@@ -3,7 +3,7 @@ import type {
   DiscordComponentConfig,
   ExtensionAgentTool,
   GatewayConfig,
-} from "@aihub/shared";
+} from "@yoplai/shared";
 import { z } from "zod";
 import { getActiveBot } from "./bot-registry.js";
 import { getDiscordContext } from "./context.js";

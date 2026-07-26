@@ -5,9 +5,10 @@ import { realpathSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import {
+  readEnv,
   type GatewayConfig,
   type StartPromptRole as SharedStartPromptRole,
-} from "@aihub/shared";
+} from "@yoplai/shared";
 import { ApiClient } from "./client.js";
 export { registerSlicesCommands } from "./slices.js";
 export { runMigration, isGatewayRunning } from "./migrate.js";
@@ -108,7 +109,7 @@ export async function buildCreateProjectBody(
 ): Promise<Record<string, unknown>> {
   if (opts.specs !== undefined) {
     throw new Error(
-      "Project-level --specs was removed. Use --pitch for project prose or `aihub slices add --specs` for slice specs."
+      "Project-level --specs was removed. Use --pitch for project prose or `yoplai slices add --specs` for slice specs."
     );
   }
   if (pitch !== undefined && opts.pitch !== undefined) {
@@ -142,7 +143,7 @@ export function createProjectCommentHandler(options?: {
   fetchImpl?: FetchLike;
 }): (args: CommentArgs) => Promise<Response> {
   const baseUrl =
-    options?.baseUrl ?? process.env.AIHUB_API_URL ?? process.env.AIHUB_URL;
+    options?.baseUrl ?? readEnv("YOPLAI_API_URL") ?? readEnv("YOPLAI_URL");
   if (!baseUrl) {
     throw new Error("Missing baseUrl for comment handler");
   }
@@ -430,7 +431,7 @@ export function runConfigValidateCommand(opts?: { config?: string }): void {
 export function registerProjectsCommands(program: Command): Command {
   const configCommand = program
     .command("config")
-    .description("Manage local AIHub config");
+    .description("Manage local Yoplai config");
 
   configCommand
     .command("migrate")
@@ -447,7 +448,7 @@ export function registerProjectsCommands(program: Command): Command {
 
   configCommand
     .command("validate")
-    .description("Validate local AIHub config")
+    .description("Validate local Yoplai config")
     .option("--config <path>", "Config path")
     .action((opts) => {
       try {
@@ -898,7 +899,7 @@ export function registerProjectsCommands(program: Command): Command {
             : [];
           const recent = messages.slice(-limit);
           const payload = {
-            type: "aihub",
+            type: "native",
             agentId,
             sessionKey,
             status: statusData.isStreaming ? "running" : "idle",
@@ -1035,7 +1036,7 @@ export function registerProjectsCommands(program: Command): Command {
   program
     .command("start")
     .argument("<id>", "Project ID")
-    .option("--agent <agent>", "Agent name (cli name or aihub:<id>)")
+    .option("--agent <agent>", "Agent name (cli name or yoplai:<id>)")
     .option("--name <name>", "Optional spawned CLI run name")
     .option("--model <model>", "Model override for CLI harness")
     .option("--reasoning-effort <level>", "Reasoning effort (codex|claude)")
@@ -1045,7 +1046,7 @@ export function registerProjectsCommands(program: Command): Command {
     .option("--slug <slug>", "Slug override (clone/worktree)")
     .option(
       "--subagent <name>",
-      "Subagent template name from aihub.json config (e.g. Worker, Reviewer)"
+      "Subagent template name from yoplai.json config (e.g. Worker, Reviewer)"
     )
     .option(
       "--prompt-role <role>",
@@ -1091,7 +1092,7 @@ export function registerProjectsCommands(program: Command): Command {
         }
 
         const data = (await getClient().startProject(normalizedId, body)) as {
-          type?: string;
+          type?: "native" | "aihub" | "cli";
           sessionKey?: string;
           slug?: string;
           runMode?: string;
@@ -1100,8 +1101,10 @@ export function registerProjectsCommands(program: Command): Command {
           console.log(JSON.stringify(data, null, 2));
           return;
         }
-        if (data.type === "aihub") {
-          console.log(`Started AIHub run (sessionKey: ${data.sessionKey})`);
+        // "aihub" is the pre-rename wire value a legacy gateway still emits;
+        // intentionally retained per rename spec section 2.
+        if (data.type === "native" || data.type === "aihub") {
+          console.log(`Started Yoplai run (sessionKey: ${data.sessionKey})`);
           return;
         }
         if (data.type === "cli") {
@@ -1122,7 +1125,7 @@ export function registerProjectsCommands(program: Command): Command {
 export function createProjectsCommand(): Command {
   return registerProjectsCommands(
     new Command("projects")
-      .description("Manage AIHub projects")
+      .description("Manage Yoplai projects")
       .version("0.1.0")
   );
 }

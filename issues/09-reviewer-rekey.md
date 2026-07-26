@@ -13,7 +13,7 @@ Rekey Reviewer dispatch + prompt + outcomes from `projectId` to `sliceId`.
 - Reviewer reads same project + slice context as Worker (#8).
 - Outcomes:
   - **Pass** → slice `review → ready_to_merge`. Project status untouched. User merges branch and manually moves slice to `done`.
-  - **Fail** → slice `review → todo` + Reviewer posts a comment to slice `THREAD.md` listing gaps (uses `aihub slices comment` from #4).
+  - **Fail** → slice `review → todo` + Reviewer posts a comment to slice `THREAD.md` listing gaps (uses `yoplai slices comment` from #4).
 - Reviewer run state carries `sliceId` + `projectId`.
 
 ## Acceptance criteria

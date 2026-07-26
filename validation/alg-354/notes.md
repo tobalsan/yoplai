@@ -1,8 +1,8 @@
 # ALG-354 E2E validation notes
 
 - **Issue:** ALG-354 — 3-tier config-surface contract (auto-form / bespoke route / toggle-only)
-- **Branch:** alg-354-config-surface-contract (worktree ~/code/aihub-alg354)
-- **Temp home:** ~/code/aihub-alg354/.aihub-e2e  (pool: sales, support; extensionsPath → .aihub-e2e/extensions)
+- **Branch:** alg-354-config-surface-contract (worktree ~/code/yoplai-alg354)
+- **Temp home:** ~/code/yoplai-alg354/.yoplai-e2e  (pool: sales, support; extensionsPath → .yoplai-e2e/extensions)
 - **Seeded external extensions:**
   - `bespoke-crm` — declares `configRoute: { path: "/agents/:agentId/extensions/bespoke-crm" }` + a schema (bespoke-route tier; route wins over schema)
   - `exa-search` — schema (`apiKey`) + `requiredSecrets: ["apiKey"]`, no route (auto-form tier)
@@ -16,7 +16,7 @@
 ## Real-stack e2e — catalog tier + agent-keyed route resolution: PASS
 Ran `buildExtensionCatalog(loadConfig(), agent)` — the exact code path the admin
 endpoint `GET /api/agents/:id/extensions` calls — against the **real config
-load + real filesystem scan** of `.aihub-e2e/extensions`, for two agents.
+load + real filesystem scan** of `.yoplai-e2e/extensions`, for two agents.
 Evidence: `catalog-real-scan.txt`. Observed:
 
 - bespoke-crm → tier=**bespoke-route**, configRoutePath resolved **per agent**
@@ -36,7 +36,7 @@ component under vitest/jsdom against the real API client contract:
 
 ## Harness gap (documented, not skipped)
 A fully independent browser walkthrough (boot the gateway on an isolated
-AIHUB_HOME, log in as admin, click the toggle, observe the real redirect) could
+YOPLAI_HOME, log in as admin, click the toggle, observe the real redirect) could
 NOT be run: this harness runs an external `hermes_cli gateway run --replace`
 supervisor that owns port 4000 and terminates any competing gateway process
 (a gateway launched on an alternate port from the temp home dies immediately

@@ -1,6 +1,6 @@
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
-import { expandPath, type GatewayConfig } from "@aihub/shared";
+import { expandPath, readEnv, type GatewayConfig } from "@yoplai/shared";
 import { getProject } from "./store.js";
 import { getProjectsRoot } from "../util/paths.js";
 
@@ -98,7 +98,7 @@ export function normalizeStringList(input: string[] | undefined): string[] {
 }
 
 export function isSpaceWriteLeaseEnabled(): boolean {
-  const raw = (process.env.AIHUB_SPACE_WRITE_LEASE ?? "").trim().toLowerCase();
+  const raw = (readEnv("YOPLAI_SPACE_WRITE_LEASE") ?? "").trim().toLowerCase();
   return raw === "1" || raw === "true" || raw === "yes";
 }
 

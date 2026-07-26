@@ -5,7 +5,7 @@ import type {
   FileAttachment,
   TelegramAgentConfig,
   TelegramComponentConfig,
-} from "@aihub/shared";
+} from "@yoplai/shared";
 import {
   handleTelegramMessage,
   type TelegramAllowlistConfig,

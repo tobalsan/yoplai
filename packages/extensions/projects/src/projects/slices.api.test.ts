@@ -22,7 +22,7 @@ describe("slices HTTP API", () => {
   let sliceRepoDir: string;
 
   beforeAll(async () => {
-    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "aihub-slices-api-"));
+    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-slices-api-"));
     projectsRoot = path.join(tmpDir, "projects");
 
     prevHome = process.env.HOME;
@@ -30,7 +30,7 @@ describe("slices HTTP API", () => {
     process.env.HOME = tmpDir;
     process.env.USERPROFILE = tmpDir;
 
-    const configDir = path.join(tmpDir, ".aihub");
+    const configDir = path.join(tmpDir, ".yoplai");
     await writeTestV3Config(configDir, {
       agents: [
         {
@@ -64,7 +64,7 @@ describe("slices HTTP API", () => {
     clearProjectsContextForTest = clearProjectsContext;
     setProjectsContext({
       getConfig: () => config,
-      getDataDir: () => path.join(tmpDir, ".aihub"),
+      getDataDir: () => path.join(tmpDir, ".yoplai"),
       getAgents: () => config.agents,
       getAgent: (id: string) => config.agents.find((agent) => agent.id === id),
       isAgentActive: () => true,

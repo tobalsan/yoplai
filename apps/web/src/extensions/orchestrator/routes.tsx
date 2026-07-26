@@ -1216,7 +1216,7 @@ function OrchestratorDashboard(): ReturnType<Component> {
             fallback={
               <div class="orch-projects-empty">
                 <strong>No projects configured.</strong>
-                <p><code>extensions.orchestrator.projects</code> in <code>aihub.json</code> is empty.</p>
+                <p><code>extensions.orchestrator.projects</code> in <code>yoplai.json</code> is empty.</p>
               </div>
             }
           >

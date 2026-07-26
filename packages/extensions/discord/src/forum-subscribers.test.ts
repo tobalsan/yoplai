@@ -3,7 +3,7 @@ import {
   AgentConfigSchema,
   AgentYamlConfigSchema,
   type ExtensionContext,
-} from "@aihub/shared";
+} from "@yoplai/shared";
 import { clearDiscordContext, setDiscordContext } from "./context.js";
 import { getForumSubscribers } from "./forum-subscribers.js";
 

@@ -132,7 +132,7 @@ beforeAll(async () => {
 beforeEach(async () => {
   vi.resetModules();
   vi.clearAllMocks();
-  homeDir = fs.mkdtempSync(path.join(os.tmpdir(), "aihub-fork-routes-"));
+  homeDir = fs.mkdtempSync(path.join(os.tmpdir(), "yoplai-fork-routes-"));
   poolDir = path.join(homeDir, "pool", "scribe");
   fs.mkdirSync(poolDir, { recursive: true });
   fs.writeFileSync(

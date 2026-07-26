@@ -2,7 +2,11 @@ import type { Context, MiddlewareHandler } from "hono";
 import { getMultiUserRuntime } from "./index.js";
 import { getImpersonation } from "./impersonation.js";
 
-export const FORWARDED_AUTH_CONTEXT_HEADER = "x-aihub-auth-context";
+export const FORWARDED_AUTH_CONTEXT_HEADER = "x-yoplai-auth-context";
+// Deprecated: accepted for requests forwarded by older code, never sent.
+const LEGACY_FORWARDED_AUTH_CONTEXT_HEADER = "x-aihub-auth-context";
+
+let warnedLegacyAuthContextHeader = false;
 
 export type RequestAuthContext = {
   user: {
@@ -186,8 +190,17 @@ export function getForwardedAuthContext(
   headers: Headers
 ): RequestAuthContext | null {
   const encoded = headers.get(FORWARDED_AUTH_CONTEXT_HEADER);
-  if (!encoded) return null;
-  return decodeAuthContext(encoded);
+  if (encoded) return decodeAuthContext(encoded);
+
+  const legacyEncoded = headers.get(LEGACY_FORWARDED_AUTH_CONTEXT_HEADER);
+  if (!legacyEncoded) return null;
+  if (!warnedLegacyAuthContextHeader) {
+    warnedLegacyAuthContextHeader = true;
+    console.warn(
+      `[multi-user] ${LEGACY_FORWARDED_AUTH_CONTEXT_HEADER} is deprecated; forward ${FORWARDED_AUTH_CONTEXT_HEADER} instead.`
+    );
+  }
+  return decodeAuthContext(legacyEncoded);
 }
 
 export function forwardAuthContextToRequest(
@@ -199,8 +212,10 @@ export function forwardAuthContextToRequest(
       FORWARDED_AUTH_CONTEXT_HEADER,
       encodeAuthContext(authContext)
     );
+    request.headers.delete(LEGACY_FORWARDED_AUTH_CONTEXT_HEADER);
   } else {
     request.headers.delete(FORWARDED_AUTH_CONTEXT_HEADER);
+    request.headers.delete(LEGACY_FORWARDED_AUTH_CONTEXT_HEADER);
   }
   return request;
 }

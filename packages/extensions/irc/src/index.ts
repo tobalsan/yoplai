@@ -5,7 +5,7 @@ import {
   type ExtensionContext,
   type IrcAgentConfig,
   type IrcExtensionConfig,
-} from "@aihub/shared";
+} from "@yoplai/shared";
 import { IrcRouter } from "./router.js";
 import { IrcService } from "./service.js";
 

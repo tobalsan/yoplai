@@ -2,7 +2,7 @@ import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { ContainerInput } from "@aihub/shared";
+import type { ContainerInput } from "@yoplai/shared";
 import { runAgent, sendFollowUpMessage } from "../runner.js";
 
 const proxyFetchMock = vi.hoisted(() => vi.fn());
@@ -96,7 +96,7 @@ afterEach(() => {
 
 describe("Pi runner", () => {
   it("runs the Pi session, returns history events, and streams events", async () => {
-    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "aihub-runner-"));
+    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-runner-"));
     const workspaceDir = path.join(tempDir, "workspace");
     const sessionDir = path.join(tempDir, "sessions");
     await fs.mkdir(workspaceDir, { recursive: true });
@@ -183,7 +183,7 @@ describe("Pi runner", () => {
   });
 
   it("registers extension tools from extensionTools", async () => {
-    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "aihub-runner-"));
+    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-runner-"));
     const workspaceDir = path.join(tempDir, "workspace");
     const sessionDir = path.join(tempDir, "sessions");
     await fs.mkdir(workspaceDir, { recursive: true });
@@ -299,7 +299,7 @@ describe("Pi runner", () => {
 
     expect(createAgentSessionArgs.resourceLoader.options?.appendSystemPrompt).toEqual(
       expect.arrayContaining([
-        expect.stringContaining("isolated AIHub container"),
+        expect.stringContaining("isolated Yoplai container"),
         "Use extension tools first.",
       ])
     );
@@ -311,7 +311,7 @@ describe("Pi runner", () => {
   });
 
   it("writes large extension tool results to workspace data", async () => {
-    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "aihub-runner-"));
+    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-runner-"));
     const workspaceDir = path.join(tempDir, "workspace");
     const sessionDir = path.join(tempDir, "sessions");
     await fs.mkdir(workspaceDir, { recursive: true });
@@ -377,7 +377,7 @@ describe("Pi runner", () => {
   });
 
   it("emits raw container file output requests from send_file", async () => {
-    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "aihub-runner-"));
+    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-runner-"));
     const workspaceDir = path.join(tempDir, "workspace");
     const sessionDir = path.join(tempDir, "sessions");
     await fs.mkdir(workspaceDir, { recursive: true });
@@ -419,7 +419,7 @@ describe("Pi runner", () => {
   });
 
   it("steers follow-up IPC messages into the active session", async () => {
-    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "aihub-runner-"));
+    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-runner-"));
     const workspaceDir = path.join(tempDir, "workspace");
     const sessionDir = path.join(tempDir, "sessions");
     await fs.mkdir(workspaceDir, { recursive: true });
@@ -443,7 +443,7 @@ describe("Pi runner", () => {
   });
 
   it("queues IPC messages received before the Pi session is ready", async () => {
-    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "aihub-runner-"));
+    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-runner-"));
     const workspaceDir = path.join(tempDir, "workspace");
     const sessionDir = path.join(tempDir, "sessions");
     await fs.mkdir(workspaceDir, { recursive: true });
@@ -468,7 +468,7 @@ describe("Pi runner", () => {
   });
 
   it("writes the session file directly under sessionDir as .jsonl", async () => {
-    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "aihub-runner-"));
+    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-runner-"));
     const workspaceDir = path.join(tempDir, "workspace");
     const sessionDir = path.join(tempDir, "sessions");
     await fs.mkdir(workspaceDir, { recursive: true });
@@ -492,7 +492,7 @@ describe("Pi runner", () => {
   });
 
   it("includes non-image attachment paths in the prompt", async () => {
-    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "aihub-runner-"));
+    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-runner-"));
     const workspaceDir = path.join(tempDir, "workspace");
     const sessionDir = path.join(tempDir, "sessions");
     await fs.mkdir(workspaceDir, { recursive: true });
@@ -535,7 +535,7 @@ describe("Pi runner", () => {
   });
 
   it("appends channel context to the system prompt and emits full/system context history", async () => {
-    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "aihub-runner-"));
+    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-runner-"));
     const workspaceDir = path.join(tempDir, "workspace");
     const sessionDir = path.join(tempDir, "sessions");
     await fs.mkdir(workspaceDir, { recursive: true });

@@ -14,7 +14,7 @@ describe("areas + tasks API", () => {
     ) => Response | Promise<Response>;
   };
   let prevHome: string | undefined;
-  let prevAihubHome: string | undefined;
+  let prevHomeDir: string | undefined;
   let prevUserProfile: string | undefined;
   let extensions: Array<{
     id: string;
@@ -24,17 +24,17 @@ describe("areas + tasks API", () => {
   }> = [];
 
   beforeAll(async () => {
-    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "aihub-areas-tasks-api-"));
+    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-areas-tasks-api-"));
     projectsRoot = path.join(tmpDir, "projects");
 
-    prevAihubHome = process.env.AIHUB_HOME;
+    prevHomeDir = process.env.YOPLAI_HOME;
     prevHome = process.env.HOME;
     prevUserProfile = process.env.USERPROFILE;
-    process.env.AIHUB_HOME = path.join(tmpDir, ".aihub");
+    process.env.YOPLAI_HOME = path.join(tmpDir, ".yoplai");
     process.env.HOME = tmpDir;
     process.env.USERPROFILE = tmpDir;
 
-    await writeTestV3Config(path.join(tmpDir, ".aihub"), {
+    await writeTestV3Config(path.join(tmpDir, ".yoplai"), {
       agents: [
         {
           id: "test-agent",
@@ -65,7 +65,7 @@ describe("areas + tasks API", () => {
 
     const mockCtx = {
       getConfig: () => config,
-      getDataDir: () => path.join(tmpDir, ".aihub"),
+      getDataDir: () => path.join(tmpDir, ".yoplai"),
       getAgents: () => config.agents ?? [],
       getAgent: (id: string) => config.agents?.find((a) => a.id === id),
       isAgentActive: () => true,
@@ -93,8 +93,8 @@ describe("areas + tasks API", () => {
     for (const extension of extensions) {
       await extension.stop?.();
     }
-    if (prevAihubHome === undefined) delete process.env.AIHUB_HOME;
-    else process.env.AIHUB_HOME = prevAihubHome;
+    if (prevHomeDir === undefined) delete process.env.YOPLAI_HOME;
+    else process.env.YOPLAI_HOME = prevHomeDir;
     if (prevHome === undefined) delete process.env.HOME;
     else process.env.HOME = prevHome;
     if (prevUserProfile === undefined) delete process.env.USERPROFILE;
@@ -135,11 +135,11 @@ describe("areas + tasks API", () => {
     const patched = await patchRes.json();
     expect(patched.title).toBe("Custom Updated");
 
-    await fs.mkdir(path.join(projectsRoot, "PRO-99_aihub_seed"), {
+    await fs.mkdir(path.join(projectsRoot, "PRO-99_yoplai_seed"), {
       recursive: true,
     });
     await fs.writeFile(
-      path.join(projectsRoot, "PRO-99_aihub_seed", "README.md"),
+      path.join(projectsRoot, "PRO-99_yoplai_seed", "README.md"),
       '---\nid: "PRO-99"\ntitle: "Seed"\n---\n# Seed\n',
       "utf8"
     );
@@ -149,13 +149,13 @@ describe("areas + tasks API", () => {
     );
     expect(migrateRes.status).toBe(200);
     const migrate = await migrateRes.json();
-    expect(migrate.updatedProjects).toContain("PRO-99_aihub_seed");
+    expect(migrate.updatedProjects).toContain("PRO-99_yoplai_seed");
 
     const readme = await fs.readFile(
-      path.join(projectsRoot, "PRO-99_aihub_seed", "README.md"),
+      path.join(projectsRoot, "PRO-99_yoplai_seed", "README.md"),
       "utf8"
     );
-    expect(readme).toContain('area: "aihub"');
+    expect(readme).toContain('area: "yoplai"');
 
     const deleteRes = await Promise.resolve(
       api.request("/areas/custom", { method: "DELETE" })

@@ -41,6 +41,13 @@ const KEY_LEN = 32;
  * salt is sound here because the input secret is a high-entropy operator key
  * (not a low-entropy user password being protected against rainbow tables); the
  * per-encryption random IV is what guarantees distinct ciphertexts.
+ *
+ * FROZEN KEY MATERIAL — never rename, re-brand or reformat these bytes. They are
+ * a scrypt input, not prose: every `enc:v2:` token already on disk was encrypted
+ * under a key derived from this exact string, so changing a single byte makes
+ * every persisted OAuth token fail its GCM auth tag and silently disconnects
+ * every connected account. The `aihub` spelling predates the yoplai rename and
+ * must stay. A new salt requires a new `enc:v3:` prefix, not an edit here.
  */
 const KDF_SALT = Buffer.from("aihub-oauth-token-at-rest-v2", "utf8");
 

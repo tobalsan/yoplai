@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { AgentConfig } from "@aihub/shared";
+import type { AgentConfig } from "@yoplai/shared";
 import type { SdkAdapter } from "../sdk/types.js";
 
 const getAgent = vi.fn();
@@ -11,7 +11,7 @@ const setSessionThinkLevel = vi.fn();
 const appendSessionMeta = vi.fn();
 
 vi.mock("../config/index.js", () => ({
-  CONFIG_DIR: "/tmp/aihub-runner-test",
+  CONFIG_DIR: "/tmp/yoplai-runner-test",
   getAgent,
   resolveWorkspaceDir,
 }));

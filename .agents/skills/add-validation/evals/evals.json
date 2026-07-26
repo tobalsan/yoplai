@@ -12,7 +12,7 @@
       "id": 1,
       "name": "backend-scheduler",
       "prompt": "add validation steps to docs/specs/scheduler-agent-tools-prd.md",
-      "expected_output": "A '## E2E Validation' section detecting a backend/CLI surface: CLI-driven steps (pnpm aihub:dev scheduler ...), hot-reload assertion, scoped gateway tests. No browser block (no UI surface). Concrete assertions.",
+      "expected_output": "A '## E2E Validation' section detecting a backend/CLI surface: CLI-driven steps (pnpm yoplai:dev scheduler ...), hot-reload assertion, scoped gateway tests. No browser block (no UI surface). Concrete assertions.",
       "files": []
     },
     {

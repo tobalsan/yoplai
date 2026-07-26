@@ -177,7 +177,7 @@ describe("SpawnForm", () => {
     const projectWithRepo: ProjectDetail = {
       ...project,
       frontmatter: {
-        repo: "~/code/aihub",
+        repo: "~/code/yoplai",
       },
     };
 
@@ -214,7 +214,7 @@ describe("SpawnForm", () => {
     expect(payload?.prompt).toContain(
       `Path: ~/projects/.workspaces/${projectWithRepo.id}/`
     );
-    expect(payload?.prompt).not.toContain("Path: ~/code/aihub");
+    expect(payload?.prompt).not.toContain("Path: ~/code/yoplai");
 
     dispose();
   });

@@ -7,4 +7,4 @@ instructions = "instruction.md"
 user = "agent"
 
 [metadata]
-aihub_agent = "smoke"
+yoplai_agent = "smoke"

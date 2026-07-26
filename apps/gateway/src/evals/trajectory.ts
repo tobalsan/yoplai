@@ -8,7 +8,7 @@
  * can tighten field-by-field then.
  */
 
-import type { StreamEvent } from "@aihub/shared";
+import type { StreamEvent } from "@yoplai/shared";
 
 export type AtifStep =
   | { type: "system_prompt"; content: string }

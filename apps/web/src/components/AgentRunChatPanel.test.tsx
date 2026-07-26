@@ -2,7 +2,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createSignal } from "solid-js";
 import { render } from "solid-js/web";
-import type { SubagentRun } from "@aihub/shared/types";
+import type { SubagentRun } from "@yoplai/shared/types";
 import { AgentRunChatPanel } from "./AgentRunChatPanel";
 import {
   archiveRuntimeSubagent,

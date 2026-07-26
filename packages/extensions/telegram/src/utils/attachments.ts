@@ -1,4 +1,4 @@
-import type { FileAttachment } from "@aihub/shared";
+import type { FileAttachment } from "@yoplai/shared";
 
 /**
  * Telegram's Bot API caps file downloads at 20MB. Anything larger cannot be

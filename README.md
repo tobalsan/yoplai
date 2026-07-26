@@ -1,8 +1,8 @@
-# AIHub
+# Yoplai
 
 Multi-agent gateway for AI agents. Exposes agents via web UI, Discord, Slack, CLI, and scheduled jobs.
 
-![Dashboard](./aihub.png)
+![Dashboard](./yoplai.png)
 
 **Main features:**
 
@@ -22,8 +22,8 @@ Multi-agent gateway for AI agents. Exposes agents via web UI, Discord, Slack, CL
 ```bash
 
 # Clone the repo
-git clone https://github.com/tobalsan/aihub.git
-cd aihub
+git clone https://github.com/tobalsan/yoplai.git
+cd yoplai
 
 # Install
 pnpm install
@@ -34,29 +34,30 @@ pnpm install
 Run the gateway (UI included) as a background launchd agent that auto-starts on login and restarts on crash:
 
 ```bash
-pnpm aihub gateway install    # write plist + load
-pnpm aihub gateway status     # show pid, ports, log paths
-pnpm aihub gateway stop       # bootout
-pnpm aihub gateway start      # bootstrap + kickstart
-pnpm aihub gateway uninstall  # bootout + remove plist
+pnpm yoplai gateway install    # write plist + load
+pnpm yoplai gateway status     # show pid, ports, log paths
+pnpm yoplai gateway stop       # bootout
+pnpm yoplai gateway start      # bootstrap + kickstart
+pnpm yoplai gateway uninstall  # bootout + remove plist
 ```
 
-- Plist: `~/Library/LaunchAgents/com.aihub.gateway.plist` (label `com.aihub.gateway`).
-- Logs: `$AIHUB_HOME/logs/gateway.{out,err}.log`.
+- Plist: `~/Library/LaunchAgents/com.yoplai.gateway.plist` (label `com.yoplai.gateway`).
+- Logs: `$YOPLAI_HOME/logs/gateway.{out,err}.log`.
 - `install` is idempotent (boots out any existing instance first).
 - macOS only for now; Linux/systemd not yet supported.
 
 ## Configuration
 
-The app uses a main config file at `$AIHUB_HOME/aihub.json` (default: `~/.aihub/aihub.json`).
+The app uses a main config file at `$YOPLAI_HOME/yoplai.json` (default: `~/.yoplai/yoplai.json`).
+> **Upgrading from AIHub?** The old `~/.aihub`/`aihub.json`/`AIHUB_*` env vars still work as a fallback and log a deprecation warning; migrate to `~/.yoplai`/`yoplai.json`/`YOPLAI_*` when convenient.
 All data is saved as markdown files in the projects folder.
 By default, if you don't specify anything, all projects are saved in `~/projects`.
 Project document layout is centralized in `ProjectDocumentStore`: project metadata stays in `README.md`, pitch in `PITCH.md`, comments in `THREAD.md`, slices under `slices/<sliceId>/`, and `SCOPE_MAP.md` is generated.
-Config uses v3: `$AIHUB_HOME/aihub.json` holds global settings and optional `agents` discovery globs; each lead agent lives in its own workspace with `agent.yaml`. If `agents` is omitted and no root `pool` is configured, AIHub defaults to `$AIHUB_HOME/agents` and fails startup clearly if that folder does not contain agent workspaces.
+Config uses v3: `$YOPLAI_HOME/yoplai.json` holds global settings and optional `agents` discovery globs; each lead agent lives in its own workspace with `agent.yaml`. If `agents` is omitted and no root `pool` is configured, Yoplai defaults to `$YOPLAI_HOME/agents` and fails startup clearly if that folder does not contain agent workspaces.
 Config has a single extension model. Root `extensions.<id>` holds shared extension defaults, and `agent.yaml` `extensions.<id>` opts that agent into tool-style extensions with optional per-agent overrides.
 Projects can opt into the slice orchestrator daemon with `extensions.projects.orchestrator`. When enabled, it polls configured slice status bindings, starts `Worker` subagents for `todo`, starts `Reviewer` subagents for `review`, and starts `Merger` subagents for `ready_to_merge`. The dispatcher is split internally into dispatch policy, prompt factory, and run planner modules. Slices can declare `blocked_by` prerequisites; blocked slices are skipped until every blocker is `done`, `ready_to_merge`, or `cancelled`. HITL bursts require `hitl_channel` to name an existing `notifications.channels` key.
 Orchestrated Worker/Reviewer/Merger prompts tell agents to pass their role via `--author` when posting project or slice comments, so THREAD.md keeps role attribution.
-Orchestrator run indexes and small event metadata stay in SQLite, while new raw runner events are written beside the owning project `WORKFLOW.md` as `<project>/.aihub/codex/<timestamp>-<encoded-run-id>.jsonl`. Inspect them with `tail -f <project>/.aihub/codex/*.jsonl` or `jq -c . <project>/.aihub/codex/<run>.jsonl`; `/api/orchestrator/runs/:id/logs?since=<cursor>` still reads both JSONL-backed runs and legacy DB-only runs.
+Orchestrator run indexes and small event metadata stay in SQLite, while new raw runner events are written beside the owning project `WORKFLOW.md` as `<project>/.yoplai/codex/<timestamp>-<encoded-run-id>.jsonl`. Inspect them with `tail -f <project>/.yoplai/codex/*.jsonl` or `jq -c . <project>/.yoplai/codex/<run>.jsonl`; `/api/orchestrator/runs/:id/logs?since=<cursor>` still reads both JSONL-backed runs and legacy DB-only runs.
 
 ```json
 {
@@ -95,12 +96,12 @@ Agents can optionally run inside ephemeral Docker containers for filesystem, net
 ### Lead agents
 
 Lead agent configuration is optional, as orchestration is done via CLI subagents.
-If you want lead agents, point `aihub.json` at agent workspace folders, or omit `agents` to use `$AIHUB_HOME/agents` in non-pool mode. Each workspace contains `agent.yaml` and prompt files.
+If you want lead agents, point `yoplai.json` at agent workspace folders, or omit `agents` to use `$YOPLAI_HOME/agents` in non-pool mode. Each workspace contains `agent.yaml` and prompt files.
 
 ```bash
-export AIHUB_HOME="${AIHUB_HOME:-$HOME/.aihub}"
-mkdir -p "$AIHUB_HOME/agents/my-agent" "$AIHUB_HOME/agents/openclaw-agent"
-cat > "$AIHUB_HOME/aihub.json" << 'EOF'
+export YOPLAI_HOME="${YOPLAI_HOME:-$HOME/.yoplai}"
+mkdir -p "$YOPLAI_HOME/agents/my-agent" "$YOPLAI_HOME/agents/openclaw-agent"
+cat > "$YOPLAI_HOME/yoplai.json" << 'EOF'
 {
   "version": 3,
   "agents": "./agents/*",
@@ -115,14 +116,14 @@ cat > "$AIHUB_HOME/aihub.json" << 'EOF'
   }
 }
 EOF
-cat > "$AIHUB_HOME/agents/my-agent/agent.yaml" << 'EOF'
+cat > "$YOPLAI_HOME/agents/my-agent/agent.yaml" << 'EOF'
 id: my-agent
 name: My Agent
 model:
   provider: anthropic
   model: claude-sonnet-4-5-20250929
 EOF
-cat > "$AIHUB_HOME/agents/openclaw-agent/agent.yaml" << 'EOF'
+cat > "$YOPLAI_HOME/agents/openclaw-agent/agent.yaml" << 'EOF'
 id: openclaw-agent
 name: Cloud
 sdk: openclaw
@@ -136,13 +137,13 @@ model:
 EOF
 ```
 
-Run `pnpm aihub agents migrate` to convert older v2 configs with centralized `agents[]` records into per-agent `agent.yaml` folders. Find it in help via `pnpm aihub --help` (shows `agents`), then `pnpm aihub agents --help` (shows `migrate`).
+Run `pnpm yoplai agents migrate` to convert older v2 configs with centralized `agents[]` records into per-agent `agent.yaml` folders. Find it in help via `pnpm yoplai --help` (shows `agents`), then `pnpm yoplai agents --help` (shows `migrate`).
 
-For repo-local dev, `pnpm init-dev-config` writes `./.aihub/aihub.json` from `scripts/config-template.json`, picking the first free UI port in `3001-3100` and the first free gateway port in `4001-4100`.
+For repo-local dev, `pnpm init-dev-config` writes `./.yoplai/yoplai.json` from `scripts/config-template.json`, picking the first free UI port in `3001-3100` and the first free gateway port in `4001-4100`.
 
 ### Built-in extensions
 
-AIHub v3 is modular. These are the built-in extension IDs you can enable under `extensions`:
+Yoplai v3 is modular. These are the built-in extension IDs you can enable under `extensions`:
 
 - `discord`: one shared Discord bot that routes configured channels/DMs to agents
 - `slack`: one shared Slack Socket Mode bot that routes configured channels/DMs to agents
@@ -178,7 +179,7 @@ webhooks:
     maxPayloadSize: 1048576
 ```
 
-On startup, AIHub creates `$AIHUB_HOME/webhook-secrets.json` and logs the full URL:
+On startup, Yoplai creates `$YOPLAI_HOME/webhook-secrets.json` and logs the full URL:
 
 ```text
 [webhooks] sales/notion -> http://127.0.0.1:4000/hooks/sales/notion/<secret>
@@ -196,15 +197,15 @@ Example prompt templates live in `docs/examples/webhooks/`.
 Rotate a webhook URL secret with:
 
 ```bash
-aihub webhooks rotate sales notion
-# or: aihub webhooks rotate sales notion
+yoplai webhooks rotate sales notion
+# or: yoplai webhooks rotate sales notion
 ```
 
 Running gateways pick up rotated secrets without restart.
 
 ### Multi-User Mode
 
-Enable multi-user auth with `extensions.multiUser` in `$AIHUB_HOME/aihub.json`:
+Enable multi-user auth with `extensions.multiUser` in `$YOPLAI_HOME/yoplai.json`:
 
 ```json
 {
@@ -237,7 +238,7 @@ Required config:
 Bootstrap flow:
 
 1. Set Google OAuth credentials and `BETTER_AUTH_SECRET`, then restart the gateway.
-2. Gateway creates `$AIHUB_HOME/auth.db`, runs Better Auth migrations, and mounts `/api/auth/*`.
+2. Gateway creates `$YOPLAI_HOME/auth.db`, runs Better Auth migrations, and mounts `/api/auth/*`.
 3. The first Google OAuth user becomes `admin`.
 4. That admin approves later signups and manages roles at `/admin/users`.
 5. Admins manage agent access by assigning agents to teams at `/teams`; any user can chat an agent whose team they belong to.
@@ -248,8 +249,8 @@ Notes:
 
 - Multi-user mode adds `/login`, `/api/me`, and `/api/admin/users`.
 - Gateway initializes the Better Auth runtime before opening the HTTP listener, so `/api/auth/*` is live as soon as the server starts.
-- Sessions/history move to per-user paths under `$AIHUB_HOME/sessions/users/<userId>/`.
-- Headless callers (curl, CI, scripts) can use `aihub user token create|list|revoke` to mint bearer API keys and call `/api/*` with `Authorization: Bearer <token>` instead of a browser cookie.
+- Sessions/history move to per-user paths under `$YOPLAI_HOME/sessions/users/<userId>/`.
+- Headless callers (curl, CI, scripts) can use `yoplai user token create|list|revoke` to mint bearer API keys and call `/api/*` with `Authorization: Bearer <token>` instead of a browser cookie.
 - There is no migration for existing single-user session/history data. Treat enablement as a fresh start.
 
 ### Extensions
@@ -258,13 +259,13 @@ Extensions own optional gateway routes, lifecycle hooks, prompt contributions, a
 
 - Root `extensions.<id>` holds shared defaults for both first-party and external extensions.
 - `agent.yaml` `extensions.<id>` opts an agent into a tool-style extension and can override root defaults. Presence is enough to enable it unless `enabled: false`.
-- External extensions load from `extensionsPath` when set, otherwise `$AIHUB_HOME/extensions` (default `~/.aihub/extensions`).
+- External extensions load from `extensionsPath` when set, otherwise `$YOPLAI_HOME/extensions` (default `~/.yoplai/extensions`).
 - Discovery follows real directories and symlinked extension directories.
 - The helper for migrated tool bundles exports from `packages/shared/src/tool-extension.ts`.
 - Gateway startup resolves extension secrets, validates configured mounts, warns on missing extension ids, and fails early on invalid config or missing required secrets.
-- Agents can define gateway-side secret aliases in `agents/<id>/.env` next to `agent.yaml`. Agent config `$env:` references and extension-tool `ctx.env` both use the resolved per-agent map, with precedence `agent/.env > $AIHUB_HOME/.env > aihub.json env > process.env`, so agents can reuse standard names such as `SLACK_TOKEN` without leaking values to other agents.
-- Extensions can append system-prompt guidance and expose Zod-object-backed tools to Pi agents. AIHub includes sanitized extension tool aliases in Pi's tool allowlist so tools like Board scratchpad are callable in-process and in Pi containers. Pi container runs serialize extension prompt/tool metadata and execute tools through `/internal/tools`; sandbox Claude fails loudly if extension tools are configured.
-- The Board extension stores user content in `$AIHUB_HOME` by default. Set `extensions.board.contentRoot` to use a custom content directory. Its `/api/board/projects` endpoint keeps a short in-memory stale-refresh cache for project rows and lifecycle counts; use `?profile=true` to return `X-Profile-Ms`. Project README frontmatter can explicitly attach ad-hoc worktrees with `worktrees: [{"repo":"~/code/aihub","branch":"feat/example"}]` or path strings.
+- Agents can define gateway-side secret aliases in `agents/<id>/.env` next to `agent.yaml`. Agent config `$env:` references and extension-tool `ctx.env` both use the resolved per-agent map, with precedence `agent/.env > $YOPLAI_HOME/.env > yoplai.json env > process.env`, so agents can reuse standard names such as `SLACK_TOKEN` without leaking values to other agents.
+- Extensions can append system-prompt guidance and expose Zod-object-backed tools to Pi agents. Yoplai includes sanitized extension tool aliases in Pi's tool allowlist so tools like Board scratchpad are callable in-process and in Pi containers. Pi container runs serialize extension prompt/tool metadata and execute tools through `/internal/tools`; sandbox Claude fails loudly if extension tools are configured.
+- The Board extension stores user content in `$YOPLAI_HOME` by default. Set `extensions.board.contentRoot` to use a custom content directory. Its `/api/board/projects` endpoint keeps a short in-memory stale-refresh cache for project rows and lifecycle counts; use `?profile=true` to return `X-Profile-Ms`. Project README frontmatter can explicitly attach ad-hoc worktrees with `worktrees: [{"repo":"~/code/yoplai","branch":"feat/example"}]` or path strings.
 
 ### OneCLI
 
@@ -302,7 +303,7 @@ Run agents inside ephemeral Docker containers for per-invocation filesystem, net
 **Prerequisites:**
 
 - Docker must be installed and running on the gateway host
-- The `aihub-agent` container image must be built (see below)
+- The `yoplai-agent` container image must be built (see below)
 - (Optional) OneCLI proxy for credential injection and network egress control
 
 #### 1. Build the agent image
@@ -310,7 +311,7 @@ Run agents inside ephemeral Docker containers for per-invocation filesystem, net
 From the repo root:
 
 ```bash
-docker build -t aihub-agent:latest -f container/agent-runner/Dockerfile .
+docker build -t yoplai-agent:latest -f container/agent-runner/Dockerfile .
 ```
 
 This builds a `node:22-slim` image with the agent-runner entry point. It does **not** contain any credentials — those are injected at runtime via the proxy or stripped from the input.
@@ -340,7 +341,7 @@ Add a top-level `sandbox` block for network and mount security settings:
   "sandbox": {
     "sharedDir": "~/agents/shared",
     "network": {
-      "name": "aihub-agents",
+      "name": "yoplai-agents",
       "internal": true
     },
     "mountAllowlist": {
@@ -358,7 +359,7 @@ OneCLI proxy config lives in the top-level `onecli` block (see [OneCLI](#onecli)
 | Field               | Default                            | Description                                                            |
 | ------------------- | ---------------------------------- | ---------------------------------------------------------------------- |
 | `enabled`           | `false`                            | Enable container isolation for this agent                              |
-| `image`             | `aihub-agent:latest`               | Docker image to use                                                    |
+| `image`             | `yoplai-agent:latest`               | Docker image to use                                                    |
 | `network`           | From global `sandbox.network.name` | Docker network name                                                    |
 | `memory`            | `2g`                               | Memory limit                                                           |
 | `cpus`              | `1`                                | CPU limit                                                              |
@@ -368,14 +369,14 @@ OneCLI proxy config lives in the top-level `onecli` block (see [OneCLI](#onecli)
 | `env`               | `{}`                               | Extra environment variables (secret values are automatically filtered) |
 | `mounts`            | `[]`                               | Additional bind mounts (validated against the allowlist)               |
 
-Sandbox containers also inherit safe top-level `aihub.json.env` entries. Per-agent `sandbox.env` is applied on top.
+Sandbox containers also inherit safe top-level `yoplai.json.env` entries. Per-agent `sandbox.env` is applied on top.
 
 #### How it works
 
 When `sandbox.enabled` is `true`, the gateway replaces the normal in-process agent run with a container spawn:
 
 1. Gateway builds Docker args and bind mounts from the agent + global config
-2. Spawns `docker run -i --rm --name aihub-agent-<id>-<ts> ...`
+2. Spawns `docker run -i --rm --name yoplai-agent-<id>-<ts> ...`
 3. Writes a `ContainerInput` JSON payload to the container's stdin
 4. Agent-runner inside the container executes the agent turn (Pi SDK or Claude CLI)
 5. Container writes structured output to stdout between sentinel markers
@@ -401,7 +402,7 @@ If you don't use OneCLI, containers can still run but will need direct network a
 - **Ephemeral containers**: fresh environment every invocation, no persistent state
 - **Read-only workspace**: agent identity files (SOUL.md, skills) are mounted read-only by default
 - **`.env` shadowing**: if the workspace contains a `.env` file, it is shadowed with `/dev/null` inside the container
-- **Top-level config env propagation**: safe `aihub.json.env` entries are forwarded into sandbox containers
+- **Top-level config env propagation**: safe `yoplai.json.env` entries are forwarded into sandbox containers
 - **`sandbox.env` filtering**: secret-looking env vars (keys containing KEY/SECRET/TOKEN/etc., values starting with `sk-`/`ghp_`/etc.) are automatically stripped
 - **Mount allowlist**: custom mounts are validated against `sandbox.mountAllowlist.allowedRoots` and blocked if they match `blockedPatterns`
 - **Path traversal prevention**: container mount paths with `..` or non-absolute paths are rejected
@@ -413,8 +414,8 @@ If you don't use OneCLI, containers can still run but will need direct network a
 
 On gateway startup, if any agent has `sandbox.enabled: true`:
 
-1. The Docker network is created (if it doesn't exist): `docker network create --internal aihub-agents`
-2. Stale containers from previous runs are removed: `docker rm -f` all `aihub-agent-*` containers
+1. The Docker network is created (if it doesn't exist): `docker network create --internal yoplai-agents`
+2. Stale containers from previous runs are removed: `docker rm -f` all `yoplai-agent-*` containers
 
 On gateway shutdown (SIGTERM/SIGINT), all running sandbox containers are stopped.
 
@@ -423,7 +424,7 @@ On gateway shutdown (SIGTERM/SIGINT), all running sandbox containers are stopped
 ```bash
 # Build & run
 pnpm build && pnpm build:web
-pnpm aihub gateway
+pnpm yoplai gateway
 ```
 
 Open http://localhost:3000
@@ -467,72 +468,72 @@ packages/
 ## CLI
 
 ```bash
-pnpm aihub gateway [--port 4000] [--host 127.0.0.1] [--agent-id <id>]
-pnpm aihub agent list
-pnpm aihub send -a <agentId> -m "Hello" [-s <sessionId>]
+pnpm yoplai gateway [--port 4000] [--host 127.0.0.1] [--agent-id <id>]
+pnpm yoplai agent list
+pnpm yoplai send -a <agentId> -m "Hello" [-s <sessionId>]
 
 # Notifications CLI (Discord/Slack)
-pnpm aihub notify --channel default --message "Hello" [--from <agentId>] [--surface discord|slack|both] [--mention userId]
-# --from resolves bot tokens from agent.yaml; AIHUB_AGENT_ID is used when --from is omitted.
+pnpm yoplai notify --channel default --message "Hello" [--from <agentId>] [--surface discord|slack|both] [--mention userId]
+# --from resolves bot tokens from agent.yaml; YOPLAI_AGENT_ID is used when --from is omitted.
 
-# Projects CLI (aihub projects; uses gateway API)
-pnpm aihub projects list [--status <status>]
-pnpm aihub projects create --title "My Project" [pitch] [--pitch <text>|@file|-] [--status <status>] [--area <area>] [--repo <path>]
-pnpm aihub projects get <id>
-pnpm aihub projects update <id> [--title <title>] [--status <status>] [--readme <text>|-] [--specs <text>|-]
-pnpm aihub projects pitch <id> --from-readme [--force]
-pnpm aihub projects move <id> <status>
-pnpm aihub projects start <id> [--agent <cli|aihub:id>] [--subagent <name>] [--name <run-name>] [--model <id>] [--reasoning-effort <level>] [--thinking <level>] [--mode <main-run|clone|worktree|none>] [--branch <branch>] [--slug <slug>] [--prompt-role <coordinator|worker|reviewer|legacy>] [--allow-overrides] [--include-default-prompt|--exclude-default-prompt] [--include-role-instructions|--exclude-role-instructions] [--include-post-run|--exclude-post-run] [--custom-prompt <text>|-]
-pnpm aihub projects rename <id> --slug <slug> [--name <name>] [--model <id>] [--reasoning-effort <level>] [--thinking <level>]
-pnpm aihub projects status <id> [--slug <slug>] [--list] [--limit <n>] [--json]
+# Projects CLI (yoplai projects; uses gateway API)
+pnpm yoplai projects list [--status <status>]
+pnpm yoplai projects create --title "My Project" [pitch] [--pitch <text>|@file|-] [--status <status>] [--area <area>] [--repo <path>]
+pnpm yoplai projects get <id>
+pnpm yoplai projects update <id> [--title <title>] [--status <status>] [--readme <text>|-] [--specs <text>|-]
+pnpm yoplai projects pitch <id> --from-readme [--force]
+pnpm yoplai projects move <id> <status>
+pnpm yoplai projects start <id> [--agent <cli|yoplai:id>] [--subagent <name>] [--name <run-name>] [--model <id>] [--reasoning-effort <level>] [--thinking <level>] [--mode <main-run|clone|worktree|none>] [--branch <branch>] [--slug <slug>] [--prompt-role <coordinator|worker|reviewer|legacy>] [--allow-overrides] [--include-default-prompt|--exclude-default-prompt] [--include-role-instructions|--exclude-role-instructions] [--include-post-run|--exclude-post-run] [--custom-prompt <text>|-]
+pnpm yoplai projects rename <id> --slug <slug> [--name <name>] [--model <id>] [--reasoning-effort <level>] [--thinking <level>]
+pnpm yoplai projects status <id> [--slug <slug>] [--list] [--limit <n>] [--json]
 
 # Slices CLI (local filesystem)
-pnpm aihub slices add --project <PRO-N> "Slice title" [specs]
-pnpm aihub slices add --project <PRO-N> "Slice title" --specs <text|@file|->
-pnpm aihub slices specs <sliceId> --from-readme [--force]
-pnpm aihub slices block <sliceId> --on <blockerId>[,<blockerId>...]
-pnpm aihub slices unblock <sliceId> [--from <blockerId>[,<blockerId>...]]
+pnpm yoplai slices add --project <PRO-N> "Slice title" [specs]
+pnpm yoplai slices add --project <PRO-N> "Slice title" --specs <text|@file|->
+pnpm yoplai slices specs <sliceId> --from-readme [--force]
+pnpm yoplai slices block <sliceId> --on <blockerId>[,<blockerId>...]
+pnpm yoplai slices unblock <sliceId> [--from <blockerId>[,<blockerId>...]]
 
 # Agent-folder config migration (v2 -> v3 centralized agents[] to agent.yaml)
-pnpm aihub agents migrate
-pnpm aihub agents --help
-pnpm aihub agents migrate --help
+pnpm yoplai agents migrate
+pnpm yoplai agents --help
+pnpm yoplai agents migrate --help
 
 # Projects extension config migration (v1 -> v2 component entries)
-pnpm aihub projects config migrate [--config <path>] [--dry-run]
-pnpm aihub projects config validate [--config <path>]
+pnpm yoplai projects config migrate [--config <path>] [--dry-run]
+pnpm yoplai projects config validate [--config <path>]
 
 # Note: `projects config migrate` is separate from `agents migrate`.
 # v1 -> v2 migration only adds component entries when legacy config explicitly implied them.
 # It no longer auto-adds `components.amsg` or `components.conversations` just because agents exist.
 
-# `--subagent <name>` resolves a config-defined subagent from `aihub.json`.
+# `--subagent <name>` resolves a config-defined subagent from `yoplai.json`.
 # The server applies that subagent's locked defaults for harness/model/reasoning/runMode/type.
 # Override locked fields only with `--allow-overrides`.
-# Lead agents launch with `--agent aihub:<id>` and use project-scoped sessions.
+# Lead agents launch with `--agent yoplai:<id>` and use project-scoped sessions.
 
 # Override API URL (highest precedence)
-AIHUB_API_URL=http://127.0.0.1:4000 pnpm aihub projects list
+YOPLAI_API_URL=http://127.0.0.1:4000 pnpm yoplai projects list
 # Backward-compatible alias
-AIHUB_URL=http://127.0.0.1:4000 pnpm aihub projects list
-# Config file fallback ($AIHUB_HOME/aihub.json, default ~/.aihub/aihub.json): { "apiUrl": "http://127.0.0.1:4000" }
-# Local config commands honor: --config > $AIHUB_HOME/aihub.json
-# Legacy fallback: AIHUB_CONFIG still works, but only to derive AIHUB_HOME with a deprecation warning.
-# Dev launchers (`pnpm dev`, `pnpm dev:web`, gateway config loading) honor AIHUB_HOME too.
+YOPLAI_URL=http://127.0.0.1:4000 pnpm yoplai projects list
+# Config file fallback ($YOPLAI_HOME/yoplai.json, default ~/.yoplai/yoplai.json): { "apiUrl": "http://127.0.0.1:4000" }
+# Local config commands honor: --config > $YOPLAI_HOME/yoplai.json
+# Legacy fallback: YOPLAI_CONFIG still works, but only to derive YOPLAI_HOME with a deprecation warning.
+# Dev launchers (`pnpm dev`, `pnpm dev:web`, gateway config loading) honor YOPLAI_HOME too.
 
-# Install the `aihub` command globally via pnpm link
+# Install the `yoplai` command globally via pnpm link
 # From repo root:
-pnpm --filter @aihub/gateway build
+pnpm --filter @yoplai/gateway build
 pnpm link --global ./apps/gateway
 
 # OAuth authentication (Pi SDK agents)
-pnpm aihub auth login           # Interactive provider selection
-pnpm aihub auth login anthropic # Login to specific provider
-pnpm aihub auth status          # Show authenticated providers
-pnpm aihub auth logout <provider>
+pnpm yoplai auth login           # Interactive provider selection
+pnpm yoplai auth login anthropic # Login to specific provider
+pnpm yoplai auth status          # Show authenticated providers
+pnpm yoplai auth logout <provider>
 ```
 
-`aihub projects move <id> shaping` and `aihub projects move <id> shaping:<stage>` fail unless the project has an explicit `repo` in its frontmatter. `aihub projects create --area <area>` copies the area's repo into the new project when the area has one; explicit `--repo` wins.
+`yoplai projects move <id> shaping` and `yoplai projects move <id> shaping:<stage>` fail unless the project has an explicit `repo` in its frontmatter. `yoplai projects create --area <area>` copies the area's repo into the new project when the area has one; explicit `--repo` wins.
 
 Project Space model:
 
@@ -549,13 +550,13 @@ Project Space model:
 - `POST /api/projects/:id/space/merge` merges `space/<projectId>` into base branch, pushes base when a remote exists, optionally cleans worker+Space worktrees/branches, clears queue, and marks project `status: done`.
 - On re-delivery after a conflict, gateway updates the original conflict entry in-place and clears `integrationBlocked`.
 - Queue statuses: `pending`, `integrated`, `conflict`, `skipped`, `stale_worker`.
-- Stale handling: clone deliveries can be marked `stale_worker`; worktree runs can auto-rebase with `AIHUB_SPACE_AUTO_REBASE=true`.
-- Optional write lease (`AIHUB_SPACE_WRITE_LEASE=true`) enforces exclusive `main-run` writer access via project `space-lease.json`.
+- Stale handling: clone deliveries can be marked `stale_worker`; worktree runs can auto-rebase with `YOPLAI_SPACE_AUTO_REBASE=true`.
+- Optional write lease (`YOPLAI_SPACE_WRITE_LEASE=true`) enforces exclusive `main-run` writer access via project `space-lease.json`.
 
 Project subagent CLIs:
 
 - Supported: `claude`, `codex`, `pi`
-- List configured runtime profiles with `aihub subagents profiles` or `aihub subagents profiles --json`.
+- List configured runtime profiles with `yoplai subagents profiles` or `yoplai subagents profiles --json`.
 - Removed: `droid`, `gemini` (API returns validation error)
 - Lead agents continue to run through the embedded Pi SDK; project subagents run as external CLIs.
 
@@ -568,11 +569,11 @@ Coordinator prompts now include:
 
 - Canonical main repository path (not worker clone/worktree paths).
 - Project Space worktree path (`.workspaces/<projectId>/_space`) for integration context.
-- Available config-defined subagent types from `aihub.json`.
-- `aihub projects` delegation preflight (`command -v aihub && aihub projects --version`) before `aihub projects start --subagent ...`.
-- `aihub projects start --subagent <name>` delegation examples that avoid locked flags unless `--allow-overrides` is set, plus a reminder to choose an exact configured subagent name from `## Available Subagent Types` (or inspect AIHub config first if none are listed).
+- Available config-defined subagent types from `yoplai.json`.
+- `yoplai projects` delegation preflight (`command -v yoplai && yoplai projects --version`) before `yoplai projects start --subagent ...`.
+- `yoplai projects start --subagent <name>` delegation examples that avoid locked flags unless `--allow-overrides` is set, plus a reminder to choose an exact configured subagent name from `## Available Subagent Types` (or inspect Yoplai config first if none are listed).
 - Post-run comment instructions use `--author <your name>`; the deprecated Cloud/openclaw follow-up step was removed.
-  `aihub slices comment` also accepts `--author <name>` for slice THREAD.md attribution.
+  `yoplai slices comment` also accepts `--author <name>` for slice THREAD.md attribution.
   Shell tool cards show a warning callout (`No output captured`) when exec/bash output is structurally empty.
   Worker/reviewer prompts remain scoped to their run workspace (`clone`/`worktree`/`main-run`/`none`).
   Worker prompts explicitly require committing implementation once checks pass.
@@ -589,7 +590,7 @@ Pi SDK agents can use OAuth tokens instead of API keys. Supported providers: `an
 
 ```bash
 # Login once
-pnpm aihub auth login anthropic
+pnpm yoplai auth login anthropic
 
 # Configure agent to use OAuth
 ```
@@ -604,7 +605,7 @@ model: { provider: anthropic, model: claude-opus-4-5 }
 
 ```bash
 # Login once (OpenAI Codex)
-pnpm aihub auth login openai-codex
+pnpm yoplai auth login openai-codex
 
 # Configure agent to use OAuth with OpenAI Codex
 ```
@@ -620,7 +621,7 @@ model: { provider: openai-codex, model: gpt-5.3-codex-spark }
 **API Key auth (e.g. OpenRouter):**
 
 ```json
-// $AIHUB_HOME/aihub.json
+// $YOPLAI_HOME/yoplai.json
 {
   "version": 3,
   "agents": "./agents/*",
@@ -638,11 +639,11 @@ model:
   model: anthropic/claude-sonnet-4
 ```
 
-Credentials stored in `$AIHUB_HOME/auth.json` (default: `~/.aihub/auth.json`). Tokens auto-refresh when expired.
+Credentials stored in `$YOPLAI_HOME/auth.json` (default: `~/.yoplai/auth.json`). Tokens auto-refresh when expired.
 
 ## OpenClaw SDK
 
-Connect to an [OpenClaw](https://github.com/openclaw/openclaw) gateway to use an OpenClaw agent from AIHub. This allows you to interact with OpenClaw agents through the AIHub web UI.
+Connect to an [OpenClaw](https://github.com/openclaw/openclaw) gateway to use an OpenClaw agent from Yoplai. This allows you to interact with OpenClaw agents through the Yoplai web UI.
 
 If you use the `sessionKey: agent:main:main`, then it while share the same conversation context. The first two elements must match the configured agents in OpenClaw, e.g. if you configured a `main` agent, the session key must start with `agent:main:`, otherwise it will create a new agent profile in `~/.openclaw`. The third key is how control the behavior. Using `main` will continue in the OpenClaw main session, while anything else will create a new session id `third_key-openclaw`.
 
@@ -709,7 +710,7 @@ Project API details: `docs/projects_api.md`
 
 ## Configuration
 
-`$AIHUB_HOME/aihub.json` (default: `~/.aihub/aihub.json`) stores global settings and agent discovery globs:
+`$YOPLAI_HOME/yoplai.json` (default: `~/.yoplai/yoplai.json`) stores global settings and agent discovery globs:
 
 ```json
 {
@@ -746,7 +747,7 @@ extensions:
 
 The `id` must match the workspace folder name. The workspace directory is the directory containing `agent.yaml`.
 
-Project lead-session titles can be generated with `extensions.sessions.autoTitleModel`; when omitted, AIHub uses the cheapest available Anthropic Haiku model and refuses Opus/thinking models for title generation.
+Project lead-session titles can be generated with `extensions.sessions.autoTitleModel`; when omitted, Yoplai uses the cheapest available Anthropic Haiku model and refuses Opus/thinking models for title generation.
 
 ### Agent Options
 
@@ -792,8 +793,8 @@ Project lead-session titles can be generated with `extensions.sessions.autoTitle
 
 - Requires Tailscale installed and logged in
 - Both `gateway.bind` and `ui.bind` must be `loopback` (or omitted)
-- UI is served at `https://<tailnet>/aihub/` (base path `/aihub`)
-- Serve must map `/aihub` -> `http://127.0.0.1:3000/aihub` and `/api`,`/ws` -> gateway (default `http://127.0.0.1:4000`)
+- UI is served at `https://<tailnet>/yoplai/` (base path `/yoplai`)
+- Serve must map `/yoplai` -> `http://127.0.0.1:3000/yoplai` and `/api`,`/ws` -> gateway (default `http://127.0.0.1:4000`)
 - MagicDNS hostname (e.g. `https://machine.tail1234.ts.net`) only works from other devices
 - Local access requires `http://127.0.0.1:<port>` (gateway: 4000, ui: 3000 by default)
 
@@ -812,7 +813,7 @@ Set env vars in config (applied at load time, only if not already set):
 
 Shell env vars take precedence over config values.
 
-Per-agent `.env` files are gateway-side aliases for extension tools. Trusted native adapters that spawn child processes can pass the resolved map as child env without mutating global `process.env`; in-process adapters keep aliases in explicit contexts only. They are not sandbox secret injection: sandbox containers do not receive `$AIHUB_HOME/.env` or `agents/<id>/.env`, and workspace `.env` files are still shadow-mounted to `/dev/null`.
+Per-agent `.env` files are gateway-side aliases for extension tools. Trusted native adapters that spawn child processes can pass the resolved map as child env without mutating global `process.env`; in-process adapters keep aliases in explicit contexts only. They are not sandbox secret injection: sandbox containers do not receive `$YOPLAI_HOME/.env` or `agents/<id>/.env`, and workspace `.env` files are still shadow-mounted to `/dev/null`.
 
 ## Scheduling
 
@@ -820,18 +821,18 @@ Create via CLI:
 
 ```bash
 # Every hour
-aihub scheduler add my-agent --cron "0 * * * *" --tz UTC \
+yoplai scheduler add my-agent --cron "0 * * * *" --tz UTC \
   -m "Run hourly check"
 
 # Daily at 9am New York time, pinned to a model
-aihub scheduler add my-agent --cron "0 9 * * *" --tz America/New_York \
+yoplai scheduler add my-agent --cron "0 9 * * *" --tz America/New_York \
   -m "Generate standup summary" \
   --provider anthropic --model claude-sonnet-4
 
-aihub scheduler list --agent my-agent
-aihub scheduler run my-agent <job-id>
-aihub scheduler rm my-agent <job-id> -y
-aihub scheduler tail my-agent <job-id>
+yoplai scheduler list --agent my-agent
+yoplai scheduler run my-agent <job-id>
+yoplai scheduler rm my-agent <job-id> -y
+yoplai scheduler tail my-agent <job-id>
 ```
 
 Jobs live in `<agent-workspace>/cron/jobs.json`; each run writes hybrid markdown output under `<agent-workspace>/cron/output/<job-id>/`. Optional job-level `model: { provider, model }` overrides the agent default for scheduled fires. Manual `scheduler run` fires use the same execution path and output location as cron fires, work even when the job is disabled, and do not change the next scheduled fire time. A second run of the same job is rejected while that job is already executing; if a scheduled fire collides with a manual run of the same job, that scheduled fire is skipped and the next cron fire is recomputed. When scheduler is enabled, agents also get self-only scheduler tools to create/list/update/delete jobs and read latest output. Gateway polls config, agent YAML, and cron job files every 5 seconds for hot reload.
@@ -852,7 +853,7 @@ curl -X POST localhost:4000/api/schedules/my-agent/<job-id>/run
 
 ## Channels
 
-AIHub supports Discord, Slack, and IRC as messaging channels. Shared transports are opt-in via `extensions` in `aihub.json`; agents opt in through `agent.yaml`.
+Yoplai supports Discord, Slack, and IRC as messaging channels. Shared transports are opt-in via `extensions` in `yoplai.json`; agents opt in through `agent.yaml`.
 
 ### IRC
 
@@ -994,31 +995,31 @@ Slack uses `/stop` instead of `/abort`; both route to the same internal abort be
 
 #### Web Chat Context Compaction
 
-The web chat supports `/compact` for agent sessions. AIHub asks the same agent model to summarize older context, then replaces the stored session with that compacted summary plus the last 8 user/assistant turns. The context usage indicator turns red at 75% and compaction runs automatically before the next send at 80%; if compaction fails at that point, the send is blocked.
+The web chat supports `/compact` for agent sessions. Yoplai asks the same agent model to summarize older context, then replaces the stored session with that compacted summary plus the last 8 user/assistant turns. The context usage indicator turns red at 75% and compaction runs automatically before the next send at 80%; if compaction fails at that point, the send is blocked.
 
 #### Slack App Manifest Commands
 
-Add these slash commands to the Slack app manifest so they appear in Slack autocomplete. Replace request URLs with any valid HTTPS URL; Socket Mode delivers commands to Bolt without requiring a public AIHub URL.
+Add these slash commands to the Slack app manifest so they appear in Slack autocomplete. Replace request URLs with any valid HTTPS URL; Socket Mode delivers commands to Bolt without requiring a public Yoplai URL.
 
 ```yaml
 features:
   slash_commands:
     - command: /new
-      description: Start a new AIHub conversation
+      description: Start a new Yoplai conversation
       usage_hint: "[session]"
       should_escape: false
       url: https://example.com/slack/commands
     - command: /stop
-      description: Stop the current AIHub run
+      description: Stop the current Yoplai run
       usage_hint: "[session]"
       should_escape: false
       url: https://example.com/slack/commands
     - command: /help
-      description: Show AIHub Slack help
+      description: Show Yoplai Slack help
       should_escape: false
       url: https://example.com/slack/commands
     - command: /ping
-      description: Check AIHub bot health
+      description: Check Yoplai bot health
       should_escape: false
       url: https://example.com/slack/commands
 oauth_config:
@@ -1111,7 +1112,7 @@ If the scheduler extension is disabled or unavailable, heartbeat logs a warning 
 
 ## Custom Models
 
-Add custom providers via `$AIHUB_HOME/models.json` (default: `~/.aihub/models.json`):
+Add custom providers via `$YOPLAI_HOME/models.json` (default: `~/.yoplai/models.json`):
 
 ```json
 {
@@ -1178,13 +1179,13 @@ If your web UI runs on machine A but projects live on machine B:
 
 In web dev mode, Vite proxies `/api` and `/ws` to `gateway.host:gateway.port`, so Kanban loads projects from machine B.
 
-Do not run `pnpm dev`, `pnpm dev:gateway`, or `pnpm aihub gateway` on machine A with a remote `gateway.host`; those commands start a local gateway process that will try to bind that host and can fail with `EADDRNOTAVAIL`.
+Do not run `pnpm dev`, `pnpm dev:gateway`, or `pnpm yoplai gateway` on machine A with a remote `gateway.host`; those commands start a local gateway process that will try to bind that host and can fail with `EADDRNOTAVAIL`.
 
 ### `apiUrl` vs `gateway.host`/`gateway.port`
 
 | Setting                         | Used by                                         | Purpose                                                                                                             |
 | ------------------------------- | ----------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
-| `apiUrl` (or `AIHUB_API_URL`)   | `aihub projects` CLI                            | Direct base URL for CLI HTTP requests                                                                               |
+| `apiUrl` (or `YOPLAI_API_URL`)   | `yoplai projects` CLI                            | Direct base URL for CLI HTTP requests                                                                               |
 | `gateway.host` + `gateway.port` | Gateway server config; reused by `pnpm dev:web` | Gateway listen host/port for gateway process. In `pnpm dev:web`, these same values are reused as Vite proxy target. |
 
 In short: `apiUrl` controls CLI target. Web app uses relative `/api`/`/ws`; in `pnpm dev:web`, proxy target currently comes from `gateway.host`/`gateway.port`.
@@ -1203,15 +1204,15 @@ Run multiple dev instances simultaneously - each gets unique ports.
 For production-like testing with all services:
 
 ```bash
-pnpm aihub gateway  # no --dev flag
+pnpm yoplai gateway  # no --dev flag
 ```
 
 ## Data
 
-- Config: `$AIHUB_HOME/aihub.json` (default: `~/.aihub/aihub.json`)
-- Auth: `$AIHUB_HOME/auth.json` (OAuth/API key credentials)
-- Models: `$AIHUB_HOME/models.json` (optional)
+- Config: `$YOPLAI_HOME/yoplai.json` (default: `~/.yoplai/yoplai.json`)
+- Auth: `$YOPLAI_HOME/auth.json` (OAuth/API key credentials)
+- Models: `$YOPLAI_HOME/models.json` (optional)
 - Schedules: `<agent-workspace>/cron/jobs.json` and outputs under `<agent-workspace>/cron/output/`
-- Session map: `$AIHUB_HOME/sessions.json` maps logical session keys to runtime session IDs.
-- Canonical chat history: `$AIHUB_HOME/history/*.jsonl`. This is the normalized transcript used by the API, web UI, tracing, compaction, system context rows, and media/file blocks.
-- Pi runtime sessions: `$AIHUB_HOME/sessions/*.jsonl`. These are SDK-owned resume/session files; AIHub may backfill canonical history from them for legacy sessions or use them as a streaming fallback.
+- Session map: `$YOPLAI_HOME/sessions.json` maps logical session keys to runtime session IDs.
+- Canonical chat history: `$YOPLAI_HOME/history/*.jsonl`. This is the normalized transcript used by the API, web UI, tracing, compaction, system context rows, and media/file blocks.
+- Pi runtime sessions: `$YOPLAI_HOME/sessions/*.jsonl`. These are SDK-owned resume/session files; Yoplai may backfill canonical history from them for legacy sessions or use them as a streaming fallback.

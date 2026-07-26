@@ -1,11 +1,11 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { GatewayConfigSchema, notify } from "@aihub/shared";
+import { GatewayConfigSchema, notify } from "@yoplai/shared";
 import { Command } from "commander";
 import { registerNotifyCommand, runNotifyCommand } from "./notify.js";
 
 describe("notify CLI", () => {
   afterEach(() => {
-    delete process.env.AIHUB_AGENT_ID;
+    delete process.env.YOPLAI_AGENT_ID;
   });
 
   it("registers a top-level notify command", () => {
@@ -112,8 +112,8 @@ describe("notify CLI", () => {
     );
   });
 
-  it("uses AIHUB_AGENT_ID as an implicit notify agent", async () => {
-    process.env.AIHUB_AGENT_ID = "pom";
+  it("uses YOPLAI_AGENT_ID as an implicit notify agent", async () => {
+    process.env.YOPLAI_AGENT_ID = "pom";
     const notifyImpl = vi.fn().mockResolvedValue({ ok: true, results: [] });
     const config = GatewayConfigSchema.parse({
       agents: [
@@ -154,8 +154,8 @@ describe("notify CLI", () => {
     );
   });
 
-  it("prefers --from over AIHUB_AGENT_ID", async () => {
-    process.env.AIHUB_AGENT_ID = "pom";
+  it("prefers --from over YOPLAI_AGENT_ID", async () => {
+    process.env.YOPLAI_AGENT_ID = "pom";
     const notifyImpl = vi.fn().mockResolvedValue({ ok: true, results: [] });
     const config = GatewayConfigSchema.parse({
       agents: [

@@ -2,7 +2,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { Command } from "commander";
-import { expandPath, getDefaultConfigPath } from "@aihub/shared";
+import { expandPath, getDefaultConfigPath } from "@yoplai/shared";
 import { OrchestratorApiClient } from "./client.js";
 import { LinearClient } from "../linear/client.js";
 import { planeAuthEnvRef, planeAuthHeaders, resolvePlaneEnvAuth } from "../plane/auth.js";
@@ -145,7 +145,7 @@ async function pathExists(filePath: string): Promise<boolean> {
   return fs.access(filePath).then(() => true).catch(() => false);
 }
 
-type AihubConfigFile = {
+type ConfigFile = {
   extensions?: {
     orchestrator?: {
       projectsRoot?: string;
@@ -248,21 +248,21 @@ async function createBootstrap(tracker: string, opts: { linearClient?: LinearPro
   return linearBootstrap(opts.linearClient ?? new LinearClient(apiKey!));
 }
 
-async function readAihubConfig(configPath = getDefaultConfigPath()): Promise<{ path: string; config: AihubConfigFile }> {
+async function readConfigFile(configPath = getDefaultConfigPath()): Promise<{ path: string; config: ConfigFile }> {
   try {
-    return { path: configPath, config: JSON.parse(await fs.readFile(configPath, "utf8")) as AihubConfigFile };
+    return { path: configPath, config: JSON.parse(await fs.readFile(configPath, "utf8")) as ConfigFile };
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return { path: configPath, config: {} };
     throw error;
   }
 }
 
-function resolveProjectsRoot(config: AihubConfigFile): string {
+function resolveProjectsRoot(config: ConfigFile): string {
   const root = config.extensions?.orchestrator?.projectsRoot?.trim() || "~/projects";
   return expandPath(root);
 }
 
-function projectRegistrationList(config: AihubConfigFile): { orchestrator: NonNullable<NonNullable<AihubConfigFile["extensions"]>["orchestrator"]>; projects: string[] } {
+function projectRegistrationList(config: ConfigFile): { orchestrator: NonNullable<NonNullable<ConfigFile["extensions"]>["orchestrator"]>; projects: string[] } {
   config.extensions ??= {};
   config.extensions.orchestrator ??= {};
   const orchestrator = config.extensions.orchestrator;
@@ -271,7 +271,7 @@ function projectRegistrationList(config: AihubConfigFile): { orchestrator: NonNu
   return { orchestrator, projects };
 }
 
-async function registerProject(configPath: string, config: AihubConfigFile, projectPath: string): Promise<void> {
+async function registerProject(configPath: string, config: ConfigFile, projectPath: string): Promise<void> {
   const { orchestrator, projects } = projectRegistrationList(config);
   if (!projects.includes(projectPath)) projects.push(projectPath);
   orchestrator.projects = projects;
@@ -286,7 +286,7 @@ async function initProject(
   const projectName = title.trim();
   const tracker = (opts.tracker ?? "linear").trim();
   const trackerNoun = tracker === "plane" ? "Plane" : "Linear";
-  const { path: configPath, config } = await readAihubConfig(opts.configPath);
+  const { path: configPath, config } = await readConfigFile(opts.configPath);
   const projectsRoot = resolveProjectsRoot(config);
   const projectPath = path.join(projectsRoot, safeProjectName(projectName));
   projectRegistrationList(config);

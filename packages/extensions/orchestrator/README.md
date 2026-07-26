@@ -1,16 +1,16 @@
-# @aihub/extension-orchestrator
+# @yoplai/extension-orchestrator
 
-Symphony-aligned issue orchestrator for AIHub. Tracker-agnostic: each project's `WORKFLOW.md` picks `tracker.kind: linear` or `tracker.kind: plane`.
+Symphony-aligned issue orchestrator for Yoplai. Tracker-agnostic: each project's `WORKFLOW.md` picks `tracker.kind: linear` or `tracker.kind: plane`.
 
-## AIHub config
+## Yoplai config
 
-AIHub config lists project folders and supervisor limits only:
+Yoplai config lists project folders and supervisor limits only:
 
 ```json
 {
   "extensions": {
     "orchestrator": {
-      "projects": ["./projects/aihub"],
+      "projects": ["./projects/yoplai"],
       "projectsRoot": "~/projects",
       "concurrency": { "global": 3 }
     }
@@ -28,7 +28,7 @@ Full schema:
 ```json
 {
   "enabled": true,
-  "projects": ["./projects/aihub"],
+  "projects": ["./projects/yoplai"],
   "projectsRoot": "~/projects",
   "concurrency": { "global": 3 },
   "validation": { "strict": true },
@@ -57,15 +57,15 @@ Fields:
 - `webhook.path` optional string. Reserved webhook path metadata; route is mounted under `/api/orchestrator/webhook`.
 - `webhook.secret` optional string. Shared HMAC secret used to verify both Linear and Plane webhook signatures.
 
-No orchestrator repo map, default repo, worktree, poll interval, or `workspacesRoot` settings live in `aihub.json`. Project runtime settings live in each project `WORKFLOW.md`.
+No orchestrator repo map, default repo, worktree, poll interval, or `workspacesRoot` settings live in `yoplai.json`. Project runtime settings live in each project `WORKFLOW.md`.
 
 ## Create a tracker project + WORKFLOW.md
 
 Bootstrap a tracker project and local orchestrator project folder:
 
 ```bash
-pnpm aihub:dev orchestrator init-project "Foo Bar"
-pnpm aihub:dev orchestrator init-project "Foo Bar" --tracker plane
+pnpm yoplai:dev orchestrator init-project "Foo Bar"
+pnpm yoplai:dev orchestrator init-project "Foo Bar" --tracker plane
 ```
 
 `--tracker <linear|plane>` selects the tracker; default `linear`.
@@ -76,7 +76,7 @@ Linear (`--tracker linear`, default):
 - Creates a Linear project named `Foo Bar`.
 - Creates `<projectsRoot>/foo-bar`.
 - Writes `WORKFLOW.md` with `tracker.project_slug` set to the created Linear project's `slugId`.
-- Appends the project folder path to `extensions.orchestrator.projects` in `$AIHUB_HOME/aihub.json`.
+- Appends the project folder path to `extensions.orchestrator.projects` in `$YOPLAI_HOME/yoplai.json`.
 - Requires `LINEAR_API_KEY` in the environment.
 
 Plane (`--tracker plane`):
@@ -85,7 +85,7 @@ Plane (`--tracker plane`):
 - `PLANE_BASE_URL` optional, default `https://api.plane.so`.
 - `PLANE_PROJECT_ID` optional. When unset, creates a new **Plane project** named `Foo Bar` and writes `tracker.project_id` from the created project. When set, creates a **module** named `Foo Bar` inside that existing project instead, and writes both `tracker.project_id` (the given `PLANE_PROJECT_ID`) and `tracker.module_id` (the created module) — see [module vs project scoping](#module-vs-project-scoping).
 - Writes `WORKFLOW.md` with `tracker.kind: plane` and the resolved `workspace_slug`/`project_id`/`module_id`; `base_url` is only written when `PLANE_BASE_URL` overrides the default.
-- Appends the project folder path to `extensions.orchestrator.projects` in `$AIHUB_HOME/aihub.json`.
+- Appends the project folder path to `extensions.orchestrator.projects` in `$YOPLAI_HOME/yoplai.json`.
 
 The local project folder must not already exist and a same-named project/module on the configured tracker must not already exist. Because project registration is read at gateway startup, restart the gateway after running `init-project`.
 
@@ -94,9 +94,9 @@ The local project folder must not already exist and a same-named project/module 
 Generate starter workflow explicitly:
 
 ```bash
-pnpm aihub:dev orchestrator init-workflow \
-  --project ./projects/aihub \
-  --project-slug aihub
+pnpm yoplai:dev orchestrator init-workflow \
+  --project ./projects/yoplai \
+  --project-slug yoplai
 ```
 
 Options:
@@ -120,7 +120,7 @@ tracker:
   kind: linear
   endpoint: https://api.linear.app/graphql
   api_key: $LINEAR_API_KEY
-  project_slug: aihub
+  project_slug: yoplai
   active_states: [Todo, In Progress]
   terminal_states: [Closed, Cancelled, Canceled, Duplicate, Done]
   needs_human: Needs Human
@@ -282,7 +282,7 @@ Path rules:
 
 - Relative paths resolve relative to the project folder containing `WORKFLOW.md`.
 - `~` expands to home.
-- `$AIHUB_HOME` and `$AIHUB_HOME/...` are supported.
+- `$YOPLAI_HOME` and `$YOPLAI_HOME/...` are supported.
 - Worker cwd is `<workspace.root>/<sanitized-issue-identifier>`.
 - Core orchestrator only creates directories. It does not clone repos or create worktrees.
 - Workspaces are preserved for `needs_human`, worker `completed`, worker `error`, worker `interrupted`, and `stalled` releases so operators can inspect or retry them.
@@ -294,7 +294,7 @@ Path rules:
 - `profile`: optional legacy/default override. If `extensions.subagents.profiles[]` is present, matching profile values can still provide runner/model/reasoning defaults; otherwise the orchestrator synthesizes protocol-runner defaults from `runner`.
 - `provider`: optional provider passed to the Pi runner (`pi --provider <provider>`). Use with `model` when Pi's default provider may not have credentials.
 - `model`: optional model passed to protocol runners that support it.
-- `thinking`: optional workflow-owned thinking/reasoning level. This is the preferred key and overrides profile/default thinking when present. Aliases are accepted for compatibility with existing AIHub config: `reasoning`, `reasoningEffort`, and `reasoning_effort`. If more than one key is set, precedence is `thinking`, `reasoningEffort`, `reasoning_effort`, then `reasoning`. Allowed values are runner-specific: Pi accepts `off`, `low`, `medium`, `high`, `xhigh`; Codex accepts `low`, `medium`, `high`, `xhigh`; Claude accepts `low`, `medium`, `high`, `xhigh`, `max`.
+- `thinking`: optional workflow-owned thinking/reasoning level. This is the preferred key and overrides profile/default thinking when present. Aliases are accepted for compatibility with existing Yoplai config: `reasoning`, `reasoningEffort`, and `reasoning_effort`. If more than one key is set, precedence is `thinking`, `reasoningEffort`, `reasoning_effort`, then `reasoning`. Allowed values are runner-specific: Pi accepts `off`, `low`, `medium`, `high`, `xhigh`; Codex accepts `low`, `medium`, `high`, `xhigh`; Claude accepts `low`, `medium`, `high`, `xhigh`, `max`.
 - `max_concurrent`: per-project worker cap. Effective cap also respects `extensions.orchestrator.concurrency.global`.
 - `max_active_runs`: maximum consecutive clean completions allowed while the issue remains in an active state before the orchestrator parks it. A clean completion that leaves the issue in an active state increments the counter; any other outcome (terminal, needs_human, stalled, etc.) resets it. When the counter reaches this threshold the issue is moved to `needsHuman` with a HITL notification. Default `3`. Must be a positive number when set.
 - `max_turns`: workflow hint for worker prompt/runtime.
@@ -304,7 +304,7 @@ Path rules:
 
 `thinking`, `max_turns`, `turn_timeout_ms`, `stall_timeout_ms`, `max_concurrent`, and `max_active_runs` are validated when set. Invalid thinking values fail config load for explicit `runner` values and fail before runner startup when the effective runner comes from a profile.
 
-Runner config belongs in project `WORKFLOW.md`, not in `extensions.subagents`. AIHub profiles are runner defaults, not Symphony roles. No label-to-profile routing exists.
+Runner config belongs in project `WORKFLOW.md`, not in `extensions.subagents`. Yoplai profiles are runner defaults, not Symphony roles. No label-to-profile routing exists.
 
 Thinking mapping:
 
@@ -380,10 +380,10 @@ Manual run release only clears the orchestrator claim. Use interrupt or kill whe
 
 Hook env includes:
 
-- `AIHUB_PROJECT_ID`
-- `AIHUB_ISSUE_ID`
-- `AIHUB_ISSUE_IDENTIFIER`
-- `AIHUB_WORKSPACE`
+- `YOPLAI_PROJECT_ID`
+- `YOPLAI_ISSUE_ID`
+- `YOPLAI_ISSUE_IDENTIFIER`
+- `YOPLAI_WORKSPACE`
 
 `LINEAR_API_KEY`, `PLANE_API_KEY`, `PLANE_OAUTH_TOKEN`, and `PLANE_BOT_TOKEN` are intentionally not passed to hooks/workers.
 
@@ -394,7 +394,7 @@ Hook env includes:
 Worker tool calls must include project id:
 
 ```json
-{ "project": "aihub", "query": "...", "variables": {} }
+{ "project": "yoplai", "query": "...", "variables": {} }
 ```
 
 The tool uses that project's workflow `tracker.api_key` and `tracker.endpoint`. Calling it against a project whose `tracker.kind` is `plane` returns `{ "error": "project uses tracker.kind: plane — use orchestrator.plane_api" }` instead of making a request.
@@ -407,7 +407,7 @@ The tool uses that project's workflow `tracker.api_key` and `tracker.endpoint`. 
 
 ```json
 {
-  "project": "aihub-plane",
+  "project": "yoplai-plane",
   "method": "GET",
   "path": "workspaces/{workspace}/projects/{project}/work-items/?per_page=100"
 }
@@ -415,7 +415,7 @@ The tool uses that project's workflow `tracker.api_key` and `tracker.endpoint`. 
 
 ```json
 {
-  "project": "aihub-plane",
+  "project": "yoplai-plane",
   "method": "POST",
   "path": "workspaces/{workspace}/projects/{project}/work-items/{id}/comments/",
   "body": { "comment_html": "<p>hi</p>" }
@@ -484,10 +484,10 @@ Configure each tracker's webhook to point at `/api/orchestrator/webhook` with th
 
 ### Run log storage
 
-Orchestrator stores run index/state in SQLite at `$AIHUB_HOME/orchestrator/state.db`. New worker events keep only query metadata in the `events` table: `run_id`, `project_id`, event `type`, `created_at`, JSONL path, byte offset, line number, and a small payload preview. Full raw payloads append to per-run JSONL:
+Orchestrator stores run index/state in SQLite at `$YOPLAI_HOME/orchestrator/state.db`. New worker events keep only query metadata in the `events` table: `run_id`, `project_id`, event `type`, `created_at`, JSONL path, byte offset, line number, and a small payload preview. Full raw payloads append to per-run JSONL:
 
 ```text
-$AIHUB_HOME/orchestrator/runs/<encoded-run-id>/logs.jsonl
+$YOPLAI_HOME/orchestrator/runs/<encoded-run-id>/logs.jsonl
 ```
 
 Each JSONL line is one raw event:
@@ -499,8 +499,8 @@ Each JSONL line is one raw event:
 Inspect a live run directly:
 
 ```bash
-tail -f "$AIHUB_HOME/orchestrator/runs/<encoded-run-id>/logs.jsonl"
-jq -c 'select(.type | startswith("worker.codex"))' "$AIHUB_HOME/orchestrator/runs/<encoded-run-id>/logs.jsonl"
+tail -f "$YOPLAI_HOME/orchestrator/runs/<encoded-run-id>/logs.jsonl"
+jq -c 'select(.type | startswith("worker.codex"))' "$YOPLAI_HOME/orchestrator/runs/<encoded-run-id>/logs.jsonl"
 curl "http://localhost:4000/api/orchestrator/runs/<issue-or-run-id>/logs?project=<project-id>&since=0"
 ```
 
@@ -509,8 +509,8 @@ Databases created before JSONL storage may still have DB-only rows with full `ev
 Useful commands:
 
 ```bash
-pnpm aihub:dev orchestrator projects
-pnpm aihub:dev orchestrator workflow --project <project-id>
-pnpm aihub:dev orchestrator tick --project <project-id>
-pnpm aihub:dev orchestrator runs --project <project-id>
+pnpm yoplai:dev orchestrator projects
+pnpm yoplai:dev orchestrator workflow --project <project-id>
+pnpm yoplai:dev orchestrator tick --project <project-id>
+pnpm yoplai:dev orchestrator runs --project <project-id>
 ```

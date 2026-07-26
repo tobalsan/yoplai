@@ -39,7 +39,7 @@ describe("cron output", () => {
   });
 
   it("writes timestamped output file", async () => {
-    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "aihub-scheduler-output-"));
+    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-scheduler-output-"));
 
     const filePath = await writeCronRunOutput({
       workspaceDir: tmpDir,

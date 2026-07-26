@@ -1,1 +1,1 @@
-export { getProjectsRoot, getProjectsWorktreeRoot } from "@aihub/shared";
+export { getProjectsRoot, getProjectsWorktreeRoot } from "@yoplai/shared";

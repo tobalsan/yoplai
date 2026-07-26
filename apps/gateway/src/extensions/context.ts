@@ -7,7 +7,7 @@ import type {
   ProjectFileChangedEvent,
   ProjectAgentChangedEvent,
   GatewayConfig,
-} from "@aihub/shared";
+} from "@yoplai/shared";
 import {
   CONFIG_DIR,
   loadConfig,

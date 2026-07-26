@@ -1,5 +1,5 @@
-import type { ContainerInput, GatewayConfig } from "@aihub/shared";
-import { resolveSystemFiles } from "@aihub/shared/node/system-files";
+import { readEnv, type ContainerInput, type GatewayConfig } from "@yoplai/shared";
+import { resolveSystemFiles } from "@yoplai/shared/node/system-files";
 import { getDefaultSdkId } from "../registry.js";
 import type { SdkRunParams } from "../types.js";
 import { getMountedOnecliCaPath } from "../../agents/container.js";
@@ -73,7 +73,7 @@ export class ContainerInputBuilder {
 }
 
 export function resolveContainerGatewayUrl(config: GatewayConfig): string {
-  const envPort = Number(process.env.AIHUB_GATEWAY_PORT);
+  const envPort = Number(readEnv("GATEWAY_PORT"));
   const port =
     Number.isFinite(envPort) && envPort > 0
       ? envPort

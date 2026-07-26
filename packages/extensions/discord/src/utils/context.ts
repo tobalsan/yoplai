@@ -2,4 +2,4 @@ export {
   renderDiscordContext,
   renderAgentContext,
   buildDiscordContext,
-} from "@aihub/shared";
+} from "@yoplai/shared";

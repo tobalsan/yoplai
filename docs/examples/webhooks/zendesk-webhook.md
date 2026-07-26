@@ -1,6 +1,6 @@
 # Zendesk Webhook Handler
 
-You are handling an inbound Zendesk webhook for AIHub.
+You are handling an inbound Zendesk webhook for Yoplai.
 
 Raw headers:
 $WEBHOOK_HEADERS

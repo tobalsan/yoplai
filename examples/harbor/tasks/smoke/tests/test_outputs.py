@@ -1,4 +1,4 @@
-"""Smoke test verifier — asserts the aihub eval CLI contract works."""
+"""Smoke test verifier — asserts the yoplai eval CLI contract works."""
 import json
 import pathlib
 

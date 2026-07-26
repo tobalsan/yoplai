@@ -2,7 +2,7 @@ import type {
   GatewayConfig,
   SubagentRuntimeCli,
   SubagentRuntimeProfile,
-} from "@aihub/shared";
+} from "@yoplai/shared";
 
 export type SubagentProfileValidationResult =
   | { valid: true; errors: [] }

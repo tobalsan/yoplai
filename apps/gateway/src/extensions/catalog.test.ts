@@ -6,7 +6,7 @@ import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { GatewayConfigSchema, type AgentConfig } from "@aihub/shared";
+import { GatewayConfigSchema, type AgentConfig } from "@yoplai/shared";
 import {
   buildExtensionCatalog,
   resolveExtensionDefinition,
@@ -99,7 +99,7 @@ describe("buildExtensionCatalog", () => {
   let root: string;
 
   beforeEach(async () => {
-    root = await mkdtemp(path.join(os.tmpdir(), "aihub-catalog-"));
+    root = await mkdtemp(path.join(os.tmpdir(), "yoplai-catalog-"));
   });
 
   afterEach(async () => {
@@ -352,7 +352,7 @@ describe("buildExtensionCatalog", () => {
     const catalogUrl = new URL("./catalog.ts", import.meta.url).href;
     const script = [
       `import { resolveBuiltInExtensionDir, resolveIconDataUri } from ${JSON.stringify(catalogUrl)};`,
-      'const dir = resolveBuiltInExtensionDir("@aihub/extension-discord");',
+      'const dir = resolveBuiltInExtensionDir("@yoplai/extension-discord");',
       "process.stdout.write(JSON.stringify({ dir, iconDataUri: resolveIconDataUri(dir) }));",
     ].join("\n");
     const output = execFileSync(

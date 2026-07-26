@@ -16,22 +16,22 @@ afterEach(async () => {
 describe("resolveCreateArea", () => {
   it("returns a valid area id", async () => {
     const client = {
-      listAreas: async () => [{ id: "aihub", title: "AIHub" }],
+      listAreas: async () => [{ id: "yoplai", title: "Yoplai" }],
     };
 
-    await expect(resolveCreateArea(client, "aihub")).resolves.toBe("aihub");
+    await expect(resolveCreateArea(client, "yoplai")).resolves.toBe("yoplai");
   });
 
   it("throws with valid ids when the area is unknown", async () => {
     const client = {
       listAreas: async () => [
-        { id: "aihub", title: "AIHub" },
+        { id: "yoplai", title: "Yoplai" },
         { id: "ops", title: "Ops" },
       ],
     };
 
     await expect(resolveCreateArea(client, "bad-area")).rejects.toThrow(
-      'Error: Invalid area "bad-area". Valid areas: aihub, ops'
+      'Error: Invalid area "bad-area". Valid areas: yoplai, ops'
     );
   });
 });
@@ -58,7 +58,7 @@ describe("buildCreateProjectBody", () => {
   });
 
   it("maps --pitch @file content", async () => {
-    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "aihub-pitch-"));
+    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-pitch-"));
     const pitchPath = path.join(tmpDir, "PITCH.md");
     await fs.writeFile(pitchPath, "File pitch\n", "utf8");
 
@@ -86,10 +86,10 @@ describe("buildCreateProjectBody", () => {
     const areaClient = {
       listAreas: async () => [
         {
-          id: "aihub",
-          title: "AIHub",
+          id: "yoplai",
+          title: "Yoplai",
           color: "#3b8ecc",
-          repo: "/tmp/aihub",
+          repo: "/tmp/yoplai",
         },
       ],
     };
@@ -97,13 +97,13 @@ describe("buildCreateProjectBody", () => {
     await expect(
       buildCreateProjectBody(
         undefined,
-        { title: "Test Project", area: "aihub" },
+        { title: "Test Project", area: "yoplai" },
         areaClient
       )
     ).resolves.toEqual({
       title: "Test Project",
-      area: "aihub",
-      repo: "/tmp/aihub",
+      area: "yoplai",
+      repo: "/tmp/yoplai",
     });
   });
 
@@ -111,10 +111,10 @@ describe("buildCreateProjectBody", () => {
     const areaClient = {
       listAreas: async () => [
         {
-          id: "aihub",
-          title: "AIHub",
+          id: "yoplai",
+          title: "Yoplai",
           color: "#3b8ecc",
-          repo: "/tmp/aihub",
+          repo: "/tmp/yoplai",
         },
       ],
     };
@@ -122,12 +122,12 @@ describe("buildCreateProjectBody", () => {
     await expect(
       buildCreateProjectBody(
         undefined,
-        { title: "Test Project", area: "aihub", repo: "/tmp/override" },
+        { title: "Test Project", area: "yoplai", repo: "/tmp/override" },
         areaClient
       )
     ).resolves.toEqual({
       title: "Test Project",
-      area: "aihub",
+      area: "yoplai",
       repo: "/tmp/override",
     });
   });
@@ -150,7 +150,7 @@ describe("buildCreateProjectBody", () => {
         client
       )
     ).rejects.toThrow(
-      "Project-level --specs was removed. Use --pitch for project prose or `aihub slices add --specs` for slice specs."
+      "Project-level --specs was removed. Use --pitch for project prose or `yoplai slices add --specs` for slice specs."
     );
   });
 });

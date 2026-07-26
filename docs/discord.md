@@ -176,9 +176,9 @@ Agents can subscribe to Discord forum channels and use forum threads as resumabl
 
 Forum behavior:
 
-- When Discord emits a newly created thread in a subscribed forum channel, AIHub starts a fresh session for each subscribed agent and posts the agent response into that thread.
-- AIHub stores a binding from the Discord thread ID to the agent session ID. Later user replies in that thread resume the same session instead of starting a new channel session.
-- Bot-authored and webhook messages are ignored. If a reply arrives in an unbound subscribed thread, AIHub falls back to the new-thread spawn path and writes the binding once the run returns a session ID.
+- When Discord emits a newly created thread in a subscribed forum channel, Yoplai starts a fresh session for each subscribed agent and posts the agent response into that thread.
+- Yoplai stores a binding from the Discord thread ID to the agent session ID. Later user replies in that thread resume the same session instead of starting a new channel session.
+- Bot-authored and webhook messages are ignored. If a reply arrives in an unbound subscribed thread, Yoplai falls back to the new-thread spawn path and writes the binding once the run returns a session ID.
 - Regular guild channels still use `discord:<channelId>` session isolation, and DMs still use `main`.
 
 Agents also receive `discord.create_forum_thread(channel_id, title, body)`. The tool creates a new thread in the given forum channel, sends `body` as the starter post, binds the returned thread to the current agent session, and returns:

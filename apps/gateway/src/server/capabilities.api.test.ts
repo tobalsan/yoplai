@@ -6,20 +6,20 @@ import { writeTestV3Config } from "../test-utils/v3-config.js";
 
 describe("/capabilities API", () => {
   let tmpDir: string;
-  let prevAihubHome: string | undefined;
+  let prevHomeDir: string | undefined;
   let prevHome: string | undefined;
   let prevUserProfile: string | undefined;
 
   beforeAll(async () => {
-    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "aihub-capabilities-"));
-    prevAihubHome = process.env.AIHUB_HOME;
+    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-capabilities-"));
+    prevHomeDir = process.env.YOPLAI_HOME;
     prevHome = process.env.HOME;
     prevUserProfile = process.env.USERPROFILE;
-    process.env.AIHUB_HOME = path.join(tmpDir, ".aihub");
+    process.env.YOPLAI_HOME = path.join(tmpDir, ".yoplai");
     process.env.HOME = tmpDir;
     process.env.USERPROFILE = tmpDir;
 
-    await writeTestV3Config(path.join(tmpDir, ".aihub"), {
+    await writeTestV3Config(path.join(tmpDir, ".yoplai"), {
       agents: [{ id: "main", name: "Main" }],
       extensions: {
         scheduler: { enabled: true },
@@ -35,8 +35,8 @@ describe("/capabilities API", () => {
   });
 
   afterAll(async () => {
-    if (prevAihubHome === undefined) delete process.env.AIHUB_HOME;
-    else process.env.AIHUB_HOME = prevAihubHome;
+    if (prevHomeDir === undefined) delete process.env.YOPLAI_HOME;
+    else process.env.YOPLAI_HOME = prevHomeDir;
     if (prevHome === undefined) delete process.env.HOME;
     else process.env.HOME = prevHome;
     if (prevUserProfile === undefined) delete process.env.USERPROFILE;

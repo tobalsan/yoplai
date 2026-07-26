@@ -26,7 +26,7 @@ describe("activity persistence", () => {
   let prevUserProfile: string | undefined;
 
   beforeEach(async () => {
-    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "aihub-activity-"));
+    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-activity-"));
 
     prevHome = process.env.HOME;
     prevUserProfile = process.env.USERPROFILE;
@@ -34,7 +34,7 @@ describe("activity persistence", () => {
     process.env.USERPROFILE = tmpDir;
     projectsRoot = path.join(tmpDir, "projects");
 
-    const configDir = path.join(tmpDir, ".aihub");
+    const configDir = path.join(tmpDir, ".yoplai");
     await writeTestV3Config(configDir, {
       agents: [
         {
@@ -62,7 +62,7 @@ describe("activity persistence", () => {
     clearProjectsContextForTest = clearProjectsContext;
     setProjectsContext({
       getConfig: () => config,
-      getDataDir: () => path.join(tmpDir, ".aihub"),
+      getDataDir: () => path.join(tmpDir, ".yoplai"),
       getAgents: () => [agentConfig],
       getAgent: (id: string) => (id === agentConfig.id ? agentConfig : undefined),
       isAgentActive: () => true,
@@ -178,7 +178,7 @@ describe("activity persistence", () => {
     );
     expect(patchRes.status).toBe(200);
 
-    const activityPath = path.join(tmpDir, ".aihub", "activity.json");
+    const activityPath = path.join(tmpDir, ".yoplai", "activity.json");
     const persistedRaw = await fs.readFile(activityPath, "utf8");
     const persisted = JSON.parse(persistedRaw) as Array<{ actor?: string }>;
     expect(persisted.some((event) => event.actor === "Avery")).toBe(true);
@@ -191,7 +191,7 @@ describe("activity persistence", () => {
         agents: [agentConfig],
         extensions: { projects: { enabled: true, root: projectsRoot } },
       }),
-      getDataDir: () => path.join(tmpDir, ".aihub"),
+      getDataDir: () => path.join(tmpDir, ".yoplai"),
       getAgents: () => [agentConfig],
       getAgent: (id: string) => (id === agentConfig.id ? agentConfig : undefined),
       isAgentActive: () => true,
@@ -268,7 +268,7 @@ describe("activity persistence", () => {
       timestamp: "2025-01-01T00:00:00.000Z",
     });
 
-    const activityPath = path.join(tmpDir, ".aihub", "activity.json");
+    const activityPath = path.join(tmpDir, ".yoplai", "activity.json");
     const persistedRaw = await fs.readFile(activityPath, "utf8");
     const persisted = JSON.parse(persistedRaw) as Array<{
       type?: string;
@@ -287,21 +287,21 @@ describe("activity persistence", () => {
   it("records slice blocker activity with structured blockers", async () => {
     const { recordSliceBlockedActivity, recordSliceUnblockedActivity } = await import("./index.js");
     await recordSliceBlockedActivity({
-      actor: "AIHub",
+      actor: "Yoplai",
       projectId: "PRO-123",
       sliceId: "PRO-123-S01",
       blockers: ["PRO-123-S02", "PRO-124-S01"],
       timestamp: "2025-01-01T00:00:00.000Z",
     });
     await recordSliceUnblockedActivity({
-      actor: "AIHub",
+      actor: "Yoplai",
       projectId: "PRO-123",
       sliceId: "PRO-123-S01",
       blockers: ["PRO-123-S02"],
       timestamp: "2025-01-01T00:01:00.000Z",
     });
 
-    const activityPath = path.join(tmpDir, ".aihub", "activity.json");
+    const activityPath = path.join(tmpDir, ".yoplai", "activity.json");
     const persistedRaw = await fs.readFile(activityPath, "utf8");
     const persisted = JSON.parse(persistedRaw) as Array<{
       type?: string;
@@ -375,7 +375,7 @@ describe("activity persistence", () => {
         agents: [agentConfig],
         extensions: { projects: { enabled: true, root: projectsRoot } },
       }),
-      getDataDir: () => path.join(tmpDir, ".aihub"),
+      getDataDir: () => path.join(tmpDir, ".yoplai"),
       getAgents: () => [agentConfig],
       getAgent: (id: string) => (id === agentConfig.id ? agentConfig : undefined),
       isAgentActive: () => true,

@@ -16,7 +16,7 @@ describe("AreaEditForm", () => {
     const dispose = render(
       () => (
         <AreaEditForm
-          draft={{ title: "AIHub", color: "#3b82f6", order: "", repo: "" }}
+          draft={{ title: "Yoplai", color: "#3b82f6", order: "", repo: "" }}
           saving={false}
           error={null}
           onChange={() => {}}

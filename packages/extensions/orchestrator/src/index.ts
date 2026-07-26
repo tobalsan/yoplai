@@ -2,8 +2,8 @@ import crypto from "node:crypto";
 import path from "node:path";
 import { Hono } from "hono";
 import { z } from "zod";
-import type { Extension, ExtensionContext, ExtensionAgentTool } from "@aihub/shared";
-import { OrchestratorExtensionConfigSchema } from "@aihub/shared";
+import type { Extension, ExtensionContext, ExtensionAgentTool } from "@yoplai/shared";
+import { OrchestratorExtensionConfigSchema } from "@yoplai/shared";
 import { LinearClient } from "./linear/client.js";
 import { WorkflowLoader } from "./workflow/loader.js";
 import { StateStore } from "./state/store.js";
@@ -58,10 +58,10 @@ async function runBeforeRemove(row: Record<string, unknown> | undefined) {
     runId,
     store,
     env: {
-      AIHUB_PROJECT_ID: typeof row.project_id === "string" ? row.project_id : undefined,
-      AIHUB_ISSUE_ID: typeof row.issue_id === "string" ? row.issue_id : undefined,
-      AIHUB_ISSUE_IDENTIFIER: typeof row.identifier === "string" ? row.identifier : undefined,
-      AIHUB_WORKSPACE: workspace,
+      YOPLAI_PROJECT_ID: typeof row.project_id === "string" ? row.project_id : undefined,
+      YOPLAI_ISSUE_ID: typeof row.issue_id === "string" ? row.issue_id : undefined,
+      YOPLAI_ISSUE_IDENTIFIER: typeof row.identifier === "string" ? row.identifier : undefined,
+      YOPLAI_WORKSPACE: workspace,
       LINEAR_API_KEY: undefined,
     },
   }).catch((error) => store?.appendEvent(runId, "hook.before_remove.error", { error: error instanceof Error ? error.message : String(error) }, typeof row.project_id === "string" ? row.project_id : undefined));

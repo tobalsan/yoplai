@@ -238,12 +238,12 @@ describe("orchestrator pure modules", () => {
     process.env.PLANE_OAUTH_TOKEN = "oauth-secret";
     process.env.PLANE_BOT_TOKEN = "bot-secret";
     try {
-      const env = sanitizedWorkerEnv({ AIHUB_RUN_ID: "run-1" });
+      const env = sanitizedWorkerEnv({ YOPLAI_RUN_ID: "run-1" });
       expect(env.LINEAR_API_KEY).toBeUndefined();
       expect(env.PLANE_API_KEY).toBeUndefined();
       expect(env.PLANE_OAUTH_TOKEN).toBeUndefined();
       expect(env.PLANE_BOT_TOKEN).toBeUndefined();
-      expect(env.AIHUB_RUN_ID).toBe("run-1");
+      expect(env.YOPLAI_RUN_ID).toBe("run-1");
       expect(env.PATH).toBe(process.env.PATH);
     } finally {
       if (oldLinear === undefined) delete process.env.LINEAR_API_KEY;
@@ -1133,7 +1133,7 @@ describe("Codex app-server worker runner", () => {
         "worker.codex.turn.completed",
       ]));
       const sent = (await fs.readFile(logPath, "utf8")).trim().split("\n").map((line) => JSON.parse(line) as { method: string; params?: any });
-      expect(sent.find((message) => message.method === "thread/start")?.params).toMatchObject({ model: "gpt-5-mini", cwd: root, approvalPolicy: "never", sandbox: "danger-full-access", serviceName: "aihub-orchestrator" });
+      expect(sent.find((message) => message.method === "thread/start")?.params).toMatchObject({ model: "gpt-5-mini", cwd: root, approvalPolicy: "never", sandbox: "danger-full-access", serviceName: "yoplai-orchestrator" });
       expect(sent.find((message) => message.method === "turn/start")?.params).toMatchObject({ cwd: root, model: "gpt-5-mini", approvalPolicy: "never", sandboxPolicy: { type: "dangerFullAccess" }, effort: "high", input: [{ type: "text", text: "Initial rendered workflow instructions" }] });
     } finally {
       delete process.env.MOCK_CODEX_MODE;
@@ -1387,7 +1387,7 @@ function handle(message) {
     write({ id: message.id, type: "response", command: "follow_up", success: true });
     write({ type: "queue_update", pendingMessageCount: 1 });
   } else if (message.type === "get_state") {
-    write({ id: message.id, type: "response", command: "get_state", success: true, data: { sessionId: "pi_session", sessionFile: process.cwd() + "/.aihub/pi-sessions/pi_session.jsonl", isStreaming: mode !== "complete", pendingMessageCount: 0 } });
+    write({ id: message.id, type: "response", command: "get_state", success: true, data: { sessionId: "pi_session", sessionFile: process.cwd() + "/.yoplai/pi-sessions/pi_session.jsonl", isStreaming: mode !== "complete", pendingMessageCount: 0 } });
   } else if (message.type === "abort") {
     if (mode !== "wedged") {
       write({ id: message.id, type: "response", command: "abort", success: true });
@@ -1789,7 +1789,7 @@ function handle(message) {
     write({ id: message.id, type: "response", command: "follow_up", success: true });
     write({ type: "queue_update", pendingMessageCount: 1 });
   } else if (message.type === "get_state") {
-    write({ id: message.id, type: "response", command: "get_state", success: true, data: { sessionId: "claude_session", sessionFile: process.cwd() + "/.aihub/claude-sessions/claude_session.jsonl", isStreaming: mode !== "complete", pendingMessageCount: 0 } });
+    write({ id: message.id, type: "response", command: "get_state", success: true, data: { sessionId: "claude_session", sessionFile: process.cwd() + "/.yoplai/claude-sessions/claude_session.jsonl", isStreaming: mode !== "complete", pendingMessageCount: 0 } });
   } else if (message.type === "abort") {
     if (mode !== "wedged") {
       write({ id: message.id, type: "response", command: "abort", success: true });
@@ -1910,7 +1910,7 @@ describe("Claude RPC worker runner", () => {
       "--name",
       "custom",
       "--session-dir",
-      path.join(root, ".aihub", "claude-sessions"),
+      path.join(root, ".yoplai", "claude-sessions"),
       "--claude-cli",
       "claude",
       "--wrapper-flag",
@@ -2227,7 +2227,7 @@ describe("orchestrator daemon", () => {
         tracker: { kind: "linear", endpoint: "x", apiKey: "x", projectSlug: "proj-a", activeStates: ["Ready"], terminalStates: ["Done"], needsHuman: "Needs Human" },
         workspace: { root, cleanupOnTerminal: false, reuse: true },
         polling: { intervalMs: 1000, jitterMs: 0 },
-        agent: { runner: "cli", command: "__aihub_missing_command__" },
+        agent: { runner: "cli", command: "__yoplai_missing_command__" },
         hooks: {},
         server: undefined,
         linear: undefined,
@@ -2271,7 +2271,7 @@ describe("orchestrator daemon", () => {
       expect(dumped.PLANE_API_KEY).toBeUndefined();
       expect(dumped.PLANE_OAUTH_TOKEN).toBeUndefined();
       expect(dumped.PLANE_BOT_TOKEN).toBeUndefined();
-      expect(dumped.AIHUB_RUN_ID).toBe("r-env");
+      expect(dumped.YOPLAI_RUN_ID).toBe("r-env");
     } finally {
       if (oldLinear === undefined) delete process.env.LINEAR_API_KEY;
       else process.env.LINEAR_API_KEY = oldLinear;
@@ -2863,7 +2863,7 @@ Do {{issue.identifier}}
     const row = db.prepare("SELECT payload, payload_preview, log_path, log_offset, log_line FROM events").get() as Record<string, unknown>;
     db.close();
     expect(row.payload).toBeNull();
-    expect(row.log_path).toBe(path.join(".aihub", "codex", "19700101T000000Z-b3JjaGVzdHJhdG9yOnAxOmkxOjE.jsonl"));
+    expect(row.log_path).toBe(path.join(".yoplai", "codex", "19700101T000000Z-b3JjaGVzdHJhdG9yOnAxOmkxOjE.jsonl"));
     expect(row.log_offset).toBe(0);
     expect(row.log_line).toBe(1);
     expect(String(row.payload_preview).length).toBeLessThan(5000);
@@ -2954,7 +2954,7 @@ Do {{issue.identifier}}
     expect(rows).toEqual([
       expect.objectContaining({ payload: JSON.stringify({ text: "short preview" }), payload_preview: JSON.stringify({ text: "short preview" }) }),
     ]);
-    await expect(fs.access(path.join(root, ".aihub", "codex", "19700101T000000Z-cjE.jsonl"))).rejects.toThrow();
+    await expect(fs.access(path.join(root, ".yoplai", "codex", "19700101T000000Z-cjE.jsonl"))).rejects.toThrow();
     store.close();
   });
 

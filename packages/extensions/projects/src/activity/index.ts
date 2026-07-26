@@ -1,10 +1,10 @@
 import {
   DEFAULT_MAIN_KEY,
   normalizeProjectStatus,
+  resolveHomeDir,
   type GatewayConfig,
-} from "@aihub/shared";
+} from "@yoplai/shared";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import { listProjects } from "../projects/index.js";
 import { listAllSubagents } from "../subagents/index.js";
@@ -35,7 +35,7 @@ const lastProjectStatuses = new Map<string, string>();
 const lastAgentMessageTs = new Map<string, number>();
 const lastSubagentFingerprint = new Map<string, string>();
 const cachedEvents: ActivityEvent[] = [];
-const STORE_PATH = path.join(os.homedir(), ".aihub", "activity.json");
+const STORE_PATH = path.join(resolveHomeDir(), "activity.json");
 let loaded = false;
 
 function ensureLoaded() {
@@ -139,7 +139,7 @@ export async function getRecentActivity(
         events.push({
           id: `project-${project.id}-${Date.now()}`,
           type: "project_status",
-          actor: "AIHub",
+          actor: "Yoplai",
           action: `moved ${project.id} to ${formatStatus(status)}`,
           projectId: project.id,
           timestamp: nowIso,
@@ -226,7 +226,7 @@ export async function recordProjectStatusActivity(params: {
 }): Promise<void> {
   ensureLoaded();
   const normalizedStatus = normalizeProjectStatus(params.status);
-  const actor = params.actor?.trim() ? params.actor.trim() : "AIHub";
+  const actor = params.actor?.trim() ? params.actor.trim() : "Yoplai";
   const event: ActivityEvent = {
     id: `project-${params.projectId}-${Date.now()}`,
     type: "project_status",

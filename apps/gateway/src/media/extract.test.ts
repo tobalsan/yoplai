@@ -14,7 +14,7 @@ describe("extractText", () => {
     ["xlsx", XLSX_MIME],
     ["xls", XLS_MIME],
   ])("extracts %s sheets as CSV text", async (extension, mimeType) => {
-    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "aihub-sheet-"));
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-sheet-"));
     const filePath = path.join(dir, `sheet.${extension}`);
     const workbook = XLSX.utils.book_new();
     const sheet = XLSX.utils.aoa_to_sheet([

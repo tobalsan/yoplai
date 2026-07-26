@@ -1,4 +1,4 @@
-import type { SubagentRun } from "@aihub/shared/types";
+import type { SubagentRun } from "@yoplai/shared/types";
 import type {
   AreaSummary,
   BoardActivityResponse,

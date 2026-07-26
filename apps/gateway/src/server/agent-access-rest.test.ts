@@ -28,7 +28,7 @@ type MockContext = {
 };
 
 const AUTH_HEADER = "x-test-auth";
-const HEADER = "x-aihub-auth-context";
+const HEADER = "x-yoplai-auth-context";
 
 function decodeAuth(value: string | null): AuthCtx {
   if (!value) return null;
@@ -66,22 +66,22 @@ async function hasAgentAccessImpl(
 
 describe("REST per-agent access gating (multi-user)", () => {
   let tmpDir: string;
-  let prevAihubHome: string | undefined;
+  let prevHomeDir: string | undefined;
   let prevHome: string | undefined;
   let prevUserProfile: string | undefined;
   let server: ReturnType<typeof import("./index.js").startServer>;
   let port: number;
 
   beforeAll(async () => {
-    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "aihub-agent-access-rest-"));
-    prevAihubHome = process.env.AIHUB_HOME;
+    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-agent-access-rest-"));
+    prevHomeDir = process.env.YOPLAI_HOME;
     prevHome = process.env.HOME;
     prevUserProfile = process.env.USERPROFILE;
-    process.env.AIHUB_HOME = path.join(tmpDir, ".aihub");
+    process.env.YOPLAI_HOME = path.join(tmpDir, ".yoplai");
     process.env.HOME = tmpDir;
     process.env.USERPROFILE = tmpDir;
 
-    await writeTestV3Config(path.join(tmpDir, ".aihub"), {
+    await writeTestV3Config(path.join(tmpDir, ".yoplai"), {
       agents: [
         { id: "allowed-agent", name: "Allowed Agent" },
         { id: "blocked-agent", name: "Blocked Agent" },
@@ -113,7 +113,7 @@ describe("REST per-agent access gating (multi-user)", () => {
         }),
       };
     });
-    vi.doMock("@aihub/extension-multi-user", () => {
+    vi.doMock("@yoplai/extension-multi-user", () => {
       // `createAuthMiddleware` reads a test header and installs the auth context
       // into Hono's store so `requireAgentAccess`/downstream forwarding can read
       // it, mirroring the real cookie-session flow without Better Auth.
@@ -174,9 +174,9 @@ describe("REST per-agent access gating (multi-user)", () => {
     if (server) {
       await new Promise<void>((resolve) => server.close(() => resolve()));
     }
-    vi.doUnmock("@aihub/extension-multi-user");
-    if (prevAihubHome === undefined) delete process.env.AIHUB_HOME;
-    else process.env.AIHUB_HOME = prevAihubHome;
+    vi.doUnmock("@yoplai/extension-multi-user");
+    if (prevHomeDir === undefined) delete process.env.YOPLAI_HOME;
+    else process.env.YOPLAI_HOME = prevHomeDir;
     if (prevHome === undefined) delete process.env.HOME;
     else process.env.HOME = prevHome;
     if (prevUserProfile === undefined) delete process.env.USERPROFILE;

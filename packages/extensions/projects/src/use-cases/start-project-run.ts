@@ -7,7 +7,7 @@ import {
   type GatewayConfig,
   type PromptRole,
   type UpdateProjectRequest,
-} from "@aihub/shared";
+} from "@yoplai/shared";
 import { normalizeRunModeOrClone } from "../profiles/resolver.js";
 import {
   resolveCliProfileOptions,
@@ -26,7 +26,7 @@ import { getProjectsContext } from "../context.js";
 type CliRunMode = NormalizedRunMode;
 
 export type StartProjectRunResult =
-  | { ok: true; data: { ok: true; type: "aihub"; sessionKey: string } }
+  | { ok: true; data: { ok: true; type: "native"; sessionKey: string } }
   | {
       ok: true;
       data: { ok: true; type: "cli"; slug: string | undefined; runMode: CliRunMode | undefined };
@@ -44,11 +44,26 @@ function expandHomePath(value: string): string {
   return value;
 }
 
+const NATIVE_PREFIX = "yoplai:";
+const LEGACY_NATIVE_PREFIX = "aihub:";
+let warnedLegacyPrefix = false;
+
 function normalizeRunAgent(
   value?: string
-): { type: "aihub"; id: string } | { type: "cli"; id: string } | null {
+): { type: "native"; id: string } | { type: "cli"; id: string } | null {
   if (!value) return null;
-  if (value.startsWith("aihub:")) return { type: "aihub", id: value.slice(6) };
+  if (value.startsWith(NATIVE_PREFIX)) {
+    return { type: "native", id: value.slice(NATIVE_PREFIX.length) };
+  }
+  if (value.startsWith(LEGACY_NATIVE_PREFIX)) {
+    if (!warnedLegacyPrefix) {
+      warnedLegacyPrefix = true;
+      console.warn(
+        `[projects] runAgent "${LEGACY_NATIVE_PREFIX}" prefix is deprecated; rewrite it as "${NATIVE_PREFIX}" instead.`
+      );
+    }
+    return { type: "native", id: value.slice(LEGACY_NATIVE_PREFIX.length) };
+  }
   if (value.startsWith("cli:")) return { type: "cli", id: value.slice(4) };
   return null;
 }
@@ -158,7 +173,7 @@ export async function startProjectRun(
         ? agents.find((agent) => agent.name === "Project Manager")
         : null;
     const selected = preferred ?? agents[0];
-    runAgentSelection = { type: "aihub", id: selected.id };
+    runAgentSelection = { type: "native", id: selected.id };
   }
 
   let runMode: CliRunMode | undefined;
@@ -242,9 +257,9 @@ export async function startProjectRun(
     ? relBasePath
     : `${relBasePath}/SPECS.md`;
   const readmePath =
-    runAgentSelection.type === "aihub" ? absReadmePath : relReadmePath;
+    runAgentSelection.type === "native" ? absReadmePath : relReadmePath;
   const specsPathForRole =
-    runAgentSelection.type === "aihub" ? absSpecsPath : relSpecsPath;
+    runAgentSelection.type === "native" ? absSpecsPath : relSpecsPath;
   const threadPath = path.join(basePath, "THREAD.md");
   let threadContent = "";
   try {
@@ -348,7 +363,7 @@ export async function startProjectRun(
     typeof frontmatter.runMode === "string" ||
     typeof frontmatter.baseBranch === "string";
 
-  if (runAgentSelection.type === "aihub") {
+  if (runAgentSelection.type === "native") {
     const agent = getProjectsContext().getAgent(runAgentSelection.id);
     if (!agent || !getProjectsContext().isAgentActive(runAgentSelection.id)) {
       return { ok: false, error: "Agent not found", status: 404 };
@@ -375,7 +390,7 @@ export async function startProjectRun(
       await updateProject(config, project.id, updates);
     }
 
-    return { ok: true, data: { ok: true, type: "aihub", sessionKey } };
+    return { ok: true, data: { ok: true, type: "native", sessionKey } };
   }
 
   if (!isSupportedSubagentCli(runAgentSelection.id)) {

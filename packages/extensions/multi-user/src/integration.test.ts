@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { Hono, type MiddlewareHandler } from "hono";
 
 type EnvSnapshot = {
-  aihubHome?: string;
+  configHome?: string;
   home?: string;
   userProfile?: string;
 };
@@ -58,16 +58,16 @@ async function createTempHome(): Promise<{
   dir: string;
   previousEnv: EnvSnapshot;
 }> {
-  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "aihub-multi-user-"));
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-multi-user-"));
   tempDirs.push(dir);
 
   const previousEnv: EnvSnapshot = {
-    aihubHome: process.env.AIHUB_HOME,
+    configHome: process.env.YOPLAI_HOME,
     home: process.env.HOME,
     userProfile: process.env.USERPROFILE,
   };
 
-  process.env.AIHUB_HOME = dir;
+  process.env.YOPLAI_HOME = dir;
   process.env.HOME = dir;
   process.env.USERPROFILE = dir;
 
@@ -82,8 +82,8 @@ async function createTempHome(): Promise<{
 }
 
 function restoreEnv(previousEnv: EnvSnapshot) {
-  if (previousEnv.aihubHome === undefined) delete process.env.AIHUB_HOME;
-  else process.env.AIHUB_HOME = previousEnv.aihubHome;
+  if (previousEnv.configHome === undefined) delete process.env.YOPLAI_HOME;
+  else process.env.YOPLAI_HOME = previousEnv.configHome;
 
   if (previousEnv.home === undefined) delete process.env.HOME;
   else process.env.HOME = previousEnv.home;
@@ -98,7 +98,7 @@ describe("multi-user integration", () => {
 
     try {
       await fs.writeFile(
-        path.join(dir, "aihub.json"),
+        path.join(dir, "yoplai.json"),
         JSON.stringify({
           version: 3,
           agents: ["agents/main"],
@@ -220,7 +220,7 @@ describe("multi-user integration", () => {
 
     try {
       await fs.writeFile(
-        path.join(dir, "aihub.json"),
+        path.join(dir, "yoplai.json"),
         JSON.stringify({
           version: 3,
           agents: ["agents/main"],
@@ -405,7 +405,7 @@ describe("multi-user integration", () => {
 
     try {
       await fs.writeFile(
-        path.join(dir, "aihub.json"),
+        path.join(dir, "yoplai.json"),
         JSON.stringify({
           version: 3,
           agents: ["agents/main"],
@@ -471,7 +471,7 @@ describe("multi-user integration", () => {
 
     try {
       await fs.writeFile(
-        path.join(dir, "aihub.json"),
+        path.join(dir, "yoplai.json"),
         JSON.stringify({
           version: 3,
           agents: ["agents/main"],

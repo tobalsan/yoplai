@@ -1,6 +1,6 @@
 # Notion Webhook Handler
 
-You are handling an inbound Notion webhook for AIHub.
+You are handling an inbound Notion webhook for Yoplai.
 
 For initial Notion setup, add this webhook config so verification requests do not invoke the agent:
 

@@ -4,7 +4,7 @@ import {
   GatewayConfigSchema,
   migrateConfigV1toV2,
   resolveConfigPath,
-} from "@aihub/shared";
+} from "@yoplai/shared";
 
 export type ConfigVersionInfo = {
   label: "1 (legacy)" | "2";

@@ -5,7 +5,7 @@ import path from "node:path";
 import { Command } from "commander";
 import yaml from "js-yaml";
 import lockfile from "proper-lockfile";
-import { resolveConfigPath, resolveHomeDir } from "@aihub/shared";
+import { expandHomePlaceholder, resolveConfigPath, resolveHomeDir } from "@yoplai/shared";
 import { logError } from "../logging.js";
 
 const LEGACY_SYSTEM_FILE_ORDER = [
@@ -45,7 +45,7 @@ function timestamp(): string {
 function resolvePathFromConfig(input: string, configDir: string, homeDir: string): string {
   const expanded = input.startsWith("~")
     ? path.join(os.homedir(), input.slice(1))
-    : input.replace(/^\$AIHUB_HOME(?=\/|$)/, homeDir);
+    : expandHomePlaceholder(input, homeDir);
   return path.isAbsolute(expanded) ? expanded : path.resolve(configDir, expanded);
 }
 
@@ -279,7 +279,7 @@ export async function migrateAgentsConfig(configPath = resolveConfigPath()): Pro
   if (isV3) {
     return {
       migrated: false,
-      message: "aihub.json is already version 3; nothing to migrate.",
+      message: "yoplai.json is already version 3; nothing to migrate.",
       agents: [],
       scheduleCounts: {},
       orphanCount: 0,
@@ -287,7 +287,7 @@ export async function migrateAgentsConfig(configPath = resolveConfigPath()): Pro
   }
 
   if (!Array.isArray(legacyAgents) || !legacyAgents.every((agent) => typeof agent === "object" && agent !== null)) {
-    throw new Error("Expected v2 aihub.json with agents array. Cannot migrate this config.");
+    throw new Error("Expected v2 yoplai.json with agents array. Cannot migrate this config.");
   }
 
   const plannedAgents: Array<{ agent: LegacyAgent & { id: string }; workspaceDir: string; yamlPath: string }> = [];

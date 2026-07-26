@@ -4,8 +4,8 @@ import {
   getAgentJobsPath,
   getScheduler,
   hasSchedulerContext,
-} from "@aihub/extension-scheduler";
-import type { GatewayConfig } from "@aihub/shared";
+} from "@yoplai/extension-scheduler";
+import type { GatewayConfig } from "@yoplai/shared";
 import { getConfigPath, reloadConfig, setLoadedConfig } from "./index.js";
 import { resolveStartupConfig } from "./validate.js";
 

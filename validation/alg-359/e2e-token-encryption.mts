@@ -1,6 +1,6 @@
 /**
  * ALG-359 e2e: prove OAuth tokens are encrypted at rest against the REAL
- * gateway runtime and an isolated AIHUB_HOME.
+ * gateway runtime and an isolated YOPLAI_HOME.
  *
  * We drive the actual OAuth service (real config load, real file-backed store,
  * real config-sourced encryption key). The only fake is Google's HTTP endpoints
@@ -13,8 +13,8 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 
-const home = process.env.AIHUB_HOME;
-assert.ok(home, "AIHUB_HOME must be set");
+const home = process.env.YOPLAI_HOME;
+assert.ok(home, "YOPLAI_HOME must be set");
 
 const { OAuthService } = await import("../../apps/gateway/src/oauth/service.ts");
 const { loadConfig } = await import("../../apps/gateway/src/config/index.ts");
@@ -46,7 +46,7 @@ const fakeFetch = (async (input: RequestInfo | URL) => {
   throw new Error(`unexpected fetch in e2e: ${url}`);
 }) as typeof fetch;
 
-// Real service: default store (writes under $AIHUB_HOME/oauth, cipher resolved
+// Real service: default store (writes under $YOPLAI_HOME/oauth, cipher resolved
 // from oauth.encryptionKey in the seeded config), real config loader.
 const service = new OAuthService({ fetchImpl: fakeFetch, loadConfig });
 

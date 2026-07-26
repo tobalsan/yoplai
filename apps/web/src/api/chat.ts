@@ -6,8 +6,9 @@ import type {
 } from "./types";
 import { API_BASE, apiFetch as fetch } from "./core";
 import { dispatchWsEvent, getWsUrl, type WsStreamEvent } from "./ws";
+import { readMigratedLocal } from "../lib/local-storage";
 
-const SESSION_KEY_PREFIX = "aihub:sessionKey:";
+const SESSION_KEY_PREFIX = "yoplai:sessionKey:";
 const DEFAULT_SESSION_KEY = "main";
 
 export type DoneMeta = {
@@ -131,8 +132,7 @@ export async function postCompact(
 
 export function getSessionKey(agentId: string): string {
   return (
-    localStorage.getItem(`${SESSION_KEY_PREFIX}${agentId}`) ??
-    DEFAULT_SESSION_KEY
+    readMigratedLocal(`${SESSION_KEY_PREFIX}${agentId}`) ?? DEFAULT_SESSION_KEY
   );
 }
 

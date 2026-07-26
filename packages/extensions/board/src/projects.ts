@@ -3,7 +3,7 @@ import { watch, type FSWatcher } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
-import { expandPath } from "@aihub/shared";
+import { expandPath, readEnv } from "@yoplai/shared";
 import { splitFrontmatter } from "./frontmatter.js";
 
 const execFileAsync = promisify(execFile);
@@ -309,7 +309,7 @@ const inFlightLifecycleScans = new Map<string, Promise<ProjectLifecycleScan>>();
 let projectCacheVersion = 0;
 
 function readPositiveIntEnv(name: string, fallback: number): number {
-  const raw = process.env[name];
+  const raw = readEnv(name);
   if (!raw) return fallback;
   const parsed = Number.parseInt(raw, 10);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
@@ -319,7 +319,7 @@ function projectCacheTtlMs(options?: ScanProjectsOptions): number {
   return (
     options?.cacheTtlMs ??
     readPositiveIntEnv(
-      "AIHUB_BOARD_PROJECTS_CACHE_TTL_MS",
+      "YOPLAI_BOARD_PROJECTS_CACHE_TTL_MS",
       DEFAULT_PROJECT_CACHE_TTL_MS
     )
   );
@@ -329,7 +329,7 @@ function repoWorktreeTtlMs(options?: ScanProjectsOptions): number {
   return (
     options?.repoWorktreeTtlMs ??
     readPositiveIntEnv(
-      "AIHUB_BOARD_REPO_WORKTREE_TTL_MS",
+      "YOPLAI_BOARD_REPO_WORKTREE_TTL_MS",
       DEFAULT_REPO_WORKTREE_TTL_MS
     )
   );
@@ -339,7 +339,7 @@ function branchTtlMs(options?: ScanProjectsOptions): number {
   return (
     options?.branchTtlMs ??
     readPositiveIntEnv(
-      "AIHUB_BOARD_BRANCH_CACHE_TTL_MS",
+      "YOPLAI_BOARD_BRANCH_CACHE_TTL_MS",
       DEFAULT_BRANCH_CACHE_TTL_MS
     )
   );
@@ -349,14 +349,14 @@ function dirtyAheadTtlMs(options?: ScanProjectsOptions): number {
   return (
     options?.dirtyAheadTtlMs ??
     readPositiveIntEnv(
-      "AIHUB_BOARD_DIRTY_AHEAD_TTL_MS",
+      "YOPLAI_BOARD_DIRTY_AHEAD_TTL_MS",
       DEFAULT_DIRTY_AHEAD_TTL_MS
     )
   );
 }
 
 function boardWorktreeDiagnosticsEnabled(): boolean {
-  return process.env.AIHUB_BOARD_WORKTREE_DIAGNOSTICS === "1";
+  return readEnv("YOPLAI_BOARD_WORKTREE_DIAGNOSTICS") === "1";
 }
 
 function normalizeSlug(value: string): string {

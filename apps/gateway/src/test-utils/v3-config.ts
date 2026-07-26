@@ -43,7 +43,7 @@ export async function writeTestV3Config(
     ...(options.extensions ? { extensions: options.extensions } : {}),
     ...(options.extraConfig ?? {}),
   };
-  const configPath = path.join(configDir, "aihub.json");
+  const configPath = path.join(configDir, "yoplai.json");
   await fs.writeFile(configPath, JSON.stringify(config, null, 2));
   return configPath;
 }

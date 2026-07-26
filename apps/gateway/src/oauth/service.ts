@@ -18,7 +18,7 @@ import {
   type OAuthProviderDescriptor,
   type OAuthRequirement,
   type ResolvedOAuth,
-} from "@aihub/shared";
+} from "@yoplai/shared";
 import { loadConfig } from "../config/index.js";
 import { OAuthConnectionStore, getOAuthConnectionStore } from "./store.js";
 

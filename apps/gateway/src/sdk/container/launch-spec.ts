@@ -1,7 +1,6 @@
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
-import type { FileAttachment, GatewayConfig } from "@aihub/shared";
+import { resolveHomeDir, type FileAttachment, type GatewayConfig } from "@yoplai/shared";
 import type { SdkRunParams } from "../types.js";
 import {
   buildContainerArgs,
@@ -15,7 +14,7 @@ import { getMediaInboundDir } from "../../media/metadata.js";
 export type ContainerLaunchSpec = {
   args: string[];
   containerName: string;
-  aihubHome: string;
+  homeDir: string;
   ipcDir: string;
   ipcInputDir: string;
   hostDataDir: string;
@@ -27,11 +26,11 @@ export function buildContainerLaunchSpec(
   config: GatewayConfig
 ): ContainerLaunchSpec {
   const globalSandbox = config.sandbox ?? {};
-  const aihubHome = process.env.AIHUB_HOME ?? path.join(os.homedir(), ".aihub");
+  const homeDir = resolveHomeDir();
   const mounts = buildVolumeMounts(
     params.agent,
     globalSandbox,
-    aihubHome,
+    homeDir,
     params.userId,
     config.onecli,
     params.sessionId
@@ -40,22 +39,22 @@ export function buildContainerLaunchSpec(
     params.agent,
     globalSandbox,
     mounts,
-    aihubHome,
+    homeDir,
     params.userId,
     config.onecli,
     config.env
   );
   const containerName = getArgValue(args, "--name");
-  const ipcDir = path.join(aihubHome, "ipc", params.agentId);
+  const ipcDir = path.join(homeDir, "ipc", params.agentId);
   return {
     args,
     containerName,
-    aihubHome,
+    homeDir,
     ipcDir,
     ipcInputDir: path.join(ipcDir, "input"),
-    hostDataDir: getAgentDataDir(aihubHome, params.agentId),
+    hostDataDir: getAgentDataDir(homeDir, params.agentId),
     hostUploadsDir: getSessionUploadsDir(
-      aihubHome,
+      homeDir,
       params.agentId,
       params.sessionId
     ),
@@ -68,11 +67,11 @@ export function prepareLaunchFilesystem(
 ): void {
   fs.rmSync(spec.ipcInputDir, { recursive: true, force: true });
   fs.mkdirSync(spec.ipcInputDir, { recursive: true });
-  fs.mkdirSync(path.join(spec.aihubHome, "sessions", params.agentId), {
+  fs.mkdirSync(path.join(spec.homeDir, "sessions", params.agentId), {
     recursive: true,
   });
   if (params.userId) {
-    fs.mkdirSync(path.join(spec.aihubHome, "users", params.userId), {
+    fs.mkdirSync(path.join(spec.homeDir, "users", params.userId), {
       recursive: true,
     });
   }

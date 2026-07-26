@@ -417,7 +417,7 @@ export function ProjectsOverview(
       }
       setEmbeddedEditorProjectId(project.id);
       window.history.pushState(
-        { aihubProjectEditor: project.id },
+        { projectEditor: project.id },
         "",
         window.location.href
       );
@@ -429,7 +429,7 @@ export function ProjectsOverview(
     }
     try {
       localStorage.setItem(
-        `aihub:project:${project.id}:center-view`,
+        `yoplai:project:${project.id}:center-view`,
         JSON.stringify({ tab })
       );
     } catch {
@@ -537,7 +537,7 @@ export function ProjectsOverview(
             <ProjectDetailPanel
               projectId={projectId()}
               onBack={() => {
-                if (window.history.state?.aihubProjectEditor === projectId()) {
+                if (window.history.state?.projectEditor === projectId()) {
                   window.history.back();
                 } else {
                   setEmbeddedEditorProjectId(null);

@@ -51,7 +51,7 @@ vi.mock("../config/hot-reload.js", () => ({
 describe("startGatewayCommand", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    delete process.env.AIHUB_UI_PORT;
+    delete process.env.YOPLAI_UI_PORT;
   });
 
   it("starts extensions before opening the HTTP server", async () => {

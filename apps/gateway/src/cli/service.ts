@@ -7,49 +7,80 @@ import { fileURLToPath } from "node:url";
 import { CONFIG_DIR, loadConfig } from "../config/index.js";
 import { logError } from "../logging.js";
 
-const LABEL = "com.aihub.gateway";
+const LABEL = "com.yoplai.gateway";
+// Pre-rename launchd label. It names an existing job and an existing plist
+// FILE on disk, so it must stay readable or installs made before the rename
+// become uncontrollable orphans.
+const LEGACY_LABEL = "com.aihub.gateway";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 function assertDarwin(): void {
   if (process.platform !== "darwin") {
     logError(
-      "aihub gateway service is unsupported on this platform",
+      "yoplai gateway service is unsupported on this platform",
       "macOS launchd only — Linux/systemd support pending."
     );
     process.exit(1);
   }
 }
 
-function getPlistPath(): string {
+function plistPathFor(label: string): string {
   return path.join(
     os.homedir(),
     "Library",
     "LaunchAgents",
-    `${LABEL}.plist`
+    `${label}.plist`
   );
 }
 
-function getServiceTarget(): string {
-  return `gui/${process.getuid?.() ?? ""}/${LABEL}`;
+function serviceTargetFor(label: string): string {
+  return `gui/${process.getuid?.() ?? ""}/${label}`;
 }
 
 function getDomainTarget(): string {
   return `gui/${process.getuid?.() ?? ""}`;
 }
 
+/** True when `label` names an install that exists on disk or in launchd. */
+function installExists(label: string): boolean {
+  return fs.existsSync(plistPathFor(label)) || isLoaded(label);
+}
+
+let warnedLegacyLabel = false;
+
+/**
+ * The label of the install that actually exists. Always prefers the current
+ * label so a stale legacy plist can never shadow a new install; falls back to
+ * the pre-rename label (warning once) so a service installed before the rename
+ * stays fully controllable.
+ */
+function resolveActiveLabel(): string {
+  if (installExists(LABEL)) return LABEL;
+  if (installExists(LEGACY_LABEL)) {
+    if (!warnedLegacyLabel) {
+      warnedLegacyLabel = true;
+      console.warn(
+        `[gateway] Using legacy launchd service ${LEGACY_LABEL}; run 'yoplai gateway install' to migrate it to ${LABEL}.`
+      );
+    }
+    return LEGACY_LABEL;
+  }
+  return LABEL;
+}
+
 function resolveCliEntry(): string {
   // service.ts lives in dist/cli/ at runtime → sibling index.js is the bin entry
   const candidate = path.join(__dirname, "index.js");
   if (fs.existsSync(candidate)) return candidate;
-  // Fallback to globally-linked aihub
+  // Fallback to globally-linked yoplai
   try {
-    const out = execSync("command -v aihub", { encoding: "utf-8" }).trim();
+    const out = execSync("command -v yoplai", { encoding: "utf-8" }).trim();
     if (out) return out;
   } catch {
     // ignore
   }
   throw new Error(
-    `Cannot resolve aihub CLI entry; expected ${candidate} or 'aihub' on PATH.`
+    `Cannot resolve yoplai CLI entry; expected ${candidate} or 'yoplai' on PATH.`
   );
 }
 
@@ -91,7 +122,7 @@ ${argXml}
   <string>${escapeXml(CONFIG_DIR)}</string>
   <key>EnvironmentVariables</key>
   <dict>
-    <key>AIHUB_HOME</key>
+    <key>YOPLAI_HOME</key>
     <string>${escapeXml(CONFIG_DIR)}</string>
     <key>HOME</key>
     <string>${escapeXml(homePath)}</string>
@@ -133,9 +164,9 @@ function runLaunchctl(args: string[], allowFail = false): number {
   }
 }
 
-function isLoaded(): boolean {
+function isLoaded(label: string): boolean {
   try {
-    execFileSync("launchctl", ["print", getServiceTarget()], {
+    execFileSync("launchctl", ["print", serviceTargetFor(label)], {
       stdio: "ignore",
     });
     return true;
@@ -146,18 +177,50 @@ function isLoaded(): boolean {
 
 function installService(): void {
   assertDarwin();
-  const plistPath = getPlistPath();
+  const plistPath = plistPathFor(LABEL);
+  const legacyPlistPath = plistPathFor(LEGACY_LABEL);
+  const migrating = installExists(LEGACY_LABEL);
+
   fs.mkdirSync(path.dirname(plistPath), { recursive: true });
   const plist = buildPlist();
   fs.writeFileSync(plistPath, plist, { mode: 0o644 });
 
-  // Bootout existing instance if present (idempotent install)
-  if (isLoaded()) {
-    runLaunchctl(["bootout", getServiceTarget()], true);
+  // Only one job may own the gateway port, so any legacy job goes down before
+  // the new one comes up — the two are never loaded at the same time. The
+  // legacy plist is kept on disk until bootstrap succeeds, so a failure can be
+  // rolled back to the still-installed legacy service.
+  if (migrating && isLoaded(LEGACY_LABEL)) {
+    runLaunchctl(["bootout", serviceTargetFor(LEGACY_LABEL)], true);
   }
-  runLaunchctl(["bootstrap", getDomainTarget(), plistPath]);
+  // Bootout existing instance if present (idempotent install)
+  if (isLoaded(LABEL)) {
+    runLaunchctl(["bootout", serviceTargetFor(LABEL)], true);
+  }
+
+  try {
+    runLaunchctl(["bootstrap", getDomainTarget(), plistPath]);
+  } catch (err) {
+    if (migrating) {
+      // Drop the half-installed new plist first so it cannot shadow the
+      // legacy install we are restoring.
+      fs.rmSync(plistPath, { force: true });
+      runLaunchctl(["bootstrap", getDomainTarget(), legacyPlistPath], true);
+      logError(
+        "install failed; rolled back to the legacy service",
+        `Restored ${LEGACY_LABEL}. If it is not running, start it with 'yoplai gateway start'.`
+      );
+    }
+    throw err;
+  }
+
+  if (migrating && fs.existsSync(legacyPlistPath)) {
+    fs.rmSync(legacyPlistPath, { force: true });
+  }
 
   const logsDir = path.join(CONFIG_DIR, "logs");
+  if (migrating) {
+    console.log(`Migrated:  ${LEGACY_LABEL} -> ${LABEL}`);
+  }
   console.log(`Installed: ${plistPath}`);
   console.log(`Logs:      ${logsDir}/gateway.{out,err}.log`);
   console.log(`Service:   ${LABEL} (loaded, RunAtLoad=true)`);
@@ -165,41 +228,44 @@ function installService(): void {
 
 function startService(): void {
   assertDarwin();
-  const plistPath = getPlistPath();
+  const label = resolveActiveLabel();
+  const plistPath = plistPathFor(label);
   if (!fs.existsSync(plistPath)) {
-    logError("Service not installed", "Run 'aihub gateway install' first.");
+    logError("Service not installed", "Run 'yoplai gateway install' first.");
     process.exit(1);
   }
-  if (!isLoaded()) {
+  if (!isLoaded(label)) {
     runLaunchctl(["bootstrap", getDomainTarget(), plistPath]);
   }
-  runLaunchctl(["kickstart", "-k", getServiceTarget()]);
-  console.log(`Started: ${LABEL}`);
+  runLaunchctl(["kickstart", "-k", serviceTargetFor(label)]);
+  console.log(`Started: ${label}`);
 }
 
 function restartService(): void {
   assertDarwin();
-  const plistPath = getPlistPath();
+  const label = resolveActiveLabel();
+  const plistPath = plistPathFor(label);
   if (!fs.existsSync(plistPath)) {
-    logError("Service not installed", "Run 'aihub gateway install' first.");
+    logError("Service not installed", "Run 'yoplai gateway install' first.");
     process.exit(1);
   }
-  if (!isLoaded()) {
+  if (!isLoaded(label)) {
     runLaunchctl(["bootstrap", getDomainTarget(), plistPath]);
   }
   // kickstart -k stops and restarts in one shot
-  runLaunchctl(["kickstart", "-k", getServiceTarget()]);
-  console.log(`Restarted: ${LABEL}`);
+  runLaunchctl(["kickstart", "-k", serviceTargetFor(label)]);
+  console.log(`Restarted: ${label}`);
 }
 
 function stopService(): void {
   assertDarwin();
-  if (!isLoaded()) {
-    console.log(`Not running: ${LABEL}`);
+  const label = resolveActiveLabel();
+  if (!isLoaded(label)) {
+    console.log(`Not running: ${label}`);
     return;
   }
-  runLaunchctl(["bootout", getServiceTarget()]);
-  console.log(`Stopped: ${LABEL}`);
+  runLaunchctl(["bootout", serviceTargetFor(label)]);
+  console.log(`Stopped: ${label}`);
 }
 
 type LaunchctlInfo = {
@@ -209,10 +275,10 @@ type LaunchctlInfo = {
   lastExitCode: number | null;
 };
 
-function readLaunchctlInfo(): LaunchctlInfo {
+function readLaunchctlInfo(label: string): LaunchctlInfo {
   let raw: string;
   try {
-    raw = execFileSync("launchctl", ["print", getServiceTarget()], {
+    raw = execFileSync("launchctl", ["print", serviceTargetFor(label)], {
       encoding: "utf-8",
       stdio: ["ignore", "pipe", "ignore"],
     });
@@ -250,9 +316,10 @@ function homeTilde(p: string): string {
 
 function statusService(): void {
   assertDarwin();
-  const info = readLaunchctlInfo();
+  const label = resolveActiveLabel();
+  const info = readLaunchctlInfo(label);
   const { gateway, ui, uiEnabled } = readPorts();
-  const plistPath = getPlistPath();
+  const plistPath = plistPathFor(label);
   const plistExists = fs.existsSync(plistPath);
   const logsDir = path.join(CONFIG_DIR, "logs");
 
@@ -272,13 +339,19 @@ function statusService(): void {
   }
 
   const rows: Array<[string, string]> = [
-    ["Service", LABEL],
+    ["Service", label],
     ["Status", statusLine],
     ["Gateway", `http://127.0.0.1:${gateway}`],
     ["UI", uiEnabled ? `http://127.0.0.1:${ui}` : "disabled"],
     ["Plist", homeTilde(plistPath)],
     ["Logs", `${homeTilde(logsDir)}/gateway.{out,err}.log`],
   ];
+  if (label !== LEGACY_LABEL && installExists(LEGACY_LABEL)) {
+    rows.push([
+      "Legacy",
+      `${LEGACY_LABEL} also present — 'yoplai gateway install' removes it`,
+    ]);
+  }
 
   const labelWidth = Math.max(...rows.map(([k]) => k.length));
   const lines = rows.map(([k, v]) => `  ${k.padEnd(labelWidth)}  ${v}`);
@@ -286,7 +359,7 @@ function statusService(): void {
   const bar = "─".repeat(inner + 2);
 
   console.log(`┌${bar}┐`);
-  console.log(`│ ${"AIHub Gateway Service".padEnd(inner)} │`);
+  console.log(`│ ${"Yoplai Gateway Service".padEnd(inner)} │`);
   console.log(`├${bar}┤`);
   for (const line of lines) {
     console.log(`│${line.padEnd(inner + 2)}│`);
@@ -296,17 +369,25 @@ function statusService(): void {
 
 function uninstallService(): void {
   assertDarwin();
-  if (isLoaded()) {
-    runLaunchctl(["bootout", getServiceTarget()], true);
+  // Remove every install that exists, so a legacy job is never left loaded
+  // with no CLI path to stop it. Both present is handled by removing both.
+  const labels = [LABEL, LEGACY_LABEL].filter((label) => installExists(label));
+  if (labels.length === 0) {
+    console.log(`No plist at ${plistPathFor(LABEL)}`);
+    console.log(`Uninstalled: ${LABEL}`);
+    return;
   }
-  const plistPath = getPlistPath();
-  if (fs.existsSync(plistPath)) {
-    fs.unlinkSync(plistPath);
-    console.log(`Removed: ${plistPath}`);
-  } else {
-    console.log(`No plist at ${plistPath}`);
+  for (const label of labels) {
+    if (isLoaded(label)) {
+      runLaunchctl(["bootout", serviceTargetFor(label)], true);
+    }
+    const plistPath = plistPathFor(label);
+    if (fs.existsSync(plistPath)) {
+      fs.unlinkSync(plistPath);
+      console.log(`Removed: ${plistPath}`);
+    }
+    console.log(`Uninstalled: ${label}`);
   }
-  console.log(`Uninstalled: ${LABEL}`);
 }
 
 export function registerGatewayServiceCommands(gatewayCmd: Command): void {

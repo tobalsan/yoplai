@@ -21,10 +21,10 @@ import {
   type ContainerOutput,
   type ContainerRunnerProtocolEvent,
   type HistoryEvent,
-} from "@aihub/shared";
+} from "@yoplai/shared";
 import { callGatewayTool } from "./gateway-client.js";
 
-const AIHUB_CONTAINER_SYSTEM_PROMPT = `You are an AI agent running inside an isolated AIHub container. Use the mounted workspace as your working directory. Coding tools run inside this container. Orchestration tools call back to the gateway.
+const CONTAINER_SYSTEM_PROMPT = `You are an AI agent running inside an isolated Yoplai container. Use the mounted workspace as your working directory. Coding tools run inside this container. Orchestration tools call back to the gateway.
 
 To share a file with the user, write it to /workspace/data/ then use the send_file tool. The file will appear as a downloadable card in the chat.
 `;
@@ -122,7 +122,7 @@ export async function runAgent(
     settingsManager,
     additionalSkillPaths: [path.join(input.workspaceDir, "skills")],
     appendSystemPrompt: [
-      AIHUB_CONTAINER_SYSTEM_PROMPT,
+      CONTAINER_SYSTEM_PROMPT,
       ...(input.extensionSystemPrompts ?? []),
       renderedContext || undefined,
     ].filter((prompt): prompt is string => Boolean(prompt)),

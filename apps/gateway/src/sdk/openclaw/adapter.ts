@@ -1,6 +1,6 @@
 import WebSocket from "ws";
-import type { AgentConfig } from "@aihub/shared";
-import { renderAgentContext } from "@aihub/shared";
+import type { AgentConfig } from "@yoplai/shared";
+import { renderAgentContext } from "@yoplai/shared";
 import type { SdkAdapter, SdkRunParams, SdkRunResult } from "../types.js";
 import { randomUUID } from "node:crypto";
 import {
@@ -99,7 +99,7 @@ export const openclawAdapter: SdkAdapter = {
     } else if (openclaw.sessionMode === "fixed") {
       sessionKey = params.sessionKey ?? "main";
     } else {
-      sessionKey = `aihub:${params.sessionId}`;
+      sessionKey = `yoplai:${params.sessionId}`;
     }
 
     let assistantText = "";
@@ -207,7 +207,7 @@ export const openclawAdapter: SdkAdapter = {
               maxProtocol: PROTOCOL_VERSION,
               client: {
                 id: CLIENT_ID,
-                displayName: "aihub-openclaw",
+                displayName: "yoplai-openclaw",
                 version: clientVersion,
                 platform: process.platform,
                 mode: CLIENT_MODE,
@@ -215,7 +215,7 @@ export const openclawAdapter: SdkAdapter = {
               role: "operator",
               scopes: ["operator.read", "operator.write"],
               auth: { token: openclaw.token },
-              userAgent: `aihub-openclaw/${clientVersion}`,
+              userAgent: `yoplai-openclaw/${clientVersion}`,
             },
           })
         );

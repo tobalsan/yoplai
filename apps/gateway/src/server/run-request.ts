@@ -7,8 +7,8 @@ import {
   type StreamEvent,
   type ThinkLevel,
   type WsSessionResetEvent,
-} from "@aihub/shared";
-import type { AgentConfig } from "@aihub/shared";
+} from "@yoplai/shared";
+import type { AgentConfig } from "@yoplai/shared";
 import type { InternalRunAgentParams } from "../agents/runner.js";
 import { invalidateResolvedHistoryFile } from "../history/store.js";
 import { normalizeInboundAttachments } from "../sdk/attachments.js";

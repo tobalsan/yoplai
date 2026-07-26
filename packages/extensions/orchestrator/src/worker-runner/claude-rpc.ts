@@ -1,11 +1,11 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import fsSync from "node:fs";
 import { createRequire } from "node:module";
-import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { WorkerRunner, WorkerRunnerHandle, WorkerRunnerStartInput, WorkerRunnerStatus } from "./runner.js";
 import { reasoningEffortForRunner, validateWorkflowThinkingForRunner } from "./thinking.js";
 import { sanitizedWorkerEnv } from "./env.js";
+import { resolveSessionDir } from "./session-dir.js";
 
 type ClaudeCommandResponse = {
   id?: string | number | null;
@@ -71,7 +71,7 @@ function commandParts(input: WorkerRunnerStartInput): [string, ...string[]] {
   const shimArgs = fsSync.existsSync(shimPath)
     ? [shimPath]
     : ["--import", createRequire(import.meta.url).resolve("tsx"), fileURLToPath(new URL("./claude-rpc-shim.ts", import.meta.url))];
-  return [process.execPath, ...runnerArgs(input, [...shimArgs, "--name", input.label, "--session-dir", path.join(input.workspace, ".aihub", "claude-sessions"), "--claude-cli", "claude"])];
+  return [process.execPath, ...runnerArgs(input, [...shimArgs, "--name", input.label, "--session-dir", resolveSessionDir(input.workspace, "claude-sessions"), "--claude-cli", "claude"])];
 }
 
 function runnerArgs(input: WorkerRunnerStartInput, args: string[]): string[] {
@@ -171,16 +171,16 @@ export class ClaudeRpcRunner implements WorkerRunner {
   }
 
   private spawnSession(key: string, input: WorkerRunnerStartInput): ClaudeSession {
-    const sessionDir = path.join(input.workspace, ".aihub", "claude-sessions");
+    const sessionDir = resolveSessionDir(input.workspace, "claude-sessions");
     fsSync.mkdirSync(sessionDir, { recursive: true });
     const [cmd, ...args] = commandParts(input);
     const child = spawn(cmd, args, {
       cwd: input.workspace,
       env: sanitizedWorkerEnv({
-        AIHUB_RUN_ID: input.runId,
-        AIHUB_PROJECT_ID: input.project.id,
-        AIHUB_ISSUE_ID: input.issue.id,
-        AIHUB_ISSUE_IDENTIFIER: input.issue.identifier,
+        YOPLAI_RUN_ID: input.runId,
+        YOPLAI_PROJECT_ID: input.project.id,
+        YOPLAI_ISSUE_ID: input.issue.id,
+        YOPLAI_ISSUE_IDENTIFIER: input.issue.identifier,
       }),
       stdio: ["pipe", "pipe", "pipe"],
       detached: false,

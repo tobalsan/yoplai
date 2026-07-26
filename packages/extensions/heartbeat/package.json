@@ -1,5 +1,5 @@
 {
-  "name": "@aihub/extension-heartbeat",
+  "name": "@yoplai/extension-heartbeat",
   "version": "0.1.0",
   "type": "module",
   "main": "./dist/index.js",
@@ -15,8 +15,8 @@
     "build": "tsc"
   },
   "dependencies": {
-    "@aihub/extension-scheduler": "workspace:*",
-    "@aihub/shared": "workspace:*",
+    "@yoplai/extension-scheduler": "workspace:*",
+    "@yoplai/shared": "workspace:*",
     "hono": "^4.11.4",
     "zod": "^3.23.8"
   }

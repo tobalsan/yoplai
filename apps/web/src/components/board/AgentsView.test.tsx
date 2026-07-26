@@ -2,7 +2,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { render } from "solid-js/web";
 import { AgentsView } from "./AgentsView";
-import type { SubagentRun } from "@aihub/shared/types";
+import type { SubagentRun } from "@yoplai/shared/types";
 
 // ── Mocks ─────────────────────────────────────────────────────────────────────
 

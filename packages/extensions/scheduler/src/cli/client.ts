@@ -2,7 +2,7 @@ import type {
   CreateScheduleRequest,
   ScheduleJob,
   UpdateScheduleRequest,
-} from "@aihub/shared";
+} from "@yoplai/shared";
 import type { SchedulerRunResult } from "../service.js";
 import { resolveConfig } from "./config.js";
 

@@ -4,7 +4,7 @@ import {
   GatewayConfigSchema,
   type AgentConfig,
   type Extension,
-} from "@aihub/shared";
+} from "@yoplai/shared";
 import { ExtensionRuntime } from "./runtime.js";
 
 function extension(overrides: Partial<Extension> & { id: string }): Extension {

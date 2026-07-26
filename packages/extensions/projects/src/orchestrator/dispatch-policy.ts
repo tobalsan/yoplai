@@ -3,7 +3,7 @@ import {
   type ProjectsOrchestratorShapingStatusConfig,
   type ProjectsOrchestratorStatusConfig,
   type SubagentRuntimeProfile,
-} from "@aihub/shared";
+} from "@yoplai/shared";
 import { resolveProfile } from "../profiles/resolver.js";
 import type { ProjectListItem } from "../projects/store.js";
 import type { SliceRecord, SliceStatus } from "../projects/slices.js";

@@ -7,7 +7,7 @@ import os from "node:os";
 import path from "node:path";
 import { spawn } from "node:child_process";
 import { describe, expect, it, afterEach, beforeEach } from "vitest";
-import type { ExtensionContext } from "@aihub/shared";
+import type { ExtensionContext } from "@yoplai/shared";
 import { boardExtension } from "./index.js";
 import { Hono } from "hono";
 
@@ -145,7 +145,7 @@ describe("GET /board/agents", () => {
   let tmpDir: string;
 
   beforeEach(async () => {
-    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "aihub-board-agents-"));
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "yoplai-board-agents-"));
   });
 
   afterEach(async () => {
@@ -235,7 +235,7 @@ describe("POST /board/agents/:runId/kill", () => {
   let tmpDir: string;
 
   beforeEach(async () => {
-    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "aihub-board-kill-"));
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "yoplai-board-kill-"));
   });
 
   afterEach(async () => {

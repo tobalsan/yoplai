@@ -1,7 +1,7 @@
 import * as fs from "node:fs";
 import path from "node:path";
 import chokidar, { type FSWatcher } from "chokidar";
-import type { GatewayConfig } from "@aihub/shared";
+import type { GatewayConfig } from "@yoplai/shared";
 import { getProjectsContext } from "../context.js";
 import { getProjectsRoot } from "../util/paths.js";
 

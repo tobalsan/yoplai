@@ -6,7 +6,7 @@ import type {
   FullHistoryMessage,
   LeadSession,
   RunAgentResult,
-} from "@aihub/shared";
+} from "@yoplai/shared";
 import { getProjectsContext } from "../context.js";
 import {
   historyPath,

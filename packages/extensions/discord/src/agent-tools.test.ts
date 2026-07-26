@@ -2,7 +2,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { AgentConfig, GatewayConfig } from "@aihub/shared";
+import type { AgentConfig, GatewayConfig } from "@yoplai/shared";
 import { clearDiscordClientCache, discordAgentTools } from "./agent-tools.js";
 import { clearActiveBots, registerActiveBot } from "./bot-registry.js";
 import type { DiscordBot } from "./bot.js";
@@ -73,7 +73,7 @@ describe("discord agent tools", () => {
 
   it("create_forum_thread creates the thread and binds it to the current session", async () => {
     const dataDir = await fs.mkdtemp(
-      path.join(os.tmpdir(), "aihub-discord-tool-")
+      path.join(os.tmpdir(), "yoplai-discord-tool-")
     );
     const rest = {
       get: vi.fn(),

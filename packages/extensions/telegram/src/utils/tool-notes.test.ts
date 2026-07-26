@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { StreamEvent } from "@aihub/shared";
+import type { StreamEvent } from "@yoplai/shared";
 import { formatToolNote, ToolNotes } from "./tool-notes.js";
 
 function toolCall(

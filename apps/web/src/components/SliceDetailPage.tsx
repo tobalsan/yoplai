@@ -145,7 +145,7 @@ function parseThreadMetadata(lines: string[]): {
   date: string;
   bodyStart: number;
 } {
-  let author = "AIHub";
+  let author = "Yoplai";
   let date = "";
   let bodyStart = 0;
   for (; bodyStart < lines.length; bodyStart += 1) {

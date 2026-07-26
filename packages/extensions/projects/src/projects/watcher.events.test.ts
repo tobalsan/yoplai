@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { GatewayConfig } from "@aihub/shared";
+import type { GatewayConfig } from "@yoplai/shared";
 import { clearProjectsContext, setProjectsContext } from "../context.js";
 
 type MockWatcher = {
@@ -32,8 +32,8 @@ vi.mock("chokidar", () => ({
   },
 }));
 
-vi.mock("@aihub/shared", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@aihub/shared")>();
+vi.mock("@yoplai/shared", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@yoplai/shared")>();
   return {
     ...actual,
     agentEventBus: {
@@ -43,7 +43,7 @@ vi.mock("@aihub/shared", async (importOriginal) => {
   };
 });
 
-import { agentEventBus } from "@aihub/shared";
+import { agentEventBus } from "@yoplai/shared";
 import { startProjectWatcher } from "./watcher.js";
 
 describe("project watcher file debounce", () => {

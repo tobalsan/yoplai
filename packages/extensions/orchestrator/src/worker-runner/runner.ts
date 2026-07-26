@@ -1,5 +1,5 @@
 import { spawn, type ChildProcess } from "node:child_process";
-import type { SubagentRuntimeProfile } from "@aihub/shared";
+import type { SubagentRuntimeProfile } from "@yoplai/shared";
 import type { LinearIssue, ProjectDescriptor, WorkflowConfig } from "../types.js";
 import { ClaudeRpcRunner } from "./claude-rpc.js";
 import { CodexAppServerRunner } from "./codex-app-server.js";
@@ -76,12 +76,12 @@ export class CliWorkerRunner implements WorkerRunner {
     const child = spawn(cmd, args, {
       cwd: input.workspace,
       env: sanitizedWorkerEnv({
-        AIHUB_RUN_ID: input.runId,
-        AIHUB_PROJECT_ID: input.project.id,
-        AIHUB_ISSUE_ID: input.issue.id,
-        AIHUB_ISSUE_IDENTIFIER: input.issue.identifier,
-        AIHUB_WORKER_PROMPT: input.prompt,
-        AIHUB_WORKER_MODEL: input.workflow.agent.model,
+        YOPLAI_RUN_ID: input.runId,
+        YOPLAI_PROJECT_ID: input.project.id,
+        YOPLAI_ISSUE_ID: input.issue.id,
+        YOPLAI_ISSUE_IDENTIFIER: input.issue.identifier,
+        YOPLAI_WORKER_PROMPT: input.prompt,
+        YOPLAI_WORKER_MODEL: input.workflow.agent.model,
       }),
       stdio: "ignore",
       detached: false,

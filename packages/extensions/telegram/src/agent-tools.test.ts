@@ -1,4 +1,4 @@
-import type { AgentConfig, GatewayConfig } from "@aihub/shared";
+import type { AgentConfig, GatewayConfig } from "@yoplai/shared";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { telegramAgentTools } from "./agent-tools.js";
 import { clearActiveBots, registerActiveBot } from "./bot-registry.js";

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { GatewayConfig, SubagentRuntimeProfile } from "@aihub/shared";
+import type { GatewayConfig, SubagentRuntimeProfile } from "@yoplai/shared";
 import {
   mergeProfiles,
   normalizeRunMode,

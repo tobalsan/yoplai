@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import { getOAuthProvider } from "@aihub/shared";
+import { getOAuthProvider } from "@yoplai/shared";
 import { getOAuthService, type OAuthService } from "./service.js";
 
 /**
@@ -124,8 +124,8 @@ function renderResultPage(success: boolean, message: string): string {
 .card{max-width:420px;padding:32px;border-radius:12px;background:#fff;box-shadow:0 1px 4px rgba(0,0,0,.12);text-align:center}
 h1{color:${color};font-size:20px;margin:0 0 12px}p{color:#3c4043;margin:0}</style></head>
 <body><div class="card"><h1>${title}</h1><p>${escapeHtml(message)}</p>
-<p style="margin-top:16px;color:#5f6368;font-size:13px">You can close this window and return to AIHub.</p></div>
-<script>try{window.opener&&window.opener.postMessage({type:"aihub-oauth",success:${success}},"*")}catch(e){}</script>
+<p style="margin-top:16px;color:#5f6368;font-size:13px">You can close this window and return to Yoplai.</p></div>
+<script>try{window.opener&&window.opener.postMessage({type:"yoplai-oauth",success:${success}},"*")}catch(e){}</script>
 </body></html>`;
 }
 

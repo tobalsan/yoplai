@@ -5,7 +5,7 @@ import { admin } from "better-auth/plugins/admin";
 import { defaultAc, userAc } from "better-auth/plugins/admin/access";
 import { apiKey } from "@better-auth/api-key";
 import type Database from "better-sqlite3";
-import type { GatewayConfig, MultiUserConfig } from "@aihub/shared";
+import type { GatewayConfig, MultiUserConfig } from "@yoplai/shared";
 
 function normalizeOrigin(url: string): string {
   return new URL(url).origin;
@@ -107,7 +107,7 @@ function buildMultiUserAuth(
   db: Database.Database
 ) {
   return betterAuth({
-    appName: "AIHub",
+    appName: "Yoplai",
     baseURL: getAuthBaseUrl(config),
     basePath: "/api/auth",
     secret: multiUserConfig.sessionSecret,

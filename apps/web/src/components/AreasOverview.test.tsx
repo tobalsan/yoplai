@@ -45,7 +45,7 @@ describe("AreasOverview", () => {
 
   it("creates a new area from the homepage with an id derived from title", async () => {
     fetchAreasMock.mockResolvedValue([
-      { id: "aihub", title: "AIHub", color: "#3b82f6" },
+      { id: "yoplai", title: "Yoplai", color: "#3b82f6" },
     ]);
     fetchProjectsMock.mockResolvedValue([]);
     createAreaMock.mockImplementation(async (payload) => payload);
@@ -67,7 +67,7 @@ describe("AreasOverview", () => {
     await tick();
 
     const titleInput = container.querySelector(
-      '.area-create-card input[type="text"][placeholder="AIHub"]'
+      '.area-create-card input[type="text"][placeholder="Yoplai"]'
     ) as HTMLInputElement | null;
     expect(titleInput).not.toBeNull();
     titleInput!.value = "Ops Platform";

@@ -1,7 +1,7 @@
 import { watch, type FSWatcher } from "node:fs";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
-import type { GatewayConfig } from "@aihub/shared";
+import type { GatewayConfig } from "@yoplai/shared";
 import { getProject, listProjects } from "./store.js";
 import { parseSpaceFile, type SpaceFile } from "./space.js";
 

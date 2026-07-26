@@ -10,7 +10,7 @@ import {
 } from "./update-models.js";
 
 describe("update-models helpers", () => {
-  it("collects models from aihub.json and models.json providers", () => {
+  it("collects models from yoplai.json and models.json providers", () => {
     const models = collectConfiguredModels(
       {
         agents: [

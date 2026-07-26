@@ -1,4 +1,4 @@
-import type { SubagentRun, SubagentRunStatus } from "@aihub/shared/types";
+import type { SubagentRun, SubagentRunStatus } from "@yoplai/shared/types";
 import type {
   FileAttachment,
   RuntimeSubagentListResponse,

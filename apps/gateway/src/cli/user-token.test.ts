@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { writeTestV3Config } from "../test-utils/v3-config.js";
 
 type EnvSnapshot = {
-  aihubHome?: string;
+  homeDir?: string;
   home?: string;
   userProfile?: string;
 };
@@ -24,16 +24,16 @@ async function createTempHome(): Promise<{
   dir: string;
   previousEnv: EnvSnapshot;
 }> {
-  const dir = await fsp.mkdtemp(path.join(os.tmpdir(), "aihub-user-token-"));
+  const dir = await fsp.mkdtemp(path.join(os.tmpdir(), "yoplai-user-token-"));
   tempDirs.push(dir);
 
   const previousEnv: EnvSnapshot = {
-    aihubHome: process.env.AIHUB_HOME,
+    homeDir: process.env.YOPLAI_HOME,
     home: process.env.HOME,
     userProfile: process.env.USERPROFILE,
   };
 
-  process.env.AIHUB_HOME = dir;
+  process.env.YOPLAI_HOME = dir;
   process.env.HOME = dir;
   process.env.USERPROFILE = dir;
 
@@ -58,8 +58,8 @@ async function createTempHome(): Promise<{
 }
 
 function restoreEnv(previousEnv: EnvSnapshot) {
-  if (previousEnv.aihubHome === undefined) delete process.env.AIHUB_HOME;
-  else process.env.AIHUB_HOME = previousEnv.aihubHome;
+  if (previousEnv.homeDir === undefined) delete process.env.YOPLAI_HOME;
+  else process.env.YOPLAI_HOME = previousEnv.homeDir;
 
   if (previousEnv.home === undefined) delete process.env.HOME;
   else process.env.HOME = previousEnv.home;
@@ -68,7 +68,7 @@ function restoreEnv(previousEnv: EnvSnapshot) {
   else process.env.USERPROFILE = previousEnv.userProfile;
 }
 
-describe("aihub user token (bootstrap path)", () => {
+describe("yoplai user token (bootstrap path)", () => {
   it("creates a token directly against the auth DB and caches it", async () => {
     const { dir, previousEnv } = await createTempHome();
 
@@ -79,7 +79,7 @@ describe("aihub user token (bootstrap path)", () => {
       clearConfigCacheForTests();
 
       const { createMultiUserAuth, initializeMultiUserDatabase } =
-        await import("@aihub/extension-multi-user");
+        await import("@yoplai/extension-multi-user");
       const { loadConfig } = await import("../config/index.js");
 
       // Seed an approved user directly in the DB so the bootstrap path can find them.

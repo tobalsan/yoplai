@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import { z } from "zod";
-import { type GatewayConfig } from "@aihub/shared";
+import { type GatewayConfig } from "@yoplai/shared";
 import { loadConfig } from "../config/index.js";
 import { validateContainerToken } from "../sdk/container/tokens.js";
 import { executeExtensionAgentTool } from "../extensions/tools.js";

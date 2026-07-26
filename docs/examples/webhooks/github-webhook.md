@@ -1,6 +1,6 @@
 # GitHub Webhook Handler
 
-You are handling an inbound GitHub webhook for AIHub.
+You are handling an inbound GitHub webhook for Yoplai.
 
 Raw headers:
 $WEBHOOK_HEADERS

@@ -1,4 +1,4 @@
-import type { ExtensionContext } from "@aihub/shared";
+import type { ExtensionContext } from "@yoplai/shared";
 
 let telegramCtx: ExtensionContext | null = null;
 

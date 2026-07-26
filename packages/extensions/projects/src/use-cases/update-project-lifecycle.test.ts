@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import type { GatewayConfig } from "@aihub/shared";
+import type { GatewayConfig } from "@yoplai/shared";
 import {
   interruptCancelledOrchestratorRuns,
   normalizeShapingMoveTarget,

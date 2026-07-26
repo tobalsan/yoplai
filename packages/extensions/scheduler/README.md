@@ -1,10 +1,10 @@
 # Scheduler Extension
 
-AIHub scheduler stores jobs per agent and fires them with cron expressions.
+Yoplai scheduler stores jobs per agent and fires them with cron expressions.
 
 ## Enable / disable
 
-Add `extensions.scheduler` to `aihub.json` to load scheduler routes and CLI support:
+Add `extensions.scheduler` to `yoplai.json` to load scheduler routes and CLI support:
 
 ```json
 {
@@ -15,7 +15,7 @@ Add `extensions.scheduler` to `aihub.json` to load scheduler routes and CLI supp
 ```
 
 `enabled: false` is a runtime kill switch only. The extension still loads, and
-HTTP API / `aihub scheduler` commands still read and write per-agent
+HTTP API / `yoplai scheduler` commands still read and write per-agent
 `cron/jobs.json` files. Timers do not start and jobs do not fire.
 
 ## Storage
@@ -105,13 +105,13 @@ are gone.
 ## CLI
 
 ```bash
-aihub scheduler add <agent-id> --cron "0 8 * * *" --tz Europe/Paris -m "..."
-aihub scheduler add <agent-id> --cron "0 8 * * *" --tz Europe/Paris -m "..." --provider anthropic --model claude-sonnet-4
-aihub scheduler list [--agent <agent-id>]
-aihub scheduler update <agent-id> <job-id> --cron "*/30 * * * *" --tz UTC
-aihub scheduler update <agent-id> <job-id> --provider openai --model gpt-5
-aihub scheduler rm <agent-id> <job-id>
-aihub scheduler tail <agent-id> <job-id>
+yoplai scheduler add <agent-id> --cron "0 8 * * *" --tz Europe/Paris -m "..."
+yoplai scheduler add <agent-id> --cron "0 8 * * *" --tz Europe/Paris -m "..." --provider anthropic --model claude-sonnet-4
+yoplai scheduler list [--agent <agent-id>]
+yoplai scheduler update <agent-id> <job-id> --cron "*/30 * * * *" --tz UTC
+yoplai scheduler update <agent-id> <job-id> --provider openai --model gpt-5
+yoplai scheduler rm <agent-id> <job-id>
+yoplai scheduler tail <agent-id> <job-id>
 ```
 
 CLI can edit files while scheduler runtime is disabled.

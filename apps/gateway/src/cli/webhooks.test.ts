@@ -5,12 +5,12 @@ import { describe, expect, it } from "vitest";
 import {
   loadWebhookSecrets,
   saveWebhookSecrets,
-} from "@aihub/extension-webhooks";
+} from "@yoplai/extension-webhooks";
 import { rotateWebhookSecret } from "./webhooks.js";
 
 describe("webhooks CLI", () => {
   it("rotates an existing webhook secret and returns the new URL", async () => {
-    const dataDir = await fs.mkdtemp(path.join(os.tmpdir(), "aihub-webhooks-"));
+    const dataDir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-webhooks-"));
     saveWebhookSecrets(dataDir, {
       "sales:notion": "old-secret",
       "sales:github": "unchanged",
@@ -36,7 +36,7 @@ describe("webhooks CLI", () => {
   });
 
   it("errors when the webhook secret does not exist", async () => {
-    const dataDir = await fs.mkdtemp(path.join(os.tmpdir(), "aihub-webhooks-"));
+    const dataDir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-webhooks-"));
     saveWebhookSecrets(dataDir, { "sales:notion": "secret" });
 
     expect(() =>

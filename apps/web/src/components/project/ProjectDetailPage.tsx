@@ -32,6 +32,7 @@ import {
 import { SpecEditor } from "./SpecEditor";
 import type { SpawnFormDraft, SpawnPrefill, SpawnTemplate } from "./SpawnForm";
 import { zenMode } from "../../lib/layout";
+import { readMigratedLocal } from "../../lib/local-storage";
 import { SliceKanbanWidget } from "../SliceKanbanWidget";
 import { EditRepoModal } from "./EditRepoModal";
 import { ToastNotification, type ToastVariant } from "../ui/Toast";
@@ -42,12 +43,12 @@ type PersistedCenterView = {
 };
 
 function centerViewKey(id: string): string {
-  return `aihub:project:${id}:center-view`;
+  return `yoplai:project:${id}:center-view`;
 }
 
 function readCenterView(id: string): PersistedCenterView | null {
   try {
-    const raw = localStorage.getItem(centerViewKey(id));
+    const raw = readMigratedLocal(centerViewKey(id));
     if (!raw) return null;
     const parsed = JSON.parse(raw);
     if (
@@ -83,11 +84,11 @@ type MobileTab =
   | "slices";
 
 function getBaseAppTitle(): string {
-  if (import.meta.env.VITE_AIHUB_DEV === "true") {
-    const port = import.meta.env.VITE_AIHUB_UI_PORT ?? "?";
-    return `[DEV :${port}] AIHub`;
+  if (import.meta.env.VITE_YOPLAI_DEV === "true" || import.meta.env.VITE_AIHUB_DEV === "true") {
+    const port = import.meta.env.VITE_YOPLAI_UI_PORT ?? import.meta.env.VITE_AIHUB_UI_PORT ?? "?";
+    return `[DEV :${port}] Yoplai`;
   }
-  return "AIHub";
+  return "Yoplai";
 }
 
 function getFrontmatterString(

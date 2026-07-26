@@ -50,21 +50,21 @@ describe("slices CLI", () => {
   let projectsRoot: string;
 
   beforeEach(async () => {
-    prevHome = process.env.AIHUB_HOME;
-    homeDir = await fs.mkdtemp(path.join(os.tmpdir(), "aihub-home-"));
+    prevHome = process.env.YOPLAI_HOME;
+    homeDir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-home-"));
     projectsRoot = path.join(homeDir, "projects");
     await fs.mkdir(projectsRoot, { recursive: true });
-    process.env.AIHUB_HOME = homeDir;
+    process.env.YOPLAI_HOME = homeDir;
     await fs.writeFile(
-      path.join(homeDir, "aihub.json"),
+      path.join(homeDir, "yoplai.json"),
       JSON.stringify({ agents: [], projects: { root: projectsRoot } }),
       "utf8"
     );
   });
 
   afterEach(async () => {
-    if (prevHome === undefined) delete process.env.AIHUB_HOME;
-    else process.env.AIHUB_HOME = prevHome;
+    if (prevHome === undefined) delete process.env.YOPLAI_HOME;
+    else process.env.YOPLAI_HOME = prevHome;
     await fs.rm(homeDir, { recursive: true, force: true });
     vi.restoreAllMocks();
   });
@@ -962,7 +962,7 @@ describe("slices CLI", () => {
 
   it("works for slugged project dir when config uses extensions.projects.root", async () => {
     await fs.writeFile(
-      path.join(homeDir, "aihub.json"),
+      path.join(homeDir, "yoplai.json"),
       JSON.stringify({
         agents: [],
         extensions: { projects: { root: projectsRoot } },
@@ -1019,7 +1019,7 @@ describe("slices CLI", () => {
     await fs.mkdir(canonicalRoot, { recursive: true });
 
     await fs.writeFile(
-      path.join(homeDir, "aihub.json"),
+      path.join(homeDir, "yoplai.json"),
       JSON.stringify({
         agents: [],
         projects: { root: legacyRoot },

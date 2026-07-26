@@ -3,7 +3,7 @@
 - Branch: `alg-350-edit-agent-shell` (base `origin/teams`), issue ALG-350
   (Edit-Agent page shell + card overlay entry)
 - Parent: ALG-349 (Edit-Agent page: extension config hub + team edit)
-- Temp home: `.aihub-e2e/` (isolated; never touched `~/.aihub`)
+- Temp home: `.yoplai-e2e/` (isolated; never touched `~/.yoplai`)
 - Ports: gateway `http://127.0.0.1:4001`, UI `http://127.0.0.1:3001`
   (auto-picked; 4000/3000 busy)
 
@@ -35,7 +35,7 @@ Web-UI-only slice on top of the pool catalog (`AgentCatalog.tsx`):
 ## Real-stack E2E (against live gateway + isolated home)
 
 Real gateway + web dev stack booted with the temp home
-(`AIHUB_HOME=$(pwd)/.aihub-e2e pnpm dev`), multiUser enabled, two pool agents
+(`YOPLAI_HOME=$(pwd)/.yoplai-e2e pnpm dev`), multiUser enabled, two pool agents
 (`sales`, `support`). Evidence: `guard-route-transcript.txt`,
 `01-edit-route-served.html`.
 

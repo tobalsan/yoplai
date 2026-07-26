@@ -1,4 +1,4 @@
-import type { GatewayConfig } from "@aihub/shared";
+import type { GatewayConfig } from "@yoplai/shared";
 
 export type OnecliEnv = {
   HTTP_PROXY: string;

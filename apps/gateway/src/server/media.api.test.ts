@@ -12,17 +12,17 @@ describe("media upload API", () => {
     ) => Response | Promise<Response>;
   };
   let mediaMetadata: typeof import("../media/metadata.js");
-  let prevAihubHome: string | undefined;
+  let prevHomeDir: string | undefined;
   let prevHome: string | undefined;
   let prevUserProfile: string | undefined;
 
   beforeAll(async () => {
-    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "aihub-media-"));
+    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-media-"));
 
-    prevAihubHome = process.env.AIHUB_HOME;
+    prevHomeDir = process.env.YOPLAI_HOME;
     prevHome = process.env.HOME;
     prevUserProfile = process.env.USERPROFILE;
-    process.env.AIHUB_HOME = path.join(tmpDir, ".aihub");
+    process.env.YOPLAI_HOME = path.join(tmpDir, ".yoplai");
     process.env.HOME = tmpDir;
     process.env.USERPROFILE = tmpDir;
 
@@ -33,8 +33,8 @@ describe("media upload API", () => {
   });
 
   afterAll(async () => {
-    if (prevAihubHome === undefined) delete process.env.AIHUB_HOME;
-    else process.env.AIHUB_HOME = prevAihubHome;
+    if (prevHomeDir === undefined) delete process.env.YOPLAI_HOME;
+    else process.env.YOPLAI_HOME = prevHomeDir;
     if (prevHome === undefined) delete process.env.HOME;
     else process.env.HOME = prevHome;
     if (prevUserProfile === undefined) delete process.env.USERPROFILE;
@@ -60,7 +60,7 @@ describe("media upload API", () => {
     const json = await res.json();
     expect(json.mimeType).toBe("image/png");
     expect(json.size).toBe(data.length);
-    expect(json.path).toContain(path.join(".aihub", "media", "inbound"));
+    expect(json.path).toContain(path.join(".yoplai", "media", "inbound"));
 
     const saved = await fs.readFile(json.path);
     expect(saved.length).toBe(data.length);

@@ -3,8 +3,8 @@ import path from "node:path";
 import { Hono } from "hono";
 import { logError } from "../logging.js";
 import { cors } from "hono/cors";
-import { resolveBindHost } from "@aihub/shared";
-import type { GatewayBindMode, GatewayConfig } from "@aihub/shared";
+import { readEnv, resolveBindHost } from "@yoplai/shared";
+import type { GatewayBindMode, GatewayConfig } from "@yoplai/shared";
 import { api } from "./api.core.js";
 import { internalTools } from "./internal-tools.js";
 import {
@@ -20,7 +20,7 @@ import { WsBroker, type WsBrokerAuthAdapter } from "./ws-broker.js";
 import { accessLogger } from "./access-log.js";
 
 type RequestAuthContext =
-  import("@aihub/extension-multi-user").RequestAuthContext;
+  import("@yoplai/extension-multi-user").RequestAuthContext;
 
 const app = new Hono();
 let activeExtensionRuntime: ExtensionRuntime | undefined;
@@ -29,13 +29,13 @@ function currentExtensionRuntime(): ExtensionRuntime {
   return activeExtensionRuntime ?? getExtensionRuntime();
 }
 
-type MultiUserMiddlewareModule = typeof import("@aihub/extension-multi-user");
+type MultiUserMiddlewareModule = typeof import("@yoplai/extension-multi-user");
 
 let multiUserMiddlewareModulePromise: Promise<MultiUserMiddlewareModule> | null =
   null;
 
 function loadMultiUserMiddlewareModule(): Promise<MultiUserMiddlewareModule> {
-  multiUserMiddlewareModulePromise ??= import("@aihub/extension-multi-user");
+  multiUserMiddlewareModulePromise ??= import("@yoplai/extension-multi-user");
   return multiUserMiddlewareModulePromise;
 }
 
@@ -148,7 +148,7 @@ app.use("/api/agents/:id/*", async (c, next) => {
   const { requireAgentAccess } = await loadMultiUserMiddlewareModule();
   return requireAgentAccess("id")(c, next);
 });
-if (process.env.AIHUB_DEV) {
+if (readEnv("DEV")) {
   app.get("/api/debug/events", (c) =>
     c.json({ events: agentEventBus.getRecentEvents() })
   );
@@ -229,7 +229,7 @@ export function startServer(
     (agent) => agent.sandbox?.enabled
   );
   if (hasSandboxAgents) {
-    const networkName = config.sandbox?.network?.name ?? "aihub-agents";
+    const networkName = config.sandbox?.network?.name ?? "yoplai-agents";
     const internal = config.sandbox?.network?.internal ?? true;
     try {
       ensureNetwork(networkName, internal);
@@ -237,7 +237,7 @@ export function startServer(
       const images = new Set(
         config.agents
           .filter((a) => a.sandbox?.enabled)
-          .map((a) => a.sandbox?.image ?? "aihub-agent:latest")
+          .map((a) => a.sandbox?.image ?? "yoplai-agent:latest")
       );
       for (const image of images) {
         ensureAgentImage(image);
@@ -260,7 +260,7 @@ export function startServer(
   }
 
   console.log(`Starting gateway server on ${resolvedHost}:${resolvedPort}`);
-  process.env.AIHUB_GATEWAY_PORT = String(resolvedPort);
+  process.env.YOPLAI_GATEWAY_PORT = String(resolvedPort);
 
   const server = serve({
     fetch: app.fetch,

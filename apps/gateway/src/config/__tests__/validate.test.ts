@@ -2,7 +2,7 @@ import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { GatewayConfigSchema, type Extension } from "@aihub/shared";
+import { GatewayConfigSchema, type Extension } from "@yoplai/shared";
 import { loadExtensions } from "../../extensions/registry.js";
 import {
   logComponentSummary,
@@ -150,7 +150,7 @@ describe("startup validation", () => {
   });
 
   it("resolves agent $env: references from agent-local .env", async () => {
-    const dir = await mkdtemp(path.join(tmpdir(), "aihub-agent-env-"));
+    const dir = await mkdtemp(path.join(tmpdir(), "yoplai-agent-env-"));
     await writeFile(
       path.join(dir, ".env"),
       "ONECLI_TOKEN=agent-onecli\nSLACK_BOT_TOKEN=agent-slack\nSLACK_APP_TOKEN=agent-app\nIRC_PASSWORD=agent-irc\nIRC_NICKSERV_PASSWORD=agent-nickserv\n"

@@ -12,7 +12,7 @@ import type {
   FullHistoryMessage,
   LeadSession,
   SubagentRun,
-} from "@aihub/shared/types";
+} from "@yoplai/shared/types";
 import {
   archiveRuntimeSubagent,
   createLeadSession,

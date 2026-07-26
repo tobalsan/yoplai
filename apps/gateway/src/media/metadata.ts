@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
-import { resolveHomeDir } from "@aihub/shared";
+import { resolveHomeDir } from "@yoplai/shared";
 import { logError } from "../logging.js";
 
 export type MediaDirection = "inbound" | "outbound";

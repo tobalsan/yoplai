@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { processReaction, formatEmoji, type ReactionData } from "./reactions.js";
-import type { DiscordConfig } from "@aihub/shared";
+import type { DiscordConfig } from "@yoplai/shared";
 
 function createReaction(overrides: Partial<ReactionData> = {}): ReactionData {
   return {

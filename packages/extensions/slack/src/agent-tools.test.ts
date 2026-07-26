@@ -2,7 +2,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { AgentConfig, GatewayConfig } from "@aihub/shared";
+import type { AgentConfig, GatewayConfig } from "@yoplai/shared";
 import { clearSlackClientCache, slackAgentTools } from "./agent-tools.js";
 import { clearActiveBots, registerActiveBot } from "./bot-registry.js";
 import { clearSlackContext, setSlackContext } from "./context.js";
@@ -67,7 +67,7 @@ describe("slack agent tools", () => {
   });
 
   it("create_thread posts a parent and binds it to the current session", async () => {
-    const dataDir = await fs.mkdtemp(path.join(os.tmpdir(), "aihub-slack-tools-"));
+    const dataDir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-slack-tools-"));
     const postMessage = vi.fn().mockResolvedValue({ channel: "D123", ts: "1.2" });
     registerMockBot("alpha", { chat: { postMessage } as never });
     setSlackContext({ getDataDir: () => dataDir } as never);
@@ -91,7 +91,7 @@ describe("slack agent tools", () => {
   });
 
   it("create_thread does not bind when no token is configured", async () => {
-    const dataDir = await fs.mkdtemp(path.join(os.tmpdir(), "aihub-slack-tools-"));
+    const dataDir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-slack-tools-"));
     setSlackContext({ getDataDir: () => dataDir } as never);
 
     const result = await tool("slack.create_thread").execute(
@@ -110,7 +110,7 @@ describe("slack agent tools", () => {
   });
 
   it("create_thread does not bind when Slack rejects the post", async () => {
-    const dataDir = await fs.mkdtemp(path.join(os.tmpdir(), "aihub-slack-tools-"));
+    const dataDir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-slack-tools-"));
     const postMessage = vi.fn().mockRejectedValue(new Error("channel_not_found"));
     registerMockBot("alpha", { chat: { postMessage } as never });
     setSlackContext({ getDataDir: () => dataDir } as never);
@@ -146,7 +146,7 @@ describe("slack agent tools", () => {
   });
 
   it("send_message does not create a thread binding", async () => {
-    const dataDir = await fs.mkdtemp(path.join(os.tmpdir(), "aihub-slack-tools-"));
+    const dataDir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-slack-tools-"));
     const postMessage = vi.fn().mockResolvedValue({ ts: "1.2" });
     registerMockBot("alpha", { chat: { postMessage } as never });
     setSlackContext({ getDataDir: () => dataDir } as never);

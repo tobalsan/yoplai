@@ -1,4 +1,4 @@
-import type { AgentConfig, ExtensionContext, IrcContext, IrcExtensionConfig } from "@aihub/shared";
+import type { AgentConfig, ExtensionContext, IrcContext, IrcExtensionConfig } from "@yoplai/shared";
 import { IrcLoopGuard } from "./loop-guard.js";
 import { isAddressed, nickFromPrefix, normalizeIrcText, splitIrcText, toPlainIrcText, type IrcMessage } from "./protocol.js";
 import type { IrcService } from "./service.js";

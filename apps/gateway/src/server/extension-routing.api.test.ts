@@ -2,7 +2,7 @@ import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import os from "node:os";
-import { GatewayConfigSchema, type RunAgentParams } from "@aihub/shared";
+import { GatewayConfigSchema, type RunAgentParams } from "@yoplai/shared";
 
 describe("extension route mounting", () => {
   let tmpDir: string;
@@ -17,9 +17,9 @@ describe("extension route mounting", () => {
 
   beforeAll(async () => {
     tmpDir = await fs.mkdtemp(
-      path.join(os.tmpdir(), "aihub-component-routes-")
+      path.join(os.tmpdir(), "yoplai-component-routes-")
     );
-    dataDir = path.join(tmpDir, ".aihub");
+    dataDir = path.join(tmpDir, ".yoplai");
     const projectsRoot = path.join(tmpDir, "projects");
     await fs.mkdir(projectsRoot, { recursive: true });
 

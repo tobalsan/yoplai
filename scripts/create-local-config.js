@@ -18,8 +18,8 @@ const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(scriptDir, "..");
 const templatePath = path.join(scriptDir, "config-template.json");
 const agentsSourceDir = path.join(scriptDir, "agents");
-const outputDir = path.join(repoRoot, ".aihub");
-const outputPath = path.join(outputDir, "aihub.json");
+const outputDir = path.join(repoRoot, ".yoplai");
+const outputPath = path.join(outputDir, "yoplai.json");
 const agentsOutputDir = path.join(outputDir, "agents");
 const projectsOutputDir = path.join(outputDir, "projects");
 

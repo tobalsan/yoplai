@@ -17,7 +17,7 @@ vi.mock("node:fs/promises", async (importOriginal) => {
 
 // Mock config to avoid loading real config
 vi.mock("../config/index.js", () => ({
-  CONFIG_DIR: "/tmp/aihub-test",
+  CONFIG_DIR: "/tmp/yoplai-test",
   loadConfig: () => ({ agents: [], sessions: {} }),
 }));
 
@@ -178,8 +178,8 @@ describe("session store isolation", () => {
     });
 
     expect(vi.mocked(fs.rename)).toHaveBeenCalledWith(
-      expect.stringContaining("/tmp/aihub-test/sessions.json."),
-      "/tmp/aihub-test/sessions.json"
+      expect.stringContaining("/tmp/yoplai-test/sessions.json."),
+      "/tmp/yoplai-test/sessions.json"
     );
   });
 
@@ -195,9 +195,9 @@ describe("session store isolation", () => {
 
     expect(vi.mocked(fs.rename)).toHaveBeenCalledWith(
       expect.stringContaining(
-        "/tmp/aihub-test/sessions/users/user-123/sessions.json."
+        "/tmp/yoplai-test/sessions/users/user-123/sessions.json."
       ),
-      "/tmp/aihub-test/sessions/users/user-123/sessions.json"
+      "/tmp/yoplai-test/sessions/users/user-123/sessions.json"
     );
   });
 

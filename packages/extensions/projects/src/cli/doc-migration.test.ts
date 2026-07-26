@@ -52,13 +52,13 @@ function createSlicesProgram(): Command {
 }
 
 beforeEach(async () => {
-  prevHome = process.env.AIHUB_HOME;
-  homeDir = await fs.mkdtemp(path.join(os.tmpdir(), "aihub-home-"));
+  prevHome = process.env.YOPLAI_HOME;
+  homeDir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-home-"));
   projectsRoot = path.join(homeDir, "projects");
   await fs.mkdir(projectsRoot, { recursive: true });
-  process.env.AIHUB_HOME = homeDir;
+  process.env.YOPLAI_HOME = homeDir;
   await fs.writeFile(
-    path.join(homeDir, "aihub.json"),
+    path.join(homeDir, "yoplai.json"),
     JSON.stringify({
       agents: [],
       extensions: { projects: { root: projectsRoot } },
@@ -68,8 +68,8 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
-  if (prevHome === undefined) delete process.env.AIHUB_HOME;
-  else process.env.AIHUB_HOME = prevHome;
+  if (prevHome === undefined) delete process.env.YOPLAI_HOME;
+  else process.env.YOPLAI_HOME = prevHome;
   await fs.rm(homeDir, { recursive: true, force: true });
   vi.restoreAllMocks();
 });

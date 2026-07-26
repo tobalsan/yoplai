@@ -1,1 +1,1 @@
-export { parseFrontmatter, splitFrontmatter, type ParsedFrontmatter } from "@aihub/shared";
+export { parseFrontmatter, splitFrontmatter, type ParsedFrontmatter } from "@yoplai/shared";

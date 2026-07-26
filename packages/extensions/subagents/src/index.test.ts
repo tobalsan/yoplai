@@ -3,12 +3,12 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { Hono } from "hono";
 import { describe, expect, it } from "vitest";
-import type { ExtensionContext, GatewayConfig } from "@aihub/shared";
+import type { ExtensionContext, GatewayConfig } from "@yoplai/shared";
 import { subagentsExtension } from "./index.js";
 
 function context(
   config: Omit<GatewayConfig, "agentFab"> & { agentFab?: boolean },
-  dataDir = "/tmp/aihub-subagents-test"
+  dataDir = "/tmp/yoplai-subagents-test"
 ): ExtensionContext {
   const normalizedConfig: GatewayConfig = {
     ...config,
@@ -169,7 +169,7 @@ describe("subagents extension profile resolution", () => {
     const contribution = subagentsExtension.getSystemPromptContributions?.({
       id: "lead",
       name: "Lead",
-      workspace: "/tmp/aihub-subagents-test",
+      workspace: "/tmp/yoplai-subagents-test",
       sdk: "pi",
       model: { model: "test" },
       queueMode: "queue",
@@ -179,9 +179,9 @@ describe("subagents extension profile resolution", () => {
       ? resolved.join("\n")
       : (resolved ?? "");
 
-    expect(text).toContain("aihub subagents start");
-    expect(text).toContain("aihub subagents list");
-    expect(text).toContain("aihub subagents interrupt|archive");
+    expect(text).toContain("yoplai subagents start");
+    expect(text).toContain("yoplai subagents list");
+    expect(text).toContain("yoplai subagents interrupt|archive");
   });
 
   it("uses top-level subagent cli templates as profiles", async () => {
@@ -259,7 +259,7 @@ describe("subagents extension profile resolution", () => {
 
   it("filters listed runs by canonical cwd query", async () => {
     const dataDir = await fs.mkdtemp(
-      path.join(os.tmpdir(), "aihub-subagents-")
+      path.join(os.tmpdir(), "yoplai-subagents-")
     );
     const realDir = await fs.mkdtemp(path.join(dataDir, "real-"));
     const linkDir = path.join(dataDir, "link");
@@ -288,7 +288,7 @@ describe("subagents extension profile resolution", () => {
 
   it("includes running project orchestrator runs in the default list", async () => {
     const dataDir = await fs.mkdtemp(
-      path.join(os.tmpdir(), "aihub-subagents-")
+      path.join(os.tmpdir(), "yoplai-subagents-")
     );
     const projectsRoot = path.join(dataDir, "projects");
     const app = new Hono();
@@ -339,7 +339,7 @@ describe("subagents extension profile resolution", () => {
 
   it("filters project runs by project and slice and serves logs by synthetic id", async () => {
     const dataDir = await fs.mkdtemp(
-      path.join(os.tmpdir(), "aihub-subagents-")
+      path.join(os.tmpdir(), "yoplai-subagents-")
     );
     const projectsRoot = path.join(dataDir, "projects");
     const app = new Hono();
@@ -396,7 +396,7 @@ describe("subagents extension profile resolution", () => {
 
   it("resumes project runs addressed by synthetic id", async () => {
     const dataDir = await fs.mkdtemp(
-      path.join(os.tmpdir(), "aihub-subagents-")
+      path.join(os.tmpdir(), "yoplai-subagents-")
     );
     const projectsRoot = path.join(dataDir, "projects");
     const binDir = path.join(dataDir, "bin");
@@ -458,17 +458,17 @@ describe("subagents extension profile resolution", () => {
 
   it("supports cwd home expansion and includeArchived=1", async () => {
     const dataDir = await fs.mkdtemp(
-      path.join(os.tmpdir(), "aihub-subagents-")
+      path.join(os.tmpdir(), "yoplai-subagents-")
     );
     const homeRoot = await fs.mkdtemp(
-      path.join(os.tmpdir(), "aihub-subagents-home-root-")
+      path.join(os.tmpdir(), "yoplai-subagents-home-root-")
     );
     const previousHome = process.env.HOME;
     const previousUserProfile = process.env.USERPROFILE;
     process.env.HOME = homeRoot;
     process.env.USERPROFILE = homeRoot;
     const homeDir = await fs.mkdtemp(
-      path.join(os.homedir(), ".aihub-subagents-home-")
+      path.join(os.homedir(), ".yoplai-subagents-home-")
     );
     const app = new Hono();
     try {

@@ -7,8 +7,8 @@ import type {
   SlackComponentChannelConfig,
   SlackComponentConfig,
   SlackComponentDmConfig,
-} from "@aihub/shared";
-import { DEFAULT_MAIN_KEY } from "@aihub/shared";
+} from "@yoplai/shared";
+import { DEFAULT_MAIN_KEY } from "@yoplai/shared";
 import { getSlackContext } from "./context.js";
 import {
   detectBangCommand,

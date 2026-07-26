@@ -35,7 +35,7 @@ const multiUserState = vi.hoisted(() => ({
 const reloadConfig = vi.fn(() => loadConfigValue);
 
 vi.mock("../config/index.js", () => ({
-  CONFIG_DIR: "/tmp/aihub-test",
+  CONFIG_DIR: "/tmp/yoplai-test",
   getAgent,
   getActiveAgents,
   isAgentActive,
@@ -58,7 +58,7 @@ vi.mock("../extensions/registry.js", () => ({
   }),
 }));
 
-vi.mock("@aihub/extension-multi-user", () => ({
+vi.mock("@yoplai/extension-multi-user", () => ({
   getForwardedAuthContext: vi.fn(() => multiUserState.authContext),
   getAgentFilter: vi.fn(() => (agents: unknown[]) => agents),
   hasAgentAccess: vi.fn(async () => multiUserState.agentAccess),
@@ -291,8 +291,8 @@ describe("api core session resolution", () => {
   });
 
   it("does not sort renamed sessions by file mtime", async () => {
-    const sessionsDir = "/tmp/aihub-test/history";
-    await fs.rm("/tmp/aihub-test", { recursive: true, force: true });
+    const sessionsDir = "/tmp/yoplai-test/history";
+    await fs.rm("/tmp/yoplai-test", { recursive: true, force: true });
     await fs.mkdir(sessionsDir, { recursive: true });
     getActiveAgents.mockReturnValue([
       { id: "alpha", name: "Alpha", avatar: "🦊" },
@@ -338,8 +338,8 @@ describe("api core session resolution", () => {
   });
 
   it("excludes ephemeral compact sessions from the sidebar listing", async () => {
-    const sessionsDir = "/tmp/aihub-test/history";
-    await fs.rm("/tmp/aihub-test", { recursive: true, force: true });
+    const sessionsDir = "/tmp/yoplai-test/history";
+    await fs.rm("/tmp/yoplai-test", { recursive: true, force: true });
     await fs.mkdir(sessionsDir, { recursive: true });
     getActiveAgents.mockReturnValue([
       { id: "alpha", name: "Alpha", avatar: "🦊" },

@@ -225,7 +225,7 @@ export function AreasOverview() {
                     onInput={(event) =>
                       setCreateTitle(event.currentTarget.value)
                     }
-                    placeholder="AIHub"
+                    placeholder="Yoplai"
                     required
                   />
                 </label>

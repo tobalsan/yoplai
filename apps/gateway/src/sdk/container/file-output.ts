@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import fsPromises from "node:fs/promises";
 import path from "node:path";
-import type { ContainerFileOutputRequest } from "@aihub/shared";
+import type { ContainerFileOutputRequest } from "@yoplai/shared";
 import { CONTAINER_DATA_DIR } from "../../agents/container.js";
 import {
   ensureMediaDirectories,

@@ -115,7 +115,7 @@ describe("ProjectsBoard card navigation", () => {
     setupRaf();
     localStorage.clear();
     localStorage.setItem(
-      "aihub:projects:expanded-columns",
+      "yoplai:projects:expanded-columns",
       JSON.stringify(["triage"])
     );
   });
@@ -144,10 +144,10 @@ describe("ProjectsBoard card navigation", () => {
   it("prefills repo from selected area and submits it", async () => {
     vi.mocked(fetchAreas).mockResolvedValueOnce([
       {
-        id: "aihub",
-        title: "AIHub",
+        id: "yoplai",
+        title: "Yoplai",
         color: "#3b8ecc",
-        repo: "/tmp/aihub",
+        repo: "/tmp/yoplai",
       },
     ]);
     const container = document.createElement("div");
@@ -171,13 +171,13 @@ describe("ProjectsBoard card navigation", () => {
       "#create-area"
     ) as HTMLInputElement;
     areaInput.focus();
-    areaInput.value = "AIHub";
+    areaInput.value = "Yoplai";
     areaInput.dispatchEvent(new InputEvent("input", { bubbles: true }));
     await tick();
     const areaButton = Array.from(
       container.querySelectorAll(".area-suggestion")
     ).find(
-      (button) => button.textContent?.trim() === "AIHub"
+      (button) => button.textContent?.trim() === "Yoplai"
     ) as HTMLButtonElement;
     areaButton.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
     await tick();
@@ -185,7 +185,7 @@ describe("ProjectsBoard card navigation", () => {
     const repoInput = container.querySelector(
       "#create-repo"
     ) as HTMLInputElement;
-    expect(repoInput.value).toBe("/tmp/aihub");
+    expect(repoInput.value).toBe("/tmp/yoplai");
     const createButton = Array.from(container.querySelectorAll("button")).find(
       (button) => button.textContent?.trim() === "Create"
     ) as HTMLButtonElement;
@@ -194,8 +194,8 @@ describe("ProjectsBoard card navigation", () => {
 
     expect(createProject).toHaveBeenCalledWith({
       title: "Repo Project",
-      area: "aihub",
-      repo: "/tmp/aihub",
+      area: "yoplai",
+      repo: "/tmp/yoplai",
     });
     dispose();
   });
@@ -232,7 +232,7 @@ describe("ProjectsBoard card navigation", () => {
       new Error("Cannot move project to Shaping: project repo is not set.")
     );
     localStorage.setItem(
-      "aihub:projects:expanded-columns",
+      "yoplai:projects:expanded-columns",
       JSON.stringify(["triage", "shaping"])
     );
     const container = document.createElement("div");

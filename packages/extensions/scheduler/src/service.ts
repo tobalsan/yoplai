@@ -4,7 +4,7 @@ import type {
   CreateScheduleRequest,
   UpdateScheduleRequest,
   ExtensionContext,
-} from "@aihub/shared";
+} from "@yoplai/shared";
 import { PerAgentScheduleStore, type ScheduleStore } from "./store.js";
 import { computeNextRunAtMs } from "./schedule.js";
 import {

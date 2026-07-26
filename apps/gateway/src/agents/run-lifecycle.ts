@@ -1,4 +1,4 @@
-import type { StreamEvent } from "@aihub/shared";
+import type { StreamEvent } from "@yoplai/shared";
 import {
   abortSession,
   bufferPendingMessage,

@@ -1,5 +1,5 @@
 import { Command } from "commander";
-import { resolveBindHost } from "@aihub/shared";
+import { readEnv, resolveBindHost } from "@yoplai/shared";
 import { loadConfig } from "../config/index.js";
 import { logError } from "../logging.js";
 
@@ -96,7 +96,7 @@ function normalizeProjectId(id: string): string {
 }
 
 function getApiBaseUrl(): string {
-  const envUrl = process.env.AIHUB_API_URL;
+  const envUrl = readEnv("API_URL");
   if (envUrl) return envUrl;
 
   const config = loadConfig();

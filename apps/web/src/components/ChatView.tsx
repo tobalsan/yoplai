@@ -44,7 +44,7 @@ import {
   isExtensionEnabled,
   loadCapabilities,
 } from "../lib/capabilities";
-import { getMaxContextTokens } from "@aihub/shared/model-context";
+import { getMaxContextTokens } from "@yoplai/shared/model-context";
 import {
   attachmentToFileBlock,
   FILE_INPUT_ACCEPT,

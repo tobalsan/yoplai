@@ -4,7 +4,7 @@ import {
   type Extension,
   type ExtensionContext,
   type TelegramComponentConfig,
-} from "@aihub/shared";
+} from "@yoplai/shared";
 import {
   createTelegramAgentBot,
   createTelegramBot,

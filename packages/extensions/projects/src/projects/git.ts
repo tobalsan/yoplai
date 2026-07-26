@@ -1,6 +1,6 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { expandPath, type GatewayConfig } from "@aihub/shared";
+import { expandPath, type GatewayConfig } from "@yoplai/shared";
 import { getProject } from "./store.js";
 import { getProjectSpace } from "./space.js";
 

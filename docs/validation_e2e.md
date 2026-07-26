@@ -2,15 +2,15 @@
 
 Use this after finishing any ALG-339 child issue. Unit tests are still required,
 but the issue is not done until the changed behavior is proven against a real
-gateway, a real web UI, and an isolated `AIHUB_HOME`.
+gateway, a real web UI, and an isolated `YOPLAI_HOME`.
 
 This document is a reusable recipe. Each worker should adapt the final scenario
 steps to the slice they implemented.
 
 ## Principles
 
-- Never validate against `~/.aihub` or a real customer config.
-- Always use a temporary `AIHUB_HOME` inside the working repo.
+- Never validate against `~/.yoplai` or a real customer config.
+- Always use a temporary `YOPLAI_HOME` inside the working repo.
 - Always launch the actual gateway/web stack, not only unit tests.
 - Capture evidence under `validation/`.
 - Keep the seeded config minimal. Add only the pool agents, fork dirs, teams,
@@ -21,17 +21,17 @@ steps to the slice they implemented.
 From the repo root:
 
 ```bash
-rm -rf .aihub-e2e validation
-mkdir -p .aihub-e2e/{pool,agents} validation
+rm -rf .yoplai-e2e validation
+mkdir -p .yoplai-e2e/{pool,agents} validation
 ```
 
 Create two tiny pool agents. Keep them cheap and deterministic; the goal is to
 validate routing/access/UI, not model quality.
 
 ```bash
-mkdir -p .aihub-e2e/pool/sales .aihub-e2e/pool/support
+mkdir -p .yoplai-e2e/pool/sales .yoplai-e2e/pool/support
 
-cat > .aihub-e2e/pool/sales/agent.yaml <<'EOF'
+cat > .yoplai-e2e/pool/sales/agent.yaml <<'EOF'
 id: sales
 name: Sales
 role: Sales Assistant
@@ -42,7 +42,7 @@ model:
 system: You are the Sales test agent. Reply with "sales-ok".
 EOF
 
-cat > .aihub-e2e/pool/support/agent.yaml <<'EOF'
+cat > .yoplai-e2e/pool/support/agent.yaml <<'EOF'
 id: support
 name: Support
 role: Support Assistant
@@ -57,7 +57,7 @@ EOF
 Write the temporary config:
 
 ```bash
-cat > .aihub-e2e/aihub.json <<'EOF'
+cat > .yoplai-e2e/yoplai.json <<'EOF'
 {
   "version": 3,
   "pool": "pool/*",
@@ -88,7 +88,7 @@ EOF
 
 If the slice needs a pre-existing runnable agent, copy one from `pool` into
 `agents` and update the config or database link state required by the slice.
-Do not point this temp config at a real YoplAI/customer pool unless the slice
+Do not point this temp config at a real Yoplai/customer pool unless the slice
 specifically needs those definitions.
 
 ## 2. Run Required Tests First
@@ -114,7 +114,7 @@ Do not use `pnpm test -- <path>`.
 Start the dev gateway/web stack with the temporary home:
 
 ```bash
-AIHUB_HOME=$(pwd)/.aihub-e2e pnpm dev
+YOPLAI_HOME=$(pwd)/.yoplai-e2e pnpm dev
 ```
 
 `pnpm dev` auto-picks free ports if `4000` or `3000` are busy. Record the actual
@@ -124,9 +124,9 @@ second terminal/pane for browser, API, and SQLite checks.
 Use those ports for every command below:
 
 ```bash
-export AIHUB_E2E_HOME="$(pwd)/.aihub-e2e"
-export AIHUB_E2E_API="http://127.0.0.1:<gateway-port>"
-export AIHUB_E2E_UI="http://127.0.0.1:<ui-port>"
+export YOPLAI_E2E_HOME="$(pwd)/.yoplai-e2e"
+export YOPLAI_E2E_API="http://127.0.0.1:<gateway-port>"
+export YOPLAI_E2E_UI="http://127.0.0.1:<ui-port>"
 ```
 
 ## 4. Seed Slice-Specific State
@@ -140,7 +140,7 @@ Examples:
 - Teams CRUD issue: create a team, edit name/description/color/icon, delete it.
 - Membership issue: create two users and two teams, assign one user to both.
 - Agent assignment issue: assign `sales` from the pool, verify a runnable fork
-  appears under `.aihub-e2e/agents`.
+  appears under `.yoplai-e2e/agents`.
 - Access issue: create one allowed user and one denied user, then prove chat/API
   access differs.
 - UI action-state issue: create pool agents covering each state: no fork,
@@ -157,8 +157,8 @@ claude-in-chrome MCP tools. Save screenshots and DOM snapshots into
 
 Minimum browser checks for ALG-339 slices:
 
-1. Open `${AIHUB_E2E_UI}` and confirm the app is using the temp home data.
-2. Open `/agents` and confirm pool agents render from `.aihub-e2e/pool`.
+1. Open `${YOPLAI_E2E_UI}` and confirm the app is using the temp home data.
+2. Open `/agents` and confirm pool agents render from `.yoplai-e2e/pool`.
 3. Open `/teams` and verify the slice-specific team UI behavior.
 4. If the slice changes auth/access, validate with at least two users:
    one allowed and one denied.
@@ -178,16 +178,16 @@ After the browser check, re-fetch server state.
 Useful probes:
 
 ```bash
-curl -s "$AIHUB_E2E_API/api/capabilities" | jq .
-curl -s "$AIHUB_E2E_API/api/pool" | jq .
-curl -s "$AIHUB_E2E_API/api/agents" | jq .
+curl -s "$YOPLAI_E2E_API/api/capabilities" | jq .
+curl -s "$YOPLAI_E2E_API/api/pool" | jq .
+curl -s "$YOPLAI_E2E_API/api/agents" | jq .
 ```
 
 Inspect persisted files:
 
 ```bash
-find "$AIHUB_E2E_HOME" -maxdepth 3 -type f | sort
-sqlite3 "$AIHUB_E2E_HOME/auth.db" '.tables'
+find "$YOPLAI_E2E_HOME" -maxdepth 3 -type f | sort
+sqlite3 "$YOPLAI_E2E_HOME/auth.db" '.tables'
 ```
 
 For assignment/access slices, verify both sides:

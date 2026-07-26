@@ -59,7 +59,7 @@ const MOCK_PROJECT = {
   path: "PRO-42_refactor-auth",
   absolutePath: "/tmp/PRO-42_refactor-auth",
   repoValid: true,
-  frontmatter: { area: "aihub", status: "shaping" },
+  frontmatter: { area: "yoplai", status: "shaping" },
   docs: {
     PITCH: "# Refactor Auth\n\nThis is the pitch.",
     THREAD: "# Thread\n\nDiscussion here.",
@@ -76,11 +76,11 @@ const MOCK_PROJECT = {
 vi.mock("../../api", () => ({
   fetchProject: vi.fn(async () => MOCK_PROJECT),
   fetchAreas: vi.fn(async () => [
-    { id: "aihub", title: "AIHub", color: "#53b97c", repo: "~/code/aihub" },
+    { id: "yoplai", title: "Yoplai", color: "#53b97c", repo: "~/code/yoplai" },
   ]),
   updateProject: vi.fn(async () => MOCK_PROJECT),
   addProjectComment: vi.fn(async () => ({
-    author: "AIHub",
+    author: "Yoplai",
     date: new Date().toISOString(),
     body: "New comment",
   })),
@@ -240,7 +240,7 @@ describe("BoardProjectDetailPage", () => {
     expect(container.textContent).toContain("PRO-42");
     expect(container.textContent).toContain("Refactor Auth");
     expect(container.textContent).toContain("shaping");
-    expect(container.textContent).toContain("AIHub");
+    expect(container.textContent).toContain("Yoplai");
     const back = container.querySelector(".bpd-back");
     expect(back).not.toBeNull();
   });

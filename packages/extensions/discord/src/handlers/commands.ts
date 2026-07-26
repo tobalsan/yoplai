@@ -10,8 +10,8 @@ import {
   type CommandOptions,
 } from "@buape/carbon";
 import { ApplicationCommandType, ApplicationCommandOptionType } from "discord-api-types/v10";
-import type { AgentConfig, DiscordConfig } from "@aihub/shared";
-import { DEFAULT_MAIN_KEY } from "@aihub/shared";
+import type { AgentConfig, DiscordConfig } from "@yoplai/shared";
+import { DEFAULT_MAIN_KEY } from "@yoplai/shared";
 import { getDiscordContext } from "../context.js";
 
 export type CommandContext = {

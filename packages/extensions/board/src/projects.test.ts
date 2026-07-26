@@ -416,7 +416,7 @@ describe("scanProjects", () => {
     const wtRoot = path.join(tmp, "_worktrees");
     const wt = await makeWorktree(
       wtRoot,
-      "aihub",
+      "yoplai",
       "feature-x",
       "space/PRO-001"
     );
@@ -452,7 +452,7 @@ describe("scanProjects", () => {
       created: "2026-01-01",
     });
     const wtRoot = path.join(tmp, "_worktrees");
-    await makeWorktree(wtRoot, "aihub", "other", "space/PRO-999");
+    await makeWorktree(wtRoot, "yoplai", "other", "space/PRO-999");
 
     const items = await scanProjects(tmp, false, wtRoot);
     expect(items[0]?.worktrees).toEqual([]);
@@ -465,7 +465,7 @@ describe("scanProjects", () => {
       created: "2026-01-01",
     });
     const wtRoot = path.join(tmp, "_worktrees");
-    const wt = await makeWorktree(wtRoot, "aihub", "flash-fix", "feat/flash");
+    const wt = await makeWorktree(wtRoot, "yoplai", "flash-fix", "feat/flash");
 
     const items = await scanProjects(tmp, false, wtRoot);
     const unassigned = items.find((item) => item.id === UNASSIGNED_PROJECT_ID);
@@ -513,7 +513,7 @@ describe("scanProjects", () => {
     const wtRoot = path.join(tmp, "_worktrees");
     const wt = await makeWorktree(
       wtRoot,
-      "aihub",
+      "yoplai",
       "cleanup",
       "feat/PRO-235-cleanup"
     );
@@ -561,7 +561,7 @@ describe("scanProjects", () => {
     const wtRoot = path.join(tmp, "_worktrees");
     const ghost = await makeWorktree(
       wtRoot,
-      "aihub",
+      "yoplai",
       "ghost",
       "feat/PRO-999-thing"
     );
@@ -614,7 +614,7 @@ describe("scanProjects", () => {
       created: "2026-01-01",
     });
     const wtRoot = path.join(tmp, "_worktrees");
-    await fs.mkdir(path.join(wtRoot, "aihub", "garbage"), { recursive: true });
+    await fs.mkdir(path.join(wtRoot, "yoplai", "garbage"), { recursive: true });
 
     const items = await scanProjects(tmp, false, wtRoot);
     expect(items).toHaveLength(2);
@@ -1137,8 +1137,8 @@ describe("scanProjects", () => {
       created: "2026-01-02",
     });
     const wtRoot = path.join(tmp, "_worktrees");
-    await makeWorktree(wtRoot, "aihub", "alpha", "space/PRO-001");
-    await makeWorktree(wtRoot, "aihub", "beta", "space/PRO-002");
+    await makeWorktree(wtRoot, "yoplai", "alpha", "space/PRO-001");
+    await makeWorktree(wtRoot, "yoplai", "beta", "space/PRO-002");
 
     const gitLog = await withGitLog(tmp);
     try {
@@ -1214,7 +1214,7 @@ describe("scanProjects", () => {
       created: "2026-01-01",
     });
     const wtRoot = path.join(tmp, "_worktrees");
-    const wt = await makeWorktree(wtRoot, "aihub", "alpha", "space/PRO-001");
+    const wt = await makeWorktree(wtRoot, "yoplai", "alpha", "space/PRO-001");
     await fs.writeFile(path.join(wt, "dirty"), "dirty", "utf-8");
 
     const gitLog = await withGitLog(tmp);
@@ -1243,7 +1243,7 @@ describe("scanProjects", () => {
       created: "2026-01-01",
     });
     const wtRoot = path.join(tmp, "_worktrees");
-    await makeWorktree(wtRoot, "aihub", "alpha", "space/PRO-001");
+    await makeWorktree(wtRoot, "yoplai", "alpha", "space/PRO-001");
 
     const withWorktree = await scanProjects(tmp, false, wtRoot);
     expect(withWorktree[0]?.worktrees).toHaveLength(1);
@@ -1263,7 +1263,7 @@ describe("scanProjects", () => {
       created: "2026-01-01",
     });
     const wtRoot = path.join(tmp, "_worktrees");
-    await makeWorktree(wtRoot, "aihub", "alpha", "space/PRO-001");
+    await makeWorktree(wtRoot, "yoplai", "alpha", "space/PRO-001");
 
     const gitLog = await withGitLog(tmp, "0.3");
     let first: Promise<Awaited<ReturnType<typeof scanProjects>>>;
@@ -1298,7 +1298,7 @@ describe("scanProjects", () => {
       created: "2026-01-01",
     });
     const wtRoot = path.join(tmp, "_worktrees");
-    const wt = await makeWorktree(wtRoot, "aihub", "alpha", "space/PRO-001");
+    const wt = await makeWorktree(wtRoot, "yoplai", "alpha", "space/PRO-001");
     const options = { cacheTtlMs: 60_000, dirtyAheadTtlMs: 60_000 };
 
     const clean = await scanProjects(tmp, false, wtRoot, options);

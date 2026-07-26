@@ -1,7 +1,7 @@
 import { describe, it, expect, afterEach } from "vitest";
 import { WebSocketServer } from "ws";
 import type { AddressInfo } from "node:net";
-import type { AgentConfig, StreamEvent } from "@aihub/shared";
+import type { AgentConfig, StreamEvent } from "@yoplai/shared";
 import { openclawAdapter } from "./adapter.js";
 
 function createAgent(
@@ -225,7 +225,7 @@ describe("openclaw adapter", () => {
 
     const token = "token-dedicated";
     const sessionId = "s-123";
-    const expectedKey = `aihub:${sessionId}`;
+    const expectedKey = `yoplai:${sessionId}`;
 
     wss.on("connection", (ws) => {
       ws.on("message", (data) => {
@@ -466,7 +466,7 @@ describe("openclaw adapter", () => {
 
     const token = "token-dedicated-explicit";
     const sessionId = "s-999";
-    const expectedKey = `aihub:${sessionId}`;
+    const expectedKey = `yoplai:${sessionId}`;
 
     wss.on("connection", (ws) => {
       ws.on("message", (data) => {

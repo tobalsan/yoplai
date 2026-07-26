@@ -5,7 +5,7 @@ import {
   type Extension,
   type ExtensionAgentTool,
   type ExtensionContext,
-} from "@aihub/shared";
+} from "@yoplai/shared";
 import { z } from "zod";
 import type { Hono } from "hono";
 import {

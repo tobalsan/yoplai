@@ -46,8 +46,8 @@ describe("AgentSidebar", () => {
   afterEach(() => {
     document.body.innerHTML = "";
     document.documentElement.removeAttribute("data-theme");
-    localStorage.removeItem("aihub-theme");
-    localStorage.removeItem("aihub:recent-project-views");
+    localStorage.removeItem("yoplai-theme");
+    localStorage.removeItem("yoplai:recent-project-views");
     setPathname("/projects");
     fetchProjectsMock.mockReset();
     fetchProjectsMock.mockResolvedValue([]);
@@ -137,7 +137,7 @@ describe("AgentSidebar", () => {
       extensions: { projects: true },
     });
     localStorage.setItem(
-      "aihub:recent-project-views",
+      "yoplai:recent-project-views",
       JSON.stringify([{ id: "PRO-1", viewedAt: Date.now() - 60_000 }])
     );
     setPathname("/projects/PRO-2");
@@ -161,7 +161,7 @@ describe("AgentSidebar", () => {
     expect(container.querySelector(".sidebar-recent")).toBeNull();
 
     const stored = JSON.parse(
-      localStorage.getItem("aihub:recent-project-views") ?? "[]"
+      localStorage.getItem("yoplai:recent-project-views") ?? "[]"
     );
     expect(stored[0]?.id).toBe("PRO-1");
 

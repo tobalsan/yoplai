@@ -2,14 +2,14 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import type { GatewayConfig } from "@aihub/shared";
+import type { GatewayConfig } from "@yoplai/shared";
 import { ContainerInputBuilder } from "./input-builder.js";
 import type { SdkRunParams } from "../types.js";
 
 describe("container input builder", () => {
   it("builds container input without leaking model auth tokens", async () => {
     const workspaceDir = await fs.mkdtemp(
-      path.join(os.tmpdir(), "aihub-container-input-")
+      path.join(os.tmpdir(), "yoplai-container-input-")
     );
     await fs.writeFile(path.join(workspaceDir, "SOUL.md"), "soul");
     const builder = new ContainerInputBuilder({
@@ -53,13 +53,13 @@ describe("container input builder", () => {
       gateway: { port: 4100 },
     } as GatewayConfig;
 
-    const previousGatewayPort = process.env.AIHUB_GATEWAY_PORT;
-    delete process.env.AIHUB_GATEWAY_PORT;
+    const previousGatewayPort = process.env.YOPLAI_GATEWAY_PORT;
+    delete process.env.YOPLAI_GATEWAY_PORT;
     const input = await builder.build(params, config, "token-1");
     if (previousGatewayPort === undefined) {
-      delete process.env.AIHUB_GATEWAY_PORT;
+      delete process.env.YOPLAI_GATEWAY_PORT;
     } else {
-      process.env.AIHUB_GATEWAY_PORT = previousGatewayPort;
+      process.env.YOPLAI_GATEWAY_PORT = previousGatewayPort;
     }
 
     expect(input).toMatchObject({
@@ -80,7 +80,7 @@ describe("container input builder", () => {
 
   it("uses run model override for container sdk config", async () => {
     const workspaceDir = await fs.mkdtemp(
-      path.join(os.tmpdir(), "aihub-container-input-")
+      path.join(os.tmpdir(), "yoplai-container-input-")
     );
     await fs.writeFile(path.join(workspaceDir, "SOUL.md"), "soul");
     const builder = new ContainerInputBuilder({
@@ -107,7 +107,7 @@ describe("container input builder", () => {
 
   it("prepends first-run bootstrap prompt", async () => {
     const workspaceDir = await fs.mkdtemp(
-      path.join(os.tmpdir(), "aihub-container-input-")
+      path.join(os.tmpdir(), "yoplai-container-input-")
     );
     await fs.writeFile(path.join(workspaceDir, "SOUL.md"), "soul");
     const builder = new ContainerInputBuilder({
@@ -141,10 +141,10 @@ describe("container input builder", () => {
 
   it("resolves system files on the host before container launch", async () => {
     const workspaceDir = await fs.mkdtemp(
-      path.join(os.tmpdir(), "aihub-container-input-")
+      path.join(os.tmpdir(), "yoplai-container-input-")
     );
     const sharedDir = await fs.mkdtemp(
-      path.join(os.tmpdir(), "aihub-container-shared-")
+      path.join(os.tmpdir(), "yoplai-container-shared-")
     );
     const sharedFile = path.join(sharedDir, "HOUSE.md");
     await fs.writeFile(path.join(workspaceDir, "AGENTS.md"), "agents");

@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { MessageEntity } from "grammy/types";
 import { isBotAddressed, type AddressableMessage } from "./addressing.js";
 
-const BOT = { id: 999, username: "aihub_bot" };
+const BOT = { id: 999, username: "yoplai_bot" };
 
 function mention(text: string, type: MessageEntity["type"]): MessageEntity {
   return { type, offset: 0, length: text.length } as MessageEntity;
@@ -26,10 +26,10 @@ describe("isBotAddressed", () => {
   });
 
   it("matches an @mention of the bot's username", () => {
-    const text = "@aihub_bot what's up";
+    const text = "@yoplai_bot what's up";
     const msg: AddressableMessage = {
       text,
-      entities: [{ type: "mention", offset: 0, length: 10 }],
+      entities: [{ type: "mention", offset: 0, length: "@yoplai_bot".length }],
     };
     expect(isBotAddressed(msg, BOT)).toBe(true);
   });
@@ -52,7 +52,7 @@ describe("isBotAddressed", () => {
   });
 
   it("matches a command targeting this bot", () => {
-    const text = "/help@aihub_bot";
+    const text = "/help@yoplai_bot";
     const msg: AddressableMessage = {
       text,
       entities: [{ type: "bot_command", offset: 0, length: text.length }],
@@ -89,10 +89,12 @@ describe("isBotAddressed", () => {
   });
 
   it("matches a mention carried in a media caption", () => {
-    const text = "@aihub_bot look";
+    const text = "@yoplai_bot look";
     const msg: AddressableMessage = {
       caption: text,
-      caption_entities: [{ type: "mention", offset: 0, length: 10 }],
+      caption_entities: [
+        { type: "mention", offset: 0, length: "@yoplai_bot".length },
+      ],
     };
     expect(isBotAddressed(msg, BOT)).toBe(true);
   });

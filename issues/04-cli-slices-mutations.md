@@ -1,5 +1,5 @@
 ---
-title: CLI — `aihub slices move/rename/comment/cancel`
+title: CLI — `yoplai slices move/rename/comment/cancel`
 type: AFK
 labels: [needs-triage]
 spec: docs/specs/kanban-slice-refactor.md (§5.4, §8)
@@ -9,10 +9,10 @@ spec: docs/specs/kanban-slice-refactor.md (§5.4, §8)
 
 Mutation verbs for slices. Validates status transitions per slice enum (§5.4). Triggers SCOPE_MAP regen (#3) on every mutation.
 
-- `aihub slices move <sliceId> <status>` — validates target ∈ `{todo, in_progress, review, ready_to_merge, done, cancelled}`. Updates frontmatter `status` + `updated_at`.
-- `aihub slices rename <sliceId> "<title>"` — updates frontmatter `title` + `updated_at`.
-- `aihub slices comment <sliceId> "<body>"` — appends timestamped entry to slice `THREAD.md`.
-- `aihub slices cancel <sliceId>` — sugar for `move <id> cancelled`.
+- `yoplai slices move <sliceId> <status>` — validates target ∈ `{todo, in_progress, review, ready_to_merge, done, cancelled}`. Updates frontmatter `status` + `updated_at`.
+- `yoplai slices rename <sliceId> "<title>"` — updates frontmatter `title` + `updated_at`.
+- `yoplai slices comment <sliceId> "<body>"` — appends timestamped entry to slice `THREAD.md`.
+- `yoplai slices cancel <sliceId>` — sugar for `move <id> cancelled`.
 
 ## Acceptance criteria
 

@@ -2,7 +2,7 @@ import { execFile } from "node:child_process";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import { promisify } from "node:util";
-import { expandPath, type GatewayConfig } from "@aihub/shared";
+import { expandPath, readEnv, type GatewayConfig } from "@yoplai/shared";
 import {
   appendProjectComment,
   listProjects,
@@ -51,7 +51,7 @@ import {
 } from "./run-planner.js";
 
 export { isActiveOrchestratorRun } from "./dispatch-policy.js";
-export { resolveAihubCli } from "./prompt-factory.js";
+export { resolveCli } from "./prompt-factory.js";
 
 const execFileAsync = promisify(execFile);
 type ExecFileFn = typeof execFile;
@@ -240,18 +240,18 @@ async function defaultCountIntegrationAhead(
   return Number.isFinite(count) ? count : 0;
 }
 
-export function resolveAihubNotifyCommand(input: {
+export function resolveNotifyCommand(input: {
   channel: string;
   message: string;
 }): { file: string; args: string[] } {
-  if (process.env.AIHUB_DEV) {
-    const root = process.env.AIHUB_WORKSPACE_ROOT ?? process.cwd();
+  if (readEnv("YOPLAI_DEV")) {
+    const root = readEnv("YOPLAI_WORKSPACE_ROOT") ?? process.cwd();
     return {
       file: "pnpm",
       args: [
         "--dir",
         root,
-        "aihub:dev",
+        "yoplai:dev",
         "notify",
         "--channel",
         input.channel,
@@ -262,19 +262,19 @@ export function resolveAihubNotifyCommand(input: {
   }
 
   return {
-    file: "aihub",
+    file: "yoplai",
     args: ["notify", "--channel", input.channel, "--message", input.message],
   };
 }
 
-export async function runAihubNotify(
+export async function runNotify(
   input: {
     channel: string;
     message: string;
   },
   execFileImpl: ExecFileFn = execFile
 ): Promise<void> {
-  const command = resolveAihubNotifyCommand(input);
+  const command = resolveNotifyCommand(input);
   const execFileWithImpl = promisify(execFileImpl);
   await execFileWithImpl(command.file, command.args);
 }
@@ -283,7 +283,7 @@ async function defaultNotify(input: {
   channel: string;
   message: string;
 }): Promise<void> {
-  await runAihubNotify(input);
+  await runNotify(input);
 }
 
 function dayKey(date: Date): string {

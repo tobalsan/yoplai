@@ -13,7 +13,7 @@ Replace legacy project kanban statuses with lifecycle enum: `shaping → active 
 - `shaping` is starting state; promotion to `active` only manually (gate before orchestrator picks up slices).
 - Auto-transition `active → done` when all child slices terminal (`done` or `cancelled`) AND ≥1 is `done`.
 - Cancellation cascade: project `→ cancelled` flips every non-terminal child slice (`!= done && != cancelled`) to `cancelled`. Slices already `done` stay `done`. Best-effort SIGTERM on any active orchestrator runs against those slices (full reconciliation parked for v0.4).
-- CLI surface: existing `aihub projects ...` keeps shape; cancel/done semantics gain cascade.
+- CLI surface: existing `yoplai projects ...` keeps shape; cancel/done semantics gain cascade.
 
 ## Acceptance criteria
 

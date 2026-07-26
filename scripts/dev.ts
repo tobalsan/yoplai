@@ -3,7 +3,7 @@
  * Dev orchestrator: spawns gateway + web UI (if ui.enabled !== false)
  *
  * - Ensures only one Vite process (won't respawn on gateway restart)
- * - Uses AIHUB_SKIP_WEB env var to prevent double-spawn
+ * - Uses YOPLAI_SKIP_WEB env var to prevent double-spawn
  * - Forwards SIGINT/SIGTERM to both processes
  * - Auto-discovers free ports for gateway and web UI
  * - Passes --dev flag to gateway to disable external services
@@ -12,7 +12,7 @@ import fs from "node:fs";
 import net from "node:net";
 import path from "node:path";
 import { spawn, ChildProcess } from "node:child_process";
-import { resolveConfigPath } from "../packages/shared/src/config-path.js";
+import { readEnv, resolveConfigPath } from "../packages/shared/src/config-path.js";
 
 interface Config {
   ui?: {
@@ -89,19 +89,19 @@ async function main() {
   }
 
   // Start web UI (unless disabled or already spawned)
-  if (uiEnabled && !process.env.AIHUB_SKIP_WEB && uiPort) {
+  if (uiEnabled && !readEnv("SKIP_WEB") && uiPort) {
     console.log("[dev] Starting web UI...");
-    const web = spawn("pnpm", ["--filter", "@aihub/web", "dev"], {
+    const web = spawn("pnpm", ["--filter", "@yoplai/web", "dev"], {
       stdio: "inherit",
       cwd: rootDir,
       env: {
         ...process.env,
-        AIHUB_DEV: "1",
-        AIHUB_GATEWAY_PORT: String(gatewayPort),
-        AIHUB_UI_PORT: String(uiPort),
+        YOPLAI_DEV: "1",
+        YOPLAI_GATEWAY_PORT: String(gatewayPort),
+        YOPLAI_UI_PORT: String(uiPort),
         // VITE_ prefixed vars are exposed to browser via import.meta.env
-        VITE_AIHUB_DEV: "true",
-        VITE_AIHUB_UI_PORT: String(uiPort),
+        VITE_YOPLAI_DEV: "true",
+        VITE_YOPLAI_UI_PORT: String(uiPort),
       },
     });
     children.push(web);
@@ -114,11 +114,11 @@ async function main() {
   const gatewayNodeOptions = [process.env.NODE_OPTIONS, "--conditions=development"].filter(Boolean).join(" ");
   const gateway = spawn(
     "pnpm",
-    ["--filter", "@aihub/gateway", "exec", "tsx", "watch", "src/cli/index.ts", "gateway", "--dev", "--port", String(gatewayPort)],
+    ["--filter", "@yoplai/gateway", "exec", "tsx", "watch", "src/cli/index.ts", "gateway", "--dev", "--port", String(gatewayPort)],
     {
       stdio: "inherit",
       cwd: rootDir,
-      env: { ...process.env, AIHUB_SKIP_WEB: "1", AIHUB_DEV: "1", AIHUB_WORKSPACE_ROOT: rootDir, AIHUB_GATEWAY_PORT: String(gatewayPort), NODE_OPTIONS: gatewayNodeOptions, ...(uiPort ? { AIHUB_UI_PORT: String(uiPort) } : {}) },
+      env: { ...process.env, YOPLAI_SKIP_WEB: "1", YOPLAI_DEV: "1", YOPLAI_WORKSPACE_ROOT: rootDir, YOPLAI_GATEWAY_PORT: String(gatewayPort), NODE_OPTIONS: gatewayNodeOptions, ...(uiPort ? { YOPLAI_UI_PORT: String(uiPort) } : {}) },
     }
   );
   children.push(gateway);

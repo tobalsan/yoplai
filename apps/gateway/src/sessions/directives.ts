@@ -1,4 +1,4 @@
-import type { ThinkLevel } from "@aihub/shared";
+import type { ThinkLevel } from "@yoplai/shared";
 
 // Aliases for think levels
 const THINK_ALIASES: Record<string, ThinkLevel> = {

@@ -3,7 +3,7 @@ import {
   GatewayConfigSchema,
   OnecliConfigSchema,
   type GatewayConfig,
-} from "@aihub/shared";
+} from "@yoplai/shared";
 import { buildOnecliEnv } from "../onecli.js";
 
 function makeConfig(overrides: Partial<GatewayConfig> = {}): GatewayConfig {

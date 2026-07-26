@@ -9,8 +9,8 @@ import type {
   ExtensionContext,
   RunAgentParams,
   RunAgentResult,
-} from "@aihub/shared";
-import { AgentConfigSchema, GatewayConfigSchema } from "@aihub/shared";
+} from "@yoplai/shared";
+import { AgentConfigSchema, GatewayConfigSchema } from "@yoplai/shared";
 import {
   clearWebhooksRuntime,
   registerWebhookRoutes,
@@ -108,7 +108,7 @@ describe("webhook routes", () => {
 
   it("reloads rotated secrets from disk at request time", async () => {
     const dataDir = fs.mkdtempSync(
-      path.join(os.tmpdir(), "aihub-webhook-routes-")
+      path.join(os.tmpdir(), "yoplai-webhook-routes-")
     );
     saveWebhookSecrets(dataDir, { "sales:notion": "old-secret" });
     const agent = AgentConfigSchema.parse({
@@ -218,7 +218,7 @@ describe("webhook routes", () => {
     expect(captured?.source).toBe("webhook");
     expect(captured?.trace).toMatchObject({
       enabled: true,
-      name: "aihub:webhook:sales",
+      name: "yoplai:webhook:sales",
       surface: "webhook",
       metadata: {
         webhookName: "notion",

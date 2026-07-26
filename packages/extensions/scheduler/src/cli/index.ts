@@ -4,7 +4,7 @@ import type {
   CreateScheduleRequest,
   ScheduleJob,
   UpdateScheduleRequest,
-} from "@aihub/shared";
+} from "@yoplai/shared";
 import { SchedulerApiClient, SchedulerApiError } from "./client.js";
 import {
   buildScheduleFromOpts,

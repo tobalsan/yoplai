@@ -151,7 +151,7 @@ describe("team store deleteTeam teamlessAgents", () => {
   let tempDir: string;
 
   beforeEach(() => {
-    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "aihub-team-forks-"));
+    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "yoplai-team-forks-"));
     fdb = new Database(":memory:");
     fdb.pragma("foreign_keys = ON");
     fdb.exec("CREATE TABLE user (id TEXT PRIMARY KEY)");

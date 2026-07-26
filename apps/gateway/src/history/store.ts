@@ -8,10 +8,10 @@ import type {
   ModelUsage,
   FileAttachment,
   FileBlock,
-} from "@aihub/shared";
+} from "@yoplai/shared";
 import type { HistoryEvent } from "../sdk/types.js";
 import { CONFIG_DIR } from "../config/index.js";
-import { getUserHistoryDir } from "@aihub/extension-multi-user/isolation";
+import { getUserHistoryDir } from "@yoplai/extension-multi-user/isolation";
 import { getSessionCreatedAt } from "../sessions/store.js";
 import { resolveSessionDataFile } from "../sessions/files.js";
 import { getMediaFileMetadata } from "../media/metadata.js";

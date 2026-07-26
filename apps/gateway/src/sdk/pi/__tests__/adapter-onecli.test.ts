@@ -2,7 +2,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { AgentConfig, Extension, GatewayConfig } from "@aihub/shared";
+import type { AgentConfig, Extension, GatewayConfig } from "@yoplai/shared";
 import type { SdkRunParams } from "../../types.js";
 import {
   clearConfigCacheForTests,
@@ -33,7 +33,7 @@ vi.mock("../../sessions/store.js", () => ({
 
 vi.mock("../../sessions/files.js", () => ({
   resolveSessionDataFile: vi.fn(
-    async () => "/tmp/aihub-test/sessions/session-1.jsonl"
+    async () => "/tmp/yoplai-test/sessions/session-1.jsonl"
   ),
 }));
 
@@ -242,14 +242,14 @@ describe("pi adapter onecli env wiring", () => {
   });
 
   it("keeps agent env out of process.env while passing it to extension tools", async () => {
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), "aihub-pi-agent-env-"));
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "yoplai-pi-agent-env-"));
     tempDirs.push(root);
     const workspace = path.join(root, "agents", "pi-agent");
     fs.mkdirSync(workspace, { recursive: true });
     fs.writeFileSync(path.join(root, ".env"), "SLACK_TOKEN=home\n");
     fs.writeFileSync(path.join(workspace, ".env"), "SLACK_TOKEN=agent\n");
     fs.writeFileSync(
-      path.join(root, "aihub.json"),
+      path.join(root, "yoplai.json"),
       JSON.stringify({ version: 3, agents: [] })
     );
     const agent = { ...makeAgent(), workspace } as AgentConfig;
@@ -268,7 +268,7 @@ describe("pi adapter onecli env wiring", () => {
     const captured: Array<string | undefined> = [];
     const execute = vi.fn(async () => ({ ok: true }));
 
-    process.env.AIHUB_HOME = root;
+    process.env.YOPLAI_HOME = root;
     process.env.SLACK_TOKEN = "process";
     setLoadedConfig(config);
     vi.spyOn(console, "log").mockImplementation(() => {});

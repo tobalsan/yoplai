@@ -40,9 +40,9 @@ vi.mock("@solidjs/router", () => ({
 
 describe("ContextPanel", () => {
   it("renders recent projects at the bottom", async () => {
-    localStorage.setItem("aihub:context-panel:mode", "agents");
+    localStorage.setItem("yoplai:context-panel:mode", "agents");
     localStorage.setItem(
-      "aihub:recent-project-views",
+      "yoplai:recent-project-views",
       JSON.stringify([{ id: "PRO-1", viewedAt: Date.now() }])
     );
 
@@ -73,15 +73,15 @@ describe("ContextPanel", () => {
     ).toBe("/projects/PRO-1");
 
     dispose();
-    localStorage.removeItem("aihub:context-panel:mode");
-    localStorage.removeItem("aihub:recent-project-views");
+    localStorage.removeItem("yoplai:context-panel:mode");
+    localStorage.removeItem("yoplai:recent-project-views");
   });
 
   it("persists recent project titles across refresh", async () => {
     vi.mocked(api.fetchProjects).mockResolvedValue([]);
-    localStorage.setItem("aihub:context-panel:mode", "agents");
+    localStorage.setItem("yoplai:context-panel:mode", "agents");
     localStorage.setItem(
-      "aihub:recent-project-views",
+      "yoplai:recent-project-views",
       JSON.stringify([
         { id: "PRO-1", title: "Alpha", viewedAt: Date.now() - 1_000 },
       ])
@@ -108,8 +108,8 @@ describe("ContextPanel", () => {
     expect(container.textContent).toContain("PRO-1: Alpha");
 
     dispose();
-    localStorage.removeItem("aihub:context-panel:mode");
-    localStorage.removeItem("aihub:recent-project-views");
+    localStorage.removeItem("yoplai:context-panel:mode");
+    localStorage.removeItem("yoplai:recent-project-views");
   });
 
   it("backfills stored recent project titles from project data", async () => {
@@ -123,9 +123,9 @@ describe("ContextPanel", () => {
         frontmatter: {},
       },
     ]);
-    localStorage.setItem("aihub:context-panel:mode", "agents");
+    localStorage.setItem("yoplai:context-panel:mode", "agents");
     localStorage.setItem(
-      "aihub:recent-project-views",
+      "yoplai:recent-project-views",
       JSON.stringify([{ id: "PRO-1", viewedAt: Date.now() - 1_000 }])
     );
 
@@ -148,19 +148,19 @@ describe("ContextPanel", () => {
     await flushAsync();
 
     expect(container.textContent).toContain("PRO-1: Alpha");
-    expect(localStorage.getItem("aihub:recent-project-views")).toContain(
+    expect(localStorage.getItem("yoplai:recent-project-views")).toContain(
       "\"title\":\"Alpha\""
     );
 
     dispose();
-    localStorage.removeItem("aihub:context-panel:mode");
-    localStorage.removeItem("aihub:recent-project-views");
+    localStorage.removeItem("yoplai:context-panel:mode");
+    localStorage.removeItem("yoplai:recent-project-views");
   });
 
   it("hides recent projects outside the Agents tab", async () => {
-    localStorage.setItem("aihub:context-panel:mode", "chat");
+    localStorage.setItem("yoplai:context-panel:mode", "chat");
     localStorage.setItem(
-      "aihub:recent-project-views",
+      "yoplai:recent-project-views",
       JSON.stringify([{ id: "PRO-1", viewedAt: Date.now() }])
     );
 
@@ -185,12 +185,12 @@ describe("ContextPanel", () => {
     expect(container.querySelector(".panel-recent")).toBeNull();
 
     dispose();
-    localStorage.removeItem("aihub:context-panel:mode");
-    localStorage.removeItem("aihub:recent-project-views");
+    localStorage.removeItem("yoplai:context-panel:mode");
+    localStorage.removeItem("yoplai:recent-project-views");
   });
 
   it("does not force-switch back to chat when reopening Agents for the same selection", async () => {
-    localStorage.setItem("aihub:context-panel:mode", "chat");
+    localStorage.setItem("yoplai:context-panel:mode", "chat");
     const [selectedAgent] = createSignal("lead-1");
 
     const container = document.createElement("div");
@@ -221,6 +221,77 @@ describe("ContextPanel", () => {
     expect(container.querySelector(".panel-recent")).not.toBeNull();
 
     dispose();
-    localStorage.removeItem("aihub:context-panel:mode");
+    localStorage.removeItem("yoplai:context-panel:mode");
+  });
+
+  it("adopts panel mode and recent projects stored under the legacy aihub keys", async () => {
+    localStorage.clear();
+    localStorage.setItem("aihub:context-panel:mode", "agents");
+    localStorage.setItem(
+      "aihub:recent-project-views",
+      JSON.stringify([{ id: "PRO-1", viewedAt: Date.now() }])
+    );
+
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const dispose = render(
+      () => (
+        <ContextPanel
+          collapsed={() => false}
+          onToggleCollapse={() => {}}
+          selectedAgent={() => null}
+          onSelectAgent={() => {}}
+          onClearSelection={() => {}}
+          onOpenProject={() => {}}
+        />
+      ),
+      container
+    );
+
+    await flushAsync();
+
+    expect(
+      (container.querySelector(".recent-project-link") as HTMLAnchorElement)
+        ?.getAttribute("href")
+    ).toBe("/projects/PRO-1");
+    expect(localStorage.getItem("yoplai:context-panel:mode")).toBe("agents");
+    expect(localStorage.getItem("yoplai:recent-project-views")).toContain(
+      "PRO-1"
+    );
+
+    dispose();
+    localStorage.clear();
+  });
+
+  it("keeps the new panel mode when a legacy value also exists", async () => {
+    localStorage.clear();
+    localStorage.setItem("yoplai:context-panel:mode", "chat");
+    localStorage.setItem("aihub:context-panel:mode", "agents");
+
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const dispose = render(
+      () => (
+        <ContextPanel
+          collapsed={() => false}
+          onToggleCollapse={() => {}}
+          selectedAgent={() => null}
+          onSelectAgent={() => {}}
+          onClearSelection={() => {}}
+          onOpenProject={() => {}}
+        />
+      ),
+      container
+    );
+
+    await flushAsync();
+
+    const activeTab = Array.from(
+      container.querySelectorAll(".panel-tabs button")
+    ).find((button) => button.classList.contains("active"));
+    expect(activeTab?.textContent).toBe("Chat");
+
+    dispose();
+    localStorage.clear();
   });
 });

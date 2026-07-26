@@ -4,7 +4,7 @@ This example shows the scheduler handoff pattern for periodic human review:
 
 1. A cron job wakes up an agent in its own scheduler session.
 2. The agent calls `slack.create_thread` to post a thread parent in a channel or DM.
-3. A user replies in that thread, and AIHub resumes that same scheduler session.
+3. A user replies in that thread, and Yoplai resumes that same scheduler session.
 
 ## Configure Slack and scheduler
 
@@ -41,7 +41,7 @@ policy and normal channel/DM session routing.
 ## Add the cron job
 
 ```sh
-aihub scheduler add ops-agent \
+yoplai scheduler add ops-agent \
   --cron "0 9 * * 1-5" \
   --tz America/New_York \
   -m "Review overnight operational signals. If human review is needed, call slack.create_thread with channel C0123456789 and a concise summary plus recommended action. After creating the thread, wait for the user's reply there before continuing."
@@ -75,7 +75,7 @@ The tool returns the resolved channel and parent timestamp:
 { "ok": true, "channel": "C0123456789", "ts": "1710000000.000100" }
 ```
 
-AIHub persists a binding for that `(channel, ts, agent)` and the current cron
+Yoplai persists a binding for that `(channel, ts, agent)` and the current cron
 session. The parent message is now the human handoff point.
 
 ## User reply resumes the session
@@ -86,7 +86,7 @@ When a user replies in the Slack thread:
 Retry after backfilling from yesterday's account export.
 ```
 
-AIHub looks up the binding before normal Slack routing, resumes the cron
+Yoplai looks up the binding before normal Slack routing, resumes the cron
 session that created the parent, and posts the agent's answer in that same
 thread exactly once. This applies even when the configured channel policy is
 `never`. Thread-bound DM replies do not add a main-session visibility note;

@@ -9,7 +9,7 @@
 // GitHub-flavoured tables into an aligned monospace block, then translate inline
 // markup, and finally escape the residual plain text.
 
-const SENTINEL_PREFIX = "\u0000AIHUB";
+const SENTINEL_PREFIX = "\u0000YOPLAI";
 const MAX_LINK_OPEN_TAG_LENGTH = 1024;
 const MAX_CODE_OPEN_TAG_LENGTH = 1024;
 

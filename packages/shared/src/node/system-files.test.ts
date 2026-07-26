@@ -5,14 +5,26 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { resolveSystemFiles } from "./system-files.js";
 
 async function tempDir() {
-  return fs.mkdtemp(path.join(os.tmpdir(), "aihub-system-files-"));
+  return fs.mkdtemp(path.join(os.tmpdir(), "yoplai-system-files-"));
 }
 
 describe("resolveSystemFiles", () => {
   let dir: string | undefined;
+  let homeRoot: string | undefined;
+
+  /** Points os.homedir() at a temp dir so tests never touch the real home. */
+  async function stubHomeDir() {
+    homeRoot = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-system-files-home-"));
+    vi.spyOn(os, "homedir").mockReturnValue(homeRoot);
+    return homeRoot;
+  }
+
   afterEach(async () => {
     if (dir) await fs.rm(dir, { recursive: true, force: true });
     dir = undefined;
+    vi.restoreAllMocks();
+    if (homeRoot) await fs.rm(homeRoot, { recursive: true, force: true });
+    homeRoot = undefined;
     vi.unstubAllEnvs();
   });
 
@@ -56,22 +68,41 @@ describe("resolveSystemFiles", () => {
     expect(files[0].content).toBe("shared");
   });
 
-  it("resolves $AIHUB_HOME to default ~/.aihub when env is absent", async () => {
-    vi.stubEnv("AIHUB_HOME", "");
+  it("resolves $YOPLAI_HOME to default ~/.yoplai when env is absent", async () => {
+    vi.stubEnv("YOPLAI_HOME", "");
     dir = await tempDir();
-    const homeFile = path.join(os.homedir(), ".aihub", "system-file-test.md");
+    const homeFile = path.join(await stubHomeDir(), ".yoplai", "system-file-test.md");
     await fs.mkdir(path.dirname(homeFile), { recursive: true });
     await fs.writeFile(homeFile, "home");
-    try {
-      const files = await resolveSystemFiles({
-        workspaceDir: dir,
-        systemFiles: ["$AIHUB_HOME/system-file-test.md"],
-      });
-      expect(files).toHaveLength(1);
-      expect(files[0].absolutePath).toBe(homeFile);
-      expect(files[0].content).toBe("home");
-    } finally {
-      await fs.rm(homeFile, { force: true });
-    }
+    const files = await resolveSystemFiles({
+      workspaceDir: dir,
+      systemFiles: ["$YOPLAI_HOME/system-file-test.md"],
+    });
+    expect(files).toHaveLength(1);
+    expect(files[0].absolutePath).toBe(homeFile);
+    expect(files[0].content).toBe("home");
+  });
+
+  it("resolves the legacy $AIHUB_HOME placeholder with a deprecation warning", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    vi.stubEnv("YOPLAI_HOME", "");
+    dir = await tempDir();
+    const homeFile = path.join(
+      await stubHomeDir(),
+      ".yoplai",
+      "system-file-legacy-test.md"
+    );
+    await fs.mkdir(path.dirname(homeFile), { recursive: true });
+    await fs.writeFile(homeFile, "home");
+    const files = await resolveSystemFiles({
+      workspaceDir: dir,
+      systemFiles: ["$AIHUB_HOME/system-file-legacy-test.md"],
+    });
+    expect(files).toHaveLength(1);
+    expect(files[0].absolutePath).toBe(homeFile);
+    expect(files[0].content).toBe("home");
+    expect(warn).toHaveBeenCalledWith(
+      "[config] $AIHUB_HOME in config values is deprecated; rewrite it as $YOPLAI_HOME."
+    );
   });
 });

@@ -17,8 +17,8 @@ async function runGit(cwd: string, args: string[]): Promise<string> {
 async function createRepo(repo: string): Promise<void> {
   await fs.mkdir(repo, { recursive: true });
   await runGit(repo, ["init", "-b", "main"]);
-  await runGit(repo, ["config", "user.name", "AIHub Test"]);
-  await runGit(repo, ["config", "user.email", "test@aihub.local"]);
+  await runGit(repo, ["config", "user.name", "Yoplai Test"]);
+  await runGit(repo, ["config", "user.email", "test@yoplai.local"]);
   await fs.writeFile(path.join(repo, "app.txt"), "one\n", "utf8");
   await runGit(repo, ["add", "app.txt"]);
   await runGit(repo, ["commit", "-m", "init"]);
@@ -41,7 +41,7 @@ describe("project integration branches", () => {
   let repo: string;
 
   beforeEach(async () => {
-    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "aihub-branches-"));
+    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-branches-"));
     repo = path.join(tmpDir, "repo");
     await createRepo(repo);
   });

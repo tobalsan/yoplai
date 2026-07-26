@@ -5,9 +5,9 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-    <title>AIHub</title>
+    <title>Yoplai</title>
     <script>
-      var t = localStorage.getItem('aihub-theme');
+      var t = localStorage.getItem('yoplai-theme') || localStorage.getItem('aihub-theme');
       if (!t) t = matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
       document.documentElement.setAttribute('data-theme', t);
     </script>

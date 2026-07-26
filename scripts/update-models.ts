@@ -1,5 +1,6 @@
 import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, join, resolve } from "node:path";
+import { expandHomePlaceholder, resolveConfigPath, resolveHomeDir } from "../packages/shared/src/config-path.js";
 
 const args = process.argv.slice(2);
 const fetchAll = args.includes("--all");
@@ -8,14 +9,6 @@ type OpenRouterModel = { id: string; context_length: number };
 type ModelsDevProvider = {
   models?: Record<string, { id?: string; limit?: { context?: number } }>;
 };
-
-function getAihubHome(): string {
-  return process.env.AIHUB_HOME ?? resolve(process.env.HOME || "~", ".aihub");
-}
-
-function getAihubConfigPath(): string {
-  return process.env.AIHUB_CONFIG ?? resolve(getAihubHome(), "aihub.json");
-}
 
 function addModelsFromAgents(
   configuredModels: Set<string>,
@@ -85,7 +78,7 @@ export function collectConfiguredModels(
 }
 
 function resolveAgentPath(pattern: string, configDir: string): string {
-  const expanded = pattern.replace(/^\$AIHUB_HOME(?=\/|$)/, getAihubHome());
+  const expanded = expandHomePlaceholder(pattern, resolveHomeDir());
   return isAbsolute(expanded) ? expanded : resolve(configDir, expanded);
 }
 
@@ -306,8 +299,8 @@ async function fetchJson<T>(url: string): Promise<T> {
 }
 
 async function main() {
-  const configPath = getAihubConfigPath();
-  const modelsPath = resolve(getAihubHome(), "models.json");
+  const configPath = resolveConfigPath();
+  const modelsPath = resolve(resolveHomeDir(), "models.json");
   let configuredModels = new Set<string>();
   let modelsConfig: unknown;
 
@@ -327,7 +320,7 @@ async function main() {
       );
     } catch {
       console.error(
-        "Could not read aihub.json. Use --all to fetch all models."
+        "Could not read yoplai.json. Use --all to fetch all models."
       );
       process.exit(1);
     }

@@ -1,7 +1,7 @@
 # ALG-353 E2E Validation Notes
 
 - **Issue/branch:** ALG-353 / `alg-353-extension-write` (stacked on `alg-352-extension-catalog`)
-- **Temp home:** `.aihub-e2e/` (isolated, single pool agent `sales`)
+- **Temp home:** `.yoplai-e2e/` (isolated, single pool agent `sales`)
 - **Gateway:** real gateway launched via `tsx src/cli/index.ts gateway`, `127.0.0.1:4066`
 - **UI:** not exercised via browser (see harness gap)
 
@@ -18,7 +18,7 @@ Transcript: `validation/e2e-transcript.txt`. All PASS:
 3. `agent.yaml` rewritten with `extensions.discord.enabled: true`.
 4. Fresh `GET .../extensions` → discord enabled=True (config reload took effect, not a fake write).
 5. `PATCH {enabled:false}` → 200; yaml `enabled: false`; fresh GET enabled=False (round-trip).
-6. `PATCH langfuse {enabled:true, secrets:{secretKey:...}}` → 200; yaml holds `secretKey: $env:AIHUB_SALES_LANGFUSE_SECRETKEY`; real value only in `pool/sales/.env`; **no plaintext secret in agent.yaml** (grep PASS).
+6. `PATCH langfuse {enabled:true, secrets:{secretKey:...}}` → 200; yaml holds `secretKey: $env:YOPLAI_SALES_LANGFUSE_SECRETKEY`; real value only in `pool/sales/.env`; **no plaintext secret in agent.yaml** (grep PASS).
 
 ## Server-side guard (multiUser enabled)
 Transcript step 7: unauthenticated `PATCH` and `GET` both → **401** (auth middleware rejects before the handler). The 403 non-admin (authenticated) path is covered by unit tests exercising the real Hono route with a mocked non-admin auth context.

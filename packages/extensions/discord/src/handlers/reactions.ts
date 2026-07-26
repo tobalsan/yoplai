@@ -4,7 +4,7 @@
  * Determines whether the bot should process a reaction event based on gating config.
  */
 
-import type { DiscordConfig } from "@aihub/shared";
+import type { DiscordConfig } from "@yoplai/shared";
 import { matchesUserAllowlist } from "../utils/allowlist.js";
 
 export type ReactionData = {

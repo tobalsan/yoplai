@@ -1,4 +1,4 @@
-import type { AgentConfig, GatewayConfig } from "@aihub/shared";
+import type { AgentConfig, GatewayConfig } from "@yoplai/shared";
 import { loadConfig } from "../config/index.js";
 import { getExtensionRuntime } from "./registry.js";
 import type { ExtensionRuntime } from "./runtime.js";

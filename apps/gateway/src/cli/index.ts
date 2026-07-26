@@ -19,10 +19,10 @@ import { registerUserTokenCommands } from "./user-token.js";
 import { registerNotifyCommand } from "./notify.js";
 import { registerAgentsMigrateCommands } from "./agents-migrate.js";
 import { registerGatewayServiceCommands } from "./service.js";
-import { registerSchedulerCommands } from "@aihub/extension-scheduler";
-import { registerOrchestratorCommands } from "@aihub/extension-orchestrator";
+import { registerSchedulerCommands } from "@yoplai/extension-scheduler";
+import { registerOrchestratorCommands } from "@yoplai/extension-orchestrator";
 import { registerEvalCommands } from "../evals/cli.js";
-import { resolveBindHost, type Extension, type UiConfig } from "@aihub/shared";
+import { readEnv, resolveBindHost, type Extension, type UiConfig } from "@yoplai/shared";
 import {
   prepareStartupConfig,
   resolveStartupConfig,
@@ -47,7 +47,7 @@ function isModuleNotFound(error: unknown): boolean {
 
 function isMonorepoDevRuntime(): boolean {
   return (
-    process.env.AIHUB_WEB_DEV === "1" ||
+    readEnv("WEB_DEV") === "1" ||
     process.env.NODE_OPTIONS?.includes("--conditions=development") === true
   );
 }
@@ -55,7 +55,7 @@ function isMonorepoDevRuntime(): boolean {
 async function importOptionalProjectsExtension(): Promise<
   Record<string, unknown>
 > {
-  const specifier = "@aihub/extension-projects";
+  const specifier = "@yoplai/extension-projects";
   try {
     return (await import(specifier)) as Record<string, unknown>;
   } catch (error) {
@@ -86,19 +86,19 @@ async function registerOptionalProjectsCli(program: Command): Promise<void> {
       typeof registerSlicesCommands !== "function"
     ) {
       throw new Error(
-        'Package "@aihub/extension-projects" does not export project CLI commands'
+        'Package "@yoplai/extension-projects" does not export project CLI commands'
       );
     }
     registerProjectsCommands(
       program
         .command("projects")
-        .description("Manage AIHub projects")
+        .description("Manage Yoplai projects")
         .version("0.1.0")
     );
     registerSlicesCommands(
       program
         .command("slices")
-        .description("Manage AIHub slices")
+        .description("Manage Yoplai slices")
         .version("0.1.0")
     );
   } catch (error) {
@@ -106,16 +106,16 @@ async function registerOptionalProjectsCli(program: Command): Promise<void> {
       throw error;
     }
     const message =
-      'Project CLI commands require optional package "@aihub/extension-projects". Install it or do not use `aihub projects`/`aihub slices`.';
+      'Project CLI commands require optional package "@yoplai/extension-projects". Install it or do not use `yoplai projects`/`yoplai slices`.';
     program
       .command("projects")
-      .description("Manage AIHub projects")
+      .description("Manage Yoplai projects")
       .action(() => {
         throw new Error(message);
       });
     program
       .command("slices")
-      .description("Manage AIHub slices")
+      .description("Manage Yoplai slices")
       .action(() => {
         throw new Error(message);
       });
@@ -165,8 +165,30 @@ function resetTailscaleServe(): void {
   }
 }
 
-function refreshTailscaleServe(port: number, gatewayPort: number): void {
-  enableTailscaleServe(port, "/aihub");
+// Pre-rename tailscale serve path. `tailscale serve` writes into tailscaled's
+// persistent serve config, which lives outside this repo and survives
+// restarts/reboots, so upgrading the binary alone does not remove it.
+const LEGACY_SERVE_PATH = "/aihub";
+let clearedLegacyServePath = false;
+
+function clearLegacyTailscaleServePath(): void {
+  try {
+    const cmd = getTailscaleCmd();
+    execSync(`${cmd} serve --bg --yes --set-path=${LEGACY_SERVE_PATH} off`, {
+      encoding: "utf-8",
+      timeout: 15000,
+    });
+  } catch {
+    // Ignore errors clearing the legacy path
+  }
+}
+
+export function refreshTailscaleServe(port: number, gatewayPort: number): void {
+  if (!clearedLegacyServePath) {
+    clearedLegacyServePath = true;
+    clearLegacyTailscaleServePath();
+  }
+  enableTailscaleServe(port, "/yoplai");
   enableTailscaleServe(gatewayPort, "/api");
   enableTailscaleServe(gatewayPort, "/ws");
 }
@@ -197,7 +219,7 @@ function resolveUiHost(bind?: string): string {
 }
 
 function getApiBaseUrl(): string {
-  const envUrl = process.env.AIHUB_API_URL;
+  const envUrl = readEnv("API_URL");
   if (envUrl) return envUrl;
 
   const config = loadConfig();
@@ -210,13 +232,13 @@ function startWebUI(
   uiConfig: UiConfig,
   gatewayPort: number
 ): ChildProcess | null {
-  if (process.env.AIHUB_SKIP_WEB) return null;
+  if (readEnv("SKIP_WEB")) return null;
 
   const port = uiConfig.port ?? 3000;
   const host = resolveUiHost(uiConfig.bind);
   const useTailscaleServe = uiConfig.tailscale?.mode === "serve";
   const resetOnExit = uiConfig.tailscale?.resetOnExit ?? true;
-  const useDevServer = process.env.AIHUB_WEB_DEV === "1";
+  const useDevServer = readEnv("WEB_DEV") === "1";
 
   // Get monorepo root (gateway is at apps/gateway/dist/cli or apps/gateway/src/cli)
   const gatewayRoot = path.resolve(__dirname, "../..");
@@ -226,7 +248,7 @@ function startWebUI(
   const viteCmd = useDevServer ? "dev" : "preview";
   const args = [
     "--filter",
-    "@aihub/web",
+    "@yoplai/web",
     "exec",
     "vite",
     viteCmd,
@@ -238,7 +260,7 @@ function startWebUI(
   const child = spawn("pnpm", args, {
     cwd: monorepoRoot,
     stdio: "inherit",
-    env: { ...process.env, AIHUB_SKIP_WEB: "1" },
+    env: { ...process.env, YOPLAI_SKIP_WEB: "1" },
   });
 
   let tailscaleReady = false;
@@ -257,7 +279,7 @@ function startWebUI(
 
   // Log URL
   if (useTailscaleServe && tailscaleReady) {
-    console.log(`Web UI: https://<tailnet>/aihub (via tailscale serve)`);
+    console.log(`Web UI: https://<tailnet>/yoplai (via tailscale serve)`);
   } else {
     const displayHost = host === "0.0.0.0" ? "localhost" : host;
     console.log(`Web UI: http://${displayHost}:${port}/`);
@@ -268,7 +290,7 @@ function startWebUI(
 
 const program = new Command();
 
-program.name("aihub").description("AIHub multi-agent gateway").version("0.1.0");
+program.name("yoplai").description("Yoplai multi-agent gateway").version("0.1.0");
 
 function printDevBanner(
   gatewayPort: number,
@@ -477,13 +499,13 @@ await registerOptionalProjectsCli(program);
 registerSchedulerCommands(
   program
     .command("scheduler")
-    .description("Manage AIHub schedules")
+    .description("Manage Yoplai schedules")
     .version("0.1.0")
 );
 registerOrchestratorCommands(
   program
     .command("orchestrator")
-    .description("Manage AIHub orchestrator")
+    .description("Manage Yoplai orchestrator")
     .version("0.1.0")
 );
 registerEvalCommands(program);
@@ -618,7 +640,7 @@ authCmd
 
       if (providers.length === 0) {
         console.log(
-          "No providers authenticated. Run 'aihub auth login' to authenticate."
+          "No providers authenticated. Run 'yoplai auth login' to authenticate."
         );
         return;
       }

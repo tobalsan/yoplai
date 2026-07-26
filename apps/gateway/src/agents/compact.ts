@@ -6,7 +6,7 @@ import type {
   ContentBlock,
   FullHistoryMessage,
   ModelMeta,
-} from "@aihub/shared";
+} from "@yoplai/shared";
 import { CONFIG_DIR, getAgent } from "../config/index.js";
 import type { ExtensionRuntime } from "../extensions/runtime.js";
 import { getFullSessionHistory, runAgent } from "./runner.js";

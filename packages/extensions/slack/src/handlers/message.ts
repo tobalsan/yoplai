@@ -1,7 +1,7 @@
 import type {
   SlackComponentChannelConfig,
   SlackComponentConfig,
-} from "@aihub/shared";
+} from "@yoplai/shared";
 import type { SlackFile } from "../utils/attachments.js";
 import { matchesUserAllowlist } from "../utils/allowlist.js";
 

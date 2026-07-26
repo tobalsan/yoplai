@@ -17,6 +17,12 @@ export type McpServer = {
 
 type McpStatus = { servers: McpServer[] };
 
+// The OAuth popup posts "yoplai-oauth", but a SPA left open across a gateway
+// upgrade may still be running old listener code while a new gateway serves
+// the popup (or vice versa), so accept the legacy "aihub-oauth" type too.
+// Do not remove until that version-skew window is no longer a concern.
+const OAUTH_POPUP_MESSAGE_TYPES = new Set(["yoplai-oauth", "aihub-oauth"]);
+
 async function fetchStatus(agentId: string): Promise<McpStatus> {
   const res = await fetch(`/api/mcp/oauth/status?agent=${encodeURIComponent(agentId)}`);
   if (!res.ok) throw new Error("Failed to load MCP server status.");
@@ -60,7 +66,7 @@ export function McpConfigPage(): ReturnType<Component> {
   createEffect(() => {
     const onMessage = (event: MessageEvent) => {
       const result = event.data;
-      if (!result || typeof result !== "object" || result.type !== "aihub-oauth" || result.extension !== "mcp") return;
+      if (!result || typeof result !== "object" || !OAUTH_POPUP_MESSAGE_TYPES.has(result.type) || result.extension !== "mcp") return;
       if (result.success) {
         void refreshStatus();
       } else {
@@ -78,7 +84,7 @@ export function McpConfigPage(): ReturnType<Component> {
 
   const connect = (server: McpServer) => {
     const url = `/api/mcp/oauth/authorize?agent=${encodeURIComponent(params.agentId)}&server=${encodeURIComponent(server.name)}`;
-    window.open(url, "aihub-oauth", "width=520,height=640");
+    window.open(url, "yoplai-oauth", "width=520,height=640");
   };
 
   const disconnect = async (server: McpServer) => {

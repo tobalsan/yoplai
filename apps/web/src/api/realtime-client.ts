@@ -1,4 +1,4 @@
-import type { LeadSessionChangedEvent, SubagentRunStatus } from "@aihub/shared/types";
+import type { LeadSessionChangedEvent, SubagentRunStatus } from "@yoplai/shared/types";
 import { getWsUrl, type WsStreamEvent } from "./ws";
 
 export type RealtimeInterest =

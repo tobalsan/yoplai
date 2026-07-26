@@ -11,7 +11,7 @@ import {
   onCleanup,
   onMount,
 } from "solid-js";
-import type { SubagentRun } from "@aihub/shared/types";
+import type { SubagentRun } from "@yoplai/shared/types";
 import { fetchBoardAgents, killBoardAgent, subscribeToSubagentChanges } from "../../api";
 
 // ── Helpers ─────────────────────────────────────────────────────────────────

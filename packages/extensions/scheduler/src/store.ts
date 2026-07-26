@@ -3,8 +3,8 @@ import fsSync from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import lockfile from "proper-lockfile";
-import type { AgentConfig, ScheduleJob } from "@aihub/shared";
-import { ScheduleJobFileSchema } from "@aihub/shared";
+import type { AgentConfig, ScheduleJob } from "@yoplai/shared";
+import { ScheduleJobFileSchema } from "@yoplai/shared";
 import { z } from "zod";
 
 export type ScheduleStore = {
@@ -37,7 +37,7 @@ export class PerAgentScheduleStore {
     const legacyPath = path.join(this.dataDir, "schedules.json");
     if (fsSync.existsSync(legacyPath)) {
       this.warn(
-        `[scheduler] Found legacy schedules.json at ${legacyPath}; run \`aihub agents migrate\` to split schedules into agent cron/jobs.json files.`
+        `[scheduler] Found legacy schedules.json at ${legacyPath}; run \`yoplai agents migrate\` to split schedules into agent cron/jobs.json files.`
       );
     }
 

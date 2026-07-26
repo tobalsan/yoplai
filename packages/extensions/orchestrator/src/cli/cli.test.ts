@@ -24,26 +24,26 @@ describe("orchestrator CLI client", () => {
 
     await client.health();
     await client.projects();
-    await client.runs(20, "ENG-1", "aihub");
-    await client.workflow("aihub");
-    await client.claim("ENG-1", "aihub");
-    await client.release("ENG-1", "aihub");
-    await client.interrupt("ENG-1", "aihub");
-    await client.kill("ENG-1", "aihub");
-    await client.export("aihub", "/tmp/snap");
-    await client.tick("aihub");
+    await client.runs(20, "ENG-1", "yoplai");
+    await client.workflow("yoplai");
+    await client.claim("ENG-1", "yoplai");
+    await client.release("ENG-1", "yoplai");
+    await client.interrupt("ENG-1", "yoplai");
+    await client.kill("ENG-1", "yoplai");
+    await client.export("yoplai", "/tmp/snap");
+    await client.tick("yoplai");
 
     expect(calls).toEqual([
       "http://localhost:4000/api/orchestrator/health",
       "http://localhost:4000/api/orchestrator/projects",
-      "http://localhost:4000/api/orchestrator/runs?limit=20&issue=ENG-1&project=aihub",
-      "http://localhost:4000/api/orchestrator/workflow?project=aihub",
-      "http://localhost:4000/api/orchestrator/issues/ENG-1/claim?project=aihub",
-      "http://localhost:4000/api/orchestrator/runs/ENG-1/release?project=aihub",
-      "http://localhost:4000/api/orchestrator/runs/ENG-1/interrupt?project=aihub",
-      "http://localhost:4000/api/orchestrator/runs/ENG-1/kill?project=aihub",
-      "http://localhost:4000/api/orchestrator/export?project=aihub&out=%2Ftmp%2Fsnap",
-      "http://localhost:4000/api/orchestrator/tick?project=aihub",
+      "http://localhost:4000/api/orchestrator/runs?limit=20&issue=ENG-1&project=yoplai",
+      "http://localhost:4000/api/orchestrator/workflow?project=yoplai",
+      "http://localhost:4000/api/orchestrator/issues/ENG-1/claim?project=yoplai",
+      "http://localhost:4000/api/orchestrator/runs/ENG-1/release?project=yoplai",
+      "http://localhost:4000/api/orchestrator/runs/ENG-1/interrupt?project=yoplai",
+      "http://localhost:4000/api/orchestrator/runs/ENG-1/kill?project=yoplai",
+      "http://localhost:4000/api/orchestrator/export?project=yoplai&out=%2Ftmp%2Fsnap",
+      "http://localhost:4000/api/orchestrator/tick?project=yoplai",
     ]);
   });
 });
@@ -76,11 +76,11 @@ describe("registerOrchestratorCommands", () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "aih-orch-cli-"));
     const project = path.join(root, "project");
 
-    const workflowPath = await initWorkflow(project, { projectSlug: "aihub", profile: "worker" });
+    const workflowPath = await initWorkflow(project, { projectSlug: "yoplai", profile: "worker" });
     const content = await fs.readFile(workflowPath, "utf8");
 
     expect(workflowPath).toBe(path.join(project, "WORKFLOW.md"));
-    expect(content).toContain("project_slug: aihub");
+    expect(content).toContain("project_slug: yoplai");
     expect(content).toContain("api_key: $LINEAR_API_KEY");
     expect(content).toContain("runner: pi");
     expect(content).toContain("profile: worker");
@@ -94,7 +94,7 @@ describe("registerOrchestratorCommands", () => {
     expect(content).toContain("Create a worktree from the `main` branch");
     expect(content).toContain("Spawn a reviewer subagent");
     expect(content).toContain("## Golden Rule: Clarification Over Assumption");
-    await expect(initWorkflow(project, { projectSlug: "aihub" })).rejects.toThrow("WORKFLOW.md already exists");
+    await expect(initWorkflow(project, { projectSlug: "yoplai" })).rejects.toThrow("WORKFLOW.md already exists");
   });
 
   it("sanitizes project names for folder creation", () => {
@@ -106,7 +106,7 @@ describe("registerOrchestratorCommands", () => {
   it("creates Linear project, folder, workflow, and registers config", async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "aih-orch-project-"));
     const projectsRoot = path.join(root, "projects");
-    const configPath = path.join(root, "aihub.json");
+    const configPath = path.join(root, "yoplai.json");
     await fs.writeFile(configPath, JSON.stringify({ extensions: { orchestrator: { projectsRoot, projects: [] } } }), "utf8");
     const linear = {
       findProjectByName: vi.fn(async () => undefined),
@@ -132,7 +132,7 @@ describe("registerOrchestratorCommands", () => {
   it("creates Plane project workflow from bootstrap metadata", async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "aih-orch-plane-project-"));
     const projectsRoot = path.join(root, "projects");
-    const configPath = path.join(root, "aihub.json");
+    const configPath = path.join(root, "yoplai.json");
     await fs.writeFile(configPath, JSON.stringify({ extensions: { orchestrator: { projectsRoot, projects: [] } } }), "utf8");
     const bootstrap: TrackerBootstrap = {
       findExisting: vi.fn(async () => undefined),
@@ -164,7 +164,7 @@ describe("registerOrchestratorCommands", () => {
   it("defaults projectsRoot to ~/projects", async () => {
     const home = await fs.mkdtemp(path.join(os.tmpdir(), "aih-orch-home-"));
     const homedir = vi.spyOn(os, "homedir").mockReturnValue(home);
-    const configPath = path.join(home, ".aihub", "aihub.json");
+    const configPath = path.join(home, ".yoplai", "yoplai.json");
     const linear = {
       findProjectByName: vi.fn(async () => undefined),
       inferProjectTeamIds: vi.fn(async () => ["team-1"]),
@@ -181,7 +181,7 @@ describe("registerOrchestratorCommands", () => {
   it("fails before Linear creation when the folder already exists", async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "aih-orch-exists-"));
     const projectsRoot = path.join(root, "projects");
-    const configPath = path.join(root, "aihub.json");
+    const configPath = path.join(root, "yoplai.json");
     await fs.mkdir(path.join(projectsRoot, "foo-bar"), { recursive: true });
     await fs.writeFile(configPath, JSON.stringify({ extensions: { orchestrator: { projectsRoot } } }), "utf8");
     const linear = {
@@ -198,7 +198,7 @@ describe("registerOrchestratorCommands", () => {
   it("fails before local scaffolding when Linear project already exists", async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "aih-orch-duplicate-"));
     const projectsRoot = path.join(root, "projects");
-    const configPath = path.join(root, "aihub.json");
+    const configPath = path.join(root, "yoplai.json");
     await fs.writeFile(configPath, JSON.stringify({ extensions: { orchestrator: { projectsRoot } } }), "utf8");
     const linear = {
       findProjectByName: vi.fn(async () => ({ id: "project-1", name: "Foo Bar", slugId: "foo-bar" })),
@@ -214,7 +214,7 @@ describe("registerOrchestratorCommands", () => {
   it("rolls back Linear project and local folder when registration fails after creation", async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "aih-orch-rollback-"));
     const projectsRoot = path.join(root, "projects");
-    const configPath = path.join(root, "aihub.json");
+    const configPath = path.join(root, "yoplai.json");
     await fs.writeFile(configPath, JSON.stringify({ extensions: { orchestrator: { projectsRoot, projects: [] } } }), "utf8");
     await fs.chmod(configPath, 0o444);
     const linear = {

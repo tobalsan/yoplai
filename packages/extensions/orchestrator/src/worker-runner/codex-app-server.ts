@@ -114,7 +114,7 @@ export class CodexAppServerRunner implements WorkerRunner {
         cwd: input.workspace,
         approvalPolicy: codexApprovalPolicy(input),
         sandbox: codexThreadSandbox(input),
-        serviceName: "aihub-orchestrator",
+        serviceName: "yoplai-orchestrator",
       });
       session.threadId = this.extractThreadId(thread);
       session.emit("worker.codex.thread.started", { threadId: session.threadId, raw: thread });
@@ -165,10 +165,10 @@ export class CodexAppServerRunner implements WorkerRunner {
     const child = spawn(cmd, args, {
       cwd: input.workspace,
       env: sanitizedWorkerEnv({
-        AIHUB_RUN_ID: input.runId,
-        AIHUB_PROJECT_ID: input.project.id,
-        AIHUB_ISSUE_ID: input.issue.id,
-        AIHUB_ISSUE_IDENTIFIER: input.issue.identifier,
+        YOPLAI_RUN_ID: input.runId,
+        YOPLAI_PROJECT_ID: input.project.id,
+        YOPLAI_ISSUE_ID: input.issue.id,
+        YOPLAI_ISSUE_IDENTIFIER: input.issue.identifier,
       }),
       stdio: ["pipe", "pipe", "pipe"],
       detached: false,
@@ -214,7 +214,7 @@ export class CodexAppServerRunner implements WorkerRunner {
 
   private async initialize(session: CodexSession, input: WorkerRunnerStartInput): Promise<void> {
     await this.request(session, "initialize", {
-      clientInfo: { name: "aihub-orchestrator", version: "0.1.0" },
+      clientInfo: { name: "yoplai-orchestrator", version: "0.1.0" },
       capabilities: { experimentalApi: true },
       cwd: input.workspace,
     });

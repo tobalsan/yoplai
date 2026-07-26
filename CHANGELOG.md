@@ -1,6 +1,6 @@
-# AIHub Release Notes
+# Yoplai Release Notes
 
-All notable changes to Dar are documented here. The format is based on
+All notable changes to Yoplai are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html) (pre-1.0:
 the minor slot carries breaking changes, the patch slot carries compatible ones).
@@ -17,6 +17,31 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Fixed
 - Gateway access logs now suppress successful fast UI polling and health checks, while retaining errors and useful request logs without ANSI status codes.
+
+### Changed
+- **Project renamed AIHub → Yoplai.** The config home is now `~/.yoplai/yoplai.json` and env vars are `YOPLAI_*`. The legacy `~/.aihub`, `aihub.json`, and `AIHUB_*` names still work but log a deprecation warning. The CLI binary is now `yoplai`, with `aihub` kept as a compatibility alias (the orchestrator extension's `aihub-claude-rpc-shim` bin alias is likewise retained alongside the new `yoplai-claude-rpc-shim`). `$AIHUB_HOME` inside config values (e.g. `agents` globs) still expands, alongside the new `$YOPLAI_HOME`.
+- **⚠ BREAKING (home resolution):** the default home directory is now chosen by which of `~/.yoplai` / `~/.aihub` contains a config file, not by which directory exists. A legacy `~/.aihub` holding only state (`.env`, `auth.json`, `sessions/`) but no `aihub.json` now resolves to `~/.yoplai` silently — set `YOPLAI_HOME` to pin it if that's not what you want. This replaces a bug where an empty `~/.yoplai` (e.g. created by a stray write) would silently sever a legacy install from its config.
+- **⚠ BREAKING (unversioned, no legacy fallback):** `yoplai projects start --json` and `yoplai projects status --json` now emit `"type": "native"` where they previously emitted `"type": "aihub"`. Scripts matching `type === "aihub"` will silently stop matching.
+- IndexedDB: the browser-side attachment staging database is renamed from `aihub` to `yoplai`, with no read-fallback to the old database. This only affects transient staged uploads that were never submitted (an in-progress project-create form, or a not-yet-submitted attachment on a project detail page) — any already-submitted/persisted project content is unaffected. Anyone with such a draft in flight at upgrade time needs to re-attach the file(s).
+- The gateway's docker agent network is renamed `aihub-agents` → `yoplai-agents`, with no lookup fallback. `ensureNetwork` auto-creates it on first run, so this is low impact, but a pre-existing `aihub-agents` network is left orphaned and can be removed manually.
+- The tailscale serve path for the UI moved from `/aihub` to `/yoplai` (Vite's `base` moved with it). Existing `https://<host>.ts.net/aihub` bookmarks and shared links break and must be updated — there is no redirect. The stale `/aihub` mapping in tailscaled's persistent serve config is cleared automatically the first time the gateway refreshes its serve paths after upgrade.
+- The workspace's internal npm package scope changed from `@aihub/*` to `@yoplai/*`. Nothing in this repo is published, so this only affects consuming this repo as a pnpm workspace, not any published-package consumer.
+
+Migrated automatically, nothing to do:
+- The macOS launchd service label and plist filename are renamed `com.aihub.gateway` → `com.yoplai.gateway`. A pre-rename install stays fully controllable: `status`/`start`/`stop`/`restart`/`uninstall` fall back to the legacy label with a one-time deprecation warning, and `yoplai gateway install` migrates it in place (the legacy job is booted out before the new one is bootstrapped, and its plist is deleted only after the new bootstrap succeeds; a failed bootstrap rolls back to the legacy service). `uninstall` removes both when both are present.
+- `yoplai-theme` localStorage key, migrated from `aihub-theme` on first read; a shared `readMigratedLocal` helper does the same move-on-read for every other renamed `yoplai:*` key, covering board, context-panel, projects, chat-session, and layout state.
+- Container stdout protocol markers accept both `---YOPLAI_*---` and legacy `---AIHUB_*---` spellings; a legacy sandbox image logs one deprecation warning and still works, but should be rebuilt.
+- The `x-yoplai-auth-context` header (multi-user forwarded auth) still accepts `x-aihub-auth-context`.
+- The `yoplai:<agentId>` project `runAgent:` prefix still accepts the legacy `aihub:` prefix.
+- Orchestrator worker session transcripts: a pre-rename `<workspace>/.aihub/{claude,pi}-sessions/` directory is renamed (moved, not copied) into `<workspace>/.yoplai/{claude,pi}-sessions/` the first time a worker resolves it, logging one `[worker-runner] Migrated legacy session dir ...` warning; after that, `.aihub` no longer exists under that workspace.
+- Orchestrator project-local event logs still read rows pointing at the legacy `<project>/.aihub/codex` directory; new logs are written under `.yoplai/codex`.
+- The `${aihubCli}` prompt-template variable (for custom Shaper templates under `<homeDir>/prompts/`) still resolves to the CLI path, logging one `[prompt-factory]` deprecation warning; use `${cli}` instead.
+
+Frozen, do not touch:
+- The OAuth token-at-rest encryption salt keeps its literal `aihub-oauth-token-at-rest-v2` spelling — existing `enc:v2:` ciphertext was derived from it. A new salt requires a new `enc:v3:` prefix, never an edit to the v2 salt.
+
+### Upgrade notes
+- Nothing is required. If you want to fully move off the legacy names: rename `~/.aihub` to `~/.yoplai` and `aihub.json` to `yoplai.json`, rewrite `AIHUB_*` env vars to `YOPLAI_*`, and rebuild any container image pinned as `aihub-agent:*`.
 
 ## v0.21.0 — Native IRC extension + Discord streaming
 
@@ -392,7 +417,7 @@ Runtime platform matured: modular components, connectors, multi-user auth, Langf
 
 ## v0.3.0 — Project UI, Space, and worktree workflow
 
-AIHub grew into a project operating surface: UI v2/v3, project agent panels, Space/worktree workflow, and richer realtime state.
+Yoplai grew into a project operating surface: UI v2/v3, project agent panels, Space/worktree workflow, and richer realtime state.
 
 ### Highlights
 - Added kanban homepage, agents sidebar, context panel, project detail tabs, mobile polish, and command/search flows.
@@ -427,7 +452,7 @@ Projects and subagents became usable together: create work, spawn agents, monito
 
 ## v0.1.0 — Initial gateway foundation
 
-First usable AIHub shape: gateway, web chat, sessions, WebSocket streaming, and early multi-SDK preparation.
+First usable Yoplai shape: gateway, web chat, sessions, WebSocket streaming, and early multi-SDK preparation.
 
 ### Highlights
 - Added gateway/web baseline with WebSocket streaming and session persistence.

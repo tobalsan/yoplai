@@ -1,12 +1,12 @@
 import { createSignal } from "solid-js";
+import { readMigratedLocal } from "./local-storage";
 
-export const SIDEBAR_COLLAPSED_STORAGE_KEY = "aihub:sidebar-collapsed";
-export const RIGHT_PANEL_COLLAPSED_STORAGE_KEY = "aihub:right-panel-collapsed";
-export const ZEN_MODE_STORAGE_KEY = "aihub:zen-mode";
+export const SIDEBAR_COLLAPSED_STORAGE_KEY = "yoplai:sidebar-collapsed";
+export const RIGHT_PANEL_COLLAPSED_STORAGE_KEY = "yoplai:right-panel-collapsed";
+export const ZEN_MODE_STORAGE_KEY = "yoplai:zen-mode";
 
 function readStoredBoolean(key: string): boolean {
-  if (typeof window === "undefined") return false;
-  return localStorage.getItem(key) === "true";
+  return readMigratedLocal(key) === "true";
 }
 
 function persistBoolean(key: string, value: boolean): void {

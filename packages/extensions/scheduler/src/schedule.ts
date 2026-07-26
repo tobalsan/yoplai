@@ -1,5 +1,5 @@
 import { CronExpressionParser } from "cron-parser";
-import type { Schedule } from "@aihub/shared";
+import type { Schedule } from "@yoplai/shared";
 
 export function computeNextRunAtMs(schedule: Schedule, nowMs: number): number {
   const currentDate = schedule.startAt

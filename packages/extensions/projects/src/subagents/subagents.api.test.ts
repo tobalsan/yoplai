@@ -23,7 +23,7 @@ describe("subagents API", () => {
   let prevUserProfile: string | undefined;
 
   beforeAll(async () => {
-    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "aihub-subagents-"));
+    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-subagents-"));
     projectsRoot = path.join(tmpDir, "projects");
 
     prevHome = process.env.HOME;
@@ -31,7 +31,7 @@ describe("subagents API", () => {
     process.env.HOME = tmpDir;
     process.env.USERPROFILE = tmpDir;
 
-    const configDir = path.join(tmpDir, ".aihub");
+    const configDir = path.join(tmpDir, ".yoplai");
     await fs.mkdir(configDir, { recursive: true });
     const config = {
       version: 2,
@@ -55,7 +55,7 @@ describe("subagents API", () => {
       },
     };
     await fs.writeFile(
-      path.join(configDir, "aihub.json"),
+      path.join(configDir, "yoplai.json"),
       JSON.stringify(config, null, 2)
     );
 
@@ -85,7 +85,7 @@ describe("subagents API", () => {
     clearProjectsContextForTest = clearProjectsContext;
     setProjectsContext({
       getConfig: () => config,
-      getDataDir: () => path.join(tmpDir, ".aihub"),
+      getDataDir: () => path.join(tmpDir, ".yoplai"),
       getAgents: () => config.agents,
       getAgent: (id: string) => config.agents.find((agent) => agent.id === id),
       isAgentActive: () => true,
@@ -2526,8 +2526,8 @@ describe("subagents API", () => {
     );
     expect(patchRes.status).toBe(200);
 
-    const prevResumeLimit = process.env.AIHUB_SUBAGENT_RESUME_MAX_PROMPT_BYTES;
-    process.env.AIHUB_SUBAGENT_RESUME_MAX_PROMPT_BYTES = "64";
+    const prevResumeLimit = process.env.YOPLAI_SUBAGENT_RESUME_MAX_PROMPT_BYTES;
+    process.env.YOPLAI_SUBAGENT_RESUME_MAX_PROMPT_BYTES = "64";
     let resumeRes: Response;
     try {
       resumeRes = await Promise.resolve(
@@ -2545,9 +2545,9 @@ describe("subagents API", () => {
       );
     } finally {
       if (prevResumeLimit === undefined) {
-        delete process.env.AIHUB_SUBAGENT_RESUME_MAX_PROMPT_BYTES;
+        delete process.env.YOPLAI_SUBAGENT_RESUME_MAX_PROMPT_BYTES;
       } else {
-        process.env.AIHUB_SUBAGENT_RESUME_MAX_PROMPT_BYTES = prevResumeLimit;
+        process.env.YOPLAI_SUBAGENT_RESUME_MAX_PROMPT_BYTES = prevResumeLimit;
       }
     }
     expect(resumeRes.status).toBe(400);
@@ -2578,8 +2578,8 @@ describe("subagents API", () => {
     );
     expect(patchRes.status).toBe(200);
 
-    const prevLimit = process.env.AIHUB_SUBAGENT_MAX_PROMPT_BYTES;
-    process.env.AIHUB_SUBAGENT_MAX_PROMPT_BYTES = "64";
+    const prevLimit = process.env.YOPLAI_SUBAGENT_MAX_PROMPT_BYTES;
+    process.env.YOPLAI_SUBAGENT_MAX_PROMPT_BYTES = "64";
     let spawnRes: Response;
     try {
       spawnRes = await Promise.resolve(
@@ -2596,9 +2596,9 @@ describe("subagents API", () => {
       );
     } finally {
       if (prevLimit === undefined) {
-        delete process.env.AIHUB_SUBAGENT_MAX_PROMPT_BYTES;
+        delete process.env.YOPLAI_SUBAGENT_MAX_PROMPT_BYTES;
       } else {
-        process.env.AIHUB_SUBAGENT_MAX_PROMPT_BYTES = prevLimit;
+        process.env.YOPLAI_SUBAGENT_MAX_PROMPT_BYTES = prevLimit;
       }
     }
     expect(spawnRes.status).toBe(400);

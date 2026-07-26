@@ -54,7 +54,7 @@ const project: ProjectDetail = {
     status: "todo",
     created: "2026-02-28T20:00:00.000Z",
     sessionKeys: { "lead-agent": "main" },
-    repo: "~/code/aihub",
+    repo: "~/code/yoplai",
   },
   docs: {},
   thread: [],
@@ -245,9 +245,9 @@ describe("AgentPanel", () => {
       ".add-agent-btn"
     ) as HTMLButtonElement;
     expect(openButton.disabled).toBe(true);
-    expect(openButton.title).toBe("Repo path not found: ~/code/aihub");
+    expect(openButton.title).toBe("Repo path not found: ~/code/yoplai");
     expect(container.textContent).toContain(
-      "Repo path not found: ~/code/aihub"
+      "Repo path not found: ~/code/yoplai"
     );
 
     dispose();
@@ -258,7 +258,7 @@ describe("AgentPanel", () => {
       ...project,
       frontmatter: {
         ...project.frontmatter,
-        repo: "~/code/aihub",
+        repo: "~/code/yoplai",
       },
     };
 
@@ -297,7 +297,7 @@ describe("AgentPanel", () => {
       ".repo-value"
     ) as HTMLParagraphElement;
     expect(repoValue).toBeTruthy();
-    expect(repoValue.textContent).toContain("~/code/aihub");
+    expect(repoValue.textContent).toContain("~/code/yoplai");
 
     repoValue.dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
     await new Promise((resolve) => setTimeout(resolve, 0));

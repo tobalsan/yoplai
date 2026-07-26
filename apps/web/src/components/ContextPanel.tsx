@@ -14,6 +14,7 @@ import { AgentChat } from "./AgentChat";
 import { AgentDirectory } from "./AgentDirectory";
 import { fetchAgents, fetchAllSubagents, fetchProjects } from "../api";
 import { isExtensionEnabled } from "../lib/capabilities";
+import { readMigratedLocal } from "../lib/local-storage";
 
 type ContextPanelProps = {
   collapsed: Accessor<boolean>;
@@ -31,7 +32,7 @@ type RecentProjectView = {
   title?: string;
 };
 
-const RECENT_PROJECTS_STORAGE_KEY = "aihub:recent-project-views";
+const RECENT_PROJECTS_STORAGE_KEY = "yoplai:recent-project-views";
 const RECENT_PROJECTS_MAX = 5;
 
 function relativeTime(timestampMs: number): string {
@@ -67,7 +68,7 @@ function readProjectIdFromPathname(pathname: string): string | null {
 function readRecentProjectViews(): RecentProjectView[] {
   if (typeof window === "undefined") return [];
   try {
-    const raw = localStorage.getItem(RECENT_PROJECTS_STORAGE_KEY);
+    const raw = readMigratedLocal(RECENT_PROJECTS_STORAGE_KEY);
     if (!raw) return [];
     const parsed = JSON.parse(raw);
     if (!Array.isArray(parsed)) return [];
@@ -109,7 +110,7 @@ export function ContextPanel(props: ContextPanelProps) {
   const [recentViews, setRecentViews] = createSignal<RecentProjectView[]>(
     readRecentProjectViews()
   );
-  const storageKey = "aihub:context-panel:mode";
+  const storageKey = "yoplai:context-panel:mode";
   let lastSelectedAgent: string | null | undefined;
   const projectTitleById = createMemo(() => {
     const map = new Map<string, string>();
@@ -217,7 +218,7 @@ export function ContextPanel(props: ContextPanelProps) {
   });
 
   onMount(() => {
-    const saved = localStorage.getItem(storageKey);
+    const saved = readMigratedLocal(storageKey);
     if (saved === "agents" || saved === "feed" || saved === "chat") {
       setMode(saved);
     }

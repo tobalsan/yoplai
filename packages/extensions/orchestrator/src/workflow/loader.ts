@@ -3,6 +3,7 @@ import fsSync from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
 import yaml from "js-yaml";
+import { expandHomePlaceholder, readEnv } from "@yoplai/shared";
 import type { PlaneAuthKind, TrackerConfig, TrackerIssue, TrackerStatesConfig, WorkflowConfig, WorkflowFrontmatter, WorkflowSnapshot } from "../types.js";
 import { planeAuthEnvRef, resolvePlaneEnvAuth } from "../plane/auth.js";
 import { validateWorkflowThinkingForRunner } from "../worker-runner/thinking.js";
@@ -29,13 +30,12 @@ function expandEnv(value: string | undefined, fallback?: string): string {
 
 function resolvePath(value: string | undefined, projectPath: string): string {
   const raw = value?.trim() || "./workspaces";
-  const expanded = raw === "$AIHUB_HOME"
-    ? process.env.AIHUB_HOME ?? projectPath
-    : raw.startsWith("$AIHUB_HOME/")
-      ? path.join(process.env.AIHUB_HOME ?? projectPath, raw.slice("$AIHUB_HOME/".length))
-      : raw.startsWith("~")
-        ? path.join(process.env.HOME ?? "", raw.slice(1))
-        : raw;
+  const homeExpanded = expandHomePlaceholder(raw, readEnv("HOME") ?? projectPath);
+  const expanded = homeExpanded !== raw
+    ? homeExpanded
+    : raw.startsWith("~")
+      ? path.join(process.env.HOME ?? "", raw.slice(1))
+      : raw;
   return path.resolve(path.isAbsolute(expanded) ? expanded : path.join(projectPath, expanded));
 }
 

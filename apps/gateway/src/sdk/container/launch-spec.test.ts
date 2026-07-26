@@ -17,7 +17,7 @@ vi.mock("../../media/metadata.js", () => ({
 }));
 
 function tempDir(): string {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "aihub-launch-spec-"));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "yoplai-launch-spec-"));
   tempDirs.push(dir);
   return dir;
 }

@@ -2,11 +2,11 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { resolveSystemFiles } from "@aihub/shared/node/system-files";
+import { resolveSystemFiles } from "@yoplai/shared/node/system-files";
 import { ensureWorkspaceFiles } from "./workspace.js";
 
 async function makeTempDir(): Promise<string> {
-  return fs.mkdtemp(path.join(os.tmpdir(), "aihub-workspace-"));
+  return fs.mkdtemp(path.join(os.tmpdir(), "yoplai-workspace-"));
 }
 
 describe("agent workspace files", () => {

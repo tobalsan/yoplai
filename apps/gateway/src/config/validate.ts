@@ -2,7 +2,7 @@ import type {
   Extension,
   GatewayConfig,
   ValidationResult,
-} from "@aihub/shared";
+} from "@yoplai/shared";
 import { resolveAgentEnv } from "./index.js";
 import { resolveConfigSecrets } from "./secrets.js";
 

@@ -18,7 +18,7 @@ export function emitProjectPitchFallbackHint(projectId: string): void {
   emitHint(
     projectId,
     emittedProjectHints,
-    `Project ${projectId} is missing PITCH.md; using README.md body. Run: aihub projects pitch ${projectId} --from-readme`
+    `Project ${projectId} is missing PITCH.md; using README.md body. Run: yoplai projects pitch ${projectId} --from-readme`
   );
 }
 
@@ -26,6 +26,6 @@ export function emitSliceSpecsFallbackHint(sliceId: string): void {
   emitHint(
     sliceId,
     emittedSliceHints,
-    `Slice ${sliceId} is missing SPECS.md; using README.md body. Run: aihub slices specs ${sliceId} --from-readme`
+    `Slice ${sliceId} is missing SPECS.md; using README.md body. Run: yoplai slices specs ${sliceId} --from-readme`
   );
 }

@@ -28,6 +28,7 @@ import {
   FILE_INPUT_ACCEPT,
   formatFileSize,
 } from "../lib/attachments";
+import { readMigratedLocal } from "../lib/local-storage";
 import {
   createChatRuntime,
   type ChatRuntimeBlock,
@@ -74,14 +75,10 @@ function toBoardLog(block: ChatRuntimeBlock): BoardLogItem {
 // ── API helpers ─────────────────────────────────────────────────────
 
 const API_BASE = "/api/board";
-const SELECTED_AGENT_STORAGE_KEY = "aihub:board:selected-agent";
+const SELECTED_AGENT_STORAGE_KEY = "yoplai:board:selected-agent";
 
 function readSelectedAgentId(): string | null {
-  try {
-    return localStorage.getItem(SELECTED_AGENT_STORAGE_KEY);
-  } catch {
-    return null;
-  }
+  return readMigratedLocal(SELECTED_AGENT_STORAGE_KEY);
 }
 
 function writeSelectedAgentId(agentId: string | null): void {

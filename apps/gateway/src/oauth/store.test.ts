@@ -3,7 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { randomBytes, scryptSync, createCipheriv } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import type { OAuthConnection } from "@aihub/shared";
+import type { OAuthConnection } from "@yoplai/shared";
 import { TokenCipher, isEncrypted } from "./crypto.js";
 import { OAuthConnectionStore } from "./store.js";
 
@@ -52,6 +52,26 @@ describe("TokenCipher", () => {
 
     expect(isEncrypted(v1)).toBe(true);
     expect(new TokenCipher(secret).decrypt(v1)).toBe(plaintext);
+  });
+
+  it("decrypts a v2 envelope produced under the frozen KDF salt", () => {
+    // The KDF salt in crypto.ts is frozen key material: every `enc:v2:` token
+    // already on disk was encrypted under a key derived from these exact bytes.
+    // The salt is spelled out here independently of the implementation so that
+    // re-branding or reformatting that literal fails loudly instead of silently
+    // breaking every connected account on upgrade.
+    const frozenSalt = Buffer.from("aihub-oauth-token-at-rest-v2", "utf8");
+    const secret = "store-encryption-secret";
+    const plaintext = "ya29.token-encrypted-before-the-rename";
+
+    const iv = randomBytes(12);
+    const key = scryptSync(Buffer.from(secret, "utf8"), frozenSalt, 32);
+    const c = createCipheriv("aes-256-gcm", key, iv);
+    const ct = Buffer.concat([c.update(plaintext, "utf8"), c.final()]);
+    const v2 =
+      "enc:v2:" + Buffer.concat([iv, c.getAuthTag(), ct]).toString("base64");
+
+    expect(new TokenCipher(secret).decrypt(v2)).toBe(plaintext);
   });
 
   it("produces distinct ciphertexts for the same input (random IV/salt)", () => {

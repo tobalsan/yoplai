@@ -17,7 +17,7 @@ import {
   AgentConfigSchema,
   type AgentConfig,
   type GatewayConfig,
-} from "@aihub/shared";
+} from "@yoplai/shared";
 import {
   clearConfigCacheForTests,
   setLoadedConfig,
@@ -34,7 +34,7 @@ vi.mock("../../extensions/tools.js", () => ({
   getExtensionAgentTools: mockGetExtensionAgentTools,
 }));
 
-vi.mock("@aihub/shared/node/system-files", () => ({
+vi.mock("@yoplai/shared/node/system-files", () => ({
   resolveSystemFiles: vi.fn(async () => [{ path: "SOUL.md", content: "soul" }]),
 }));
 
@@ -57,9 +57,9 @@ vi.mock("node:child_process", () => ({
   execFileSync: vi.fn(),
 }));
 
-const OUTPUT_START = "---AIHUB_OUTPUT_START---";
-const OUTPUT_END = "---AIHUB_OUTPUT_END---";
-const EVENT_PREFIX = "---AIHUB_EVENT---";
+const OUTPUT_START = "---YOPLAI_OUTPUT_START---";
+const OUTPUT_END = "---YOPLAI_OUTPUT_END---";
+const EVENT_PREFIX = "---YOPLAI_EVENT---";
 
 class FakeDockerProcess extends EventEmitter {
   stdout = new PassThrough();
@@ -103,7 +103,7 @@ const tempDirs: string[] = [];
 
 function tempDir(): string {
   const dir = fs.mkdtempSync(
-    path.join(os.tmpdir(), "aihub-container-adapter-")
+    path.join(os.tmpdir(), "yoplai-container-adapter-")
   );
   tempDirs.push(dir);
   return dir;
@@ -134,7 +134,7 @@ function createAgent(
     },
     sandbox: {
       enabled: true,
-      image: "aihub-agent:latest",
+      image: "yoplai-agent:latest",
       memory: "2g",
       cpus: 1,
       workspaceWritable: false,
@@ -217,14 +217,14 @@ function mockExecFile(complete = true): MockInstance {
 beforeEach(() => {
   vi.clearAllMocks();
   mockGetExtensionAgentTools.mockReturnValue([]);
-  delete process.env.AIHUB_HOME;
+  delete process.env.YOPLAI_HOME;
 });
 
 afterEach(() => {
   vi.useRealTimers();
   vi.clearAllMocks();
   clearConfigCacheForTests();
-  delete process.env.AIHUB_HOME;
+  delete process.env.YOPLAI_HOME;
   for (const dir of tempDirs.splice(0)) {
     fs.rmSync(dir, { recursive: true, force: true });
   }
@@ -233,8 +233,8 @@ afterEach(() => {
 describe("container adapter", () => {
   it("spawns docker and writes ContainerInput to stdin", async () => {
     const root = tempDir();
-    const aihubHome = path.join(root, "aihub");
-    process.env.AIHUB_HOME = aihubHome;
+    const homeDir = path.join(root, "yoplai");
+    process.env.YOPLAI_HOME = homeDir;
     const agent = createAgent(root);
     setConfig(agent, root);
     mockGetExtensionAgentTools.mockResolvedValue([
@@ -301,8 +301,8 @@ describe("container adapter", () => {
     expect(input.agentToken).toEqual(expect.any(String));
     expect(params.onSessionHandle).toHaveBeenCalledWith(
       expect.objectContaining({
-        containerName: expect.stringMatching(/^aihub-agent-cloud-/),
-        ipcDir: path.join(aihubHome, "ipc", "cloud"),
+        containerName: expect.stringMatching(/^yoplai-agent-cloud-/),
+        ipcDir: path.join(homeDir, "ipc", "cloud"),
       })
     );
     expect(params.onEvent).toHaveBeenCalledWith({
@@ -316,7 +316,7 @@ describe("container adapter", () => {
 
   it("surfaces docker run stderr when extra network attach races a failed container start", async () => {
     const root = tempDir();
-    process.env.AIHUB_HOME = path.join(root, "aihub");
+    process.env.YOPLAI_HOME = path.join(root, "yoplai");
     const agent = createAgent(root);
     setConfig(agent, root, { onecliSandboxNetwork: "config_onecli" });
 
@@ -347,7 +347,7 @@ describe("container adapter", () => {
 
   it("streams history events in real time from stdout", async () => {
     const root = tempDir();
-    process.env.AIHUB_HOME = path.join(root, "aihub");
+    process.env.YOPLAI_HOME = path.join(root, "yoplai");
     const agent = createAgent(root);
     setConfig(agent, root);
     const { processes } = mockSpawn();
@@ -413,7 +413,7 @@ describe("container adapter", () => {
 
   it("emits system_context from gateway for container runs", async () => {
     const root = tempDir();
-    process.env.AIHUB_HOME = path.join(root, "aihub");
+    process.env.YOPLAI_HOME = path.join(root, "yoplai");
     const agent = createAgent(root);
     setConfig(agent, root);
     const { processes } = mockSpawn();
@@ -459,8 +459,8 @@ describe("container adapter", () => {
 
   it("copies file_output events to outbound media", async () => {
     const root = tempDir();
-    const aihubHome = path.join(root, "aihub");
-    process.env.AIHUB_HOME = aihubHome;
+    const homeDir = path.join(root, "yoplai");
+    process.env.YOPLAI_HOME = homeDir;
     const agent = createAgent(root);
     setConfig(agent, root);
     const { processes } = mockSpawn();
@@ -471,7 +471,7 @@ describe("container adapter", () => {
     await tick();
     const dockerProcess = processes[0];
     const dataPath = path.join(
-      aihubHome,
+      homeDir,
       "agents",
       "cloud",
       "data",
@@ -514,7 +514,7 @@ describe("container adapter", () => {
     if (!event || event.type !== "file_output") return;
 
     const outboundPath = path.join(
-      aihubHome,
+      homeDir,
       "media",
       "outbound",
       `${event.fileId}.csv`
@@ -522,7 +522,7 @@ describe("container adapter", () => {
     expect(fs.readFileSync(outboundPath, "utf8")).toBe("a,b\n1,2\n");
 
     const metadata = JSON.parse(
-      fs.readFileSync(path.join(aihubHome, "media", "metadata.json"), "utf8")
+      fs.readFileSync(path.join(homeDir, "media", "metadata.json"), "utf8")
     );
     expect(metadata[event.fileId]).toMatchObject({
       direction: "outbound",
@@ -574,7 +574,7 @@ describe("container adapter", () => {
   it("stops then kills on legacy hard runtime timeout", async () => {
     vi.useFakeTimers();
     const root = tempDir();
-    process.env.AIHUB_HOME = path.join(root, "aihub");
+    process.env.YOPLAI_HOME = path.join(root, "yoplai");
     const agent = createAgent(root, { timeout: 1 });
     setConfig(agent, root);
     const { processes } = mockSpawn();
@@ -585,7 +585,7 @@ describe("container adapter", () => {
     vi.advanceTimersByTime(1_000);
     expect(execSpy).toHaveBeenCalledWith(
       "docker",
-      ["stop", expect.stringMatching(/^aihub-agent-cloud-/)],
+      ["stop", expect.stringMatching(/^yoplai-agent-cloud-/)],
       { timeout: 10_000 },
       expect.any(Function)
     );
@@ -593,7 +593,7 @@ describe("container adapter", () => {
     vi.advanceTimersByTime(10_000);
     expect(execSpy).toHaveBeenCalledWith(
       "docker",
-      ["kill", expect.stringMatching(/^aihub-agent-cloud-/)],
+      ["kill", expect.stringMatching(/^yoplai-agent-cloud-/)],
       { timeout: 5_000 },
       expect.any(Function)
     );
@@ -605,7 +605,7 @@ describe("container adapter", () => {
   it("stops then kills on idle timeout", async () => {
     vi.useFakeTimers();
     const root = tempDir();
-    process.env.AIHUB_HOME = path.join(root, "aihub");
+    process.env.YOPLAI_HOME = path.join(root, "yoplai");
     const agent = createAgent(root, { idleTimeout: 1, maxRunTime: 100 });
     setConfig(agent, root);
     const { processes } = mockSpawn();
@@ -616,7 +616,7 @@ describe("container adapter", () => {
     vi.advanceTimersByTime(1_000);
     expect(execSpy).toHaveBeenCalledWith(
       "docker",
-      ["stop", expect.stringMatching(/^aihub-agent-cloud-/)],
+      ["stop", expect.stringMatching(/^yoplai-agent-cloud-/)],
       { timeout: 10_000 },
       expect.any(Function)
     );
@@ -624,7 +624,7 @@ describe("container adapter", () => {
     vi.advanceTimersByTime(10_000);
     expect(execSpy).toHaveBeenCalledWith(
       "docker",
-      ["kill", expect.stringMatching(/^aihub-agent-cloud-/)],
+      ["kill", expect.stringMatching(/^yoplai-agent-cloud-/)],
       { timeout: 5_000 },
       expect.any(Function)
     );
@@ -638,7 +638,7 @@ describe("container adapter", () => {
   it("resets idle timeout on protocol activity", async () => {
     vi.useFakeTimers();
     const root = tempDir();
-    process.env.AIHUB_HOME = path.join(root, "aihub");
+    process.env.YOPLAI_HOME = path.join(root, "yoplai");
     const agent = createAgent(root, { idleTimeout: 1, maxRunTime: 100 });
     setConfig(agent, root);
     const { processes } = mockSpawn();
@@ -658,7 +658,7 @@ describe("container adapter", () => {
     vi.advanceTimersByTime(1);
     expect(execSpy).toHaveBeenCalledWith(
       "docker",
-      ["stop", expect.stringMatching(/^aihub-agent-cloud-/)],
+      ["stop", expect.stringMatching(/^yoplai-agent-cloud-/)],
       { timeout: 10_000 },
       expect.any(Function)
     );
@@ -671,7 +671,7 @@ describe("container adapter", () => {
 
   it("rejects non-zero exits without protocol output", async () => {
     const root = tempDir();
-    process.env.AIHUB_HOME = path.join(root, "aihub");
+    process.env.YOPLAI_HOME = path.join(root, "yoplai");
     const agent = createAgent(root);
     setConfig(agent, root);
     const { processes } = mockSpawn();
@@ -687,7 +687,7 @@ describe("container adapter", () => {
 
   it("does not expose benign runner startup stderr as the failure", async () => {
     const root = tempDir();
-    process.env.AIHUB_HOME = path.join(root, "aihub");
+    process.env.YOPLAI_HOME = path.join(root, "yoplai");
     const agent = createAgent(root);
     setConfig(agent, root);
     const { processes } = mockSpawn();
@@ -705,7 +705,7 @@ describe("container adapter", () => {
 
   it("embeds per-agent onecli token into proxy URL", async () => {
     const root = tempDir();
-    process.env.AIHUB_HOME = path.join(root, "aihub");
+    process.env.YOPLAI_HOME = path.join(root, "yoplai");
     const agent = createAgent(root);
     // Override config with top-level onecli that has per-agent token
     setLoadedConfig({
@@ -737,7 +737,7 @@ describe("container adapter", () => {
 
   it("rejects successful exits with missing sentinels", async () => {
     const root = tempDir();
-    process.env.AIHUB_HOME = path.join(root, "aihub");
+    process.env.YOPLAI_HOME = path.join(root, "yoplai");
     const agent = createAgent(root);
     setConfig(agent, root);
     const { processes } = mockSpawn();

@@ -1,7 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import yaml from "js-yaml";
-import { AgentYamlConfigSchema } from "@aihub/shared";
+import { AgentYamlConfigSchema } from "@yoplai/shared";
 
 /**
  * Write path for an agent's `config.extensions`. Runtime agent config is

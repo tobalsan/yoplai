@@ -1,4 +1,4 @@
-import type { ContainerExtensionTool, GatewayConfig } from "@aihub/shared";
+import type { ContainerExtensionTool, GatewayConfig } from "@yoplai/shared";
 import { getExtensionSystemPromptContributions } from "../../extensions/prompts.js";
 import { getExtensionAgentTools } from "../../extensions/tools.js";
 import type { SdkRunParams } from "../types.js";

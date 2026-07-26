@@ -2,7 +2,7 @@ import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { GatewayConfig, AgentConfig } from "@aihub/shared";
+import type { GatewayConfig, AgentConfig } from "@yoplai/shared";
 import {
   interruptCancelledOrchestratorRuns,
   projectsExtension,
@@ -21,7 +21,7 @@ afterEach(async () => {
 
 describe("projects extension agent tools", () => {
   it("registers project tools through the extension model", async () => {
-    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "aihub-project-tools-"));
+    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-project-tools-"));
     const projectsRoot = path.join(tmpDir, "projects");
     const agent = {
       id: "agent-1",
@@ -36,7 +36,7 @@ describe("projects extension agent tools", () => {
     } as unknown as GatewayConfig;
     setProjectsContext({
       getConfig: () => config,
-      getDataDir: () => path.join(tmpDir, ".aihub"),
+      getDataDir: () => path.join(tmpDir, ".yoplai"),
       getAgents: () => [agent],
       getAgent: () => agent,
       isAgentActive: () => true,

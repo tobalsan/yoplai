@@ -3,7 +3,7 @@ import path from "node:path";
 import {
   OAuthConnectionSchema,
   type OAuthConnection,
-} from "@aihub/shared";
+} from "@yoplai/shared";
 import { CONFIG_DIR } from "../config/index.js";
 import { TokenCipher } from "./crypto.js";
 import { resolveTokenCipher } from "./encryption.js";
@@ -11,7 +11,7 @@ import { resolveTokenCipher } from "./encryption.js";
 /**
  * File-backed store for OAuth connections. Connections are scoped to a single
  * (agent, provider) pair — one connection per pair, not per user. Persisted as
- * one JSON file per pair under `$AIHUB_HOME/oauth/`.
+ * one JSON file per pair under `$YOPLAI_HOME/oauth/`.
  *
  * Token fields (access + refresh) are encrypted at rest with AES-256-GCM using
  * the configured encryption secret (`oauth.encryptionKey`); a leaked token file

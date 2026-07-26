@@ -102,29 +102,29 @@ describe("api client (projects/subagents)", () => {
       json: async () => [{ id: "PRO-2" }],
     });
 
-    const res = await fetchProjects("aihub");
+    const res = await fetchProjects("yoplai");
 
-    expectFetchCall("/api/projects?area=aihub");
+    expectFetchCall("/api/projects?area=yoplai");
     expect(res[0]?.id).toBe("PRO-2");
   });
 
   it("updates area with patch payload", async () => {
     fetchMock.mockResolvedValue({
       ok: true,
-      json: async () => ({ id: "aihub", title: "AIHub Updated" }),
+      json: async () => ({ id: "yoplai", title: "Yoplai Updated" }),
     });
 
-    const res = await updateArea("aihub", {
-      title: "AIHub Updated",
+    const res = await updateArea("yoplai", {
+      title: "Yoplai Updated",
       color: "#123456",
     });
 
-    expectFetchCall("/api/areas/aihub", {
+    expectFetchCall("/api/areas/yoplai", {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ title: "AIHub Updated", color: "#123456" }),
+      body: JSON.stringify({ title: "Yoplai Updated", color: "#123456" }),
     });
-    expect(res.title).toBe("AIHub Updated");
+    expect(res.title).toBe("Yoplai Updated");
   });
 
   it("creates area with payload", async () => {

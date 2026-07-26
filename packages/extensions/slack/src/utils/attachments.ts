@@ -1,4 +1,4 @@
-import type { FileAttachment } from "@aihub/shared";
+import type { FileAttachment } from "@yoplai/shared";
 
 export const MAX_UPLOAD_SIZE_BYTES = 25 * 1024 * 1024;
 

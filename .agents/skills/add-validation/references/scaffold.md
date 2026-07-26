@@ -2,7 +2,7 @@
 
 Fill this template with PRD-specific content. Keep the six parts; drop blocks
 that don't apply to the detected surface. Commands come from
-`aihub-commands.md`.
+`yoplai-commands.md`.
 
 ```markdown
 ## E2E Validation
@@ -12,10 +12,10 @@ beyond unit tests — i.e. the round-trip through the real gateway/UI.>
 
 ### 1. Worktree + seed config (skip if already set up)
 
-- Create `~/.worktrees/aihub/<branch>` and `pnpm install` ONLY if not already
+- Create `~/.worktrees/yoplai/<branch>` and `pnpm install` ONLY if not already
   inside a worktree.
-- `pnpm init-dev-config` ONLY if `$CWD/.aihub` is absent.
-- <Add orchestrator/board/extension blocks to `.aihub/aihub.json` if the feature
+- `pnpm init-dev-config` ONLY if `$CWD/.yoplai` is absent.
+- <Add orchestrator/board/extension blocks to `.yoplai/yoplai.json` if the feature
   needs them.>
 - <Seed PRD-specific canary projects/slices here.>
 
@@ -25,7 +25,7 @@ beyond unit tests — i.e. the round-trip through the real gateway/UI.>
 
 ### 3. Launch preview
 
-`AIHUB_HOME=$(pwd)/.aihub pnpm dev` — note the auto-picked ports. Don't touch prod.
+`YOPLAI_HOME=$(pwd)/.yoplai pnpm dev` — note the auto-picked ports. Don't touch prod.
 <Omit this block for pure-CLI/backend specs.>
 
 ### 4. E2E steps
@@ -91,12 +91,12 @@ gateway and unblocks orchestrator dispatch.
 
 ### 1. Worktree + seed config (skip if already set up)
 
-- Worktree `~/.worktrees/aihub/pro-251-edit-repo-modal` + `pnpm install` if not
+- Worktree `~/.worktrees/yoplai/pro-251-edit-repo-modal` + `pnpm install` if not
   already in one.
-- `pnpm init-dev-config` if `.aihub` absent. Add `orchestrator` + `board` blocks
-  to `.aihub/aihub.json` to match prod.
+- `pnpm init-dev-config` if `.yoplai` absent. Add `orchestrator` + `board` blocks
+  to `.yoplai/yoplai.json` to match prod.
 - Seed two canary projects:
-  - (a) one with a valid repo set (`projects update PRO-XXX --repo ~/code/aihub`)
+  - (a) one with a valid repo set (`projects update PRO-XXX --repo ~/code/yoplai`)
     — exercises the "edit existing" path.
   - (b) one with no repo — exercises "first-time set" + the orchestrator-pickup
     smoke. Add one slice in `todo` so dispatch has something to pick up.
@@ -107,7 +107,7 @@ gateway and unblocks orchestrator dispatch.
 
 ### 3. Launch preview
 
-`AIHUB_HOME=$(pwd)/.aihub pnpm dev` — note ports (gateway 4001+, UI 3001+).
+`YOPLAI_HOME=$(pwd)/.yoplai pnpm dev` — note ports (gateway 4001+, UI 3001+).
 
 ### 4. E2E steps
 

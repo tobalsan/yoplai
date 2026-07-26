@@ -1,7 +1,7 @@
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
-import type { GatewayConfig } from "@aihub/shared";
+import type { GatewayConfig } from "@yoplai/shared";
 import { afterEach, describe, expect, it } from "vitest";
 import { getSubagentLogs } from "./index.js";
 
@@ -10,7 +10,7 @@ const tmpRoots: string[] = [];
 async function setupLogs(lines: Record<string, unknown>[]): Promise<{
   config: GatewayConfig;
 }> {
-  const root = await fs.mkdtemp(path.join(os.tmpdir(), "aihub-subagents-"));
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-subagents-"));
   tmpRoots.push(root);
   const projectDir = path.join(root, "PRO-1_empty-exec");
   const sessionDir = path.join(projectDir, "sessions", "worker");
@@ -44,7 +44,7 @@ describe("getSubagentLogs shell diagnostics", () => {
         type: "tool_execution_start",
         toolCallId: "t1",
         toolName: "exec_command",
-        args: { cmd: "aihub projects start PRO-1 --subagent Worker" },
+        args: { cmd: "yoplai projects start PRO-1 --subagent Worker" },
       },
       {
         type: "tool_execution_end",
@@ -62,10 +62,10 @@ describe("getSubagentLogs shell diagnostics", () => {
     const warning = out.data.events.find((event) => event.type === "warning");
     expect(warning).toBeTruthy();
     expect(warning?.text).toContain(
-      "No output captured for shell command: aihub projects start PRO-1 --subagent Worker"
+      "No output captured for shell command: yoplai projects start PRO-1 --subagent Worker"
     );
     expect(warning?.text).toContain(
-      "command -v aihub && aihub projects --version"
+      "command -v yoplai && yoplai projects --version"
     );
   });
 
@@ -75,13 +75,13 @@ describe("getSubagentLogs shell diagnostics", () => {
         type: "tool_execution_start",
         toolCallId: "t2",
         toolName: "exec_command",
-        args: { cmd: "aihub projects --version" },
+        args: { cmd: "yoplai projects --version" },
       },
       {
         type: "tool_execution_end",
         toolCallId: "t2",
         toolName: "exec_command",
-        result: { stdout: "aihub projects 1.2.3", stderr: "", is_error: false },
+        result: { stdout: "yoplai projects 1.2.3", stderr: "", is_error: false },
         isError: false,
       },
     ]);
@@ -150,7 +150,7 @@ describe("getSubagentLogs usage snapshots", () => {
   });
 
   it("infers Codex context usage from average input per agent message", async () => {
-    const root = await fs.mkdtemp(path.join(os.tmpdir(), "aihub-subagents-"));
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-subagents-"));
     tmpRoots.push(root);
     const projectDir = path.join(root, "PRO-1_empty-exec");
     const sessionDir = path.join(projectDir, "sessions", "worker");
@@ -217,7 +217,7 @@ describe("getSubagentLogs usage snapshots", () => {
   });
 
   it("uses the full turn delta when Codex has one agent message", async () => {
-    const root = await fs.mkdtemp(path.join(os.tmpdir(), "aihub-subagents-"));
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-subagents-"));
     tmpRoots.push(root);
     const projectDir = path.join(root, "PRO-1_empty-exec");
     const sessionDir = path.join(projectDir, "sessions", "worker");
@@ -269,7 +269,7 @@ describe("getSubagentLogs usage snapshots", () => {
   });
 
   it("uses only the latest Codex turn delta across consecutive turns", async () => {
-    const root = await fs.mkdtemp(path.join(os.tmpdir(), "aihub-subagents-"));
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-subagents-"));
     tmpRoots.push(root);
     const projectDir = path.join(root, "PRO-1_empty-exec");
     const sessionDir = path.join(projectDir, "sessions", "worker");
@@ -354,7 +354,7 @@ describe("getSubagentLogs usage snapshots", () => {
   });
 
   it("falls back to one Codex call when no agent messages were logged", async () => {
-    const root = await fs.mkdtemp(path.join(os.tmpdir(), "aihub-subagents-"));
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-subagents-"));
     tmpRoots.push(root);
     const projectDir = path.join(root, "PRO-1_empty-exec");
     const sessionDir = path.join(projectDir, "sessions", "worker");

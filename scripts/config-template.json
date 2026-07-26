@@ -59,7 +59,7 @@
     "bind": "loopback",
     "port": __UI_PORT__
   },
-  "apiUrl": "http://127.0.0.1:__GATEWAY_PORT__/aihub",
+  "apiUrl": "http://127.0.0.1:__GATEWAY_PORT__/yoplai",
   "agents": [
     "agents/devagent"
   ]

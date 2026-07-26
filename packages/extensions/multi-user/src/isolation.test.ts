@@ -6,11 +6,11 @@ describe("multi-user isolation paths", () => {
       "./isolation.js"
     );
 
-    expect(getUserSessionsPath(undefined, "/tmp/aihub-test")).toBe(
-      "/tmp/aihub-test/sessions.json"
+    expect(getUserSessionsPath(undefined, "/tmp/yoplai-test")).toBe(
+      "/tmp/yoplai-test/sessions.json"
     );
-    expect(getUserHistoryDir(undefined, "/tmp/aihub-test")).toBe(
-      "/tmp/aihub-test/history"
+    expect(getUserHistoryDir(undefined, "/tmp/yoplai-test")).toBe(
+      "/tmp/yoplai-test/history"
     );
   });
 
@@ -18,14 +18,14 @@ describe("multi-user isolation paths", () => {
     const { getUserDataDir, getUserSessionsPath, getUserHistoryDir } =
       await import("./isolation.js");
 
-    expect(getUserDataDir("user-123", "/tmp/aihub-test")).toBe(
-      "/tmp/aihub-test/sessions/users/user-123"
+    expect(getUserDataDir("user-123", "/tmp/yoplai-test")).toBe(
+      "/tmp/yoplai-test/sessions/users/user-123"
     );
-    expect(getUserSessionsPath("user-123", "/tmp/aihub-test")).toBe(
-      "/tmp/aihub-test/sessions/users/user-123/sessions.json"
+    expect(getUserSessionsPath("user-123", "/tmp/yoplai-test")).toBe(
+      "/tmp/yoplai-test/sessions/users/user-123/sessions.json"
     );
-    expect(getUserHistoryDir("user-123", "/tmp/aihub-test")).toBe(
-      "/tmp/aihub-test/sessions/users/user-123/history"
+    expect(getUserHistoryDir("user-123", "/tmp/yoplai-test")).toBe(
+      "/tmp/yoplai-test/sessions/users/user-123/history"
     );
   });
 });

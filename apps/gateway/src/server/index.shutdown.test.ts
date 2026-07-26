@@ -11,16 +11,16 @@ describe("gateway graceful shutdown", () => {
   });
 
   it("registers SIGTERM/SIGINT handlers and cleans up containers", async () => {
-    const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "aihub-shutdown-"));
-    const prevAihubHome = process.env.AIHUB_HOME;
+    const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-shutdown-"));
+    const prevHomeDir = process.env.YOPLAI_HOME;
     const prevHome = process.env.HOME;
     const prevUserProfile = process.env.USERPROFILE;
 
-    process.env.AIHUB_HOME = path.join(tmpDir, ".aihub");
+    process.env.YOPLAI_HOME = path.join(tmpDir, ".yoplai");
     process.env.HOME = tmpDir;
     process.env.USERPROFILE = tmpDir;
 
-    await writeTestV3Config(path.join(tmpDir, ".aihub"), {
+    await writeTestV3Config(path.join(tmpDir, ".yoplai"), {
       agents: [{ id: "test-agent", name: "Test Agent" }],
     });
 
@@ -60,8 +60,8 @@ describe("gateway graceful shutdown", () => {
     if (sigtermCall) process.off("SIGTERM", sigtermCall[1]);
     if (sigintCall) process.off("SIGINT", sigintCall[1]);
 
-    if (prevAihubHome === undefined) delete process.env.AIHUB_HOME;
-    else process.env.AIHUB_HOME = prevAihubHome;
+    if (prevHomeDir === undefined) delete process.env.YOPLAI_HOME;
+    else process.env.YOPLAI_HOME = prevHomeDir;
     if (prevHome === undefined) delete process.env.HOME;
     else process.env.HOME = prevHome;
     if (prevUserProfile === undefined) delete process.env.USERPROFILE;

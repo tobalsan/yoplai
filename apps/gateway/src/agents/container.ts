@@ -10,7 +10,7 @@ import type {
   MountAllowlist,
   OnecliConfig,
   SandboxMount,
-} from "@aihub/shared";
+} from "@yoplai/shared";
 import { resolveWorkspaceDir } from "../config/index.js";
 
 export type ContainerVolumeMount = {
@@ -19,10 +19,10 @@ export type ContainerVolumeMount = {
   readonly: boolean;
 };
 
-const DEFAULT_IMAGE = "aihub-agent:latest";
+const DEFAULT_IMAGE = "yoplai-agent:latest";
 const DEFAULT_MEMORY = "2g";
 const DEFAULT_CPUS = 1;
-const DEFAULT_NETWORK = "aihub-agents";
+const DEFAULT_NETWORK = "yoplai-agents";
 const DEFAULT_GATEWAY_URL = "http://gateway:4000";
 const CONTAINER_ONECLI_CA_PATH =
   "/usr/local/share/ca-certificates/onecli-ca.pem";
@@ -30,7 +30,7 @@ export const CONTAINER_DATA_DIR = "/workspace/data";
 export const CONTAINER_UPLOADS_DIR = "/workspace/uploads";
 
 function createContainerName(agentId: string): string {
-  return `aihub-agent-${agentId}-${randomUUID()}`;
+  return `yoplai-agent-${agentId}-${randomUUID()}`;
 }
 
 export function getMountedOnecliCaPath(
@@ -112,9 +112,9 @@ function sanitizePathSegment(segment: string): string {
   return segment.replace(/[^a-zA-Z0-9._-]/g, "_") || "default";
 }
 
-export function getAgentDataDir(aihubHome: string, agentId: string): string {
+export function getAgentDataDir(homeDir: string, agentId: string): string {
   return path.join(
-    resolveHostPath(aihubHome),
+    resolveHostPath(homeDir),
     "agents",
     sanitizePathSegment(agentId),
     "data"
@@ -122,12 +122,12 @@ export function getAgentDataDir(aihubHome: string, agentId: string): string {
 }
 
 export function getSessionUploadsDir(
-  aihubHome: string,
+  homeDir: string,
   agentId: string,
   sessionId: string
 ): string {
   return path.join(
-    resolveHostPath(aihubHome),
+    resolveHostPath(homeDir),
     "agents",
     sanitizePathSegment(agentId),
     "uploads",
@@ -179,7 +179,7 @@ export function validateMount(
 export function buildVolumeMounts(
   agent: AgentConfig,
   globalSandbox: GlobalSandboxConfig,
-  aihubHome: string,
+  homeDir: string,
   userId?: string,
   onecli?: OnecliConfig,
   sessionId?: string
@@ -187,16 +187,16 @@ export function buildVolumeMounts(
   const mounts: ContainerVolumeMount[] = [];
   const sandbox = agent.sandbox;
   const workspace = resolveWorkspaceDir(agent.workspace);
-  const home = resolveHostPath(aihubHome);
+  const home = resolveHostPath(homeDir);
 
   addMount(mounts, workspace, "/workspace", !sandbox?.workspaceWritable);
 
-  const dataDir = getAgentDataDir(aihubHome, agent.id);
+  const dataDir = getAgentDataDir(homeDir, agent.id);
   fs.mkdirSync(dataDir, { recursive: true });
   addMount(mounts, dataDir, CONTAINER_DATA_DIR, false);
 
   if (sessionId) {
-    const uploadsDir = getSessionUploadsDir(aihubHome, agent.id, sessionId);
+    const uploadsDir = getSessionUploadsDir(homeDir, agent.id, sessionId);
     fs.mkdirSync(uploadsDir, { recursive: true });
     addMount(mounts, uploadsDir, CONTAINER_UPLOADS_DIR, true);
   }
@@ -312,7 +312,7 @@ export function buildContainerArgs(
   agent: AgentConfig,
   globalSandbox: GlobalSandboxConfig,
   mounts: ContainerVolumeMount[],
-  _aihubHome: string,
+  _homeDir: string,
   _userId?: string,
   onecli?: OnecliConfig,
   configEnv?: Record<string, string>
@@ -438,9 +438,19 @@ export function ensureAgentImage(image: string): void {
 }
 
 export function cleanupOrphanContainers(): void {
+  // Match containers named by both the current and pre-rename gateway so
+  // containers left behind by an older gateway (named `aihub-agent-*`) are
+  // still reaped. Multiple `--filter name=` values are OR'd by docker.
   const containerIds = execFileSync(
     "docker",
-    ["ps", "-q", "--filter", "name=aihub-agent-"],
+    [
+      "ps",
+      "-q",
+      "--filter",
+      "name=yoplai-agent-",
+      "--filter",
+      "name=aihub-agent-",
+    ],
     { encoding: "utf8" }
   )
     .split("\n")

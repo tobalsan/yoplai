@@ -1,4 +1,4 @@
-import type { SlackComponentConfig } from "@aihub/shared";
+import type { SlackComponentConfig } from "@yoplai/shared";
 import { describe, expect, it } from "vitest";
 import {
   formatReactionMessage,

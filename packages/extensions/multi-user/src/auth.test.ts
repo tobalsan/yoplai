@@ -2,7 +2,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { GatewayConfigSchema } from "@aihub/shared";
+import { GatewayConfigSchema } from "@yoplai/shared";
 import { initializeMultiUserDatabase } from "./db.js";
 import { createMultiUserAuth, resolveBootstrapUserFields } from "./auth.js";
 
@@ -31,7 +31,7 @@ describe("bootstrap user fields", () => {
 
 describe("multi-user auth", () => {
   it("creates auth instance and runs Better Auth migrations", async () => {
-    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "aihub-auth-"));
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "yoplai-auth-"));
     tempDirs.push(tempDir);
 
     const config = GatewayConfigSchema.parse({
@@ -90,7 +90,7 @@ describe("multi-user auth", () => {
   });
 
   it("treats empty server.baseUrl / web.baseUrl as missing", async () => {
-    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "aihub-auth-"));
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "yoplai-auth-"));
     tempDirs.push(tempDir);
 
     const config = GatewayConfigSchema.parse({
@@ -137,7 +137,7 @@ describe("multi-user auth", () => {
   });
 
   it("grants set-role only to superadmin (admins cannot escalate roles)", async () => {
-    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "aihub-auth-"));
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "yoplai-auth-"));
     tempDirs.push(tempDir);
 
     const config = GatewayConfigSchema.parse({

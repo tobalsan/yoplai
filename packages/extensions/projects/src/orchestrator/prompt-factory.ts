@@ -1,14 +1,16 @@
+import { readEnv } from "@yoplai/shared";
+
 /**
- * Resolve the actual `aihub` CLI invocation that subagents should use to talk
+ * Resolve the actual `yoplai` CLI invocation that subagents should use to talk
  * back to *this* gateway. Substituted into spawn prompts at render time so the
  * agent doesn't need to wrangle env vars.
  */
-export function resolveAihubCli(): string {
-  if (process.env.AIHUB_DEV) {
-    const root = process.env.AIHUB_WORKSPACE_ROOT ?? process.cwd();
-    return `pnpm --dir ${root} aihub:dev`;
+export function resolveCli(): string {
+  if (readEnv("YOPLAI_DEV")) {
+    const root = readEnv("YOPLAI_WORKSPACE_ROOT") ?? process.cwd();
+    return `pnpm --dir ${root} yoplai:dev`;
   }
-  return "aihub";
+  return "yoplai";
 }
 
 export type WorkerPromptInput = {
@@ -52,8 +54,10 @@ export function renderPromptTemplate(
   });
 }
 
+let warnedLegacyCliTemplateVar = false;
+
 export class OrchestratorPromptFactory {
-  constructor(private readonly aihubCli: string = resolveAihubCli()) {}
+  constructor(private readonly cli: string = resolveCli()) {}
 
   buildShaperPrompt(input: ShaperPromptInput, template?: string): string {
     const fallbackTemplate = [
@@ -74,20 +78,32 @@ export class OrchestratorPromptFactory {
       "",
       "## Role",
       "You are ${profileName}, a shaping specialist. Read the project state, do only the work required for this stage, or self-skip if already complete.",
-      `For any \`aihub\` CLI calls, invoke \`${this.aihubCli}\` (this targets the gateway that owns this project - prod or dev).`,
-      `Record rejection or escalation reasons with \`${this.aihubCli} projects comment \${projectId} --author \${profileName} "<reason>"\`.`,
-      `When your stage is complete, run \`${this.aihubCli} projects move \${projectId} \${nextStatus}\` and exit. If human intervention is required, comment why, move to \`shaping:blocked\`, and exit.`,
+      `For any \`yoplai\` CLI calls, invoke \`${this.cli}\` (this targets the gateway that owns this project - prod or dev).`,
+      `Record rejection or escalation reasons with \`${this.cli} projects comment \${projectId} --author \${profileName} "<reason>"\`.`,
+      `When your stage is complete, run \`${this.cli} projects move \${projectId} \${nextStatus}\` and exit. If human intervention is required, comment why, move to \`shaping:blocked\`, and exit.`,
     ].join("\n");
-    return renderPromptTemplate(template ?? fallbackTemplate, {
+    const resolvedTemplate = template ?? fallbackTemplate;
+    if (resolvedTemplate.includes("${aihubCli}") && !warnedLegacyCliTemplateVar) {
+      warnedLegacyCliTemplateVar = true;
+      console.warn(
+        "[prompt-factory] Template uses `${aihubCli}`, which is deprecated; use `${cli}` instead."
+      );
+    }
+    return renderPromptTemplate(resolvedTemplate, {
       ...input,
-      aihubCli: this.aihubCli,
+      cli: this.cli,
+      // Legacy alias: pre-rename user templates in `<homeDir>/prompts/<Profile>.md`
+      // reference `${aihubCli}` (the context key before the rename). Keep resolving
+      // it here per spec section 2 — this is a legitimate reintroduction of the
+      // `aihub` literal, not a leftover to "fix".
+      aihubCli: this.cli,
       nextStatus: input.nextStatus ?? "active",
     }).trim();
   }
 
   buildWorkerPrompt(input: WorkerPromptInput): string {
     const signoffInstruction =
-      'When posting comments via `aihub projects comment` or `aihub slices comment`, always pass `--author Worker`. Do not let comments default to "AIHub".';
+      'When posting comments via `yoplai projects comment` or `yoplai slices comment`, always pass `--author Worker`. Do not let comments default to "Yoplai".';
     return [
       `## Working on Slice: ${input.sliceId} — ${input.sliceTitle}`,
       "",
@@ -122,9 +138,9 @@ export class OrchestratorPromptFactory {
       "## Orchestrator Handoff",
       "Read SPECS.md, TASKS.md, and VALIDATION.md inside your slice directory.",
       "Also read THREAD.md at the project root for any prior Reviewer feedback.",
-      `For any \`aihub\` CLI calls, invoke \`${this.aihubCli}\` (this targets the gateway that owns this project - prod or dev).`,
+      `For any \`yoplai\` CLI calls, invoke \`${this.cli}\` (this targets the gateway that owns this project - prod or dev).`,
       signoffInstruction,
-      `When all VALIDATION.md criteria pass, run \`${this.aihubCli} slices move ${input.sliceId} review\` and exit.`,
+      `When all VALIDATION.md criteria pass, run \`${this.cli} slices move ${input.sliceId} review\` and exit.`,
     ]
       .join("\n")
       .trim();
@@ -132,7 +148,7 @@ export class OrchestratorPromptFactory {
 
   buildReviewerPrompt(input: ReviewerPromptInput): string {
     const signoffInstruction =
-      'When posting comments via `aihub projects comment` or `aihub slices comment`, always pass `--author Reviewer`. Do not let comments default to "AIHub".';
+      'When posting comments via `yoplai projects comment` or `yoplai slices comment`, always pass `--author Reviewer`. Do not let comments default to "Yoplai".';
     const workspacesBlock =
       input.workerWorkspaces.length > 0
         ? [
@@ -163,19 +179,19 @@ export class OrchestratorPromptFactory {
       "## Your Role: Reviewer",
       "Review the worker's implementation against SPECS.md / TASKS.md / VALIDATION.md.",
       "Worker workspaces are listed above; inspect their diffs and run their tests as needed.",
-      `For any \`aihub\` CLI calls, invoke \`${this.aihubCli}\` (this targets the gateway that owns this project - prod or dev).`,
+      `For any \`yoplai\` CLI calls, invoke \`${this.cli}\` (this targets the gateway that owns this project - prod or dev).`,
       signoffInstruction,
       "",
       "Decision protocol:",
-      `- If ALL VALIDATION.md criteria pass: run \`${this.aihubCli} slices comment ${input.sliceId} --author Reviewer "<one-line PASS summary>"\` then \`${this.aihubCli} slices move ${input.sliceId} ready_to_merge\`. Exit.`,
+      `- If ALL VALIDATION.md criteria pass: run \`${this.cli} slices comment ${input.sliceId} --author Reviewer "<one-line PASS summary>"\` then \`${this.cli} slices move ${input.sliceId} ready_to_merge\`. Exit.`,
       `- If ANY criterion fails or the diff has blocking issues:`,
-      `    1. Run \`${this.aihubCli} slices comment ${input.sliceId} --author Reviewer "<crisp list of gaps, file:line where applicable>"\` (this records to THREAD.md).`,
+      `    1. Run \`${this.cli} slices comment ${input.sliceId} --author Reviewer "<crisp list of gaps, file:line where applicable>"\` (this records to THREAD.md).`,
       `    2. Append/update a \`## Known traps\` section in ${input.sliceDirPath}/SPECS.md so the next Worker reads it. For each new trap, capture three fields:`,
       `       - **Symptom** — failing test name, error, file:line.`,
       `       - **Wrong fix to avoid** — what previous Worker(s) tried that you rejected.`,
       `       - **Correct fix / investigation direction** — what the next Worker should do instead.`,
       `       Keep entries terse. If a matching trap already exists, update it rather than duplicating.`,
-      `    3. Run \`${this.aihubCli} slices move ${input.sliceId} todo\`. Exit.`,
+      `    3. Run \`${this.cli} slices move ${input.sliceId} todo\`. Exit.`,
       "",
       "Do NOT move to `done` - that's a manual merge gate. Do NOT push, do NOT merge.",
     ]
@@ -186,7 +202,7 @@ export class OrchestratorPromptFactory {
   buildMergerPrompt(input: MergerPromptInput): string {
     const mergeTarget = input.workerBranch ?? "<slice-worker-branch>";
     const signoffInstruction =
-      'When posting comments via `aihub slices comment`, always pass `--author Merger`. Do not let comments default to "AIHub".';
+      'When posting comments via `yoplai slices comment`, always pass `--author Merger`. Do not let comments default to "Yoplai".';
 
     return [
       `## Merging Slice: ${input.sliceId} — ${input.sliceTitle}`,
@@ -202,8 +218,8 @@ export class OrchestratorPromptFactory {
       `Run \`git merge ${mergeTarget}\` to merge the slice branch into this integration branch worktree.`,
       "If the merge is clean, commit if needed, then run targeted validation you can discover plus `pnpm typecheck` when available.",
       "If conflicts are trivial, resolve them, commit, and run validation.",
-      `On success: run \`${this.aihubCli} slices comment ${input.sliceId} --author Merger "Merged to integration."\` then \`${this.aihubCli} slices move ${input.sliceId} done\`. Exit.`,
-      `On irrecoverable conflict or validation failure: run \`${this.aihubCli} slices merger-conflict ${input.sliceId} "<files or failing checks>"\`, then run \`${this.aihubCli} slices comment ${input.sliceId} --author Merger "Merge conflict — needs human: <files or failing checks>"\`. Leave the slice in \`ready_to_merge\` and exit.`,
+      `On success: run \`${this.cli} slices comment ${input.sliceId} --author Merger "Merged to integration."\` then \`${this.cli} slices move ${input.sliceId} done\`. Exit.`,
+      `On irrecoverable conflict or validation failure: run \`${this.cli} slices merger-conflict ${input.sliceId} "<files or failing checks>"\`, then run \`${this.cli} slices comment ${input.sliceId} --author Merger "Merge conflict — needs human: <files or failing checks>"\`. Leave the slice in \`ready_to_merge\` and exit.`,
       "Do not push. Do not merge integration into main.",
       signoffInstruction,
     ]

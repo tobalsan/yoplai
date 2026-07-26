@@ -4,7 +4,7 @@ import type {
   GatewayConfig,
   TelegramAgentConfig,
   TelegramComponentConfig,
-} from "@aihub/shared";
+} from "@yoplai/shared";
 import { z } from "zod";
 import { getActiveBot } from "./bot-registry.js";
 import { splitMessage } from "./utils/chunk.js";

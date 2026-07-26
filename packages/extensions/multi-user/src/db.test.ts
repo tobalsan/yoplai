@@ -22,7 +22,7 @@ afterEach(() => {
 
 describe("multi-user db", () => {
   it("initializes sqlite db and agent assignments table", () => {
-    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "aihub-auth-db-"));
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "yoplai-auth-db-"));
     tempDirs.push(tempDir);
     const dbPath = path.join(tempDir, "auth.db");
 
@@ -56,7 +56,7 @@ describe("multi-user db", () => {
   });
 
   it("creates a teams table with a unique name index", () => {
-    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "aihub-teams-db-"));
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "yoplai-teams-db-"));
     tempDirs.push(tempDir);
     const dbPath = path.join(tempDir, "auth.db");
 
@@ -86,7 +86,7 @@ describe("multi-user db", () => {
   });
 
   it("creates a team_members M2M table with team/user foreign keys", () => {
-    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "aihub-members-db-"));
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "yoplai-members-db-"));
     tempDirs.push(tempDir);
     const dbPath = path.join(tempDir, "auth.db");
 
@@ -117,7 +117,7 @@ describe("multi-user db", () => {
   });
 
   it("creates an agent_forks table with fork-once / one-team constraints", () => {
-    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "aihub-forks-db-"));
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "yoplai-forks-db-"));
     tempDirs.push(tempDir);
     const dbPath = path.join(tempDir, "auth.db");
 
@@ -189,7 +189,7 @@ function seedAssignments(dbPath: string) {
 
 describe("assignments → teams migration", () => {
   function makeDbPath(): string {
-    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "aihub-migrate-"));
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "yoplai-migrate-"));
     tempDirs.push(tempDir);
     return path.join(tempDir, "auth.db");
   }

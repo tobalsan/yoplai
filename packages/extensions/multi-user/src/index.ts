@@ -4,7 +4,7 @@ import {
   type Extension,
   type ExtensionContext,
   type ExtensionLogger,
-} from "@aihub/shared";
+} from "@yoplai/shared";
 import type { Hono } from "hono";
 import type Database from "better-sqlite3";
 import { initializeMultiUserDatabase } from "./db.js";
@@ -174,7 +174,7 @@ export const multiUserExtension: Extension = {
     const auth = await createMultiUserAuth(ctx.getConfig(), config, db);
     const assignments = createAgentAssignmentStore(db);
     const membership = createMembershipStore(db);
-    // Forks live under $AIHUB_HOME/agents/<forkId>, alongside functional
+    // Forks live under $YOPLAI_HOME/agents/<forkId>, alongside functional
     // agents, so the standard gateway `agents` glob discovers a freshly
     // copied fork and makes it runnable without a separate forks glob.
     const agentsDir = path.join(ctx.getDataDir(), "agents");

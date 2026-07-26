@@ -2,7 +2,7 @@ import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { GatewayConfig } from "@aihub/shared";
+import type { GatewayConfig } from "@yoplai/shared";
 import type { ProjectListItem } from "../projects/store.js";
 import type { SliceRecord } from "../projects/slices.js";
 import type { SubagentListItem } from "../subagents/index.js";
@@ -13,8 +13,8 @@ import {
   dispatchOrchestratorTick,
   isActiveOrchestratorRun,
   reconcileLiveRuns,
-  resolveAihubNotifyCommand,
-  runAihubNotify,
+  resolveNotifyCommand,
+  runNotify,
 } from "./dispatcher.js";
 import { resolveHitlNotifyChannel } from "./index.js";
 import type { HitlEvent } from "./hitl.js";
@@ -59,11 +59,11 @@ const donePingConfig: OrchestratorConfig = {
   statuses: {},
 };
 
-const originalAihubHome = process.env.AIHUB_HOME;
+const originalHomeDir = process.env.YOPLAI_HOME;
 
 afterEach(() => {
-  if (originalAihubHome === undefined) delete process.env.AIHUB_HOME;
-  else process.env.AIHUB_HOME = originalAihubHome;
+  if (originalHomeDir === undefined) delete process.env.YOPLAI_HOME;
+  else process.env.YOPLAI_HOME = originalHomeDir;
 });
 
 /** Create a project in `active` status (the project gate for slice dispatch). */
@@ -123,7 +123,7 @@ function run(
 }
 
 async function tempWorkspace(name: string): Promise<string> {
-  return fs.mkdtemp(path.join(os.tmpdir(), `aihub-${name}-`));
+  return fs.mkdtemp(path.join(os.tmpdir(), `yoplai-${name}-`));
 }
 
 /** Default updateSlice mock — records calls + returns a slice record. */
@@ -289,8 +289,8 @@ describe("orchestrator dispatcher", () => {
   });
 
   it("dispatches Shaper profiles for matching shaping project statuses", async () => {
-    process.env.AIHUB_HOME = await fs.mkdtemp(
-      path.join(os.tmpdir(), "aihub-home-")
+    process.env.YOPLAI_HOME = await fs.mkdtemp(
+      path.join(os.tmpdir(), "yoplai-home-")
     );
     const spawned: SpawnSubagentInput[] = [];
     const shapingConfig: OrchestratorConfig = {
@@ -324,10 +324,10 @@ describe("orchestrator dispatcher", () => {
     expect(spawned[0].prompt).toContain("Next status: shaping:drill");
   });
 
-  it("loads Shaper prompt templates from AIHUB_HOME, not process cwd", async () => {
-    const homeDir = await fs.mkdtemp(path.join(os.tmpdir(), "aihub-home-"));
-    const cwdDir = await fs.mkdtemp(path.join(os.tmpdir(), "aihub-cwd-"));
-    process.env.AIHUB_HOME = homeDir;
+  it("loads Shaper prompt templates from YOPLAI_HOME, not process cwd", async () => {
+    const homeDir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-home-"));
+    const cwdDir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-cwd-"));
+    process.env.YOPLAI_HOME = homeDir;
     await fs.mkdir(path.join(homeDir, "prompts"), { recursive: true });
     await fs.writeFile(
       path.join(homeDir, "prompts", "RepoSetter.md"),
@@ -366,8 +366,8 @@ describe("orchestrator dispatcher", () => {
   });
 
   it("skips a Shaper prompt build failure and continues slice dispatch", async () => {
-    const homeDir = await fs.mkdtemp(path.join(os.tmpdir(), "aihub-home-"));
-    process.env.AIHUB_HOME = homeDir;
+    const homeDir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-home-"));
+    process.env.YOPLAI_HOME = homeDir;
     await fs.mkdir(path.join(homeDir, "prompts"), { recursive: true });
     await fs.writeFile(
       path.join(homeDir, "prompts", "RepoSetter.md"),
@@ -498,13 +498,13 @@ describe("orchestrator dispatcher", () => {
     expect(spawned.every((input) => input.mode === "clone")).toBe(true);
     // sliceId is set on each spawn
     expect(spawned.map((s) => s.sliceId)).toEqual(["PRO-1-S01", "PRO-1-S02"]);
-    // Prompt uses `aihub slices move` (not `projects move`)
+    // Prompt uses `yoplai slices move` (not `projects move`)
     expect(spawned[0]?.prompt).toContain(
-      "`aihub slices move PRO-1-S01 review`"
+      "`yoplai slices move PRO-1-S01 review`"
     );
     expect(spawned[0]?.prompt).toContain("always pass `--author Worker`");
-    expect(spawned[0]?.prompt).toContain("aihub projects comment");
-    expect(spawned[0]?.prompt).toContain("aihub slices comment");
+    expect(spawned[0]?.prompt).toContain("yoplai projects comment");
+    expect(spawned[0]?.prompt).toContain("yoplai slices comment");
     expect(spawned[0]?.prompt).not.toContain("projects move");
     // Worker lock: slices moved to in_progress
     expect(updates.calls.map((c) => c.sliceId)).toEqual([
@@ -1237,14 +1237,14 @@ describe("orchestrator dispatcher", () => {
     expect(spawned[0]?.source).toBe("orchestrator");
     // Reviewer uses `slices move` for both pass and fail paths
     expect(spawned[0]?.prompt).toContain(
-      "`aihub slices move PRO-1-S01 ready_to_merge`"
+      "`yoplai slices move PRO-1-S01 ready_to_merge`"
     );
     expect(spawned[0]?.prompt).toContain("always pass `--author Reviewer`");
     expect(spawned[0]?.prompt).toContain(
-      '`aihub slices comment PRO-1-S01 --author Reviewer "<one-line PASS summary>"`'
+      '`yoplai slices comment PRO-1-S01 --author Reviewer "<one-line PASS summary>"`'
     );
-    expect(spawned[0]?.prompt).toContain("aihub projects comment");
-    expect(spawned[0]?.prompt).toContain("aihub slices comment");
+    expect(spawned[0]?.prompt).toContain("yoplai projects comment");
+    expect(spawned[0]?.prompt).toContain("yoplai slices comment");
     // BLOCK path must instruct Reviewer to record durable feedback in SPECS.md
     // (PRO-249 — prevents identical reject loops across fresh Worker iterations)
     expect(spawned[0]?.prompt).toContain("## Known traps");
@@ -1307,9 +1307,9 @@ describe("orchestrator dispatcher", () => {
     });
     expect(spawned[0]?.slug).toContain("pro-1-s01-merger-");
     expect(spawned[0]?.prompt).toContain("git merge PRO-1/pro-1-s01-worker");
-    expect(spawned[0]?.prompt).toContain("aihub slices move PRO-1-S01 done");
+    expect(spawned[0]?.prompt).toContain("yoplai slices move PRO-1-S01 done");
     expect(spawned[0]?.prompt).toContain(
-      "aihub slices merger-conflict PRO-1-S01"
+      "yoplai slices merger-conflict PRO-1-S01"
     );
     expect(updates.calls).toEqual([]);
   });
@@ -2543,41 +2543,41 @@ describe("orchestrator dispatcher", () => {
   });
 
   it("resolves prod notify CLI args", () => {
-    const oldDev = process.env.AIHUB_DEV;
-    const oldRoot = process.env.AIHUB_WORKSPACE_ROOT;
-    delete process.env.AIHUB_DEV;
-    delete process.env.AIHUB_WORKSPACE_ROOT;
+    const oldDev = process.env.YOPLAI_DEV;
+    const oldRoot = process.env.YOPLAI_WORKSPACE_ROOT;
+    delete process.env.YOPLAI_DEV;
+    delete process.env.YOPLAI_WORKSPACE_ROOT;
 
     try {
       expect(
-        resolveAihubNotifyCommand({ channel: "ops", message: "ready" })
+        resolveNotifyCommand({ channel: "ops", message: "ready" })
       ).toEqual({
-        file: "aihub",
+        file: "yoplai",
         args: ["notify", "--channel", "ops", "--message", "ready"],
       });
     } finally {
-      if (oldDev === undefined) delete process.env.AIHUB_DEV;
-      else process.env.AIHUB_DEV = oldDev;
-      if (oldRoot === undefined) delete process.env.AIHUB_WORKSPACE_ROOT;
-      else process.env.AIHUB_WORKSPACE_ROOT = oldRoot;
+      if (oldDev === undefined) delete process.env.YOPLAI_DEV;
+      else process.env.YOPLAI_DEV = oldDev;
+      if (oldRoot === undefined) delete process.env.YOPLAI_WORKSPACE_ROOT;
+      else process.env.YOPLAI_WORKSPACE_ROOT = oldRoot;
     }
   });
 
   it("resolves dev notify CLI args", () => {
-    const oldDev = process.env.AIHUB_DEV;
-    const oldRoot = process.env.AIHUB_WORKSPACE_ROOT;
-    process.env.AIHUB_DEV = "1";
-    process.env.AIHUB_WORKSPACE_ROOT = "/repo";
+    const oldDev = process.env.YOPLAI_DEV;
+    const oldRoot = process.env.YOPLAI_WORKSPACE_ROOT;
+    process.env.YOPLAI_DEV = "1";
+    process.env.YOPLAI_WORKSPACE_ROOT = "/repo";
 
     try {
       expect(
-        resolveAihubNotifyCommand({ channel: "ops", message: "ready" })
+        resolveNotifyCommand({ channel: "ops", message: "ready" })
       ).toEqual({
         file: "pnpm",
         args: [
           "--dir",
           "/repo",
-          "aihub:dev",
+          "yoplai:dev",
           "notify",
           "--channel",
           "ops",
@@ -2586,18 +2586,18 @@ describe("orchestrator dispatcher", () => {
         ],
       });
     } finally {
-      if (oldDev === undefined) delete process.env.AIHUB_DEV;
-      else process.env.AIHUB_DEV = oldDev;
-      if (oldRoot === undefined) delete process.env.AIHUB_WORKSPACE_ROOT;
-      else process.env.AIHUB_WORKSPACE_ROOT = oldRoot;
+      if (oldDev === undefined) delete process.env.YOPLAI_DEV;
+      else process.env.YOPLAI_DEV = oldDev;
+      if (oldRoot === undefined) delete process.env.YOPLAI_WORKSPACE_ROOT;
+      else process.env.YOPLAI_WORKSPACE_ROOT = oldRoot;
     }
   });
 
   it("runs prod notify CLI args through the default notifier path", async () => {
-    const oldDev = process.env.AIHUB_DEV;
-    const oldRoot = process.env.AIHUB_WORKSPACE_ROOT;
-    delete process.env.AIHUB_DEV;
-    delete process.env.AIHUB_WORKSPACE_ROOT;
+    const oldDev = process.env.YOPLAI_DEV;
+    const oldRoot = process.env.YOPLAI_WORKSPACE_ROOT;
+    delete process.env.YOPLAI_DEV;
+    delete process.env.YOPLAI_WORKSPACE_ROOT;
     const calls: Array<{ file: string; args: string[] }> = [];
     const execFile = ((
       file: string,
@@ -2609,26 +2609,26 @@ describe("orchestrator dispatcher", () => {
     }) as typeof import("node:child_process").execFile;
 
     try {
-      await runAihubNotify({ channel: "ops", message: "ready" }, execFile);
+      await runNotify({ channel: "ops", message: "ready" }, execFile);
       expect(calls).toEqual([
         {
-          file: "aihub",
+          file: "yoplai",
           args: ["notify", "--channel", "ops", "--message", "ready"],
         },
       ]);
     } finally {
-      if (oldDev === undefined) delete process.env.AIHUB_DEV;
-      else process.env.AIHUB_DEV = oldDev;
-      if (oldRoot === undefined) delete process.env.AIHUB_WORKSPACE_ROOT;
-      else process.env.AIHUB_WORKSPACE_ROOT = oldRoot;
+      if (oldDev === undefined) delete process.env.YOPLAI_DEV;
+      else process.env.YOPLAI_DEV = oldDev;
+      if (oldRoot === undefined) delete process.env.YOPLAI_WORKSPACE_ROOT;
+      else process.env.YOPLAI_WORKSPACE_ROOT = oldRoot;
     }
   });
 
   it("runs dev notify CLI args through the default notifier path", async () => {
-    const oldDev = process.env.AIHUB_DEV;
-    const oldRoot = process.env.AIHUB_WORKSPACE_ROOT;
-    process.env.AIHUB_DEV = "1";
-    process.env.AIHUB_WORKSPACE_ROOT = "/repo";
+    const oldDev = process.env.YOPLAI_DEV;
+    const oldRoot = process.env.YOPLAI_WORKSPACE_ROOT;
+    process.env.YOPLAI_DEV = "1";
+    process.env.YOPLAI_WORKSPACE_ROOT = "/repo";
     const calls: Array<{ file: string; args: string[] }> = [];
     const execFile = ((
       file: string,
@@ -2640,14 +2640,14 @@ describe("orchestrator dispatcher", () => {
     }) as typeof import("node:child_process").execFile;
 
     try {
-      await runAihubNotify({ channel: "ops", message: "ready" }, execFile);
+      await runNotify({ channel: "ops", message: "ready" }, execFile);
       expect(calls).toEqual([
         {
           file: "pnpm",
           args: [
             "--dir",
             "/repo",
-            "aihub:dev",
+            "yoplai:dev",
             "notify",
             "--channel",
             "ops",
@@ -2657,10 +2657,10 @@ describe("orchestrator dispatcher", () => {
         },
       ]);
     } finally {
-      if (oldDev === undefined) delete process.env.AIHUB_DEV;
-      else process.env.AIHUB_DEV = oldDev;
-      if (oldRoot === undefined) delete process.env.AIHUB_WORKSPACE_ROOT;
-      else process.env.AIHUB_WORKSPACE_ROOT = oldRoot;
+      if (oldDev === undefined) delete process.env.YOPLAI_DEV;
+      else process.env.YOPLAI_DEV = oldDev;
+      if (oldRoot === undefined) delete process.env.YOPLAI_WORKSPACE_ROOT;
+      else process.env.YOPLAI_WORKSPACE_ROOT = oldRoot;
     }
   });
 });

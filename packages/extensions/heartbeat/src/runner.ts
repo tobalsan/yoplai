@@ -3,14 +3,14 @@ import path from "node:path";
 import {
   latestAssistantText,
   writeCronRunOutput,
-} from "@aihub/extension-scheduler";
+} from "@yoplai/extension-scheduler";
 import {
   DEFAULT_MAIN_KEY,
   type AgentConfig,
   type ExtensionContext,
   type HeartbeatEventPayload,
   type HeartbeatStatus,
-} from "@aihub/shared";
+} from "@yoplai/shared";
 
 // Default heartbeat interval (30 minutes)
 // Default ackMaxChars threshold

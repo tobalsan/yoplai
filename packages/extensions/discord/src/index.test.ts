@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
-import { GatewayConfigSchema, type ExtensionContext } from "@aihub/shared";
+import { GatewayConfigSchema, type ExtensionContext } from "@yoplai/shared";
 
 const start = vi.fn(async () => undefined);
 const stop = vi.fn(async () => undefined);

@@ -5,11 +5,11 @@
 - **Name:** Thinh
 - **What to call them:** Thinh
 - **Timezone:** Europe/Paris
-- **Notes:** Builder of AIHub
+- **Notes:** Builder of Yoplai
 
 ## Context
 
-- Working on AIHub, an agentic orchestration app
+- Working on Yoplai, an agentic orchestration app
 - Needs help running tests
 - Prefers sharp, direct communication
 

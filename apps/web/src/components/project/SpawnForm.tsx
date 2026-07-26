@@ -1,6 +1,6 @@
 import { For, Show, createEffect, createMemo, createSignal, untrack } from "solid-js";
-import { buildRolePrompt } from "@aihub/shared/projectPrompt";
-import type { PromptRole } from "@aihub/shared/projectPrompt";
+import { buildRolePrompt } from "@yoplai/shared/projectPrompt";
+import type { PromptRole } from "@yoplai/shared/projectPrompt";
 import { spawnSubagent } from "../../api";
 import type { ProjectDetail, SubagentListItem } from "../../api/types";
 
@@ -480,7 +480,7 @@ export function SpawnForm(props: SpawnFormProps) {
                 setIncludePostRun(event.currentTarget.checked)
               }
             />
-            AIHub post-run instructions
+            Yoplai post-run instructions
           </label>
           <label class="add-agent-check">
             <input

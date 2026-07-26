@@ -2,7 +2,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { AgentConfig, ExtensionContext, GatewayConfig } from "@aihub/shared";
+import type { AgentConfig, ExtensionContext, GatewayConfig } from "@yoplai/shared";
 import { schedulerExtension } from "./index.js";
 import { clearSchedulerContext, setSchedulerContext, stopScheduler } from "./service.js";
 
@@ -58,7 +58,7 @@ describe("scheduler agent tools", () => {
   });
 
   it("hides tools when scheduler is disabled", async () => {
-    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "aihub-scheduler-tools-"));
+    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-scheduler-tools-"));
     const alpha = agent("alpha", path.join(tmpDir, "alpha"));
     const config: GatewayConfig = { version: 3, agents: [alpha], extensions: { scheduler: { enabled: false } }, sessions: { idleMinutes: 360 }, agentFab: false };
 
@@ -66,7 +66,7 @@ describe("scheduler agent tools", () => {
   });
 
   it("creates, lists, updates, and deletes caller agent jobs", async () => {
-    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "aihub-scheduler-tools-"));
+    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-scheduler-tools-"));
     const alpha = agent("alpha", path.join(tmpDir, "alpha"));
     const beta = agent("beta", path.join(tmpDir, "beta"));
     const config: GatewayConfig = { version: 3, agents: [alpha, beta], extensions: { scheduler: { enabled: true } }, sessions: { idleMinutes: 360 }, agentFab: false };
@@ -105,7 +105,7 @@ describe("scheduler agent tools", () => {
   });
 
   it("returns structured validation errors", async () => {
-    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "aihub-scheduler-tools-"));
+    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-scheduler-tools-"));
     const alpha = agent("alpha", path.join(tmpDir, "alpha"));
     const config: GatewayConfig = { version: 3, agents: [alpha], extensions: { scheduler: { enabled: true } }, sessions: { idleMinutes: 360 }, agentFab: false };
     setSchedulerContext(context(config));

@@ -2,7 +2,7 @@ import {
   ProjectsOrchestratorConfigSchema,
   type GatewayConfig,
   type ProjectsOrchestratorConfig,
-} from "@aihub/shared";
+} from "@yoplai/shared";
 
 export type OrchestratorConfig = ProjectsOrchestratorConfig;
 

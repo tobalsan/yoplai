@@ -1,5 +1,5 @@
-import type { AgentConfig, ChannelConversationType, FileAttachment } from "@aihub/shared";
-import { DEFAULT_MAIN_KEY, buildTelegramContext } from "@aihub/shared";
+import type { AgentConfig, ChannelConversationType, FileAttachment } from "@yoplai/shared";
+import { DEFAULT_MAIN_KEY, buildTelegramContext } from "@yoplai/shared";
 import { getTelegramContext } from "../context.js";
 import {
   matchesChatAllowlist,

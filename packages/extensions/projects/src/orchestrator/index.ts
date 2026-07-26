@@ -1,4 +1,4 @@
-import { notify, type GatewayConfig } from "@aihub/shared";
+import { notify, type GatewayConfig } from "@yoplai/shared";
 import {
   createOrchestratorAttemptTracker,
   createStallTracker,

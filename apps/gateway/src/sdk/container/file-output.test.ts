@@ -11,13 +11,13 @@ import type { SdkRunParams } from "../types.js";
 const tempDirs: string[] = [];
 
 function tempDir(): string {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "aihub-file-output-"));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "yoplai-file-output-"));
   tempDirs.push(dir);
   return dir;
 }
 
 afterEach(() => {
-  delete process.env.AIHUB_HOME;
+  delete process.env.YOPLAI_HOME;
   for (const dir of tempDirs.splice(0)) {
     fs.rmSync(dir, { recursive: true, force: true });
   }
@@ -35,7 +35,7 @@ describe("container file output adapter", () => {
 
   it("registers outbound media and emits history plus stream events", async () => {
     const root = tempDir();
-    process.env.AIHUB_HOME = root;
+    process.env.YOPLAI_HOME = root;
     const hostDataDir = path.join(root, "agents", "cloud", "data");
     fs.mkdirSync(hostDataDir, { recursive: true });
     fs.writeFileSync(path.join(hostDataDir, "report.csv"), "a,b\n");

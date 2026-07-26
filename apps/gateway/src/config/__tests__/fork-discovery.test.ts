@@ -8,7 +8,7 @@ import { clearConfigCacheForTests, loadConfig, reloadConfig } from "../index.js"
  * A fork folder written into the `agents` glob directory must be discovered and
  * made runnable through the unchanged runtime, exactly like a hand-authored
  * agent. This mirrors how the multi-user fork store copies a pool workspace
- * into `$AIHUB_HOME/agents/<forkId>` and then reloads config. Fork-runtime chat
+ * into `$YOPLAI_HOME/agents/<forkId>` and then reloads config. Fork-runtime chat
  * is gated in a later slice; here we prove discovery/glob pickup.
  */
 async function writeAgent(dir: string, id = path.basename(dir)) {
@@ -20,28 +20,28 @@ async function writeAgent(dir: string, id = path.basename(dir)) {
 }
 
 describe("fork discovery via agents glob", () => {
-  const prevHome = process.env.AIHUB_HOME;
+  const prevHome = process.env.YOPLAI_HOME;
 
   afterEach(() => {
     clearConfigCacheForTests();
-    if (prevHome === undefined) delete process.env.AIHUB_HOME;
-    else process.env.AIHUB_HOME = prevHome;
+    if (prevHome === undefined) delete process.env.YOPLAI_HOME;
+    else process.env.YOPLAI_HOME = prevHome;
   });
 
   it("discovers a fork folder copied under agents/* and picks it up on reload", async () => {
-    const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "aihub-fork-glob-"));
+    const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-fork-glob-"));
     // Pool agent lives under pool/*, fork lands under agents/* — the standard
     // agents glob discovers forks directly while the pool stays inert.
     await writeAgent(path.join(tmpDir, "pool", "scribe"));
     await fs.writeFile(
-      path.join(tmpDir, "aihub.json"),
+      path.join(tmpDir, "yoplai.json"),
       JSON.stringify({
         version: 3,
         agents: "./agents/*",
         pool: "./pool/*",
       })
     );
-    process.env.AIHUB_HOME = tmpDir;
+    process.env.YOPLAI_HOME = tmpDir;
 
     // No fork yet: agents empty, pool has scribe.
     const initial = loadConfig();

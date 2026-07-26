@@ -5,7 +5,7 @@ import type {
   AgentStreamEvent,
   WsClientMessage,
   WsServerMessage,
-} from "@aihub/shared";
+} from "@yoplai/shared";
 import { getAgent, isAgentActive } from "../config/index.js";
 import { agentEventBus, runAgent } from "../agents/index.js";
 import { getSessionEntry } from "../sessions/index.js";
@@ -14,7 +14,7 @@ import type { ExtensionRuntime } from "../extensions/runtime.js";
 import { normalizeRunRequest } from "./run-request.js";
 
 type RequestAuthContext =
-  import("@aihub/extension-multi-user").RequestAuthContext;
+  import("@yoplai/extension-multi-user").RequestAuthContext;
 
 type WsRequest = IncomingMessage & {
   authContext?: RequestAuthContext | null;

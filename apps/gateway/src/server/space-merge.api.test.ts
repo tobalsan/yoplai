@@ -5,13 +5,13 @@ import os from "node:os";
 import { writeTestV3Config } from "../test-utils/v3-config.js";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import type { GatewayConfig } from "@aihub/shared";
+import type { GatewayConfig } from "@yoplai/shared";
 import type {
   ensureProjectSpace as ensureProjectSpaceType,
   integrateProjectSpaceQueue as integrateProjectSpaceQueueType,
   recordWorkerDelivery as recordWorkerDeliveryType,
-} from "@aihub/extension-projects";
-const projectsExtensionSpecifier = "@aihub/extension-projects";
+} from "@yoplai/extension-projects";
+const projectsExtensionSpecifier = "@yoplai/extension-projects";
 const {
   ensureProjectSpace,
   recordWorkerDelivery,
@@ -33,8 +33,8 @@ async function runGit(cwd: string, args: string[]): Promise<string> {
 async function createRepo(repoDir: string): Promise<void> {
   await fs.mkdir(repoDir, { recursive: true });
   await runGit(repoDir, ["init", "-b", "main"]);
-  await runGit(repoDir, ["config", "user.name", "AIHub Test"]);
-  await runGit(repoDir, ["config", "user.email", "test@aihub.local"]);
+  await runGit(repoDir, ["config", "user.name", "Yoplai Test"]);
+  await runGit(repoDir, ["config", "user.email", "test@yoplai.local"]);
   await fs.writeFile(path.join(repoDir, "app.txt"), "base\n", "utf8");
   await runGit(repoDir, ["add", "."]);
   await runGit(repoDir, ["commit", "-m", "init"]);
@@ -50,7 +50,7 @@ describe("space merge API", () => {
     ) => Response | Promise<Response>;
   };
   let prevHome: string | undefined;
-  let prevAihubHome: string | undefined;
+  let prevHomeDir: string | undefined;
   let prevUserProfile: string | undefined;
   let extensions: Array<{
     id: string;
@@ -69,17 +69,17 @@ describe("space merge API", () => {
     }) as unknown as GatewayConfig;
 
   beforeAll(async () => {
-    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "aihub-space-merge-api-"));
+    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-space-merge-api-"));
     projectsRoot = path.join(tmpDir, "projects");
 
-    prevAihubHome = process.env.AIHUB_HOME;
+    prevHomeDir = process.env.YOPLAI_HOME;
     prevHome = process.env.HOME;
     prevUserProfile = process.env.USERPROFILE;
-    process.env.AIHUB_HOME = path.join(tmpDir, ".aihub");
+    process.env.YOPLAI_HOME = path.join(tmpDir, ".yoplai");
     process.env.HOME = tmpDir;
     process.env.USERPROFILE = tmpDir;
 
-    await writeTestV3Config(path.join(tmpDir, ".aihub"), {
+    await writeTestV3Config(path.join(tmpDir, ".yoplai"), {
       agents: [
         {
           id: "test-agent",
@@ -111,7 +111,7 @@ describe("space merge API", () => {
 
     const mockCtx = {
       getConfig: () => config,
-      getDataDir: () => path.join(tmpDir, ".aihub"),
+      getDataDir: () => path.join(tmpDir, ".yoplai"),
       getAgents: () => config.agents ?? [],
       getAgent: (id: string) => config.agents?.find((a) => a.id === id),
       isAgentActive: () => true,
@@ -139,8 +139,8 @@ describe("space merge API", () => {
     for (const extension of extensions) {
       await extension.stop?.();
     }
-    if (prevAihubHome === undefined) delete process.env.AIHUB_HOME;
-    else process.env.AIHUB_HOME = prevAihubHome;
+    if (prevHomeDir === undefined) delete process.env.YOPLAI_HOME;
+    else process.env.YOPLAI_HOME = prevHomeDir;
     if (prevHome === undefined) delete process.env.HOME;
     else process.env.HOME = prevHome;
     if (prevUserProfile === undefined) delete process.env.USERPROFILE;

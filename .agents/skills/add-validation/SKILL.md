@@ -1,8 +1,8 @@
 ---
 name: add-validation
 description: >-
-  Author an "## E2E Validation" section for an AIHub spec/PRD, wherever it
-  lives. Use this AFTER implementing (or before merging) any AIHub PRD/spec to
+  Author an "## E2E Validation" section for a Yoplai spec/PRD, wherever it
+  lives. Use this AFTER implementing (or before merging) any Yoplai PRD/spec to
   add concrete, PRD-specific end-to-end validation steps that prove the feature
   round-trips through the real gateway/UI — not just unit tests. Trigger
   whenever the user says "add validation", "write the validation section",
@@ -15,7 +15,7 @@ description: >-
 
 ## What this skill does
 
-Read an AIHub spec/PRD, work out what the feature actually does, and add (or
+Read a Yoplai spec/PRD, work out what the feature actually does, and add (or
 replace) a `## E2E Validation` section in it. The spec may live anywhere — a
 tracker, a doc, a local file — the skill is deliberately agnostic about the
 medium. The section is a concrete, runnable validation plan tailored to *this*
@@ -27,7 +27,7 @@ the spec. It never launches the gateway, never opens a browser, never seeds
 config. Those commands live in the section you write so a human or a later
 validation run can execute them.
 
-Why a written plan instead of just running it now: validation in AIHub needs an
+Why a written plan instead of just running it now: validation in Yoplai needs an
 isolated worktree, seeded config, and a live gateway on non-prod ports. That is
 a deliberate, reviewable sequence. Capturing it in the spec makes it repeatable,
 reviewable, and survives across sessions — and keeps authoring (cheap, here) separate
@@ -46,18 +46,18 @@ Read the whole spec. Also skim the implementation if it exists (the spec usually
 names the touched files/components) so the steps reference real routes, CLI
 commands, tool names, and UI affordances rather than invented ones.
 
-### 2. Ground in real AIHub commands
+### 2. Ground in real Yoplai commands
 
 The generated steps must use commands that actually exist in this repo, not
 placeholders. Confirm them from the repo rather than trusting memory — read
 `package.json` scripts and `CLAUDE.md`/`AGENTS.md`/`docs/llms.md` if unsure. The
-canonical set is in `references/aihub-commands.md` — read it before writing the
+canonical set is in `references/yoplai-commands.md` — read it before writing the
 section.
 
 ### 3. Detect the surface(s)
 
 A spec can touch more than one. The key question is not "what code changed" but
-**"how does a real person observe this feature working?"** In AIHub almost
+**"how does a real person observe this feature working?"** In Yoplai almost
 everything a user touches reaches them through a browser — either the web UI
 directly, or the **chat UI** where they talk to agents. So a feature is "UI" far
 more often than its file footprint suggests.
@@ -71,7 +71,7 @@ more often than its file footprint suggests.
   thing, and watch it call the tool and report back. This is a browser surface,
   even though no new component was added. Do **not** downgrade these to
   "backend, no UI" — that misses the actual user path.
-- **CLI** — `aihub …` subcommands. Drive with `pnpm aihub:dev …`. Use as a
+- **CLI** — `yoplai …` subcommands. Drive with `pnpm yoplai:dev …`. Use as a
   *complement* to confirm persisted state, not as the sole proof for a feature
   that users reach through chat.
 - **HTTP/WS API** — routes under `apps/gateway/src/server`, `/api/*`, `/ws`.
@@ -105,11 +105,11 @@ Use the template in `references/scaffold.md`. The standard skeleton:
 1. **Preamble** — one or two sentences: what this feature is and what the
    validation proves beyond unit tests.
 2. **Setup (conditional)** — worktree + seed config. State the conditions
-   plainly: create the worktree at `~/.worktrees/aihub/<branch>` **only if not
-   already inside a worktree**; seed config **only if `$CWD/.aihub` is absent**.
+   plainly: create the worktree at `~/.worktrees/yoplai/<branch>` **only if not
+   already inside a worktree**; seed config **only if `$CWD/.yoplai` is absent**.
    Otherwise reuse what exists. Then any PRD-specific canary projects/slices.
 3. **Unit tests** — the scoped test command(s) for the changed package(s).
-4. **Launch preview** — `AIHUB_HOME=$(pwd)/.aihub pnpm dev` (auto-picks free
+4. **Launch preview** — `YOPLAI_HOME=$(pwd)/.yoplai pnpm dev` (auto-picks free
    ports; note them; never touch prod). Needed for any browser scenario
    (web UI or chat UI). Omit only for the rare spec with no user-facing path.
 5. **E2E steps** — the concrete assertions from step 4, grouped by scenario and
@@ -148,7 +148,7 @@ surfaces you covered and how many scenarios.
 
 ## Reference files
 
-- `references/aihub-commands.md` — canonical AIHub dev/test/seed/CLI commands to
+- `references/yoplai-commands.md` — canonical Yoplai dev/test/seed/CLI commands to
   use in generated steps. Read before writing.
 - `references/scaffold.md` — the section template plus a full worked example
   (the PRO-251 edit-repo modal validation) showing the target depth.

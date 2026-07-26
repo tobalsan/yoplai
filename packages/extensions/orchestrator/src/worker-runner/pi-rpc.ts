@@ -1,9 +1,9 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import fsSync from "node:fs";
-import path from "node:path";
 import type { WorkerRunner, WorkerRunnerHandle, WorkerRunnerStartInput, WorkerRunnerStatus } from "./runner.js";
 import { piThinkingForRunner, validateWorkflowThinkingForRunner } from "./thinking.js";
 import { sanitizedWorkerEnv } from "./env.js";
+import { resolveSessionDir } from "./session-dir.js";
 
 type PiCommandResponse = {
   id?: string | number | null;
@@ -54,7 +54,7 @@ function commandParts(input: WorkerRunnerStartInput): [string, ...string[]] {
     const [cmd, ...args] = Array.isArray(command) ? command : [command];
     if (cmd) return [cmd, ...runnerArgs(input, args)];
   }
-  return ["pi", ...runnerArgs(input, ["--mode", "rpc", "--name", input.label], path.join(input.workspace, ".aihub", "pi-sessions"))];
+  return ["pi", ...runnerArgs(input, ["--mode", "rpc", "--name", input.label], resolveSessionDir(input.workspace, "pi-sessions"))];
 }
 
 function runnerArgs(input: WorkerRunnerStartInput, args: string[], sessionDir?: string): string[] {
@@ -146,16 +146,16 @@ export class PiRpcRunner implements WorkerRunner {
   }
 
   private spawnSession(key: string, input: WorkerRunnerStartInput): PiSession {
-    const sessionDir = path.join(input.workspace, ".aihub", "pi-sessions");
+    const sessionDir = resolveSessionDir(input.workspace, "pi-sessions");
     fsSync.mkdirSync(sessionDir, { recursive: true });
     const [cmd, ...args] = commandParts(input);
     const child = spawn(cmd, args, {
       cwd: input.workspace,
       env: sanitizedWorkerEnv({
-        AIHUB_RUN_ID: input.runId,
-        AIHUB_PROJECT_ID: input.project.id,
-        AIHUB_ISSUE_ID: input.issue.id,
-        AIHUB_ISSUE_IDENTIFIER: input.issue.identifier,
+        YOPLAI_RUN_ID: input.runId,
+        YOPLAI_PROJECT_ID: input.project.id,
+        YOPLAI_ISSUE_ID: input.issue.id,
+        YOPLAI_ISSUE_IDENTIFIER: input.issue.identifier,
       }),
       stdio: ["pipe", "pipe", "pipe"],
       detached: false,

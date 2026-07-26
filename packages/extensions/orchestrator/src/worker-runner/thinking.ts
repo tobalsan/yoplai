@@ -1,4 +1,4 @@
-import type { SubagentRuntimeProfile } from "@aihub/shared";
+import type { SubagentRuntimeProfile } from "@yoplai/shared";
 import type { WorkflowConfig } from "../types.js";
 
 type AgentConfig = WorkflowConfig["agent"];

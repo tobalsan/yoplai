@@ -2,7 +2,7 @@ import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 import { describe, expect, it } from "vitest";
-import type { GatewayConfig } from "@aihub/shared";
+import type { GatewayConfig } from "@yoplai/shared";
 import type { ProjectListItem } from "../projects/store.js";
 import type { SliceRecord } from "../projects/slices.js";
 import type { SubagentListItem } from "../subagents/index.js";
@@ -116,9 +116,9 @@ describe("OrchestratorRunPlanner", () => {
 
   it("selects the latest existing Worker workspace for review", async () => {
     const workspace = await fs.mkdtemp(
-      path.join(os.tmpdir(), "aihub-worker-")
+      path.join(os.tmpdir(), "yoplai-worker-")
     );
-    const missing = path.join(os.tmpdir(), "aihub-missing-worker");
+    const missing = path.join(os.tmpdir(), "yoplai-missing-worker");
 
     const workspaces = await recentWorkerWorkspaces(
       config,

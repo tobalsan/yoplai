@@ -3,7 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { Hono } from "hono";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { AgentConfig, GatewayConfig, RunAgentParams } from "@aihub/shared";
+import type { AgentConfig, GatewayConfig, RunAgentParams } from "@yoplai/shared";
 import {
   clearProjectsContext,
   setProjectsContext,
@@ -36,7 +36,7 @@ beforeEach(async () => {
 
   setProjectsContext({
     getConfig: () => config,
-    getDataDir: () => path.join(tmpDir, ".aihub"),
+    getDataDir: () => path.join(tmpDir, ".yoplai"),
     reloadConfig: () => undefined,
     getAgents: () => [agent],
     getAgent: (id: string) => (id === agent.id ? agent : undefined),

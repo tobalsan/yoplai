@@ -6,7 +6,7 @@
  *   - load extensions
  *   - call runAgent() with an event collector
  *
- * Skipped (vs `aihub gateway`):
+ * Skipped (vs `yoplai gateway`):
  *   - HTTP server / WebSocket
  *   - HTTP routes and long-running extension services
  *   - multi-user auth
@@ -14,7 +14,7 @@
  *   - tailscale serve
  *
  * The carve-out works because `prepareStartupConfig(rawConfig, [])` already
- * accepts an empty extension list (this is what `aihub send` does).
+ * accepts an empty extension list (this is what `yoplai send` does).
  */
 
 import { loadConfig, getAgent, setLoadedConfig } from "../config/index.js";
@@ -24,7 +24,7 @@ import {
   loadExtensions,
 } from "../extensions/registry.js";
 import { runAgent } from "../agents/index.js";
-import type { StreamEvent } from "@aihub/shared";
+import type { StreamEvent } from "@yoplai/shared";
 import { TrajectoryBuilder, type AtifTrajectory } from "./trajectory.js";
 
 export type EvalToolCall = {
@@ -150,7 +150,7 @@ class EventCollector {
  * verifier failures are the right place to differentiate.
  */
 export async function runEval(opts: RunEvalOptions): Promise<RunEvalOutcome> {
-  // 1. Load + resolve config (same path as `aihub send`)
+  // 1. Load + resolve config (same path as `yoplai send`)
   const rawConfig = loadConfig();
   const resolvedStartupConfig = await resolveStartupConfig(rawConfig);
   const extensions = await loadExtensions(resolvedStartupConfig);

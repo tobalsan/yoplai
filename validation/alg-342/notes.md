@@ -1,7 +1,7 @@
 # ALG-342 E2E Validation Notes
 
 - Branch: `alg-342-membership` (base `teams`), issue ALG-342 (User↔team membership + team detail)
-- Temp home: `.aihub-e2e/` (isolated; never touched `~/.aihub`)
+- Temp home: `.yoplai-e2e/` (isolated; never touched `~/.yoplai`)
 - Ports: gateway `http://127.0.0.1:4001`, UI `http://127.0.0.1:3001` (auto-picked; 4000/3000 busy)
 
 ## Tests run first (all green)
@@ -12,7 +12,7 @@
 
 ## Real-stack E2E (against live gateway + isolated home)
 Real gateway booted with the temp home and created the schema:
-- `sqlite3 .aihub-e2e/auth.db '.schema team_members'` shows the M2M table with
+- `sqlite3 .yoplai-e2e/auth.db '.schema team_members'` shows the M2M table with
   composite PK `(teamId,userId)`, FKs to `teams`/`user` (cascade), and `idx_team_members_user_id`.
   Evidence: this notes file + `membership-api-transcript.txt`.
 

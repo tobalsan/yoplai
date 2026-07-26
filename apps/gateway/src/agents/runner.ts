@@ -8,7 +8,7 @@ import type {
   SimpleHistoryMessage,
   FullHistoryMessage,
   HistoryViewMode,
-} from "@aihub/shared";
+} from "@yoplai/shared";
 import { getAgent, resolveWorkspaceDir, CONFIG_DIR } from "../config/index.js";
 import { SessionRunLifecycle } from "./run-lifecycle.js";
 import {

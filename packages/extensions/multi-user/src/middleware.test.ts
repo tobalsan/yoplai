@@ -739,4 +739,62 @@ describe("multi-user middleware", () => {
     const response = await app.request("/api/su");
     expect(response.status).toBe(200);
   });
+
+  function encodeAuthHeader(value: unknown) {
+    return Buffer.from(JSON.stringify(value), "utf-8").toString("base64url");
+  }
+
+  it("reads the forwarded auth context from the legacy x-aihub-auth-context header", async () => {
+    const { getForwardedAuthContext } = await import("./middleware.js");
+
+    const authContext = getForwardedAuthContext(
+      new Headers({
+        "x-aihub-auth-context": encodeAuthHeader({
+          user: { id: "user-1" },
+          session: { id: "session-1", userId: "user-1" },
+        }),
+      })
+    );
+
+    expect(authContext).toEqual({
+      user: { id: "user-1" },
+      session: { id: "session-1", userId: "user-1" },
+    });
+  });
+
+  it("prefers x-yoplai-auth-context over the legacy header when both are present", async () => {
+    const { getForwardedAuthContext } = await import("./middleware.js");
+
+    const authContext = getForwardedAuthContext(
+      new Headers({
+        "x-yoplai-auth-context": encodeAuthHeader({
+          user: { id: "user-new" },
+          session: { id: "session-1", userId: "user-new" },
+        }),
+        "x-aihub-auth-context": encodeAuthHeader({
+          user: { id: "user-legacy" },
+          session: { id: "session-1", userId: "user-legacy" },
+        }),
+      })
+    );
+
+    expect(authContext?.user.id).toBe("user-new");
+  });
+
+  it("forwardAuthContextToRequest only ever sends the x-yoplai-auth-context header", async () => {
+    const { forwardAuthContextToRequest } = await import("./middleware.js");
+
+    const request = forwardAuthContextToRequest(
+      new Request("http://localhost/api", {
+        headers: { "x-aihub-auth-context": "stale" },
+      }),
+      {
+        user: { id: "user-1" },
+        session: { id: "session-1", userId: "user-1" },
+      }
+    );
+
+    expect(request.headers.has("x-aihub-auth-context")).toBe(false);
+    expect(request.headers.get("x-yoplai-auth-context")).toBeTruthy();
+  });
 });

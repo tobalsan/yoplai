@@ -1,8 +1,8 @@
 /// <reference types="vite/client" />
 
 interface ImportMetaEnv {
-  readonly VITE_AIHUB_DEV?: string;
-  readonly VITE_AIHUB_UI_PORT?: string;
+  readonly VITE_YOPLAI_DEV?: string;
+  readonly VITE_YOPLAI_UI_PORT?: string;
 }
 
 interface ImportMeta {

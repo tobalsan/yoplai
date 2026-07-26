@@ -1,8 +1,8 @@
-FROM aihub-eval-base:local
+FROM yoplai-eval-base:local
 
 # Smoke task provides its own minimal agent config.
 USER root
-COPY environment/aihub.json /eval/aihub.json
+COPY environment/yoplai.json /eval/yoplai.json
 
 # Minimal agent workspace with just an identity file.
 RUN mkdir -p /eval/agents/smoke && \

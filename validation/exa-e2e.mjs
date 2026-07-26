@@ -1,7 +1,7 @@
 import path from "node:path";
 import fs from "node:fs/promises";
 
-const HOME = process.env.AIHUB_HOME;
+const HOME = process.env.YOPLAI_HOME;
 const repoRoot = process.cwd();
 
 // Import the REAL gateway code paths via tsx-compiled sources.

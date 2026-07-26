@@ -3,7 +3,7 @@ import { IrcLoopGuard } from "./loop-guard.js";
 import { isAddressed, normalizeIrcText, parseIrcLine, splitIrcText, toPlainIrcText } from "./protocol.js";
 describe("IRC protocol helpers", () => {
   it("parses messages and rejects malformed prefixes", () => { expect(parseIrcLine(":nick!u@h PRIVMSG #room :hello")).toMatchObject({ prefix: "nick!u@h", command: "PRIVMSG", params: ["#room"], trailing: "hello" }); expect(parseIrcLine(": PRIVMSG #room :bad")).toBeNull(); });
-  it("handles case-insensitive addressing and ACTION text", () => { expect(isAddressed("AiHuB: hello", "aihub")).toEqual({ addressed: true, text: "hello" }); expect(normalizeIrcText("\u0001ACTION waves\u0001")).toBe("* waves"); });
+  it("handles case-insensitive addressing and ACTION text", () => { expect(isAddressed("YoPlAi: hello", "yoplai")).toEqual({ addressed: true, text: "hello" }); expect(normalizeIrcText("\u0001ACTION waves\u0001")).toBe("* waves"); });
   it("splits Unicode without exceeding byte limits", () => { const chunks = splitIrcText("🙂🙂🙂", 5); expect(chunks).toEqual(["🙂", "🙂", "🙂"]); expect(chunks.every((chunk) => Buffer.byteLength(chunk) <= 5)).toBe(true); });
   it("removes IRC controls and markdown formatting from replies", () => { expect(toPlainIrcText("**hello** \u0002world\u000f\u0001DCC SEND\u0001")).toBe("hello worldDCC SEND"); });
   it("splits on newlines into separate chunks", () => { expect(splitIrcText("line one\nline two")).toEqual(["line one", "line two"]); });

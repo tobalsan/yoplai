@@ -3,7 +3,7 @@ import {
   type Extension,
   type ExtensionContext,
   type DiscordComponentConfig,
-} from "@aihub/shared";
+} from "@yoplai/shared";
 import {
   createDiscordBot,
   createDiscordComponentBot,

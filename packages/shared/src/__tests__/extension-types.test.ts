@@ -62,7 +62,7 @@ describe("extension config schemas", () => {
   it("parses top-level debounceMs on the shared irc extension config", () => {
     const result = IrcExtensionConfigSchema.parse({
       host: "irc.example.com",
-      nick: "aihub",
+      nick: "yoplai",
       channels: { "#team": { agent: "main", mode: "mention-only" } },
       debounceMs: 1500,
     });
@@ -117,7 +117,7 @@ describe("extension config schemas", () => {
       },
       orchestrator: {
         projectsRoot: "~/projects",
-        projects: ["~/projects/aihub"],
+        projects: ["~/projects/yoplai"],
       },
       langfuse: {
         enabled: true,

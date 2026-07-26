@@ -5,7 +5,7 @@ import {
   resolveHomeDir,
   type GatewayConfig,
   type SubagentRuntimeProfile,
-} from "@aihub/shared";
+} from "@yoplai/shared";
 import { normalizeRunMode, resolveProfile } from "../profiles/resolver.js";
 import { ensureProjectIntegrationBranch } from "../projects/branches.js";
 import type { ProjectListItem } from "../projects/store.js";

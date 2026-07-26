@@ -120,7 +120,7 @@ export function buildProjectStartPrompt(input: {
   }
   if (includePostRun) {
     const cliUsed = input.runAgentLabel?.trim() || "{cli_used}";
-    const postRun = `## IMPORTANT: MUST DO AFTER IMPLEMENTATION\n\n- Run the test suite after changes\n- Run linter/formatter (if any)\n- Fix any failure/error before committing\n- Once everything is green, perform atomic commit(s)\n- Add a project comment using \`aihub projects comment <project_id> --message "<your summary>" --author <your name>\`. Write a clear summary of what you did — use paragraphs, newlines, and bullet points as appropriate for readability (don't force everything into bullets). Use \\n for newlines in the message string.\n- Move the project to review status using \`aihub projects move <project_id> review --agent ${cliUsed}\``;
+    const postRun = `## IMPORTANT: MUST DO AFTER IMPLEMENTATION\n\n- Run the test suite after changes\n- Run linter/formatter (if any)\n- Fix any failure/error before committing\n- Once everything is green, perform atomic commit(s)\n- Add a project comment using \`yoplai projects comment <project_id> --message "<your summary>" --author <your name>\`. Write a clear summary of what you did — use paragraphs, newlines, and bullet points as appropriate for readability (don't force everything into bullets). Use \\n for newlines in the message string.\n- Move the project to review status using \`yoplai projects move <project_id> review --agent ${cliUsed}\``;
     prompt = prompt ? `${prompt}\n\n${postRun}` : postRun;
   }
   return prompt.trim();
@@ -191,7 +191,7 @@ function postRunCommitBlock(): string {
 }
 
 function postRunProjectCommentBlock(projectId: string): string {
-  return `- Add a project comment: \`aihub projects comment ${projectId} --message "<your summary>" --author <your name>\``;
+  return `- Add a project comment: \`yoplai projects comment ${projectId} --message "<your summary>" --author <your name>\``;
 }
 
 function postRunUpdateCoordinatorDocsBlock(specsPath: string): string {
@@ -276,11 +276,11 @@ export function buildCoordinatorPrompt(input: RolePromptInput): string {
       ? [
           "## Available Subagent Types",
           "",
-          "The following subagent types are configured and can be spawned via `aihub projects start`:",
+          "The following subagent types are configured and can be spawned via `yoplai projects start`:",
           "",
           ...input.subagentTypes.map(
             (s) =>
-              `- **${s.name}** (${s.cli} / ${s.model}, reasoning: ${s.reasoning}, mode: ${s.runMode})${s.description ? `: ${s.description}` : ""}\n  → \`aihub projects start ${projectId} --subagent ${s.name} --custom-prompt "..."\``
+              `- **${s.name}** (${s.cli} / ${s.model}, reasoning: ${s.reasoning}, mode: ${s.runMode})${s.description ? `: ${s.description}` : ""}\n  → \`yoplai projects start ${projectId} --subagent ${s.name} --custom-prompt "..."\``
           ),
         ].join("\n")
       : "";
@@ -298,25 +298,25 @@ export function buildCoordinatorPrompt(input: RolePromptInput): string {
           "- Track progress and keep project docs updated",
           "- Verify acceptance criteria before signaling completion",
           "- When delegating implementation, keep workers on dedicated worktrees/workspaces; do not send them to the main repo unless the task explicitly requires it.",
-          "Use `aihub projects start` with configured subagents for delegation:",
-          "- Preflight first: `command -v aihub && aihub projects --version`",
-          '- Worker: `aihub projects start <project_id> --subagent Worker --slug worker-<task> --custom-prompt "Implement <task>; update SPECS.md status."`',
-          '- Reviewer: `aihub projects start <project_id> --subagent Reviewer --slug reviewer-<scope> --custom-prompt "Review worker workspaces; run tests; report pass/fail against acceptance criteria."`',
+          "Use `yoplai projects start` with configured subagents for delegation:",
+          "- Preflight first: `command -v yoplai && yoplai projects --version`",
+          '- Worker: `yoplai projects start <project_id> --subagent Worker --slug worker-<task> --custom-prompt "Implement <task>; update SPECS.md status."`',
+          '- Reviewer: `yoplai projects start <project_id> --subagent Reviewer --slug reviewer-<scope> --custom-prompt "Review worker workspaces; run tests; report pass/fail against acceptance criteria."`',
           '- Agent names use the subagent config name as prefix (e.g. "Worker Sage"). Use `--name "..."` to override.',
-          "- Before dispatching, pick an exact subagent name from `## Available Subagent Types` below. If none are listed, inspect the AIHub config first.",
+          "- Before dispatching, pick an exact subagent name from `## Available Subagent Types` below. If none are listed, inspect the Yoplai config first.",
           "- When using `--subagent`, do NOT add locked flags (`--agent`, `--model`, `--reasoning-effort`, `--thinking`, `--mode`, `--branch`, `--prompt-role`) unless also using `--allow-overrides`.",
           "- Do not merge/cherry-pick directly from coordinator/reviewer runs. Integration must go through Space queue and explicit Integrate Now.",
           "## Agent Management Rules",
-          "- Monitor agents with `aihub projects status <project-id> --slug <agent>`.",
-          '- Resume agents with `aihub projects resume <project-id> -m "..." --slug <agent>`.',
-          "- Never use background tasks to monitor worker agents — background monitoring does not work. Always use a foreground sleep & poll loop using `aihub projects status`, for example: `while true; do aihub projects status <project-id> --slug <agent> --json; sleep 30; done`.",
+          "- Monitor agents with `yoplai projects status <project-id> --slug <agent>`.",
+          '- Resume agents with `yoplai projects resume <project-id> -m "..." --slug <agent>`.',
+          "- Never use background tasks to monitor worker agents — background monitoring does not work. Always use a foreground sleep & poll loop using `yoplai projects status`, for example: `while true; do yoplai projects status <project-id> --slug <agent> --json; sleep 30; done`.",
           "- Never merge commits directly into `main`. Route all changes through the Space branch first.",
-          '- Never act on a worker\'s changes until `aihub projects status` shows the worker finished with status `"done"`.',
-          "- Never implement fixes or run reviews yourself unless the user explicitly asks. Resume the original worker/reviewer for follow-up on an existing run; spawn a new AIHub agent only for new work.",
-          "- Never spawn direct native subagents outside AIHub `aihub projects` for implementation work. Direct subagents may be used only for exploration/research, and only after explicit user confirmation.",
+          '- Never act on a worker\'s changes until `yoplai projects status` shows the worker finished with status `"done"`.',
+          "- Never implement fixes or run reviews yourself unless the user explicitly asks. Resume the original worker/reviewer for follow-up on an existing run; spawn a new Yoplai agent only for new work.",
+          "- Never spawn direct native subagents outside Yoplai `yoplai projects` for implementation work. Direct subagents may be used only for exploration/research, and only after explicit user confirmation.",
           "- When a new worker depends on a previous worker's output, wait until the first worker's worktree has been integrated into the Space branch before dispatching the dependent worker.",
-          "- As soon as you dispatch workers, move the project to `in_progress` status using `aihub projects update <project-id> --status in_progress`.",
-          "- As soon as implementation is complete and you are ready for review, move the project to `review` status using `aihub projects update <project-id> --status review`.",
+          "- As soon as you dispatch workers, move the project to `in_progress` status using `yoplai projects update <project-id> --status in_progress`.",
+          "- As soon as implementation is complete and you are ready for review, move the project to `review` status using `yoplai projects update <project-id> --status review`.",
           "- If you manually integrate a worker commit into the Space branch outside the normal Space queue flow, update the project's `space.json` to mark those commits integrated.",
           "- When manually integrating, update each commit's status in `space.json` to `integrated` or `skipped` as appropriate.",
           "When writing SPECS.md, keep checklist sections parseable:",

@@ -2,11 +2,11 @@ import { Command } from "commander";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { buildCreateBody, buildUpdateBody, registerSchedulerCommands } from "./index.js";
 
-const originalApiUrl = process.env.AIHUB_API_URL;
+const originalApiUrl = process.env.YOPLAI_API_URL;
 
 afterEach(() => {
-  if (originalApiUrl === undefined) delete process.env.AIHUB_API_URL;
-  else process.env.AIHUB_API_URL = originalApiUrl;
+  if (originalApiUrl === undefined) delete process.env.YOPLAI_API_URL;
+  else process.env.YOPLAI_API_URL = originalApiUrl;
   vi.restoreAllMocks();
 });
 
@@ -130,7 +130,7 @@ describe("buildUpdateBody", () => {
 
 describe("scheduler run command", () => {
   it("posts to the manual run endpoint and prints the output path", async () => {
-    process.env.AIHUB_API_URL = "http://localhost:4521";
+    process.env.YOPLAI_API_URL = "http://localhost:4521";
     const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
       new Response(
         JSON.stringify({
@@ -163,7 +163,7 @@ describe("scheduler run command", () => {
   });
 
   it("prints failed run output path before exiting non-zero", async () => {
-    process.env.AIHUB_API_URL = "http://localhost:4521";
+    process.env.YOPLAI_API_URL = "http://localhost:4521";
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
       new Response(
         JSON.stringify({

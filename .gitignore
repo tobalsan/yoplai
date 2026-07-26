@@ -16,4 +16,6 @@ apps/web/vite.config.d.ts.map
 jobs/
 __pycache__/
 worker-types
+.yoplai/
+# Legacy pre-rename config dir, still read as a fallback
 .aihub/

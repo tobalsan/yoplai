@@ -3,7 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { Hono } from "hono";
-import type { ExtensionContext } from "@aihub/shared";
+import type { ExtensionContext } from "@yoplai/shared";
 import { boardExtension } from "./index.js";
 
 function context(
@@ -94,7 +94,7 @@ describe("board extension system prompt contribution", () => {
     const contribution = boardExtension.getSystemPromptContributions?.({
       id: "lead",
       name: "Lead",
-      workspace: "/tmp/aihub-board-test",
+      workspace: "/tmp/yoplai-board-test",
       sdk: "pi",
       model: { model: "test" },
       queueMode: "queue",
@@ -113,7 +113,7 @@ describe("board extension system prompt contribution", () => {
     const tools = await boardExtension.getAgentTools?.({
       id: "lead",
       name: "Lead",
-      workspace: "/tmp/aihub-board-test",
+      workspace: "/tmp/yoplai-board-test",
       sdk: "pi",
       model: { model: "test" },
       queueMode: "queue",
@@ -131,13 +131,13 @@ describe("board extension system prompt contribution", () => {
   });
 
   it("edits scratchpad lines without replacing the whole file", async () => {
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "aihub-board-"));
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "yoplai-board-"));
     try {
       await boardExtension.start(context(tmpDir));
       const tools = await boardExtension.getAgentTools?.({
         id: "lead",
         name: "Lead",
-        workspace: "/tmp/aihub-board-test",
+        workspace: "/tmp/yoplai-board-test",
         sdk: "pi",
         model: { model: "test" },
         queueMode: "queue",
@@ -191,7 +191,7 @@ describe("board extension system prompt contribution", () => {
 
   it("uses extensions.projects.root before deprecated projects.root", async () => {
     const dataDir = fs.mkdtempSync(
-      path.join(os.tmpdir(), "aihub-board-roots-")
+      path.join(os.tmpdir(), "yoplai-board-roots-")
     );
     const legacyRoot = path.join(dataDir, "legacy-projects");
     const canonicalRoot = path.join(dataDir, "canonical-projects");
@@ -213,7 +213,7 @@ describe("board extension system prompt contribution", () => {
   });
 
   it("returns lifecycle counts while omitting done projects by default", async () => {
-    const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "aihub-board-list-"));
+    const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "yoplai-board-list-"));
     const root = path.join(dataDir, "projects");
     try {
       writeProject(root, "PRO-501", "Active Project", "active");
@@ -256,7 +256,7 @@ describe("board extension system prompt contribution", () => {
 
   it("uses extensions.projects.root for board areas", async () => {
     const dataDir = fs.mkdtempSync(
-      path.join(os.tmpdir(), "aihub-board-areas-")
+      path.join(os.tmpdir(), "yoplai-board-areas-")
     );
     const legacyRoot = path.join(dataDir, "legacy-projects");
     const canonicalRoot = path.join(dataDir, "canonical-projects");
@@ -285,17 +285,17 @@ describe("board extension system prompt contribution", () => {
     }
   });
 
-  it("stores user content at AIHUB_HOME by default and supports contentRoot override", async () => {
-    const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "aihub-board-home-"));
+  it("stores user content at YOPLAI_HOME by default and supports contentRoot override", async () => {
+    const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "yoplai-board-home-"));
     const customDir = fs.mkdtempSync(
-      path.join(os.tmpdir(), "aihub-board-custom-")
+      path.join(os.tmpdir(), "yoplai-board-custom-")
     );
     try {
       await boardExtension.start(context(dataDir));
       const defaultTools = await boardExtension.getAgentTools?.({
         id: "lead",
         name: "Lead",
-        workspace: "/tmp/aihub-board-test",
+        workspace: "/tmp/yoplai-board-test",
         sdk: "pi",
         model: { model: "test" },
         queueMode: "queue",
@@ -315,7 +315,7 @@ describe("board extension system prompt contribution", () => {
       const customTools = await boardExtension.getAgentTools?.({
         id: "lead",
         name: "Lead",
-        workspace: "/tmp/aihub-board-test",
+        workspace: "/tmp/yoplai-board-test",
         sdk: "pi",
         model: { model: "test" },
         queueMode: "queue",

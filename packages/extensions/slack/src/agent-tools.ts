@@ -5,7 +5,7 @@ import type {
   GatewayConfig,
   SlackAgentConfig,
   SlackComponentConfig,
-} from "@aihub/shared";
+} from "@yoplai/shared";
 import { z } from "zod";
 import { getActiveBot } from "./bot-registry.js";
 import { getSlackContextIfInitialized } from "./context.js";

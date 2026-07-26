@@ -9,7 +9,7 @@ import {
 } from "./activity.js";
 
 function makeTmpDir(): string {
-  return fs.mkdtempSync(path.join(os.tmpdir(), "aihub-board-activity-"));
+  return fs.mkdtempSync(path.join(os.tmpdir(), "yoplai-board-activity-"));
 }
 
 function makeProject(

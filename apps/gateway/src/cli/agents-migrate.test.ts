@@ -16,20 +16,20 @@ async function exists(filePath: string): Promise<boolean> {
 
 describe("agents migrate", () => {
   let tmpDir: string;
-  const oldAihubHome = process.env.AIHUB_HOME;
+  const oldHomeDir = process.env.YOPLAI_HOME;
 
   beforeEach(async () => {
-    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "aihub-migrate-"));
-    process.env.AIHUB_HOME = tmpDir;
+    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-migrate-"));
+    process.env.YOPLAI_HOME = tmpDir;
   });
 
   afterEach(async () => {
-    process.env.AIHUB_HOME = oldAihubHome;
+    process.env.YOPLAI_HOME = oldHomeDir;
     await fs.rm(tmpDir, { recursive: true, force: true });
   });
 
   it("no-ops for v3 config", async () => {
-    const configPath = path.join(tmpDir, "aihub.json");
+    const configPath = path.join(tmpDir, "yoplai.json");
     await fs.writeFile(configPath, JSON.stringify({ version: 3, agents: [] }), "utf8");
 
     const result = await migrateAgentsConfig(configPath);
@@ -53,7 +53,7 @@ describe("agents migrate", () => {
     await fs.writeFile(path.join(alphaDir, "BOOTSTRAP.md"), "bootstrap");
     await fs.writeFile(path.join(betaDir, "SOUL.md"), "soul");
 
-    const configPath = path.join(tmpDir, "aihub.json");
+    const configPath = path.join(tmpDir, "yoplai.json");
     await fs.writeFile(
       configPath,
       JSON.stringify(
@@ -192,7 +192,7 @@ describe("agents migrate", () => {
   it("does not partially migrate when schedule conversion fails", async () => {
     const agentDir = path.join(tmpDir, "agents", "alpha");
     await fs.mkdir(agentDir, { recursive: true });
-    const configPath = path.join(tmpDir, "aihub.json");
+    const configPath = path.join(tmpDir, "yoplai.json");
     const originalConfig = {
       version: 2,
       agents: [
@@ -233,7 +233,7 @@ describe("agents migrate", () => {
   it("does not partially migrate unsupported long intervals", async () => {
     const agentDir = path.join(tmpDir, "agents", "alpha");
     await fs.mkdir(agentDir, { recursive: true });
-    const configPath = path.join(tmpDir, "aihub.json");
+    const configPath = path.join(tmpDir, "yoplai.json");
     const originalConfig = {
       version: 2,
       agents: [

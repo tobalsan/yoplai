@@ -2,7 +2,7 @@
 /**
  * Dev launcher for web UI with optional Tailscale HTTPS support.
  *
- * Reads $AIHUB_HOME/aihub.json for ui config:
+ * Reads $YOPLAI_HOME/yoplai.json for ui config:
  * - ui.port: dev server port (default 3000)
  * - ui.bind: "loopback" | "lan" | "tailnet"
  * - ui.tailscale.mode: "off" | "serve" (enables HTTPS via tailscale serve)
@@ -12,7 +12,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { spawn } from "node:child_process";
 import { getTailnetHostname, enableTailscaleServe, disableTailscaleServe } from "./tailscale.js";
-import { resolveConfigPath } from "../../../packages/shared/src/config-path.js";
+import { readEnv, resolveConfigPath } from "../../../packages/shared/src/config-path.js";
 
 type UiBindMode = "loopback" | "lan" | "tailnet";
 
@@ -50,10 +50,10 @@ async function main() {
   const uiConfig = config.ui ?? {};
   const gatewayConfig = config.gateway ?? {};
 
-  // In dev mode (AIHUB_DEV=1), use ports from orchestrator
-  const isDevMode = process.env.AIHUB_DEV === "1";
-  const port = process.env.AIHUB_UI_PORT ? parseInt(process.env.AIHUB_UI_PORT, 10) : (uiConfig.port ?? 3000);
-  const gatewayPort = process.env.AIHUB_GATEWAY_PORT ? parseInt(process.env.AIHUB_GATEWAY_PORT, 10) : (gatewayConfig.port ?? 4000);
+  // In dev mode (YOPLAI_DEV=1), use ports from orchestrator
+  const isDevMode = readEnv("DEV") === "1";
+  const port = readEnv("UI_PORT") ? parseInt(readEnv("UI_PORT")!, 10) : (uiConfig.port ?? 3000);
+  const gatewayPort = readEnv("GATEWAY_PORT") ? parseInt(readEnv("GATEWAY_PORT")!, 10) : (gatewayConfig.port ?? 4000);
 
   // In dev mode, skip tailscale serve entirely
   const tailscaleMode = isDevMode ? "off" : (uiConfig.tailscale?.mode ?? "off");
@@ -64,12 +64,12 @@ async function main() {
   // Enable tailscale serve if configured (skipped in dev mode)
   if (tailscaleMode === "serve") {
     try {
-      console.log(`[dev] Enabling Tailscale serve on port ${port} (path /aihub)...`);
-      enableTailscaleServe(port, "/aihub");
+      console.log(`[dev] Enabling Tailscale serve on port ${port} (path /yoplai)...`);
+      enableTailscaleServe(port, "/yoplai");
       enableTailscaleServe(gatewayPort, "/api");
       enableTailscaleServe(gatewayPort, "/ws");
       tailscaleHostname = getTailnetHostname();
-      console.log(`[dev] HTTPS available at: https://${tailscaleHostname}/aihub`);
+      console.log(`[dev] HTTPS available at: https://${tailscaleHostname}/yoplai`);
     } catch (err) {
       console.error("[dev] Failed to enable Tailscale serve:", err);
       console.log("[dev] Continuing without HTTPS...");

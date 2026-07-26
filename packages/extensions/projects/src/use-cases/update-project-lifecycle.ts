@@ -3,7 +3,7 @@ import {
   normalizeProjectStatus,
   type GatewayConfig,
   type UpdateProjectRequest,
-} from "@aihub/shared";
+} from "@yoplai/shared";
 import { recordProjectStatusActivity } from "../activity/index.js";
 import { getOrchestratorConfig } from "../orchestrator/config.js";
 import { configuredShapingStatusKeys } from "../orchestrator/dispatch-policy.js";

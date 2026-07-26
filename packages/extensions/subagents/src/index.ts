@@ -5,8 +5,8 @@ import type {
   ExtensionContext,
   OrchestratorSource,
   SubagentRuntimeCli,
-} from "@aihub/shared";
-import { SubagentsExtensionConfigSchema } from "@aihub/shared";
+} from "@yoplai/shared";
+import { SubagentsExtensionConfigSchema } from "@yoplai/shared";
 import {
   archiveSubagent,
   getSubagentLogs as getProjectSubagentLogs,
@@ -14,11 +14,11 @@ import {
   killSubagent as killProjectSubagent,
   listAllSubagents,
   spawnProjectSubagent,
-} from "@aihub/extension-projects";
+} from "@yoplai/extension-projects";
 import {
   resolveProfile as resolveRuntimeProfile,
   runtimeProfiles,
-} from "@aihub/extension-projects/profiles/resolver";
+} from "@yoplai/extension-projects/profiles/resolver";
 import {
   deleteSubagentRun,
   getLiveSubagentRunsByCwd,
@@ -402,11 +402,11 @@ const subagentsExtension: Extension = {
   getSystemPromptContributions() {
     return [
       "Subagent runtime commands:",
-      "- Use `aihub subagents start --cwd <repo> --label <name> --prompt <task>` with either `--cli codex|claude|pi` or `--profile <name>` to delegate scoped work.",
-      "- Use `aihub subagents list --status running` and `aihub subagents status <runId>` to monitor runs.",
-      "- Use `aihub subagents logs <runId> --since 0` to inspect run output.",
-      "- Use `aihub subagents resume <runId> --prompt <follow-up>` for follow-up work.",
-      "- Use `aihub subagents interrupt|archive|unarchive|delete <runId>` to manage run lifecycle.",
+      "- Use `yoplai subagents start --cwd <repo> --label <name> --prompt <task>` with either `--cli codex|claude|pi` or `--profile <name>` to delegate scoped work.",
+      "- Use `yoplai subagents list --status running` and `yoplai subagents status <runId>` to monitor runs.",
+      "- Use `yoplai subagents logs <runId> --since 0` to inspect run output.",
+      "- Use `yoplai subagents resume <runId> --prompt <follow-up>` for follow-up work.",
+      "- Use `yoplai subagents interrupt|archive|unarchive|delete <runId>` to manage run lifecycle.",
     ].join("\n");
   },
   async start(ctx) {

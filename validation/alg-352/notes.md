@@ -1,7 +1,7 @@
 # E2E Validation — ALG-352 Extension catalog API
 
 - **Issue/branch:** ALG-352 / `alg-352-extension-catalog` (base `teams`)
-- **Temp home:** `.aihub-e2e/` (pool: `sales`, `support`; external extension dir `.aihub-e2e/extensions/acme-crm`)
+- **Temp home:** `.yoplai-e2e/` (pool: `sales`, `support`; external extension dir `.yoplai-e2e/extensions/acme-crm`)
 - **Gateway/UI ports:** gateway `http://127.0.0.1:4001`, web `http://127.0.0.1:3000` (4000 was busy; dev auto-picked 4001)
 
 ## Tests run (all green)
@@ -12,11 +12,11 @@
 
 ## Real-stack E2E
 
-Launched the actual gateway/web stack against the temp home (`AIHUB_HOME=.aihub-e2e pnpm dev`).
+Launched the actual gateway/web stack against the temp home (`YOPLAI_HOME=.yoplai-e2e pnpm dev`).
 
 ### Catalog builder against real config + real filesystem scan — PASS
 `buildExtensionCatalog(loadConfig(), <pool agent>)` executed in-process against the
-running deployment's real config and a real directory scan of `$AIHUB_HOME/extensions`.
+running deployment's real config and a real directory scan of `$YOPLAI_HOME/extensions`.
 Evidence: `validation/catalog-builder.json`, `validation/per-agent-enabled.txt`.
 
 - **Discovery accurate:** 13 entries = 12 built-in (static registry) + 1 external

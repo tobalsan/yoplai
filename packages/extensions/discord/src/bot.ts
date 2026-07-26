@@ -6,8 +6,8 @@ import type {
   DiscordComponentConfig,
   DiscordConfig,
   HeartbeatEventPayload,
-} from "@aihub/shared";
-import { DEFAULT_MAIN_KEY } from "@aihub/shared";
+} from "@yoplai/shared";
+import { DEFAULT_MAIN_KEY } from "@yoplai/shared";
 import {
   createCarbonClient,
   getGatewayPlugin,

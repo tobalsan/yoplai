@@ -3,7 +3,7 @@ import {
   normalizeProjectStatus,
   type GatewayConfig,
   type UpdateProjectRequest,
-} from "@aihub/shared";
+} from "@yoplai/shared";
 import { resolveCliProfileOptions } from "../profiles/resolver.js";
 import { getProject, updateProject } from "../projects/index.js";
 import { readSubagentConfig } from "../subagents/index.js";

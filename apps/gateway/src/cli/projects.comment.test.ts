@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-const projectsExtensionSpecifier = "@aihub/extension-projects";
+const projectsExtensionSpecifier = "@yoplai/extension-projects";
 const { createProjectCommentHandler } = (await import(
   projectsExtensionSpecifier
 )) as {

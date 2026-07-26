@@ -2,7 +2,7 @@ import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { ContainerInput } from "@aihub/shared";
+import type { ContainerInput } from "@yoplai/shared";
 import { callGatewayTool } from "../gateway-client.js";
 import { startIpcPoller } from "../ipc.js";
 import {
@@ -88,7 +88,7 @@ describe("agent runner entry point", () => {
 
 describe("IPC poller", () => {
   it("reads follow-up messages and close sentinel", async () => {
-    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "aihub-ipc-"));
+    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-ipc-"));
     const inputDir = path.join(tempDir, "input");
     await fs.mkdir(inputDir);
 

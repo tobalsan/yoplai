@@ -70,7 +70,7 @@ export async function addSliceComment(
   projectId: string,
   sliceId: string,
   message: string,
-  author = "AIHub"
+  author = "Yoplai"
 ): Promise<ProjectThreadEntry> {
   const res = await fetch(
     `${API_BASE}/projects/${encodeURIComponent(projectId)}/slices/${encodeURIComponent(sliceId)}/comments`,

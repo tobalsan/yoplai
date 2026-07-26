@@ -2,7 +2,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { AgentConfig, ExtensionContext, GatewayConfig } from "@aihub/shared";
+import type { AgentConfig, ExtensionContext, GatewayConfig } from "@yoplai/shared";
 import {
   ScheduleAlreadyRunningError,
   SchedulerService,
@@ -72,7 +72,7 @@ describe("SchedulerService.runNow", () => {
 
   it("runs a disabled job immediately without changing its next scheduled fire", async () => {
     vi.spyOn(console, "log").mockImplementation(() => {});
-    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "aihub-scheduler-service-"));
+    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-scheduler-service-"));
     const alpha = agent("alpha", path.join(tmpDir, "alpha"));
     const runAgent = vi.fn().mockResolvedValue({
       payloads: [{ text: "done" }],
@@ -122,7 +122,7 @@ describe("SchedulerService.runNow", () => {
 
   it("rejects a second manual run while the same job is executing", async () => {
     vi.spyOn(console, "log").mockImplementation(() => {});
-    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "aihub-scheduler-service-"));
+    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-scheduler-service-"));
     const alpha = agent("alpha", path.join(tmpDir, "alpha"));
     let finishRun!: (value: unknown) => void;
     const runStarted = new Promise<void>((resolve) => {
@@ -162,7 +162,7 @@ describe("SchedulerService.runNow", () => {
 
   it("skips and reschedules a due scheduled fire that collides with a manual run", async () => {
     vi.spyOn(console, "log").mockImplementation(() => {});
-    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "aihub-scheduler-service-"));
+    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-scheduler-service-"));
     const alpha = agent("alpha", path.join(tmpDir, "alpha"));
     let finishRun!: (value: unknown) => void;
     const runStarted = new Promise<void>((resolve) => {
@@ -226,7 +226,7 @@ describe("SchedulerService timeout and loop isolation", () => {
     vi.useFakeTimers();
     vi.spyOn(console, "log").mockImplementation(() => {});
     vi.spyOn(console, "error").mockImplementation(() => {});
-    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "aihub-scheduler-timeout-"));
+    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-scheduler-timeout-"));
     const alpha = agent("alpha", path.join(tmpDir, "alpha"));
 
     // runAgent never resolves — simulates a hung tool call
@@ -277,7 +277,7 @@ describe("SchedulerService timeout and loop isolation", () => {
     vi.useFakeTimers();
     vi.spyOn(console, "log").mockImplementation(() => {});
     vi.spyOn(console, "error").mockImplementation(() => {});
-    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "aihub-scheduler-isolation-"));
+    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-scheduler-isolation-"));
     const alpha = agent("alpha", path.join(tmpDir, "alpha"));
     const beta = agent("beta", path.join(tmpDir, "beta"));
 
@@ -334,7 +334,7 @@ describe("SchedulerService timeout and loop isolation", () => {
   it("abort signal is fired on runAgent when job times out", async () => {
     vi.spyOn(console, "log").mockImplementation(() => {});
     vi.spyOn(console, "error").mockImplementation(() => {});
-    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "aihub-scheduler-abort-"));
+    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-scheduler-abort-"));
     const alpha = agent("alpha", path.join(tmpDir, "alpha"));
 
     let receivedSignal: AbortSignal | undefined;
@@ -375,7 +375,7 @@ describe("SchedulerService timeout and loop isolation", () => {
     // Real timers with a very short jobTimeoutMs to avoid fake-timer / I/O deadlocks.
     vi.spyOn(console, "log").mockImplementation(() => {});
     vi.spyOn(console, "error").mockImplementation(() => {});
-    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "aihub-scheduler-overlap-"));
+    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-scheduler-overlap-"));
     const alpha = agent("alpha", path.join(tmpDir, "alpha"));
 
     const rejectCallbacks: Array<(err: Error) => void> = [];

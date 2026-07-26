@@ -1,6 +1,6 @@
 import path from "node:path";
-import type { Extension, GatewayConfig } from "@aihub/shared";
-import { discoverExternalExtensions } from "@aihub/shared";
+import type { Extension, GatewayConfig } from "@yoplai/shared";
+import { discoverExternalExtensions, readEnv } from "@yoplai/shared";
 import { CONFIG_DIR } from "../config/index.js";
 import { ExtensionRuntime } from "./runtime.js";
 
@@ -17,15 +17,15 @@ type ExtensionRegistration = {
 type ExtensionModule = Record<string, unknown>;
 
 const MONOREPO_DEV_EXTENSION_IMPORTS: Record<string, string> = {
-  "@aihub/extension-board": new URL(
+  "@yoplai/extension-board": new URL(
     "../../../../packages/extensions/board/src/index.ts",
     import.meta.url
   ).href,
-  "@aihub/extension-projects": new URL(
+  "@yoplai/extension-projects": new URL(
     "../../../../packages/extensions/projects/src/index.ts",
     import.meta.url
   ).href,
-  "@aihub/extension-orchestrator": new URL(
+  "@yoplai/extension-orchestrator": new URL(
     "../../../../packages/extensions/orchestrator/src/index.ts",
     import.meta.url
   ).href,
@@ -41,7 +41,7 @@ function isModuleNotFound(error: unknown): boolean {
 
 function isMonorepoDevRuntime(): boolean {
   return (
-    process.env.AIHUB_WEB_DEV === "1" ||
+    readEnv("WEB_DEV") === "1" ||
     process.env.NODE_OPTIONS?.includes("--conditions=development") === true
   );
 }
@@ -107,8 +107,8 @@ const EXTENSION_LOAD_PRIORITY: Record<string, number> = {
 
 const EXTENSION_REGISTRY: Record<string, ExtensionRegistration> = {
   irc: {
-    packageName: "@aihub/extension-irc",
-    load: () => import("@aihub/extension-irc").then((module) => module.ircExtension),
+    packageName: "@yoplai/extension-irc",
+    load: () => import("@yoplai/extension-irc").then((module) => module.ircExtension),
     getConfig: (config) => {
       const hasPerAgent = config.agents?.some((agent) => agent.irc);
       const rootConfig = config.extensions?.irc;
@@ -120,9 +120,9 @@ const EXTENSION_REGISTRY: Record<string, ExtensionRegistration> = {
     routePrefixes: [],
   },
   discord: {
-    packageName: "@aihub/extension-discord",
+    packageName: "@yoplai/extension-discord",
     load: () =>
-      import("@aihub/extension-discord").then(
+      import("@yoplai/extension-discord").then(
         (module) => module.discordExtension
       ),
     getConfig: (config) => {
@@ -135,9 +135,9 @@ const EXTENSION_REGISTRY: Record<string, ExtensionRegistration> = {
     routePrefixes: [],
   },
   slack: {
-    packageName: "@aihub/extension-slack",
+    packageName: "@yoplai/extension-slack",
     load: () =>
-      import("@aihub/extension-slack").then((module) => module.slackExtension),
+      import("@yoplai/extension-slack").then((module) => module.slackExtension),
     getConfig: (config) => {
       const hasPerAgent = config.agents?.some((a) => a.slack?.token);
       if (config.extensions?.slack) {
@@ -148,9 +148,9 @@ const EXTENSION_REGISTRY: Record<string, ExtensionRegistration> = {
     routePrefixes: [],
   },
   telegram: {
-    packageName: "@aihub/extension-telegram",
+    packageName: "@yoplai/extension-telegram",
     load: () =>
-      import("@aihub/extension-telegram").then(
+      import("@yoplai/extension-telegram").then(
         (module) => module.telegramExtension
       ),
     getConfig: (config) => {
@@ -167,7 +167,7 @@ const EXTENSION_REGISTRY: Record<string, ExtensionRegistration> = {
   },
   scheduler: {
     load: () =>
-      import("@aihub/extension-scheduler").then(
+      import("@yoplai/extension-scheduler").then(
         (module) => module.schedulerExtension
       ),
     getConfig: (config) => config.extensions?.scheduler,
@@ -177,7 +177,7 @@ const EXTENSION_REGISTRY: Record<string, ExtensionRegistration> = {
   },
   heartbeat: {
     load: () =>
-      import("@aihub/extension-heartbeat").then(
+      import("@yoplai/extension-heartbeat").then(
         (module) => module.heartbeatExtension
       ),
     getConfig: (config) => {
@@ -192,7 +192,7 @@ const EXTENSION_REGISTRY: Record<string, ExtensionRegistration> = {
     },
     routePrefixes: ["/api/agents/:id/heartbeat"],
   },
-  projects: builtInExtension("@aihub/extension-projects", "projectsExtension", {
+  projects: builtInExtension("@yoplai/extension-projects", "projectsExtension", {
     getConfig: (config) => config.extensions?.projects,
     routePrefixes: [
       "/api/areas",
@@ -203,14 +203,14 @@ const EXTENSION_REGISTRY: Record<string, ExtensionRegistration> = {
   }),
   subagents: {
     load: () =>
-      import("@aihub/extension-subagents").then(
+      import("@yoplai/extension-subagents").then(
         (module) => module.subagentsExtension
       ),
     getConfig: (config) => config.extensions?.subagents,
     routePrefixes: ["/api/subagents"],
   },
   orchestrator: builtInExtension(
-    "@aihub/extension-orchestrator",
+    "@yoplai/extension-orchestrator",
     "orchestratorExtension",
     {
       getConfig: (config) => config.extensions?.orchestrator,
@@ -219,16 +219,16 @@ const EXTENSION_REGISTRY: Record<string, ExtensionRegistration> = {
   ),
   langfuse: {
     load: () =>
-      import("@aihub/extension-langfuse").then(
+      import("@yoplai/extension-langfuse").then(
         (module) => module.langfuseExtension
       ),
     getConfig: (config) => config.extensions?.langfuse,
     routePrefixes: [],
   },
   webhooks: {
-    packageName: "@aihub/extension-webhooks",
+    packageName: "@yoplai/extension-webhooks",
     load: () =>
-      import("@aihub/extension-webhooks").then(
+      import("@yoplai/extension-webhooks").then(
         (module) => module.webhooksExtension
       ),
     getConfig: (config) => {
@@ -241,13 +241,13 @@ const EXTENSION_REGISTRY: Record<string, ExtensionRegistration> = {
   },
   multiUser: {
     load: () =>
-      import("@aihub/extension-multi-user").then(
+      import("@yoplai/extension-multi-user").then(
         (module) => module.multiUserExtension
       ),
     getConfig: (config) => config.extensions?.multiUser,
     routePrefixes: ["/api/auth", "/api/me", "/api/admin", "/api/teams"],
   },
-  board: builtInExtension("@aihub/extension-board", "boardExtension", {
+  board: builtInExtension("@yoplai/extension-board", "boardExtension", {
     getConfig: (config) => config.extensions?.board,
     routePrefixes: ["/api/board"],
   }),

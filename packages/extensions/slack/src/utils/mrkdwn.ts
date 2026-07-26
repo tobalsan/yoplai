@@ -6,7 +6,7 @@ type CodeToken = {
 function protectCode(input: string): { text: string; tokens: CodeToken[] } {
   const tokens: CodeToken[] = [];
   const replace = (value: string) => {
-    const key = `@@AIHUB_CODE_${tokens.length}@@`;
+    const key = `@@YOPLAI_CODE_${tokens.length}@@`;
     tokens.push({ key, value });
     return key;
   };

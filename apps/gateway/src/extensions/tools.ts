@@ -1,7 +1,7 @@
 import type {
   AgentConfig,
   GatewayConfig,
-} from "@aihub/shared";
+} from "@yoplai/shared";
 import { loadConfig } from "../config/index.js";
 import { getExtensionRuntime } from "./registry.js";
 import type {

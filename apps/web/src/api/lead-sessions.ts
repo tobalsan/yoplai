@@ -2,7 +2,7 @@ import type {
   FileAttachment,
   FullHistoryMessage,
   LeadSession,
-} from "@aihub/shared/types";
+} from "@yoplai/shared/types";
 import { API_BASE, apiFetch as fetch } from "./core";
 
 export type LeadSessionsResponse = {

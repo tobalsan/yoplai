@@ -1,7 +1,13 @@
-import { describe, expect, it } from "vitest";
-import { buildStartRequestBody } from "./index.js";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-describe("aihub projects start request body mapping", () => {
+vi.mock("./client.js", () => ({
+  ApiClient: vi.fn(),
+}));
+
+import { ApiClient } from "./client.js";
+import { buildStartRequestBody, program } from "./index.js";
+
+describe("yoplai projects start request body mapping", () => {
   it("sends subagentTemplate when --subagent is provided (server applies defaults)", () => {
     const { body, errors } = buildStartRequestBody({
       subagent: "Worker",
@@ -132,5 +138,51 @@ describe("aihub projects start request body mapping", () => {
       model: "gpt-5.4",
     });
     expect(body).not.toHaveProperty("subagentTemplate");
+  });
+});
+
+describe("yoplai projects start command", () => {
+  const apiClientMock = vi.mocked(ApiClient);
+  let logSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    apiClientMock.mockReset();
+    logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+  });
+
+  afterEach(() => {
+    logSpy.mockRestore();
+  });
+
+  it('prints the friendly line when the server responds with type "native"', async () => {
+    const startProject = vi.fn(async () => ({
+      type: "native",
+      sessionKey: "sess-123",
+    }));
+    apiClientMock.mockImplementation(
+      () => ({ startProject }) as unknown as InstanceType<typeof ApiClient>
+    );
+
+    await program.parseAsync(["start", "PRO-1"], { from: "user" });
+
+    expect(logSpy).toHaveBeenCalledWith(
+      "Started Yoplai run (sessionKey: sess-123)"
+    );
+  });
+
+  it('prints the friendly line when the server responds with legacy type "aihub"', async () => {
+    const startProject = vi.fn(async () => ({
+      type: "aihub",
+      sessionKey: "sess-456",
+    }));
+    apiClientMock.mockImplementation(
+      () => ({ startProject }) as unknown as InstanceType<typeof ApiClient>
+    );
+
+    await program.parseAsync(["start", "PRO-1"], { from: "user" });
+
+    expect(logSpy).toHaveBeenCalledWith(
+      "Started Yoplai run (sessionKey: sess-456)"
+    );
   });
 });

@@ -120,15 +120,15 @@ describe("scanAreaSummaries", () => {
 
   it("reads area config without loop file", async () => {
     await writeArea(
-      "aihub",
-      "id: aihub\ntitle: AIHub\ncolor: '#3b8ecc'\norder: 1\n",
+      "yoplai",
+      "id: yoplai\ntitle: Yoplai\ncolor: '#3b8ecc'\norder: 1\n",
     );
 
     const result = await scanAreaSummaries(tmpDir);
     expect(result).toHaveLength(1);
     expect(result[0]).toMatchObject({
-      id: "aihub",
-      title: "AIHub",
+      id: "yoplai",
+      title: "Yoplai",
       color: "#3b8ecc",
       order: 1,
       recentlyDone: "",
@@ -138,9 +138,9 @@ describe("scanAreaSummaries", () => {
 
   it("extracts latest entry from dated loop file", async () => {
     await writeArea(
-      "aihub",
-      "id: aihub\ntitle: AIHub\ncolor: '#3b8ecc'\norder: 1\n",
-      `# AIHub
+      "yoplai",
+      "id: yoplai\ntitle: Yoplai\ncolor: '#3b8ecc'\norder: 1\n",
+      `# Yoplai
 
 [[2026-04-25]]
 - Old stuff
@@ -167,11 +167,11 @@ Next:
 
   it("sorts by order then title", async () => {
     await writeArea("ranksource", "id: ranksource\ntitle: Ranksource\ncolor: '#cc6b3b'\norder: 2\n");
-    await writeArea("aihub", "id: aihub\ntitle: AIHub\ncolor: '#3b8ecc'\norder: 1\n");
+    await writeArea("yoplai", "id: yoplai\ntitle: Yoplai\ncolor: '#3b8ecc'\norder: 1\n");
     await writeArea("cloudifai", "id: cloudifai\ntitle: Cloudifai\ncolor: '#FFE100'\norder: 3\n");
 
     const result = await scanAreaSummaries(tmpDir);
-    expect(result.map((a) => a.id)).toEqual(["aihub", "ranksource", "cloudifai"]);
+    expect(result.map((a) => a.id)).toEqual(["yoplai", "ranksource", "cloudifai"]);
   });
 
   it("uses defaults for missing config fields", async () => {

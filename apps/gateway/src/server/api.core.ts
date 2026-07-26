@@ -3,7 +3,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { Readable } from "node:stream";
 import { Hono, type Context } from "hono";
-import { resolveDefaultProjectManager, resolveHomeDir } from "@aihub/shared";
+import { resolveDefaultProjectManager, resolveHomeDir } from "@yoplai/shared";
 import {
   getActiveAgents,
   getAgent,
@@ -36,8 +36,8 @@ import {
   getSessionCurrentTurn,
   isStreaming,
 } from "../agents/index.js";
-import type { HistoryViewMode } from "@aihub/shared";
-import type { AgentConfig, GatewayConfig } from "@aihub/shared";
+import type { HistoryViewMode } from "@yoplai/shared";
+import type { AgentConfig, GatewayConfig } from "@yoplai/shared";
 import {
   clearSessionEntry,
   getSessionEntry,
@@ -58,7 +58,7 @@ import {
 import { normalizeRunRequest } from "./run-request.js";
 import { compactAgentSession } from "../agents/compact.js";
 import { CONFIG_DIR } from "../config/index.js";
-import { getUserHistoryDir } from "@aihub/extension-multi-user/isolation";
+import { getUserHistoryDir } from "@yoplai/extension-multi-user/isolation";
 import { invalidateResolvedHistoryFile } from "../history/store.js";
 import { resolveSessionDataFile } from "../sessions/files.js";
 import { createOAuthRoutes } from "../oauth/routes.js";
@@ -68,15 +68,15 @@ const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 type MultiUserApiDeps = {
-  getForwardedAuthContext: typeof import("@aihub/extension-multi-user").getForwardedAuthContext;
-  getAgentFilter: typeof import("@aihub/extension-multi-user").getAgentFilter;
-  hasAgentAccess: typeof import("@aihub/extension-multi-user").hasAgentAccess;
+  getForwardedAuthContext: typeof import("@yoplai/extension-multi-user").getForwardedAuthContext;
+  getAgentFilter: typeof import("@yoplai/extension-multi-user").getAgentFilter;
+  hasAgentAccess: typeof import("@yoplai/extension-multi-user").hasAgentAccess;
 };
 
 let multiUserApiDepsPromise: Promise<MultiUserApiDeps> | null = null;
 
 function loadMultiUserApiDeps(): Promise<MultiUserApiDeps> {
-  multiUserApiDepsPromise ??= import("@aihub/extension-multi-user").then(
+  multiUserApiDepsPromise ??= import("@yoplai/extension-multi-user").then(
     (module) => ({
       getForwardedAuthContext: module.getForwardedAuthContext,
       getAgentFilter: module.getAgentFilter,
@@ -599,7 +599,7 @@ api.get("/agents/:id", async (c) => {
 
 // GET /api/agents/:id/extensions - extension catalog for one agent.
 // Lists every available extension (built-in static registry + runtime scan of
-// $AIHUB_HOME/extensions) with its per-agent enabled state, config JSON-schema,
+// $YOPLAI_HOME/extensions) with its per-agent enabled state, config JSON-schema,
 // required secrets, and config-surface tier. Read-only.
 api.get("/agents/:id/extensions", async (c) => {
   const agentId = c.req.param("id");

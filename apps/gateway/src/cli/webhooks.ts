@@ -5,8 +5,8 @@ import {
   loadWebhookSecrets,
   saveWebhookSecrets,
   webhookSecretKey,
-} from "@aihub/extension-webhooks";
-import { resolveBindHost, resolveHomeDir } from "@aihub/shared";
+} from "@yoplai/extension-webhooks";
+import { readEnv, resolveBindHost, resolveHomeDir } from "@yoplai/shared";
 import { loadConfig } from "../config/index.js";
 import { logError } from "../logging.js";
 
@@ -28,7 +28,7 @@ function trimTrailingSlash(url: string): string {
 }
 
 function getWebhookBaseUrl(): string {
-  const envUrl = process.env.AIHUB_API_URL ?? process.env.AIHUB_URL;
+  const envUrl = readEnv("API_URL") ?? readEnv("URL");
   if (envUrl?.trim()) return trimTrailingSlash(envUrl.trim());
 
   try {

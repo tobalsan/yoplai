@@ -4,7 +4,7 @@
  * Determines whether the bot should reply to a message with explicit gating reasons.
  */
 
-import type { DiscordConfig } from "@aihub/shared";
+import type { DiscordConfig } from "@yoplai/shared";
 import { MessageType } from "discord-api-types/v10";
 import { matchesUserAllowlist } from "../utils/allowlist.js";
 

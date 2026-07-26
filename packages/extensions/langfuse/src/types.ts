@@ -1,4 +1,4 @@
-import type { ModelUsage } from "@aihub/shared";
+import type { ModelUsage } from "@yoplai/shared";
 import type {
   LangfuseGenerationClient,
   LangfuseSpanClient,

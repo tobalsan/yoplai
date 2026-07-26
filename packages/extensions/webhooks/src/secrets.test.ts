@@ -2,7 +2,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { AgentConfigSchema, type AgentConfig } from "@aihub/shared";
+import { AgentConfigSchema, type AgentConfig } from "@yoplai/shared";
 import {
   ensureWebhookSecrets,
   getWebhookSecretsPath,
@@ -24,7 +24,7 @@ function agent(id: string, webhooks: unknown): AgentConfig {
 describe("webhook secrets", () => {
   it("generates and persists missing secrets", async () => {
     const dataDir = await fs.mkdtemp(
-      path.join(os.tmpdir(), "aihub-webhook-secrets-")
+      path.join(os.tmpdir(), "yoplai-webhook-secrets-")
     );
 
     const result = ensureWebhookSecrets(dataDir, [
@@ -40,7 +40,7 @@ describe("webhook secrets", () => {
 
   it("writes the secrets file with owner-only permissions", async () => {
     const dataDir = await fs.mkdtemp(
-      path.join(os.tmpdir(), "aihub-webhook-secrets-")
+      path.join(os.tmpdir(), "yoplai-webhook-secrets-")
     );
 
     saveWebhookSecrets(dataDir, { "sales:notion": "secret" });
@@ -51,7 +51,7 @@ describe("webhook secrets", () => {
 
   it("keeps existing secrets stable", async () => {
     const dataDir = await fs.mkdtemp(
-      path.join(os.tmpdir(), "aihub-webhook-secrets-")
+      path.join(os.tmpdir(), "yoplai-webhook-secrets-")
     );
     saveWebhookSecrets(dataDir, { "sales:notion": "existing" });
 

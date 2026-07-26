@@ -1,8 +1,8 @@
 # Multi-User Extension
 
 The `multi-user` extension adds OAuth authentication, per-user agent access
-control, and per-user isolation of session/history state to AIHub. Without it,
-AIHub runs as a single-user gateway with no authentication on `/api/*`. With
+control, and per-user isolation of session/history state to Yoplai. Without it,
+Yoplai runs as a single-user gateway with no authentication on `/api/*`. With
 it, every `/api/*` route requires either a Better Auth session cookie or an
 `Authorization: Bearer <token>` API key, and each agent's runtime state is
 scoped to the calling user.
@@ -22,7 +22,7 @@ config with `enabled: true`, OAuth client credentials, and a session secret.
 - The `createAuthMiddleware` mounted on `/api/*`, plus `requireAdmin` and
   `requireAgentAccess` middleware used by other extensions.
 - Bearer-token API auth via the `@better-auth/api-key` plugin (see below).
-- Per-user data directories under `$AIHUB_HOME/sessions/users/<userId>/` for sessions,
+- Per-user data directories under `$YOPLAI_HOME/sessions/users/<userId>/` for sessions,
   Claude session maps, and conversation history.
 
 The extension does not own agent execution, conversation storage, or routing —
@@ -31,7 +31,7 @@ it only owns auth, authorization, and the per-user data namespace.
 ## Storage
 
 ```text
-$AIHUB_HOME/
+$YOPLAI_HOME/
 ├── auth.db                # Better Auth tables: user, session, account,
 │                          # verification, apikey, plus agent_assignments
 └── sessions/
@@ -57,7 +57,7 @@ keys if an older shape is detected on boot.
   "extensions": {
     "multiUser": {
       "enabled": true,
-      "sessionSecret": { "envVar": "AIHUB_SESSION_SECRET" },
+      "sessionSecret": { "envVar": "YOPLAI_SESSION_SECRET" },
       "oauth": {
         "google": {
           "clientId":     { "envVar": "GOOGLE_CLIENT_ID" },
@@ -131,19 +131,19 @@ same authorization rules as cookies — there is no admin bypass.
   `user_token.revoked` log line via the extension's logger. The plugin's
   built-in `/api/auth/api-key/delete` endpoint stays available but is silent.
 
-### CLI: `aihub user token`
+### CLI: `yoplai user token`
 
 ```text
-aihub user token create --user <email-or-id> [--name <name>]
-aihub user token list
-aihub user token revoke <token-id>
+yoplai user token create --user <email-or-id> [--name <name>]
+yoplai user token list
+yoplai user token revoke <token-id>
 ```
 
 The CLI uses a hybrid auth model:
 
 1. The first `create` boots the multi-user extension in-process, resolves the
    user, mints a key directly against the local `auth.db`, prints the
-   plaintext key **once**, and caches it to `~/.aihub/user-token.json` with
+   plaintext key **once**, and caches it to `~/.yoplai/user-token.json` with
    mode `0600`. This avoids the bootstrap problem (you need a token to manage
    tokens).
 2. All subsequent commands (and any `create` after the cache exists) hit the
@@ -157,7 +157,7 @@ supported but discouraged.
 ## Per-User Isolation
 
 When multi-user is enabled, every agent run is rewritten to read and write
-under `$AIHUB_HOME/sessions/users/<userId>/`:
+under `$YOPLAI_HOME/sessions/users/<userId>/`:
 
 - `sessions.json` — pi/Claude session id → conversation id mapping.
 - `claude-sessions.json` — same shape, narrowed to Claude.
@@ -167,7 +167,7 @@ Helpers `getUserDataDir`, `getUserSessionsPath`, `getUserHistoryDir` are
 exported from the package root for other extensions that need to honor the
 isolation.
 
-There is no migration path from a single-user `$AIHUB_HOME` into per-user
+There is no migration path from a single-user `$YOPLAI_HOME` into per-user
 ownership — enabling multi-user mode is a fresh start for auth-owned state.
 
 ## Operational Notes
@@ -182,6 +182,6 @@ ownership — enabling multi-user mode is a fresh start for auth-owned state.
   `/api/branding/logo`, and `/api/theme.css` — these always answer
   unauthenticated requests (still attaching context if a valid session or
   bearer is present).
-- API sub-apps receive the auth context via the `x-aihub-auth-context`
+- API sub-apps receive the auth context via the `x-yoplai-auth-context`
   header so `requireAdmin` and `getRequestAuthContext` work inside nested
   routers.

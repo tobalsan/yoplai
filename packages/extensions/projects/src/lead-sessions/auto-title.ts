@@ -7,7 +7,7 @@ import type {
 } from "@earendil-works/pi-ai";
 import { completeSimple as defaultCompleteSimple } from "@earendil-works/pi-ai/compat";
 import { AuthStorage, ModelRegistry } from "@earendil-works/pi-coding-agent";
-import type { GatewayConfig, LeadSession } from "@aihub/shared";
+import type { GatewayConfig, LeadSession } from "@yoplai/shared";
 import { getProjectsContext } from "../context.js";
 import { findLeadSession, updateLeadSessionInProject } from "./store.js";
 import { readLeadTranscript } from "./transcript.js";

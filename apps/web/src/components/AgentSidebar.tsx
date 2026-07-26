@@ -162,7 +162,7 @@ export function AgentSidebar(props: AgentSidebarProps) {
               </Show>
             </Show>
           </A>
-          <Show when={import.meta.env.VITE_AIHUB_DEV === "true"}>
+          <Show when={import.meta.env.VITE_YOPLAI_DEV === "true" || import.meta.env.VITE_AIHUB_DEV === "true"}>
             <span class="dev-badge">DEV</span>
           </Show>
           <button

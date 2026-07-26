@@ -3,7 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Api, AssistantMessage, Model } from "@earendil-works/pi-ai";
-import type { AgentConfig, GatewayConfig } from "@aihub/shared";
+import type { AgentConfig, GatewayConfig } from "@yoplai/shared";
 import {
   clearProjectsContext,
   setProjectsContext,
@@ -72,7 +72,7 @@ async function setup() {
   const emitted: Array<{ event: string; payload: unknown }> = [];
   setProjectsContext({
     getConfig: () => config,
-    getDataDir: () => path.join(tmpDir!, ".aihub"),
+    getDataDir: () => path.join(tmpDir!, ".yoplai"),
     reloadConfig: () => undefined,
     getAgents: () => [agent],
     getAgent: (id: string) => (id === agent.id ? agent : undefined),

@@ -159,7 +159,7 @@ beforeAll(async () => {
 beforeEach(async () => {
   vi.resetModules();
   vi.clearAllMocks();
-  homeDir = fs.mkdtempSync(path.join(os.tmpdir(), "aihub-pool-actions-"));
+  homeDir = fs.mkdtempSync(path.join(os.tmpdir(), "yoplai-pool-actions-"));
   poolDir = path.join(homeDir, "pool");
   fs.mkdirSync(poolDir, { recursive: true });
 

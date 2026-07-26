@@ -1,5 +1,5 @@
 import { Command } from "commander";
-import { notify, type GatewayConfig, type NotifySummary } from "@aihub/shared";
+import { notify, readEnv, type GatewayConfig, type NotifySummary } from "@yoplai/shared";
 import { loadConfig } from "../config/index.js";
 import { resolveStartupConfig } from "../config/validate.js";
 import { logError } from "../logging.js";
@@ -30,7 +30,7 @@ function resolveNotifyAgentId(options: NotifyCommandOptions): string | undefined
   const explicit = options.from?.trim();
   if (explicit) return explicit;
 
-  const envAgentId = process.env.AIHUB_AGENT_ID?.trim();
+  const envAgentId = readEnv("AGENT_ID")?.trim();
   return envAgentId || undefined;
 }
 

@@ -1,4 +1,4 @@
-import { GatewayConfigSchema, type ExtensionContext } from "@aihub/shared";
+import { GatewayConfigSchema, type ExtensionContext } from "@yoplai/shared";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const componentStart = vi.fn().mockResolvedValue(undefined);

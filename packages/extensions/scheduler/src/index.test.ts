@@ -3,7 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { Hono } from "hono";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { AgentConfig, ExtensionContext, GatewayConfig } from "@aihub/shared";
+import type { AgentConfig, ExtensionContext, GatewayConfig } from "@yoplai/shared";
 import { schedulerExtension } from "./index.js";
 import { clearSchedulerContext, setSchedulerContext, stopScheduler } from "./service.js";
 
@@ -61,7 +61,7 @@ describe("scheduler routes", () => {
 
   it("POST /schedules/:agentId/:id/run triggers one immediate run", async () => {
     vi.spyOn(console, "log").mockImplementation(() => {});
-    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "aihub-scheduler-routes-"));
+    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-scheduler-routes-"));
     const alpha = agent("alpha", path.join(tmpDir, "alpha"));
     const runAgent = vi.fn().mockResolvedValue({
       payloads: [{ text: "route output" }],

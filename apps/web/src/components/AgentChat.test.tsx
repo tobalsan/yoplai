@@ -997,7 +997,7 @@ describe("AgentChat stop/send behavior", () => {
           {
             type: "tool_call",
             tool: { id: "t1", name: "exec_command" },
-            text: JSON.stringify({ cmd: "aihub projects start PRO-1 --subagent Worker" }),
+            text: JSON.stringify({ cmd: "yoplai projects start PRO-1 --subagent Worker" }),
           },
           {
             type: "tool_output",
@@ -1016,7 +1016,7 @@ describe("AgentChat stop/send behavior", () => {
     const warning = container.querySelector(".log-line.warning");
     expect(warning).not.toBeNull();
     expect(warning?.textContent).toContain("No output captured.");
-    expect(warning?.textContent).toContain("aihub projects start PRO-1 --subagent Worker");
+    expect(warning?.textContent).toContain("yoplai projects start PRO-1 --subagent Worker");
 
     dispose();
   });

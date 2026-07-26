@@ -1,19 +1,19 @@
 # Vendor-neutral base image every Harbor task FROMs.
-# Bakes the aihub CLI so `aihub eval run` works headlessly inside the
-# trial container.  Agent config (aihub.json, models.json, agents/,
+# Bakes the yoplai CLI so `yoplai eval run` works headlessly inside the
+# trial container.  Agent config (yoplai.json, models.json, agents/,
 # connectors/) is NOT included — consuming repos provide it via
 # bind-mount or COPY in their task Dockerfile.
 #
 # Built once per dev loop from the repo root (context must be the
 # monorepo root so the builder stage can access packages/ + apps/):
 #
-#   docker build -t aihub-eval-base:local \
-#     -f examples/harbor/base/aihub-eval/Dockerfile .
+#   docker build -t yoplai-eval-base:local \
+#     -f examples/harbor/base/yoplai-eval/Dockerfile .
 #
-# Task images then: FROM aihub-eval-base:local
+# Task images then: FROM yoplai-eval-base:local
 
 # ---------- builder stage ----------
-# Build aihub CLI from source. Produces a self-contained /out via
+# Build yoplai CLI from source. Produces a self-contained /out via
 # `pnpm deploy --prod` (resolves workspace:* deps into real node_modules).
 FROM node:20-slim AS builder
 
@@ -49,8 +49,8 @@ COPY apps/gateway apps/gateway
 RUN pnpm exec tsc -b
 
 # pnpm deploy flattens workspace:* deps into /out/node_modules,
-# producing a self-contained production tree for @aihub/gateway.
-RUN pnpm --filter @aihub/gateway deploy --prod /out
+# producing a self-contained production tree for @yoplai/gateway.
+RUN pnpm --filter @yoplai/gateway deploy --prod /out
 
 # ---------- runtime stage ----------
 FROM node:20-slim
@@ -76,28 +76,28 @@ RUN mkdir -p /opt/uv && uv tool install pytest==8.4.1
 # Create the non-root user Harbor expects (task.toml [agent].user = "agent")
 RUN useradd --create-home --shell /bin/bash agent
 
-# Install the baked aihub CLI from the builder stage.
-COPY --from=builder /out /opt/aihub
+# Install the baked yoplai CLI from the builder stage.
+COPY --from=builder /out /opt/yoplai
 # pnpm deploy preserves source file modes (often 0600 for workspace
 # packages), so the non-root `agent` user cannot read package.json /
 # dist files.  Make the whole tree world-readable.
-RUN chmod -R a+rX /opt/aihub \
-    && chmod +x /opt/aihub/dist/cli/index.js \
-    && ln -s /opt/aihub/dist/cli/index.js /usr/local/bin/aihub
+RUN chmod -R a+rX /opt/yoplai \
+    && chmod +x /opt/yoplai/dist/cli/index.js \
+    && ln -s /opt/yoplai/dist/cli/index.js /usr/local/bin/yoplai
 
-# AIHUB_HOME for the eval container. Consuming repos bind-mount or
-# COPY their own aihub.json, models.json, agents/, connectors/ into
+# YOPLAI_HOME for the eval container. Consuming repos bind-mount or
+# COPY their own yoplai.json, models.json, agents/, connectors/ into
 # /eval at task-image build time or via docker-compose volumes.
-ENV AIHUB_HOME=/eval
+ENV YOPLAI_HOME=/eval
 RUN mkdir -p /eval /logs/agent /logs/verifier /app/out
 
-# Placeholder aihub.json — consuming repos override this.
-COPY examples/harbor/base/aihub-eval/aihub.json /eval/aihub.json
+# Placeholder yoplai.json — consuming repos override this.
+COPY examples/harbor/base/yoplai-eval/yoplai.json /eval/yoplai.json
 
 # External connectors loaded from /eval/connectors/*/index.js walk up
 # looking for node_modules. Point them at the gateway's flat deps tree
 # so they resolve zod (and anything else) without a separate install.
-RUN ln -s /opt/aihub/node_modules /eval/node_modules
+RUN ln -s /opt/yoplai/node_modules /eval/node_modules
 
 RUN chown -R agent:agent /eval /logs /app
 

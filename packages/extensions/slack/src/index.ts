@@ -4,7 +4,7 @@ import {
   type Extension,
   type ExtensionContext,
   type SlackComponentConfig,
-} from "@aihub/shared";
+} from "@yoplai/shared";
 import {
   createSlackAgentBot,
   createSlackBot,

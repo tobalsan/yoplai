@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { GatewayConfig } from "@aihub/shared";
+import type { GatewayConfig } from "@yoplai/shared";
 import type { ProjectListItem } from "../projects/store.js";
 import type { SliceRecord } from "../projects/slices.js";
 import type { SubagentListItem } from "../subagents/index.js";

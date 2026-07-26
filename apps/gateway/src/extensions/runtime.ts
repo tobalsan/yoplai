@@ -6,7 +6,7 @@ import type {
   GatewayConfig,
   OAuthRequirement,
   ResolvedOAuth,
-} from "@aihub/shared";
+} from "@yoplai/shared";
 import { resolveAgentEnv } from "../config/index.js";
 import { getOAuthService } from "../oauth/service.js";
 

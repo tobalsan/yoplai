@@ -1,1 +1,1 @@
-export { dirExists } from "@aihub/shared";
+export { dirExists } from "@yoplai/shared";

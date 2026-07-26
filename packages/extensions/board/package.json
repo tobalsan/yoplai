@@ -1,5 +1,5 @@
 {
-  "name": "@aihub/extension-board",
+  "name": "@yoplai/extension-board",
   "version": "0.1.0",
   "type": "module",
   "main": "./dist/index.js",
@@ -15,9 +15,9 @@
     "build": "tsc"
   },
   "dependencies": {
-    "@aihub/extension-projects": "workspace:*",
-    "@aihub/extension-subagents": "workspace:*",
-    "@aihub/shared": "workspace:*",
+    "@yoplai/extension-projects": "workspace:*",
+    "@yoplai/extension-subagents": "workspace:*",
+    "@yoplai/shared": "workspace:*",
     "hono": "^4.11.4",
     "zod": "^3.23.8"
   }

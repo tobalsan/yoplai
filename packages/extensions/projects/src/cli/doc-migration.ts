@@ -1,7 +1,7 @@
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
-import type { GatewayConfig } from "@aihub/shared";
-import { resolveHomeDir } from "@aihub/shared";
+import type { GatewayConfig } from "@yoplai/shared";
+import { getDefaultConfigPath } from "@yoplai/shared";
 import { parseMarkdownFile } from "../taskboard/parser.js";
 import { getProjectsRoot } from "../util/paths.js";
 
@@ -40,7 +40,7 @@ async function writeFileAtomic(
 }
 
 function getProjectsConfigPath(): string {
-  return path.join(resolveHomeDir(), "aihub.json");
+  return getDefaultConfigPath();
 }
 
 async function loadGatewayConfig(): Promise<GatewayConfig> {

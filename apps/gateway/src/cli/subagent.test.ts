@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, it, expect, vi } from "vitest";
 import { Command } from "commander";
-import { GatewayConfigSchema, type GatewayConfig } from "@aihub/shared";
+import { GatewayConfigSchema, type GatewayConfig } from "@yoplai/shared";
 import { clearConfigCacheForTests, setLoadedConfig } from "../config/index.js";
 import {
   createRuntimeSubagentHandlers,
@@ -29,12 +29,12 @@ function setTestConfig(extensions?: GatewayConfig["extensions"]): void {
 let previousApiUrl: string | undefined;
 
 beforeEach(() => {
-  previousApiUrl = process.env.AIHUB_API_URL;
+  previousApiUrl = process.env.YOPLAI_API_URL;
 });
 
 afterEach(() => {
-  if (previousApiUrl === undefined) delete process.env.AIHUB_API_URL;
-  else process.env.AIHUB_API_URL = previousApiUrl;
+  if (previousApiUrl === undefined) delete process.env.YOPLAI_API_URL;
+  else process.env.YOPLAI_API_URL = previousApiUrl;
   clearConfigCacheForTests();
   vi.restoreAllMocks();
 });
@@ -191,10 +191,10 @@ describe("runtime subagents profiles CLI", () => {
     const lines = stubConsoleLog();
     const program = new Command();
     program.exitOverride();
-    process.env.AIHUB_API_URL = "http://localhost:4000";
+    process.env.YOPLAI_API_URL = "http://localhost:4000";
     registerSubagentCommands(program);
 
-    await program.parseAsync(["node", "aihub", "subagents", "profiles"]);
+    await program.parseAsync(["node", "yoplai", "subagents", "profiles"]);
 
     expect(lines).toEqual(["Worker  codex  gpt-5.3-codex  worker  worktree"]);
   });

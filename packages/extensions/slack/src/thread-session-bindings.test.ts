@@ -12,7 +12,7 @@ describe("Slack thread session bindings", () => {
   let store: SlackThreadSessionBindingStore;
 
   beforeEach(async () => {
-    dataDir = await fs.mkdtemp(path.join(os.tmpdir(), "aihub-slack-bindings-"));
+    dataDir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-slack-bindings-"));
     store = createSlackThreadSessionBindingStore(dataDir);
   });
 

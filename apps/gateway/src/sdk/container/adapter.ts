@@ -2,12 +2,12 @@ import * as childProcess from "node:child_process";
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
-import type { AgentConfig, ContainerOutput } from "@aihub/shared";
+import type { AgentConfig, ContainerOutput } from "@yoplai/shared";
 import {
   ContainerRunnerProtocolEventSchema,
   HistoryEventSchema,
   renderAgentContext,
-} from "@aihub/shared";
+} from "@yoplai/shared";
 import { loadConfig } from "../../config/index.js";
 import { logInfo } from "../../logging.js";
 import {

@@ -31,7 +31,7 @@ extensions:
     enabled: true
 ```
 
-Configure shared connection and routing in `aihub.json`:
+Configure shared connection and routing in `yoplai.json`:
 
 ```json
 {
@@ -41,7 +41,7 @@ Configure shared connection and routing in `aihub.json`:
       "host": "irc.example.net",
       "port": 6697,
       "tls": true,
-      "nick": "aihub",
+      "nick": "yoplai",
       "nickservPassword": "$env:IRC_NICKSERV_PASSWORD",
       "channels": { "#team": { "agent": "main", "mode": "mention-only" } },
       "dm": { "enabled": true, "agent": "main" },
@@ -55,7 +55,7 @@ Configure shared connection and routing in `aihub.json`:
 
 ## Behavior
 
-Mention-only channels respond to `aihub: message`; `reply-all` channels answer every message. Once an accepted channel message or allowed DM dispatches to an agent, the bot first sends a standalone `👀` to the same destination. IRC cannot remove this acknowledgement, so it remains in the conversation. Debounced messages send one acknowledgement when the coalesced run dispatches; ignored or rejected messages send none.
+Mention-only channels respond to `yoplai: message`; `reply-all` channels answer every message. Once an accepted channel message or allowed DM dispatches to an agent, the bot first sends a standalone `👀` to the same destination. IRC cannot remove this acknowledgement, so it remains in the conversation. Debounced messages send one acknowledgement when the coalesced run dispatches; ignored or rejected messages send none.
 
 Top-level `debounceMs` batches a burst of channel lines from the same sender into one agent turn: in mention-only channels, follow-up lines from the same sender join the pending batch without needing another mention; `reply-all` channels batch every line the same way. `dm.debounceMs` does the same for direct messages. A coalesced batch counts once toward `maxA2ATurns`, and is discarded if its agent becomes inactive before dispatch.
 

@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import os from "node:os";
-import type { GatewayConfig } from "@aihub/shared";
+import type { GatewayConfig } from "@yoplai/shared";
 import {
   getCachedSpace,
   invalidateSpaceCache,
@@ -81,7 +81,7 @@ describe("space cache", () => {
   let config: GatewayConfig;
 
   beforeEach(async () => {
-    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "aihub-space-cache-"));
+    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-space-cache-"));
     projectsRoot = path.join(tmpDir, "projects");
     await fs.mkdir(projectsRoot, { recursive: true });
     config = {

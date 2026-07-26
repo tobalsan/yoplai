@@ -7,4 +7,4 @@ export {
   type AgentStatusChangeEvent,
   type ProjectFileChangedEvent,
   type ProjectAgentChangedEvent,
-} from "@aihub/shared";
+} from "@yoplai/shared";

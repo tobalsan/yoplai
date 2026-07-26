@@ -1,5 +1,5 @@
 ---
-title: CLI — `aihub slices add/list/get`
+title: CLI — `yoplai slices add/list/get`
 type: AFK
 labels: [needs-triage]
 spec: docs/specs/kanban-slice-refactor.md (§8)
@@ -7,17 +7,17 @@ spec: docs/specs/kanban-slice-refactor.md (§8)
 
 ## What to build
 
-Top-level `aihub slices` command group with read-side + create verb. Uses storage primitives from #1.
+Top-level `yoplai slices` command group with read-side + create verb. Uses storage primitives from #1.
 
-- `aihub slices add --project <PRO-XXX> "<title>"` — creates slice in `todo`, allocates ID, writes initial files.
-- `aihub slices list [--project <id>] [--status <s>]` — table output.
-- `aihub slices get <sliceId>` — full detail (frontmatter + section bodies).
+- `yoplai slices add --project <PRO-XXX> "<title>"` — creates slice in `todo`, allocates ID, writes initial files.
+- `yoplai slices list [--project <id>] [--status <s>]` — table output.
+- `yoplai slices get <sliceId>` — full detail (frontmatter + section bodies).
 
 ## Acceptance criteria
 
-- [ ] `aihub slices add` creates slice on disk and prints new slice ID
-- [ ] `aihub slices list` filters by `--project` and `--status`; works with no flags (lists all)
-- [ ] `aihub slices get <sliceId>` resolves slice across all projects
+- [ ] `yoplai slices add` creates slice on disk and prints new slice ID
+- [ ] `yoplai slices list` filters by `--project` and `--status`; works with no flags (lists all)
+- [ ] `yoplai slices get <sliceId>` resolves slice across all projects
 - [ ] Errors clear when project doesn't exist or sliceId not found
 - [ ] CLI tests cover happy paths + filters
 - [ ] `pnpm test:cli` passes

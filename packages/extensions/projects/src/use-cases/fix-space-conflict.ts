@@ -1,6 +1,6 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import type { GatewayConfig } from "@aihub/shared";
+import type { GatewayConfig } from "@yoplai/shared";
 import { resolveCliProfileOptions } from "../profiles/resolver.js";
 import {
   clearProjectSpaceRebaseConflict,

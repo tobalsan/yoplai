@@ -5,8 +5,8 @@ import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import type { AssistantMessage, ImageContent } from "@earendil-works/pi-ai";
 import type { AgentSession as PiAgentSession } from "@earendil-works/pi-coding-agent";
-import type { AgentConfig } from "@aihub/shared";
-import { claimAgentToolName, renderAgentContext } from "@aihub/shared";
+import type { AgentConfig } from "@yoplai/shared";
+import { claimAgentToolName, renderAgentContext } from "@yoplai/shared";
 import type {
   SdkAdapter,
   SdkRunParams,
@@ -16,7 +16,7 @@ import type {
 import { CONFIG_DIR, loadConfig, resolveAgentEnv } from "../../config/index.js";
 import { logError } from "../../logging.js";
 import { buildOnecliEnv } from "../../config/onecli.js";
-import { resolveSystemFiles } from "@aihub/shared/node/system-files";
+import { resolveSystemFiles } from "@yoplai/shared/node/system-files";
 import {
   FIRST_RUN_BOOTSTRAP_PROMPT,
   ensureWorkspaceFiles,
@@ -35,7 +35,7 @@ import {
 
 const SESSIONS_DIR = path.join(CONFIG_DIR, "sessions");
 let piEnvLock: Promise<void> = Promise.resolve();
-const AIHUB_PI_SYSTEM_PROMPT = `You are an AI agent running inside AIHub, a self-hosted multi-agent gateway. AIHub provides a unified interface to orchestrate AI agents across multiple surfaces including web UI, CLI, Discord, scheduled jobs, and agent-to-agent messaging. Your role is determined by your configuration — you may operate as a coordinator planning and delegating work, a worker implementing tasks, a reviewer verifying quality, or a general-purpose assistant.
+const PI_SYSTEM_PROMPT = `You are an AI agent running inside Yoplai, a self-hosted multi-agent gateway. Yoplai provides a unified interface to orchestrate AI agents across multiple surfaces including web UI, CLI, Discord, scheduled jobs, and agent-to-agent messaging. Your role is determined by your configuration — you may operate as a coordinator planning and delegating work, a worker implementing tasks, a reviewer verifying quality, or a general-purpose assistant.
 
 Available tools:
 \${toolsList}
@@ -228,7 +228,7 @@ export const piAdapter: SdkAdapter = {
         const cred = authStorage.get(model.provider);
         if (!cred || cred.type !== "oauth") {
           throw new Error(
-            `No OAuth credentials for provider: ${model.provider}. Run 'aihub auth login ${model.provider}' first.`
+            `No OAuth credentials for provider: ${model.provider}. Run 'yoplai auth login ${model.provider}' first.`
           );
         }
         const auth = await modelRegistry.getApiKeyAndHeaders(model);
@@ -318,7 +318,7 @@ export const piAdapter: SdkAdapter = {
         cwd: params.workspaceDir,
         agentDir: CONFIG_DIR,
         settingsManager,
-        systemPromptOverride: () => AIHUB_PI_SYSTEM_PROMPT,
+        systemPromptOverride: () => PI_SYSTEM_PROMPT,
         appendSystemPrompt:
           allAppendedPrompts.length > 0 ? allAppendedPrompts : undefined,
         additionalSkillPaths: [workspaceSkillsDir],

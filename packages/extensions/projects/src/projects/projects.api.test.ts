@@ -19,7 +19,7 @@ describe("projects API", () => {
   let prevUserProfile: string | undefined;
 
   beforeAll(async () => {
-    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "aihub-projects-"));
+    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-projects-"));
     projectsRoot = path.join(tmpDir, "projects");
 
     prevHome = process.env.HOME;
@@ -27,7 +27,7 @@ describe("projects API", () => {
     process.env.HOME = tmpDir;
     process.env.USERPROFILE = tmpDir;
 
-    const configDir = path.join(tmpDir, ".aihub");
+    const configDir = path.join(tmpDir, ".yoplai");
     await writeTestV3Config(configDir, {
       agents: [
         {
@@ -61,7 +61,7 @@ describe("projects API", () => {
     clearProjectsContextForTest = clearProjectsContext;
     setProjectsContext({
       getConfig: () => config,
-      getDataDir: () => path.join(tmpDir, ".aihub"),
+      getDataDir: () => path.join(tmpDir, ".yoplai"),
       getAgents: () => config.agents,
       getAgent: (id: string) => config.agents.find((agent) => agent.id === id),
       isAgentActive: () => true,
@@ -356,10 +356,10 @@ describe("projects API", () => {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          id: "aihub",
-          title: "AIHub",
+          id: "yoplai",
+          title: "Yoplai",
           color: "#3b8ecc",
-          repo: "~/code/aihub",
+          repo: "~/code/yoplai",
         }),
       })
     );
@@ -400,7 +400,7 @@ describe("projects API", () => {
       api.request(`/projects/${firstProject.id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ area: "aihub" }),
+        body: JSON.stringify({ area: "yoplai" }),
       })
     );
     const secondPatch = await Promise.resolve(
@@ -414,13 +414,13 @@ describe("projects API", () => {
     expect(secondPatch.status).toBe(200);
 
     const filteredRes = await Promise.resolve(
-      api.request("/projects?area=aihub")
+      api.request("/projects?area=yoplai")
     );
     expect(filteredRes.status).toBe(200);
     const filtered = await filteredRes.json();
     expect(filtered.length).toBe(1);
     expect(filtered[0].id).toBe(firstProject.id);
-    expect(filtered[0].frontmatter.area).toBe("aihub");
+    expect(filtered[0].frontmatter.area).toBe("yoplai");
   });
 
   it("appends thread comments via API", async () => {

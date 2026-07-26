@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { Command } from "commander";
-const projectsExtensionSpecifier = "@aihub/extension-projects";
+const projectsExtensionSpecifier = "@yoplai/extension-projects";
 const { createProjectsCommand, registerProjectsCommands } = (await import(
   projectsExtensionSpecifier
 )) as {
@@ -18,13 +18,13 @@ describe("projects CLI", () => {
   let prevApiUrl: string | undefined;
 
   beforeEach(() => {
-    prevApiUrl = process.env.AIHUB_API_URL;
-    process.env.AIHUB_API_URL = "http://localhost:4000";
+    prevApiUrl = process.env.YOPLAI_API_URL;
+    process.env.YOPLAI_API_URL = "http://localhost:4000";
   });
 
   afterEach(() => {
-    if (prevApiUrl === undefined) delete process.env.AIHUB_API_URL;
-    else process.env.AIHUB_API_URL = prevApiUrl;
+    if (prevApiUrl === undefined) delete process.env.YOPLAI_API_URL;
+    else process.env.YOPLAI_API_URL = prevApiUrl;
     vi.unstubAllGlobals();
   });
 
@@ -278,7 +278,7 @@ describe("projects CLI", () => {
     expect(calls[0].init?.method).toBe("POST");
   });
 
-  it("registers commands under aihub projects", async () => {
+  it("registers commands under yoplai projects", async () => {
     const calls: Array<{ url: string; init?: RequestInit }> = [];
     const fetchImpl = vi.fn(async (url: string, init?: RequestInit) => {
       calls.push({ url: String(url), init });
@@ -289,12 +289,12 @@ describe("projects CLI", () => {
 
     vi.stubGlobal("fetch", fetchImpl);
     const root = new Command();
-    root.name("aihub").exitOverride();
+    root.name("yoplai").exitOverride();
     registerProjectsCommands(root.command("projects"));
 
     await root.parseAsync([
       "node",
-      "aihub",
+      "yoplai",
       "projects",
       "get",
       "pro-11",

@@ -24,12 +24,12 @@ vi.mock("../../api", () => ({
     path: "PRO-1_alpha-project",
     absolutePath: "/tmp/PRO-1_alpha-project",
     repoValid: true,
-    frontmatter: { area: "aihub", status: "todo" },
+    frontmatter: { area: "yoplai", status: "todo" },
     docs: {},
     thread: [],
   })),
   fetchAreas: vi.fn(async () => [
-    { id: "aihub", title: "AIHub", color: "#53b97c", repo: "~/code/aihub" },
+    { id: "yoplai", title: "Yoplai", color: "#53b97c", repo: "~/code/yoplai" },
   ]),
   fetchTasks: vi.fn(async () => ({
     tasks: [
@@ -134,7 +134,7 @@ describe("ProjectDetailPage", () => {
     expect(container.querySelector(".project-detail__center")).not.toBeNull();
     expect(container.querySelector(".project-detail__right")).not.toBeNull();
     expect(container.textContent).toContain("Back to Projects");
-    expect(container.textContent).toContain("AIHub");
+    expect(container.textContent).toContain("Yoplai");
     expect(container.textContent).toContain("Alpha Project");
     expect(document.title).toContain("Alpha Project");
 
@@ -173,7 +173,7 @@ describe("ProjectDetailPage", () => {
       absolutePath: "/tmp/PRO-1_alpha-project",
       repoValid: true,
       frontmatter: {
-        area: "aihub",
+        area: "yoplai",
         status: "todo",
         repo: "/tmp/repo",
       },
@@ -250,7 +250,7 @@ describe("ProjectDetailPage", () => {
   it("opens spawn form in center panel after selecting a template", async () => {
     mockMatchMedia();
     localStorage.setItem(
-      "aihub:project:PRO-1:center-view",
+      "yoplai:project:PRO-1:center-view",
       JSON.stringify({ tab: "activity" })
     );
     const container = document.createElement("div");
@@ -291,7 +291,62 @@ describe("ProjectDetailPage", () => {
     expect(container.textContent).toContain("Spawn Agent");
 
     dispose();
-    localStorage.removeItem("aihub:project:PRO-1:center-view");
+    localStorage.removeItem("yoplai:project:PRO-1:center-view");
+  });
+
+  it("restores a center view stored under the legacy per-project aihub key", async () => {
+    mockMatchMedia();
+    localStorage.clear();
+    localStorage.setItem(
+      "aihub:project:PRO-1:center-view",
+      JSON.stringify({ tab: "activity" })
+    );
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const dispose = render(() => <ProjectDetailPage />, container);
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const active = Array.from(container.querySelectorAll(".center-tab")).find(
+      (item) => item.classList.contains("active")
+    );
+    expect(active?.textContent?.trim()).toBe("Activity");
+    expect(localStorage.getItem("yoplai:project:PRO-1:center-view")).toContain(
+      "activity"
+    );
+    // A different project's legacy value must not leak in.
+    expect(localStorage.getItem("yoplai:project:PRO-2:center-view")).toBeNull();
+
+    dispose();
+    localStorage.clear();
+  });
+
+  it("keeps the new per-project center view over a legacy one", async () => {
+    mockMatchMedia();
+    localStorage.clear();
+    localStorage.setItem(
+      "yoplai:project:PRO-1:center-view",
+      JSON.stringify({ tab: "changes" })
+    );
+    localStorage.setItem(
+      "aihub:project:PRO-1:center-view",
+      JSON.stringify({ tab: "activity" })
+    );
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const dispose = render(() => <ProjectDetailPage />, container);
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const active = Array.from(container.querySelectorAll(".center-tab")).find(
+      (item) => item.classList.contains("active")
+    );
+    expect(active?.textContent?.trim()).toBe("Changes");
+
+    dispose();
+    localStorage.clear();
   });
 
   it("disables agent creation and shows repo error when repo is invalid", async () => {
@@ -303,7 +358,7 @@ describe("ProjectDetailPage", () => {
       absolutePath: "/tmp/PRO-1_alpha-project",
       repoValid: false,
       frontmatter: {
-        area: "aihub",
+        area: "yoplai",
         status: "todo",
         repo: "/tmp/missing-repo",
       },
@@ -353,7 +408,7 @@ describe("ProjectDetailPage", () => {
     expect(container.querySelector(".project-detail__center")).toBeNull();
     expect(container.querySelector(".project-detail__right")).toBeNull();
     expect(container.textContent).toContain("Back to Projects");
-    expect(container.textContent).toContain("AIHub");
+    expect(container.textContent).toContain("Yoplai");
 
     const activeTab = container.querySelector(
       ".project-detail-merged-tabs button.active"

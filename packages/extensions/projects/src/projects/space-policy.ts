@@ -1,4 +1,4 @@
-import type { GatewayConfig } from "@aihub/shared";
+import { readEnv, type GatewayConfig } from "@yoplai/shared";
 import { dirExists } from "../util/fs.js";
 import {
   buildSpaceDefaults,
@@ -59,7 +59,7 @@ export type RecordWorkerDeliveryInput = {
 };
 
 function isSpaceAutoRebaseEnabled(): boolean {
-  const raw = (process.env.AIHUB_SPACE_AUTO_REBASE ?? "true")
+  const raw = (readEnv("YOPLAI_SPACE_AUTO_REBASE") ?? "true")
     .trim()
     .toLowerCase();
   return raw === "1" || raw === "true" || raw === "yes";

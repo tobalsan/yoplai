@@ -1,5 +1,5 @@
 ---
-title: `aihub projects migrate-to-slices` migration command
+title: `yoplai projects migrate-to-slices` migration command
 type: AFK
 labels: [needs-triage]
 spec: docs/specs/kanban-slice-refactor.md (§10)

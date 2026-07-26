@@ -5,9 +5,9 @@ import {
   DEFAULT_MAIN_KEY,
   type SessionEntry,
   type ThinkLevel,
-} from "@aihub/shared";
+} from "@yoplai/shared";
 import { CONFIG_DIR, loadConfig } from "../config/index.js";
-import { getUserSessionsPath } from "@aihub/extension-multi-user/isolation";
+import { getUserSessionsPath } from "@yoplai/extension-multi-user/isolation";
 
 export { formatSessionTimestamp } from "./files.js";
 
@@ -30,8 +30,8 @@ function uuidv7(): string {
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
 }
 
-export { DEFAULT_MAIN_KEY } from "@aihub/shared";
-export type { SessionEntry } from "@aihub/shared";
+export { DEFAULT_MAIN_KEY } from "@yoplai/shared";
+export type { SessionEntry } from "@yoplai/shared";
 
 type SessionStoreEntry = SessionEntry & {
   thinkLevel?: ThinkLevel;

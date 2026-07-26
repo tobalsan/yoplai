@@ -1,8 +1,8 @@
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import { Command } from "commander";
-import type { GatewayConfig } from "@aihub/shared";
-import { resolveHomeDir } from "@aihub/shared";
+import type { GatewayConfig } from "@yoplai/shared";
+import { getDefaultConfigPath } from "@yoplai/shared";
 import {
   createSlice,
   getSlice,
@@ -140,7 +140,7 @@ async function pathExists(targetPath: string): Promise<boolean> {
 }
 
 function getProjectsConfigPath(): string {
-  return path.join(resolveHomeDir(), "aihub.json");
+  return getDefaultConfigPath();
 }
 
 async function loadGatewayConfig(): Promise<GatewayConfig> {
@@ -557,7 +557,7 @@ export function registerSlicesCommands(program: Command): Command {
           frontmatter: { blocked_by: nextBlockers },
         });
         await recordSliceBlockedActivity({
-          actor: "AIHub",
+          actor: "Yoplai",
           projectId: found.project.id,
           sliceId: targetId,
           blockers,
@@ -603,7 +603,7 @@ export function registerSlicesCommands(program: Command): Command {
           },
         });
         await recordSliceUnblockedActivity({
-          actor: "AIHub",
+          actor: "Yoplai",
           projectId: found.project.id,
           sliceId: targetId,
           blockers: remove,

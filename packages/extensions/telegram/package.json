@@ -1,5 +1,5 @@
 {
-  "name": "@aihub/extension-telegram",
+  "name": "@yoplai/extension-telegram",
   "version": "0.1.0",
   "type": "module",
   "main": "./dist/index.js",
@@ -15,7 +15,7 @@
     "build": "tsc"
   },
   "dependencies": {
-    "@aihub/shared": "workspace:*",
+    "@yoplai/shared": "workspace:*",
     "grammy": "^1.30.0",
     "hono": "^4.11.4",
     "zod": "^3.23.8"

@@ -1,26 +1,26 @@
-# aihub projects CLI
+# yoplai projects CLI
 
-`aihub projects` is the CLI command provided by the projects extension and mounted into the gateway CLI:
+`yoplai projects` is the CLI command provided by the projects extension and mounted into the gateway CLI:
 
 ```
-aihub projects <command> [options]
+yoplai projects <command> [options]
 ```
 
 It can be run as:
 
 ```
-pnpm --dir /Users/thinh/code/aihub aihub projects ...
+pnpm --dir /Users/thinh/code/yoplai yoplai projects ...
 ```
 
 Environment:
 
-- `AIHUB_API_URL`: override API base URL (highest precedence).
-- `AIHUB_URL`: fallback env alias for API URL.
-- `$AIHUB_HOME/aihub.json`: fallback file config, e.g. `{ "apiUrl": "http://..." }`. Default home: `~/.aihub/`.
+- `YOPLAI_API_URL`: override API base URL (highest precedence).
+- `YOPLAI_URL`: fallback env alias for API URL.
+- `$YOPLAI_HOME/yoplai.json`: fallback file config, e.g. `{ "apiUrl": "http://..." }`. Default home: `~/.yoplai/`.
 
 ## Commands
 
-### `aihub projects list`
+### `yoplai projects list`
 
 List projects (frontmatter only).
 
@@ -33,11 +33,11 @@ Status values:
 
 - `not_now`, `maybe`, `shaping`, `todo`, `in_progress`, `review`, `ready_to_merge`, `done`.
 
-### `aihub projects agent list`
+### `yoplai projects agent list`
 
-List all configured AIHub agents (same output as `pnpm aihub agent list`).
+List all configured Yoplai agents (same output as `pnpm yoplai agent list`).
 
-### `aihub projects create`
+### `yoplai projects create`
 
 Create a project.
 
@@ -53,7 +53,7 @@ Options:
 - `--area <area>`: optional area id. Validated against `GET /api/areas`; invalid values print the valid ids.
 - `-j, --json`: JSON output.
 
-### `aihub projects get <id>`
+### `yoplai projects get <id>`
 
 Fetch a single project (frontmatter plus pitch body).
 
@@ -61,7 +61,7 @@ Options:
 
 - `-j, --json`: JSON output.
 
-### `aihub projects update <id>`
+### `yoplai projects update <id>`
 
 Update project fields and/or project docs content.
 
@@ -70,9 +70,9 @@ Options:
 - `--title <title>`: update title (renames folder).
 - `--status <status>`: `not_now|maybe|shaping|todo|in_progress|review|ready_to_merge|done`.
 - `--run-agent <agent>`: agent used by monitoring start.
-  - `aihub:<agentId>` (AIHub agent)
+  - `yoplai:<agentId>` (Yoplai agent)
   - `cli:claude|cli:codex|cli:pi` (external CLI)
-  - Use `aihub projects agent list` to see configured AIHub agents.
+  - Use `yoplai projects agent list` to see configured Yoplai agents.
 - `--run-mode <mode>`: `main-run` or `worktree` (CLI runs only).
   - `main-run`: use the main repo working tree, slug is `main`.
   - `worktree`: create/use a git worktree at `projects/.workspaces/...`, slug required.
@@ -86,11 +86,11 @@ Notes:
 - To unset optional fields, pass empty string.
 - If stdin is piped and neither `--readme` nor `--specs` is provided, piped content is written to legacy project-level `SPECS.md`.
 
-### `aihub projects pitch <id> --from-readme`
+### `yoplai projects pitch <id> --from-readme`
 
 Copy the stripped legacy `README.md` body into `PITCH.md`. Refuses to overwrite an existing `PITCH.md` unless `--force` is passed.
 
-### `aihub projects move <id> <status>`
+### `yoplai projects move <id> <status>`
 
 Shortcut for status update.
 
@@ -99,17 +99,17 @@ Options:
 - `--agent <name>`: agent name to record in the status change.
 - `-j, --json`: JSON output.
 
-### `aihub projects start <id>`
+### `yoplai projects start <id>`
 
 Start a project run.
 
 Options:
 
-- `--agent <agent>`: cli name (e.g. `codex`) or `aihub:<id>`. Defaults to `codex`.
+- `--agent <agent>`: cli name (e.g. `codex`) or `yoplai:<id>`. Defaults to `codex`.
 - `--mode <mode>`: `main-run|clone|worktree|none`. Defaults to `clone`.
 - `--branch <branch>`: base branch for worktree. Defaults to `main`.
 - `--slug <slug>`: slug override for worktree. Defaults to auto-slug.
-- `--subagent <name>`: resolve a named subagent config from `aihub.json` and apply its locked defaults.
+- `--subagent <name>`: resolve a named subagent config from `yoplai.json` and apply its locked defaults.
 - `--prompt-role <role>`: prompt role override (`coordinator|worker|reviewer|legacy`).
 - `--allow-overrides`: allow explicit overrides for fields locked by `--subagent`.
 - `--include-default-prompt`: force-enable default project prompt context.
@@ -121,18 +121,18 @@ Options:
 - `--custom-prompt <prompt>`: one-off prompt (use `-` for stdin).
 - `-j, --json`: JSON output.
 
-Subagent config mapping (`--subagent`) comes from the top-level `subagents` array in `aihub.json`.
+Subagent config mapping (`--subagent`) comes from the top-level `subagents` array in `yoplai.json`.
 Each config can define `name`, `description`, `cli`, `model`, `reasoning`, `type`, and `runMode`.
-The web spawn form and `aihub projects start --subagent <name>` both resolve through that same config source.
+The web spawn form and `yoplai projects start --subagent <name>` both resolve through that same config source.
 
 Any explicit locked-field override requires `--allow-overrides`.
-Lead-agent launches use `--agent aihub:<id>` and run in project-scoped sessions.
+Lead-agent launches use `--agent yoplai:<id>` and run in project-scoped sessions.
 
 ## Shaping pipeline configuration
 
 The projects orchestrator can also run a project-level shaping pipeline before projects become `active`. Configure ordered shaping stages under `extensions.projects.orchestrator.shaping_statuses` and add matching subagent profiles with `type: "shaper"` under `extensions.subagents.profiles`.
 
-Example `aihub.json` fragment:
+Example `yoplai.json` fragment:
 
 ```json
 {
@@ -172,24 +172,24 @@ Example `aihub.json` fragment:
 
 Behavior:
 
-- Project status is the pipeline cursor. A project at `shaping:repo` dispatches the `RepoSetter` profile; the agent advances with `aihub projects move <id> shaping:drill`.
+- Project status is the pipeline cursor. A project at `shaping:repo` dispatches the `RepoSetter` profile; the agent advances with `yoplai projects move <id> shaping:drill`.
 - The next status is the next key in `shaping_statuses`; the final configured stage defaults to advancing to `active`.
 - `shaping:blocked` is terminal for the pipeline. Move the project back to any `shaping:<stage>` status to resume.
 - Only one shaper runs per project at a time. `max_concurrent` limits concurrent runs for that stage across projects.
 - If a project stays in one shaping status longer than `stall_threshold_ms`, the orchestrator comments in `THREAD.md` and moves it to `shaping:blocked`.
-- Prompts are loaded from `.aihub/prompts/<ProfileName>.md` when present. Templates use `${variable}` substitution and fail dispatch on unresolved variables. Available variables include `projectId`, `projectTitle`, `projectDirPath`, `status`, `nextStatus`, `profileName`, `projectDocs`, `sliceDocs`, `recentThread`, and `aihubCli`.
+- Prompts are loaded from `.yoplai/prompts/<ProfileName>.md` when present. Templates use `${variable}` substitution and fail dispatch on unresolved variables. Available variables include `projectId`, `projectTitle`, `projectDirPath`, `status`, `nextStatus`, `profileName`, `projectDocs`, `sliceDocs`, `recentThread`, and `cli`. `${aihubCli}` still resolves for templates written before the rename, but is deprecated — switch to `${cli}`.
 
 Start a project in the pipeline with:
 
 ```bash
-aihub projects move PRO-19 shaping:repo
+yoplai projects move PRO-19 shaping:repo
 ```
 
 - `--mode <mode>`: `main-run|worktree`.
 - `--branch <branch>`: base branch for worktree mode.
 - `-j, --json`: JSON output.
 
-### `aihub projects resume <id>`
+### `yoplai projects resume <id>`
 
 Resume an existing run (same as sending a message in the monitoring panel).
 Resume sends only the follow-up message delta to the harness (no project summary re-prepend).
@@ -200,7 +200,7 @@ Options:
 - `--slug <slug>`: override slug for CLI worktree resumes.
 - `-j, --json`: JSON output.
 
-### `aihub projects status <id>`
+### `yoplai projects status <id>`
 
 Show run status and recent messages.
 
@@ -210,7 +210,7 @@ Options:
 - `--slug <slug>`: override slug for CLI worktree status.
 - `-j, --json`: JSON output.
 
-### `aihub projects archive <id>`
+### `yoplai projects archive <id>`
 
 Archive a project.
 
@@ -218,7 +218,7 @@ Options:
 
 - `-j, --json`: JSON output.
 
-### `aihub projects unarchive <id>`
+### `yoplai projects unarchive <id>`
 
 Unarchive a project.
 
@@ -230,51 +230,51 @@ Options:
 
 ```bash
 # Create with pitch
-aihub projects create -t "Add kill tool" "Implement a kill command for subagents"
+yoplai projects create -t "Add kill tool" "Implement a kill command for subagents"
 
 # Create with pitch from file
-aihub projects create -t "Add kill tool" --pitch @PITCH.md
+yoplai projects create -t "Add kill tool" --pitch @PITCH.md
 
 # Update run metadata
-aihub projects update PRO-19 --run-agent cli:codex --repo ~/code/aihub --run-mode worktree
+yoplai projects update PRO-19 --run-agent cli:codex --repo ~/code/yoplai --run-mode worktree
 
 # Update README via stdin
-cat README.md | aihub projects update PRO-19 --readme -
+cat README.md | yoplai projects update PRO-19 --readme -
 
 # Update SPECS via stdin
-cat SPECS.md | aihub projects update PRO-19 --specs -
+cat SPECS.md | yoplai projects update PRO-19 --specs -
 
 # Migrate legacy README prose into PITCH.md
-aihub projects pitch PRO-19 --from-readme
+yoplai projects pitch PRO-19 --from-readme
 
 # Default stdin update target is SPECS.md
-cat SPECS.md | aihub projects update PRO-19
+cat SPECS.md | yoplai projects update PRO-19
 
 # Start a run with a custom prompt
-aihub projects start PRO-19 --custom-prompt "Focus on the rollout plan."
+yoplai projects start PRO-19 --custom-prompt "Focus on the rollout plan."
 
 # Start a run with per-run config
-aihub projects start PRO-19 --agent codex --mode worktree --branch main --slug my-run
+yoplai projects start PRO-19 --agent codex --mode worktree --branch main --slug my-run
 
 # Start a config-defined Worker subagent run
-aihub projects start PRO-19 --subagent Worker --slug worker-task-a
+yoplai projects start PRO-19 --subagent Worker --slug worker-task-a
 
 # Start a config-defined Reviewer subagent run
-aihub projects start PRO-19 --subagent Reviewer --slug reviewer-task-a
+yoplai projects start PRO-19 --subagent Reviewer --slug reviewer-task-a
 
-# Start a lead-agent run on a configured AIHub agent
-aihub projects start PRO-19 --agent aihub:cloud --custom-prompt "Plan the rollout."
+# Start a lead-agent run on a configured Yoplai agent
+yoplai projects start PRO-19 --agent yoplai:cloud --custom-prompt "Plan the rollout."
 
 # Resume with a follow-up message
-aihub projects resume PRO-19 --message "Continue from where you left off."
+yoplai projects resume PRO-19 --message "Continue from where you left off."
 
 # Status with last 5 messages
-aihub projects status PRO-19 --limit 5
+yoplai projects status PRO-19 --limit 5
 
 # Archive a project
-aihub projects archive PRO-19
+yoplai projects archive PRO-19
 
 # Unarchive a project
-aihub projects unarchive PRO-19
+yoplai projects unarchive PRO-19
 
 ```

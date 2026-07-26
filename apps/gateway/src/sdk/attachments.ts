@@ -1,6 +1,6 @@
 import fs from "node:fs/promises";
 import path from "node:path";
-import type { FileAttachment } from "@aihub/shared";
+import type { FileAttachment } from "@yoplai/shared";
 import { extractText } from "../media/extract.js";
 import { getMediaInboundDir } from "../media/metadata.js";
 

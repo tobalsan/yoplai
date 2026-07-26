@@ -1,6 +1,6 @@
 # Slack Extension
 
-Connects AIHub agents to Slack over Socket Mode. Routes channel messages,
+Connects Yoplai agents to Slack over Socket Mode. Routes channel messages,
 direct messages, app mentions, and reactions to agents, and exposes agent tools
 for proactively sending Slack messages.
 
@@ -10,7 +10,7 @@ The extension runs in two modes; both can be active at once.
 
 ### Component bot (shared)
 
-One bot shared across agents, configured under `extensions.slack` in `aihub.json`:
+One bot shared across agents, configured under `extensions.slack` in `yoplai.json`:
 
 ```json
 {

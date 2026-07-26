@@ -1,8 +1,11 @@
 import type { ActiveTurn } from "./agents";
 import type { DoneMeta, StreamCallbacks } from "./chat";
 
-export const wsDebug = () =>
-  globalThis.localStorage?.getItem("debug")?.includes("aihub:ws");
+// `debug` is user-authored, so the legacy `aihub:ws` namespace still enables it.
+export const wsDebug = () => {
+  const debug = globalThis.localStorage?.getItem("debug");
+  return !!debug && (debug.includes("yoplai:ws") || debug.includes("aihub:ws"));
+};
 
 export function getWsUrl(): string {
   // Use Vite's proxy in dev mode, direct connection in prod

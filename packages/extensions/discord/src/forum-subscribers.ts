@@ -1,4 +1,4 @@
-import type { AgentConfig, ExtensionContext } from "@aihub/shared";
+import type { AgentConfig, ExtensionContext } from "@yoplai/shared";
 import { getDiscordContext } from "./context.js";
 
 export type ForumSubscriberSource =

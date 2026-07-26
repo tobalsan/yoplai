@@ -1,4 +1,4 @@
-import type { Schedule, ScheduleJob } from "@aihub/shared";
+import type { Schedule, ScheduleJob } from "@yoplai/shared";
 import { formatSchedule } from "../schedule.js";
 
 export type ScheduleInputOpts = {

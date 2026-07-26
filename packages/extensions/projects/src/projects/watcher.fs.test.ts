@@ -2,8 +2,8 @@ import * as fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import type { GatewayConfig } from "@aihub/shared";
-import { agentEventBus } from "@aihub/shared";
+import type { GatewayConfig } from "@yoplai/shared";
+import { agentEventBus } from "@yoplai/shared";
 import { clearProjectsContext, setProjectsContext } from "../context.js";
 import { startProjectWatcher } from "./watcher.js";
 
@@ -64,7 +64,7 @@ describe("project watcher filesystem events", () => {
   });
 
   it("emits agent_changed when a nested session state.json changes", async () => {
-    root = await fs.mkdtemp(path.join(os.tmpdir(), "aihub-watcher-"));
+    root = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-watcher-"));
     const sessionDir = path.join(root, "PRO-200_test", "sessions", "worker-a");
     await fs.mkdir(sessionDir, { recursive: true });
     await fs.writeFile(
@@ -97,8 +97,8 @@ describe("project watcher filesystem events", () => {
     }
   });
 
-  it("emits file_changed for markdown under a hidden AIHUB_HOME root", async () => {
-    root = await fs.mkdtemp(path.join(os.tmpdir(), ".aihub-watcher-"));
+  it("emits file_changed for markdown under a hidden YOPLAI_HOME root", async () => {
+    root = await fs.mkdtemp(path.join(os.tmpdir(), ".yoplai-watcher-"));
     const readmePath = path.join(
       root,
       "projects",

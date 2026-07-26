@@ -23,7 +23,7 @@ import {
   subscribeToSubagentChanges,
 } from "../../api";
 import { ToastNotification, type ToastVariant } from "../ui/Toast";
-import type { SubagentRun } from "@aihub/shared/types";
+import type { SubagentRun } from "@yoplai/shared/types";
 import {
   getProjectRunPillState,
   isProjectShapingRun,

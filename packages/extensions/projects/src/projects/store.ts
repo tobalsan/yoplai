@@ -6,7 +6,7 @@ import type {
   UpdateProjectRequest,
   UploadedAttachment,
   ProjectStatus,
-} from "@aihub/shared";
+} from "@yoplai/shared";
 import { getProjectsContext } from "../context.js";
 import { listAreas } from "../areas/store.js";
 import { dirExists } from "../util/fs.js";

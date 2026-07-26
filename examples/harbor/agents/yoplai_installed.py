@@ -1,17 +1,17 @@
 """
-Harbor installed-agent wrapper for AIHub.
+Harbor installed-agent wrapper for Yoplai.
 
 Generic, vendor-neutral reference implementation. Drops into Harbor via
 `--agent-import-path`. Expects the container to be built FROM
-`aihub-eval-base`, which bakes the `aihub` CLI.
+`yoplai-eval-base`, which bakes the `yoplai` CLI.
 
-The wrapper does not boot AIHub itself — it only shells out to
-`aihub eval run` inside the container. All agent behavior lives in the
-AIHub runtime; Harbor just orchestrates trials and reads the output
+The wrapper does not boot Yoplai itself — it only shells out to
+`yoplai eval run` inside the container. All agent behavior lives in the
+Yoplai runtime; Harbor just orchestrates trials and reads the output
 contract (`/logs/agent/result.json` + `/logs/agent/trajectory.json`).
 
-Blueprint repos should copy this file and set DEFAULT_AIHUB_AGENT to
-their own agent id, or set `aihub_agent` in task.toml [metadata].
+Blueprint repos should copy this file and set DEFAULT_AGENT to
+their own agent id, or set `yoplai_agent` in task.toml [metadata].
 """
 from __future__ import annotations
 
@@ -24,27 +24,27 @@ from harbor.environments.base import BaseEnvironment
 from harbor.models.agent.context import AgentContext
 
 
-class AIHubInstalledAgent(BaseInstalledAgent):
+class InstalledAgent(BaseInstalledAgent):
     """
-    Minimal wrapper. `aihub_agent` is the agent id (as defined in the eval
-    container's aihub.json) to evaluate. Set via task.toml [metadata]
-    aihub_agent, or override DEFAULT_AIHUB_AGENT in a subclass.
+    Minimal wrapper. `yoplai_agent` is the agent id (as defined in the eval
+    container's yoplai.json) to evaluate. Set via task.toml [metadata]
+    yoplai_agent, or override DEFAULT_AGENT in a subclass.
     """
 
-    DEFAULT_AIHUB_AGENT: str | None = None
+    DEFAULT_AGENT: str | None = None
     INSTRUCTION_PATH = "/app/instruction.md"
     RESULT_PATH = "/logs/agent/result.json"
     TRAJECTORY_PATH = "/logs/agent/trajectory.json"
 
     @staticmethod
     def name() -> str:
-        return "aihub-installed"
+        return "yoplai-installed"
 
     def version(self) -> str | None:
         return "0.1.0"
 
     async def install(self, environment: BaseEnvironment) -> None:
-        # The aihub CLI is baked into aihub-eval-base; nothing to install.
+        # The yoplai CLI is baked into yoplai-eval-base; nothing to install.
         return None
 
     @with_prompt_template
@@ -54,17 +54,20 @@ class AIHubInstalledAgent(BaseInstalledAgent):
         environment: BaseEnvironment,
         context: AgentContext,
     ) -> None:
-        # Write the instruction into the container so aihub eval run can
+        # Write the instruction into the container so yoplai eval run can
         # read it from a stable path.
         await self.exec_as_agent(
             environment,
-            command=f"mkdir -p /app && cat > {self.INSTRUCTION_PATH} <<'AIHUB_EOF'\n{instruction}\nAIHUB_EOF",
+            command=f"mkdir -p /app && cat > {self.INSTRUCTION_PATH} <<'YOPLAI_EOF'\n{instruction}\nYOPLAI_EOF",
         )
 
-        aihub_agent = self._resolve_agent_id(context)
+        agent_id = self._resolve_agent_id(context)
+        # Fall back to the pre-rename `aihub` binary in case the base image
+        # was built before the yoplai rename and only has that CLI baked in.
         cmd = (
-            "aihub eval run"
-            f" --agent {shlex.quote(aihub_agent)}"
+            "BIN=$(command -v yoplai || command -v aihub) &&"
+            ' "$BIN" eval run'
+            f" --agent {shlex.quote(agent_id)}"
             f" --instruction-file {self.INSTRUCTION_PATH}"
             f" --output {self.RESULT_PATH}"
             f" --trace {self.TRAJECTORY_PATH}"
@@ -91,17 +94,18 @@ class AIHubInstalledAgent(BaseInstalledAgent):
         context.n_output_tokens = int(metrics.get("outputTokens", 0) or 0)
 
     def _resolve_agent_id(self, context: AgentContext) -> str:
-        # task.toml [metadata] can set aihub_agent to target a different
+        # task.toml [metadata] can set yoplai_agent to target a different
         # agent from the default. Harbor passes metadata through on
-        # AgentContext.metadata.
+        # AgentContext.metadata. aihub_agent is accepted for task.toml files
+        # written before the yoplai rename.
         metadata = getattr(context, "metadata", None) or {}
         if isinstance(metadata, dict):
-            value = metadata.get("aihub_agent")
+            value = metadata.get("yoplai_agent") or metadata.get("aihub_agent")
             if isinstance(value, str) and value:
                 return value
-        if self.DEFAULT_AIHUB_AGENT is None:
+        if self.DEFAULT_AGENT is None:
             raise ValueError(
-                "No agent id configured. Set aihub_agent in task.toml "
-                "[metadata] or override DEFAULT_AIHUB_AGENT in a subclass."
+                "No agent id configured. Set yoplai_agent in task.toml "
+                "[metadata] or override DEFAULT_AGENT in a subclass."
             )
-        return self.DEFAULT_AIHUB_AGENT
+        return self.DEFAULT_AGENT

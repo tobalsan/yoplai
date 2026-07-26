@@ -3,6 +3,7 @@ import { spawn, type ChildProcess } from "node:child_process";
 import fsSync from "node:fs";
 import path from "node:path";
 import readline from "node:readline";
+import { resolveSessionDir } from "./session-dir.js";
 
 type RpcRequest = {
   id?: string | number;
@@ -28,7 +29,7 @@ let aborted = false;
 let activeRunFailed = false;
 
 function parseArgs(argv: string[]): ShimOptions {
-  const options: ShimOptions = { name: "claude", sessionDir: path.join(process.cwd(), ".aihub", "claude-sessions"), claudeCli: "claude" };
+  const options: ShimOptions = { name: "claude", sessionDir: resolveSessionDir(process.cwd(), "claude-sessions"), claudeCli: "claude" };
   for (let index = 0; index < argv.length; index += 1) {
     const key = argv[index];
     const value = argv[index + 1];

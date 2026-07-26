@@ -260,7 +260,7 @@ export async function unarchiveProject(
 export async function addProjectComment(
   projectId: string,
   message: string,
-  author = "AIHub"
+  author = "Yoplai"
 ): Promise<ProjectThreadEntry> {
   const res = await fetch(`${API_BASE}/projects/${projectId}/comments`, {
     method: "POST",
@@ -303,7 +303,7 @@ export async function deleteProjectComment(
 }
 
 export type StartProjectRunResult =
-  | { ok: true; type: "aihub" | "cli"; slug?: string; runMode?: string }
+  | { ok: true; type: "native" | "cli"; slug?: string; runMode?: string }
   | { ok: false; error: string };
 
 export type StartProjectRunInput = {

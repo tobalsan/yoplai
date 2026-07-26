@@ -12,7 +12,7 @@ import {
   type Extension,
   type ExtensionAgentTool,
   type GatewayConfig,
-} from "@aihub/shared";
+} from "@yoplai/shared";
 import { z } from "zod";
 import {
   getRecentActivity,
@@ -283,7 +283,7 @@ function createProjectAgentTools(): ExtensionAgentTool[] {
   return [
     {
       name: "project.create",
-      description: "Create an AIHub project",
+      description: "Create a Yoplai project",
       parameters: {
         type: "object",
         properties: {
@@ -301,7 +301,7 @@ function createProjectAgentTools(): ExtensionAgentTool[] {
     },
     {
       name: "project.get",
-      description: "Get an AIHub project",
+      description: "Get a Yoplai project",
       parameters: {
         type: "object",
         properties: { projectId: { type: "string" } },
@@ -316,7 +316,7 @@ function createProjectAgentTools(): ExtensionAgentTool[] {
     },
     {
       name: "project.update",
-      description: "Update an AIHub project",
+      description: "Update a Yoplai project",
       parameters: {
         type: "object",
         properties: {
@@ -342,7 +342,7 @@ function createProjectAgentTools(): ExtensionAgentTool[] {
     },
     {
       name: "project.comment",
-      description: "Add a comment to an AIHub project",
+      description: "Add a comment to a Yoplai project",
       parameters: {
         type: "object",
         properties: {

@@ -90,15 +90,28 @@ describe("McpConfigPage", () => {
     container.querySelector<HTMLButtonElement>("button")!.click();
     expect(window.open).toHaveBeenCalledWith(
       "/api/mcp/oauth/authorize?agent=casey&server=Claap",
-      "aihub-oauth",
+      "yoplai-oauth",
       "width=520,height=640"
     );
 
-    window.dispatchEvent(new MessageEvent("message", { data: { type: "aihub-oauth", extension: "mcp", server: "Claap", success: true } }));
+    window.dispatchEvent(new MessageEvent("message", { data: { type: "yoplai-oauth", extension: "mcp", server: "Claap", success: true } }));
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(fetchMock).toHaveBeenCalledTimes(2);
     expect(container.textContent).toContain("Connected");
   });
+
+  it.each(["yoplai-oauth", "aihub-oauth"] as const)(
+    "refreshes exactly once per %s popup message",
+    async (type) => {
+      fetchMock.mockResolvedValueOnce(status([server("disconnected")])).mockResolvedValueOnce(status([server("connected")]));
+      await mount();
+
+      window.dispatchEvent(new MessageEvent("message", { data: { type, extension: "mcp", server: "Claap", success: true } }));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+      expect(container.textContent).toContain("Connected");
+    }
+  );
 
   it("disconnects and refreshes the server state", async () => {
     fetchMock
@@ -117,11 +130,14 @@ describe("McpConfigPage", () => {
     expect(container.textContent).toContain("Not connected");
   });
 
-  it("shows an error after a failed popup result", async () => {
-    fetchMock.mockResolvedValue(status([server("disconnected")]));
-    await mount();
-    window.dispatchEvent(new MessageEvent("message", { data: { type: "aihub-oauth", extension: "mcp", server: "Claap", success: false } }));
-    await new Promise((resolve) => setTimeout(resolve, 0));
-    expect(container.textContent).toContain("Could not connect Claap.");
-  });
+  it.each(["yoplai-oauth", "aihub-oauth"] as const)(
+    "shows an error after a failed %s popup result",
+    async (type) => {
+      fetchMock.mockResolvedValue(status([server("disconnected")]));
+      await mount();
+      window.dispatchEvent(new MessageEvent("message", { data: { type, extension: "mcp", server: "Claap", success: false } }));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(container.textContent).toContain("Could not connect Claap.");
+    }
+  );
 });

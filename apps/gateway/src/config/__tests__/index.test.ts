@@ -19,29 +19,29 @@ async function writeAgent(dir: string, id = path.basename(dir)) {
 }
 
 describe("config loading", () => {
-  const prevConfig = process.env.AIHUB_CONFIG;
-  const prevHome = process.env.AIHUB_HOME;
+  const prevConfig = process.env.YOPLAI_CONFIG;
+  const prevHome = process.env.YOPLAI_HOME;
 
   afterEach(() => {
     clearConfigCacheForTests();
-    if (prevConfig === undefined) delete process.env.AIHUB_CONFIG;
-    else process.env.AIHUB_CONFIG = prevConfig;
-    if (prevHome === undefined) delete process.env.AIHUB_HOME;
-    else process.env.AIHUB_HOME = prevHome;
+    if (prevConfig === undefined) delete process.env.YOPLAI_CONFIG;
+    else process.env.YOPLAI_CONFIG = prevConfig;
+    if (prevHome === undefined) delete process.env.YOPLAI_HOME;
+    else process.env.YOPLAI_HOME = prevHome;
   });
 
-  it("honors AIHUB_HOME and exact agent dirs", async () => {
-    const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "aihub-config-"));
+  it("honors YOPLAI_HOME and exact agent dirs", async () => {
+    const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-config-"));
     const agentDir = path.join(tmpDir, "agents", "custom");
     await writeAgent(agentDir);
     await fs.writeFile(
-      path.join(tmpDir, "aihub.json"),
+      path.join(tmpDir, "yoplai.json"),
       JSON.stringify({ version: 3, agents: [agentDir] })
     );
 
-    process.env.AIHUB_HOME = tmpDir;
+    process.env.YOPLAI_HOME = tmpDir;
 
-    expect(getConfigPath()).toBe(path.join(tmpDir, "aihub.json"));
+    expect(getConfigPath()).toBe(path.join(tmpDir, "yoplai.json"));
     const agents = loadConfig().agents;
     expect(agents.map((agent) => agent.id)).toEqual(["custom"]);
     expect(agents[0].workspace).toBe(agentDir);
@@ -50,15 +50,15 @@ describe("config loading", () => {
 
   it("loads agents from direct child glob", async () => {
     const tmpDir = await fs.mkdtemp(
-      path.join(os.tmpdir(), "aihub-config-glob-")
+      path.join(os.tmpdir(), "yoplai-config-glob-")
     );
     await writeAgent(path.join(tmpDir, "agents", "beta"));
     await writeAgent(path.join(tmpDir, "agents", "alpha"));
     await fs.writeFile(
-      path.join(tmpDir, "aihub.json"),
+      path.join(tmpDir, "yoplai.json"),
       JSON.stringify({ version: 3, agents: "./agents/*" })
     );
-    process.env.AIHUB_HOME = tmpDir;
+    process.env.YOPLAI_HOME = tmpDir;
 
     expect(loadConfig().agents.map((agent) => agent.id)).toEqual([
       "alpha",
@@ -67,7 +67,7 @@ describe("config loading", () => {
   });
 
   it("resolves per-agent env with isolation and documented precedence", async () => {
-    const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "aihub-agent-env-"));
+    const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-agent-env-"));
     const sallyDir = path.join(tmpDir, "agents", "sally");
     const caseyDir = path.join(tmpDir, "agents", "casey");
     await writeAgent(sallyDir);
@@ -82,7 +82,7 @@ describe("config loading", () => {
     );
     await fs.writeFile(path.join(caseyDir, ".env"), "SLACK_TOKEN=casey\n");
     await fs.writeFile(
-      path.join(tmpDir, "aihub.json"),
+      path.join(tmpDir, "yoplai.json"),
       JSON.stringify({
         version: 3,
         agents: "./agents/*",
@@ -100,7 +100,7 @@ describe("config loading", () => {
     const prevConfigOnly = process.env.CONFIG_ONLY;
     const prevAgentOnly = process.env.AGENT_ONLY;
     process.env.PROCESS_ONLY = "process";
-    process.env.AIHUB_HOME = tmpDir;
+    process.env.YOPLAI_HOME = tmpDir;
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
 
     const config = loadConfig();
@@ -142,33 +142,33 @@ describe("config loading", () => {
   });
 
   it("rejects v2 config with migrate message", async () => {
-    const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "aihub-config-v2-"));
+    const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-config-v2-"));
     await fs.writeFile(
-      path.join(tmpDir, "aihub.json"),
+      path.join(tmpDir, "yoplai.json"),
       JSON.stringify({ version: 2, agents: [] })
     );
-    process.env.AIHUB_HOME = tmpDir;
+    process.env.YOPLAI_HOME = tmpDir;
     expect(() => loadConfig()).toThrow(
-      "aihub.json is version 2. Run `aihub agents migrate` to upgrade to version 3."
+      "yoplai.json is version 2. Run `yoplai agents migrate` to upgrade to version 3."
     );
   });
 
   it("rejects id mismatch", async () => {
-    const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "aihub-config-id-"));
+    const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-config-id-"));
     const agentDir = path.join(tmpDir, "agents", "folder");
     await writeAgent(agentDir, "other");
     await fs.writeFile(
-      path.join(tmpDir, "aihub.json"),
+      path.join(tmpDir, "yoplai.json"),
       JSON.stringify({ version: 3, agents: [agentDir] })
     );
-    process.env.AIHUB_HOME = tmpDir;
+    process.env.YOPLAI_HOME = tmpDir;
     expect(() => loadConfig()).toThrow(/id mismatch/);
   });
 
   it("warns at startup when onecli CA file path does not exist", async () => {
-    const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "aihub-onecli-ca-"));
+    const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-onecli-ca-"));
     await fs.writeFile(
-      path.join(tmpDir, "aihub.json"),
+      path.join(tmpDir, "yoplai.json"),
       JSON.stringify({
         version: 3,
         agents: [],
@@ -179,7 +179,7 @@ describe("config loading", () => {
         },
       })
     );
-    process.env.AIHUB_HOME = tmpDir;
+    process.env.YOPLAI_HOME = tmpDir;
 
     const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
     expect(() => loadConfig()).not.toThrow();
@@ -191,7 +191,7 @@ describe("config loading", () => {
 
   it("does not throw when onecli CA file path exists", async () => {
     const tmpDir = await fs.mkdtemp(
-      path.join(os.tmpdir(), "aihub-onecli-ca-ok-")
+      path.join(os.tmpdir(), "yoplai-onecli-ca-ok-")
     );
     const caPath = path.join(tmpDir, "ca.pem");
     writeFileSync(
@@ -199,7 +199,7 @@ describe("config loading", () => {
       "-----BEGIN CERTIFICATE-----\nfake\n-----END CERTIFICATE-----\n"
     );
     await fs.writeFile(
-      path.join(tmpDir, "aihub.json"),
+      path.join(tmpDir, "yoplai.json"),
       JSON.stringify({
         version: 3,
         agents: [],
@@ -210,7 +210,7 @@ describe("config loading", () => {
         },
       })
     );
-    process.env.AIHUB_HOME = tmpDir;
+    process.env.YOPLAI_HOME = tmpDir;
 
     expect(() => loadConfig()).not.toThrow();
   });

@@ -41,7 +41,7 @@ export function getTailnetHostname(): string {
 /**
  * Enable tailscale serve on a port (HTTPS proxy)
  */
-export function enableTailscaleServe(port: number, path: string = "/aihub"): void {
+export function enableTailscaleServe(port: number, path: string = "/yoplai"): void {
   const cmd = getTailscaleCmd();
   const normalizedPath = path.endsWith("/") && path !== "/" ? path.slice(0, -1) : path;
   const target = `http://127.0.0.1:${port}${normalizedPath}`;

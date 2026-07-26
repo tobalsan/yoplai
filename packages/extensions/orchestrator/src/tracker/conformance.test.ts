@@ -36,10 +36,10 @@ function linearWorld(call: Call): Response {
   const q: string = call.body?.query ?? "";
   const v: Record<string, any> = call.body?.variables ?? {};
   if (q.includes("query Export")) return json({ data: { issues: { nodes: [LIN_EXPORT_NODE] } } });
-  if (q.includes("AihubPoll")) return json({ data: { issues: { nodes: LIN_NODES.filter((n) => n.project.slugId === v.projectSlug && v.states.includes(n.state.name)) } } });
-  if (q.includes("AihubIssueByIdentifier")) { const n = LIN_NODES.find((x) => x.identifier === v.identifier); return json({ data: { issues: { nodes: n ? [n] : [] } } }); }
-  if (q.includes("AihubIssueById")) { const n = LIN_NODES.find((x) => x.id === v.id); return json({ data: { issue: n ?? null } }); }
-  if (q.includes("AihubIssueStates")) return json({ data: { issue: { team: { states: { nodes: LINEAR_STATES } } } } });
+  if (q.includes("YoplaiPoll")) return json({ data: { issues: { nodes: LIN_NODES.filter((n) => n.project.slugId === v.projectSlug && v.states.includes(n.state.name)) } } });
+  if (q.includes("YoplaiIssueByIdentifier")) { const n = LIN_NODES.find((x) => x.identifier === v.identifier); return json({ data: { issues: { nodes: n ? [n] : [] } } }); }
+  if (q.includes("YoplaiIssueById")) { const n = LIN_NODES.find((x) => x.id === v.id); return json({ data: { issue: n ?? null } }); }
+  if (q.includes("YoplaiIssueStates")) return json({ data: { issue: { team: { states: { nodes: LINEAR_STATES } } } } });
   if (q.includes("issueUpdate")) return json({ data: { issueUpdate: { success: true } } });
   if (q.includes("commentCreate")) return json({ data: { commentCreate: { success: true } } });
   return json({ data: {} });
@@ -111,7 +111,7 @@ const linearAdapter: Adapter = {
   expectedAuth: "lin-key",
   authOf: (c) => c.auth,
   rlHeaders: (remaining, reset) => ({ "x-ratelimit-requests-remaining": String(remaining), ...(reset !== undefined ? { "x-ratelimit-requests-reset": String(reset) } : {}) }),
-  assertPollHttp: (calls) => { const polls = calls.filter((c) => (c.body?.query ?? "").includes("AihubPoll")); expect(polls).toHaveLength(1); expect(polls[0]!.body.variables).toEqual({ projectSlug: "proj-a", states: ["Ready"] }); },
+  assertPollHttp: (calls) => { const polls = calls.filter((c) => (c.body?.query ?? "").includes("YoplaiPoll")); expect(polls).toHaveLength(1); expect(polls[0]!.body.variables).toEqual({ projectSlug: "proj-a", states: ["Ready"] }); },
   assertCommentHttp: (calls) => { const c = calls.find((x) => (x.body?.query ?? "").includes("commentCreate")); expect(c?.body.variables).toEqual({ issueId: "lin_1", body: "Hello\nWorld" }); },
   assertSetStateHttp: (calls) => { const c = calls.find((x) => (x.body?.query ?? "").includes("issueUpdate")); expect(c?.body.variables.id).toBe("lin_1"); expect(c?.body.variables.input).toEqual({ stateId: "st-review" }); },
   webhook: { issue: { type: "Issue", action: "update", data: { id: "lin_1", state: { name: "Done" } } }, comment: { type: "Comment", action: "create", data: { id: "c1", issue: "lin_1" } }, irrelevant: { type: "User", action: "update", data: { id: "u1" } } },

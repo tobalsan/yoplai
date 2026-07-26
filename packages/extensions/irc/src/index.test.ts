@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { GatewayConfigSchema, type ExtensionContext, type GatewayConfig } from "@aihub/shared";
+import { GatewayConfigSchema, type ExtensionContext, type GatewayConfig } from "@yoplai/shared";
 
 const instances = vi.hoisted(() => [] as Array<{ start: ReturnType<typeof vi.fn>; stop: ReturnType<typeof vi.fn>; config: unknown }>);
 vi.mock("./service.js", () => ({

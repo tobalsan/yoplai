@@ -331,7 +331,7 @@ describe("SliceDetailPage", () => {
       ".slice-detail-thread-card"
     ) as HTMLElement;
     expect(card.querySelector(".slice-detail-thread-author")?.textContent).toBe(
-      "AIHub"
+      "Yoplai"
     );
     expect(card.querySelector(".slice-detail-thread-date")?.textContent).toBe(
       "5m ago"

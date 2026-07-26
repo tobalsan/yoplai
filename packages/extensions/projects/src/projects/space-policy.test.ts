@@ -3,7 +3,7 @@ import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 import { promisify } from "node:util";
-import type { GatewayConfig } from "@aihub/shared";
+import type { GatewayConfig } from "@yoplai/shared";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { SpaceIntegrationPolicy } from "./space-policy.js";
 
@@ -17,8 +17,8 @@ async function runGit(cwd: string, args: string[]): Promise<string> {
 async function createRepo(repoDir: string): Promise<void> {
   await fs.mkdir(repoDir, { recursive: true });
   await runGit(repoDir, ["init", "-b", "main"]);
-  await runGit(repoDir, ["config", "user.name", "AIHub Test"]);
-  await runGit(repoDir, ["config", "user.email", "test@aihub.local"]);
+  await runGit(repoDir, ["config", "user.name", "Yoplai Test"]);
+  await runGit(repoDir, ["config", "user.email", "test@yoplai.local"]);
   await fs.writeFile(path.join(repoDir, "app.txt"), "base\n", "utf8");
   await runGit(repoDir, ["add", "."]);
   await runGit(repoDir, ["commit", "-m", "init"]);
@@ -47,7 +47,7 @@ describe("SpaceIntegrationPolicy", () => {
   let config: GatewayConfig;
 
   beforeEach(async () => {
-    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "aihub-space-policy-"));
+    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-space-policy-"));
     config = {
       agents: [],
       sessions: { idleMinutes: 360 },

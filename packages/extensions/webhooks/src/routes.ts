@@ -3,7 +3,7 @@ import type {
   AgentConfig,
   ExtensionContext,
   WebhookConfig,
-} from "@aihub/shared";
+} from "@yoplai/shared";
 import type { Hono } from "hono";
 import { interpolateWebhookPrompt, resolveWebhookPrompt } from "./prompt.js";
 import {
@@ -137,7 +137,7 @@ function getTraceContext(params: {
 }) {
   return {
     enabled: params.langfuseTracing,
-    name: `aihub:webhook:${params.agent.id}`,
+    name: `yoplai:webhook:${params.agent.id}`,
     surface: "webhook",
     metadata: {
       webhookName: params.webhookName,

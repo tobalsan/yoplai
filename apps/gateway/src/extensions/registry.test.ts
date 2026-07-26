@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { describe, expect, it } from "vitest";
-import { GatewayConfigSchema, type Extension } from "@aihub/shared";
+import { GatewayConfigSchema, type Extension } from "@yoplai/shared";
 import {
   getBuiltInExtensionRegistrations,
   getLoadedExtensions,
@@ -342,16 +342,16 @@ describe("extension registry", () => {
       getBuiltInExtensionRegistrations().map((r) => [r.id, r])
     );
 
-    expect(byId.discord?.packageName).toBe("@aihub/extension-discord");
-    expect(byId.slack?.packageName).toBe("@aihub/extension-slack");
-    expect(byId.telegram?.packageName).toBe("@aihub/extension-telegram");
-    expect(byId.webhooks?.packageName).toBe("@aihub/extension-webhooks");
+    expect(byId.discord?.packageName).toBe("@yoplai/extension-discord");
+    expect(byId.slack?.packageName).toBe("@yoplai/extension-slack");
+    expect(byId.telegram?.packageName).toBe("@yoplai/extension-telegram");
+    expect(byId.webhooks?.packageName).toBe("@yoplai/extension-webhooks");
   });
 
   it("loads external extensions from symlinked directories for agent config", async () => {
-    const root = await mkdtemp(path.join(os.tmpdir(), "aihub-extensions-"));
+    const root = await mkdtemp(path.join(os.tmpdir(), "yoplai-extensions-"));
     const target = await mkdtemp(
-      path.join(os.tmpdir(), "aihub-extension-target-")
+      path.join(os.tmpdir(), "yoplai-extension-target-")
     );
     const zodUrl = pathToFileURL(require.resolve("zod")).href;
 

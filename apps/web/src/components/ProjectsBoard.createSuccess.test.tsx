@@ -87,9 +87,9 @@ const setupRaf = () => {
 const triggerCreateSuccess = async (title: string) => {
   const api = (
     window as unknown as {
-      __aihubTest?: { setCreateSuccess: (value: string) => void };
+      __testHooks?: { setCreateSuccess: (value: string) => void };
     }
-  ).__aihubTest;
+  ).__testHooks;
   if (!api?.setCreateSuccess) {
     throw new Error("Missing test API for create success");
   }
@@ -104,7 +104,7 @@ describe("ProjectsBoard create success toast", () => {
     setupRaf();
     localStorage.clear();
     localStorage.setItem(
-      "aihub:projects:expanded-columns",
+      "yoplai:projects:expanded-columns",
       JSON.stringify(["maybe", "not_now"])
     );
   });
@@ -140,5 +140,67 @@ describe("ProjectsBoard create success toast", () => {
     await tick();
     expect(container.querySelector(".create-success")).toBeNull();
     dispose();
+  });
+
+  it("adopts expanded columns, create draft and delete toast from legacy aihub keys", async () => {
+    localStorage.clear();
+    localStorage.setItem(
+      "aihub:projects:expanded-columns",
+      JSON.stringify(["triage", "shaping"])
+    );
+    localStorage.setItem(
+      "aihub:projects:create-form",
+      JSON.stringify({ title: "Draft title", description: "Draft body" })
+    );
+    localStorage.setItem("aihub:projects:delete-success", "Old Project");
+
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const dispose = render(() => <ProjectsBoard />, container);
+    await tick();
+
+    expect(
+      container.querySelector(".create-success-subtitle")?.textContent
+    ).toBe("Old Project");
+    expect(localStorage.getItem("yoplai:projects:expanded-columns")).toBe(
+      JSON.stringify(["triage", "shaping"])
+    );
+
+    window.dispatchEvent(new KeyboardEvent("keydown", { key: "c" }));
+    await tick();
+    expect(
+      container.querySelector<HTMLInputElement>(".create-input")?.value
+    ).toBe("Draft title");
+
+    // The one-shot delete flag must not resurrect on the next mount.
+    expect(localStorage.getItem("aihub:projects:delete-success")).toBeNull();
+    expect(localStorage.getItem("yoplai:projects:delete-success")).toBeNull();
+
+    dispose();
+    localStorage.clear();
+  });
+
+  it("keeps expanded columns already stored under the new key", async () => {
+    localStorage.clear();
+    localStorage.setItem(
+      "yoplai:projects:expanded-columns",
+      JSON.stringify(["triage"])
+    );
+    localStorage.setItem(
+      "aihub:projects:expanded-columns",
+      JSON.stringify(["done"])
+    );
+
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const dispose = render(() => <ProjectsBoard />, container);
+    await tick();
+
+    expect(localStorage.getItem("yoplai:projects:expanded-columns")).toBe(
+      JSON.stringify(["triage"])
+    );
+
+    dispose();
+    localStorage.clear();
   });
 });

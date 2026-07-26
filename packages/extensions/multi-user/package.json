@@ -1,5 +1,5 @@
 {
-  "name": "@aihub/extension-multi-user",
+  "name": "@yoplai/extension-multi-user",
   "version": "0.1.0",
   "type": "module",
   "main": "./dist/index.js",
@@ -25,7 +25,7 @@
     "build": "tsc"
   },
   "dependencies": {
-    "@aihub/shared": "workspace:*",
+    "@yoplai/shared": "workspace:*",
     "@better-auth/api-key": "1.6.10",
     "better-auth": "1.6.10",
     "better-sqlite3": "^12.10.0",

@@ -7,4 +7,4 @@
 
 ---
 
-Built to help Thinh run tests on AIHub.
+Built to help Thinh run tests on Yoplai.

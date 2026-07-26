@@ -1,4 +1,4 @@
-import type { AgentConfig, SlackComponentConfig } from "@aihub/shared";
+import type { AgentConfig, SlackComponentConfig } from "@yoplai/shared";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   handleAbortCommand,

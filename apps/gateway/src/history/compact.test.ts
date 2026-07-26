@@ -2,7 +2,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { FullHistoryMessage } from "@aihub/shared";
+import type { FullHistoryMessage } from "@yoplai/shared";
 
 let tmpDir = "";
 
@@ -12,7 +12,7 @@ vi.mock("../config/index.js", () => ({
   },
 }));
 
-vi.mock("@aihub/extension-multi-user/isolation", () => ({
+vi.mock("@yoplai/extension-multi-user/isolation", () => ({
   getUserHistoryDir: (userId: string | undefined, configDir: string) =>
     userId
       ? path.join(configDir, "users", userId, "history")
@@ -25,7 +25,7 @@ vi.mock("../sessions/store.js", () => ({
 
 describe("compact history rewrite", () => {
   beforeEach(async () => {
-    tmpDir = await mkdtemp(path.join(os.tmpdir(), "aihub-compact-"));
+    tmpDir = await mkdtemp(path.join(os.tmpdir(), "yoplai-compact-"));
   });
 
   afterEach(async () => {

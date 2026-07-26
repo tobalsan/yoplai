@@ -1,5 +1,5 @@
 import fs from "node:fs";
-import { resolveHomeDir } from "@aihub/shared";
+import { getDefaultConfigPath, readEnv } from "@yoplai/shared";
 
 export type CliConfig = { apiUrl: string; token?: string };
 
@@ -12,7 +12,7 @@ function trim(value: string | undefined): string | undefined {
 
 function readUserConfig(): UserConfig {
   try {
-    return JSON.parse(fs.readFileSync(`${resolveHomeDir()}/aihub.json`, "utf8")) as UserConfig;
+    return JSON.parse(fs.readFileSync(getDefaultConfigPath(), "utf8")) as UserConfig;
   } catch {
     return {};
   }
@@ -20,9 +20,9 @@ function readUserConfig(): UserConfig {
 
 export function resolveConfig(): CliConfig {
   const fileConfig = readUserConfig();
-  const apiUrl = trim(process.env.AIHUB_API_URL) ?? trim(process.env.AIHUB_URL) ?? trim(fileConfig.apiUrl);
+  const apiUrl = trim(readEnv("API_URL")) ?? trim(readEnv("URL")) ?? trim(fileConfig.apiUrl);
   if (!apiUrl) {
-    throw new Error('Missing AIHub API URL. Set AIHUB_API_URL (or AIHUB_URL) or add $AIHUB_HOME/aihub.json with {"apiUrl":"http://..."}.');
+    throw new Error('Missing Yoplai API URL. Set YOPLAI_API_URL (or YOPLAI_URL) or add $YOPLAI_HOME/yoplai.json with {"apiUrl":"http://..."}.');
   }
-  return { apiUrl, token: trim(process.env.AIHUB_TOKEN) ?? trim(fileConfig.token) };
+  return { apiUrl, token: trim(readEnv("TOKEN")) ?? trim(fileConfig.token) };
 }

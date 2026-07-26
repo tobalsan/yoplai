@@ -1,4 +1,4 @@
-# AIHub
+# Yoplai
 
 Start by reading `./docs/llms.md`.
 

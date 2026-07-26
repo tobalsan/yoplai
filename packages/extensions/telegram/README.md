@@ -1,6 +1,6 @@
 # Telegram Extension
 
-Connects AIHub agents to Telegram over a [grammY](https://grammy.dev)
+Connects Yoplai agents to Telegram over a [grammY](https://grammy.dev)
 long-polling bot. This is the walking-skeleton slice: a direct message reaches
 an agent's main session and a single plain-text reply is delivered back to the
 same chat.

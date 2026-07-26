@@ -43,7 +43,7 @@ function hasStaffRole(role: unknown): boolean {
   return typeof role === "string" && staff.includes(role);
 }
 
-vi.mock("@aihub/extension-multi-user", () => ({
+vi.mock("@yoplai/extension-multi-user", () => ({
   getForwardedAuthContext: vi.fn(() => state.authContext),
   getAgentFilter: vi.fn(() => (agents: unknown[]) => agents),
   hasAgentAccess: vi.fn(
@@ -67,7 +67,7 @@ describe("media access gating (multi-user)", () => {
     ) => Response | Promise<Response>;
   };
   let mediaMetadata: typeof import("../media/metadata.js");
-  let prevAihubHome: string | undefined;
+  let prevHomeDir: string | undefined;
   let prevHome: string | undefined;
   let prevUserProfile: string | undefined;
 
@@ -77,11 +77,11 @@ describe("media access gating (multi-user)", () => {
   const UNAUTHORIZED_USER = "mallory";
 
   beforeAll(async () => {
-    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "aihub-media-access-"));
-    prevAihubHome = process.env.AIHUB_HOME;
+    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-media-access-"));
+    prevHomeDir = process.env.YOPLAI_HOME;
     prevHome = process.env.HOME;
     prevUserProfile = process.env.USERPROFILE;
-    process.env.AIHUB_HOME = path.join(tmpDir, ".aihub");
+    process.env.YOPLAI_HOME = path.join(tmpDir, ".yoplai");
     process.env.HOME = tmpDir;
     process.env.USERPROFILE = tmpDir;
 
@@ -99,8 +99,8 @@ describe("media access gating (multi-user)", () => {
   });
 
   afterAll(async () => {
-    if (prevAihubHome === undefined) delete process.env.AIHUB_HOME;
-    else process.env.AIHUB_HOME = prevAihubHome;
+    if (prevHomeDir === undefined) delete process.env.YOPLAI_HOME;
+    else process.env.YOPLAI_HOME = prevHomeDir;
     if (prevHome === undefined) delete process.env.HOME;
     else process.env.HOME = prevHome;
     if (prevUserProfile === undefined) delete process.env.USERPROFILE;

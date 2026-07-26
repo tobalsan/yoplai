@@ -2,7 +2,7 @@ import { defineConfig } from "vite";
 import solid from "vite-plugin-solid";
 import fs from "node:fs";
 import { execSync } from "node:child_process";
-import { resolveConfigPath } from "../../packages/shared/src/config-path.js";
+import { readEnv, resolveConfigPath } from "../../packages/shared/src/config-path.js";
 import { resolveBindHost } from "../../packages/shared/src/network.js";
 
 type BindMode = "loopback" | "lan" | "tailnet";
@@ -28,14 +28,14 @@ interface BaseUrlConfig {
   baseUrl?: string;
 }
 
-interface AihubConfig {
+interface AppConfig {
   ui?: UiConfig;
   gateway?: GatewayConfig;
   server?: BaseUrlConfig;
   web?: BaseUrlConfig;
 }
 
-function loadConfig(): AihubConfig {
+function loadConfig(): AppConfig {
   try {
     const configPath = resolveConfigPath();
     const raw = fs.readFileSync(configPath, "utf-8");
@@ -93,12 +93,12 @@ const config = loadConfig();
 const uiConfig = config.ui ?? {};
 const gatewayConfig = config.gateway ?? {};
 
-// Dev mode detection: AIHUB_DEV=1 from scripts/dev.ts
-const isDevMode = process.env.AIHUB_DEV === "1";
+// Dev mode detection: YOPLAI_DEV=1 from scripts/dev.ts
+const isDevMode = readEnv("DEV") === "1";
 
 // Port resolution: env vars from dev orchestrator take precedence
-const port = process.env.AIHUB_UI_PORT
-  ? parseInt(process.env.AIHUB_UI_PORT, 10)
+const port = readEnv("UI_PORT")
+  ? parseInt(readEnv("UI_PORT")!, 10)
   : (uiConfig.port ?? 3000);
 
 // In dev mode, disable tailscale serve (handled separately by production)
@@ -119,21 +119,21 @@ const configuredHostnames = [
   (value, index, values): value is string =>
     !!value && values.indexOf(value) === index
 );
-const hmrHostOverride = process.env.AIHUB_HMR_HOST;
+const hmrHostOverride = readEnv("HMR_HOST");
 
 // Resolve gateway target for proxy
-// In dev mode, use AIHUB_GATEWAY_PORT from orchestrator
+// In dev mode, use YOPLAI_GATEWAY_PORT from orchestrator
 const gatewayBindHost = gatewayConfig.host ?? resolveHost(gatewayConfig.bind);
 // The proxy connects (not listens), so 0.0.0.0 isn't a valid destination on
 // macOS — rewrite to loopback. The gateway still listens on all interfaces.
 const gatewayHost = gatewayBindHost === "0.0.0.0" ? "127.0.0.1" : gatewayBindHost;
-const gatewayPort = process.env.AIHUB_GATEWAY_PORT
-  ? parseInt(process.env.AIHUB_GATEWAY_PORT, 10)
+const gatewayPort = readEnv("GATEWAY_PORT")
+  ? parseInt(readEnv("GATEWAY_PORT")!, 10)
   : (gatewayConfig.port ?? 4000);
 const gatewayTarget = `http://${gatewayHost}:${gatewayPort}`;
 
-// In dev mode, always use root path (no /aihub prefix)
-const base = tailscaleServe ? "/aihub" : "/";
+// In dev mode, always use root path (no /yoplai prefix)
+const base = tailscaleServe ? "/yoplai" : "/";
 
 export default defineConfig({
   base,

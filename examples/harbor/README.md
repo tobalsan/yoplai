@@ -1,16 +1,16 @@
-# Harbor eval engine for AIHub
+# Harbor eval engine for Yoplai
 
-Vendor-neutral [Harbor](https://www.harborframework.com/) eval infrastructure for AIHub agents.
+Vendor-neutral [Harbor](https://www.harborframework.com/) eval infrastructure for Yoplai agents.
 
-See `docs/plans/harbor-evals-for-aihub-migration.md` for the full design.
+See `docs/plans/harbor-evals-for-yoplai-migration.md` for the full design.
 
 ## What lives here
 
 ```
 base/
-  aihub-eval/          # base Docker image every task FROMs (runtime only, no agent config)
+  yoplai-eval/          # base Docker image every task FROMs (runtime only, no agent config)
 agents/
-  aihub_installed.py   # generic Harbor BaseInstalledAgent reference wrapper
+  yoplai_installed.py   # generic Harbor BaseInstalledAgent reference wrapper
 tasks/
   smoke/               # minimal contract test for the eval CLI
 ```
@@ -23,20 +23,20 @@ Prerequisites: [Harbor](https://www.harborframework.com/docs/getting-started) in
 
 ```bash
 # Build the base image (from repo root)
-docker build -t aihub-eval-base:local \
-  -f examples/harbor/base/aihub-eval/Dockerfile .
+docker build -t yoplai-eval-base:local \
+  -f examples/harbor/base/yoplai-eval/Dockerfile .
 
 # Run the smoke task
 harbor run \
   -p examples/harbor/tasks/smoke \
-  --agent-import-path examples.harbor.agents.aihub_installed:AIHubInstalledAgent \
+  --agent-import-path examples.harbor.agents.yoplai_installed:InstalledAgent \
   --env docker
 ```
 
 ## For blueprint repos
 
 Blueprint repos (e.g. cloudihub) consume the base image and provide their own:
-- Agent config (`aihub.json`, `models.json`, `agents/`, `connectors/`)
+- Agent config (`yoplai.json`, `models.json`, `agents/`, `connectors/`)
 - Fake HTTP sidecars for connector stubbing
 - Harbor tasks, datasets, and verifiers
 - Product-specific agent wrapper with a default agent id

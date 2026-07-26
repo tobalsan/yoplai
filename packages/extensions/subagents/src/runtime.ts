@@ -4,7 +4,7 @@ import { homedir } from "node:os";
 import os from "node:os";
 import { randomUUID } from "node:crypto";
 import { spawn, type ChildProcess } from "node:child_process";
-import { expandPath } from "@aihub/shared";
+import { expandPath } from "@yoplai/shared";
 import type {
   SubagentChangedEvent,
   SubagentLogEvent,
@@ -12,7 +12,7 @@ import type {
   SubagentRun,
   SubagentRunStatus,
   SubagentRuntimeCli,
-} from "@aihub/shared";
+} from "@yoplai/shared";
 
 export const SUPPORTED_SUBAGENT_CLIS = ["claude", "codex", "pi"] as const;
 

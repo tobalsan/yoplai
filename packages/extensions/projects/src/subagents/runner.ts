@@ -1,7 +1,7 @@
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import { spawn } from "node:child_process";
-import type { GatewayConfig, OrchestratorSource } from "@aihub/shared";
+import { readEnv, type GatewayConfig, type OrchestratorSource } from "@yoplai/shared";
 import { parseMarkdownFile } from "../taskboard/parser.js";
 import { findProjectLocation } from "../projects/store.js";
 import { dirExists } from "../util/fs.js";
@@ -94,7 +94,7 @@ function buildProjectSummary(
 }
 
 function parsePromptLimitEnv(name: string, fallback: number): number {
-  const raw = process.env[name];
+  const raw = readEnv(name);
   if (!raw) return fallback;
   const parsed = Number.parseInt(raw, 10);
   if (!Number.isFinite(parsed) || parsed <= 0) return fallback;
@@ -306,11 +306,11 @@ export async function spawnSubagent(
     prompt = `${prompt}\n\n[Attached images: ${paths}]`;
   }
   const resumeLimit = parsePromptLimitEnv(
-    "AIHUB_SUBAGENT_RESUME_MAX_PROMPT_BYTES",
+    "YOPLAI_SUBAGENT_RESUME_MAX_PROMPT_BYTES",
     32768
   );
   const startLimit = parsePromptLimitEnv(
-    "AIHUB_SUBAGENT_MAX_PROMPT_BYTES",
+    "YOPLAI_SUBAGENT_MAX_PROMPT_BYTES",
     262144
   );
   const promptLimit = input.resume ? resumeLimit : startLimit;

@@ -7,12 +7,13 @@ import yaml from "js-yaml";
 import {
   AgentYamlConfigSchema,
   GatewayRootConfigSchema,
+  expandHomePlaceholder,
   resolveConfigPath,
   resolveHomeDir,
   type AgentConfig,
   type GatewayConfig,
   type SubagentConfig,
-} from "@aihub/shared";
+} from "@yoplai/shared";
 
 export const CONFIG_DIR = resolveHomeDir();
 export const SCHEDULES_PATH = path.join(CONFIG_DIR, "schedules.json");
@@ -27,7 +28,7 @@ export function getConfigPath(): string {
 function resolvePathFromConfig(input: string, configDir: string): string {
   const expanded = input.startsWith("~")
     ? path.join(os.homedir(), input.slice(1))
-    : input.replace(/^\$AIHUB_HOME(?=\/|$)/, CONFIG_DIR);
+    : expandHomePlaceholder(input, CONFIG_DIR);
   return path.isAbsolute(expanded)
     ? expanded
     : path.resolve(configDir, expanded);
@@ -162,7 +163,7 @@ export function resolveAgentEnv(
 export function loadConfig(): GatewayConfig {
   if (cachedConfig) return cachedConfig;
 
-  // Load .env file from AIHUB_HOME if it exists (silently skip if absent)
+  // Load .env file from YOPLAI_HOME if it exists (silently skip if absent)
   const dotenvPath = path.join(CONFIG_DIR, ".env");
   if (fs.existsSync(dotenvPath)) {
     process.loadEnvFile(dotenvPath);
@@ -184,14 +185,14 @@ export function loadConfig(): GatewayConfig {
       ))
   ) {
     throw new Error(
-      "aihub.json is version 2. Run `aihub agents migrate` to upgrade to version 3."
+      "yoplai.json is version 2. Run `yoplai agents migrate` to upgrade to version 3."
     );
   }
   const parsed = GatewayRootConfigSchema.parse(json);
   const configDir = path.dirname(configPath);
   const hasPoolConfig = Object.prototype.hasOwnProperty.call(json, "pool");
   const agentDiscovery =
-    parsed.agents ?? (hasPoolConfig ? undefined : "$AIHUB_HOME/agents/*");
+    parsed.agents ?? (hasPoolConfig ? undefined : "$YOPLAI_HOME/agents/*");
   const poolEmptyMessage =
     "[config] pool is configured but no valid agents were found. Remove pool for single-folder mode, or point pool at directories containing agent.yaml.";
   const result: GatewayConfig = {

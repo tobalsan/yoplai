@@ -1,7 +1,7 @@
 import { Command } from "commander";
 import fs from "node:fs";
 import path from "node:path";
-import { resolveBindHost } from "@aihub/shared";
+import { readEnv, resolveBindHost } from "@yoplai/shared";
 import { loadConfig, CONFIG_DIR } from "../config/index.js";
 import { resolveConfigSecrets } from "../config/secrets.js";
 import { logError } from "../logging.js";
@@ -59,7 +59,7 @@ export function saveCachedToken(token: CachedToken): void {
 }
 
 function getApiBaseUrl(): string {
-  const envUrl = process.env.AIHUB_API_URL;
+  const envUrl = readEnv("API_URL");
   if (envUrl) return envUrl;
 
   const config = loadConfig();
@@ -88,7 +88,7 @@ export async function createTokenInProcess(opts: {
   name?: string;
   dataDir?: string;
 }): Promise<{ token: string; tokenId: string; userId: string }> {
-  // loadConfig() loads $AIHUB_HOME/.env into process.env but leaves $env: refs
+  // loadConfig() loads $YOPLAI_HOME/.env into process.env but leaves $env: refs
   // unresolved on the returned object; the gateway proper resolves them via
   // prepareStartupConfig(). The CLI bootstrap mirrors that step so baseUrl /
   // sessionSecret / OAuth refs reach better-auth as real strings.
@@ -96,13 +96,13 @@ export async function createTokenInProcess(opts: {
   const mu = config.extensions?.multiUser;
   if (!mu?.enabled) {
     throw new Error(
-      "multi-user extension is not enabled in this AIHub config"
+      "multi-user extension is not enabled in this Yoplai config"
     );
   }
 
   const dataDir = opts.dataDir ?? CONFIG_DIR;
   const { initializeMultiUserDatabase, createMultiUserAuth } = await import(
-    "@aihub/extension-multi-user"
+    "@yoplai/extension-multi-user"
   );
 
   const db = initializeMultiUserDatabase(dataDir);
@@ -248,7 +248,7 @@ export function registerUserTokenCommands(
         if (!cached) {
           logError(
             "No cached bearer token",
-            "Run `aihub user token create --user <email>` first."
+            "Run `yoplai user token create --user <email>` first."
           );
           process.exit(1);
         }
@@ -280,7 +280,7 @@ export function registerUserTokenCommands(
         if (!cached) {
           logError(
             "No cached bearer token",
-            "Run `aihub user token create --user <email>` first."
+            "Run `yoplai user token create --user <email>` first."
           );
           process.exit(1);
         }

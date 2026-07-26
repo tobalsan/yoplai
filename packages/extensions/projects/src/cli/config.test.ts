@@ -6,7 +6,7 @@ import { resolveConfig } from "./config.js";
 
 describe("cli config", () => {
   let prevHome: string | undefined;
-  let prevAihubHome: string | undefined;
+  let prevHomeDir: string | undefined;
   let prevApiUrl: string | undefined;
   let prevUrl: string | undefined;
   let prevToken: string | undefined;
@@ -14,44 +14,44 @@ describe("cli config", () => {
 
   beforeEach(async () => {
     prevHome = process.env.HOME;
-    prevAihubHome = process.env.AIHUB_HOME;
-    prevApiUrl = process.env.AIHUB_API_URL;
-    prevUrl = process.env.AIHUB_URL;
-    prevToken = process.env.AIHUB_TOKEN;
+    prevHomeDir = process.env.YOPLAI_HOME;
+    prevApiUrl = process.env.YOPLAI_API_URL;
+    prevUrl = process.env.YOPLAI_URL;
+    prevToken = process.env.YOPLAI_TOKEN;
 
-    tmpHome = await fs.mkdtemp(path.join(os.tmpdir(), "aihub-cli-test-"));
+    tmpHome = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-cli-test-"));
     process.env.HOME = tmpHome;
-    process.env.AIHUB_HOME = path.join(tmpHome, ".aihub");
-    delete process.env.AIHUB_API_URL;
-    delete process.env.AIHUB_URL;
-    delete process.env.AIHUB_TOKEN;
+    process.env.YOPLAI_HOME = path.join(tmpHome, ".yoplai");
+    delete process.env.YOPLAI_API_URL;
+    delete process.env.YOPLAI_URL;
+    delete process.env.YOPLAI_TOKEN;
   });
 
   afterEach(async () => {
     if (prevHome === undefined) delete process.env.HOME;
     else process.env.HOME = prevHome;
-    if (prevAihubHome === undefined) delete process.env.AIHUB_HOME;
-    else process.env.AIHUB_HOME = prevAihubHome;
-    if (prevApiUrl === undefined) delete process.env.AIHUB_API_URL;
-    else process.env.AIHUB_API_URL = prevApiUrl;
-    if (prevUrl === undefined) delete process.env.AIHUB_URL;
-    else process.env.AIHUB_URL = prevUrl;
-    if (prevToken === undefined) delete process.env.AIHUB_TOKEN;
-    else process.env.AIHUB_TOKEN = prevToken;
+    if (prevHomeDir === undefined) delete process.env.YOPLAI_HOME;
+    else process.env.YOPLAI_HOME = prevHomeDir;
+    if (prevApiUrl === undefined) delete process.env.YOPLAI_API_URL;
+    else process.env.YOPLAI_API_URL = prevApiUrl;
+    if (prevUrl === undefined) delete process.env.YOPLAI_URL;
+    else process.env.YOPLAI_URL = prevUrl;
+    if (prevToken === undefined) delete process.env.YOPLAI_TOKEN;
+    else process.env.YOPLAI_TOKEN = prevToken;
 
     await fs.rm(tmpHome, { recursive: true, force: true });
   });
 
-  it("uses AIHUB_API_URL over AIHUB_URL and config file", async () => {
-    await fs.mkdir(process.env.AIHUB_HOME!, { recursive: true });
+  it("uses YOPLAI_API_URL over YOPLAI_URL and config file", async () => {
+    await fs.mkdir(process.env.YOPLAI_HOME!, { recursive: true });
     await fs.writeFile(
-      path.join(process.env.AIHUB_HOME!, "aihub.json"),
+      path.join(process.env.YOPLAI_HOME!, "yoplai.json"),
       JSON.stringify({ apiUrl: "http://file-url", token: "file-token" })
     );
 
-    process.env.AIHUB_URL = "http://env-url";
-    process.env.AIHUB_API_URL = "http://api-url";
-    process.env.AIHUB_TOKEN = "env-token";
+    process.env.YOPLAI_URL = "http://env-url";
+    process.env.YOPLAI_API_URL = "http://api-url";
+    process.env.YOPLAI_TOKEN = "env-token";
 
     expect(resolveConfig()).toEqual({
       apiUrl: "http://api-url",
@@ -60,9 +60,9 @@ describe("cli config", () => {
   });
 
   it("uses config file when env is missing", async () => {
-    await fs.mkdir(process.env.AIHUB_HOME!, { recursive: true });
+    await fs.mkdir(process.env.YOPLAI_HOME!, { recursive: true });
     await fs.writeFile(
-      path.join(process.env.AIHUB_HOME!, "aihub.json"),
+      path.join(process.env.YOPLAI_HOME!, "yoplai.json"),
       JSON.stringify({ apiUrl: "http://from-file", token: "file-token" })
     );
 
@@ -72,12 +72,25 @@ describe("cli config", () => {
     });
   });
 
-  it("uses AIHUB_URL when AIHUB_API_URL is not set", () => {
-    process.env.AIHUB_URL = "http://legacy-url";
+  it("uses YOPLAI_URL when YOPLAI_API_URL is not set", () => {
+    process.env.YOPLAI_URL = "http://legacy-url";
     expect(resolveConfig()).toEqual({ apiUrl: "http://legacy-url" });
   });
 
   it("throws when no API URL is configured", () => {
-    expect(() => resolveConfig()).toThrow(/Missing AIHub API URL/);
+    expect(() => resolveConfig()).toThrow(/Missing Yoplai API URL/);
+  });
+
+  it("falls back to legacy aihub.json when yoplai.json is absent", async () => {
+    await fs.mkdir(process.env.YOPLAI_HOME!, { recursive: true });
+    await fs.writeFile(
+      path.join(process.env.YOPLAI_HOME!, "aihub.json"),
+      JSON.stringify({ apiUrl: "http://legacy-file-url", token: "legacy-file-token" })
+    );
+
+    expect(resolveConfig()).toEqual({
+      apiUrl: "http://legacy-file-url",
+      token: "legacy-file-token",
+    });
   });
 });

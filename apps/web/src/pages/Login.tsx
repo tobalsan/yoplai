@@ -67,12 +67,12 @@ export default function LoginPage() {
               <img
                 class="login-logo"
                 src={capabilities.branding?.logo}
-                alt={capabilities.branding?.name ?? "AIHub"}
+                alt={capabilities.branding?.name ?? "Yoplai"}
               />
             </Show>
             <div>
               <p class="login-eyebrow">
-                {capabilities.branding?.name ?? "AIHub"}
+                {capabilities.branding?.name ?? "Yoplai"}
               </p>
               <h1>Sign in with Google</h1>
             </div>

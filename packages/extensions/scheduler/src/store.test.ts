@@ -2,7 +2,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { AgentConfig, ScheduleJob } from "@aihub/shared";
+import type { AgentConfig, ScheduleJob } from "@yoplai/shared";
 import { PerAgentScheduleStore } from "./store.js";
 
 function agent(id: string, workspace: string): AgentConfig {
@@ -24,7 +24,7 @@ describe("PerAgentScheduleStore", () => {
   });
 
   it("loads union and synthesizes agentId", async () => {
-    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "aihub-scheduler-store-"));
+    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-scheduler-store-"));
     const a = agent("alpha", path.join(tmpDir, "alpha"));
     const b = agent("beta", path.join(tmpDir, "beta"));
     await fs.mkdir(path.join(a.workspace, "cron"), { recursive: true });
@@ -55,7 +55,7 @@ describe("PerAgentScheduleStore", () => {
   });
 
   it("warns and treats malformed jobs file as empty", async () => {
-    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "aihub-scheduler-store-"));
+    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-scheduler-store-"));
     const a = agent("alpha", path.join(tmpDir, "alpha"));
     await fs.mkdir(path.join(a.workspace, "cron"), { recursive: true });
     await fs.writeFile(path.join(a.workspace, "cron/jobs.json"), "not json");
@@ -69,7 +69,7 @@ describe("PerAgentScheduleStore", () => {
   });
 
   it("loads job model overrides", async () => {
-    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "aihub-scheduler-store-"));
+    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-scheduler-store-"));
     const a = agent("alpha", path.join(tmpDir, "alpha"));
     await fs.mkdir(path.join(a.workspace, "cron"), { recursive: true });
     await fs.writeFile(
@@ -99,7 +99,7 @@ describe("PerAgentScheduleStore", () => {
   });
 
   it("rejects partial job model overrides", async () => {
-    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "aihub-scheduler-store-"));
+    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-scheduler-store-"));
     const a = agent("alpha", path.join(tmpDir, "alpha"));
     await fs.mkdir(path.join(a.workspace, "cron"), { recursive: true });
     await fs.writeFile(
@@ -128,7 +128,7 @@ describe("PerAgentScheduleStore", () => {
   });
 
   it("writes only target agent jobs", async () => {
-    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "aihub-scheduler-store-"));
+    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-scheduler-store-"));
     const a = agent("alpha", path.join(tmpDir, "alpha"));
     const b = agent("beta", path.join(tmpDir, "beta"));
     const store = new PerAgentScheduleStore([a, b], (candidate) => candidate.workspace, tmpDir);

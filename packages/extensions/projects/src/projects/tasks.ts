@@ -1,7 +1,7 @@
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
-import type { GatewayConfig, Task } from "@aihub/shared";
-import { TaskSchema } from "@aihub/shared";
+import type { GatewayConfig, Task } from "@yoplai/shared";
+import { TaskSchema } from "@yoplai/shared";
 import { getProjectsRoot } from "../util/paths.js";
 import { findProjectLocation } from "./store.js";
 

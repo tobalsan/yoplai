@@ -7,7 +7,7 @@ import {
   type Extension,
   type ExtensionContext,
   type SubagentRun,
-} from "@aihub/shared";
+} from "@yoplai/shared";
 import {
   getCachedSpace,
   archiveProject,
@@ -18,13 +18,13 @@ import {
   startSpaceCacheWatcher,
   unarchiveProject,
   updateProject,
-} from "@aihub/extension-projects";
+} from "@yoplai/extension-projects";
 import {
   getLiveSubagentRunsByCwd,
   listSubagentRuns,
   getSubagentRun,
   interruptSubagentRun,
-} from "@aihub/extension-subagents";
+} from "@yoplai/extension-subagents";
 import {
   invalidateProjectCache,
   mapToLifecycleStatus,
@@ -48,7 +48,7 @@ import {
 // ── Config ──────────────────────────────────────────────────────────
 
 const BoardExtensionConfigSchema = z.object({
-  /** Custom board user-content path (defaults to $AIHUB_HOME) */
+  /** Custom board user-content path (defaults to $YOPLAI_HOME) */
   contentRoot: z.string().optional(),
   /** If true, board claims the home route (/) */
   home: z.boolean().default(true),

@@ -57,6 +57,7 @@ import { AgentChat } from "./AgentChat";
 import { formatCreatedRelative, formatRunRelative } from "../lib/format";
 import { extractBlockText } from "../lib/history";
 import { renderMarkdown as renderMarkdownHtml } from "../lib/markdown";
+import { readMigratedLocal } from "../lib/local-storage";
 import {
   rightPanelCollapsed,
   setRightPanelCollapsedPersistent,
@@ -104,10 +105,33 @@ const CLI_OPTIONS = [
   { id: "cli:pi", label: "Pi CLI", cli: "pi" },
 ];
 
-const COLUMN_STORAGE_KEY = "aihub:projects:expanded-columns";
-const CREATE_FORM_STORAGE_KEY = "aihub:projects:create-form";
-const DELETE_SUCCESS_KEY = "aihub:projects:delete-success";
-const FILES_DB = "aihub";
+// Mirrors the gateway's normalizeRunAgent: "yoplai:" is the current
+// persisted runAgent prefix and "aihub:" is accepted as a legacy persisted
+// prefix. This is distinct from the in-memory `native:${agentId}` key used
+// to identify entries in the run list (selectedRunKey) below, which is
+// never persisted or sent to the API.
+export function parseRunAgent(
+  value: string | null | undefined
+): { type: "native"; id: string } | { type: "cli"; id: string } | null {
+  if (!value) return null;
+  for (const prefix of ["yoplai:", "aihub:"]) {
+    if (value.startsWith(prefix))
+      return { type: "native", id: value.slice(prefix.length) };
+  }
+  if (value.startsWith("cli:"))
+    return { type: "cli", id: value.slice("cli:".length) };
+  return null;
+}
+
+const COLUMN_STORAGE_KEY = "yoplai:projects:expanded-columns";
+const CREATE_FORM_STORAGE_KEY = "yoplai:projects:create-form";
+const DELETE_SUCCESS_KEY = "yoplai:projects:delete-success";
+// Renamed from "aihub" with no legacy-DB read fallback: unlike the
+// localStorage keys above, this IndexedDB only ever holds transient staged
+// file uploads (an in-progress create-project form or a not-yet-submitted
+// detail-page attachment), so any pending files left under the old "aihub"
+// database name are dropped rather than migrated.
+const FILES_DB = "yoplai";
 const CREATE_FILES_STORE = "project-create-files";
 const DETAIL_FILES_STORE = "project-detail-files";
 const CREATE_FILES_KEY = "pending";
@@ -129,7 +153,7 @@ function normalizeExpanded(value: unknown): string[] {
 function readExpandedFromStorage(): string[] {
   if (typeof window === "undefined") return [];
   try {
-    const raw = localStorage.getItem(COLUMN_STORAGE_KEY);
+    const raw = readMigratedLocal(COLUMN_STORAGE_KEY);
     if (!raw) return [];
     return normalizeExpanded(JSON.parse(raw));
   } catch {
@@ -161,7 +185,7 @@ function saveFormToStorage(state: CreateFormState): void {
 function loadFormFromStorage(): CreateFormState | null {
   if (typeof window === "undefined") return null;
   try {
-    const raw = localStorage.getItem(CREATE_FORM_STORAGE_KEY);
+    const raw = readMigratedLocal(CREATE_FORM_STORAGE_KEY);
     if (!raw) return null;
     const parsed = JSON.parse(raw);
     if (
@@ -392,7 +416,7 @@ function getTextBlocks(blocks: ContentBlock[]): string {
     .join("\n");
 }
 
-function buildAihubLogs(messages: FullHistoryMessage[]): LogItem[] {
+function buildNativeLogs(messages: FullHistoryMessage[]): LogItem[] {
   const entries: LogItem[] = [];
   const toolResults = new Map<string, FullToolResultMessage>();
   for (const msg of messages) {
@@ -791,7 +815,7 @@ type LogItem = {
 
 type AgentRunItem = {
   key: string;
-  type: "subagent" | "aihub";
+  type: "subagent" | "native";
   executionType?: "subagent";
   label: string;
   status: "running" | "replied" | "error" | "idle";
@@ -1100,10 +1124,10 @@ export function ProjectsBoard(
   const [showArchivedRuns, setShowArchivedRuns] = createSignal(true);
   const [subagentLogs, setSubagentLogs] = createSignal<SubagentLogEvent[]>([]);
   const [selectedRunKey, setSelectedRunKey] = createSignal<string | null>(null);
-  const [aihubRunMeta, setAihubRunMeta] = createSignal<
+  const [nativeRunMeta, setNativeRunMeta] = createSignal<
     Record<string, { lastTs?: number }>
   >({});
-  const [aihubRunLogs, setAihubRunLogs] = createSignal<
+  const [nativeRunLogs, setNativeRunLogs] = createSignal<
     Record<string, LogItem[]>
   >({});
   const [runLogAtBottom, setRunLogAtBottom] = createSignal(true);
@@ -1140,7 +1164,8 @@ export function ProjectsBoard(
   const [sidebarCollapsed, setSidebarCollapsed] = createSignal(false);
   const [isMobile, setIsMobile] = createSignal(false);
   const [mobileOverlay, setMobileOverlay] = createSignal<"chat" | null>(null);
-  const selectedAgentStorageKey = "aihub:context-panel:selected-agent";
+  const selectedAgentStorageKey = "yoplai:context-panel:selected-agent";
+  const legacySelectedAgentStorageKey = "aihub:context-panel:selected-agent";
 
   const matchingAreas = createMemo(() => {
     const query = createArea().trim().toLowerCase();
@@ -1197,12 +1222,20 @@ export function ProjectsBoard(
 
   onMount(() => {
     const saved = localStorage.getItem(selectedAgentStorageKey);
-    if (saved) setSelectedAgent(saved);
+    if (saved) {
+      setSelectedAgent(saved);
+      return;
+    }
+    const legacy = localStorage.getItem(legacySelectedAgentStorageKey);
+    if (legacy) {
+      localStorage.setItem(selectedAgentStorageKey, legacy);
+      setSelectedAgent(legacy);
+    }
   });
 
   onMount(() => {
     try {
-      const pendingDelete = localStorage.getItem(DELETE_SUCCESS_KEY);
+      const pendingDelete = readMigratedLocal(DELETE_SUCCESS_KEY);
       if (pendingDelete) {
         localStorage.removeItem(DELETE_SUCCESS_KEY);
         showDeleteSuccess(pendingDelete);
@@ -1217,11 +1250,11 @@ export function ProjectsBoard(
       typeof process !== "undefined" && process.env?.NODE_ENV === "test";
     if (!isTestEnv) return;
     const testApi = { setCreateSuccess };
-    (window as unknown as { __aihubTest?: typeof testApi }).__aihubTest =
+    (window as unknown as { __testHooks?: typeof testApi }).__testHooks =
       testApi;
     onCleanup(() => {
-      const global = window as unknown as { __aihubTest?: typeof testApi };
-      if (global.__aihubTest === testApi) delete global.__aihubTest;
+      const global = window as unknown as { __testHooks?: typeof testApi };
+      if (global.__testHooks === testApi) delete global.__testHooks;
     });
   });
 
@@ -1318,20 +1351,12 @@ export function ProjectsBoard(
     return CLI_OPTIONS;
   });
 
-  const selectedRunAgent = createMemo(() => {
-    const value = detailRunAgent();
-    if (!value) return null;
-    if (value.startsWith("aihub:"))
-      return { type: "aihub" as const, id: value.slice(6) };
-    if (value.startsWith("cli:"))
-      return { type: "cli" as const, id: value.slice(4) };
-    return null;
-  });
+  const selectedRunAgent = createMemo(() => parseRunAgent(detailRunAgent()));
 
   const canStart = createMemo(() => {
     const agent = selectedRunAgent();
     if (!agent) return false;
-    if (agent.type === "aihub") return true;
+    if (agent.type === "native") return true;
     if (!detailRepo()) return false;
     if (detailRunMode() !== "main-run" && !detailSlug().trim()) return false;
     return true;
@@ -1435,11 +1460,11 @@ export function ProjectsBoard(
       const sessionKey = sessionKeys[agentId];
       if (!sessionKey) continue;
       runs.push({
-        key: `aihub:${agentId}`,
-        type: "aihub",
-        label: `aihub:${agentId}`,
+        key: `native:${agentId}`,
+        type: "native",
+        label: `yoplai:${agentId}`,
         status: "idle",
-        time: aihubRunMeta()[agentId]?.lastTs,
+        time: nativeRunMeta()[agentId]?.lastTs,
         agentId,
         sessionKey,
       });
@@ -1477,8 +1502,8 @@ export function ProjectsBoard(
   const selectedRunLogItems = createMemo(() => {
     const run = selectedRun();
     if (!run) return [];
-    if (run.type === "aihub") {
-      return aihubRunLogs()[run.agentId ?? ""] ?? [];
+    if (run.type === "native") {
+      return nativeRunLogs()[run.agentId ?? ""] ?? [];
     }
     return subagentLogItems();
   });
@@ -1639,8 +1664,8 @@ export function ProjectsBoard(
     setSubagentLogs([]);
     setShowArchivedRuns(false);
     setSelectedRunKey(null);
-    setAihubRunMeta({});
-    setAihubRunLogs({});
+    setNativeRunMeta({});
+    setNativeRunLogs({});
     setDetailSlug("");
     setDetailRepo("");
     setRepoStatus("idle");
@@ -1800,8 +1825,8 @@ export function ProjectsBoard(
     if (!project) return;
     const agentIds = Object.keys(sessionKeys);
     if (agentIds.length === 0) {
-      setAihubRunMeta({});
-      setAihubRunLogs({});
+      setNativeRunMeta({});
+      setNativeRunLogs({});
       return;
     }
     let active = true;
@@ -1813,15 +1838,15 @@ export function ProjectsBoard(
         if (!sessionKey) continue;
         const res = await fetchFullHistory(agentId, sessionKey);
         if (!active) return;
-        nextLogs[agentId] = buildAihubLogs(res.messages);
+        nextLogs[agentId] = buildNativeLogs(res.messages);
         const last = res.messages[res.messages.length - 1];
         if (last?.timestamp) {
           nextMeta[agentId] = { lastTs: last.timestamp };
         }
       }
       if (!active) return;
-      setAihubRunMeta(nextMeta);
-      setAihubRunLogs(nextLogs);
+      setNativeRunMeta(nextMeta);
+      setNativeRunLogs(nextLogs);
     };
     load();
     onCleanup(() => {
@@ -2071,7 +2096,7 @@ export function ProjectsBoard(
     if (!body) return;
     const now = new Date();
     const dateStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")} ${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
-    const optimisticEntry = { author: "AIHub", date: dateStr, body };
+    const optimisticEntry = { author: "Yoplai", date: dateStr, body };
     setDetailThread((prev) => [...prev, optimisticEntry]);
     setNewComment("");
     await addProjectComment(projectId, body);

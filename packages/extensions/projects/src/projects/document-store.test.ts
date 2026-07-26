@@ -23,7 +23,7 @@ describe("project document store", () => {
   let repoDir: string;
 
   beforeEach(async () => {
-    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "aihub-doc-store-"));
+    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-doc-store-"));
     projectDir = path.join(tmpDir, "PRO-7_docs");
     repoDir = path.join(tmpDir, "repo");
     await fs.mkdir(path.join(repoDir, ".git"), { recursive: true });

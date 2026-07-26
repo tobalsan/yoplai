@@ -52,14 +52,14 @@ describe("role-based project prompts", () => {
     expect(out).toContain("## Canonical Repo Root");
     expect(out).toContain("Path: /tmp/repo");
     expect(out).not.toContain("Run relevant tests after changes.");
-    expect(out).not.toContain("aihub projects move PRO-151 review");
+    expect(out).not.toContain("yoplai projects move PRO-151 review");
     expect(out).toContain("primarily in /tmp/PRO-151/SPECS.md");
     expect(out).toContain("other relevant project markdown files");
     expect(out).toContain(
-      "Use `aihub projects start` with configured subagents for delegation:"
+      "Use `yoplai projects start` with configured subagents for delegation:"
     );
     expect(out).toContain(
-      "Preflight first: `command -v aihub && aihub projects --version`"
+      "Preflight first: `command -v yoplai && yoplai projects --version`"
     );
     expect(out).toContain("--subagent Worker --slug worker-<task>");
     expect(out).toContain("--subagent Reviewer --slug reviewer-<scope>");
@@ -71,7 +71,7 @@ describe("role-based project prompts", () => {
     expect(out).toContain("Agent names use the subagent config name as prefix");
     expect(out).toContain('Use `--name "..."` to override.');
     expect(out).toContain(
-      "Before dispatching, pick an exact subagent name from `## Available Subagent Types` below. If none are listed, inspect the AIHub config first."
+      "Before dispatching, pick an exact subagent name from `## Available Subagent Types` below. If none are listed, inspect the Yoplai config first."
     );
     expect(out).toContain(
       "When using `--subagent`, do NOT add locked flags (`--agent`, `--model`, `--reasoning-effort`, `--thinking`, `--mode`, `--branch`, `--prompt-role`) unless also using `--allow-overrides`."
@@ -93,13 +93,13 @@ describe("role-based project prompts", () => {
     );
     expect(out).toContain("## Agent Management Rules");
     expect(out).toContain(
-      "Monitor agents with `aihub projects status <project-id> --slug <agent>`."
+      "Monitor agents with `yoplai projects status <project-id> --slug <agent>`."
     );
     expect(out).toContain(
-      'Resume agents with `aihub projects resume <project-id> -m "..." --slug <agent>`.'
+      'Resume agents with `yoplai projects resume <project-id> -m "..." --slug <agent>`.'
     );
     expect(out).toContain(
-      "while true; do aihub projects status <project-id> --slug <agent> --json; sleep 30; done"
+      "while true; do yoplai projects status <project-id> --slug <agent> --json; sleep 30; done"
     );
     expect(out).toContain(
       "Never use background tasks to monitor worker agents"
@@ -108,22 +108,22 @@ describe("role-based project prompts", () => {
       "Never merge commits directly into `main`. Route all changes through the Space branch first."
     );
     expect(out).toContain(
-      'Never act on a worker\'s changes until `aihub projects status` shows the worker finished with status `"done"`.'
+      'Never act on a worker\'s changes until `yoplai projects status` shows the worker finished with status `"done"`.'
     );
     expect(out).toContain(
       "Never implement fixes or run reviews yourself unless the user explicitly asks."
     );
     expect(out).toContain(
-      "Never spawn direct native subagents outside AIHub `aihub projects` for implementation work."
+      "Never spawn direct native subagents outside Yoplai `yoplai projects` for implementation work."
     );
     expect(out).toContain(
       "wait until the first worker's worktree has been integrated into the Space branch before dispatching the dependent worker."
     );
     expect(out).toContain(
-      "As soon as you dispatch workers, move the project to `in_progress` status using `aihub projects update <project-id> --status in_progress`."
+      "As soon as you dispatch workers, move the project to `in_progress` status using `yoplai projects update <project-id> --status in_progress`."
     );
     expect(out).toContain(
-      "As soon as implementation is complete and you are ready for review, move the project to `review` status using `aihub projects update <project-id> --status review`."
+      "As soon as implementation is complete and you are ready for review, move the project to `review` status using `yoplai projects update <project-id> --status review`."
     );
     expect(out).toContain(
       "update the project's `space.json` to mark those commits integrated."
@@ -161,7 +161,7 @@ describe("role-based project prompts", () => {
       subagentTypes: [],
     });
     expect(result).not.toContain(
-      "The following subagent types are configured and can be spawned via `aihub projects start`:"
+      "The following subagent types are configured and can be spawned via `yoplai projects start`:"
     );
   });
 
@@ -179,12 +179,12 @@ describe("role-based project prompts", () => {
     expect(out).toContain(
       "Once checks pass, commit the implementation before reporting completion."
     );
-    expect(out).not.toContain("aihub projects move PRO-151 review");
+    expect(out).not.toContain("yoplai projects move PRO-151 review");
     expect(out).toContain(
       "Update task statuses and acceptance criteria notes in /tmp/PRO-151/SPECS.md."
     );
     expect(out).toContain(
-      'aihub projects comment PRO-151 --message "<your summary>" --author <your name>'
+      'yoplai projects comment PRO-151 --message "<your summary>" --author <your name>'
     );
   });
 
@@ -207,12 +207,12 @@ describe("role-based project prompts", () => {
     expect(out).toContain("## Active Worker Workspaces");
     expect(out).toContain("~/projects/.workspaces/PRO-151/worker-alpha/");
     expect(out).not.toContain("Run relevant tests after changes.");
-    expect(out).not.toContain("aihub projects move PRO-151 review");
+    expect(out).not.toContain("yoplai projects move PRO-151 review");
     expect(out).toContain(
       "Update task statuses and acceptance criteria notes in /tmp/PRO-151/SPECS.md."
     );
     expect(out).toContain(
-      'aihub projects comment PRO-151 --message "<your summary>" --author <your name>'
+      'yoplai projects comment PRO-151 --message "<your summary>" --author <your name>'
     );
   });
 
@@ -248,9 +248,9 @@ describe("role-based project prompts", () => {
     });
     expect(legacyOut).toContain("## Your Role");
     expect(legacyOut).toContain("## IMPORTANT: MUST DO AFTER IMPLEMENTATION");
-    expect(legacyOut).toContain("aihub projects move <project_id> review");
+    expect(legacyOut).toContain("yoplai projects move <project_id> review");
     expect(legacyOut).toContain(
-      'aihub projects comment <project_id> --message "<your summary>" --author <your name>'
+      'yoplai projects comment <project_id> --message "<your summary>" --author <your name>'
     );
   });
 

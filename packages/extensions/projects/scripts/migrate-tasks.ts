@@ -2,6 +2,7 @@
 import { readdir, readFile, writeFile, stat } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
+import { readEnv } from "@yoplai/shared";
 
 interface Args {
   root: string;
@@ -10,10 +11,11 @@ interface Args {
 }
 
 function parseArgs(argv: string[]): Args {
+  const homeDir = readEnv("YOPLAI_HOME");
   const args: Args = {
-    root:
-      (process.env.AIHUB_HOME ? join(process.env.AIHUB_HOME, "projects") : "") ||
-      join(process.env.HOME ?? "", "projects"),
+    root: homeDir
+      ? join(homeDir, "projects")
+      : join(process.env.HOME ?? "", "projects"),
     apply: false,
     help: false,
   };
@@ -37,7 +39,7 @@ Usage:
   npx tsx packages/extensions/projects/scripts/migrate-tasks.ts [options]
 
 Options:
-  --root <path>   Projects root dir (default: $AIHUB_HOME/projects or ~/projects)
+  --root <path>   Projects root dir (default: $YOPLAI_HOME/projects or ~/projects)
   --apply         Write changes (default: dry-run)
   -h, --help      Show this help
 `);
@@ -172,7 +174,7 @@ async function main(): Promise<void> {
     return;
   }
   if (!args.root) {
-    console.error("No root provided. Use --root <path> or set AIHUB_HOME.");
+    console.error("No root provided. Use --root <path> or set YOPLAI_HOME.");
     process.exit(1);
   }
   if (!existsSync(args.root)) {

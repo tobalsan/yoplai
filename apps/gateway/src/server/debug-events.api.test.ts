@@ -7,7 +7,7 @@ import { writeTestV3Config } from "../test-utils/v3-config.js";
 
 describe("/api/debug/events", () => {
   let tmpDir: string;
-  let prevAihubHome: string | undefined;
+  let prevHomeDir: string | undefined;
   let prevHome: string | undefined;
   let prevUserProfile: string | undefined;
   let server: ReturnType<typeof import("./index.js").startServer>;
@@ -16,17 +16,17 @@ describe("/api/debug/events", () => {
   let prevDev: string | undefined;
 
   beforeAll(async () => {
-    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "aihub-debug-events-"));
-    prevAihubHome = process.env.AIHUB_HOME;
+    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-debug-events-"));
+    prevHomeDir = process.env.YOPLAI_HOME;
     prevHome = process.env.HOME;
     prevUserProfile = process.env.USERPROFILE;
-    prevDev = process.env.AIHUB_DEV;
-    process.env.AIHUB_HOME = path.join(tmpDir, ".aihub");
+    prevDev = process.env.YOPLAI_DEV;
+    process.env.YOPLAI_HOME = path.join(tmpDir, ".yoplai");
     process.env.HOME = tmpDir;
     process.env.USERPROFILE = tmpDir;
-    process.env.AIHUB_DEV = "1";
+    process.env.YOPLAI_DEV = "1";
 
-    await writeTestV3Config(path.join(tmpDir, ".aihub"), {
+    await writeTestV3Config(path.join(tmpDir, ".yoplai"), {
       agents: [
         {
           id: "test-agent",
@@ -53,14 +53,14 @@ describe("/api/debug/events", () => {
     if (server) {
       await new Promise<void>((resolve) => server.close(() => resolve()));
     }
-    if (prevAihubHome === undefined) delete process.env.AIHUB_HOME;
-    else process.env.AIHUB_HOME = prevAihubHome;
+    if (prevHomeDir === undefined) delete process.env.YOPLAI_HOME;
+    else process.env.YOPLAI_HOME = prevHomeDir;
     if (prevHome === undefined) delete process.env.HOME;
     else process.env.HOME = prevHome;
     if (prevUserProfile === undefined) delete process.env.USERPROFILE;
     else process.env.USERPROFILE = prevUserProfile;
-    if (prevDev === undefined) delete process.env.AIHUB_DEV;
-    else process.env.AIHUB_DEV = prevDev;
+    if (prevDev === undefined) delete process.env.YOPLAI_DEV;
+    else process.env.YOPLAI_DEV = prevDev;
     await fs.rm(tmpDir, { recursive: true, force: true });
   });
 

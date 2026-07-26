@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { AgentHistoryEvent, AgentStreamEvent } from "@aihub/shared";
+import type { AgentHistoryEvent, AgentStreamEvent } from "@yoplai/shared";
 import { LangfuseTracer } from "../tracer.js";
 
 const langfuseMock = vi.hoisted(() => {
@@ -148,7 +148,7 @@ describe("LangfuseTracer", () => {
     await tracer.stop();
   });
 
-  it("names traces as aihub:<surface>:<agentId>", async () => {
+  it("names traces as yoplai:<surface>:<agentId>", async () => {
     const tracer = startTracer();
 
     // Chat surface (default sessionKey)
@@ -163,7 +163,7 @@ describe("LangfuseTracer", () => {
     );
 
     expect(langfuseMock.traces[0]?.args).toEqual(
-      expect.objectContaining({ name: "aihub:chat:agent-1" })
+      expect.objectContaining({ name: "yoplai:chat:agent-1" })
     );
 
     // Project surface
@@ -178,7 +178,7 @@ describe("LangfuseTracer", () => {
     );
 
     expect(langfuseMock.traces[1]?.args).toEqual(
-      expect.objectContaining({ name: "aihub:project:agent-1" })
+      expect.objectContaining({ name: "yoplai:project:agent-1" })
     );
 
     await tracer.stop();
@@ -194,7 +194,7 @@ describe("LangfuseTracer", () => {
           sessionKey: "webhook:agent-1:notion:req-1",
           source: "webhook",
           trace: {
-            name: "aihub:webhook:agent-1",
+            name: "yoplai:webhook:agent-1",
             surface: "webhook",
             metadata: {
               webhookName: "notion",
@@ -211,7 +211,7 @@ describe("LangfuseTracer", () => {
           sessionKey: "webhook:agent-1:notion:req-1",
           source: "webhook",
           trace: {
-            name: "aihub:webhook:agent-1",
+            name: "yoplai:webhook:agent-1",
             surface: "webhook",
             metadata: { webhookName: "notion" },
           },
@@ -221,7 +221,7 @@ describe("LangfuseTracer", () => {
 
     expect(langfuseMock.traces[0]?.args).toEqual(
       expect.objectContaining({
-        name: "aihub:webhook:agent-1",
+        name: "yoplai:webhook:agent-1",
         metadata: expect.objectContaining({
           source: "webhook",
           surface: "webhook",

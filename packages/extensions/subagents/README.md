@@ -1,11 +1,11 @@
 # Subagents Extension
 
-The `subagents` extension is AIHub's project-agnostic runtime for CLI-backed
+The `subagents` extension is Yoplai's project-agnostic runtime for CLI-backed
 subagents. It lets any UI, extension, or lead agent start and observe external
 agent processes without depending on the `projects` extension.
 
 The extension is built in and enabled by default. Runtime actions go through the
-gateway HTTP API, so the gateway must be running for `aihub subagents ...`
+gateway HTTP API, so the gateway must be running for `yoplai subagents ...`
 commands.
 
 ## What It Owns
@@ -25,7 +25,7 @@ ordinary directory. The runtime only validates that `cwd` exists.
 Runs are stored under:
 
 ```text
-$AIHUB_HOME/sessions/subagents/runs/<runId>/
+$YOPLAI_HOME/sessions/subagents/runs/<runId>/
   config.json
   state.json
   progress.json
@@ -58,7 +58,7 @@ with `board:main`.
 
 ## Profiles
 
-Profiles live in `aihub.json` under `extensions.subagents.profiles`.
+Profiles live in `yoplai.json` under `extensions.subagents.profiles`.
 
 ```json
 {
@@ -104,7 +104,7 @@ screens migrate to the runtime extension. Those templates use `cli`:
 Start a Codex subagent in a repo:
 
 ```sh
-aihub subagents start \
+yoplai subagents start \
   --cli codex \
   --cwd /Users/me/code/app \
   --label worker-a \
@@ -114,7 +114,7 @@ aihub subagents start \
 Start with a model and reasoning effort:
 
 ```sh
-aihub subagents start \
+yoplai subagents start \
   --cli codex \
   --cwd /Users/me/code/app \
   --label reviewer-a \
@@ -126,7 +126,7 @@ aihub subagents start \
 Start from a profile:
 
 ```sh
-aihub subagents start \
+yoplai subagents start \
   --profile Worker \
   --cwd /Users/me/code/app \
   --label worker-b \
@@ -136,7 +136,7 @@ aihub subagents start \
 Attach a run to the current lead-agent chat session:
 
 ```sh
-aihub subagents start \
+yoplai subagents start \
   --cli claude \
   --cwd /Users/me/code/app \
   --label docs-worker \
@@ -147,62 +147,62 @@ aihub subagents start \
 List active runs:
 
 ```sh
-aihub subagents list --status running
+yoplai subagents list --status running
 ```
 
 List runs for a parent:
 
 ```sh
-aihub subagents list --parent board:main
+yoplai subagents list --parent board:main
 ```
 
 Inspect one run:
 
 ```sh
-aihub subagents status sar_mabc1234xyz
+yoplai subagents status sar_mabc1234xyz
 ```
 
 Read logs from the beginning:
 
 ```sh
-aihub subagents logs sar_mabc1234xyz --since 0
+yoplai subagents logs sar_mabc1234xyz --since 0
 ```
 
 Resume a completed or interrupted run:
 
 ```sh
-aihub subagents resume sar_mabc1234xyz \
+yoplai subagents resume sar_mabc1234xyz \
   --prompt "Continue with the remaining failing tests"
 ```
 
 Stop a running process but keep its run record:
 
 ```sh
-aihub subagents interrupt sar_mabc1234xyz
+yoplai subagents interrupt sar_mabc1234xyz
 ```
 
 Hide a run from normal lists:
 
 ```sh
-aihub subagents archive sar_mabc1234xyz
+yoplai subagents archive sar_mabc1234xyz
 ```
 
 Restore an archived run:
 
 ```sh
-aihub subagents unarchive sar_mabc1234xyz
+yoplai subagents unarchive sar_mabc1234xyz
 ```
 
 Delete a run record and its files:
 
 ```sh
-aihub subagents delete sar_mabc1234xyz
+yoplai subagents delete sar_mabc1234xyz
 ```
 
 For scripts and agents, add `--json` to receive machine-readable output:
 
 ```sh
-aihub subagents list --parent agent-session:lead:main --json
+yoplai subagents list --parent agent-session:lead:main --json
 ```
 
 ## HTTP API

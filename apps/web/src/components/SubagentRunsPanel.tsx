@@ -1,6 +1,6 @@
 import { For, Show, createEffect, createSignal, onCleanup } from "solid-js";
-import type { SubagentRun } from "@aihub/shared/types";
-import type { SubagentRunStatus } from "@aihub/shared/types";
+import type { SubagentRun } from "@yoplai/shared/types";
+import type { SubagentRunStatus } from "@yoplai/shared/types";
 import {
   archiveRuntimeSubagent,
   deleteRuntimeSubagent,

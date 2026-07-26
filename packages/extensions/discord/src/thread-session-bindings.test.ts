@@ -12,7 +12,7 @@ describe("thread session bindings", () => {
   let store: ThreadSessionBindingStore;
 
   beforeEach(async () => {
-    dir = await fs.mkdtemp(path.join(os.tmpdir(), "aihub-discord-bindings-"));
+    dir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-discord-bindings-"));
     store = createThreadSessionBindingStore(dir);
   });
 

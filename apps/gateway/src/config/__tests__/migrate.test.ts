@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { GatewayConfigSchema } from "@aihub/shared";
+import { GatewayConfigSchema } from "@yoplai/shared";
 import { migrateConfigV1toV2 } from "../migrate.js";
 
 describe("migrateConfigV1toV2", () => {

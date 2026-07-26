@@ -6,10 +6,10 @@ import type {
   FileAttachment,
   HistoryEvent,
   RequiredModelConfig,
-} from "@aihub/shared";
+} from "@yoplai/shared";
 import type { ExtensionRuntime } from "../extensions/runtime.js";
 
-export type { HistoryEvent } from "@aihub/shared";
+export type { HistoryEvent } from "@yoplai/shared";
 
 // SDK identifiers
 export type SdkId = "pi" | "openclaw";

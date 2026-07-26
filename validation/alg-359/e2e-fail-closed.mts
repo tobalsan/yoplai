@@ -4,15 +4,15 @@
  *
  * Same real code path as e2e-token-encryption.mts (real config load, real
  * file-backed store, only Google's HTTP endpoints faked), but the seeded
- * AIHUB_HOME config OMITS oauth.encryptionKey. The connect must fail and no
+ * YOPLAI_HOME config OMITS oauth.encryptionKey. The connect must fail and no
  * token file may be written.
  */
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 
-const home = process.env.AIHUB_HOME;
-assert.ok(home, "AIHUB_HOME must be set");
+const home = process.env.YOPLAI_HOME;
+assert.ok(home, "YOPLAI_HOME must be set");
 
 const { OAuthService } = await import("../../apps/gateway/src/oauth/service.ts");
 const { loadConfig } = await import("../../apps/gateway/src/config/index.ts");

@@ -2,7 +2,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { GatewayConfig } from "@aihub/shared";
+import type { GatewayConfig } from "@yoplai/shared";
 import { createOAuthRoutes } from "./routes.js";
 import { OAuthService } from "./service.js";
 import { OAuthConnectionStore } from "./store.js";

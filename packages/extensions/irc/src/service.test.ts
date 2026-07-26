@@ -38,7 +38,7 @@ describe("IrcService", () => {
 
     const connection = waitForConnection(server);
     const service = new IrcService(
-      { host: "127.0.0.1", port: address.port, tls: false, nick: "aihub", channels: [] },
+      { host: "127.0.0.1", port: address.port, tls: false, nick: "yoplai", channels: [] },
       () => {},
       { info: () => {}, warn: () => {}, error: () => {} }
     );
@@ -46,7 +46,7 @@ describe("IrcService", () => {
     service.start();
 
     const socket = await connection;
-    await waitForText(socket, "USER aihub 0 * :aihub\r\n");
+    await waitForText(socket, "USER yoplai 0 * :yoplai\r\n");
     service.send("#room", "too early");
 
     const early = await new Promise<string>((resolve) => {
@@ -61,7 +61,7 @@ describe("IrcService", () => {
     expect(early).not.toContain("PRIVMSG #room :too early");
 
     const delivered = waitForText(socket, "PRIVMSG #room :too early\r\n");
-    socket.write(":server 001 aihub :welcome\r\n");
+    socket.write(":server 001 yoplai :welcome\r\n");
     await expect(delivered).resolves.toContain("PRIVMSG #room :too early\r\n");
   });
 });

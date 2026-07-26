@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { processMessage, type MessageData } from "./message.js";
-import type { DiscordConfig } from "@aihub/shared";
+import type { DiscordConfig } from "@yoplai/shared";
 
 function createMessage(overrides: Partial<MessageData> = {}): MessageData {
   return {

@@ -20,7 +20,7 @@ Worker prompt context:
 - Parent project: `README.md` (pitch) + `SCOPE_MAP.md` (sibling slice index, titles only).
 - Slice: `README.md` (must/nice) + `SPECS.md` + `TASKS.md` + `VALIDATION.md`.
 - Plus a "stay in your slice" clause forbidding modification of other slices' files or project-level docs without explicit instruction.
-- On completion: Worker hands off via `aihub slices move <sliceId> review` (CLI from #4).
+- On completion: Worker hands off via `yoplai slices move <sliceId> review` (CLI from #4).
 
 Config key stays at `extensions.projects.orchestrator` (no rename — see §6.1). Worktree path: `<worktreeDir>/<PRO-XXX>/<PRO-XXX-Snn>-<slug>/` (§5.8).
 
@@ -32,7 +32,7 @@ Config key stays at `extensions.projects.orchestrator` (no rename — see §6.1)
 - [ ] `max_concurrent` per profile honored across active runs
 - [ ] Worker prompt includes pitch + scope map + slice docs only (no other slices' files)
 - [ ] Worker run sets `sliceId` + `projectId` on its run state
-- [ ] Worker completion moves slice `in_progress → review` via `aihub slices move`
+- [ ] Worker completion moves slice `in_progress → review` via `yoplai slices move`
 - [ ] Worktree path follows §5.8 layout
 - [ ] In-tick `running` flag + `failure_cooldown_ms` dedupe stack carries forward unchanged
 - [ ] `pnpm test:gateway` passes; e2e tracer: slice in `todo` under `active` project → Worker dispatched → slice ends in `review`

@@ -1013,7 +1013,7 @@ describe("multi-user api core", () => {
     const response = await api.request(
       new Request("http://localhost/agents", {
         headers: {
-          "x-aihub-auth-context": encodeAuthHeader({
+          "x-yoplai-auth-context": encodeAuthHeader({
             user: {
               id: "user-1",
               role: "user",
@@ -1044,7 +1044,7 @@ describe("multi-user api core", () => {
     const response = await api.request(
       new Request("http://localhost/agents", {
         headers: {
-          "x-aihub-auth-context": encodeAuthHeader({
+          "x-yoplai-auth-context": encodeAuthHeader({
             user: {
               id: "admin-1",
               role: "admin",
@@ -1076,7 +1076,7 @@ describe("multi-user api core", () => {
     const response = await api.request(
       new Request("http://localhost/agents/status", {
         headers: {
-          "x-aihub-auth-context": encodeAuthHeader({
+          "x-yoplai-auth-context": encodeAuthHeader({
             user: {
               id: "user-1",
               role: "user",
@@ -1109,7 +1109,7 @@ describe("multi-user api core", () => {
     const response = await api.request(
       new Request("http://localhost/capabilities", {
         headers: {
-          "x-aihub-auth-context": encodeAuthHeader({
+          "x-yoplai-auth-context": encodeAuthHeader({
             user: {
               id: "user-1",
               name: "User One",

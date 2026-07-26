@@ -6,7 +6,7 @@ import {
   AgentConfigSchema,
   GlobalSandboxConfigSchema,
   type MountAllowlist,
-} from "@aihub/shared";
+} from "@yoplai/shared";
 import {
   buildContainerArgs,
   buildVolumeMounts,
@@ -20,7 +20,7 @@ import {
 const tempDirs: string[] = [];
 
 function tmpDir(): string {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "aihub-container-"));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "yoplai-container-"));
   tempDirs.push(dir);
   return dir;
 }
@@ -43,7 +43,7 @@ describe("buildVolumeMounts", () => {
     const root = tmpDir();
     const workspace = path.join(root, "agents", "cloud");
     const shared = path.join(root, "shared");
-    const aihubHome = path.join(root, "aihub");
+    const homeDir = path.join(root, "yoplai");
     const custom = path.join(root, "docs");
     const caPath = path.join(root, "onecli-ca.pem");
 
@@ -76,7 +76,7 @@ describe("buildVolumeMounts", () => {
     const mounts = buildVolumeMounts(
       agent,
       globalSandbox,
-      aihubHome,
+      homeDir,
       "user-1",
       onecliConfig
     );
@@ -85,23 +85,23 @@ describe("buildVolumeMounts", () => {
       expect.arrayContaining<ContainerVolumeMount>([
         { source: workspace, target: "/workspace", readonly: true },
         {
-          source: getAgentDataDir(aihubHome, "cloud"),
+          source: getAgentDataDir(homeDir, "cloud"),
           target: "/workspace/data",
           readonly: false,
         },
         { source: shared, target: "/shared", readonly: false },
         {
-          source: path.join(aihubHome, "sessions", "users", "user-1"),
+          source: path.join(homeDir, "sessions", "users", "user-1"),
           target: "/users/user-1",
           readonly: false,
         },
         {
-          source: path.join(aihubHome, "sessions", "cloud"),
+          source: path.join(homeDir, "sessions", "cloud"),
           target: "/sessions",
           readonly: false,
         },
         {
-          source: path.join(aihubHome, "ipc", "cloud"),
+          source: path.join(homeDir, "ipc", "cloud"),
           target: "/workspace/ipc",
           readonly: false,
         },
@@ -128,7 +128,7 @@ describe("buildVolumeMounts", () => {
       model: { provider: "anthropic", model: "claude" },
       sandbox: { workspaceWritable: true },
     });
-    const mounts = buildVolumeMounts(agent, {}, path.join(root, "aihub"));
+    const mounts = buildVolumeMounts(agent, {}, path.join(root, "yoplai"));
 
     expect(mounts[0]).toEqual({
       source: workspace,
@@ -140,7 +140,7 @@ describe("buildVolumeMounts", () => {
   it("adds a read-only uploads mount for a session", () => {
     const root = tmpDir();
     const workspace = path.join(root, "workspace");
-    const aihubHome = path.join(root, "aihub");
+    const homeDir = path.join(root, "yoplai");
     fs.mkdirSync(workspace, { recursive: true });
 
     const agent = AgentConfigSchema.parse({
@@ -153,7 +153,7 @@ describe("buildVolumeMounts", () => {
     const mounts = buildVolumeMounts(
       agent,
       {},
-      aihubHome,
+      homeDir,
       undefined,
       undefined,
       "session-1"
@@ -162,14 +162,14 @@ describe("buildVolumeMounts", () => {
     expect(mounts).toEqual(
       expect.arrayContaining<ContainerVolumeMount>([
         {
-          source: getSessionUploadsDir(aihubHome, "agent", "session-1"),
+          source: getSessionUploadsDir(homeDir, "agent", "session-1"),
           target: "/workspace/uploads",
           readonly: true,
         },
       ])
     );
     expect(
-      fs.existsSync(getSessionUploadsDir(aihubHome, "agent", "session-1"))
+      fs.existsSync(getSessionUploadsDir(homeDir, "agent", "session-1"))
     ).toBe(true);
   });
 });
@@ -258,7 +258,7 @@ describe("buildContainerArgs", () => {
       },
     });
     const globalSandbox = GlobalSandboxConfigSchema.parse({
-      network: { name: "aihub-agents" },
+      network: { name: "yoplai-agents" },
     });
     const onecliConfig = {
       enabled: true,
@@ -274,7 +274,7 @@ describe("buildContainerArgs", () => {
       agent,
       globalSandbox,
       mounts,
-      "/aihub",
+      "/yoplai",
       "user-1",
       onecliConfig
     );
@@ -282,7 +282,7 @@ describe("buildContainerArgs", () => {
     expect(args.slice(0, 3)).toEqual(["run", "-i", "--rm"]);
     expect(argValues(args, "--name")).toEqual([
       expect.stringMatching(
-        /^aihub-agent-cloud-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
+        /^yoplai-agent-cloud-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
       ),
     ]);
     expect(argValues(args, "--memory")).toEqual(["4g"]);
@@ -326,7 +326,7 @@ describe("buildContainerArgs", () => {
       agent,
       {},
       [],
-      "/aihub",
+      "/yoplai",
       undefined,
       undefined,
       {
@@ -349,14 +349,14 @@ describe("buildContainerArgs", () => {
     );
   });
 
-  it("does not pass AIHUB_HOME or per-agent .env secrets into sandbox env", () => {
+  it("does not pass YOPLAI_HOME or per-agent .env secrets into sandbox env", () => {
     const root = tmpDir();
-    const aihubHome = path.join(root, "aihub");
+    const homeDir = path.join(root, "yoplai");
     const workspace = path.join(root, "agents", "cloud");
     fs.mkdirSync(workspace, { recursive: true });
-    fs.mkdirSync(aihubHome, { recursive: true });
+    fs.mkdirSync(homeDir, { recursive: true });
     fs.writeFileSync(
-      path.join(aihubHome, ".env"),
+      path.join(homeDir, ".env"),
       "GLOBAL_SECRET=home-secret\n"
     );
     fs.writeFileSync(
@@ -371,12 +371,12 @@ describe("buildContainerArgs", () => {
       model: { provider: "anthropic", model: "claude" },
       sandbox: {},
     });
-    const mounts = buildVolumeMounts(agent, {}, aihubHome);
+    const mounts = buildVolumeMounts(agent, {}, homeDir);
     const args = buildContainerArgs(
       agent,
       {},
       mounts,
-      aihubHome,
+      homeDir,
       undefined,
       undefined,
       {
@@ -414,7 +414,7 @@ describe("buildContainerArgs", () => {
       sandbox: {},
     });
 
-    const args = buildContainerArgs(agent, {}, [], "/aihub");
+    const args = buildContainerArgs(agent, {}, [], "/yoplai");
 
     expect(argValues(args, "--env")).toEqual([
       "GATEWAY_URL=http://gateway:4000",

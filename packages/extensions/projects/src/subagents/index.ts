@@ -8,7 +8,7 @@ import {
   type ModelUsage,
   type OrchestratorSource,
   type SubagentGlobalListItem,
-} from "@aihub/shared";
+} from "@yoplai/shared";
 import { findProjectLocation } from "../projects/store.js";
 import { parseMarkdownFile } from "../taskboard/parser.js";
 import { dirExists } from "../util/fs.js";
@@ -136,7 +136,7 @@ function parseShellExecutionResult(text: string): {
 function emptyShellOutputDiagnostic(command: string): string {
   return [
     `No output captured for shell command: ${command}`,
-    "Hint: run `command -v aihub && aihub projects --version` before delegation, then retry (`aihub projects ...` or `pnpm aihub projects ...`).",
+    "Hint: run `command -v yoplai && yoplai projects --version` before delegation, then retry (`yoplai projects ...` or `pnpm yoplai projects ...`).",
   ].join("\n");
 }
 

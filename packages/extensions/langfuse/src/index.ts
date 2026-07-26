@@ -4,7 +4,7 @@ import {
   type AgentStreamEvent,
   type Extension,
   type ExtensionContext,
-} from "@aihub/shared";
+} from "@yoplai/shared";
 import { LangfuseTracer } from "./tracer.js";
 
 let tracer: LangfuseTracer | undefined;

@@ -4,21 +4,21 @@ import os from "node:os";
 import path from "node:path";
 import { runConfigMigrateCommand, runConfigValidateCommand } from "./index.js";
 
-describe("aihub projects config commands", () => {
+describe("yoplai projects config commands", () => {
   let prevHome: string | undefined;
-  let prevAihubHome: string | undefined;
+  let prevHomeDir: string | undefined;
   let prevConfig: string | undefined;
   let tmpHome = "";
   let logSpy: ReturnType<typeof vi.spyOn>;
 
   beforeEach(async () => {
     prevHome = process.env.HOME;
-    prevAihubHome = process.env.AIHUB_HOME;
-    prevConfig = process.env.AIHUB_CONFIG;
-    tmpHome = await fs.mkdtemp(path.join(os.tmpdir(), "aihub-config-cli-"));
+    prevHomeDir = process.env.YOPLAI_HOME;
+    prevConfig = process.env.YOPLAI_CONFIG;
+    tmpHome = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-config-cli-"));
     process.env.HOME = tmpHome;
-    process.env.AIHUB_HOME = path.join(tmpHome, ".aihub");
-    delete process.env.AIHUB_CONFIG;
+    process.env.YOPLAI_HOME = path.join(tmpHome, ".yoplai");
+    delete process.env.YOPLAI_CONFIG;
     logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
   });
 
@@ -26,15 +26,15 @@ describe("aihub projects config commands", () => {
     logSpy.mockRestore();
     if (prevHome === undefined) delete process.env.HOME;
     else process.env.HOME = prevHome;
-    if (prevAihubHome === undefined) delete process.env.AIHUB_HOME;
-    else process.env.AIHUB_HOME = prevAihubHome;
-    if (prevConfig === undefined) delete process.env.AIHUB_CONFIG;
-    else process.env.AIHUB_CONFIG = prevConfig;
+    if (prevHomeDir === undefined) delete process.env.YOPLAI_HOME;
+    else process.env.YOPLAI_HOME = prevHomeDir;
+    if (prevConfig === undefined) delete process.env.YOPLAI_CONFIG;
+    else process.env.YOPLAI_CONFIG = prevConfig;
     await fs.rm(tmpHome, { recursive: true, force: true });
   });
 
   it("prints dry-run migration summary without writing", async () => {
-    const configPath = path.join(tmpHome, ".aihub", "aihub.json");
+    const configPath = path.join(tmpHome, ".yoplai", "yoplai.json");
     await fs.mkdir(path.dirname(configPath), { recursive: true });
     await fs.writeFile(
       configPath,
@@ -115,7 +115,7 @@ describe("aihub projects config commands", () => {
   });
 
   it("validates config through migrated v2 shape", async () => {
-    const configPath = path.join(tmpHome, ".aihub", "aihub.json");
+    const configPath = path.join(tmpHome, ".yoplai", "yoplai.json");
     await fs.mkdir(path.dirname(configPath), { recursive: true });
     await fs.writeFile(
       configPath,

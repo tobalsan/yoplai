@@ -3,22 +3,22 @@ import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import os from "node:os";
 import { randomUUID } from "node:crypto";
-import type { GatewayConfig } from "@aihub/shared";
+import type { GatewayConfig } from "@yoplai/shared";
 
 describe("createExtensionContext media helpers", () => {
   let tmpDir: string;
-  let prevAihubHome: string | undefined;
+  let prevHomeDir: string | undefined;
 
   beforeEach(async () => {
-    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "aihub-context-"));
-    prevAihubHome = process.env.AIHUB_HOME;
-    process.env.AIHUB_HOME = tmpDir;
+    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-context-"));
+    prevHomeDir = process.env.YOPLAI_HOME;
+    process.env.YOPLAI_HOME = tmpDir;
     vi.resetModules();
   });
 
   afterEach(async () => {
-    if (prevAihubHome === undefined) delete process.env.AIHUB_HOME;
-    else process.env.AIHUB_HOME = prevAihubHome;
+    if (prevHomeDir === undefined) delete process.env.YOPLAI_HOME;
+    else process.env.YOPLAI_HOME = prevHomeDir;
     await fs.rm(tmpDir, { recursive: true, force: true });
   });
 

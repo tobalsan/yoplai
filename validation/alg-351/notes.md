@@ -1,7 +1,7 @@
 # E2E Validation — ALG-351 (Rehome team edit to Edit-Agent page)
 
 - Branch/issue: alg-351-rehome-team-edit / ALG-351 (base: teams)
-- Temp home: ./.aihub-e2e (AIHUB_HOME)
+- Temp home: ./.yoplai-e2e (YOPLAI_HOME)
 - Gateway port: 4001 (4000 was in use), UI port: 3000
 - Admin bearer minted via `user token create` bootstrap path for a seeded superadmin
   (auth.db seed only — not this slice's data, per playbook §4).
@@ -9,7 +9,7 @@
 ## Tests run
 - pnpm test:web  -> 44 files / 370 passed
 - pnpm exec vitest run apps/web/src/pages/{EditAgent,AgentCatalog}.test.tsx -> 11 passed
-- pnpm --filter @aihub/shared build + pnpm build:web -> clean
+- pnpm --filter @yoplai/shared build + pnpm build:web -> clean
 
 ## Real-stack E2E (gateway 4001 + real APIs the page calls)
 The Edit-Agent Team-assignment section calls the exact admin fork APIs exercised below.
@@ -18,7 +18,7 @@ The Edit-Agent Team-assignment section calls the exact admin fork APIs exercised
 2. ASSIGN never-forked pool agent `sales` -> Red
    POST /api/admin/forks/assign {poolId:sales, teamId:Red}
    -> fork {sourcePoolId:sales, forkAgentId:fork__sales, teamId:Red}
-   -> fork folder created on disk: .aihub-e2e/forks/fork__sales/agent.yaml (id: fork__sales)
+   -> fork folder created on disk: .yoplai-e2e/forks/fork__sales/agent.yaml (id: fork__sales)
    (this is the page's never-forked path: assignPoolToTeam)  ✅ PASS
 3. REASSIGN forked agent `sales` Red -> Blue
    POST /api/admin/forks/sales/reassign {teamId:Blue}

@@ -5,8 +5,8 @@
     "moduleResolution": "bundler",
     "baseUrl": ".",
     "paths": {
-      "@aihub/shared": ["../../packages/shared/src/index.ts"],
-      "@aihub/shared/*": ["../../packages/shared/src/*"]
+      "@yoplai/shared": ["../../packages/shared/src/index.ts"],
+      "@yoplai/shared/*": ["../../packages/shared/src/*"]
     },
     "strict": true,
     "jsx": "preserve",

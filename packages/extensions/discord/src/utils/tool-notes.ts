@@ -12,7 +12,7 @@
 // Transport-agnostic: it decides *what* note text to show and *when* a batch is
 // due. The handler owns actually sending the batched message.
 
-import type { StreamEvent } from "@aihub/shared";
+import type { StreamEvent } from "@yoplai/shared";
 
 // Minimum wall-clock gap between two surfaced note batches. Keeps the chat from
 // being flooded while still feeling live. A long burst of tool calls coalesces

@@ -1,4 +1,4 @@
-import type { AgentConfig, SlackComponentConfig } from "@aihub/shared";
+import type { AgentConfig, SlackComponentConfig } from "@yoplai/shared";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -185,7 +185,7 @@ function getCommandHandler(
 
 describe("createSlackBot", () => {
   beforeEach(async () => {
-    dataDir = await fs.mkdtemp(path.join(os.tmpdir(), "aihub-slack-notes-"));
+    dataDir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-slack-notes-"));
     apps.length = 0;
     receivers.length = 0;
     streamHandlers.length = 0;

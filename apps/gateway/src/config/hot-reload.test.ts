@@ -7,7 +7,7 @@ const reloadConfig = vi.fn();
 const setLoadedConfig = vi.fn();
 let configPath = "";
 
-vi.mock("@aihub/extension-scheduler", () => ({
+vi.mock("@yoplai/extension-scheduler", () => ({
   getAgentJobsPath: (workspace: string) => path.join(workspace, "jobs.yaml"),
   getScheduler: () => ({ refreshFromDisk: vi.fn() }),
   hasSchedulerContext: () => false,
@@ -32,8 +32,8 @@ describe("startGatewayHotReload", () => {
     vi.useFakeTimers();
     vi.clearAllMocks();
     resolveStartupConfig.mockImplementation(async (config) => config);
-    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "aihub-hot-reload-"));
-    configPath = path.join(tmpDir, "aihub.json");
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "yoplai-hot-reload-"));
+    configPath = path.join(tmpDir, "yoplai.json");
     fs.writeFileSync(configPath, "{}");
   });
 

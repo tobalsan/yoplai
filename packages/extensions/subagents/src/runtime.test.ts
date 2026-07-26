@@ -60,7 +60,7 @@ async function writeRun(
 
 describe("subagent runtime logs", () => {
   beforeEach(async () => {
-    tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "aihub-subagents-"));
+    tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-subagents-"));
   });
 
   afterEach(async () => {
@@ -174,8 +174,15 @@ describe("subagent runtime logs", () => {
   });
 
   it("filters cwd with home expansion", async () => {
+    const homeRoot = await fs.mkdtemp(
+      path.join(os.tmpdir(), "yoplai-subagents-home-root-")
+    );
+    const previousHome = process.env.HOME;
+    const previousUserProfile = process.env.USERPROFILE;
+    process.env.HOME = homeRoot;
+    process.env.USERPROFILE = homeRoot;
     const homeDir = await fs.mkdtemp(
-      path.join(os.homedir(), ".aihub-subagents-home-")
+      path.join(os.homedir(), ".yoplai-subagents-home-")
     );
     try {
       const cwd = path.join(homeDir, "home-run");
@@ -189,7 +196,11 @@ describe("subagent runtime logs", () => {
 
       expect(runs.map((run) => run.id)).toEqual(["run-home"]);
     } finally {
-      await fs.rm(homeDir, { recursive: true, force: true });
+      if (previousHome === undefined) delete process.env.HOME;
+      else process.env.HOME = previousHome;
+      if (previousUserProfile === undefined) delete process.env.USERPROFILE;
+      else process.env.USERPROFILE = previousUserProfile;
+      await fs.rm(homeRoot, { recursive: true, force: true });
     }
   });
 

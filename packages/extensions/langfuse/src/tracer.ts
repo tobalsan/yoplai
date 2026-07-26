@@ -1,6 +1,6 @@
 import Langfuse from "langfuse";
 
-import type { AgentHistoryEvent, AgentStreamEvent } from "@aihub/shared";
+import type { AgentHistoryEvent, AgentStreamEvent } from "@yoplai/shared";
 import type { GenerationState, SpanState, TraceState } from "./types.js";
 
 const IDLE_CLEANUP_INTERVAL_MS = 5 * 60 * 1000;
@@ -217,7 +217,7 @@ export class LangfuseTracer {
     }
 
     const surface = toSurface(event);
-    const traceName = event.trace?.name ?? `aihub:${surface}:${event.agentId}`;
+    const traceName = event.trace?.name ?? `yoplai:${surface}:${event.agentId}`;
 
     const trace = this.langfuse.trace({
       name: traceName,

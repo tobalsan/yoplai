@@ -1,7 +1,7 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { resolveHomeDir } from "../config-path.js";
+import { expandHomePlaceholder, resolveHomeDir } from "../config-path.js";
 import type { SystemFileEntry } from "../types.js";
 
 export type ResolvedSystemFile = { path: string; absolutePath: string; content: string };
@@ -25,7 +25,7 @@ function normalizeEntry(entry: SystemFileEntry): { filePath: string; required?: 
 function expandPath(filePath: string, workspaceDir: string): string {
   const expanded = filePath.startsWith("~")
     ? path.join(os.homedir(), filePath.slice(1))
-    : filePath.replace(/^\$AIHUB_HOME(?=\/|$)/, resolveHomeDir());
+    : expandHomePlaceholder(filePath, resolveHomeDir());
   return path.isAbsolute(expanded)
     ? path.normalize(expanded)
     : path.resolve(workspaceDir, expanded);

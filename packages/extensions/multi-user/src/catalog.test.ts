@@ -39,7 +39,7 @@ const staff = (id: string): CatalogUser => ({ id, isStaff: true });
 const member = (id: string): CatalogUser => ({ id, isStaff: false });
 
 beforeEach(() => {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), "aihub-catalog-"));
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "yoplai-catalog-"));
   tempDirs.push(home);
   poolDir = path.join(home, "pool");
   forksDir = path.join(home, "agents");

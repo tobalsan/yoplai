@@ -1,4 +1,4 @@
-import type { Extension, GatewayConfig } from "@aihub/shared";
+import { readEnv, type Extension, type GatewayConfig } from "@yoplai/shared";
 import {
   loadConfig,
   getAgent,
@@ -63,7 +63,7 @@ export async function startGatewayCommand(
   }
 
   if (opts.dev) {
-    process.env.AIHUB_DEV = "1";
+    process.env.YOPLAI_DEV = "1";
   }
 
   for (const extension of extensions) {
@@ -72,8 +72,9 @@ export async function startGatewayCommand(
 
   const port = opts.port ? parseInt(opts.port, 10) : undefined;
   const actualPort = port ?? config.gateway?.port ?? 4000;
-  const uiPort = process.env.AIHUB_UI_PORT
-    ? parseInt(process.env.AIHUB_UI_PORT, 10)
+  const envUiPort = readEnv("UI_PORT");
+  const uiPort = envUiPort
+    ? parseInt(envUiPort, 10)
     : (config.ui?.port ?? 3000);
   const runtimeConfig = {
     ...config,

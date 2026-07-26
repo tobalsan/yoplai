@@ -1,11 +1,11 @@
 import { readFileSync, existsSync, statSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import type { AgentConfig, Extension, GatewayConfig } from "@aihub/shared";
+import type { AgentConfig, Extension, GatewayConfig } from "@yoplai/shared";
 import {
   discoverExternalExtensions,
   resolveAgentConfigRoute,
-} from "@aihub/shared";
+} from "@yoplai/shared";
 import {
   getBuiltInExtensionRegistrations,
   getExternalExtensionsPath,
@@ -19,7 +19,7 @@ const MAX_PACKAGE_ROOT_WALK = 8;
 
 /**
  * Best-effort resolution of a built-in extension's package directory, used
- * only for icon lookup. The `@aihub/extension-*` packages are ESM-only (their
+ * only for icon lookup. The `@yoplai/extension-*` packages are ESM-only (their
  * `exports` map has no `require`/`default` condition), so we resolve via
  * `import.meta.resolve` rather than CJS `require.resolve`. The resolved entry
  * point can land under `dist/` (default conditions) or `src/` (dev

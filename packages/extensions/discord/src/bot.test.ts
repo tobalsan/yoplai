@@ -18,11 +18,11 @@ import type {
   DiscordComponentConfig,
   DiscordConfig,
   ExtensionContext,
-} from "@aihub/shared";
+} from "@yoplai/shared";
 
 const extensionEventEmitter = new EventEmitter();
 const mockRunAgent = vi.fn();
-const mockGetDataDir = vi.fn(() => "/tmp/aihub-discord-test");
+const mockGetDataDir = vi.fn(() => "/tmp/yoplai-discord-test");
 const mockGetSessionEntry = vi.fn(() =>
   Promise.resolve({ sessionId: "test-session", updatedAt: Date.now() })
 );
@@ -1767,7 +1767,7 @@ describe("Discord component bot", () => {
   });
 
   it("spawns one bound session per subscribed agent when a forum thread is created", async () => {
-    const dataDir = await fs.mkdtemp(path.join(os.tmpdir(), "aihub-discord-forum-"));
+    const dataDir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-discord-forum-"));
     mockGetDataDir.mockReturnValue(dataDir);
 
     const alpha = createTestAgent({ forumChannels: ["forum-1"] });
@@ -1865,7 +1865,7 @@ describe("Discord component bot", () => {
   });
 
   it("resumes a bound session when a forum thread receives a reply", async () => {
-    const dataDir = await fs.mkdtemp(path.join(os.tmpdir(), "aihub-discord-forum-"));
+    const dataDir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-discord-forum-"));
     mockGetDataDir.mockReturnValue(dataDir);
 
     const alpha = createTestAgent({ forumChannels: ["forum-1"] });
@@ -1931,7 +1931,7 @@ describe("Discord component bot", () => {
   });
 
   it("does not auto-deliver final text after a discord tool posts to the bound forum thread", async () => {
-    const dataDir = await fs.mkdtemp(path.join(os.tmpdir(), "aihub-discord-forum-"));
+    const dataDir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-discord-forum-"));
     mockGetDataDir.mockReturnValue(dataDir);
 
     const alpha = createTestAgent({ forumChannels: ["forum-1"] });
@@ -2015,7 +2015,7 @@ describe("Discord component bot", () => {
   });
 
   it("resumes a bound forum thread even when channel enrichment fails", async () => {
-    const dataDir = await fs.mkdtemp(path.join(os.tmpdir(), "aihub-discord-forum-"));
+    const dataDir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-discord-forum-"));
     mockGetDataDir.mockReturnValue(dataDir);
 
     const alpha = createTestAgent({ forumChannels: ["forum-1"] });
@@ -2064,7 +2064,7 @@ describe("Discord component bot", () => {
   });
 
   it("ignores bot and webhook messages in bound forum threads", async () => {
-    const dataDir = await fs.mkdtemp(path.join(os.tmpdir(), "aihub-discord-forum-"));
+    const dataDir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-discord-forum-"));
     mockGetDataDir.mockReturnValue(dataDir);
 
     const alpha = createTestAgent({ forumChannels: ["forum-1"] });
@@ -2115,7 +2115,7 @@ describe("Discord component bot", () => {
   });
 
   it("falls back to the forum opening path when a thread reply has no binding", async () => {
-    const dataDir = await fs.mkdtemp(path.join(os.tmpdir(), "aihub-discord-forum-"));
+    const dataDir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-discord-forum-"));
     mockGetDataDir.mockReturnValue(dataDir);
 
     const alpha = createTestAgent({ forumChannels: ["forum-1"] });
@@ -2179,7 +2179,7 @@ describe("Discord component bot", () => {
   });
 
   it("does not start duplicate fallback openings for rapid unbound thread replies", async () => {
-    const dataDir = await fs.mkdtemp(path.join(os.tmpdir(), "aihub-discord-forum-"));
+    const dataDir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-discord-forum-"));
     mockGetDataDir.mockReturnValue(dataDir);
 
     const alpha = createTestAgent({ forumChannels: ["forum-1"] });

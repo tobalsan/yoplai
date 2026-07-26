@@ -31,7 +31,7 @@ function writePoolAgent(id: string): PoolAgentRef {
 }
 
 beforeEach(() => {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), "aihub-access-"));
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "yoplai-access-"));
   tempDirs.push(home);
   poolDir = path.join(home, "pool");
   forksDir = path.join(home, "agents");

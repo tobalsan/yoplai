@@ -34,6 +34,12 @@ function stateOf(status: OAuthStatus | undefined): ConnectionState {
 const PROVIDER = "google";
 const PROVIDER_LABEL = "Google Drive";
 
+// The OAuth popup posts "yoplai-oauth", but a SPA left open across a gateway
+// upgrade may still be running old listener code while a new gateway serves
+// the popup (or vice versa), so accept the legacy "aihub-oauth" type too.
+// Do not remove until that version-skew window is no longer a concern.
+const OAUTH_POPUP_MESSAGE_TYPES = new Set(["yoplai-oauth", "aihub-oauth"]);
+
 async function fetchOAuthStatus(
   agentId: string,
   provider = PROVIDER
@@ -88,7 +94,7 @@ function OAuthConnectCard(props: { agentId: () => string }): ReturnType<Componen
       if (
         event.data &&
         typeof event.data === "object" &&
-        event.data.type === "aihub-oauth"
+        OAUTH_POPUP_MESSAGE_TYPES.has(event.data.type)
       ) {
         void refreshStatus();
       }
@@ -106,7 +112,7 @@ function OAuthConnectCard(props: { agentId: () => string }): ReturnType<Componen
     const agentId = props.agentId();
     if (!agentId) return;
     const url = `/api/oauth/${PROVIDER}/authorize?agent=${encodeURIComponent(agentId)}`;
-    window.open(url, "aihub-oauth", "width=520,height=640");
+    window.open(url, "yoplai-oauth", "width=520,height=640");
   };
 
   const disconnect = async () => {

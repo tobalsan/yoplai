@@ -7,7 +7,7 @@ import { TokenCipher } from "./crypto.js";
  *
  * The secret follows the same `$env:` contract as every other operator secret:
  * `oauth.encryptionKey: "$env:OAUTH_ENCRYPTION_KEY"` resolves the value
- * from the environment (loaded from `$AIHUB_HOME/.env` or the process env).
+ * from the environment (loaded from `$YOPLAI_HOME/.env` or the process env).
  *
  * When no secret is configured, returns `undefined` and logs a one-time warning.
  * The connection store treats a missing cipher as fail-closed: it can still read

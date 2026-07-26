@@ -1,6 +1,7 @@
 import crypto from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
+import { expandHomePlaceholder } from "@yoplai/shared";
 import type { ProjectDescriptor } from "../types.js";
 
 export class InvalidProjectsError extends Error {
@@ -12,8 +13,8 @@ export class InvalidProjectsError extends Error {
 function expandProjectPath(raw: string, dataDir: string): string {
   const value = raw.trim();
   if (!value) return value;
-  if (value === "$AIHUB_HOME") return dataDir;
-  if (value.startsWith("$AIHUB_HOME/")) return path.join(dataDir, value.slice("$AIHUB_HOME/".length));
+  const expanded = expandHomePlaceholder(value, dataDir);
+  if (expanded !== value) return expanded;
   if (value.startsWith("~")) return path.join(process.env.HOME ?? "", value.slice(1));
   return path.isAbsolute(value) ? value : path.join(dataDir, value);
 }

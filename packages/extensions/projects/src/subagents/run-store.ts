@@ -1,7 +1,7 @@
 import { execSync } from "node:child_process";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
-import type { OrchestratorSource } from "@aihub/shared";
+import type { OrchestratorSource } from "@yoplai/shared";
 import { dirExists } from "../util/fs.js";
 import { migrateLegacySessions } from "./migrate.js";
 

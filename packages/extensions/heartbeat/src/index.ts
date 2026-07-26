@@ -2,7 +2,7 @@ import {
   HeartbeatExtensionConfigSchema,
   type Extension,
   type ExtensionContext,
-} from "@aihub/shared";
+} from "@yoplai/shared";
 import type { Hono } from "hono";
 import {
   areHeartbeatsEnabled,

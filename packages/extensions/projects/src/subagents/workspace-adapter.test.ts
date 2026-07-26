@@ -1,7 +1,7 @@
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
-import type { GatewayConfig } from "@aihub/shared";
+import type { GatewayConfig } from "@yoplai/shared";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   getSubagentWorkspaceAdapter,
@@ -16,7 +16,7 @@ describe("SubagentWorkspaceAdapter", () => {
 
   beforeEach(async () => {
     tmpDir = await fs.mkdtemp(
-      path.join(os.tmpdir(), "aihub-workspace-adapter-")
+      path.join(os.tmpdir(), "yoplai-workspace-adapter-")
     );
     projectDir = path.join(tmpDir, "projects", "PRO-1");
     repoDir = path.join(tmpDir, "repo");

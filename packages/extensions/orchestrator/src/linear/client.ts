@@ -86,7 +86,7 @@ export class LinearClient {
 
   async pollIssues(input: { projectSlug: string; activeStates: string[] }): Promise<LinearIssue[]> {
     const data = await this.graphql<{ issues: { nodes: Array<any> } }>(
-      `query AihubPoll($projectSlug: String!, $states: [String!]) { issues(filter: { project: { slugId: { eq: $projectSlug } }, state: { name: { in: $states } } }) { nodes { id identifier title description url state { name } labels { nodes { name } } inverseRelations { nodes { type issue { id identifier state { name } } } } project { name slugId } parent { id } } } }`,
+      `query YoplaiPoll($projectSlug: String!, $states: [String!]) { issues(filter: { project: { slugId: { eq: $projectSlug } }, state: { name: { in: $states } } }) { nodes { id identifier title description url state { name } labels { nodes { name } } inverseRelations { nodes { type issue { id identifier state { name } } } } project { name slugId } parent { id } } } }`,
       { projectSlug: input.projectSlug, states: input.activeStates }
     );
     return data.issues.nodes.map((node) => this.mapIssue(node));
@@ -98,7 +98,7 @@ export class LinearClient {
 
   async findProjectByName(name: string): Promise<{ id: string; name: string; slugId: string } | undefined> {
     const data = await this.graphql<{ projects: { nodes: Array<{ id: string; name: string; slugId: string }> } }>(
-      `query AihubProjectByName($name: String!) { projects(filter: { name: { eq: $name } }, first: 1) { nodes { id name slugId } } }`,
+      `query YoplaiProjectByName($name: String!) { projects(filter: { name: { eq: $name } }, first: 1) { nodes { id name slugId } } }`,
       { name }
     );
     return data.projects.nodes[0];
@@ -106,7 +106,7 @@ export class LinearClient {
 
   async createProject(input: { name: string; teamIds: string[] }): Promise<{ id: string; name: string; slugId: string }> {
     const data = await this.graphql<{ projectCreate: { success: boolean; project: { id: string; name: string; slugId: string } } }>(
-      `mutation AihubProjectCreate($input: ProjectCreateInput!) { projectCreate(input: $input) { success project { id name slugId } } }`,
+      `mutation YoplaiProjectCreate($input: ProjectCreateInput!) { projectCreate(input: $input) { success project { id name slugId } } }`,
       { input }
     );
     if (!data.projectCreate.success) throw new Error(`Linear project creation failed: ${input.name}`);
@@ -115,7 +115,7 @@ export class LinearClient {
 
   async deleteProject(id: string): Promise<void> {
     const data = await this.graphql<{ projectDelete: { success: boolean } }>(
-      `mutation AihubProjectDelete($id: String!) { projectDelete(id: $id) { success } }`,
+      `mutation YoplaiProjectDelete($id: String!) { projectDelete(id: $id) { success } }`,
       { id }
     );
     if (!data.projectDelete.success) throw new Error(`Linear project deletion failed: ${id}`);
@@ -123,7 +123,7 @@ export class LinearClient {
 
   async inferProjectTeamIds(): Promise<string[]> {
     const data = await this.graphql<{ teams: { nodes: Array<{ id: string; name: string; key: string; archivedAt?: string | null }> } }>(
-      `query AihubProjectTeams { teams(first: 100) { nodes { id name key archivedAt } } }`
+      `query YoplaiProjectTeams { teams(first: 100) { nodes { id name key archivedAt } } }`
     );
     const teams = data.teams.nodes.filter((team) => !team.archivedAt);
     const envTeamId = process.env.LINEAR_TEAM_ID?.trim();
@@ -147,27 +147,27 @@ export class LinearClient {
     const issueFields = `id identifier title description url state { name } labels { nodes { name } } inverseRelations { nodes { type issue { id identifier state { name } } } } project { name slugId } parent { id }`;
     if (/^[A-Z][A-Z0-9]*-\d+$/.test(idOrIdentifier)) {
       const data = await this.graphql<{ issues: { nodes: Array<any> } }>(
-        `query AihubIssueByIdentifier($identifier: String!) { issues(filter: { identifier: { eq: $identifier } }, first: 1) { nodes { ${issueFields} } } }`,
+        `query YoplaiIssueByIdentifier($identifier: String!) { issues(filter: { identifier: { eq: $identifier } }, first: 1) { nodes { ${issueFields} } } }`,
         { identifier: idOrIdentifier }
       );
       const [node] = data.issues.nodes;
       return node ? this.mapIssue(node) : undefined;
     }
-    const data = await this.graphql<{ issue: any | null }>(`query AihubIssueById($id: String!) { issue(id: $id) { ${issueFields} } }`, { id: idOrIdentifier });
+    const data = await this.graphql<{ issue: any | null }>(`query YoplaiIssueById($id: String!) { issue(id: $id) { ${issueFields} } }`, { id: idOrIdentifier });
     return data.issue ? this.mapIssue(data.issue) : undefined;
   }
 
   commentCreate(issueId: string, body: string) {
-    return this.graphql(`mutation AihubComment($issueId: String!, $body: String!) { commentCreate(input: { issueId: $issueId, body: $body }) { success } }`, { issueId, body });
+    return this.graphql(`mutation YoplaiComment($issueId: String!, $body: String!) { commentCreate(input: { issueId: $issueId, body: $body }) { success } }`, { issueId, body });
   }
 
   issueUpdate(issueId: string, input: Record<string, unknown>) {
-    return this.graphql(`mutation AihubIssueUpdate($id: String!, $input: IssueUpdateInput!) { issueUpdate(id: $id, input: $input) { success } }`, { id: issueId, input });
+    return this.graphql(`mutation YoplaiIssueUpdate($id: String!, $input: IssueUpdateInput!) { issueUpdate(id: $id, input: $input) { success } }`, { id: issueId, input });
   }
 
   async issueUpdateStateByName(issueId: string, stateName: string) {
     const data = await this.graphql<{ issue: { team: { states: { nodes: Array<{ id: string; name: string }> } } } }>(
-      `query AihubIssueStates($id: String!) { issue(id: $id) { team { states { nodes { id name } } } } }`,
+      `query YoplaiIssueStates($id: String!) { issue(id: $id) { team { states { nodes { id name } } } } }`,
       { id: issueId }
     );
     const state = data.issue.team.states.nodes.find((node) => node.name === stateName);

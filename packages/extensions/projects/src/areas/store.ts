@@ -1,7 +1,7 @@
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import yaml from "js-yaml";
-import { AreaSchema, type Area, type GatewayConfig } from "@aihub/shared";
+import { AreaSchema, type Area, type GatewayConfig } from "@yoplai/shared";
 import { parseMarkdownFile } from "../taskboard/parser.js";
 import { getProjectsRoot } from "../util/paths.js";
 
@@ -13,10 +13,10 @@ type DefaultArea = Required<
 
 const DEFAULT_AREAS: DefaultArea[] = [
   {
-    id: "aihub",
-    title: "AIHub",
+    id: "yoplai",
+    title: "Yoplai",
     color: "#3b8ecc",
-    repo: "~/code/aihub",
+    repo: "~/code/yoplai",
     order: 1,
   },
   {
@@ -67,7 +67,7 @@ function formatMarkdown(
 }
 
 function inferAreaFromProjectDir(dirName: string): string | null {
-  const match = dirName.match(/^PRO-\d+_(aihub|ranksource|cloudifai)_/i);
+  const match = dirName.match(/^PRO-\d+_(yoplai|ranksource|cloudifai)_/i);
   return match?.[1]?.toLowerCase() ?? null;
 }
 

@@ -1,4 +1,4 @@
-import type { LeadSessionChangedEvent, SubagentRunStatus } from "@aihub/shared/types";
+import type { LeadSessionChangedEvent, SubagentRunStatus } from "@yoplai/shared/types";
 import type { ActiveTurn } from "./agents";
 import { dispatchWsEvent, wsDebug, type WsStreamEvent } from "./ws";
 import {

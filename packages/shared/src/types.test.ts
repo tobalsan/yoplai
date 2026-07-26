@@ -157,7 +157,7 @@ describe("sandbox config schemas", () => {
 
     expect(result.sandbox).toMatchObject({
       enabled: false,
-      image: "aihub-agent:latest",
+      image: "yoplai-agent:latest",
       memory: "2g",
       cpus: 1,
       idleTimeout: 300,
@@ -201,7 +201,7 @@ describe("sandbox config schemas", () => {
     });
 
     expect(result.sandbox?.network).toEqual({
-      name: "aihub-agents",
+      name: "yoplai-agents",
       internal: true,
     });
     expect(result.sandbox?.mountAllowlist?.blockedPatterns).toEqual([

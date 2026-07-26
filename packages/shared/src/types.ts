@@ -89,10 +89,10 @@ export const DiscordConfigSchema = z.object({
   replyToMode: z.enum(["off", "all", "first"]).default("off"),
   mentionPatterns: z.array(z.string()).optional(),
 
-  // AIHub-only: broadcast main-session responses to a Discord channel
+  // Yoplai-only: broadcast main-session responses to a Discord channel
   broadcastToChannel: z.string().optional(),
 
-  // AIHub-only: Discord forum channels this agent subscribes to.
+  // Yoplai-only: Discord forum channels this agent subscribes to.
   forumChannels: z.array(z.string().min(1)).optional(),
 
   // Opt-in tool-call visibility (ALG-292): surface the agent's tool calls as
@@ -151,7 +151,7 @@ export type SandboxMount = z.infer<typeof SandboxMountSchema>;
 export const AgentSandboxConfigSchema = z
   .object({
     enabled: z.boolean().optional().default(false),
-    image: z.string().optional().default("aihub-agent:latest"),
+    image: z.string().optional().default("yoplai-agent:latest"),
     network: z.string().optional(),
     memory: z.string().optional().default("2g"),
     cpus: z.number().optional().default(1),
@@ -854,7 +854,7 @@ export const MountAllowlistSchema = z.object({
 export type MountAllowlist = z.infer<typeof MountAllowlistSchema>;
 
 export const SandboxNetworkSchema = z.object({
-  name: z.string().optional().default("aihub-agents"),
+  name: z.string().optional().default("yoplai-agents"),
   internal: z.boolean().optional().default(true),
 });
 export type SandboxNetwork = z.infer<typeof SandboxNetworkSchema>;

@@ -1,7 +1,7 @@
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
-import type { AgentConfig } from "@aihub/shared";
+import type { AgentConfig } from "@yoplai/shared";
 
 export type WebhookSecrets = Record<string, string>;
 

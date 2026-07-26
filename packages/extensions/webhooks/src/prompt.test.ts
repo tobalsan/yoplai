@@ -13,7 +13,7 @@ describe("webhook prompts", () => {
 
   it("reads md and txt prompts relative to workspace", async () => {
     const workspace = await fs.mkdtemp(
-      path.join(os.tmpdir(), "aihub-webhook-prompt-")
+      path.join(os.tmpdir(), "yoplai-webhook-prompt-")
     );
     await fs.mkdir(path.join(workspace, "webhooks"));
     await fs.writeFile(
@@ -29,7 +29,7 @@ describe("webhook prompts", () => {
 
   it("rejects prompt files outside the workspace", async () => {
     const parent = await fs.mkdtemp(
-      path.join(os.tmpdir(), "aihub-webhook-prompt-")
+      path.join(os.tmpdir(), "yoplai-webhook-prompt-")
     );
     const workspace = path.join(parent, "workspace");
     await fs.mkdir(workspace);

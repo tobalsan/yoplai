@@ -14,7 +14,7 @@ describe("projects store", () => {
   let warnings: string[];
 
   beforeEach(async () => {
-    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "aihub-projects-store-"));
+    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-projects-store-"));
     projectsRoot = path.join(tmpDir, "projects");
 
     prevHome = process.env.HOME;
@@ -33,7 +33,7 @@ describe("projects store", () => {
         agents: [],
         extensions: { projects: { enabled: true, root: projectsRoot } },
       }),
-      getDataDir: () => path.join(tmpDir, ".aihub"),
+      getDataDir: () => path.join(tmpDir, ".yoplai"),
       getAgents: () => [],
       getAgent: () => undefined,
       isAgentActive: () => true,
@@ -121,7 +121,7 @@ describe("projects store", () => {
     expect(thread).toContain("project: PRO-1");
 
     const stateRaw = await fs.readFile(
-      path.join(tmpDir, ".aihub", "projects.json"),
+      path.join(tmpDir, ".yoplai", "projects.json"),
       "utf8"
     );
     expect(JSON.parse(stateRaw)).toEqual({ lastId: 2 });
@@ -165,7 +165,7 @@ describe("projects store", () => {
     expect(first.data.docs.PITCH).toBe("Legacy body\n");
     expect(second.data.docs.PITCH).toBe("Legacy body\n");
     expect(warnings).toEqual([
-      "Project PRO-42 is missing PITCH.md; using README.md body. Run: aihub projects pitch PRO-42 --from-readme",
+      "Project PRO-42 is missing PITCH.md; using README.md body. Run: yoplai projects pitch PRO-42 --from-readme",
     ]);
   });
 
@@ -492,13 +492,13 @@ describe("projects store", () => {
       projects: { root: projectsRoot },
     };
 
-    const repoPath = path.join(tmpDir, "code", "aihub");
+    const repoPath = path.join(tmpDir, "code", "yoplai");
     await createGitRepo(repoPath);
 
     await fs.mkdir(path.join(projectsRoot, ".areas"), { recursive: true });
     await fs.writeFile(
-      path.join(projectsRoot, ".areas", "aihub.yaml"),
-      'id: "aihub"\ntitle: "AIHub"\ncolor: "#3b8ecc"\nrepo: "~/code/aihub"\n',
+      path.join(projectsRoot, ".areas", "yoplai.yaml"),
+      'id: "yoplai"\ntitle: "Yoplai"\ncolor: "#3b8ecc"\nrepo: "~/code/yoplai"\n',
       "utf8"
     );
 
@@ -506,17 +506,17 @@ describe("projects store", () => {
     if (!created.ok) throw new Error(created.error);
 
     const withArea = await updateProject(config, created.data.id, {
-      area: "aihub",
+      area: "yoplai",
     });
     expect(withArea.ok).toBe(true);
     if (!withArea.ok) return;
-    expect(withArea.data.frontmatter.repo).toBe("~/code/aihub");
+    expect(withArea.data.frontmatter.repo).toBe("~/code/yoplai");
     expect(withArea.data.repoValid).toBe(true);
 
     const fetched = await getProject(config, created.data.id);
     expect(fetched.ok).toBe(true);
     if (!fetched.ok) return;
-    expect(fetched.data.frontmatter.repo).toBe("~/code/aihub");
+    expect(fetched.data.frontmatter.repo).toBe("~/code/yoplai");
     expect(fetched.data.repoValid).toBe(true);
 
     const withRepo = await updateProject(config, created.data.id, {

@@ -1,4 +1,4 @@
-import type { AgentContext } from "@aihub/shared";
+import type { AgentContext } from "@yoplai/shared";
 import { describe, it, expect } from "vitest";
 import { renderDiscordContext, buildDiscordContext, renderAgentContext } from "./context.js";
 

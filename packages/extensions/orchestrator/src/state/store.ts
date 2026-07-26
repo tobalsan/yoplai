@@ -3,6 +3,9 @@ import path from "node:path";
 import Database from "better-sqlite3";
 
 const PAYLOAD_PREVIEW_BYTES = 4096;
+// New event logs are written under ".yoplai/codex"; ".aihub/codex" is recognized so runs
+// logged before the rename can still be read back.
+const PROJECT_LOCAL_LOG_DIRS = [path.join(".yoplai", "codex"), path.join(".aihub", "codex")];
 
 function hasColumn(db: Database.Database, table: string, column: string): boolean {
   return (db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>).some((item) => item.name === column);
@@ -106,7 +109,7 @@ CREATE TABLE IF NOT EXISTS heartbeats (daemon_id TEXT PRIMARY KEY, pid INTEGER, 
   private appendJsonlEvent(input: { runId: string; projectId?: string; type: string; payload: unknown; createdAt: string }): { relativePath: string; offset: number; line: number } | undefined {
     const projectRoot = this.projectRootForRun(input.runId);
     if (!projectRoot) return undefined;
-    const relativePath = path.join(".aihub", "codex", `${timestampPrefix(input.runId, input.createdAt)}-${encodeRunPath(input.runId)}.jsonl`);
+    const relativePath = path.join(".yoplai", "codex", `${timestampPrefix(input.runId, input.createdAt)}-${encodeRunPath(input.runId)}.jsonl`);
     const absolutePath = path.join(projectRoot, relativePath);
     fs.mkdirSync(path.dirname(absolutePath), { recursive: true });
     const offset = fs.existsSync(absolutePath) ? fs.statSync(absolutePath).size : 0;
@@ -164,7 +167,8 @@ CREATE TABLE IF NOT EXISTS heartbeats (daemon_id TEXT PRIMARY KEY, pid INTEGER, 
 
   private resolveLogPath(runId: string, logPath: unknown): string | undefined {
     if (typeof logPath !== "string" || path.isAbsolute(logPath)) return undefined;
-    const isProjectLocalLog = logPath === path.join(".aihub", "codex") || logPath.startsWith(`${path.join(".aihub", "codex")}${path.sep}`);
+    // Rows written before the rename still point at the legacy ".aihub/codex" project-local dir.
+    const isProjectLocalLog = PROJECT_LOCAL_LOG_DIRS.some((dir) => logPath === dir || logPath.startsWith(`${dir}${path.sep}`));
     const projectRoot = isProjectLocalLog && runId ? this.projectRootForRun(runId) : undefined;
     if (projectRoot) {
       const projectPath = path.resolve(projectRoot, logPath);

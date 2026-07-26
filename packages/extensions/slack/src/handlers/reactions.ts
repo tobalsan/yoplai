@@ -1,4 +1,4 @@
-import type { SlackComponentConfig } from "@aihub/shared";
+import type { SlackComponentConfig } from "@yoplai/shared";
 import { matchesUserAllowlist } from "../utils/allowlist.js";
 
 export type ReactionData = {

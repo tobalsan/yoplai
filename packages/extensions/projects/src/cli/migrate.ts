@@ -1,5 +1,5 @@
 /**
- * aihub projects migrate-to-slices
+ * yoplai projects migrate-to-slices
  *
  * Idempotent command that walks the configured projects root and converts
  * legacy project layouts to the post-refactor slice model.
@@ -23,8 +23,8 @@
 import * as fs from "node:fs/promises";
 import * as net from "node:net";
 import * as path from "node:path";
-import type { GatewayConfig } from "@aihub/shared";
-import { resolveHomeDir } from "@aihub/shared";
+import type { GatewayConfig } from "@yoplai/shared";
+import { getDefaultConfigPath } from "@yoplai/shared";
 import { splitFrontmatter } from "../util/frontmatter.js";
 import { getProjectsRoot } from "../util/paths.js";
 import { regenerateScopeMap } from "../projects/slices.js";
@@ -370,7 +370,7 @@ async function moveOrRead(src: string, dst: string): Promise<string> {
 // ─── Config loading ───────────────────────────────────────────────────────────
 
 function getConfigPath(): string {
-  return path.join(resolveHomeDir(), "aihub.json");
+  return getDefaultConfigPath();
 }
 
 async function loadGatewayConfig(): Promise<GatewayConfig> {
@@ -390,7 +390,7 @@ async function loadGatewayConfig(): Promise<GatewayConfig> {
 // ─── Public API ───────────────────────────────────────────────────────────────
 
 export type MigrateOptions = {
-  /** Override AIHUB_HOME config path */
+  /** Override YOPLAI_HOME config path */
   config?: string;
   /** Skip gateway detection (for tests) */
   skipGatewayCheck?: boolean;
@@ -428,7 +428,7 @@ export async function runMigration(
     const running = await isGatewayRunning(config);
     if (running) {
       throw new Error(
-        "Gateway is running. Stop the gateway before migrating:\n  aihub gateway stop\nThen re-run: aihub projects migrate-to-slices"
+        "Gateway is running. Stop the gateway before migrating:\n  yoplai gateway stop\nThen re-run: yoplai projects migrate-to-slices"
       );
     }
   }

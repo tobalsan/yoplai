@@ -17,7 +17,7 @@ describe("projects tasks parser", () => {
   let prevUserProfile: string | undefined;
 
   beforeEach(async () => {
-    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "aihub-project-tasks-"));
+    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-project-tasks-"));
     projectsRoot = path.join(tmpDir, "projects");
     await fs.mkdir(projectsRoot, { recursive: true });
     prevHome = process.env.HOME;

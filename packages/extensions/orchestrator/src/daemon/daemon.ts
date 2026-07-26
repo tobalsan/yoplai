@@ -1,5 +1,5 @@
-import type { ExtensionContext, SubagentRuntimeProfile } from "@aihub/shared";
-import { notify } from "@aihub/shared";
+import type { ExtensionContext, SubagentRuntimeProfile } from "@yoplai/shared";
+import { notify } from "@yoplai/shared";
 import type { StateStore } from "../state/store.js";
 import type {
   TrackerConfig,
@@ -504,10 +504,10 @@ export class OrchestratorDaemon {
     projectId: string
   ): Record<string, string | undefined> {
     return {
-      AIHUB_PROJECT_ID: projectId,
-      AIHUB_ISSUE_ID: issue.id,
-      AIHUB_ISSUE_IDENTIFIER: issue.identifier,
-      AIHUB_WORKSPACE: workspace,
+      YOPLAI_PROJECT_ID: projectId,
+      YOPLAI_ISSUE_ID: issue.id,
+      YOPLAI_ISSUE_IDENTIFIER: issue.identifier,
+      YOPLAI_WORKSPACE: workspace,
       LINEAR_API_KEY: undefined,
       PLANE_API_KEY: undefined,
       PLANE_OAUTH_TOKEN: undefined,

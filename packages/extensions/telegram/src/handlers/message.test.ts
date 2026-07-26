@@ -1,4 +1,4 @@
-import { DEFAULT_MAIN_KEY, type AgentConfig } from "@aihub/shared";
+import { DEFAULT_MAIN_KEY, type AgentConfig } from "@yoplai/shared";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   handleTelegramMessage,

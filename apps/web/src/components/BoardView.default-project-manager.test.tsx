@@ -161,6 +161,19 @@ describe("BoardView default project manager", () => {
   });
 
   it("keeps a valid localStorage preference over the configured default", async () => {
+    localStorage.setItem("yoplai:board:selected-agent", "alpha");
+    const { container, dispose } = renderView();
+    await tick();
+    await tick();
+
+    expect(
+      container.querySelector<HTMLSelectElement>(".board-agent-select")?.value
+    ).toBe("alpha");
+
+    dispose();
+  });
+
+  it("adopts a selection stored under the legacy aihub key", async () => {
     localStorage.setItem("aihub:board:selected-agent", "alpha");
     const { container, dispose } = renderView();
     await tick();
@@ -169,6 +182,21 @@ describe("BoardView default project manager", () => {
     expect(
       container.querySelector<HTMLSelectElement>(".board-agent-select")?.value
     ).toBe("alpha");
+    expect(localStorage.getItem("yoplai:board:selected-agent")).toBe("alpha");
+
+    dispose();
+  });
+
+  it("keeps the new-key selection when a legacy key also exists", async () => {
+    localStorage.setItem("yoplai:board:selected-agent", "pom");
+    localStorage.setItem("aihub:board:selected-agent", "alpha");
+    const { container, dispose } = renderView();
+    await tick();
+    await tick();
+
+    expect(
+      container.querySelector<HTMLSelectElement>(".board-agent-select")?.value
+    ).toBe("pom");
 
     dispose();
   });

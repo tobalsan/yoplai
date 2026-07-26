@@ -1,5 +1,5 @@
 /**
- * Tests for aihub projects migrate-to-slices
+ * Tests for yoplai projects migrate-to-slices
  *
  * Covers one project per legacy status and golden assertions.
  */
@@ -85,10 +85,10 @@ describe("migrate-to-slices", () => {
   let configPath: string;
 
   beforeEach(async () => {
-    prevHome = process.env.AIHUB_HOME;
-    homeDir = await fs.mkdtemp(path.join(os.tmpdir(), "aihub-migrate-"));
+    prevHome = process.env.YOPLAI_HOME;
+    homeDir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-migrate-"));
     projectsRoot = path.join(homeDir, "projects");
-    configPath = path.join(homeDir, "aihub.json");
+    configPath = path.join(homeDir, "yoplai.json");
 
     await fs.mkdir(projectsRoot, { recursive: true });
     await fs.writeFile(
@@ -96,12 +96,12 @@ describe("migrate-to-slices", () => {
       JSON.stringify({ agents: [], projects: { root: projectsRoot } }),
       "utf8"
     );
-    process.env.AIHUB_HOME = homeDir;
+    process.env.YOPLAI_HOME = homeDir;
   });
 
   afterEach(async () => {
-    if (prevHome === undefined) delete process.env.AIHUB_HOME;
-    else process.env.AIHUB_HOME = prevHome;
+    if (prevHome === undefined) delete process.env.YOPLAI_HOME;
+    else process.env.YOPLAI_HOME = prevHome;
     await fs.rm(homeDir, { recursive: true, force: true });
     vi.restoreAllMocks();
   });

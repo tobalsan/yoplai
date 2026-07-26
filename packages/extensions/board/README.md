@@ -1,7 +1,7 @@
 # Board Extension
 
 The `board` extension adds the Board workspace API and shared scratchpad tools.
-It is built in, but it only loads when configured in `aihub.json`.
+It is built in, but it only loads when configured in `yoplai.json`.
 
 ## Minimal Config
 
@@ -15,22 +15,22 @@ Enable Board with defaults:
 }
 ```
 
-By default, Board stores user content in `$AIHUB_HOME`. The shared scratchpad
+By default, Board stores user content in `$YOPLAI_HOME`. The shared scratchpad
 file is:
 
 ```text
-$AIHUB_HOME/SCRATCHPAD.md
+$YOPLAI_HOME/SCRATCHPAD.md
 ```
 
 ## Custom Content Root
 
-Set `contentRoot` when Board content should live outside `$AIHUB_HOME`:
+Set `contentRoot` when Board content should live outside `$YOPLAI_HOME`:
 
 ```json
 {
   "extensions": {
     "board": {
-      "contentRoot": "~/aihub-board"
+      "contentRoot": "~/yoplai-board"
     }
   }
 }
@@ -39,7 +39,7 @@ Set `contentRoot` when Board content should live outside `$AIHUB_HOME`:
 Board will create the directory if needed and store:
 
 ```text
-~/aihub-board/SCRATCHPAD.md
+~/yoplai-board/SCRATCHPAD.md
 ```
 
 ## Home Route
@@ -90,7 +90,7 @@ Use `enabled: false` to keep config in place without loading the extension:
 {
   "extensions": {
     "board": {
-      "contentRoot": "~/aihub-board",
+      "contentRoot": "~/yoplai-board",
       "home": true
     }
   }
@@ -132,9 +132,9 @@ POST /api/board/canvas/:agentId
 
 `GET /api/board/projects?profile=true` adds an `X-Profile-Ms` header with
 handler wall time. Project scans are cached in memory with stale refresh; tune
-the defaults with `AIHUB_BOARD_PROJECTS_CACHE_TTL_MS`,
-`AIHUB_BOARD_REPO_WORKTREE_TTL_MS`, `AIHUB_BOARD_BRANCH_CACHE_TTL_MS`, and
-`AIHUB_BOARD_DIRTY_AHEAD_TTL_MS`.
+the defaults with `YOPLAI_BOARD_PROJECTS_CACHE_TTL_MS`,
+`YOPLAI_BOARD_REPO_WORKTREE_TTL_MS`, `YOPLAI_BOARD_BRANCH_CACHE_TTL_MS`, and
+`YOPLAI_BOARD_DIRTY_AHEAD_TTL_MS`.
 
 ## Agent Tools
 

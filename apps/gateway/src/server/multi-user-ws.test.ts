@@ -8,22 +8,22 @@ import { writeTestV3Config } from "../test-utils/v3-config.js";
 
 describe("gateway multi-user websocket auth", () => {
   let tmpDir: string;
-  let prevAihubHome: string | undefined;
+  let prevHomeDir: string | undefined;
   let prevHome: string | undefined;
   let prevUserProfile: string | undefined;
   let server: ReturnType<typeof import("./index.js").startServer>;
   let port: number;
 
   beforeAll(async () => {
-    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "aihub-ws-auth-"));
-    prevAihubHome = process.env.AIHUB_HOME;
+    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-ws-auth-"));
+    prevHomeDir = process.env.YOPLAI_HOME;
     prevHome = process.env.HOME;
     prevUserProfile = process.env.USERPROFILE;
-    process.env.AIHUB_HOME = path.join(tmpDir, ".aihub");
+    process.env.YOPLAI_HOME = path.join(tmpDir, ".yoplai");
     process.env.HOME = tmpDir;
     process.env.USERPROFILE = tmpDir;
 
-    await writeTestV3Config(path.join(tmpDir, ".aihub"), {
+    await writeTestV3Config(path.join(tmpDir, ".yoplai"), {
       agents: [{ id: "main", name: "Main" }],
       extensions: {
         multiUser: {
@@ -61,8 +61,8 @@ describe("gateway multi-user websocket auth", () => {
       await new Promise<void>((resolve) => server.close(() => resolve()));
     }
 
-    if (prevAihubHome === undefined) delete process.env.AIHUB_HOME;
-    else process.env.AIHUB_HOME = prevAihubHome;
+    if (prevHomeDir === undefined) delete process.env.YOPLAI_HOME;
+    else process.env.YOPLAI_HOME = prevHomeDir;
     if (prevHome === undefined) delete process.env.HOME;
     else process.env.HOME = prevHome;
     if (prevUserProfile === undefined) delete process.env.USERPROFILE;

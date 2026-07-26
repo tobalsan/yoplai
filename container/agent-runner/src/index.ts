@@ -9,7 +9,7 @@ import {
   type ContainerInput,
   type ContainerOutput,
   type ContainerRunnerProtocolEvent,
-} from "@aihub/shared";
+} from "@yoplai/shared";
 import { startIpcPoller, type IpcCleanup } from "./ipc.js";
 import { configureProxy, proxyClient } from "./proxy.js";
 import { abortActiveAgent, runAgent, sendFollowUpMessage } from "./runner.js";

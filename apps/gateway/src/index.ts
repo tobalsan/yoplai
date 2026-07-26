@@ -1,7 +1,7 @@
 export { startServer, app } from "./server/index.js";
 export { loadConfig, reloadConfig, getAgent, getAgents } from "./config/index.js";
 export { runAgent } from "./agents/index.js";
-export { startScheduler, stopScheduler, getScheduler } from "@aihub/extension-scheduler";
+export { startScheduler, stopScheduler, getScheduler } from "@yoplai/extension-scheduler";
 export {
   startAllHeartbeats,
   stopAllHeartbeats,
@@ -11,4 +11,4 @@ export {
   setHeartbeatsEnabled,
   areHeartbeatsEnabled,
   onHeartbeatEvent,
-} from "@aihub/extension-heartbeat";
+} from "@yoplai/extension-heartbeat";

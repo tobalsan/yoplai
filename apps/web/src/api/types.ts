@@ -24,7 +24,7 @@ import type {
   ThinkingBlock,
   TodoItem,
   ToolCallBlock,
-} from "@aihub/shared/types";
+} from "@yoplai/shared/types";
 export type {
   ContextEstimate,
   ContentBlock,

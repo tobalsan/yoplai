@@ -17,7 +17,7 @@ import type {
   ExtensionContext,
   HeartbeatConfig,
   HeartbeatEventPayload,
-} from "@aihub/shared";
+} from "@yoplai/shared";
 
 // Helper to create minimal agent config for testing
 function createAgent(heartbeat?: HeartbeatConfig): AgentConfig {

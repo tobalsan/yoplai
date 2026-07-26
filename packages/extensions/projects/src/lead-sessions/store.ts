@@ -5,7 +5,7 @@ import {
   LeadSessionSchema,
   type LeadSession,
   type GatewayConfig,
-} from "@aihub/shared";
+} from "@yoplai/shared";
 import { getProject } from "../projects/index.js";
 
 const INDEX_FILE = "lead-sessions.json";

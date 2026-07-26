@@ -1,11 +1,11 @@
 /**
- * `aihub eval run` subcommand.
+ * `yoplai eval run` subcommand.
  *
  * Headless single-turn agent invocation for Harbor evals. Reads an
  * instruction file, runs one agent turn, and writes result.json +
  * trajectory.json (ATIF) to the configured output paths.
  *
- * See docs/plans/harbor-evals-for-aihub-migration.md §2 for the contract.
+ * See docs/plans/harbor-evals-for-yoplai-migration.md §2 for the contract.
  */
 
 import { Command } from "commander";
@@ -38,7 +38,7 @@ export function registerEvalCommands(program: Command): void {
   evalCmd
     .command("run")
     .description("Run one agent turn against an instruction file")
-    .requiredOption("-a, --agent <id>", "Agent id from aihub.json")
+    .requiredOption("-a, --agent <id>", "Agent id from yoplai.json")
     .requiredOption(
       "-i, --instruction-file <path>",
       "Path to instruction text file"
@@ -53,14 +53,14 @@ export function registerEvalCommands(program: Command): void {
       "Where to write ATIF trajectory.json",
       "/logs/agent/trajectory.json"
     )
-    .option("-c, --config <path>", "Override aihub.json path")
+    .option("-c, --config <path>", "Override yoplai.json path")
     .option("-m, --model <id>", "Override the agent's configured model")
     .action(async (opts: EvalRunOpts) => {
-      // Honor --config by setting AIHUB_HOME's config path before loadConfig
-      // runs. loadConfig() reads $AIHUB_HOME/aihub.json by default; we set
-      // AIHUB_CONFIG (still respected as a fallback) for the override.
+      // Honor --config by setting YOPLAI_HOME's config path before loadConfig
+      // runs. loadConfig() reads $YOPLAI_HOME/yoplai.json by default; we set
+      // YOPLAI_CONFIG (still respected as a fallback) for the override.
       if (opts.config) {
-        process.env.AIHUB_CONFIG = path.resolve(opts.config);
+        process.env.YOPLAI_CONFIG = path.resolve(opts.config);
       }
 
       let instruction: string;

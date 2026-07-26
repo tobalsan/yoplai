@@ -5,7 +5,7 @@ import { GatewayConfigSchema, resolveAgentConfigRoute } from "../types.js";
 
 describe("tool extensions", () => {
   it("merges root and agent config, resolves env refs, and prefixes tools", async () => {
-    process.env.AIHUB_TEST_TOKEN = "secret";
+    process.env.YOPLAI_TEST_TOKEN = "secret";
     let receivedConfig: unknown;
     const extension = defineToolExtension({
       id: "sample",
@@ -48,7 +48,7 @@ describe("tool extensions", () => {
         },
       ],
       extensions: {
-        sample: { token: "$env:AIHUB_TEST_TOKEN", region: "us" },
+        sample: { token: "$env:YOPLAI_TEST_TOKEN", region: "us" },
       },
     });
 
@@ -70,12 +70,12 @@ describe("tool extensions", () => {
     expect(prompt).toEqual([
       "Use Sample when needed.",
       [
-        "AIHub exposes this extension's tools with these exact names:",
+        "Yoplai exposes this extension's tools with these exact names:",
         "- sample_ping: Ping",
       ].join("\n"),
     ]);
 
-    delete process.env.AIHUB_TEST_TOKEN;
+    delete process.env.YOPLAI_TEST_TOKEN;
   });
 
   it("does not enable tools from root config alone", async () => {

@@ -4,7 +4,7 @@ import * as path from "node:path";
 import os from "node:os";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import type { GatewayConfig } from "@aihub/shared";
+import type { GatewayConfig } from "@yoplai/shared";
 import {
   getProjectChanges,
   commitProjectChanges,
@@ -22,8 +22,8 @@ async function runGit(cwd: string, args: string[]): Promise<void> {
 async function createRepo(repoDir: string): Promise<void> {
   await fs.mkdir(repoDir, { recursive: true });
   await runGit(repoDir, ["init", "-b", "main"]);
-  await runGit(repoDir, ["config", "user.name", "AIHub Test"]);
-  await runGit(repoDir, ["config", "user.email", "test@aihub.local"]);
+  await runGit(repoDir, ["config", "user.name", "Yoplai Test"]);
+  await runGit(repoDir, ["config", "user.email", "test@yoplai.local"]);
   await fs.writeFile(path.join(repoDir, "README.md"), "hello\n", "utf8");
   await runGit(repoDir, ["add", "."]);
   await runGit(repoDir, ["commit", "-m", "init"]);
@@ -52,7 +52,7 @@ describe("projects git", () => {
   let config: GatewayConfig;
 
   beforeEach(async () => {
-    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "aihub-git-"));
+    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-git-"));
     projectsRoot = path.join(tmpDir, "projects");
     await fs.mkdir(projectsRoot, { recursive: true });
     config = {
@@ -182,7 +182,7 @@ describe("projects git", () => {
   it("builds PR compare target from origin remote", async () => {
     const repoDir = path.join(tmpDir, "repo");
     await createRepo(repoDir);
-    await runGit(repoDir, ["remote", "add", "origin", "git@github.com:acme/aihub.git"]);
+    await runGit(repoDir, ["remote", "add", "origin", "git@github.com:acme/yoplai.git"]);
 
     const projectDir = path.join(projectsRoot, "PRO-1_changes-test");
     await fs.mkdir(projectDir, { recursive: true });
@@ -198,7 +198,7 @@ describe("projects git", () => {
     expect(target.branch).toBe("space/PRO-1");
     expect(target.baseBranch).toBe("main");
     expect(target.compareUrl).toContain(
-      "https://github.com/acme/aihub/compare/main...space%2FPRO-1"
+      "https://github.com/acme/yoplai/compare/main...space%2FPRO-1"
     );
   }, GIT_TEST_TIMEOUT_MS);
 });

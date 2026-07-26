@@ -2,8 +2,8 @@ import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import { execFile, spawn } from "node:child_process";
 import { promisify } from "node:util";
-import type { GatewayConfig } from "@aihub/shared";
-import { expandPath } from "@aihub/shared";
+import type { GatewayConfig } from "@yoplai/shared";
+import { expandPath } from "@yoplai/shared";
 import { getProject } from "../projects/store.js";
 import { getSlice } from "../projects/slices.js";
 import {

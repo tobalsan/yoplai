@@ -1,4 +1,4 @@
-import type { SubagentRun } from "@aihub/shared/types";
+import type { SubagentRun } from "@yoplai/shared/types";
 
 export type ProjectRunPillState = "running" | "stalled" | "error" | "hidden";
 

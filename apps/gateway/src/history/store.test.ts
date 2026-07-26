@@ -17,7 +17,7 @@ vi.mock("node:fs/promises", async (importOriginal) => {
 });
 
 vi.mock("../config/index.js", () => ({
-  CONFIG_DIR: "/tmp/aihub-test",
+  CONFIG_DIR: "/tmp/yoplai-test",
 }));
 
 vi.mock("../sessions/store.js", () => ({
@@ -46,7 +46,7 @@ describe("history store isolation", () => {
     await appendSessionMeta("agent-1", "session-1", "thinkingLevel", "high");
 
     expect(vi.mocked(fs.appendFile)).toHaveBeenCalledWith(
-      "/tmp/aihub-test/history/1970-01-01T00-00-00-000Z_agent-1-session-1.jsonl",
+      "/tmp/yoplai-test/history/1970-01-01T00-00-00-000Z_agent-1-session-1.jsonl",
       expect.any(String),
       "utf-8"
     );
@@ -64,7 +64,7 @@ describe("history store isolation", () => {
     );
 
     expect(vi.mocked(fs.appendFile)).toHaveBeenCalledWith(
-      "/tmp/aihub-test/sessions/users/user-123/history/1970-01-01T00-00-00-000Z_agent-1-session-1.jsonl",
+      "/tmp/yoplai-test/sessions/users/user-123/history/1970-01-01T00-00-00-000Z_agent-1-session-1.jsonl",
       expect.any(String),
       "utf-8"
     );

@@ -1,13 +1,13 @@
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
-import { expandPath } from "@aihub/shared";
+import { expandPath } from "@yoplai/shared";
 import type {
   TodoItem,
   ProjectItem,
   TaskboardResponse,
   TaskboardItemResponse,
   TaskboardConfig,
-} from "@aihub/shared";
+} from "@yoplai/shared";
 import { parseMarkdownFile } from "./parser.js";
 import { dirExists } from "../util/fs.js";
 
@@ -134,7 +134,7 @@ export async function scanTaskboard(
   config: TaskboardConfig | undefined
 ): Promise<ScanResult> {
   if (!config?.todosPath && !config?.projectsPath) {
-    return { ok: false, error: "Taskboard paths not configured in aihub.json" };
+    return { ok: false, error: "Taskboard paths not configured in yoplai.json" };
   }
 
   const result: TaskboardResponse = {
@@ -200,7 +200,7 @@ export async function getTaskboardItem(
   companion?: string
 ): Promise<ItemResult> {
   if (!config?.todosPath && !config?.projectsPath) {
-    return { ok: false, error: "Taskboard paths not configured in aihub.json" };
+    return { ok: false, error: "Taskboard paths not configured in yoplai.json" };
   }
 
   let filePath: string | undefined;

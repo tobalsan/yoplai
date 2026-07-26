@@ -55,11 +55,19 @@ function stripBase(pathname: string): string {
   return pathname;
 }
 
-const QUICK_CHAT_LAST_AGENT_KEY = "aihub:quick-chat-last-agent";
+const QUICK_CHAT_LAST_AGENT_KEY = "yoplai:quick-chat-last-agent";
+const LEGACY_QUICK_CHAT_LAST_AGENT_KEY = "aihub:quick-chat-last-agent";
 
 function readQuickChatAgentId(): string | null {
   if (typeof window === "undefined") return null;
-  return localStorage.getItem(QUICK_CHAT_LAST_AGENT_KEY);
+  const stored = localStorage.getItem(QUICK_CHAT_LAST_AGENT_KEY);
+  if (stored) return stored;
+  const legacy = localStorage.getItem(LEGACY_QUICK_CHAT_LAST_AGENT_KEY);
+  if (legacy) {
+    localStorage.setItem(QUICK_CHAT_LAST_AGENT_KEY, legacy);
+    return legacy;
+  }
+  return null;
 }
 
 function pickDefaultQuickAgentId(agents: Agent[]): string | null {
@@ -105,9 +113,9 @@ function Layout(props: { children?: JSX.Element }) {
 
   // Set document title based on dev mode
   onMount(() => {
-    if (import.meta.env.VITE_AIHUB_DEV === "true") {
-      const port = import.meta.env.VITE_AIHUB_UI_PORT ?? "?";
-      document.title = `[DEV :${port}] AIHub`;
+    if (import.meta.env.VITE_YOPLAI_DEV === "true" || import.meta.env.VITE_AIHUB_DEV === "true") {
+      const port = import.meta.env.VITE_YOPLAI_UI_PORT ?? import.meta.env.VITE_AIHUB_UI_PORT ?? "?";
+      document.title = `[DEV :${port}] Yoplai`;
     }
     void loadCapabilities().catch(() => undefined);
   });
