@@ -9,6 +9,13 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ## [Unreleased]
 
+## v0.22.0 — Yoplai rename + Slack session threads
+
+The project is now Yoplai: config lives in `~/.yoplai/yoplai.json`, env vars are
+`YOPLAI_*`, and the CLI is `yoplai` — with legacy AIHub names kept working behind
+deprecation warnings. Slack gains session-bound threads so proactive follow-ups
+keep their context, and MCP remote servers are now connectable from the UI.
+
 ### Added
 - MCP extension settings now list each remote server and provide OAuth connect, reconnect, and disconnect actions per agent.
 - Slack agents can create session-bound thread parents with `slack.create_thread` for proactive follow-ups that preserve context.
@@ -17,6 +24,9 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Fixed
 - Gateway access logs now suppress successful fast UI polling and health checks, while retaining errors and useful request logs without ANSI status codes.
+- Streamed container stderr is logged at info instead of error — agent runners write normal startup chatter there, so every chunk surfaced as `level:error` in observability. Real failures still log as errors via the container exit path.
+- Project scanning no longer fails when the scan root disappears mid-scan, which raised an unhandled rejection.
+- Pool globs ignore Git metadata, so repository `.git` directories no longer fail strict pool discovery; hidden agent directories stay discoverable.
 
 ### Changed
 - **Project renamed AIHub → Yoplai.** The config home is now `~/.yoplai/yoplai.json` and env vars are `YOPLAI_*`. The legacy `~/.aihub`, `aihub.json`, and `AIHUB_*` names still work but log a deprecation warning. The CLI binary is now `yoplai`, with `aihub` kept as a compatibility alias (the orchestrator extension's `aihub-claude-rpc-shim` bin alias is likewise retained alongside the new `yoplai-claude-rpc-shim`). `$AIHUB_HOME` inside config values (e.g. `agents` globs) still expands, alongside the new `$YOPLAI_HOME`.
