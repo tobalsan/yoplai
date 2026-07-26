@@ -250,7 +250,17 @@ async function listProjectItemsFromRoot(
   areaFilter?: string
 ): Promise<ProjectListItem[]> {
   if (!(await dirExists(scanRoot))) return [];
-  const entries = await fs.readdir(scanRoot, { withFileTypes: true });
+  let entries: import("node:fs").Dirent[];
+  try {
+    entries = await fs.readdir(scanRoot, { withFileTypes: true });
+  } catch (error) {
+    // scanRoot can vanish between the dirExists check above and this readdir
+    // (e.g. a test tears down its temp dir while a background scan is still
+    // in flight). A scan root that disappeared mid-scan is genuinely empty.
+    const code = (error as NodeJS.ErrnoException | undefined)?.code;
+    if (code === "ENOENT" || code === "ENOTDIR") return [];
+    throw error;
+  }
   const projects: ProjectListItem[] = [];
   for (const entry of entries) {
     if (!entry.isDirectory()) continue;

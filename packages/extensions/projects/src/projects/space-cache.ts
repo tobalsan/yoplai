@@ -186,12 +186,17 @@ export function startSpaceCacheWatcher(
   let stopped = false;
   if (onChange) changeListeners.add(onChange);
 
-  void listProjects(config).then((result) => {
-    if (stopped || !result.ok) return;
-    for (const project of result.data) {
-      void getCachedSpace(config, project.id);
-    }
-  });
+  void listProjects(config)
+    .then((result) => {
+      if (stopped || !result.ok) return;
+      for (const project of result.data) {
+        void getCachedSpace(config, project.id);
+      }
+    })
+    .catch((error: unknown) => {
+      if (stopped) return;
+      warn("*", "failed to warm space cache from listProjects:", error);
+    });
 
   return () => {
     stopped = true;
