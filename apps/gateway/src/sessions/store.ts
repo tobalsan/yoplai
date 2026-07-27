@@ -63,6 +63,7 @@ type StoreState = {
   store: Record<string, SessionStoreEntry>;
   loaded: boolean;
   loadPromise?: Promise<void>;
+  savePromise: Promise<void>;
 };
 
 const storeStates = new Map<string, StoreState>();
@@ -75,7 +76,7 @@ function getStoreState(userId?: string): StoreState {
   const storePath = getStorePath(userId);
   let state = storeStates.get(storePath);
   if (!state) {
-    state = { store: {}, loaded: false };
+    state = { store: {}, loaded: false, savePromise: Promise.resolve() };
     storeStates.set(storePath, state);
   }
   return state;
@@ -112,11 +113,15 @@ async function ensureLoaded(userId?: string): Promise<void> {
 async function save(userId?: string) {
   const storePath = getStorePath(userId);
   const state = getStoreState(userId);
-  await fs.mkdir(path.dirname(storePath), { recursive: true });
-  const json = JSON.stringify(state.store, null, 2);
-  const tmp = `${storePath}.${process.pid}.${crypto.randomUUID()}.tmp`;
-  await fs.writeFile(tmp, json, "utf-8");
-  await fs.rename(tmp, storePath);
+  const operation = state.savePromise.then(async () => {
+    await fs.mkdir(path.dirname(storePath), { recursive: true });
+    const json = JSON.stringify(state.store, null, 2);
+    const tmp = `${storePath}.${process.pid}.${crypto.randomUUID()}.tmp`;
+    await fs.writeFile(tmp, json, "utf-8");
+    await fs.rename(tmp, storePath);
+  });
+  state.savePromise = operation.catch(() => {});
+  await operation;
 }
 
 export type ResolveSessionParams = {
@@ -183,7 +188,9 @@ export async function resolveSessionId(
   }
 
   // Determine if we should create a new session
-  const isExpired = !entry || (!sessionKey.startsWith("project:") && now - entry.updatedAt > idleMs);
+  const isExpired =
+    !entry ||
+    (!sessionKey.startsWith("project:") && now - entry.updatedAt > idleMs);
   const shouldCreateNew = isReset || isExpired;
 
   let sessionId: string;

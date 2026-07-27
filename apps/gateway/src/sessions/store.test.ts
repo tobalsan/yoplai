@@ -63,7 +63,8 @@ describe("restoreSessionUpdatedAt", () => {
 
     vi.mocked(fs.readFile).mockResolvedValue(JSON.stringify(mockStore));
 
-    const { restoreSessionUpdatedAt, getSessionEntry } = await import("./store.js");
+    const { restoreSessionUpdatedAt, getSessionEntry } =
+      await import("./store.js");
 
     // Restore to original value
     await restoreSessionUpdatedAt("test-agent", "main", originalUpdatedAt);
@@ -88,7 +89,8 @@ describe("restoreSessionUpdatedAt", () => {
 
     vi.mocked(fs.readFile).mockResolvedValue(JSON.stringify(mockStore));
 
-    const { restoreSessionUpdatedAt, getSessionEntry } = await import("./store.js");
+    const { restoreSessionUpdatedAt, getSessionEntry } =
+      await import("./store.js");
 
     await restoreSessionUpdatedAt("test-agent", "main", 1000);
 
@@ -201,16 +203,20 @@ describe("session store isolation", () => {
     );
   });
 
-  it("uses unique temp files for concurrent saves", async () => {
-    let releaseWrites: (() => void) | undefined;
-    const writesStarted = new Promise<void>((resolve) => {
-      releaseWrites = resolve;
+  it("serializes concurrent saves without losing newer entries", async () => {
+    let releaseFirstWrite: (() => void) | undefined;
+    const firstWriteBlocked = new Promise<void>((resolve) => {
+      releaseFirstWrite = resolve;
     });
-    let blocked = true;
+    let activeWrites = 0;
+    let maxActiveWrites = 0;
     vi.mocked(fs.writeFile).mockImplementation(async () => {
-      if (blocked) {
-        await writesStarted;
+      activeWrites += 1;
+      maxActiveWrites = Math.max(maxActiveWrites, activeWrites);
+      if (vi.mocked(fs.writeFile).mock.calls.length === 1) {
+        await firstWriteBlocked;
       }
+      activeWrites -= 1;
     });
 
     const { resolveSessionId } = await import("./store.js");
@@ -226,17 +232,21 @@ describe("session store isolation", () => {
       message: "hello",
     });
 
-    while (vi.mocked(fs.writeFile).mock.calls.length < 2) {
+    while (vi.mocked(fs.writeFile).mock.calls.length < 1) {
       await new Promise((resolve) => setTimeout(resolve, 0));
     }
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(vi.mocked(fs.writeFile)).toHaveBeenCalledTimes(1);
 
-    blocked = false;
-    releaseWrites?.();
+    releaseFirstWrite?.();
     await Promise.all([first, second]);
 
-    const tempFiles = vi
-      .mocked(fs.writeFile)
-      .mock.calls.map(([file]) => String(file));
-    expect(new Set(tempFiles).size).toBe(tempFiles.length);
+    expect(maxActiveWrites).toBe(1);
+    expect(vi.mocked(fs.writeFile)).toHaveBeenCalledTimes(2);
+    const finalJson = String(vi.mocked(fs.writeFile).mock.calls[1]?.[1]);
+    expect(JSON.parse(finalJson)).toEqual({
+      "test-agent:main": expect.any(Object),
+      "test-agent:other": expect.any(Object),
+    });
   });
 });
