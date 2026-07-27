@@ -15,45 +15,30 @@
 # ---------- builder stage ----------
 # Build yoplai CLI from source. Produces a self-contained /out via
 # `pnpm deploy --prod` (resolves workspace:* deps into real node_modules).
-FROM node:20-slim AS builder
+FROM node:22-slim AS builder
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         python3 build-essential \
     && rm -rf /var/lib/apt/lists/*
 
-RUN npm install -g pnpm@9
+RUN corepack enable && corepack prepare pnpm@11.4.0 --activate
 
 WORKDIR /build
 
-# Copy workspace manifests first for better layer caching.
-COPY pnpm-workspace.yaml pnpm-lock.yaml package.json ./
-COPY packages/shared/package.json packages/shared/
-COPY packages/extensions/projects/package.json packages/extensions/projects/
-COPY apps/gateway/package.json apps/gateway/
-COPY apps/web/package.json apps/web/
+# Copy the complete workspace because gateway depends on every first-party
+# extension and TypeScript project references require their source trees.
+COPY . .
 
 RUN pnpm install --frozen-lockfile
-
-# Copy sources and build shared -> projects extension -> gateway.
-COPY tsconfig.json ./
-COPY packages/shared packages/shared
-COPY packages/extensions/projects packages/extensions/projects
-COPY apps/gateway apps/gateway
-
-# Build via project references (composite: true) from repo root.
-# Using `tsc -b` sequences shared -> projects extension -> gateway correctly; running
-# each package's `build` script individually fails to resolve workspace
-# .d.ts files inside a clean container for reasons that are not worth
-# debugging on the spike.
-RUN pnpm exec tsc -b
+RUN pnpm build
 
 # pnpm deploy flattens workspace:* deps into /out/node_modules,
 # producing a self-contained production tree for @yoplai/gateway.
-RUN pnpm --filter @yoplai/gateway deploy --prod /out
+RUN pnpm --filter @yoplai/gateway deploy --prod --legacy /out
 
 # ---------- runtime stage ----------
-FROM node:20-slim
+FROM node:22-slim
 
 # System deps:
 # - curl, ca-certificates: outbound HTTPS to the LLM API at run time

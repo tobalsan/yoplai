@@ -4,7 +4,7 @@ Vendor-neutral base Docker image shared by every Harbor task.
 
 ## What it provides
 
-- Node 20 + the `yoplai` CLI (built from source)
+- Node 22 + the `yoplai` CLI (built from source)
 - Python 3 + pytest (via uv)
 - Non-root `agent` user (matches `task.toml [agent].user = "agent"`)
 - `YOPLAI_HOME=/eval` with a placeholder `yoplai.json`
