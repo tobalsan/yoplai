@@ -490,7 +490,10 @@ export type DiscordComponentConfig = DiscordExtensionConfig;
 
 export const IrcChannelConfigSchema = z.object({
   agent: z.string().min(1),
-  mode: z.enum(["mention-only", "reply-all"]).optional().default("mention-only"),
+  mode: z
+    .enum(["mention-only", "reply-all"])
+    .optional()
+    .default("mention-only"),
 });
 export type IrcChannelConfig = z.infer<typeof IrcChannelConfigSchema>;
 
@@ -504,7 +507,14 @@ export const IrcExtensionConfigSchema = z.object({
   password: SecretRefSchema.optional(),
   nickservPassword: SecretRefSchema.optional(),
   channels: z.record(z.string().min(1), IrcChannelConfigSchema).default({}),
-  dm: z.object({ enabled: z.boolean().optional(), agent: z.string().min(1).optional(), allowFrom: z.array(z.string()).optional(), debounceMs: z.number().int().min(0).optional() }).optional(),
+  dm: z
+    .object({
+      enabled: z.boolean().optional(),
+      agent: z.string().min(1).optional(),
+      allowFrom: z.array(z.string()).optional(),
+      debounceMs: z.number().int().min(0).optional(),
+    })
+    .optional(),
   debounceMs: z.number().int().min(0).optional(),
   historyLimit: z.number().int().min(0).optional().default(20),
   maxA2ATurns: z.number().int().min(0).optional().default(4),
@@ -520,8 +530,20 @@ export const IrcAgentConfigSchema = z.object({
   username: z.string().min(1).optional(),
   password: SecretRefSchema.optional(),
   nickservPassword: SecretRefSchema.optional(),
-  channels: z.record(z.string().min(1), IrcChannelConfigSchema.omit({ agent: true }).strict()).default({}),
-  dm: z.object({ enabled: z.boolean().optional(), allowFrom: z.array(z.string()).optional(), debounceMs: z.number().int().min(0).optional() }).strict().optional(),
+  channels: z
+    .record(
+      z.string().min(1),
+      IrcChannelConfigSchema.omit({ agent: true }).strict()
+    )
+    .default({}),
+  dm: z
+    .object({
+      enabled: z.boolean().optional(),
+      allowFrom: z.array(z.string()).optional(),
+      debounceMs: z.number().int().min(0).optional(),
+    })
+    .strict()
+    .optional(),
   debounceMs: z.number().int().min(0).optional(),
   historyLimit: z.number().int().min(0).optional().default(20),
   maxA2ATurns: z.number().int().min(0).optional().default(4),
@@ -1216,11 +1238,9 @@ export const ExtensionDefinitionSchema = z.object({
   advancedConfigFields: z.array(z.string()).optional(),
   configRoute: z
     .object({
-      path: z
-        .string()
-        .refine((value) => value.includes(":agentId"), {
-          message: 'configRoute.path must include the ":agentId" param',
-        }),
+      path: z.string().refine((value) => value.includes(":agentId"), {
+        message: 'configRoute.path must include the ":agentId" param',
+      }),
     })
     .optional(),
   factory: z.boolean().optional(),
@@ -1852,7 +1872,22 @@ export type TelegramContext = {
   blocks: TelegramContextBlock[];
 };
 
-export type IrcContext = { kind: "irc"; blocks: Array<{ type: "metadata"; channel: "irc"; place: string; conversationType: ChannelConversationType; sender: string } | { type: "history"; messages: Array<{ author: string; content: string; timestamp: number }> }> };
+export type IrcContext = {
+  kind: "irc";
+  blocks: Array<
+    | {
+        type: "metadata";
+        channel: "irc";
+        place: string;
+        conversationType: ChannelConversationType;
+        sender: string;
+      }
+    | {
+        type: "history";
+        messages: Array<{ author: string; content: string; timestamp: number }>;
+      }
+  >;
+};
 
 export type UserContext = {
   kind: "web";
@@ -1866,11 +1901,76 @@ export type AgentContext =
   | IrcContext
   | UserContext;
 
-export const AgentContextSchema: z.ZodType<AgentContext> = z
-  .object({
-    kind: z.string(),
-  })
-  .passthrough() as z.ZodType<AgentContext>;
+const ContextHistoryBlockSchema = z.object({
+  type: z.literal("history"),
+  messages: z.array(
+    z.object({
+      author: z.string(),
+      content: z.string(),
+      timestamp: z.number(),
+    })
+  ),
+});
+
+const ContextMetadataBlockSchema = z.object({
+  type: z.literal("metadata"),
+  channel: z.enum(["discord", "slack", "telegram", "irc"]),
+  place: z.string(),
+  conversationType: z.enum(["direct_message", "group", "channel", "thread"]),
+  sender: z.string(),
+});
+
+const RichContextBlockSchema = z.union([
+  ContextMetadataBlockSchema,
+  ContextHistoryBlockSchema,
+  z.object({ type: z.literal("channel_topic"), topic: z.string() }),
+  z.object({ type: z.literal("channel_name"), name: z.string() }),
+  z.object({ type: z.literal("thread_name"), name: z.string() }),
+  z.object({
+    type: z.literal("thread_starter"),
+    author: z.string(),
+    content: z.string(),
+    timestamp: z.number(),
+  }),
+  z.object({
+    type: z.literal("proactive_dm_notes"),
+    notes: z.array(z.string()),
+  }),
+  z.object({
+    type: z.literal("reaction"),
+    emoji: z.string(),
+    user: z.string(),
+    messageId: z.string(),
+    action: z.enum(["add", "remove"]),
+  }),
+]);
+
+export const AgentContextSchema: z.ZodType<AgentContext> = z.discriminatedUnion(
+  "kind",
+  [
+    z.object({
+      kind: z.literal("discord"),
+      blocks: z.array(RichContextBlockSchema),
+    }),
+    z.object({
+      kind: z.literal("slack"),
+      blocks: z.array(RichContextBlockSchema),
+    }),
+    z.object({
+      kind: z.literal("telegram"),
+      blocks: z.array(
+        z.union([ContextMetadataBlockSchema, ContextHistoryBlockSchema])
+      ),
+    }),
+    z.object({
+      kind: z.literal("irc"),
+      blocks: z.array(
+        z.union([ContextMetadataBlockSchema, ContextHistoryBlockSchema])
+      ),
+    }),
+    z.object({ kind: z.literal("web"), name: z.string().optional() }),
+  ]
+) as z.ZodType<AgentContext>;
 
 export const HistoryEventSchema = z.discriminatedUnion("type", [
   z.object({

@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   AgentConfigSchema,
+  AgentContextSchema,
   ContainerFileOutputRequestSchema,
   ContainerInputSchema,
   ContainerOutputSchema,
@@ -254,6 +255,29 @@ describe("Projects orchestrator config", () => {
 });
 
 describe("container IPC schemas", () => {
+  it("validates the complete agent context protocol shape", () => {
+    expect(AgentContextSchema.safeParse({ kind: "discord" }).success).toBe(
+      false
+    );
+    expect(
+      AgentContextSchema.safeParse({
+        kind: "telegram",
+        blocks: [
+          {
+            type: "metadata",
+            channel: "telegram",
+            place: "direct message / alice",
+            conversationType: "direct_message",
+            sender: "alice",
+          },
+        ],
+      }).success
+    ).toBe(true);
+    expect(AgentContextSchema.safeParse({ kind: "unknown" }).success).toBe(
+      false
+    );
+  });
+
   it("parses container input and output", () => {
     const input = ContainerInputSchema.parse({
       agentId: "sandbox-agent",
