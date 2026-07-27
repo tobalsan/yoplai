@@ -33,6 +33,7 @@ vi.mock("../history/store.js", () => ({
   ),
 }));
 
+import { flushUserMessage } from "../history/store.js";
 import { SessionRunLifecycle } from "./run-lifecycle.js";
 import {
   getSessionCurrentTurn,
@@ -149,6 +150,35 @@ describe("SessionRunLifecycle", () => {
     expect(isStreaming("agent-lifecycle-test", sessionId)).toBe(false);
   });
 
+  it("waits for eager user persistence before flushing the completed turn", async () => {
+    const sessionId = `eager-${Date.now()}`;
+    const lifecycle = makeLifecycle(sessionId);
+    let releaseFlush: (() => void) | undefined;
+    vi.mocked(flushUserMessage).mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          releaseFlush = resolve;
+        })
+    );
+
+    lifecycle.acceptHistoryEvent({
+      type: "user",
+      text: "first",
+      timestamp: 1,
+    });
+    lifecycle.acceptHistoryEvent({ type: "turn_end", timestamp: 2 });
+
+    const flush = lifecycle.flushTurns();
+    await Promise.resolve();
+    expect(flushedTurns).toEqual([]);
+
+    releaseFlush?.();
+    await flush;
+    expect(flushedTurns).toEqual([
+      [{ type: "user", text: "first", timestamp: 1 }],
+    ]);
+  });
+
   it("flushes completed, current, and pending user-only turns in order", async () => {
     const sessionId = `turns-${Date.now()}`;
     const lifecycle = makeLifecycle(sessionId);
@@ -185,9 +215,7 @@ describe("SessionRunLifecycle", () => {
       [{ type: "user", text: "second", timestamp: 4 }],
       [{ type: "user", text: "pending", timestamp: 5 }],
     ]);
-    expect(
-      getSessionCurrentTurn("agent-lifecycle-test", sessionId)
-    ).toBeNull();
+    expect(getSessionCurrentTurn("agent-lifecycle-test", sessionId)).toBeNull();
   });
 
   it("finishRun clears current turn and streaming state", () => {
@@ -203,9 +231,7 @@ describe("SessionRunLifecycle", () => {
     lifecycle.finishRun();
 
     expect(isStreaming("agent-lifecycle-test", sessionId)).toBe(false);
-    expect(
-      getSessionCurrentTurn("agent-lifecycle-test", sessionId)
-    ).toBeNull();
+    expect(getSessionCurrentTurn("agent-lifecycle-test", sessionId)).toBeNull();
   });
 
   it("returns false when aborting an idle session", async () => {

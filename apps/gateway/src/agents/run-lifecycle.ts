@@ -61,6 +61,7 @@ type QueueDecision =
 export class SessionRunLifecycle {
   private currentTurn: TurnBuffer | null = null;
   private completedTurns: TurnBuffer[] = [];
+  private eagerUserFlushes: Promise<void>[] = [];
 
   constructor(private readonly context: LifecycleContext) {}
 
@@ -201,6 +202,9 @@ export class SessionRunLifecycle {
   }
 
   async flushTurns() {
+    await Promise.all(this.eagerUserFlushes);
+    this.eagerUserFlushes = [];
+
     for (const buffer of this.completedTurns) {
       await flushTurnBuffer(
         this.context.agentId,
@@ -257,12 +261,18 @@ export class SessionRunLifecycle {
     bufferHistoryEvent(buffer, event);
     if (!this.currentTurn) {
       this.currentTurn = buffer;
-      setSessionCurrentTurn(this.context.agentId, this.context.sessionId, buffer);
-      void flushUserMessage(
+      setSessionCurrentTurn(
         this.context.agentId,
         this.context.sessionId,
-        buffer,
-        this.context.userId
+        buffer
+      );
+      this.eagerUserFlushes.push(
+        flushUserMessage(
+          this.context.agentId,
+          this.context.sessionId,
+          buffer,
+          this.context.userId
+        )
       );
     } else {
       enqueuePendingUserMessage(
@@ -287,11 +297,13 @@ export class SessionRunLifecycle {
           text: pendingUser.text,
           timestamp: pendingUser.timestamp,
         });
-        void flushUserMessage(
-          this.context.agentId,
-          this.context.sessionId,
-          this.currentTurn,
-          this.context.userId
+        this.eagerUserFlushes.push(
+          flushUserMessage(
+            this.context.agentId,
+            this.context.sessionId,
+            this.currentTurn,
+            this.context.userId
+          )
         );
       }
       setSessionCurrentTurn(
