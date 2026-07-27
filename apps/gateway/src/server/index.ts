@@ -64,7 +64,8 @@ app.use("/api/*", async (c, next) => {
   for (const matcher of runtime.getRouteMatchers()) {
     if (!matcher.matches(path)) continue;
     if (isExtensionEnabled(config, matcher.extension, runtime)) break;
-    if (matcher.allowWhenDisabled && runtime.isEnabled(matcher.extension)) break;
+    if (matcher.allowWhenDisabled && runtime.isEnabled(matcher.extension))
+      break;
     return c.json(
       {
         error: "extension_disabled",
@@ -203,15 +204,17 @@ function resolveGatewayBindHost(bind?: GatewayBindMode): string {
 }
 
 function setupGracefulShutdown(server: ReturnType<typeof serve>): void {
-  const shutdown = async () => {
+  const shutdown = () => {
     console.log("[gateway] Graceful shutdown initiated");
     try {
       cleanupOrphanContainers();
     } catch (error) {
       logError("[gateway] Container cleanup failed", error);
     }
+    // Do not force-exit here. The CLI owns extension shutdown and registers its
+    // own signal handler after the server starts; exiting from this earlier
+    // handler would cut off those awaited stop hooks.
     server.close();
-    process.exit(0);
   };
 
   process.on("SIGTERM", shutdown);
@@ -271,7 +274,8 @@ export function startServer(
   const wsAuthAdapter: WsBrokerAuthAdapter = {
     isMultiUserEnabled: () => currentExtensionRuntime().isEnabled("multiUser"),
     validateWebSocketRequest: async (request) => {
-      const { validateWebSocketRequest } = await loadMultiUserMiddlewareModule();
+      const { validateWebSocketRequest } =
+        await loadMultiUserMiddlewareModule();
       return validateWebSocketRequest(request);
     },
     canAccessAgent,

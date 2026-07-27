@@ -10,7 +10,7 @@ describe("gateway graceful shutdown", () => {
     vi.resetModules();
   });
 
-  it("registers SIGTERM/SIGINT handlers and cleans up containers", async () => {
+  it("closes the server without preempting the CLI shutdown handler", async () => {
     const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-shutdown-"));
     const prevHomeDir = process.env.YOPLAI_HOME;
     const prevHome = process.env.HOME;
@@ -50,12 +50,12 @@ describe("gateway graceful shutdown", () => {
     expect(sigtermCall).toBeTruthy();
     expect(sigintCall).toBeTruthy();
 
-    const shutdown = sigtermCall?.[1] as () => Promise<void>;
-    await shutdown();
+    const shutdown = sigtermCall?.[1] as () => void;
+    shutdown();
 
     expect(cleanupOrphanContainers).toHaveBeenCalledTimes(1);
     expect(closeSpy).toHaveBeenCalledTimes(1);
-    expect(exitSpy).toHaveBeenCalledWith(0);
+    expect(exitSpy).not.toHaveBeenCalled();
 
     if (sigtermCall) process.off("SIGTERM", sigtermCall[1]);
     if (sigintCall) process.off("SIGINT", sigintCall[1]);
