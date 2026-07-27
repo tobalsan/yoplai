@@ -90,24 +90,30 @@ export class SpaceIntegrationPolicy {
       throw new Error("Not a git repository");
     }
 
-    const existing = await this.state.readSpaceFile(context.spaceFilePath);
-    const space = buildSpaceDefaults({
+    const initial = buildSpaceDefaults({
       config: this.config,
       projectId,
-      existing,
       baseBranch,
     });
-
-    await this.git.ensureWorktree(
-      context.repo,
-      space.worktreePath,
-      space.branch,
-      space.baseBranch
+    return this.state.persistProjectSpace(
+      projectId,
+      async (existing) => {
+        const space = buildSpaceDefaults({
+          config: this.config,
+          projectId,
+          existing,
+          baseBranch,
+        });
+        await this.git.ensureWorktree(
+          context.repo,
+          space.worktreePath,
+          space.branch,
+          space.baseBranch
+        );
+        return space;
+      },
+      initial
     );
-
-    space.updatedAt = new Date().toISOString();
-    await this.state.writeSpaceFile(context.spaceFilePath, space);
-    return space;
   }
 
   async getProjectSpace(projectId: string) {
@@ -172,7 +178,11 @@ export class SpaceIntegrationPolicy {
     const entry = space.queue.find((item) => item.id === entryId);
     if (!entry) throw new Error("Space integration entry not found");
 
-    const preferredCwds = [entry.worktreePath, space.worktreePath, context.repo];
+    const preferredCwds = [
+      entry.worktreePath,
+      space.worktreePath,
+      context.repo,
+    ];
     let cwd = space.worktreePath;
     for (const candidate of preferredCwds) {
       if (await this.git.isGitRepo(candidate)) {
@@ -213,9 +223,9 @@ export class SpaceIntegrationPolicy {
   async pruneProjectRepoWorktrees(projectId: string): Promise<void> {
     const context = await this.state.resolveProjectContext(projectId);
     if (!(await this.git.isGitRepo(context.repo))) return;
-    await this.git.runGitInRepo(context.repo, ["worktree", "prune"]).catch(
-      () => {}
-    );
+    await this.git
+      .runGitInRepo(context.repo, ["worktree", "prune"])
+      .catch(() => {});
   }
 
   getWriteLease(projectId: string): Promise<SpaceWriteLeaseResult> {
@@ -321,7 +331,8 @@ export class SpaceIntegrationPolicy {
       space.branch
     );
     if (deletedSpaceBranch === "deleted") summary.spaceBranchDeleted = true;
-    else if (deletedSpaceBranch === "missing") summary.spaceBranchMissing = true;
+    else if (deletedSpaceBranch === "missing")
+      summary.spaceBranchMissing = true;
     else summary.errors.push(`failed to delete space branch ${space.branch}`);
 
     await this.state.persistProjectSpace(projectId, (current) => ({
@@ -664,7 +675,8 @@ export class SpaceIntegrationPolicy {
     );
 
     const existingConflictEntry = space.queue.find(
-      (item) => item.workerSlug === input.workerSlug && item.status === "conflict"
+      (item) =>
+        item.workerSlug === input.workerSlug && item.status === "conflict"
     );
     let resolvedShas = shas;
     let resolvedStartSha = startSha;
@@ -920,4 +932,3 @@ export const spaceGitInternals = {
 };
 
 export type { SpaceProjectContext };
-

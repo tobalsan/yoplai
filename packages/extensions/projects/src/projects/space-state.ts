@@ -5,6 +5,29 @@ import { getProject } from "./store.js";
 import { getProjectsRoot } from "../util/paths.js";
 
 const DEFAULT_LEASE_TTL_SECONDS = 60 * 60;
+const spaceMutationQueues = new Map<string, Promise<void>>();
+
+async function serializeSpaceMutation<T>(
+  filePath: string,
+  mutation: () => Promise<T>
+): Promise<T> {
+  const previous = spaceMutationQueues.get(filePath) ?? Promise.resolve();
+  let release!: () => void;
+  const current = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const queued = previous.catch(() => {}).then(() => current);
+  spaceMutationQueues.set(filePath, queued);
+  await previous.catch(() => {});
+  try {
+    return await mutation();
+  } finally {
+    release();
+    if (spaceMutationQueues.get(filePath) === queued) {
+      spaceMutationQueues.delete(filePath);
+    }
+  }
+}
 
 export type IntegrationStatus =
   | "pending"
@@ -261,7 +284,14 @@ export class SpaceStateStore {
   }
 
   async writeSpaceFile(filePath: string, space: ProjectSpace): Promise<void> {
-    await fs.writeFile(filePath, JSON.stringify(space, null, 2), "utf8");
+    const tempPath = `${filePath}.${process.pid}.${Date.now()}.tmp`;
+    try {
+      await fs.writeFile(tempPath, JSON.stringify(space, null, 2), "utf8");
+      await fs.rename(tempPath, filePath);
+    } catch (error) {
+      await fs.rm(tempPath, { force: true }).catch(() => {});
+      throw error;
+    }
   }
 
   async readProjectSpace(projectId: string): Promise<ProjectSpace | null> {
@@ -289,15 +319,18 @@ export class SpaceStateStore {
 
   async persistProjectSpace(
     projectId: string,
-    updater: (space: ProjectSpace) => Promise<ProjectSpace> | ProjectSpace
+    updater: (space: ProjectSpace) => Promise<ProjectSpace> | ProjectSpace,
+    initial?: ProjectSpace
   ): Promise<ProjectSpace> {
     const context = await this.resolveProjectContext(projectId);
-    const existing = await this.readSpaceFile(context.spaceFilePath);
-    if (!existing) throw new Error("Project space not found");
-    const updated = await updater(existing);
-    updated.updatedAt = new Date().toISOString();
-    await this.writeSpaceFile(context.spaceFilePath, updated);
-    return updated;
+    return serializeSpaceMutation(context.spaceFilePath, async () => {
+      const existing = await this.readSpaceFile(context.spaceFilePath);
+      if (!existing && !initial) throw new Error("Project space not found");
+      const updated = await updater(existing ?? initial!);
+      updated.updatedAt = new Date().toISOString();
+      await this.writeSpaceFile(context.spaceFilePath, updated);
+      return updated;
+    });
   }
 
   async clearRebaseConflict(projectId: string): Promise<ProjectSpace> {
