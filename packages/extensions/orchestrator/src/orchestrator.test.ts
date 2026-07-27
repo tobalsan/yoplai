@@ -6,21 +6,58 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it, vi } from "vitest";
 import { Hono } from "hono";
-import { ClaimsRegistry, ClaudeRpcRunner, CliWorkerRunner, CodexAppServerRunner, ConcurrencyLimiter, createTrackerClient, LinearClient, OrchestratorDaemon, PiRpcRunner, RetryPolicy, WorkflowLoader, WorkflowWorkerRunner, isRelevantWebhook, orchestratorExtension, resolveProfile, resolveProjects, sanitizeIdentifier, StateStore, verifyWebhookSignature, WorkspaceLayout } from "./index.js";
+import {
+  ClaimsRegistry,
+  ClaudeRpcRunner,
+  CliWorkerRunner,
+  CodexAppServerRunner,
+  ConcurrencyLimiter,
+  createTrackerClient,
+  LinearClient,
+  OrchestratorDaemon,
+  PiRpcRunner,
+  RetryPolicy,
+  WorkflowLoader,
+  WorkflowWorkerRunner,
+  isRelevantWebhook,
+  orchestratorExtension,
+  resolveProfile,
+  resolveProjects,
+  sanitizeIdentifier,
+  StateStore,
+  verifyWebhookSignature,
+  WorkspaceLayout,
+} from "./index.js";
 import type { LinearTrackerConfig, PlaneTrackerConfig } from "./index.js";
 import { runHook } from "./hooks/runner.js";
-import { piThinkingForRunner, reasoningEffortForRunner, runnerForWorkflow, workflowAgentThinking } from "./worker-runner/thinking.js";
-import type { WorkerRunnerHandle, WorkerRunnerStatus } from "./worker-runner/runner.js";
+import {
+  piThinkingForRunner,
+  reasoningEffortForRunner,
+  runnerForWorkflow,
+  workflowAgentThinking,
+} from "./worker-runner/thinking.js";
+import type {
+  WorkerRunnerHandle,
+  WorkerRunnerStatus,
+} from "./worker-runner/runner.js";
 import { sanitizedWorkerEnv } from "./worker-runner/env.js";
 
 const require = createRequire(import.meta.url);
 const Database = require("better-sqlite3");
-const profiles = [{ name: "default", cli: "codex" as const }, { name: "claude", cli: "claude" as const }];
+const profiles = [
+  { name: "default", cli: "codex" as const },
+  { name: "claude", cli: "claude" as const },
+];
 
-function mockWorkerRunner(handle: WorkerRunnerHandle = { id: "worker_1", kind: "fake" }, statuses: Array<WorkerRunnerStatus | undefined> = [undefined]) {
+function mockWorkerRunner(
+  handle: WorkerRunnerHandle = { id: "worker_1", kind: "fake" },
+  statuses: Array<WorkerRunnerStatus | undefined> = [undefined]
+) {
   const queue = [...statuses];
   const start = vi.fn(async (_input: unknown) => handle);
-  const status = vi.fn(async () => queue.length > 0 ? queue.shift() : undefined);
+  const status = vi.fn(async () =>
+    queue.length > 0 ? queue.shift() : undefined
+  );
   const abort = vi.fn(async () => undefined);
   return { runner: { start, status, abort }, start, status, abort };
 }
@@ -81,7 +118,12 @@ Do {{issue.identifier}}
 
 async function writePlaneWorkflow(
   root: string,
-  input: { workspaceSlug?: string; projectId?: string; activeStates?: string[]; terminalStates?: string[] } = {}
+  input: {
+    workspaceSlug?: string;
+    projectId?: string;
+    activeStates?: string[];
+    terminalStates?: string[];
+  } = {}
 ): Promise<void> {
   await fs.writeFile(
     path.join(root, "WORKFLOW.md"),
@@ -136,34 +178,150 @@ describe("orchestrator pure modules", () => {
   });
 
   it("resolves profiles or parks", () => {
-    expect(resolveProfile({ workflow: { agent: { profile: "default" } }, profilesConfig: profiles })).toMatchObject({ profile: { name: "default" } });
-    expect(resolveProfile({ workflow: { agent: { runner: "pi", provider: "anthropic", model: "claude-sonnet-4-6" } }, profilesConfig: [] })).toMatchObject({ profile: { cli: "pi", provider: "anthropic", model: "claude-sonnet-4-6" } });
-    expect(resolveProfile({ workflow: { agent: { provider: "anthropic", model: "claude-sonnet-4-6" } }, profilesConfig: [] })).toMatchObject({ profile: { name: "pi", cli: "pi", provider: "anthropic", model: "claude-sonnet-4-6" } });
-    expect(resolveProfile({ workflow: { agent: { profile: "missing" } }, profilesConfig: profiles })).toHaveProperty("park");
+    expect(
+      resolveProfile({
+        workflow: { agent: { profile: "default" } },
+        profilesConfig: profiles,
+      })
+    ).toMatchObject({ profile: { name: "default" } });
+    expect(
+      resolveProfile({
+        workflow: {
+          agent: {
+            runner: "pi",
+            provider: "anthropic",
+            model: "claude-sonnet-4-6",
+          },
+        },
+        profilesConfig: [],
+      })
+    ).toMatchObject({
+      profile: { cli: "pi", provider: "anthropic", model: "claude-sonnet-4-6" },
+    });
+    expect(
+      resolveProfile({
+        workflow: {
+          agent: { provider: "anthropic", model: "claude-sonnet-4-6" },
+        },
+        profilesConfig: [],
+      })
+    ).toMatchObject({
+      profile: {
+        name: "pi",
+        cli: "pi",
+        provider: "anthropic",
+        model: "claude-sonnet-4-6",
+      },
+    });
+    expect(
+      resolveProfile({
+        workflow: { agent: { profile: "missing" } },
+        profilesConfig: profiles,
+      })
+    ).toHaveProperty("park");
   });
 
   it("maps workflow agent thinking to runner-specific effort fields", () => {
     const base = {
-      tracker: { kind: "linear" as const, endpoint: "x", apiKey: "x", projectSlug: "proj-a", activeStates: ["Ready"], terminalStates: ["Done"], needsHuman: "Needs Human" },
+      tracker: {
+        kind: "linear" as const,
+        endpoint: "x",
+        apiKey: "x",
+        projectSlug: "proj-a",
+        activeStates: ["Ready"],
+        terminalStates: ["Done"],
+        needsHuman: "Needs Human",
+      },
       workspace: { root: "/tmp", cleanupOnTerminal: false, reuse: true },
       polling: { intervalMs: 1000, jitterMs: 0 },
       hooks: {},
       server: undefined,
       linear: undefined,
     };
-    expect(piThinkingForRunner({ workflow: { ...base, agent: { runner: "pi", thinking: "high" } }, profile: { name: "pi", cli: "pi", thinking: "low" } })).toBe("high");
-    expect(reasoningEffortForRunner({ workflow: { ...base, agent: { runner: "codex", reasoning_effort: "xhigh" } }, profile: { name: "codex", cli: "codex", reasoningEffort: "low" } })).toBe("xhigh");
-    expect(reasoningEffortForRunner({ workflow: { ...base, agent: { runner: "claude", reasoning: "max" } }, profile: { name: "claude", cli: "claude", reasoningEffort: "medium" } })).toBe("max");
-    expect(runnerForWorkflow({ workflow: { ...base, agent: { profile: "claude", thinking: "max" } }, profile: { name: "claude", cli: "claude", reasoningEffort: "medium" } })).toBe("claude");
-    expect(reasoningEffortForRunner({ workflow: { ...base, agent: { profile: "claude", thinking: "max" } }, profile: { name: "claude", cli: "claude", reasoningEffort: "medium" } })).toBe("max");
-    expect(reasoningEffortForRunner({ workflow: { ...base, agent: { profile: "codex" } }, profile: { name: "codex", cli: "codex", reasoningEffort: "high" } })).toBe("high");
-    expect(workflowAgentThinking({ runner: "codex", reasoningEffort: "medium" })).toBe("medium");
-    expect(workflowAgentThinking({ runner: "codex", thinking: "high", reasoningEffort: "low", reasoning_effort: "medium", reasoning: "xhigh" })).toBe("high");
-    expect(workflowAgentThinking({ runner: "codex", reasoningEffort: "low", reasoning_effort: "medium", reasoning: "xhigh" })).toBe("low");
-    expect(workflowAgentThinking({ runner: "codex", reasoning_effort: "medium", reasoning: "xhigh" })).toBe("medium");
-    expect(() => reasoningEffortForRunner({ workflow: { ...base, agent: { profile: "codex", thinking: "max" } }, profile: { name: "codex", cli: "codex", reasoningEffort: "low" } })).toThrow("Invalid agent.thinking for codex: max");
-    expect(() => reasoningEffortForRunner({ workflow: { ...base, agent: { profile: "claude", thinking: "off" } }, profile: { name: "claude", cli: "claude", reasoningEffort: "medium" } })).toThrow("Invalid agent.thinking for claude: off");
-    expect(() => piThinkingForRunner({ workflow: { ...base, agent: { profile: "pi", thinking: "max" } }, profile: { name: "pi", cli: "pi", thinking: "low" } })).toThrow("Invalid agent.thinking for pi: max");
+    expect(
+      piThinkingForRunner({
+        workflow: { ...base, agent: { runner: "pi", thinking: "high" } },
+        profile: { name: "pi", cli: "pi", thinking: "low" },
+      })
+    ).toBe("high");
+    expect(
+      reasoningEffortForRunner({
+        workflow: {
+          ...base,
+          agent: { runner: "codex", reasoning_effort: "xhigh" },
+        },
+        profile: { name: "codex", cli: "codex", reasoningEffort: "low" },
+      })
+    ).toBe("xhigh");
+    expect(
+      reasoningEffortForRunner({
+        workflow: { ...base, agent: { runner: "claude", reasoning: "max" } },
+        profile: { name: "claude", cli: "claude", reasoningEffort: "medium" },
+      })
+    ).toBe("max");
+    expect(
+      runnerForWorkflow({
+        workflow: { ...base, agent: { profile: "claude", thinking: "max" } },
+        profile: { name: "claude", cli: "claude", reasoningEffort: "medium" },
+      })
+    ).toBe("claude");
+    expect(
+      reasoningEffortForRunner({
+        workflow: { ...base, agent: { profile: "claude", thinking: "max" } },
+        profile: { name: "claude", cli: "claude", reasoningEffort: "medium" },
+      })
+    ).toBe("max");
+    expect(
+      reasoningEffortForRunner({
+        workflow: { ...base, agent: { profile: "codex" } },
+        profile: { name: "codex", cli: "codex", reasoningEffort: "high" },
+      })
+    ).toBe("high");
+    expect(
+      workflowAgentThinking({ runner: "codex", reasoningEffort: "medium" })
+    ).toBe("medium");
+    expect(
+      workflowAgentThinking({
+        runner: "codex",
+        thinking: "high",
+        reasoningEffort: "low",
+        reasoning_effort: "medium",
+        reasoning: "xhigh",
+      })
+    ).toBe("high");
+    expect(
+      workflowAgentThinking({
+        runner: "codex",
+        reasoningEffort: "low",
+        reasoning_effort: "medium",
+        reasoning: "xhigh",
+      })
+    ).toBe("low");
+    expect(
+      workflowAgentThinking({
+        runner: "codex",
+        reasoning_effort: "medium",
+        reasoning: "xhigh",
+      })
+    ).toBe("medium");
+    expect(() =>
+      reasoningEffortForRunner({
+        workflow: { ...base, agent: { profile: "codex", thinking: "max" } },
+        profile: { name: "codex", cli: "codex", reasoningEffort: "low" },
+      })
+    ).toThrow("Invalid agent.thinking for codex: max");
+    expect(() =>
+      reasoningEffortForRunner({
+        workflow: { ...base, agent: { profile: "claude", thinking: "off" } },
+        profile: { name: "claude", cli: "claude", reasoningEffort: "medium" },
+      })
+    ).toThrow("Invalid agent.thinking for claude: off");
+    expect(() =>
+      piThinkingForRunner({
+        workflow: { ...base, agent: { profile: "pi", thinking: "max" } },
+        profile: { name: "pi", cli: "pi", thinking: "low" },
+      })
+    ).toThrow("Invalid agent.thinking for pi: max");
   });
 
   it("backs off independently", () => {
@@ -208,12 +366,17 @@ describe("orchestrator pure modules", () => {
     const events: string[] = [];
     try {
       await runHook({
-        command: "node -e \"console.log([process.env.LINEAR_API_KEY,process.env.PLANE_API_KEY,process.env.PLANE_OAUTH_TOKEN,process.env.PLANE_BOT_TOKEN,process.env.EXTRA_ENV].join('|'))\"",
+        command:
+          "node -e \"console.log([process.env.LINEAR_API_KEY,process.env.PLANE_API_KEY,process.env.PLANE_OAUTH_TOKEN,process.env.PLANE_BOT_TOKEN,process.env.EXTRA_ENV].join('|'))\"",
         phase: "before_run",
         cwd: root,
         runId: "run-1",
         env: { EXTRA_ENV: "visible" },
-        store: { appendEvent: async (_runId: string, _type: string, text: string) => { events.push(text); } } as unknown as StateStore,
+        store: {
+          appendEvent: async (_runId: string, _type: string, text: string) => {
+            events.push(text);
+          },
+        } as unknown as StateStore,
       });
     } finally {
       if (oldLinear === undefined) delete process.env.LINEAR_API_KEY;
@@ -311,17 +474,23 @@ describe("project workflow modules", () => {
         labels: [],
       },
     });
-    expect((snapshot.config.tracker as LinearTrackerConfig).projectSlug).toBe("proj-a");
+    expect((snapshot.config.tracker as LinearTrackerConfig).projectSlug).toBe(
+      "proj-a"
+    );
     expect(snapshot.config.workspace.root).toBe(path.join(root, "workspaces"));
     expect(snapshot.body.trim()).toBe("Do ENG-1");
   });
 
   it("loads Plane tracker workflow config with defaults and env fallback", async () => {
-    const root = await fs.mkdtemp(path.join(os.tmpdir(), "aih-orch-plane-workflow-"));
+    const root = await fs.mkdtemp(
+      path.join(os.tmpdir(), "aih-orch-plane-workflow-")
+    );
     const oldKey = process.env.PLANE_API_KEY;
     process.env.PLANE_API_KEY = "plane-env-key";
     try {
-      await fs.writeFile(path.join(root, "WORKFLOW.md"), `---
+      await fs.writeFile(
+        path.join(root, "WORKFLOW.md"),
+        `---
 tracker:
   kind: plane
   workspace_slug: ws-a
@@ -332,8 +501,11 @@ agent:
   runner: fake
 ---
 Run
-`);
-      const snapshot = await new WorkflowLoader(root).resolve({ projectPath: root });
+`
+      );
+      const snapshot = await new WorkflowLoader(root).resolve({
+        projectPath: root,
+      });
       expect(snapshot.config.tracker).toMatchObject<PlaneTrackerConfig>({
         kind: "plane",
         baseUrl: "https://api.plane.so",
@@ -344,12 +516,25 @@ Run
         moduleId: "mod-a",
         mention: "Worker Agent",
         activeStates: ["Todo", "In Progress"],
-        terminalStates: ["Closed", "Cancelled", "Canceled", "Duplicate", "Done"],
+        terminalStates: [
+          "Closed",
+          "Cancelled",
+          "Canceled",
+          "Duplicate",
+          "Done",
+        ],
         needsHuman: "Needs Human",
       });
 
-      await fs.writeFile(path.join(root, "WORKFLOW.md"), "---\ntracker:\n  kind: plane\n  api_key: test\n  project_id: proj-a\n---\nRun\n");
-      await expect(new WorkflowLoader(root).resolve({ projectPath: root })).rejects.toThrow("tracker.workspace_slug is required for tracker.kind: plane");
+      await fs.writeFile(
+        path.join(root, "WORKFLOW.md"),
+        "---\ntracker:\n  kind: plane\n  api_key: test\n  project_id: proj-a\n---\nRun\n"
+      );
+      await expect(
+        new WorkflowLoader(root).resolve({ projectPath: root })
+      ).rejects.toThrow(
+        "tracker.workspace_slug is required for tracker.kind: plane"
+      );
     } finally {
       if (oldKey === undefined) delete process.env.PLANE_API_KEY;
       else process.env.PLANE_API_KEY = oldKey;
@@ -357,17 +542,35 @@ Run
   });
 
   it("infers plane auth_kind from a literal api_key env-var reference", async () => {
-    const root = await fs.mkdtemp(path.join(os.tmpdir(), "aih-orch-plane-auth-infer-"));
+    const root = await fs.mkdtemp(
+      path.join(os.tmpdir(), "aih-orch-plane-auth-infer-")
+    );
     const oldBot = process.env.PLANE_BOT_TOKEN;
     const oldOauth = process.env.PLANE_OAUTH_TOKEN;
     process.env.PLANE_BOT_TOKEN = "bot-secret";
     process.env.PLANE_OAUTH_TOKEN = "oauth-secret";
     try {
-      await fs.writeFile(path.join(root, "WORKFLOW.md"), "---\ntracker:\n  kind: plane\n  api_key: $PLANE_BOT_TOKEN\n  workspace_slug: ws-a\n  project_id: proj-a\n---\nRun\n");
-      await expect(new WorkflowLoader(root).resolve({ projectPath: root })).resolves.toMatchObject({ config: { tracker: { authKind: "bot_token", apiKey: "bot-secret" } } });
+      await fs.writeFile(
+        path.join(root, "WORKFLOW.md"),
+        "---\ntracker:\n  kind: plane\n  api_key: $PLANE_BOT_TOKEN\n  workspace_slug: ws-a\n  project_id: proj-a\n---\nRun\n"
+      );
+      await expect(
+        new WorkflowLoader(root).resolve({ projectPath: root })
+      ).resolves.toMatchObject({
+        config: { tracker: { authKind: "bot_token", apiKey: "bot-secret" } },
+      });
 
-      await fs.writeFile(path.join(root, "WORKFLOW.md"), "---\ntracker:\n  kind: plane\n  api_key: $PLANE_OAUTH_TOKEN\n  workspace_slug: ws-a\n  project_id: proj-a\n---\nRun\n");
-      await expect(new WorkflowLoader(root).resolve({ projectPath: root })).resolves.toMatchObject({ config: { tracker: { authKind: "oauth_token", apiKey: "oauth-secret" } } });
+      await fs.writeFile(
+        path.join(root, "WORKFLOW.md"),
+        "---\ntracker:\n  kind: plane\n  api_key: $PLANE_OAUTH_TOKEN\n  workspace_slug: ws-a\n  project_id: proj-a\n---\nRun\n"
+      );
+      await expect(
+        new WorkflowLoader(root).resolve({ projectPath: root })
+      ).resolves.toMatchObject({
+        config: {
+          tracker: { authKind: "oauth_token", apiKey: "oauth-secret" },
+        },
+      });
     } finally {
       if (oldBot === undefined) delete process.env.PLANE_BOT_TOKEN;
       else process.env.PLANE_BOT_TOKEN = oldBot;
@@ -377,12 +580,19 @@ Run
   });
 
   it("throws when explicit plane auth_kind mismatches the env-resolved token source", async () => {
-    const root = await fs.mkdtemp(path.join(os.tmpdir(), "aih-orch-plane-auth-mismatch-"));
+    const root = await fs.mkdtemp(
+      path.join(os.tmpdir(), "aih-orch-plane-auth-mismatch-")
+    );
     const oldBot = process.env.PLANE_BOT_TOKEN;
     process.env.PLANE_BOT_TOKEN = "bot-secret";
     try {
-      await fs.writeFile(path.join(root, "WORKFLOW.md"), "---\ntracker:\n  kind: plane\n  auth_kind: oauth_token\n  workspace_slug: ws-a\n  project_id: proj-a\n---\nRun\n");
-      await expect(new WorkflowLoader(root).resolve({ projectPath: root })).rejects.toThrow(
+      await fs.writeFile(
+        path.join(root, "WORKFLOW.md"),
+        "---\ntracker:\n  kind: plane\n  auth_kind: oauth_token\n  workspace_slug: ws-a\n  project_id: proj-a\n---\nRun\n"
+      );
+      await expect(
+        new WorkflowLoader(root).resolve({ projectPath: root })
+      ).rejects.toThrow(
         'tracker.auth_kind is "oauth_token" but the resolved token came from $PLANE_BOT_TOKEN'
       );
     } finally {
@@ -392,16 +602,27 @@ Run
   });
 
   it("trusts explicit plane auth_kind when api_key is also explicit", async () => {
-    const root = await fs.mkdtemp(path.join(os.tmpdir(), "aih-orch-plane-auth-explicit-"));
-    await fs.writeFile(path.join(root, "WORKFLOW.md"), "---\ntracker:\n  kind: plane\n  api_key: raw-token-abc\n  auth_kind: bot_token\n  workspace_slug: ws-a\n  project_id: proj-a\n---\nRun\n");
-    await expect(new WorkflowLoader(root).resolve({ projectPath: root })).resolves.toMatchObject({
+    const root = await fs.mkdtemp(
+      path.join(os.tmpdir(), "aih-orch-plane-auth-explicit-")
+    );
+    await fs.writeFile(
+      path.join(root, "WORKFLOW.md"),
+      "---\ntracker:\n  kind: plane\n  api_key: raw-token-abc\n  auth_kind: bot_token\n  workspace_slug: ws-a\n  project_id: proj-a\n---\nRun\n"
+    );
+    await expect(
+      new WorkflowLoader(root).resolve({ projectPath: root })
+    ).resolves.toMatchObject({
       config: { tracker: { authKind: "bot_token", apiKey: "raw-token-abc" } },
     });
   });
 
   it("validates orchestrator-owned runner config", async () => {
-    const root = await fs.mkdtemp(path.join(os.tmpdir(), "aih-orch-runner-config-"));
-    await fs.writeFile(path.join(root, "WORKFLOW.md"), `---
+    const root = await fs.mkdtemp(
+      path.join(os.tmpdir(), "aih-orch-runner-config-")
+    );
+    await fs.writeFile(
+      path.join(root, "WORKFLOW.md"),
+      `---
 tracker:
   kind: linear
   api_key: test-key
@@ -418,48 +639,148 @@ agent:
   max_concurrent: 1
 ---
 Run
-`);
-    const snapshot = await new WorkflowLoader(root).resolve({ projectPath: root });
-    expect(snapshot.config.agent).toMatchObject({ runner: "fake", provider: "anthropic", model: "gpt-test", thinking: "high", max_turns: 4, turn_timeout_ms: 1000, stall_timeout_ms: 2000 });
+`
+    );
+    const snapshot = await new WorkflowLoader(root).resolve({
+      projectPath: root,
+    });
+    expect(snapshot.config.agent).toMatchObject({
+      runner: "fake",
+      provider: "anthropic",
+      model: "gpt-test",
+      thinking: "high",
+      max_turns: 4,
+      turn_timeout_ms: 1000,
+      stall_timeout_ms: 2000,
+    });
 
-    await fs.writeFile(path.join(root, "WORKFLOW.md"), "---\ntracker:\n  kind: linear\n  api_key: test\n  project_slug: proj-a\nagent:\n  profile: default\n  runner: cli\n---\nRun\n");
-    await expect(new WorkflowLoader(root).resolve({ projectPath: root })).rejects.toThrow("agent.command must provide an executable when agent.runner is cli");
+    await fs.writeFile(
+      path.join(root, "WORKFLOW.md"),
+      "---\ntracker:\n  kind: linear\n  api_key: test\n  project_slug: proj-a\nagent:\n  profile: default\n  runner: cli\n---\nRun\n"
+    );
+    await expect(
+      new WorkflowLoader(root).resolve({ projectPath: root })
+    ).rejects.toThrow(
+      "agent.command must provide an executable when agent.runner is cli"
+    );
 
-    await fs.writeFile(path.join(root, "WORKFLOW.md"), "---\ntracker:\n  kind: linear\n  api_key: test\n  project_slug: proj-a\nagent:\n  profile: default\n  runner: cli\n  command: []\n---\nRun\n");
-    await expect(new WorkflowLoader(root).resolve({ projectPath: root })).rejects.toThrow("agent.command must provide an executable when agent.runner is cli");
+    await fs.writeFile(
+      path.join(root, "WORKFLOW.md"),
+      "---\ntracker:\n  kind: linear\n  api_key: test\n  project_slug: proj-a\nagent:\n  profile: default\n  runner: cli\n  command: []\n---\nRun\n"
+    );
+    await expect(
+      new WorkflowLoader(root).resolve({ projectPath: root })
+    ).rejects.toThrow(
+      "agent.command must provide an executable when agent.runner is cli"
+    );
 
-    await fs.writeFile(path.join(root, "WORKFLOW.md"), "---\ntracker:\n  kind: linear\n  api_key: test\n  project_slug: proj-a\nagent:\n  profile: default\n  runner: cli\n  command: [\" node \", \"-v\"]\n---\nRun\n");
-    await expect(new WorkflowLoader(root).resolve({ projectPath: root })).resolves.toMatchObject({ config: { agent: { command: ["node", "-v"] } } });
+    await fs.writeFile(
+      path.join(root, "WORKFLOW.md"),
+      '---\ntracker:\n  kind: linear\n  api_key: test\n  project_slug: proj-a\nagent:\n  profile: default\n  runner: cli\n  command: [" node ", "-v"]\n---\nRun\n'
+    );
+    await expect(
+      new WorkflowLoader(root).resolve({ projectPath: root })
+    ).resolves.toMatchObject({
+      config: { agent: { command: ["node", "-v"] } },
+    });
 
-    await fs.writeFile(path.join(root, "WORKFLOW.md"), "---\ntracker:\n  kind: linear\n  api_key: test\n  project_slug: proj-a\nagent:\n  profile: default\n  runner: codex\n---\nRun\n");
-    await expect(new WorkflowLoader(root).resolve({ projectPath: root })).resolves.toMatchObject({ config: { agent: { runner: "codex" } } });
+    await fs.writeFile(
+      path.join(root, "WORKFLOW.md"),
+      "---\ntracker:\n  kind: linear\n  api_key: test\n  project_slug: proj-a\nagent:\n  profile: default\n  runner: codex\n---\nRun\n"
+    );
+    await expect(
+      new WorkflowLoader(root).resolve({ projectPath: root })
+    ).resolves.toMatchObject({ config: { agent: { runner: "codex" } } });
 
-    await fs.writeFile(path.join(root, "WORKFLOW.md"), "---\ntracker:\n  kind: linear\n  api_key: test\n  project_slug: proj-a\nagent:\n  profile: default\n  runner: codex\n  command: [\" node \", \"mock-app-server.mjs\"]\n---\nRun\n");
-    await expect(new WorkflowLoader(root).resolve({ projectPath: root })).resolves.toMatchObject({ config: { agent: { runner: "codex", command: ["node", "mock-app-server.mjs"] } } });
+    await fs.writeFile(
+      path.join(root, "WORKFLOW.md"),
+      '---\ntracker:\n  kind: linear\n  api_key: test\n  project_slug: proj-a\nagent:\n  profile: default\n  runner: codex\n  command: [" node ", "mock-app-server.mjs"]\n---\nRun\n'
+    );
+    await expect(
+      new WorkflowLoader(root).resolve({ projectPath: root })
+    ).resolves.toMatchObject({
+      config: {
+        agent: { runner: "codex", command: ["node", "mock-app-server.mjs"] },
+      },
+    });
 
-    await fs.writeFile(path.join(root, "WORKFLOW.md"), "---\ntracker:\n  kind: linear\n  api_key: test\n  project_slug: proj-a\nagent:\n  profile: default\n  kind: pi\n  provider: anthropic\n---\nRun\n");
-    await expect(new WorkflowLoader(root).resolve({ projectPath: root })).resolves.toMatchObject({ config: { agent: { runner: "pi", provider: "anthropic" } } });
+    await fs.writeFile(
+      path.join(root, "WORKFLOW.md"),
+      "---\ntracker:\n  kind: linear\n  api_key: test\n  project_slug: proj-a\nagent:\n  profile: default\n  kind: pi\n  provider: anthropic\n---\nRun\n"
+    );
+    await expect(
+      new WorkflowLoader(root).resolve({ projectPath: root })
+    ).resolves.toMatchObject({
+      config: { agent: { runner: "pi", provider: "anthropic" } },
+    });
 
-    await fs.writeFile(path.join(root, "WORKFLOW.md"), "---\ntracker:\n  kind: linear\n  api_key: test\n  project_slug: proj-a\nagent:\n  profile: claude\n  kind: claude\n---\nRun\n");
-    await expect(new WorkflowLoader(root).resolve({ projectPath: root })).resolves.toMatchObject({ config: { agent: { runner: "claude" } } });
+    await fs.writeFile(
+      path.join(root, "WORKFLOW.md"),
+      "---\ntracker:\n  kind: linear\n  api_key: test\n  project_slug: proj-a\nagent:\n  profile: claude\n  kind: claude\n---\nRun\n"
+    );
+    await expect(
+      new WorkflowLoader(root).resolve({ projectPath: root })
+    ).resolves.toMatchObject({ config: { agent: { runner: "claude" } } });
 
-    await fs.writeFile(path.join(root, "WORKFLOW.md"), "---\ntracker:\n  kind: linear\n  api_key: test\n  project_slug: proj-a\nagent:\n  runner: codex\n  reasoningEffort: xhigh\n---\nRun\n");
-    await expect(new WorkflowLoader(root).resolve({ projectPath: root })).resolves.toMatchObject({ config: { agent: { runner: "codex", reasoningEffort: "xhigh" } } });
+    await fs.writeFile(
+      path.join(root, "WORKFLOW.md"),
+      "---\ntracker:\n  kind: linear\n  api_key: test\n  project_slug: proj-a\nagent:\n  runner: codex\n  reasoningEffort: xhigh\n---\nRun\n"
+    );
+    await expect(
+      new WorkflowLoader(root).resolve({ projectPath: root })
+    ).resolves.toMatchObject({
+      config: { agent: { runner: "codex", reasoningEffort: "xhigh" } },
+    });
 
-    await fs.writeFile(path.join(root, "WORKFLOW.md"), "---\ntracker:\n  kind: linear\n  api_key: test\n  project_slug: proj-a\nagent:\n  runner: pi\n  thinking: max\n---\nRun\n");
-    await expect(new WorkflowLoader(root).resolve({ projectPath: root })).rejects.toThrow("Invalid agent.thinking for pi: max. Allowed: off, low, medium, high, xhigh");
+    await fs.writeFile(
+      path.join(root, "WORKFLOW.md"),
+      "---\ntracker:\n  kind: linear\n  api_key: test\n  project_slug: proj-a\nagent:\n  runner: pi\n  thinking: max\n---\nRun\n"
+    );
+    await expect(
+      new WorkflowLoader(root).resolve({ projectPath: root })
+    ).rejects.toThrow(
+      "Invalid agent.thinking for pi: max. Allowed: off, low, medium, high, xhigh"
+    );
 
-    await fs.writeFile(path.join(root, "WORKFLOW.md"), "---\ntracker:\n  kind: linear\n  api_key: test\n  project_slug: proj-a\nagent:\n  runner: codex\n  reasoning: max\n---\nRun\n");
-    await expect(new WorkflowLoader(root).resolve({ projectPath: root })).rejects.toThrow("Invalid agent.thinking for codex: max. Allowed: xhigh, high, medium, low");
+    await fs.writeFile(
+      path.join(root, "WORKFLOW.md"),
+      "---\ntracker:\n  kind: linear\n  api_key: test\n  project_slug: proj-a\nagent:\n  runner: codex\n  reasoning: max\n---\nRun\n"
+    );
+    await expect(
+      new WorkflowLoader(root).resolve({ projectPath: root })
+    ).rejects.toThrow(
+      "Invalid agent.thinking for codex: max. Allowed: xhigh, high, medium, low"
+    );
 
-    await fs.writeFile(path.join(root, "WORKFLOW.md"), "---\ntracker:\n  kind: linear\n  api_key: test\n  project_slug: proj-a\nagent:\n  runner: codex\n  reasoning: max\n  reasoningEffort: high\n---\nRun\n");
-    await expect(new WorkflowLoader(root).resolve({ projectPath: root })).resolves.toMatchObject({ config: { agent: { runner: "codex", reasoning: "max", reasoningEffort: "high" } } });
+    await fs.writeFile(
+      path.join(root, "WORKFLOW.md"),
+      "---\ntracker:\n  kind: linear\n  api_key: test\n  project_slug: proj-a\nagent:\n  runner: codex\n  reasoning: max\n  reasoningEffort: high\n---\nRun\n"
+    );
+    await expect(
+      new WorkflowLoader(root).resolve({ projectPath: root })
+    ).resolves.toMatchObject({
+      config: {
+        agent: { runner: "codex", reasoning: "max", reasoningEffort: "high" },
+      },
+    });
 
-    await fs.writeFile(path.join(root, "WORKFLOW.md"), "---\ntracker:\n  kind: linear\n  api_key: test\n  project_slug: proj-a\nagent:\n  runner: claude\n  thinking: off\n---\nRun\n");
-    await expect(new WorkflowLoader(root).resolve({ projectPath: root })).rejects.toThrow("Invalid agent.thinking for claude: off. Allowed: low, medium, high, xhigh, max");
+    await fs.writeFile(
+      path.join(root, "WORKFLOW.md"),
+      "---\ntracker:\n  kind: linear\n  api_key: test\n  project_slug: proj-a\nagent:\n  runner: claude\n  thinking: off\n---\nRun\n"
+    );
+    await expect(
+      new WorkflowLoader(root).resolve({ projectPath: root })
+    ).rejects.toThrow(
+      "Invalid agent.thinking for claude: off. Allowed: low, medium, high, xhigh, max"
+    );
 
-    await fs.writeFile(path.join(root, "WORKFLOW.md"), "---\ntracker:\n  kind: linear\n  api_key: test\n  project_slug: proj-a\nagent:\n  profile: default\n  runner: fake\n  max_turns: 0\n---\nRun\n");
-    await expect(new WorkflowLoader(root).resolve({ projectPath: root })).rejects.toThrow("agent.max_turns must be a positive number");
+    await fs.writeFile(
+      path.join(root, "WORKFLOW.md"),
+      "---\ntracker:\n  kind: linear\n  api_key: test\n  project_slug: proj-a\nagent:\n  profile: default\n  runner: fake\n  max_turns: 0\n---\nRun\n"
+    );
+    await expect(
+      new WorkflowLoader(root).resolve({ projectPath: root })
+    ).rejects.toThrow("agent.max_turns must be a positive number");
   });
 
   it("renders only Symphony issue and attempt variables strictly", async () => {
@@ -505,7 +826,9 @@ Run
     await writeWorkflow(root);
     const loader = new WorkflowLoader(root);
     const first = await loader.resolve({ projectPath: root });
-    expect((first.config.tracker as LinearTrackerConfig).projectSlug).toBe("proj-a");
+    expect((first.config.tracker as LinearTrackerConfig).projectSlug).toBe(
+      "proj-a"
+    );
     await fs.writeFile(
       path.join(root, "WORKFLOW.md"),
       "---\ntracker: [bad]\n---\nbad"
@@ -521,7 +844,9 @@ Run
       },
       allowStale: true,
     });
-    expect((stale.config.tracker as LinearTrackerConfig).projectSlug).toBe("proj-a");
+    expect((stale.config.tracker as LinearTrackerConfig).projectSlug).toBe(
+      "proj-a"
+    );
     expect(stale.body.trim()).toBe("Do ENG-2");
     await expect(loader.resolve({ projectPath: root })).rejects.toThrow();
   });
@@ -641,31 +966,103 @@ describe("orchestrator routes", () => {
     const project = path.join(home, "project");
     await fs.mkdir(project);
     await writeWorkflow(project);
-    const context = { getDataDir: () => home, getConfig: () => ({ gateway: { port: 4001 }, extensions: { orchestrator: { projects: [project] } } }), emit: vi.fn() } as any;
+    const context = {
+      getDataDir: () => home,
+      getConfig: () => ({
+        gateway: { port: 4001 },
+        extensions: { orchestrator: { projects: [project] } },
+      }),
+      emit: vi.fn(),
+    } as any;
     const app = new Hono();
     try {
       await orchestratorExtension.start?.(context);
       orchestratorExtension.registerRoutes(app);
       const state = new StateStore(path.join(home, "orchestrator", "state.db"));
       state.bootstrap();
-      state.insertRun({ runId: "r-log", projectId: "project", issueId: "lin_1", identifier: "ENG-1", workspace: path.join(project, "workspaces", "eng-1"), profileJson: "{}", workflowPath: path.join(project, "WORKFLOW.md"), workflowSha: "abc", pid: null, startedAt: new Date().toISOString() });
+      state.insertRun({
+        runId: "r-log",
+        projectId: "project",
+        issueId: "lin_1",
+        identifier: "ENG-1",
+        workspace: path.join(project, "workspaces", "eng-1"),
+        profileJson: "{}",
+        workflowPath: path.join(project, "WORKFLOW.md"),
+        workflowSha: "abc",
+        pid: null,
+        startedAt: new Date().toISOString(),
+      });
       state.setWorkerId("r-log", "worker-log");
-      state.appendEvent("r-log", "worker.started", { id: "worker-log", kind: "claude" }, "project");
-      state.appendEvent("r-log", "worker.claude.message", { text: "hello from worker" }, "project");
-      state.appendEvent("r-log", "worker.codex.message", { item: { type: "agentMessage", text: "\u001b[31mhello from codex\u001b[0m [2mclean" } }, "project");
-      state.appendEvent("r-log", "worker.pi.message", { assistantMessageEvent: { type: "text_delta", text: "partial pi" } }, "project");
-      state.appendEvent("r-log", "worker.pi.message", { type: "turn_end", message: { role: "assistant", content: "hello from pi" } }, "project");
+      state.appendEvent(
+        "r-log",
+        "worker.started",
+        { id: "worker-log", kind: "claude" },
+        "project"
+      );
+      state.appendEvent(
+        "r-log",
+        "worker.claude.message",
+        { text: "hello from worker" },
+        "project"
+      );
+      state.appendEvent(
+        "r-log",
+        "worker.codex.message",
+        {
+          item: {
+            type: "agentMessage",
+            text: "\u001b[31mhello from codex\u001b[0m [2mclean",
+          },
+        },
+        "project"
+      );
+      state.appendEvent(
+        "r-log",
+        "worker.pi.message",
+        { assistantMessageEvent: { type: "text_delta", text: "partial pi" } },
+        "project"
+      );
+      state.appendEvent(
+        "r-log",
+        "worker.pi.message",
+        {
+          type: "turn_end",
+          message: { role: "assistant", content: "hello from pi" },
+        },
+        "project"
+      );
 
-      const response = await app.request("/orchestrator/runs/ENG-1/logs?project=project&since=0");
+      const response = await app.request(
+        "/orchestrator/runs/ENG-1/logs?project=project&since=0"
+      );
       expect(response.status).toBe(200);
       const body = await response.json();
       expect(body.cursor).toBe(5);
-      expect(body.events).toEqual(expect.arrayContaining([
-        expect.objectContaining({ type: "assistant", rawType: "worker.claude.message", text: "hello from worker", payload: { text: "hello from worker" } }),
-        expect.objectContaining({ type: "assistant", rawType: "worker.codex.message", text: "hello from codex clean" }),
-        expect.objectContaining({ type: "assistant", rawType: "worker.pi.message", text: "" }),
-        expect.objectContaining({ type: "assistant", rawType: "worker.pi.message", text: "hello from pi" }),
-      ]));
+      expect(body.events).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            type: "assistant",
+            rawType: "worker.claude.message",
+            text: "hello from worker",
+            payload: { text: "hello from worker" },
+          }),
+          expect.objectContaining({
+            type: "assistant",
+            rawType: "worker.codex.message",
+            text: "hello from codex clean",
+          }),
+          expect.objectContaining({
+            type: "assistant",
+            rawType: "worker.pi.message",
+            text: "",
+          }),
+          expect.objectContaining({
+            type: "assistant",
+            rawType: "worker.pi.message",
+            text: "hello from pi",
+          }),
+        ])
+      );
       state.close();
     } finally {
       await orchestratorExtension.stop?.();
@@ -677,22 +1074,57 @@ describe("orchestrator routes", () => {
     const project = path.join(home, "project");
     await fs.mkdir(project);
     await writeWorkflow(project);
-    const context = { getDataDir: () => home, getConfig: () => ({ gateway: { port: 4001 }, extensions: { orchestrator: { projects: [project] } } }), emit: vi.fn() } as any;
+    const context = {
+      getDataDir: () => home,
+      getConfig: () => ({
+        gateway: { port: 4001 },
+        extensions: { orchestrator: { projects: [project] } },
+      }),
+      emit: vi.fn(),
+    } as any;
     const app = new Hono();
     try {
       await orchestratorExtension.start?.(context);
       orchestratorExtension.registerRoutes(app);
       const state = new StateStore(path.join(home, "orchestrator", "state.db"));
       state.bootstrap();
-      state.insertRun({ runId: "r-active", projectId: "project", issueId: "lin_1", identifier: "ENG-1", workspace: path.join(project, "workspaces", "eng-1"), profileJson: "{}", workflowPath: path.join(project, "WORKFLOW.md"), workflowSha: "abc", pid: null, startedAt: new Date().toISOString() });
+      state.insertRun({
+        runId: "r-active",
+        projectId: "project",
+        issueId: "lin_1",
+        identifier: "ENG-1",
+        workspace: path.join(project, "workspaces", "eng-1"),
+        profileJson: "{}",
+        workflowPath: path.join(project, "WORKFLOW.md"),
+        workflowSha: "abc",
+        pid: null,
+        startedAt: new Date().toISOString(),
+      });
       state.setWorkerId("r-active", "worker-active");
-      state.appendEvent("r-active", "worker.started", { id: "worker-active", kind: "claude" }, "project");
-      state.appendEvent("r-active", "worker.status", { id: "worker-active", kind: "claude", status: "running" }, "project");
+      state.appendEvent(
+        "r-active",
+        "worker.started",
+        { id: "worker-active", kind: "claude" },
+        "project"
+      );
+      state.appendEvent(
+        "r-active",
+        "worker.status",
+        { id: "worker-active", kind: "claude", status: "running" },
+        "project"
+      );
 
       const response = await app.request("/orchestrator/runs?project=project");
       expect(response.status).toBe(200);
       const body = await response.json();
-      expect(body.active).toEqual([expect.objectContaining({ runId: "r-active", worker_id: "worker-active", worker_status: "running", worker_kind: "claude" })]);
+      expect(body.active).toEqual([
+        expect.objectContaining({
+          runId: "r-active",
+          worker_id: "worker-active",
+          worker_status: "running",
+          worker_kind: "claude",
+        }),
+      ]);
       state.close();
     } finally {
       await orchestratorExtension.stop?.();
@@ -700,7 +1132,9 @@ describe("orchestrator routes", () => {
   });
 
   it("queues a webhook tick for a plane payload when all projects are plane-scoped", async () => {
-    const home = await fs.mkdtemp(path.join(os.tmpdir(), "aih-orch-webhook-plane-"));
+    const home = await fs.mkdtemp(
+      path.join(os.tmpdir(), "aih-orch-webhook-plane-")
+    );
     const project = path.join(home, "project");
     await fs.mkdir(project);
     await writePlaneWorkflow(project);
@@ -710,25 +1144,40 @@ describe("orchestrator routes", () => {
         gateway: { port: 4001 },
         extensions: {
           subagents: { profiles },
-          orchestrator: { projects: [project], webhook: { enabled: true, secret: "whsec" } },
+          orchestrator: {
+            projects: [project],
+            webhook: { enabled: true, secret: "whsec" },
+          },
         },
       }),
       emit: vi.fn(),
     } as any;
     const app = new Hono();
-    const enqueueTickSpy = vi.spyOn(OrchestratorDaemon.prototype, "enqueueTick").mockImplementation(() => {});
+    const enqueueTickSpy = vi
+      .spyOn(OrchestratorDaemon.prototype, "enqueueTick")
+      .mockImplementation(() => {});
     try {
       await orchestratorExtension.start?.(context);
       orchestratorExtension.registerRoutes(app);
-      const body = JSON.stringify({ event: "issue", action: "updated", data: { id: "wi_1", state: "In Progress" } });
-      const signature = crypto.createHmac("sha256", "whsec").update(body).digest("hex");
+      const body = JSON.stringify({
+        event: "issue",
+        action: "updated",
+        data: { id: "wi_1", state: "In Progress" },
+      });
+      const signature = crypto
+        .createHmac("sha256", "whsec")
+        .update(body)
+        .digest("hex");
       const response = await app.request("/orchestrator/webhook", {
         method: "POST",
         headers: { "x-plane-signature": signature },
         body,
       });
       expect(response.status).toBe(200);
-      await expect(response.json()).resolves.toEqual({ ok: true, queued: true });
+      await expect(response.json()).resolves.toEqual({
+        ok: true,
+        queued: true,
+      });
       expect(enqueueTickSpy).toHaveBeenCalled();
     } finally {
       enqueueTickSpy.mockRestore();
@@ -737,7 +1186,9 @@ describe("orchestrator routes", () => {
   });
 
   it("queues a webhook tick for a plane payload when projects mix linear and plane", async () => {
-    const home = await fs.mkdtemp(path.join(os.tmpdir(), "aih-orch-webhook-mixed-"));
+    const home = await fs.mkdtemp(
+      path.join(os.tmpdir(), "aih-orch-webhook-mixed-")
+    );
     const linearProject = path.join(home, "linear-project");
     const planeProject = path.join(home, "plane-project");
     await fs.mkdir(linearProject);
@@ -750,24 +1201,39 @@ describe("orchestrator routes", () => {
         gateway: { port: 4001 },
         extensions: {
           subagents: { profiles },
-          orchestrator: { projects: [linearProject, planeProject], webhook: { enabled: true, secret: "whsec" } },
+          orchestrator: {
+            projects: [linearProject, planeProject],
+            webhook: { enabled: true, secret: "whsec" },
+          },
         },
       }),
       emit: vi.fn(),
     } as any;
     const app = new Hono();
-    const enqueueTickSpy = vi.spyOn(OrchestratorDaemon.prototype, "enqueueTick").mockImplementation(() => {});
+    const enqueueTickSpy = vi
+      .spyOn(OrchestratorDaemon.prototype, "enqueueTick")
+      .mockImplementation(() => {});
     try {
       await orchestratorExtension.start?.(context);
       orchestratorExtension.registerRoutes(app);
-      const body = JSON.stringify({ event: "issue", action: "updated", data: { id: "wi_1", state: "In Progress" } });
-      const signature = crypto.createHmac("sha256", "whsec").update(body).digest("hex");
+      const body = JSON.stringify({
+        event: "issue",
+        action: "updated",
+        data: { id: "wi_1", state: "In Progress" },
+      });
+      const signature = crypto
+        .createHmac("sha256", "whsec")
+        .update(body)
+        .digest("hex");
       const response = await app.request("/orchestrator/webhook", {
         method: "POST",
         headers: { "x-plane-signature": signature },
         body,
       });
-      await expect(response.json()).resolves.toEqual({ ok: true, queued: true });
+      await expect(response.json()).resolves.toEqual({
+        ok: true,
+        queued: true,
+      });
       expect(enqueueTickSpy).toHaveBeenCalled();
     } finally {
       enqueueTickSpy.mockRestore();
@@ -776,14 +1242,19 @@ describe("orchestrator routes", () => {
   });
 
   it("fails open and still queues a plane payload when tracker kind cannot be determined", async () => {
-    const home = await fs.mkdtemp(path.join(os.tmpdir(), "aih-orch-webhook-unknown-"));
+    const home = await fs.mkdtemp(
+      path.join(os.tmpdir(), "aih-orch-webhook-unknown-")
+    );
     const context = {
       getDataDir: () => home,
       getConfig: () => ({
         gateway: { port: 4001 },
         extensions: {
           subagents: { profiles },
-          orchestrator: { projects: [], webhook: { enabled: true, secret: "whsec" } },
+          orchestrator: {
+            projects: [],
+            webhook: { enabled: true, secret: "whsec" },
+          },
         },
       }),
       emit: vi.fn(),
@@ -792,14 +1263,24 @@ describe("orchestrator routes", () => {
     try {
       await orchestratorExtension.start?.(context);
       orchestratorExtension.registerRoutes(app);
-      const body = JSON.stringify({ event: "issue", action: "updated", data: { id: "wi_1", state: "In Progress" } });
-      const signature = crypto.createHmac("sha256", "whsec").update(body).digest("hex");
+      const body = JSON.stringify({
+        event: "issue",
+        action: "updated",
+        data: { id: "wi_1", state: "In Progress" },
+      });
+      const signature = crypto
+        .createHmac("sha256", "whsec")
+        .update(body)
+        .digest("hex");
       const response = await app.request("/orchestrator/webhook", {
         method: "POST",
         headers: { "x-plane-signature": signature },
         body,
       });
-      await expect(response.json()).resolves.toEqual({ ok: true, queued: true });
+      await expect(response.json()).resolves.toEqual({
+        ok: true,
+        queued: true,
+      });
     } finally {
       await orchestratorExtension.stop?.();
     }
@@ -982,7 +1463,9 @@ describe("orchestrator Linear client", () => {
 
 async function writeMockCodexAppServer(dir: string): Promise<string> {
   const script = path.join(dir, "mock-codex-app-server.mjs");
-  await fs.writeFile(script, `
+  await fs.writeFile(
+    script,
+    `
 import fs from "node:fs";
 import readline from "node:readline";
 
@@ -1038,21 +1521,44 @@ rl.on("line", (line) => {
     }
   }
 });
-`);
+`
+  );
   return script;
 }
 
-function codexRunnerInput(root: string, command: string[], extra: Partial<Parameters<CodexAppServerRunner["start"]>[0]> = {}): Parameters<CodexAppServerRunner["start"]>[0] {
+function codexRunnerInput(
+  root: string,
+  command: string[],
+  extra: Partial<Parameters<CodexAppServerRunner["start"]>[0]> = {}
+): Parameters<CodexAppServerRunner["start"]>[0] {
   return {
     runId: "r-codex",
-    project: { id: "project", path: root, workflowPath: path.join(root, "WORKFLOW.md") },
-    issue: { id: "lin_1", identifier: "ENG-1", title: "Codex", state: "Ready", labels: [] },
+    project: {
+      id: "project",
+      path: root,
+      workflowPath: path.join(root, "WORKFLOW.md"),
+    },
+    issue: {
+      id: "lin_1",
+      identifier: "ENG-1",
+      title: "Codex",
+      state: "Ready",
+      labels: [],
+    },
     workspace: root,
     prompt: "Initial rendered workflow instructions",
     label: "ENG-1",
     profile: { name: "default", cli: "codex", model: "gpt-5" },
     workflow: {
-      tracker: { kind: "linear", endpoint: "x", apiKey: "x", projectSlug: "proj-a", activeStates: ["Ready"], terminalStates: ["Done"], needsHuman: "Needs Human" },
+      tracker: {
+        kind: "linear",
+        endpoint: "x",
+        apiKey: "x",
+        projectSlug: "proj-a",
+        activeStates: ["Ready"],
+        terminalStates: ["Done"],
+        needsHuman: "Needs Human",
+      },
       workspace: { root, cleanupOnTerminal: false, reuse: true },
       polling: { intervalMs: 1000, jitterMs: 0 },
       agent: { runner: "codex", command, model: "gpt-5-mini" },
@@ -1066,20 +1572,36 @@ function codexRunnerInput(root: string, command: string[], extra: Partial<Parame
 
 describe("Codex app-server worker runner", () => {
   it("validates profile-derived Codex thinking before spawning app-server", async () => {
-    const root = await fs.mkdtemp(path.join(os.tmpdir(), "aih-orch-codex-invalid-thinking-"));
+    const root = await fs.mkdtemp(
+      path.join(os.tmpdir(), "aih-orch-codex-invalid-thinking-")
+    );
     const script = await writeMockCodexAppServer(root);
     const logPath = path.join(root, "rpc.log");
     process.env.MOCK_CODEX_MODE = "complete";
     process.env.MOCK_CODEX_LOG = logPath;
     const runner = new CodexAppServerRunner();
     try {
-      await expect(runner.start(codexRunnerInput(root, [process.execPath, script], {
-        profile: { name: "codex", cli: "codex", model: "gpt-5", reasoningEffort: "low" },
-        workflow: {
-          ...codexRunnerInput(root, [process.execPath, script]).workflow,
-          agent: { profile: "codex", command: [process.execPath, script], model: "gpt-5-mini", thinking: "max" },
-        },
-      }))).rejects.toThrow("Invalid agent.thinking for codex: max");
+      await expect(
+        runner.start(
+          codexRunnerInput(root, [process.execPath, script], {
+            profile: {
+              name: "codex",
+              cli: "codex",
+              model: "gpt-5",
+              reasoningEffort: "low",
+            },
+            workflow: {
+              ...codexRunnerInput(root, [process.execPath, script]).workflow,
+              agent: {
+                profile: "codex",
+                command: [process.execPath, script],
+                model: "gpt-5-mini",
+                thinking: "max",
+              },
+            },
+          })
+        )
+      ).rejects.toThrow("Invalid agent.thinking for codex: max");
       await expect(fs.stat(logPath)).rejects.toThrow();
     } finally {
       delete process.env.MOCK_CODEX_MODE;
@@ -1088,16 +1610,31 @@ describe("Codex app-server worker runner", () => {
   });
 
   it("times out a non-responsive Codex app-server request and removes the session", async () => {
-    const root = await fs.mkdtemp(path.join(os.tmpdir(), "aih-orch-codex-silent-"));
+    const root = await fs.mkdtemp(
+      path.join(os.tmpdir(), "aih-orch-codex-silent-")
+    );
     const script = await writeMockCodexAppServer(root);
     const events: Array<{ type: string; payload: unknown }> = [];
     process.env.MOCK_CODEX_MODE = "silent";
-    const runner = new CodexAppServerRunner({ requestTimeoutMs: 20, idleCleanupMs: 20, terminalRetentionMs: 20 });
+    const runner = new CodexAppServerRunner({
+      requestTimeoutMs: 20,
+      idleCleanupMs: 20,
+      terminalRetentionMs: 20,
+    });
     try {
-      await expect(runner.start(codexRunnerInput(root, [process.execPath, script], {
-        emitEvent: (type, payload) => events.push({ type, payload }),
-      }))).rejects.toThrow("Codex app-server request timed out: initialize");
-      expect(events.map((event) => event.type)).toEqual(expect.arrayContaining(["worker.codex.request.timeout", "worker.codex.session.removed"]));
+      await expect(
+        runner.start(
+          codexRunnerInput(root, [process.execPath, script], {
+            emitEvent: (type, payload) => events.push({ type, payload }),
+          })
+        )
+      ).rejects.toThrow("Codex app-server request timed out: initialize");
+      expect(events.map((event) => event.type)).toEqual(
+        expect.arrayContaining([
+          "worker.codex.request.timeout",
+          "worker.codex.session.removed",
+        ])
+      );
     } finally {
       delete process.env.MOCK_CODEX_MODE;
       await runner.shutdown();
@@ -1105,36 +1642,82 @@ describe("Codex app-server worker runner", () => {
   });
 
   it("starts a mocked app-server session and maps messages, tools, tokens, and completion events", async () => {
-    const root = await fs.mkdtemp(path.join(os.tmpdir(), "aih-orch-codex-complete-"));
+    const root = await fs.mkdtemp(
+      path.join(os.tmpdir(), "aih-orch-codex-complete-")
+    );
     const script = await writeMockCodexAppServer(root);
     const logPath = path.join(root, "rpc.log");
     const events: Array<{ type: string; payload: unknown }> = [];
     process.env.MOCK_CODEX_MODE = "complete";
     process.env.MOCK_CODEX_LOG = logPath;
-    const runner = new CodexAppServerRunner({ idleCleanupMs: 20, terminalRetentionMs: 50 });
+    const runner = new CodexAppServerRunner({
+      idleCleanupMs: 20,
+      terminalRetentionMs: 50,
+    });
     try {
-      const handle = await runner.start(codexRunnerInput(root, [process.execPath, script], {
-        profile: { name: "default", cli: "codex", model: "gpt-5", reasoningEffort: "low" },
-        workflow: {
-          ...codexRunnerInput(root, [process.execPath, script]).workflow,
-          agent: { runner: "codex", command: [process.execPath, script], model: "gpt-5-mini", thinking: "high" },
-        },
-        emitEvent: (type, payload) => events.push({ type, payload }),
-      }));
+      const handle = await runner.start(
+        codexRunnerInput(root, [process.execPath, script], {
+          profile: {
+            name: "default",
+            cli: "codex",
+            model: "gpt-5",
+            reasoningEffort: "low",
+          },
+          workflow: {
+            ...codexRunnerInput(root, [process.execPath, script]).workflow,
+            agent: {
+              runner: "codex",
+              command: [process.execPath, script],
+              model: "gpt-5-mini",
+              thinking: "high",
+            },
+          },
+          emitEvent: (type, payload) => events.push({ type, payload }),
+        })
+      );
 
-      await vi.waitFor(async () => expect(await runner.status(handle)).toMatchObject({ status: "done" }));
-      expect(handle).toMatchObject({ kind: "codex", raw: { threadId: "thr_mock", turnId: "turn_mock" } });
-      expect(events.map((event) => event.type)).toEqual(expect.arrayContaining([
-        "worker.codex.initialized",
-        "worker.codex.thread.started",
-        "worker.codex.message",
-        "worker.codex.tool",
-        "worker.codex.tokens",
-        "worker.codex.turn.completed",
-      ]));
-      const sent = (await fs.readFile(logPath, "utf8")).trim().split("\n").map((line) => JSON.parse(line) as { method: string; params?: any });
-      expect(sent.find((message) => message.method === "thread/start")?.params).toMatchObject({ model: "gpt-5-mini", cwd: root, approvalPolicy: "never", sandbox: "danger-full-access", serviceName: "yoplai-orchestrator" });
-      expect(sent.find((message) => message.method === "turn/start")?.params).toMatchObject({ cwd: root, model: "gpt-5-mini", approvalPolicy: "never", sandboxPolicy: { type: "dangerFullAccess" }, effort: "high", input: [{ type: "text", text: "Initial rendered workflow instructions" }] });
+      await vi.waitFor(async () =>
+        expect(await runner.status(handle)).toMatchObject({ status: "done" })
+      );
+      expect(handle).toMatchObject({
+        kind: "codex",
+        raw: { threadId: "thr_mock", turnId: "turn_mock" },
+      });
+      expect(events.map((event) => event.type)).toEqual(
+        expect.arrayContaining([
+          "worker.codex.initialized",
+          "worker.codex.thread.started",
+          "worker.codex.message",
+          "worker.codex.tool",
+          "worker.codex.tokens",
+          "worker.codex.turn.completed",
+        ])
+      );
+      const sent = (await fs.readFile(logPath, "utf8"))
+        .trim()
+        .split("\n")
+        .map((line) => JSON.parse(line) as { method: string; params?: any });
+      expect(
+        sent.find((message) => message.method === "thread/start")?.params
+      ).toMatchObject({
+        model: "gpt-5-mini",
+        cwd: root,
+        approvalPolicy: "never",
+        sandbox: "danger-full-access",
+        serviceName: "yoplai-orchestrator",
+      });
+      expect(
+        sent.find((message) => message.method === "turn/start")?.params
+      ).toMatchObject({
+        cwd: root,
+        model: "gpt-5-mini",
+        approvalPolicy: "never",
+        sandboxPolicy: { type: "dangerFullAccess" },
+        effort: "high",
+        input: [
+          { type: "text", text: "Initial rendered workflow instructions" },
+        ],
+      });
     } finally {
       delete process.env.MOCK_CODEX_MODE;
       delete process.env.MOCK_CODEX_LOG;
@@ -1142,24 +1725,39 @@ describe("Codex app-server worker runner", () => {
   });
 
   it("reuses a live Codex thread for continuation guidance", async () => {
-    const root = await fs.mkdtemp(path.join(os.tmpdir(), "aih-orch-codex-continue-"));
+    const root = await fs.mkdtemp(
+      path.join(os.tmpdir(), "aih-orch-codex-continue-")
+    );
     const script = await writeMockCodexAppServer(root);
     const logPath = path.join(root, "rpc.log");
     process.env.MOCK_CODEX_MODE = "hold";
     process.env.MOCK_CODEX_LOG = logPath;
     const runner = new CodexAppServerRunner();
     try {
-      const first = await runner.start(codexRunnerInput(root, [process.execPath, script]));
-      const second = await runner.start(codexRunnerInput(root, [process.execPath, script], { prompt: "This full prompt must not be resent" }));
+      const first = await runner.start(
+        codexRunnerInput(root, [process.execPath, script])
+      );
+      const second = await runner.start(
+        codexRunnerInput(root, [process.execPath, script], {
+          prompt: "This full prompt must not be resent",
+        })
+      );
 
       expect(second.id).toBe(first.id);
-      const sent = (await fs.readFile(logPath, "utf8")).trim().split("\n").map((line) => JSON.parse(line) as { method: string; params?: any });
+      const sent = (await fs.readFile(logPath, "utf8"))
+        .trim()
+        .split("\n")
+        .map((line) => JSON.parse(line) as { method: string; params?: any });
       const starts = sent.filter((message) => message.method === "turn/start");
       const steer = sent.find((message) => message.method === "turn/steer");
       expect(starts).toHaveLength(1);
       expect(steer?.params.expectedTurnId).toBe("turn_mock");
-      expect(steer?.params.input[0].text).toContain("Continue the active orchestrator work for ENG-1");
-      expect(steer?.params.input[0].text).not.toContain("This full prompt must not be resent");
+      expect(steer?.params.input[0].text).toContain(
+        "Continue the active orchestrator work for ENG-1"
+      );
+      expect(steer?.params.input[0].text).not.toContain(
+        "This full prompt must not be resent"
+      );
       await runner.abort(first);
     } finally {
       delete process.env.MOCK_CODEX_MODE;
@@ -1168,26 +1766,52 @@ describe("Codex app-server worker runner", () => {
   });
 
   it("reuses a completed but live Codex thread before idle cleanup and later cleans it up", async () => {
-    const root = await fs.mkdtemp(path.join(os.tmpdir(), "aih-orch-codex-idle-"));
+    const root = await fs.mkdtemp(
+      path.join(os.tmpdir(), "aih-orch-codex-idle-")
+    );
     const script = await writeMockCodexAppServer(root);
     const logPath = path.join(root, "rpc.log");
     const events: Array<{ type: string; payload: unknown }> = [];
     process.env.MOCK_CODEX_MODE = "complete";
     process.env.MOCK_CODEX_LOG = logPath;
-    const runner = new CodexAppServerRunner({ idleCleanupMs: 200, terminalRetentionMs: 40 });
+    const runner = new CodexAppServerRunner({
+      idleCleanupMs: 200,
+      terminalRetentionMs: 40,
+    });
     try {
-      const first = await runner.start(codexRunnerInput(root, [process.execPath, script], {
-        emitEvent: (type, payload) => events.push({ type, payload }),
-      }));
-      await vi.waitFor(async () => expect(await runner.status(first)).toMatchObject({ status: "done" }));
-      const second = await runner.start(codexRunnerInput(root, [process.execPath, script], { prompt: "Do not resend this full prompt" }));
+      const first = await runner.start(
+        codexRunnerInput(root, [process.execPath, script], {
+          emitEvent: (type, payload) => events.push({ type, payload }),
+        })
+      );
+      await vi.waitFor(async () =>
+        expect(await runner.status(first)).toMatchObject({ status: "done" })
+      );
+      const second = await runner.start(
+        codexRunnerInput(root, [process.execPath, script], {
+          prompt: "Do not resend this full prompt",
+        })
+      );
       expect(second.id).toBe(first.id);
-      const sent = (await fs.readFile(logPath, "utf8")).trim().split("\n").map((line) => JSON.parse(line) as { method?: string; params?: any });
+      const sent = (await fs.readFile(logPath, "utf8"))
+        .trim()
+        .split("\n")
+        .map((line) => JSON.parse(line) as { method?: string; params?: any });
       const starts = sent.filter((message) => message.method === "turn/start");
       expect(starts).toHaveLength(2);
-      expect(starts[1]?.params.input[0].text).toContain("Continue the active orchestrator work for ENG-1");
-      expect(starts[1]?.params.input[0].text).not.toContain("Do not resend this full prompt");
-      await vi.waitFor(() => expect(events.map((event) => event.type)).toContain("worker.codex.session.removed"), { timeout: 1000 });
+      expect(starts[1]?.params.input[0].text).toContain(
+        "Continue the active orchestrator work for ENG-1"
+      );
+      expect(starts[1]?.params.input[0].text).not.toContain(
+        "Do not resend this full prompt"
+      );
+      await vi.waitFor(
+        () =>
+          expect(events.map((event) => event.type)).toContain(
+            "worker.codex.session.removed"
+          ),
+        { timeout: 1000 }
+      );
     } finally {
       delete process.env.MOCK_CODEX_MODE;
       delete process.env.MOCK_CODEX_LOG;
@@ -1195,20 +1819,37 @@ describe("Codex app-server worker runner", () => {
   });
 
   it("does not let retained old Codex sessions remove newer sessions with the same key", async () => {
-    const root = await fs.mkdtemp(path.join(os.tmpdir(), "aih-orch-codex-retention-replace-"));
+    const root = await fs.mkdtemp(
+      path.join(os.tmpdir(), "aih-orch-codex-retention-replace-")
+    );
     const script = await writeMockCodexAppServer(root);
     const events: Array<{ type: string; payload: unknown }> = [];
     process.env.MOCK_CODEX_MODE = "complete";
-    const runner = new CodexAppServerRunner({ idleCleanupMs: 10, terminalRetentionMs: 40 });
+    const runner = new CodexAppServerRunner({
+      idleCleanupMs: 10,
+      terminalRetentionMs: 40,
+    });
     try {
-      const first = await runner.start(codexRunnerInput(root, [process.execPath, script], {
-        emitEvent: (type, payload) => events.push({ type, payload }),
-      }));
-      await vi.waitFor(async () => expect(await runner.status(first)).toMatchObject({ status: "done" }));
-      await vi.waitFor(() => expect(events.map((event) => event.type)).toContain("worker.codex.process.exit"), { timeout: 1000 });
+      const first = await runner.start(
+        codexRunnerInput(root, [process.execPath, script], {
+          emitEvent: (type, payload) => events.push({ type, payload }),
+        })
+      );
+      await vi.waitFor(async () =>
+        expect(await runner.status(first)).toMatchObject({ status: "done" })
+      );
+      await vi.waitFor(
+        () =>
+          expect(events.map((event) => event.type)).toContain(
+            "worker.codex.process.exit"
+          ),
+        { timeout: 1000 }
+      );
 
       process.env.MOCK_CODEX_MODE = "hold";
-      const second = await runner.start(codexRunnerInput(root, [process.execPath, script]));
+      const second = await runner.start(
+        codexRunnerInput(root, [process.execPath, script])
+      );
       await new Promise((resolve) => setTimeout(resolve, 80));
       expect(await runner.status(second)).toMatchObject({ status: "running" });
       await runner.abort(second);
@@ -1219,21 +1860,43 @@ describe("Codex app-server worker runner", () => {
   });
 
   it("responds to server-initiated approval requests", async () => {
-    const root = await fs.mkdtemp(path.join(os.tmpdir(), "aih-orch-codex-approval-"));
+    const root = await fs.mkdtemp(
+      path.join(os.tmpdir(), "aih-orch-codex-approval-")
+    );
     const script = await writeMockCodexAppServer(root);
     const logPath = path.join(root, "rpc.log");
     const events: Array<{ type: string; payload: unknown }> = [];
     process.env.MOCK_CODEX_MODE = "approval";
     process.env.MOCK_CODEX_LOG = logPath;
-    const runner = new CodexAppServerRunner({ idleCleanupMs: 20, terminalRetentionMs: 50 });
+    const runner = new CodexAppServerRunner({
+      idleCleanupMs: 20,
+      terminalRetentionMs: 50,
+    });
     try {
-      const handle = await runner.start(codexRunnerInput(root, [process.execPath, script], {
-        emitEvent: (type, payload) => events.push({ type, payload }),
-      }));
-      await vi.waitFor(async () => expect(await runner.status(handle)).toMatchObject({ status: "done" }));
-      expect(events.map((event) => event.type)).toEqual(expect.arrayContaining(["worker.codex.server_request", "worker.codex.tool"]));
-      const sent = (await fs.readFile(logPath, "utf8")).trim().split("\n").map((line) => JSON.parse(line) as { id?: string; result?: unknown });
-      expect(sent.some((message) => message.id === "approval_1" && message.result === "cancel")).toBe(true);
+      const handle = await runner.start(
+        codexRunnerInput(root, [process.execPath, script], {
+          emitEvent: (type, payload) => events.push({ type, payload }),
+        })
+      );
+      await vi.waitFor(async () =>
+        expect(await runner.status(handle)).toMatchObject({ status: "done" })
+      );
+      expect(events.map((event) => event.type)).toEqual(
+        expect.arrayContaining([
+          "worker.codex.server_request",
+          "worker.codex.tool",
+        ])
+      );
+      const sent = (await fs.readFile(logPath, "utf8"))
+        .trim()
+        .split("\n")
+        .map((line) => JSON.parse(line) as { id?: string; result?: unknown });
+      expect(
+        sent.some(
+          (message) =>
+            message.id === "approval_1" && message.result === "cancel"
+        )
+      ).toBe(true);
     } finally {
       delete process.env.MOCK_CODEX_MODE;
       delete process.env.MOCK_CODEX_LOG;
@@ -1241,33 +1904,56 @@ describe("Codex app-server worker runner", () => {
   });
 
   it("maps failed turns and protocol-native aborts", async () => {
-    const failRoot = await fs.mkdtemp(path.join(os.tmpdir(), "aih-orch-codex-fail-"));
+    const failRoot = await fs.mkdtemp(
+      path.join(os.tmpdir(), "aih-orch-codex-fail-")
+    );
     const failScript = await writeMockCodexAppServer(failRoot);
     process.env.MOCK_CODEX_MODE = "fail";
     const failEvents: Array<{ type: string; payload: unknown }> = [];
     const failed = new CodexAppServerRunner();
     try {
-      const failedHandle = await failed.start(codexRunnerInput(failRoot, [process.execPath, failScript], {
-        emitEvent: (type, payload) => failEvents.push({ type, payload }),
-      }));
-      await vi.waitFor(async () => expect(await failed.status(failedHandle)).toMatchObject({ status: "error" }));
-      expect(failEvents.map((event) => event.type)).toContain("worker.codex.rate_limit");
+      const failedHandle = await failed.start(
+        codexRunnerInput(failRoot, [process.execPath, failScript], {
+          emitEvent: (type, payload) => failEvents.push({ type, payload }),
+        })
+      );
+      await vi.waitFor(async () =>
+        expect(await failed.status(failedHandle)).toMatchObject({
+          status: "error",
+        })
+      );
+      expect(failEvents.map((event) => event.type)).toContain(
+        "worker.codex.rate_limit"
+      );
     } finally {
       delete process.env.MOCK_CODEX_MODE;
     }
 
-    const abortRoot = await fs.mkdtemp(path.join(os.tmpdir(), "aih-orch-codex-abort-"));
+    const abortRoot = await fs.mkdtemp(
+      path.join(os.tmpdir(), "aih-orch-codex-abort-")
+    );
     const abortScript = await writeMockCodexAppServer(abortRoot);
     const logPath = path.join(abortRoot, "rpc.log");
     process.env.MOCK_CODEX_MODE = "hold";
     process.env.MOCK_CODEX_LOG = logPath;
     const aborting = new CodexAppServerRunner();
     try {
-      const abortHandle = await aborting.start(codexRunnerInput(abortRoot, [process.execPath, abortScript]));
+      const abortHandle = await aborting.start(
+        codexRunnerInput(abortRoot, [process.execPath, abortScript])
+      );
       await aborting.abort(abortHandle);
-      await vi.waitFor(async () => expect(await aborting.status(abortHandle)).toMatchObject({ status: "interrupted" }));
-      const sent = (await fs.readFile(logPath, "utf8")).trim().split("\n").map((line) => JSON.parse(line) as { method: string });
-      expect(sent.some((message) => message.method === "turn/interrupt")).toBe(true);
+      await vi.waitFor(async () =>
+        expect(await aborting.status(abortHandle)).toMatchObject({
+          status: "interrupted",
+        })
+      );
+      const sent = (await fs.readFile(logPath, "utf8"))
+        .trim()
+        .split("\n")
+        .map((line) => JSON.parse(line) as { method: string });
+      expect(sent.some((message) => message.method === "turn/interrupt")).toBe(
+        true
+      );
     } finally {
       delete process.env.MOCK_CODEX_MODE;
       delete process.env.MOCK_CODEX_LOG;
@@ -1275,36 +1961,55 @@ describe("Codex app-server worker runner", () => {
   });
 
   it("falls back to process cleanup when protocol interrupt does not respond", async () => {
-    const root = await fs.mkdtemp(path.join(os.tmpdir(), "aih-orch-codex-wedged-"));
+    const root = await fs.mkdtemp(
+      path.join(os.tmpdir(), "aih-orch-codex-wedged-")
+    );
     const script = await writeMockCodexAppServer(root);
     const events: Array<{ type: string; payload: unknown }> = [];
     process.env.MOCK_CODEX_MODE = "wedged";
     const runner = new CodexAppServerRunner({ interruptTimeoutMs: 20 });
     try {
-      const handle = await runner.start(codexRunnerInput(root, [process.execPath, script], {
-        emitEvent: (type, payload) => events.push({ type, payload }),
-      }));
+      const handle = await runner.start(
+        codexRunnerInput(root, [process.execPath, script], {
+          emitEvent: (type, payload) => events.push({ type, payload }),
+        })
+      );
       await runner.abort(handle);
-      expect(await runner.status(handle)).toMatchObject({ status: "interrupted" });
-      expect(events.map((event) => event.type)).toContain("worker.codex.interrupt.timeout");
+      expect(await runner.status(handle)).toMatchObject({
+        status: "interrupted",
+      });
+      expect(events.map((event) => event.type)).toContain(
+        "worker.codex.interrupt.timeout"
+      );
     } finally {
       delete process.env.MOCK_CODEX_MODE;
     }
   });
 
   it("shuts down retained completed sessions immediately", async () => {
-    const root = await fs.mkdtemp(path.join(os.tmpdir(), "aih-orch-codex-shutdown-"));
+    const root = await fs.mkdtemp(
+      path.join(os.tmpdir(), "aih-orch-codex-shutdown-")
+    );
     const script = await writeMockCodexAppServer(root);
     const events: Array<{ type: string; payload: unknown }> = [];
     process.env.MOCK_CODEX_MODE = "complete";
-    const runner = new CodexAppServerRunner({ idleCleanupMs: 10_000, terminalRetentionMs: 10_000 });
+    const runner = new CodexAppServerRunner({
+      idleCleanupMs: 10_000,
+      terminalRetentionMs: 10_000,
+    });
     try {
-      const handle = await runner.start(codexRunnerInput(root, [process.execPath, script], {
-        emitEvent: (type, payload) => events.push({ type, payload }),
-      }));
-      await vi.waitFor(async () => expect(await runner.status(handle)).toMatchObject({ status: "done" }));
+      const handle = await runner.start(
+        codexRunnerInput(root, [process.execPath, script], {
+          emitEvent: (type, payload) => events.push({ type, payload }),
+        })
+      );
+      await vi.waitFor(async () =>
+        expect(await runner.status(handle)).toMatchObject({ status: "done" })
+      );
       await runner.shutdown();
-      expect(events.map((event) => event.type)).toContain("worker.codex.session.removed");
+      expect(events.map((event) => event.type)).toContain(
+        "worker.codex.session.removed"
+      );
       expect(await runner.status(handle)).toBeUndefined();
     } finally {
       delete process.env.MOCK_CODEX_MODE;
@@ -1312,21 +2017,41 @@ describe("Codex app-server worker runner", () => {
   });
 
   it("aborts a turn that exceeds turn_timeout_ms and emits a turn.timeout event", async () => {
-    const root = await fs.mkdtemp(path.join(os.tmpdir(), "aih-orch-codex-turn-timeout-"));
+    const root = await fs.mkdtemp(
+      path.join(os.tmpdir(), "aih-orch-codex-turn-timeout-")
+    );
     const script = await writeMockCodexAppServer(root);
     const events: Array<{ type: string; payload: unknown }> = [];
     process.env.MOCK_CODEX_MODE = "stall";
-    const runner = new CodexAppServerRunner({ interruptTimeoutMs: 100, idleCleanupMs: 100 });
+    const runner = new CodexAppServerRunner({
+      interruptTimeoutMs: 100,
+      idleCleanupMs: 100,
+    });
     try {
-      const handle = await runner.start(codexRunnerInput(root, [process.execPath, script], {
-        emitEvent: (type, payload) => events.push({ type, payload }),
-        workflow: {
-          ...codexRunnerInput(root, [process.execPath, script]).workflow,
-          agent: { runner: "codex", command: [process.execPath, script], turn_timeout_ms: 50 },
-        },
-      }));
-      await vi.waitFor(async () => expect(await runner.status(handle)).toMatchObject({ status: "interrupted", raw: expect.objectContaining({ reason: "turn_timeout" }) }), { timeout: 3_000 });
-      expect(events.map((event) => event.type)).toContain("worker.codex.turn.timeout");
+      const handle = await runner.start(
+        codexRunnerInput(root, [process.execPath, script], {
+          emitEvent: (type, payload) => events.push({ type, payload }),
+          workflow: {
+            ...codexRunnerInput(root, [process.execPath, script]).workflow,
+            agent: {
+              runner: "codex",
+              command: [process.execPath, script],
+              turn_timeout_ms: 50,
+            },
+          },
+        })
+      );
+      await vi.waitFor(
+        async () =>
+          expect(await runner.status(handle)).toMatchObject({
+            status: "interrupted",
+            raw: expect.objectContaining({ reason: "turn_timeout" }),
+          }),
+        { timeout: 3_000 }
+      );
+      expect(events.map((event) => event.type)).toContain(
+        "worker.codex.turn.timeout"
+      );
     } finally {
       delete process.env.MOCK_CODEX_MODE;
       await runner.shutdown();
@@ -1336,7 +2061,9 @@ describe("Codex app-server worker runner", () => {
 
 async function writeMockPiRpcServer(dir: string): Promise<string> {
   const script = path.join(dir, "mock-pi-rpc.mjs");
-  await fs.writeFile(script, `
+  await fs.writeFile(
+    script,
+    `
 import fs from "node:fs";
 
 const mode = process.env.MOCK_PI_MODE ?? "complete";
@@ -1406,21 +2133,44 @@ process.stdin.on("data", (chunk) => {
     if (line.trim()) handle(JSON.parse(line));
   }
 });
-`);
+`
+  );
   return script;
 }
 
-function piRunnerInput(root: string, command: string[], extra: Partial<Parameters<PiRpcRunner["start"]>[0]> = {}): Parameters<PiRpcRunner["start"]>[0] {
+function piRunnerInput(
+  root: string,
+  command: string[],
+  extra: Partial<Parameters<PiRpcRunner["start"]>[0]> = {}
+): Parameters<PiRpcRunner["start"]>[0] {
   return {
     runId: "r-pi",
-    project: { id: "project", path: root, workflowPath: path.join(root, "WORKFLOW.md") },
-    issue: { id: "lin_1", identifier: "ENG-1", title: "Pi", state: "Ready", labels: [] },
+    project: {
+      id: "project",
+      path: root,
+      workflowPath: path.join(root, "WORKFLOW.md"),
+    },
+    issue: {
+      id: "lin_1",
+      identifier: "ENG-1",
+      title: "Pi",
+      state: "Ready",
+      labels: [],
+    },
     workspace: root,
     prompt: "Initial rendered workflow instructions",
     label: "ENG-1",
     profile: { name: "default", cli: "codex", model: "gpt-5" },
     workflow: {
-      tracker: { kind: "linear", endpoint: "x", apiKey: "x", projectSlug: "proj-a", activeStates: ["Ready"], terminalStates: ["Done"], needsHuman: "Needs Human" },
+      tracker: {
+        kind: "linear",
+        endpoint: "x",
+        apiKey: "x",
+        projectSlug: "proj-a",
+        activeStates: ["Ready"],
+        terminalStates: ["Done"],
+        needsHuman: "Needs Human",
+      },
       workspace: { root, cleanupOnTerminal: false, reuse: true },
       polling: { intervalMs: 1000, jitterMs: 0 },
       agent: { runner: "pi", command, model: "gpt-5-mini" },
@@ -1434,7 +2184,9 @@ function piRunnerInput(root: string, command: string[], extra: Partial<Parameter
 
 describe("Workflow worker runner", () => {
   it("uses a resolved profile runner when workflow runner is omitted", async () => {
-    const root = await fs.mkdtemp(path.join(os.tmpdir(), "aih-orch-worker-profile-codex-"));
+    const root = await fs.mkdtemp(
+      path.join(os.tmpdir(), "aih-orch-worker-profile-codex-")
+    );
     const script = await writeMockCodexAppServer(root);
     const logPath = path.join(root, "rpc.log");
     process.env.MOCK_CODEX_MODE = "complete";
@@ -1442,16 +2194,30 @@ describe("Workflow worker runner", () => {
     const runner = new WorkflowWorkerRunner();
     try {
       const input = codexRunnerInput(root, [process.execPath, script], {
-        profile: { name: "codex-profile", cli: "codex", model: "gpt-5", reasoningEffort: "high" },
+        profile: {
+          name: "codex-profile",
+          cli: "codex",
+          model: "gpt-5",
+          reasoningEffort: "high",
+        },
         workflow: {
           ...codexRunnerInput(root, []).workflow,
-          agent: { profile: "codex-profile", command: [process.execPath, script], model: "gpt-5-mini" },
+          agent: {
+            profile: "codex-profile",
+            command: [process.execPath, script],
+            model: "gpt-5-mini",
+          },
         },
       });
       const handle = await runner.start(input);
       expect(handle.kind).toBe("codex");
-      const sent = (await fs.readFile(logPath, "utf8")).trim().split("\n").map((line) => JSON.parse(line) as { method: string; params?: any });
-      expect(sent.find((message) => message.method === "turn/start")?.params).toMatchObject({ model: "gpt-5-mini", effort: "high" });
+      const sent = (await fs.readFile(logPath, "utf8"))
+        .trim()
+        .split("\n")
+        .map((line) => JSON.parse(line) as { method: string; params?: any });
+      expect(
+        sent.find((message) => message.method === "turn/start")?.params
+      ).toMatchObject({ model: "gpt-5-mini", effort: "high" });
     } finally {
       delete process.env.MOCK_CODEX_MODE;
       delete process.env.MOCK_CODEX_LOG;
@@ -1460,7 +2226,9 @@ describe("Workflow worker runner", () => {
   });
 
   it("defaults omitted workflow runner to Pi", async () => {
-    const root = await fs.mkdtemp(path.join(os.tmpdir(), "aih-orch-worker-default-pi-"));
+    const root = await fs.mkdtemp(
+      path.join(os.tmpdir(), "aih-orch-worker-default-pi-")
+    );
     const script = await writeMockPiRpcServer(root);
     const events: Array<{ type: string; payload: unknown }> = [];
     process.env.MOCK_PI_MODE = "complete";
@@ -1476,8 +2244,16 @@ describe("Workflow worker runner", () => {
       });
       const handle = await runner.start(input);
       expect(handle.kind).toBe("pi");
-      const started = events.find((event) => event.type === "worker.pi.started")?.payload as { command?: string[] } | undefined;
-      expect(started?.command).toEqual(expect.arrayContaining([process.execPath, script, "--model", "gpt-5-mini"]));
+      const started = events.find((event) => event.type === "worker.pi.started")
+        ?.payload as { command?: string[] } | undefined;
+      expect(started?.command).toEqual(
+        expect.arrayContaining([
+          process.execPath,
+          script,
+          "--model",
+          "gpt-5-mini",
+        ])
+      );
     } finally {
       delete process.env.MOCK_PI_MODE;
       await runner.shutdown();
@@ -1487,33 +2263,60 @@ describe("Workflow worker runner", () => {
 
 describe("Pi RPC worker runner", () => {
   it("starts a mocked Pi RPC session and maps messages, thinking, tools, queue, state, and completion events", async () => {
-    const root = await fs.mkdtemp(path.join(os.tmpdir(), "aih-orch-pi-complete-"));
+    const root = await fs.mkdtemp(
+      path.join(os.tmpdir(), "aih-orch-pi-complete-")
+    );
     const script = await writeMockPiRpcServer(root);
     const logPath = path.join(root, "rpc.log");
     const events: Array<{ type: string; payload: unknown }> = [];
     process.env.MOCK_PI_MODE = "complete";
     process.env.MOCK_PI_LOG = logPath;
-    const runner = new PiRpcRunner({ idleCleanupMs: 20, terminalRetentionMs: 50 });
+    const runner = new PiRpcRunner({
+      idleCleanupMs: 20,
+      terminalRetentionMs: 50,
+    });
     try {
-      const handle = await runner.start(piRunnerInput(root, [process.execPath, script], {
-        emitEvent: (type, payload) => events.push({ type, payload }),
-      }));
+      const handle = await runner.start(
+        piRunnerInput(root, [process.execPath, script], {
+          emitEvent: (type, payload) => events.push({ type, payload }),
+        })
+      );
 
-      await vi.waitFor(async () => expect(await runner.status(handle)).toMatchObject({ status: "done" }));
-      expect(handle).toMatchObject({ kind: "pi", raw: { state: { sessionId: "pi_session" } } });
-      expect(events.map((event) => event.type)).toEqual(expect.arrayContaining([
-        "worker.pi.started",
-        "worker.pi.prompt.accepted",
-        "worker.pi.message",
-        "worker.pi.tool",
-        "worker.pi.queue",
-        "worker.pi.state",
-        "worker.pi.agent_end",
-      ]));
-      expect(events.filter((event) => event.type === "worker.pi.message")).toHaveLength(1);
-      expect(events.some((event) => event.type === "worker.pi.message_update" || event.type === "worker.pi.thinking")).toBe(false);
-      const sent = (await fs.readFile(logPath, "utf8")).trim().split("\n").map((line) => JSON.parse(line) as { type: string; message?: string });
-      expect(sent.find((message) => message.type === "prompt")?.message).toBe("Initial rendered workflow instructions");
+      await vi.waitFor(async () =>
+        expect(await runner.status(handle)).toMatchObject({ status: "done" })
+      );
+      expect(handle).toMatchObject({
+        kind: "pi",
+        raw: { state: { sessionId: "pi_session" } },
+      });
+      expect(events.map((event) => event.type)).toEqual(
+        expect.arrayContaining([
+          "worker.pi.started",
+          "worker.pi.prompt.accepted",
+          "worker.pi.message",
+          "worker.pi.tool",
+          "worker.pi.queue",
+          "worker.pi.state",
+          "worker.pi.agent_end",
+        ])
+      );
+      expect(
+        events.filter((event) => event.type === "worker.pi.message")
+      ).toHaveLength(1);
+      expect(
+        events.some(
+          (event) =>
+            event.type === "worker.pi.message_update" ||
+            event.type === "worker.pi.thinking"
+        )
+      ).toBe(false);
+      const sent = (await fs.readFile(logPath, "utf8"))
+        .trim()
+        .split("\n")
+        .map((line) => JSON.parse(line) as { type: string; message?: string });
+      expect(sent.find((message) => message.type === "prompt")?.message).toBe(
+        "Initial rendered workflow instructions"
+      );
       expect(sent.some((message) => message.type === "get_state")).toBe(true);
     } finally {
       delete process.env.MOCK_PI_MODE;
@@ -1522,29 +2325,60 @@ describe("Pi RPC worker runner", () => {
   });
 
   it("passes provider and thinking to the default Pi RPC command", async () => {
-    const root = await fs.mkdtemp(path.join(os.tmpdir(), "aih-orch-pi-provider-"));
+    const root = await fs.mkdtemp(
+      path.join(os.tmpdir(), "aih-orch-pi-provider-")
+    );
     const binDir = path.join(root, "bin");
     await fs.mkdir(binDir);
     const script = await writeMockPiRpcServer(root);
     const shim = path.join(binDir, "pi");
-    await fs.writeFile(shim, `#!/bin/sh\nexec ${JSON.stringify(process.execPath)} ${JSON.stringify(script)} "$@"\n`);
+    await fs.writeFile(
+      shim,
+      `#!/bin/sh\nexec ${JSON.stringify(process.execPath)} ${JSON.stringify(script)} "$@"\n`
+    );
     await fs.chmod(shim, 0o755);
     const events: Array<{ type: string; payload: unknown }> = [];
     const previousPath = process.env.PATH;
     process.env.PATH = `${binDir}${path.delimiter}${previousPath ?? ""}`;
     process.env.MOCK_PI_MODE = "complete";
-    const runner = new PiRpcRunner({ idleCleanupMs: 20, terminalRetentionMs: 50 });
+    const runner = new PiRpcRunner({
+      idleCleanupMs: 20,
+      terminalRetentionMs: 50,
+    });
     try {
-      await runner.start(piRunnerInput(root, [], {
-        emitEvent: (type, payload) => events.push({ type, payload }),
-        profile: { name: "default", cli: "pi", provider: "anthropic", model: "claude-sonnet-4-6", thinking: "low" },
-        workflow: {
-          ...piRunnerInput(root, []).workflow,
-          agent: { runner: "pi", provider: "openrouter", model: "moonshotai/kimi-k2.5", thinking: "high" },
-        },
-      }));
-      const started = events.find((event) => event.type === "worker.pi.started")?.payload as { command?: string[] } | undefined;
-      expect(started?.command).toEqual(expect.arrayContaining(["--provider", "openrouter", "--model", "moonshotai/kimi-k2.5", "--thinking", "high"]));
+      await runner.start(
+        piRunnerInput(root, [], {
+          emitEvent: (type, payload) => events.push({ type, payload }),
+          profile: {
+            name: "default",
+            cli: "pi",
+            provider: "anthropic",
+            model: "claude-sonnet-4-6",
+            thinking: "low",
+          },
+          workflow: {
+            ...piRunnerInput(root, []).workflow,
+            agent: {
+              runner: "pi",
+              provider: "openrouter",
+              model: "moonshotai/kimi-k2.5",
+              thinking: "high",
+            },
+          },
+        })
+      );
+      const started = events.find((event) => event.type === "worker.pi.started")
+        ?.payload as { command?: string[] } | undefined;
+      expect(started?.command).toEqual(
+        expect.arrayContaining([
+          "--provider",
+          "openrouter",
+          "--model",
+          "moonshotai/kimi-k2.5",
+          "--thinking",
+          "high",
+        ])
+      );
     } finally {
       process.env.PATH = previousPath;
       delete process.env.MOCK_PI_MODE;
@@ -1553,22 +2387,52 @@ describe("Pi RPC worker runner", () => {
   });
 
   it("passes provider and thinking to a custom Pi RPC command", async () => {
-    const root = await fs.mkdtemp(path.join(os.tmpdir(), "aih-orch-pi-custom-thinking-"));
+    const root = await fs.mkdtemp(
+      path.join(os.tmpdir(), "aih-orch-pi-custom-thinking-")
+    );
     const script = await writeMockPiRpcServer(root);
     const events: Array<{ type: string; payload: unknown }> = [];
     process.env.MOCK_PI_MODE = "complete";
-    const runner = new PiRpcRunner({ idleCleanupMs: 20, terminalRetentionMs: 50 });
+    const runner = new PiRpcRunner({
+      idleCleanupMs: 20,
+      terminalRetentionMs: 50,
+    });
     try {
-      await runner.start(piRunnerInput(root, [process.execPath, script, "--wrapper-flag"], {
-        emitEvent: (type, payload) => events.push({ type, payload }),
-        profile: { name: "default", cli: "pi", provider: "anthropic", model: "claude-sonnet-4-6", thinking: "low" },
-        workflow: {
-          ...piRunnerInput(root, []).workflow,
-          agent: { runner: "pi", command: [process.execPath, script, "--wrapper-flag"], provider: "openrouter", model: "moonshotai/kimi-k2.5", thinking: "high" },
-        },
-      }));
-      const started = events.find((event) => event.type === "worker.pi.started")?.payload as { command?: string[] } | undefined;
-      expect(started?.command).toEqual(expect.arrayContaining(["--wrapper-flag", "--provider", "openrouter", "--model", "moonshotai/kimi-k2.5", "--thinking", "high"]));
+      await runner.start(
+        piRunnerInput(root, [process.execPath, script, "--wrapper-flag"], {
+          emitEvent: (type, payload) => events.push({ type, payload }),
+          profile: {
+            name: "default",
+            cli: "pi",
+            provider: "anthropic",
+            model: "claude-sonnet-4-6",
+            thinking: "low",
+          },
+          workflow: {
+            ...piRunnerInput(root, []).workflow,
+            agent: {
+              runner: "pi",
+              command: [process.execPath, script, "--wrapper-flag"],
+              provider: "openrouter",
+              model: "moonshotai/kimi-k2.5",
+              thinking: "high",
+            },
+          },
+        })
+      );
+      const started = events.find((event) => event.type === "worker.pi.started")
+        ?.payload as { command?: string[] } | undefined;
+      expect(started?.command).toEqual(
+        expect.arrayContaining([
+          "--wrapper-flag",
+          "--provider",
+          "openrouter",
+          "--model",
+          "moonshotai/kimi-k2.5",
+          "--thinking",
+          "high",
+        ])
+      );
     } finally {
       delete process.env.MOCK_PI_MODE;
       await runner.shutdown();
@@ -1576,22 +2440,39 @@ describe("Pi RPC worker runner", () => {
   });
 
   it("reuses a live Pi session and queues continuation with follow_up", async () => {
-    const root = await fs.mkdtemp(path.join(os.tmpdir(), "aih-orch-pi-continue-"));
+    const root = await fs.mkdtemp(
+      path.join(os.tmpdir(), "aih-orch-pi-continue-")
+    );
     const script = await writeMockPiRpcServer(root);
     const logPath = path.join(root, "rpc.log");
     process.env.MOCK_PI_MODE = "hold";
     process.env.MOCK_PI_LOG = logPath;
     const runner = new PiRpcRunner({ abortTimeoutMs: 20 });
     try {
-      const first = await runner.start(piRunnerInput(root, [process.execPath, script]));
-      const second = await runner.start(piRunnerInput(root, [process.execPath, script], { prompt: "This full prompt must not be resent" }));
+      const first = await runner.start(
+        piRunnerInput(root, [process.execPath, script])
+      );
+      const second = await runner.start(
+        piRunnerInput(root, [process.execPath, script], {
+          prompt: "This full prompt must not be resent",
+        })
+      );
 
       expect(second.id).toBe(first.id);
-      const sent = (await fs.readFile(logPath, "utf8")).trim().split("\n").map((line) => JSON.parse(line) as { type: string; message?: string });
-      expect(sent.filter((message) => message.type === "prompt")).toHaveLength(1);
+      const sent = (await fs.readFile(logPath, "utf8"))
+        .trim()
+        .split("\n")
+        .map((line) => JSON.parse(line) as { type: string; message?: string });
+      expect(sent.filter((message) => message.type === "prompt")).toHaveLength(
+        1
+      );
       const followUp = sent.find((message) => message.type === "follow_up");
-      expect(followUp?.message).toContain("Continue the active orchestrator work for ENG-1");
-      expect(followUp?.message).not.toContain("This full prompt must not be resent");
+      expect(followUp?.message).toContain(
+        "Continue the active orchestrator work for ENG-1"
+      );
+      expect(followUp?.message).not.toContain(
+        "This full prompt must not be resent"
+      );
       await runner.abort(first);
     } finally {
       delete process.env.MOCK_PI_MODE;
@@ -1600,48 +2481,78 @@ describe("Pi RPC worker runner", () => {
   });
 
   it("maps Pi failures and rejected commands", async () => {
-    const failRoot = await fs.mkdtemp(path.join(os.tmpdir(), "aih-orch-pi-fail-"));
+    const failRoot = await fs.mkdtemp(
+      path.join(os.tmpdir(), "aih-orch-pi-fail-")
+    );
     const failScript = await writeMockPiRpcServer(failRoot);
     process.env.MOCK_PI_MODE = "fail";
     const failed = new PiRpcRunner();
     try {
-      const failedHandle = await failed.start(piRunnerInput(failRoot, [process.execPath, failScript]));
-      await vi.waitFor(async () => expect(await failed.status(failedHandle)).toMatchObject({ status: "error" }));
+      const failedHandle = await failed.start(
+        piRunnerInput(failRoot, [process.execPath, failScript])
+      );
+      await vi.waitFor(async () =>
+        expect(await failed.status(failedHandle)).toMatchObject({
+          status: "error",
+        })
+      );
     } finally {
       delete process.env.MOCK_PI_MODE;
       await failed.shutdown();
     }
 
-    const failEndRoot = await fs.mkdtemp(path.join(os.tmpdir(), "aih-orch-pi-fail-end-"));
+    const failEndRoot = await fs.mkdtemp(
+      path.join(os.tmpdir(), "aih-orch-pi-fail-end-")
+    );
     const failEndScript = await writeMockPiRpcServer(failEndRoot);
     process.env.MOCK_PI_MODE = "failend";
     const failedThenEnded = new PiRpcRunner();
     try {
-      const handle = await failedThenEnded.start(piRunnerInput(failEndRoot, [process.execPath, failEndScript]));
-      await vi.waitFor(async () => expect(await failedThenEnded.status(handle)).toMatchObject({ status: "error" }));
+      const handle = await failedThenEnded.start(
+        piRunnerInput(failEndRoot, [process.execPath, failEndScript])
+      );
+      await vi.waitFor(async () =>
+        expect(await failedThenEnded.status(handle)).toMatchObject({
+          status: "error",
+        })
+      );
     } finally {
       delete process.env.MOCK_PI_MODE;
       await failedThenEnded.shutdown();
     }
 
-    const abortEndRoot = await fs.mkdtemp(path.join(os.tmpdir(), "aih-orch-pi-abort-end-"));
+    const abortEndRoot = await fs.mkdtemp(
+      path.join(os.tmpdir(), "aih-orch-pi-abort-end-")
+    );
     const abortEndScript = await writeMockPiRpcServer(abortEndRoot);
     process.env.MOCK_PI_MODE = "abortend";
     const abortedThenEnded = new PiRpcRunner();
     try {
-      const handle = await abortedThenEnded.start(piRunnerInput(abortEndRoot, [process.execPath, abortEndScript]));
-      await vi.waitFor(async () => expect(await abortedThenEnded.status(handle)).toMatchObject({ status: "interrupted" }));
+      const handle = await abortedThenEnded.start(
+        piRunnerInput(abortEndRoot, [process.execPath, abortEndScript])
+      );
+      await vi.waitFor(async () =>
+        expect(await abortedThenEnded.status(handle)).toMatchObject({
+          status: "interrupted",
+        })
+      );
     } finally {
       delete process.env.MOCK_PI_MODE;
       await abortedThenEnded.shutdown();
     }
 
-    const rejectRoot = await fs.mkdtemp(path.join(os.tmpdir(), "aih-orch-pi-reject-"));
+    const rejectRoot = await fs.mkdtemp(
+      path.join(os.tmpdir(), "aih-orch-pi-reject-")
+    );
     const rejectScript = await writeMockPiRpcServer(rejectRoot);
     process.env.MOCK_PI_MODE = "reject";
     const rejected = new PiRpcRunner();
     try {
-      await expect(rejected.start(piRunnerInput(rejectRoot, [process.execPath, rejectScript]))).rejects.toThrow("prompt rejected");
+      await expect(
+        rejected.start(
+          piRunnerInput(rejectRoot, [process.execPath, rejectScript])
+        )
+      ).rejects.toThrow("prompt rejected");
     } finally {
       delete process.env.MOCK_PI_MODE;
       await rejected.shutdown();
@@ -1649,16 +2560,24 @@ describe("Pi RPC worker runner", () => {
   });
 
   it("times out unresponsive Pi RPC startup and cleans the session", async () => {
-    const root = await fs.mkdtemp(path.join(os.tmpdir(), "aih-orch-pi-silent-"));
+    const root = await fs.mkdtemp(
+      path.join(os.tmpdir(), "aih-orch-pi-silent-")
+    );
     const script = await writeMockPiRpcServer(root);
     const events: Array<{ type: string; payload: unknown }> = [];
     process.env.MOCK_PI_MODE = "silent";
     const runner = new PiRpcRunner({ requestTimeoutMs: 200 });
     try {
-      await expect(runner.start(piRunnerInput(root, [process.execPath, script], {
-        emitEvent: (type, payload) => events.push({ type, payload }),
-      }))).rejects.toThrow("Pi RPC prompt timed out");
-      expect(events.map((event) => event.type)).toContain("worker.pi.session.removed");
+      await expect(
+        runner.start(
+          piRunnerInput(root, [process.execPath, script], {
+            emitEvent: (type, payload) => events.push({ type, payload }),
+          })
+        )
+      ).rejects.toThrow("Pi RPC prompt timed out");
+      expect(events.map((event) => event.type)).toContain(
+        "worker.pi.session.removed"
+      );
     } finally {
       delete process.env.MOCK_PI_MODE;
       await runner.shutdown();
@@ -1666,20 +2585,30 @@ describe("Pi RPC worker runner", () => {
   });
 
   it("times out unresponsive Pi continuation and removes the live session", async () => {
-    const root = await fs.mkdtemp(path.join(os.tmpdir(), "aih-orch-pi-nofollow-"));
+    const root = await fs.mkdtemp(
+      path.join(os.tmpdir(), "aih-orch-pi-nofollow-")
+    );
     const script = await writeMockPiRpcServer(root);
     const events: Array<{ type: string; payload: unknown }> = [];
     process.env.MOCK_PI_MODE = "nofollow";
     const runner = new PiRpcRunner({ requestTimeoutMs: 1_000 });
     try {
-      await runner.start(piRunnerInput(root, [process.execPath, script], {
-        emitEvent: (type, payload) => events.push({ type, payload }),
-      }));
-      await expect(runner.start(piRunnerInput(root, [process.execPath, script], {
-        prompt: "Do not resend this full prompt",
-        emitEvent: (type, payload) => events.push({ type, payload }),
-      }))).rejects.toThrow("Pi RPC follow_up timed out");
-      expect(events.map((event) => event.type)).toContain("worker.pi.session.removed");
+      await runner.start(
+        piRunnerInput(root, [process.execPath, script], {
+          emitEvent: (type, payload) => events.push({ type, payload }),
+        })
+      );
+      await expect(
+        runner.start(
+          piRunnerInput(root, [process.execPath, script], {
+            prompt: "Do not resend this full prompt",
+            emitEvent: (type, payload) => events.push({ type, payload }),
+          })
+        )
+      ).rejects.toThrow("Pi RPC follow_up timed out");
+      expect(events.map((event) => event.type)).toContain(
+        "worker.pi.session.removed"
+      );
     } finally {
       delete process.env.MOCK_PI_MODE;
       await runner.shutdown();
@@ -1687,21 +2616,38 @@ describe("Pi RPC worker runner", () => {
   });
 
   it("aborts a turn that exceeds turn_timeout_ms and emits a turn.timeout event", async () => {
-    const root = await fs.mkdtemp(path.join(os.tmpdir(), "aih-orch-pi-turn-timeout-"));
+    const root = await fs.mkdtemp(
+      path.join(os.tmpdir(), "aih-orch-pi-turn-timeout-")
+    );
     const script = await writeMockPiRpcServer(root);
     const events: Array<{ type: string; payload: unknown }> = [];
     process.env.MOCK_PI_MODE = "stall";
     const runner = new PiRpcRunner({ abortTimeoutMs: 100, idleCleanupMs: 100 });
     try {
-      const handle = await runner.start(piRunnerInput(root, [process.execPath, script], {
-        emitEvent: (type, payload) => events.push({ type, payload }),
-        workflow: {
-          ...piRunnerInput(root, [process.execPath, script]).workflow,
-          agent: { runner: "pi", command: [process.execPath, script], turn_timeout_ms: 50 },
-        },
-      }));
-      await vi.waitFor(async () => expect(await runner.status(handle)).toMatchObject({ status: "interrupted", raw: expect.objectContaining({ reason: "turn_timeout" }) }), { timeout: 3_000 });
-      expect(events.map((event) => event.type)).toContain("worker.pi.turn.timeout");
+      const handle = await runner.start(
+        piRunnerInput(root, [process.execPath, script], {
+          emitEvent: (type, payload) => events.push({ type, payload }),
+          workflow: {
+            ...piRunnerInput(root, [process.execPath, script]).workflow,
+            agent: {
+              runner: "pi",
+              command: [process.execPath, script],
+              turn_timeout_ms: 50,
+            },
+          },
+        })
+      );
+      await vi.waitFor(
+        async () =>
+          expect(await runner.status(handle)).toMatchObject({
+            status: "interrupted",
+            raw: expect.objectContaining({ reason: "turn_timeout" }),
+          }),
+        { timeout: 3_000 }
+      );
+      expect(events.map((event) => event.type)).toContain(
+        "worker.pi.turn.timeout"
+      );
     } finally {
       delete process.env.MOCK_PI_MODE;
       await runner.shutdown();
@@ -1709,35 +2655,54 @@ describe("Pi RPC worker runner", () => {
   });
 
   it("uses protocol abort and falls back to process cleanup when abort does not respond", async () => {
-    const abortRoot = await fs.mkdtemp(path.join(os.tmpdir(), "aih-orch-pi-abort-"));
+    const abortRoot = await fs.mkdtemp(
+      path.join(os.tmpdir(), "aih-orch-pi-abort-")
+    );
     const abortScript = await writeMockPiRpcServer(abortRoot);
     const abortLog = path.join(abortRoot, "rpc.log");
     process.env.MOCK_PI_MODE = "hold";
     process.env.MOCK_PI_LOG = abortLog;
     const aborting = new PiRpcRunner();
     try {
-      const abortHandle = await aborting.start(piRunnerInput(abortRoot, [process.execPath, abortScript]));
+      const abortHandle = await aborting.start(
+        piRunnerInput(abortRoot, [process.execPath, abortScript])
+      );
       await aborting.abort(abortHandle);
-      await vi.waitFor(async () => expect(await aborting.status(abortHandle)).toMatchObject({ status: "interrupted" }));
-      const sent = (await fs.readFile(abortLog, "utf8")).trim().split("\n").map((line) => JSON.parse(line) as { type: string });
+      await vi.waitFor(async () =>
+        expect(await aborting.status(abortHandle)).toMatchObject({
+          status: "interrupted",
+        })
+      );
+      const sent = (await fs.readFile(abortLog, "utf8"))
+        .trim()
+        .split("\n")
+        .map((line) => JSON.parse(line) as { type: string });
       expect(sent.some((message) => message.type === "abort")).toBe(true);
     } finally {
       delete process.env.MOCK_PI_MODE;
       delete process.env.MOCK_PI_LOG;
     }
 
-    const wedgedRoot = await fs.mkdtemp(path.join(os.tmpdir(), "aih-orch-pi-wedged-"));
+    const wedgedRoot = await fs.mkdtemp(
+      path.join(os.tmpdir(), "aih-orch-pi-wedged-")
+    );
     const wedgedScript = await writeMockPiRpcServer(wedgedRoot);
     const events: Array<{ type: string; payload: unknown }> = [];
     process.env.MOCK_PI_MODE = "wedged";
     const wedged = new PiRpcRunner({ abortTimeoutMs: 20 });
     try {
-      const handle = await wedged.start(piRunnerInput(wedgedRoot, [process.execPath, wedgedScript], {
-        emitEvent: (type, payload) => events.push({ type, payload }),
-      }));
+      const handle = await wedged.start(
+        piRunnerInput(wedgedRoot, [process.execPath, wedgedScript], {
+          emitEvent: (type, payload) => events.push({ type, payload }),
+        })
+      );
       await wedged.abort(handle);
-      expect(await wedged.status(handle)).toMatchObject({ status: "interrupted" });
-      expect(events.map((event) => event.type)).toContain("worker.pi.abort.timeout");
+      expect(await wedged.status(handle)).toMatchObject({
+        status: "interrupted",
+      });
+      expect(events.map((event) => event.type)).toContain(
+        "worker.pi.abort.timeout"
+      );
     } finally {
       delete process.env.MOCK_PI_MODE;
       await wedged.shutdown();
@@ -1747,7 +2712,9 @@ describe("Pi RPC worker runner", () => {
 
 async function writeMockClaudeRpcShim(dir: string): Promise<string> {
   const script = path.join(dir, "mock-claude-rpc-shim.mjs");
-  await fs.writeFile(script, `
+  await fs.writeFile(
+    script,
+    `
 import fs from "node:fs";
 
 const mode = process.env.MOCK_CLAUDE_MODE ?? "complete";
@@ -1808,13 +2775,16 @@ process.stdin.on("data", (chunk) => {
     if (line.trim()) handle(JSON.parse(line));
   }
 });
-`);
+`
+  );
   return script;
 }
 
 async function writeMockClaudeCli(dir: string): Promise<string> {
   const script = path.join(dir, "claude");
-  await fs.writeFile(script, `#!/usr/bin/env node
+  await fs.writeFile(
+    script,
+    `#!/usr/bin/env node
 import fs from "node:fs";
 
 const logPath = process.env.MOCK_CLAUDE_CLI_LOG;
@@ -1828,25 +2798,52 @@ if (process.env.MOCK_CLAUDE_CLI_FAIL === "1") {
 } else {
   process.stdout.write(JSON.stringify({ type: "result", subtype: "success", result: "done" }) + "\\n");
 }
-`);
+`
+  );
   await fs.chmod(script, 0o755);
   return script;
 }
 
-function claudeRunnerInput(root: string, command: string[], extra: Partial<Parameters<ClaudeRpcRunner["start"]>[0]> = {}): Parameters<ClaudeRpcRunner["start"]>[0] {
+function claudeRunnerInput(
+  root: string,
+  command: string[],
+  extra: Partial<Parameters<ClaudeRpcRunner["start"]>[0]> = {}
+): Parameters<ClaudeRpcRunner["start"]>[0] {
   return {
     runId: "r-claude",
-    project: { id: "project", path: root, workflowPath: path.join(root, "WORKFLOW.md") },
-    issue: { id: "lin_1", identifier: "ENG-1", title: "Claude", state: "Ready", labels: [] },
+    project: {
+      id: "project",
+      path: root,
+      workflowPath: path.join(root, "WORKFLOW.md"),
+    },
+    issue: {
+      id: "lin_1",
+      identifier: "ENG-1",
+      title: "Claude",
+      state: "Ready",
+      labels: [],
+    },
     workspace: root,
     prompt: "Initial rendered workflow instructions",
     label: "ENG-1",
     profile: { name: "claude", cli: "claude", model: "claude-sonnet-4" },
     workflow: {
-      tracker: { kind: "linear", endpoint: "x", apiKey: "x", projectSlug: "proj-a", activeStates: ["Ready"], terminalStates: ["Done"], needsHuman: "Needs Human" },
+      tracker: {
+        kind: "linear",
+        endpoint: "x",
+        apiKey: "x",
+        projectSlug: "proj-a",
+        activeStates: ["Ready"],
+        terminalStates: ["Done"],
+        needsHuman: "Needs Human",
+      },
       workspace: { root, cleanupOnTerminal: false, reuse: true },
       polling: { intervalMs: 1000, jitterMs: 0 },
-      agent: { runner: "claude", command: command.length > 0 ? command : undefined, model: "claude-sonnet-4" },
+      agent: {
+        runner: "claude",
+        command: command.length > 0 ? command : undefined,
+        model: "claude-sonnet-4",
+      },
       hooks: {},
       server: undefined,
       linear: undefined,
@@ -1857,7 +2854,9 @@ function claudeRunnerInput(root: string, command: string[], extra: Partial<Param
 
 describe("Claude RPC worker runner", () => {
   it("uses the in-package Claude shim by default and queues active follow-up work", async () => {
-    const root = await fs.mkdtemp(path.join(os.tmpdir(), "aih-orch-claude-default-shim-"));
+    const root = await fs.mkdtemp(
+      path.join(os.tmpdir(), "aih-orch-claude-default-shim-")
+    );
     await writeMockClaudeCli(root);
     const logPath = path.join(root, "claude-cli.log");
     const originalPath = process.env.PATH;
@@ -1865,28 +2864,63 @@ describe("Claude RPC worker runner", () => {
     process.env.MOCK_CLAUDE_CLI_LOG = logPath;
     process.env.MOCK_CLAUDE_CLI_DELAY_MS = "200";
     process.env.MOCK_CLAUDE_QUEUE_DELAY_MS = "200";
-    const runner = new ClaudeRpcRunner({ idleCleanupMs: 50, terminalRetentionMs: 1_000 });
+    const runner = new ClaudeRpcRunner({
+      idleCleanupMs: 50,
+      terminalRetentionMs: 1_000,
+    });
     try {
-      const first = await runner.start(claudeRunnerInput(root, [], {
-        profile: { name: "claude", cli: "claude", model: "claude-sonnet-4", reasoningEffort: "low" },
-        workflow: {
-          ...claudeRunnerInput(root, []).workflow,
-          agent: { runner: "claude", model: "claude-sonnet-4", thinking: "max" },
-        },
-      }));
-      const second = await runner.start(claudeRunnerInput(root, [], { prompt: "Do not resend this full prompt" }));
+      const first = await runner.start(
+        claudeRunnerInput(root, [], {
+          profile: {
+            name: "claude",
+            cli: "claude",
+            model: "claude-sonnet-4",
+            reasoningEffort: "low",
+          },
+          workflow: {
+            ...claudeRunnerInput(root, []).workflow,
+            agent: {
+              runner: "claude",
+              model: "claude-sonnet-4",
+              thinking: "max",
+            },
+          },
+        })
+      );
+      const second = await runner.start(
+        claudeRunnerInput(root, [], {
+          prompt: "Do not resend this full prompt",
+        })
+      );
 
       expect(second.id).toBe(first.id);
       await new Promise((resolve) => setTimeout(resolve, 250));
       expect(await runner.status(first)).toMatchObject({ status: "running" });
-      await vi.waitFor(async () => expect(await runner.status(first)).toMatchObject({ status: "done" }), { timeout: 3_000 });
-      const invocations = (await fs.readFile(logPath, "utf8")).trim().split("\n").map((line) => JSON.parse(line) as string[]);
+      await vi.waitFor(
+        async () =>
+          expect(await runner.status(first)).toMatchObject({ status: "done" }),
+        { timeout: 3_000 }
+      );
+      const invocations = (await fs.readFile(logPath, "utf8"))
+        .trim()
+        .split("\n")
+        .map((line) => JSON.parse(line) as string[]);
       expect(invocations).toHaveLength(2);
-      expect(invocations[0]?.join(" ")).toContain("Initial rendered workflow instructions");
-      expect(invocations[0]).toEqual(expect.arrayContaining(["--effort", "max"]));
-      expect(invocations[0]).toEqual(expect.arrayContaining(["--permission-mode", "bypassPermissions"]));
-      expect(invocations[1]?.join(" ")).toContain("Continue the active orchestrator work for ENG-1");
-      expect(invocations[1]?.join(" ")).not.toContain("Do not resend this full prompt");
+      expect(invocations[0]?.join(" ")).toContain(
+        "Initial rendered workflow instructions"
+      );
+      expect(invocations[0]).toEqual(
+        expect.arrayContaining(["--effort", "max"])
+      );
+      expect(invocations[0]).toEqual(
+        expect.arrayContaining(["--permission-mode", "bypassPermissions"])
+      );
+      expect(invocations[1]?.join(" ")).toContain(
+        "Continue the active orchestrator work for ENG-1"
+      );
+      expect(invocations[1]?.join(" ")).not.toContain(
+        "Do not resend this full prompt"
+      );
     } finally {
       if (originalPath === undefined) delete process.env.PATH;
       else process.env.PATH = originalPath;
@@ -1898,10 +2932,14 @@ describe("Claude RPC worker runner", () => {
   });
 
   it("passes effort to a custom Claude RPC command", async () => {
-    const root = await fs.mkdtemp(path.join(os.tmpdir(), "aih-orch-claude-custom-effort-"));
+    const root = await fs.mkdtemp(
+      path.join(os.tmpdir(), "aih-orch-claude-custom-effort-")
+    );
     await writeMockClaudeCli(root);
     const logPath = path.join(root, "claude-cli.log");
-    const shim = fileURLToPath(new URL("./worker-runner/claude-rpc-shim.ts", import.meta.url));
+    const shim = fileURLToPath(
+      new URL("./worker-runner/claude-rpc-shim.ts", import.meta.url)
+    );
     const command = [
       process.execPath,
       "--import",
@@ -1918,22 +2956,48 @@ describe("Claude RPC worker runner", () => {
     const originalPath = process.env.PATH;
     process.env.PATH = `${root}${path.delimiter}${originalPath ?? ""}`;
     process.env.MOCK_CLAUDE_CLI_LOG = logPath;
-    const runner = new ClaudeRpcRunner({ idleCleanupMs: 20, terminalRetentionMs: 50 });
+    const runner = new ClaudeRpcRunner({
+      idleCleanupMs: 20,
+      terminalRetentionMs: 50,
+    });
     const events: Array<{ type: string; payload: unknown }> = [];
     try {
-      const handle = await runner.start(claudeRunnerInput(root, command, {
-        emitEvent: (type, payload) => events.push({ type, payload }),
-        profile: { name: "claude", cli: "claude", model: "claude-sonnet-4", reasoningEffort: "low" },
-        workflow: {
-          ...claudeRunnerInput(root, []).workflow,
-          agent: { runner: "claude", command, model: "claude-sonnet-4", thinking: "max" },
-        },
-      }));
-      const started = events.find((event) => event.type === "worker.claude.started")?.payload as { command?: string[] } | undefined;
-      expect(started?.command).toEqual(expect.arrayContaining(["--wrapper-flag", "--effort", "max"]));
-      await vi.waitFor(async () => expect(await runner.status(handle)).toMatchObject({ status: "done" }));
-      const invocations = (await fs.readFile(logPath, "utf8")).trim().split("\n").map((line) => JSON.parse(line) as string[]);
-      expect(invocations[0]).toEqual(expect.arrayContaining(["--effort", "max"]));
+      const handle = await runner.start(
+        claudeRunnerInput(root, command, {
+          emitEvent: (type, payload) => events.push({ type, payload }),
+          profile: {
+            name: "claude",
+            cli: "claude",
+            model: "claude-sonnet-4",
+            reasoningEffort: "low",
+          },
+          workflow: {
+            ...claudeRunnerInput(root, []).workflow,
+            agent: {
+              runner: "claude",
+              command,
+              model: "claude-sonnet-4",
+              thinking: "max",
+            },
+          },
+        })
+      );
+      const started = events.find(
+        (event) => event.type === "worker.claude.started"
+      )?.payload as { command?: string[] } | undefined;
+      expect(started?.command).toEqual(
+        expect.arrayContaining(["--wrapper-flag", "--effort", "max"])
+      );
+      await vi.waitFor(async () =>
+        expect(await runner.status(handle)).toMatchObject({ status: "done" })
+      );
+      const invocations = (await fs.readFile(logPath, "utf8"))
+        .trim()
+        .split("\n")
+        .map((line) => JSON.parse(line) as string[]);
+      expect(invocations[0]).toEqual(
+        expect.arrayContaining(["--effort", "max"])
+      );
     } finally {
       if (originalPath === undefined) delete process.env.PATH;
       else process.env.PATH = originalPath;
@@ -1943,7 +3007,9 @@ describe("Claude RPC worker runner", () => {
   });
 
   it("does not run queued Claude follow-up work after a failed default shim run", async () => {
-    const root = await fs.mkdtemp(path.join(os.tmpdir(), "aih-orch-claude-default-shim-fail-"));
+    const root = await fs.mkdtemp(
+      path.join(os.tmpdir(), "aih-orch-claude-default-shim-fail-")
+    );
     await writeMockClaudeCli(root);
     const logPath = path.join(root, "claude-cli.log");
     const originalPath = process.env.PATH;
@@ -1951,15 +3017,25 @@ describe("Claude RPC worker runner", () => {
     process.env.MOCK_CLAUDE_CLI_LOG = logPath;
     process.env.MOCK_CLAUDE_CLI_DELAY_MS = "200";
     process.env.MOCK_CLAUDE_CLI_FAIL = "1";
-    const runner = new ClaudeRpcRunner({ idleCleanupMs: 50, terminalRetentionMs: 1_000 });
+    const runner = new ClaudeRpcRunner({
+      idleCleanupMs: 50,
+      terminalRetentionMs: 1_000,
+    });
     try {
       const first = await runner.start(claudeRunnerInput(root, []));
-      const second = await runner.start(claudeRunnerInput(root, [], { prompt: "Queued follow-up must not run" }));
+      const second = await runner.start(
+        claudeRunnerInput(root, [], { prompt: "Queued follow-up must not run" })
+      );
 
       expect(second.id).toBe(first.id);
-      await vi.waitFor(async () => expect(await runner.status(first)).toMatchObject({ status: "error" }));
+      await vi.waitFor(async () =>
+        expect(await runner.status(first)).toMatchObject({ status: "error" })
+      );
       await new Promise((resolve) => setTimeout(resolve, 250));
-      const invocations = (await fs.readFile(logPath, "utf8")).trim().split("\n").map((line) => JSON.parse(line) as string[]);
+      const invocations = (await fs.readFile(logPath, "utf8"))
+        .trim()
+        .split("\n")
+        .map((line) => JSON.parse(line) as string[]);
       expect(invocations).toHaveLength(1);
     } finally {
       if (originalPath === undefined) delete process.env.PATH;
@@ -1972,33 +3048,59 @@ describe("Claude RPC worker runner", () => {
   });
 
   it("starts a mocked Claude shim and maps messages, thinking, tools, queue, state, and result events", async () => {
-    const root = await fs.mkdtemp(path.join(os.tmpdir(), "aih-orch-claude-complete-"));
+    const root = await fs.mkdtemp(
+      path.join(os.tmpdir(), "aih-orch-claude-complete-")
+    );
     const script = await writeMockClaudeRpcShim(root);
     const logPath = path.join(root, "rpc.log");
     const events: Array<{ type: string; payload: unknown }> = [];
     process.env.MOCK_CLAUDE_MODE = "complete";
     process.env.MOCK_CLAUDE_LOG = logPath;
-    const runner = new ClaudeRpcRunner({ idleCleanupMs: 20, terminalRetentionMs: 50 });
+    const runner = new ClaudeRpcRunner({
+      idleCleanupMs: 20,
+      terminalRetentionMs: 50,
+    });
     try {
-      const handle = await runner.start(claudeRunnerInput(root, [process.execPath, script], {
-        emitEvent: (type, payload) => events.push({ type, payload }),
-      }));
+      const handle = await runner.start(
+        claudeRunnerInput(root, [process.execPath, script], {
+          emitEvent: (type, payload) => events.push({ type, payload }),
+        })
+      );
 
-      await vi.waitFor(async () => expect(await runner.status(handle)).toMatchObject({ status: "done" }));
-      expect(handle).toMatchObject({ kind: "claude", raw: { state: { sessionId: "claude_session" } } });
-      expect(events.map((event) => event.type)).toEqual(expect.arrayContaining([
-        "worker.claude.started",
-        "worker.claude.prompt.accepted",
-        "worker.claude.message",
-        "worker.claude.thinking",
-        "worker.claude.tool",
-        "worker.claude.queue",
-        "worker.claude.state",
-        "worker.claude.result",
-      ]));
-      expect(events.some((event) => event.type === "worker.claude.tool" && (event.payload as { item?: { type?: string } }).item?.type === "tool_use")).toBe(true);
-      const sent = (await fs.readFile(logPath, "utf8")).trim().split("\n").map((line) => JSON.parse(line) as { type: string; message?: string });
-      expect(sent.find((message) => message.type === "prompt")?.message).toBe("Initial rendered workflow instructions");
+      await vi.waitFor(async () =>
+        expect(await runner.status(handle)).toMatchObject({ status: "done" })
+      );
+      expect(handle).toMatchObject({
+        kind: "claude",
+        raw: { state: { sessionId: "claude_session" } },
+      });
+      expect(events.map((event) => event.type)).toEqual(
+        expect.arrayContaining([
+          "worker.claude.started",
+          "worker.claude.prompt.accepted",
+          "worker.claude.message",
+          "worker.claude.thinking",
+          "worker.claude.tool",
+          "worker.claude.queue",
+          "worker.claude.state",
+          "worker.claude.result",
+        ])
+      );
+      expect(
+        events.some(
+          (event) =>
+            event.type === "worker.claude.tool" &&
+            (event.payload as { item?: { type?: string } }).item?.type ===
+              "tool_use"
+        )
+      ).toBe(true);
+      const sent = (await fs.readFile(logPath, "utf8"))
+        .trim()
+        .split("\n")
+        .map((line) => JSON.parse(line) as { type: string; message?: string });
+      expect(sent.find((message) => message.type === "prompt")?.message).toBe(
+        "Initial rendered workflow instructions"
+      );
       expect(sent.some((message) => message.type === "get_state")).toBe(true);
     } finally {
       delete process.env.MOCK_CLAUDE_MODE;
@@ -2008,22 +3110,39 @@ describe("Claude RPC worker runner", () => {
   });
 
   it("reuses a live Claude shim session and queues continuation with follow_up", async () => {
-    const root = await fs.mkdtemp(path.join(os.tmpdir(), "aih-orch-claude-continue-"));
+    const root = await fs.mkdtemp(
+      path.join(os.tmpdir(), "aih-orch-claude-continue-")
+    );
     const script = await writeMockClaudeRpcShim(root);
     const logPath = path.join(root, "rpc.log");
     process.env.MOCK_CLAUDE_MODE = "hold";
     process.env.MOCK_CLAUDE_LOG = logPath;
     const runner = new ClaudeRpcRunner({ abortTimeoutMs: 20 });
     try {
-      const first = await runner.start(claudeRunnerInput(root, [process.execPath, script]));
-      const second = await runner.start(claudeRunnerInput(root, [process.execPath, script], { prompt: "This full prompt must not be resent" }));
+      const first = await runner.start(
+        claudeRunnerInput(root, [process.execPath, script])
+      );
+      const second = await runner.start(
+        claudeRunnerInput(root, [process.execPath, script], {
+          prompt: "This full prompt must not be resent",
+        })
+      );
 
       expect(second.id).toBe(first.id);
-      const sent = (await fs.readFile(logPath, "utf8")).trim().split("\n").map((line) => JSON.parse(line) as { type: string; message?: string });
-      expect(sent.filter((message) => message.type === "prompt")).toHaveLength(1);
+      const sent = (await fs.readFile(logPath, "utf8"))
+        .trim()
+        .split("\n")
+        .map((line) => JSON.parse(line) as { type: string; message?: string });
+      expect(sent.filter((message) => message.type === "prompt")).toHaveLength(
+        1
+      );
       const followUp = sent.find((message) => message.type === "follow_up");
-      expect(followUp?.message).toContain("Continue the active orchestrator work for ENG-1");
-      expect(followUp?.message).not.toContain("This full prompt must not be resent");
+      expect(followUp?.message).toContain(
+        "Continue the active orchestrator work for ENG-1"
+      );
+      expect(followUp?.message).not.toContain(
+        "This full prompt must not be resent"
+      );
       await runner.abort(first);
     } finally {
       delete process.env.MOCK_CLAUDE_MODE;
@@ -2033,38 +3152,61 @@ describe("Claude RPC worker runner", () => {
   });
 
   it("surfaces Claude shim failures and rejected commands", async () => {
-    const failRoot = await fs.mkdtemp(path.join(os.tmpdir(), "aih-orch-claude-fail-"));
+    const failRoot = await fs.mkdtemp(
+      path.join(os.tmpdir(), "aih-orch-claude-fail-")
+    );
     const failScript = await writeMockClaudeRpcShim(failRoot);
     process.env.MOCK_CLAUDE_MODE = "fail";
     const failed = new ClaudeRpcRunner();
     try {
-      const failedHandle = await failed.start(claudeRunnerInput(failRoot, [process.execPath, failScript]));
-      await vi.waitFor(async () => expect(await failed.status(failedHandle)).toMatchObject({ status: "error" }));
+      const failedHandle = await failed.start(
+        claudeRunnerInput(failRoot, [process.execPath, failScript])
+      );
+      await vi.waitFor(async () =>
+        expect(await failed.status(failedHandle)).toMatchObject({
+          status: "error",
+        })
+      );
       expect(failedHandle.kind).toBe("claude");
     } finally {
       delete process.env.MOCK_CLAUDE_MODE;
       await failed.shutdown();
     }
 
-    const resultFailRoot = await fs.mkdtemp(path.join(os.tmpdir(), "aih-orch-claude-result-fail-"));
+    const resultFailRoot = await fs.mkdtemp(
+      path.join(os.tmpdir(), "aih-orch-claude-result-fail-")
+    );
     const resultFailScript = await writeMockClaudeRpcShim(resultFailRoot);
     process.env.MOCK_CLAUDE_MODE = "resultfail";
     const resultFailed = new ClaudeRpcRunner();
     try {
-      const handle = await resultFailed.start(claudeRunnerInput(resultFailRoot, [process.execPath, resultFailScript]));
-      await vi.waitFor(async () => expect(await resultFailed.status(handle)).toMatchObject({ status: "error" }));
+      const handle = await resultFailed.start(
+        claudeRunnerInput(resultFailRoot, [process.execPath, resultFailScript])
+      );
+      await vi.waitFor(async () =>
+        expect(await resultFailed.status(handle)).toMatchObject({
+          status: "error",
+        })
+      );
     } finally {
       delete process.env.MOCK_CLAUDE_MODE;
       await resultFailed.shutdown();
     }
 
-    const rejectRoot = await fs.mkdtemp(path.join(os.tmpdir(), "aih-orch-claude-reject-"));
+    const rejectRoot = await fs.mkdtemp(
+      path.join(os.tmpdir(), "aih-orch-claude-reject-")
+    );
     const rejectScript = await writeMockClaudeRpcShim(rejectRoot);
     process.env.MOCK_CLAUDE_MODE = "reject";
     const rejected = new ClaudeRpcRunner();
     try {
-      const handle = await rejected.start(claudeRunnerInput(rejectRoot, [process.execPath, rejectScript]));
-      await expect(rejected.status(handle)).resolves.toMatchObject({ status: "error", raw: { message: "prompt rejected" } });
+      const handle = await rejected.start(
+        claudeRunnerInput(rejectRoot, [process.execPath, rejectScript])
+      );
+      await expect(rejected.status(handle)).resolves.toMatchObject({
+        status: "error",
+        raw: { message: "prompt rejected" },
+      });
     } finally {
       delete process.env.MOCK_CLAUDE_MODE;
       await rejected.shutdown();
@@ -2072,17 +3214,26 @@ describe("Claude RPC worker runner", () => {
   });
 
   it("times out unresponsive Claude shim startup and removes the session", async () => {
-    const root = await fs.mkdtemp(path.join(os.tmpdir(), "aih-orch-claude-silent-"));
+    const root = await fs.mkdtemp(
+      path.join(os.tmpdir(), "aih-orch-claude-silent-")
+    );
     const script = await writeMockClaudeRpcShim(root);
     const events: Array<{ type: string; payload: unknown }> = [];
     process.env.MOCK_CLAUDE_MODE = "silent";
     const runner = new ClaudeRpcRunner({ requestTimeoutMs: 200 });
     try {
-      const handle = await runner.start(claudeRunnerInput(root, [process.execPath, script], {
-        emitEvent: (type, payload) => events.push({ type, payload }),
-      }));
-      await expect(runner.status(handle)).resolves.toMatchObject({ status: "error", raw: { message: "Claude RPC prompt timed out" } });
-      expect(events.map((event) => event.type)).toContain("worker.claude.start.error");
+      const handle = await runner.start(
+        claudeRunnerInput(root, [process.execPath, script], {
+          emitEvent: (type, payload) => events.push({ type, payload }),
+        })
+      );
+      await expect(runner.status(handle)).resolves.toMatchObject({
+        status: "error",
+        raw: { message: "Claude RPC prompt timed out" },
+      });
+      expect(events.map((event) => event.type)).toContain(
+        "worker.claude.start.error"
+      );
     } finally {
       delete process.env.MOCK_CLAUDE_MODE;
       await runner.shutdown();
@@ -2090,21 +3241,41 @@ describe("Claude RPC worker runner", () => {
   });
 
   it("aborts a turn that exceeds turn_timeout_ms and emits a turn.timeout event", async () => {
-    const root = await fs.mkdtemp(path.join(os.tmpdir(), "aih-orch-claude-turn-timeout-"));
+    const root = await fs.mkdtemp(
+      path.join(os.tmpdir(), "aih-orch-claude-turn-timeout-")
+    );
     const script = await writeMockClaudeRpcShim(root);
     const events: Array<{ type: string; payload: unknown }> = [];
     process.env.MOCK_CLAUDE_MODE = "stall";
-    const runner = new ClaudeRpcRunner({ abortTimeoutMs: 100, idleCleanupMs: 100 });
+    const runner = new ClaudeRpcRunner({
+      abortTimeoutMs: 100,
+      idleCleanupMs: 100,
+    });
     try {
-      const handle = await runner.start(claudeRunnerInput(root, [process.execPath, script], {
-        emitEvent: (type, payload) => events.push({ type, payload }),
-        workflow: {
-          ...claudeRunnerInput(root, [process.execPath, script]).workflow,
-          agent: { runner: "claude", command: [process.execPath, script], turn_timeout_ms: 50 },
-        },
-      }));
-      await vi.waitFor(async () => expect(await runner.status(handle)).toMatchObject({ status: "interrupted", raw: expect.objectContaining({ reason: "turn_timeout" }) }), { timeout: 3_000 });
-      expect(events.map((event) => event.type)).toContain("worker.claude.turn.timeout");
+      const handle = await runner.start(
+        claudeRunnerInput(root, [process.execPath, script], {
+          emitEvent: (type, payload) => events.push({ type, payload }),
+          workflow: {
+            ...claudeRunnerInput(root, [process.execPath, script]).workflow,
+            agent: {
+              runner: "claude",
+              command: [process.execPath, script],
+              turn_timeout_ms: 50,
+            },
+          },
+        })
+      );
+      await vi.waitFor(
+        async () =>
+          expect(await runner.status(handle)).toMatchObject({
+            status: "interrupted",
+            raw: expect.objectContaining({ reason: "turn_timeout" }),
+          }),
+        { timeout: 3_000 }
+      );
+      expect(events.map((event) => event.type)).toContain(
+        "worker.claude.turn.timeout"
+      );
     } finally {
       delete process.env.MOCK_CLAUDE_MODE;
       await runner.shutdown();
@@ -2112,17 +3283,28 @@ describe("Claude RPC worker runner", () => {
   });
 
   it("uses protocol abort and falls back to process cleanup when abort does not respond", async () => {
-    const abortRoot = await fs.mkdtemp(path.join(os.tmpdir(), "aih-orch-claude-abort-"));
+    const abortRoot = await fs.mkdtemp(
+      path.join(os.tmpdir(), "aih-orch-claude-abort-")
+    );
     const abortScript = await writeMockClaudeRpcShim(abortRoot);
     const abortLog = path.join(abortRoot, "rpc.log");
     process.env.MOCK_CLAUDE_MODE = "hold";
     process.env.MOCK_CLAUDE_LOG = abortLog;
     const aborting = new ClaudeRpcRunner();
     try {
-      const abortHandle = await aborting.start(claudeRunnerInput(abortRoot, [process.execPath, abortScript]));
+      const abortHandle = await aborting.start(
+        claudeRunnerInput(abortRoot, [process.execPath, abortScript])
+      );
       await aborting.abort(abortHandle);
-      await vi.waitFor(async () => expect(await aborting.status(abortHandle)).toMatchObject({ status: "interrupted" }));
-      const sent = (await fs.readFile(abortLog, "utf8")).trim().split("\n").map((line) => JSON.parse(line) as { type: string });
+      await vi.waitFor(async () =>
+        expect(await aborting.status(abortHandle)).toMatchObject({
+          status: "interrupted",
+        })
+      );
+      const sent = (await fs.readFile(abortLog, "utf8"))
+        .trim()
+        .split("\n")
+        .map((line) => JSON.parse(line) as { type: string });
       expect(sent.some((message) => message.type === "abort")).toBe(true);
     } finally {
       delete process.env.MOCK_CLAUDE_MODE;
@@ -2130,18 +3312,26 @@ describe("Claude RPC worker runner", () => {
       await aborting.shutdown();
     }
 
-    const wedgedRoot = await fs.mkdtemp(path.join(os.tmpdir(), "aih-orch-claude-wedged-"));
+    const wedgedRoot = await fs.mkdtemp(
+      path.join(os.tmpdir(), "aih-orch-claude-wedged-")
+    );
     const wedgedScript = await writeMockClaudeRpcShim(wedgedRoot);
     const events: Array<{ type: string; payload: unknown }> = [];
     process.env.MOCK_CLAUDE_MODE = "wedged";
     const wedged = new ClaudeRpcRunner({ abortTimeoutMs: 20 });
     try {
-      const handle = await wedged.start(claudeRunnerInput(wedgedRoot, [process.execPath, wedgedScript], {
-        emitEvent: (type, payload) => events.push({ type, payload }),
-      }));
+      const handle = await wedged.start(
+        claudeRunnerInput(wedgedRoot, [process.execPath, wedgedScript], {
+          emitEvent: (type, payload) => events.push({ type, payload }),
+        })
+      );
       await wedged.abort(handle);
-      expect(await wedged.status(handle)).toMatchObject({ status: "interrupted" });
-      expect(events.map((event) => event.type)).toContain("worker.claude.abort.timeout");
+      expect(await wedged.status(handle)).toMatchObject({
+        status: "interrupted",
+      });
+      expect(events.map((event) => event.type)).toContain(
+        "worker.claude.abort.timeout"
+      );
     } finally {
       delete process.env.MOCK_CLAUDE_MODE;
       await wedged.shutdown();
@@ -2149,35 +3339,64 @@ describe("Claude RPC worker runner", () => {
   });
 
   it("emits user_prompt, tool, and tool_output events when Claude CLI nests tool blocks", async () => {
-    const root = await fs.mkdtemp(path.join(os.tmpdir(), "aih-orch-claude-tool-events-"));
+    const root = await fs.mkdtemp(
+      path.join(os.tmpdir(), "aih-orch-claude-tool-events-")
+    );
     const binDir = path.join(root, "bin");
     await fs.mkdir(binDir);
     const cliScript = path.join(binDir, "claude");
-    await fs.writeFile(cliScript, `#!/usr/bin/env node
+    await fs.writeFile(
+      cliScript,
+      `#!/usr/bin/env node
 process.stdout.write(JSON.stringify({ type: "system", session_id: "shim_session" }) + "\\n");
 process.stdout.write(JSON.stringify({ type: "assistant", message: { role: "assistant", content: [{ type: "tool_use", id: "tu_1", name: "Bash", input: { command: "ls" } }] } }) + "\\n");
 process.stdout.write(JSON.stringify({ type: "user", message: { role: "user", content: [{ type: "tool_result", tool_use_id: "tu_1", content: [{ type: "text", text: "file.txt" }] }] } }) + "\\n");
 process.stdout.write(JSON.stringify({ type: "result", subtype: "success", result: "done" }) + "\\n");
-`);
+`
+    );
     await fs.chmod(cliScript, 0o755);
     const events: Array<{ type: string; payload: unknown }> = [];
     const previousPath = process.env.PATH;
     process.env.PATH = `${binDir}${path.delimiter}${previousPath ?? ""}`;
-    const runner = new ClaudeRpcRunner({ idleCleanupMs: 50, terminalRetentionMs: 200 });
+    const runner = new ClaudeRpcRunner({
+      idleCleanupMs: 50,
+      terminalRetentionMs: 200,
+    });
     try {
-      const handle = await runner.start(claudeRunnerInput(root, [], {
-        emitEvent: (type, payload) => events.push({ type, payload }),
-      }));
-      await vi.waitFor(async () => expect(await runner.status(handle)).toMatchObject({ status: "done" }), { timeout: 5000 });
+      const handle = await runner.start(
+        claudeRunnerInput(root, [], {
+          emitEvent: (type, payload) => events.push({ type, payload }),
+        })
+      );
+      await vi.waitFor(
+        async () =>
+          expect(await runner.status(handle)).toMatchObject({ status: "done" }),
+        { timeout: 5000 }
+      );
 
-      const userPromptEvent = events.find((e) => e.type === "worker.claude.user_prompt");
-      expect(userPromptEvent?.payload).toMatchObject({ message: "Initial rendered workflow instructions" });
+      const userPromptEvent = events.find(
+        (e) => e.type === "worker.claude.user_prompt"
+      );
+      expect(userPromptEvent?.payload).toMatchObject({
+        message: "Initial rendered workflow instructions",
+      });
 
       const toolEvent = events.find((e) => e.type === "worker.claude.tool");
-      expect((toolEvent?.payload as { item?: { name?: string } } | undefined)?.item?.name).toBe("Bash");
+      expect(
+        (toolEvent?.payload as { item?: { name?: string } } | undefined)?.item
+          ?.name
+      ).toBe("Bash");
 
-      const toolOutputEvent = events.find((e) => e.type === "worker.claude.tool_output");
-      expect((toolOutputEvent?.payload as { item?: { aggregated_output?: string } } | undefined)?.item?.aggregated_output).toContain("file.txt");
+      const toolOutputEvent = events.find(
+        (e) => e.type === "worker.claude.tool_output"
+      );
+      expect(
+        (
+          toolOutputEvent?.payload as
+            | { item?: { aggregated_output?: string } }
+            | undefined
+        )?.item?.aggregated_output
+      ).toContain("file.txt");
     } finally {
       if (previousPath === undefined) delete process.env.PATH;
       else process.env.PATH = previousPath;
@@ -2186,20 +3405,37 @@ process.stdout.write(JSON.stringify({ type: "result", subtype: "success", result
   });
 
   it("does not let a stale retention timer evict a newer session occupying the same key", async () => {
-    const root = await fs.mkdtemp(path.join(os.tmpdir(), "aih-orch-claude-retention-replace-"));
+    const root = await fs.mkdtemp(
+      path.join(os.tmpdir(), "aih-orch-claude-retention-replace-")
+    );
     const script = await writeMockClaudeRpcShim(root);
     const events: Array<{ type: string; payload: unknown }> = [];
     process.env.MOCK_CLAUDE_MODE = "complete";
-    const runner = new ClaudeRpcRunner({ idleCleanupMs: 10, terminalRetentionMs: 40 });
+    const runner = new ClaudeRpcRunner({
+      idleCleanupMs: 10,
+      terminalRetentionMs: 40,
+    });
     try {
-      const first = await runner.start(claudeRunnerInput(root, [process.execPath, script], {
-        emitEvent: (type, payload) => events.push({ type, payload }),
-      }));
-      await vi.waitFor(async () => expect(await runner.status(first)).toMatchObject({ status: "done" }));
-      await vi.waitFor(() => expect(events.map((e) => e.type)).toContain("worker.claude.process.exit"), { timeout: 1000 });
+      const first = await runner.start(
+        claudeRunnerInput(root, [process.execPath, script], {
+          emitEvent: (type, payload) => events.push({ type, payload }),
+        })
+      );
+      await vi.waitFor(async () =>
+        expect(await runner.status(first)).toMatchObject({ status: "done" })
+      );
+      await vi.waitFor(
+        () =>
+          expect(events.map((e) => e.type)).toContain(
+            "worker.claude.process.exit"
+          ),
+        { timeout: 1000 }
+      );
 
       process.env.MOCK_CLAUDE_MODE = "hold";
-      const second = await runner.start(claudeRunnerInput(root, [process.execPath, script]));
+      const second = await runner.start(
+        claudeRunnerInput(root, [process.execPath, script])
+      );
       // Wait long enough for the old session's retention timer (40 ms) to fire
       await new Promise((resolve) => setTimeout(resolve, 80));
       expect(await runner.status(second)).toMatchObject({ status: "running" });
@@ -2213,18 +3449,38 @@ process.stdout.write(JSON.stringify({ type: "result", subtype: "success", result
 
 describe("orchestrator daemon", () => {
   it("records CLI runner spawn failures as worker errors", async () => {
-    const root = await fs.mkdtemp(path.join(os.tmpdir(), "aih-orch-cli-error-"));
+    const root = await fs.mkdtemp(
+      path.join(os.tmpdir(), "aih-orch-cli-error-")
+    );
     const runner = new CliWorkerRunner();
     const handle = await runner.start({
       runId: "r-cli-error",
-      project: { id: "project", path: root, workflowPath: path.join(root, "WORKFLOW.md") },
-      issue: { id: "lin_1", identifier: "ENG-1", title: "CLI", state: "Ready", labels: [] },
+      project: {
+        id: "project",
+        path: root,
+        workflowPath: path.join(root, "WORKFLOW.md"),
+      },
+      issue: {
+        id: "lin_1",
+        identifier: "ENG-1",
+        title: "CLI",
+        state: "Ready",
+        labels: [],
+      },
       workspace: root,
       prompt: "Run",
       label: "ENG-1",
       profile: { name: "default", cli: "codex" },
       workflow: {
-        tracker: { kind: "linear", endpoint: "x", apiKey: "x", projectSlug: "proj-a", activeStates: ["Ready"], terminalStates: ["Done"], needsHuman: "Needs Human" },
+        tracker: {
+          kind: "linear",
+          endpoint: "x",
+          apiKey: "x",
+          projectSlug: "proj-a",
+          activeStates: ["Ready"],
+          terminalStates: ["Done"],
+          needsHuman: "Needs Human",
+        },
         workspace: { root, cleanupOnTerminal: false, reuse: true },
         polling: { intervalMs: 1000, jitterMs: 0 },
         agent: { runner: "cli", command: "__yoplai_missing_command__" },
@@ -2234,13 +3490,18 @@ describe("orchestrator daemon", () => {
       },
     });
 
-    await vi.waitFor(async () => expect(await runner.status(handle)).toMatchObject({ status: "error" }));
+    await vi.waitFor(async () =>
+      expect(await runner.status(handle)).toMatchObject({ status: "error" })
+    );
   });
 
   it("spawns CLI workers without leaking tracker credentials into their env", async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "aih-orch-cli-env-"));
     const script = path.join(root, "dump-env.mjs");
-    await fs.writeFile(script, `import fs from "node:fs"; fs.writeFileSync("env.json", JSON.stringify(process.env));`);
+    await fs.writeFile(
+      script,
+      `import fs from "node:fs"; fs.writeFileSync("env.json", JSON.stringify(process.env));`
+    );
     const oldLinear = process.env.LINEAR_API_KEY;
     const oldPlane = process.env.PLANE_API_KEY;
     process.env.LINEAR_API_KEY = "linear-secret";
@@ -2249,14 +3510,32 @@ describe("orchestrator daemon", () => {
     try {
       const handle = await runner.start({
         runId: "r-env",
-        project: { id: "project", path: root, workflowPath: path.join(root, "WORKFLOW.md") },
-        issue: { id: "lin_1", identifier: "ENG-1", title: "Env", state: "Ready", labels: [] },
+        project: {
+          id: "project",
+          path: root,
+          workflowPath: path.join(root, "WORKFLOW.md"),
+        },
+        issue: {
+          id: "lin_1",
+          identifier: "ENG-1",
+          title: "Env",
+          state: "Ready",
+          labels: [],
+        },
         workspace: root,
         prompt: "Run",
         label: "ENG-1",
         profile: { name: "default", cli: "codex" },
         workflow: {
-          tracker: { kind: "linear", endpoint: "x", apiKey: "x", projectSlug: "proj-a", activeStates: ["Ready"], terminalStates: ["Done"], needsHuman: "Needs Human" },
+          tracker: {
+            kind: "linear",
+            endpoint: "x",
+            apiKey: "x",
+            projectSlug: "proj-a",
+            activeStates: ["Ready"],
+            terminalStates: ["Done"],
+            needsHuman: "Needs Human",
+          },
           workspace: { root, cleanupOnTerminal: false, reuse: true },
           polling: { intervalMs: 1000, jitterMs: 0 },
           agent: { runner: "cli", command: [process.execPath, script] },
@@ -2265,8 +3544,12 @@ describe("orchestrator daemon", () => {
           linear: undefined,
         },
       });
-      await vi.waitFor(async () => expect(await runner.status(handle)).toMatchObject({ status: "done" }));
-      const dumped = JSON.parse(await fs.readFile(path.join(root, "env.json"), "utf8"));
+      await vi.waitFor(async () =>
+        expect(await runner.status(handle)).toMatchObject({ status: "done" })
+      );
+      const dumped = JSON.parse(
+        await fs.readFile(path.join(root, "env.json"), "utf8")
+      );
       expect(dumped.LINEAR_API_KEY).toBeUndefined();
       expect(dumped.PLANE_API_KEY).toBeUndefined();
       expect(dumped.PLANE_OAUTH_TOKEN).toBeUndefined();
@@ -2302,9 +3585,25 @@ describe("orchestrator daemon", () => {
       createComment: vi.fn(),
       setIssueState: vi.fn(),
     } as any;
-    const ctx = { getDataDir: () => path.dirname(root), getConfig: () => ({ extensions: { subagents: { profiles }, orchestrator: { projects: [root] } } }), emit: vi.fn() } as any;
+    const ctx = {
+      getDataDir: () => path.dirname(root),
+      getConfig: () => ({
+        extensions: {
+          subagents: { profiles },
+          orchestrator: { projects: [root] },
+        },
+      }),
+      emit: vi.fn(),
+    } as any;
     const worker = mockWorkerRunner();
-    const daemon = new OrchestratorDaemon({ ctx, store, claims, getConfig: () => ({ projects: [root] }), workerRunner: worker.runner, createTrackerClient: () => client });
+    const daemon = new OrchestratorDaemon({
+      ctx,
+      store,
+      claims,
+      getConfig: () => ({ projects: [root] }),
+      workerRunner: worker.runner,
+      createTrackerClient: () => client,
+    });
 
     await daemon.start();
     await expect(daemon.tick()).resolves.toMatchObject({
@@ -2351,9 +3650,25 @@ describe("orchestrator daemon", () => {
       createComment: vi.fn(),
       setIssueState: vi.fn(),
     } as any;
-    const ctx = { getDataDir: () => path.dirname(root), getConfig: () => ({ extensions: { subagents: { profiles }, orchestrator: { projects: [root] } } }), emit: vi.fn() } as any;
+    const ctx = {
+      getDataDir: () => path.dirname(root),
+      getConfig: () => ({
+        extensions: {
+          subagents: { profiles },
+          orchestrator: { projects: [root] },
+        },
+      }),
+      emit: vi.fn(),
+    } as any;
     const worker = mockWorkerRunner();
-    const daemon = new OrchestratorDaemon({ ctx, store, claims, getConfig: () => ({ projects: [root] }), workerRunner: worker.runner, createTrackerClient: () => client });
+    const daemon = new OrchestratorDaemon({
+      ctx,
+      store,
+      claims,
+      getConfig: () => ({ projects: [root] }),
+      workerRunner: worker.runner,
+      createTrackerClient: () => client,
+    });
 
     await daemon.start();
     await expect(daemon.tick()).resolves.toMatchObject({
@@ -2368,23 +3683,56 @@ describe("orchestrator daemon", () => {
   });
 
   it("builds a Plane-worded worker prompt through the real tracker client factory", async () => {
-    const root = await fs.mkdtemp(path.join(os.tmpdir(), "aih-orch-plane-dispatch-"));
+    const root = await fs.mkdtemp(
+      path.join(os.tmpdir(), "aih-orch-plane-dispatch-")
+    );
     await writePlaneWorkflow(root);
     const store = new StateStore(path.join(root, "state.db"));
     store.bootstrap();
     const claims = new ClaimsRegistry();
-    const jsonResponse = (data: unknown) => new Response(JSON.stringify(data), { status: 200, headers: { "content-type": "application/json" } });
+    const jsonResponse = (data: unknown) =>
+      new Response(JSON.stringify(data), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
     const fetchImpl = vi.fn(async (url: string | URL) => {
       const u = String(url);
       if (u.includes("/relations/")) return jsonResponse({ blocked_by: [] });
-      if (u.includes("/states/")) return jsonResponse({ results: [{ id: "state-ready", name: "Ready" }] });
+      if (u.includes("/states/"))
+        return jsonResponse({
+          results: [{ id: "state-ready", name: "Ready" }],
+        });
       if (u.includes("/work-items/") && u.includes("per_page")) {
-        return jsonResponse({ results: [{ id: "wi_1", sequence_id: 1, name: "Plane Issue", description_stripped: "Body", state: "state-ready" }] });
+        return jsonResponse({
+          results: [
+            {
+              id: "wi_1",
+              sequence_id: 1,
+              name: "Plane Issue",
+              description_stripped: "Body",
+              state: "state-ready",
+            },
+          ],
+        });
       }
-      if (u.endsWith("/proj-plane/")) return jsonResponse({ id: "proj-plane", identifier: "PLN", name: "Plane Project" });
+      if (u.endsWith("/proj-plane/"))
+        return jsonResponse({
+          id: "proj-plane",
+          identifier: "PLN",
+          name: "Plane Project",
+        });
       return jsonResponse({});
     }) as unknown as typeof fetch;
-    const ctx = { getDataDir: () => path.dirname(root), getConfig: () => ({ extensions: { subagents: { profiles }, orchestrator: { projects: [root] } } }), emit: vi.fn() } as any;
+    const ctx = {
+      getDataDir: () => path.dirname(root),
+      getConfig: () => ({
+        extensions: {
+          subagents: { profiles },
+          orchestrator: { projects: [root] },
+        },
+      }),
+      emit: vi.fn(),
+    } as any;
     const worker = mockWorkerRunner();
     const daemon = new OrchestratorDaemon({
       ctx,
@@ -2392,14 +3740,19 @@ describe("orchestrator daemon", () => {
       claims,
       getConfig: () => ({ projects: [root] }),
       workerRunner: worker.runner,
-      createTrackerClient: ({ config: trackerConfig }) => createTrackerClient(trackerConfig, { fetchImpl }),
+      createTrackerClient: ({ config: trackerConfig }) =>
+        createTrackerClient(trackerConfig, { fetchImpl }),
     });
 
     await daemon.start();
-    await expect(daemon.tick()).resolves.toMatchObject({ dispatched: 1, skipped: 0 });
+    await expect(daemon.tick()).resolves.toMatchObject({
+      dispatched: 1,
+      skipped: 0,
+    });
 
     expect(worker.start).toHaveBeenCalledOnce();
-    const prompt = (worker.start.mock.calls[0]?.[0] as { prompt: string }).prompt;
+    const prompt = (worker.start.mock.calls[0]?.[0] as { prompt: string })
+      .prompt;
     expect(prompt).toContain("Plane API tool calls must pass project");
     expect(prompt).toContain("## Plane work item");
     expect(prompt).not.toContain("Linear GraphQL tool calls");
@@ -2409,8 +3762,12 @@ describe("orchestrator daemon", () => {
   });
 
   it("dispatches through fake worker runner without starting an external runtime", async () => {
-    const root = await fs.mkdtemp(path.join(os.tmpdir(), "aih-orch-fake-runner-"));
-    await fs.writeFile(path.join(root, "WORKFLOW.md"), `---
+    const root = await fs.mkdtemp(
+      path.join(os.tmpdir(), "aih-orch-fake-runner-")
+    );
+    await fs.writeFile(
+      path.join(root, "WORKFLOW.md"),
+      `---
 tracker:
   kind: linear
   api_key: test-key
@@ -2425,36 +3782,73 @@ workspace:
   root: ./workspaces
 ---
 Do {{issue.identifier}}
-`);
+`
+    );
     const store = new StateStore(path.join(root, "state.db"));
     store.bootstrap();
     const claims = new ClaimsRegistry();
     const client = {
-      pollIssues: vi.fn(async () => [{ id: "lin_1", identifier: "ENG-1", title: "Fake", description: "Body", state: "Ready", labels: [], projectSlug: "proj-a" }]),
+      pollIssues: vi.fn(async () => [
+        {
+          id: "lin_1",
+          identifier: "ENG-1",
+          title: "Fake",
+          description: "Body",
+          state: "Ready",
+          labels: [],
+          projectSlug: "proj-a",
+        },
+      ]),
       createComment: vi.fn(),
       setIssueState: vi.fn(),
     } as any;
-    const ctx = { getDataDir: () => path.dirname(root), getConfig: () => ({ extensions: { subagents: { profiles }, orchestrator: { projects: [root] } } }), emit: vi.fn() } as any;
-    const daemon = new OrchestratorDaemon({ ctx, store, claims, getConfig: () => ({ projects: [root] }), createTrackerClient: () => client });
+    const ctx = {
+      getDataDir: () => path.dirname(root),
+      getConfig: () => ({
+        extensions: {
+          subagents: { profiles },
+          orchestrator: { projects: [root] },
+        },
+      }),
+      emit: vi.fn(),
+    } as any;
+    const daemon = new OrchestratorDaemon({
+      ctx,
+      store,
+      claims,
+      getConfig: () => ({ projects: [root] }),
+      createTrackerClient: () => client,
+    });
 
     await daemon.start();
-    await expect(daemon.tick()).resolves.toMatchObject({ dispatched: 1, skipped: 0 });
-    expect(store.listRecent(1)[0]).toMatchObject({ worker_id: expect.stringContaining("fake:") });
+    await expect(daemon.tick()).resolves.toMatchObject({
+      dispatched: 1,
+      skipped: 0,
+    });
+    expect(store.listRecent(1)[0]).toMatchObject({
+      worker_id: expect.stringContaining("fake:"),
+    });
     await expect(daemon.tick()).resolves.toMatchObject({ dispatched: 0 });
     expect(claims.list()).toHaveLength(0);
     expect(store.listRecent(1)[0]).toMatchObject({ outcome: "completed" });
     const runId = String((store.listRecent(1)[0] as any).run_id);
-    expect(store.listEvents(runId)).toEqual(expect.arrayContaining([
-      expect.objectContaining({ type: "worker.started" }),
-      expect.objectContaining({ type: "worker.status" }),
-    ]));
+    expect(store.listEvents(runId)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ type: "worker.started" }),
+        expect.objectContaining({ type: "worker.status" }),
+      ])
+    );
     await daemon.stop();
     store.close();
   });
 
   it("dispatches without the subagents extension configured", async () => {
-    const root = await fs.mkdtemp(path.join(os.tmpdir(), "aih-orch-no-subagents-"));
-    await fs.writeFile(path.join(root, "WORKFLOW.md"), `---
+    const root = await fs.mkdtemp(
+      path.join(os.tmpdir(), "aih-orch-no-subagents-")
+    );
+    await fs.writeFile(
+      path.join(root, "WORKFLOW.md"),
+      `---
 tracker:
   kind: linear
   api_key: test-key
@@ -2467,36 +3861,90 @@ workspace:
   root: ./workspaces
 ---
 Do {{issue.identifier}}
-`);
+`
+    );
     const store = new StateStore(path.join(root, "state.db"));
     store.bootstrap();
     const claims = new ClaimsRegistry();
     const client = {
-      pollIssues: vi.fn(async () => [{ id: "lin_1", identifier: "ENG-1", title: "No Subagents", description: "Body", state: "Ready", labels: [], projectSlug: "proj-a" }]),
+      pollIssues: vi.fn(async () => [
+        {
+          id: "lin_1",
+          identifier: "ENG-1",
+          title: "No Subagents",
+          description: "Body",
+          state: "Ready",
+          labels: [],
+          projectSlug: "proj-a",
+        },
+      ]),
       createComment: vi.fn(),
       setIssueState: vi.fn(),
     } as any;
-    const ctx = { getDataDir: () => path.dirname(root), getConfig: () => ({ extensions: { orchestrator: { projects: [root] } } }), emit: vi.fn() } as any;
+    const ctx = {
+      getDataDir: () => path.dirname(root),
+      getConfig: () => ({ extensions: { orchestrator: { projects: [root] } } }),
+      emit: vi.fn(),
+    } as any;
     const worker = mockWorkerRunner({ id: "claude:owned", kind: "claude" });
-    const daemon = new OrchestratorDaemon({ ctx, store, claims, getConfig: () => ({ projects: [root] }), workerRunner: worker.runner, createTrackerClient: () => client });
+    const daemon = new OrchestratorDaemon({
+      ctx,
+      store,
+      claims,
+      getConfig: () => ({ projects: [root] }),
+      workerRunner: worker.runner,
+      createTrackerClient: () => client,
+    });
 
     await daemon.start();
-    await expect(daemon.tick()).resolves.toMatchObject({ dispatched: 1, skipped: 0 });
+    await expect(daemon.tick()).resolves.toMatchObject({
+      dispatched: 1,
+      skipped: 0,
+    });
 
-    expect(worker.start).toHaveBeenCalledWith(expect.objectContaining({ profile: expect.objectContaining({ name: "claude", cli: "claude" }) }));
+    expect(worker.start).toHaveBeenCalledWith(
+      expect.objectContaining({
+        profile: expect.objectContaining({ name: "claude", cli: "claude" }),
+      })
+    );
     expect(store.listRecent(1)[0]).toMatchObject({ worker_id: "claude:owned" });
     await daemon.stop();
     store.close();
   });
 
   it("interrupts worker handles by orchestrator run id", async () => {
-    const root = await fs.mkdtemp(path.join(os.tmpdir(), "aih-orch-interrupt-runid-"));
+    const root = await fs.mkdtemp(
+      path.join(os.tmpdir(), "aih-orch-interrupt-runid-")
+    );
     await writeWorkflow(root);
     const store = new StateStore(path.join(root, "state.db"));
     store.bootstrap();
     const claims = new ClaimsRegistry();
-    const client = { pollIssues: vi.fn(async () => [{ id: "lin_1", identifier: "ENG-1", title: "Run", description: "Body", state: "Ready", labels: [], projectSlug: "proj-a" }]), createComment: vi.fn(), setIssueState: vi.fn() } as any;
-    const ctx = { getDataDir: () => path.dirname(root), getConfig: () => ({ extensions: { subagents: { profiles }, orchestrator: { projects: [root] } } }), emit: vi.fn() } as any;
+    const client = {
+      pollIssues: vi.fn(async () => [
+        {
+          id: "lin_1",
+          identifier: "ENG-1",
+          title: "Run",
+          description: "Body",
+          state: "Ready",
+          labels: [],
+          projectSlug: "proj-a",
+        },
+      ]),
+      createComment: vi.fn(),
+      setIssueState: vi.fn(),
+    } as any;
+    const ctx = {
+      getDataDir: () => path.dirname(root),
+      getConfig: () => ({
+        extensions: {
+          subagents: { profiles },
+          orchestrator: { projects: [root] },
+        },
+      }),
+      emit: vi.fn(),
+    } as any;
     const abort = vi.fn(async () => undefined);
     const daemon = new OrchestratorDaemon({
       ctx,
@@ -2505,7 +3953,11 @@ Do {{issue.identifier}}
       getConfig: () => ({ projects: [root] }),
       createTrackerClient: () => client,
       workerRunner: {
-        start: vi.fn(async () => ({ id: "cli:test:123", kind: "cli" as const, pid: 123 })),
+        start: vi.fn(async () => ({
+          id: "cli:test:123",
+          kind: "cli" as const,
+          pid: 123,
+        })),
         status: vi.fn(async () => undefined),
         abort,
       },
@@ -2516,14 +3968,18 @@ Do {{issue.identifier}}
     const runId = String((store.listRecent(1)[0] as any).run_id);
     await daemon.interruptWorker(runId, path.basename(root));
 
-    expect(abort).toHaveBeenCalledWith(expect.objectContaining({ id: "cli:test:123", kind: "cli" }));
+    expect(abort).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "cli:test:123", kind: "cli" })
+    );
     await daemon.stop();
     store.close();
   });
 
   it("persists CLI worker pid for restart cleanup", async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "aih-orch-cli-pid-"));
-    await fs.writeFile(path.join(root, "WORKFLOW.md"), `---
+    await fs.writeFile(
+      path.join(root, "WORKFLOW.md"),
+      `---
 tracker:
   kind: linear
   api_key: test-key
@@ -2539,13 +3995,43 @@ workspace:
   root: ./workspaces
 ---
 Do {{issue.identifier}}
-`);
+`
+    );
     const store = new StateStore(path.join(root, "state.db"));
     store.bootstrap();
     const claims = new ClaimsRegistry();
-    const client = { pollIssues: vi.fn(async () => [{ id: "lin_1", identifier: "ENG-1", title: "CLI", description: "Body", state: "Ready", labels: [], projectSlug: "proj-a" }]), createComment: vi.fn(), setIssueState: vi.fn() } as any;
-    const ctx = { getDataDir: () => path.dirname(root), getConfig: () => ({ extensions: { subagents: { profiles }, orchestrator: { projects: [root] } } }), emit: vi.fn() } as any;
-    const daemon = new OrchestratorDaemon({ ctx, store, claims, getConfig: () => ({ projects: [root] }), createTrackerClient: () => client });
+    const client = {
+      pollIssues: vi.fn(async () => [
+        {
+          id: "lin_1",
+          identifier: "ENG-1",
+          title: "CLI",
+          description: "Body",
+          state: "Ready",
+          labels: [],
+          projectSlug: "proj-a",
+        },
+      ]),
+      createComment: vi.fn(),
+      setIssueState: vi.fn(),
+    } as any;
+    const ctx = {
+      getDataDir: () => path.dirname(root),
+      getConfig: () => ({
+        extensions: {
+          subagents: { profiles },
+          orchestrator: { projects: [root] },
+        },
+      }),
+      emit: vi.fn(),
+    } as any;
+    const daemon = new OrchestratorDaemon({
+      ctx,
+      store,
+      claims,
+      getConfig: () => ({ projects: [root] }),
+      createTrackerClient: () => client,
+    });
 
     await daemon.start();
     await daemon.tick();
@@ -2579,22 +4065,51 @@ Do {{issue.identifier}}
       createComment: vi.fn(),
       setIssueState: vi.fn(),
     } as any;
-    const ctx = { getDataDir: () => path.dirname(root), getConfig: () => ({ extensions: { subagents: { profiles }, orchestrator: { projects: [root] } } }), emit: vi.fn() } as any;
+    const ctx = {
+      getDataDir: () => path.dirname(root),
+      getConfig: () => ({
+        extensions: {
+          subagents: { profiles },
+          orchestrator: { projects: [root] },
+        },
+      }),
+      emit: vi.fn(),
+    } as any;
     const worker = mockWorkerRunner({ id: "worker_1", kind: "fake" });
-    const daemon = new OrchestratorDaemon({ ctx, store, claims, getConfig: () => ({ projects: [root] }), workerRunner: worker.runner, createTrackerClient: () => client });
+    const daemon = new OrchestratorDaemon({
+      ctx,
+      store,
+      claims,
+      getConfig: () => ({ projects: [root] }),
+      workerRunner: worker.runner,
+      createTrackerClient: () => client,
+    });
 
     await daemon.start();
     await daemon.tick();
     expect(daemon.rateLimitRemaining).toBe(7);
     expect(claims.list()).toHaveLength(1);
-    expect(worker.start).toHaveBeenCalledWith(expect.objectContaining({ workspace: path.join(root, "workspaces", "eng-1"), prompt: expect.stringContaining(`Linear GraphQL tool calls must pass project: ${path.basename(root)}`), profile: expect.objectContaining({ name: "default" }) }));
+    expect(worker.start).toHaveBeenCalledWith(
+      expect.objectContaining({
+        workspace: path.join(root, "workspaces", "eng-1"),
+        prompt: expect.stringContaining(
+          `Linear GraphQL tool calls must pass project: ${path.basename(root)}`
+        ),
+        profile: expect.objectContaining({ name: "default" }),
+      })
+    );
     expect(store.listRecent(5)).toHaveLength(1);
 
     state = "Done";
     await daemon.tick();
     expect(claims.list()).toHaveLength(0);
-    expect(worker.abort).toHaveBeenCalledWith(expect.objectContaining({ id: "worker_1" }));
-    expect(store.listRecent(1)[0]).toMatchObject({ project_id: path.basename(root), outcome: "terminal" });
+    expect(worker.abort).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "worker_1" })
+    );
+    expect(store.listRecent(1)[0]).toMatchObject({
+      project_id: path.basename(root),
+      outcome: "terminal",
+    });
     await daemon.stop();
     store.close();
   });
@@ -2605,10 +4120,42 @@ Do {{issue.identifier}}
     const store = new StateStore(path.join(root, "state.db"));
     store.bootstrap();
     const claims = new ClaimsRegistry();
-    const client = { pollIssues: vi.fn(async () => [{ id: "lin_1", identifier: "ENG-1", title: "Test", description: "Body", state: "Ready", labels: [], projectSlug: "proj-a" }]), createComment: vi.fn(), setIssueState: vi.fn() } as any;
-    const ctx = { getDataDir: () => path.dirname(root), getConfig: () => ({ extensions: { subagents: { profiles }, orchestrator: { projects: [root] } } }), emit: vi.fn() } as any;
-    const worker = mockWorkerRunner({ id: "worker_done", kind: "fake" }, [{ status: "done", exitCode: 0 }]);
-    const daemon = new OrchestratorDaemon({ ctx, store, claims, getConfig: () => ({ projects: [root] }), workerRunner: worker.runner, createTrackerClient: () => client });
+    const client = {
+      pollIssues: vi.fn(async () => [
+        {
+          id: "lin_1",
+          identifier: "ENG-1",
+          title: "Test",
+          description: "Body",
+          state: "Ready",
+          labels: [],
+          projectSlug: "proj-a",
+        },
+      ]),
+      createComment: vi.fn(),
+      setIssueState: vi.fn(),
+    } as any;
+    const ctx = {
+      getDataDir: () => path.dirname(root),
+      getConfig: () => ({
+        extensions: {
+          subagents: { profiles },
+          orchestrator: { projects: [root] },
+        },
+      }),
+      emit: vi.fn(),
+    } as any;
+    const worker = mockWorkerRunner({ id: "worker_done", kind: "fake" }, [
+      { status: "done", exitCode: 0 },
+    ]);
+    const daemon = new OrchestratorDaemon({
+      ctx,
+      store,
+      claims,
+      getConfig: () => ({ projects: [root] }),
+      workerRunner: worker.runner,
+      createTrackerClient: () => client,
+    });
     await daemon.start();
     await daemon.tick();
     expect(claims.list()).toHaveLength(1);
@@ -2629,10 +4176,35 @@ Do {{issue.identifier}}
     const store = new StateStore(path.join(root, "state.db"));
     store.bootstrap();
     const claims = new ClaimsRegistry();
-    const client = { pollIssues: vi.fn(async () => [{ id: "lin_1", identifier: "ENG-1", title: "Release", description: "Body", state: "Ready", labels: [], projectSlug: "proj-a" }]), createComment: vi.fn(), setIssueState: vi.fn() } as any;
-    const ctx = { getDataDir: () => path.dirname(root), getConfig: () => ({ extensions: { orchestrator: { projects: [root] } } }), emit: vi.fn() } as any;
+    const client = {
+      pollIssues: vi.fn(async () => [
+        {
+          id: "lin_1",
+          identifier: "ENG-1",
+          title: "Release",
+          description: "Body",
+          state: "Ready",
+          labels: [],
+          projectSlug: "proj-a",
+        },
+      ]),
+      createComment: vi.fn(),
+      setIssueState: vi.fn(),
+    } as any;
+    const ctx = {
+      getDataDir: () => path.dirname(root),
+      getConfig: () => ({ extensions: { orchestrator: { projects: [root] } } }),
+      emit: vi.fn(),
+    } as any;
     const worker = mockWorkerRunner({ id: "worker_release", kind: "fake" });
-    const daemon = new OrchestratorDaemon({ ctx, store, claims, getConfig: () => ({ projects: [root] }), workerRunner: worker.runner, createTrackerClient: () => client });
+    const daemon = new OrchestratorDaemon({
+      ctx,
+      store,
+      claims,
+      getConfig: () => ({ projects: [root] }),
+      workerRunner: worker.runner,
+      createTrackerClient: () => client,
+    });
 
     await daemon.start();
     await daemon.tick();
@@ -2641,7 +4213,11 @@ Do {{issue.identifier}}
 
     expect(worker.abort).not.toHaveBeenCalled();
     expect(claims.list()).toHaveLength(0);
-    expect(store.listRecent(1)[0]).toMatchObject({ outcome: "released", process_alive: 0, worker_id: "worker_release" });
+    expect(store.listRecent(1)[0]).toMatchObject({
+      outcome: "released",
+      process_alive: 0,
+      worker_id: "worker_release",
+    });
     await daemon.stop();
     store.close();
   });
@@ -2652,18 +4228,59 @@ Do {{issue.identifier}}
     const store = new StateStore(path.join(root, "state.db"));
     store.bootstrap();
     const claims = new ClaimsRegistry();
-    const client = { pollIssues: vi.fn(async () => [{ id: "lin_1", identifier: "ENG-1", title: "Test", description: "Body", state: "Ready", labels: [], projectSlug: "proj-a" }]), createComment: vi.fn(async () => undefined), setIssueState: vi.fn(async () => undefined) } as any;
-    const ctx = { getDataDir: () => path.dirname(root), getConfig: () => ({ extensions: { subagents: { profiles }, orchestrator: { projects: [root] } } }), emit: vi.fn() } as any;
-    const worker = mockWorkerRunner({ id: "worker_error", kind: "fake" }, [{ status: "error", exitCode: 1 }]);
-    const daemon = new OrchestratorDaemon({ ctx, store, claims, getConfig: () => ({ projects: [root] }), workerRunner: worker.runner, createTrackerClient: () => client });
+    const client = {
+      pollIssues: vi.fn(async () => [
+        {
+          id: "lin_1",
+          identifier: "ENG-1",
+          title: "Test",
+          description: "Body",
+          state: "Ready",
+          labels: [],
+          projectSlug: "proj-a",
+        },
+      ]),
+      createComment: vi.fn(async () => undefined),
+      setIssueState: vi.fn(async () => undefined),
+    } as any;
+    const ctx = {
+      getDataDir: () => path.dirname(root),
+      getConfig: () => ({
+        extensions: {
+          subagents: { profiles },
+          orchestrator: { projects: [root] },
+        },
+      }),
+      emit: vi.fn(),
+    } as any;
+    const worker = mockWorkerRunner({ id: "worker_error", kind: "fake" }, [
+      { status: "error", exitCode: 1 },
+    ]);
+    const daemon = new OrchestratorDaemon({
+      ctx,
+      store,
+      claims,
+      getConfig: () => ({ projects: [root] }),
+      workerRunner: worker.runner,
+      createTrackerClient: () => client,
+    });
     await daemon.start();
     await daemon.tick();
     await daemon.tick();
-    expect(client.createComment).toHaveBeenCalledWith("lin_1", "Orchestrator parked issue: worker exited with error (exit 1)");
+    expect(client.createComment).toHaveBeenCalledWith(
+      "lin_1",
+      "Orchestrator parked issue: worker exited with error (exit 1)"
+    );
     expect(client.setIssueState).toHaveBeenCalledWith("lin_1", "Needs Human");
-    expect(worker.abort).toHaveBeenCalledWith(expect.objectContaining({ id: "worker_error" }));
+    expect(worker.abort).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "worker_error" })
+    );
     expect(claims.list()).toHaveLength(0);
-    expect(store.listRecent(1)[0]).toMatchObject({ outcome: "error", process_alive: 0, worker_id: "worker_error" });
+    expect(store.listRecent(1)[0]).toMatchObject({
+      outcome: "error",
+      process_alive: 0,
+      worker_id: "worker_error",
+    });
     await daemon.stop();
     store.close();
   });
@@ -2675,19 +4292,55 @@ Do {{issue.identifier}}
     store.bootstrap();
     const claims = new ClaimsRegistry();
     let state = "Ready";
-    const client = { pollIssues: vi.fn(async () => [{ id: "lin_1", identifier: "ENG-1", title: "Test", description: "Body", state, labels: [], projectSlug: "proj-a" }]), createComment: vi.fn(), setIssueState: vi.fn() } as any;
-    const ctx = { getDataDir: () => path.dirname(root), getConfig: () => ({ extensions: { subagents: { profiles }, orchestrator: { projects: [root] } } }), emit: vi.fn() } as any;
+    const client = {
+      pollIssues: vi.fn(async () => [
+        {
+          id: "lin_1",
+          identifier: "ENG-1",
+          title: "Test",
+          description: "Body",
+          state,
+          labels: [],
+          projectSlug: "proj-a",
+        },
+      ]),
+      createComment: vi.fn(),
+      setIssueState: vi.fn(),
+    } as any;
+    const ctx = {
+      getDataDir: () => path.dirname(root),
+      getConfig: () => ({
+        extensions: {
+          subagents: { profiles },
+          orchestrator: { projects: [root] },
+        },
+      }),
+      emit: vi.fn(),
+    } as any;
     const worker = mockWorkerRunner({ id: "worker_needs_human", kind: "fake" });
-    const daemon = new OrchestratorDaemon({ ctx, store, claims, getConfig: () => ({ projects: [root] }), workerRunner: worker.runner, createTrackerClient: () => client });
+    const daemon = new OrchestratorDaemon({
+      ctx,
+      store,
+      claims,
+      getConfig: () => ({ projects: [root] }),
+      workerRunner: worker.runner,
+      createTrackerClient: () => client,
+    });
     await daemon.start();
     await daemon.tick();
 
     state = "Needs Human";
     await daemon.tick();
 
-    expect(worker.abort).toHaveBeenCalledWith(expect.objectContaining({ id: "worker_needs_human" }));
+    expect(worker.abort).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "worker_needs_human" })
+    );
     expect(claims.list()).toHaveLength(0);
-    expect(store.listRecent(1)[0]).toMatchObject({ outcome: "needs_human", process_alive: 0, worker_id: "worker_needs_human" });
+    expect(store.listRecent(1)[0]).toMatchObject({
+      outcome: "needs_human",
+      process_alive: 0,
+      worker_id: "worker_needs_human",
+    });
     await daemon.stop();
     store.close();
   });
@@ -2715,10 +4368,40 @@ Do {{issue.identifier}}
     });
     store.finishRun("old", "interrupted_gateway_restart");
     const claims = new ClaimsRegistry();
-    const client = { pollIssues: vi.fn(async () => [{ id: "lin_1", identifier: "ENG-1", title: "Test", description: "Body", state: "Ready", labels: [], projectSlug: "proj-a" }]), createComment: vi.fn(), setIssueState: vi.fn() } as any;
-    const ctx = { getDataDir: () => path.dirname(root), getConfig: () => ({ extensions: { subagents: { profiles }, orchestrator: { projects: [root] } } }), emit: vi.fn() } as any;
+    const client = {
+      pollIssues: vi.fn(async () => [
+        {
+          id: "lin_1",
+          identifier: "ENG-1",
+          title: "Test",
+          description: "Body",
+          state: "Ready",
+          labels: [],
+          projectSlug: "proj-a",
+        },
+      ]),
+      createComment: vi.fn(),
+      setIssueState: vi.fn(),
+    } as any;
+    const ctx = {
+      getDataDir: () => path.dirname(root),
+      getConfig: () => ({
+        extensions: {
+          subagents: { profiles },
+          orchestrator: { projects: [root] },
+        },
+      }),
+      emit: vi.fn(),
+    } as any;
     const worker = mockWorkerRunner({ id: "worker_retry", kind: "fake" });
-    const daemon = new OrchestratorDaemon({ ctx, store, claims, getConfig: () => ({ projects: [root] }), workerRunner: worker.runner, createTrackerClient: () => client });
+    const daemon = new OrchestratorDaemon({
+      ctx,
+      store,
+      claims,
+      getConfig: () => ({ projects: [root] }),
+      workerRunner: worker.runner,
+      createTrackerClient: () => client,
+    });
     await daemon.start();
     await daemon.tick();
     const calls = worker.start.mock.calls as Array<[Record<string, unknown>]>;
@@ -2730,22 +4413,83 @@ Do {{issue.identifier}}
     store.close();
   });
 
+  it("scopes claims by orchestrator project", async () => {
+    const claims = new ClaimsRegistry();
+
+    await expect(
+      claims.tryClaim("shared-issue-id", "run-a", "project-a")
+    ).resolves.toMatchObject({
+      projectId: "project-a",
+      issueId: "shared-issue-id",
+    });
+    await expect(
+      claims.tryClaim("shared-issue-id", "run-b", "project-b")
+    ).resolves.toMatchObject({
+      projectId: "project-b",
+      issueId: "shared-issue-id",
+    });
+    await expect(
+      claims.tryClaim("shared-issue-id", "run-a-duplicate", "project-a")
+    ).resolves.toBeUndefined();
+
+    expect(claims.get("shared-issue-id", "project-a")?.runId).toBe("run-a");
+    expect(claims.get("shared-issue-id", "project-b")?.runId).toBe("run-b");
+    expect(claims.release("shared-issue-id", "project-a")).toBe(true);
+    expect(claims.get("shared-issue-id", "project-b")?.runId).toBe("run-b");
+  });
+
   it("manual claim runs project-scoped dispatch", async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "aih-orch-claim-"));
     await writeWorkflow(root);
     const store = new StateStore(path.join(root, "state.db"));
     store.bootstrap();
     const claims = new ClaimsRegistry();
-    const issue = { id: "lin_1", identifier: "ENG-1", title: "Manual", description: "Body", state: "Ready", labels: [], projectSlug: "proj-a" };
-    const client = { getIssue: vi.fn(async () => issue), pollIssues: vi.fn(), createComment: vi.fn(), setIssueState: vi.fn() } as any;
-    const ctx = { getDataDir: () => path.dirname(root), getConfig: () => ({ extensions: { subagents: { profiles }, orchestrator: { projects: [root] } } }), emit: vi.fn() } as any;
+    const issue = {
+      id: "lin_1",
+      identifier: "ENG-1",
+      title: "Manual",
+      description: "Body",
+      state: "Ready",
+      labels: [],
+      projectSlug: "proj-a",
+    };
+    const client = {
+      getIssue: vi.fn(async () => issue),
+      pollIssues: vi.fn(),
+      createComment: vi.fn(),
+      setIssueState: vi.fn(),
+    } as any;
+    const ctx = {
+      getDataDir: () => path.dirname(root),
+      getConfig: () => ({
+        extensions: {
+          subagents: { profiles },
+          orchestrator: { projects: [root] },
+        },
+      }),
+      emit: vi.fn(),
+    } as any;
     const worker = mockWorkerRunner({ id: "worker_manual", kind: "fake" });
-    const daemon = new OrchestratorDaemon({ ctx, store, claims, getConfig: () => ({ projects: [root] }), workerRunner: worker.runner, createTrackerClient: () => client });
+    const daemon = new OrchestratorDaemon({
+      ctx,
+      store,
+      claims,
+      getConfig: () => ({ projects: [root] }),
+      workerRunner: worker.runner,
+      createTrackerClient: () => client,
+    });
     await daemon.start();
     await expect(daemon.claimNow("ENG-1")).resolves.toEqual({ ok: true });
     expect(client.getIssue).toHaveBeenCalledWith("ENG-1");
-    expect(worker.start).toHaveBeenCalledWith(expect.objectContaining({ workspace: path.join(root, "workspaces", "eng-1") }));
-    await expect(daemon.claimNow("ENG-1")).resolves.toMatchObject({ ok: false, status: 409 });
+    expect(worker.start).toHaveBeenCalledWith(
+      expect.objectContaining({
+        workspace: path.join(root, "workspaces", "eng-1"),
+      })
+    );
+    await expect(daemon.claimNow("ENG-1")).resolves.toMatchObject({
+      ok: false,
+      status: 409,
+    });
     await daemon.stop();
     store.close();
   });
@@ -2767,8 +4511,23 @@ Do {{issue.identifier}}
     const store = new StateStore(path.join(home, "state.db"));
     store.bootstrap();
     const setTimeoutSpy = vi.spyOn(globalThis, "setTimeout");
-    const ctx = { getDataDir: () => home, getConfig: () => ({ extensions: { subagents: { profiles }, orchestrator: { projects: [fast, slow] } } }), emit: vi.fn() } as any;
-    const daemon = new OrchestratorDaemon({ ctx, store, claims: new ClaimsRegistry(), getConfig: () => ({ projects: [fast, slow] }), createTrackerClient: () => ({ pollIssues: vi.fn(async () => []) } as any) });
+    const ctx = {
+      getDataDir: () => home,
+      getConfig: () => ({
+        extensions: {
+          subagents: { profiles },
+          orchestrator: { projects: [fast, slow] },
+        },
+      }),
+      emit: vi.fn(),
+    } as any;
+    const daemon = new OrchestratorDaemon({
+      ctx,
+      store,
+      claims: new ClaimsRegistry(),
+      getConfig: () => ({ projects: [fast, slow] }),
+      createTrackerClient: () => ({ pollIssues: vi.fn(async () => []) }) as any,
+    });
     try {
       await daemon.start();
       const delays = setTimeoutSpy.mock.calls.map((call) => call[1]);
@@ -2786,12 +4545,40 @@ Do {{issue.identifier}}
     await writeWorkflow(root);
     const store = new StateStore(path.join(root, "state.db"));
     store.bootstrap();
-    store.insertRun({ runId: "r1", projectId: path.basename(root), issueId: "lin_1", identifier: "ENG-1", workspace: path.join(root, "workspaces", "eng-1"), profileJson: "{}", workflowPath: path.join(root, "WORKFLOW.md"), workflowSha: "abc", pid: 1, startedAt: new Date().toISOString() });
-    const ctx = { getDataDir: () => path.dirname(root), getConfig: () => ({ extensions: { subagents: { profiles }, orchestrator: { projects: [root] } } }), emit: vi.fn() } as any;
+    store.insertRun({
+      runId: "r1",
+      projectId: path.basename(root),
+      issueId: "lin_1",
+      identifier: "ENG-1",
+      workspace: path.join(root, "workspaces", "eng-1"),
+      profileJson: "{}",
+      workflowPath: path.join(root, "WORKFLOW.md"),
+      workflowSha: "abc",
+      pid: 1,
+      startedAt: new Date().toISOString(),
+    });
+    const ctx = {
+      getDataDir: () => path.dirname(root),
+      getConfig: () => ({
+        extensions: {
+          subagents: { profiles },
+          orchestrator: { projects: [root] },
+        },
+      }),
+      emit: vi.fn(),
+    } as any;
     store.setWorkerId("r1", "sub_stale");
-    const daemon = new OrchestratorDaemon({ ctx, store, claims: new ClaimsRegistry(), getConfig: () => ({ projects: [root] }), createTrackerClient: () => ({ pollIssues: vi.fn(async () => []) } as any) });
+    const daemon = new OrchestratorDaemon({
+      ctx,
+      store,
+      claims: new ClaimsRegistry(),
+      getConfig: () => ({ projects: [root] }),
+      createTrackerClient: () => ({ pollIssues: vi.fn(async () => []) }) as any,
+    });
     await daemon.start();
-    expect(store.listRecent(1)[0]).toMatchObject({ outcome: "interrupted_gateway_restart" });
+    expect(store.listRecent(1)[0]).toMatchObject({
+      outcome: "interrupted_gateway_restart",
+    });
     await daemon.stop();
     store.close();
   });
@@ -2814,8 +4601,26 @@ Do {{issue.identifier}}
       }),
     } as any;
     const sent: string[] = [];
-    const ctx = { getDataDir: () => path.dirname(root), getConfig: () => ({ extensions: { subagents: { profiles }, orchestrator: { projects: [root], notifyChannel: "ops" } } }), emit: vi.fn() } as any;
-    const daemon = new OrchestratorDaemon({ ctx, store, claims: new ClaimsRegistry(), getConfig: () => ({ projects: [root], notifyChannel: "ops" }), createTrackerClient: () => client, notify: async (message) => { sent.push(message); } });
+    const ctx = {
+      getDataDir: () => path.dirname(root),
+      getConfig: () => ({
+        extensions: {
+          subagents: { profiles },
+          orchestrator: { projects: [root], notifyChannel: "ops" },
+        },
+      }),
+      emit: vi.fn(),
+    } as any;
+    const daemon = new OrchestratorDaemon({
+      ctx,
+      store,
+      claims: new ClaimsRegistry(),
+      getConfig: () => ({ projects: [root], notifyChannel: "ops" }),
+      createTrackerClient: () => client,
+      notify: async (message) => {
+        sent.push(message);
+      },
+    });
     await daemon.start();
     daemon.enqueueTick();
     daemon.enqueueTick();
@@ -2856,33 +4661,91 @@ Do {{issue.identifier}}
     const dbPath = path.join(root, "state.db");
     const store = new StateStore(dbPath);
     store.bootstrap();
-    store.insertRun({ runId: "orchestrator:p1:i1:1", projectId: "p1", issueId: "i1", identifier: "ENG-1", workspace: path.join(root, "workspaces", "eng-1"), profileJson: "{}", workflowPath: path.join(root, "WORKFLOW.md"), workflowSha: "abc", pid: null, startedAt: new Date(1).toISOString() });
-    store.appendEvent("orchestrator:p1:i1:1", "worker.codex.tool_output", { output: "x".repeat(6000) }, "p1");
+    store.insertRun({
+      runId: "orchestrator:p1:i1:1",
+      projectId: "p1",
+      issueId: "i1",
+      identifier: "ENG-1",
+      workspace: path.join(root, "workspaces", "eng-1"),
+      profileJson: "{}",
+      workflowPath: path.join(root, "WORKFLOW.md"),
+      workflowSha: "abc",
+      pid: null,
+      startedAt: new Date(1).toISOString(),
+    });
+    store.appendEvent(
+      "orchestrator:p1:i1:1",
+      "worker.codex.tool_output",
+      { output: "x".repeat(6000) },
+      "p1"
+    );
 
     const db = new Database(dbPath);
-    const row = db.prepare("SELECT payload, payload_preview, log_path, log_offset, log_line FROM events").get() as Record<string, unknown>;
+    const row = db
+      .prepare(
+        "SELECT payload, payload_preview, log_path, log_offset, log_line FROM events"
+      )
+      .get() as Record<string, unknown>;
     db.close();
     expect(row.payload).toBeNull();
-    expect(row.log_path).toBe(path.join(".yoplai", "codex", "19700101T000000Z-b3JjaGVzdHJhdG9yOnAxOmkxOjE.jsonl"));
+    expect(row.log_path).toBe(
+      path.join(
+        ".yoplai",
+        "codex",
+        "19700101T000000Z-b3JjaGVzdHJhdG9yOnAxOmkxOjE.jsonl"
+      )
+    );
     expect(row.log_offset).toBe(0);
     expect(row.log_line).toBe(1);
     expect(String(row.payload_preview).length).toBeLessThan(5000);
 
     const logPath = path.join(root, String(row.log_path));
-    const line = JSON.parse((await fs.readFile(logPath, "utf8")).trim()) as Record<string, unknown>;
-    expect(line).toMatchObject({ project_id: "p1", run_id: "orchestrator:p1:i1:1", type: "worker.codex.tool_output" });
+    const line = JSON.parse(
+      (await fs.readFile(logPath, "utf8")).trim()
+    ) as Record<string, unknown>;
+    expect(line).toMatchObject({
+      project_id: "p1",
+      run_id: "orchestrator:p1:i1:1",
+      type: "worker.codex.tool_output",
+    });
     expect((line.payload as { output: string }).output).toHaveLength(6000);
-    const hydrated = store.listEvents("orchestrator:p1:i1:1") as Array<Record<string, unknown>>;
+    const hydrated = store.listEvents("orchestrator:p1:i1:1") as Array<
+      Record<string, unknown>
+    >;
     expect(JSON.parse(String(hydrated[0].payload)).output).toHaveLength(6000);
     store.close();
   });
 
   it("handles undefined payloads and keeps encoded run log paths distinct", async () => {
-    const root = await fs.mkdtemp(path.join(os.tmpdir(), "aih-orch-jsonl-undefined-"));
+    const root = await fs.mkdtemp(
+      path.join(os.tmpdir(), "aih-orch-jsonl-undefined-")
+    );
     const store = new StateStore(path.join(root, "state.db"));
     store.bootstrap();
-    store.insertRun({ runId: "a:b", projectId: "p1", issueId: "i1", identifier: "ENG-1", workspace: "/", profileJson: "{}", workflowPath: path.join(root, "WORKFLOW.md"), workflowSha: "s", pid: null, startedAt: new Date(1).toISOString() });
-    store.insertRun({ runId: "a_3Ab", projectId: "p1", issueId: "i2", identifier: "ENG-2", workspace: "/", profileJson: "{}", workflowPath: path.join(root, "WORKFLOW.md"), workflowSha: "s", pid: null, startedAt: new Date(2).toISOString() });
+    store.insertRun({
+      runId: "a:b",
+      projectId: "p1",
+      issueId: "i1",
+      identifier: "ENG-1",
+      workspace: "/",
+      profileJson: "{}",
+      workflowPath: path.join(root, "WORKFLOW.md"),
+      workflowSha: "s",
+      pid: null,
+      startedAt: new Date(1).toISOString(),
+    });
+    store.insertRun({
+      runId: "a_3Ab",
+      projectId: "p1",
+      issueId: "i2",
+      identifier: "ENG-2",
+      workspace: "/",
+      profileJson: "{}",
+      workflowPath: path.join(root, "WORKFLOW.md"),
+      workflowSha: "s",
+      pid: null,
+      startedAt: new Date(2).toISOString(),
+    });
     store.appendEvent("a:b", "worker.empty", undefined, "p1");
     store.appendEvent("a_3Ab", "worker.empty", undefined, "p1");
 
@@ -2894,8 +4757,12 @@ Do {{issue.identifier}}
     const firstPath = String(first[0].log_path);
     const secondPath = String(second[0].log_path);
     expect(firstPath).not.toBe(secondPath);
-    await expect(fs.access(path.join(root, firstPath))).resolves.toBeUndefined();
-    await expect(fs.access(path.join(root, secondPath))).resolves.toBeUndefined();
+    await expect(
+      fs.access(path.join(root, firstPath))
+    ).resolves.toBeUndefined();
+    await expect(
+      fs.access(path.join(root, secondPath))
+    ).resolves.toBeUndefined();
     store.close();
   });
 
@@ -2904,38 +4771,97 @@ Do {{issue.identifier}}
     const dbPath = path.join(root, "state.db");
     const store = new StateStore(dbPath);
     store.bootstrap();
-    store.insertRun({ runId: "r1", projectId: "p1", issueId: "i1", identifier: "ENG-1", workspace: "/", profileJson: "{}", workflowPath: path.join(root, "WORKFLOW.md"), workflowSha: "s", pid: null, startedAt: new Date(1).toISOString() });
+    store.insertRun({
+      runId: "r1",
+      projectId: "p1",
+      issueId: "i1",
+      identifier: "ENG-1",
+      workspace: "/",
+      profileJson: "{}",
+      workflowPath: path.join(root, "WORKFLOW.md"),
+      workflowSha: "s",
+      pid: null,
+      startedAt: new Date(1).toISOString(),
+    });
     const db = new Database(dbPath);
-    db.prepare("INSERT INTO events (project_id,run_id,type,payload,created_at) VALUES (?,?,?,?,?)").run("p1", "r1", "worker.started", JSON.stringify({ legacy: true }), new Date().toISOString());
+    db.prepare(
+      "INSERT INTO events (project_id,run_id,type,payload,created_at) VALUES (?,?,?,?,?)"
+    ).run(
+      "p1",
+      "r1",
+      "worker.started",
+      JSON.stringify({ legacy: true }),
+      new Date().toISOString()
+    );
     db.close();
     store.appendEvent("r1", "worker.claude.message", { text: "jsonl" }, "p1");
 
     expect(store.listEvents("r1", 0)).toEqual([
-      expect.objectContaining({ id: 1, payload: JSON.stringify({ legacy: true }) }),
-      expect.objectContaining({ id: 2, payload: JSON.stringify({ text: "jsonl" }) }),
+      expect.objectContaining({
+        id: 1,
+        payload: JSON.stringify({ legacy: true }),
+      }),
+      expect.objectContaining({
+        id: 2,
+        payload: JSON.stringify({ text: "jsonl" }),
+      }),
     ]);
     expect(store.listEvents("r1", 1)).toEqual([
-      expect.objectContaining({ id: 2, payload: JSON.stringify({ text: "jsonl" }) }),
+      expect.objectContaining({
+        id: 2,
+        payload: JSON.stringify({ text: "jsonl" }),
+      }),
     ]);
     store.close();
   });
 
   it("reads and deletes prior state-root JSONL rows for runs with workflow paths", async () => {
-    const root = await fs.mkdtemp(path.join(os.tmpdir(), "aih-orch-legacy-jsonl-"));
+    const root = await fs.mkdtemp(
+      path.join(os.tmpdir(), "aih-orch-legacy-jsonl-")
+    );
     const project = path.join(root, "project");
     const state = path.join(root, "state");
     await fs.mkdir(path.join(state, "runs", "cjE"), { recursive: true });
     const legacyLog = path.join(state, "runs", "cjE", "logs.jsonl");
-    await fs.writeFile(legacyLog, `${JSON.stringify({ payload: { text: "legacy jsonl payload" } })}\n`, "utf8");
+    await fs.writeFile(
+      legacyLog,
+      `${JSON.stringify({ payload: { text: "legacy jsonl payload" } })}\n`,
+      "utf8"
+    );
     const store = new StateStore(path.join(state, "state.db"));
     store.bootstrap();
-    store.insertRun({ runId: "r1", projectId: "p1", issueId: "i1", identifier: "ENG-1", workspace: "/", profileJson: "{}", workflowPath: path.join(project, "WORKFLOW.md"), workflowSha: "s", pid: null, startedAt: new Date(1).toISOString() });
+    store.insertRun({
+      runId: "r1",
+      projectId: "p1",
+      issueId: "i1",
+      identifier: "ENG-1",
+      workspace: "/",
+      profileJson: "{}",
+      workflowPath: path.join(project, "WORKFLOW.md"),
+      workflowSha: "s",
+      pid: null,
+      startedAt: new Date(1).toISOString(),
+    });
     const db = new Database(path.join(state, "state.db"));
-    db.prepare("INSERT INTO events (project_id,run_id,type,payload,created_at,log_path,log_offset,log_line,payload_preview) VALUES (?,?,?,?,?,?,?,?,?)").run("p1", "r1", "worker.message", null, new Date().toISOString(), path.join("runs", "cjE", "logs.jsonl"), 0, 1, JSON.stringify({ text: "preview" }));
+    db.prepare(
+      "INSERT INTO events (project_id,run_id,type,payload,created_at,log_path,log_offset,log_line,payload_preview) VALUES (?,?,?,?,?,?,?,?,?)"
+    ).run(
+      "p1",
+      "r1",
+      "worker.message",
+      null,
+      new Date().toISOString(),
+      path.join("runs", "cjE", "logs.jsonl"),
+      0,
+      1,
+      JSON.stringify({ text: "preview" })
+    );
     db.close();
 
     expect(store.listEvents("r1")).toEqual([
-      expect.objectContaining({ payload: JSON.stringify({ text: "legacy jsonl payload" }) }),
+      expect.objectContaining({
+        payload: JSON.stringify({ text: "legacy jsonl payload" }),
+      }),
     ]);
     expect(store.deleteRunLogs("r1")).toBe(true);
     await expect(fs.access(legacyLog)).rejects.toThrow();
@@ -2946,29 +4872,69 @@ Do {{issue.identifier}}
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "aih-orch-delete-"));
     const store = new StateStore(path.join(root, "state.db"));
     store.bootstrap();
-    store.insertRun({ runId: "r1", projectId: "p1", issueId: "i1", identifier: "ENG-1", workspace: "/", profileJson: "{}", workflowPath: path.join(root, "WORKFLOW.md"), workflowSha: "s", pid: null, startedAt: new Date(1).toISOString() });
-    store.appendEvent("r1", "worker.claude.message", { text: "short preview" }, "p1");
+    store.insertRun({
+      runId: "r1",
+      projectId: "p1",
+      issueId: "i1",
+      identifier: "ENG-1",
+      workspace: "/",
+      profileJson: "{}",
+      workflowPath: path.join(root, "WORKFLOW.md"),
+      workflowSha: "s",
+      pid: null,
+      startedAt: new Date(1).toISOString(),
+    });
+    store.appendEvent(
+      "r1",
+      "worker.claude.message",
+      { text: "short preview" },
+      "p1"
+    );
 
     expect(store.deleteRunLogs("r1")).toBe(true);
     const rows = store.listEvents("r1") as Array<Record<string, unknown>>;
     expect(rows).toEqual([
-      expect.objectContaining({ payload: JSON.stringify({ text: "short preview" }), payload_preview: JSON.stringify({ text: "short preview" }) }),
+      expect.objectContaining({
+        payload: JSON.stringify({ text: "short preview" }),
+        payload_preview: JSON.stringify({ text: "short preview" }),
+      }),
     ]);
-    await expect(fs.access(path.join(root, ".yoplai", "codex", "19700101T000000Z-cjE.jsonl"))).rejects.toThrow();
+    await expect(
+      fs.access(
+        path.join(root, ".yoplai", "codex", "19700101T000000Z-cjE.jsonl")
+      )
+    ).rejects.toThrow();
     store.close();
   });
 
   it("ignores corrupted log paths outside the orchestrator state directory", async () => {
-    const root = await fs.mkdtemp(path.join(os.tmpdir(), "aih-orch-path-root-"));
+    const root = await fs.mkdtemp(
+      path.join(os.tmpdir(), "aih-orch-path-root-")
+    );
     const sibling = `${root}-sibling`;
     await fs.mkdir(sibling);
     const outside = path.join(sibling, "outside.jsonl");
-    await fs.writeFile(outside, `${JSON.stringify({ payload: { text: "outside" } })}\n`);
+    await fs.writeFile(
+      outside,
+      `${JSON.stringify({ payload: { text: "outside" } })}\n`
+    );
     const dbPath = path.join(root, "state.db");
     const store = new StateStore(dbPath);
     store.bootstrap();
     const db = new Database(dbPath);
-    db.prepare("INSERT INTO events (project_id,run_id,type,payload,created_at,log_path,log_offset,log_line,payload_preview) VALUES (?,?,?,?,?,?,?,?,?)").run("p1", "r1", "worker.message", null, new Date().toISOString(), path.relative(root, outside), 0, 1, JSON.stringify({ text: "preview" }));
+    db.prepare(
+      "INSERT INTO events (project_id,run_id,type,payload,created_at,log_path,log_offset,log_line,payload_preview) VALUES (?,?,?,?,?,?,?,?,?)"
+    ).run(
+      "p1",
+      "r1",
+      "worker.message",
+      null,
+      new Date().toISOString(),
+      path.relative(root, outside),
+      0,
+      1,
+      JSON.stringify({ text: "preview" })
+    );
     db.close();
 
     expect(store.listEvents("r1")).toEqual([
@@ -2984,7 +4950,18 @@ Do {{issue.identifier}}
     store.bootstrap();
     const t = Date.now();
     const seed = (runId: string, outcome: string, offset: number) => {
-      store.insertRun({ runId, projectId: "p1", issueId: "i1", identifier: "ENG-1", workspace: "/", profileJson: "{}", workflowPath: "w", workflowSha: "s", pid: null, startedAt: new Date(t + offset).toISOString() });
+      store.insertRun({
+        runId,
+        projectId: "p1",
+        issueId: "i1",
+        identifier: "ENG-1",
+        workspace: "/",
+        profileJson: "{}",
+        workflowPath: "w",
+        workflowSha: "s",
+        pid: null,
+        startedAt: new Date(t + offset).toISOString(),
+      });
       store.finishRun(runId, outcome);
     };
 
@@ -3002,7 +4979,9 @@ Do {{issue.identifier}}
 
   it("parks issue after max_active_runs consecutive completed runs", async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "aih-orch-cap-park-"));
-    await fs.writeFile(path.join(root, "WORKFLOW.md"), `---
+    await fs.writeFile(
+      path.join(root, "WORKFLOW.md"),
+      `---
 tracker:
   kind: linear
   api_key: test-key
@@ -3017,35 +4996,83 @@ workspace:
   root: ./workspaces
 ---
 Do {{issue.identifier}}
-`);
+`
+    );
     const store = new StateStore(path.join(root, "state.db"));
     store.bootstrap();
     const projectId = path.basename(root);
     const t = Date.now();
     for (let i = 0; i < 2; i++) {
       const runId = `seed-${i}`;
-      store.insertRun({ runId, projectId, issueId: "lin_1", identifier: "ENG-1", workspace: "/", profileJson: "{}", workflowPath: "WORKFLOW.md", workflowSha: "s", pid: null, startedAt: new Date(t + i).toISOString() });
+      store.insertRun({
+        runId,
+        projectId,
+        issueId: "lin_1",
+        identifier: "ENG-1",
+        workspace: "/",
+        profileJson: "{}",
+        workflowPath: "WORKFLOW.md",
+        workflowSha: "s",
+        pid: null,
+        startedAt: new Date(t + i).toISOString(),
+      });
       store.finishRun(runId, "completed");
     }
     const claims = new ClaimsRegistry();
-    const client = { pollIssues: vi.fn(async () => [{ id: "lin_1", identifier: "ENG-1", title: "Loop", state: "Ready", labels: [], projectSlug: "proj-a" }]), createComment: vi.fn(async () => undefined), setIssueState: vi.fn(async () => undefined) } as any;
+    const client = {
+      pollIssues: vi.fn(async () => [
+        {
+          id: "lin_1",
+          identifier: "ENG-1",
+          title: "Loop",
+          state: "Ready",
+          labels: [],
+          projectSlug: "proj-a",
+        },
+      ]),
+      createComment: vi.fn(async () => undefined),
+      setIssueState: vi.fn(async () => undefined),
+    } as any;
     const worker = mockWorkerRunner();
-    const ctx = { getDataDir: () => path.dirname(root), getConfig: () => ({ extensions: { subagents: { profiles }, orchestrator: { projects: [root] } } }), emit: vi.fn() } as any;
-    const daemon = new OrchestratorDaemon({ ctx, store, claims, getConfig: () => ({ projects: [root] }), workerRunner: worker.runner, createTrackerClient: () => client });
+    const ctx = {
+      getDataDir: () => path.dirname(root),
+      getConfig: () => ({
+        extensions: {
+          subagents: { profiles },
+          orchestrator: { projects: [root] },
+        },
+      }),
+      emit: vi.fn(),
+    } as any;
+    const daemon = new OrchestratorDaemon({
+      ctx,
+      store,
+      claims,
+      getConfig: () => ({ projects: [root] }),
+      workerRunner: worker.runner,
+      createTrackerClient: () => client,
+    });
 
     await daemon.start();
     await daemon.tick();
 
     expect(worker.start).not.toHaveBeenCalled();
-    expect(client.createComment).toHaveBeenCalledWith("lin_1", expect.stringContaining("2 consecutive run"));
+    expect(client.createComment).toHaveBeenCalledWith(
+      "lin_1",
+      expect.stringContaining("2 consecutive run")
+    );
     expect(client.setIssueState).toHaveBeenCalledWith("lin_1", "Needs Human");
     await daemon.stop();
     store.close();
   });
 
   it("resets consecutive run count after a non-completed outcome so future dispatches proceed", async () => {
-    const root = await fs.mkdtemp(path.join(os.tmpdir(), "aih-orch-cap-reset-"));
-    await fs.writeFile(path.join(root, "WORKFLOW.md"), `---
+    const root = await fs.mkdtemp(
+      path.join(os.tmpdir(), "aih-orch-cap-reset-")
+    );
+    await fs.writeFile(
+      path.join(root, "WORKFLOW.md"),
+      `---
 tracker:
   kind: linear
   api_key: test-key
@@ -3060,37 +5087,96 @@ workspace:
   root: ./workspaces
 ---
 Do {{issue.identifier}}
-`);
+`
+    );
     const store = new StateStore(path.join(root, "state.db"));
     store.bootstrap();
     const projectId = path.basename(root);
     const t = Date.now();
     for (let i = 0; i < 2; i++) {
       const runId = `seed-completed-${i}`;
-      store.insertRun({ runId, projectId, issueId: "lin_1", identifier: "ENG-1", workspace: "/", profileJson: "{}", workflowPath: "WORKFLOW.md", workflowSha: "s", pid: null, startedAt: new Date(t + i).toISOString() });
+      store.insertRun({
+        runId,
+        projectId,
+        issueId: "lin_1",
+        identifier: "ENG-1",
+        workspace: "/",
+        profileJson: "{}",
+        workflowPath: "WORKFLOW.md",
+        workflowSha: "s",
+        pid: null,
+        startedAt: new Date(t + i).toISOString(),
+      });
       store.finishRun(runId, "completed");
     }
-    store.insertRun({ runId: "seed-terminal", projectId, issueId: "lin_1", identifier: "ENG-1", workspace: "/", profileJson: "{}", workflowPath: "WORKFLOW.md", workflowSha: "s", pid: null, startedAt: new Date(t + 2).toISOString() });
+    store.insertRun({
+      runId: "seed-terminal",
+      projectId,
+      issueId: "lin_1",
+      identifier: "ENG-1",
+      workspace: "/",
+      profileJson: "{}",
+      workflowPath: "WORKFLOW.md",
+      workflowSha: "s",
+      pid: null,
+      startedAt: new Date(t + 2).toISOString(),
+    });
     store.finishRun("seed-terminal", "terminal");
 
     const claims = new ClaimsRegistry();
-    const client = { pollIssues: vi.fn(async () => [{ id: "lin_1", identifier: "ENG-1", title: "Reset", state: "Ready", labels: [], projectSlug: "proj-a" }]), createComment: vi.fn(async () => undefined), setIssueState: vi.fn(async () => undefined) } as any;
+    const client = {
+      pollIssues: vi.fn(async () => [
+        {
+          id: "lin_1",
+          identifier: "ENG-1",
+          title: "Reset",
+          state: "Ready",
+          labels: [],
+          projectSlug: "proj-a",
+        },
+      ]),
+      createComment: vi.fn(async () => undefined),
+      setIssueState: vi.fn(async () => undefined),
+    } as any;
     const worker = mockWorkerRunner();
-    const ctx = { getDataDir: () => path.dirname(root), getConfig: () => ({ extensions: { subagents: { profiles }, orchestrator: { projects: [root] } } }), emit: vi.fn() } as any;
-    const daemon = new OrchestratorDaemon({ ctx, store, claims, getConfig: () => ({ projects: [root] }), workerRunner: worker.runner, createTrackerClient: () => client });
+    const ctx = {
+      getDataDir: () => path.dirname(root),
+      getConfig: () => ({
+        extensions: {
+          subagents: { profiles },
+          orchestrator: { projects: [root] },
+        },
+      }),
+      emit: vi.fn(),
+    } as any;
+    const daemon = new OrchestratorDaemon({
+      ctx,
+      store,
+      claims,
+      getConfig: () => ({ projects: [root] }),
+      workerRunner: worker.runner,
+      createTrackerClient: () => client,
+    });
 
     await daemon.start();
     await expect(daemon.tick()).resolves.toMatchObject({ dispatched: 1 });
 
     expect(worker.start).toHaveBeenCalledOnce();
-    expect(client.setIssueState).not.toHaveBeenCalledWith("lin_1", "Needs Human");
+    expect(client.setIssueState).not.toHaveBeenCalledWith(
+      "lin_1",
+      "Needs Human"
+    );
     await daemon.stop();
     store.close();
   });
 
   it("resets consecutive run count after parking for max_active_runs so reactivation can dispatch", async () => {
-    const root = await fs.mkdtemp(path.join(os.tmpdir(), "aih-orch-cap-reactivate-"));
-    await fs.writeFile(path.join(root, "WORKFLOW.md"), `---
+    const root = await fs.mkdtemp(
+      path.join(os.tmpdir(), "aih-orch-cap-reactivate-")
+    );
+    await fs.writeFile(
+      path.join(root, "WORKFLOW.md"),
+      `---
 tracker:
   kind: linear
   api_key: test-key
@@ -3105,21 +5191,62 @@ workspace:
   root: ./workspaces
 ---
 Do {{issue.identifier}}
-`);
+`
+    );
     const store = new StateStore(path.join(root, "state.db"));
     store.bootstrap();
     const projectId = path.basename(root);
     const t = Date.now();
     for (let i = 0; i < 2; i++) {
       const runId = `seed-${i}`;
-      store.insertRun({ runId, projectId, issueId: "lin_1", identifier: "ENG-1", workspace: "/", profileJson: "{}", workflowPath: "WORKFLOW.md", workflowSha: "s", pid: null, startedAt: new Date(t + i).toISOString() });
+      store.insertRun({
+        runId,
+        projectId,
+        issueId: "lin_1",
+        identifier: "ENG-1",
+        workspace: "/",
+        profileJson: "{}",
+        workflowPath: "WORKFLOW.md",
+        workflowSha: "s",
+        pid: null,
+        startedAt: new Date(t + i).toISOString(),
+      });
       store.finishRun(runId, "completed");
     }
     const claims = new ClaimsRegistry();
-    const client = { pollIssues: vi.fn(async () => [{ id: "lin_1", identifier: "ENG-1", title: "Loop", state: "Ready", labels: [], projectSlug: "proj-a" }]), createComment: vi.fn(async () => undefined), setIssueState: vi.fn(async () => undefined) } as any;
+    const client = {
+      pollIssues: vi.fn(async () => [
+        {
+          id: "lin_1",
+          identifier: "ENG-1",
+          title: "Loop",
+          state: "Ready",
+          labels: [],
+          projectSlug: "proj-a",
+        },
+      ]),
+      createComment: vi.fn(async () => undefined),
+      setIssueState: vi.fn(async () => undefined),
+    } as any;
     const worker = mockWorkerRunner();
-    const ctx = { getDataDir: () => path.dirname(root), getConfig: () => ({ extensions: { subagents: { profiles }, orchestrator: { projects: [root] } } }), emit: vi.fn() } as any;
-    const daemon = new OrchestratorDaemon({ ctx, store, claims, getConfig: () => ({ projects: [root] }), workerRunner: worker.runner, createTrackerClient: () => client });
+    const ctx = {
+      getDataDir: () => path.dirname(root),
+      getConfig: () => ({
+        extensions: {
+          subagents: { profiles },
+          orchestrator: { projects: [root] },
+        },
+      }),
+      emit: vi.fn(),
+    } as any;
+    const daemon = new OrchestratorDaemon({
+      ctx,
+      store,
+      claims,
+      getConfig: () => ({ projects: [root] }),
+      workerRunner: worker.runner,
+      createTrackerClient: () => client,
+    });
 
     await daemon.start();
     await daemon.tick();
@@ -3135,13 +5262,18 @@ Do {{issue.identifier}}
     await expect(daemon.tick()).resolves.toMatchObject({ dispatched: 1 });
 
     expect(worker.start).toHaveBeenCalledOnce();
-    expect(client.setIssueState).not.toHaveBeenCalledWith("lin_1", "Needs Human");
+    expect(client.setIssueState).not.toHaveBeenCalledWith(
+      "lin_1",
+      "Needs Human"
+    );
     await daemon.stop();
     store.close();
   });
 
   it("uses default max_active_runs of 3 and does not park below threshold", async () => {
-    const root = await fs.mkdtemp(path.join(os.tmpdir(), "aih-orch-cap-default-"));
+    const root = await fs.mkdtemp(
+      path.join(os.tmpdir(), "aih-orch-cap-default-")
+    );
     await writeWorkflow(root);
     const store = new StateStore(path.join(root, "state.db"));
     store.bootstrap();
@@ -3149,27 +5281,84 @@ Do {{issue.identifier}}
     const t = Date.now();
     for (let i = 0; i < 2; i++) {
       const runId = `seed-${i}`;
-      store.insertRun({ runId, projectId, issueId: "lin_1", identifier: "ENG-1", workspace: "/", profileJson: "{}", workflowPath: "WORKFLOW.md", workflowSha: "s", pid: null, startedAt: new Date(t + i).toISOString() });
+      store.insertRun({
+        runId,
+        projectId,
+        issueId: "lin_1",
+        identifier: "ENG-1",
+        workspace: "/",
+        profileJson: "{}",
+        workflowPath: "WORKFLOW.md",
+        workflowSha: "s",
+        pid: null,
+        startedAt: new Date(t + i).toISOString(),
+      });
       store.finishRun(runId, "completed");
     }
     const claims = new ClaimsRegistry();
-    const client = { pollIssues: vi.fn(async () => [{ id: "lin_1", identifier: "ENG-1", title: "Default", state: "Ready", labels: [], projectSlug: "proj-a" }]), createComment: vi.fn(async () => undefined), setIssueState: vi.fn(async () => undefined) } as any;
+    const client = {
+      pollIssues: vi.fn(async () => [
+        {
+          id: "lin_1",
+          identifier: "ENG-1",
+          title: "Default",
+          state: "Ready",
+          labels: [],
+          projectSlug: "proj-a",
+        },
+      ]),
+      createComment: vi.fn(async () => undefined),
+      setIssueState: vi.fn(async () => undefined),
+    } as any;
     const worker = mockWorkerRunner();
-    const ctx = { getDataDir: () => path.dirname(root), getConfig: () => ({ extensions: { subagents: { profiles }, orchestrator: { projects: [root] } } }), emit: vi.fn() } as any;
-    const daemon = new OrchestratorDaemon({ ctx, store, claims, getConfig: () => ({ projects: [root] }), workerRunner: worker.runner, createTrackerClient: () => client });
+    const ctx = {
+      getDataDir: () => path.dirname(root),
+      getConfig: () => ({
+        extensions: {
+          subagents: { profiles },
+          orchestrator: { projects: [root] },
+        },
+      }),
+      emit: vi.fn(),
+    } as any;
+    const daemon = new OrchestratorDaemon({
+      ctx,
+      store,
+      claims,
+      getConfig: () => ({ projects: [root] }),
+      workerRunner: worker.runner,
+      createTrackerClient: () => client,
+    });
 
     await daemon.start();
     await expect(daemon.tick()).resolves.toMatchObject({ dispatched: 1 });
     expect(worker.start).toHaveBeenCalledOnce();
-    expect(client.setIssueState).not.toHaveBeenCalledWith("lin_1", "Needs Human");
+    expect(client.setIssueState).not.toHaveBeenCalledWith(
+      "lin_1",
+      "Needs Human"
+    );
 
-    store.insertRun({ runId: "seed-5th", projectId, issueId: "lin_1", identifier: "ENG-1", workspace: "/", profileJson: "{}", workflowPath: "WORKFLOW.md", workflowSha: "s", pid: null, startedAt: new Date(t + 100).toISOString() });
+    store.insertRun({
+      runId: "seed-5th",
+      projectId,
+      issueId: "lin_1",
+      identifier: "ENG-1",
+      workspace: "/",
+      profileJson: "{}",
+      workflowPath: "WORKFLOW.md",
+      workflowSha: "s",
+      pid: null,
+      startedAt: new Date(t + 100).toISOString(),
+    });
     store.finishRun("seed-5th", "completed");
     worker.start.mockClear();
     claims.release("lin_1", projectId);
     await expect(daemon.tick()).resolves.toMatchObject({ dispatched: 0 });
     expect(worker.start).not.toHaveBeenCalled();
-    expect(client.createComment).toHaveBeenCalledWith("lin_1", expect.stringContaining("max_active_runs=3"));
+    expect(client.createComment).toHaveBeenCalledWith(
+      "lin_1",
+      expect.stringContaining("max_active_runs=3")
+    );
     await daemon.stop();
     store.close();
   });
