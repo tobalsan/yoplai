@@ -247,6 +247,52 @@ describe("subagent runtime logs", () => {
     expect(runs.map((run) => run.id)).toEqual(["run-match"]);
   });
 
+  it("reserves labels atomically for concurrent starts", async () => {
+    const binDir = await fs.mkdtemp(path.join(tempDir, "bin-"));
+    const codexPath = path.join(binDir, "codex");
+    await fs.writeFile(codexPath, "#!/bin/sh\nexit 0\n", {
+      encoding: "utf8",
+      mode: 0o755,
+    });
+    const originalPath = process.env.PATH;
+    process.env.PATH = `${binDir}${path.delimiter}${originalPath ?? ""}`;
+
+    try {
+      const input = {
+        cli: "codex" as const,
+        cwd: tempDir,
+        prompt: "test",
+        label: "Worker",
+        parent: { type: "board", id: "main" },
+      };
+      const results = await Promise.allSettled([
+        startSubagentRun(runtimeOptions(), input),
+        startSubagentRun(runtimeOptions(), input),
+      ]);
+
+      expect(
+        results.filter((result) => result.status === "fulfilled")
+      ).toHaveLength(1);
+      expect(
+        results.filter((result) => result.status === "rejected")
+      ).toHaveLength(1);
+      expect(
+        results.find((result) => result.status === "rejected")
+      ).toMatchObject({
+        reason: expect.objectContaining({
+          message: "Subagent label already exists for parent: Worker",
+        }),
+      });
+      const runs = await listSubagentRuns(runtimeOptions(), {
+        parent: input.parent,
+        includeArchived: true,
+      });
+      expect(runs).toHaveLength(1);
+    } finally {
+      process.env.PATH = originalPath;
+    }
+  });
+
   it("persists projectId/sliceId for new runs", async () => {
     const binDir = await fs.mkdtemp(path.join(tempDir, "bin-"));
     const codexPath = path.join(binDir, "codex");

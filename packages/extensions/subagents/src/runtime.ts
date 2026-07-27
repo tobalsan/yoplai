@@ -91,6 +91,7 @@ type RunPaths = {
 
 const activeChildren = new Map<string, ChildProcess>();
 const liveRunsById = new Map<string, LiveSubagentRunSummary>();
+const startReservations = new Map<string, Promise<void>>();
 
 function runsRoot(dataDir: string): string {
   return path.join(dataDir, "sessions", "subagents", "runs");
@@ -604,6 +605,30 @@ export async function getSubagentRun(
 }
 
 export async function startSubagentRun(
+  options: RuntimeOptions,
+  input: StartSubagentInput
+): Promise<SubagentRun> {
+  const reservationKey = `${path.resolve(options.dataDir)}:${parentKey(input.parent)}`;
+  const previous = startReservations.get(reservationKey) ?? Promise.resolve();
+  let release!: () => void;
+  const current = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const queued = previous.then(() => current);
+  startReservations.set(reservationKey, queued);
+
+  await previous;
+  try {
+    return await startSubagentRunReserved(options, input);
+  } finally {
+    release();
+    if (startReservations.get(reservationKey) === queued) {
+      startReservations.delete(reservationKey);
+    }
+  }
+}
+
+async function startSubagentRunReserved(
   options: RuntimeOptions,
   input: StartSubagentInput
 ): Promise<SubagentRun> {
