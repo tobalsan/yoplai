@@ -4,6 +4,7 @@ tracker:
   team: ALG
   label: 
     - repo:yoplai
+    - repo:yoplai-extensions
   active_states: [Todo, In Progress]
   terminal_states: [In Review, Done, Cancelled]
   needs_human: "Needs Human"
@@ -53,12 +54,6 @@ When this issue is a sub-issue of a parent that has other sub-issues, stack on a
 
 ## Workspace
 
-Reference repos: 
-- Main repo: https://github.com/tobalsan/yoplai.git (local: {{ workflow.dir }}).
-- Extensions repo: https://github.com/algodynai/yoplai-extensions.git
-
-If it's not perfectly clear which repo to use, do not make unreliable assumptions, instead park the issue to "Needs Human" and add a comment signaling you need human input to specify which repo to use.
-
 **Never work directly in the referenced repository.** Any local repo path in the issue description (or its parent/siblings) is provided **for reference only** — to help you identify the repo and read existing code. It is NOT your working directory. Treat it as read-only: do not create branches, commit, or make edits there. Editing the referenced clone directly corrupts a shared checkout and is a hard failure of this workflow.
 
 **Always work inside your own issue workspace** — the `workspaces/<issue_id>` folder under your agent folder root. Everything you produce (clones, worktrees, checkouts, scratch files) lives here. If a repo or extra checkout is needed and does not already exist in your workspace, clone or create it inside `workspaces/<issue_id>` — never reuse or mutate the reference path in place.
@@ -69,6 +64,12 @@ For code changes, create a git worktree — **inside your issue workspace** — 
 
 ## Repo-specific instructions
 
+Reference repos:
+- Platform repo: https://github.com/tobalsan/yoplai.git (local: {{ workflow.dir }}).
+- Extensions repo: https://github.com/algodynai/yoplai-extensions.git
+
+Refer to the issue label for repo identification.
+If it's not perfectly clear which repo to use, do not make unreliable assumptions, instead park the issue to "Needs Human" and add a comment signaling you need human input to specify which repo to use.
 If the repo you work on contains an AGENTS.md file, you **must follow its instructions**.
 
 **E2E validation is not optional.** If AGENTS.md (or any file it points to, e.g. `./docs/validation_e2e.md`) instructs you to run an end-to-end validation for your kind of change, you **must actually run it** — not just read the doc. Unit tests (`vitest`, `pnpm test:*`) do NOT satisfy an e2e requirement. For any user-facing change where such instructions exist, you must:
