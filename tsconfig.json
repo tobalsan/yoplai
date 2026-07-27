@@ -17,6 +17,7 @@
     { "path": "packages/shared" },
     { "path": "packages/extensions/discord" },
     { "path": "packages/extensions/heartbeat" },
+    { "path": "packages/extensions/irc" },
     { "path": "packages/extensions/langfuse" },
     { "path": "packages/extensions/multi-user" },
     { "path": "packages/extensions/scheduler" },
@@ -28,6 +29,7 @@
     { "path": "packages/extensions/subagents" },
     { "path": "packages/extensions/orchestrator" },
     { "path": "apps/gateway" },
+    { "path": "apps/web" },
     { "path": "container/agent-runner" }
   ]
 }
