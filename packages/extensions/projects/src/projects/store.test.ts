@@ -142,6 +142,37 @@ describe("projects store", () => {
     expect(getResult.data.thread.length).toBe(0);
   });
 
+  it("serializes project ids and heals a stale counter from disk", async () => {
+    const { createProject } = await import("./store.js");
+    const config = {
+      agents: [],
+      sessions: { idleMinutes: 360 },
+      projects: { root: projectsRoot },
+    };
+
+    await fs.mkdir(path.join(projectsRoot, "PRO-7_existing"), {
+      recursive: true,
+    });
+    await fs.mkdir(path.join(tmpDir, ".yoplai"), { recursive: true });
+    await fs.writeFile(
+      path.join(tmpDir, ".yoplai", "projects.json"),
+      JSON.stringify({ lastId: 2 })
+    );
+
+    const results = await Promise.all([
+      createProject(config, { title: "Concurrent Alpha" }),
+      createProject(config, { title: "Concurrent Beta" }),
+    ]);
+
+    expect(results.every((result) => result.ok)).toBe(true);
+    expect(
+      results.map((result) => (result.ok ? result.data.id : result.error))
+    ).toEqual(["PRO-8", "PRO-9"]);
+    await expect(
+      fs.readFile(path.join(tmpDir, ".yoplai", "projects.json"), "utf8")
+    ).resolves.toContain('"lastId": 9');
+  });
+
   it("falls back to README body for missing PITCH and emits one hint", async () => {
     const { getProject } = await import("./store.js");
     const config = {

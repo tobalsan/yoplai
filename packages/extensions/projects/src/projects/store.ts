@@ -99,6 +99,8 @@ function slugifyTitle(title: string): string {
 
 type ProjectsState = { lastId: number };
 
+const projectIdAllocationQueues = new Map<string, Promise<void>>();
+
 async function readProjectsState(): Promise<ProjectsState> {
   try {
     const raw = await fs.readFile(getProjectsStatePath(), "utf8");
@@ -111,19 +113,56 @@ async function readProjectsState(): Promise<ProjectsState> {
 
 async function writeProjectsState(state: ProjectsState): Promise<void> {
   await ensureDir(getProjectsContext().getDataDir());
-  await fs.writeFile(
+  await documentStore.writeFileAtomic(
     getProjectsStatePath(),
-    JSON.stringify(state, null, 2),
-    "utf8"
+    JSON.stringify(state, null, 2)
   );
 }
 
-async function allocateProjectId(): Promise<string> {
-  const state = await readProjectsState();
-  const next = state.lastId + 1;
-  state.lastId = next;
-  await writeProjectsState(state);
-  return `PRO-${next}`;
+async function findMaxProjectIdOnDisk(root: string): Promise<number> {
+  const roots = [
+    root,
+    path.join(root, DONE_DIR),
+    path.join(root, ARCHIVE_DIR),
+    path.join(root, TRASH_DIR),
+  ];
+  let max = 0;
+  for (const scanRoot of roots) {
+    let entries: import("node:fs").Dirent[];
+    try {
+      entries = await fs.readdir(scanRoot, { withFileTypes: true });
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") continue;
+      throw error;
+    }
+    for (const entry of entries) {
+      if (!entry.isDirectory()) continue;
+      const match = /^PRO-(\d+)(?:_|$)/.exec(entry.name);
+      if (match) max = Math.max(max, Number.parseInt(match[1], 10));
+    }
+  }
+  return max;
+}
+
+async function allocateProjectId(root: string): Promise<string> {
+  const statePath = getProjectsStatePath();
+  const previous =
+    projectIdAllocationQueues.get(statePath) ?? Promise.resolve();
+  const allocation = previous.then(async () => {
+    const state = await readProjectsState();
+    const maxOnDisk = await findMaxProjectIdOnDisk(root);
+    const next = Math.max(state.lastId, maxOnDisk) + 1;
+    await writeProjectsState({ lastId: next });
+    return `PRO-${next}`;
+  });
+  projectIdAllocationQueues.set(
+    statePath,
+    allocation.then(
+      () => undefined,
+      () => undefined
+    )
+  );
+  return allocation;
 }
 
 function formatMarkdown(
@@ -495,7 +534,7 @@ export async function createProject(
   const root = getProjectsRoot(config);
   await migrateTrashRoot(root);
   await ensureDir(root);
-  const id = await allocateProjectId();
+  const id = await allocateProjectId(root);
   const slug = slugifyTitle(trimmedTitle);
   const dirName = `${id}_${slug}`;
   const dirPath = path.join(root, dirName);
