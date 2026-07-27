@@ -50,7 +50,10 @@ function makeSession(
   fs.writeFileSync(path.join(dir, "state.json"), JSON.stringify(state));
 }
 
-function makeThread(dir: string, entries: Array<{ author: string; date: string; body: string }>): void {
+function makeThread(
+  dir: string,
+  entries: Array<{ author: string; date: string; body: string }>
+): void {
   const sections = entries
     .map((e) => `[author:${e.author}]\n[date:${e.date}]\n${e.body}`)
     .join("\n\n---\n---\n\n");
@@ -87,7 +90,9 @@ describe("board activity feed aggregator", () => {
     });
 
     const items = await aggregateActivity({ projectsRoot });
-    const projectItem = items.find((i) => i.type === "project_status" && i.projectId === "PRO-001");
+    const projectItem = items.find(
+      (i) => i.type === "project_status" && i.projectId === "PRO-001"
+    );
     expect(projectItem).toBeDefined();
     expect(projectItem?.actor).toBe("PRO-001");
     expect(projectItem?.action).toBe("→ active");
@@ -108,7 +113,9 @@ describe("board activity feed aggregator", () => {
     });
 
     const items = await aggregateActivity({ projectsRoot });
-    const sliceItem = items.find((i) => i.type === "slice_status" && i.sliceId === "PRO-002-S01");
+    const sliceItem = items.find(
+      (i) => i.type === "slice_status" && i.sliceId === "PRO-002-S01"
+    );
     expect(sliceItem).toBeDefined();
     expect(sliceItem?.actor).toBe("PRO-002-S01");
     expect(sliceItem?.action).toBe("→ review");
@@ -130,8 +137,12 @@ describe("board activity feed aggregator", () => {
     });
 
     const items = await aggregateActivity({ projectsRoot });
-    const startItem = items.find((i) => i.type === "run_start" && i.runSlug === "worker");
-    const completeItem = items.find((i) => i.type === "run_complete" && i.runSlug === "worker");
+    const startItem = items.find(
+      (i) => i.type === "run_start" && i.runSlug === "worker"
+    );
+    const completeItem = items.find(
+      (i) => i.type === "run_complete" && i.runSlug === "worker"
+    );
 
     expect(startItem?.timestamp).toBe("2025-02-01T09:00:00.000Z");
     expect(startItem?.action).toBe("run started");
@@ -170,12 +181,22 @@ describe("board activity feed aggregator", () => {
       updated_at: "2025-01-01T00:00:00.000Z",
     });
     makeThread(projDir, [
-      { author: "Alice", date: "2025-04-01T12:00:00.000Z", body: "Initial comment" },
-      { author: "Bob", date: "2025-04-02T09:00:00.000Z", body: "Follow-up note" },
+      {
+        author: "Alice",
+        date: "2025-04-01T12:00:00.000Z",
+        body: "Initial comment",
+      },
+      {
+        author: "Bob",
+        date: "2025-04-02T09:00:00.000Z",
+        body: "Follow-up note",
+      },
     ]);
 
     const items = await aggregateActivity({ projectsRoot });
-    const comments = items.filter((i) => i.type === "thread_comment" && i.projectId === "PRO-005");
+    const comments = items.filter(
+      (i) => i.type === "thread_comment" && i.projectId === "PRO-005"
+    );
     expect(comments).toHaveLength(2);
     const alice = comments.find((i) => i.actor === "Alice");
     expect(alice?.action).toBe("Initial comment");
@@ -236,13 +257,28 @@ describe("board activity feed aggregator", () => {
       });
       // Add 3 thread entries per project → 30*3 = 90 thread + 30 project = 120 events total
       makeThread(projDir, [
-        { author: "A", date: `2025-02-${String(i).padStart(2, "0")}T00:00:00.000Z`, body: "c1" },
-        { author: "B", date: `2025-02-${String(i).padStart(2, "0")}T01:00:00.000Z`, body: "c2" },
-        { author: "C", date: `2025-02-${String(i).padStart(2, "0")}T02:00:00.000Z`, body: "c3" },
+        {
+          author: "A",
+          date: `2025-02-${String(i).padStart(2, "0")}T00:00:00.000Z`,
+          body: "c1",
+        },
+        {
+          author: "B",
+          date: `2025-02-${String(i).padStart(2, "0")}T01:00:00.000Z`,
+          body: "c2",
+        },
+        {
+          author: "C",
+          date: `2025-02-${String(i).padStart(2, "0")}T02:00:00.000Z`,
+          body: "c3",
+        },
       ]);
     }
 
-    const items = await aggregateActivity({ projectsRoot, limit: MAX_ACTIVITY_ITEMS });
+    const items = await aggregateActivity({
+      projectsRoot,
+      limit: MAX_ACTIVITY_ITEMS,
+    });
     expect(items.length).toBeLessThanOrEqual(MAX_ACTIVITY_ITEMS);
   });
 
@@ -275,14 +311,34 @@ describe("board activity feed aggregator", () => {
       updated_at: "2025-01-02T00:00:00.000Z",
     });
 
-    const items = await aggregateActivity({ projectsRoot, projectId: "PRO-012" });
+    const items = await aggregateActivity({
+      projectsRoot,
+      projectId: "PRO-012",
+    });
     expect(items.every((i) => i.projectId === "PRO-012")).toBe(true);
     expect(items.length).toBeGreaterThan(0);
   });
 
   it("returns empty for unknown projectId", async () => {
-    const items = await aggregateActivity({ projectsRoot, projectId: "PRO-999" });
+    const items = await aggregateActivity({
+      projectsRoot,
+      projectId: "PRO-999",
+    });
     expect(items).toHaveLength(0);
+  });
+
+  it("does not scan outside the projects root", async () => {
+    makeProject(tmpDir, "PRO-OUTSIDE", {
+      id: "PRO-OUTSIDE",
+      status: "active",
+      updated_at: "2025-01-01T00:00:00.000Z",
+    });
+
+    const items = await aggregateActivity({
+      projectsRoot,
+      projectId: "../PRO-OUTSIDE",
+    });
+    expect(items).toEqual([]);
   });
 
   it("uses in-memory cache on repeated requests", async () => {
@@ -358,7 +414,9 @@ describe("board activity feed aggregator", () => {
     });
 
     const items = await aggregateActivity({ projectsRoot });
-    const item = items.find((i) => i.projectId === "PRO-021" && i.type === "project_status");
+    const item = items.find(
+      (i) => i.projectId === "PRO-021" && i.type === "project_status"
+    );
     expect(item).toMatchObject({
       id: expect.stringContaining("PRO-021"),
       type: "project_status",
@@ -404,7 +462,9 @@ describe("board activity feed aggregator", () => {
     });
 
     const items = await aggregateActivity({ projectsRoot });
-    const runItem = items.find((i) => i.type === "run_start" && i.runSlug === "worker-s01");
+    const runItem = items.find(
+      (i) => i.type === "run_start" && i.runSlug === "worker-s01"
+    );
     expect(runItem?.sliceId).toBe("PRO-023-S01");
   });
 });

@@ -63,9 +63,15 @@ function parseThreadEntry(section: string): ThreadEntry | null {
     const line = (lines[cursor] ?? "").trim();
     if (!line) continue;
     const authorMatch = line.match(/^\[author:(.+)\]$/);
-    if (authorMatch) { author = (authorMatch[1] ?? "").trim(); continue; }
+    if (authorMatch) {
+      author = (authorMatch[1] ?? "").trim();
+      continue;
+    }
     const dateMatch = line.match(/^\[date:(.+)\]$/);
-    if (dateMatch) { date = (dateMatch[1] ?? "").trim(); continue; }
+    if (dateMatch) {
+      date = (dateMatch[1] ?? "").trim();
+      continue;
+    }
     break;
   }
   const body = lines.slice(cursor).join("\n").trim();
@@ -119,7 +125,8 @@ function shortBody(body: string, max = 60): string {
 // ── Status → color ──────────────────────────────────────────────────
 
 function projectStatusColor(status: string): BoardActivityColor {
-  if (status === "done" || status === "active" || status === "in_progress") return "green";
+  if (status === "done" || status === "active" || status === "in_progress")
+    return "green";
   if (status === "review") return "purple";
   if (status === "shaping" || status === "maybe") return "yellow";
   return "blue";
@@ -136,7 +143,10 @@ function sliceStatusColor(status: string): BoardActivityColor {
 
 const SLICE_DIR_RE = /^PRO-\d+-S\d+$/;
 
-async function aggregateProject(projectDir: string, projectId: string): Promise<BoardActivityItem[]> {
+async function aggregateProject(
+  projectDir: string,
+  projectId: string
+): Promise<BoardActivityItem[]> {
   const items: BoardActivityItem[] = [];
   const readmePath = path.join(projectDir, "README.md");
 
@@ -147,10 +157,10 @@ async function aggregateProject(projectDir: string, projectId: string): Promise<
     const raw = await fs.readFile(readmePath, "utf-8");
     const stat = await fs.stat(readmePath);
     const { frontmatter } = splitFrontmatter(raw);
-    projectStatus = typeof frontmatter.status === "string" ? frontmatter.status : "";
+    projectStatus =
+      typeof frontmatter.status === "string" ? frontmatter.status : "";
     projectUpdatedAt =
-      validIso(frontmatter.updated_at) ??
-      stat.mtime.toISOString();
+      validIso(frontmatter.updated_at) ?? stat.mtime.toISOString();
   } catch {
     // project dir unreadable — skip status item but still try slices/sessions/thread
   }
@@ -168,7 +178,9 @@ async function aggregateProject(projectDir: string, projectId: string): Promise<
   }
 
   // Project THREAD.md
-  const projectThread = await readThreadEntries(path.join(projectDir, "THREAD.md"));
+  const projectThread = await readThreadEntries(
+    path.join(projectDir, "THREAD.md")
+  );
   for (const entry of projectThread) {
     const ts = validIso(entry.date) ?? null;
     if (!ts) continue;
@@ -204,10 +216,10 @@ async function aggregateProject(projectDir: string, projectId: string): Promise<
       const raw = await fs.readFile(sliceReadme, "utf-8");
       const stat = await fs.stat(sliceReadme);
       const { frontmatter } = splitFrontmatter(raw);
-      const sliceStatus = typeof frontmatter.status === "string" ? frontmatter.status : "";
+      const sliceStatus =
+        typeof frontmatter.status === "string" ? frontmatter.status : "";
       const sliceTs =
-        validIso(frontmatter.updated_at) ??
-        stat.mtime.toISOString();
+        validIso(frontmatter.updated_at) ?? stat.mtime.toISOString();
       if (sliceStatus && sliceTs) {
         items.push({
           id: `slice:${sliceId}:status:${sliceStatus}:${sliceTs}`,
@@ -225,7 +237,9 @@ async function aggregateProject(projectDir: string, projectId: string): Promise<
     }
 
     // Slice THREAD.md
-    const sliceThread = await readThreadEntries(path.join(sliceDir, "THREAD.md"));
+    const sliceThread = await readThreadEntries(
+      path.join(sliceDir, "THREAD.md")
+    );
     for (const entry of sliceThread) {
       const ts = validIso(entry.date) ?? null;
       if (!ts) continue;
@@ -332,6 +346,8 @@ const SKIP_DIRS = new Set([".workspaces", ".archive", ".done", ".trash"]);
 export async function aggregateActivity(
   opts: AggregateActivityOptions
 ): Promise<BoardActivityItem[]> {
+  if (opts.projectId && !isSafeProjectId(opts.projectId)) return [];
+
   const limit = Math.min(Math.max(opts.limit ?? 50, 1), MAX_ACTIVITY_ITEMS);
   const ttl = opts.cacheTtlMs ?? CACHE_TTL_MS;
   const cacheKey = `${opts.projectsRoot}:${opts.projectId ?? "*"}:${limit}`;
@@ -350,7 +366,9 @@ export async function aggregateActivity(
   } else {
     // All projects
     try {
-      const entries = await fs.readdir(opts.projectsRoot, { withFileTypes: true });
+      const entries = await fs.readdir(opts.projectsRoot, {
+        withFileTypes: true,
+      });
       projectDirs = entries
         .filter(
           (e) =>
@@ -386,8 +404,7 @@ export async function aggregateActivity(
 
   // Sort newest first
   deduped.sort(
-    (a, b) =>
-      new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
+    (a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
   );
 
   // Cap at MAX_ACTIVITY_ITEMS globally before caching
@@ -399,6 +416,12 @@ export async function aggregateActivity(
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────
+
+function isSafeProjectId(projectId: string): boolean {
+  return (
+    PROJECT_DIR_RE.test(projectId) && path.basename(projectId) === projectId
+  );
+}
 
 async function findProjectDir(
   projectsRoot: string,
