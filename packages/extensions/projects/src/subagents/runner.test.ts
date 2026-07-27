@@ -144,6 +144,26 @@ describe("subagent runner repo resolution", () => {
     expect(state.worktree_path).toBe(projectRepo);
   });
 
+  it("removes a new run record when workspace preparation fails", async () => {
+    const invalidRepo = await createRepo("invalid-repo");
+    const { config, projectDir } = await createProject({
+      projectRepo: invalidRepo,
+    });
+
+    const result = await spawnSubagent(config, {
+      projectId: "PRO-1",
+      slug: "worker",
+      cli: "codex",
+      prompt: "test",
+      mode: "worktree",
+    });
+
+    expect(result).toEqual({ ok: false, error: "git worktree add failed" });
+    await expect(
+      fs.stat(path.join(projectDir, "sessions", "worker"))
+    ).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
   it("errors when worktree mode has no slice or project repo", async () => {
     const { config } = await createProject({});
 

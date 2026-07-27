@@ -1,7 +1,11 @@
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import { spawn } from "node:child_process";
-import { readEnv, type GatewayConfig, type OrchestratorSource } from "@yoplai/shared";
+import {
+  readEnv,
+  type GatewayConfig,
+  type OrchestratorSource,
+} from "@yoplai/shared";
 import { parseMarkdownFile } from "../taskboard/parser.js";
 import { findProjectLocation } from "../projects/store.js";
 import { dirExists } from "../util/fs.js";
@@ -225,11 +229,11 @@ export async function spawnSubagent(
 
   const repoError = await validateWorkspaceRepo(mode, repo);
   if (repoError) return { ok: false, error: repoError };
-  if (await dirExists(sessionDir)) {
-    if (!input.resume) {
-      return { ok: false, error: `Subagent already exists: ${input.slug}` };
-    }
-  } else {
+  const sessionExists = await dirExists(sessionDir);
+  if (sessionExists && !input.resume) {
+    return { ok: false, error: `Subagent already exists: ${input.slug}` };
+  }
+  if (!sessionExists) {
     await fs.mkdir(sessionDir, { recursive: true });
   }
 
@@ -248,6 +252,21 @@ export async function spawnSubagent(
       baseBranch,
     });
   } catch (error) {
+    if (!sessionExists) {
+      await fs.rm(sessionDir, { recursive: true, force: true }).catch(() => {});
+    }
+    await workspaceAdapter
+      .cleanup({
+        config,
+        projectId: input.projectId,
+        sliceId: input.sliceId,
+        slug: input.slug,
+        projectDir,
+        repo,
+        mode,
+        baseBranch,
+      })
+      .catch(() => {});
     return {
       ok: false,
       error:
