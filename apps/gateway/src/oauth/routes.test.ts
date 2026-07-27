@@ -25,7 +25,10 @@ describe("oauth routes", () => {
 
   beforeEach(() => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "oauth-routes-"));
-    store = new OAuthConnectionStore(tmpDir, new TokenCipher("routes-test-key"));
+    store = new OAuthConnectionStore(
+      tmpDir,
+      new TokenCipher("routes-test-key")
+    );
   });
 
   afterEach(() => {
@@ -38,7 +41,11 @@ describe("oauth routes", () => {
       const urlStr = String(input);
       if (urlStr.includes("token")) {
         return new Response(
-          JSON.stringify({ access_token: "A1", expires_in: 3600, token_type: "Bearer" }),
+          JSON.stringify({
+            access_token: "A1",
+            expires_in: 3600,
+            token_type: "Bearer",
+          }),
           { status: 200, headers: { "Content-Type": "application/json" } }
         );
       }
@@ -55,9 +62,7 @@ describe("oauth routes", () => {
     });
     const app = createOAuthRoutes(service);
 
-    const authorizeRes = await app.request(
-      "/oauth/google/authorize?agent=a1"
-    );
+    const authorizeRes = await app.request("/oauth/google/authorize?agent=a1");
     expect(authorizeRes.status).toBe(302);
     const location = authorizeRes.headers.get("location")!;
     const state = new URL(location).searchParams.get("state")!;
@@ -163,6 +168,35 @@ describe("oauth routes", () => {
     const body = (await res.json()) as { state: string; connected: boolean };
     expect(body.state).toBe("disconnected");
     expect(store.get("a1", "google")).toBeUndefined();
+  });
+
+  it("gates agent-scoped OAuth operations through the host access policy", async () => {
+    store.save({
+      agentId: "a1",
+      provider: "google",
+      accessToken: "A1",
+      scopes: [],
+      connectedAt: Date.now(),
+      updatedAt: Date.now(),
+    });
+    const canAccessAgent = vi.fn(async () => false);
+    const app = createOAuthRoutes(
+      new OAuthService({ store, loadConfig: makeConfig }),
+      canAccessAgent
+    );
+
+    for (const [url, method] of [
+      ["/oauth/google/authorize?agent=a1", "GET"],
+      ["/oauth/google/status?agent=a1", "GET"],
+      ["/oauth/google/disconnect?agent=a1", "POST"],
+    ] as const) {
+      const res = await app.request(url, { method });
+      expect(res.status).toBe(403);
+      expect(await res.json()).toEqual({ error: "forbidden" });
+    }
+
+    expect(canAccessAgent).toHaveBeenCalledTimes(3);
+    expect(store.get("a1", "google")).toBeDefined();
   });
 
   it("callback surfaces a provider error page without throwing", async () => {

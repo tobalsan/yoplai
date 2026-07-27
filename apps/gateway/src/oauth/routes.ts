@@ -1,4 +1,4 @@
-import { Hono } from "hono";
+import { Hono, type Context } from "hono";
 import { getOAuthProvider } from "@yoplai/shared";
 import { getOAuthService, type OAuthService } from "./service.js";
 
@@ -13,22 +13,43 @@ import { getOAuthService, type OAuthService } from "./service.js";
  * `/api`, so paths here omit the `/api` prefix.
  */
 export function createOAuthRoutes(
-  service: OAuthService = getOAuthService()
+  service: OAuthService = getOAuthService(),
+  canAccessAgent: (
+    c: Context,
+    agentId: string
+  ) => Promise<boolean> = async () => true
 ): Hono {
   const router = new Hono();
+
+  async function requireAgentAccess(
+    c: Context,
+    agentId: string
+  ): Promise<Response | null> {
+    return (await canAccessAgent(c, agentId))
+      ? null
+      : c.json({ error: "forbidden" }, 403);
+  }
 
   router.get("/oauth/:provider/authorize", async (c) => {
     const provider = c.req.param("provider");
     const agentId = c.req.query("agent");
     if (!agentId) {
-      return c.json({ error: "missing_agent", message: "agent query param required" }, 400);
+      return c.json(
+        { error: "missing_agent", message: "agent query param required" },
+        400
+      );
     }
     if (!getOAuthProvider(provider)) {
       return c.json({ error: "unknown_provider", provider }, 404);
     }
+    const denied = await requireAgentAccess(c, agentId);
+    if (denied) return denied;
     const scopesParam = c.req.query("scopes");
     const scopes = scopesParam
-      ? scopesParam.split(",").map((s) => s.trim()).filter(Boolean)
+      ? scopesParam
+          .split(",")
+          .map((s) => s.trim())
+          .filter(Boolean)
       : undefined;
     try {
       const { authorizeUrl } = await service.startAuthorization({
@@ -54,13 +75,20 @@ export function createOAuthRoutes(
     const state = c.req.query("state");
     const providerError = c.req.query("error");
     if (providerError) {
-      return c.html(renderResultPage(false, `Google returned an error: ${providerError}`), 400);
+      return c.html(
+        renderResultPage(false, `Google returned an error: ${providerError}`),
+        400
+      );
     }
     if (!code || !state) {
       return c.html(renderResultPage(false, "Missing code or state."), 400);
     }
     try {
-      const connection = await service.handleCallback({ provider, code, state });
+      const connection = await service.handleCallback({
+        provider,
+        code,
+        state,
+      });
       return c.html(
         renderResultPage(
           true,
@@ -78,12 +106,14 @@ export function createOAuthRoutes(
     }
   });
 
-  router.get("/oauth/:provider/status", (c) => {
+  router.get("/oauth/:provider/status", async (c) => {
     const provider = c.req.param("provider");
     const agentId = c.req.query("agent");
     if (!agentId) {
       return c.json({ error: "missing_agent" }, 400);
     }
+    const denied = await requireAgentAccess(c, agentId);
+    if (denied) return denied;
     const state = service.getConnectionState(agentId, provider);
     const connection = service.getConnection(agentId, provider);
     if (!connection) {
@@ -108,6 +138,8 @@ export function createOAuthRoutes(
     if (!agentId) {
       return c.json({ error: "missing_agent" }, 400);
     }
+    const denied = await requireAgentAccess(c, agentId);
+    if (denied) return denied;
     await service.disconnect(agentId, provider);
     return c.json({ state: "disconnected", connected: false, provider });
   });
