@@ -535,24 +535,35 @@ describe("container adapter", () => {
     });
   });
 
-  it("writes queued messages to the IPC input dir", async () => {
+  it("writes every queued message to a unique IPC file", async () => {
     const root = tempDir();
     const ipcDir = path.join(root, "ipc", "cloud");
     vi.spyOn(Date, "now").mockReturnValue(123);
 
     const recordQueuedMessageActivity = vi.fn();
+    const handle = {
+      containerName: "container",
+      ipcDir,
+      recordQueuedMessageActivity,
+    };
 
-    await getContainerAdapter().queueMessage?.(
-      { containerName: "container", ipcDir, recordQueuedMessageActivity },
-      "follow up"
+    await getContainerAdapter().queueMessage?.(handle, "first follow up");
+    await getContainerAdapter().queueMessage?.(handle, "second follow up");
+
+    const inputDir = path.join(ipcDir, "input");
+    const messages = fs
+      .readdirSync(inputDir)
+      .map((filename) =>
+        JSON.parse(fs.readFileSync(path.join(inputDir, filename), "utf8"))
+      );
+    expect(messages).toEqual(
+      expect.arrayContaining([
+        { message: "first follow up", timestamp: 123 },
+        { message: "second follow up", timestamp: 123 },
+      ])
     );
-
-    expect(
-      JSON.parse(
-        fs.readFileSync(path.join(ipcDir, "input", "123.json"), "utf8")
-      )
-    ).toEqual({ message: "follow up", timestamp: 123 });
-    expect(recordQueuedMessageActivity).toHaveBeenCalledTimes(1);
+    expect(messages).toHaveLength(2);
+    expect(recordQueuedMessageActivity).toHaveBeenCalledTimes(2);
   });
 
   it("writes close sentinel and stops on abort", () => {
@@ -599,7 +610,9 @@ describe("container adapter", () => {
     );
 
     processes[0].finish(137);
-    await expect(run).rejects.toThrow("Container exceeded max runtime after 1s");
+    await expect(run).rejects.toThrow(
+      "Container exceeded max runtime after 1s"
+    );
   });
 
   it("stops then kills on idle timeout", async () => {
@@ -695,7 +708,9 @@ describe("container adapter", () => {
 
     const run = getContainerAdapter().run(createParams(agent));
     await tick();
-    processes[0].stderr.write("[agent-runner] Running agent henry with SDK pi\n");
+    processes[0].stderr.write(
+      "[agent-runner] Running agent henry with SDK pi\n"
+    );
     processes[0].finish(1);
 
     await expect(run).rejects.toThrow(

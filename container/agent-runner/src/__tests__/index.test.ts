@@ -87,6 +87,34 @@ describe("agent runner entry point", () => {
 });
 
 describe("IPC poller", () => {
+  it("does not redeliver a message while its handler is pending", async () => {
+    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-ipc-"));
+    const inputDir = path.join(tempDir, "input");
+    await fs.mkdir(inputDir);
+    await fs.writeFile(
+      path.join(inputDir, "0001.json"),
+      JSON.stringify({ message: "follow-up" })
+    );
+
+    let releaseHandler: (() => void) | undefined;
+    const handlerPending = new Promise<void>((resolve) => {
+      releaseHandler = resolve;
+    });
+    const onMessage = vi.fn(async () => handlerPending);
+    const cleanup = startIpcPoller(tempDir, onMessage, () => undefined);
+
+    try {
+      await waitFor(() => onMessage.mock.calls.length === 1);
+      await new Promise((resolve) => setTimeout(resolve, 600));
+      expect(onMessage).toHaveBeenCalledTimes(1);
+      releaseHandler?.();
+    } finally {
+      cleanup();
+      releaseHandler?.();
+      await fs.rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
   it("reads follow-up messages and close sentinel", async () => {
     const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-ipc-"));
     const inputDir = path.join(tempDir, "input");

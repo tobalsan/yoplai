@@ -13,50 +13,56 @@ export function startIpcPoller(
   const inputDir = path.join(ipcDir, "input");
   const seen = new Set<string>();
   let closed = false;
+  let scanRunning = false;
 
   const scan = async (): Promise<void> => {
-    if (closed) {
+    if (closed || scanRunning) {
       return;
     }
+    scanRunning = true;
 
-    let entries: string[];
     try {
-      entries = await fs.readdir(inputDir);
-    } catch (error) {
-      if (isMissingDirectory(error)) {
+      let entries: string[];
+      try {
+        entries = await fs.readdir(inputDir);
+      } catch (error) {
+        if (isMissingDirectory(error)) {
+          return;
+        }
+        console.error("[agent-runner] IPC scan failed", error);
         return;
       }
-      console.error("[agent-runner] IPC scan failed", error);
-      return;
-    }
 
-    for (const entry of entries.sort()) {
-      if (seen.has(entry)) {
-        continue;
-      }
+      for (const entry of entries.sort()) {
+        if (seen.has(entry)) {
+          continue;
+        }
 
-      if (entry === "_close") {
-        seen.add(entry);
-        await onClose();
-        continue;
-      }
+        if (entry === "_close") {
+          seen.add(entry);
+          await onClose();
+          continue;
+        }
 
-      if (!entry.endsWith(".json")) {
-        continue;
-      }
+        if (!entry.endsWith(".json")) {
+          continue;
+        }
 
-      const filePath = path.join(inputDir, entry);
-      try {
-        const raw = await fs.readFile(filePath, "utf8");
-        const message = JSON.parse(raw) as unknown;
-        seen.add(entry);
-        await onMessage(message);
-      } catch (error) {
-        console.error(
-          `[agent-runner] IPC message read failed: ${entry}`,
-          error
-        );
+        const filePath = path.join(inputDir, entry);
+        try {
+          const raw = await fs.readFile(filePath, "utf8");
+          const message = JSON.parse(raw) as unknown;
+          seen.add(entry);
+          await onMessage(message);
+        } catch (error) {
+          console.error(
+            `[agent-runner] IPC message read failed: ${entry}`,
+            error
+          );
+        }
       }
+    } finally {
+      scanRunning = false;
     }
   };
 

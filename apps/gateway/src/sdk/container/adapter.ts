@@ -492,7 +492,7 @@ export function getContainerAdapter(): SdkAdapter {
       const timestamp = Date.now();
       fs.mkdirSync(inputDir, { recursive: true });
       fs.writeFileSync(
-        path.join(inputDir, `${timestamp}.json`),
+        path.join(inputDir, `${timestamp}-${randomUUID()}.json`),
         JSON.stringify({ message, timestamp })
       );
       recordQueuedMessageActivity?.();
