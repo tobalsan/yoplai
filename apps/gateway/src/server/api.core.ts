@@ -11,7 +11,9 @@ import {
   loadConfig,
   reloadConfig,
   resolveWorkspaceDir,
+  setLoadedConfig,
 } from "../config/index.js";
+import { resolveStartupConfig } from "../config/validate.js";
 import {
   getExtensionRuntime,
   isExtensionLoaded,
@@ -144,13 +146,16 @@ function findExtensionCatalogAgent(
   config: GatewayConfig,
   agentId: string
 ): { agent: AgentConfig; configurable: boolean } | undefined {
-  const directAgent = config.agents.find((candidate) => candidate.id === agentId);
+  const directAgent = config.agents.find(
+    (candidate) => candidate.id === agentId
+  );
   if (directAgent) return { agent: directAgent, configurable: true };
 
   const poolAgent = config.pool?.find((candidate) => candidate.id === agentId);
   if (!poolAgent) return undefined;
   const agentWithoutTemplateExtensions = { ...poolAgent };
-  delete (agentWithoutTemplateExtensions as { extensions?: unknown }).extensions;
+  delete (agentWithoutTemplateExtensions as { extensions?: unknown })
+    .extensions;
   return { agent: agentWithoutTemplateExtensions, configurable: false };
 }
 
@@ -179,7 +184,7 @@ function contentDispositionFilename(filename: string): string {
 }
 
 // OAuth connect framework (authorize + callback + status/disconnect).
-api.route("/", createOAuthRoutes());
+api.route("/", createOAuthRoutes(undefined, callerHasAgentAccess));
 
 api.get("/theme.css", async (c) => {
   const themePath = path.join(resolveHomeDir(), "theme.css");
@@ -309,7 +314,11 @@ function parseSessionFileName(
   if (!agentId) return null;
   const sessionId = name.slice(agentId.length + 1);
   if (!sessionId) return null;
-  return { agentId, sessionId, createdAt: Number.isFinite(createdAt) ? createdAt : 0 };
+  return {
+    agentId,
+    sessionId,
+    createdAt: Number.isFinite(createdAt) ? createdAt : 0,
+  };
 }
 
 function isSafeSessionId(sessionId: string): boolean {
@@ -328,10 +337,12 @@ function isSafeSessionId(sessionId: string): boolean {
 }
 
 function sessionIdIsInteractive(sessionId: string): boolean {
-  return isSafeSessionId(sessionId) &&
+  return (
+    isSafeSessionId(sessionId) &&
     !/^(scheduler:|scheduler-|bench-|slack:|slack-|webhook:|webhook-|compact:|compact-|default$)/.test(
       sessionId
-    );
+    )
+  );
 }
 
 function textFromContent(content: unknown): string {
@@ -340,7 +351,9 @@ function textFromContent(content: unknown): string {
     .map((block) => {
       if (!block || typeof block !== "object") return "";
       const obj = block as Record<string, unknown>;
-      return obj.type === "text" && typeof obj.text === "string" ? obj.text : "";
+      return obj.type === "text" && typeof obj.text === "string"
+        ? obj.text
+        : "";
     })
     .filter(Boolean)
     .join("\n")
@@ -367,7 +380,8 @@ async function summarizeSessionFile(params: {
     if (!line.trim()) continue;
     try {
       const entry = JSON.parse(line) as Record<string, unknown>;
-      const timestamp = typeof entry.timestamp === "number" ? entry.timestamp : undefined;
+      const timestamp =
+        typeof entry.timestamp === "number" ? entry.timestamp : undefined;
       if (entry.type === "meta" && entry.key === "title") {
         title = typeof entry.value === "string" ? entry.value : undefined;
         continue;
@@ -643,10 +657,7 @@ api.patch("/agents/:id/extensions/:extensionId", async (c) => {
   // Factory extensions are internal/non-user-facing: they're hidden from the
   // catalog entirely, so must also be rejected here rather than silently
   // reconfigured through a direct API call.
-  const targetExtension = await resolveExtensionDefinition(
-    config,
-    extensionId
-  );
+  const targetExtension = await resolveExtensionDefinition(config, extensionId);
   if (targetExtension?.factory === true) {
     return c.json(
       { error: "Factory extensions cannot be configured from the UI" },
@@ -719,7 +730,9 @@ api.patch("/agents/:id/extensions/:extensionId", async (c) => {
 
   // Invalidate the config cache so the next run (and the next catalog read)
   // observes the change rather than the stale in-memory config.
-  const reloaded = reloadConfig();
+  const rawReloaded = reloadConfig();
+  const reloaded = await resolveStartupConfig(rawReloaded);
+  setLoadedConfig(reloaded);
 
   // Bring a newly-enabled extension online without a gateway restart so that
   // /capabilities and tool resolution reflect it immediately (ALG-349). Only
@@ -1075,10 +1088,7 @@ api.get("/media/download/:id", async (c) => {
   // caller who cannot chat the agent must not be able to pull its attachments
   // by guessing/reusing a file id. Files with no agent binding (e.g. inbound
   // uploads not yet attached to a run) stay open as before.
-  if (
-    metadata.agentId &&
-    !(await callerHasAgentAccess(c, metadata.agentId))
-  ) {
+  if (metadata.agentId && !(await callerHasAgentAccess(c, metadata.agentId))) {
     return c.json({ error: "forbidden" }, 403);
   }
 

@@ -160,8 +160,8 @@ export function resolveAgentEnv(
   };
 }
 
-export function loadConfig(): GatewayConfig {
-  if (cachedConfig) return cachedConfig;
+export function loadConfig(configPathOverride?: string): GatewayConfig {
+  if (!configPathOverride && cachedConfig) return cachedConfig;
 
   // Load .env file from YOPLAI_HOME if it exists (silently skip if absent)
   const dotenvPath = path.join(CONFIG_DIR, ".env");
@@ -169,7 +169,7 @@ export function loadConfig(): GatewayConfig {
     process.loadEnvFile(dotenvPath);
   }
 
-  const configPath = getConfigPath();
+  const configPath = resolveConfigPath(configPathOverride);
 
   if (!fs.existsSync(configPath)) {
     throw new Error(`Config not found: ${configPath}`);
@@ -240,7 +240,7 @@ export function loadConfig(): GatewayConfig {
     if (!agent.queueMode) agent.queueMode = "queue";
   }
 
-  cachedConfig = result;
+  if (!configPathOverride) cachedConfig = result;
   return result;
 }
 

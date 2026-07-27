@@ -33,6 +33,9 @@ const multiUserState = vi.hoisted(() => ({
 }));
 
 const reloadConfig = vi.fn(() => loadConfigValue);
+const setLoadedConfig = vi.fn();
+const resolveStartupConfig = vi.fn(async (config) => config);
+const reloadExtensions = vi.fn();
 
 vi.mock("../config/index.js", () => ({
   CONFIG_DIR: "/tmp/yoplai-test",
@@ -42,10 +45,16 @@ vi.mock("../config/index.js", () => ({
   resolveWorkspaceDir,
   loadConfig: () => loadConfigValue,
   reloadConfig,
+  setLoadedConfig,
+}));
+
+vi.mock("../config/validate.js", () => ({
+  resolveStartupConfig,
 }));
 
 vi.mock("../extensions/registry.js", () => ({
   getLoadedExtensions: () => [],
+  reloadExtensions,
   isExtensionLoaded: (extensionId: string) =>
     extensionId === "multiUser" && multiUserState.loaded,
   getExtensionRuntime: () => ({
@@ -326,14 +335,15 @@ describe("api core session resolution", () => {
     );
     const { api } = await import("./api.core.js");
 
-    const response = await api.request(new Request("http://localhost/agents/sessions"));
+    const response = await api.request(
+      new Request("http://localhost/agents/sessions")
+    );
 
     expect(response.status).toBe(200);
     const body = await response.json();
-    expect(body.items.map((item: { sessionId: string }) => item.sessionId)).toEqual([
-      "new",
-      "old",
-    ]);
+    expect(
+      body.items.map((item: { sessionId: string }) => item.sessionId)
+    ).toEqual(["new", "old"]);
     expect(body.items[1]).toMatchObject({ title: "renamed", avatar: "🦊" });
   });
 
@@ -729,6 +739,7 @@ describe("api core session resolution", () => {
 
     beforeEach(() => {
       reloadConfig.mockImplementation(() => loadConfigValue);
+      resolveStartupConfig.mockImplementation(async (config) => config);
       // Default: not a factory extension, so the guard doesn't interfere with
       // tests that aren't specifically exercising it.
       resolveExtensionDefinition.mockResolvedValue(undefined);
@@ -763,8 +774,57 @@ describe("api core session resolution", () => {
         "acme",
         { enabled: true }
       );
-      // Config cache is invalidated so the change takes effect next run.
+      // Config cache is invalidated and the newly read config is resolved
+      // before it becomes the live runtime config.
       expect(reloadConfig).toHaveBeenCalled();
+      expect(resolveStartupConfig).toHaveBeenCalledWith(loadConfigValue);
+      expect(setLoadedConfig).toHaveBeenCalledWith(loadConfigValue);
+      expect(reloadExtensions).toHaveBeenCalledWith(loadConfigValue);
+    });
+
+    it("installs the secret-resolved config after writing", async () => {
+      const rawReloaded = {
+        agents: [
+          {
+            id: "alpha",
+            name: "Alpha",
+            workspace: "/ws/alpha",
+            extensions: { acme: { apiKey: "$env:ACME_API_KEY" } },
+          },
+        ],
+        pool: [],
+      };
+      const resolvedReloaded = {
+        ...rawReloaded,
+        agents: [
+          {
+            ...rawReloaded.agents[0],
+            extensions: { acme: { apiKey: "secret-value" } },
+          },
+        ],
+      };
+      loadConfigValue = rawReloaded;
+      reloadConfig.mockReturnValue(rawReloaded);
+      resolveStartupConfig.mockResolvedValue(resolvedReloaded);
+      updateAgentExtensionConfig.mockResolvedValue({});
+      buildExtensionCatalog.mockResolvedValue(catalog);
+      const { api } = await import("./api.core.js");
+
+      const response = await api.request(
+        new Request("http://localhost/agents/alpha/extensions/acme", {
+          method: "PATCH",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ secrets: { apiKey: "secret-value" } }),
+        })
+      );
+
+      expect(response.status).toBe(200);
+      expect(setLoadedConfig).toHaveBeenCalledWith(resolvedReloaded);
+      expect(reloadExtensions).toHaveBeenCalledWith(resolvedReloaded);
+      expect(buildExtensionCatalog).toHaveBeenCalledWith(
+        resolvedReloaded,
+        resolvedReloaded.agents[0]
+      );
     });
 
     it("passes config and secrets through to the writer", async () => {
