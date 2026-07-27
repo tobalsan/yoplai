@@ -2,7 +2,11 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { AgentConfig, ExtensionContext, GatewayConfig } from "@yoplai/shared";
+import type {
+  AgentConfig,
+  ExtensionContext,
+  GatewayConfig,
+} from "@yoplai/shared";
 import {
   ScheduleAlreadyRunningError,
   SchedulerService,
@@ -38,7 +42,8 @@ function context(config: GatewayConfig, runAgent = vi.fn()): ExtensionContext {
     getAgents: () => config.agents,
     isAgentActive: () => true,
     isAgentStreaming: () => false,
-    resolveWorkspaceDir: (candidate) => candidate.workspaceDir ?? candidate.workspace,
+    resolveWorkspaceDir: (candidate) =>
+      candidate.workspaceDir ?? candidate.workspace,
     runAgent,
     getSubagentTemplates: () => [],
     resolveSessionId: vi.fn(),
@@ -72,7 +77,9 @@ describe("SchedulerService.runNow", () => {
 
   it("runs a disabled job immediately without changing its next scheduled fire", async () => {
     vi.spyOn(console, "log").mockImplementation(() => {});
-    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-scheduler-service-"));
+    tmpDir = await fs.mkdtemp(
+      path.join(os.tmpdir(), "yoplai-scheduler-service-")
+    );
     const alpha = agent("alpha", path.join(tmpDir, "alpha"));
     const runAgent = vi.fn().mockResolvedValue({
       payloads: [{ text: "done" }],
@@ -92,7 +99,9 @@ describe("SchedulerService.runNow", () => {
       schedule: { cron: "0 8 * * *", tz: "UTC" },
       payload: { message: "Run" },
     });
-    const disabled = (await scheduler.update("alpha", job.id, { enabled: false })) as {
+    const disabled = (await scheduler.update("alpha", job.id, {
+      enabled: false,
+    })) as {
       state?: { nextRunAtMs?: number };
     };
     const previousNextRunAtMs = disabled.state?.nextRunAtMs;
@@ -102,7 +111,9 @@ describe("SchedulerService.runNow", () => {
     expect(result.status).toBe("ok");
     expect(result.sessionId).toBe("manual-session");
     expect(result.outputPath).toContain(path.join("cron", "output", job.id));
-    await expect(fs.readFile(result.outputPath!, "utf8")).resolves.toContain("done");
+    await expect(fs.readFile(result.outputPath!, "utf8")).resolves.toContain(
+      "done"
+    );
     expect(runAgent).toHaveBeenCalledWith(
       expect.objectContaining({
         agentId: "alpha",
@@ -122,7 +133,9 @@ describe("SchedulerService.runNow", () => {
 
   it("rejects a second manual run while the same job is executing", async () => {
     vi.spyOn(console, "log").mockImplementation(() => {});
-    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-scheduler-service-"));
+    tmpDir = await fs.mkdtemp(
+      path.join(os.tmpdir(), "yoplai-scheduler-service-")
+    );
     const alpha = agent("alpha", path.join(tmpDir, "alpha"));
     let finishRun!: (value: unknown) => void;
     const runStarted = new Promise<void>((resolve) => {
@@ -156,13 +169,18 @@ describe("SchedulerService.runNow", () => {
       ScheduleAlreadyRunningError
     );
 
-    finishRun({ payloads: [{ text: "done" }], meta: { durationMs: 1, sessionId: "s" } });
+    finishRun({
+      payloads: [{ text: "done" }],
+      meta: { durationMs: 1, sessionId: "s" },
+    });
     await expect(firstRun).resolves.toMatchObject({ status: "ok" });
   });
 
   it("skips and reschedules a due scheduled fire that collides with a manual run", async () => {
     vi.spyOn(console, "log").mockImplementation(() => {});
-    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-scheduler-service-"));
+    tmpDir = await fs.mkdtemp(
+      path.join(os.tmpdir(), "yoplai-scheduler-service-")
+    );
     const alpha = agent("alpha", path.join(tmpDir, "alpha"));
     let finishRun!: (value: unknown) => void;
     const runStarted = new Promise<void>((resolve) => {
@@ -196,15 +214,132 @@ describe("SchedulerService.runNow", () => {
     const manualRun = scheduler.runNow("alpha", job.id);
     await runStarted;
 
-    await (scheduler as unknown as { runDueJobs(): Promise<void> }).runDueJobs();
+    await (
+      scheduler as unknown as { runDueJobs(): Promise<void> }
+    ).runDueJobs();
 
-    finishRun({ payloads: [{ text: "done" }], meta: { durationMs: 1, sessionId: "s" } });
+    finishRun({
+      payloads: [{ text: "done" }],
+      meta: { durationMs: 1, sessionId: "s" },
+    });
     await expect(manualRun).resolves.toMatchObject({ status: "ok" });
 
     const [after] = (await scheduler.list("alpha")) as Array<{
       state?: { nextRunAtMs?: number };
     }>;
     expect(after?.state?.nextRunAtMs).toBeGreaterThan(Date.now());
+  });
+});
+
+describe("SchedulerService persistence and lifecycle", () => {
+  let tmpDir: string | undefined;
+
+  afterEach(async () => {
+    try {
+      await stopScheduler();
+    } catch {
+      // Tests create the service directly and may not start it.
+    }
+    clearSchedulerContext();
+    vi.restoreAllMocks();
+    if (tmpDir) await fs.rm(tmpDir, { recursive: true, force: true });
+  });
+
+  it("serializes saves for concurrent mutations of one agent", async () => {
+    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-scheduler-save-"));
+    const alpha = agent("alpha", path.join(tmpDir, "alpha"));
+    const config: GatewayConfig = {
+      version: 3,
+      agents: [alpha],
+      extensions: { scheduler: { enabled: true } },
+      sessions: { idleMinutes: 360 },
+      agentFab: false,
+    };
+    setSchedulerContext(context(config));
+    const scheduler = new SchedulerService();
+    await scheduler.list();
+
+    let releaseFirst!: () => void;
+    let activeSaves = 0;
+    let maxActiveSaves = 0;
+    const snapshots: string[][] = [];
+    const saveAgentJobs = vi.fn(
+      async (_agentId: string, jobs: Array<{ name: string }>) => {
+        activeSaves++;
+        maxActiveSaves = Math.max(maxActiveSaves, activeSaves);
+        snapshots.push(jobs.map((job) => job.name));
+        if (snapshots.length === 1) {
+          await new Promise<void>((resolve) => {
+            releaseFirst = resolve;
+          });
+        }
+        activeSaves--;
+      }
+    );
+    (
+      scheduler as unknown as {
+        jobStore: { saveAgentJobs: typeof saveAgentJobs };
+      }
+    ).jobStore = {
+      saveAgentJobs,
+    };
+
+    const first = scheduler.add("alpha", {
+      name: "First",
+      schedule: { cron: "0 8 * * *", tz: "UTC" },
+      payload: { message: "one" },
+    });
+    await vi.waitFor(() => expect(saveAgentJobs).toHaveBeenCalledTimes(1));
+    const second = scheduler.add("alpha", {
+      name: "Second",
+      schedule: { cron: "0 9 * * *", tz: "UTC" },
+      payload: { message: "two" },
+    });
+
+    await Promise.resolve();
+    expect(maxActiveSaves).toBe(1);
+    expect(saveAgentJobs).toHaveBeenCalledTimes(1);
+
+    releaseFirst();
+    await Promise.all([first, second]);
+
+    expect(snapshots).toEqual([["First"], ["First", "Second"]]);
+    expect(maxActiveSaves).toBe(1);
+  });
+
+  it("does not re-arm a timer after stop while a tick is pending", async () => {
+    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-scheduler-stop-"));
+    const alpha = agent("alpha", path.join(tmpDir, "alpha"));
+    const config: GatewayConfig = {
+      version: 3,
+      agents: [alpha],
+      extensions: { scheduler: { enabled: true } },
+      sessions: { idleMinutes: 360 },
+      agentFab: false,
+    };
+    setSchedulerContext(context(config));
+    const scheduler = new SchedulerService();
+    await scheduler.add("alpha", {
+      name: "Future",
+      schedule: { cron: "0 8 * * *", tz: "UTC" },
+      payload: { message: "run" },
+    });
+
+    let finishTick!: () => void;
+    const internals = scheduler as unknown as SchedulerWithInternals;
+    internals.runDueJobs = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          finishTick = resolve;
+        })
+    );
+
+    const tick = internals.tick();
+    await scheduler.stop();
+    finishTick();
+    await tick;
+
+    expect(internals.timer).toBeNull();
   });
 });
 
@@ -226,7 +361,9 @@ describe("SchedulerService timeout and loop isolation", () => {
     vi.useFakeTimers();
     vi.spyOn(console, "log").mockImplementation(() => {});
     vi.spyOn(console, "error").mockImplementation(() => {});
-    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-scheduler-timeout-"));
+    tmpDir = await fs.mkdtemp(
+      path.join(os.tmpdir(), "yoplai-scheduler-timeout-")
+    );
     const alpha = agent("alpha", path.join(tmpDir, "alpha"));
 
     // runAgent never resolves — simulates a hung tool call
@@ -277,7 +414,9 @@ describe("SchedulerService timeout and loop isolation", () => {
     vi.useFakeTimers();
     vi.spyOn(console, "log").mockImplementation(() => {});
     vi.spyOn(console, "error").mockImplementation(() => {});
-    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-scheduler-isolation-"));
+    tmpDir = await fs.mkdtemp(
+      path.join(os.tmpdir(), "yoplai-scheduler-isolation-")
+    );
     const alpha = agent("alpha", path.join(tmpDir, "alpha"));
     const beta = agent("beta", path.join(tmpDir, "beta"));
 
@@ -313,7 +452,9 @@ describe("SchedulerService timeout and loop isolation", () => {
       payload: { message: "Go" },
     });
 
-    const jobs = (await scheduler.list()) as Array<{ state?: { nextRunAtMs?: number } }>;
+    const jobs = (await scheduler.list()) as Array<{
+      state?: { nextRunAtMs?: number };
+    }>;
     for (const j of jobs) j.state = { nextRunAtMs: Date.now() - 1 };
 
     const internals = scheduler as unknown as SchedulerWithInternals;
@@ -334,7 +475,9 @@ describe("SchedulerService timeout and loop isolation", () => {
   it("abort signal is fired on runAgent when job times out", async () => {
     vi.spyOn(console, "log").mockImplementation(() => {});
     vi.spyOn(console, "error").mockImplementation(() => {});
-    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-scheduler-abort-"));
+    tmpDir = await fs.mkdtemp(
+      path.join(os.tmpdir(), "yoplai-scheduler-abort-")
+    );
     const alpha = agent("alpha", path.join(tmpDir, "alpha"));
 
     let receivedSignal: AbortSignal | undefined;
@@ -375,7 +518,9 @@ describe("SchedulerService timeout and loop isolation", () => {
     // Real timers with a very short jobTimeoutMs to avoid fake-timer / I/O deadlocks.
     vi.spyOn(console, "log").mockImplementation(() => {});
     vi.spyOn(console, "error").mockImplementation(() => {});
-    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-scheduler-overlap-"));
+    tmpDir = await fs.mkdtemp(
+      path.join(os.tmpdir(), "yoplai-scheduler-overlap-")
+    );
     const alpha = agent("alpha", path.join(tmpDir, "alpha"));
 
     const rejectCallbacks: Array<(err: Error) => void> = [];

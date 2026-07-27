@@ -33,7 +33,10 @@ export type SchedulerRunResult = {
   error?: string;
 };
 
-type JobWithState = ScheduleJob & { state?: SchedulerState; timeoutMs?: number };
+type JobWithState = ScheduleJob & {
+  state?: SchedulerState;
+  timeoutMs?: number;
+};
 
 let schedulerCtx: ExtensionContext | null = null;
 
@@ -84,6 +87,8 @@ export class SchedulerService {
   private jobStore: PerAgentScheduleStore;
   private timer: NodeJS.Timeout | null = null;
   private loaded = false;
+  private stopped = false;
+  private agentSaveChains = new Map<string, Promise<void>>();
   private executingJobs = new Set<string>();
   private runningJobStartedAtMs = new Map<string, number>();
   private executingJobControllers = new Map<string, AbortController>();
@@ -100,6 +105,7 @@ export class SchedulerService {
   }
 
   async start() {
+    this.stopped = false;
     await this.load();
     const config = getSchedulerContext().getConfig();
     if (config.extensions?.scheduler?.enabled === false) {
@@ -113,6 +119,7 @@ export class SchedulerService {
   }
 
   async stop() {
+    this.stopped = true;
     if (this.timer) {
       clearTimeout(this.timer);
       this.timer = null;
@@ -152,7 +159,10 @@ export class SchedulerService {
       });
   }
 
-  async add(agentId: string, input: Omit<CreateScheduleRequest, "agentId">): Promise<ScheduleJob> {
+  async add(
+    agentId: string,
+    input: Omit<CreateScheduleRequest, "agentId">
+  ): Promise<ScheduleJob> {
     await this.load();
     const ctx = getSchedulerContext();
     if (!ctx.getAgent(agentId)) throw new Error(`Agent not found: ${agentId}`);
@@ -265,10 +275,21 @@ export class SchedulerService {
   }
 
   private async saveAgent(agentId: string) {
-    await this.jobStore.saveAgentJobs(
-      agentId,
-      this.store.jobs.filter((job) => job.agentId === agentId)
+    const previous = this.agentSaveChains.get(agentId) ?? Promise.resolve();
+    const operation = previous.then(() =>
+      this.jobStore.saveAgentJobs(
+        agentId,
+        this.store.jobs.filter((job) => job.agentId === agentId)
+      )
     );
+    const chain = operation.catch(() => {});
+    this.agentSaveChains.set(agentId, chain);
+    chain.finally(() => {
+      if (this.agentSaveChains.get(agentId) === chain) {
+        this.agentSaveChains.delete(agentId);
+      }
+    });
+    await operation;
   }
 
   armTimer() {
@@ -276,6 +297,7 @@ export class SchedulerService {
       clearTimeout(this.timer);
       this.timer = null;
     }
+    if (this.stopped) return;
 
     const config = getSchedulerContext().getConfig();
     if (config.extensions?.scheduler?.enabled === false) return;
@@ -321,7 +343,10 @@ export class SchedulerService {
           if (error instanceof ScheduleAlreadyRunningError) {
             getSchedulerContext().logger.warn(error.message);
             job.state = job.state ?? {};
-            job.state.nextRunAtMs = computeNextRunAtMs(job.schedule, Date.now());
+            job.state.nextRunAtMs = computeNextRunAtMs(
+              job.schedule,
+              Date.now()
+            );
             this.skippedScheduledFireKeys.add(this.executionKey(job));
             await this.saveAgent(job.agentId);
             return;
@@ -354,7 +379,8 @@ export class SchedulerService {
 
     const agent = ctx.getAgent(job.agentId);
     const firedAt = new Date();
-    const sessionId = job.payload.sessionId ?? `scheduler:${job.id}:${uuidv7()}`;
+    const sessionId =
+      job.payload.sessionId ?? `scheduler:${job.id}:${uuidv7()}`;
 
     if (!agent) {
       console.error(`[scheduler] Agent not found: ${job.agentId}`);
@@ -409,11 +435,13 @@ export class SchedulerService {
       signal: controller.signal,
     });
 
-    runPromise.catch(() => {}).finally(() => {
-      this.executingJobs.delete(key);
-      this.runningJobStartedAtMs.delete(key);
-      this.executingJobControllers.delete(key);
-    });
+    runPromise
+      .catch(() => {})
+      .finally(() => {
+        this.executingJobs.delete(key);
+        this.runningJobStartedAtMs.delete(key);
+        this.executingJobControllers.delete(key);
+      });
 
     let timeoutId: NodeJS.Timeout | undefined;
     const timeoutPromise = new Promise<never>((_, reject) => {
