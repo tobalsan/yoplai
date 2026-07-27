@@ -47,12 +47,16 @@ beforeEach(() => {
   db.prepare("INSERT INTO user (id) VALUES (?)").run("admin-1");
   ensureTeamsTable(db);
   ensureAgentForksTable(db);
-  db.prepare(
-    "INSERT INTO teams (id, name, createdBy) VALUES (?, ?, ?)"
-  ).run("team-a", "Team A", "admin-1");
-  db.prepare(
-    "INSERT INTO teams (id, name, createdBy) VALUES (?, ?, ?)"
-  ).run("team-b", "Team B", "admin-1");
+  db.prepare("INSERT INTO teams (id, name, createdBy) VALUES (?, ?, ?)").run(
+    "team-a",
+    "Team A",
+    "admin-1"
+  );
+  db.prepare("INSERT INTO teams (id, name, createdBy) VALUES (?, ?, ?)").run(
+    "team-b",
+    "Team B",
+    "admin-1"
+  );
 
   const poolAgents = new Map<string, PoolAgentRef>();
   poolAgents.set("scribe", writePoolAgent("scribe"));
@@ -94,10 +98,7 @@ describe("fork store", () => {
       "pool soul\n"
     );
     // agent.yaml id matches the fork folder basename.
-    const yaml = fs.readFileSync(
-      path.join(forkFolder, "agent.yaml"),
-      "utf8"
-    );
+    const yaml = fs.readFileSync(path.join(forkFolder, "agent.yaml"), "utf8");
     expect(yaml).toContain(`id: ${forkId}`);
     expect(yaml).toContain("name: scribe");
     // Excluded runtime artifacts are not copied.
@@ -146,6 +147,29 @@ describe("fork store", () => {
     // Fork row + folder persist (teamless/inert, never deleted).
     expect(store.getForkByPool("scribe")).not.toBeNull();
     expect(fs.existsSync(forkFolder)).toBe(true);
+  });
+
+  it("removes a partial fork when workspace validation fails", () => {
+    const invalidPoolDir = path.join(poolDir, "invalid");
+    fs.mkdirSync(invalidPoolDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(invalidPoolDir, "agent.yaml"),
+      "name: Invalid\n"
+    );
+    store = createForkStore({
+      db,
+      getForksDir: () => forksDir,
+      getPoolAgent: (poolId) =>
+        poolId === "invalid"
+          ? { id: poolId, workspaceDir: invalidPoolDir }
+          : null,
+    });
+
+    expect(() => store.forkAndAssign("invalid", "team-a", "admin-1")).toThrow(
+      /no top-level id field/
+    );
+    expect(fs.existsSync(path.join(forksDir, "invalid"))).toBe(false);
+    expect(store.getForkByPool("invalid")).toBeNull();
   });
 
   it("rejects assigning an unknown pool id", () => {

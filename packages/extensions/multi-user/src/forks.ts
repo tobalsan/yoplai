@@ -196,18 +196,27 @@ export function createForkStore(deps: ForkStoreDeps): ForkStore {
     if (fs.existsSync(destDir)) {
       fs.rmSync(destDir, { recursive: true, force: true });
     }
-    copyWorkspace(pool.workspaceDir, destDir);
-    rewriteAgentYamlId(path.join(destDir, "agent.yaml"), forkId);
 
-    insertStatement.run({
-      sourcePoolId: poolId,
-      forkAgentId: forkId,
-      teamId: null,
-      createdBy: assignedBy,
-      assignedBy: null,
-    });
+    try {
+      copyWorkspace(pool.workspaceDir, destDir);
+      rewriteAgentYamlId(path.join(destDir, "agent.yaml"), forkId);
+      insertStatement.run({
+        sourcePoolId: poolId,
+        forkAgentId: forkId,
+        teamId: null,
+        createdBy: assignedBy,
+        assignedBy: null,
+      });
+    } catch (error) {
+      // A failed copy/YAML rewrite/row insert is not a fork. Remove the partial
+      // folder so a corrected pool definition can be retried cleanly.
+      fs.rmSync(destDir, { recursive: true, force: true });
+      throw error;
+    }
 
     // Make the new fork discoverable through the agents glob immediately.
+    // Keep this outside rollback: once the row and complete folder exist the
+    // fork is durable, even if config reload itself reports another problem.
     reloadConfig?.();
   }
 
