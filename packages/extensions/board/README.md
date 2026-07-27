@@ -124,11 +124,16 @@ Gateway routes are mounted under `/api/board`:
 GET /api/board/info
 GET /api/board/agents
 GET /api/board/projects
+GET /api/board/activity
 GET /api/board/scratchpad
 PUT /api/board/scratchpad
 GET /api/board/canvas/:agentId
 POST /api/board/canvas/:agentId
 ```
+
+`GET /api/board/activity?projectId=PRO-N&limit=50` returns the cached project,
+slice, thread, and subagent activity feed. Project IDs are confined to the
+configured projects root.
 
 `GET /api/board/projects?profile=true` adds an `X-Profile-Ms` header with
 handler wall time. Project scans are cached in memory with stale refresh; tune

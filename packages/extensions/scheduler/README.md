@@ -16,7 +16,8 @@ Add `extensions.scheduler` to `yoplai.json` to load scheduler routes and CLI sup
 
 `enabled: false` is a runtime kill switch only. The extension still loads, and
 HTTP API / `yoplai scheduler` commands still read and write per-agent
-`cron/jobs.json` files. Timers do not start and jobs do not fire.
+`cron/jobs.json` files. Timers do not start and jobs do not fire. Extension
+shutdown prevents an already-pending tick from re-arming the timer.
 
 ## Storage
 
@@ -56,15 +57,20 @@ Disk shape omits `agentId`; it is implied by the workspace:
 `timeoutMs` is an optional top-level job field: the per-run timeout in milliseconds for that job. Falls back to `extensions.scheduler.jobTimeoutMs`, then the 30-minute built-in default.
 
 Malformed `cron/jobs.json` logs one warning and is treated as empty for that
-agent. In phase 1, job files are loaded at gateway start; restart after manual
-edits.
+agent. In-process writes for one agent are serialized and atomically renamed,
+so concurrent API/tool/run-state updates cannot overwrite newer job snapshots.
+Gateway hot reload also refreshes manual file edits.
 
 ## Schedule schema
 
 Current schedule shape:
 
 ```json
-{ "cron": "0 8 * * *", "tz": "Europe/Paris", "startAt": "2026-05-19T07:00:00.000Z" }
+{
+  "cron": "0 8 * * *",
+  "tz": "Europe/Paris",
+  "startAt": "2026-05-19T07:00:00.000Z"
+}
 ```
 
 - `cron`: cron expression parsed by `cron-parser`
@@ -155,7 +161,7 @@ schedule: "0 8 * * * Europe/Paris"
 
 **Job ID:** morning-digest
 **Run Time:** 2026-05-19 07:00:00
-**Schedule:** 0 8 * * * Europe/Paris
+**Schedule:** 0 8 \* \* \* Europe/Paris
 
 ## Prompt
 

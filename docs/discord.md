@@ -14,20 +14,22 @@ Replies stream by default: Discord posts the first agent text immediately and ed
 
 ## Basic Setup
 
-Minimal config - bot responds to all messages where it's mentioned:
+For a shared bot, route channels from `yoplai.json` and keep each agent in its own workspace:
 
 ```json
 {
-  "agents": [
-    {
-      "id": "my-agent",
-      "discord": {
-        "token": "YOUR_BOT_TOKEN"
+  "extensions": {
+    "discord": {
+      "token": "YOUR_BOT_TOKEN",
+      "channels": {
+        "CHANNEL_ID": { "agent": "my-agent", "requireMention": true }
       }
     }
-  ]
+  }
 }
 ```
+
+A legacy per-agent bot is also supported by placing `discord.token` in that agent's `agent.yaml`.
 
 ## Configuration Examples
 
@@ -144,7 +146,7 @@ Mirror main session responses to a Discord channel (useful for monitoring):
 }
 ```
 
-Only broadcasts non-Discord sources (web UI, scheduler, amsg). Discord messages are never echoed back.
+Only broadcasts non-Discord sources (for example web UI and scheduler). Discord messages are never echoed back.
 
 ### Forum Channels
 

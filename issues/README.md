@@ -1,6 +1,6 @@
 # Kanban slice refactor — issues
 
-Local issue tracker for [`docs/specs/kanban-slice-refactor.md`](../docs/specs/kanban-slice-refactor.md).
+Historical local issue sequence for the completed kanban slice refactor. The superseded source spec was removed during documentation cleanup; the numbered issue files retain the implementation plan.
 
 ## Dependency graph
 

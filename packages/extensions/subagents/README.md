@@ -4,9 +4,9 @@ The `subagents` extension is Yoplai's project-agnostic runtime for CLI-backed
 subagents. It lets any UI, extension, or lead agent start and observe external
 agent processes without depending on the `projects` extension.
 
-The extension is built in and enabled by default. Runtime actions go through the
-gateway HTTP API, so the gateway must be running for `yoplai subagents ...`
-commands.
+The extension is built in but opt-in. Add an `extensions.subagents` block (for
+example `{}`) to `yoplai.json` to load it. Runtime actions go through the gateway
+HTTP API, so the gateway must be running for `yoplai subagents ...` commands.
 
 ## What It Owns
 

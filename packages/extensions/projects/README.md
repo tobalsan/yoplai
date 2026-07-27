@@ -31,7 +31,8 @@ Options:
 
 Status values:
 
-- `not_now`, `maybe`, `shaping`, `todo`, `in_progress`, `review`, `ready_to_merge`, `done`.
+- `triage`, `shaping`, `shaping:<stage>`, `active`, `ready_to_merge`, `done`, `cancelled`.
+- Legacy `not_now`/`maybe` values normalize to `triage`; legacy `todo`/`in_progress`/`review` values normalize to `active`.
 
 ### `yoplai projects agent list`
 
@@ -68,7 +69,7 @@ Update project fields and/or project docs content.
 Options:
 
 - `--title <title>`: update title (renames folder).
-- `--status <status>`: `not_now|maybe|shaping|todo|in_progress|review|ready_to_merge|done`.
+- `--status <status>`: `triage|shaping|shaping:<stage>|active|ready_to_merge|done|cancelled` (legacy values normalize as described above).
 - `--run-agent <agent>`: agent used by monitoring start.
   - `yoplai:<agentId>` (Yoplai agent)
   - `cli:claude|cli:codex|cli:pi` (external CLI)
@@ -146,7 +147,10 @@ Example `yoplai.json` fragment:
           "shaping:repo": { "profile": "RepoSetter", "max_concurrent": 1 },
           "shaping:drill": { "profile": "SpecsDriller", "max_concurrent": 1 },
           "shaping:slice": { "profile": "Slicer", "max_concurrent": 1 },
-          "shaping:verticality": { "profile": "VerticalityChecker", "max_concurrent": 1 },
+          "shaping:verticality": {
+            "profile": "VerticalityChecker",
+            "max_concurrent": 1
+          },
           "shaping:validation": {
             "profile": "ValidationFiller",
             "max_concurrent": 1,
@@ -158,12 +162,48 @@ Example `yoplai.json` fragment:
     },
     "subagents": {
       "profiles": [
-        { "name": "RepoSetter", "type": "shaper", "cli": "codex", "model": "gpt-5.1-codex-mini", "runMode": "none" },
-        { "name": "SpecsDriller", "type": "shaper", "cli": "codex", "model": "gpt-5.1-codex", "runMode": "none" },
-        { "name": "Slicer", "type": "shaper", "cli": "codex", "model": "gpt-5.1-codex", "runMode": "none" },
-        { "name": "VerticalityChecker", "type": "shaper", "cli": "codex", "model": "gpt-5.1-codex", "runMode": "none" },
-        { "name": "ValidationFiller", "type": "shaper", "cli": "codex", "model": "gpt-5.1-codex", "runMode": "worktree" },
-        { "name": "Approver", "type": "shaper", "cli": "codex", "model": "gpt-5.1-codex", "runMode": "none" }
+        {
+          "name": "RepoSetter",
+          "type": "shaper",
+          "cli": "codex",
+          "model": "gpt-5.1-codex-mini",
+          "runMode": "none"
+        },
+        {
+          "name": "SpecsDriller",
+          "type": "shaper",
+          "cli": "codex",
+          "model": "gpt-5.1-codex",
+          "runMode": "none"
+        },
+        {
+          "name": "Slicer",
+          "type": "shaper",
+          "cli": "codex",
+          "model": "gpt-5.1-codex",
+          "runMode": "none"
+        },
+        {
+          "name": "VerticalityChecker",
+          "type": "shaper",
+          "cli": "codex",
+          "model": "gpt-5.1-codex",
+          "runMode": "none"
+        },
+        {
+          "name": "ValidationFiller",
+          "type": "shaper",
+          "cli": "codex",
+          "model": "gpt-5.1-codex",
+          "runMode": "worktree"
+        },
+        {
+          "name": "Approver",
+          "type": "shaper",
+          "cli": "codex",
+          "model": "gpt-5.1-codex",
+          "runMode": "none"
+        }
       ]
     }
   }

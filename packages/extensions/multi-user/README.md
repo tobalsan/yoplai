@@ -17,8 +17,9 @@ config with `enabled: true`, OAuth client credentials, and a session secret.
 - Google OAuth sign-in via Better Auth's social provider integration.
 - An admin role (auto-assigned to the first registered user) plus an
   `approved` flag gating non-admin access.
-- Per-user agent assignments — non-admin users only see and can run agents
-  they have been explicitly assigned to.
+- Team membership, pool-agent forks, and team-based agent access. Non-staff
+  users only see and run forked agents assigned to one of their teams; staff
+  bypass that membership check.
 - The `createAuthMiddleware` mounted on `/api/*`, plus `requireAdmin` and
   `requireAgentAccess` middleware used by other extensions.
 - Bearer-token API auth via the `@better-auth/api-key` plugin (see below).
@@ -46,9 +47,15 @@ $YOPLAI_HOME/
 `apikey` from the api-key plugin) are auto-migrated on every boot via
 `getMigrations(auth.options).runMigrations()`.
 
-Custom table: `agent_assignments(userId, agentId, assignedBy, assignedAt)`
-with `ON DELETE CASCADE` against `user.id`. Re-created with corrected foreign
-keys if an older shape is detected on boot.
+Custom tables:
+
+- `teams` and `team_members` own many-to-many user membership.
+- `agent_forks` links one source pool agent to one stable runnable fork and an
+  optional team. Deleting or unassigning a team leaves the fork teamless and
+  inert rather than deleting its workspace.
+- `agent_assignments` is retained only for compatibility. A one-shot,
+  transaction-backed migration converts legacy assignments into teams,
+  memberships, and fork links; authorization no longer reads the allowlist.
 
 ## Configuration
 
@@ -60,13 +67,13 @@ keys if an older shape is detected on boot.
       "sessionSecret": { "envVar": "YOPLAI_SESSION_SECRET" },
       "oauth": {
         "google": {
-          "clientId":     { "envVar": "GOOGLE_CLIENT_ID" },
-          "clientSecret": { "envVar": "GOOGLE_CLIENT_SECRET" }
-        }
+          "clientId": { "envVar": "GOOGLE_CLIENT_ID" },
+          "clientSecret": { "envVar": "GOOGLE_CLIENT_SECRET" },
+        },
       },
-      "allowedDomains": ["example.com"]
-    }
-  }
+      "allowedDomains": ["example.com"],
+    },
+  },
 }
 ```
 
@@ -95,17 +102,29 @@ The extension mounts three route prefixes: `/api/auth/*`, `/api/me`, and
 adds the rest:
 
 ```http
-GET    /api/me                          # current user + assigned agent ids
+GET    /api/me                          # current user + legacy assignment ids
 DELETE /api/user/token/:id              # revoke an API key (audited)
+GET    /api/teams                       # globally visible team catalog
+GET    /api/teams/:id/members           # team member profiles
+GET    /api/teams/:id/agents            # team fork links
+GET    /api/pool-actions                # caller-specific pool card actions
 GET    /api/admin/users                 # list users
 PATCH  /api/admin/users/:id             # approve / set role
-GET    /api/admin/agents/assignments    # all (userId, agentId) pairs
-POST   /api/admin/agents/:agentId/assignments
-DELETE /api/admin/agents/:agentId/assignments/:userId
+POST   /api/admin/teams                 # create team
+PATCH  /api/admin/teams/:id             # update team
+DELETE /api/admin/teams/:id             # delete team
+POST   /api/admin/teams/:id/members     # add member
+DELETE /api/admin/teams/:id/members/:userId
+GET    /api/admin/forks                 # list fork provenance
+POST   /api/admin/forks/assign          # fork once and assign
+POST   /api/admin/forks/:poolId/reassign
+POST   /api/admin/forks/:poolId/unassign
 ```
 
-Non-admin callers get `403` from any `/api/admin/*` route. `/api/me` and
-`DELETE /api/user/token/:id` require any authenticated user.
+Non-admin callers get `403` from any `/api/admin/*` route. `/api/me`, team
+reads, pool actions, and `DELETE /api/user/token/:id` require any authenticated
+user. Agent chat/read/write authorization derives from team membership, not the
+legacy assignment endpoints.
 
 ## Bearer-Token API Auth
 

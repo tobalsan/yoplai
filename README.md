@@ -49,15 +49,16 @@ pnpm yoplai gateway uninstall  # bootout + remove plist
 ## Configuration
 
 The app uses a main config file at `$YOPLAI_HOME/yoplai.json` (default: `~/.yoplai/yoplai.json`).
+
 > **Upgrading from AIHub?** The old `~/.aihub`/`aihub.json`/`AIHUB_*` env vars still work as a fallback and log a deprecation warning; migrate to `~/.yoplai`/`yoplai.json`/`YOPLAI_*` when convenient.
-All data is saved as markdown files in the projects folder.
-By default, if you don't specify anything, all projects are saved in `~/projects`.
-Project document layout is centralized in `ProjectDocumentStore`: project metadata stays in `README.md`, pitch in `PITCH.md`, comments in `THREAD.md`, slices under `slices/<sliceId>/`, and `SCOPE_MAP.md` is generated.
-Config uses v3: `$YOPLAI_HOME/yoplai.json` holds global settings and optional `agents` discovery globs; each lead agent lives in its own workspace with `agent.yaml`. If `agents` is omitted and no root `pool` is configured, Yoplai defaults to `$YOPLAI_HOME/agents` and fails startup clearly if that folder does not contain agent workspaces.
-Config has a single extension model. Root `extensions.<id>` holds shared extension defaults, and `agent.yaml` `extensions.<id>` opts that agent into tool-style extensions with optional per-agent overrides.
-Projects can opt into the slice orchestrator daemon with `extensions.projects.orchestrator`. When enabled, it polls configured slice status bindings, starts `Worker` subagents for `todo`, starts `Reviewer` subagents for `review`, and starts `Merger` subagents for `ready_to_merge`. The dispatcher is split internally into dispatch policy, prompt factory, and run planner modules. Slices can declare `blocked_by` prerequisites; blocked slices are skipped until every blocker is `done`, `ready_to_merge`, or `cancelled`. HITL bursts require `hitl_channel` to name an existing `notifications.channels` key.
-Orchestrated Worker/Reviewer/Merger prompts tell agents to pass their role via `--author` when posting project or slice comments, so THREAD.md keeps role attribution.
-Orchestrator run indexes and small event metadata stay in SQLite, while new raw runner events are written beside the owning project `WORKFLOW.md` as `<project>/.yoplai/codex/<timestamp>-<encoded-run-id>.jsonl`. Inspect them with `tail -f <project>/.yoplai/codex/*.jsonl` or `jq -c . <project>/.yoplai/codex/<run>.jsonl`; `/api/orchestrator/runs/:id/logs?since=<cursor>` still reads both JSONL-backed runs and legacy DB-only runs.
+> All data is saved as markdown files in the projects folder.
+> By default, if you don't specify anything, all projects are saved in `~/projects`.
+> Project document layout is centralized in `ProjectDocumentStore`: project metadata stays in `README.md`, pitch in `PITCH.md`, comments in `THREAD.md`, slices under `slices/<sliceId>/`, and `SCOPE_MAP.md` is generated.
+> Config uses v3: `$YOPLAI_HOME/yoplai.json` holds global settings and optional `agents` discovery globs; each lead agent lives in its own workspace with `agent.yaml`. If `agents` is omitted and no root `pool` is configured, Yoplai defaults to `$YOPLAI_HOME/agents` and fails startup clearly if that folder does not contain agent workspaces.
+> Config has a single extension model. Root `extensions.<id>` holds shared extension defaults, and `agent.yaml` `extensions.<id>` opts that agent into tool-style extensions with optional per-agent overrides.
+> Projects can opt into the slice orchestrator daemon with `extensions.projects.orchestrator`. When enabled, it polls configured slice status bindings, starts `Worker` subagents for `todo`, starts `Reviewer` subagents for `review`, and starts `Merger` subagents for `ready_to_merge`. The dispatcher is split internally into dispatch policy, prompt factory, and run planner modules. Slices can declare `blocked_by` prerequisites; blocked slices are skipped until every blocker is `done`, `ready_to_merge`, or `cancelled`. HITL bursts require `hitl_channel` to name an existing `notifications.channels` key.
+> Orchestrated Worker/Reviewer/Merger prompts tell agents to pass their role via `--author` when posting project or slice comments, so THREAD.md keeps role attribution.
+> Orchestrator run indexes and small event metadata stay in SQLite, while new raw runner events are written beside the owning project `WORKFLOW.md` as `<project>/.yoplai/codex/<timestamp>-<encoded-run-id>.jsonl`. Inspect them with `tail -f <project>/.yoplai/codex/*.jsonl` or `jq -c . <project>/.yoplai/codex/<run>.jsonl`; `/api/orchestrator/runs/:id/logs?since=<cursor>` still reads both JSONL-backed runs and legacy DB-only runs.
 
 ```json
 {
@@ -145,19 +146,21 @@ For repo-local dev, `pnpm init-dev-config` writes `./.yoplai/yoplai.json` from `
 
 Yoplai v3 is modular. These are the built-in extension IDs you can enable under `extensions`:
 
-- `discord`: one shared Discord bot that routes configured channels/DMs to agents
-- `slack`: one shared Slack Socket Mode bot that routes configured channels/DMs to agents
+- `board`: Board workspace, project projections, activity, and scratchpad tools
+- `discord`: Discord guild/DM/forum transport
+- `heartbeat`: periodic agent check-ins and alert delivery
+- `irc`: native IRC transport
+- `langfuse`: stream/history tracing, generations, tool spans, and usage
+- `multiUser`: Better Auth + SQLite auth, teams, and per-user isolation
+- `orchestrator`: tracker-backed autonomous worker orchestration
+- `projects`: areas, project/slice documents, project subagents, and Space workflows
 - `scheduler`: recurring cron runner for per-agent `cron/jobs.json` jobs
-- `heartbeat`: periodic heartbeat prompts for agents with `heartbeat.every` in `agent.yaml`
-- `amsg`: background watcher that checks agent amsg inboxes and nudges agents when new messages arrive
-- `conversations`: saved conversation API/UI surface for browsing threads, attachments, and creating projects from conversations
-- `projects`: project management surface including areas, kanban, taskboard, activity feed, subagents, and Space workflows
-- `multiUser`: optional Better Auth + SQLite auth layer with per-user isolation and admin APIs
-- `langfuse`: optional tracing component for stream/history events, LLM generations, tool spans, and model usage
-- `webhooks`: auto-loaded when any agent defines `webhooks`; exposes `/hooks/:agentId/:name/:secret`
+- `slack`: Slack Socket Mode channel/DM/thread transport
+- `subagents`: project-agnostic CLI subagent runtime
+- `telegram`: Telegram private/group transport
+- `webhooks`: agent HTTP webhook triggers
 
-If an extension key is absent, it is disabled and not loaded.
-`webhooks` and `heartbeat` are exceptions: they auto-load when any agent defines matching per-agent config.
+Most extensions load only when configured under `extensions.<id>`. Discord, Slack, Telegram, IRC, and heartbeat can also load from supported per-agent configuration. Webhooks load when an agent declares `webhooks`.
 Inbound Slack and Discord messages now append a normalized `[CHANNEL CONTEXT]` block to the actual agent system prompt. It includes the channel (`slack` or `discord`), place (`#channel`, `#channel / thread`, or `direct message / <peer>`), conversation type, sender, and fallback-filled channel/topic/thread/history fields. The same block is persisted in full history as a system message and forwarded to Langfuse as both trace input and generation `systemPrompt` metadata. First-party gateway/web/CLI messages do not get this block.
 
 ### Webhooks
@@ -359,7 +362,7 @@ OneCLI proxy config lives in the top-level `onecli` block (see [OneCLI](#onecli)
 | Field               | Default                            | Description                                                            |
 | ------------------- | ---------------------------------- | ---------------------------------------------------------------------- |
 | `enabled`           | `false`                            | Enable container isolation for this agent                              |
-| `image`             | `yoplai-agent:latest`               | Docker image to use                                                    |
+| `image`             | `yoplai-agent:latest`              | Docker image to use                                                    |
 | `network`           | From global `sandbox.network.name` | Docker network name                                                    |
 | `memory`            | `2g`                               | Memory limit                                                           |
 | `cpus`              | `1`                                | CPU limit                                                              |
@@ -442,7 +445,7 @@ packages/
 
 ## Web UI Navigation
 
-- Single unified left sidebar (`LeftNavShell`/`AgentSidebar`) wraps every route — `/`, `/projects`, `/agents`, `/teams`, `/agents/:id/edit`, `/conversations`, `/admin/users`, and `/chat/:agentId`. Primary links: `Chats` always; `Projects` and `Conversations` only when those components are enabled; `Agents` and `Teams` visible to everyone; `Admin` (→ `/admin/users`) visible only to admin/superadmin. The sidebar logo shows custom org branding when configured, otherwise the default "Yoplai" wordmark — never both.
+- Single unified left sidebar (`LeftNavShell`/`AgentSidebar`) wraps every route — `/`, `/projects`, `/agents`, `/teams`, `/agents/:id/edit`, `/admin/users`, and `/chat/:agentId`. Primary links are capability-driven; `Admin` (→ `/admin/users`) is visible only to admin/superadmin. The sidebar logo shows custom org branding when configured, otherwise the default "Yoplai" wordmark — never both.
 - Main route: `/` for Areas overview (new homepage)
 - Areas homepage supports quick area creation with auto-generated ids and color picker selection
 - Project routes: `/projects` shows the cached Board-backed Projects kanban (`Triage`, `Shaping`, `Active`, `Ready to merge`, `Done`), `/projects/archive` groups archived and cancelled projects, and `/projects/:id` reuses the Board-style project detail (`Pitch`, `Slices`, `Thread`, `Activity`) with the global left nav. The Projects create form stores the initial idea in `README.md` for shaping agents to turn into `PITCH.md`, exposes an editable repo field, prefills it from the selected area repo, and validates the path on blur without blocking creation. Moving a project to `Shaping` or any `shaping:*` stage requires an explicit project-level repo. The Board extension's `Projects` tab embeds the two-pane Projects Overview with client-side filters/search and worktree run state from `/api/board/projects`
@@ -450,14 +453,14 @@ packages/
 - Collapsed left/right sidebars hover-expand as overlays instead of pushing the main content
 - Legacy direct-chat agent list remains at `/agents`
 - `Archived` button lives in the projects header (top-right) and toggles archived-projects section
-- Left sidebar nav is persistent across `/projects`, `/agents`, `/teams`, `/conversations`, `/admin/users`, and `/chat/:agentId`
+- Left sidebar nav is persistent across `/projects`, `/agents`, `/teams`, `/admin/users`, and `/chat/:agentId`
 - The full project editor remains available from the overview through `?detail=1`; it opens `ProjectDetailPage` over the overview for Pitch editing, chat, activity, changes, and slice spec work
 - Board project detail uses one editable Pitch surface backed by `PITCH.md`; legacy projects without `PITCH.md` display the `README.md` body as fallback while `README.md` remains the frontmatter carrier. Project-level `SPECS.md` files are legacy artifacts and are not surfaced in project detail. The header title can be edited inline from its hover edit icon, saved with Enter/check, or cancelled with Escape.
 - Slice detail uses one editable Specs surface backed by `SPECS.md`; legacy slices without `SPECS.md` display the `README.md` body as fallback while slice `README.md` remains the frontmatter carrier. `TASKS.md`, `VALIDATION.md`, and `THREAD.md` remain separate slice tabs; the Thread tab supports adding timestamped comments from the UI, with Cmd/Ctrl+Enter to submit.
 - Project detail is mobile/tablet responsive: `<=768px` uses a single-column `Overview | Chat | Activity | Changes | Spec` tabbed view, and `769px-1199px` uses a `280px` left rail with merged center/right tabs
 - In `SPECS.md` view, one top-right toggle collapses/expands both Tasks and Acceptance Criteria to free more room for the markdown pane
 - Right context panel `Recent` list shows the 5 most recently viewed projects from browser localStorage
-- Web UI fetches `/api/capabilities` on boot, hides disabled component nav, and lazy-loads projects/conversations route bundles only when enabled
+- Web UI fetches `/api/capabilities` on boot, hides disabled extension navigation, and lazy-loads optional route bundles only when enabled
 - Intercom-style quick chat can be enabled with root config `agentFab: true`; it appears globally as a fixed bottom-right bubble and opens a lead-agent overlay with agent picker, streaming chat, and image attachments
 - Lead `ChatView` aborts preserve any assistant text already streamed before `/abort` or the Stop button, then show an `Interrupted` marker instead of dropping the partial reply
 - Project-detail UI spawns use name-based session slugs, so the generated session folder follows the displayed agent name instead of a random id
@@ -499,13 +502,12 @@ pnpm yoplai agents migrate
 pnpm yoplai agents --help
 pnpm yoplai agents migrate --help
 
-# Projects extension config migration (v1 -> v2 component entries)
+# Projects extension config migration (legacy v1 -> v2 entries)
 pnpm yoplai projects config migrate [--config <path>] [--dry-run]
 pnpm yoplai projects config validate [--config <path>]
 
 # Note: `projects config migrate` is separate from `agents migrate`.
-# v1 -> v2 migration only adds component entries when legacy config explicitly implied them.
-# It no longer auto-adds `components.amsg` or `components.conversations` just because agents exist.
+# v1 -> v2 migration only adds compatibility entries when legacy config explicitly implied them.
 
 # `--subagent <name>` resolves a config-defined subagent from `yoplai.json`.
 # The server applies that subagent's locked defaults for harness/model/reasoning/runMode/type.
@@ -580,9 +582,7 @@ Coordinator prompts now include:
 
 Repo resolution for subagent runner modes (`clone`/`worktree`/`main-run`) now falls back to the project area's `repo` when project `frontmatter.repo` is unset.
 
-Use the canonical guide:
-
-- `docs/specs-task-format.md`
+Use exact `## Tasks` and `## Acceptance Criteria` headings; optional `###` subgroup headings are supported within either section.
 
 ## OAuth Authentication
 
@@ -740,9 +740,6 @@ queueMode: queue
 system_files:
   - SOUL.md
   - USER.md
-extensions:
-  amsg:
-    enabled: true
 ```
 
 The `id` must match the workspace folder name. The workspace directory is the directory containing `agent.yaml`.
@@ -764,10 +761,9 @@ Project lead-session titles can be generated with `extensions.sessions.autoTitle
 | `auth.mode`        | `oauth`, `api_key`, or `proxy` (Pi SDK only)                                         |
 | `reasoning`        | off, minimal, low, medium, high, xhigh; `thinkLevel` is a deprecated alias           |
 | `queueMode`        | `queue` (inject into current run) or `interrupt` (abort & restart)                   |
-| `discord`          | Discord bot config (legacy per-agent; prefer [Channels](#channels) component config) |
+| `discord`          | Discord bot config (legacy per-agent; prefer [Channels](#channels) extension config) |
 | `slack`            | Slack bot config (per-agent token; see [Channels](#channels) section)                |
 | `heartbeat`        | Periodic check-in config (see below)                                                 |
-| `amsg`             | Amsg inbox watcher config (`enabled` to toggle; ID read from workspace `.amsg-info`) |
 | `sandbox`          | Container isolation config (see [Container Isolation](#container-isolation))         |
 | `onecliToken`      | Per-agent OneCLI proxy access token (e.g. `"$env:ONECLI_MY_AGENT_TOKEN"`)            |
 
@@ -1185,7 +1181,7 @@ Do not run `pnpm dev`, `pnpm dev:gateway`, or `pnpm yoplai gateway` on machine A
 
 | Setting                         | Used by                                         | Purpose                                                                                                             |
 | ------------------------------- | ----------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
-| `apiUrl` (or `YOPLAI_API_URL`)   | `yoplai projects` CLI                            | Direct base URL for CLI HTTP requests                                                                               |
+| `apiUrl` (or `YOPLAI_API_URL`)  | `yoplai projects` CLI                           | Direct base URL for CLI HTTP requests                                                                               |
 | `gateway.host` + `gateway.port` | Gateway server config; reused by `pnpm dev:web` | Gateway listen host/port for gateway process. In `pnpm dev:web`, these same values are reused as Vite proxy target. |
 
 In short: `apiUrl` controls CLI target. Web app uses relative `/api`/`/ws`; in `pnpm dev:web`, proxy target currently comes from `gateway.host`/`gateway.port`.
@@ -1195,7 +1191,7 @@ In short: `apiUrl` controls CLI target. Web app uses relative `/api`/`/ws`; in `
 `pnpm dev` runs with the `--dev` flag, which:
 
 - **Auto-finds free ports** if 4000/3000 are in use (scans up to +50)
-- **Disables external services**: Discord, scheduler, amsg watcher, heartbeats
+- **Disables external services**: messaging transports, scheduler, and heartbeats
 - **Skips Tailscale serve** setup
 - **Visual indicators**: console banner, `[DEV :port]` browser title, orange sidebar badge
 
