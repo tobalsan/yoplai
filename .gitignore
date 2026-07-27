@@ -6,7 +6,11 @@ dist/
 .DS_Store
 *.tsbuildinfo
 
-# Stale compiled vite config
+# Stale compiled tool configs
+vitest.config.js
+vitest.config.js.map
+vitest.config.d.ts
+vitest.config.d.ts.map
 apps/web/vite.config.js
 apps/web/vite.config.js.map
 apps/web/vite.config.d.ts
