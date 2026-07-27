@@ -74,7 +74,12 @@ export function parseDurationMs(
   if (!duration) return null;
 
   const trimmed = duration.trim().toLowerCase();
-  if (trimmed === "0" || trimmed === "0m" || trimmed === "0h" || trimmed === "0s") {
+  if (
+    trimmed === "0" ||
+    trimmed === "0m" ||
+    trimmed === "0h" ||
+    trimmed === "0s"
+  ) {
     return null; // Disabled
   }
 
@@ -138,7 +143,11 @@ export function evaluateHeartbeatReply(
   }
 
   // Alert: either no token or substantial content beyond threshold
-  return { status: "sent", strippedText: strippedText || replyText.trim(), shouldDeliver: true };
+  return {
+    status: "sent",
+    strippedText: strippedText || replyText.trim(),
+    shouldDeliver: true,
+  };
 }
 
 /**
@@ -277,7 +286,9 @@ async function writeHeartbeatOutput(input: {
  * Run single heartbeat for agent.
  * Returns event payload describing result.
  */
-export async function runHeartbeat(agentId: string): Promise<HeartbeatEventPayload> {
+export async function runHeartbeat(
+  agentId: string
+): Promise<HeartbeatEventPayload> {
   const startTs = Date.now();
   const ctx = getContext();
   const agent = ctx.getAgent(agentId);
@@ -403,7 +414,11 @@ export async function runHeartbeat(agentId: string): Promise<HeartbeatEventPaylo
 
     // Restore updatedAt if not delivering
     if (!evaluation.shouldDeliver) {
-      maybeRestoreSessionUpdatedAt(agentId, DEFAULT_MAIN_KEY, originalUpdatedAt);
+      maybeRestoreSessionUpdatedAt(
+        agentId,
+        DEFAULT_MAIN_KEY,
+        originalUpdatedAt
+      );
     }
 
     const payload: HeartbeatEventPayload = {
@@ -475,6 +490,9 @@ function scheduleTick(agentId: string, intervalMs: number): void {
   const timer = setTimeout(async () => {
     // Run heartbeat
     await runHeartbeat(agentId);
+
+    // A stop or replacement while the run was pending owns the current lifecycle.
+    if (timers.get(agentId) !== timer) return;
 
     // Reschedule (if still configured)
     const agent = getContext().getAgent(agentId);

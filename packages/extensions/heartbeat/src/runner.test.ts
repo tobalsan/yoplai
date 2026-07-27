@@ -68,7 +68,9 @@ describe("parseDurationMs", () => {
     });
 
     it("respects defaultUnit option", () => {
-      expect(parseDurationMs("5", { defaultUnit: "h" })).toBe(5 * 60 * 60 * 1000);
+      expect(parseDurationMs("5", { defaultUnit: "h" })).toBe(
+        5 * 60 * 60 * 1000
+      );
       expect(parseDurationMs("30", { defaultUnit: "s" })).toBe(30 * 1000);
     });
   });
@@ -114,9 +116,9 @@ describe("stripHeartbeatToken", () => {
     });
 
     it("strips token from middle of text", () => {
-      expect(stripHeartbeatToken("All good! HEARTBEAT_OK - nothing to report")).toBe(
-        "All good!  - nothing to report"
-      );
+      expect(
+        stripHeartbeatToken("All good! HEARTBEAT_OK - nothing to report")
+      ).toBe("All good!  - nothing to report");
     });
 
     it("strips token from start of text", () => {
@@ -133,14 +135,16 @@ describe("stripHeartbeatToken", () => {
   describe("HTML wrapped tokens", () => {
     it("strips <b> wrapped token", () => {
       expect(stripHeartbeatToken("<b>HEARTBEAT_OK</b>")).toBe("");
-      expect(stripHeartbeatToken("All good! <b>HEARTBEAT_OK</b>")).toBe("All good!");
+      expect(stripHeartbeatToken("All good! <b>HEARTBEAT_OK</b>")).toBe(
+        "All good!"
+      );
     });
 
     it("strips <strong> wrapped token", () => {
       expect(stripHeartbeatToken("<strong>HEARTBEAT_OK</strong>")).toBe("");
-      expect(stripHeartbeatToken("Status: <strong>HEARTBEAT_OK</strong> done")).toBe(
-        "Status:  done"
-      );
+      expect(
+        stripHeartbeatToken("Status: <strong>HEARTBEAT_OK</strong> done")
+      ).toBe("Status:  done");
     });
 
     it("strips <em> wrapped token", () => {
@@ -156,14 +160,18 @@ describe("stripHeartbeatToken", () => {
     });
 
     it("strips <span> wrapped token", () => {
-      expect(stripHeartbeatToken('<span class="status">HEARTBEAT_OK</span>')).toBe("");
+      expect(
+        stripHeartbeatToken('<span class="status">HEARTBEAT_OK</span>')
+      ).toBe("");
     });
   });
 
   describe("Markdown wrapped tokens", () => {
     it("strips ** wrapped token (bold)", () => {
       expect(stripHeartbeatToken("**HEARTBEAT_OK**")).toBe("");
-      expect(stripHeartbeatToken("All good! **HEARTBEAT_OK**")).toBe("All good!");
+      expect(stripHeartbeatToken("All good! **HEARTBEAT_OK**")).toBe(
+        "All good!"
+      );
     });
 
     it("strips * wrapped token (italic)", () => {
@@ -183,21 +191,23 @@ describe("stripHeartbeatToken", () => {
   describe("preserves surrounding content", () => {
     it("preserves text before and after token", () => {
       expect(
-        stripHeartbeatToken("I checked everything. HEARTBEAT_OK. Will continue monitoring.")
+        stripHeartbeatToken(
+          "I checked everything. HEARTBEAT_OK. Will continue monitoring."
+        )
       ).toBe("I checked everything. . Will continue monitoring.");
     });
 
     it("handles multiple tokens", () => {
-      expect(
-        stripHeartbeatToken("HEARTBEAT_OK - HEARTBEAT_OK")
-      ).toBe("-");
+      expect(stripHeartbeatToken("HEARTBEAT_OK - HEARTBEAT_OK")).toBe("-");
     });
 
     it("does not strip partial matches", () => {
       expect(stripHeartbeatToken("HEARTBEAT_OKAY")).toBe("HEARTBEAT_OKAY");
       expect(stripHeartbeatToken("XHEARTBEAT_OK")).toBe("XHEARTBEAT_OK");
       // Word boundaries: underscore is a word character, so _HEARTBEAT_OK_ won't match
-      expect(stripHeartbeatToken("MY_HEARTBEAT_OK_VALUE")).toBe("MY_HEARTBEAT_OK_VALUE");
+      expect(stripHeartbeatToken("MY_HEARTBEAT_OK_VALUE")).toBe(
+        "MY_HEARTBEAT_OK_VALUE"
+      );
     });
   });
 });
@@ -250,20 +260,29 @@ describe("evaluateHeartbeatReply", () => {
 
   describe("token-only replies", () => {
     it("returns ok-token for plain HEARTBEAT_OK", () => {
-      const result = evaluateHeartbeatReply("HEARTBEAT_OK", DEFAULT_ACK_MAX_CHARS);
+      const result = evaluateHeartbeatReply(
+        "HEARTBEAT_OK",
+        DEFAULT_ACK_MAX_CHARS
+      );
       expect(result.status).toBe("ok-token");
       expect(result.shouldDeliver).toBe(false);
       expect(result.strippedText).toBe("");
     });
 
     it("returns ok-token for wrapped HEARTBEAT_OK", () => {
-      const result = evaluateHeartbeatReply("**HEARTBEAT_OK**", DEFAULT_ACK_MAX_CHARS);
+      const result = evaluateHeartbeatReply(
+        "**HEARTBEAT_OK**",
+        DEFAULT_ACK_MAX_CHARS
+      );
       expect(result.status).toBe("ok-token");
       expect(result.shouldDeliver).toBe(false);
     });
 
     it("returns ok-token when remaining text is within threshold", () => {
-      const result = evaluateHeartbeatReply("HEARTBEAT_OK - All good!", DEFAULT_ACK_MAX_CHARS);
+      const result = evaluateHeartbeatReply(
+        "HEARTBEAT_OK - All good!",
+        DEFAULT_ACK_MAX_CHARS
+      );
       expect(result.status).toBe("ok-token");
       expect(result.shouldDeliver).toBe(false);
       expect(result.strippedText).toBe("- All good!");
@@ -278,7 +297,9 @@ describe("evaluateHeartbeatReply", () => {
       );
       expect(result.status).toBe("sent");
       expect(result.shouldDeliver).toBe(true);
-      expect(result.strippedText).toBe("Hey! I noticed something you should know about.");
+      expect(result.strippedText).toBe(
+        "Hey! I noticed something you should know about."
+      );
     });
 
     it("returns sent when stripped text exceeds ackMaxChars", () => {
@@ -380,7 +401,10 @@ describe("loadHeartbeatPrompt", () => {
       isAgentActive: () => false,
       isAgentStreaming: () => false,
       resolveWorkspaceDir: (agent) => agent.workspace,
-      runAgent: async () => ({ payloads: [], meta: { durationMs: 0, sessionId: "s" } }),
+      runAgent: async () => ({
+        payloads: [],
+        meta: { durationMs: 0, sessionId: "s" },
+      }),
       getSubagentTemplates: () => [],
       resolveSessionId: async () => undefined,
       getSessionEntry: async () => undefined,
@@ -391,7 +415,11 @@ describe("loadHeartbeatPrompt", () => {
       getSessionHistory: async () => [],
       subscribe: () => () => undefined,
       emit: () => undefined,
-      logger: { info: () => undefined, warn: () => undefined, error: () => undefined },
+      logger: {
+        info: () => undefined,
+        warn: () => undefined,
+        error: () => undefined,
+      },
     });
   });
 
@@ -444,7 +472,8 @@ describe("loadHeartbeatPrompt", () => {
   describe("HEARTBEAT.md file (priority 2)", () => {
     it("reads HEARTBEAT.md when config prompt is not set", async () => {
       const agent = createAgentWithWorkspace({});
-      const fileContent = "# Daily Check\nReview dashboards and report anomalies.";
+      const fileContent =
+        "# Daily Check\nReview dashboards and report anomalies.";
 
       await fs.writeFile(path.join(tmpDir, "HEARTBEAT.md"), fileContent);
 
@@ -873,7 +902,9 @@ describe("runHeartbeat session preservation", () => {
   });
 
   it("writes heartbeat output for completed runs", async () => {
-    const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "heartbeat-output-"));
+    const tmpDir = await fs.mkdtemp(
+      path.join(os.tmpdir(), "heartbeat-output-")
+    );
     mockResolveWorkspaceDir.mockReturnValue(tmpDir);
     mockGetAgent.mockReturnValue({
       id: "test-agent",
@@ -899,7 +930,7 @@ describe("runHeartbeat session preservation", () => {
       expect(files).toHaveLength(1);
     });
     const content = await fs.readFile(path.join(outputDir, files[0]), "utf-8");
-    expect(content).toContain("job_id: \"__heartbeat__\"");
+    expect(content).toContain('job_id: "__heartbeat__"');
     expect(content).toContain("run_type: heartbeat");
     expect(content).toContain("result_status: ok");
     expect(content).toContain("# Heartbeat");
@@ -910,7 +941,9 @@ describe("runHeartbeat session preservation", () => {
   });
 
   it("writes heartbeat output for failed runs", async () => {
-    const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "heartbeat-output-"));
+    const tmpDir = await fs.mkdtemp(
+      path.join(os.tmpdir(), "heartbeat-output-")
+    );
     mockResolveWorkspaceDir.mockReturnValue(tmpDir);
     mockGetAgent.mockReturnValue({
       id: "test-agent",
@@ -1063,7 +1096,10 @@ describe("heartbeat lifecycle", () => {
       mockLoadConfig.mockReturnValue({
         agents: [{ id: "agent-disabled", heartbeat: { every: "0" } }],
       });
-      mockGetAgent.mockReturnValue({ id: "agent-disabled", heartbeat: { every: "0" } });
+      mockGetAgent.mockReturnValue({
+        id: "agent-disabled",
+        heartbeat: { every: "0" },
+      });
 
       const module = await getLifecycleModule();
       module.startAllHeartbeats();
@@ -1085,7 +1121,9 @@ describe("heartbeat lifecycle", () => {
 
       expect(module.getActiveHeartbeats()).toEqual([]);
       expect(mockLoggerWarn).not.toHaveBeenCalledWith(
-        expect.stringContaining("Scheduler extension is disabled or unavailable")
+        expect.stringContaining(
+          "Scheduler extension is disabled or unavailable"
+        )
       );
     });
 
@@ -1102,7 +1140,9 @@ describe("heartbeat lifecycle", () => {
 
       expect(module.getActiveHeartbeats()).toEqual([]);
       expect(mockLoggerWarn).toHaveBeenCalledWith(
-        expect.stringContaining("Scheduler extension is disabled or unavailable")
+        expect.stringContaining(
+          "Scheduler extension is disabled or unavailable"
+        )
       );
     });
 
@@ -1119,7 +1159,9 @@ describe("heartbeat lifecycle", () => {
 
       expect(module.getActiveHeartbeats()).toEqual([]);
       expect(mockLoggerWarn).toHaveBeenCalledWith(
-        expect.stringContaining("Scheduler extension is disabled or unavailable")
+        expect.stringContaining(
+          "Scheduler extension is disabled or unavailable"
+        )
       );
     });
 
@@ -1133,7 +1175,9 @@ describe("heartbeat lifecycle", () => {
 
       expect(module.getActiveHeartbeats()).toEqual([]);
       expect(mockLoggerWarn).toHaveBeenCalledWith(
-        expect.stringContaining("Scheduler extension is disabled or unavailable")
+        expect.stringContaining(
+          "Scheduler extension is disabled or unavailable"
+        )
       );
     });
 
@@ -1145,7 +1189,10 @@ describe("heartbeat lifecycle", () => {
       mockGetAgents.mockReturnValue([
         { id: "agent-1", heartbeat: { every: "5m" } },
       ]);
-      mockGetAgent.mockReturnValue({ id: "agent-1", heartbeat: { every: "5m" } });
+      mockGetAgent.mockReturnValue({
+        id: "agent-1",
+        heartbeat: { every: "5m" },
+      });
 
       const module = await getLifecycleModule();
       module.startAllHeartbeats();
@@ -1163,7 +1210,10 @@ describe("heartbeat lifecycle", () => {
         discord: { broadcastToChannel: "channel-1" },
         workspace: "/test",
       };
-      mockLoadConfig.mockReturnValue({ agents: [agent], extensions: { scheduler: {}, heartbeat: {} } });
+      mockLoadConfig.mockReturnValue({
+        agents: [agent],
+        extensions: { scheduler: {}, heartbeat: {} },
+      });
       mockGetAgent.mockReturnValue(agent);
       mockGetSessionEntry.mockReturnValue({ sessionId: "s", updatedAt: 1000 });
 
@@ -1191,7 +1241,10 @@ describe("heartbeat lifecycle", () => {
         discord: { broadcastToChannel: "channel-1" },
         workspace: "/test",
       };
-      mockLoadConfig.mockReturnValue({ agents: [agent], extensions: { scheduler: {}, heartbeat: {} } });
+      mockLoadConfig.mockReturnValue({
+        agents: [agent],
+        extensions: { scheduler: {}, heartbeat: {} },
+      });
       mockGetAgent.mockReturnValue(agent);
       mockGetSessionEntry.mockReturnValue({ sessionId: "s", updatedAt: 1000 });
 
@@ -1236,7 +1289,10 @@ describe("heartbeat lifecycle", () => {
         discord: { broadcastToChannel: "channel-1" },
         workspace: "/test",
       };
-      mockLoadConfig.mockReturnValue({ agents: [agent], extensions: { scheduler: {}, heartbeat: {} } });
+      mockLoadConfig.mockReturnValue({
+        agents: [agent],
+        extensions: { scheduler: {}, heartbeat: {} },
+      });
       mockGetAgent.mockReturnValue(agent);
       mockGetSessionEntry.mockReturnValue({ sessionId: "s", updatedAt: 1000 });
 
@@ -1253,6 +1309,44 @@ describe("heartbeat lifecycle", () => {
       expect(mockRunAgent).not.toHaveBeenCalled();
     });
 
+    it("does not reschedule after stop while a heartbeat run is pending", async () => {
+      const agent = {
+        id: "agent-1",
+        heartbeat: { every: "1m", prompt: "Ping" },
+        discord: { broadcastToChannel: "channel-1" },
+        workspace: "/test",
+      };
+      mockLoadConfig.mockReturnValue({
+        agents: [agent],
+        extensions: { scheduler: {}, heartbeat: {} },
+      });
+      mockGetAgent.mockReturnValue(agent);
+      mockGetSessionEntry.mockReturnValue({ sessionId: "s", updatedAt: 1000 });
+      let finishRun!: (value: unknown) => void;
+      mockRunAgent.mockImplementation(
+        () =>
+          new Promise((resolve) => {
+            finishRun = resolve;
+          })
+      );
+
+      const module = await getLifecycleModule();
+      module.startAllHeartbeats();
+      await vi.advanceTimersByTimeAsync(60 * 1000);
+      expect(mockRunAgent).toHaveBeenCalledTimes(1);
+
+      module.stopAllHeartbeats();
+      finishRun({
+        payloads: [{ text: "HEARTBEAT_OK" }],
+        meta: { sessionId: "test-session" },
+      });
+      await vi.advanceTimersByTimeAsync(0);
+      await vi.advanceTimersByTimeAsync(2 * 60 * 1000);
+
+      expect(mockRunAgent).toHaveBeenCalledTimes(1);
+      expect(module.getActiveHeartbeats()).toEqual([]);
+    });
+
     it("stops mid-cycle timer without affecting next cycle", async () => {
       const agent = {
         id: "agent-1",
@@ -1260,7 +1354,10 @@ describe("heartbeat lifecycle", () => {
         discord: { broadcastToChannel: "channel-1" },
         workspace: "/test",
       };
-      mockLoadConfig.mockReturnValue({ agents: [agent], extensions: { scheduler: {}, heartbeat: {} } });
+      mockLoadConfig.mockReturnValue({
+        agents: [agent],
+        extensions: { scheduler: {}, heartbeat: {} },
+      });
       mockGetAgent.mockReturnValue(agent);
       mockGetSessionEntry.mockReturnValue({ sessionId: "s", updatedAt: 1000 });
 
@@ -1287,7 +1384,10 @@ describe("heartbeat lifecycle", () => {
     it("startHeartbeat returns true for enabled agent", async () => {
       const agent = { id: "agent-1", heartbeat: { every: "5m" } };
       mockGetAgent.mockReturnValue(agent);
-      mockLoadConfig.mockReturnValue({ agents: [], extensions: { scheduler: {}, heartbeat: {} } });
+      mockLoadConfig.mockReturnValue({
+        agents: [],
+        extensions: { scheduler: {}, heartbeat: {} },
+      });
 
       const module = await getLifecycleModule();
       const result = module.startHeartbeat("agent-1");
@@ -1299,8 +1399,14 @@ describe("heartbeat lifecycle", () => {
     });
 
     it("startHeartbeat returns false for disabled agent", async () => {
-      mockGetAgent.mockReturnValue({ id: "agent-1", heartbeat: { every: "0" } });
-      mockLoadConfig.mockReturnValue({ agents: [], extensions: { scheduler: {}, heartbeat: {} } });
+      mockGetAgent.mockReturnValue({
+        id: "agent-1",
+        heartbeat: { every: "0" },
+      });
+      mockLoadConfig.mockReturnValue({
+        agents: [],
+        extensions: { scheduler: {}, heartbeat: {} },
+      });
 
       const module = await getLifecycleModule();
       const result = module.startHeartbeat("agent-1");
@@ -1325,7 +1431,10 @@ describe("heartbeat lifecycle", () => {
 
     it("startHeartbeat returns false for unknown agent", async () => {
       mockGetAgent.mockReturnValue(undefined);
-      mockLoadConfig.mockReturnValue({ agents: [], extensions: { scheduler: {}, heartbeat: {} } });
+      mockLoadConfig.mockReturnValue({
+        agents: [],
+        extensions: { scheduler: {}, heartbeat: {} },
+      });
 
       const module = await getLifecycleModule();
       const result = module.startHeartbeat("unknown-agent");
@@ -1369,7 +1478,10 @@ describe("heartbeat lifecycle", () => {
         discord: { broadcastToChannel: "channel-1" },
         workspace: "/test",
       };
-      mockLoadConfig.mockReturnValue({ agents: [agent], extensions: { scheduler: {}, heartbeat: {} } });
+      mockLoadConfig.mockReturnValue({
+        agents: [agent],
+        extensions: { scheduler: {}, heartbeat: {} },
+      });
       mockGetAgent.mockReturnValue(agent);
       mockGetSessionEntry.mockReturnValue({ sessionId: "s", updatedAt: 1000 });
 
@@ -1401,7 +1513,10 @@ describe("heartbeat lifecycle", () => {
         discord: { broadcastToChannel: "channel-1" },
         workspace: "/test",
       };
-      mockLoadConfig.mockReturnValue({ agents: [agent], extensions: { scheduler: {}, heartbeat: {} } });
+      mockLoadConfig.mockReturnValue({
+        agents: [agent],
+        extensions: { scheduler: {}, heartbeat: {} },
+      });
       mockGetAgent.mockReturnValue(agent);
       mockGetSessionEntry.mockReturnValue({ sessionId: "s", updatedAt: 1000 });
 
@@ -1450,7 +1565,9 @@ describe("heartbeat lifecycle", () => {
         agents: [{ id: "agent-1", heartbeat: { every: "1m" } }],
         extensions: { scheduler: {}, heartbeat: {} },
       });
-      mockGetAgent.mockImplementation(() => (heartbeatEnabled ? enabledAgent : disabledAgent));
+      mockGetAgent.mockImplementation(() =>
+        heartbeatEnabled ? enabledAgent : disabledAgent
+      );
       mockGetSessionEntry.mockReturnValue({ sessionId: "s", updatedAt: 1000 });
       mockRunAgent.mockImplementationOnce(async () => {
         heartbeatEnabled = false;
@@ -1482,7 +1599,10 @@ describe("heartbeat lifecycle", () => {
         discord: { broadcastToChannel: "channel-1" },
         workspace: "/test",
       };
-      mockLoadConfig.mockReturnValue({ agents: [agent], extensions: { scheduler: {}, heartbeat: {} } });
+      mockLoadConfig.mockReturnValue({
+        agents: [agent],
+        extensions: { scheduler: {}, heartbeat: {} },
+      });
       mockGetAgent.mockReturnValue(agent);
       mockGetSessionEntry.mockReturnValue({ sessionId: "s", updatedAt: 1000 });
 
@@ -1510,11 +1630,26 @@ describe("heartbeat lifecycle", () => {
 
     it("toggle can be flipped at runtime and affects all agents", async () => {
       const agents = [
-        { id: "agent-1", heartbeat: { every: "1m", prompt: "ping" }, discord: { broadcastToChannel: "ch1" }, workspace: "/t1" },
-        { id: "agent-2", heartbeat: { every: "1m", prompt: "ping" }, discord: { broadcastToChannel: "ch2" }, workspace: "/t2" },
+        {
+          id: "agent-1",
+          heartbeat: { every: "1m", prompt: "ping" },
+          discord: { broadcastToChannel: "ch1" },
+          workspace: "/t1",
+        },
+        {
+          id: "agent-2",
+          heartbeat: { every: "1m", prompt: "ping" },
+          discord: { broadcastToChannel: "ch2" },
+          workspace: "/t2",
+        },
       ];
-      mockLoadConfig.mockReturnValue({ agents, extensions: { scheduler: {}, heartbeat: {} } });
-      mockGetAgent.mockImplementation((id: string) => agents.find((a) => a.id === id));
+      mockLoadConfig.mockReturnValue({
+        agents,
+        extensions: { scheduler: {}, heartbeat: {} },
+      });
+      mockGetAgent.mockImplementation((id: string) =>
+        agents.find((a) => a.id === id)
+      );
       mockGetSessionEntry.mockReturnValue({ sessionId: "s", updatedAt: 1000 });
 
       const module = await getLifecycleModule();
@@ -1546,7 +1681,10 @@ describe("heartbeat lifecycle", () => {
         id: "agent-1",
         heartbeat: { every: "5m" },
       };
-      mockLoadConfig.mockReturnValue({ agents: [agent], extensions: { scheduler: {}, heartbeat: {} } });
+      mockLoadConfig.mockReturnValue({
+        agents: [agent],
+        extensions: { scheduler: {}, heartbeat: {} },
+      });
       mockGetAgent.mockReturnValue(agent);
 
       const module = await getLifecycleModule();
@@ -1562,7 +1700,10 @@ describe("heartbeat lifecycle", () => {
 
     it("multiple stop calls are safe (idempotent)", async () => {
       const agent = { id: "agent-1", heartbeat: { every: "5m" } };
-      mockLoadConfig.mockReturnValue({ agents: [agent], extensions: { scheduler: {}, heartbeat: {} } });
+      mockLoadConfig.mockReturnValue({
+        agents: [agent],
+        extensions: { scheduler: {}, heartbeat: {} },
+      });
       mockGetAgent.mockReturnValue(agent);
 
       const module = await getLifecycleModule();
@@ -1577,7 +1718,10 @@ describe("heartbeat lifecycle", () => {
     });
 
     it("stopHeartbeat on non-existent timer is safe", async () => {
-      mockLoadConfig.mockReturnValue({ agents: [], extensions: { scheduler: {}, heartbeat: {} } });
+      mockLoadConfig.mockReturnValue({
+        agents: [],
+        extensions: { scheduler: {}, heartbeat: {} },
+      });
 
       const module = await getLifecycleModule();
 
@@ -1729,7 +1873,9 @@ describe("heartbeat event emission", () => {
 
       const module = await getEventModule();
       const receivedEvents: HeartbeatEventPayload[] = [];
-      const unsubscribe = module.onHeartbeatEvent((p) => receivedEvents.push(p));
+      const unsubscribe = module.onHeartbeatEvent((p) =>
+        receivedEvents.push(p)
+      );
 
       await module.runHeartbeat("test-agent");
 
@@ -1752,7 +1898,9 @@ describe("heartbeat event emission", () => {
 
       const module = await getEventModule();
       const receivedEvents: HeartbeatEventPayload[] = [];
-      const unsubscribe = module.onHeartbeatEvent((p) => receivedEvents.push(p));
+      const unsubscribe = module.onHeartbeatEvent((p) =>
+        receivedEvents.push(p)
+      );
 
       await module.runHeartbeat("test-agent");
 
@@ -1773,7 +1921,9 @@ describe("heartbeat event emission", () => {
 
       const module = await getEventModule();
       const receivedEvents: HeartbeatEventPayload[] = [];
-      const unsubscribe = module.onHeartbeatEvent((p) => receivedEvents.push(p));
+      const unsubscribe = module.onHeartbeatEvent((p) =>
+        receivedEvents.push(p)
+      );
 
       await module.runHeartbeat("test-agent");
 
@@ -1796,13 +1946,17 @@ describe("heartbeat event emission", () => {
 
       const module = await getEventModule();
       const receivedEvents: HeartbeatEventPayload[] = [];
-      const unsubscribe = module.onHeartbeatEvent((p) => receivedEvents.push(p));
+      const unsubscribe = module.onHeartbeatEvent((p) =>
+        receivedEvents.push(p)
+      );
 
       await module.runHeartbeat("test-agent");
 
       expect(receivedEvents[0].status).toBe("sent");
       expect(receivedEvents[0].to).toBe("my-channel-123");
-      expect(receivedEvents[0].alertText).toBe("Alert! Something needs attention");
+      expect(receivedEvents[0].alertText).toBe(
+        "Alert! Something needs attention"
+      );
 
       unsubscribe();
     });
@@ -1820,7 +1974,9 @@ describe("heartbeat event emission", () => {
 
       const module = await getEventModule();
       const receivedEvents: HeartbeatEventPayload[] = [];
-      const unsubscribe = module.onHeartbeatEvent((p) => receivedEvents.push(p));
+      const unsubscribe = module.onHeartbeatEvent((p) =>
+        receivedEvents.push(p)
+      );
 
       await module.runHeartbeat("test-agent");
 
@@ -1844,7 +2000,9 @@ describe("heartbeat event emission", () => {
 
       const module = await getEventModule();
       const receivedEvents: HeartbeatEventPayload[] = [];
-      const unsubscribe = module.onHeartbeatEvent((p) => receivedEvents.push(p));
+      const unsubscribe = module.onHeartbeatEvent((p) =>
+        receivedEvents.push(p)
+      );
 
       await module.runHeartbeat("test-agent");
 
@@ -1860,11 +2018,15 @@ describe("heartbeat event emission", () => {
         discord: { broadcastToChannel: "channel-1" },
         workspace: "/test",
       });
-      mockRunAgent.mockResolvedValue({ payloads: [{ text: "**HEARTBEAT_OK**" }] });
+      mockRunAgent.mockResolvedValue({
+        payloads: [{ text: "**HEARTBEAT_OK**" }],
+      });
 
       const module = await getEventModule();
       const receivedEvents: HeartbeatEventPayload[] = [];
-      const unsubscribe = module.onHeartbeatEvent((p) => receivedEvents.push(p));
+      const unsubscribe = module.onHeartbeatEvent((p) =>
+        receivedEvents.push(p)
+      );
 
       await module.runHeartbeat("test-agent");
 
@@ -1886,7 +2048,9 @@ describe("heartbeat event emission", () => {
 
       const module = await getEventModule();
       const receivedEvents: HeartbeatEventPayload[] = [];
-      const unsubscribe = module.onHeartbeatEvent((p) => receivedEvents.push(p));
+      const unsubscribe = module.onHeartbeatEvent((p) =>
+        receivedEvents.push(p)
+      );
 
       await module.runHeartbeat("test-agent");
 
@@ -1906,7 +2070,9 @@ describe("heartbeat event emission", () => {
 
       const module = await getEventModule();
       const receivedEvents: HeartbeatEventPayload[] = [];
-      const unsubscribe = module.onHeartbeatEvent((p) => receivedEvents.push(p));
+      const unsubscribe = module.onHeartbeatEvent((p) =>
+        receivedEvents.push(p)
+      );
 
       await module.runHeartbeat("test-agent");
 
@@ -1927,7 +2093,9 @@ describe("heartbeat event emission", () => {
 
       const module = await getEventModule();
       const receivedEvents: HeartbeatEventPayload[] = [];
-      const unsubscribe = module.onHeartbeatEvent((p) => receivedEvents.push(p));
+      const unsubscribe = module.onHeartbeatEvent((p) =>
+        receivedEvents.push(p)
+      );
 
       await module.runHeartbeat("test-agent");
 
@@ -1952,7 +2120,9 @@ describe("heartbeat event emission", () => {
 
       const module = await getEventModule();
       const receivedEvents: HeartbeatEventPayload[] = [];
-      const unsubscribe = module.onHeartbeatEvent((p) => receivedEvents.push(p));
+      const unsubscribe = module.onHeartbeatEvent((p) =>
+        receivedEvents.push(p)
+      );
 
       await module.runHeartbeat("test-agent");
 
@@ -1975,7 +2145,9 @@ describe("heartbeat event emission", () => {
 
       const module = await getEventModule();
       const receivedEvents: HeartbeatEventPayload[] = [];
-      const unsubscribe = module.onHeartbeatEvent((p) => receivedEvents.push(p));
+      const unsubscribe = module.onHeartbeatEvent((p) =>
+        receivedEvents.push(p)
+      );
 
       await module.runHeartbeat("test-agent");
 
@@ -1997,7 +2169,9 @@ describe("heartbeat event emission", () => {
 
       const module = await getEventModule();
       const receivedEvents: HeartbeatEventPayload[] = [];
-      const unsubscribe = module.onHeartbeatEvent((p) => receivedEvents.push(p));
+      const unsubscribe = module.onHeartbeatEvent((p) =>
+        receivedEvents.push(p)
+      );
 
       await module.runHeartbeat("test-agent");
 
@@ -2018,7 +2192,9 @@ describe("heartbeat event emission", () => {
 
       const module = await getEventModule();
       const receivedEvents: HeartbeatEventPayload[] = [];
-      const unsubscribe = module.onHeartbeatEvent((p) => receivedEvents.push(p));
+      const unsubscribe = module.onHeartbeatEvent((p) =>
+        receivedEvents.push(p)
+      );
 
       await module.runHeartbeat("test-agent");
 
@@ -2039,7 +2215,9 @@ describe("heartbeat event emission", () => {
 
       const module = await getEventModule();
       const receivedEvents: HeartbeatEventPayload[] = [];
-      const unsubscribe = module.onHeartbeatEvent((p) => receivedEvents.push(p));
+      const unsubscribe = module.onHeartbeatEvent((p) =>
+        receivedEvents.push(p)
+      );
 
       await module.runHeartbeat("test-agent");
 
@@ -2065,7 +2243,9 @@ describe("heartbeat event emission", () => {
 
       const module = await getEventModule();
       const receivedEvents: HeartbeatEventPayload[] = [];
-      const unsubscribe = module.onHeartbeatEvent((p) => receivedEvents.push(p));
+      const unsubscribe = module.onHeartbeatEvent((p) =>
+        receivedEvents.push(p)
+      );
 
       await module.runHeartbeat("test-agent");
 
@@ -2110,4 +2290,3 @@ describe("heartbeat event emission", () => {
     });
   });
 });
-
