@@ -237,7 +237,7 @@ export function createChatRuntime(deps: Partial<ChatRuntimeDeps> = {}) {
   let activeStreamCleanup: (() => void) | null = null;
   let subscriptionCleanup: (() => void) | null = null;
   let activeQueuedMessage: QueuedChatMessage | null = null;
-  let lastAgentId: string | null = null;
+  let historyLoadVersion = 0;
 
   const combinedBlocks = createMemo(() => streamingBlocks());
 
@@ -265,16 +265,19 @@ export function createChatRuntime(deps: Partial<ChatRuntimeDeps> = {}) {
     setIsStreaming(false);
     setError("");
     activeQueuedMessage = null;
-    lastAgentId = null;
+    historyLoadVersion += 1;
   };
 
   const applyActiveTurn = (
-    turn: NonNullable<Awaited<ReturnType<typeof fetchFullHistory>>["activeTurn"]>
+    turn: NonNullable<
+      Awaited<ReturnType<typeof fetchFullHistory>>["activeTurn"]
+    >
   ) => {
     setIsStreaming(true);
     setWaitingForFirstText(!turn.text?.trim() && !turn.thinking?.trim());
     const blocks: ChatRuntimeBlock[] = [];
-    if (turn.thinking) blocks.push({ type: "thinking", content: turn.thinking });
+    if (turn.thinking)
+      blocks.push({ type: "thinking", content: turn.thinking });
     if (turn.text) {
       blocks.push({ type: "text", role: "assistant", content: turn.text });
     }
@@ -350,7 +353,10 @@ export function createChatRuntime(deps: Partial<ChatRuntimeDeps> = {}) {
     },
   });
 
-  const subscribe = (agentId: string, sessionKey = api.getSessionKey(agentId)) => {
+  const subscribe = (
+    agentId: string,
+    sessionKey = api.getSessionKey(agentId)
+  ) => {
     cleanupSubscription();
     subscriptionCleanup = api.subscribeToSession(
       agentId,
@@ -380,9 +386,9 @@ export function createChatRuntime(deps: Partial<ChatRuntimeDeps> = {}) {
     agentId,
     sessionKey = api.getSessionKey(agentId),
   }: LoadHistoryInput) => {
-    lastAgentId = agentId;
+    const loadVersion = ++historyLoadVersion;
     const history = await api.fetchFullHistory(agentId, sessionKey);
-    if (lastAgentId !== agentId) return history;
+    if (loadVersion !== historyLoadVersion) return history;
     setMessages(history.messages);
     if (history.isStreaming && history.activeTurn && !activeStreamCleanup) {
       subscribe(agentId, sessionKey);
@@ -416,7 +422,13 @@ export function createChatRuntime(deps: Partial<ChatRuntimeDeps> = {}) {
       agentId,
       text,
       sessionKey,
-      (chunk) => callbacks(agentId, sessionKey, () => {}, () => {}).onText?.(chunk),
+      (chunk) =>
+        callbacks(
+          agentId,
+          sessionKey,
+          () => {},
+          () => {}
+        ).onText?.(chunk),
       (meta?: DoneMeta) => {
         cleanupStream();
         setIsStreaming(false);
@@ -480,7 +492,9 @@ export function createChatRuntime(deps: Partial<ChatRuntimeDeps> = {}) {
       attachments.setUploadingFiles(true);
       attachments.setUploadError("");
       try {
-        uploaded = await api.uploadFiles(currentPendingFiles.map((p) => p.file));
+        uploaded = await api.uploadFiles(
+          currentPendingFiles.map((p) => p.file)
+        );
         inboundFiles = uploaded.map((attachment, index) =>
           attachmentToFileBlock(attachment, currentPendingFiles[index])
         );
@@ -516,14 +530,15 @@ export function createChatRuntime(deps: Partial<ChatRuntimeDeps> = {}) {
       sessionKey,
       messageText,
       "normal",
-      uploaded?.length
-        ? { ...options, attachments: uploaded }
-        : options,
+      uploaded?.length ? { ...options, attachments: uploaded } : options,
       onAssistantError
     );
   };
 
-  const stop = async (agentId: string, sessionKey = api.getSessionKey(agentId)) => {
+  const stop = async (
+    agentId: string,
+    sessionKey = api.getSessionKey(agentId)
+  ) => {
     await api.postAbort(agentId, sessionKey);
     cleanupStream();
     cleanupSubscription();

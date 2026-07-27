@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { createRoot } from "solid-js";
 import { describe, expect, it, vi } from "vitest";
+import type { FullHistoryMessage } from "../api/types";
 import { createChatRuntime } from "./chat-runtime";
 
 describe("createChatRuntime", () => {
@@ -72,6 +73,72 @@ describe("createChatRuntime", () => {
             "main",
             expect.any(Object)
           );
+          dispose();
+          resolve();
+        });
+      });
+    });
+  });
+
+  it("ignores an older history response for the same agent", async () => {
+    let resolveFirst:
+      | ((value: { messages: FullHistoryMessage[] }) => void)
+      | undefined;
+    const fetchFullHistory = vi
+      .fn()
+      .mockImplementationOnce(
+        () =>
+          new Promise<{ messages: FullHistoryMessage[] }>((resolve) => {
+            resolveFirst = resolve;
+          })
+      )
+      .mockResolvedValueOnce({
+        messages: [
+          {
+            role: "user",
+            content: [{ type: "text", text: "new" }],
+            timestamp: 2,
+          },
+        ],
+      });
+
+    await new Promise<void>((resolve) => {
+      createRoot((dispose) => {
+        const runtime = createChatRuntime({ fetchFullHistory });
+        const firstLoad = runtime.loadHistory({
+          agentId: "agent-1",
+          sessionKey: "main",
+        });
+        const secondLoad = runtime.loadHistory({
+          agentId: "agent-1",
+          sessionKey: "main",
+        });
+
+        secondLoad.then(async () => {
+          expect(runtime.messages()).toEqual([
+            {
+              role: "user",
+              content: [{ type: "text", text: "new" }],
+              timestamp: 2,
+            },
+          ]);
+          resolveFirst?.({
+            messages: [
+              {
+                role: "user",
+                content: [{ type: "text", text: "old" }],
+                timestamp: 1,
+              },
+            ],
+          });
+          await firstLoad;
+          expect(runtime.messages()).toEqual([
+            {
+              role: "user",
+              content: [{ type: "text", text: "new" }],
+              timestamp: 2,
+            },
+          ]);
           dispose();
           resolve();
         });
