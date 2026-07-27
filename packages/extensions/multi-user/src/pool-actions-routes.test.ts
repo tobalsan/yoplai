@@ -26,11 +26,9 @@ import type { PoolCatalogEntry } from "./catalog.js";
 
 const getMultiUserRuntime = vi.fn();
 
-vi.mock("./index.js", async () => {
-  const actual =
-    await vi.importActual<typeof import("./index.js")>("./index.js");
-  return { ...actual, getMultiUserRuntime };
-});
+vi.mock("./runtime-state.js", () => ({
+  getMultiUserRuntime,
+}));
 
 const getLoadedExtensions = vi.fn(() => [{ id: "multiUser" }]);
 
@@ -177,9 +175,11 @@ beforeEach(async () => {
     ["team-blue", "Blue"],
     ["team-green", "Green"],
   ] as const) {
-    db.prepare(
-      "INSERT INTO teams (id, name, createdBy) VALUES (?, ?, ?)"
-    ).run(id, name, "admin-1");
+    db.prepare("INSERT INTO teams (id, name, createdBy) VALUES (?, ?, ?)").run(
+      id,
+      name,
+      "admin-1"
+    );
   }
 
   // Seed forks + memberships up front so the runtime built per request sees a

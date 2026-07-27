@@ -1,7 +1,15 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  afterEach,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  vi,
+} from "vitest";
 import { Hono } from "hono";
 import Database from "better-sqlite3";
 import {
@@ -15,11 +23,9 @@ import { createForkStore } from "./forks.js";
 
 const getMultiUserRuntime = vi.fn();
 
-vi.mock("./index.js", async () => {
-  const actual =
-    await vi.importActual<typeof import("./index.js")>("./index.js");
-  return { ...actual, getMultiUserRuntime };
-});
+vi.mock("./runtime-state.js", () => ({
+  getMultiUserRuntime,
+}));
 
 // Mirror the sibling admin-routes test's top-level mocks. Mocking the gateway
 // config + registry modules forces Vitest to hoist/apply all mocks (including
@@ -174,7 +180,9 @@ describe("admin fork/assignment routes", () => {
       req("/admin/forks/assign", { poolId: "scribe", teamId })
     );
     expect(res.status).toBe(201);
-    const body = (await res.json()) as { fork: { forkAgentId: string; teamId: string } };
+    const body = (await res.json()) as {
+      fork: { forkAgentId: string; teamId: string };
+    };
     expect(body.fork.forkAgentId).toBe("scribe");
     expect(body.fork.teamId).toBe(teamId);
     expect(fs.existsSync(path.join(homeDir, "agents", "scribe"))).toBe(true);
@@ -230,7 +238,9 @@ describe("admin fork/assignment routes", () => {
       })
     );
     expect(res.status).toBe(200);
-    const body = (await res.json()) as { forks: Array<{ forkAgentId: string }> };
+    const body = (await res.json()) as {
+      forks: Array<{ forkAgentId: string }>;
+    };
     expect(body.forks.map((f) => f.forkAgentId)).toEqual(["scribe"]);
   });
 });

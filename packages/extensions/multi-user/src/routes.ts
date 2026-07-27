@@ -1,5 +1,5 @@
 import type { Hono } from "hono";
-import { getMultiUserRuntime } from "./index.js";
+import { getMultiUserRuntime } from "./runtime-state.js";
 import { registerMultiUserAdminRoutes } from "./admin-routes.js";
 import {
   getForwardedAuthContext,

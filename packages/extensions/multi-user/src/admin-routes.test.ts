@@ -8,9 +8,7 @@ import { createMembershipStore } from "./membership.js";
 function createInMemoryTeamStore(extraUserIds: string[] = []) {
   const db = new Database(":memory:");
   db.pragma("foreign_keys = ON");
-  db.exec(
-    "CREATE TABLE user (id TEXT PRIMARY KEY, name TEXT, email TEXT)"
-  );
+  db.exec("CREATE TABLE user (id TEXT PRIMARY KEY, name TEXT, email TEXT)");
   for (const id of ["admin-1", "superadmin-1", ...extraUserIds]) {
     db.prepare("INSERT OR IGNORE INTO user (id) VALUES (?)").run(id);
   }
@@ -26,12 +24,15 @@ const getAgent = vi.fn();
 const getActiveAgents = vi.fn();
 const getLoadedExtensions = vi.fn();
 
+vi.mock("./runtime-state.js", () => ({
+  getMultiUserRuntime,
+}));
+
 vi.mock("./index.js", async () => {
   const actual =
     await vi.importActual<typeof import("./index.js")>("./index.js");
   return {
     ...actual,
-    getMultiUserRuntime,
     getAgentFilter:
       (userId: string, role: string | string[] | null | undefined) =>
       <T extends { id: string }>(agents: T[]) => {
@@ -367,7 +368,8 @@ describe("multi-user admin routes", () => {
 
     const { registerMultiUserRoutes } = await importAdminRoutes();
     const { createAuthMiddleware } = await importAuthMiddleware();
-    const { getImpersonation, endImpersonation } = await import("./impersonation.js");
+    const { getImpersonation, endImpersonation } =
+      await import("./impersonation.js");
     const app = createAdminApp();
     app.use("*", createAuthMiddleware());
     registerMultiUserRoutes(app);
@@ -457,7 +459,11 @@ describe("multi-user admin routes", () => {
     expect(runtime.approvedByUserId.get("user-1")).toBe(0);
   });
 
-  async function patchRole(session: MockSession, targetId: string, role: string) {
+  async function patchRole(
+    session: MockSession,
+    targetId: string,
+    role: string
+  ) {
     const runtime = createRuntime({ session });
     getMultiUserRuntime.mockReturnValue(runtime.runtime);
 
@@ -860,10 +866,10 @@ describe("multi-user admin routes", () => {
     });
 
     const removeResponse = await app.request(
-      new Request(
-        `http://localhost/admin/teams/${team.id}/members/user-1`,
-        { method: "DELETE", headers: { cookie: "session=1" } }
-      )
+      new Request(`http://localhost/admin/teams/${team.id}/members/user-1`, {
+        method: "DELETE",
+        headers: { cookie: "session=1" },
+      })
     );
     expect(removeResponse.status).toBe(200);
     await expect(removeResponse.json()).resolves.toEqual({

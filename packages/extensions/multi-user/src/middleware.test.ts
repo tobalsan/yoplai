@@ -3,7 +3,7 @@ import { Hono } from "hono";
 
 const getMultiUserRuntime = vi.fn();
 
-vi.mock("./index.js", () => ({
+vi.mock("./runtime-state.js", () => ({
   getMultiUserRuntime,
 }));
 
@@ -549,8 +549,10 @@ describe("multi-user middleware", () => {
       db: { prepare },
     });
 
-    const { startImpersonation, endImpersonation } = await import("./impersonation.js");
-    const { createAuthMiddleware, getRequestAuthContext } = await import("./middleware.js");
+    const { startImpersonation, endImpersonation } =
+      await import("./impersonation.js");
+    const { createAuthMiddleware, getRequestAuthContext } =
+      await import("./middleware.js");
     startImpersonation("session-1", "user-2");
 
     const app = new Hono();
@@ -606,8 +608,10 @@ describe("multi-user middleware", () => {
       },
     });
 
-    const { startImpersonation, endImpersonation } = await import("./impersonation.js");
-    const { createAuthMiddleware, getRequestAuthContext } = await import("./middleware.js");
+    const { startImpersonation, endImpersonation } =
+      await import("./impersonation.js");
+    const { createAuthMiddleware, getRequestAuthContext } =
+      await import("./middleware.js");
     startImpersonation("apikey:key-1", "user-2");
 
     const app = new Hono();
@@ -682,9 +686,8 @@ describe("multi-user middleware", () => {
     for (const role of ["admin", "superadmin"]) {
       vi.resetModules();
       mockSessionRole(role);
-      const { createAuthMiddleware, requireAdmin } = await import(
-        "./middleware.js"
-      );
+      const { createAuthMiddleware, requireAdmin } =
+        await import("./middleware.js");
       const app = new Hono();
       app.use("/api/*", createAuthMiddleware());
       app.get("/api/admin", requireAdmin(), (c) => c.json({ ok: true }));
@@ -698,9 +701,8 @@ describe("multi-user middleware", () => {
 
   it("requireSuperadmin allows superadmin", async () => {
     mockSessionRole("superadmin");
-    const { createAuthMiddleware, requireSuperadmin } = await import(
-      "./middleware.js"
-    );
+    const { createAuthMiddleware, requireSuperadmin } =
+      await import("./middleware.js");
     const app = new Hono();
     app.use("/api/*", createAuthMiddleware());
     app.get("/api/su", requireSuperadmin(), (c) => c.json({ ok: true }));
@@ -715,9 +717,8 @@ describe("multi-user middleware", () => {
     for (const role of ["admin", "user"]) {
       vi.resetModules();
       mockSessionRole(role);
-      const { createAuthMiddleware, requireSuperadmin } = await import(
-        "./middleware.js"
-      );
+      const { createAuthMiddleware, requireSuperadmin } =
+        await import("./middleware.js");
       const app = new Hono();
       app.use("/api/*", createAuthMiddleware());
       app.get("/api/su", requireSuperadmin(), (c) => c.json({ ok: true }));

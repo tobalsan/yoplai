@@ -3,50 +3,22 @@ import {
   type AgentConfig,
   type Extension,
   type ExtensionContext,
-  type ExtensionLogger,
 } from "@yoplai/shared";
 import type { Hono } from "hono";
-import type Database from "better-sqlite3";
 import { initializeMultiUserDatabase } from "./db.js";
 import { createMultiUserAuth } from "./auth.js";
 import { registerMultiUserRoutes } from "./routes.js";
-import {
-  createAgentAssignmentStore,
-  type AgentAssignmentStore,
-} from "./assignments.js";
-import { createTeamStore, type TeamStore } from "./teams.js";
-import {
-  createMembershipStore,
-  type MembershipStore,
-} from "./membership.js";
-import { createForkStore, type ForkStore } from "./forks.js";
-import { createAccessResolver, type AccessResolver } from "./access.js";
-import {
-  createPoolCatalogResolver,
-  type PoolCatalogResolver,
-} from "./catalog.js";
+import { createAgentAssignmentStore } from "./assignments.js";
+import { createTeamStore } from "./teams.js";
+import { createMembershipStore } from "./membership.js";
+import { createForkStore } from "./forks.js";
+import { createAccessResolver } from "./access.js";
+import { createPoolCatalogResolver } from "./catalog.js";
+import { getMultiUserRuntime, setMultiUserRuntime } from "./runtime-state.js";
 import path from "node:path";
 
-export type MultiUserRuntime = {
-  auth: Awaited<ReturnType<typeof createMultiUserAuth>>;
-  db: Database.Database;
-  assignments: AgentAssignmentStore;
-  teams: TeamStore;
-  membership: MembershipStore;
-  forks: ForkStore;
-  access: AccessResolver;
-  catalog: PoolCatalogResolver;
-  /** Current pool agent ids (the catalog card keys), in config order. */
-  getPoolAgentIds(): string[];
-  getAgent: ExtensionContext["getAgent"];
-  logger: ExtensionLogger;
-};
-
-let runtime: MultiUserRuntime | null = null;
-
-export function getMultiUserRuntime(): MultiUserRuntime | null {
-  return runtime;
-}
+export { getMultiUserRuntime } from "./runtime-state.js";
+export type { MultiUserRuntime } from "./runtime-state.js";
 
 const STAFF_ROLES = ["admin", "superadmin"];
 
@@ -141,7 +113,8 @@ export const multiUserExtension: Extension = {
   id: "multiUser",
   displayName: "Multi-User Auth",
   factory: true,
-  description: "OAuth authentication, sessions, and per-user agent access control",
+  description:
+    "OAuth authentication, sessions, and per-user agent access control",
   dependencies: [],
   configSchema: MultiUserConfigSchema,
   routePrefixes: [
@@ -202,7 +175,7 @@ export const multiUserExtension: Extension = {
       isAgentRunnable: (agentId) => Boolean(ctx.getAgent(agentId)),
       getTeamName: (teamId) => teams.getTeam(teamId)?.name ?? null,
     });
-    runtime = {
+    setMultiUserRuntime({
       auth,
       db,
       assignments,
@@ -215,13 +188,13 @@ export const multiUserExtension: Extension = {
         (ctx.getConfig().pool ?? []).map((agent) => agent.id),
       getAgent: ctx.getAgent,
       logger: ctx.logger,
-    };
+    });
   },
   async stop() {
-    runtime?.db.close();
-    runtime = null;
+    getMultiUserRuntime()?.db.close();
+    setMultiUserRuntime(null);
   },
   capabilities() {
-    return runtime ? ["multi-user"] : [];
+    return getMultiUserRuntime() ? ["multi-user"] : [];
   },
 };

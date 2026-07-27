@@ -6,13 +6,10 @@ import {
   requireAdmin,
   requireSuperadmin,
 } from "./middleware.js";
-import { getMultiUserRuntime } from "./index.js";
+import { getMultiUserRuntime } from "./runtime-state.js";
 import { logImpersonationEvent, startImpersonation } from "./impersonation.js";
 import { isDuplicateTeamNameError, isTeamNotFoundError } from "./teams.js";
-import {
-  isForkNotFoundError,
-  isPoolAgentNotFoundError,
-} from "./forks.js";
+import { isForkNotFoundError, isPoolAgentNotFoundError } from "./forks.js";
 
 const UpdateAdminUserBodySchema = z
   .object({
@@ -44,11 +41,7 @@ const StartImpersonationBodySchema = z.object({
   targetUserId: z.string().min(1),
 });
 
-const optionalNullableString = z
-  .string()
-  .trim()
-  .nullable()
-  .optional();
+const optionalNullableString = z.string().trim().nullable().optional();
 
 const CreateTeamBodySchema = z.object({
   name: z.string().trim().min(1, "name is required"),
@@ -347,25 +340,21 @@ export function registerMultiUserAdminRoutes(app: Hono): void {
     });
   });
 
-  app.delete(
-    "/admin/teams/:teamId/members/:userId",
-    requireAdmin(),
-    (c) => {
-      const teamId = c.req.param("teamId");
-      const userId = c.req.param("userId");
-      const { teams, membership } = getRuntimeOrThrow();
-      if (!teams.getTeam(teamId)) {
-        return c.json({ error: "Team not found" }, 404);
-      }
-
-      // remove is idempotent too: removing a non-member is a no-op.
-      membership.removeMember(teamId, userId);
-      return c.json({
-        teamId,
-        members: membership.listMemberProfilesForTeam(teamId),
-      });
+  app.delete("/admin/teams/:teamId/members/:userId", requireAdmin(), (c) => {
+    const teamId = c.req.param("teamId");
+    const userId = c.req.param("userId");
+    const { teams, membership } = getRuntimeOrThrow();
+    if (!teams.getTeam(teamId)) {
+      return c.json({ error: "Team not found" }, 404);
     }
-  );
+
+    // remove is idempotent too: removing a non-member is a no-op.
+    membership.removeMember(teamId, userId);
+    return c.json({
+      teamId,
+      members: membership.listMemberProfilesForTeam(teamId),
+    });
+  });
 
   app.put("/admin/agents/:agentId/assignments", requireAdmin(), async (c) => {
     const parsed = SetAgentAssignmentsBodySchema.safeParse(await c.req.json());
@@ -388,12 +377,14 @@ export function registerMultiUserAdminRoutes(app: Hono): void {
       const placeholders = userIds.map(() => "?").join(", ");
       const existingUserIds = new Set(
         (
-          db.prepare(`SELECT id FROM user WHERE id IN (${placeholders})`).all(
-            ...userIds
-          ) as Array<{ id: string }>
+          db
+            .prepare(`SELECT id FROM user WHERE id IN (${placeholders})`)
+            .all(...userIds) as Array<{ id: string }>
         ).map((row) => row.id)
       );
-      const invalidUserIds = userIds.filter((userId) => !existingUserIds.has(userId));
+      const invalidUserIds = userIds.filter(
+        (userId) => !existingUserIds.has(userId)
+      );
 
       if (invalidUserIds.length > 0) {
         return c.json(

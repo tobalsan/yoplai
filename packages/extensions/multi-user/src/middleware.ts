@@ -1,5 +1,5 @@
 import type { Context, MiddlewareHandler } from "hono";
-import { getMultiUserRuntime } from "./index.js";
+import { getMultiUserRuntime } from "./runtime-state.js";
 import { getImpersonation } from "./impersonation.js";
 
 export const FORWARDED_AUTH_CONTEXT_HEADER = "x-yoplai-auth-context";
@@ -115,7 +115,9 @@ function refreshApprovalFromDb(authContext: RequestAuthContext): void {
   }
 }
 
-function applyActiveImpersonation(authContext: RequestAuthContext): RequestAuthContext {
+function applyActiveImpersonation(
+  authContext: RequestAuthContext
+): RequestAuthContext {
   if (!hasAdminRole(authContext)) return authContext;
   if (authContext.session.id.startsWith("apikey:")) return authContext;
 
@@ -242,9 +244,7 @@ type BearerVerifyResult =
   | { kind: "invalid" }
   | { kind: "forbidden"; authContext: RequestAuthContext };
 
-async function verifyBearer(
-  token: string
-): Promise<BearerVerifyResult | null> {
+async function verifyBearer(token: string): Promise<BearerVerifyResult | null> {
   const runtime = getMultiUserRuntime();
   if (!runtime) return null;
 
@@ -384,7 +384,10 @@ export const createAuthMiddleware = (): MiddlewareHandler => {
         const authContext = normalizeAuthContext(session);
         refreshApprovalFromDb(authContext);
         if (isApproved(authContext)) {
-          c.set(REQUEST_AUTH_CONTEXT_KEY, applyActiveImpersonation(authContext));
+          c.set(
+            REQUEST_AUTH_CONTEXT_KEY,
+            applyActiveImpersonation(authContext)
+          );
         }
       }
       await next();
@@ -406,15 +409,21 @@ export const createAuthMiddleware = (): MiddlewareHandler => {
   };
 };
 
-export function hasActiveImpersonation(authContext: RequestAuthContext | null): boolean {
+export function hasActiveImpersonation(
+  authContext: RequestAuthContext | null
+): boolean {
   return Boolean(authContext?.impersonator);
 }
 
 export const requireNotImpersonating = (): MiddlewareHandler => {
   return async (c, next) => {
-    const authContext = getRequestAuthContext(c) ?? getForwardedAuthContext(c.req.raw.headers);
+    const authContext =
+      getRequestAuthContext(c) ?? getForwardedAuthContext(c.req.raw.headers);
     if (hasActiveImpersonation(authContext)) {
-      return c.json({ error: "read_only_impersonation", code: "READ_ONLY_IMPERSONATION" }, 403);
+      return c.json(
+        { error: "read_only_impersonation", code: "READ_ONLY_IMPERSONATION" },
+        403
+      );
     }
     await next();
   };
