@@ -368,6 +368,16 @@ describe("createSlackBot", () => {
     expect(apps[0].stop).toHaveBeenCalledOnce();
   });
 
+  it("does not subscribe to broadcasts when Socket Mode startup fails", async () => {
+    const { createSlackBot } = await import("./bot.js");
+    const bot = createSlackBot([agent], config);
+    apps[0].start.mockRejectedValueOnce(new Error("connection failed"));
+
+    await expect(bot?.start()).rejects.toThrow("connection failed");
+
+    expect(streamHandlers).toHaveLength(0);
+  });
+
   it("records history only after messages pass gating", async () => {
     const { createSlackBot } = await import("./bot.js");
     const bot = createSlackBot([agent], {

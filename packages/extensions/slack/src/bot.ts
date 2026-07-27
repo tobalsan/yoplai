@@ -1323,6 +1323,7 @@ export function createSlackBot(
       } catch {
         botUserId = undefined;
       }
+      await app.start();
       cleanupBroadcasts = setupSlackBroadcasts({
         client,
         textAccumulators,
@@ -1330,7 +1331,6 @@ export function createSlackBot(
         getBroadcastChannel: () => componentConfig.broadcastToChannel,
         logPrefix,
       });
-      await app.start();
       console.log(`${logPrefix} Started Socket Mode bot`);
     },
     stop: async () => {
@@ -1598,6 +1598,7 @@ export function createSlackAgentBot(agent: AgentConfig): SlackBot | null {
       } catch {
         botUserId = undefined;
       }
+      await app.start();
       cleanupBroadcasts = setupSlackBroadcasts({
         client,
         textAccumulators,
@@ -1605,7 +1606,6 @@ export function createSlackAgentBot(agent: AgentConfig): SlackBot | null {
         getBroadcastChannel: () => agentSlackConfig.broadcastToChannel,
         logPrefix,
       });
-      await app.start();
       console.log(`${logPrefix} Started Socket Mode bot`);
     },
     stop: async () => {
