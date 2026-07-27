@@ -10,6 +10,30 @@ import { getProject } from "../projects/index.js";
 
 const INDEX_FILE = "lead-sessions.json";
 const SESSIONS_DIR = "sessions";
+const indexMutationQueues = new Map<string, Promise<void>>();
+
+async function serializeIndexMutation<T>(
+  projectDir: string,
+  mutation: () => Promise<T>
+): Promise<T> {
+  const key = path.resolve(indexPath(projectDir));
+  const previous = indexMutationQueues.get(key) ?? Promise.resolve();
+  let release!: () => void;
+  const current = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const queued = previous.catch(() => {}).then(() => current);
+  indexMutationQueues.set(key, queued);
+  await previous.catch(() => {});
+  try {
+    return await mutation();
+  } finally {
+    release();
+    if (indexMutationQueues.get(key) === queued) {
+      indexMutationQueues.delete(key);
+    }
+  }
+}
 
 type ProjectForMigration = {
   id: string;
@@ -152,19 +176,23 @@ async function migrateLegacySessions(
 export async function readLeadSessionsForProject(
   project: ProjectForMigration
 ): Promise<LeadSession[]> {
-  const current = await readJsonIndex(project.absolutePath);
-  const migrated = await migrateLegacySessions(project, current);
-  if (migrated.changed) {
-    await writeJsonIndex(project.absolutePath, migrated.sessions);
-  }
-  return migrated.sessions;
+  return serializeIndexMutation(project.absolutePath, async () => {
+    const current = await readJsonIndex(project.absolutePath);
+    const migrated = await migrateLegacySessions(project, current);
+    if (migrated.changed) {
+      await writeJsonIndex(project.absolutePath, migrated.sessions);
+    }
+    return migrated.sessions;
+  });
 }
 
 export async function writeLeadSessionsForProject(
   projectDir: string,
   sessions: LeadSession[]
 ): Promise<void> {
-  await writeJsonIndex(projectDir, sessions);
+  await serializeIndexMutation(projectDir, () =>
+    writeJsonIndex(projectDir, sessions)
+  );
 }
 
 export async function updateLeadSessionInProject(
@@ -172,16 +200,41 @@ export async function updateLeadSessionInProject(
   id: string,
   updater: (session: LeadSession) => LeadSession | null
 ): Promise<LeadSession | null> {
-  const sessions = await readJsonIndex(projectDir);
-  let updated: LeadSession | null = null;
-  const next = sessions.map((session) => {
-    if (session.id !== id) return session;
-    updated = updater(session);
-    return updated ?? session;
+  return serializeIndexMutation(projectDir, async () => {
+    const sessions = await readJsonIndex(projectDir);
+    let updated: LeadSession | null = null;
+    const next = sessions.map((session) => {
+      if (session.id !== id) return session;
+      updated = updater(session);
+      return updated ?? session;
+    });
+    if (!updated) return null;
+    await writeJsonIndex(projectDir, next);
+    return updated;
   });
-  if (!updated) return null;
-  await writeJsonIndex(projectDir, next);
-  return updated;
+}
+
+async function appendLeadSession(
+  projectDir: string,
+  session: LeadSession
+): Promise<void> {
+  await serializeIndexMutation(projectDir, async () => {
+    const sessions = await readJsonIndex(projectDir);
+    await writeJsonIndex(projectDir, [...sessions, session]);
+  });
+}
+
+async function removeLeadSessionFromProject(
+  projectDir: string,
+  id: string
+): Promise<void> {
+  await serializeIndexMutation(projectDir, async () => {
+    const sessions = await readJsonIndex(projectDir);
+    await writeJsonIndex(
+      projectDir,
+      sessions.filter((session) => session.id !== id)
+    );
+  });
 }
 
 export async function listLeadSessions(
@@ -232,9 +285,9 @@ export async function createLeadSession(
     transcriptRef,
   };
   const project = projectResult.data;
-  const sessions = await readLeadSessionsForProject(project);
+  await readLeadSessionsForProject(project);
   await ensureTranscriptScaffold(project.absolutePath, session);
-  await writeJsonIndex(project.absolutePath, [...sessions, session]);
+  await appendLeadSession(project.absolutePath, session);
   return { ok: true, data: session };
 }
 
@@ -279,27 +332,31 @@ export async function patchLeadSession(
 ): Promise<LeadSessionResult> {
   const found = await findLeadSession(config, id);
   if (!found.ok) return found;
+  const title = input.title?.trim();
+  if (input.title !== undefined && !title) {
+    return { ok: false, error: "Title is required", status: 400 };
+  }
   const now = new Date().toISOString();
-  const nextSession: LeadSession = {
-    ...found.session,
-    updatedAt: now,
-  };
-  if (input.title !== undefined) {
-    const title = input.title.trim();
-    if (!title) return { ok: false, error: "Title is required", status: 400 };
-    nextSession.title = title;
-    nextSession.titleLocked = true;
-  }
-  if (input.archived !== undefined) {
-    if (input.archived)
-      nextSession.archivedAt = found.session.archivedAt ?? now;
-    else delete nextSession.archivedAt;
-  }
-  await writeJsonIndex(
+  const updated = await updateLeadSessionInProject(
     found.projectDir,
-    found.sessions.map((session) => (session.id === id ? nextSession : session))
+    id,
+    (current) => {
+      const next: LeadSession = { ...current, updatedAt: now };
+      if (title) {
+        next.title = title;
+        next.titleLocked = true;
+      }
+      if (input.archived !== undefined) {
+        if (input.archived) next.archivedAt = current.archivedAt ?? now;
+        else delete next.archivedAt;
+      }
+      return next;
+    }
   );
-  return { ok: true, data: nextSession };
+  if (!updated) {
+    return { ok: false, error: "Lead session not found", status: 404 };
+  }
+  return { ok: true, data: updated };
 }
 
 export async function deleteLeadSession(
@@ -320,10 +377,7 @@ export async function deleteLeadSession(
     force: true,
   });
   await removeEmptySessionsDir(found.projectDir);
-  await writeJsonIndex(
-    found.projectDir,
-    found.sessions.filter((session) => session.id !== id)
-  );
+  await removeLeadSessionFromProject(found.projectDir, id);
   return { ok: true, data: found.session };
 }
 
