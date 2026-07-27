@@ -18,11 +18,11 @@
  */
 
 import { loadConfig, getAgent, setLoadedConfig } from "../config/index.js";
-import { resolveStartupConfig, prepareStartupConfig } from "../config/validate.js";
 import {
-  getExtensionRuntime,
-  loadExtensions,
-} from "../extensions/registry.js";
+  resolveStartupConfig,
+  prepareStartupConfig,
+} from "../config/validate.js";
+import { getExtensionRuntime, loadExtensions } from "../extensions/registry.js";
 import { runAgent } from "../agents/index.js";
 import type { StreamEvent } from "@yoplai/shared";
 import { TrajectoryBuilder, type AtifTrajectory } from "./trajectory.js";
@@ -151,7 +151,7 @@ class EventCollector {
  */
 export async function runEval(opts: RunEvalOptions): Promise<RunEvalOutcome> {
   // 1. Load + resolve config (same path as `yoplai send`)
-  const rawConfig = loadConfig();
+  const rawConfig = loadConfig(opts.configPath);
   const resolvedStartupConfig = await resolveStartupConfig(rawConfig);
   const extensions = await loadExtensions(resolvedStartupConfig);
   const extensionRuntime = getExtensionRuntime();
@@ -167,6 +167,15 @@ export async function runEval(opts: RunEvalOptions): Promise<RunEvalOutcome> {
   if (!agent) {
     throw new Error(`Agent not found: ${opts.agentId}`);
   }
+
+  if (opts.modelOverride && !agent.model.provider) {
+    throw new Error(
+      `Cannot override model for agent ${agent.id}: configured model has no provider`
+    );
+  }
+  const model = opts.modelOverride
+    ? { provider: agent.model.provider!, model: opts.modelOverride }
+    : undefined;
 
   // 3. Run the agent, collecting events
   const collector = new EventCollector();
@@ -184,6 +193,7 @@ export async function runEval(opts: RunEvalOptions): Promise<RunEvalOutcome> {
       // Each eval invocation is a fresh single-turn session.
       sessionId: `eval-${Date.now()}`,
       extensionRuntime,
+      model,
       source: "cli",
       onEvent: (event) => collector.ingest(event),
     });
@@ -196,8 +206,7 @@ export async function runEval(opts: RunEvalOptions): Promise<RunEvalOutcome> {
 
   // 4. Build EvalResult + ATIF trajectory
   const status = runError ? "error" : "completed";
-  const modelName =
-    opts.modelOverride ?? `${agent.model.provider}/${agent.model.model}`;
+  const modelName = `${model?.provider ?? agent.model.provider}/${model?.model ?? agent.model.model}`;
 
   const result: EvalResult = {
     status,

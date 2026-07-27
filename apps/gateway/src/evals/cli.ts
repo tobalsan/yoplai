@@ -56,18 +56,14 @@ export function registerEvalCommands(program: Command): void {
     .option("-c, --config <path>", "Override yoplai.json path")
     .option("-m, --model <id>", "Override the agent's configured model")
     .action(async (opts: EvalRunOpts) => {
-      // Honor --config by setting YOPLAI_HOME's config path before loadConfig
-      // runs. loadConfig() reads $YOPLAI_HOME/yoplai.json by default; we set
-      // YOPLAI_CONFIG (still respected as a fallback) for the override.
-      if (opts.config) {
-        process.env.YOPLAI_CONFIG = path.resolve(opts.config);
-      }
-
       let instruction: string;
       try {
         instruction = await fs.readFile(opts.instructionFile, "utf-8");
       } catch (err) {
-        logError(`Failed to read instruction file ${opts.instructionFile}`, err);
+        logError(
+          `Failed to read instruction file ${opts.instructionFile}`,
+          err
+        );
         process.exit(2);
       }
 
@@ -76,7 +72,7 @@ export function registerEvalCommands(program: Command): void {
           agentId: opts.agent,
           instruction,
           modelOverride: opts.model,
-          configPath: opts.config,
+          configPath: opts.config ? path.resolve(opts.config) : undefined,
         });
 
         await writeJsonAtomic(opts.output, result);
