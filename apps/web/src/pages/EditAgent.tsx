@@ -196,6 +196,11 @@ export function EditAgent() {
     setExtError(null);
     try {
       const enabling = !ext.enabled;
+      if (ext.enabled && ext.configured === false) {
+        if (ext.tier === "bespoke-route" && ext.configRoutePath) void navigate(ext.configRoutePath);
+        else if (ext.tier === "auto-form") void navigate(autoFormPath(params.agentId, ext.id));
+        return;
+      }
       const next = await patchAgentExtension(params.agentId, ext.id, {
         enabled: enabling,
       });
@@ -326,6 +331,9 @@ export function EditAgent() {
                           <span class="edit-agent-ext-desc">
                             {ext.description}
                           </span>
+                          <Show when={ext.enabled && ext.configured === false}>
+                            <span class="edit-agent-ext-desc">Needs configuration</span>
+                          </Show>
                         </div>
                       </div>
                     </A>

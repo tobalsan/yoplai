@@ -8,6 +8,8 @@ export type ExtensionCatalogEntry = {
   description: string;
   builtIn: boolean;
   enabled: boolean;
+  configured: boolean;
+  missingConfig: string[];
   configurable: boolean;
   configJsonSchema: Record<string, unknown> | null;
   requiredSecrets: string[];

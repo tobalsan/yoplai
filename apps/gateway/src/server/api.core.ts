@@ -10,6 +10,7 @@ import {
   isAgentActive,
   loadConfig,
   reloadConfig,
+  resolveAgentEnv,
   resolveWorkspaceDir,
   setLoadedConfig,
 } from "../config/index.js";
@@ -720,8 +721,28 @@ api.patch("/agents/:id/extensions/:extensionId", async (c) => {
     agent.workspaceDir ?? agent.workspace
   );
   try {
-    await updateAgentExtensionConfig(workspaceDir, extensionId, patch);
+    await updateAgentExtensionConfig(workspaceDir, extensionId, patch, (nextConfig, pendingEnv) => {
+      const nextExtensions = nextConfig.extensions as AgentConfig["extensions"];
+      const prospectiveAgent = { ...agent, extensions: nextExtensions };
+      const enabled = (nextExtensions as Record<string, { enabled?: boolean }> | undefined)?.[extensionId]?.enabled !== false;
+      if (!enabled || !targetExtension?.validateAgentConfig) return;
+      const result = targetExtension.validateAgentConfig(prospectiveAgent, config, {
+        ...resolveAgentEnv(agent, config),
+        ...pendingEnv,
+      });
+      if (!result.valid) {
+        const error = new Error("Extension configuration is invalid") as Error & { fields: string[] };
+        error.fields = result.errors;
+        throw error;
+      }
+    });
   } catch (error) {
+    if (error instanceof Error && "fields" in error) {
+      return c.json(
+        { error: "Extension configuration is invalid", fields: error.fields },
+        422
+      );
+    }
     return c.json(
       { error: (error as Error).message || "Failed to update extension" },
       400

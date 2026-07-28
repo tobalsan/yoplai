@@ -185,6 +185,16 @@ describe("tool extensions", () => {
     });
   });
 
+  it("validates one agent using the supplied env map", () => {
+    const extension = defineToolExtension({
+      id: "sample", displayName: "Sample", description: "Sample", configSchema: z.object({ token: z.string(), count: z.number() }), requiredSecrets: ["token"], createTools: () => [],
+    });
+    const config = GatewayConfigSchema.parse({ version: 2, agents: [{ id: "main", name: "Main", workspace: "~/agents/main", model: { provider: "anthropic", model: "claude" }, extensions: { sample: { enabled: true, token: "$env:TOKEN", count: "bad" } } }], extensions: { sample: {} } });
+    expect(extension.validateAgentConfig?.(config.agents[0]!, config, {})).toEqual({ valid: false, errors: ["TOKEN"] });
+    expect(extension.validateAgentConfig?.(config.agents[0]!, config, { TOKEN: "secret" })).toEqual({ valid: false, errors: ["count"] });
+    expect(extension.validateAgentConfig?.({ ...config.agents[0]!, extensions: { sample: { enabled: true, token: "$env:TOKEN", count: 1 } } }, config, { TOKEN: "secret" })).toEqual({ valid: true, errors: [] });
+  });
+
   it("passes through a self-registered agent-keyed configRoute", () => {
     const extension = defineToolExtension({
       id: "mcp",

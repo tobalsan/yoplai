@@ -158,4 +158,19 @@ describe("ExtensionRuntime", () => {
       "Duplicate extension agent tool: duplicate"
     );
   });
+
+  it("skips a failing extension without exposing its secret", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const runtime = new ExtensionRuntime();
+    runtime.load([
+      extension({ id: "broken", getAgentTools: () => { throw new Error('missing required secret "token" value=super-secret'); }, getSystemPromptContributions: () => { throw new Error('missing required secret "token" value=super-secret'); } }),
+      extension({ id: "healthy", getAgentTools: () => [{ name: "ok", description: "ok", parameters: {}, execute: async () => undefined }], getSystemPromptContributions: () => "healthy" }),
+    ]);
+
+    await expect(runtime.getTools(agent, config)).resolves.toMatchObject([{ name: "ok" }]);
+    await expect(runtime.getPromptContributions(agent, config)).resolves.toEqual(["healthy"]);
+    expect(warn).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({ extensionId: "broken", agentId: "main", fields: ["token"] }));
+    expect(JSON.stringify(warn.mock.calls)).not.toContain("super-secret");
+    warn.mockRestore();
+  });
 });

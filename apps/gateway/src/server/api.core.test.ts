@@ -772,7 +772,8 @@ describe("api core session resolution", () => {
       expect(updateAgentExtensionConfig).toHaveBeenCalledWith(
         "/ws/alpha",
         "acme",
-        { enabled: true }
+        { enabled: true },
+        expect.any(Function)
       );
       // Config cache is invalidated and the newly read config is resolved
       // before it becomes the live runtime config.
@@ -852,7 +853,8 @@ describe("api core session resolution", () => {
       expect(updateAgentExtensionConfig).toHaveBeenCalledWith(
         "/ws/alpha",
         "acme",
-        { enabled: true, config: { region: "eu" }, secrets: { apiKey: "sk-1" } }
+        { enabled: true, config: { region: "eu" }, secrets: { apiKey: "sk-1" } },
+        expect.any(Function)
       );
     });
 
@@ -896,7 +898,8 @@ describe("api core session resolution", () => {
       expect(updateAgentExtensionConfig).toHaveBeenCalledWith(
         "/ws/poolie-fork",
         "acme",
-        { enabled: false }
+        { enabled: false },
+        expect.any(Function)
       );
     });
 
@@ -927,7 +930,8 @@ describe("api core session resolution", () => {
       expect(updateAgentExtensionConfig).toHaveBeenCalledWith(
         "/ws/alpha",
         "acme",
-        { enabled: true }
+        { enabled: true },
+        expect.any(Function)
       );
     });
 
