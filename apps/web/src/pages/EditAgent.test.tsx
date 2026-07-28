@@ -452,6 +452,38 @@ describe("EditAgent", () => {
     expect(after.getAttribute("aria-checked")).toBe("true");
   });
 
+  it("locks root-managed extensions without sending a patch", async () => {
+    setSession("admin");
+    fetchPoolMock.mockResolvedValue([agent({ id: "scribe" })]);
+    fetchAgentExtensionsMock.mockResolvedValue([
+      {
+        id: "slack",
+        displayName: "Slack",
+        description: "Slack channel",
+        builtIn: true,
+        enabled: true,
+        configurable: true,
+        managedAtRoot: true,
+        configJsonSchema: null,
+        requiredSecrets: [],
+        advancedConfigFields: [],
+        configValues: {},
+        configRoutePath: null,
+        tier: "toggle-only",
+      },
+    ]);
+    await mountEdit("scribe");
+
+    const toggle = container.querySelector<HTMLButtonElement>(
+      ".edit-agent-ext-item button.edit-agent-ext-state"
+    )!;
+    expect(toggle.getAttribute("aria-checked")).toBe("true");
+    expect(toggle.disabled).toBe(true);
+    toggle.click();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(patchAgentExtensionMock).not.toHaveBeenCalled();
+  });
+
   it("disables extension enable toggles until a fork exists", async () => {
     setSession("admin");
     fetchPoolMock.mockResolvedValue([agent({ id: "scribe" })]);

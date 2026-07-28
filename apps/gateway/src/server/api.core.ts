@@ -666,6 +666,17 @@ api.patch("/agents/:id/extensions/:extensionId", async (c) => {
     );
   }
 
+  const catalog = await buildExtensionCatalog(config, agent);
+  const targetEntry = catalog.find((entry) => entry.id === extensionId);
+  if (targetEntry?.managedAtRoot) {
+    return c.json(
+      {
+        error: `${extensionId} is configured at the agent.yaml root; edit agent.yaml to change it`,
+      },
+      409
+    );
+  }
+
   let body: unknown;
   try {
     body = await c.req.json();

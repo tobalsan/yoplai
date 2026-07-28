@@ -191,6 +191,7 @@ export function EditAgent() {
   // surface off never redirects into it.
   const toggleExtension = async (ext: ExtensionCatalogEntry) => {
     if (pending()) return;
+    if (ext.managedAtRoot) return;
     if (!ext.enabled && ext.configurable === false) return;
     setPending(ext.id);
     setExtError(null);
@@ -347,10 +348,13 @@ export function EditAgent() {
                       classList={{ "is-on": ext.enabled }}
                       disabled={
                         pending() !== null ||
+                        ext.managedAtRoot ||
                         (!ext.enabled && ext.configurable === false)
                       }
                       title={
-                        !ext.enabled && ext.configurable === false
+                        ext.managedAtRoot
+                          ? "Configured in agent.yaml — edit the file to change."
+                          : !ext.enabled && ext.configurable === false
                           ? disabledEnableMessage()
                           : undefined
                       }

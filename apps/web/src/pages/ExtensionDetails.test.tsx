@@ -47,6 +47,7 @@ function entry(partial: Partial<ExtensionCatalogEntry> = {}): ExtensionCatalogEn
     configured: true,
     missingConfig: [],
     configurable: true,
+    managedAtRoot: false,
     configJsonSchema: null,
     requiredSecrets: [],
     advancedConfigFields: [],

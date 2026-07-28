@@ -73,7 +73,8 @@ async function writeExternalExtension(
 }
 
 function makeAgent(
-  extensions?: Record<string, Record<string, unknown>>
+  extensions?: Record<string, Record<string, unknown>>,
+  rootConfig?: Record<string, unknown>
 ): AgentConfig {
   return GatewayConfigSchema.parse({
     version: 2,
@@ -84,6 +85,7 @@ function makeAgent(
         workspace: "~/agents/main",
         model: { provider: "anthropic", model: "claude" },
         ...(extensions ? { extensions } : {}),
+        ...rootConfig,
       },
     ],
     extensions: {},
@@ -191,6 +193,62 @@ describe("buildExtensionCatalog", () => {
     const catalog = await buildExtensionCatalog(configWith(agent, root), agent);
     const bare = catalog.find((e) => e.id === "bare-ext");
     expect(bare?.enabled).toBe(true);
+  });
+
+  it("reports root-configured stock extensions as enabled and managed", async () => {
+    const agent = makeAgent(undefined, {
+      slack: { token: "x", appToken: "x" },
+    });
+    const catalog = await buildExtensionCatalog(configWith(agent, root), agent);
+    const slack = catalog.find((entry) => entry.id === "slack");
+
+    expect(slack).toMatchObject({ enabled: true, managedAtRoot: true });
+  });
+
+  it("gives explicit agent extension config precedence over root config", async () => {
+    const disabled = makeAgent(
+      { slack: { enabled: false } },
+      { slack: { token: "x", appToken: "x" } }
+    );
+    const enabled = makeAgent(
+      { slack: {} },
+      { slack: { token: "x", appToken: "x" } }
+    );
+
+    const disabledEntry = (await buildExtensionCatalog(configWith(disabled, root), disabled)).find(
+      (entry) => entry.id === "slack"
+    );
+    const enabledEntry = (await buildExtensionCatalog(configWith(enabled, root), enabled)).find(
+      (entry) => entry.id === "slack"
+    );
+
+    expect(disabledEntry).toMatchObject({ enabled: false, managedAtRoot: false });
+    expect(enabledEntry).toMatchObject({ enabled: true, managedAtRoot: false });
+  });
+
+  it("requires non-empty root config and ignores extensions without root keys", async () => {
+    await writeExternalExtension(root, "no-root");
+    const emptyWebhooks = makeAgent(undefined, { webhooks: {} });
+    const populatedWebhooks = makeAgent(undefined, {
+      webhooks: { incoming: { prompt: "hello" } },
+    });
+    const neither = makeAgent();
+
+    const emptyEntry = (await buildExtensionCatalog(
+      configWith(emptyWebhooks, root),
+      emptyWebhooks
+    )).find((entry) => entry.id === "webhooks");
+    const populatedEntry = (await buildExtensionCatalog(
+      configWith(populatedWebhooks, root),
+      populatedWebhooks
+    )).find((entry) => entry.id === "webhooks");
+    const noRootEntry = (await buildExtensionCatalog(configWith(neither, root), neither)).find(
+      (entry) => entry.id === "no-root"
+    );
+
+    expect(emptyEntry).toMatchObject({ enabled: false, managedAtRoot: false });
+    expect(populatedEntry).toMatchObject({ enabled: true, managedAtRoot: true });
+    expect(noRootEntry).toMatchObject({ enabled: false, managedAtRoot: false });
   });
 
   it("assigns tiers: bespoke-route > auto-form > toggle-only", async () => {
