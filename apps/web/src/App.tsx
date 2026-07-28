@@ -41,19 +41,12 @@ import {
   getExtensionHome,
   renderExtensionRoutes,
 } from "./lib/web-route-registry";
+import { documentTitle } from "./lib/document-title";
+import { stripBase } from "./lib/path";
 
 const LazyAuthGuard = lazy(() => import("./auth/AuthGuard"));
 const LazyLoginPage = lazy(() => import("./pages/Login"));
 const LazyAdminUsersPage = lazy(() => import("./pages/admin/Users"));
-
-const basePath = import.meta.env.BASE_URL?.replace(/\/+$/, "") ?? "";
-
-function stripBase(pathname: string): string {
-  if (basePath && pathname.startsWith(basePath)) {
-    return pathname.slice(basePath.length) || "/";
-  }
-  return pathname;
-}
 
 const QUICK_CHAT_LAST_AGENT_KEY = "yoplai:quick-chat-last-agent";
 const LEGACY_QUICK_CHAT_LAST_AGENT_KEY = "aihub:quick-chat-last-agent";
@@ -110,14 +103,39 @@ function Layout(props: { children?: JSX.Element }) {
   const quickChatFabLabel = createMemo(
     () => selectedQuickChatAgent()?.name ?? "Lead agent"
   );
+  const chatAgentId = createMemo(() => {
+    const match = stripBase(location.pathname).match(/^\/chat\/([^/]+)/);
+    return match ? decodeURIComponent(match[1]) : null;
+  });
+  const [chatAgents] = createResource(
+    () =>
+      chatAgentId() &&
+      capabilitiesReady() &&
+      (!capabilities.multiUser || Boolean(capabilities.user))
+        ? chatAgentId()
+        : null,
+    () => fetchAgents()
+  );
+  const chatAgentName = createMemo(
+    () => chatAgents()?.find((agent) => agent.id === chatAgentId())?.name
+  );
 
-  // Set document title based on dev mode
   onMount(() => {
-    if (import.meta.env.VITE_YOPLAI_DEV === "true" || import.meta.env.VITE_AIHUB_DEV === "true") {
-      const port = import.meta.env.VITE_YOPLAI_UI_PORT ?? import.meta.env.VITE_AIHUB_UI_PORT ?? "?";
-      document.title = `[DEV :${port}] Yoplai`;
-    }
     void loadCapabilities().catch(() => undefined);
+  });
+
+  createEffect(() => {
+    const devPrefix =
+      import.meta.env.VITE_YOPLAI_DEV === "true" ||
+      import.meta.env.VITE_AIHUB_DEV === "true"
+        ? `[DEV :${import.meta.env.VITE_YOPLAI_UI_PORT ?? import.meta.env.VITE_AIHUB_UI_PORT ?? "?"}] `
+        : undefined;
+    document.title = documentTitle({
+      pathname: location.pathname,
+      brandingName: capabilities.branding?.name,
+      agentName: chatAgentName(),
+      devPrefix,
+    });
   });
 
   onMount(() => {
@@ -334,8 +352,6 @@ function ExtensionDetailsRouteShell() {
     </LeftNavShell>
   );
 }
-
-
 function ChatRouteShell() {
   return (
     <LeftNavShell>

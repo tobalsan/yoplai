@@ -13,6 +13,7 @@ Breaking changes are marked **⚠ BREAKING**.
 
 - Slack reactions are now off by default and require per-channel opt-in before they can start an agent turn.
 - External extension API routes now respect the extension enabled state after hot reload.
+- Browser tab titles now include configured branding, agent names, and page sections.
 - The Harbor eval base image now builds the complete gateway workspace with the repository-supported Node 22 and pnpm 11 toolchain.
 - Agent extension updates now keep secret references on disk while installing resolved values into the live runtime config.
 - Fast agent runs no longer duplicate user history rows, and concurrent session mapping updates no longer lose newer entries.
