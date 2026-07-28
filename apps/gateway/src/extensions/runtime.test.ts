@@ -90,6 +90,41 @@ describe("ExtensionRuntime", () => {
     ).toBe(false);
   });
 
+  it("merges loaded extension routes without replacing known metadata", () => {
+    const runtime = new ExtensionRuntime([
+      {
+        id: "scheduler",
+        routePrefixes: ["/api/schedules"],
+        allowWhenDisabled: true,
+      },
+    ]);
+
+    runtime.load([
+      extension({ id: "scheduler", routePrefixes: ["/api/other-schedules"] }),
+      extension({
+        id: "external",
+        routePrefixes: ["/api/thing", "/api/agents/:id/thing"],
+      }),
+    ]);
+
+    const matchers = runtime.getRouteMatchers();
+    expect(
+      matchers.find((matcher) => matcher.matches("/api/schedules"))
+        ?.allowWhenDisabled
+    ).toBe(true);
+    expect(
+      matchers.some((matcher) => matcher.matches("/api/other-schedules"))
+    ).toBe(false);
+    expect(
+      matchers.find((matcher) => matcher.matches("/api/thing/sub"))?.extension
+    ).toBe("external");
+    expect(
+      matchers.find((matcher) =>
+        matcher.matches("/api/agents/main/thing")
+      )?.extension
+    ).toBe("external");
+  });
+
   it("resolves prompt and tool lookups through loaded extensions", async () => {
     const execute = vi.fn(async () => ({ ok: true }));
     const runtime = new ExtensionRuntime();
