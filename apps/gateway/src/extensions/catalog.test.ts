@@ -28,6 +28,7 @@ async function writeExternalExtension(
     advancedConfigFields?: string;
     configRoute?: string;
     factory?: boolean;
+    validateAgentConfig?: string;
   } = {}
 ): Promise<void> {
   const dir = path.join(root, id);
@@ -54,6 +55,9 @@ async function writeExternalExtension(
         ? `  advancedConfigFields: ${body.advancedConfigFields},`
         : "",
       body.configRoute ? `  configRoute: ${body.configRoute},` : "",
+      body.validateAgentConfig
+        ? `  validateAgentConfig: ${body.validateAgentConfig},`
+        : "",
       body.factory !== undefined ? `  factory: ${body.factory},` : "",
       `  routePrefixes: ${body.routePrefixes ?? "[]"},`,
       "  validateConfig: () => ({ valid: true, errors: [] }),",
@@ -168,13 +172,17 @@ describe("buildExtensionCatalog", () => {
   it("marks entries not configurable when no writable fork backs them", async () => {
     await writeExternalExtension(root, "acme-tool");
     const agent = makeAgent();
-    const catalog = await buildExtensionCatalog(configWith(agent, root), agent, {
-      configurable: false,
-    });
-
-    expect(catalog.find((entry) => entry.id === "acme-tool")?.configurable).toBe(
-      false
+    const catalog = await buildExtensionCatalog(
+      configWith(agent, root),
+      agent,
+      {
+        configurable: false,
+      }
     );
+
+    expect(
+      catalog.find((entry) => entry.id === "acme-tool")?.configurable
+    ).toBe(false);
   });
 
   it("treats a present-but-empty agent config as enabled (enabled defaults true)", async () => {
@@ -278,6 +286,49 @@ describe("buildExtensionCatalog", () => {
     expect(entry?.configValues).toEqual({
       apiKey: "********",
       region: "eu",
+    });
+  });
+
+  it("reports missing configuration fields without exposing values", async () => {
+    await writeExternalExtension(root, "cloudifi-admin", {
+      requiredSecrets: '["username", "password"]',
+      validateAgentConfig: `(agent) => {
+        const value = agent.extensions?.["cloudifi-admin"] ?? {};
+        const missing = ["username", "password"].filter((field) => typeof value[field] !== "string" || value[field].length === 0);
+        return { valid: missing.length === 0, errors: missing };
+      }`,
+    });
+    const unconfigured = makeAgent({ "cloudifi-admin": { enabled: true } });
+    const unconfiguredCatalog = await buildExtensionCatalog(
+      configWith(unconfigured, root),
+      unconfigured
+    );
+    const entry = unconfiguredCatalog.find((e) => e.id === "cloudifi-admin");
+
+    expect(entry).toMatchObject({
+      enabled: true,
+      configured: false,
+      missingConfig: ["username", "password"],
+    });
+    expect(entry?.missingConfig).not.toContain("secret-value");
+
+    const configured = makeAgent({
+      "cloudifi-admin": {
+        enabled: true,
+        username: "secret-value",
+        password: "another-secret-value",
+      },
+    });
+    const configuredCatalog = await buildExtensionCatalog(
+      configWith(configured, root),
+      configured
+    );
+    expect(
+      configuredCatalog.find((e) => e.id === "cloudifi-admin")
+    ).toMatchObject({
+      enabled: true,
+      configured: true,
+      missingConfig: [],
     });
   });
 

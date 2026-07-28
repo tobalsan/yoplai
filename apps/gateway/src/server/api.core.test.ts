@@ -45,6 +45,7 @@ vi.mock("../config/index.js", () => ({
   resolveWorkspaceDir,
   loadConfig: () => loadConfigValue,
   reloadConfig,
+  resolveAgentEnv: () => ({}),
   setLoadedConfig,
 }));
 
@@ -853,9 +854,56 @@ describe("api core session resolution", () => {
       expect(updateAgentExtensionConfig).toHaveBeenCalledWith(
         "/ws/alpha",
         "acme",
-        { enabled: true, config: { region: "eu" }, secrets: { apiKey: "sk-1" } },
+        {
+          enabled: true,
+          config: { region: "eu" },
+          secrets: { apiKey: "sk-1" },
+        },
         expect.any(Function)
       );
+    });
+
+    it("returns 422 when prospective enabled config is invalid", async () => {
+      loadConfigValue = {
+        agents: [{ id: "alpha", name: "Alpha", workspace: "/ws/alpha" }],
+        pool: [],
+      };
+      resolveExtensionDefinition.mockResolvedValue({
+        id: "cloudifi-admin",
+        validateAgentConfig: () => ({
+          valid: false,
+          errors: ["username", "password"],
+        }),
+      });
+      updateAgentExtensionConfig.mockImplementation(
+        async (
+          _workspace: string,
+          _extensionId: string,
+          _patch: unknown,
+          validate: (
+            nextConfig: Record<string, unknown>,
+            pendingEnv: Record<string, string>
+          ) => void
+        ) =>
+          validate({ extensions: { "cloudifi-admin": { enabled: true } } }, {})
+      );
+      const { api } = await import("./api.core.js");
+
+      const response = await api.request(
+        new Request("http://localhost/agents/alpha/extensions/cloudifi-admin", {
+          method: "PATCH",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ enabled: true }),
+        })
+      );
+
+      const responseBody = await response.json();
+      expect(response.status).toBe(422);
+      expect(responseBody).toEqual({
+        error: "Extension configuration is invalid",
+        fields: ["username", "password"],
+      });
+      expect(reloadConfig).not.toHaveBeenCalled();
     });
 
     it("rejects writes when no fork exists for a pool agent", async () => {
