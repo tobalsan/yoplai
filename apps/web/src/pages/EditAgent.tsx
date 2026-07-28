@@ -196,11 +196,6 @@ export function EditAgent() {
     setExtError(null);
     try {
       const enabling = !ext.enabled;
-      if (ext.enabled && ext.configured === false) {
-        if (ext.tier === "bespoke-route" && ext.configRoutePath) void navigate(ext.configRoutePath);
-        else if (ext.tier === "auto-form") void navigate(autoFormPath(params.agentId, ext.id));
-        return;
-      }
       const next = await patchAgentExtension(params.agentId, ext.id, {
         enabled: enabling,
       });
@@ -217,6 +212,14 @@ export function EditAgent() {
     } finally {
       setPending(null);
     }
+  };
+
+  const extensionPath = (ext: ExtensionCatalogEntry) => {
+    if (ext.enabled && ext.configured === false) {
+      if (ext.tier === "bespoke-route" && ext.configRoutePath) return ext.configRoutePath;
+      if (ext.tier === "auto-form") return autoFormPath(params.agentId, ext.id);
+    }
+    return detailsPath(params.agentId, ext.id);
   };
 
   return (
@@ -297,7 +300,7 @@ export function EditAgent() {
                 {(ext) => (
                   <li class="edit-agent-ext-item">
                     <A
-                      href={detailsPath(params.agentId, ext.id)}
+                      href={extensionPath(ext)}
                       class="edit-agent-ext-open"
                     >
                       <div class="edit-agent-ext-icon">

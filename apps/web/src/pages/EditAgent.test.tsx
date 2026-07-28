@@ -599,6 +599,83 @@ describe("EditAgent", () => {
     );
   });
 
+  it("routes a needs-configuration auto-form extension to its config surface", async () => {
+    setSession("admin");
+    fetchPoolMock.mockResolvedValue([agent({ id: "scribe" })]);
+    fetchAgentExtensionsMock.mockResolvedValue([{
+      id: "exa",
+      displayName: "Exa",
+      description: "Search",
+      builtIn: true,
+      enabled: true,
+      configured: false,
+      missingConfig: ["apiKey"],
+      configJsonSchema: { type: "object" },
+      requiredSecrets: ["apiKey"],
+      advancedConfigFields: [],
+      configRoutePath: null,
+      tier: "auto-form",
+    }]);
+    await mountEdit("scribe");
+
+    const link = container.querySelector<HTMLAnchorElement>(".edit-agent-ext-open")!;
+    expect(link.getAttribute("href")).toBe("/agents/scribe/extensions/exa/config");
+    expect(link.textContent).toContain("Needs configuration");
+  });
+
+  it("routes a needs-configuration bespoke extension to its config surface", async () => {
+    setSession("admin");
+    fetchPoolMock.mockResolvedValue([agent({ id: "scribe" })]);
+    fetchAgentExtensionsMock.mockResolvedValue([{
+      id: "mcp",
+      displayName: "MCP",
+      description: "File-based MCP config",
+      builtIn: false,
+      enabled: true,
+      configured: false,
+      missingConfig: ["servers"],
+      configJsonSchema: null,
+      requiredSecrets: [],
+      advancedConfigFields: [],
+      configRoutePath: "/agents/scribe/extensions/mcp/configure",
+      tier: "bespoke-route",
+    }]);
+    await mountEdit("scribe");
+
+    expect(container.querySelector<HTMLAnchorElement>(".edit-agent-ext-open")?.getAttribute("href"))
+      .toBe("/agents/scribe/extensions/mcp/configure");
+  });
+
+  it("disables a needs-configuration extension inline", async () => {
+    setSession("admin");
+    fetchPoolMock.mockResolvedValue([agent({ id: "scribe" })]);
+    const entry = {
+      id: "exa",
+      displayName: "Exa",
+      description: "Search",
+      builtIn: true,
+      enabled: true,
+      configured: false,
+      missingConfig: ["apiKey"],
+      configJsonSchema: { type: "object" },
+      requiredSecrets: ["apiKey"],
+      advancedConfigFields: [],
+      configRoutePath: null,
+      tier: "auto-form" as const,
+    };
+    fetchAgentExtensionsMock.mockResolvedValue([entry]);
+    patchAgentExtensionMock.mockResolvedValue([{ ...entry, enabled: false }]);
+    await mountEdit("scribe");
+
+    container.querySelector<HTMLButtonElement>(".edit-agent-ext-state")!.click();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(patchAgentExtensionMock).toHaveBeenCalledWith("scribe", "exa", {
+      enabled: false,
+    });
+    expect(navigateMock).not.toHaveBeenCalled();
+  });
+
   it("flips a toggle-only extension inline with no redirect", async () => {
     setSession("admin");
     fetchPoolMock.mockResolvedValue([agent({ id: "scribe" })]);
