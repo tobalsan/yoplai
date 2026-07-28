@@ -20,7 +20,10 @@ export type ReactionPipelineResult = {
 
 export function processReaction(
   data: ReactionData,
-  config: SlackComponentConfig
+  config: SlackComponentConfig,
+  messageAuthor?: string,
+  botUserId?: string,
+  botId?: string
 ): ReactionPipelineResult {
   const channel = data.item.channel;
   const messageTs = data.item.ts;
@@ -41,7 +44,38 @@ export function processReaction(
     return { shouldProcess: false, reason: "user_not_in_channel_allowlist" };
   }
 
-  return { shouldProcess: true, channel, messageTs };
+  if (botUserId && data.user === botUserId) {
+    return { shouldProcess: false, reason: "self_reaction" };
+  }
+
+  const mode = route.reactionNotifications ?? "off";
+  if (mode === "off") {
+    return { shouldProcess: false, reason: "reactions_off" };
+  }
+  if (mode === "all") {
+    return { shouldProcess: true, channel, messageTs };
+  }
+  if (mode === "allowlist") {
+    const allowlist = route.reactionAllowlist;
+    if (!allowlist?.length) {
+      return { shouldProcess: false, reason: "empty_allowlist" };
+    }
+    if (!matchesUserAllowlist(data.user, allowlist)) {
+      return { shouldProcess: false, reason: "user_not_in_allowlist" };
+    }
+    return { shouldProcess: true, channel, messageTs };
+  }
+  if (mode === "own") {
+    if (!messageAuthor) {
+      return { shouldProcess: false, reason: "no_message_author" };
+    }
+    if (messageAuthor !== botUserId && messageAuthor !== botId) {
+      return { shouldProcess: false, reason: "not_own_message" };
+    }
+    return { shouldProcess: true, channel, messageTs };
+  }
+
+  return { shouldProcess: false, reason: "unknown_mode" };
 }
 
 export function formatReactionMessage(

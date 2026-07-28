@@ -50,7 +50,7 @@ import {
   buildSlackHistoryKey,
   buildSlackSessionKey,
   getThreadParent,
-  lookupReactionThreadTs,
+  lookupReactionMessage,
   resolveReplyThreadTs,
 } from "./utils/threads.js";
 import {
@@ -952,9 +952,33 @@ async function handleSlackReaction(
   data: ReactionData,
   client: SlackWebClient,
   target: SlackReactionTarget,
-  action: "add" | "remove"
+  action: "add" | "remove",
+  botUserId: string | undefined,
+  botId: string | undefined
 ): Promise<void> {
-  const result = processReaction(data, target.config);
+  if (botUserId && data.user === botUserId) {
+    console.debug(`${target.logPrefix} Reaction ignored: self_reaction`);
+    return;
+  }
+  const channel = data.item.channel;
+  const route = channel ? target.config.channels?.[channel] : undefined;
+  const mode = route?.reactionNotifications ?? "off";
+  let result = processReaction(data, target.config, undefined, botUserId);
+  let messageInfo: Awaited<ReturnType<typeof lookupReactionMessage>>;
+  if (mode === "own" && result.reason === "no_message_author") {
+    messageInfo = await lookupReactionMessage(
+      client,
+      channel ?? "",
+      data.item.ts ?? ""
+    );
+    result = processReaction(
+      data,
+      target.config,
+      messageInfo?.author,
+      botUserId,
+      botId
+    );
+  }
   if (!result.shouldProcess || !result.channel || !result.messageTs) {
     if (result.reason && result.reason !== "channel_not_configured") {
       console.debug(`${target.logPrefix} Reaction ignored: ${result.reason}`);
@@ -972,10 +996,14 @@ async function handleSlackReaction(
   });
 
   try {
-    const directThreadTs = data.item.thread_ts;
-    const reactionThreadTs =
-      directThreadTs ??
-      (await lookupReactionThreadTs(client, result.channel, result.messageTs));
+    if (!messageInfo && !data.item.thread_ts) {
+      messageInfo = await lookupReactionMessage(
+        client,
+        result.channel,
+        result.messageTs
+      );
+    }
+    const reactionThreadTs = data.item.thread_ts ?? messageInfo?.threadTs;
     await getSlackContext().runAgent({
       agentId: target.agent.id,
       message: formatReactionMessage(data, action),
@@ -1141,6 +1169,7 @@ export function createSlackBot(
   const logPrefix = "[slack]";
   let cleanupBroadcasts: (() => void) | null = null;
   let botUserId: string | undefined;
+  let botId: string | undefined;
 
   const resolveMessageTarget = (
     data: MessageData
@@ -1252,7 +1281,9 @@ export function createSlackBot(
       data,
       eventClient as unknown as SlackWebClient,
       target,
-      "add"
+      "add",
+      botUserId,
+      botId
     );
   });
 
@@ -1265,7 +1296,9 @@ export function createSlackBot(
       data,
       eventClient as unknown as SlackWebClient,
       target,
-      "remove"
+      "remove",
+      botUserId,
+      botId
     );
   });
 
@@ -1320,8 +1353,10 @@ export function createSlackBot(
       try {
         const auth = await client.auth?.test();
         botUserId = auth?.user_id;
+        botId = auth?.bot_id;
       } catch {
         botUserId = undefined;
+        botId = undefined;
       }
       await app.start();
       cleanupBroadcasts = setupSlackBroadcasts({
@@ -1359,6 +1394,7 @@ export function createSlackAgentBot(agent: AgentConfig): SlackBot | null {
   const logPrefix = `[slack:${agent.id}]`;
   let cleanupBroadcasts: (() => void) | null = null;
   let botUserId: string | undefined;
+  let botId: string | undefined;
 
   const resolveMessageTarget = (
     data: MessageData
@@ -1532,7 +1568,9 @@ export function createSlackAgentBot(agent: AgentConfig): SlackBot | null {
       data,
       eventClient as unknown as SlackWebClient,
       target,
-      "add"
+      "add",
+      botUserId,
+      botId
     );
   });
 
@@ -1545,7 +1583,9 @@ export function createSlackAgentBot(agent: AgentConfig): SlackBot | null {
       data,
       eventClient as unknown as SlackWebClient,
       target,
-      "remove"
+      "remove",
+      botUserId,
+      botId
     );
   });
 
@@ -1595,8 +1635,10 @@ export function createSlackAgentBot(agent: AgentConfig): SlackBot | null {
       try {
         const auth = await client.auth?.test();
         botUserId = auth?.user_id;
+        botId = auth?.bot_id;
       } catch {
         botUserId = undefined;
+        botId = undefined;
       }
       await app.start();
       cleanupBroadcasts = setupSlackBroadcasts({

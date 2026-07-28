@@ -1,6 +1,9 @@
 export type SlackWebClient = {
   auth?: {
-    test(params?: Record<string, unknown>): Promise<{ user_id?: string }>;
+    test(params?: Record<string, unknown>): Promise<{
+      user_id?: string;
+      bot_id?: string;
+    }>;
   };
   users?: {
     info(params: { user: string }): Promise<{
@@ -84,6 +87,7 @@ export type SlackWebClient = {
         ts?: string;
         thread_ts?: string;
         reply_count?: number;
+        bot_id?: string;
       }>;
     }>;
   };

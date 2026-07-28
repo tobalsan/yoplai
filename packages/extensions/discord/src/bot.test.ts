@@ -572,10 +572,10 @@ describe("Discord bot integration", () => {
 
   describe("reaction handling", () => {
     describe("reactionNotifications modes", () => {
-      it("ignores reactions when mode=off (default)", async () => {
+      it("ignores reactions when reactionNotifications is unset", async () => {
         const agent = createTestAgent({
           guilds: {
-            "guild-1": { requireMention: true, reactionNotifications: "off" },
+            "guild-1": { requireMention: true },
           },
         });
 

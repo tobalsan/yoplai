@@ -81,7 +81,9 @@ vi.mock("@slack/bolt", () => ({
     const app: MockSlackApp = {
       config,
       client: {
-        auth: { test: vi.fn().mockResolvedValue({ user_id: "Ubot" }) },
+        auth: {
+          test: vi.fn().mockResolvedValue({ user_id: "Ubot", bot_id: "Bbot" }),
+        },
         chat: {
           postMessage: vi.fn().mockResolvedValue({ ts: "reply-ts" }),
           update: vi.fn().mockResolvedValue({}),
@@ -156,7 +158,11 @@ const config: SlackComponentConfig = {
   token: "xoxb-test",
   appToken: "xapp-test",
   channels: {
-    C1: { agent: "main", requireMention: false },
+    C1: {
+      agent: "main",
+      requireMention: false,
+      reactionNotifications: "all",
+    },
   },
   dm: { enabled: true, agent: "main" },
 };
@@ -2017,6 +2023,106 @@ describe("createSlackBot", () => {
   });
 
   describe("reactions", () => {
+    it("drops added and removed reactions by default", async () => {
+      const { createSlackBot } = await import("./bot.js");
+      const defaultConfig: SlackComponentConfig = {
+        ...config,
+        channels: { C1: { agent: "main", requireMention: false } },
+      };
+      const bot = createSlackBot([agent], defaultConfig);
+      await bot?.start();
+
+      for (const name of ["reaction_added", "reaction_removed"] as const) {
+        await getEventHandler(apps[0], name)({
+          event: {
+            reaction: "eyes",
+            user: "U1",
+            item: { type: "message", channel: "C1", ts: "1.1" },
+          },
+          client: apps[0].client,
+        });
+      }
+
+      expect(mockRunAgent).not.toHaveBeenCalled();
+      expect(apps[0].client.conversations.history).not.toHaveBeenCalled();
+    });
+
+    it("looks up an own-mode reaction message once", async () => {
+      const { createSlackBot } = await import("./bot.js");
+      const ownConfig: SlackComponentConfig = {
+        ...config,
+        channels: {
+          C1: {
+            agent: "main",
+            requireMention: false,
+            reactionNotifications: "own",
+          },
+        },
+      };
+      const bot = createSlackBot([agent], ownConfig);
+      await bot?.start();
+      apps[0].client.conversations.history.mockResolvedValueOnce({
+        messages: [{ ts: "2.2", thread_ts: "1.1", user: "Ubot" }],
+      });
+
+      await getEventHandler(apps[0], "reaction_added")({
+        event: {
+          reaction: "eyes",
+          user: "U1",
+          item: { type: "message", channel: "C1", ts: "2.2" },
+        },
+        client: apps[0].client,
+      });
+
+      expect(apps[0].client.conversations.history).toHaveBeenCalledTimes(1);
+      expect(mockRunAgent).toHaveBeenCalledWith(
+        expect.objectContaining({ sessionKey: "slack:C1:1.1" })
+      );
+    });
+
+    it("recognizes a bot_id-only own-mode message", async () => {
+      const { createSlackBot } = await import("./bot.js");
+      const ownConfig: SlackComponentConfig = {
+        ...config,
+        channels: {
+          C1: { agent: "main", reactionNotifications: "own" },
+        },
+      };
+      const bot = createSlackBot([agent], ownConfig);
+      await bot?.start();
+      apps[0].client.conversations.history.mockResolvedValueOnce({
+        messages: [{ ts: "2.2", bot_id: "Bbot" }],
+      });
+
+      await getEventHandler(apps[0], "reaction_added")({
+        event: {
+          reaction: "eyes",
+          user: "U1",
+          item: { type: "message", channel: "C1", ts: "2.2" },
+        },
+        client: apps[0].client,
+      });
+
+      expect(mockRunAgent).toHaveBeenCalledOnce();
+    });
+
+    it("drops the bot's own reaction in all mode", async () => {
+      const { createSlackBot } = await import("./bot.js");
+      const bot = createSlackBot([agent], config);
+      await bot?.start();
+
+      await getEventHandler(apps[0], "reaction_added")({
+        event: {
+          reaction: "thinking",
+          user: "Ubot",
+          item: { type: "message", channel: "C1", ts: "1.1" },
+        },
+        client: apps[0].client,
+      });
+
+      expect(mockRunAgent).not.toHaveBeenCalled();
+    });
+
     it("scopes reaction session by thread_ts looked up via conversations.history", async () => {
       const { createSlackBot } = await import("./bot.js");
       const bot = createSlackBot([agent], config);
@@ -2259,7 +2365,11 @@ describe("createSlackAgentBot", () => {
         token: "xoxb-test",
         appToken: "xapp-test",
         channels: {
-          C1: { agent: "a1", requireMention: false },
+          C1: {
+            agent: "a1",
+            requireMention: false,
+            reactionNotifications: "off",
+          },
         },
       },
     } as AgentConfig;

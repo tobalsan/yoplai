@@ -959,6 +959,8 @@ Inbound Slack messages inject the same normalized channel-context block into the
 | `channels.<id>.requireMention` | Require @mention to trigger (default: `true`)                 |
 | `channels.<id>.threadPolicy`   | `always` (default), `never`, or `follow`                      |
 | `channels.<id>.users`          | Allowed Slack user IDs (empty = all allowed)                  |
+| `channels.<id>.reactionNotifications` | `off` (default), `all`, `own`, or `allowlist`            |
+| `channels.<id>.reactionAllowlist` | Allowed reacting user IDs when mode is `allowlist`          |
 | `dm.enabled`                   | Enable DM support                                             |
 | `dm.agent`                     | Agent ID for DMs                                              |
 | `dm.allowFrom`                 | Allowed Slack user IDs for DMs (empty = all allowed)          |
@@ -1045,7 +1047,7 @@ settings:
 - **Message chunking**: Responses split at 4000 chars, preserving mrkdwn code blocks
 - **Single-agent mode**: Omit `channels` config to route all messages to the first configured agent
 - **Broadcast**: Subscribe to agent events from other sources (web, CLI, etc.) and post to `broadcastToChannel`
-- **Reactions**: User reactions on messages trigger agent runs with reaction context
+- **Reactions**: Off by default. Set a channel's `reactionNotifications` to `all`, `own`, or `allowlist` to trigger agent runs with reaction context.
 
 #### Per-Agent Tokens
 

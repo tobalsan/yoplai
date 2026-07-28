@@ -556,8 +556,13 @@ export const SlackExtensionChannelConfigSchema = z.object({
   requireMention: z.boolean().optional(),
   threadPolicy: z.enum(["always", "never", "follow"]).optional(),
   users: z.array(z.union([z.string(), z.number()])).optional(),
+  reactionNotifications: z
+    .enum(["off", "own", "all", "allowlist"])
+    .optional()
+    .default("off"),
+  reactionAllowlist: z.array(z.union([z.string(), z.number()])).optional(),
 });
-export type SlackExtensionChannelConfig = z.infer<
+export type SlackExtensionChannelConfig = z.input<
   typeof SlackExtensionChannelConfigSchema
 >;
 export type SlackComponentChannelConfig = SlackExtensionChannelConfig;
@@ -587,7 +592,7 @@ export const SlackExtensionConfigSchema = z.object({
   showThinking: z.boolean().optional(),
   deleteThinkingOnComplete: z.boolean().optional(),
 });
-export type SlackExtensionConfig = z.infer<typeof SlackExtensionConfigSchema>;
+export type SlackExtensionConfig = z.input<typeof SlackExtensionConfigSchema>;
 export type SlackComponentConfig = SlackExtensionConfig;
 
 export const SlackAgentConfigSchema = z.object({
@@ -603,7 +608,7 @@ export const SlackAgentConfigSchema = z.object({
   showThinking: z.boolean().optional(),
   deleteThinkingOnComplete: z.boolean().optional(),
 });
-export type SlackAgentConfig = z.infer<typeof SlackAgentConfigSchema>;
+export type SlackAgentConfig = z.input<typeof SlackAgentConfigSchema>;
 
 // Telegram allowlist entries mirror the discord/slack convention: each entry is
 // a user/chat id (numeric or string) or a username, matched case-insensitively.
