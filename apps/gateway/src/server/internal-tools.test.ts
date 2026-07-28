@@ -13,11 +13,11 @@ function registerToken(token: string, agentId = "agent-1"): void {
   registeredTokens.push(token);
 }
 
-function createDeps() {
+function createDeps(agentId = "agent-1") {
   const config = {
     agents: [
       {
-        id: "agent-1",
+        id: agentId,
         name: "Agent One",
         workspace: "/tmp/agent-1",
         queueMode: "queue",
@@ -72,6 +72,7 @@ afterEach(() => {
 describe("internal tools", () => {
   it("accepts a valid container token", async () => {
     const { app, executeExtensionTool, runtime } = createDeps();
+    const consoleWarn = vi.spyOn(console, "warn").mockImplementation(() => {});
     registerToken("token-1");
 
     const response = await postTool(app, {
@@ -93,6 +94,9 @@ describe("internal tools", () => {
       expect.objectContaining({ agents: expect.any(Array), extensions: {} }),
       runtime,
       undefined
+    );
+    expect(consoleWarn).toHaveBeenCalledWith(
+      expect.stringContaining("sandbox image is likely stale")
     );
   });
 
@@ -180,26 +184,45 @@ describe("internal tools", () => {
   });
 
   it("passes sessionId through to extension tool execution", async () => {
-    const { app, executeExtensionTool, runtime } = createDeps();
-    registerToken("token-7");
+    const { app, executeExtensionTool, runtime } = createDeps("agent-3");
+    const consoleWarn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    registerToken("token-7", "agent-3");
 
     const response = await postTool(app, {
       tool: "discord.create_forum_thread",
       args: { channel_id: "forum-1", title: "Title", body: "Body" },
-      agentId: "agent-1",
+      agentId: "agent-3",
       agentToken: "token-7",
       sessionId: "session-1",
     });
 
     expect(response.status).toBe(200);
     expect(executeExtensionTool).toHaveBeenCalledWith(
-      expect.objectContaining({ id: "agent-1" }),
+      expect.objectContaining({ id: "agent-3" }),
       "discord.create_forum_thread",
       { channel_id: "forum-1", title: "Title", body: "Body" },
       expect.objectContaining({ agents: expect.any(Array), extensions: {} }),
       runtime,
       "session-1"
     );
+    expect(consoleWarn).not.toHaveBeenCalled();
+  });
+
+  it("warns about a missing sessionId only once per agent", async () => {
+    const { app } = createDeps("agent-2");
+    const consoleWarn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    registerToken("token-missing-session", "agent-2");
+
+    const body = {
+      tool: "project.get",
+      args: { projectId: "PRO-1" },
+      agentId: "agent-2",
+      agentToken: "token-missing-session",
+    };
+    expect((await postTool(app, body)).status).toBe(200);
+    expect((await postTool(app, body)).status).toBe(200);
+
+    expect(consoleWarn).toHaveBeenCalledOnce();
   });
 
   it("returns 500 for tool execution errors", async () => {
@@ -210,7 +233,9 @@ describe("internal tools", () => {
       requestId: "request-1",
       details: "x".repeat(600),
     });
-    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    const consoleError = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => {});
     executeExtensionTool.mockRejectedValueOnce(error);
     registerToken("token-4");
 

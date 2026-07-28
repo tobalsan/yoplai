@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -12,6 +12,7 @@ import type {
   SandboxMount,
 } from "@yoplai/shared";
 import { resolveWorkspaceDir } from "../config/index.js";
+import { logWarn } from "../logging.js";
 
 export type ContainerVolumeMount = {
   source: string;
@@ -20,6 +21,7 @@ export type ContainerVolumeMount = {
 };
 
 const DEFAULT_IMAGE = "yoplai-agent:latest";
+const AGENT_IMAGE_HASH_LABEL = "yoplai.agent-runner.hash";
 const DEFAULT_MEMORY = "2g";
 const DEFAULT_CPUS = 1;
 const DEFAULT_NETWORK = "yoplai-agents";
@@ -411,30 +413,125 @@ function findRepoRoot(): string | null {
   return null;
 }
 
-export function ensureAgentImage(image: string): void {
+function sortedFiles(root: string): string[] {
+  const entries = fs.readdirSync(root, { withFileTypes: true });
+  return entries.flatMap((entry) => {
+    const file = path.join(root, entry.name);
+    if (entry.isDirectory()) return sortedFiles(file);
+    return entry.isFile() ? [file] : [];
+  });
+}
+
+export function getAgentImageHash(repoRoot: string): string | null {
+  const inputs = [
+    "container/agent-runner/Dockerfile",
+    "package.json",
+    "pnpm-lock.yaml",
+    "pnpm-workspace.yaml",
+    "container/agent-runner/package.json",
+    "packages/shared/package.json",
+  ].map((file) => path.join(repoRoot, file));
+  const runnerDist = path.join(repoRoot, "container/agent-runner/dist");
+  const sharedDist = path.join(repoRoot, "packages/shared/dist");
+
+  if (!fs.existsSync(runnerDist) || !fs.existsSync(sharedDist)) return null;
+  if (!inputs.every((file) => fs.existsSync(file))) return null;
+
+  const files = [
+    ...inputs,
+    ...sortedFiles(runnerDist),
+    ...sortedFiles(sharedDist),
+  ]
+    .map((file) => path.relative(repoRoot, file).split(path.sep).join("/"))
+    .sort();
+  const hash = createHash("sha256");
+  for (const file of files) {
+    hash.update(file);
+    hash.update("\0");
+    hash.update(fs.readFileSync(path.join(repoRoot, file)));
+  }
+  return hash.digest("hex");
+}
+
+const imageInputWarnings = new Set<string>();
+
+function warnUnresolvableImageInputs(reason: string): void {
+  if (imageInputWarnings.has(reason)) return;
+  imageInputWarnings.add(reason);
+  logWarn(`[container] skipping sandbox image freshness check: ${reason}`);
+}
+
+function buildAgentImage(
+  image: string,
+  repoRoot: string,
+  hash: string,
+  reason: string
+): void {
+  console.log(`Container sandbox: building ${image} (${reason})...`);
+  execFileSync(
+    "docker",
+    [
+      "build",
+      "--label",
+      `${AGENT_IMAGE_HASH_LABEL}=${hash}`,
+      "-t",
+      image,
+      "-f",
+      "container/agent-runner/Dockerfile",
+      repoRoot,
+    ],
+    { stdio: "inherit" }
+  );
+}
+
+export function ensureAgentImage(
+  image: string,
+  repoRoot = findRepoRoot()
+): void {
+  let imagePresent = true;
   try {
     execFileSync("docker", ["image", "inspect", image], { stdio: "ignore" });
-    return;
   } catch {
-    // not present — build below
+    imagePresent = false;
   }
   if (image !== DEFAULT_IMAGE) {
+    if (imagePresent) return;
     throw new Error(
       `Sandbox image ${image} not present locally; build it before starting the gateway.`
     );
   }
-  const repoRoot = findRepoRoot();
   if (!repoRoot) {
-    throw new Error(
-      `Cannot locate container/agent-runner/Dockerfile to build ${image}`
-    );
+    warnUnresolvableImageInputs("repository root was not found");
+    return;
   }
-  console.log(`Container sandbox: building ${image} (first run)...`);
-  execFileSync(
+  const hash = getAgentImageHash(repoRoot);
+  if (!hash) {
+    warnUnresolvableImageInputs(
+      "agent-runner or shared build output is missing"
+    );
+    return;
+  }
+  if (!imagePresent) {
+    buildAgentImage(image, repoRoot, hash, "first run");
+    return;
+  }
+  const imageHash = execFileSync(
     "docker",
-    ["build", "-t", image, "-f", "container/agent-runner/Dockerfile", repoRoot],
-    { stdio: "inherit" }
-  );
+    [
+      "image",
+      "inspect",
+      "--format",
+      `{{index .Config.Labels "${AGENT_IMAGE_HASH_LABEL}"}}`,
+      image,
+    ],
+    { encoding: "utf8" }
+  ).trim();
+  if (imageHash !== hash) {
+    console.log(
+      `Container sandbox: ${image} is stale (image hash ${imageHash || "missing"}, current hash ${hash})`
+    );
+    buildAgentImage(image, repoRoot, hash, "stale image");
+  }
 }
 
 export function cleanupOrphanContainers(): void {

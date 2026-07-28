@@ -2,6 +2,10 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
+
+vi.mock("node:child_process", () => ({ execFileSync: vi.fn() }));
+
+import { execFileSync } from "node:child_process";
 import {
   AgentConfigSchema,
   GlobalSandboxConfigSchema,
@@ -10,7 +14,9 @@ import {
 import {
   buildContainerArgs,
   buildVolumeMounts,
+  ensureAgentImage,
   filterSecretEnvVars,
+  getAgentImageHash,
   getAgentDataDir,
   getSessionUploadsDir,
   validateMount,
@@ -33,9 +39,109 @@ function argValues(args: string[], flag: string): string[] {
 
 afterEach(() => {
   vi.restoreAllMocks();
+  vi.mocked(execFileSync).mockReset();
   for (const dir of tempDirs.splice(0)) {
     fs.rmSync(dir, { recursive: true, force: true });
   }
+});
+
+function imageBuildContext(): string {
+  const root = tmpDir();
+  for (const file of [
+    "container/agent-runner/Dockerfile",
+    "container/agent-runner/dist/index.js",
+    "packages/shared/dist/index.js",
+    "package.json",
+    "pnpm-lock.yaml",
+    "pnpm-workspace.yaml",
+    "container/agent-runner/package.json",
+    "packages/shared/package.json",
+  ]) {
+    const target = path.join(root, file);
+    fs.mkdirSync(path.dirname(target), { recursive: true });
+    fs.writeFileSync(target, file);
+  }
+  return root;
+}
+
+describe("ensureAgentImage", () => {
+  it("hashes the Docker build inputs deterministically", () => {
+    const root = imageBuildContext();
+    const first = getAgentImageHash(root);
+
+    expect(getAgentImageHash(root)).toBe(first);
+    fs.writeFileSync(
+      path.join(root, "container/agent-runner/dist/index.js"),
+      "changed"
+    );
+    expect(getAgentImageHash(root)).not.toBe(first);
+  });
+
+  it("rebuilds a stale default image with its content hash label", () => {
+    const root = imageBuildContext();
+    vi.mocked(execFileSync).mockImplementation((_command, args) => {
+      if (args?.[0] === "image" && args[2] !== "--format") return "" as never;
+      if (args?.[0] === "image") return "old-hash" as never;
+      return "" as never;
+    });
+
+    ensureAgentImage("yoplai-agent:latest", root);
+
+    const build = vi
+      .mocked(execFileSync)
+      .mock.calls.find(
+        ([command, args]) => command === "docker" && args?.[0] === "build"
+      );
+    expect(build?.[1]).toEqual(
+      expect.arrayContaining([
+        "--label",
+        `yoplai.agent-runner.hash=${getAgentImageHash(root)}`,
+      ])
+    );
+  });
+
+  it("does not rebuild when the default image hash matches", () => {
+    const root = imageBuildContext();
+    const hash = getAgentImageHash(root)!;
+    vi.mocked(execFileSync).mockImplementation((_command, args) => {
+      if (args?.[0] === "image" && args[2] !== "--format") return "" as never;
+      if (args?.[0] === "image") return hash as never;
+      return "" as never;
+    });
+
+    ensureAgentImage("yoplai-agent:latest", root);
+
+    expect(vi.mocked(execFileSync)).not.toHaveBeenCalledWith(
+      "docker",
+      expect.arrayContaining(["build"]),
+      expect.anything()
+    );
+  });
+
+  it("does not hash-check an operator-supplied image", () => {
+    vi.mocked(execFileSync).mockReturnValue("" as never);
+
+    ensureAgentImage("operator-image:latest");
+
+    expect(vi.mocked(execFileSync)).toHaveBeenCalledTimes(1);
+  });
+
+  it("warns and skips freshness checks when build output is missing", () => {
+    const root = tmpDir();
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    vi.mocked(execFileSync).mockReturnValue("" as never);
+
+    ensureAgentImage("yoplai-agent:latest", root);
+
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringContaining("build output is missing")
+    );
+    expect(vi.mocked(execFileSync)).not.toHaveBeenCalledWith(
+      "docker",
+      expect.arrayContaining(["build"]),
+      expect.anything()
+    );
+  });
 });
 
 describe("buildVolumeMounts", () => {
@@ -355,10 +461,7 @@ describe("buildContainerArgs", () => {
     const workspace = path.join(root, "agents", "cloud");
     fs.mkdirSync(workspace, { recursive: true });
     fs.mkdirSync(homeDir, { recursive: true });
-    fs.writeFileSync(
-      path.join(homeDir, ".env"),
-      "GLOBAL_SECRET=home-secret\n"
-    );
+    fs.writeFileSync(path.join(homeDir, ".env"), "GLOBAL_SECRET=home-secret\n");
     fs.writeFileSync(
       path.join(workspace, ".env"),
       "SLACK_TOKEN=agent-secret\n"

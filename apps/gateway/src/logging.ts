@@ -46,6 +46,10 @@ export function logInfo(msg: string, fields: Record<string, unknown> = {}): void
   console.log(JSON.stringify({ level: "info", msg, ...fields }, createJsonReplacer()));
 }
 
+export function logWarn(msg: string, fields: Record<string, unknown> = {}): void {
+  console.warn(JSON.stringify({ level: "warn", msg, ...fields }, createJsonReplacer()));
+}
+
 export function logError(
   msg: string,
   error: unknown,
