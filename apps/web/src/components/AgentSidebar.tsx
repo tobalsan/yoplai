@@ -11,6 +11,7 @@ import {
 import { A, useLocation, useNavigate } from "@solidjs/router";
 import { theme, toggleTheme } from "../theme";
 import { capabilities, isExtensionEnabled } from "../lib/capabilities";
+import { stripBase } from "../lib/path";
 import {
   deleteAgentSession,
   fetchAgentSessions,
@@ -33,16 +34,6 @@ const STAFF_ROLES = ["admin", "superadmin"];
 function hasAdminRole(role: string | string[] | null | undefined): boolean {
   if (Array.isArray(role)) return role.some((r) => STAFF_ROLES.includes(r));
   return typeof role === "string" && STAFF_ROLES.includes(role);
-}
-
-const basePath = import.meta.env.BASE_URL?.replace(/\/+$/, "") ?? "";
-
-/** Strip the Vite base prefix from a router pathname. */
-function stripBase(pathname: string): string {
-  if (basePath && pathname.startsWith(basePath)) {
-    return pathname.slice(basePath.length) || "/";
-  }
-  return pathname;
 }
 
 function relativeTime(timestamp: number): string {
