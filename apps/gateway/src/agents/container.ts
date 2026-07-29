@@ -477,7 +477,7 @@ function buildAgentImage(
       "-t",
       image,
       "-f",
-      "container/agent-runner/Dockerfile",
+      path.join(repoRoot, "container/agent-runner/Dockerfile"),
       repoRoot,
     ],
     { stdio: "inherit" }
