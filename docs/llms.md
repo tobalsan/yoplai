@@ -193,6 +193,7 @@ Container OneCLI proxy wiring:
 - Gateway calls `ensureWorkspaceFiles(workspaceDir)` on the host before spawning the container, so workspace template files (AGENTS.md, SOUL.md, etc.) are created for new agents even in sandbox mode.
 - Docker-backed agent containers use UUID-suffixed names (`yoplai-agent-<agentId>-<uuid>`) so simultaneous runs for the same agent do not collide on Docker `--name`.
 - Orchestration callbacks go to `POST /internal/tools`. `apps/gateway/src/sdk/container/tokens.ts` tracks active per-container tokens, and `apps/gateway/src/server/internal-tools.ts` validates them before dispatching subagent/project operations on the gateway side.
+- `yoplai-agent:latest` is content-hashed from the agent-runner Docker build context and rebuilt at startup when those inputs drift. Operator-supplied sandbox images are never hash-checked or rebuilt.
 - When `onecli.sandbox.network` is configured, the adapter attaches that extra Docker network asynchronously after `docker run` starts. If Docker rejects startup first (for example a missing bind-mount source), gateway logs now surface the captured `docker run` stderr instead of masking it as a network-connect failure.
 
 ### packages/shared
@@ -424,6 +425,7 @@ curl -H "Authorization: Bearer $T" http://127.0.0.1:4000/api/me
 - Sandbox Claude currently fails loudly when extension tools are present; Pi supports extension tool execution in and out of containers.
 - When native `onecli` is enabled for an agent, Claude and Pi runs apply scoped `HTTP_PROXY`/`HTTPS_PROXY` plus CA env vars before the run and restore process env afterward.
 - Sandbox container manager helpers in `apps/gateway/src/agents/container.ts` build Docker bind mounts, shadow workspace `.env` with `/dev/null`, validate custom mounts against the sandbox allowlist/blocklist, build `docker run -i --rm` args, and provide Docker network/orphan cleanup helpers. `apps/gateway/src/sdk/container/adapter.ts` composes focused internal modules, spawns ephemeral Docker containers, writes `ContainerInput` to stdin, parses `---YOPLAI_OUTPUT_START---`/`---YOPLAI_OUTPUT_END---` output, queues follow-ups through `$YOPLAI_HOME/ipc/<agentId>/input/*.json`, and stops/kills containers on abort or timeout.
+- `yoplai-agent:latest` is content-hashed from the agent-runner Docker build context and rebuilt at startup when those inputs drift. Operator-supplied sandbox images are never hash-checked or rebuilt.
 - `apps/gateway/src/server/internal-tools.ts` handles container-to-gateway orchestration callbacks for `project.create`, `project.update`, `project.comment`, and `project.get` (subagent orchestration is CLI-driven via `yoplai projects start`).
 - Any adapter/run failure that reaches the shared runner catch is logged to gateway stderr before the error event/HTTP 500 is returned. Pi-only post-prompt `stopReason:error` logging remains in the Pi adapter for extra context.
 

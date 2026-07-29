@@ -6,7 +6,7 @@ import { validateContainerToken } from "../sdk/container/tokens.js";
 import { executeExtensionAgentTool } from "../extensions/tools.js";
 import { getExtensionRuntime } from "../extensions/registry.js";
 import type { ExtensionRuntime } from "../extensions/runtime.js";
-import { logError } from "../logging.js";
+import { logError, logWarn } from "../logging.js";
 
 const InternalToolRequestSchema = z.object({
   tool: z.string(),
@@ -29,6 +29,8 @@ const defaultDeps: InternalToolsDeps = {
   validateToken: validateContainerToken,
   executeExtensionTool: executeExtensionAgentTool,
 };
+
+const warnedMissingSessionIdAgents = new Set<string>();
 
 async function dispatchInternalTool(
   deps: InternalToolsDeps,
@@ -73,6 +75,17 @@ export function createInternalTools(
       !deps.validateToken(parsed.data.agentToken, parsed.data.agentId)
     ) {
       return c.json({ error: "Invalid agent token" }, 403);
+    }
+
+    if (
+      parsed.data.sessionId === undefined &&
+      !warnedMissingSessionIdAgents.has(parsed.data.agentId)
+    ) {
+      warnedMissingSessionIdAgents.add(parsed.data.agentId);
+      logWarn(
+        "[internal-tools] request missing sessionId — sandbox image is likely stale (agent-runner predates sessionId forwarding); rebuild yoplai-agent:latest",
+        { tool: parsed.data.tool, agentId: parsed.data.agentId }
+      );
     }
 
     try {
