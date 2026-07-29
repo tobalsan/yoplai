@@ -832,7 +832,15 @@ describe("api core session resolution", () => {
 
     it("allows an explicit extension entry to override root management", async () => {
       loadConfigValue = {
-        agents: [{ id: "alpha", name: "Alpha", workspace: "/ws/alpha" }],
+        agents: [
+          {
+            id: "alpha",
+            name: "Alpha",
+            workspace: "/ws/alpha",
+            slack: { token: "xoxb-root" },
+            extensions: { slack: { enabled: false } },
+          },
+        ],
         pool: [],
       };
       updateAgentExtensionConfig.mockResolvedValue({});
@@ -853,7 +861,8 @@ describe("api core session resolution", () => {
       expect(updateAgentExtensionConfig).toHaveBeenCalledWith(
         "/ws/alpha",
         "slack",
-        { enabled: true }
+        { enabled: true },
+        expect.any(Function)
       );
     });
 
