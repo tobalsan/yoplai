@@ -13,6 +13,7 @@ import {
   loadExtensions,
   topoSort,
 } from "./registry.js";
+import { ExtensionRuntime } from "./runtime.js";
 
 const require = createRequire(import.meta.url);
 
@@ -370,7 +371,7 @@ describe("extension registry", () => {
           '  description: "Sample extension",',
           "  dependencies: [],",
           "  configSchema: z.object({ apiKey: z.string() }),",
-          "  routePrefixes: [],",
+          '  routePrefixes: ["/api/sample"],',
           "  validateConfig: () => ({ valid: true, errors: [] }),",
           "  registerRoutes: () => undefined,",
           "  start: async () => undefined,",
@@ -402,6 +403,13 @@ describe("extension registry", () => {
       const result = await loadExtensions(config);
 
       expect(result.map((extension) => extension.id)).toContain("sample");
+      const runtime = new ExtensionRuntime();
+      runtime.load(result);
+      expect(
+        runtime
+          .getRouteMatchers()
+          .find((matcher) => matcher.matches("/api/sample/sub"))?.extension
+      ).toBe("sample");
     } finally {
       await rm(root, { recursive: true, force: true });
       await rm(target, { recursive: true, force: true });

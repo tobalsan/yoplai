@@ -106,6 +106,12 @@ export class ExtensionRuntime {
   }
 
   load(extensions: Extension[], homeExtensionId?: string): Extension[] {
+    this.#mergeRouteMetadata(
+      extensions.map((extension) => ({
+        id: extension.id,
+        routePrefixes: extension.routePrefixes,
+      }))
+    );
     this.#extensions = [...extensions];
     this.#extensionIds = new Set(extensions.map((extension) => extension.id));
     this.#homeExtensionId = homeExtensionId;
@@ -262,6 +268,16 @@ export class ExtensionRuntime {
         matches: routePrefixToMatcher(prefix),
       }))
     );
+  }
+
+  #mergeRouteMetadata(routeMetadata: ExtensionRouteMetadata[]): void {
+    const knownIds = new Set(
+      this.#routeMatchers.map((matcher) => matcher.extension)
+    );
+    const newMetadata = routeMetadata.filter(
+      (extension) => !knownIds.has(extension.id)
+    );
+    this.#routeMatchers.push(...this.#buildRouteMatchers(newMetadata));
   }
 }
 

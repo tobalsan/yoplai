@@ -53,6 +53,8 @@ function exaEntry(
     description: "Exa web search",
     builtIn: false,
     enabled: false,
+    configured: false,
+    missingConfig: [],
     configurable: true,
     configJsonSchema: {
       type: "object",

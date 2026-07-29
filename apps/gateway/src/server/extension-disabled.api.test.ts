@@ -2,6 +2,7 @@ import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import os from "node:os";
+import { z } from "zod";
 import { writeTestV3Config } from "../test-utils/v3-config.js";
 
 describe("extension-disabled API responses", () => {
@@ -21,7 +22,7 @@ describe("extension-disabled API responses", () => {
 
     await writeTestV3Config(path.join(tmpDir, ".yoplai"), {
       agents: [{ id: "main", name: "Main" }],
-      extensions: {},
+      extensions: { probe: { enabled: false } },
     });
 
     vi.resetModules();
@@ -49,5 +50,34 @@ describe("extension-disabled API responses", () => {
       error: "extension_disabled",
       extension: "projects",
     });
+  });
+
+  it("gates routes loaded from an external extension", async () => {
+    const { getExtensionRuntime } = await import("../extensions/registry.js");
+    getExtensionRuntime().load([
+      {
+        id: "probe",
+        displayName: "Probe",
+        description: "Probe extension",
+        dependencies: [],
+        configSchema: z.object({}),
+        routePrefixes: ["/api/probe"],
+        validateConfig: () => ({ valid: true, errors: [] }),
+        registerRoutes: () => undefined,
+        start: async () => undefined,
+        stop: async () => undefined,
+        capabilities: () => [],
+      },
+    ]);
+    const { app } = await import("./index.js");
+
+    for (const path of ["/api/probe", "/api/probe/sub"]) {
+      const response = await Promise.resolve(app.request(path));
+      expect(response.status).toBe(404);
+      await expect(response.json()).resolves.toEqual({
+        error: "extension_disabled",
+        extension: "probe",
+      });
+    }
   });
 });

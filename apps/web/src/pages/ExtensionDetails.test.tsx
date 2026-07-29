@@ -44,6 +44,8 @@ function entry(partial: Partial<ExtensionCatalogEntry> = {}): ExtensionCatalogEn
     description: "Exa web search",
     builtIn: false,
     enabled: true,
+    configured: true,
+    missingConfig: [],
     configurable: true,
     configJsonSchema: null,
     requiredSecrets: [],
