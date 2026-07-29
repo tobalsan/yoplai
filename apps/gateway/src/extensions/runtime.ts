@@ -7,12 +7,17 @@ import type {
   OAuthRequirement,
   ResolvedOAuth,
 } from "@yoplai/shared";
+import { extensionConfigFieldNames } from "@yoplai/shared";
 import { resolveAgentEnv } from "../config/index.js";
 import { getOAuthService } from "../oauth/service.js";
 
-function buildHookContext(config: GatewayConfig): ExtensionHookContext {
+function buildHookContext(
+  agent: AgentConfig,
+  config: GatewayConfig
+): ExtensionHookContext {
   return {
     config,
+    env: resolveAgentEnv(agent, config),
     resolveOAuth: (agent: AgentConfig, requirement: OAuthRequirement): Promise<ResolvedOAuth> =>
       getOAuthService().resolveToken(agent.id, requirement),
   };
@@ -150,12 +155,17 @@ export class ExtensionRuntime {
     agent: AgentConfig,
     config: GatewayConfig
   ): Promise<LoadedExtensionAgentTool[]> {
-    const hookContext = buildHookContext(config);
+    const hookContext = buildHookContext(agent, config);
     const groups = await Promise.all(
       this.#extensions.map(async (extension) => {
-        const tools =
-          (await extension.getAgentTools?.(agent, hookContext)) ?? [];
-        return tools.map((tool) => ({ ...tool, extensionId: extension.id }));
+        try {
+          const tools =
+            (await extension.getAgentTools?.(agent, hookContext)) ?? [];
+          return tools.map((tool) => ({ ...tool, extensionId: extension.id }));
+        } catch (error) {
+          console.warn("Skipping extension tools", { extensionId: extension.id, agentId: agent.id, fields: extensionConfigFieldNames(error) });
+          return [];
+        }
       })
     );
     const tools = groups.flat();
@@ -199,15 +209,20 @@ export class ExtensionRuntime {
     agent: AgentConfig,
     config: GatewayConfig
   ): Promise<string[]> {
-    const hookContext = buildHookContext(config);
+    const hookContext = buildHookContext(agent, config);
     const contributions = await Promise.all(
       this.#extensions.map(async (extension) => {
-        const contribution = await extension.getSystemPromptContributions?.(
-          agent,
-          hookContext
-        );
-        if (!contribution) return [];
-        return Array.isArray(contribution) ? contribution : [contribution];
+        try {
+          const contribution = await extension.getSystemPromptContributions?.(
+            agent,
+            hookContext
+          );
+          if (!contribution) return [];
+          return Array.isArray(contribution) ? contribution : [contribution];
+        } catch (error) {
+          console.warn("Skipping extension prompt", { extensionId: extension.id, agentId: agent.id, fields: extensionConfigFieldNames(error) });
+          return [];
+        }
       })
     );
 

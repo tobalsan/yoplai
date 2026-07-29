@@ -214,6 +214,14 @@ export function EditAgent() {
     }
   };
 
+  const extensionPath = (ext: ExtensionCatalogEntry) => {
+    if (ext.enabled && ext.configured === false) {
+      if (ext.tier === "bespoke-route" && ext.configRoutePath) return ext.configRoutePath;
+      if (ext.tier === "auto-form") return autoFormPath(params.agentId, ext.id);
+    }
+    return detailsPath(params.agentId, ext.id);
+  };
+
   return (
     <Show when={!session().isPending}>
       <div class="edit-agent">
@@ -292,7 +300,7 @@ export function EditAgent() {
                 {(ext) => (
                   <li class="edit-agent-ext-item">
                     <A
-                      href={detailsPath(params.agentId, ext.id)}
+                      href={extensionPath(ext)}
                       class="edit-agent-ext-open"
                     >
                       <div class="edit-agent-ext-icon">
@@ -326,6 +334,9 @@ export function EditAgent() {
                           <span class="edit-agent-ext-desc">
                             {ext.description}
                           </span>
+                          <Show when={ext.enabled && ext.configured === false}>
+                            <span class="edit-agent-ext-desc">Needs configuration</span>
+                          </Show>
                         </div>
                       </div>
                     </A>

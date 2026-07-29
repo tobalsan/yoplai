@@ -3,8 +3,14 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import yaml from "js-yaml";
-import { AgentYamlConfigSchema } from "@yoplai/shared";
 import {
+  AgentYamlConfigSchema,
+  GatewayConfigSchema,
+  defineToolExtension,
+} from "@yoplai/shared";
+import { z } from "zod";
+import {
+  ExtensionConfigValidationError,
   secretEnvName,
   updateAgentExtensionConfig,
 } from "./agent-config-writer.js";
@@ -20,6 +26,32 @@ system: You are the Sales test agent.
 `;
 
 let workspaceDir: string;
+
+const cloudifiExtension = defineToolExtension({
+  id: "cloudifi-admin",
+  displayName: "Cloudifi Admin",
+  description: "Cloudifi test fixture",
+  configSchema: z.object({ username: z.string(), password: z.string() }),
+  requiredSecrets: ["username", "password"],
+  createTools: () => [],
+});
+
+function validateCloudifiConfig(
+  nextConfig: Record<string, unknown>,
+  pendingEnv: Record<string, string>
+): void {
+  const agent = {
+    ...AgentYamlConfigSchema.parse(nextConfig),
+    workspace: workspaceDir,
+  };
+  const config = GatewayConfigSchema.parse({ version: 2, agents: [agent] });
+  const result = cloudifiExtension.validateAgentConfig!(
+    agent,
+    config,
+    pendingEnv
+  );
+  if (!result.valid) throw new ExtensionConfigValidationError(result.errors);
+}
 
 async function readAgentExtensions(): Promise<Record<string, unknown>> {
   const raw = await readFile(path.join(workspaceDir, "agent.yaml"), "utf8");
@@ -137,5 +169,93 @@ describe("updateAgentExtensionConfig", () => {
     const envName = secretEnvName("acme-crm", "token");
     const envRaw = await readFile(path.join(workspaceDir, ".env"), "utf8");
     expect(envRaw).toContain(`${envName}="has spaces #hash"`);
+  });
+
+  it("does not write either file when prospective validation rejects missing secrets", async () => {
+    const originalYaml = await readFile(
+      path.join(workspaceDir, "agent.yaml"),
+      "utf8"
+    );
+    const existingEnv = "UNRELATED=keep-me\n";
+    await writeFile(path.join(workspaceDir, ".env"), existingEnv);
+
+    await expect(
+      updateAgentExtensionConfig(
+        workspaceDir,
+        "cloudifi-admin",
+        { enabled: true },
+        validateCloudifiConfig
+      )
+    ).rejects.toMatchObject({ fields: ["username", "password"] });
+
+    expect(await readFile(path.join(workspaceDir, "agent.yaml"), "utf8")).toBe(
+      originalYaml
+    );
+    expect(await readFile(path.join(workspaceDir, ".env"), "utf8")).toBe(
+      existingEnv
+    );
+  });
+
+  it("rejects a partial prospective secret config without writing either file", async () => {
+    const originalYaml = await readFile(
+      path.join(workspaceDir, "agent.yaml"),
+      "utf8"
+    );
+    const existingEnv = "UNRELATED=keep-me\n";
+    await writeFile(path.join(workspaceDir, ".env"), existingEnv);
+
+    await expect(
+      updateAgentExtensionConfig(
+        workspaceDir,
+        "cloudifi-admin",
+        { enabled: true, secrets: { username: "cloudifi-user" } },
+        validateCloudifiConfig
+      )
+    ).rejects.toMatchObject({ fields: ["password"] });
+
+    expect(await readFile(path.join(workspaceDir, "agent.yaml"), "utf8")).toBe(
+      originalYaml
+    );
+    expect(await readFile(path.join(workspaceDir, ".env"), "utf8")).toBe(
+      existingEnv
+    );
+  });
+
+  it("validates pending secrets before atomically writing their env references", async () => {
+    const username = "cloudifi-user";
+    const password = "cloudifi-password";
+    let validatedEnv: Record<string, string> | undefined;
+
+    await updateAgentExtensionConfig(
+      workspaceDir,
+      "cloudifi-admin",
+      { enabled: true, secrets: { username, password } },
+      (nextConfig, pendingEnv) => {
+        validateCloudifiConfig(nextConfig, pendingEnv);
+        const extension = (
+          nextConfig.extensions as Record<string, Record<string, unknown>>
+        )["cloudifi-admin"];
+        expect(extension).toMatchObject({ enabled: true });
+        expect(extension.username).toBe(
+          `$env:${secretEnvName("cloudifi-admin", "username")}`
+        );
+        expect(extension.password).toBe(
+          `$env:${secretEnvName("cloudifi-admin", "password")}`
+        );
+        validatedEnv = pendingEnv;
+      }
+    );
+
+    expect(validatedEnv).toEqual({
+      [secretEnvName("cloudifi-admin", "username")]: username,
+      [secretEnvName("cloudifi-admin", "password")]: password,
+    });
+    const envRaw = await readFile(path.join(workspaceDir, ".env"), "utf8");
+    expect(envRaw).toContain(
+      `${secretEnvName("cloudifi-admin", "username")}=cloudifi-user`
+    );
+    expect(envRaw).toContain(
+      `${secretEnvName("cloudifi-admin", "password")}=cloudifi-password`
+    );
   });
 });

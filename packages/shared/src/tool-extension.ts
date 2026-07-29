@@ -75,10 +75,10 @@ function stripEnabled(value: Record<string, unknown>): Record<string, unknown> {
   return rest;
 }
 
-function resolveEnvRefs(value: unknown): unknown {
+function resolveEnvRefs(value: unknown, env = process.env): unknown {
   if (typeof value === "string" && value.startsWith("$env:")) {
     const envName = value.slice("$env:".length);
-    const envValue = process.env[envName];
+    const envValue = env[envName];
     if (envValue === undefined) {
       throw new Error(
         `Env var "${envName}" not set (referenced in extension config)`
@@ -87,11 +87,11 @@ function resolveEnvRefs(value: unknown): unknown {
     return envValue;
   }
   if (Array.isArray(value)) {
-    return value.map(resolveEnvRefs);
+    return value.map((item) => resolveEnvRefs(item, env));
   }
   if (isRecord(value)) {
     return Object.fromEntries(
-      Object.entries(value).map(([key, item]) => [key, resolveEnvRefs(item)])
+      Object.entries(value).map(([key, item]) => [key, resolveEnvRefs(item, env)])
     );
   }
   return value;
@@ -115,17 +115,28 @@ function getAgentConfig(
   return toRecord(extensions[extensionId]);
 }
 
+export function extensionConfigFieldNames(error: unknown): string[] {
+  if (error instanceof z.ZodError) {
+    return [...new Set(error.issues.map((issue) => issue.path.join(".") || "config"))];
+  }
+  const match = error instanceof Error ? /missing required secret "([^"]+)"/.exec(error.message) : null;
+  if (match) return [match[1]];
+  const envMatch = error instanceof Error ? /Env var "([^"]+)" not set/.exec(error.message) : null;
+  return envMatch ? [envMatch[1]] : ["config"];
+}
+
 function resolveToolExtensionConfig(
   definition: ToolExtensionDefinition,
   config: GatewayConfig,
-  agent: AgentConfig
+  agent: AgentConfig,
+  env?: Record<string, string>
 ): ResolvedToolExtensionConfig | undefined {
   const rawAgent = getAgentConfig(agent, definition.id);
   if (!rawAgent || rawAgent.enabled === false) return undefined;
 
   const rawRoot = getRootConfig(config, definition.id);
-  const root = resolveEnvRefs(stripEnabled(rawRoot)) as Record<string, unknown>;
-  const agentConfig = resolveEnvRefs(stripEnabled(rawAgent)) as Record<
+  const root = resolveEnvRefs(stripEnabled(rawRoot), env) as Record<string, unknown>;
+  const agentConfig = resolveEnvRefs(stripEnabled(rawAgent), env) as Record<
     string,
     unknown
   >;
@@ -244,6 +255,14 @@ export function defineToolExtension(
     validateAgentConfigs(config) {
       return validateToolExtensionAgentConfigs(definition, config);
     },
+    validateAgentConfig(agent, config, env) {
+      try {
+        resolveToolExtensionConfig(definition, config, agent, env);
+        return { valid: true, errors: [] };
+      } catch (error) {
+        return { valid: false, errors: extensionConfigFieldNames(error) };
+      }
+    },
     registerRoutes() {
       return undefined;
     },
@@ -261,7 +280,8 @@ export function defineToolExtension(
       const resolved = resolveToolExtensionConfig(
         definition,
         context.config,
-        agent
+        agent,
+        context.env
       );
       if (!resolved) return undefined;
       resolved.oauth = await resolveOAuthForDefinition(
@@ -279,7 +299,8 @@ export function defineToolExtension(
       const resolved = resolveToolExtensionConfig(
         definition,
         context.config,
-        agent
+        agent,
+        context.env
       );
       if (!resolved) return [];
       resolved.oauth = await resolveOAuthForDefinition(

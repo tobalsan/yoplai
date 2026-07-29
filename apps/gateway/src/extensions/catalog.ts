@@ -10,6 +10,7 @@ import {
   getBuiltInExtensionRegistrations,
   getExternalExtensionsPath,
 } from "./registry.js";
+import { resolveAgentEnv } from "../config/index.js";
 
 /** Icon files above this size are skipped rather than inlined as a data URI. */
 const MAX_ICON_BYTES = 256 * 1024;
@@ -98,6 +99,10 @@ export type ExtensionCatalogEntry = {
   builtIn: boolean;
   /** Enabled for this specific agent (agent-scoped config). */
   enabled: boolean;
+  /** Whether this enabled extension has usable per-agent configuration. */
+  configured: boolean;
+  /** Invalid or missing config field names; never values. */
+  missingConfig: string[];
   /** True when writes can persist to a real agent fork. */
   configurable: boolean;
   /** Config JSON-schema when the extension exposes one, else null. */
@@ -184,6 +189,7 @@ function configValuesForAgent(
 function toCatalogEntry(
   extension: Extension,
   builtIn: boolean,
+  config: GatewayConfig,
   agent: AgentConfig,
   dir: string | undefined,
   configurable: boolean
@@ -191,12 +197,19 @@ function toCatalogEntry(
   const configJsonSchema = extension.configJsonSchema ?? null;
   const configRoutePath =
     resolveAgentConfigRoute(extension.configRoute, agent.id) ?? null;
+  const validation = extension.validateAgentConfig?.(
+    agent,
+    config,
+    resolveAgentEnv(agent, config)
+  );
   return {
     id: extension.id,
     displayName: extension.displayName,
     description: extension.description,
     builtIn,
     enabled: isEnabledForAgent(agent, extension.id),
+    configured: validation?.valid ?? true,
+    missingConfig: validation?.valid === false ? validation.errors : [],
     configurable,
     configJsonSchema,
     requiredSecrets: extension.requiredSecrets ?? [],
@@ -243,7 +256,7 @@ export async function buildExtensionCatalog(
     // agent-edit UI, still enable-able manually in agent.yaml.
     if (extension.factory === true) continue;
     const dir = resolveBuiltInExtensionDir(registration.packageName);
-    entries.push(toCatalogEntry(extension, true, agent, dir, configurable));
+    entries.push(toCatalogEntry(extension, true, config, agent, dir, configurable));
   }
 
   const external = await discoverExternalExtensions(
@@ -254,7 +267,7 @@ export async function buildExtensionCatalog(
     seen.add(extension.id);
     if (extension.factory === true) continue;
     entries.push(
-      toCatalogEntry(extension, false, agent, extensionDir, configurable)
+      toCatalogEntry(extension, false, config, agent, extensionDir, configurable)
     );
   }
 

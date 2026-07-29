@@ -32,6 +32,17 @@ export type ExtensionConfigPatch = {
   secrets?: Record<string, string>;
 };
 
+export class ExtensionConfigValidationError extends Error {
+  constructor(readonly fields: string[]) {
+    super("Extension configuration is invalid");
+  }
+}
+
+export type ExtensionConfigValidator = (
+  nextConfig: Record<string, unknown>,
+  pendingEnv: Record<string, string>
+) => void;
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -134,7 +145,8 @@ async function upsertEnvVars(
 export async function updateAgentExtensionConfig(
   workspaceDir: string,
   extensionId: string,
-  patch: ExtensionConfigPatch
+  patch: ExtensionConfigPatch,
+  validate?: ExtensionConfigValidator
 ): Promise<Record<string, unknown>> {
   const agentPath = path.join(workspaceDir, "agent.yaml");
   const raw = await fs.readFile(agentPath, "utf8");
@@ -182,6 +194,9 @@ export async function updateAgentExtensionConfig(
       `agent.yaml would be invalid after update: ${validation.error.message}`
     );
   }
+
+  // Validate the prospective yaml and env map before either file is touched.
+  validate?.(nextConfig, envVars);
 
   // Write secrets first so a mid-write crash can't leave a $env ref pointing at
   // a missing value.

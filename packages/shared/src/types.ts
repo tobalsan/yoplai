@@ -1135,6 +1135,7 @@ export type OAuthTokenResolver = (
 
 export type ExtensionHookContext = {
   config: GatewayConfig;
+  env?: Record<string, string>;
   resolveOAuth?: OAuthTokenResolver;
 };
 
@@ -1219,6 +1220,12 @@ export interface Extension {
     context?: ExtensionHookContext
   ): ExtensionAgentTool[] | Promise<ExtensionAgentTool[]>;
   validateAgentConfigs?(config: GatewayConfig): ValidationResult;
+  /** Validate this extension's config for one agent before it is enabled. */
+  validateAgentConfig?(
+    agent: AgentConfig,
+    config: GatewayConfig,
+    env?: Record<string, string>
+  ): ValidationResult;
 }
 
 const isZodSchema = (value: unknown): value is z.ZodTypeAny =>
