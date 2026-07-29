@@ -1,5 +1,5 @@
 import path from "node:path";
-import type { Extension, GatewayConfig } from "@yoplai/shared";
+import type { AgentConfig, Extension, GatewayConfig } from "@yoplai/shared";
 import { discoverExternalExtensions, readEnv } from "@yoplai/shared";
 import { CONFIG_DIR } from "../config/index.js";
 import { ExtensionRuntime } from "./runtime.js";
@@ -252,6 +252,32 @@ const EXTENSION_REGISTRY: Record<string, ExtensionRegistration> = {
     routePrefixes: ["/api/board"],
   }),
 };
+
+/**
+ * Stock extensions that can also be configured at the agent.yaml root (for
+ * example, `agent.slack`) instead of under `agent.extensions`. Heartbeat is
+ * omitted because it is factory-only and never appears in the catalog.
+ */
+const AGENT_ROOT_CONFIG_KEYS: Record<string, string> = {
+  discord: "discord",
+  slack: "slack",
+  telegram: "telegram",
+  irc: "irc",
+  webhooks: "webhooks",
+};
+
+export function hasAgentRootConfig(
+  agent: AgentConfig,
+  extensionId: string
+): boolean {
+  const key = AGENT_ROOT_CONFIG_KEYS[extensionId];
+  if (!key) return false;
+  const value = (agent as Record<string, unknown>)[key];
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return false;
+  }
+  return Object.keys(value).length > 0;
+}
 
 const extensionRuntime = new ExtensionRuntime(getKnownExtensionRouteMetadata());
 

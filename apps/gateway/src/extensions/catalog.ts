@@ -9,6 +9,7 @@ import {
 import {
   getBuiltInExtensionRegistrations,
   getExternalExtensionsPath,
+  hasAgentRootConfig,
 } from "./registry.js";
 import { resolveAgentEnv } from "../config/index.js";
 
@@ -105,6 +106,8 @@ export type ExtensionCatalogEntry = {
   missingConfig: string[];
   /** True when writes can persist to a real agent fork. */
   configurable: boolean;
+  /** True when root-level agent config enables this extension, locking UI writes. */
+  managedAtRoot: boolean;
   /** Config JSON-schema when the extension exposes one, else null. */
   configJsonSchema: Record<string, unknown> | null;
   /** Field names a UI must mask. */
@@ -161,7 +164,9 @@ function resolveTier(
 
 function isEnabledForAgent(agent: AgentConfig, extensionId: string): boolean {
   const extensions = agent.extensions as Record<string, unknown> | undefined;
-  if (!extensions || !(extensionId in extensions)) return false;
+  if (!extensions || !(extensionId in extensions)) {
+    return hasAgentRootConfig(agent, extensionId);
+  }
   const value = extensions[extensionId];
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
     return false;
@@ -202,6 +207,8 @@ function toCatalogEntry(
     config,
     resolveAgentEnv(agent, config)
   );
+  const extensions = agent.extensions as Record<string, unknown> | undefined;
+  const hasExplicitConfig = extensions && extension.id in extensions;
   return {
     id: extension.id,
     displayName: extension.displayName,
@@ -211,6 +218,7 @@ function toCatalogEntry(
     configured: validation?.valid ?? true,
     missingConfig: validation?.valid === false ? validation.errors : [],
     configurable,
+    managedAtRoot: !hasExplicitConfig && hasAgentRootConfig(agent, extension.id),
     configJsonSchema,
     requiredSecrets: extension.requiredSecrets ?? [],
     advancedConfigFields: extension.advancedConfigFields ?? [],

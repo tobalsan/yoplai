@@ -11,6 +11,7 @@ export type ExtensionCatalogEntry = {
   configured: boolean;
   missingConfig: string[];
   configurable: boolean;
+  managedAtRoot: boolean;
   configJsonSchema: Record<string, unknown> | null;
   requiredSecrets: string[];
   advancedConfigFields: string[];

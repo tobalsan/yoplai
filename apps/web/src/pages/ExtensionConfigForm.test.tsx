@@ -56,6 +56,7 @@ function exaEntry(
     configured: false,
     missingConfig: [],
     configurable: true,
+    managedAtRoot: false,
     configJsonSchema: {
       type: "object",
       properties: { apiKey: { type: "string" } },

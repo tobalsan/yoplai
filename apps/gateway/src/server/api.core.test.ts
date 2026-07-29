@@ -784,6 +784,88 @@ describe("api core session resolution", () => {
       expect(reloadExtensions).toHaveBeenCalledWith(loadConfigValue);
     });
 
+    it("rejects root-managed extensions without writing", async () => {
+      const workspace = await fs.mkdtemp("/tmp/yoplai-root-managed-");
+      const agentYaml = path.join(workspace, "agent.yaml");
+      const originalYaml = [
+        "id: alpha",
+        "name: Alpha",
+        "slack:",
+        "  token: xoxb-root",
+        "  appToken: xapp-root",
+        "",
+      ].join("\n");
+      await fs.mkdir(workspace, { recursive: true });
+      await fs.writeFile(agentYaml, originalYaml);
+      loadConfigValue = {
+        agents: [
+          {
+            id: "alpha",
+            name: "Alpha",
+            workspace,
+            slack: { token: "xoxb-root", appToken: "xapp-root" },
+          },
+        ],
+        pool: [],
+      };
+      buildExtensionCatalog.mockResolvedValue([
+        { ...catalog[0], id: "slack", managedAtRoot: true },
+      ]);
+      const { api } = await import("./api.core.js");
+
+      const response = await api.request(
+        new Request("http://localhost/agents/alpha/extensions/slack", {
+          method: "PATCH",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ enabled: false }),
+        })
+      );
+
+      expect(response.status).toBe(409);
+      expect(await response.json()).toEqual({
+        error: "slack is configured at the agent.yaml root; edit agent.yaml to change it",
+      });
+      expect(updateAgentExtensionConfig).not.toHaveBeenCalled();
+      expect(await fs.readFile(agentYaml, "utf8")).toBe(originalYaml);
+      await fs.rm(workspace, { recursive: true, force: true });
+    });
+
+    it("allows an explicit extension entry to override root management", async () => {
+      loadConfigValue = {
+        agents: [
+          {
+            id: "alpha",
+            name: "Alpha",
+            workspace: "/ws/alpha",
+            slack: { token: "xoxb-root" },
+            extensions: { slack: { enabled: false } },
+          },
+        ],
+        pool: [],
+      };
+      updateAgentExtensionConfig.mockResolvedValue({});
+      buildExtensionCatalog.mockResolvedValue([
+        { ...catalog[0], id: "slack", enabled: false, managedAtRoot: false },
+      ]);
+      const { api } = await import("./api.core.js");
+
+      const response = await api.request(
+        new Request("http://localhost/agents/alpha/extensions/slack", {
+          method: "PATCH",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ enabled: true }),
+        })
+      );
+
+      expect(response.status).toBe(200);
+      expect(updateAgentExtensionConfig).toHaveBeenCalledWith(
+        "/ws/alpha",
+        "slack",
+        { enabled: true },
+        expect.any(Function)
+      );
+    });
+
     it("installs the secret-resolved config after writing", async () => {
       const rawReloaded = {
         agents: [
