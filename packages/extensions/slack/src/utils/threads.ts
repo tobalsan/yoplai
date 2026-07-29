@@ -83,11 +83,16 @@ export function buildSlackHistoryKey(
   return threadTs ? `${channel}:${threadTs}` : channel;
 }
 
-export async function lookupReactionThreadTs(
+export type ReactionMessageInfo = {
+  threadTs?: string;
+  author?: string;
+};
+
+export async function lookupReactionMessage(
   client: SlackWebClient,
   channel: string,
   messageTs: string
-): Promise<string | undefined> {
+): Promise<ReactionMessageInfo | undefined> {
   try {
     const result = await client.conversations.history({
       channel,
@@ -97,9 +102,12 @@ export async function lookupReactionThreadTs(
     });
     const msg = result.messages?.[0];
     if (!msg) return undefined;
-    if (msg.thread_ts && msg.thread_ts !== msg.ts) return msg.thread_ts;
-    if ((msg.reply_count ?? 0) > 0) return msg.ts;
-    return undefined;
+    const author = msg.user ?? msg.bot_id;
+    if (msg.thread_ts && msg.thread_ts !== msg.ts) {
+      return { threadTs: msg.thread_ts, author };
+    }
+    if ((msg.reply_count ?? 0) > 0) return { threadTs: msg.ts, author };
+    return { author };
   } catch {
     return undefined;
   }

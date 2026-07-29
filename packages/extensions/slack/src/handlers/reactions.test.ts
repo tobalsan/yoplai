@@ -56,22 +56,100 @@ describe("processReaction", () => {
     expect(result.reason).toBe("user_not_in_channel_allowlist");
   });
 
-  it("allows configured channel reactions", () => {
+  it("drops configured channel reactions by default", () => {
     const result = processReaction(createReaction(), createConfig());
     expect(result).toEqual({
-      shouldProcess: true,
-      channel: "C1",
-      messageTs: "1.1",
+      shouldProcess: false,
+      reason: "reactions_off",
     });
   });
 
-  it("accepts item.thread_ts on the reaction payload", () => {
-    const reaction = createReaction({
-      item: { channel: "C1", ts: "2.2", thread_ts: "1.1" },
-    });
-    expect(reaction.item.thread_ts).toBe("1.1");
-    const result = processReaction(reaction, createConfig());
+  it("allows all reactions when enabled", () => {
+    const result = processReaction(
+      createReaction(),
+      createConfig({
+        channels: { C1: { agent: "main", reactionNotifications: "all" } },
+      })
+    );
     expect(result.shouldProcess).toBe(true);
+  });
+
+  it("allows allowlisted reactions", () => {
+    const result = processReaction(
+      createReaction(),
+      createConfig({
+        channels: {
+          C1: {
+            agent: "main",
+            reactionNotifications: "allowlist",
+            reactionAllowlist: ["U1"],
+          },
+        },
+      })
+    );
+    expect(result.shouldProcess).toBe(true);
+  });
+
+  it("drops reactions outside the reaction allowlist", () => {
+    const result = processReaction(
+      createReaction({ user: "U2" }),
+      createConfig({
+        channels: {
+          C1: {
+            agent: "main",
+            reactionNotifications: "allowlist",
+            reactionAllowlist: ["U1"],
+          },
+        },
+      })
+    );
+    expect(result.reason).toBe("user_not_in_allowlist");
+  });
+
+  it("drops allowlist mode with no configured users", () => {
+    const result = processReaction(
+      createReaction(),
+      createConfig({
+        channels: { C1: { agent: "main", reactionNotifications: "allowlist" } },
+      })
+    );
+    expect(result.reason).toBe("empty_allowlist");
+  });
+
+  it("allows reactions on the bot's messages in own mode", () => {
+    const result = processReaction(
+      createReaction(),
+      createConfig({
+        channels: { C1: { agent: "main", reactionNotifications: "own" } },
+      }),
+      "Ubot",
+      "Ubot"
+    );
+    expect(result.shouldProcess).toBe(true);
+  });
+
+  it("drops reactions on another user's messages in own mode", () => {
+    const result = processReaction(
+      createReaction(),
+      createConfig({
+        channels: { C1: { agent: "main", reactionNotifications: "own" } },
+      }),
+      "U2",
+      "Ubot"
+    );
+    expect(result.reason).toBe("not_own_message");
+  });
+
+  it("drops the bot's own reaction even in all mode", () => {
+    const result = processReaction(
+      createReaction({ user: "Ubot" }),
+      createConfig({
+        channels: { C1: { agent: "main", reactionNotifications: "all" } },
+      }),
+      undefined,
+      "Ubot"
+    );
+    expect(result.reason).toBe("self_reaction");
   });
 });
 
