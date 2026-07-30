@@ -28,7 +28,7 @@ async function sessionsSince(agentId: string, since: number): Promise<Session[]>
       const lines = (await fs.readFile(file, "utf8")).trim().split("\n");
       for (const line of lines) {
         const entry = JSON.parse(line) as { agentId?: string; sessionId?: string; timestamp?: number };
-        if (entry.agentId === agentId && entry.sessionId && (entry.timestamp ?? 0) > since) {
+        if (entry.agentId === agentId && entry.sessionId && !entry.sessionId.startsWith("dream:") && (entry.timestamp ?? 0) > since) {
           const match = file.match(/[\\/]sessions[\\/]users[\\/]([^\\/]+)[\\/]history[\\/]/);
           const key = `${match?.[1] ?? ""}:${entry.sessionId}`;
           const prior = found.get(key);
@@ -59,9 +59,9 @@ export async function renderTranscript(agentId: string, sessionId: string, userI
   }).filter(Boolean).join("\n\n") + "\n";
 }
 
-async function snapshot(workspace: string): Promise<Set<string>> {
+async function snapshot(workspace: string): Promise<Map<string, number>> {
   const files = await fg("**/*", { cwd: workspace, onlyFiles: true, dot: true, ignore: ["dreams/sessions/**"] });
-  return new Set(await Promise.all(files.map(async file => `${file}:${(await fs.stat(path.join(workspace, file))).mtimeMs}`)));
+  return new Map(await Promise.all(files.map(async file => [file, (await fs.stat(path.join(workspace, file))).mtimeMs] as const)));
 }
 
 export async function runDream(agentId: string, options: { dryRun?: boolean } = {}) {
@@ -101,8 +101,10 @@ export async function runDream(agentId: string, options: { dryRun?: boolean } = 
     } finally { clearTimeout(timeoutId); }
     try { await fs.access(journal); } catch { await fs.writeFile(journal, `# Dream ${now.toISOString()}\n\n## Gateway fallback\n\n${response}\n`); }
     const after = await snapshot(workspace);
-    const modified = [...after].filter(file => !before.has(file)).map(file => file.split(":")[0]);
-    await fs.appendFile(journal, `\n## Gateway metadata\n\nStatus: success\n\nModified files:\n${modified.length ? modified.map(file => `- ${file}`).join("\n") : "- none"}\n`);
+    const modified = new Set<string>();
+    for (const [file, mtime] of after) if (before.get(file) !== mtime) modified.add(file);
+    for (const file of before.keys()) if (!after.has(file)) modified.add(file);
+    await fs.appendFile(journal, `\n## Gateway metadata\n\nStatus: success\n\nModified files:\n${modified.size ? [...modified].sort().map(file => `- ${file}`).join("\n") : "- none"}\n`);
     await fs.writeFile(path.join(dreams, "state.json"), JSON.stringify({ lastDreamAt: now.toISOString() }) + "\n");
     return { status: "ok", sessions: sessions.map(s => s.id), journal };
   } catch (error) {
