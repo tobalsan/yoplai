@@ -7,6 +7,7 @@ Ask early and often if anything is ambiguous.
 After a code update, make sure to keep documentation up to date, mainly:
 - @`./docs/llms.md` is the documentation for LLMs.
 - @`./README.md` is for humans.
+- @`./CHANGELOG.md` records user-visible changes. Always add an entry under `## [Unreleased]` (Keep a Changelog format: Added/Changed/Fixed/Removed) for any behavior, API, config, or UI change. Skip only for pure-internal work with no user-visible effect (refactors, tests, docs, chores).
 
 ## Testing
 
