@@ -85,6 +85,7 @@ export async function startGatewayCommand(
   for (const extension of extensions) {
     await extension.start(extensionContext);
   }
+  (await import("../dream/service.js")).startDreamTimers();
 
   // Allow extensions enabled at runtime (via the per-agent PATCH endpoint or a
   // config-file edit) to be brought online without a restart.

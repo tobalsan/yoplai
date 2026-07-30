@@ -37,6 +37,22 @@ describe("AgentConfigSchema openclaw model handling", () => {
     expect(result.success).toBe(false);
   });
 
+  it("accepts dream shorthand and validates model overrides", () => {
+    expect(AgentConfigSchema.parse({
+      id: "dreamer", name: "Dreamer", workspace: "~/agents/dreamer",
+      model: { provider: "openai", model: "gpt" }, dream: true,
+    }).dream).toBe(true);
+    expect(AgentConfigSchema.parse({
+      id: "dreamer", name: "Dreamer", workspace: "~/agents/dreamer",
+      model: { provider: "openai", model: "gpt" },
+      dream: { provider: "anthropic", model: "claude" },
+    }).dream).toMatchObject({ enabled: true, time: "00:00" });
+    expect(AgentConfigSchema.safeParse({
+      id: "dreamer", name: "Dreamer", workspace: "~/agents/dreamer",
+      model: { provider: "openai", model: "gpt" }, dream: { provider: "anthropic" },
+    }).success).toBe(false);
+  });
+
   it("allows openclaw agents to omit model", () => {
     const result = AgentConfigSchema.safeParse({
       id: "openclaw-agent",

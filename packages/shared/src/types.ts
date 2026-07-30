@@ -114,6 +114,28 @@ export const HeartbeatConfigSchema = z.object({
 });
 export type HeartbeatConfig = z.infer<typeof HeartbeatConfigSchema>;
 
+export const DreamConfigSchema = z.union([
+  z.literal(true),
+  z.object({
+    enabled: z.boolean().optional().default(true),
+    provider: z.string().min(1).optional(),
+    model: z.string().min(1).optional(),
+    time: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, "time must be HH:MM").optional().default("00:00"),
+  }).superRefine((value, ctx) => {
+    if (Boolean(value.provider) !== Boolean(value.model)) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: "provider and model must be set together" });
+    }
+  }),
+]);
+export type DreamConfig = z.infer<typeof DreamConfigSchema>;
+
+export const DreamGatewayConfigSchema = z.object({
+  prompt: z.string().min(1).optional(),
+  timeoutMs: z.number().positive().optional(),
+  coldStartHours: z.number().positive().optional(),
+});
+export type DreamGatewayConfig = z.infer<typeof DreamGatewayConfigSchema>;
+
 // SDK types
 export const SdkIdSchema = z.enum(["pi", "claude", "openclaw"]);
 export type SdkId = z.infer<typeof SdkIdSchema>;
@@ -213,6 +235,7 @@ const AgentConfigBaseSchema = z.object({
   thinkLevel: ThinkLevelSchema.optional(),
   queueMode: z.enum(["queue", "interrupt"]).optional().default("queue"),
   heartbeat: HeartbeatConfigSchema.optional(), // Periodic heartbeat config
+  dream: DreamConfigSchema.optional(),
   webhooks: z.record(z.string(), WebhookConfigSchema).optional(),
   introMessage: z.string().optional(), // Custom intro for /new (default: "New conversation started.")
   extensions: z.record(z.string(), ExtensionBaseConfigSchema).optional(),
@@ -934,6 +957,7 @@ export const GatewayRootConfigSchema = z.object({
   projects: ProjectsConfigSchema.optional(),
   subagents: z.array(SubagentConfigSchema).optional(),
   notifications: NotificationsConfigSchema.optional(),
+  dream: DreamGatewayConfigSchema.optional(),
   env: z.record(z.string(), z.string()).optional(),
 });
 export type GatewayRootConfig = z.infer<typeof GatewayRootConfigSchema>;
@@ -976,6 +1000,7 @@ export const GatewayConfigSchema = z.object({
   projects: ProjectsConfigSchema.optional(),
   subagents: z.array(SubagentConfigSchema).optional(),
   notifications: NotificationsConfigSchema.optional(),
+  dream: DreamGatewayConfigSchema.optional(),
   env: z.record(z.string(), z.string()).optional(), // Env vars to set (only if not already set)
 });
 export type GatewayConfig = z.infer<typeof GatewayConfigSchema>;
