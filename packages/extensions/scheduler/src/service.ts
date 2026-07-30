@@ -432,6 +432,12 @@ export class SchedulerService {
       sessionId,
       model: job.model,
       source: "scheduler",
+      // Without an explicit surface the tracer falls back to "chat", so
+      // scheduled runs would show up as yoplai:chat:<agent> in Langfuse.
+      trace: {
+        surface: "scheduler",
+        metadata: { jobId: job.id, jobName: job.name },
+      },
       signal: controller.signal,
     });
 

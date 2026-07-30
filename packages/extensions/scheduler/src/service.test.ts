@@ -119,6 +119,7 @@ describe("SchedulerService.runNow", () => {
         agentId: "alpha",
         message: "Run",
         source: "scheduler",
+        trace: expect.objectContaining({ surface: "scheduler" }),
       })
     );
 
