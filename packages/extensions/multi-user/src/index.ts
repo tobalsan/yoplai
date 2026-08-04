@@ -187,6 +187,7 @@ export const multiUserExtension: Extension = {
       getPoolAgentIds: () =>
         (ctx.getConfig().pool ?? []).map((agent) => agent.id),
       getAgent: ctx.getAgent,
+      notifyAgentListChanged: ctx.notifyAgentListChanged,
       logger: ctx.logger,
     });
   },

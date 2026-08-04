@@ -21,6 +21,12 @@ let db: Database.Database;
 let forks: ForkStore;
 let membership: MembershipStore;
 let catalog: PoolCatalogResolver;
+
+function addMember(teamId: string, userId: string): void {
+  const current = membership.getMembership(teamId);
+  if (current.mode !== "list") throw new Error("expected explicit team");
+  membership.setMembers(teamId, { mode: "list", userIds: [...current.userIds, userId] }, "admin-1");
+}
 let poolDir: string;
 let forksDir: string;
 const tempDirs: string[] = [];
@@ -90,9 +96,9 @@ beforeEach(() => {
   forks.setTeams("orphan", { mode: "list", teamIds: [] }, "admin-1");
 
   // alice ∈ {red, blue}; bob ∈ {green}; loner ∈ {} (teamless).
-  membership.addMember("team-red", "alice", "admin-1");
-  membership.addMember("team-blue", "alice", "admin-1");
-  membership.addMember("team-green", "bob", "admin-1");
+  addMember("team-red", "alice");
+  addMember("team-blue", "alice");
+  addMember("team-green", "bob");
 });
 
 afterEach(() => {

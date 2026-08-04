@@ -195,9 +195,9 @@ beforeEach(async () => {
   forks.setTeams("sage", { mode: "list", teamIds: ["team-blue"] }, "admin-1");
   forks.setTeams("scout", { mode: "list", teamIds: ["team-green"] }, "admin-1");
   forks.setTeams("orphan", { mode: "list", teamIds: [] }, "admin-1");
-  membership.addMember("team-red", "alice", "admin-1");
-  membership.addMember("team-blue", "alice", "admin-1");
-  membership.addMember("team-green", "bob", "admin-1");
+  membership.setMembers("team-red", { mode: "list", userIds: ["alice"] }, "admin-1");
+  membership.setMembers("team-blue", { mode: "list", userIds: ["alice"] }, "admin-1");
+  membership.setMembers("team-green", { mode: "list", userIds: ["bob"] }, "admin-1");
 });
 
 afterEach(() => {

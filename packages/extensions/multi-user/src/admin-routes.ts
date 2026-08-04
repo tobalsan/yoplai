@@ -10,6 +10,7 @@ import { getMultiUserRuntime } from "./runtime-state.js";
 import { logImpersonationEvent, startImpersonation } from "./impersonation.js";
 import { isDuplicateTeamNameError, isTeamNotFoundError } from "./teams.js";
 import { isForkNotFoundError, isPoolAgentNotFoundError } from "./forks.js";
+import { isAllUsersTeamError } from "./membership.js";
 
 const UpdateAdminUserBodySchema = z
   .object({
@@ -24,9 +25,10 @@ const SetAgentAssignmentsBodySchema = z.object({
   userIds: z.array(z.string()),
 });
 
-const AddTeamMemberBodySchema = z.object({
-  userId: z.string().min(1, "userId is required"),
-});
+const SetTeamMembersBodySchema = z.discriminatedUnion("mode", [
+  z.object({ mode: z.literal("all") }),
+  z.object({ mode: z.literal("list"), userIds: z.array(z.string().min(1)) }),
+]);
 
 const SetForkTeamsBodySchema = z.discriminatedUnion("mode", [
   z.object({ mode: z.literal("all") }),
@@ -251,9 +253,10 @@ export function registerMultiUserAdminRoutes(app: Hono): void {
   });
 
   app.delete("/admin/teams/:id", requireAdmin(), (c) => {
-    const { teams } = getRuntimeOrThrow();
+    const { teams, notifyAgentListChanged } = getRuntimeOrThrow();
     try {
       const result = teams.deleteTeam(c.req.param("id"));
+      notifyAgentListChanged?.();
       return c.json(result);
     } catch (error) {
       if (isTeamNotFoundError(error)) {
@@ -263,8 +266,8 @@ export function registerMultiUserAdminRoutes(app: Hono): void {
     }
   });
 
-  app.post("/admin/teams/:teamId/members", requireAdmin(), async (c) => {
-    const parsed = AddTeamMemberBodySchema.safeParse(await c.req.json());
+  app.put("/admin/teams/:teamId/members", requireAdmin(), async (c) => {
+    const parsed = SetTeamMembersBodySchema.safeParse(await c.req.json());
     if (!parsed.success) {
       return c.json({ error: parsed.error.message }, 400);
     }
@@ -273,22 +276,21 @@ export function registerMultiUserAdminRoutes(app: Hono): void {
     if (!authContext) return c.json({ error: "unauthorized" }, 401);
 
     const teamId = c.req.param("teamId");
-    const { teams, membership, db } = getRuntimeOrThrow();
+    const { teams, membership, db, notifyAgentListChanged } = getRuntimeOrThrow();
     if (!teams.getTeam(teamId)) {
       return c.json({ error: "Team not found" }, 404);
     }
 
-    const userExists = db
-      .prepare("SELECT 1 FROM user WHERE id = ?")
-      .get(parsed.data.userId);
-    if (!userExists) {
-      return c.json({ error: "User not found" }, 404);
+    const userIds = parsed.data.mode === "list" ? [...new Set(parsed.data.userIds)] : [];
+    if (userIds.length) {
+      const rows = db.prepare(`SELECT id FROM user WHERE id IN (${userIds.map(() => "?").join(",")})`).all(...userIds) as Array<{ id: string }>;
+      if (rows.length !== userIds.length) return c.json({ error: "User not found" }, 404);
     }
-
-    // add is idempotent: re-adding an existing member is a 200 no-op.
-    membership.addMember(teamId, parsed.data.userId, authContext.user.id);
+    membership.setMembers(teamId, parsed.data.mode === "all" ? { mode: "all" } : { mode: "list", userIds }, authContext.user.id);
+    notifyAgentListChanged?.();
     return c.json({
       teamId,
+      allUsers: teams.getTeam(teamId)?.allUsers ?? false,
       members: membership.listMemberProfilesForTeam(teamId),
     });
   });
@@ -296,15 +298,19 @@ export function registerMultiUserAdminRoutes(app: Hono): void {
   app.delete("/admin/teams/:teamId/members/:userId", requireAdmin(), (c) => {
     const teamId = c.req.param("teamId");
     const userId = c.req.param("userId");
-    const { teams, membership } = getRuntimeOrThrow();
+    const { teams, membership, notifyAgentListChanged } = getRuntimeOrThrow();
     if (!teams.getTeam(teamId)) {
       return c.json({ error: "Team not found" }, 404);
     }
 
-    // remove is idempotent too: removing a non-member is a no-op.
-    membership.removeMember(teamId, userId);
+    try { membership.removeMember(teamId, userId); } catch (error) {
+      if (isAllUsersTeamError(error)) return c.json({ error: (error as Error).message }, 409);
+      throw error;
+    }
+    notifyAgentListChanged?.();
     return c.json({
       teamId,
+      allUsers: teams.getTeam(teamId)?.allUsers ?? false,
       members: membership.listMemberProfilesForTeam(teamId),
     });
   });

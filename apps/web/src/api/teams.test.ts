@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
-  addTeamMember,
+  setTeamMembers,
   fetchTeamAgents,
   fetchTeamMembers,
   removeForkFromTeam,
@@ -40,12 +40,10 @@ describe("teams membership api client", () => {
     expect(fetchMock).toHaveBeenCalledWith("/api/teams/team-1/members", {
       credentials: "include",
     });
-    expect(members).toEqual([
-      { id: "user-1", name: "User One", email: "u1@example.com" },
-    ]);
+    expect(members).toEqual({ teamId: "team-1", members: [{ id: "user-1", name: "User One", email: "u1@example.com" }] });
   });
 
-  it("adds a member via the admin route", async () => {
+  it("sets a team's explicit members via the admin route", async () => {
     fetchMock.mockResolvedValue({
       ok: true,
       json: async () => ({
@@ -54,17 +52,15 @@ describe("teams membership api client", () => {
       }),
     });
 
-    const result = await addTeamMember("team-1", "user-1");
+    const result = await setTeamMembers("team-1", { mode: "list", userIds: ["user-1"] });
 
     expect(fetchMock).toHaveBeenCalledWith("/api/admin/teams/team-1/members", {
-      method: "POST",
+      method: "PUT",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ userId: "user-1" }),
+      body: JSON.stringify({ mode: "list", userIds: ["user-1"] }),
       credentials: "include",
     });
-    expect(result).toEqual([
-      { id: "user-1", name: "User One", email: "u1@example.com" },
-    ]);
+    expect(result).toEqual({ teamId: "team-1", members: [{ id: "user-1", name: "User One", email: "u1@example.com" }] });
   });
 
   it("removes a member via the admin route", async () => {
@@ -79,7 +75,7 @@ describe("teams membership api client", () => {
       "/api/admin/teams/team-1/members/user-1",
       { method: "DELETE", credentials: "include" }
     );
-    expect(result).toEqual([]);
+    expect(result).toEqual({ teamId: "team-1", members: [] });
   });
 
   it("lists a team's agents from the global route", async () => {

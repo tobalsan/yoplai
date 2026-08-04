@@ -112,12 +112,17 @@ export function registerMultiUserRoutes(app: Hono): void {
   });
 
   app.get("/teams", (c) => {
-    const { teams } = getRuntimeOrThrow();
+    const { teams, membership } = getRuntimeOrThrow();
     const authContext =
       getRequestAuthContext(c) ?? getForwardedAuthContext(c.req.raw.headers);
     if (!authContext) return c.json({ error: "unauthorized" }, 401);
     // Team visibility is global: any authenticated user can list all teams.
-    return c.json({ teams: teams.listTeams() });
+    return c.json({
+      teams: teams.listTeams().map((team) => ({
+        ...team,
+        memberCount: membership.listUsersForTeam(team.id).length,
+      })),
+    });
   });
 
   app.get("/teams/:teamId/members", (c) => {
@@ -133,6 +138,7 @@ export function registerMultiUserRoutes(app: Hono): void {
     }
     return c.json({
       teamId,
+      allUsers: teams.getTeam(teamId)?.allUsers ?? false,
       members: membership.listMemberProfilesForTeam(teamId),
     });
   });
