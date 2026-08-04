@@ -864,7 +864,23 @@ dream:
   model: claude-sonnet-4
 ```
 
-`provider` and `model` must be set together. Dreaming is disabled unless configured. Trigger a run immediately, or inspect its input window without modifying the workspace:
+`provider` and `model` must be set together. Dreaming is disabled unless configured.
+
+The consolidation prompt, run timeout, and cold-start lookback window can be overridden globally in `yoplai.json`:
+
+```json
+{
+  "dream": {
+    "prompt": "Custom consolidation instructions...",
+    "timeoutMs": 1800000,
+    "coldStartHours": 24
+  }
+}
+```
+
+`coldStartHours` (default `24`) only applies when `dreams/state.json` has no `lastDreamAt` yet — after the first successful run, each dream reads sessions since the previous one. `timeoutMs` defaults to 30 minutes.
+
+Trigger a run immediately, or inspect its input window without modifying the workspace:
 
 ```bash
 yoplai dream my-agent
