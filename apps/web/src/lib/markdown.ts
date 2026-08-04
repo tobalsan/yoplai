@@ -21,6 +21,15 @@ function normalizeHref(raw: unknown): string | null {
   return String(raw);
 }
 
+function escapeHtml(text: string): string {
+  return text
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
 export function getFilenameFromHref(raw: string): string {
   const cleaned = raw.split(/[?#]/)[0] ?? "";
   const last = cleaned.split("/").filter(Boolean).pop() ?? cleaned;
@@ -50,6 +59,8 @@ export function renderMarkdown(
   options?: RenderMarkdownOptions
 ): string {
   const renderer = new marked.Renderer();
+
+  renderer.html = ({ text }: Tokens.HTML | Tokens.Tag) => escapeHtml(text);
 
   renderer.link = ({ href, title, text }: Tokens.Link) => {
     const rawHref = normalizeHref(href) ?? "";

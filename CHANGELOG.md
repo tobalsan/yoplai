@@ -15,6 +15,7 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Fixed
 
+- Agent chat markdown now renders raw HTML literally, preventing malformed tags from truncating messages or injecting markup.
 - Scheduled job runs are now traced as `yoplai:scheduler:<agent>` in observability platforms instead of being mislabelled as chat runs.
 - Agent extension settings now show root-configured Slack, Discord, Telegram, IRC, and webhooks integrations as enabled and lock their toggles so the UI cannot contradict the live configuration.
 - Slack reactions are now off by default and require per-channel opt-in before they can start an agent turn.
