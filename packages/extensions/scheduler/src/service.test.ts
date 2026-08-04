@@ -4,9 +4,12 @@ import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type {
   AgentConfig,
+  DeliverySink,
   ExtensionContext,
   GatewayConfig,
+  SchedulePayload,
 } from "@yoplai/shared";
+import { MAX_DELIVERY_CHARS } from "./deliver.js";
 import {
   ScheduleAlreadyRunningError,
   SchedulerService,
@@ -22,6 +25,12 @@ type SchedulerWithInternals = {
   timer: NodeJS.Timeout | null;
 };
 
+// SchedulePayloadSchema defaults noAgent/quietOutput, so the parsed type
+// requires them; tests build payloads through this helper.
+function jobPayload(overrides: Partial<SchedulePayload>): SchedulePayload {
+  return { noAgent: false, quietOutput: false, ...overrides };
+}
+
 function agent(id: string, workspace: string): AgentConfig {
   return {
     id,
@@ -33,7 +42,11 @@ function agent(id: string, workspace: string): AgentConfig {
   };
 }
 
-function context(config: GatewayConfig, runAgent = vi.fn()): ExtensionContext {
+function context(
+  config: GatewayConfig,
+  runAgent = vi.fn(),
+  sinks: Record<string, DeliverySink> = {}
+): ExtensionContext {
   return {
     getConfig: () => config,
     getDataDir: () => os.tmpdir(),
@@ -55,6 +68,8 @@ function context(config: GatewayConfig, runAgent = vi.fn()): ExtensionContext {
     getSessionHistory: vi.fn(),
     saveMediaFile: vi.fn(),
     readMediaFile: vi.fn(),
+    registerDeliverySink: vi.fn(() => () => {}),
+    getDeliverySink: (id: string) => sinks[id],
     subscribe: vi.fn(() => () => {}),
     emit: vi.fn(),
     logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
@@ -97,7 +112,7 @@ describe("SchedulerService.runNow", () => {
     const job = await scheduler.add("alpha", {
       name: "Digest",
       schedule: { cron: "0 8 * * *", tz: "UTC" },
-      payload: { message: "Run" },
+      payload: jobPayload({ message: "Run" }),
     });
     const disabled = (await scheduler.update("alpha", job.id, {
       enabled: false,
@@ -160,7 +175,7 @@ describe("SchedulerService.runNow", () => {
     const job = await scheduler.add("alpha", {
       name: "Digest",
       schedule: { cron: "0 8 * * *", tz: "UTC" },
-      payload: { message: "Run" },
+      payload: jobPayload({ message: "Run" }),
     });
 
     const firstRun = scheduler.runNow("alpha", job.id);
@@ -205,7 +220,7 @@ describe("SchedulerService.runNow", () => {
     const job = await scheduler.add("alpha", {
       name: "Digest",
       schedule: { cron: "* * * * *", tz: "UTC" },
-      payload: { message: "Run" },
+      payload: jobPayload({ message: "Run" }),
     });
     const [loadedJob] = (await scheduler.list("alpha")) as Array<{
       state?: { nextRunAtMs?: number };
@@ -288,13 +303,13 @@ describe("SchedulerService persistence and lifecycle", () => {
     const first = scheduler.add("alpha", {
       name: "First",
       schedule: { cron: "0 8 * * *", tz: "UTC" },
-      payload: { message: "one" },
+      payload: jobPayload({ message: "one" }),
     });
     await vi.waitFor(() => expect(saveAgentJobs).toHaveBeenCalledTimes(1));
     const second = scheduler.add("alpha", {
       name: "Second",
       schedule: { cron: "0 9 * * *", tz: "UTC" },
-      payload: { message: "two" },
+      payload: jobPayload({ message: "two" }),
     });
 
     await Promise.resolve();
@@ -323,7 +338,7 @@ describe("SchedulerService persistence and lifecycle", () => {
     await scheduler.add("alpha", {
       name: "Future",
       schedule: { cron: "0 8 * * *", tz: "UTC" },
-      payload: { message: "run" },
+      payload: jobPayload({ message: "run" }),
     });
 
     let finishTick!: () => void;
@@ -381,7 +396,7 @@ describe("SchedulerService timeout and loop isolation", () => {
     await scheduler.add("alpha", {
       name: "Hung",
       schedule: { cron: "* * * * *", tz: "UTC" },
-      payload: { message: "Hang" },
+      payload: jobPayload({ message: "Hang" }),
     });
 
     // Force the job to be due now
@@ -445,12 +460,12 @@ describe("SchedulerService timeout and loop isolation", () => {
     await scheduler.add("alpha", {
       name: "Hung",
       schedule: { cron: "* * * * *", tz: "UTC" },
-      payload: { message: "Hang" },
+      payload: jobPayload({ message: "Hang" }),
     });
     await scheduler.add("beta", {
       name: "Quick",
       schedule: { cron: "* * * * *", tz: "UTC" },
-      payload: { message: "Go" },
+      payload: jobPayload({ message: "Go" }),
     });
 
     const jobs = (await scheduler.list()) as Array<{
@@ -499,7 +514,7 @@ describe("SchedulerService timeout and loop isolation", () => {
     await scheduler.add("alpha", {
       name: "Hung",
       schedule: { cron: "* * * * *", tz: "UTC" },
-      payload: { message: "Hang" },
+      payload: jobPayload({ message: "Hang" }),
     });
 
     const [loadedJob] = (await scheduler.list("alpha")) as Array<{
@@ -544,7 +559,7 @@ describe("SchedulerService timeout and loop isolation", () => {
     await scheduler.add("alpha", {
       name: "Hung",
       schedule: { cron: "* * * * *", tz: "UTC" },
-      payload: { message: "Hang" },
+      payload: jobPayload({ message: "Hang" }),
     });
 
     const [loadedJob] = (await scheduler.list("alpha")) as Array<{
@@ -579,5 +594,598 @@ describe("SchedulerService timeout and loop isolation", () => {
     // Clean up: reject run #2 so its promise settles before afterEach deletes tmpDir.
     if (rejectCallbacks[1]) rejectCallbacks[1](new Error("aborted"));
     await new Promise<void>((r) => setTimeout(r, 50));
+  });
+});
+
+describe("SchedulerService script jobs", () => {
+  let tmpDir: string | undefined;
+
+  afterEach(async () => {
+    try {
+      await stopScheduler();
+    } catch {
+      // Tests create the service directly and may not start it.
+    }
+    clearSchedulerContext();
+    vi.restoreAllMocks();
+    if (tmpDir) await fs.rm(tmpDir, { recursive: true, force: true });
+  });
+
+  async function setup(script: string, runAgent = vi.fn()) {
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    tmpDir = await fs.mkdtemp(
+      path.join(os.tmpdir(), "yoplai-scheduler-script-")
+    );
+    const workspace = path.join(tmpDir, "alpha");
+    await fs.mkdir(path.join(workspace, "bin"), { recursive: true });
+    await fs.writeFile(path.join(workspace, "bin", "gate.sh"), script, "utf8");
+    const config: GatewayConfig = {
+      version: 3,
+      agents: [agent("alpha", workspace)],
+      extensions: { scheduler: { enabled: true } },
+      sessions: { idleMinutes: 360 },
+      agentFab: false,
+    };
+    setSchedulerContext(context(config, runAgent));
+    return { scheduler: new SchedulerService(), runAgent, workspace };
+  }
+
+  type JobState = {
+    state?: {
+      lastStatus?: string;
+      lastError?: string;
+      lastExitCode?: number;
+      lastRunKind?: string;
+      lastRunAtMs?: number;
+    };
+  };
+
+  it("runs a script-only job to completion without ever calling runAgent", async () => {
+    const { scheduler, runAgent } = await setup("echo rotated\n");
+    const job = await scheduler.add("alpha", {
+      name: "Rotate",
+      schedule: { cron: "0 8 * * *", tz: "UTC" },
+      payload: jobPayload({ script: "bin/gate.sh", noAgent: true }),
+    });
+
+    const result = await scheduler.runNow("alpha", job.id);
+
+    expect(runAgent).not.toHaveBeenCalled();
+    expect(result.status).toBe("ok");
+    expect(result.sessionId).toBeUndefined();
+    const content = await fs.readFile(result.outputPath!, "utf8");
+    expect(content).toContain("**Status:** ok");
+    expect(content).not.toContain("## Prompt");
+    expect(content).toContain("## Response\n\nrotated");
+
+    const [after] = (await scheduler.list("alpha")) as JobState[];
+    expect(after?.state?.lastStatus).toBe("ok");
+    expect(after?.state?.lastRunKind).toBe("script_only");
+  });
+
+  it("records a silent tick without calling runAgent", async () => {
+    const { scheduler, runAgent } = await setup(
+      "echo '{\"wakeAgent\":false}'\n"
+    );
+    const job = await scheduler.add("alpha", {
+      name: "Gate",
+      schedule: { cron: "0 8 * * *", tz: "UTC" },
+      payload: jobPayload({ script: "bin/gate.sh", message: "Digest" }),
+    });
+
+    const result = await scheduler.runNow("alpha", job.id);
+
+    expect(runAgent).not.toHaveBeenCalled();
+    expect(result.status).toBe("ok");
+    const content = await fs.readFile(result.outputPath!, "utf8");
+    expect(content).toContain("**Status:** ok (silent tick)");
+    expect(content).toContain("## Response\n\nsilent tick");
+
+    const [after] = (await scheduler.list("alpha")) as JobState[];
+    expect(after?.state?.lastRunKind).toBe("silent_tick");
+  });
+
+  it("wakes the agent with the gate context appended to the message", async () => {
+    const runAgent = vi.fn().mockResolvedValue({
+      payloads: [{ text: "Two new rows." }],
+      meta: { durationMs: 3, sessionId: "gated-session" },
+    });
+    const { scheduler } = await setup(
+      'echo \'{"wakeAgent":true,"context":{"count":2}}\'\n',
+      runAgent
+    );
+    const job = await scheduler.add("alpha", {
+      name: "Gate",
+      schedule: { cron: "0 8 * * *", tz: "UTC" },
+      payload: jobPayload({ script: "bin/gate.sh", message: "Digest" }),
+    });
+
+    const result = await scheduler.runNow("alpha", job.id);
+
+    expect(runAgent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        message: 'Digest\n\nGate context:\n{"count":2}',
+      })
+    );
+    expect(result.status).toBe("ok");
+    expect(result.sessionId).toBe("gated-session");
+    const content = await fs.readFile(result.outputPath!, "utf8");
+    expect(content).toContain("**Status:** woke agent");
+    expect(content).toContain("## Prompt\n\nDigest");
+    expect(content).toContain('## Gate Output\n\n{"wakeAgent":true');
+    expect(content).toContain("## Response\n\nTwo new rows.");
+
+    const [after] = (await scheduler.list("alpha")) as JobState[];
+    expect(after?.state?.lastRunKind).toBe("woke_agent");
+  });
+
+  it("records a script failure mechanically and never invokes the agent", async () => {
+    const { scheduler, runAgent } = await setup("echo boom >&2\nexit 3\n");
+    const job = await scheduler.add("alpha", {
+      name: "Gate",
+      schedule: { cron: "0 8 * * *", tz: "UTC" },
+      payload: jobPayload({ script: "bin/gate.sh", message: "Digest" }),
+    });
+
+    const result = await scheduler.runNow("alpha", job.id);
+
+    expect(runAgent).not.toHaveBeenCalled();
+    expect(result.status).toBe("error");
+    expect(result.error).toContain("script failed (exit 3)");
+    const content = await fs.readFile(result.outputPath!, "utf8");
+    expect(content).toContain("**Status:** script failed (exit 3)");
+    expect(content).toContain("exit_code: 3");
+    expect(content).toContain("boom");
+
+    const [after] = (await scheduler.list("alpha")) as JobState[];
+    expect(after?.state?.lastStatus).toBe("error");
+    expect(after?.state?.lastExitCode).toBe(3);
+  });
+
+  it("skips the output file for a quiet uneventful run but still updates state", async () => {
+    const { scheduler } = await setup("exit 0\n");
+    const job = await scheduler.add("alpha", {
+      name: "Quiet",
+      schedule: { cron: "0 8 * * *", tz: "UTC" },
+      payload: jobPayload({
+        script: "bin/gate.sh",
+        noAgent: true,
+        quietOutput: true,
+      }),
+    });
+
+    const result = await scheduler.runNow("alpha", job.id);
+
+    expect(result.status).toBe("ok");
+    expect(result.outputPath).toBeUndefined();
+    await expect(
+      fs.readdir(path.join(tmpDir!, "alpha", "cron", "output", job.id))
+    ).rejects.toThrow();
+
+    const [after] = (await scheduler.list("alpha")) as JobState[];
+    expect(after?.state?.lastStatus).toBe("ok");
+    expect(after?.state?.lastRunKind).toBe("script_only");
+    expect(after?.state?.lastRunAtMs).toBeGreaterThan(0);
+  });
+
+  it("still writes the output file for a quiet job whose script fails", async () => {
+    const { scheduler } = await setup("exit 1\n");
+    const job = await scheduler.add("alpha", {
+      name: "Quiet",
+      schedule: { cron: "0 8 * * *", tz: "UTC" },
+      payload: jobPayload({
+        script: "bin/gate.sh",
+        noAgent: true,
+        quietOutput: true,
+      }),
+    });
+
+    const result = await scheduler.runNow("alpha", job.id);
+
+    expect(result.status).toBe("error");
+    expect(result.outputPath).toBeDefined();
+    await expect(fs.readFile(result.outputPath!, "utf8")).resolves.toContain(
+      "**Status:** script failed (exit 1)"
+    );
+  });
+});
+
+describe("SchedulerService delivery", () => {
+  let tmpDir: string | undefined;
+
+  afterEach(async () => {
+    try {
+      await stopScheduler();
+    } catch {
+      // Tests create the service directly and may not start it.
+    }
+    clearSchedulerContext();
+    vi.restoreAllMocks();
+    if (tmpDir) await fs.rm(tmpDir, { recursive: true, force: true });
+  });
+
+  type Delivered = { destination: unknown; text: string };
+
+  function recordingSink(delivered: Delivered[]): DeliverySink {
+    return async ({ destination, text }) => {
+      delivered.push({ destination, text });
+    };
+  }
+
+  async function setup(options: {
+    script?: string;
+    runAgent?: ReturnType<typeof vi.fn>;
+    sinks: Record<string, DeliverySink>;
+  }) {
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    tmpDir = await fs.mkdtemp(
+      path.join(os.tmpdir(), "yoplai-scheduler-deliver-")
+    );
+    const workspace = path.join(tmpDir, "alpha");
+    await fs.mkdir(path.join(workspace, "bin"), { recursive: true });
+    if (options.script) {
+      await fs.writeFile(
+        path.join(workspace, "bin", "gate.sh"),
+        options.script,
+        "utf8"
+      );
+    }
+    const config: GatewayConfig = {
+      version: 3,
+      agents: [agent("alpha", workspace)],
+      extensions: { scheduler: { enabled: true } },
+      sessions: { idleMinutes: 360 },
+      agentFab: false,
+    };
+    const runAgent =
+      options.runAgent ??
+      vi.fn().mockResolvedValue({
+        payloads: [{ text: "Two new rows." }],
+        meta: { durationMs: 3, sessionId: "s" },
+      });
+    setSchedulerContext(context(config, runAgent, options.sinks));
+    return { scheduler: new SchedulerService(), runAgent };
+  }
+
+  type JobDeliveryState = {
+    state?: {
+      lastStatus?: string;
+      lastDelivery?: Array<{ target: string; ok: boolean; error?: string }>;
+    };
+  };
+
+  it("delivers an agent job's response to every configured target", async () => {
+    const delivered: Delivered[] = [];
+    const { scheduler } = await setup({
+      sinks: { slack: recordingSink(delivered) },
+    });
+    const job = await scheduler.add("alpha", {
+      name: "Digest",
+      schedule: { cron: "0 8 * * *", tz: "UTC" },
+      payload: jobPayload({ message: "Run" }),
+      deliver: [{ target: "slack", channel: "C0123" }],
+    });
+
+    const result = await scheduler.runNow("alpha", job.id);
+
+    expect(delivered).toEqual([
+      {
+        destination: { channel: "C0123", user: undefined },
+        text: "Two new rows.",
+      },
+    ]);
+    await expect(fs.readFile(result.outputPath!, "utf8")).resolves.toContain(
+      "## Delivery\n\n- slack: delivered"
+    );
+    const [after] = (await scheduler.list("alpha")) as JobDeliveryState[];
+    expect(after?.state?.lastDelivery).toEqual([{ target: "slack", ok: true }]);
+  });
+
+  it("delivers a script-only job's stdout but stays silent on empty stdout", async () => {
+    const delivered: Delivered[] = [];
+    const { scheduler } = await setup({
+      script: "exit 0\n",
+      sinks: { slack: recordingSink(delivered) },
+    });
+    const job = await scheduler.add("alpha", {
+      name: "Rotate",
+      schedule: { cron: "0 8 * * *", tz: "UTC" },
+      payload: jobPayload({ script: "bin/gate.sh", noAgent: true }),
+      deliver: [{ target: "slack", channel: "C0123" }],
+    });
+
+    const result = await scheduler.runNow("alpha", job.id);
+
+    expect(result.status).toBe("ok");
+    expect(delivered).toEqual([]);
+    await expect(fs.readFile(result.outputPath!, "utf8")).resolves.not.toContain(
+      "## Delivery"
+    );
+  });
+
+  it("delivers a script-only job's trimmed stdout", async () => {
+    const delivered: Delivered[] = [];
+    const { scheduler } = await setup({
+      script: "echo rotated\n",
+      sinks: { telegram: recordingSink(delivered) },
+    });
+    const job = await scheduler.add("alpha", {
+      name: "Rotate",
+      schedule: { cron: "0 8 * * *", tz: "UTC" },
+      payload: jobPayload({ script: "bin/gate.sh", noAgent: true }),
+      deliver: [{ target: "telegram", user: "12345" }],
+    });
+
+    await scheduler.runNow("alpha", job.id);
+
+    expect(delivered).toEqual([
+      { destination: { channel: undefined, user: "12345" }, text: "rotated" },
+    ]);
+  });
+
+  it("delivers nothing on a silent tick", async () => {
+    const delivered: Delivered[] = [];
+    const { scheduler, runAgent } = await setup({
+      script: "echo '{\"wakeAgent\":false}'\n",
+      sinks: { slack: recordingSink(delivered) },
+    });
+    const job = await scheduler.add("alpha", {
+      name: "Gate",
+      schedule: { cron: "0 8 * * *", tz: "UTC" },
+      payload: jobPayload({ script: "bin/gate.sh", message: "Digest" }),
+      deliver: [{ target: "slack", channel: "C0123" }],
+    });
+
+    await scheduler.runNow("alpha", job.id);
+
+    expect(runAgent).not.toHaveBeenCalled();
+    expect(delivered).toEqual([]);
+  });
+
+  it("delivers the agent's response when the gate woke it", async () => {
+    const delivered: Delivered[] = [];
+    const { scheduler } = await setup({
+      script: 'echo \'{"wakeAgent":true,"context":{"count":2}}\'\n',
+      sinks: { slack: recordingSink(delivered) },
+    });
+    const job = await scheduler.add("alpha", {
+      name: "Gate",
+      schedule: { cron: "0 8 * * *", tz: "UTC" },
+      payload: jobPayload({ script: "bin/gate.sh", message: "Digest" }),
+      deliver: [{ target: "slack", channel: "C0123" }],
+    });
+
+    await scheduler.runNow("alpha", job.id);
+
+    expect(delivered.map((entry) => entry.text)).toEqual(["Two new rows."]);
+  });
+
+  it("always delivers an alert when the script fails", async () => {
+    const delivered: Delivered[] = [];
+    const { scheduler } = await setup({
+      script: "echo boom >&2\nexit 3\n",
+      sinks: { slack: recordingSink(delivered) },
+    });
+    const job = await scheduler.add("alpha", {
+      name: "Rotate",
+      schedule: { cron: "0 8 * * *", tz: "UTC" },
+      payload: jobPayload({ script: "bin/gate.sh", noAgent: true }),
+      deliver: [{ target: "slack", channel: "C0123" }],
+    });
+
+    const result = await scheduler.runNow("alpha", job.id);
+
+    expect(result.status).toBe("error");
+    expect(delivered).toHaveLength(1);
+    expect(delivered[0]!.text).toContain('Cron job "Rotate" failed:');
+    expect(delivered[0]!.text).toContain("script failed (exit 3)");
+  });
+
+  it("delivers an alert even when quietOutput skipped the output file", async () => {
+    const delivered: Delivered[] = [];
+    const { scheduler } = await setup({
+      script: "exit 4\n",
+      sinks: { slack: recordingSink(delivered) },
+    });
+    const job = await scheduler.add("alpha", {
+      name: "Quiet",
+      schedule: { cron: "0 8 * * *", tz: "UTC" },
+      payload: jobPayload({
+        script: "bin/gate.sh",
+        noAgent: true,
+        quietOutput: true,
+      }),
+      deliver: [{ target: "slack", channel: "C0123" }],
+    });
+
+    await scheduler.runNow("alpha", job.id);
+
+    expect(delivered).toHaveLength(1);
+    expect(delivered[0]!.text).toContain("script failed (exit 4)");
+  });
+
+  it("keeps the run ok and records a warning for an unregistered target", async () => {
+    const { scheduler } = await setup({ sinks: {} });
+    const job = await scheduler.add("alpha", {
+      name: "Digest",
+      schedule: { cron: "0 8 * * *", tz: "UTC" },
+      payload: jobPayload({ message: "Run" }),
+      deliver: [{ target: "irc", channel: "#ops" }],
+    });
+
+    const result = await scheduler.runNow("alpha", job.id);
+
+    expect(result.status).toBe("ok");
+    await expect(fs.readFile(result.outputPath!, "utf8")).resolves.toContain(
+      '- irc: warning: no delivery sink registered for "irc"'
+    );
+    const [after] = (await scheduler.list("alpha")) as JobDeliveryState[];
+    expect(after?.state?.lastStatus).toBe("ok");
+    expect(after?.state?.lastDelivery).toEqual([
+      {
+        target: "irc",
+        ok: false,
+        error: 'no delivery sink registered for "irc"',
+      },
+    ]);
+  });
+
+  it("a throwing sink is a warning and does not block the other targets", async () => {
+    const delivered: Delivered[] = [];
+    const { scheduler } = await setup({
+      sinks: {
+        slack: async () => {
+          throw new Error("missing scope");
+        },
+        telegram: recordingSink(delivered),
+      },
+    });
+    const job = await scheduler.add("alpha", {
+      name: "Digest",
+      schedule: { cron: "0 8 * * *", tz: "UTC" },
+      payload: jobPayload({ message: "Run" }),
+      deliver: [
+        { target: "slack", channel: "C0123" },
+        { target: "telegram", user: "12345" },
+      ],
+    });
+
+    const result = await scheduler.runNow("alpha", job.id);
+
+    expect(result.status).toBe("ok");
+    expect(delivered).toHaveLength(1);
+    const content = await fs.readFile(result.outputPath!, "utf8");
+    expect(content).toContain("- slack: warning: missing scope");
+    expect(content).toContain("- telegram: delivered");
+  });
+
+  function blockingSink(): {
+    sink: DeliverySink;
+    entered: Promise<void>;
+    release: () => void;
+  } {
+    let enter!: () => void;
+    let release!: () => void;
+    const entered = new Promise<void>((resolve) => {
+      enter = resolve;
+    });
+    const blocked = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    return {
+      sink: async () => {
+        enter();
+        await blocked;
+      },
+      entered,
+      release,
+    };
+  }
+
+  // Delivery is a network call that runs after the run itself resolved; if the
+  // overlap guard were released before it, another fire path would start a
+  // second copy of the same job while the first is still delivering.
+  it("holds the overlap guard while a script-only job is still delivering", async () => {
+    const slack = blockingSink();
+    const { scheduler } = await setup({
+      script: "echo rotated\n",
+      sinks: { slack: slack.sink },
+    });
+    const job = await scheduler.add("alpha", {
+      name: "Rotate",
+      schedule: { cron: "0 8 * * *", tz: "UTC" },
+      payload: jobPayload({ script: "bin/gate.sh", noAgent: true }),
+      deliver: [{ target: "slack", channel: "C0123" }],
+    });
+
+    const firstRun = scheduler.runNow("alpha", job.id);
+    await slack.entered;
+
+    await expect(scheduler.runNow("alpha", job.id)).rejects.toBeInstanceOf(
+      ScheduleAlreadyRunningError
+    );
+
+    slack.release();
+    await expect(firstRun).resolves.toMatchObject({ status: "ok" });
+  });
+
+  it("holds the overlap guard while an agent job is still delivering", async () => {
+    const slack = blockingSink();
+    const { scheduler, runAgent } = await setup({ sinks: { slack: slack.sink } });
+    const job = await scheduler.add("alpha", {
+      name: "Digest",
+      schedule: { cron: "0 8 * * *", tz: "UTC" },
+      payload: jobPayload({ message: "Run" }),
+      deliver: [{ target: "slack", channel: "C0123" }],
+    });
+
+    const firstRun = scheduler.runNow("alpha", job.id);
+    await slack.entered;
+
+    await expect(scheduler.runNow("alpha", job.id)).rejects.toBeInstanceOf(
+      ScheduleAlreadyRunningError
+    );
+    expect(runAgent).toHaveBeenCalledTimes(1);
+
+    slack.release();
+    await expect(firstRun).resolves.toMatchObject({ status: "ok" });
+  });
+
+  // A failed output write used to escape completeRun before the reschedule, so
+  // nextRunAtMs stayed in the past and every tick re-fired and re-delivered.
+  it("reschedules after a failed output write instead of re-delivering forever", async () => {
+    const delivered: Delivered[] = [];
+    const { scheduler } = await setup({
+      sinks: { slack: recordingSink(delivered) },
+    });
+    // Make the run output undeliverable to disk: a file where cron/output goes.
+    const cronDir = path.join(tmpDir!, "alpha", "cron");
+    await fs.mkdir(cronDir, { recursive: true });
+    await fs.writeFile(path.join(cronDir, "output"), "not a dir", "utf8");
+    await scheduler.add("alpha", {
+      name: "Digest",
+      schedule: { cron: "* * * * *", tz: "UTC" },
+      payload: jobPayload({ message: "Run" }),
+      deliver: [{ target: "slack", channel: "C0123" }],
+    });
+    const [loaded] = (await scheduler.list("alpha")) as Array<{
+      state?: { nextRunAtMs?: number };
+    }>;
+    loaded!.state!.nextRunAtMs = Date.now() - 1;
+
+    const internals = scheduler as unknown as { runDueJobs(): Promise<void> };
+    await internals.runDueJobs();
+    await internals.runDueJobs();
+
+    expect(delivered).toHaveLength(1);
+    const [after] = (await scheduler.list("alpha")) as Array<{
+      state?: { nextRunAtMs?: number };
+    }>;
+    expect(after?.state?.nextRunAtMs).toBeGreaterThan(Date.now());
+  });
+
+  it("truncates an oversized response before delivering it", async () => {
+    const delivered: Delivered[] = [];
+    const runAgent = vi.fn().mockResolvedValue({
+      payloads: [{ text: "x".repeat(10_000) }],
+      meta: { durationMs: 3, sessionId: "s" },
+    });
+    const { scheduler } = await setup({
+      runAgent,
+      sinks: { slack: recordingSink(delivered) },
+    });
+    const job = await scheduler.add("alpha", {
+      name: "Digest",
+      schedule: { cron: "0 8 * * *", tz: "UTC" },
+      payload: jobPayload({ message: "Run" }),
+      deliver: [{ target: "slack", channel: "C0123" }],
+    });
+
+    await scheduler.runNow("alpha", job.id);
+
+    expect(delivered[0]!.text).toHaveLength(MAX_DELIVERY_CHARS);
+    expect(delivered[0]!.text.endsWith("\n[truncated]")).toBe(true);
   });
 });

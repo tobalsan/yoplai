@@ -308,11 +308,74 @@ export const ScheduleSchema = z.object({
 });
 export type Schedule = z.infer<typeof ScheduleSchema>;
 
-export const SchedulePayloadSchema = z.object({
-  message: z.string(),
-  sessionId: z.string().optional(),
-});
+// A job's behavior is determined by which payload fields are present (no
+// `kind` discriminator, matching Hermes): `message` alone is a plain agent
+// job; `script` + `noAgent: true` is script-only (exit code decides success,
+// no LLM call); `script` + `message` is a wakeAgent gate (the script runs
+// first and its final stdout line decides whether the agent runs).
+export const SchedulePayloadSchema = z
+  .object({
+    message: z.string().optional(),
+    sessionId: z.string().optional(),
+    script: z.string().optional(),
+    noAgent: z.boolean().optional(),
+    quietOutput: z.boolean().optional(),
+  })
+  .superRefine((value, ctx) => {
+    const message = value.message?.trim() ? value.message : undefined;
+    const script = value.script?.trim() ? value.script : undefined;
+    const reject = (msg: string, path: string) => {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: msg, path: [path] });
+    };
+
+    if (value.message !== undefined && message === undefined) {
+      reject("payload.message must not be empty", "message");
+    } else if (value.script !== undefined && script === undefined) {
+      reject("payload.script must not be empty", "script");
+    } else if (value.noAgent && script === undefined) {
+      reject("payload.noAgent requires payload.script", "noAgent");
+    } else if (value.noAgent && value.message !== undefined) {
+      reject("payload.noAgent rejects payload.message", "noAgent");
+    } else if (script !== undefined && !value.noAgent && message === undefined) {
+      reject("payload.script requires payload.message unless noAgent is true", "script");
+    } else if (script === undefined && message === undefined) {
+      reject("payload.message is required when payload.script is absent", "message");
+    } else if (value.quietOutput && script === undefined) {
+      reject("payload.quietOutput requires payload.script", "quietOutput");
+    } else if (
+      script !== undefined &&
+      (script.startsWith("/") || script.split("/").includes(".."))
+    ) {
+      reject("payload.script must be a relative path contained in the agent root", "script");
+    }
+  });
 export type SchedulePayload = z.infer<typeof SchedulePayloadSchema>;
+
+// One runtime delivery destination for a completed job result. `target` names
+// the extension whose delivery sink pushes the text (e.g. "slack"); exactly one
+// of `channel` | `user` addresses the destination within that extension.
+export const DeliverTargetSchema = z
+  .object({
+    target: z.string(),
+    channel: z.string().optional(),
+    user: z.string().optional(),
+  })
+  .superRefine((value, ctx) => {
+    const reject = (msg: string, path: string) => {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: msg, path: [path] });
+    };
+
+    if (!value.target.trim()) {
+      reject("deliver.target must not be empty", "target");
+    } else if (value.channel !== undefined && !value.channel.trim()) {
+      reject("deliver.channel must not be empty when supplied", "channel");
+    } else if (value.user !== undefined && !value.user.trim()) {
+      reject("deliver.user must not be empty when supplied", "user");
+    } else if ((value.channel !== undefined) === (value.user !== undefined)) {
+      reject("deliver requires exactly one of channel or user", "target");
+    }
+  });
+export type DeliverTarget = z.infer<typeof DeliverTargetSchema>;
 
 export const ScheduleJobFileSchema = z.object({
   id: z.string(),
@@ -321,6 +384,7 @@ export const ScheduleJobFileSchema = z.object({
   schedule: ScheduleSchema,
   model: RequiredModelConfigSchema.optional(),
   payload: SchedulePayloadSchema,
+  deliver: z.array(DeliverTargetSchema).optional(),
   createdAt: z.string().optional(),
   timeoutMs: z.number().positive().optional(),
 });
@@ -1069,6 +1133,20 @@ export interface ExtensionLogger {
 export type SubagentTemplate = SubagentConfig;
 export type HistoryMessage = SimpleHistoryMessage | FullHistoryMessage;
 
+/** Normalized destination a delivery sink resolves onto its own send path. */
+export type DeliveryDestination = { channel?: string; user?: string };
+
+/**
+ * Runtime push of a text result into a comm channel. Registered by comm
+ * extensions under their extension id and called by the host (never by an
+ * LLM tool call). Must throw when delivery fails so the caller can record it.
+ */
+export type DeliverySink = (input: {
+  agent: AgentConfig;
+  destination: DeliveryDestination;
+  text: string;
+}) => Promise<void>;
+
 export interface ExtensionContext {
   // Config
   getConfig(): GatewayConfig;
@@ -1131,6 +1209,11 @@ export interface ExtensionContext {
     mimeType: string;
     size: number;
   }>;
+
+  // Delivery sinks (host-owned registry; comm extensions register in `start`
+  // and unregister in `stop` with the returned function)
+  registerDeliverySink(id: string, sink: DeliverySink): () => void;
+  getDeliverySink(id: string): DeliverySink | undefined;
 
   // Events
   subscribe(event: string, handler: (payload: unknown) => void): () => void;
@@ -1520,6 +1603,7 @@ export const CreateScheduleRequestSchema = z.object({
   schedule: ScheduleSchema,
   model: RequiredModelConfigSchema.optional(),
   payload: SchedulePayloadSchema,
+  deliver: z.array(DeliverTargetSchema).optional(),
   timeoutMs: z.number().positive().optional(),
 });
 export type CreateScheduleRequest = z.infer<typeof CreateScheduleRequestSchema>;
@@ -1530,6 +1614,7 @@ export const UpdateScheduleRequestSchema = z.object({
   schedule: ScheduleSchema.optional(),
   model: RequiredModelConfigSchema.optional(),
   payload: SchedulePayloadSchema.optional(),
+  deliver: z.array(DeliverTargetSchema).optional(),
   timeoutMs: z.number().positive().optional(),
 });
 export type UpdateScheduleRequest = z.infer<typeof UpdateScheduleRequestSchema>;

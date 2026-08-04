@@ -76,3 +76,16 @@ Unauthorized messages are ignored — no agent dispatch and no reply.
 
 - `telegram.send_message` — proactively send a plain-text message to a chat by
   numeric chat ID.
+
+## Delivery sink
+
+Registers under id `"telegram"` for the scheduler's `deliver` targets. The
+destination maps to a chat ID: `user` (preferred) or `channel`, whichever is
+set — set exactly one. The message is sent through the same active-bot lookup,
+markdown rendering, chunking, and retry as `telegram.send_message`, and throws
+if no bot is active for the job's agent (the scheduler records this as a
+delivery warning; it does not fail the job run).
+
+```json
+{ "target": "telegram", "user": "123456789" }
+```

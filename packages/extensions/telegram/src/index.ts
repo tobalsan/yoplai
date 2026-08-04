@@ -1,6 +1,7 @@
 import {
   TelegramExtensionConfigSchema,
   type AgentConfig,
+  type DeliveryDestination,
   type Extension,
   type ExtensionContext,
   type TelegramComponentConfig,
@@ -17,7 +18,14 @@ import {
   getActiveBots,
   registerActiveBot,
 } from "./bot-registry.js";
-import { telegramAgentTools } from "./agent-tools.js";
+import { sendTelegramMessage, telegramAgentTools } from "./agent-tools.js";
+
+let unregisterDeliverySink: (() => void) | undefined;
+
+/** Delivery destination → Telegram chat ID: `user` (preferred) or `channel`. */
+function toChatId(destination: DeliveryDestination): string | undefined {
+  return destination.user ?? destination.channel;
+}
 
 type StartTelegramBotsOptions = {
   agents: AgentConfig[];
@@ -126,8 +134,29 @@ const telegramExtension: Extension = {
     }
 
     await startTelegramBots(ctx);
+
+    unregisterDeliverySink = ctx.registerDeliverySink(
+      "telegram",
+      async ({ agent, destination, text }) => {
+        const chatId = toChatId(destination);
+        if (!chatId) {
+          throw new Error(
+            "telegram delivery requires a channel or user destination"
+          );
+        }
+        await sendTelegramMessage(
+          agent,
+          ctx.getConfig(),
+          undefined,
+          chatId,
+          text
+        );
+      }
+    );
   },
   async stop() {
+    unregisterDeliverySink?.();
+    unregisterDeliverySink = undefined;
     await stopTelegramBots();
     clearTelegramContext();
   },

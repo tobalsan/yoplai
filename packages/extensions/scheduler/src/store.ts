@@ -12,9 +12,12 @@ export type ScheduleStore = {
   jobs: ScheduleJob[];
 };
 
+// Jobs are validated one by one (below) rather than as a typed array, so a
+// single unloadable job — e.g. a legacy entry with an empty message — cannot
+// take every other job of that agent down with it.
 const JobsFileSchema = z.object({
   version: z.literal(1).optional().default(1),
-  jobs: z.array(ScheduleJobFileSchema).optional().default([]),
+  jobs: z.array(z.unknown()).optional().default([]),
 });
 
 export function getAgentJobsPath(workspaceDir: string): string {
@@ -94,7 +97,18 @@ export class PerAgentScheduleStore {
         );
         return [];
       }
-      return parsed.data.jobs.map((job) => ({ ...job, agentId: agent.id }));
+      const jobs: ScheduleJob[] = [];
+      for (const [index, raw] of parsed.data.jobs.entries()) {
+        const job = ScheduleJobFileSchema.safeParse(raw);
+        if (!job.success) {
+          this.warn(
+            `[scheduler] Skipping invalid job #${index} in ${jobsPath}: ${job.error.message}`
+          );
+          continue;
+        }
+        jobs.push({ ...job.data, agentId: agent.id });
+      }
+      return jobs;
     } catch (error) {
       const code =
         error && typeof error === "object" && "code" in error

@@ -1,4 +1,8 @@
-import { GatewayConfigSchema, type ExtensionContext } from "@yoplai/shared";
+import {
+  GatewayConfigSchema,
+  type DeliverySink,
+  type ExtensionContext,
+} from "@yoplai/shared";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const componentStart = vi.fn().mockResolvedValue(undefined);
@@ -32,6 +36,7 @@ describe("telegram extension", () => {
   });
 
   function buildCtx(config: ReturnType<typeof GatewayConfigSchema.parse>) {
+    const deliverySinks = new Map<string, DeliverySink>();
     return {
       getConfig: () => config,
       getDataDir: () => "/tmp",
@@ -50,6 +55,13 @@ describe("telegram extension", () => {
       deleteSession: () => undefined,
       invalidateHistoryCache: async () => undefined,
       getSessionHistory: async () => [],
+      registerDeliverySink: (id: string, sink: DeliverySink) => {
+        deliverySinks.set(id, sink);
+        return () => {
+          deliverySinks.delete(id);
+        };
+      },
+      getDeliverySink: (id: string) => deliverySinks.get(id),
       subscribe: () => () => undefined,
       emit: () => undefined,
       logger: {

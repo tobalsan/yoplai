@@ -51,6 +51,8 @@ function createContext(params: {
     deleteSession: () => undefined,
     invalidateHistoryCache: async () => undefined,
     getSessionHistory: async () => [],
+    registerDeliverySink: () => () => undefined,
+    getDeliverySink: () => undefined,
     subscribe: () => () => undefined,
     emit: (event, payload) => params.onEmit?.(event, payload),
     logger: {

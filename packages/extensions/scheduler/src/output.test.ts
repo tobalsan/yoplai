@@ -36,6 +36,115 @@ describe("cron output", () => {
     expect(content).toContain("**Model:** anthropic/claude-sonnet-4");
     expect(content).toContain("## Prompt\n\nSummarize overnight events.");
     expect(content).toContain("## Response\n\nDone.");
+    expect(content).not.toContain("**Status:**");
+  });
+
+  const base = {
+    workspaceDir: "/tmp/agent",
+    jobId: "rotate",
+    agentId: "devagent",
+    runType: "cron" as const,
+    name: "Rotate token",
+    schedule: "*/5 * * * * UTC",
+    firedAt: new Date("2026-05-19T07:00:00Z"),
+    finishedAt: new Date("2026-05-19T07:00:02Z"),
+    durationMs: 2000,
+  };
+
+  it("renders a script-only run with no session and no prompt", () => {
+    const content = renderCronRunOutput({
+      ...base,
+      status: "ok",
+      statusLabel: "ok",
+      response: "rotated\n",
+    });
+
+    expect(content).not.toContain("session_id:");
+    expect(content).not.toContain("## Prompt");
+    expect(content).toContain('status_label: "ok"');
+    expect(content).toContain("**Status:** ok");
+    expect(content).toContain("## Response\n\nrotated");
+  });
+
+  it("renders a silent tick", () => {
+    const content = renderCronRunOutput({
+      ...base,
+      prompt: "Check the inbox.",
+      status: "ok",
+      statusLabel: "ok (silent tick)",
+      response: "silent tick",
+    });
+
+    expect(content).toContain('status_label: "ok (silent tick)"');
+    expect(content).toContain("**Status:** ok (silent tick)");
+    expect(content).toContain("## Response\n\nsilent tick");
+  });
+
+  it("renders a woke-agent run with gate output before the response", () => {
+    const content = renderCronRunOutput({
+      ...base,
+      sessionId: "scheduler:rotate:1",
+      prompt: "Check the inbox.",
+      status: "ok",
+      statusLabel: "woke agent",
+      gateOutput: '{"wakeAgent":true,"context":{"count":2}}\n',
+      response: "Two new rows.",
+    });
+
+    expect(content).toContain("**Status:** woke agent");
+    expect(content.indexOf("## Gate Output")).toBeLessThan(
+      content.indexOf("## Response")
+    );
+    expect(content).toContain('## Gate Output\n\n{"wakeAgent":true');
+    expect(content).toContain("## Response\n\nTwo new rows.");
+  });
+
+  it("renders a script failure with its exit code", () => {
+    const content = renderCronRunOutput({
+      ...base,
+      status: "error",
+      statusLabel: "script failed (exit 3)",
+      exitCode: 3,
+      error: new Error("script failed (exit 3)\nstderr:\nboom\nstdout:\n"),
+    });
+
+    expect(content).toContain('status_label: "script failed (exit 3)"');
+    expect(content).toContain("exit_code: 3");
+    expect(content).toContain("**Status:** script failed (exit 3)");
+    expect(content).toContain("## Error");
+    expect(content).toContain("boom");
+  });
+
+  it("renders per-target delivery outcomes as notes", () => {
+    const content = renderCronRunOutput({
+      ...base,
+      status: "ok",
+      statusLabel: "ok",
+      response: "rotated",
+      delivery: [
+        { target: "slack", ok: true },
+        { target: "irc", ok: false, error: 'no delivery sink registered for "irc"' },
+      ],
+    });
+
+    expect(content).toContain(
+      '## Delivery\n\n- slack: delivered\n- irc: warning: no delivery sink registered for "irc"'
+    );
+    expect(content.indexOf("## Response")).toBeLessThan(
+      content.indexOf("## Delivery")
+    );
+  });
+
+  it("omits the delivery section when nothing was delivered", () => {
+    const content = renderCronRunOutput({
+      ...base,
+      status: "ok",
+      statusLabel: "ok",
+      response: "rotated",
+      delivery: [],
+    });
+
+    expect(content).not.toContain("## Delivery");
   });
 
   it("writes timestamped output file", async () => {

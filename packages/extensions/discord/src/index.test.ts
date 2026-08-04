@@ -1,5 +1,9 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
-import { GatewayConfigSchema, type ExtensionContext } from "@yoplai/shared";
+import {
+  GatewayConfigSchema,
+  type DeliverySink,
+  type ExtensionContext,
+} from "@yoplai/shared";
 
 const start = vi.fn(async () => undefined);
 const stop = vi.fn(async () => undefined);
@@ -21,6 +25,7 @@ describe("discord extension", () => {
   });
 
   function makeContext(config: ReturnType<typeof GatewayConfigSchema.parse>) {
+    const deliverySinks = new Map<string, DeliverySink>();
     return {
       getConfig: () => config,
       getDataDir: () => "/tmp",
@@ -39,6 +44,13 @@ describe("discord extension", () => {
       deleteSession: () => undefined,
       invalidateHistoryCache: async () => undefined,
       getSessionHistory: async () => [],
+      registerDeliverySink: (id: string, sink: DeliverySink) => {
+        deliverySinks.set(id, sink);
+        return () => {
+          deliverySinks.delete(id);
+        };
+      },
+      getDeliverySink: (id: string) => deliverySinks.get(id),
       subscribe: () => () => undefined,
       emit: () => undefined,
       logger: {
@@ -108,5 +120,34 @@ describe("discord extension", () => {
     await discordExtension.stop();
 
     expect(stop).toHaveBeenCalledOnce();
+  });
+
+  it("registers a delivery sink on start and unregisters it on stop", async () => {
+    const { discordExtension } = await import("./index.js");
+    const config = GatewayConfigSchema.parse({
+      version: 2,
+      agents: [
+        {
+          id: "main",
+          name: "Main",
+          workspace: "~/agents/main",
+          model: { provider: "anthropic", model: "claude" },
+        },
+      ],
+      extensions: {
+        discord: {
+          enabled: true,
+          token: "secret-token",
+          channels: { "123": { agent: "main" } },
+        },
+      },
+    });
+
+    const ctx = makeContext(config);
+    await discordExtension.start(ctx);
+    expect(ctx.getDeliverySink("discord")).toBeTypeOf("function");
+
+    await discordExtension.stop();
+    expect(ctx.getDeliverySink("discord")).toBeUndefined();
   });
 });

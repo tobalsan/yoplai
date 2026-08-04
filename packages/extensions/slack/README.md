@@ -100,6 +100,20 @@ the main session.
 See [the Slack thread cron example](../../../docs/examples/slack-thread-cron.md)
 for a complete scheduled handoff.
 
+## Scheduler delivery
+
+This extension registers a delivery sink under id `"slack"` for the scheduler's
+`deliver` feature (see the [scheduler README](../scheduler/README.md)). A job's
+`deliver` entry maps `channel` to a Slack channel ID and `user` to a Slack user
+ID (passed as the `channel` param on `chat.postMessage`, which is how Slack
+DMs). The sink shares `slack.send_message`'s send path (chunking, mrkdwn
+conversion, and the proactive-DM note), so a delivered cron result behaves the
+same as a manual send for these purposes.
+
+```json
+"deliver": [{ "target": "slack", "channel": "C0123456789" }]
+```
+
 ### Client resolution
 
 When a tool runs, it resolves a Slack Web API client in this order:

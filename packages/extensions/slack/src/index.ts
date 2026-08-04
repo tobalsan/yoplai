@@ -17,7 +17,11 @@ import {
   getActiveBots,
   registerActiveBot,
 } from "./bot-registry.js";
-import { clearSlackClientCache, slackAgentTools } from "./agent-tools.js";
+import {
+  clearSlackClientCache,
+  createSlackDeliverySink,
+  slackAgentTools,
+} from "./agent-tools.js";
 
 type StartSlackBotsOptions = {
   agents: AgentConfig[];
@@ -84,6 +88,8 @@ export {
   type SlackThreadSessionBinding,
 } from "./thread-session-bindings.js";
 
+let unregisterDeliverySink: (() => void) | undefined;
+
 const slackExtension: Extension = {
   id: "slack",
   displayName: "Slack",
@@ -128,9 +134,15 @@ const slackExtension: Extension = {
     }
 
     await startSlackBots(ctx);
+    unregisterDeliverySink = ctx.registerDeliverySink(
+      "slack",
+      createSlackDeliverySink(ctx)
+    );
   },
   async stop() {
     await stopSlackBots();
+    unregisterDeliverySink?.();
+    unregisterDeliverySink = undefined;
     clearSlackContext();
   },
   capabilities() {

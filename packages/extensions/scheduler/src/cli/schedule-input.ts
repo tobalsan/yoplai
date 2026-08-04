@@ -1,4 +1,5 @@
-import type { Schedule, ScheduleJob } from "@yoplai/shared";
+import { InvalidArgumentError } from "commander";
+import type { DeliverTarget, Schedule, ScheduleJob } from "@yoplai/shared";
 import { formatSchedule } from "../schedule.js";
 
 export type ScheduleInputOpts = {
@@ -6,6 +7,41 @@ export type ScheduleInputOpts = {
   tz?: string;
   startAt?: string;
 };
+
+// Parses one `--deliver <target>:<channel|user>:<value>` flag occurrence, e.g.
+// "slack:channel:C0123" or "telegram:user:12345". Matches commander's collect
+// pattern: called once per occurrence with the array built so far. Rejections
+// must be InvalidArgumentError — commander rethrows anything else out of
+// `parse()`, where the gateway's uncaughtException handler swallows it and the
+// CLI exits 0 as if the job had been created.
+export function parseDeliverFlag(
+  value: string,
+  previous: DeliverTarget[] = []
+): DeliverTarget[] {
+  const usage = 'Use <target>:<channel|user>:<value>, e.g. slack:channel:C0123.';
+  const firstColon = value.indexOf(":");
+  const secondColon = firstColon === -1 ? -1 : value.indexOf(":", firstColon + 1);
+  if (
+    firstColon <= 0 ||
+    secondColon === -1 ||
+    secondColon === firstColon + 1 ||
+    secondColon === value.length - 1
+  ) {
+    throw new InvalidArgumentError(`Invalid --deliver "${value}". ${usage}`);
+  }
+  const target = value.slice(0, firstColon);
+  const kind = value.slice(firstColon + 1, secondColon);
+  const destValue = value.slice(secondColon + 1);
+  if (kind !== "channel" && kind !== "user") {
+    throw new InvalidArgumentError(`Invalid --deliver "${value}": second segment must be "channel" or "user". ${usage}`);
+  }
+  return [...previous, { target, [kind]: destValue } as DeliverTarget];
+}
+
+export function formatDeliver(deliver?: DeliverTarget[]): string {
+  if (!deliver?.length) return "";
+  return deliver.map((entry) => `${entry.target}:${entry.channel ?? entry.user}`).join(", ");
+}
 
 export function buildScheduleFromOpts(opts: ScheduleInputOpts): Schedule {
   if (!opts.cron) {
@@ -47,8 +83,26 @@ function formatDuration(ms: number): string {
   return `${Math.floor(m / 60)}h${m % 60}m`;
 }
 
+export type JobKind = "agent" | "script" | "gated";
+
+export function jobKind(payload: ScheduleJob["payload"]): JobKind {
+  if (payload.script && payload.noAgent) return "script";
+  if (payload.script && payload.message) return "gated";
+  return "agent";
+}
+
 export function renderJobsTable(jobs: JobWithState[]): string {
-  const headers = ["id", "name", "agent", "schedule", "next-run", "last-status", "running-for"];
+  const headers = [
+    "id",
+    "name",
+    "agent",
+    "kind",
+    "schedule",
+    "next-run",
+    "last-status",
+    "running-for",
+    "deliver",
+  ];
   const formatCell = (value: unknown) =>
     String(value ?? "")
       .replace(/\r?\n/g, " ")
@@ -58,12 +112,14 @@ export function renderJobsTable(jobs: JobWithState[]): string {
     job.id,
     job.name,
     job.agentId,
+    jobKind(job.payload),
     formatSchedule(job.schedule),
     job.state?.nextRunAtMs
       ? new Date(job.state.nextRunAtMs).toISOString()
       : "",
     job.state?.lastStatus ?? "",
     job.state?.runningForMs != null ? formatDuration(job.state.runningForMs) : "",
+    formatDeliver(job.deliver),
   ]);
 
   const headerRow = `| ${headers.join(" | ")} |`;

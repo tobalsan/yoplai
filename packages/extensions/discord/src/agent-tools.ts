@@ -1,5 +1,6 @@
 import type {
   AgentConfig,
+  DeliveryDestination,
   DiscordComponentConfig,
   ExtensionAgentTool,
   GatewayConfig,
@@ -285,6 +286,60 @@ async function sendToChannel(
   return { channelId, messageId: firstMessageId };
 }
 
+async function resolveSendChannelId(
+  client: DiscordRestClient,
+  destination: DeliveryDestination
+): Promise<string> {
+  if (destination.channel) return destination.channel;
+  const dm = (await client.post("/users/@me/channels", {
+    body: { recipient_id: destination.user },
+  })) as DiscordDmChannel;
+  if (!dm.id) {
+    throw new Error("Discord did not return a DM channel ID.");
+  }
+  return dm.id;
+}
+
+async function sendDiscordMessage(
+  client: DiscordRestClient,
+  destination: DeliveryDestination,
+  text: string
+): Promise<{ channelId: string; messageId?: string }> {
+  const channelId = await resolveSendChannelId(client, destination);
+  return sendToChannel(client, channelId, text);
+}
+
+/**
+ * Runtime delivery path used by the scheduler's `deliver` fan-out (never an
+ * LLM tool call). Shares `resolveDiscordClient` / `sendDiscordMessage` with
+ * `discord.send_message` but throws on failure instead of returning
+ * `{ ok: false }` — the scheduler turns a thrown sink into a recorded
+ * warning on the run.
+ */
+export async function sendDiscordDelivery(
+  agent: AgentConfig,
+  config: GatewayConfig,
+  destination: DeliveryDestination,
+  text: string
+): Promise<void> {
+  const resolved = resolveDiscordClient(agent, config);
+  if (!resolved) {
+    throw new Error("No Discord token is configured for this agent.");
+  }
+  if (resolved.source === "component") {
+    // The shared component bot can reach every routed channel, so the same
+    // per-agent routing check the tool applies has to gate delivery too —
+    // otherwise a `deliver` target bypasses it.
+    const error = validateComponentSendTarget(agent, config, {
+      channel: destination.channel,
+      user: destination.user,
+      text,
+    });
+    if (error) throw new Error(error);
+  }
+  await sendDiscordMessage(resolved.rest, destination, text);
+}
+
 async function createForumThread(
   client: DiscordRestClient,
   channelId: string,
@@ -475,21 +530,11 @@ export function discordAgentTools(): ExtensionAgentTool[] {
               return { ok: false, error };
             }
           }
-          const client = resolved.rest;
-
-          const channelId =
-            input.channel ??
-            (await (async () => {
-              const dm = (await client.post("/users/@me/channels", {
-                body: { recipient_id: input.user },
-              })) as DiscordDmChannel;
-              if (!dm.id) {
-                throw new Error("Discord did not return a DM channel ID.");
-              }
-              return dm.id;
-            })());
-
-          const result = await sendToChannel(client, channelId, input.text);
+          const result = await sendDiscordMessage(
+            resolved.rest,
+            { channel: input.channel, user: input.user },
+            input.text
+          );
           return {
             ok: true,
             channel: result.channelId,

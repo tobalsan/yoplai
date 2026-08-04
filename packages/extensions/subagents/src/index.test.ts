@@ -35,6 +35,8 @@ function context(
     deleteSession: () => undefined,
     invalidateHistoryCache: async () => undefined,
     getSessionHistory: async () => [],
+    registerDeliverySink: () => () => undefined,
+    getDeliverySink: () => undefined,
     subscribe: () => () => undefined,
     emit: () => undefined,
     logger: {

@@ -68,6 +68,40 @@ describe("PerAgentScheduleStore", () => {
     expect(warn).toHaveBeenCalled();
   });
 
+  it("skips only the invalid job and keeps its siblings", async () => {
+    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-scheduler-store-"));
+    const a = agent("alpha", path.join(tmpDir, "alpha"));
+    await fs.mkdir(path.join(a.workspace, "cron"), { recursive: true });
+    await fs.writeFile(
+      path.join(a.workspace, "cron/jobs.json"),
+      JSON.stringify({
+        version: 1,
+        jobs: [
+          {
+            id: "good",
+            name: "Digest",
+            schedule: { cron: "0 8 * * *", tz: "UTC" },
+            payload: { message: "Run" },
+          },
+          // Legacy job written before payload.message had to be non-empty.
+          {
+            id: "legacy",
+            name: "Empty",
+            schedule: { cron: "0 9 * * *", tz: "UTC" },
+            payload: { message: "" },
+          },
+        ],
+      })
+    );
+    const warn = vi.fn();
+
+    const store = new PerAgentScheduleStore([a], (candidate) => candidate.workspace, tmpDir, warn);
+    const loaded = await store.load();
+
+    expect(loaded.jobs.map((job) => job.id)).toEqual(["good"]);
+    expect(warn).toHaveBeenCalled();
+  });
+
   it("loads job model overrides", async () => {
     tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-scheduler-store-"));
     const a = agent("alpha", path.join(tmpDir, "alpha"));

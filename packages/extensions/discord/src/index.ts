@@ -1,5 +1,6 @@
 import {
   DiscordExtensionConfigSchema,
+  type DeliverySink,
   type Extension,
   type ExtensionContext,
   type DiscordComponentConfig,
@@ -16,7 +17,18 @@ import {
   getActiveBots,
   registerActiveBot,
 } from "./bot-registry.js";
-import { clearDiscordClientCache, discordAgentTools } from "./agent-tools.js";
+import {
+  clearDiscordClientCache,
+  discordAgentTools,
+  sendDiscordDelivery,
+} from "./agent-tools.js";
+
+let unregisterDeliverySink: (() => void) | undefined;
+
+function createDiscordDeliverySink(ctx: ExtensionContext): DeliverySink {
+  return ({ agent, destination, text }) =>
+    sendDiscordDelivery(agent, ctx.getConfig(), destination, text);
+}
 
 export async function startDiscordBots(
   ctx: ExtensionContext,
@@ -107,6 +119,11 @@ const discordExtension: Extension = {
     return discordAgentTools();
   },
   async start(ctx) {
+    unregisterDeliverySink = ctx.registerDeliverySink(
+      "discord",
+      createDiscordDeliverySink(ctx)
+    );
+
     const rawConfig = ctx.getConfig().extensions?.discord;
 
     if (rawConfig) {
@@ -119,6 +136,8 @@ const discordExtension: Extension = {
     await startDiscordBots(ctx);
   },
   async stop() {
+    unregisterDeliverySink?.();
+    unregisterDeliverySink = undefined;
     await stopDiscordBots();
     clearDiscordContext();
   },

@@ -135,3 +135,42 @@ describe("createExtensionContext media helpers", () => {
     );
   });
 });
+
+describe("createExtensionContext delivery sink registry", () => {
+  async function context() {
+    const { createExtensionContext } = await import("./context.js");
+    return createExtensionContext({
+      version: 2,
+      agents: [],
+    } as unknown as GatewayConfig);
+  }
+
+  it("registers, looks up, and unregisters a sink", async () => {
+    const ctx = await context();
+    const sink = vi.fn(async () => undefined);
+
+    const unregister = ctx.registerDeliverySink("slack", sink);
+    expect(ctx.getDeliverySink("slack")).toBe(sink);
+
+    unregister();
+    expect(ctx.getDeliverySink("slack")).toBeUndefined();
+  });
+
+  it("replaces a duplicate id with a warning and keeps the replacement after the old unregister", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const ctx = await context();
+    const first = vi.fn(async () => undefined);
+    const second = vi.fn(async () => undefined);
+
+    const unregisterFirst = ctx.registerDeliverySink("slack", first);
+    ctx.registerDeliverySink("slack", second);
+    expect(warn).toHaveBeenCalledWith(
+      'Delivery sink "slack" already registered; replacing it'
+    );
+    expect(ctx.getDeliverySink("slack")).toBe(second);
+
+    unregisterFirst();
+    expect(ctx.getDeliverySink("slack")).toBe(second);
+    warn.mockRestore();
+  });
+});

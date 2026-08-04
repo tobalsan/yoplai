@@ -1,7 +1,9 @@
 import { WebClient } from "@slack/web-api";
 import type {
   AgentConfig,
+  DeliverySink,
   ExtensionAgentTool,
+  ExtensionContext,
   GatewayConfig,
   SlackAgentConfig,
   SlackComponentConfig,
@@ -92,6 +94,77 @@ function resolveSlackClient(
 
 export function clearSlackClientCache(): void {
   clientCache.clear();
+}
+
+/**
+ * Send a Slack message to a channel or user, chunking long text and recording
+ * a proactive-DM note when the recipient is a DM. Shared by slack.send_message
+ * and the scheduler delivery sink. Throws on failure.
+ */
+async function sendSlackMessage(
+  agent: AgentConfig,
+  config: GatewayConfig,
+  env: Record<string, string> | undefined,
+  input: { channel: string; text: string; threadTs?: string }
+): Promise<{ channel: string; ts?: string }> {
+  const client = resolveSlackClient(agent, config, env);
+  if (!client) {
+    throw new Error("No Slack token is configured for this agent.");
+  }
+  const chunks = splitMessage(markdownToMrkdwn(input.text));
+  let firstTs: string | undefined;
+  for (const chunk of chunks) {
+    const result = await client.chat.postMessage({
+      channel: input.channel,
+      text: chunk,
+      mrkdwn: true,
+      thread_ts: input.threadTs,
+      unfurl_links: false,
+      unfurl_media: false,
+    });
+    firstTs ??= result.ts;
+  }
+  const recipientType = input.channel.startsWith("U")
+    ? "user"
+    : input.channel.startsWith("D")
+      ? "channel"
+      : undefined;
+  if (recipientType) {
+    const context = getSlackContextIfInitialized();
+    if (context) {
+      const store = createProactiveDmNoteStore(context.getDataDir());
+      try {
+        store.addNote(agent.id, recipientType, input.channel, input.text);
+      } catch (error) {
+        // The message is already in Slack; a bookkeeping failure must not be
+        // reported back as a failed send (a scheduler delivery would record a
+        // warning for a message the user actually received).
+        context.logger.warn(
+          `[slack] Failed to record proactive DM note: ${error instanceof Error ? error.message : String(error)}`
+        );
+      } finally {
+        store.close();
+      }
+    }
+  }
+  return { channel: input.channel, ts: firstTs };
+}
+
+/**
+ * Register the "slack" delivery sink used by the scheduler to push cron
+ * results. `channel` maps to a channel ID; `user` maps to a Slack user ID,
+ * which Slack DMs when passed as the `channel` param on chat.postMessage.
+ * Shares sendSlackMessage with slack.send_message, so a delivered result also
+ * leaves the same proactive-DM note a manual send would.
+ */
+export function createSlackDeliverySink(ctx: ExtensionContext): DeliverySink {
+  return async ({ agent, destination, text }) => {
+    const channel = destination.channel ?? destination.user;
+    if (!channel) {
+      throw new Error("Slack delivery requires a channel or user destination.");
+    }
+    await sendSlackMessage(agent, ctx.getConfig(), undefined, { channel, text });
+  };
 }
 
 export function slackAgentTools(): ExtensionAgentTool[] {
@@ -186,48 +259,8 @@ export function slackAgentTools(): ExtensionAgentTool[] {
       async execute(args, { agent, config, env }) {
         try {
           const input = sendMessageSchema.parse(args);
-          const client = resolveSlackClient(agent, config, env);
-          if (!client) {
-            return {
-              ok: false,
-              error: "No Slack token is configured for this agent.",
-            };
-          }
-          const chunks = splitMessage(markdownToMrkdwn(input.text));
-          let firstTs: string | undefined;
-          for (const chunk of chunks) {
-            const result = await client.chat.postMessage({
-              channel: input.channel,
-              text: chunk,
-              mrkdwn: true,
-              thread_ts: input.threadTs,
-              unfurl_links: false,
-              unfurl_media: false,
-            });
-            firstTs ??= result.ts;
-          }
-          const recipientType = input.channel.startsWith("U")
-            ? "user"
-            : input.channel.startsWith("D")
-              ? "channel"
-              : undefined;
-          if (recipientType) {
-            const context = getSlackContextIfInitialized();
-            if (context) {
-              const store = createProactiveDmNoteStore(context.getDataDir());
-              try {
-                store.addNote(
-                  agent.id,
-                  recipientType,
-                  input.channel,
-                  input.text
-                );
-              } finally {
-                store.close();
-              }
-            }
-          }
-          return { ok: true, channel: input.channel, ts: firstTs };
+          const result = await sendSlackMessage(agent, config, env, input);
+          return { ok: true, ...result };
         } catch (error) {
           return toolError(error);
         }

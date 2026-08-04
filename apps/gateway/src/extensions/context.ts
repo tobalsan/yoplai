@@ -1,5 +1,6 @@
 import fs from "node:fs/promises";
 import type {
+  DeliverySink,
   Extension,
   ExtensionContext,
   AgentStreamEvent,
@@ -38,6 +39,11 @@ import {
 export function createExtensionContext(
   _resolvedConfig: GatewayConfig
 ): Parameters<Extension["start"]>[0] {
+  // Host-owned delivery sink registry. Extensions register in `start` and drop
+  // their entry in `stop` via the returned unregister, so a restart re-registers
+  // cleanly instead of leaving a stale sink behind.
+  const deliverySinks = new Map<string, DeliverySink>();
+
   return {
     getConfig: () => loadConfig(),
     getDataDir: () => CONFIG_DIR,
@@ -106,6 +112,18 @@ export function createExtensionContext(
         size: metadata.size,
       };
     },
+    registerDeliverySink: (id: string, sink: DeliverySink) => {
+      if (deliverySinks.has(id)) {
+        console.warn(`Delivery sink "${id}" already registered; replacing it`);
+      }
+      deliverySinks.set(id, sink);
+      return () => {
+        // Only drop our own entry: a replacement registration must survive the
+        // replaced extension's `stop`.
+        if (deliverySinks.get(id) === sink) deliverySinks.delete(id);
+      };
+    },
+    getDeliverySink: (id: string) => deliverySinks.get(id),
     subscribe: (event: string, handler: (payload: unknown) => void) => {
       switch (event) {
         case "agent.stream":

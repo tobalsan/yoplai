@@ -15,6 +15,8 @@ Breaking changes are marked **⚠ BREAKING**.
 - Teams can now use a standing All users membership rule, granting their agents to every current and future user.
 - Forked pool agents can now serve multiple teams or use a standing All teams assignment.
 - Opt-in nightly agent dreams consolidate recent sessions into durable workspace memory, with `yoplai dream <agent-id>` for manual and dry runs. The default prompt directs agents to skim repetitive scheduler-run transcripts instead of consolidating every occurrence.
+- Scheduler jobs can now run a script instead of (or before) an LLM turn: `payload.script` + `noAgent: true` runs a script-only job whose exit code — never a model's self-report — decides success or failure, and `payload.script` + `payload.message` gates the agent behind the script's final stdout line (`{"wakeAgent": false}` silences the tick with no tokens spent). Opt-in `payload.quietOutput: true` skips the output file for uneventful runs. Configure both shapes via `cron/jobs.json` or the scheduler HTTP API; see `packages/extensions/scheduler/README.md`.
+- Scheduler jobs can now push their result to Discord, Slack, and Telegram via a job-level `deliver` list, at the runtime level rather than through an agent tool call: agent-job responses and non-empty script stdout are delivered, silent ticks and empty script output stay silent, and any errored run always delivers an alert. A missing or failing target is recorded as a warning on the run and never blocks the other targets. See `packages/extensions/scheduler/README.md`.
 
 ### Changed
 
@@ -29,6 +31,8 @@ Breaking changes are marked **⚠ BREAKING**.
 - Changing a fork's team assignment no longer restores its retired pre-migration team after a service restart.
 - Agent chat markdown now renders raw HTML literally, preventing malformed tags from truncating messages or injecting markup.
 - Scheduled job runs are now traced as `yoplai:scheduler:<agent>` in observability platforms instead of being mislabelled as chat runs.
+- `yoplai scheduler update` now merges payload flags onto the job's existing payload, so changing the message no longer silently drops the job's session id or script.
+- A scheduler `cron/jobs.json` entry that fails validation is now skipped on its own instead of disabling every other job of that agent.
 - Agent extension settings now show root-configured Slack, Discord, Telegram, IRC, and webhooks integrations as enabled and lock their toggles so the UI cannot contradict the live configuration.
 - Slack reactions are now off by default and require per-channel opt-in before they can start an agent turn.
 - External extension API routes now respect the extension enabled state after hot reload.

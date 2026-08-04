@@ -1,5 +1,6 @@
 import {
   CreateScheduleRequestSchema,
+  DeliverTargetSchema,
   SchedulerExtensionConfigSchema,
   UpdateScheduleRequestSchema,
   type Extension,
@@ -33,8 +34,12 @@ const createJobToolSchema = z.object({
   cron: z.string().min(1),
   tz: z.string().min(1),
   startAt: z.string().optional(),
-  message: z.string().min(1),
+  message: z.string().min(1).optional(),
   sessionId: z.string().optional(),
+  script: z.string().min(1).optional(),
+  noAgent: z.boolean().optional(),
+  quietOutput: z.boolean().optional(),
+  deliver: z.array(DeliverTargetSchema).optional(),
   timeoutMs: z.number().positive().optional(),
 });
 
@@ -43,8 +48,12 @@ const updateJobToolSchema = z.object({
   name: z.string().min(1).optional(),
   enabled: z.boolean().optional(),
   schedule: scheduleInputSchema.optional(),
-  message: z.string().min(1).optional(),
+  message: z.string().min(1).nullable().optional(),
   sessionId: z.string().nullable().optional(),
+  script: z.string().min(1).nullable().optional(),
+  noAgent: z.boolean().optional(),
+  quietOutput: z.boolean().optional(),
+  deliver: z.array(DeliverTargetSchema).optional(),
   timeoutMs: z.number().positive().optional(),
 });
 
@@ -76,7 +85,20 @@ function schedulerAgentTools(): ExtensionAgentTool[] {
     {
       name: "scheduler.create_job",
       description:
-        "Create an enabled scheduler cron job for this agent. Optional timeoutMs overrides the per-run timeout (default 30 minutes).",
+        "Create an enabled scheduler cron job for this agent. Choose one of three payload shapes: " +
+        "(1) message only — an agent job; the LLM runs every tick, use when the tick needs reasoning. " +
+        "(2) script + noAgent: true — script-only; the scheduler runs the script as a subprocess and " +
+        "success/failure is decided by its exit code alone, never by an LLM self-report — no tokens, " +
+        "no agent loop. Use for deterministic recurring work like token rotation, watchdogs, or health " +
+        "checks. (3) script + message (without noAgent) — gated; the script runs first as a cheap check " +
+        "and only wakes the agent (with message) when its final stdout line is JSON with " +
+        '{"wakeAgent": true}. Use for file-change gates, threshold alerts, or new-rows pollers that ' +
+        "should stay silent most ticks. Set quietOutput: true on high-frequency script jobs to skip " +
+        "writing an output file for uneventful runs (errors and woke-agent runs always write one). " +
+        "Optional deliver pushes each run's result to comm-channel targets: this happens at the RUNTIME " +
+        "level after the run resolves, not as an LLM action — do NOT call a *.send_message tool yourself " +
+        "to report cron results, that would duplicate delivery and the agent is not trusted to self-report " +
+        "success/failure. Optional timeoutMs overrides the per-run timeout (default 30 minutes).",
       parameters: {
         type: "object",
         properties: {
@@ -84,11 +106,50 @@ function schedulerAgentTools(): ExtensionAgentTool[] {
           cron: { type: "string" },
           tz: { type: "string" },
           startAt: { type: "string" },
-          message: { type: "string" },
+          message: {
+            type: "string",
+            description:
+              "Prompt for an agent job, or the wake prompt for a gated job. Omit for a script-only job (noAgent: true).",
+          },
           sessionId: { type: "string" },
+          script: {
+            type: "string",
+            description:
+              "Relative path (from the agent workspace root) to a script to run. Required for script-only and gated jobs.",
+          },
+          noAgent: {
+            type: "boolean",
+            description:
+              "Script-only mode: run the script and skip the agent entirely; success/failure is decided by the script's exit code. Requires script; rejects message.",
+          },
+          quietOutput: {
+            type: "boolean",
+            description:
+              "Skip writing an output file for uneventful runs (exit 0 with empty stdout on script-only jobs, or a silent tick on gated jobs). Errors and woke-agent runs always write a file. Requires script.",
+          },
+          deliver: {
+            type: "array",
+            items: {
+              type: "object",
+              properties: {
+                target: {
+                  type: "string",
+                  description: "Delivery sink id, e.g. \"slack\", \"telegram\", \"discord\".",
+                },
+                channel: { type: "string" },
+                user: { type: "string" },
+              },
+              required: ["target"],
+            },
+            description:
+              "Destinations the runtime pushes this job's result to after each run: agent job or woke " +
+              "gated run delivers the response, script-only delivers trimmed stdout (nothing when empty), " +
+              "a silent tick delivers nothing, and any error always delivers an alert. Each entry needs " +
+              "target and exactly one of channel or user.",
+          },
           timeoutMs: { type: "number" },
         },
-        required: ["name", "cron", "tz", "message"],
+        required: ["name", "cron", "tz"],
       },
       async execute(args, { agent }) {
         try {
@@ -101,7 +162,14 @@ function schedulerAgentTools(): ExtensionAgentTool[] {
               tz: input.tz,
               startAt: input.startAt,
             },
-            payload: { message: input.message, sessionId: input.sessionId },
+            payload: {
+              message: input.message,
+              sessionId: input.sessionId,
+              script: input.script,
+              noAgent: input.noAgent,
+              quietOutput: input.quietOutput,
+            },
+            deliver: input.deliver,
             timeoutMs: input.timeoutMs,
           });
           const { agentId, ...body } = parsed;
@@ -114,7 +182,16 @@ function schedulerAgentTools(): ExtensionAgentTool[] {
     {
       name: "scheduler.update_job",
       description:
-        "Update this agent's scheduler cron job. Set timeoutMs to override the per-run timeout in milliseconds (default 30 minutes).",
+        "Update this agent's scheduler cron job. Only the fields you provide change; omit a field to " +
+        "leave it unchanged, or pass null for message/script/sessionId to clear it (needed when moving " +
+        "a job between payload shapes). Payload fields (message, script, noAgent, quietOutput) follow the same " +
+        "mode rules as scheduler.create_job: message only = agent job; script + noAgent: true = " +
+        "script-only (exit code decides success, the agent is never called); script + message = gated " +
+        '(wakes the agent only when the script\'s final stdout line is JSON with {"wakeAgent": true}); ' +
+        "quietOutput: true skips the output file for uneventful script ticks. deliver replaces the job's " +
+        "whole delivery list when provided (pass [] to clear it, omit to leave it unchanged); results are " +
+        "pushed by the RUNTIME after each run, so do NOT call a *.send_message tool yourself to report " +
+        "cron results. Set timeoutMs to override the per-run timeout in milliseconds (default 30 minutes).",
       parameters: {
         type: "object",
         properties: {
@@ -130,8 +207,46 @@ function schedulerAgentTools(): ExtensionAgentTool[] {
             },
             required: ["cron", "tz"],
           },
-          message: { type: "string" },
+          message: {
+            type: ["string", "null"],
+            description:
+              "Prompt for an agent job, or the wake prompt for a gated job. Pass null to drop it, e.g. when switching the job to script-only (noAgent: true).",
+          },
           sessionId: { type: ["string", "null"] },
+          script: {
+            type: ["string", "null"],
+            description:
+              "Relative path (from the agent workspace root) to a script to run. Required for script-only and gated jobs; pass null to drop it and go back to a plain agent job.",
+          },
+          noAgent: {
+            type: "boolean",
+            description:
+              "Script-only mode: run the script and skip the agent entirely; success/failure is decided by the script's exit code. Requires script; rejects message.",
+          },
+          quietOutput: {
+            type: "boolean",
+            description:
+              "Skip writing an output file for uneventful runs (exit 0 with empty stdout on script-only jobs, or a silent tick on gated jobs). Errors and woke-agent runs always write a file. Requires script.",
+          },
+          deliver: {
+            type: "array",
+            items: {
+              type: "object",
+              properties: {
+                target: {
+                  type: "string",
+                  description: "Delivery sink id, e.g. \"slack\", \"telegram\", \"discord\".",
+                },
+                channel: { type: "string" },
+                user: { type: "string" },
+              },
+              required: ["target"],
+            },
+            description:
+              "Replaces the job's whole delivery list. Pass an empty array to clear all delivery targets; " +
+              "omit this field to leave the current list unchanged. Each entry needs target and exactly " +
+              "one of channel or user.",
+          },
           timeoutMs: { type: "number" },
         },
         required: ["jobId"],
@@ -144,13 +259,29 @@ function schedulerAgentTools(): ExtensionAgentTool[] {
           );
           if (!existing) return { ok: false, error: "Schedule not found" };
           const payload =
-            input.message !== undefined || input.sessionId !== undefined
+            input.message !== undefined ||
+            input.sessionId !== undefined ||
+            input.script !== undefined ||
+            input.noAgent !== undefined ||
+            input.quietOutput !== undefined
               ? {
-                  message: input.message ?? existing.payload.message,
+                  // null clears a field, so a job can be moved between the
+                  // three payload shapes (e.g. agent job -> script-only needs
+                  // message dropped) without deleting and re-creating it.
+                  message:
+                    input.message === null
+                      ? undefined
+                      : (input.message ?? existing.payload.message),
                   sessionId:
                     input.sessionId === null
                       ? undefined
                       : (input.sessionId ?? existing.payload.sessionId),
+                  script:
+                    input.script === null
+                      ? undefined
+                      : (input.script ?? existing.payload.script),
+                  noAgent: input.noAgent ?? existing.payload.noAgent,
+                  quietOutput: input.quietOutput ?? existing.payload.quietOutput,
                 }
               : undefined;
           const patch = UpdateScheduleRequestSchema.parse({
@@ -158,6 +289,7 @@ function schedulerAgentTools(): ExtensionAgentTool[] {
             enabled: input.enabled,
             schedule: input.schedule,
             payload,
+            deliver: input.deliver,
             timeoutMs: input.timeoutMs,
           });
           return {

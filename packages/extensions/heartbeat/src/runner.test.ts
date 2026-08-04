@@ -413,6 +413,8 @@ describe("loadHeartbeatPrompt", () => {
       deleteSession: () => undefined,
       invalidateHistoryCache: async () => undefined,
       getSessionHistory: async () => [],
+      registerDeliverySink: () => () => undefined,
+      getDeliverySink: () => undefined,
       subscribe: () => () => undefined,
       emit: () => undefined,
       logger: {
@@ -620,6 +622,8 @@ function createMockExtensionContext(): ExtensionContext {
     deleteSession: mockDeleteSession,
     invalidateHistoryCache: mockInvalidateHistoryCache,
     getSessionHistory: mockGetSessionHistory,
+    registerDeliverySink: () => () => undefined,
+    getDeliverySink: () => undefined,
     subscribe: mockSubscribe,
     emit: mockEmit,
     logger: {

@@ -3,7 +3,11 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AgentConfig, GatewayConfig } from "@yoplai/shared";
-import { clearDiscordClientCache, discordAgentTools } from "./agent-tools.js";
+import {
+  clearDiscordClientCache,
+  discordAgentTools,
+  sendDiscordDelivery,
+} from "./agent-tools.js";
 import { clearActiveBots, registerActiveBot } from "./bot-registry.js";
 import type { DiscordBot } from "./bot.js";
 import { clearDiscordContext, setDiscordContext } from "./context.js";
@@ -447,5 +451,92 @@ describe("discord agent tools", () => {
         body: JSON.stringify({ content: "from token" }),
       })
     );
+  });
+});
+
+describe("sendDiscordDelivery (deliver sink)", () => {
+  afterEach(() => {
+    clearActiveBots();
+    clearDiscordClientCache();
+  });
+
+  it("sends to a channel destination", async () => {
+    const rest = {
+      get: vi.fn(),
+      post: vi.fn().mockResolvedValue({ id: "m1", channel_id: "c1" }),
+    };
+    registerMockBot("alpha", rest);
+
+    await sendDiscordDelivery(
+      agent("alpha"),
+      config(),
+      { channel: "c1" },
+      "cron result"
+    );
+
+    expect(rest.post).toHaveBeenCalledWith("/channels/c1/messages", {
+      body: { content: "cron result" },
+    });
+  });
+
+  it("opens a DM for a user destination", async () => {
+    const rest = {
+      get: vi.fn(),
+      post: vi
+        .fn()
+        .mockResolvedValueOnce({ id: "dm1" })
+        .mockResolvedValueOnce({ id: "m2", channel_id: "dm1" }),
+    };
+    registerMockBot("alpha", rest);
+
+    await sendDiscordDelivery(
+      agent("alpha"),
+      config(),
+      { user: "u1" },
+      "cron result"
+    );
+
+    expect(rest.post).toHaveBeenNthCalledWith(1, "/users/@me/channels", {
+      body: { recipient_id: "u1" },
+    });
+    expect(rest.post).toHaveBeenNthCalledWith(2, "/channels/dm1/messages", {
+      body: { content: "cron result" },
+    });
+  });
+
+  it("refuses a component-bot channel routed to another agent", async () => {
+    const rest = {
+      get: vi.fn(),
+      post: vi.fn().mockResolvedValue({ id: "m1", channel_id: "c2" }),
+    };
+    registerMockBot("discord", rest);
+
+    await expect(
+      sendDiscordDelivery(
+        agent("alpha"),
+        config({ channels: { c1: { agent: "alpha" }, c2: { agent: "beta" } } }),
+        { channel: "c2" },
+        "cron result"
+      )
+    ).rejects.toThrow("Discord channel is routed to a different agent.");
+    expect(rest.post).not.toHaveBeenCalled();
+  });
+
+  it("throws when no Discord client is configured for the agent", async () => {
+    await expect(
+      sendDiscordDelivery(agent("alpha"), config(), { channel: "c1" }, "hi")
+    ).rejects.toThrow("No Discord token is configured for this agent.");
+  });
+
+  it("throws when the Discord API call fails", async () => {
+    const rest = {
+      get: vi.fn(),
+      post: vi.fn().mockRejectedValue(new Error("Missing Permissions")),
+    };
+    registerMockBot("alpha", rest);
+
+    await expect(
+      sendDiscordDelivery(agent("alpha"), config(), { channel: "c1" }, "hi")
+    ).rejects.toThrow("Missing Permissions");
   });
 });

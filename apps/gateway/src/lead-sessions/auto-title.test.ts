@@ -88,6 +88,8 @@ async function setup() {
     deleteSession: () => {},
     invalidateHistoryCache: async () => {},
     getSessionHistory: async () => [],
+    registerDeliverySink: () => () => {},
+    getDeliverySink: () => undefined,
     subscribe: () => () => {},
     emit: (event: string, payload: unknown) => emitted.push({ event, payload }),
     logger: { info: () => {}, warn: () => {}, error: () => {} },

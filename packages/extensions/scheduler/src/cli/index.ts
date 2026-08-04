@@ -2,6 +2,7 @@ import { Command } from "commander";
 import { createInterface } from "node:readline";
 import type {
   CreateScheduleRequest,
+  DeliverTarget,
   ScheduleJob,
   UpdateScheduleRequest,
 } from "@yoplai/shared";
@@ -9,13 +10,27 @@ import { SchedulerApiClient, SchedulerApiError } from "./client.js";
 import {
   buildScheduleFromOpts,
   defaultJobName,
+  parseDeliverFlag,
   renderJobsTable,
   type JobWithState,
   type ScheduleInputOpts,
 } from "./schedule-input.js";
 
+// `agent` (not `noAgent`) is commander's negated-option binding for
+// `--no-agent`: it defaults to `true` and flips to `false` only when
+// `--no-agent` is passed. There is no pre-existing `--agent` option to
+// collide with (the agent id is a positional `<agent-id>` argument, stored
+// separately from `opts`), so the plain negated form reads fine on `add`.
+// `update` additionally needs to know whether `--no-agent` was *explicitly*
+// passed (vs. defaulted) since the command only rebuilds the payload when a
+// payload-affecting flag was actually given; see `getOptionValueSource` in
+// the update action below.
 type AddOpts = ScheduleInputOpts & {
-  message: string;
+  message?: string;
+  script?: string;
+  agent?: boolean;
+  quietOutput?: boolean;
+  deliver?: DeliverTarget[];
   name?: string;
   session?: string;
   provider?: string;
@@ -29,6 +44,11 @@ type UpdateOpts = ScheduleInputOpts & {
   enable?: boolean;
   disable?: boolean;
   message?: string;
+  script?: string;
+  agent?: boolean;
+  quietOutput?: boolean;
+  deliver?: DeliverTarget[];
+  clearDeliver?: boolean;
   session?: string;
   provider?: string;
   model?: string;
@@ -98,19 +118,69 @@ async function confirmDelete(agentId: string, id: string): Promise<boolean> {
   return /^y(es)?$/i.test(answer.trim());
 }
 
+function buildJobPayload(input: {
+  message?: string;
+  session?: string;
+  script?: string;
+  noAgent: boolean;
+  quietOutput?: boolean;
+}): NonNullable<CreateScheduleRequest["payload"]> {
+  const { message, session, script, noAgent, quietOutput } = input;
+  if (noAgent && !script) {
+    throw new Error("--no-agent requires --script <path>.");
+  }
+  if (noAgent && message) {
+    throw new Error("--no-agent jobs cannot also set -m/--message.");
+  }
+  if (!noAgent && !message) {
+    throw new Error(
+      script
+        ? "--script requires -m <text> unless you also pass --no-agent."
+        : "Message required: pass -m <text>, or --script with --no-agent for a script-only job."
+    );
+  }
+  if (quietOutput && !script) {
+    throw new Error("--quiet-output requires --script <path>.");
+  }
+  const payload: NonNullable<CreateScheduleRequest["payload"]> = {
+    noAgent,
+    quietOutput: Boolean(quietOutput),
+  };
+  if (message) payload.message = message;
+  if (session) payload.sessionId = session;
+  if (script) payload.script = script;
+  return payload;
+}
+
 export function buildCreateBody(
   agentId: string,
   opts: AddOpts
 ): CreateScheduleRequest {
   const schedule = buildScheduleFromOpts(opts);
   const name = opts.name?.trim() || defaultJobName(agentId, schedule);
-  const payload: CreateScheduleRequest["payload"] = { message: opts.message };
-  if (opts.session) payload.sessionId = opts.session;
+  const payload = buildJobPayload({
+    message: opts.message,
+    session: opts.session,
+    script: opts.script,
+    noAgent: opts.agent === false,
+    quietOutput: opts.quietOutput,
+  });
   const model = buildModelOverride(opts);
-  return { name, agentId, schedule, ...(model ? { model } : {}), payload };
+  return {
+    name,
+    agentId,
+    schedule,
+    ...(model ? { model } : {}),
+    payload,
+    ...(opts.deliver?.length ? { deliver: opts.deliver } : {}),
+  };
 }
 
-export function buildUpdateBody(opts: UpdateOpts): UpdateScheduleRequest {
+export function buildUpdateBody(
+  opts: UpdateOpts,
+  noAgentExplicit = false,
+  existing?: ScheduleJob["payload"]
+): UpdateScheduleRequest {
   const body: UpdateScheduleRequest = {};
   if (opts.enable && opts.disable) {
     throw new Error("Use either --enable or --disable, not both.");
@@ -125,19 +195,40 @@ export function buildUpdateBody(opts: UpdateOpts): UpdateScheduleRequest {
   const model = buildModelOverride(opts);
   if (model) body.model = model;
 
-  if (opts.message !== undefined || opts.session !== undefined) {
-    if (opts.message === undefined) {
-      throw new Error("--session also requires -m <message> (server replaces payload).");
-    }
-    const payload: NonNullable<UpdateScheduleRequest["payload"]> = {
-      message: opts.message,
-    };
-    if (opts.session) payload.sessionId = opts.session;
-    body.payload = payload;
+  if (opts.clearDeliver && opts.deliver?.length) {
+    throw new Error("Use --deliver or --clear-deliver, not both.");
+  }
+  if (opts.deliver?.length) body.deliver = opts.deliver;
+  else if (opts.clearDeliver) body.deliver = [];
+
+  const hasPayloadOpt =
+    opts.message !== undefined ||
+    opts.session !== undefined ||
+    opts.script !== undefined ||
+    noAgentExplicit ||
+    opts.quietOutput !== undefined;
+  if (hasPayloadOpt) {
+    // The server replaces `payload` wholesale, so the flags are merged onto the
+    // job's current payload; otherwise `update -m ...` would silently drop its
+    // script/noAgent/quietOutput and start paying for the LLM every tick.
+    const noAgent = noAgentExplicit
+      ? opts.agent === false
+      : Boolean(existing?.noAgent);
+    body.payload = buildJobPayload({
+      // A script-only job has no message by definition, so an explicit
+      // --no-agent drops an inherited one; an explicit -m still conflicts.
+      message: opts.message ?? (noAgent ? undefined : existing?.message),
+      session: opts.session ?? existing?.sessionId,
+      script: opts.script ?? existing?.script,
+      noAgent,
+      quietOutput: opts.quietOutput ?? existing?.quietOutput,
+    });
   }
 
   if (Object.keys(body).length === 0) {
-    throw new Error("Nothing to update. Pass --name/--enable/--disable/--cron/-m/--model.");
+    throw new Error(
+      "Nothing to update. Pass --name/--enable/--disable/--cron/-m/--script/--model/--deliver/--clear-deliver."
+    );
   }
   return body;
 }
@@ -162,7 +253,16 @@ export function registerSchedulerCommands(program: Command): Command {
     .alias("create")
     .description("Create a schedule")
     .argument("<agent-id>", "Agent id to invoke")
-    .requiredOption("-m, --message <text>", "Message to send on each fire")
+    .option("-m, --message <text>", "Message to send on each fire (or the wake prompt for a gated job)")
+    .option("--script <path>", "Relative script path (from the agent workspace) to run at fire time")
+    .option("--no-agent", "Script-only job: run the script and never call the agent (requires --script)")
+    .option("--quiet-output", "Skip the output file for uneventful script runs (requires --script)")
+    .option(
+      "--deliver <target:channel|user:value>",
+      "Push this job's result to a delivery sink (repeatable), e.g. slack:channel:C0123",
+      parseDeliverFlag,
+      [] as DeliverTarget[]
+    )
     .requiredOption("--cron <expr>", "Cron expression, e.g. '0 8 * * *'")
     .requiredOption("--tz <iana>", "IANA timezone")
     .option("--name <name>", "Schedule name (default: <agent>-<cron>)")
@@ -199,15 +299,31 @@ export function registerSchedulerCommands(program: Command): Command {
     .option("--cron <expr>", "Cron expression")
     .option("--tz <iana>", "IANA timezone")
     .option("--start-at <iso>", "Anchor")
-    .option("-m, --message <text>", "Replace payload message")
+    .option("-m, --message <text>", "Replace payload message (or the wake prompt for a gated job)")
+    .option("--script <path>", "Replace payload script path")
+    .option("--no-agent", "Script-only job: run the script and never call the agent (requires --script)")
+    .option("--quiet-output", "Skip the output file for uneventful script runs (requires --script)")
+    .option(
+      "--deliver <target:channel|user:value>",
+      "Replace the job's delivery list (repeatable), e.g. slack:channel:C0123",
+      parseDeliverFlag,
+      [] as DeliverTarget[]
+    )
+    .option("--clear-deliver", "Remove all delivery targets from the job")
     .option("--session <id>", "Replace payload session id (requires -m)")
     .option("--provider <provider>", "Model provider override (requires --model)")
     .option("--model <model>", "Model name override (requires --provider)")
     .option("-j, --json", "JSON output")
-    .action(async (agentId: string, id: string, opts: UpdateOpts) => {
+    .action(async (agentId: string, id: string, opts: UpdateOpts, command: Command) => {
       try {
-        const body = buildUpdateBody(opts);
-        const job = (await getClient().updateSchedule(agentId, id, body)) as JobWithState;
+        const noAgentExplicit = command.getOptionValueSource("agent") === "cli";
+        const client = getClient();
+        const existing = (await client.listSchedules(agentId)).find(
+          (candidate) => candidate.id === id
+        );
+        if (!existing) throw new Error(`Schedule not found: ${agentId}/${id}`);
+        const body = buildUpdateBody(opts, noAgentExplicit, existing.payload);
+        const job = (await client.updateSchedule(agentId, id, body)) as JobWithState;
         printJobs([job], opts.json);
       } catch (err) {
         fail(err);

@@ -39,6 +39,8 @@ function context(config: GatewayConfig, runAgent = vi.fn()): ExtensionContext {
     getSessionHistory: vi.fn(),
     saveMediaFile: vi.fn(),
     readMediaFile: vi.fn(),
+    registerDeliverySink: vi.fn(() => () => {}),
+    getDeliverySink: vi.fn(() => undefined),
     subscribe: vi.fn(() => () => {}),
     emit: vi.fn(),
     logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
@@ -106,5 +108,130 @@ describe("scheduler routes", () => {
     await expect(fs.readFile(result.outputPath!, "utf8")).resolves.toContain(
       "route output"
     );
+  });
+
+  it("POST /schedules creates a script-only job without a message", async () => {
+    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-scheduler-routes-"));
+    const alpha = agent("alpha", path.join(tmpDir, "alpha"));
+    const config: GatewayConfig = {
+      version: 3,
+      agents: [alpha],
+      extensions: { scheduler: { enabled: true } },
+      sessions: { idleMinutes: 360 },
+      agentFab: false,
+    };
+    setSchedulerContext(context(config));
+    const app = new Hono().basePath("/api");
+    schedulerExtension.registerRoutes!(app);
+
+    const createResponse = await app.request("/api/schedules", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        agentId: "alpha",
+        name: "Rotate token",
+        schedule: { cron: "*/5 * * * *", tz: "UTC" },
+        payload: { script: "scripts/rotate.sh", noAgent: true },
+      }),
+    });
+    const job = (await createResponse.json()) as {
+      payload: { script?: string; noAgent?: boolean; message?: string };
+    };
+
+    expect(createResponse.status).toBe(201);
+    expect(job.payload).toMatchObject({ script: "scripts/rotate.sh", noAgent: true });
+    expect(job.payload.message).toBeUndefined();
+  });
+
+  it("POST /schedules rejects an invalid script/message combination with a readable error", async () => {
+    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-scheduler-routes-"));
+    const alpha = agent("alpha", path.join(tmpDir, "alpha"));
+    const config: GatewayConfig = {
+      version: 3,
+      agents: [alpha],
+      extensions: { scheduler: { enabled: true } },
+      sessions: { idleMinutes: 360 },
+      agentFab: false,
+    };
+    setSchedulerContext(context(config));
+    const app = new Hono().basePath("/api");
+    schedulerExtension.registerRoutes!(app);
+
+    const response = await app.request("/api/schedules", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        agentId: "alpha",
+        name: "Bad",
+        schedule: { cron: "0 8 * * *", tz: "UTC" },
+        payload: { script: "scripts/rotate.sh", noAgent: true, message: "Run" },
+      }),
+    });
+    const body = (await response.json()) as { error: string };
+
+    expect(response.status).toBe(400);
+    expect(body.error).toContain("payload.noAgent rejects payload.message");
+  });
+
+  it("POST /schedules creates a job with deliver targets", async () => {
+    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-scheduler-routes-"));
+    const alpha = agent("alpha", path.join(tmpDir, "alpha"));
+    const config: GatewayConfig = {
+      version: 3,
+      agents: [alpha],
+      extensions: { scheduler: { enabled: true } },
+      sessions: { idleMinutes: 360 },
+      agentFab: false,
+    };
+    setSchedulerContext(context(config));
+    const app = new Hono().basePath("/api");
+    schedulerExtension.registerRoutes!(app);
+
+    const createResponse = await app.request("/api/schedules", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        agentId: "alpha",
+        name: "Digest",
+        schedule: { cron: "0 8 * * *", tz: "UTC" },
+        payload: { message: "Run" },
+        deliver: [{ target: "slack", channel: "C0123" }],
+      }),
+    });
+    const job = (await createResponse.json()) as { deliver?: unknown[] };
+
+    expect(createResponse.status).toBe(201);
+    expect(job.deliver).toEqual([{ target: "slack", channel: "C0123" }]);
+  });
+
+  it("POST /schedules rejects a deliver entry with neither channel nor user", async () => {
+    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-scheduler-routes-"));
+    const alpha = agent("alpha", path.join(tmpDir, "alpha"));
+    const config: GatewayConfig = {
+      version: 3,
+      agents: [alpha],
+      extensions: { scheduler: { enabled: true } },
+      sessions: { idleMinutes: 360 },
+      agentFab: false,
+    };
+    setSchedulerContext(context(config));
+    const app = new Hono().basePath("/api");
+    schedulerExtension.registerRoutes!(app);
+
+    const response = await app.request("/api/schedules", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        agentId: "alpha",
+        name: "Bad",
+        schedule: { cron: "0 8 * * *", tz: "UTC" },
+        payload: { message: "Run" },
+        deliver: [{ target: "slack" }],
+      }),
+    });
+    const body = (await response.json()) as { error: string };
+
+    expect(response.status).toBe(400);
+    expect(body.error).toContain("exactly one of channel or user");
   });
 });
