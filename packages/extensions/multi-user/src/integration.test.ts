@@ -196,6 +196,8 @@ describe("multi-user integration", () => {
         )
         .all() as Array<{ name: string }>;
       expect(tables.map((table) => table.name)).toContain("agent_assignments");
+      const teamColumns = runtime?.db.prepare("PRAGMA table_info(teams)").all() as Array<{ name: string; dflt_value: string | null }>;
+      expect(teamColumns).toContainEqual(expect.objectContaining({ name: "allUsers", dflt_value: "0" }));
 
       const meResponse = await app.request("/api/me");
       expect(meResponse.status).toBe(401);

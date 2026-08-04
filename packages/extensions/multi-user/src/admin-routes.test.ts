@@ -881,6 +881,33 @@ describe("multi-user admin routes", () => {
     });
   });
 
+  it("sets All users, returns the full roster, and rejects individual removal", async () => {
+    const runtime = createRuntime();
+    const team = runtime.teams.createTeam({ name: "Platform", createdBy: "admin-1" });
+    getMultiUserRuntime.mockReturnValue(runtime.runtime);
+
+    const { registerMultiUserRoutes } = await importAdminRoutes();
+    const { createAuthMiddleware } = await importAuthMiddleware();
+    const app = createAdminApp();
+    app.use("*", createAuthMiddleware());
+    registerMultiUserRoutes(app);
+    const url = `http://localhost/admin/teams/${team.id}/members`;
+
+    const set = () => new Request(url, { method: "PUT", headers: { cookie: "session=1", "content-type": "application/json" }, body: JSON.stringify({ mode: "all" }) });
+    const first = await app.request(set());
+    expect(first.status).toBe(200);
+    const firstBody = await first.json() as { allUsers: boolean; members: Array<{ id: string }> };
+    const repeated = await app.request(set());
+    expect(repeated.status).toBe(200);
+    expect(await repeated.json()).toEqual(firstBody);
+
+    const listed = await app.request(makeAuthRequest(`/teams/${team.id}/members`));
+    const body = await listed.json() as { allUsers: boolean; members: Array<{ id: string }> };
+    expect(body.allUsers).toBe(true);
+    expect(body.members.map((member) => member.id)).toEqual(expect.arrayContaining(["admin-1", "user-1", "user-2"]));
+    expect((await app.request(new Request(`${url}/user-1`, { method: "DELETE", headers: { cookie: "session=1" } }))).status).toBe(409);
+  });
+
   it("add-member returns 404 for a missing team or user", async () => {
     const runtime = createRuntime();
     const team = runtime.teams.createTeam({

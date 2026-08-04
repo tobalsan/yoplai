@@ -3,7 +3,8 @@ import os from "node:os";
 import path from "node:path";
 import Database from "better-sqlite3";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { ensureAgentForksTable, ensureTeamsTable } from "./db.js";
+import { ensureAgentForksTable, ensureTeamMembersTable, ensureTeamsTable } from "./db.js";
+import { createMembershipStore } from "./membership.js";
 import {
   DEFAULT_TEAM_COLOR,
   DEFAULT_TEAM_ICON,
@@ -185,5 +186,18 @@ describe("team store deleteTeam teamlessAgents", () => {
     expect(result.teamlessAgents).toEqual(["scribe"]);
     // The fork row persists but its only explicit link is removed.
     expect(forks.getForkByPool("scribe")?.assignment).toEqual({ mode: "list", teamIds: [] });
+  });
+
+  it("reports users whose last membership is an All-users team", () => {
+    fdb.prepare("INSERT INTO user (id) VALUES (?)").run("member-1");
+    ensureTeamMembersTable(fdb);
+    const membership = createMembershipStore(fdb);
+    const teamStore = createTeamStore(fdb, membership);
+    const alpha = teamStore.createTeam({ name: "Alpha", createdBy: "admin-1" });
+    const beta = teamStore.createTeam({ name: "Beta", createdBy: "admin-1" });
+    membership.setMembers(alpha.id, { mode: "all" }, "admin-1");
+    membership.setMembers(beta.id, { mode: "list", userIds: ["member-1"] }, "admin-1");
+
+    expect(teamStore.deleteTeam(alpha.id).teamlessUsers).toEqual(["admin-1"]);
   });
 });

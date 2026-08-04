@@ -70,6 +70,16 @@ describe("membership store", () => {
     expect(membership.listUsersForTeam(team.id)).toEqual([]);
   });
 
+  it("replaces explicit rosters, including an explicit empty roster", () => {
+    const team = teams.createTeam({ name: "Alpha", createdBy: "admin-1" });
+    membership.setMembers(team.id, { mode: "list", userIds: ["user-1", "user-2"] }, "admin-1");
+    membership.setMembers(team.id, { mode: "list", userIds: ["user-2"] }, "admin-1");
+
+    expect(membership.getMembership(team.id)).toEqual({ mode: "list", userIds: ["user-2"] });
+    membership.setMembers(team.id, { mode: "list", userIds: [] }, "admin-1");
+    expect(membership.getMembership(team.id)).toEqual({ mode: "list", userIds: [] });
+  });
+
   it("is idempotent on add (no duplicate rows, no error)", () => {
     const team = teams.createTeam({ name: "Alpha", createdBy: "admin-1" });
     addMember(team.id, "user-1");
@@ -126,6 +136,15 @@ describe("membership store", () => {
       addMember(alpha.id, "user-1");
 
       expect(membership.usersOnlyInTeam(alpha.id)).toEqual(["user-1"]);
+    });
+
+    it("resolves an All-users team when calculating who would become teamless", () => {
+      const alpha = teams.createTeam({ name: "Alpha", createdBy: "admin-1" });
+      const beta = teams.createTeam({ name: "Beta", createdBy: "admin-1" });
+      membership.setMembers(alpha.id, { mode: "all" }, "admin-1");
+      addMember(beta.id, "user-1");
+
+      expect(membership.usersOnlyInTeam(alpha.id)).toEqual(["admin-1", "user-2"]);
     });
 
     it("excludes users who still belong to another team", () => {
