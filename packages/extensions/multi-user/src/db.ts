@@ -125,6 +125,11 @@ export function ensureAgentForksTable(db: Database.Database): void {
   // soon-to-be-teamless set in its warning. `createdBy`/`createdAt` record who
   // first forked and when; `assignedBy`/`assignedAt` record the most recent
   // team (re)assignment provenance and are null while teamless.
+  const linksTableExisted = Boolean(
+    db
+      .prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'agent_fork_teams'")
+      .get()
+  );
   db.exec(`
     CREATE TABLE IF NOT EXISTS agent_forks (
       sourcePoolId TEXT NOT NULL UNIQUE,
@@ -156,11 +161,29 @@ export function ensureAgentForksTable(db: Database.Database): void {
       FOREIGN KEY (teamId) REFERENCES teams(id) ON DELETE CASCADE
     );
     CREATE INDEX IF NOT EXISTS idx_agent_fork_teams_team_id ON agent_fork_teams(teamId);
-    INSERT OR IGNORE INTO agent_fork_teams (forkAgentId, teamId, assignedBy, assignedAt)
-    SELECT forkAgentId, teamId, assignedBy, assignedAt
-    FROM agent_forks
-    WHERE teamId IS NOT NULL;
   `);
+
+  ensureMigrationsTable(db);
+  const alreadyBackfilled = db
+    .prepare("SELECT 1 FROM schema_migrations WHERE name = ?")
+    .get(FORK_TEAMS_BACKFILL_MIGRATION);
+  if (!alreadyBackfilled && !linksTableExisted) {
+    db.transaction(() => {
+      db.exec(`
+        INSERT OR IGNORE INTO agent_fork_teams (forkAgentId, teamId, assignedBy, assignedAt)
+        SELECT forkAgentId, teamId, assignedBy, assignedAt
+        FROM agent_forks
+        WHERE teamId IS NOT NULL;
+      `);
+      db.prepare("INSERT INTO schema_migrations (name) VALUES (?)").run(
+        FORK_TEAMS_BACKFILL_MIGRATION
+      );
+    })();
+  } else if (!alreadyBackfilled) {
+    db.prepare("INSERT INTO schema_migrations (name) VALUES (?)").run(
+      FORK_TEAMS_BACKFILL_MIGRATION
+    );
+  }
 }
 
 /** Records one-shot data migrations so bootstrap never re-runs them. */
@@ -175,6 +198,8 @@ export function ensureMigrationsTable(db: Database.Database): void {
 
 /** Identifier of the assignments → teams one-shot migration. */
 export const ASSIGNMENTS_TO_TEAMS_MIGRATION = "assignments_to_teams";
+/** One-shot backfill from the retired agent_forks.teamId column. */
+export const FORK_TEAMS_BACKFILL_MIGRATION = "fork_teams_backfill";
 
 /**
  * One-shot migration converting the legacy `agent_assignments` allowlist into

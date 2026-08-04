@@ -16,6 +16,7 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Fixed
 
+- Changing a fork's team assignment no longer restores its retired pre-migration team after a service restart.
 - Agent chat markdown now renders raw HTML literally, preventing malformed tags from truncating messages or injecting markup.
 - Scheduled job runs are now traced as `yoplai:scheduler:<agent>` in observability platforms instead of being mislabelled as chat runs.
 - Agent extension settings now show root-configured Slack, Discord, Telegram, IRC, and webhooks integrations as enabled and lock their toggles so the UI cannot contradict the live configuration.
