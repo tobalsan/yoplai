@@ -348,6 +348,8 @@ const gatewayCmd = program
       // Handle shutdown
       const shutdown = async () => {
         console.log("\nShutting down...");
+        const { stopDreamTimers } = await import("../dream/service.js");
+        stopDreamTimers();
         if (webProcess) webProcess.kill("SIGTERM");
         stopTailscaleServeRefresh();
         if (tailscaleServeEnabled && tailscaleServeResetOnExit) {
@@ -509,6 +511,18 @@ registerOrchestratorCommands(
     .version("0.1.0")
 );
 registerEvalCommands(program);
+
+program
+  .command("dream <agent-id>")
+  .description("Run an agent's nightly self-consolidation")
+  .option("--dry-run", "Show sessions that would be consolidated")
+  .action(async (agentId, options) => {
+    const config = loadConfig();
+    setLoadedConfig(config);
+    await loadExtensions(config);
+    const result = await (await import("../dream/service.js")).runDream(agentId, { dryRun: options.dryRun });
+    console.log(JSON.stringify(result, null, 2));
+  });
 
 // Auth commands
 const authCmd = program

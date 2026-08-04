@@ -764,6 +764,7 @@ Project lead-session titles can be generated with `extensions.sessions.autoTitle
 | `discord`          | Discord bot config (legacy per-agent; prefer [Channels](#channels) extension config) |
 | `slack`            | Slack bot config (per-agent token; see [Channels](#channels) section)                |
 | `heartbeat`        | Periodic check-in config (see below)                                                 |
+| `dream`            | Nightly self-consolidation config (see [Nightly dreams](#nightly-dreams))            |
 | `sandbox`          | Container isolation config (see [Container Isolation](#container-isolation))         |
 | `onecliToken`      | Per-agent OneCLI proxy access token (e.g. `"$env:ONECLI_MY_AGENT_TOKEN"`)            |
 
@@ -845,6 +846,29 @@ curl -X POST localhost:4000/api/schedules -H "Content-Type: application/json" -d
 }'
 
 curl -X POST localhost:4000/api/schedules/my-agent/<job-id>/run
+```
+
+## Nightly dreams
+
+Agents opt in to a nightly self-consolidation run through their `agent.yaml`. A dream reads sessions since its last successful run, stages transcripts under `dreams/sessions/`, and asks the agent to consolidate durable lessons. Its journals and state live in `dreams/`.
+
+```yaml
+# agent.yaml
+dream: true # runs daily at 00:00 using the agent's configured model
+
+# Or choose a time and a dedicated model:
+dream:
+  enabled: true
+  time: "02:30"
+  provider: anthropic
+  model: claude-sonnet-4
+```
+
+`provider` and `model` must be set together. Dreaming is disabled unless configured. Trigger a run immediately, or inspect its input window without modifying the workspace:
+
+```bash
+yoplai dream my-agent
+yoplai dream my-agent --dry-run
 ```
 
 ## Channels
