@@ -87,6 +87,7 @@ export function ensureTeamsTable(db: Database.Database): void {
       description TEXT,
       color TEXT,
       icon TEXT,
+      allUsers INTEGER NOT NULL DEFAULT 0,
       createdBy TEXT NOT NULL,
       createdAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
       FOREIGN KEY (createdBy) REFERENCES user(id) ON DELETE CASCADE
@@ -94,6 +95,10 @@ export function ensureTeamsTable(db: Database.Database): void {
     CREATE UNIQUE INDEX IF NOT EXISTS idx_teams_name_unique
       ON teams (name COLLATE NOCASE);
   `);
+  const columns = db.prepare("PRAGMA table_info(teams)").all() as Array<{ name: string }>;
+  if (!columns.some((column) => column.name === "allUsers")) {
+    db.exec("ALTER TABLE teams ADD COLUMN allUsers INTEGER NOT NULL DEFAULT 0");
+  }
 }
 
 export function ensureTeamMembersTable(db: Database.Database): void {

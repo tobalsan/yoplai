@@ -770,6 +770,36 @@ describe("multi-user admin routes", () => {
     expect(response.status).toBe(409);
   });
 
+  it("previews users made teamless by deleting an All-users team", async () => {
+    const runtime = createRuntime();
+    const allUsersTeam = runtime.teams.createTeam({
+      name: "Everyone",
+      createdBy: "admin-1",
+    });
+    const otherTeam = runtime.teams.createTeam({
+      name: "Other",
+      createdBy: "admin-1",
+    });
+    runtime.membership.setMembers(allUsersTeam.id, { mode: "all" }, "admin-1");
+    runtime.membership.setMembers(otherTeam.id, { mode: "list", userIds: ["user-2"] }, "admin-1");
+    getMultiUserRuntime.mockReturnValue(runtime.runtime);
+
+    const { registerMultiUserRoutes } = await importAdminRoutes();
+    const { createAuthMiddleware } = await importAuthMiddleware();
+    const app = createAdminApp();
+    app.use("*", createAuthMiddleware());
+    registerMultiUserRoutes(app);
+
+    const response = await app.request(
+      makeAuthRequest(`/admin/teams/${allUsersTeam.id}/delete-preview`)
+    );
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({
+      teamlessUsers: ["admin-1", "superadmin-1", "user-1"],
+    });
+  });
+
   it("returns 404 when editing a missing team", async () => {
     const runtime = createRuntime();
     getMultiUserRuntime.mockReturnValue(runtime.runtime);
@@ -828,7 +858,7 @@ describe("multi-user admin routes", () => {
     expect(runtime.teams.listTeams()).toHaveLength(0);
   });
 
-  it("admin adds and removes team members; add is idempotent", async () => {
+  it("admin sets and removes team members", async () => {
     const runtime = createRuntime();
     const team = runtime.teams.createTeam({
       name: "Platform",
@@ -843,25 +873,27 @@ describe("multi-user admin routes", () => {
     registerMultiUserRoutes(app);
 
     const addUrl = `http://localhost/admin/teams/${team.id}/members`;
-    const addBody = (userId: string) =>
+    const setBody = (userIds: string[]) =>
       new Request(addUrl, {
-        method: "POST",
+        method: "PUT",
         headers: { cookie: "session=1", "content-type": "application/json" },
-        body: JSON.stringify({ userId }),
+        body: JSON.stringify({ mode: "list", userIds }),
       });
 
-    const firstAdd = await app.request(addBody("user-1"));
+    const firstAdd = await app.request(setBody(["user-1"]));
     expect(firstAdd.status).toBe(200);
     await expect(firstAdd.json()).resolves.toEqual({
       teamId: team.id,
+      allUsers: false,
       members: [{ id: "user-1", name: null, email: null }],
     });
 
     // Re-adding is idempotent: still one member, still 200.
-    const secondAdd = await app.request(addBody("user-1"));
+    const secondAdd = await app.request(setBody(["user-1"]));
     expect(secondAdd.status).toBe(200);
     await expect(secondAdd.json()).resolves.toEqual({
       teamId: team.id,
+      allUsers: false,
       members: [{ id: "user-1", name: null, email: null }],
     });
 
@@ -874,8 +906,36 @@ describe("multi-user admin routes", () => {
     expect(removeResponse.status).toBe(200);
     await expect(removeResponse.json()).resolves.toEqual({
       teamId: team.id,
+      allUsers: false,
       members: [],
     });
+  });
+
+  it("sets All users, returns the full roster, and rejects individual removal", async () => {
+    const runtime = createRuntime();
+    const team = runtime.teams.createTeam({ name: "Platform", createdBy: "admin-1" });
+    getMultiUserRuntime.mockReturnValue(runtime.runtime);
+
+    const { registerMultiUserRoutes } = await importAdminRoutes();
+    const { createAuthMiddleware } = await importAuthMiddleware();
+    const app = createAdminApp();
+    app.use("*", createAuthMiddleware());
+    registerMultiUserRoutes(app);
+    const url = `http://localhost/admin/teams/${team.id}/members`;
+
+    const set = () => new Request(url, { method: "PUT", headers: { cookie: "session=1", "content-type": "application/json" }, body: JSON.stringify({ mode: "all" }) });
+    const first = await app.request(set());
+    expect(first.status).toBe(200);
+    const firstBody = await first.json() as { allUsers: boolean; members: Array<{ id: string }> };
+    const repeated = await app.request(set());
+    expect(repeated.status).toBe(200);
+    expect(await repeated.json()).toEqual(firstBody);
+
+    const listed = await app.request(makeAuthRequest(`/teams/${team.id}/members`));
+    const body = await listed.json() as { allUsers: boolean; members: Array<{ id: string }> };
+    expect(body.allUsers).toBe(true);
+    expect(body.members.map((member) => member.id)).toEqual(expect.arrayContaining(["admin-1", "user-1", "user-2"]));
+    expect((await app.request(new Request(`${url}/user-1`, { method: "DELETE", headers: { cookie: "session=1" } }))).status).toBe(409);
   });
 
   it("add-member returns 404 for a missing team or user", async () => {
@@ -894,18 +954,18 @@ describe("multi-user admin routes", () => {
 
     const missingTeam = await app.request(
       new Request("http://localhost/admin/teams/nope/members", {
-        method: "POST",
+        method: "PUT",
         headers: { cookie: "session=1", "content-type": "application/json" },
-        body: JSON.stringify({ userId: "user-1" }),
+        body: JSON.stringify({ mode: "list", userIds: ["user-1"] }),
       })
     );
     expect(missingTeam.status).toBe(404);
 
     const missingUser = await app.request(
       new Request(`http://localhost/admin/teams/${team.id}/members`, {
-        method: "POST",
+        method: "PUT",
         headers: { cookie: "session=1", "content-type": "application/json" },
-        body: JSON.stringify({ userId: "ghost" }),
+        body: JSON.stringify({ mode: "list", userIds: ["ghost"] }),
       })
     );
     expect(missingUser.status).toBe(404);
@@ -927,9 +987,9 @@ describe("multi-user admin routes", () => {
 
     const response = await app.request(
       new Request(`http://localhost/admin/teams/${team.id}/members`, {
-        method: "POST",
+        method: "PUT",
         headers: { cookie: "session=1", "content-type": "application/json" },
-        body: JSON.stringify({ userId: "user-1" }),
+        body: JSON.stringify({ mode: "list", userIds: ["user-1"] }),
       })
     );
     expect(response.status).toBe(403);
@@ -942,7 +1002,7 @@ describe("multi-user admin routes", () => {
       name: "Platform",
       createdBy: "admin-1",
     });
-    runtime.membership.addMember(team.id, "user-1", "admin-1");
+    runtime.membership.setMembers(team.id, { mode: "list", userIds: ["user-1"] }, "admin-1");
     getMultiUserRuntime.mockReturnValue(runtime.runtime);
 
     const { registerMultiUserRoutes } = await importAdminRoutes();
@@ -957,6 +1017,7 @@ describe("multi-user admin routes", () => {
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toEqual({
       teamId: team.id,
+      allUsers: false,
       members: [{ id: "user-1", name: null, email: null }],
     });
   });

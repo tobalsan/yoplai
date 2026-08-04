@@ -1,4 +1,4 @@
-import { createMemo, createResource, For, Show } from "solid-js";
+import { createEffect, createMemo, createResource, For, Show, onCleanup } from "solid-js";
 import { A } from "@solidjs/router";
 import { fetchAgents, fetchPool } from "../api";
 import {
@@ -7,6 +7,7 @@ import {
 } from "../api/teams";
 import { useSession } from "../auth/client";
 import { capabilities } from "../lib/capabilities";
+import { subscribeToRealtime } from "../api/realtime-client";
 
 function isEmoji(str: string): boolean {
   return /^\p{Emoji}/u.test(str) && str.length <= 4;
@@ -51,10 +52,15 @@ export function AgentCatalog() {
   );
   // The per-user action state for every pool card, resolved by the gateway
   // (chat / assign_to_team / none).
-  const [actions] = createResource(
+  const [actions, { refetch: refetchActions }] = createResource(
     () => capabilities.forkedAgents,
     (enabled) => (enabled ? fetchPoolActions() : Promise.resolve([]))
   );
+  createEffect(() => {
+    if (typeof window === "undefined") return;
+    const unsubscribe = subscribeToRealtime({ interests: [{ type: "project" }], onEvent: (event) => { if (event.type === "agent_changed" && event.projectId === "membership") void refetchActions(); } });
+    onCleanup(unsubscribe);
+  });
   const actionByPool = createMemo(() => {
     const map = new Map<string, PoolCatalogEntry>();
     for (const entry of actions() ?? []) map.set(entry.poolId, entry);

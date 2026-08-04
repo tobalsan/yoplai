@@ -16,6 +16,12 @@ let db: Database.Database;
 let forks: ForkStore;
 let membership: MembershipStore;
 let resolver: AccessResolver;
+
+function addMember(teamId: string, userId: string): void {
+  const current = membership.getMembership(teamId);
+  if (current.mode !== "list") throw new Error("expected explicit team");
+  membership.setMembers(teamId, { mode: "list", userIds: [...current.userIds, userId] }, "admin-1");
+}
 let poolDir: string;
 let forksDir: string;
 const tempDirs: string[] = [];
@@ -75,9 +81,9 @@ beforeEach(() => {
   forks.setTeams("orphan", { mode: "list", teamIds: [] }, "admin-1");
 
   // alice ∈ {red, blue}; bob ∈ {green}; carol ∈ {}; loner ∈ {} (teamless).
-  membership.addMember("team-red", "alice", "admin-1");
-  membership.addMember("team-blue", "alice", "admin-1");
-  membership.addMember("team-green", "bob", "admin-1");
+  addMember("team-red", "alice");
+  addMember("team-blue", "alice");
+  addMember("team-green", "bob");
 });
 
 afterEach(() => {
@@ -144,5 +150,24 @@ describe("getVisibleChatAgents", () => {
   it("never includes a teamless fork", () => {
     const visible = resolver.getVisibleChatAgents("alice");
     expect(visible).not.toContain(forkId("orphan"));
+  });
+
+  it("grants every current and future user access through an All-users team", () => {
+    membership.setMembers("team-red", { mode: "all" }, "admin-1");
+    db.prepare("INSERT INTO user (id) VALUES (?)").run("new-user");
+
+    expect(resolver.canUserChatAgent("carol", forkId("scribe"))).toBe(true);
+    expect(resolver.canUserChatAgent("new-user", forkId("scribe"))).toBe(true);
+  });
+
+  it("deduplicates an agent reachable through explicit and All-users teams, and revokes immediately", () => {
+    membership.setMembers("team-blue", { mode: "all" }, "admin-1");
+    forks.setTeams("scribe", { mode: "list", teamIds: ["team-red", "team-blue"] }, "admin-1");
+
+    expect(resolver.getVisibleChatAgents("alice").filter((id) => id === forkId("scribe"))).toEqual([forkId("scribe")]);
+    expect(resolver.canUserChatAgent("carol", forkId("scribe"))).toBe(true);
+
+    membership.setMembers("team-blue", { mode: "list", userIds: [] }, "admin-1");
+    expect(resolver.canUserChatAgent("carol", forkId("scribe"))).toBe(false);
   });
 });

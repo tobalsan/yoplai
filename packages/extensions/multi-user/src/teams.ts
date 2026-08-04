@@ -12,6 +12,7 @@ export type Team = {
   description: string | null;
   color: string;
   icon: string;
+  allUsers: boolean;
   createdBy: string;
   createdAt: string;
 };
@@ -85,6 +86,7 @@ type TeamRow = {
   description: string | null;
   color: string | null;
   icon: string | null;
+  allUsers: number;
   createdBy: string;
   createdAt: string;
 };
@@ -100,6 +102,7 @@ function rowToTeam(row: TeamRow): Team {
     description: row.description,
     color: row.color ?? DEFAULT_TEAM_COLOR,
     icon: row.icon ?? DEFAULT_TEAM_ICON,
+    allUsers: Boolean(row.allUsers),
     createdBy: row.createdBy,
     createdAt: row.createdAt,
   };
@@ -119,10 +122,10 @@ export function createTeamStore(
   forks?: () => ForkStore | undefined
 ): TeamStore {
   const listStatement = db.prepare(
-    "SELECT id, name, description, color, icon, createdBy, createdAt FROM teams ORDER BY name COLLATE NOCASE"
+    "SELECT id, name, description, color, icon, allUsers, createdBy, createdAt FROM teams ORDER BY name COLLATE NOCASE"
   );
   const getStatement = db.prepare(
-    "SELECT id, name, description, color, icon, createdBy, createdAt FROM teams WHERE id = ?"
+    "SELECT id, name, description, color, icon, allUsers, createdBy, createdAt FROM teams WHERE id = ?"
   );
   const insertStatement = db.prepare(`
     INSERT INTO teams (id, name, description, color, icon, createdBy)

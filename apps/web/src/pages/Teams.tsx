@@ -9,9 +9,10 @@ import {
 } from "solid-js";
 import { A } from "@solidjs/router";
 import {
-  addTeamMember,
+  setTeamMembers,
   createTeam,
   deleteTeam,
+  fetchDeleteTeamPreview,
   fetchTeamAgents,
   fetchTeamMembers,
   fetchTeams,
@@ -276,7 +277,15 @@ function DeleteTeamDialog(props: {
   // delete touches; the exact soon-to-be-teamless subset comes back on the
   // delete response.
   const [members] = createResource(() => props.team.id, fetchTeamMembers);
-  const memberCount = createMemo(() => members()?.length ?? 0);
+  const [preview] = createResource(() => props.team.id, fetchDeleteTeamPreview);
+  const [users] = createResource(fetchUsers);
+  const memberCount = createMemo(() => members()?.members.length ?? 0);
+  const teamlessUserNames = createMemo(() => {
+    const directory = new Map((users() ?? []).map((user) => [user.id, user]));
+    return (preview()?.teamlessUsers ?? []).map((userId) =>
+      userLabel(userId, directory)
+    );
+  });
 
   const handleDelete = async () => {
     if (deleting()) return;
@@ -320,6 +329,11 @@ function DeleteTeamDialog(props: {
             </Show>{" "}
             This cannot be undone.
           </p>
+          <Show when={teamlessUserNames().length > 0}>
+            <p class="team-delete-warning">
+              These users will have no team: {teamlessUserNames().join(", ")}.
+            </p>
+          </Show>
           <Show when={error()}>
             {(message) => <p class="team-modal__error">⚠ {message()}</p>}
           </Show>
@@ -409,7 +423,7 @@ function TeamDetail(props: {
   });
 
   const memberSet = createMemo(
-    () => new Set((members() ?? []).map((m) => m.id))
+    () => new Set((members()?.members ?? []).map((m) => m.id))
   );
 
   const addableUsers = createMemo(() =>
@@ -423,7 +437,7 @@ function TeamDetail(props: {
   );
 
   const sortedMembers = createMemo(() =>
-    [...(members() ?? [])].sort((a, b) =>
+    [...(members()?.members ?? [])].sort((a, b) =>
       memberProfileLabel(a).localeCompare(memberProfileLabel(b))
     )
   );
@@ -434,7 +448,7 @@ function TeamDetail(props: {
     setBusy(true);
     setError(null);
     try {
-      await addTeamMember(props.team.id, userId);
+      await setTeamMembers(props.team.id, { mode: "list", userIds: [...memberSet(), userId] });
       setSelectedUser("");
       await refetchMembers();
       props.onMembersChanged();
@@ -443,6 +457,14 @@ function TeamDetail(props: {
     } finally {
       setBusy(false);
     }
+  };
+
+  const handleAllUsers = async (allUsers: boolean) => {
+    if (busy()) return;
+    setBusy(true); setError(null);
+    try { await setTeamMembers(props.team.id, allUsers ? { mode: "all" } : { mode: "list", userIds: [] }); await refetchMembers(); props.onMembersChanged(); }
+    catch (cause) { setError(cause instanceof Error ? cause.message : "Failed to update members."); }
+    finally { setBusy(false); }
   };
 
   const handleRemove = async (userId: string) => {
@@ -492,6 +514,9 @@ function TeamDetail(props: {
         </header>
         <div class="team-modal__body">
           <Show when={props.isAdmin}>
+            <label class="team-detail__all-users"><input type="checkbox" checked={members()?.allUsers ?? false} disabled={busy()} onChange={(event) => void handleAllUsers(event.currentTarget.checked)} /> All users</label>
+          </Show>
+          <Show when={props.isAdmin && !members()?.allUsers}>
             <div class="team-detail__add">
               <select
                 class="team-field__input"
@@ -541,15 +566,8 @@ function TeamDetail(props: {
                       <span class="team-member__name">
                         {memberProfileLabel(member)}
                       </span>
-                      <Show when={props.isAdmin}>
-                        <button
-                          type="button"
-                          class="team-button team-button--danger-text"
-                          disabled={busy()}
-                          onClick={() => void handleRemove(member.id)}
-                        >
-                          Remove
-                        </button>
+                      <Show when={members()?.allUsers} fallback={<Show when={props.isAdmin}><button type="button" class="team-button team-button--danger-text" disabled={busy()} onClick={() => void handleRemove(member.id)}>Remove</button></Show>}>
+                        <span class="team-member__all-users">all users</span>
                       </Show>
                     </li>
                   )}
@@ -673,6 +691,10 @@ export function Teams() {
                   </div>
                   <div class="team-card__body">
                     <h2 class="team-card__name">{team.name}</h2>
+                    <Show when={team.allUsers}>
+                      <p class="team-card__description">All users</p>
+                    </Show>
+                    <p class="team-card__description">{team.memberCount} member{team.memberCount === 1 ? "" : "s"}</p>
                     <Show when={team.description}>
                       <p class="team-card__description">{team.description}</p>
                     </Show>
@@ -1051,6 +1073,12 @@ export function Teams() {
         .team-member__name {
           font-size: 13px;
           color: var(--text-primary);
+        }
+
+        .team-member__all-users,
+        .team-detail__all-users {
+          font-size: 12px;
+          color: var(--text-tertiary);
         }
       `}</style>
     </div>

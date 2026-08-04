@@ -42,6 +42,8 @@ export function createExtensionContext(
     getConfig: () => loadConfig(),
     getDataDir: () => CONFIG_DIR,
     reloadConfig: () => reloadConfig(),
+    notifyAgentListChanged: () =>
+      agentEventBus.emitAgentChanged({ type: "agent_changed", projectId: "membership" }),
     getAgent,
     getAgents,
     isAgentActive,

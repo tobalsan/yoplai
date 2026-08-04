@@ -12,6 +12,7 @@ Breaking changes are marked **⚠ BREAKING**.
 ### Added
 
 - Agent workspaces can provide curated starting suggestions for new web chats.
+- Teams can now use a standing All users membership rule, granting their agents to every current and future user.
 - Forked pool agents can now serve multiple teams or use a standing All teams assignment.
 - Opt-in nightly agent dreams consolidate recent sessions into durable workspace memory, with `yoplai dream <agent-id>` for manual and dry runs. The default prompt directs agents to skim repetitive scheduler-run transcripts instead of consolidating every occurrence.
 
@@ -22,6 +23,7 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Fixed
 
+- Team deletion warnings now name users who would become teamless, including when the team uses the All users rule.
 - Changing a fork's team assignment no longer restores its retired pre-migration team after a service restart.
 - Agent chat markdown now renders raw HTML literally, preventing malformed tags from truncating messages or injecting markup.
 - Scheduled job runs are now traced as `yoplai:scheduler:<agent>` in observability platforms instead of being mislabelled as chat runs.

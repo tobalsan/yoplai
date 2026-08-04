@@ -1074,6 +1074,7 @@ export interface ExtensionContext {
   getConfig(): GatewayConfig;
   getDataDir(): string;
   reloadConfig(): void;
+  notifyAgentListChanged?(): void;
 
   // Agent access
   getAgent(id: string): AgentConfig | undefined;

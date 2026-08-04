@@ -10,11 +10,13 @@ const {
   fetchAgentsMock,
   fetchPoolMock,
   fetchPoolActionsMock,
+  subscribeToRealtimeMock,
   useSessionMock,
 } = vi.hoisted(() => ({
   fetchAgentsMock: vi.fn(),
   fetchPoolMock: vi.fn(),
   fetchPoolActionsMock: vi.fn(),
+  subscribeToRealtimeMock: vi.fn(() => () => undefined),
   useSessionMock: vi.fn(),
 }));
 
@@ -26,6 +28,7 @@ vi.mock("../api", () => ({
 vi.mock("../api/teams", () => ({
   fetchPoolActions: fetchPoolActionsMock,
 }));
+vi.mock("../api/realtime-client", () => ({ subscribeToRealtime: subscribeToRealtimeMock }));
 
 vi.mock("../auth/client", () => ({ useSession: useSessionMock }));
 
@@ -87,6 +90,8 @@ beforeEach(() => {
   fetchAgentsMock.mockReset();
   fetchPoolMock.mockReset();
   fetchPoolActionsMock.mockReset();
+  subscribeToRealtimeMock.mockReset();
+  subscribeToRealtimeMock.mockReturnValue(() => undefined);
   setCapabilitiesForTests({ forkedAgents: true });
   useSessionMock.mockReset();
   container = document.createElement("div");
@@ -222,5 +227,31 @@ describe("AgentCatalog action states", () => {
     await mountCatalog();
 
     expect(container.querySelector(".catalog-edit")).toBeNull();
+  });
+
+  it("refreshes access actions when membership changes in realtime", async () => {
+    setSession("user");
+    fetchPoolMock.mockResolvedValue([agent("scribe")]);
+    fetchPoolActionsMock.mockResolvedValue([entry("scribe", "none")]);
+    await mountCatalog();
+    const calls = subscribeToRealtimeMock.mock.calls as unknown as Array<[
+      { onEvent: (event: { type: string; projectId?: string }) => void }
+    ]>;
+    const options = calls[0]?.[0];
+    if (!options) throw new Error("expected realtime subscription");
+    options.onEvent({ type: "agent_changed", projectId: "membership" });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(fetchPoolActionsMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("closes its realtime subscription when unmounted", async () => {
+    const unsubscribe = vi.fn();
+    subscribeToRealtimeMock.mockReturnValue(unsubscribe);
+    setSession("user");
+    fetchPoolMock.mockResolvedValue([agent("scribe")]);
+    fetchPoolActionsMock.mockResolvedValue([entry("scribe", "chat")]);
+    await mountCatalog();
+    dispose();
+    expect(unsubscribe).toHaveBeenCalledOnce();
   });
 });

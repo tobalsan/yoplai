@@ -88,6 +88,23 @@ describe("multi-user db", () => {
     expect(indexes.some((index) => index.unique === 1)).toBe(true);
   });
 
+  it("adds All-users off without changing existing membership rows", () => {
+    const db = new Database(":memory:");
+    db.pragma("foreign_keys = ON");
+    db.exec("CREATE TABLE user (id TEXT PRIMARY KEY)");
+    db.exec("INSERT INTO user (id) VALUES ('admin'), ('member')");
+    db.exec(`CREATE TABLE teams (id TEXT PRIMARY KEY, name TEXT NOT NULL, createdBy TEXT NOT NULL);
+      CREATE TABLE team_members (teamId TEXT NOT NULL, userId TEXT NOT NULL, addedBy TEXT NOT NULL, PRIMARY KEY (teamId, userId));
+      INSERT INTO teams (id, name, createdBy) VALUES ('team', 'Team', 'admin');
+      INSERT INTO team_members (teamId, userId, addedBy) VALUES ('team', 'member', 'admin');`);
+
+    ensureTeamsTable(db);
+    ensureTeamsTable(db);
+    expect(db.prepare("SELECT allUsers FROM teams WHERE id = 'team'").get()).toEqual({ allUsers: 0 });
+    expect(db.prepare("SELECT teamId, userId FROM team_members").all()).toEqual([{ teamId: "team", userId: "member" }]);
+    db.close();
+  });
+
   it("creates a team_members M2M table with team/user foreign keys", () => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "yoplai-members-db-"));
     tempDirs.push(tempDir);

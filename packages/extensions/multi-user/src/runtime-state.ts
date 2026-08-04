@@ -20,6 +20,7 @@ export type MultiUserRuntime = {
   /** Current pool agent ids (the catalog card keys), in config order. */
   getPoolAgentIds(): string[];
   getAgent: ExtensionContext["getAgent"];
+  notifyAgentListChanged: ExtensionContext["notifyAgentListChanged"];
   logger: ExtensionLogger;
 };
 

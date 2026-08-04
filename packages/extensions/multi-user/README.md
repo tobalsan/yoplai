@@ -114,7 +114,7 @@ PATCH  /api/admin/users/:id             # approve / set role
 POST   /api/admin/teams                 # create team
 PATCH  /api/admin/teams/:id             # update team
 DELETE /api/admin/teams/:id             # delete team
-POST   /api/admin/teams/:id/members     # add member
+PUT    /api/admin/teams/:id/members     # { mode: "all" } or { mode: "list", userIds }
 DELETE /api/admin/teams/:id/members/:userId
 GET    /api/admin/forks                 # list fork provenance
 PUT    /api/admin/forks/:poolId/teams   # { mode: "all" } or { mode: "list", teamIds }

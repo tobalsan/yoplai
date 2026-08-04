@@ -4,6 +4,8 @@ export type Team = {
   description: string | null;
   color: string;
   icon: string;
+  allUsers: boolean;
+  memberCount: number;
   createdBy: string;
   createdAt: string;
 };
@@ -16,12 +18,15 @@ export type TeamInput = {
 };
 
 export type TeamMemberProfile = { id: string; name: string | null; email: string | null };
+export type TeamMembersResponse = { teamId: string; allUsers: boolean; members: TeamMemberProfile[] };
 
 export type DeleteTeamResult = {
   deleted: boolean;
   teamlessUsers: string[];
   teamlessAgents: string[];
 };
+
+export type DeleteTeamPreview = { teamlessUsers: string[] };
 
 // A forked pool agent and its provenance link. `teamId` is null when the fork
 // is teamless/inert (unassigned).
@@ -111,42 +116,46 @@ export async function deleteTeam(id: string): Promise<DeleteTeamResult> {
   );
 }
 
+export async function fetchDeleteTeamPreview(
+  id: string
+): Promise<DeleteTeamPreview> {
+  return request<DeleteTeamPreview>(
+    `/api/admin/teams/${encodeURIComponent(id)}/delete-preview`
+  );
+}
+
 // Any authenticated user can read a team's members (global visibility).
 export async function fetchTeamMembers(
   teamId: string
-): Promise<TeamMemberProfile[]> {
-  const data = await request<{ teamId: string; members: TeamMemberProfile[] }>(
+): Promise<TeamMembersResponse> {
+  return request<TeamMembersResponse>(
     `/api/teams/${encodeURIComponent(teamId)}/members`
   );
-  return data.members;
 }
 
-// Admin-only: add a user to a team. Idempotent server-side.
-export async function addTeamMember(
+export async function setTeamMembers(
   teamId: string,
-  userId: string
-): Promise<TeamMemberProfile[]> {
-  const data = await request<{ teamId: string; members: TeamMemberProfile[] }>(
+  membership: { mode: "all" } | { mode: "list"; userIds: string[] }
+): Promise<TeamMembersResponse> {
+  return request<TeamMembersResponse>(
     `/api/admin/teams/${encodeURIComponent(teamId)}/members`,
     {
-      method: "POST",
+      method: "PUT",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ userId }),
+      body: JSON.stringify(membership),
     }
   );
-  return data.members;
 }
 
 // Admin-only: remove a user from a team.
 export async function removeTeamMember(
   teamId: string,
   userId: string
-): Promise<TeamMemberProfile[]> {
-  const data = await request<{ teamId: string; members: TeamMemberProfile[] }>(
+): Promise<TeamMembersResponse> {
+  return request<TeamMembersResponse>(
     `/api/admin/teams/${encodeURIComponent(teamId)}/members/${encodeURIComponent(userId)}`,
     { method: "DELETE" }
   );
-  return data.members;
 }
 
 // Admin-only: all fork provenance rows. Lets the pool catalog decide whether a
