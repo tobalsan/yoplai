@@ -22,6 +22,10 @@ export function isAllUsersTeamError(error: unknown): boolean {
  * The membership deep module. Owns the many-to-many user↔team relationship:
  * a user may belong to many teams and a team may hold many users. Membership
  * writes replace the complete explicit set or enable the standing All rule.
+ * Switching to All users leaves the previous explicit roster's rows in place
+ * (latent — inert under the read queries below, which short-circuit on the
+ * `allUsers` flag) rather than deleting them, so switching back to an
+ * explicit list restores that saved roster.
  */
 export type MembershipStore = {
   setMembers(teamId: string, membership: TeamMembership, addedBy: string): void;
@@ -34,6 +38,12 @@ export type MembershipStore = {
   listUsersForTeam(teamId: string): string[];
   /** Members of the team with display info (name/email), for rendering. */
   listMemberProfilesForTeam(teamId: string): TeamMemberProfile[];
+  /**
+   * Explicit `team_members` rows for the team, ignoring the `allUsers` flag —
+   * the latent roster kept under an All-users team, so the UI can restore it
+   * when the admin unchecks All users.
+   */
+  listSavedMemberProfilesForTeam(teamId: string): TeamMemberProfile[];
   /**
    * Of the given user ids, those whose only remaining team is `teamId` — i.e.
    * the users who would be left teamless if `teamId` were deleted. Used to
@@ -78,13 +88,19 @@ export function createMembershipStore(db: Database.Database): MembershipStore {
   // Prepared lazily: some test fixtures create a minimal `user` table without
   // name/email columns, and better-sqlite3 validates columns at prepare time.
   let memberProfilesStatement: Database.Statement | undefined;
+  let savedMemberProfilesStatement: Database.Statement | undefined;
 
   return {
     setMembers(teamId, membership, addedBy) {
       db.transaction(() => {
-        deleteForTeamStatement.run(teamId);
+        // Mode "all" only flips the flag: the prior explicit roster's rows
+        // are left latent so switching back to a list restores them. Mode
+        // "list" replaces the complete explicit set as before.
+        if (membership.mode === "list") {
+          deleteForTeamStatement.run(teamId);
+          for (const userId of new Set(membership.userIds)) insertStatement.run(teamId, userId, addedBy);
+        }
         setAllUsersStatement.run(membership.mode === "all" ? 1 : 0, teamId);
-        if (membership.mode === "list") for (const userId of new Set(membership.userIds)) insertStatement.run(teamId, userId, addedBy);
       })();
     },
     getMembership(teamId) {
@@ -122,6 +138,15 @@ export function createMembershipStore(db: Database.Database): MembershipStore {
         ORDER BY u.id
       `);
       return memberProfilesStatement.all(teamId, teamId) as TeamMemberProfile[];
+    },
+    listSavedMemberProfilesForTeam(teamId) {
+      savedMemberProfilesStatement ??= db.prepare(`
+        SELECT u.id AS id, u.name AS name, u.email AS email
+        FROM user AS u
+        JOIN team_members m ON m.teamId = ? AND m.userId = u.id
+        ORDER BY u.id
+      `);
+      return savedMemberProfilesStatement.all(teamId) as TeamMemberProfile[];
     },
   };
 }

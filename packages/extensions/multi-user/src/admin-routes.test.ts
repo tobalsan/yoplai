@@ -938,6 +938,42 @@ describe("multi-user admin routes", () => {
     expect((await app.request(new Request(`${url}/user-1`, { method: "DELETE", headers: { cookie: "session=1" } }))).status).toBe(409);
   });
 
+  it("returns the pre-switch roster as savedMembers once a team goes All users", async () => {
+    const runtime = createRuntime();
+    const team = runtime.teams.createTeam({ name: "Platform", createdBy: "admin-1" });
+    runtime.membership.setMembers(team.id, { mode: "list", userIds: ["user-1"] }, "admin-1");
+    getMultiUserRuntime.mockReturnValue(runtime.runtime);
+
+    const { registerMultiUserRoutes } = await importAdminRoutes();
+    const { createAuthMiddleware } = await importAuthMiddleware();
+    const app = createAdminApp();
+    app.use("*", createAuthMiddleware());
+    registerMultiUserRoutes(app);
+
+    const setResponse = await app.request(
+      new Request(`http://localhost/admin/teams/${team.id}/members`, {
+        method: "PUT",
+        headers: { cookie: "session=1", "content-type": "application/json" },
+        body: JSON.stringify({ mode: "all" }),
+      })
+    );
+    const expectedBody = {
+      teamId: team.id,
+      allUsers: true,
+      members: [
+        { id: "admin-1", name: null, email: null },
+        { id: "superadmin-1", name: null, email: null },
+        { id: "user-1", name: null, email: null },
+        { id: "user-2", name: null, email: null },
+      ],
+      savedMembers: [{ id: "user-1", name: null, email: null }],
+    };
+    await expect(setResponse.json()).resolves.toEqual(expectedBody);
+
+    const listed = await app.request(makeAuthRequest(`/teams/${team.id}/members`));
+    await expect(listed.json()).resolves.toEqual(expectedBody);
+  });
+
   it("add-member returns 404 for a missing team or user", async () => {
     const runtime = createRuntime();
     const team = runtime.teams.createTeam({

@@ -1,6 +1,7 @@
 import {
   For,
   Show,
+  createEffect,
   createMemo,
   createResource,
   createSignal,
@@ -16,7 +17,6 @@ import {
   fetchTeamAgents,
   fetchTeamMembers,
   fetchTeams,
-  removeTeamMember,
   removeForkFromTeam,
   updateTeam,
   type Team,
@@ -416,19 +416,35 @@ function TeamDetail(props: {
   const [busy, setBusy] = createSignal(false);
   const [error, setError] = createSignal<string | null>(null);
 
+  // Membership edits are staged here and only sent to the server on Save;
+  // this keeps a stray "All users" click or Remove from instantly wiping a
+  // hand-built roster.
+  const [draftAll, setDraftAll] = createSignal(false);
+  const [draftIds, setDraftIds] = createSignal<string[]>([]);
+
+  // Re-sync the draft from the server whenever `members` resolves (initial
+  // load, or after a Save's refetch).
+  createEffect(() => {
+    const data = members();
+    if (!data) return;
+    setDraftAll(data.allUsers);
+    // Under All users, `members` is the expanded full directory; seed the
+    // draft from the latent saved roster instead, so unchecking All users
+    // restores it rather than the whole directory.
+    setDraftIds(data.allUsers ? (data.savedMembers ?? []).map((m) => m.id) : data.members.map((m) => m.id));
+  });
+
   const directory = createMemo(() => {
     const map = new Map<string, AdminUser>();
     for (const user of users() ?? []) map.set(user.id, user);
     return map;
   });
 
-  const memberSet = createMemo(
-    () => new Set((members()?.members ?? []).map((m) => m.id))
-  );
+  const draftIdSet = createMemo(() => new Set(draftIds()));
 
   const addableUsers = createMemo(() =>
     (users() ?? [])
-      .filter((user) => !memberSet().has(user.id))
+      .filter((user) => !draftIdSet().has(user.id))
       .sort((a, b) =>
         userLabel(a.id, directory()).localeCompare(
           userLabel(b.id, directory())
@@ -436,49 +452,80 @@ function TeamDetail(props: {
       )
   );
 
-  const sortedMembers = createMemo(() =>
-    [...(members()?.members ?? [])].sort((a, b) =>
-      memberProfileLabel(a).localeCompare(memberProfileLabel(b))
-    )
-  );
+  // Server member profiles keyed by id, for labeling draft ids still present
+  // server-side; ids just added to the draft fall back to userLabel below.
+  const memberProfileById = createMemo(() => {
+    const map = new Map<string, TeamMemberProfile>();
+    for (const m of members()?.members ?? []) map.set(m.id, m);
+    return map;
+  });
 
-  const handleAdd = async () => {
-    const userId = selectedUser();
-    if (!userId || busy()) return;
-    setBusy(true);
-    setError(null);
-    try {
-      await setTeamMembers(props.team.id, { mode: "list", userIds: [...memberSet(), userId] });
-      setSelectedUser("");
-      await refetchMembers();
-      props.onMembersChanged();
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Failed to add member.");
-    } finally {
-      setBusy(false);
+  const displayedMembers = createMemo(() => {
+    if (!draftAll()) {
+      const profiles = memberProfileById();
+      return draftIds()
+        .map((id) => {
+          const profile = profiles.get(id);
+          return {
+            id,
+            label: profile ? memberProfileLabel(profile) : userLabel(id, directory()),
+          };
+        })
+        .sort((a, b) => a.label.localeCompare(b.label));
     }
+    if (members()?.allUsers) {
+      return (members()?.members ?? [])
+        .map((m) => ({ id: m.id, label: memberProfileLabel(m) }))
+        .sort((a, b) => a.label.localeCompare(b.label));
+    }
+    // Staged, unsaved all-users: show the full directory so the admin can see
+    // who they're about to include.
+    return (users() ?? [])
+      .map((u) => ({ id: u.id, label: userLabel(u.id, directory()) }))
+      .sort((a, b) => a.label.localeCompare(b.label));
+  });
+
+  const dirty = createMemo(() => {
+    const serverAll = members()?.allUsers ?? false;
+    if (draftAll() !== serverAll) return true;
+    if (draftAll()) return false;
+    const serverIds = new Set((members()?.members ?? []).map((m) => m.id));
+    const draft = draftIdSet();
+    if (draft.size !== serverIds.size) return true;
+    for (const id of draft) if (!serverIds.has(id)) return true;
+    return false;
+  });
+
+  const handleAdd = () => {
+    const userId = selectedUser();
+    if (!userId) return;
+    setDraftIds([...draftIds(), userId]);
+    setSelectedUser("");
   };
 
-  const handleAllUsers = async (allUsers: boolean) => {
-    if (busy()) return;
-    setBusy(true); setError(null);
-    try { await setTeamMembers(props.team.id, allUsers ? { mode: "all" } : { mode: "list", userIds: [] }); await refetchMembers(); props.onMembersChanged(); }
-    catch (cause) { setError(cause instanceof Error ? cause.message : "Failed to update members."); }
-    finally { setBusy(false); }
+  const handleCancel = () => {
+    const data = members();
+    setDraftAll(data?.allUsers ?? false);
+    setDraftIds(
+      data?.allUsers
+        ? (data.savedMembers ?? []).map((m) => m.id)
+        : (data?.members ?? []).map((m) => m.id)
+    );
   };
 
-  const handleRemove = async (userId: string) => {
+  const handleSave = async () => {
     if (busy()) return;
     setBusy(true);
     setError(null);
     try {
-      await removeTeamMember(props.team.id, userId);
+      await setTeamMembers(
+        props.team.id,
+        draftAll() ? { mode: "all" } : { mode: "list", userIds: draftIds() }
+      );
       await refetchMembers();
       props.onMembersChanged();
     } catch (cause) {
-      setError(
-        cause instanceof Error ? cause.message : "Failed to remove member."
-      );
+      setError(cause instanceof Error ? cause.message : "Failed to save members.");
     } finally {
       setBusy(false);
     }
@@ -514,9 +561,17 @@ function TeamDetail(props: {
         </header>
         <div class="team-modal__body">
           <Show when={props.isAdmin}>
-            <label class="team-detail__all-users"><input type="checkbox" checked={members()?.allUsers ?? false} disabled={busy()} onChange={(event) => void handleAllUsers(event.currentTarget.checked)} /> All users</label>
+            <div class="team-detail__all-users-row">
+              <label class="team-detail__all-users"><input type="checkbox" checked={draftAll()} disabled={busy()} onChange={(event) => setDraftAll(event.currentTarget.checked)} /> All users</label>
+              <Show when={dirty()}>
+                <div class="team-detail__save-row">
+                  <button type="button" class="team-detail__cancel" disabled={busy()} onClick={handleCancel}>Cancel</button>
+                  <button type="button" class="team-button team-button--primary" disabled={busy()} onClick={() => void handleSave()}>{busy() ? "Saving…" : "Save"}</button>
+                </div>
+              </Show>
+            </div>
           </Show>
-          <Show when={props.isAdmin && !members()?.allUsers}>
+          <Show when={props.isAdmin && !draftAll()}>
             <div class="team-detail__add">
               <select
                 class="team-field__input"
@@ -541,7 +596,7 @@ function TeamDetail(props: {
                 type="button"
                 class="team-button team-button--primary"
                 disabled={busy() || !selectedUser()}
-                onClick={() => void handleAdd()}
+                onClick={handleAdd}
               >
                 Add
               </button>
@@ -549,24 +604,24 @@ function TeamDetail(props: {
           </Show>
 
           <h3 class="team-detail__section-title">
-            Members ({sortedMembers().length})
+            Members ({displayedMembers().length})
           </h3>
           <Show
             when={!members.loading}
             fallback={<p class="team-detail__empty">Loading members…</p>}
           >
             <Show
-              when={sortedMembers().length > 0}
+              when={displayedMembers().length > 0}
               fallback={<p class="team-detail__empty">No members yet.</p>}
             >
               <ul class="team-member-list">
-                <For each={sortedMembers()}>
+                <For each={displayedMembers()}>
                   {(member) => (
                     <li class="team-member">
                       <span class="team-member__name">
-                        {memberProfileLabel(member)}
+                        {member.label}
                       </span>
-                      <Show when={members()?.allUsers} fallback={<Show when={props.isAdmin}><button type="button" class="team-button team-button--danger-text" disabled={busy()} onClick={() => void handleRemove(member.id)}>Remove</button></Show>}>
+                      <Show when={draftAll()} fallback={<Show when={props.isAdmin}><button type="button" class="team-button team-button--danger-text" disabled={busy()} onClick={() => setDraftIds(draftIds().filter((id) => id !== member.id))}>Remove</button></Show>}>
                         <span class="team-member__all-users">all users</span>
                       </Show>
                     </li>
@@ -1015,6 +1070,37 @@ export function Teams() {
           margin: 4px 0 0;
           font-size: 13px;
           color: var(--text-secondary);
+        }
+
+        .team-detail__all-users-row {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 8px;
+        }
+
+        .team-detail__save-row {
+          display: flex;
+          align-items: center;
+          gap: 12px;
+        }
+
+        .team-detail__cancel {
+          border: none;
+          background: none;
+          padding: 0;
+          font-size: 13px;
+          color: var(--text-tertiary);
+          cursor: pointer;
+        }
+
+        .team-detail__cancel:hover {
+          color: var(--text-primary);
+        }
+
+        .team-detail__cancel:disabled {
+          cursor: not-allowed;
+          opacity: 0.62;
         }
 
         .team-detail__add {

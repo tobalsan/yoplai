@@ -19,10 +19,12 @@ Breaking changes are marked **⚠ BREAKING**.
 ### Changed
 
 - The agent edit page's team assignment is now a compact toggle-pill row; Save and Cancel appear only when the selection has unsaved changes.
+- The team detail modal's membership editing (All users toggle, Add, Remove) now stages changes locally with Save/Cancel, instead of applying each interaction to the server instantly.
 - Chat suggestion cards now sit under a "What would you like to do?" lead line and carry a subtle arrow icon, making them read as tappable prompts.
 
 ### Fixed
 
+- Switching a team to All users no longer erases its explicit member roster; unchecking All users restores the saved members instead of leaving the roster empty.
 - Team deletion warnings now name users who would become teamless, including when the team uses the All users rule.
 - Changing a fork's team assignment no longer restores its retired pre-migration team after a service restart.
 - Agent chat markdown now renders raw HTML literally, preventing malformed tags from truncating messages or injecting markup.

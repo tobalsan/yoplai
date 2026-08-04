@@ -18,7 +18,14 @@ export type TeamInput = {
 };
 
 export type TeamMemberProfile = { id: string; name: string | null; email: string | null };
-export type TeamMembersResponse = { teamId: string; allUsers: boolean; members: TeamMemberProfile[] };
+export type TeamMembersResponse = {
+  teamId: string;
+  allUsers: boolean;
+  members: TeamMemberProfile[];
+  // The latent roster from before the team switched to All users; present
+  // (possibly empty) only when `allUsers` is true.
+  savedMembers?: TeamMemberProfile[];
+};
 
 export type DeleteTeamResult = {
   deleted: boolean;

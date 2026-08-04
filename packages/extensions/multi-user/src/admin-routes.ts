@@ -297,10 +297,14 @@ export function registerMultiUserAdminRoutes(app: Hono): void {
     }
     membership.setMembers(teamId, parsed.data.mode === "all" ? { mode: "all" } : { mode: "list", userIds }, authContext.user.id);
     notifyAgentListChanged?.();
+    const allUsers = teams.getTeam(teamId)?.allUsers ?? false;
     return c.json({
       teamId,
-      allUsers: teams.getTeam(teamId)?.allUsers ?? false,
+      allUsers,
       members: membership.listMemberProfilesForTeam(teamId),
+      // The latent roster from before the team switched to All users, so the
+      // UI can restore it if the admin unchecks All users.
+      ...(allUsers ? { savedMembers: membership.listSavedMemberProfilesForTeam(teamId) } : {}),
     });
   });
 

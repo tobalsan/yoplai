@@ -70,6 +70,55 @@ describe("membership store", () => {
     expect(membership.listUsersForTeam(team.id)).toEqual([]);
   });
 
+  it("keeps the explicit roster latent under All users", () => {
+    const team = teams.createTeam({ name: "Alpha", createdBy: "admin-1" });
+    addMember(team.id, "user-1");
+    addMember(team.id, "user-2");
+
+    membership.setMembers(team.id, { mode: "all" }, "admin-1");
+    expect(membership.getMembership(team.id)).toEqual({ mode: "all" });
+    // The rows are latent, not deleted: the saved roster still lists them
+    // even though the live reads above return the full directory.
+    expect(membership.listSavedMemberProfilesForTeam(team.id)).toEqual([
+      { id: "user-1", name: null, email: null },
+      { id: "user-2", name: null, email: null },
+    ]);
+  });
+
+  it("restores the latent roster after toggling back to a list", () => {
+    const team = teams.createTeam({ name: "Alpha", createdBy: "admin-1" });
+    addMember(team.id, "user-1");
+    addMember(team.id, "user-2");
+
+    membership.setMembers(team.id, { mode: "all" }, "admin-1");
+    const saved = membership.listSavedMemberProfilesForTeam(team.id).map((m) => m.id);
+    membership.setMembers(team.id, { mode: "list", userIds: saved }, "admin-1");
+
+    expect(membership.getMembership(team.id)).toEqual({
+      mode: "list",
+      userIds: ["user-1", "user-2"],
+    });
+  });
+
+  it("replaces the latent rows when switching back to a different explicit list", () => {
+    const team = teams.createTeam({ name: "Alpha", createdBy: "admin-1" });
+    addMember(team.id, "user-1");
+    membership.setMembers(team.id, { mode: "all" }, "admin-1");
+
+    membership.setMembers(team.id, { mode: "list", userIds: ["user-2"] }, "admin-1");
+    expect(membership.getMembership(team.id)).toEqual({ mode: "list", userIds: ["user-2"] });
+    expect(membership.listSavedMemberProfilesForTeam(team.id)).toEqual([
+      { id: "user-2", name: null, email: null },
+    ]);
+  });
+
+  it("a from-scratch All-users team has no latent roster", () => {
+    const team = teams.createTeam({ name: "Alpha", createdBy: "admin-1" });
+    membership.setMembers(team.id, { mode: "all" }, "admin-1");
+
+    expect(membership.listSavedMemberProfilesForTeam(team.id)).toEqual([]);
+  });
+
   it("replaces explicit rosters, including an explicit empty roster", () => {
     const team = teams.createTeam({ name: "Alpha", createdBy: "admin-1" });
     membership.setMembers(team.id, { mode: "list", userIds: ["user-1", "user-2"] }, "admin-1");
