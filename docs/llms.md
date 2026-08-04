@@ -251,6 +251,7 @@ All stored under `YOPLAI_HOME` (default `~/.yoplai/`):
 - `models.json` - Custom model providers (Pi SDK format; read directly by Pi SDK)
 - `webhook-secrets.json` - Generated per-agent webhook URL secrets
 - `agents/<id>/cron/jobs.json` - Per-agent schedule jobs; run outputs in `agents/<id>/cron/output/`
+- `agents/<id>/dreams/` - Dream journals, successful-run state, and staged session transcripts
 - `projects.json` - Project ID counter (`{ lastId }`)
 - `sessions.json` - Logical session key -> runtime sessionId mapping with timestamps
 - `history/*.jsonl` - Yoplai canonical chat transcripts. The history API, web UI, Langfuse, compaction, system context rows, attachment/file blocks, and gateway-owned metadata read this normalized store.
@@ -652,6 +653,10 @@ heartbeat?: {
 - No `broadcastToChannel` configured
 
 **Events:** `onHeartbeatEvent(payload)` for status monitoring. Payload: `{ ts, agentId, status, to?, preview?, alertText?, durationMs?, reason? }`
+
+### Dream (`apps/gateway/src/dream/`)
+
+Opt-in nightly agent self-consolidation. `agent.yaml` accepts `dream: true` for a daily `00:00` run using the agent model, or `{ enabled?, time?, provider?, model? }`; `time` is `HH:MM`, defaults to `00:00`, and `provider`/`model` must be supplied together. Global `yoplai.json` `dream` settings may override the prompt, timeout, and cold-start window. `yoplai dream <agent-id> [--dry-run]` invokes the same runner manually. Each successful run advances `<workspace>/dreams/state.json`; failures retain the window for retry. The runner scopes extension tools to scheduler only and writes/stamps a dated journal under `<workspace>/dreams/`.
 
 ## API Endpoints
 
