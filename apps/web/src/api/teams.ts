@@ -26,6 +26,8 @@ export type DeleteTeamResult = {
   teamlessAgents: string[];
 };
 
+export type DeleteTeamPreview = { teamlessUsers: string[] };
+
 // A forked pool agent and its provenance link. `teamId` is null when the fork
 // is teamless/inert (unassigned).
 export type AgentFork = {
@@ -111,6 +113,14 @@ export async function deleteTeam(id: string): Promise<DeleteTeamResult> {
   return request<DeleteTeamResult>(
     `/api/admin/teams/${encodeURIComponent(id)}`,
     { method: "DELETE" }
+  );
+}
+
+export async function fetchDeleteTeamPreview(
+  id: string
+): Promise<DeleteTeamPreview> {
+  return request<DeleteTeamPreview>(
+    `/api/admin/teams/${encodeURIComponent(id)}/delete-preview`
   );
 }
 

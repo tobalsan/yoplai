@@ -770,6 +770,36 @@ describe("multi-user admin routes", () => {
     expect(response.status).toBe(409);
   });
 
+  it("previews users made teamless by deleting an All-users team", async () => {
+    const runtime = createRuntime();
+    const allUsersTeam = runtime.teams.createTeam({
+      name: "Everyone",
+      createdBy: "admin-1",
+    });
+    const otherTeam = runtime.teams.createTeam({
+      name: "Other",
+      createdBy: "admin-1",
+    });
+    runtime.membership.setMembers(allUsersTeam.id, { mode: "all" }, "admin-1");
+    runtime.membership.setMembers(otherTeam.id, { mode: "list", userIds: ["user-2"] }, "admin-1");
+    getMultiUserRuntime.mockReturnValue(runtime.runtime);
+
+    const { registerMultiUserRoutes } = await importAdminRoutes();
+    const { createAuthMiddleware } = await importAuthMiddleware();
+    const app = createAdminApp();
+    app.use("*", createAuthMiddleware());
+    registerMultiUserRoutes(app);
+
+    const response = await app.request(
+      makeAuthRequest(`/admin/teams/${allUsersTeam.id}/delete-preview`)
+    );
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({
+      teamlessUsers: ["admin-1", "superadmin-1", "user-1"],
+    });
+  });
+
   it("returns 404 when editing a missing team", async () => {
     const runtime = createRuntime();
     getMultiUserRuntime.mockReturnValue(runtime.runtime);

@@ -12,6 +12,7 @@ import {
   setTeamMembers,
   createTeam,
   deleteTeam,
+  fetchDeleteTeamPreview,
   fetchTeamAgents,
   fetchTeamMembers,
   fetchTeams,
@@ -276,7 +277,15 @@ function DeleteTeamDialog(props: {
   // delete touches; the exact soon-to-be-teamless subset comes back on the
   // delete response.
   const [members] = createResource(() => props.team.id, fetchTeamMembers);
+  const [preview] = createResource(() => props.team.id, fetchDeleteTeamPreview);
+  const [users] = createResource(fetchUsers);
   const memberCount = createMemo(() => members()?.members.length ?? 0);
+  const teamlessUserNames = createMemo(() => {
+    const directory = new Map((users() ?? []).map((user) => [user.id, user]));
+    return (preview()?.teamlessUsers ?? []).map((userId) =>
+      userLabel(userId, directory)
+    );
+  });
 
   const handleDelete = async () => {
     if (deleting()) return;
@@ -320,6 +329,11 @@ function DeleteTeamDialog(props: {
             </Show>{" "}
             This cannot be undone.
           </p>
+          <Show when={teamlessUserNames().length > 0}>
+            <p class="team-delete-warning">
+              These users will have no team: {teamlessUserNames().join(", ")}.
+            </p>
+          </Show>
           <Show when={error()}>
             {(message) => <p class="team-modal__error">⚠ {message()}</p>}
           </Show>

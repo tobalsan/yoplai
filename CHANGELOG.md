@@ -22,6 +22,7 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Fixed
 
+- Team deletion warnings now name users who would become teamless, including when the team uses the All users rule.
 - Changing a fork's team assignment no longer restores its retired pre-migration team after a service restart.
 - Agent chat markdown now renders raw HTML literally, preventing malformed tags from truncating messages or injecting markup.
 - Scheduled job runs are now traced as `yoplai:scheduler:<agent>` in observability platforms instead of being mislabelled as chat runs.

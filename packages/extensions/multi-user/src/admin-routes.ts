@@ -252,6 +252,15 @@ export function registerMultiUserAdminRoutes(app: Hono): void {
     }
   });
 
+  app.get("/admin/teams/:id/delete-preview", requireAdmin(), (c) => {
+    const { teams, membership } = getRuntimeOrThrow();
+    const teamId = c.req.param("id");
+    if (!teams.getTeam(teamId)) {
+      return c.json({ error: "Team not found" }, 404);
+    }
+    return c.json({ teamlessUsers: membership.usersOnlyInTeam(teamId) });
+  });
+
   app.delete("/admin/teams/:id", requireAdmin(), (c) => {
     const { teams, notifyAgentListChanged } = getRuntimeOrThrow();
     try {
