@@ -18,6 +18,7 @@ Breaking changes are marked **⚠ BREAKING**.
 ### Changed
 
 - The agent edit page's team assignment is now a compact toggle-pill row; Save and Cancel appear only when the selection has unsaved changes.
+- Chat suggestion cards now sit under a "What would you like to do?" lead line and carry a subtle arrow icon, making them read as tappable prompts.
 
 ### Fixed
 

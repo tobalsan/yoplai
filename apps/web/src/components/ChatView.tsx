@@ -2839,7 +2839,19 @@ export function ChatView() {
           padding: 48px 18px;
         }
 
+        .suggestion-cards-lead {
+          margin: 0 0 4px;
+          font-size: 16px;
+          font-style: italic;
+          color: var(--text-tertiary);
+          text-align: center;
+        }
+
         .suggestion-card {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 12px;
           padding: 14px 16px;
           color: var(--text-primary);
           font: inherit;
@@ -2854,6 +2866,18 @@ export function ChatView() {
         .suggestion-card:focus-visible {
           border-color: var(--accent);
           outline: none;
+        }
+
+        .suggestion-card-icon {
+          color: var(--text-tertiary);
+          font-size: 12px;
+          transition: color 0.15s ease-out, transform 0.15s ease-out;
+        }
+
+        .suggestion-card:hover .suggestion-card-icon,
+        .suggestion-card:focus-visible .suggestion-card-icon {
+          color: var(--accent);
+          transform: translateX(2px);
         }
 
         .view-toggle {
