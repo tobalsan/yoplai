@@ -33,6 +33,7 @@ export type AgentFork = {
   createdAt: string;
   assignedBy: string | null;
   assignedAt: string | null;
+  assignment: { mode: "all" } | { mode: "list"; teamIds: string[] };
 };
 
 // The single action a pool catalog card should offer the current user. Mirrors
@@ -172,40 +173,24 @@ export async function fetchPoolActions(): Promise<PoolCatalogEntry[]> {
   return data.actions;
 }
 
-// Admin-only: assign a pool agent to a team (forks on first assignment).
-export async function assignPoolToTeam(
+/** Replace an agent's explicit team set or enable its standing All teams rule. */
+export async function setForkTeams(
   poolId: string,
-  teamId: string
+  assignment: AgentFork["assignment"]
 ): Promise<AgentFork> {
-  const data = await request<{ fork: AgentFork }>("/api/admin/forks/assign", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ poolId, teamId }),
-  });
+  const data = await request<{ fork: AgentFork }>(
+    `/api/admin/forks/${encodeURIComponent(poolId)}/teams`,
+    { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(assignment) }
+  );
+  return data.fork;
+}
+
+export async function removeForkFromTeam(poolId: string, teamId: string): Promise<AgentFork> {
+  const data = await request<{ fork: AgentFork }>(
+    `/api/admin/teams/${encodeURIComponent(teamId)}/agents/${encodeURIComponent(poolId)}`,
+    { method: "DELETE" }
+  );
   return data.fork;
 }
 
 // Admin-only: move an existing fork to a different team.
-export async function reassignFork(
-  poolId: string,
-  teamId: string
-): Promise<AgentFork> {
-  const data = await request<{ fork: AgentFork }>(
-    `/api/admin/forks/${encodeURIComponent(poolId)}/reassign`,
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ teamId }),
-    }
-  );
-  return data.fork;
-}
-
-// Admin-only: clear a fork's team link (teamless/inert; folder persists).
-export async function unassignFork(poolId: string): Promise<AgentFork> {
-  const data = await request<{ fork: AgentFork }>(
-    `/api/admin/forks/${encodeURIComponent(poolId)}/unassign`,
-    { method: "POST" }
-  );
-  return data.fork;
-}

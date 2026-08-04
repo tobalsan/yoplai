@@ -117,9 +117,9 @@ async function makeApp(role: Role = "admin") {
   return app;
 }
 
-function req(path: string, body?: unknown) {
+function req(path: string, body?: unknown, method = "POST") {
   return new Request(`http://localhost${path}`, {
-    method: "POST",
+    method,
     headers: { cookie: "session=1", "content-type": "application/json" },
     body: body === undefined ? undefined : JSON.stringify(body),
   });
@@ -174,33 +174,33 @@ afterEach(() => {
 });
 
 describe("admin fork/assignment routes", () => {
-  it("assigns a pool agent to a team (forks + link)", async () => {
+  it("sets explicit teams, forks once, and is idempotent", async () => {
     const app = await makeApp("admin");
     const res = await app.request(
-      req("/admin/forks/assign", { poolId: "scribe", teamId })
+      req("/admin/forks/scribe/teams", { mode: "list", teamIds: [teamId] }, "PUT")
     );
-    expect(res.status).toBe(201);
+    expect(res.status).toBe(200);
     const body = (await res.json()) as {
-      fork: { forkAgentId: string; teamId: string };
+      fork: { forkAgentId: string; assignment: { mode: string; teamIds: string[] } };
     };
     expect(body.fork.forkAgentId).toBe("scribe");
-    expect(body.fork.teamId).toBe(teamId);
+    expect(body.fork.assignment).toEqual({ mode: "list", teamIds: [teamId] });
     expect(fs.existsSync(path.join(homeDir, "agents", "scribe"))).toBe(true);
   });
 
   it("is guarded to admins/superadmins", async () => {
     const app = await makeApp("user");
     const res = await app.request(
-      req("/admin/forks/assign", { poolId: "scribe", teamId })
+      req("/admin/forks/scribe/teams", { mode: "list", teamIds: [teamId] }, "PUT")
     );
     expect(res.status).toBe(403);
   });
 
-  it("reassign moves the fork to another team without duplicating", async () => {
+  it("replaces explicit teams without duplicating the fork", async () => {
     const app = await makeApp("admin");
-    await app.request(req("/admin/forks/assign", { poolId: "scribe", teamId }));
+    await app.request(req("/admin/forks/scribe/teams", { mode: "list", teamIds: [teamId] }, "PUT"));
     const res = await app.request(
-      req("/admin/forks/scribe/reassign", { teamId: "team-b" })
+      req("/admin/forks/scribe/teams", { mode: "list", teamIds: ["team-b"] }, "PUT")
     );
     expect(res.status).toBe(200);
     const listRes = await app.request(
@@ -212,26 +212,26 @@ describe("admin fork/assignment routes", () => {
     expect(list.forks).toHaveLength(1);
   });
 
-  it("unassign clears the team link", async () => {
+  it("accepts an empty explicit list", async () => {
     const app = await makeApp("admin");
-    await app.request(req("/admin/forks/assign", { poolId: "scribe", teamId }));
-    const res = await app.request(req("/admin/forks/scribe/unassign"));
+    await app.request(req("/admin/forks/scribe/teams", { mode: "list", teamIds: [teamId] }, "PUT"));
+    const res = await app.request(req("/admin/forks/scribe/teams", { mode: "list", teamIds: [] }, "PUT"));
     expect(res.status).toBe(200);
-    const body = (await res.json()) as { fork: { teamId: string | null } };
-    expect(body.fork.teamId).toBeNull();
+    const body = (await res.json()) as { fork: { assignment: unknown } };
+    expect(body.fork.assignment).toEqual({ mode: "list", teamIds: [] });
   });
 
   it("returns 404 assigning an unknown pool id", async () => {
     const app = await makeApp("admin");
     const res = await app.request(
-      req("/admin/forks/assign", { poolId: "ghost", teamId })
+      req("/admin/forks/ghost/teams", { mode: "list", teamIds: [teamId] }, "PUT")
     );
     expect(res.status).toBe(404);
   });
 
   it("lists a team's agents via GET /teams/:id/agents", async () => {
     const app = await makeApp("admin");
-    await app.request(req("/admin/forks/assign", { poolId: "scribe", teamId }));
+    await app.request(req("/admin/forks/scribe/teams", { mode: "all" }, "PUT"));
     const res = await app.request(
       new Request(`http://localhost/teams/${teamId}/agents`, {
         headers: { cookie: "session=1" },

@@ -11,6 +11,7 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Added
 
+- Forked pool agents can now serve multiple teams or use a standing All teams assignment.
 - Opt-in nightly agent dreams consolidate recent sessions into durable workspace memory, with `yoplai dream <agent-id>` for manual and dry runs.
 
 ### Fixed

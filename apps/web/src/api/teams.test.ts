@@ -1,12 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   addTeamMember,
-  assignPoolToTeam,
   fetchTeamAgents,
   fetchTeamMembers,
-  reassignFork,
+  removeForkFromTeam,
   removeTeamMember,
-  unassignFork,
+  setForkTeams,
 } from "./teams";
 
 type FetchResponse = {
@@ -102,48 +101,48 @@ describe("teams membership api client", () => {
     ]);
   });
 
-  it("assigns a pool agent to a team via the admin route", async () => {
+  it("sets explicit teams via the admin route", async () => {
     fetchMock.mockResolvedValue({
       ok: true,
       json: async () => ({ fork: { sourcePoolId: "scribe", teamId: "team-1" } }),
     });
 
-    await assignPoolToTeam("scribe", "team-1");
+    await setForkTeams("scribe", { mode: "list", teamIds: ["team-1"] });
 
-    expect(fetchMock).toHaveBeenCalledWith("/api/admin/forks/assign", {
-      method: "POST",
+    expect(fetchMock).toHaveBeenCalledWith("/api/admin/forks/scribe/teams", {
+      method: "PUT",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ poolId: "scribe", teamId: "team-1" }),
+      body: JSON.stringify({ mode: "list", teamIds: ["team-1"] }),
       credentials: "include",
     });
   });
 
-  it("reassigns a fork via the admin route", async () => {
+  it("sets all teams via the admin route", async () => {
     fetchMock.mockResolvedValue({
       ok: true,
       json: async () => ({ fork: { sourcePoolId: "scribe", teamId: "team-2" } }),
     });
 
-    await reassignFork("scribe", "team-2");
+    await setForkTeams("scribe", { mode: "all" });
 
-    expect(fetchMock).toHaveBeenCalledWith("/api/admin/forks/scribe/reassign", {
-      method: "POST",
+    expect(fetchMock).toHaveBeenCalledWith("/api/admin/forks/scribe/teams", {
+      method: "PUT",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ teamId: "team-2" }),
+      body: JSON.stringify({ mode: "all" }),
       credentials: "include",
     });
   });
 
-  it("unassigns a fork via the admin route", async () => {
+  it("removes an explicit team link via the team-scoped admin route", async () => {
     fetchMock.mockResolvedValue({
       ok: true,
       json: async () => ({ fork: { sourcePoolId: "scribe", teamId: null } }),
     });
 
-    await unassignFork("scribe");
+    await removeForkFromTeam("scribe", "team-1");
 
-    expect(fetchMock).toHaveBeenCalledWith("/api/admin/forks/scribe/unassign", {
-      method: "POST",
+    expect(fetchMock).toHaveBeenCalledWith("/api/admin/teams/team-1/agents/scribe", {
+      method: "DELETE",
       credentials: "include",
     });
   });

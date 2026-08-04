@@ -28,14 +28,10 @@ const AddTeamMemberBodySchema = z.object({
   userId: z.string().min(1, "userId is required"),
 });
 
-const AssignPoolBodySchema = z.object({
-  poolId: z.string().min(1, "poolId is required"),
-  teamId: z.string().min(1, "teamId is required"),
-});
-
-const ReassignForkBodySchema = z.object({
-  teamId: z.string().min(1, "teamId is required"),
-});
+const SetForkTeamsBodySchema = z.discriminatedUnion("mode", [
+  z.object({ mode: z.literal("all") }),
+  z.object({ mode: z.literal("list"), teamIds: z.array(z.string().min(1)) }),
+]);
 
 const StartImpersonationBodySchema = z.object({
   targetUserId: z.string().min(1),
@@ -176,75 +172,32 @@ export function registerMultiUserAdminRoutes(app: Hono): void {
     return c.json({ forks: forks.listForks() });
   });
 
-  // Assign a pool agent to a team. First assignment forks the pool workspace;
-  // an already-forked pool reuses its single fork (fork-once) and repoints the
-  // team link.
-  app.post("/admin/forks/assign", requireAdmin(), async (c) => {
-    const parsed = AssignPoolBodySchema.safeParse(await c.req.json());
-    if (!parsed.success) {
-      return c.json({ error: parsed.error.message }, 400);
-    }
+  app.put("/admin/forks/:poolId/teams", requireAdmin(), async (c) => {
+    const parsed = SetForkTeamsBodySchema.safeParse(await c.req.json());
+    if (!parsed.success) return c.json({ error: parsed.error.message }, 400);
     const authContext = getRequestAuthContext(c);
     if (!authContext) return c.json({ error: "unauthorized" }, 401);
-
     const { forks, teams } = getRuntimeOrThrow();
-    if (!teams.getTeam(parsed.data.teamId)) {
+    if (parsed.data.mode === "list" && parsed.data.teamIds.some((teamId) => !teams.getTeam(teamId))) {
       return c.json({ error: "Team not found" }, 404);
     }
     try {
-      const fork = forks.forkAndAssign(
-        parsed.data.poolId,
-        parsed.data.teamId,
-        authContext.user.id
-      );
-      return c.json({ fork }, 201);
-    } catch (error) {
-      if (isPoolAgentNotFoundError(error)) {
-        return c.json({ error: (error as Error).message }, 404);
-      }
-      throw error;
-    }
-  });
-
-  // Move an existing fork to a different team (single-team invariant). The
-  // fork folder never moves — only the link row's teamId changes.
-  app.post("/admin/forks/:poolId/reassign", requireAdmin(), async (c) => {
-    const parsed = ReassignForkBodySchema.safeParse(await c.req.json());
-    if (!parsed.success) {
-      return c.json({ error: parsed.error.message }, 400);
-    }
-    const authContext = getRequestAuthContext(c);
-    if (!authContext) return c.json({ error: "unauthorized" }, 401);
-
-    const { forks, teams } = getRuntimeOrThrow();
-    if (!teams.getTeam(parsed.data.teamId)) {
-      return c.json({ error: "Team not found" }, 404);
-    }
-    try {
-      const fork = forks.reassign(
-        c.req.param("poolId"),
-        parsed.data.teamId,
-        authContext.user.id
-      );
+      const fork = forks.setTeams(c.req.param("poolId"), parsed.data, authContext.user.id);
       return c.json({ fork });
     } catch (error) {
-      if (isForkNotFoundError(error)) {
-        return c.json({ error: (error as Error).message }, 404);
-      }
+      if (isPoolAgentNotFoundError(error) || isForkNotFoundError(error)) return c.json({ error: (error as Error).message }, 404);
       throw error;
     }
   });
 
-  // Clear a fork's team link (teamless/inert). The fork folder persists.
-  app.post("/admin/forks/:poolId/unassign", requireAdmin(), (c) => {
+  app.delete("/admin/teams/:teamId/agents/:poolId", requireAdmin(), (c) => {
     const { forks } = getRuntimeOrThrow();
     try {
-      const fork = forks.unassign(c.req.param("poolId"));
+      const fork = forks.removeTeam(c.req.param("poolId"), c.req.param("teamId"));
       return c.json({ fork });
     } catch (error) {
-      if (isForkNotFoundError(error)) {
-        return c.json({ error: (error as Error).message }, 404);
-      }
+      if (isForkNotFoundError(error)) return c.json({ error: (error as Error).message }, 404);
+      if (error instanceof Error && /All-teams/.test(error.message)) return c.json({ error: error.message }, 409);
       throw error;
     }
   });

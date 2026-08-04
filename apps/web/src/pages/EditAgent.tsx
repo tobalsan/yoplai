@@ -1,6 +1,7 @@
 import {
   createMemo,
   createResource,
+  createEffect,
   createSignal,
   For,
   Show,
@@ -15,10 +16,9 @@ import {
   type ExtensionCatalogEntry,
 } from "../api/extensions";
 import {
-  assignPoolToTeam,
   fetchForks,
   fetchTeams,
-  reassignFork,
+  setForkTeams,
   type AgentFork,
   type Team,
 } from "../api/teams";
@@ -48,30 +48,23 @@ function TeamAssignment(props: {
   fork: AgentFork | undefined;
   onChanged: () => void;
 }) {
-  const [selected, setSelected] = createSignal("");
+  const [selected, setSelected] = createSignal<string[]>(props.fork?.assignment?.mode === "list" ? props.fork.assignment.teamIds : []);
+  const [allTeams, setAllTeams] = createSignal(props.fork?.assignment?.mode === "all");
   const [busy, setBusy] = createSignal(false);
   const [error, setError] = createSignal<string | null>(null);
 
-  const currentTeam = createMemo(() =>
-    props.fork?.teamId
-      ? props.teams.find((team) => team.id === props.fork?.teamId)
-      : undefined
-  );
+  createEffect(() => {
+    const assignment = props.fork?.assignment;
+    setAllTeams(assignment?.mode === "all");
+    setSelected(assignment?.mode === "list" ? assignment.teamIds : []);
+  });
 
   const handleAssign = async () => {
-    const teamId = selected();
-    if (!teamId || busy()) return;
+    if (busy()) return;
     setBusy(true);
     setError(null);
     try {
-      // An existing fork moves teams (reassign); a never-forked pool agent
-      // forks on first assignment.
-      if (props.fork) {
-        await reassignFork(props.poolId, teamId);
-      } else {
-        await assignPoolToTeam(props.poolId, teamId);
-      }
-      setSelected("");
+      await setForkTeams(props.poolId, allTeams() ? { mode: "all" } : { mode: "list", teamIds: selected() });
       props.onChanged();
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Failed to assign.");
@@ -83,53 +76,19 @@ function TeamAssignment(props: {
   return (
     <section class="edit-agent-team">
       <h2 class="edit-agent-section-title">Team assignment</h2>
-      <Show
-        when={currentTeam()}
-        fallback={
-          <div class="edit-agent-team-current">Not assigned to a team.</div>
-        }
-      >
-        {(team) => (
-          <div class="edit-agent-team-current">
-            Assigned to <strong>{team().name}</strong>
-          </div>
-        )}
-      </Show>
+      <div class="edit-agent-team-current">{allTeams() ? `All teams (${props.teams.length} teams)` : `${selected().length} team${selected().length === 1 ? "" : "s"}`}</div>
       <div class="edit-agent-team-row">
-        <select
-          class="edit-agent-team-select"
-          value={selected()}
-          disabled={busy() || props.teams.length === 0}
-          onChange={(event) => setSelected(event.currentTarget.value)}
-        >
-          <option value="">
-            {props.fork ? "Move to team…" : "Assign to team…"}
-          </option>
-          <For each={props.teams}>
-            {(team) => (
-              <Show when={team.id !== props.fork?.teamId}>
-                <option value={team.id}>{team.name}</option>
-              </Show>
-            )}
-          </For>
-        </select>
+        <label><input type="checkbox" checked={allTeams()} disabled={busy()} onChange={(event) => { setAllTeams(event.currentTarget.checked); if (event.currentTarget.checked) setSelected([]); }} /> All teams</label>
+        <For each={props.teams}>{(team) => <label><input type="checkbox" disabled={busy() || allTeams()} checked={selected().includes(team.id)} onChange={(event) => setSelected((ids) => event.currentTarget.checked ? [...ids, team.id] : ids.filter((id) => id !== team.id))} /> {team.name}</label>}</For>
         <button
           type="button"
           class="edit-agent-team-button"
-          disabled={busy() || !selected()}
+          disabled={busy()}
           onClick={() => void handleAssign()}
         >
-          {props.fork ? "Move" : "Assign"}
+          Save
         </button>
       </div>
-      {/* Reassigning an already-forked agent moves its single fork away from
-          the previous team — warn before the move. */}
-      <Show when={props.fork && props.fork.teamId && selected()}>
-        <p class="edit-agent-team-warning">
-          ⚠ This will move the agent from{" "}
-          <strong>{currentTeam()?.name ?? "its current team"}</strong>.
-        </p>
-      </Show>
       <Show when={error()}>
         {(message) => <p class="edit-agent-team-error">{message()}</p>}
       </Show>
