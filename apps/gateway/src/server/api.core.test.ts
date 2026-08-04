@@ -168,6 +168,37 @@ describe("api core session resolution", () => {
     expect(await response.json()).toEqual([]);
   });
 
+  it("returns fresh workspace suggestions on every request", async () => {
+    const workspace = await fs.mkdtemp(path.join("/tmp", "yoplai-api-suggestions-"));
+    getAgent.mockReturnValue({ id: "alpha", name: "Alpha", workspace });
+    const { api } = await import("./api.core.js");
+    const missing = await api.request(
+      new Request("http://localhost/agents/alpha/suggestions")
+    );
+    expect(await missing.json()).toEqual([]);
+    await fs.writeFile(
+      path.join(workspace, "suggestions.yaml"),
+      "- title: First\n  prompt: First prompt\n"
+    );
+
+    const first = await api.request(
+      new Request("http://localhost/agents/alpha/suggestions")
+    );
+    expect(await first.json()).toEqual([{ title: "First", prompt: "First prompt" }]);
+
+    await fs.writeFile(
+      path.join(workspace, "suggestions.yaml"),
+      "- title: Updated\n  prompt: Updated prompt\n"
+    );
+    const second = await api.request(
+      new Request("http://localhost/agents/alpha/suggestions")
+    );
+    expect(await second.json()).toEqual([
+      { title: "Updated", prompt: "Updated prompt" },
+    ]);
+    await fs.rm(workspace, { recursive: true });
+  });
+
   it("marks the configured default project manager on visible agents", async () => {
     const agents = [
       {

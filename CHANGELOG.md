@@ -11,6 +11,7 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Added
 
+- Agent workspaces can provide curated starting suggestions for new web chats.
 - Opt-in nightly agent dreams consolidate recent sessions into durable workspace memory, with `yoplai dream <agent-id>` for manual and dry runs.
 
 ### Fixed

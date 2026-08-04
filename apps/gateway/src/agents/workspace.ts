@@ -38,6 +38,10 @@ Capture what matters. Decisions, context, things to remember. Skip the secrets u
 - Don't run destructive commands without asking.
 - \`trash\` > \`rm\` (recoverable beats gone forever)
 - When in doubt, ask.
+
+## Starting suggestions
+
+The suggestions.yaml file is the owner-curated list of starting prompts shown in a new web chat. You may co-author it, but keep every suggestion truthful to your current capabilities. Each entry has a title and prompt; do not create generic filler suggestions.
 `,
   "SOUL.md": `# SOUL.md - Who You Are
 
@@ -154,4 +158,3 @@ export async function ensureWorkspaceFiles(
 
   return isFirstRun;
 }
-

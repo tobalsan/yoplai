@@ -46,6 +46,10 @@ You have access to your human's stuff. That doesn't mean you *share* their stuff
 
 Skills provide your tools. When you need one, check its `SKILL.md`.
 
+## Starting suggestions
+
+`suggestions.yaml` is the owner-curated list of starting prompts shown in a new web chat. You may co-author it, but keep every suggestion truthful to your current capabilities. Each entry has a `title` and `prompt`; do not create generic filler suggestions.
+
 ## Make It Yours
 
 This is a starting point. Add your own conventions, style, and rules as you figure out what works.

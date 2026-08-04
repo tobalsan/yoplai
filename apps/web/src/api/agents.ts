@@ -6,6 +6,7 @@ import type {
   SimpleHistoryMessage,
   ThinkLevel,
 } from "./types";
+import type { Suggestion } from "@yoplai/shared/types";
 import { API_BASE, apiFetch as fetch } from "./core";
 
 export async function fetchAgents(): Promise<Agent[]> {
@@ -35,6 +36,12 @@ export function selectDefaultProjectManagerAgent(
 export async function fetchAgent(agentId: string): Promise<Agent> {
   const res = await fetch(`${API_BASE}/agents/${agentId}`);
   if (!res.ok) throw new Error("Failed to fetch agent");
+  return res.json();
+}
+
+export async function fetchAgentSuggestions(agentId: string): Promise<Suggestion[]> {
+  const res = await fetch(`${API_BASE}/agents/${agentId}/suggestions`);
+  if (!res.ok) return [];
   return res.json();
 }
 
