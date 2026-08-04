@@ -189,10 +189,9 @@ describe("EditAgent", () => {
 
     const section = container.querySelector(".edit-agent-team");
     expect(section).not.toBeNull();
-    expect(section?.textContent).toContain("0 teams");
 
-    const checkbox = container.querySelectorAll<HTMLInputElement>(".edit-agent-team input")[1]!;
-    checkbox.click();
+    const pill = container.querySelectorAll<HTMLButtonElement>(".edit-agent-team-pill")[1]!;
+    pill.click();
     await new Promise((resolve) => setTimeout(resolve, 0));
 
     const button = container.querySelector<HTMLButtonElement>(
@@ -255,7 +254,7 @@ describe("EditAgent", () => {
     )!;
     expect(toggle.disabled).toBe(true);
 
-    container.querySelectorAll<HTMLInputElement>(".edit-agent-team input")[1]!.click();
+    container.querySelectorAll<HTMLButtonElement>(".edit-agent-team-pill")[1]!.click();
     await new Promise((resolve) => setTimeout(resolve, 0));
     container.querySelector<HTMLButtonElement>(".edit-agent-team-button")!.click();
     await new Promise((resolve) => setTimeout(resolve, 0));
@@ -283,11 +282,12 @@ describe("EditAgent", () => {
     await mountEdit("scribe");
 
     const section = container.querySelector(".edit-agent-team");
-    expect(section?.textContent).toContain("1 team");
+    const pills = container.querySelectorAll<HTMLButtonElement>(".edit-agent-team-pill");
+    expect(pills[1]!.classList.contains("selected")).toBe(true);
     expect(section?.textContent).toContain("Red");
 
-    container.querySelectorAll<HTMLInputElement>(".edit-agent-team input")[1]!.click();
-    container.querySelectorAll<HTMLInputElement>(".edit-agent-team input")[2]!.click();
+    pills[1]!.click();
+    pills[2]!.click();
     await new Promise((resolve) => setTimeout(resolve, 0));
 
     const button = container.querySelector<HTMLButtonElement>(

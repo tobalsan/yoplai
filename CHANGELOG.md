@@ -15,6 +15,10 @@ Breaking changes are marked **⚠ BREAKING**.
 - Forked pool agents can now serve multiple teams or use a standing All teams assignment.
 - Opt-in nightly agent dreams consolidate recent sessions into durable workspace memory, with `yoplai dream <agent-id>` for manual and dry runs. The default prompt directs agents to skim repetitive scheduler-run transcripts instead of consolidating every occurrence.
 
+### Changed
+
+- The agent edit page's team assignment is now a compact toggle-pill row; Save and Cancel appear only when the selection has unsaved changes.
+
 ### Fixed
 
 - Changing a fork's team assignment no longer restores its retired pre-migration team after a service restart.

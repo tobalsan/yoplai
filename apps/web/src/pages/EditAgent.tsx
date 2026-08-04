@@ -73,21 +73,60 @@ function TeamAssignment(props: {
     }
   };
 
+  // Dirty state compares current selection against the last-synced fork
+  // assignment, so the Save/Cancel row only appears when there's something
+  // to persist or discard.
+  const baseline = () => {
+    const a = props.fork?.assignment;
+    return { all: a?.mode === "all", ids: a?.mode === "list" ? a.teamIds : [] };
+  };
+  const dirty = createMemo(() => {
+    const b = baseline();
+    if (allTeams() !== b.all) return true;
+    if (allTeams()) return false;
+    const ids = selected();
+    return ids.length !== b.ids.length || ids.some((id) => !b.ids.includes(id));
+  });
+  const reset = () => {
+    const b = baseline();
+    setAllTeams(b.all);
+    setSelected(b.ids);
+  };
+
   return (
     <section class="edit-agent-team">
-      <h2 class="edit-agent-section-title">Team assignment</h2>
-      <div class="edit-agent-team-current">{allTeams() ? `All teams (${props.teams.length} teams)` : `${selected().length} team${selected().length === 1 ? "" : "s"}`}</div>
-      <div class="edit-agent-team-row">
-        <label><input type="checkbox" checked={allTeams()} disabled={busy()} onChange={(event) => { setAllTeams(event.currentTarget.checked); if (event.currentTarget.checked) setSelected([]); }} /> All teams</label>
-        <For each={props.teams}>{(team) => <label><input type="checkbox" disabled={busy() || allTeams()} checked={selected().includes(team.id)} onChange={(event) => setSelected((ids) => event.currentTarget.checked ? [...ids, team.id] : ids.filter((id) => id !== team.id))} /> {team.name}</label>}</For>
+      <div class="edit-agent-team-head">
+        <h2 class="edit-agent-section-title">Teams</h2>
+        <Show when={dirty()}>
+          <div class="edit-agent-team-actions">
+            <button type="button" class="edit-agent-team-cancel" disabled={busy()} onClick={reset}>Cancel</button>
+            <button type="button" class="edit-agent-team-button" disabled={busy()} onClick={() => void handleAssign()}>Save</button>
+          </div>
+        </Show>
+      </div>
+      <div class="edit-agent-team-pills">
         <button
           type="button"
-          class="edit-agent-team-button"
+          class="edit-agent-team-pill"
+          classList={{ selected: allTeams() }}
+          aria-pressed={allTeams()}
           disabled={busy()}
-          onClick={() => void handleAssign()}
+          onClick={() => { const next = !allTeams(); setAllTeams(next); if (next) setSelected([]); }}
         >
-          Save
+          All teams
         </button>
+        <For each={props.teams}>{(team) => (
+          <button
+            type="button"
+            class="edit-agent-team-pill"
+            classList={{ selected: !allTeams() && selected().includes(team.id) }}
+            aria-pressed={!allTeams() && selected().includes(team.id)}
+            disabled={busy() || allTeams()}
+            onClick={() => setSelected((ids) => ids.includes(team.id) ? ids.filter((id) => id !== team.id) : [...ids, team.id])}
+          >
+            {team.name}
+          </button>
+        )}</For>
       </div>
       <Show when={error()}>
         {(message) => <p class="edit-agent-team-error">{message()}</p>}
@@ -413,10 +452,10 @@ export function EditAgent() {
 
         .edit-agent-team {
           margin-top: 28px;
-          max-width: 320px;
+          max-width: 520px;
           display: flex;
           flex-direction: column;
-          gap: 8px;
+          gap: 10px;
         }
 
         .edit-agent-section-title {
@@ -426,16 +465,67 @@ export function EditAgent() {
           color: var(--text-primary);
         }
 
-        .edit-agent-team-current {
-          font-size: 13px;
-          color: var(--text-tertiary);
+        .edit-agent-team-head {
+          display: flex;
+          align-items: baseline;
+          justify-content: space-between;
+          gap: 12px;
         }
 
-        .edit-agent-team-row {
+        .edit-agent-team-actions {
           display: flex;
           align-items: center;
-          gap: 8px;
+          gap: 10px;
+        }
+
+        .edit-agent-team-pills {
+          display: flex;
           flex-wrap: wrap;
+          gap: 6px;
+        }
+
+        .edit-agent-team-pill {
+          padding: 5px 12px;
+          border-radius: 999px;
+          border: 1px solid var(--border-default);
+          background: transparent;
+          color: var(--text-tertiary);
+          font-size: 13px;
+          cursor: pointer;
+          transition: color 0.15s ease-out, border-color 0.15s ease-out, background 0.15s ease-out;
+        }
+
+        .edit-agent-team-pill:hover:not(:disabled) {
+          color: var(--text-primary);
+          border-color: var(--text-tertiary);
+        }
+
+        .edit-agent-team-pill.selected {
+          background: color-mix(in oklab, var(--accent, #3b82f6) 14%, transparent);
+          border-color: color-mix(in oklab, var(--accent, #3b82f6) 45%, transparent);
+          color: var(--text-primary);
+        }
+
+        .edit-agent-team-pill:disabled {
+          opacity: 0.45;
+          cursor: default;
+        }
+
+        .edit-agent-team-pill.selected:disabled {
+          opacity: 1;
+        }
+
+        .edit-agent-team-cancel {
+          border: none;
+          background: none;
+          padding: 0;
+          font-size: 13px;
+          color: var(--text-tertiary);
+          cursor: pointer;
+        }
+
+        .edit-agent-team-cancel:hover {
+          color: var(--text-primary);
         }
 
         .edit-agent-team-select {
@@ -456,13 +546,12 @@ export function EditAgent() {
         }
 
         .edit-agent-team-button {
-          flex-shrink: 0;
-          padding: 8px 16px;
-          border-radius: 6px;
+          padding: 4px 14px;
+          border-radius: 999px;
           border: none;
           background: var(--accent, #3b82f6);
           color: #fff;
-          font-size: 14px;
+          font-size: 13px;
           font-weight: 500;
           cursor: pointer;
         }
