@@ -11,7 +11,7 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Added
 
-- Opt-in nightly agent dreams consolidate recent sessions into durable workspace memory, with `yoplai dream <agent-id>` for manual and dry runs.
+- Opt-in nightly agent dreams consolidate recent sessions into durable workspace memory, with `yoplai dream <agent-id>` for manual and dry runs. The default prompt directs agents to skim repetitive scheduler-run transcripts instead of consolidating every occurrence.
 
 ### Fixed
 
