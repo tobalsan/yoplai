@@ -11,8 +11,7 @@ const {
   fetchAgentsMock,
   fetchTeamsMock,
   fetchForksMock,
-  assignPoolToTeamMock,
-  reassignForkMock,
+  setForkTeamsMock,
   fetchAgentExtensionsMock,
   patchAgentExtensionMock,
   useSessionMock,
@@ -23,8 +22,7 @@ const {
   fetchAgentsMock: vi.fn(),
   fetchTeamsMock: vi.fn(),
   fetchForksMock: vi.fn(),
-  assignPoolToTeamMock: vi.fn(),
-  reassignForkMock: vi.fn(),
+  setForkTeamsMock: vi.fn(),
   fetchAgentExtensionsMock: vi.fn(),
   patchAgentExtensionMock: vi.fn(),
   useSessionMock: vi.fn(),
@@ -49,8 +47,7 @@ vi.mock("../api/extensions", () => ({
 vi.mock("../api/teams", () => ({
   fetchTeams: fetchTeamsMock,
   fetchForks: fetchForksMock,
-  assignPoolToTeam: assignPoolToTeamMock,
-  reassignFork: reassignForkMock,
+  setForkTeams: setForkTeamsMock,
 }));
 
 vi.mock("../auth/client", () => ({ useSession: useSessionMock }));
@@ -89,6 +86,7 @@ function fork(partial: Partial<AgentFork> & { sourcePoolId: string }): AgentFork
     assignedBy: null,
     assignedAt: null,
     ...partial,
+    assignment: partial.assignment ?? { mode: "list", teamIds: partial.teamId ? [partial.teamId] : [] },
   };
 }
 
@@ -129,8 +127,7 @@ beforeEach(() => {
   fetchForksMock.mockReset().mockResolvedValue([] as AgentFork[]);
   fetchAgentExtensionsMock.mockReset().mockResolvedValue([]);
   patchAgentExtensionMock.mockReset();
-  assignPoolToTeamMock.mockReset();
-  reassignForkMock.mockReset();
+  setForkTeamsMock.mockReset();
   useSessionMock.mockReset();
   useParamsMock.mockReset();
   navigateMock.mockReset();
@@ -182,34 +179,30 @@ describe("EditAgent", () => {
     expect(fetchAgentExtensionsMock).toHaveBeenCalledWith("scribe");
   });
 
-  it("assigns a never-forked agent to a team via assignPoolToTeam", async () => {
+  it("sets explicit teams for a never-forked agent", async () => {
     setSession("admin");
     fetchPoolMock.mockResolvedValue([agent({ id: "scribe" })]);
     fetchForksMock.mockResolvedValue([]);
     fetchTeamsMock.mockResolvedValue([{ id: "t1", name: "Red" } as Team]);
-    assignPoolToTeamMock.mockResolvedValue(fork({ sourcePoolId: "scribe", teamId: "t1" }));
+    setForkTeamsMock.mockResolvedValue(fork({ sourcePoolId: "scribe", teamId: "t1" }));
     await mountEdit("scribe");
 
     const section = container.querySelector(".edit-agent-team");
     expect(section).not.toBeNull();
-    expect(section?.textContent).toContain("Not assigned to a team");
+    expect(section?.textContent).toContain("0 teams");
 
-    const select = container.querySelector<HTMLSelectElement>(
-      ".edit-agent-team-select"
-    )!;
-    select.value = "t1";
-    select.dispatchEvent(new Event("change"));
+    const checkbox = container.querySelectorAll<HTMLInputElement>(".edit-agent-team input")[1]!;
+    checkbox.click();
     await new Promise((resolve) => setTimeout(resolve, 0));
 
     const button = container.querySelector<HTMLButtonElement>(
       ".edit-agent-team-button"
     )!;
-    expect(button.textContent).toBe("Assign");
+    expect(button.textContent).toBe("Save");
     button.click();
     await new Promise((resolve) => setTimeout(resolve, 0));
 
-    expect(assignPoolToTeamMock).toHaveBeenCalledWith("scribe", "t1");
-    expect(reassignForkMock).not.toHaveBeenCalled();
+    expect(setForkTeamsMock).toHaveBeenCalledWith("scribe", { mode: "list", teamIds: ["t1"] });
   });
 
   it("refetches extensions after assigning an agent to a team", async () => {
@@ -252,7 +245,7 @@ describe("EditAgent", () => {
           tier: "toggle-only",
         },
       ]);
-    assignPoolToTeamMock.mockResolvedValue(
+    setForkTeamsMock.mockResolvedValue(
       fork({ sourcePoolId: "scribe", teamId: "t1" })
     );
     await mountEdit("scribe");
@@ -262,11 +255,7 @@ describe("EditAgent", () => {
     )!;
     expect(toggle.disabled).toBe(true);
 
-    const select = container.querySelector<HTMLSelectElement>(
-      ".edit-agent-team-select"
-    )!;
-    select.value = "t1";
-    select.dispatchEvent(new Event("change"));
+    container.querySelectorAll<HTMLInputElement>(".edit-agent-team input")[1]!.click();
     await new Promise((resolve) => setTimeout(resolve, 0));
     container.querySelector<HTMLButtonElement>(".edit-agent-team-button")!.click();
     await new Promise((resolve) => setTimeout(resolve, 0));
@@ -280,7 +269,7 @@ describe("EditAgent", () => {
     ).toBe(false);
   });
 
-  it("moves an already-forked agent to another team via reassignFork", async () => {
+  it("replaces an already-forked agent's explicit team list", async () => {
     setSession("admin");
     fetchPoolMock.mockResolvedValue([agent({ id: "scribe" })]);
     fetchForksMock.mockResolvedValue([
@@ -290,31 +279,25 @@ describe("EditAgent", () => {
       { id: "t1", name: "Red" } as Team,
       { id: "t2", name: "Blue" } as Team,
     ]);
-    reassignForkMock.mockResolvedValue(fork({ sourcePoolId: "scribe", teamId: "t2" }));
+    setForkTeamsMock.mockResolvedValue(fork({ sourcePoolId: "scribe", teamId: "t2" }));
     await mountEdit("scribe");
 
     const section = container.querySelector(".edit-agent-team");
-    expect(section?.textContent).toContain("Assigned to");
+    expect(section?.textContent).toContain("1 team");
     expect(section?.textContent).toContain("Red");
 
-    const select = container.querySelector<HTMLSelectElement>(
-      ".edit-agent-team-select"
-    )!;
-    expect(select.textContent).not.toContain("Red");
-    expect(select.textContent).toContain("Blue");
-    select.value = "t2";
-    select.dispatchEvent(new Event("change"));
+    container.querySelectorAll<HTMLInputElement>(".edit-agent-team input")[1]!.click();
+    container.querySelectorAll<HTMLInputElement>(".edit-agent-team input")[2]!.click();
     await new Promise((resolve) => setTimeout(resolve, 0));
 
     const button = container.querySelector<HTMLButtonElement>(
       ".edit-agent-team-button"
     )!;
-    expect(button.textContent).toBe("Move");
+    expect(button.textContent).toBe("Save");
     button.click();
     await new Promise((resolve) => setTimeout(resolve, 0));
 
-    expect(reassignForkMock).toHaveBeenCalledWith("scribe", "t2");
-    expect(assignPoolToTeamMock).not.toHaveBeenCalled();
+    expect(setForkTeamsMock).toHaveBeenCalledWith("scribe", { mode: "list", teamIds: ["t2"] });
   });
 
   it("does not render the team controls for a non-admin", async () => {

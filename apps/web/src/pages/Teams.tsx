@@ -16,7 +16,7 @@ import {
   fetchTeamMembers,
   fetchTeams,
   removeTeamMember,
-  unassignFork,
+  removeForkFromTeam,
   updateTeam,
   type Team,
   type TeamMemberProfile,
@@ -381,7 +381,7 @@ function TeamDetail(props: {
     setAgentBusy(true);
     setError(null);
     try {
-      await unassignFork(poolId);
+      await removeForkFromTeam(poolId, props.team.id);
       await refetchAgents();
     } catch (cause) {
       setError(
@@ -575,14 +575,12 @@ function TeamDetail(props: {
                     <li class="team-member">
                       <span class="team-member__name">{fork.forkAgentId}</span>
                       <Show when={props.isAdmin}>
-                        <button
-                          type="button"
-                          class="team-button team-button--danger-text"
-                          disabled={agentBusy()}
-                          onClick={() => void handleUnassign(fork.sourcePoolId)}
+                        <Show
+                          when={fork.assignment?.mode === "all"}
+                          fallback={<button type="button" class="team-button team-button--danger-text" disabled={agentBusy()} onClick={() => void handleUnassign(fork.sourcePoolId)}>Remove</button>}
                         >
-                          Unassign
-                        </button>
+                          <A href={`/agents/${encodeURIComponent(fork.sourcePoolId)}/edit`} class="team-button">all teams · manage →</A>
+                        </Show>
                       </Show>
                     </li>
                   )}

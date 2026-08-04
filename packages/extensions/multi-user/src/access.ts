@@ -45,8 +45,10 @@ export function createAccessResolver(deps: AccessResolverDeps): AccessResolver {
   function canUserChatAgent(userId: string, forkAgentId: string): boolean {
     const fork = forks.getForkByAgentId(forkAgentId);
     // Unknown agent or a teamless/inert fork is chattable by nobody.
-    if (!fork || fork.teamId === null) return false;
-    return membership.isMember(fork.teamId, userId);
+    if (!fork) return false;
+    if (fork.assignment?.mode === "all") return membership.listTeamsForUser(userId).length > 0;
+    const teamIds = fork.assignment?.mode === "list" ? fork.assignment.teamIds : [];
+    return teamIds.some((teamId) => membership.isMember(teamId, userId));
   }
 
   function getVisibleChatAgents(userId: string): string[] {
@@ -57,7 +59,7 @@ export function createAccessResolver(deps: AccessResolverDeps): AccessResolver {
     // but the ids come back sorted for a stable, deterministic surface.
     return forks
       .listForks()
-      .filter((fork) => fork.teamId !== null && teamIds.has(fork.teamId))
+      .filter((fork) => fork.assignment?.mode === "all" || (fork.assignment?.mode === "list" ? fork.assignment.teamIds : []).some((teamId) => teamIds.has(teamId)))
       .map((fork) => fork.forkAgentId)
       .sort();
   }

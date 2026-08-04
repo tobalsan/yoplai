@@ -178,12 +178,12 @@ describe("team store deleteTeam teamlessAgents", () => {
     });
     const teamStore = createTeamStore(fdb, undefined, () => forks);
     const team = teamStore.createTeam({ name: "Team A", createdBy: "admin-1" });
-    forks.forkAndAssign("scribe", team.id, "admin-1");
+    forks.setTeams("scribe", { mode: "list", teamIds: [team.id] }, "admin-1");
 
     const result = teamStore.deleteTeam(team.id);
     expect(result.deleted).toBe(true);
     expect(result.teamlessAgents).toEqual(["scribe"]);
-    // The fork row persists (teamId set to null by the FK), not deleted.
-    expect(forks.getForkByPool("scribe")?.teamId).toBeNull();
+    // The fork row persists but its only explicit link is removed.
+    expect(forks.getForkByPool("scribe")?.assignment).toEqual({ mode: "list", teamIds: [] });
   });
 });

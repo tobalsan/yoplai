@@ -191,11 +191,10 @@ beforeEach(async () => {
     getForksDir: () => path.join(homeDir, "agents"),
     getPoolAgent: (poolId) => writePoolAgent(poolId),
   });
-  forks.forkAndAssign("scribe", "team-red", "admin-1");
-  forks.forkAndAssign("sage", "team-blue", "admin-1");
-  forks.forkAndAssign("scout", "team-green", "admin-1");
-  forks.forkAndAssign("orphan", "team-red", "admin-1");
-  forks.unassign("orphan");
+  forks.setTeams("scribe", { mode: "list", teamIds: ["team-red"] }, "admin-1");
+  forks.setTeams("sage", { mode: "list", teamIds: ["team-blue"] }, "admin-1");
+  forks.setTeams("scout", { mode: "list", teamIds: ["team-green"] }, "admin-1");
+  forks.setTeams("orphan", { mode: "list", teamIds: [] }, "admin-1");
   membership.addMember("team-red", "alice", "admin-1");
   membership.addMember("team-blue", "alice", "admin-1");
   membership.addMember("team-green", "bob", "admin-1");

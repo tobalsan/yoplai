@@ -16,7 +16,7 @@ export function ensureAgentAssignmentsTable(
     CREATE TABLE agent_assignments (
       userId TEXT NOT NULL,
       agentId TEXT NOT NULL,
-      assignedBy TEXT NOT NULL,
+      assignedBy TEXT,
       assignedAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
       PRIMARY KEY (userId, agentId),
       FOREIGN KEY (userId) REFERENCES user(id) ON DELETE CASCADE,
@@ -125,11 +125,17 @@ export function ensureAgentForksTable(db: Database.Database): void {
   // soon-to-be-teamless set in its warning. `createdBy`/`createdAt` record who
   // first forked and when; `assignedBy`/`assignedAt` record the most recent
   // team (re)assignment provenance and are null while teamless.
+  const linksTableExisted = Boolean(
+    db
+      .prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'agent_fork_teams'")
+      .get()
+  );
   db.exec(`
     CREATE TABLE IF NOT EXISTS agent_forks (
       sourcePoolId TEXT NOT NULL UNIQUE,
       forkAgentId TEXT NOT NULL UNIQUE,
       teamId TEXT,
+      allTeams INTEGER NOT NULL DEFAULT 0,
       createdBy TEXT NOT NULL,
       createdAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
       assignedBy TEXT,
@@ -140,6 +146,44 @@ export function ensureAgentForksTable(db: Database.Database): void {
     CREATE INDEX IF NOT EXISTS idx_agent_forks_team_id
       ON agent_forks (teamId);
   `);
+  const columns = db.prepare("PRAGMA table_info(agent_forks)").all() as Array<{ name: string }>;
+  if (!columns.some((column) => column.name === "allTeams")) {
+    db.exec("ALTER TABLE agent_forks ADD COLUMN allTeams INTEGER NOT NULL DEFAULT 0");
+  }
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS agent_fork_teams (
+      forkAgentId TEXT NOT NULL,
+      teamId TEXT NOT NULL,
+      assignedBy TEXT,
+      assignedAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      PRIMARY KEY (forkAgentId, teamId),
+      FOREIGN KEY (forkAgentId) REFERENCES agent_forks(forkAgentId) ON DELETE CASCADE,
+      FOREIGN KEY (teamId) REFERENCES teams(id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_agent_fork_teams_team_id ON agent_fork_teams(teamId);
+  `);
+
+  ensureMigrationsTable(db);
+  const alreadyBackfilled = db
+    .prepare("SELECT 1 FROM schema_migrations WHERE name = ?")
+    .get(FORK_TEAMS_BACKFILL_MIGRATION);
+  if (!alreadyBackfilled && !linksTableExisted) {
+    db.transaction(() => {
+      db.exec(`
+        INSERT OR IGNORE INTO agent_fork_teams (forkAgentId, teamId, assignedBy, assignedAt)
+        SELECT forkAgentId, teamId, assignedBy, assignedAt
+        FROM agent_forks
+        WHERE teamId IS NOT NULL;
+      `);
+      db.prepare("INSERT INTO schema_migrations (name) VALUES (?)").run(
+        FORK_TEAMS_BACKFILL_MIGRATION
+      );
+    })();
+  } else if (!alreadyBackfilled) {
+    db.prepare("INSERT INTO schema_migrations (name) VALUES (?)").run(
+      FORK_TEAMS_BACKFILL_MIGRATION
+    );
+  }
 }
 
 /** Records one-shot data migrations so bootstrap never re-runs them. */
@@ -154,6 +198,8 @@ export function ensureMigrationsTable(db: Database.Database): void {
 
 /** Identifier of the assignments → teams one-shot migration. */
 export const ASSIGNMENTS_TO_TEAMS_MIGRATION = "assignments_to_teams";
+/** One-shot backfill from the retired agent_forks.teamId column. */
+export const FORK_TEAMS_BACKFILL_MIGRATION = "fork_teams_backfill";
 
 /**
  * One-shot migration converting the legacy `agent_assignments` allowlist into
@@ -206,6 +252,9 @@ export function migrateAssignmentsToTeams(db: Database.Database): boolean {
   const insertFork = db.prepare(
     "INSERT INTO agent_forks (sourcePoolId, forkAgentId, teamId, createdBy, assignedBy, assignedAt) VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)"
   );
+  const insertForkTeam = db.prepare(
+    "INSERT OR IGNORE INTO agent_fork_teams (forkAgentId, teamId, assignedBy, assignedAt) VALUES (?, ?, ?, CURRENT_TIMESTAMP)"
+  );
   const markDone = db.prepare(
     "INSERT INTO schema_migrations (name) VALUES (?)"
   );
@@ -240,6 +289,7 @@ export function migrateAssignmentsToTeams(db: Database.Database): boolean {
         insertMember.run(teamId, userId, assignedBy);
       }
       insertFork.run(agentId, agentId, teamId, assignedBy, assignedBy);
+      insertForkTeam.run(agentId, teamId, assignedBy);
     }
 
     markDone.run(ASSIGNMENTS_TO_TEAMS_MIGRATION);
@@ -268,5 +318,6 @@ export function initializeMultiUserDatabase(
   // pre-teams installs keep working after the resolver stops reading the
   // allowlist. Safe no-op on fresh installs (no assignment rows).
   migrateAssignmentsToTeams(db);
+  ensureAgentForksTable(db);
   return db;
 }

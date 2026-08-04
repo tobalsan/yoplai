@@ -38,4 +38,4 @@ deploy:
     @just unreleased
     @echo
     @echo "Deploying to ams..."
-    ssh ams 'cd ~/code/yoplai && git pull origin main && pnpm install && pnpm build && pnpm build:web && yoplai gateway restart'
+    ssh ams 'cd ~/code/algodyn/yoplai/platform && git pull origin main && pnpm install && pnpm build && pnpm build:web && yoplai gateway restart'

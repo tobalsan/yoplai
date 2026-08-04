@@ -1,9 +1,12 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import Database from "better-sqlite3";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   ASSIGNMENTS_TO_TEAMS_MIGRATION,
+  ensureAgentForksTable,
+  ensureTeamsTable,
   initializeMultiUserDatabase,
   migrateAssignmentsToTeams,
 } from "./db.js";
@@ -161,6 +164,100 @@ describe("multi-user db", () => {
         }),
       ])
     );
+  });
+});
+
+describe("fork teams backfill", () => {
+  it("does not restore a retired teamId link after an assignment changes and the service restarts", () => {
+    const db = new Database(":memory:");
+    db.pragma("foreign_keys = ON");
+    db.exec("CREATE TABLE user (id TEXT PRIMARY KEY)");
+    db.prepare("INSERT INTO user (id) VALUES (?)").run("admin-1");
+    ensureTeamsTable(db);
+    for (const id of ["team-a", "team-b"]) {
+      db.prepare("INSERT INTO teams (id, name, createdBy) VALUES (?, ?, ?)").run(
+        id,
+        id,
+        "admin-1"
+      );
+    }
+    db.exec(`
+      CREATE TABLE agent_forks (
+        sourcePoolId TEXT NOT NULL UNIQUE,
+        forkAgentId TEXT NOT NULL UNIQUE,
+        teamId TEXT,
+        createdBy TEXT NOT NULL,
+        createdAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        assignedBy TEXT,
+        assignedAt TEXT
+      );
+    `);
+    db.prepare(
+      "INSERT INTO agent_forks (sourcePoolId, forkAgentId, teamId, createdBy, assignedBy) VALUES (?, ?, ?, ?, ?)"
+    ).run("scribe", "scribe", "team-a", "admin-1", "admin-1");
+
+    ensureAgentForksTable(db);
+    const store = createForkStore({
+      db,
+      getForksDir: () => "",
+      getPoolAgent: () => null,
+    });
+    store.setTeams("scribe", { mode: "list", teamIds: ["team-b"] }, "admin-1");
+
+    // A later bootstrap must not read the retired column again.
+    ensureAgentForksTable(db);
+    expect(store.getForkByPool("scribe")?.assignment).toEqual({
+      mode: "list",
+      teamIds: ["team-b"],
+    });
+    db.close();
+  });
+
+  it("does not backfill a stale retired teamId when upgrading an existing join table", () => {
+    const db = new Database(":memory:");
+    db.pragma("foreign_keys = ON");
+    db.exec("CREATE TABLE user (id TEXT PRIMARY KEY)");
+    db.prepare("INSERT INTO user (id) VALUES (?)").run("admin-1");
+    ensureTeamsTable(db);
+    for (const id of ["team-a", "team-b"]) {
+      db.prepare("INSERT INTO teams (id, name, createdBy) VALUES (?, ?, ?)").run(
+        id,
+        id,
+        "admin-1"
+      );
+    }
+    db.exec(`
+      CREATE TABLE agent_forks (
+        sourcePoolId TEXT NOT NULL UNIQUE,
+        forkAgentId TEXT NOT NULL UNIQUE,
+        teamId TEXT,
+        createdBy TEXT NOT NULL,
+        createdAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        assignedBy TEXT,
+        assignedAt TEXT
+      );
+      CREATE TABLE agent_fork_teams (
+        forkAgentId TEXT NOT NULL,
+        teamId TEXT NOT NULL,
+        assignedBy TEXT,
+        assignedAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (forkAgentId, teamId)
+      );
+    `);
+    db.prepare(
+      "INSERT INTO agent_forks (sourcePoolId, forkAgentId, teamId, createdBy, assignedBy) VALUES (?, ?, ?, ?, ?)"
+    ).run("scribe", "scribe", "team-a", "admin-1", "admin-1");
+    db.prepare(
+      "INSERT INTO agent_fork_teams (forkAgentId, teamId, assignedBy) VALUES (?, ?, ?)"
+    ).run("scribe", "team-b", "admin-1");
+
+    ensureAgentForksTable(db);
+    expect(
+      db
+        .prepare("SELECT teamId FROM agent_fork_teams WHERE forkAgentId = ? ORDER BY teamId")
+        .all("scribe")
+    ).toEqual([{ teamId: "team-b" }]);
+    db.close();
   });
 });
 

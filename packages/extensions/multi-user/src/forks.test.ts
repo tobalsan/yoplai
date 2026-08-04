@@ -80,16 +80,16 @@ afterEach(() => {
 });
 
 describe("fork store", () => {
-  it("forkAndAssign copies the folder and writes the link row", () => {
-    const fork = store.forkAndAssign("scribe", "team-a", "admin-1");
+  it("setTeams copies the folder and writes the link row", () => {
+    const fork = store.setTeams("scribe", { mode: "list", teamIds: ["team-a"] }, "admin-1");
 
     const forkId = forkIdForPool("scribe");
     expect(forkId).toBe("scribe");
     expect(fork.forkAgentId).toBe(forkId);
     expect(fork.sourcePoolId).toBe("scribe");
-    expect(fork.teamId).toBe("team-a");
+    expect(fork.assignment).toEqual({ mode: "list", teamIds: ["team-a"] });
     expect(fork.createdBy).toBe("admin-1");
-    expect(fork.assignedBy).toBe("admin-1");
+    expect(fork.assignment).toEqual({ mode: "list", teamIds: ["team-a"] });
 
     const forkFolder = path.join(forksDir, forkId);
     expect(fs.existsSync(forkFolder)).toBe(true);
@@ -109,15 +109,15 @@ describe("fork store", () => {
   });
 
   it("enforces fork-once: re-assigning reuses the single fork", () => {
-    const first = store.forkAndAssign("scribe", "team-a", "admin-1");
+    const first = store.setTeams("scribe", { mode: "list", teamIds: ["team-a"] }, "admin-1");
     const forkFolder = path.join(forksDir, first.forkAgentId);
     // Mutate the fork folder so we can detect an unwanted re-copy.
     fs.writeFileSync(path.join(forkFolder, "marker.txt"), "keep-me\n");
 
-    const second = store.forkAndAssign("scribe", "team-b", "admin-1");
+    const second = store.setTeams("scribe", { mode: "list", teamIds: ["team-b"] }, "admin-1");
 
     expect(second.forkAgentId).toBe(first.forkAgentId);
-    expect(second.teamId).toBe("team-b");
+    expect(second.assignment).toEqual({ mode: "list", teamIds: ["team-b"] });
     expect(store.listForks()).toHaveLength(1);
     // The folder was not re-copied: the marker survives.
     expect(fs.existsSync(path.join(forkFolder, "marker.txt"))).toBe(true);
@@ -126,24 +126,35 @@ describe("fork store", () => {
     expect(reloadCount).toBe(1);
   });
 
-  it("reassign moves the single fork to another team (no duplicate)", () => {
-    store.forkAndAssign("scribe", "team-a", "admin-1");
-    const moved = store.reassign("scribe", "team-b", "admin-1");
+  it("setTeams replaces the explicit list without duplicating", () => {
+    store.setTeams("scribe", { mode: "list", teamIds: ["team-a"] }, "admin-1");
+    const moved = store.setTeams("scribe", { mode: "list", teamIds: ["team-b"] }, "admin-1");
 
-    expect(moved.teamId).toBe("team-b");
+    expect(moved.assignment).toEqual({ mode: "list", teamIds: ["team-b"] });
     expect(store.listForksForTeam("team-a")).toHaveLength(0);
     expect(store.listForksForTeam("team-b")).toHaveLength(1);
     expect(store.listForks()).toHaveLength(1);
   });
 
-  it("unassign clears the team link but keeps the fork folder", () => {
-    const fork = store.forkAndAssign("scribe", "team-a", "admin-1");
+  it("supports multiple teams, All teams, and leaving All with no remembered links", () => {
+    store.setTeams("scribe", { mode: "list", teamIds: ["team-a", "team-b"] }, "admin-1");
+    expect(store.listForksForTeam("team-a")).toHaveLength(1);
+    expect(store.listForksForTeam("team-b")).toHaveLength(1);
+
+    store.setTeams("scribe", { mode: "all" }, "admin-1");
+    expect(store.listForksForTeam("team-c")).toHaveLength(1);
+    expect(() => store.removeTeam("scribe", "team-a")).toThrow(/All-teams/);
+
+    expect(store.setTeams("scribe", { mode: "list", teamIds: [] }, "admin-1").assignment).toEqual({ mode: "list", teamIds: [] });
+    expect(store.listForksForTeam("team-a")).toHaveLength(0);
+  });
+
+  it("an empty list leaves the fork teamless but keeps its folder", () => {
+    const fork = store.setTeams("scribe", { mode: "list", teamIds: ["team-a"] }, "admin-1");
     const forkFolder = path.join(forksDir, fork.forkAgentId);
 
-    const inert = store.unassign("scribe");
-    expect(inert.teamId).toBeNull();
-    expect(inert.assignedBy).toBeNull();
-    expect(inert.assignedAt).toBeNull();
+    const inert = store.setTeams("scribe", { mode: "list", teamIds: [] }, "admin-1");
+    expect(inert.assignment).toEqual({ mode: "list", teamIds: [] });
     // Fork row + folder persist (teamless/inert, never deleted).
     expect(store.getForkByPool("scribe")).not.toBeNull();
     expect(fs.existsSync(forkFolder)).toBe(true);
@@ -165,7 +176,7 @@ describe("fork store", () => {
           : null,
     });
 
-    expect(() => store.forkAndAssign("invalid", "team-a", "admin-1")).toThrow(
+    expect(() => store.setTeams("invalid", { mode: "list", teamIds: ["team-a"] }, "admin-1")).toThrow(
       /no top-level id field/
     );
     expect(fs.existsSync(path.join(forksDir, "invalid"))).toBe(false);
@@ -173,15 +184,9 @@ describe("fork store", () => {
   });
 
   it("rejects assigning an unknown pool id", () => {
-    expect(() => store.forkAndAssign("ghost", "team-a", "admin-1")).toThrow(
+    expect(() => store.setTeams("ghost", { mode: "list", teamIds: ["team-a"] }, "admin-1")).toThrow(
       /Pool agent ghost not found/
     );
   });
 
-  it("rejects reassign/unassign when no fork exists", () => {
-    expect(() => store.reassign("scribe", "team-a", "admin-1")).toThrow(
-      /No fork exists/
-    );
-    expect(() => store.unassign("scribe")).toThrow(/No fork exists/);
-  });
 });
