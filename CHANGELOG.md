@@ -11,6 +11,7 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Added
 
+- Agent workspaces can provide curated starting suggestions for new web chats.
 - Forked pool agents can now serve multiple teams or use a standing All teams assignment.
 - Opt-in nightly agent dreams consolidate recent sessions into durable workspace memory, with `yoplai dream <agent-id>` for manual and dry runs. The default prompt directs agents to skim repetitive scheduler-run transcripts instead of consolidating every occurrence.
 

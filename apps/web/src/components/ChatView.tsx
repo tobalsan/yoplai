@@ -18,6 +18,7 @@ import {
   getSessionKey,
   fetchFullHistory,
   fetchAgent,
+  fetchAgentSuggestions,
   subscribeToSession,
   subscribeToRealtime,
   postAbort,
@@ -52,6 +53,7 @@ import {
 } from "../lib/attachments";
 import { createChatAttachmentRuntime } from "../lib/chat-runtime";
 import { impersonationStatus } from "./ImpersonationBanner";
+import { SuggestionCards } from "./SuggestionCards";
 
 function isEmoji(str: string): boolean {
   return /^\p{Emoji}/u.test(str) && str.length <= 4;
@@ -566,6 +568,10 @@ export function ChatView() {
     typeof searchParams.session === "string" && searchParams.session.trim()
       ? searchParams.session
       : undefined;
+  const [suggestions] = createResource(
+    () => [params.agentId, explicitSessionId()] as const,
+    ([agentId]) => fetchAgentSuggestions(agentId)
+  );
 
   const isOAuth = () => agent()?.authMode === "oauth";
 
@@ -734,6 +740,14 @@ export function ChatView() {
     const lineHeight = 22;
     const maxHeight = lineHeight * 10;
     textareaRef.style.height = `${Math.min(textareaRef.scrollHeight, maxHeight)}px`;
+  };
+
+  const prefillSuggestion = (prompt: string) => {
+    setInput(prompt);
+    requestAnimationFrame(() => {
+      resizeTextarea();
+      textareaRef?.focus();
+    });
   };
 
   const clearPendingFiles = attachmentRuntime.clearFiles;
@@ -2136,6 +2150,19 @@ export function ChatView() {
           "drop-target": isFileDragActive() && activeDropZone() === "history",
         }}
       >
+        <Show
+          when={
+            !loading() &&
+            !isStreaming() &&
+            simpleMessages().length === 0 &&
+            fullMessages().length === 0
+          }
+        >
+          <SuggestionCards
+            suggestions={suggestions() ?? []}
+            onSelect={prefillSuggestion}
+          />
+        </Show>
         <Show when={viewMode() === "simple"}>
           <For each={simpleMessages()}>
             {(msg) => {
@@ -2802,6 +2829,31 @@ export function ChatView() {
         .think-dropdown:focus {
           border-color: var(--accent);
           box-shadow: 0 0 0 3px var(--accent-glow);
+        }
+
+        .suggestion-cards {
+          display: grid;
+          gap: 10px;
+          width: min(100%, 440px);
+          margin: auto;
+          padding: 48px 18px;
+        }
+
+        .suggestion-card {
+          padding: 14px 16px;
+          color: var(--text-primary);
+          font: inherit;
+          text-align: left;
+          cursor: pointer;
+          background: var(--surface-1);
+          border: 1px solid var(--surface-2);
+          border-radius: var(--radius-sm);
+        }
+
+        .suggestion-card:hover,
+        .suggestion-card:focus-visible {
+          border-color: var(--accent);
+          outline: none;
         }
 
         .view-toggle {

@@ -18,6 +18,14 @@ export const ThinkLevelSchema = z.enum([
 ]);
 export type ThinkLevel = z.infer<typeof ThinkLevelSchema>;
 
+export const SuggestionSchema = z.object({
+  title: z.string().min(1),
+  prompt: z.string().min(1),
+});
+export type Suggestion = z.infer<typeof SuggestionSchema>;
+
+export const SuggestionsDocumentSchema = z.array(SuggestionSchema);
+
 // Agent model config
 export const AgentModelConfigSchema = z.object({
   provider: z.string().optional(), // For display; inferred from sdk if omitted

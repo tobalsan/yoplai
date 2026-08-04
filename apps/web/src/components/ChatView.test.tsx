@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { createSignal } from "solid-js";
 import { delegateEvents, render } from "solid-js/web";
 import { ChatView } from "./ChatView";
 import {
@@ -8,9 +9,11 @@ import {
 } from "../lib/capabilities";
 
 const navigateMock = vi.fn();
+const [routeVersion, setRouteVersion] = createSignal(0);
 
 const {
   fetchAgentMock,
+  fetchAgentSuggestionsMock,
   fetchSimpleHistoryMock,
   fetchFullHistoryMock,
   fetchAgentStatusesMock,
@@ -25,6 +28,7 @@ const {
   routeState,
 } = vi.hoisted(() => ({
   fetchAgentMock: vi.fn(),
+  fetchAgentSuggestionsMock: vi.fn(),
   fetchSimpleHistoryMock: vi.fn(),
   fetchFullHistoryMock: vi.fn(),
   fetchAgentStatusesMock: vi.fn(),
@@ -43,11 +47,12 @@ vi.mock("@solidjs/router", () => ({
   A: (props: Record<string, unknown>) => <a {...props} />,
   useNavigate: () => navigateMock,
   useParams: () => ({ agentId: "agent-1", view: routeState.view }),
-  useSearchParams: () => [{ get session() { return routeState.session; } }, vi.fn()],
+  useSearchParams: () => [{ get session() { routeVersion(); return routeState.session; } }, vi.fn()],
 }));
 
 vi.mock("../api", () => ({
   fetchAgent: fetchAgentMock,
+  fetchAgentSuggestions: fetchAgentSuggestionsMock,
   fetchSimpleHistory: fetchSimpleHistoryMock,
   fetchFullHistory: fetchFullHistoryMock,
   fetchAgentStatuses: fetchAgentStatusesMock,
@@ -110,6 +115,7 @@ describe("ChatView abort handling", () => {
       model: { provider: "openai", model: "gpt-5" },
       queueMode: "queue",
     });
+    fetchAgentSuggestionsMock.mockResolvedValue([]);
     fetchSimpleHistoryMock.mockResolvedValue({
       messages: [],
       sessionId: "session-main",
@@ -144,12 +150,50 @@ describe("ChatView abort handling", () => {
     uploadFilesMock.mockResolvedValue([]);
     routeState.view = undefined;
     routeState.session = undefined;
+    setRouteVersion(0);
   });
 
   afterEach(() => {
     document.body.innerHTML = "";
     resetCapabilitiesForTests();
     vi.clearAllMocks();
+  });
+
+  it("prefills the composer when a starting suggestion is clicked", async () => {
+    fetchAgentSuggestionsMock.mockResolvedValue([
+      { title: "Plan work", prompt: "Plan this work" },
+    ]);
+    const { container, dispose } = renderView();
+
+    await waitFor(() =>
+      expect(container.querySelector(".suggestion-card")).not.toBeNull()
+    );
+    (container.querySelector(".suggestion-card") as HTMLButtonElement).click();
+
+    expect((container.querySelector("textarea") as HTMLTextAreaElement).value).toBe(
+      "Plan this work"
+    );
+    expect(streamMessageMock).not.toHaveBeenCalled();
+    dispose();
+  });
+
+  it("refreshes suggestions for a new session with the same agent", async () => {
+    fetchAgentSuggestionsMock
+      .mockResolvedValueOnce([{ title: "First", prompt: "First prompt" }])
+      .mockResolvedValueOnce([{ title: "Updated", prompt: "Updated prompt" }]);
+    const { container, dispose } = renderView();
+
+    await waitFor(() =>
+      expect(container.textContent).toContain("First")
+    );
+    routeState.session = "new-session";
+    setRouteVersion((version) => version + 1);
+
+    await waitFor(() =>
+      expect(container.textContent).toContain("Updated")
+    );
+    expect(fetchAgentSuggestionsMock).toHaveBeenCalledTimes(2);
+    dispose();
   });
 
   it("renders thinking traces in simple history", async () => {

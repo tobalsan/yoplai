@@ -65,6 +65,7 @@ import { getUserHistoryDir } from "@yoplai/extension-multi-user/isolation";
 import { invalidateResolvedHistoryFile } from "../history/store.js";
 import { resolveSessionDataFile } from "../sessions/files.js";
 import { createOAuthRoutes } from "../oauth/routes.js";
+import { loadSuggestions } from "../suggestions/loader.js";
 
 const api = new Hono();
 const UUID_RE =
@@ -610,6 +611,20 @@ api.get("/agents/:id", async (c) => {
     authMode: agent.auth?.mode,
     queueMode: agent.queueMode ?? "queue",
   });
+});
+
+// GET /api/agents/:id/suggestions - workspace-authored starting prompts.
+api.get("/agents/:id/suggestions", async (c) => {
+  const agentId = c.req.param("id");
+  const agent = getAgent(agentId);
+  if (!agent || !isAgentActive(agentId)) {
+    return c.json({ error: "Agent not found" }, 404);
+  }
+  return c.json(
+    await loadSuggestions(
+      resolveWorkspaceDir(agent.workspaceDir ?? agent.workspace)
+    )
+  );
 });
 
 // GET /api/agents/:id/extensions - extension catalog for one agent.

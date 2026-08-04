@@ -1,0 +1,5 @@
+Initial GET /api/agents/suggested/suggestions:
+[{"title":"Plan work","prompt":"Plan this work"}]
+
+After editing suggestions.yaml:
+[{"title":"Updated plan","prompt":"Plan the updated work"}]
