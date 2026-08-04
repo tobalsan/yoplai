@@ -111,7 +111,8 @@ export function createPoolCatalogResolver(
       };
     }
 
-    const teamName = fork.teamId ? getTeamName(fork.teamId) : null;
+    const teamIds = fork.assignment?.mode === "list" ? fork.assignment.teamIds : [];
+    const teamName = teamIds.length === 1 ? getTeamName(teamIds[0]) : null;
 
     // The fork row exists, but its agent may not: an operator can rename or
     // remove the agent's on-disk folder (or, for legacy-migrated forks where
@@ -148,7 +149,7 @@ export function createPoolCatalogResolver(
       };
     }
 
-    if (!fork.teamId) {
+    if (fork.assignment?.mode !== "all" && teamIds.length === 0) {
       return {
         poolId,
         forked: true,

@@ -50,9 +50,10 @@ $YOPLAI_HOME/
 Custom tables:
 
 - `teams` and `team_members` own many-to-many user membership.
-- `agent_forks` links one source pool agent to one stable runnable fork and an
-  optional team. Deleting or unassigning a team leaves the fork teamless and
-  inert rather than deleting its workspace.
+- `agent_forks` links one source pool agent to one stable runnable fork; `agent_fork_teams`
+  records its explicit team links, while `allTeams` is a standing org-wide rule.
+  Deleting an explicit team link leaves the fork teamless only when it was its last link,
+  rather than deleting its workspace.
 - `agent_assignments` is retained only for compatibility. A one-shot,
   transaction-backed migration converts legacy assignments into teams,
   memberships, and fork links; authorization no longer reads the allowlist.
@@ -116,9 +117,8 @@ DELETE /api/admin/teams/:id             # delete team
 POST   /api/admin/teams/:id/members     # add member
 DELETE /api/admin/teams/:id/members/:userId
 GET    /api/admin/forks                 # list fork provenance
-POST   /api/admin/forks/assign          # fork once and assign
-POST   /api/admin/forks/:poolId/reassign
-POST   /api/admin/forks/:poolId/unassign
+PUT    /api/admin/forks/:poolId/teams   # { mode: "all" } or { mode: "list", teamIds }
+DELETE /api/admin/teams/:teamId/agents/:poolId
 ```
 
 Non-admin callers get `403` from any `/api/admin/*` route. `/api/me`, team

@@ -31,11 +31,16 @@ export type AgentFork = {
   sourcePoolId: string;
   forkAgentId: string;
   teamId: string | null;
+  assignment: AgentTeamAssignment;
   createdBy: string;
   createdAt: string;
   assignedBy: string | null;
   assignedAt: string | null;
 };
+
+export type AgentTeamAssignment =
+  | { mode: "all" }
+  | { mode: "list"; teamIds: string[] };
 
 /** Minimal shape of a discovered pool agent the store needs to fork it. */
 export type PoolAgentRef = {
@@ -84,16 +89,14 @@ export type ForkStore = {
    * fork id, and writes the link row. If a fork already exists it is reused
    * (fork-once) and its team link is updated — no second folder is created.
    */
-  forkAndAssign(poolId: string, teamId: string, assignedBy: string): AgentFork;
-  /** Move an existing fork's link to a different team (single-team invariant). */
-  reassign(poolId: string, teamId: string, assignedBy: string): AgentFork;
-  /** Clear the team link while keeping the fork folder (teamless/inert). */
-  unassign(poolId: string): AgentFork;
+  setTeams(poolId: string, assignment: AgentTeamAssignment, assignedBy: string): AgentFork;
+  removeTeam(poolId: string, teamId: string): AgentFork;
   getForkByPool(poolId: string): AgentFork | null;
   /** Resolve a fork by its agent id (the chat/list surface key). */
   getForkByAgentId(forkAgentId: string): AgentFork | null;
   listForks(): AgentFork[];
   listForksForTeam(teamId: string): AgentFork[];
+  listTeamsForFork(poolId: string): string[];
 };
 
 type ForkRow = {
@@ -104,6 +107,7 @@ type ForkRow = {
   createdAt: string;
   assignedBy: string | null;
   assignedAt: string | null;
+  allTeams: number;
 };
 
 /**
@@ -137,35 +141,34 @@ function rewriteAgentYamlId(agentYamlPath: string, forkId: string): void {
   fs.writeFileSync(agentYamlPath, rewritten);
 }
 
-function rowToFork(row: ForkRow): AgentFork {
-  return { ...row };
-}
-
 export function createForkStore(deps: ForkStoreDeps): ForkStore {
   const { db, getPoolAgent, getForksDir, reloadConfig } = deps;
 
   const getByPoolStatement = db.prepare(
-    "SELECT sourcePoolId, forkAgentId, teamId, createdBy, createdAt, assignedBy, assignedAt FROM agent_forks WHERE sourcePoolId = ?"
+    "SELECT sourcePoolId, forkAgentId, teamId, createdBy, createdAt, assignedBy, assignedAt, allTeams FROM agent_forks WHERE sourcePoolId = ?"
   );
   const getByAgentIdStatement = db.prepare(
-    "SELECT sourcePoolId, forkAgentId, teamId, createdBy, createdAt, assignedBy, assignedAt FROM agent_forks WHERE forkAgentId = ?"
+    "SELECT sourcePoolId, forkAgentId, teamId, createdBy, createdAt, assignedBy, assignedAt, allTeams FROM agent_forks WHERE forkAgentId = ?"
   );
   const listStatement = db.prepare(
-    "SELECT sourcePoolId, forkAgentId, teamId, createdBy, createdAt, assignedBy, assignedAt FROM agent_forks ORDER BY forkAgentId"
+    "SELECT sourcePoolId, forkAgentId, teamId, createdBy, createdAt, assignedBy, assignedAt, allTeams FROM agent_forks ORDER BY forkAgentId"
   );
   const listForTeamStatement = db.prepare(
-    "SELECT sourcePoolId, forkAgentId, teamId, createdBy, createdAt, assignedBy, assignedAt FROM agent_forks WHERE teamId = ? ORDER BY forkAgentId"
+    "SELECT f.sourcePoolId, f.forkAgentId, f.teamId, f.createdBy, f.createdAt, f.assignedBy, f.assignedAt, f.allTeams FROM agent_forks f WHERE f.allTeams = 1 OR EXISTS (SELECT 1 FROM agent_fork_teams l WHERE l.forkAgentId = f.forkAgentId AND l.teamId = ?) ORDER BY f.forkAgentId"
   );
   const insertStatement = db.prepare(`
     INSERT INTO agent_forks (sourcePoolId, forkAgentId, teamId, createdBy, assignedBy, assignedAt)
     VALUES (@sourcePoolId, @forkAgentId, @teamId, @createdBy, @assignedBy, CURRENT_TIMESTAMP)
   `);
-  const updateTeamStatement = db.prepare(
-    "UPDATE agent_forks SET teamId = ?, assignedBy = ?, assignedAt = CURRENT_TIMESTAMP WHERE sourcePoolId = ?"
-  );
-  const clearTeamStatement = db.prepare(
-    "UPDATE agent_forks SET teamId = NULL, assignedBy = NULL, assignedAt = NULL WHERE sourcePoolId = ?"
-  );
+  const linksForFork = db.prepare("SELECT teamId FROM agent_fork_teams WHERE forkAgentId = ? ORDER BY teamId");
+  const clearLinks = db.prepare("DELETE FROM agent_fork_teams WHERE forkAgentId = ?");
+  const insertLink = db.prepare("INSERT INTO agent_fork_teams (forkAgentId, teamId, assignedBy) VALUES (?, ?, ?)");
+  const setAllTeams = db.prepare("UPDATE agent_forks SET allTeams = ? WHERE sourcePoolId = ?");
+
+  function rowToFork(row: ForkRow): AgentFork {
+    const teamIds = (linksForFork.all(row.forkAgentId) as Array<{ teamId: string }>).map((link) => link.teamId);
+    return { ...row, assignment: row.allTeams ? { mode: "all" } : { mode: "list", teamIds } };
+  }
 
   function getForkByPool(poolId: string): AgentFork | null {
     const row = getByPoolStatement.get(poolId) as ForkRow | undefined;
@@ -221,27 +224,27 @@ export function createForkStore(deps: ForkStoreDeps): ForkStore {
   }
 
   return {
-    forkAndAssign(poolId, teamId, assignedBy) {
+    setTeams(poolId, assignment, assignedBy) {
       // Fork-once: only copy + insert when no fork exists yet. An already
       // forked pool reuses its single fork and simply (re)points the link.
       if (!getForkByPool(poolId)) {
         createFork(poolId, assignedBy);
       }
-      updateTeamStatement.run(teamId, assignedBy, poolId);
+      const fork = requireFork(poolId);
+      const replace = db.transaction(() => {
+        clearLinks.run(fork.forkAgentId);
+        setAllTeams.run(assignment.mode === "all" ? 1 : 0, poolId);
+        if (assignment.mode === "list") {
+          for (const teamId of new Set(assignment.teamIds)) insertLink.run(fork.forkAgentId, teamId, assignedBy);
+        }
+      });
+      replace();
       return requireFork(poolId);
     },
-    reassign(poolId, teamId, assignedBy) {
-      // reassign never creates a fork: it moves the existing single fork's link
-      // to a new team, preserving the one-fork / one-team invariants.
-      requireFork(poolId);
-      updateTeamStatement.run(teamId, assignedBy, poolId);
-      return requireFork(poolId);
-    },
-    unassign(poolId) {
-      requireFork(poolId);
-      // Clear the team link only; the fork folder and row persist so the fork
-      // is teamless/inert rather than deleted.
-      clearTeamStatement.run(poolId);
+    removeTeam(poolId, teamId) {
+      const fork = requireFork(poolId);
+      if (fork.assignment?.mode === "all") throw new Error("All-teams agent cannot be removed from a single team");
+      db.prepare("DELETE FROM agent_fork_teams WHERE forkAgentId = ? AND teamId = ?").run(fork.forkAgentId, teamId);
       return requireFork(poolId);
     },
     getForkByPool,
@@ -251,6 +254,10 @@ export function createForkStore(deps: ForkStoreDeps): ForkStore {
     },
     listForksForTeam(teamId) {
       return (listForTeamStatement.all(teamId) as ForkRow[]).map(rowToFork);
+    },
+    listTeamsForFork(poolId) {
+      const fork = requireFork(poolId);
+      return fork.assignment?.mode === "all" ? [] : fork.assignment?.teamIds ?? [];
     },
   };
 }

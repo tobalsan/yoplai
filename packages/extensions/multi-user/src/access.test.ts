@@ -68,12 +68,11 @@ beforeEach(() => {
   resolver = createAccessResolver({ membership, forks });
 
   // team-red owns scribe; team-blue owns sage; team-green owns scout.
-  forks.forkAndAssign("scribe", "team-red", "admin-1");
-  forks.forkAndAssign("sage", "team-blue", "admin-1");
-  forks.forkAndAssign("scout", "team-green", "admin-1");
+  forks.setTeams("scribe", { mode: "list", teamIds: ["team-red"] }, "admin-1");
+  forks.setTeams("sage", { mode: "list", teamIds: ["team-blue"] }, "admin-1");
+  forks.setTeams("scout", { mode: "list", teamIds: ["team-green"] }, "admin-1");
   // orphan is forked but left teamless (unassigned).
-  forks.forkAndAssign("orphan", "team-red", "admin-1");
-  forks.unassign("orphan");
+  forks.setTeams("orphan", { mode: "list", teamIds: [] }, "admin-1");
 
   // alice ∈ {red, blue}; bob ∈ {green}; carol ∈ {}; loner ∈ {} (teamless).
   membership.addMember("team-red", "alice", "admin-1");
