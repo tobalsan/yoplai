@@ -13,6 +13,8 @@ const corruptFixture = fileURLToPath(new URL("./__fixtures__/corrupt.pdf", impor
 // Source: https://github.com/ArturT/Test-PDF-Files/blob/master/encrypted.pdf
 const encryptedFixture = fileURLToPath(new URL("./__fixtures__/encrypted.pdf", import.meta.url));
 const mixedFixture = fileURLToPath(new URL("./__fixtures__/mixed.pdf", import.meta.url));
+const scannedEnglishFixture = fileURLToPath(new URL("./__fixtures__/scanned-english.pdf", import.meta.url));
+const scannedFrenchFixture = fileURLToPath(new URL("./__fixtures__/scanned-french.pdf", import.meta.url));
 const textLayerFixture = fileURLToPath(new URL("./__fixtures__/text-layer.pdf", import.meta.url));
 
 describe("extractPdfBuffer fixtures", () => {
@@ -54,5 +56,19 @@ describe("extractPdfBuffer fixtures", () => {
       maxOutput: 250_000,
     });
     expect(pages).toEqual([{ number: 2, text: "HELLO OCR ENGLISH" }]);
+  });
+
+  it("OCRs the image-only English fixture", async () => {
+    const pages = await ocrPdfPages({
+      data: new Uint8Array(await fs.readFile(scannedEnglishFixture)), pages: [1], maxPages: 30, maxOutput: 250_000,
+    });
+    expect(pages[0]?.text).toContain("HELLO OCR ENGLISH");
+  });
+
+  it("OCRs the image-only French fixture", async () => {
+    const pages = await ocrPdfPages({
+      data: new Uint8Array(await fs.readFile(scannedFrenchFixture)), pages: [1], maxPages: 30, maxOutput: 250_000,
+    });
+    expect(pages[0]?.text.normalize("NFD").replace(/\p{Diacritic}/gu, "")).toContain("BONJOUR ELEVE FRANCAIS");
   });
 });
