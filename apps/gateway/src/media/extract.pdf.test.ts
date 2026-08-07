@@ -7,7 +7,7 @@ const { fork } = vi.hoisted(() => ({ fork: vi.fn() }));
 vi.mock("node:child_process", () => ({ fork }));
 
 import { extractPdfBuffer } from "./extract.js";
-import { ocrPdfPages } from "./pdf-ocr-worker.js";
+import { assertRenderPixels, ocrPdfPages } from "./pdf-ocr-worker.js";
 
 const corruptFixture = fileURLToPath(new URL("./__fixtures__/corrupt.pdf", import.meta.url));
 // Source: https://github.com/ArturT/Test-PDF-Files/blob/master/encrypted.pdf
@@ -21,6 +21,10 @@ describe("extractPdfBuffer fixtures", () => {
   beforeEach(() => {
     fork.mockReset();
     fork.mockImplementation(() => { throw new Error("Invalid PDF"); });
+  });
+
+  it("rejects pages above the render-pixel limit before rasterization", () => {
+    expect(() => assertRenderPixels([0, 0, 2_001, 2_000])).toThrow("PDF page exceeds render pixel limit");
   });
 
   it("keeps a real text-layer PDF on the extraction fast path", async () => {
