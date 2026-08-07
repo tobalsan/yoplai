@@ -546,9 +546,10 @@ export function ChatView() {
   const [contextFullMessages, setContextFullMessages] = createSignal<
     FullHistoryMessage[]
   >([]);
-  const [compactStatus, setCompactStatus] = createSignal<CompactStatus | null>(
-    null
+  const [compactStatuses, setCompactStatuses] = createSignal(
+    new Map<string, CompactStatus>()
   );
+  const compactRequests = new Map<string, Promise<void>>();
 
   let chatViewRef: HTMLDivElement | undefined;
   let messagesContainerRef: HTMLDivElement | undefined;
@@ -839,21 +840,52 @@ export function ChatView() {
     setContextFullMessages(res.messages);
   };
 
-  const compactCurrentSession = async () => {
-    setCompactStatus({ state: "running", text: "Compacting context..." });
-    scrollToBottom(true);
-    try {
-      await postCompact(params.agentId, sessionKey(), explicitSessionId());
-      await loadHistory(viewMode());
-      setCompactStatus({ state: "done", text: "Context compacted." });
+  const compactKey = (agentId: string, key: string, sessionId?: string) =>
+    `${agentId}:${key}:${sessionId ?? ""}`;
+
+  const compactStatusForCurrentSession = () =>
+    compactStatuses().get(
+      compactKey(params.agentId, sessionKey(), explicitSessionId())
+    );
+
+  const setCompactStatus = (key: string, status: CompactStatus) => {
+    setCompactStatuses((statuses) => new Map(statuses).set(key, status));
+  };
+
+  const compactCurrentSession = () => {
+    const agentId = params.agentId;
+    const currentSessionKey = sessionKey();
+    const currentSessionId = explicitSessionId();
+    const key = compactKey(agentId, currentSessionKey, currentSessionId);
+    const existing = compactRequests.get(key);
+    if (existing) return existing;
+    const request = (async () => {
+      setCompactStatus(key, {
+        state: "running",
+        text: "Compacting context...",
+      });
       scrollToBottom(true);
-    } catch (error) {
-      const message =
-        error instanceof Error ? error.message : "Failed to compact context";
-      setCompactStatus({ state: "error", text: message });
-      scrollToBottom(true);
-      throw error;
-    }
+      try {
+        await postCompact(agentId, currentSessionKey, currentSessionId);
+        if (
+          compactKey(params.agentId, sessionKey(), explicitSessionId()) === key
+        ) {
+          await loadHistory(viewMode());
+        }
+        setCompactStatus(key, { state: "done", text: "Context compacted." });
+        scrollToBottom(true);
+      } catch (error) {
+        const message =
+          error instanceof Error ? error.message : "Failed to compact context";
+        setCompactStatus(key, { state: "error", text: message });
+        scrollToBottom(true);
+        throw error;
+      } finally {
+        compactRequests.delete(key);
+      }
+    })();
+    compactRequests.set(key, request);
+    return request;
   };
 
   const applyActiveTurnSnapshot = (turn: import("../api").ActiveTurn) => {
@@ -1072,118 +1104,123 @@ export function ChatView() {
     if (!agentId) return;
 
     subscriptionCleanup?.();
-    subscriptionCleanup = subscribeToSession(agentId, key, {
-      onText: (chunk) => {
-        if (cleanup) return;
-        setStreamingFinished(false);
-        appendStreamingTextBlock(chunk);
-        setStreamingText((prev) => prev + chunk);
-        if (!streamingTextAt()) setStreamingTextAt(Date.now());
-        if (!streamingStartedAt()) setStreamingStartedAt(Date.now());
-        setIsStreaming(true);
-      },
-      onThinking: (chunk) => {
-        if (cleanup) return;
-        setStreamingFinished(false);
-        appendStreamingThinkingBlock(chunk);
-        setStreamingThinking((prev) => prev + chunk);
-        if (!streamingThinkingAt()) setStreamingThinkingAt(Date.now());
-        if (!streamingStartedAt()) setStreamingStartedAt(Date.now());
-        setIsStreaming(true);
-      },
-      onToolCall: (id, name, args) => {
-        if (cleanup) return;
-        setStreamingFinished(false);
-        appendStreamingToolCallBlock(id, name, args);
-        setStreamingToolCalls((prev) => {
-          if (prev.some((tc) => tc.id === id)) return prev;
-          return [
-            ...prev,
-            {
-              id,
-              name,
-              arguments: args,
-              status: "running",
-              timestamp: Date.now(),
-            },
-          ];
-        });
-        if (!streamingStartedAt()) setStreamingStartedAt(Date.now());
-        setIsStreaming(true);
-      },
-      onToolStart: (toolName) => {
-        if (cleanup) return;
-        setActiveTools((prev) =>
-          prev.some((t) => t.toolName === toolName && t.status === "running")
-            ? prev
-            : [
-                ...prev,
-                { id: crypto.randomUUID(), toolName, status: "running" },
-              ]
-        );
-      },
-      onToolEnd: (toolName, isError) => {
-        if (cleanup) return;
-        setActiveTools((prev) =>
-          prev.map((t) =>
-            t.toolName === toolName && t.status === "running"
-              ? { ...t, status: isError ? "error" : "done" }
-              : t
-          )
-        );
-        setStreamingToolCalls((prev) =>
-          prev.map((tc) =>
-            tc.name === toolName && tc.status === "running"
-              ? { ...tc, status: isError ? "error" : "done" }
-              : tc
-          )
-        );
-        updateStreamingToolBlockStatus(toolName, isError ? "error" : "done");
-      },
-      onToolResult: (id, name, content, isError, details) => {
-        if (cleanup) return;
-        attachStreamingToolResult(id, name, content, isError, details);
-      },
-      onFileOutput: (file) => {
-        if (cleanup) return;
-        setStreamingFinished(false);
-        const fileBlock: FileBlock = {
-          type: "file",
-          direction: "outbound",
-          ...file,
-        };
-        setStreamingFiles((prev) => [...prev, fileBlock]);
-        appendStreamingFileBlock(fileBlock);
-        if (!streamingStartedAt()) setStreamingStartedAt(Date.now());
-        setIsStreaming(true);
-      },
-      onDone: () => {
-        if (cleanup) return;
-        if (streamingFinished()) return;
-        resetStreamingState();
-      },
-      onActiveTurn: (turn) => {
-        if (cleanup) return;
-        applyActiveTurnSnapshot(turn);
-      },
-      onHistoryUpdated: () => {
-        if (skipNextHistoryRefresh) {
-          skipNextHistoryRefresh = false;
-          void refreshContextUsage();
-          return;
-        }
-        // Refetch history when background run completes. Also reconcile if
-        // isStreaming is stale-true but we don't own the direct stream — the
-        // history_updated signal means the backend finished and history is ready.
-        if (!isStreaming() || !cleanup) {
-          if (isStreaming() && !cleanup) resetStreamingState();
-          if (pendingQueuedMessages().length > 0) {
-            setPendingQueuedMessages((prev) => prev.slice(1));
+    subscriptionCleanup = subscribeToSession(
+      agentId,
+      key,
+      {
+        onText: (chunk) => {
+          if (cleanup) return;
+          setStreamingFinished(false);
+          appendStreamingTextBlock(chunk);
+          setStreamingText((prev) => prev + chunk);
+          if (!streamingTextAt()) setStreamingTextAt(Date.now());
+          if (!streamingStartedAt()) setStreamingStartedAt(Date.now());
+          setIsStreaming(true);
+        },
+        onThinking: (chunk) => {
+          if (cleanup) return;
+          setStreamingFinished(false);
+          appendStreamingThinkingBlock(chunk);
+          setStreamingThinking((prev) => prev + chunk);
+          if (!streamingThinkingAt()) setStreamingThinkingAt(Date.now());
+          if (!streamingStartedAt()) setStreamingStartedAt(Date.now());
+          setIsStreaming(true);
+        },
+        onToolCall: (id, name, args) => {
+          if (cleanup) return;
+          setStreamingFinished(false);
+          appendStreamingToolCallBlock(id, name, args);
+          setStreamingToolCalls((prev) => {
+            if (prev.some((tc) => tc.id === id)) return prev;
+            return [
+              ...prev,
+              {
+                id,
+                name,
+                arguments: args,
+                status: "running",
+                timestamp: Date.now(),
+              },
+            ];
+          });
+          if (!streamingStartedAt()) setStreamingStartedAt(Date.now());
+          setIsStreaming(true);
+        },
+        onToolStart: (toolName) => {
+          if (cleanup) return;
+          setActiveTools((prev) =>
+            prev.some((t) => t.toolName === toolName && t.status === "running")
+              ? prev
+              : [
+                  ...prev,
+                  { id: crypto.randomUUID(), toolName, status: "running" },
+                ]
+          );
+        },
+        onToolEnd: (toolName, isError) => {
+          if (cleanup) return;
+          setActiveTools((prev) =>
+            prev.map((t) =>
+              t.toolName === toolName && t.status === "running"
+                ? { ...t, status: isError ? "error" : "done" }
+                : t
+            )
+          );
+          setStreamingToolCalls((prev) =>
+            prev.map((tc) =>
+              tc.name === toolName && tc.status === "running"
+                ? { ...tc, status: isError ? "error" : "done" }
+                : tc
+            )
+          );
+          updateStreamingToolBlockStatus(toolName, isError ? "error" : "done");
+        },
+        onToolResult: (id, name, content, isError, details) => {
+          if (cleanup) return;
+          attachStreamingToolResult(id, name, content, isError, details);
+        },
+        onFileOutput: (file) => {
+          if (cleanup) return;
+          setStreamingFinished(false);
+          const fileBlock: FileBlock = {
+            type: "file",
+            direction: "outbound",
+            ...file,
+          };
+          setStreamingFiles((prev) => [...prev, fileBlock]);
+          appendStreamingFileBlock(fileBlock);
+          if (!streamingStartedAt()) setStreamingStartedAt(Date.now());
+          setIsStreaming(true);
+        },
+        onDone: () => {
+          if (cleanup) return;
+          if (streamingFinished()) return;
+          resetStreamingState();
+        },
+        onActiveTurn: (turn) => {
+          if (cleanup) return;
+          applyActiveTurnSnapshot(turn);
+        },
+        onHistoryUpdated: () => {
+          if (skipNextHistoryRefresh) {
+            skipNextHistoryRefresh = false;
+            void refreshContextUsage();
+            return;
           }
-          loadHistory(viewMode());
-        }
+          // Refetch history when background run completes. Also reconcile if
+          // isStreaming is stale-true but we don't own the direct stream — the
+          // history_updated signal means the backend finished and history is ready.
+          if (!isStreaming() || !cleanup) {
+            if (isStreaming() && !cleanup) resetStreamingState();
+            if (pendingQueuedMessages().length > 0) {
+              setPendingQueuedMessages((prev) => prev.slice(1));
+            }
+            loadHistory(viewMode());
+          }
+        },
       },
-    }, explicitSessionId());
+      explicitSessionId()
+    );
   });
 
   // On mount, check if the agent is already running (e.g. after page refresh)
@@ -1553,7 +1590,9 @@ export function ChatView() {
       setFullMessages([]);
       setPendingQueuedMessages([]);
       clearPendingFiles();
-      navigate(`/chat/${encodeURIComponent(params.agentId)}?session=${encodeURIComponent(sessionId)}`);
+      navigate(
+        `/chat/${encodeURIComponent(params.agentId)}?session=${encodeURIComponent(sessionId)}`
+      );
     };
 
     // Add user message to both views
@@ -2300,7 +2339,9 @@ export function ChatView() {
                     return (
                       <CollapsibleBlock
                         title="Thinking"
-                        content={(blockAccessor() as { thinking: string }).thinking}
+                        content={
+                          (blockAccessor() as { thinking: string }).thinking
+                        }
                         defaultCollapsed={false}
                         timestamp={initial.timestamp}
                       />
@@ -2322,14 +2363,18 @@ export function ChatView() {
                         name={initial.name}
                         arguments={initial.arguments}
                         result={
-                          (blockAccessor() as {
-                            result?: FullToolResultMessage;
-                          }).result
+                          (
+                            blockAccessor() as {
+                              result?: FullToolResultMessage;
+                            }
+                          ).result
                         }
                         status={
-                          (blockAccessor() as {
-                            status: "running" | "done" | "error";
-                          }).status
+                          (
+                            blockAccessor() as {
+                              status: "running" | "done" | "error";
+                            }
+                          ).status
                         }
                       />
                     );
@@ -2468,7 +2513,7 @@ export function ChatView() {
           </div>
         </Show>
 
-        <Show when={compactStatus()}>
+        <Show when={compactStatusForCurrentSession()}>
           {(status) => (
             <div class={`message compact-status ${status().state}`}>
               <div class="content">{status().text}</div>
@@ -2594,7 +2639,8 @@ export function ChatView() {
                 impersonationStatus()?.active ||
                 (!input().trim() && pendingFiles().length === 0) ||
                 loading() ||
-                uploadingFiles()
+                uploadingFiles() ||
+                compactStatusForCurrentSession()?.state === "running"
               }
               aria-label="Send message"
             >

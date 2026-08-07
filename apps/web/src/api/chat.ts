@@ -10,6 +10,7 @@ import { readMigratedLocal } from "../lib/local-storage";
 
 const SESSION_KEY_PREFIX = "yoplai:sessionKey:";
 const DEFAULT_SESSION_KEY = "main";
+const COMPACT_TIMEOUT_MS = 60_000;
 
 export type DoneMeta = {
   durationMs?: number;
@@ -80,7 +81,9 @@ export class UnauthenticatedError extends Error {
   }
 }
 
-export async function fetchAgentSessions(): Promise<{ items: SessionSummary[] }> {
+export async function fetchAgentSessions(): Promise<{
+  items: SessionSummary[];
+}> {
   const res = await fetch(`${API_BASE}/agents/sessions`);
   if (res.status === 401) throw new UnauthenticatedError();
   if (!res.ok) return { items: [] };
@@ -91,9 +94,12 @@ export async function deleteAgentSession(
   agentId: string,
   sessionId: string
 ): Promise<void> {
-  const res = await fetch(`${API_BASE}/agents/${agentId}/sessions/${sessionId}`, {
-    method: "DELETE",
-  });
+  const res = await fetch(
+    `${API_BASE}/agents/${agentId}/sessions/${sessionId}`,
+    {
+      method: "DELETE",
+    }
+  );
   if (!res.ok) throw new Error("Failed to delete session");
 }
 
@@ -102,11 +108,14 @@ export async function renameAgentSession(
   sessionId: string,
   title: string
 ): Promise<void> {
-  const res = await fetch(`${API_BASE}/agents/${agentId}/sessions/${sessionId}`, {
-    method: "PATCH",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ title }),
-  });
+  const res = await fetch(
+    `${API_BASE}/agents/${agentId}/sessions/${sessionId}`,
+    {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ title }),
+    }
+  );
   if (!res.ok) throw new Error("Failed to rename session");
 }
 
@@ -115,15 +124,31 @@ export async function postCompact(
   sessionKey: string,
   sessionId?: string
 ): Promise<void> {
-  const res = await fetch(`${API_BASE}/agents/${agentId}/compact`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ sessionKey, ...(sessionId ? { sessionId } : {}) }),
-  });
+  const controller = new AbortController();
+  const timeout = window.setTimeout(
+    () => controller.abort(),
+    COMPACT_TIMEOUT_MS
+  );
+  let res: Response;
+  try {
+    res = await fetch(`${API_BASE}/agents/${agentId}/compact`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ sessionKey, ...(sessionId ? { sessionId } : {}) }),
+      signal: controller.signal,
+    });
+  } catch (error) {
+    if (controller.signal.aborted) {
+      throw new Error("Compaction timed out. Try again.");
+    }
+    throw error;
+  } finally {
+    window.clearTimeout(timeout);
+  }
   if (!res.ok) {
-    const body = (await res.json().catch(() => null)) as
-      | { error?: unknown }
-      | null;
+    const body = (await res.json().catch(() => null)) as {
+      error?: unknown;
+    } | null;
     throw new Error(
       typeof body?.error === "string" ? body.error : "Failed to compact context"
     );
