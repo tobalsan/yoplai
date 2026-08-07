@@ -45,10 +45,10 @@ function requestIdentityMatches(
   context: ContainerTokenContext
 ): boolean {
   return (
-    (!request.agentId || request.agentId === context.agentId) &&
-    (!request.sessionId || request.sessionId === context.sessionId) &&
-    (!request.runId || request.runId === context.runId) &&
-    (!request.containerName || request.containerName === context.containerName)
+    (request.agentId === undefined || request.agentId === context.agentId) &&
+    (request.sessionId === undefined || request.sessionId === context.sessionId) &&
+    (request.runId === undefined || request.runId === context.runId) &&
+    (request.containerName === undefined || request.containerName === context.containerName)
   );
 }
 
@@ -157,8 +157,8 @@ export function createInternalTools(
     const headerAgentToken = c.req.header("X-Agent-Token");
     const context = deps.getTokenContext(parsed.data.agentToken);
     if (
-      (headerAgentId && headerAgentId !== context?.agentId) ||
-      (headerAgentToken && headerAgentToken !== parsed.data.agentToken) ||
+      (headerAgentId !== undefined && headerAgentId !== context?.agentId) ||
+      (headerAgentToken !== undefined && headerAgentToken !== parsed.data.agentToken) ||
       !context ||
       !requestIdentityMatches(parsed.data, context)
     ) {

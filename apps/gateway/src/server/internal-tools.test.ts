@@ -184,6 +184,10 @@ describe("internal tools", () => {
   it.each([
     ["runId", "another-run"],
     ["containerName", "another-container"],
+    ["agentId", ""],
+    ["sessionId", ""],
+    ["runId", ""],
+    ["containerName", ""],
   ])("rejects a mismatched %s", async (field, value) => {
     const { app, executeExtensionTool } = createDeps();
     registerToken("token-identity");
