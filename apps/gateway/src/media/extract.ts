@@ -1,4 +1,5 @@
 import fs from "node:fs/promises";
+import { existsSync } from "node:fs";
 import { fork } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import mammoth from "mammoth";
@@ -127,9 +128,16 @@ export function runPdfOcr(data: Buffer, pages: number[]): Promise<Map<number, st
       }, 2_000);
     };
     try {
-      child = fork(fileURLToPath(new URL("./pdf-ocr-worker.js", import.meta.url)), [], {
+      const sourceWorker = fileURLToPath(new URL("./pdf-ocr-worker.ts", import.meta.url));
+      const workerPath = existsSync(sourceWorker)
+        ? sourceWorker
+        : fileURLToPath(new URL("./pdf-ocr-worker.js", import.meta.url));
+      child = fork(workerPath, [], {
         serialization: "advanced",
-        execArgv: ["--max-old-space-size=256"],
+        execArgv: existsSync(sourceWorker)
+          ? ["--import", "tsx", "--max-old-space-size=256"]
+          : ["--max-old-space-size=256"],
+        env: { ...process.env, YOPLAI_PDF_OCR_WORKER: "1" },
         stdio: ["ignore", "ignore", "ignore", "ipc"],
       });
     } catch (error) {

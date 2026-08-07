@@ -108,7 +108,7 @@ export async function ocrPdfPages(input: Input): Promise<Array<{ number: number;
   }
 }
 
-if (process.send && !process.env.VITEST) {
+if (process.send && process.env.YOPLAI_PDF_OCR_WORKER === "1") {
   setInterval(() => process.send?.({ rss: process.memoryUsage().rss }), 250).unref();
   process.once("message", (input: Input) => {
     void ocrPdfPages(input).then(
