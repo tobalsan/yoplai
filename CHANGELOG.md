@@ -11,6 +11,7 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Added
 
+- PDF uploads now fall back to bounded English/French OCR, and sandboxed agents can extract PDFs from their approved workspace paths with `extract_document`.
 - Agent workspaces can provide curated starting suggestions for new web chats.
 - Teams can now use a standing All users membership rule, granting their agents to every current and future user.
 - Forked pool agents can now serve multiple teams or use a standing All teams assignment.

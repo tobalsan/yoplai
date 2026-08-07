@@ -43,6 +43,7 @@ describe("container tool bridge", () => {
         description: "Read",
         parameters: { type: "object" },
       },
+      expect.objectContaining({ extensionId: "gateway", name: "extract_document" }),
     ]);
   });
 });

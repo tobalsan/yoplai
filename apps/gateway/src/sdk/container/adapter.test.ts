@@ -25,7 +25,7 @@ import {
 import { ensureWorkspaceFiles } from "../../agents/workspace.js";
 import { getContainerAdapter } from "./adapter.js";
 import { isRunSettledError } from "../run-settled.js";
-import { validateContainerToken } from "./tokens.js";
+import { getContainerTokenContext } from "./tokens.js";
 import type { SdkRunParams } from "../types.js";
 
 const mockGetExtensionAgentTools = vi.hoisted(() =>
@@ -289,7 +289,11 @@ describe("container adapter", () => {
     await tick();
     const dockerProcess = processes[0];
     const input = JSON.parse(dockerProcess.stdinChunks.join(""));
-    expect(validateContainerToken(input.agentToken, "cloud")).toBe(true);
+    expect(getContainerTokenContext(input.agentToken)).toMatchObject({
+      agentId: "cloud",
+      sessionId: "session-1",
+      containerName: expect.stringMatching(/^yoplai-agent-cloud-/),
+    });
 
     dockerProcess.emitOutput({ text: "hello back" });
     dockerProcess.finish(0);
@@ -298,7 +302,7 @@ describe("container adapter", () => {
       text: "hello back",
       aborted: undefined,
     });
-    expect(validateContainerToken(input.agentToken, "cloud")).toBe(false);
+    expect(getContainerTokenContext(input.agentToken)).toBeUndefined();
 
     expect(spy).toHaveBeenCalledWith(
       "docker",
@@ -326,6 +330,7 @@ describe("container adapter", () => {
           description: "Read scratchpad",
           parameters: { type: "object", properties: {} },
         },
+        expect.objectContaining({ extensionId: "gateway", name: "extract_document" }),
       ],
       sdkConfig: {
         sdk: "pi",
