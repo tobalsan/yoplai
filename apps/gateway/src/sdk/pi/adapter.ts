@@ -106,6 +106,7 @@ async function createPiExtensionTools(
         config,
         env,
         sessionId: params.sessionId,
+        userId: params.userId,
       });
       return {
         content: [{ type: "text", text: stringifyToolResult(result) }],

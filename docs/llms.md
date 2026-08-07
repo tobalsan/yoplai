@@ -258,6 +258,7 @@ All stored under `YOPLAI_HOME` (default `~/.yoplai/`):
 - `sessions/*.jsonl` - Pi SDK runtime session files. These are SDK-owned resume/session state, not the primary UI/API transcript source. Yoplai may backfill `history/` from these files for old sessions or fall back to them when a Pi turn is still streaming and canonical history has not flushed yet.
 - `auth.db` - Better Auth + multi-user SQLite database; only created when `multiUser.enabled: true`
 - `sessions/users/<userId>/sessions.json` - Per-user session mapping file when multi-user mode is enabled
+- `tasks/users/<userId>/ledger.json` - Durable, session-scoped agent task ledger. The always-on `task.*` tools adopt, inspect, checkpoint, pause, resume, and complete work without exposing lifecycle chatter to users.
 - `sessions/users/<userId>/claude-sessions.json` - Per-user Claude session map when multi-user mode is enabled
 - `sessions/users/<userId>/history/` - Per-user conversation history directory when multi-user mode is enabled; single-user history files live in `sessions/*.jsonl` beside `sessions.json`
 - `sessions/subagents/runs/<runId>/` - Project-agnostic CLI subagent run data (`config.json`, `state.json`, `progress.json`, `logs.jsonl`, `history.jsonl`); concurrent starts reserve labels per parent so the documented label-uniqueness invariant cannot race
