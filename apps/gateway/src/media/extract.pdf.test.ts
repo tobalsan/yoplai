@@ -1,7 +1,11 @@
 import fs from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { PDFParse } from "pdf-parse";
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+const { fork } = vi.hoisted(() => ({ fork: vi.fn() }));
+vi.mock("node:child_process", () => ({ fork }));
+
 import { extractPdfBuffer } from "./extract.js";
 import { ocrPdfPages } from "./pdf-ocr-worker.js";
 
@@ -9,8 +13,19 @@ const corruptFixture = fileURLToPath(new URL("./__fixtures__/corrupt.pdf", impor
 // Source: https://github.com/ArturT/Test-PDF-Files/blob/master/encrypted.pdf
 const encryptedFixture = fileURLToPath(new URL("./__fixtures__/encrypted.pdf", import.meta.url));
 const mixedFixture = fileURLToPath(new URL("./__fixtures__/mixed.pdf", import.meta.url));
+const textLayerFixture = fileURLToPath(new URL("./__fixtures__/text-layer.pdf", import.meta.url));
 
 describe("extractPdfBuffer fixtures", () => {
+  beforeEach(() => {
+    fork.mockReset();
+    fork.mockImplementation(() => { throw new Error("Invalid PDF"); });
+  });
+
+  it("keeps a real text-layer PDF on the extraction fast path", async () => {
+    await expect(extractPdfBuffer(await fs.readFile(textLayerFixture))).resolves.toContain("TEXT LAYER FIXTURE WITH ENOUGH CONTENT TO SKIP OCR");
+    expect(fork).not.toHaveBeenCalled();
+  });
+
   it("rejects a real corrupt-xref PDF without starting an agent run", async () => {
     await expect(extractPdfBuffer(await fs.readFile(corruptFixture))).rejects.toThrow(/xref|PDF|Invalid/i);
   });
