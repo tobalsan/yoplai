@@ -157,6 +157,21 @@ async function seedPiSession(params: {
   await fs.writeFile(file, lines.join("\n") + "\n", "utf-8");
 }
 
+type CompactResult = { sessionId: string; summary: string; keptMessages: number };
+
+// Single-flight in-flight compactions, keyed by (userId, agentId, sessionId). Concurrent
+// callers for the same identity share one promise so the history read, summarization,
+// canonical rewrite, and runtime seed run exactly once instead of racing two rewrites.
+const inFlightCompactions = new Map<string, Promise<CompactResult>>();
+
+function compactionKey(params: {
+  agentId: string;
+  sessionId: string;
+  userId?: string;
+}): string {
+  return JSON.stringify([params.userId ?? "", params.agentId, params.sessionId]);
+}
+
 export async function compactAgentSession(params: {
   agentId: string;
   sessionId: string;
@@ -164,7 +179,34 @@ export async function compactAgentSession(params: {
   userId?: string;
   extensionRuntime?: ExtensionRuntime;
   context?: AgentContext;
-}): Promise<{ sessionId: string; summary: string; keptMessages: number }> {
+}): Promise<CompactResult> {
+  const key = compactionKey(params);
+  const existing = inFlightCompactions.get(key);
+  if (existing) {
+    console.log(
+      `[compact] coalesced agentId=${params.agentId} sessionId=${params.sessionId} userId=${params.userId ?? "anon"}`
+    );
+    return existing;
+  }
+
+  console.log(
+    `[compact] started agentId=${params.agentId} sessionId=${params.sessionId} userId=${params.userId ?? "anon"}`
+  );
+  const run = runCompactAgentSession(params).finally(() => {
+    inFlightCompactions.delete(key);
+  });
+  inFlightCompactions.set(key, run);
+  return run;
+}
+
+async function runCompactAgentSession(params: {
+  agentId: string;
+  sessionId: string;
+  sessionKey: string;
+  userId?: string;
+  extensionRuntime?: ExtensionRuntime;
+  context?: AgentContext;
+}): Promise<CompactResult> {
   const messages = await getFullSessionHistory(
     params.agentId,
     params.sessionId,
