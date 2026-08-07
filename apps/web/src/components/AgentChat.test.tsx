@@ -1273,4 +1273,91 @@ describe("AgentChat stop/send behavior", () => {
 
     dispose();
   });
+
+  it("does not send on Enter while IME composition is active", async () => {
+    const { container, dispose } = renderLead();
+    await tick();
+
+    const input = container.querySelector("textarea") as HTMLTextAreaElement;
+    input.value = "hello";
+    input.dispatchEvent(new InputEvent("input", { bubbles: true }));
+    input.dispatchEvent(
+      new KeyboardEvent("keydown", {
+        key: "Enter",
+        isComposing: true,
+        bubbles: true,
+      })
+    );
+    await tick();
+
+    expect(streamMessageMock).not.toHaveBeenCalled();
+
+    dispose();
+  });
+
+  it("sends exactly once on Enter after composition ends", async () => {
+    const { container, dispose } = renderLead();
+    await tick();
+
+    const input = container.querySelector("textarea") as HTMLTextAreaElement;
+    input.value = "hello";
+    input.dispatchEvent(new InputEvent("input", { bubbles: true }));
+    input.dispatchEvent(
+      new KeyboardEvent("keydown", {
+        key: "Enter",
+        isComposing: true,
+        bubbles: true,
+      })
+    );
+    input.dispatchEvent(
+      new KeyboardEvent("keydown", {
+        key: "Enter",
+        isComposing: false,
+        bubbles: true,
+      })
+    );
+    await tick();
+
+    expect(streamMessageMock).toHaveBeenCalledTimes(1);
+
+    dispose();
+  });
+
+  it("sends on plain Enter with no composition", async () => {
+    const { container, dispose } = renderLead();
+    await tick();
+
+    const input = container.querySelector("textarea") as HTMLTextAreaElement;
+    input.value = "hello";
+    input.dispatchEvent(new InputEvent("input", { bubbles: true }));
+    input.dispatchEvent(
+      new KeyboardEvent("keydown", { key: "Enter", bubbles: true })
+    );
+    await tick();
+
+    expect(streamMessageMock).toHaveBeenCalledTimes(1);
+
+    dispose();
+  });
+
+  it("does not send on Shift+Enter", async () => {
+    const { container, dispose } = renderLead();
+    await tick();
+
+    const input = container.querySelector("textarea") as HTMLTextAreaElement;
+    input.value = "hello";
+    input.dispatchEvent(new InputEvent("input", { bubbles: true }));
+    input.dispatchEvent(
+      new KeyboardEvent("keydown", {
+        key: "Enter",
+        shiftKey: true,
+        bubbles: true,
+      })
+    );
+    await tick();
+
+    expect(streamMessageMock).not.toHaveBeenCalled();
+
+    dispose();
+  });
 });

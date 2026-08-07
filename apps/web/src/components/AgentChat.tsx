@@ -3024,7 +3024,8 @@ export function AgentChat(props: AgentChatProps) {
               resizeTextarea(value);
             }}
             onKeyDown={(e) => {
-              if (e.key === "Enter" && !e.shiftKey) {
+              const isComposing = e.isComposing === true || e.keyCode === 229;
+              if (e.key === "Enter" && !e.shiftKey && !isComposing) {
                 e.preventDefault();
                 void handleSend();
               }
