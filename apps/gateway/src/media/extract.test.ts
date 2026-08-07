@@ -129,6 +129,23 @@ describe("extractText", () => {
     }
   });
 
+  it("starts one queued OCR job when a worker slot is released", async () => {
+    const first = runPdfOcr(Buffer.alloc(1), [1]);
+    const second = runPdfOcr(Buffer.alloc(1), [1]);
+    const queued = runPdfOcr(Buffer.alloc(1), [1]);
+    const firstFailure = expect(first).rejects.toThrow("exited before completing");
+    const secondFailure = expect(second).rejects.toThrow("exited before completing");
+    await vi.waitFor(() => expect(children).toHaveLength(2));
+    children[0].emit("exit", 0);
+    await vi.waitFor(() => expect(children).toHaveLength(3));
+    children[2].emit("message", { pages: [{ number: 1, text: "queued OCR" }] });
+    children[2].emit("exit", 0);
+    children[1].emit("exit", 0);
+    await firstFailure;
+    await secondFailure;
+    await expect(queued).resolves.toEqual(new Map([[1, "queued OCR"]]));
+  });
+
   it("releases a timed-out OCR slot when a child never exits", async () => {
     vi.useFakeTimers();
     const pending = runPdfOcr(Buffer.alloc(1), [1]);
