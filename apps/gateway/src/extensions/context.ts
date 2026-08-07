@@ -29,7 +29,7 @@ import {
 import { deleteSession } from "../agents/sessions.js";
 import { invalidateResolvedHistoryFile } from "../history/store.js";
 import { getSessionHistory } from "../agents/runner.js";
-import { logError } from "../logging.js";
+import { logError, logInfo, logWarn } from "../logging.js";
 import { saveUploadedFile } from "../media/upload.js";
 import {
   getMediaFileMetadata,
@@ -49,7 +49,10 @@ export function createExtensionContext(
     getDataDir: () => CONFIG_DIR,
     reloadConfig: () => reloadConfig(),
     notifyAgentListChanged: () =>
-      agentEventBus.emitAgentChanged({ type: "agent_changed", projectId: "membership" }),
+      agentEventBus.emitAgentChanged({
+        type: "agent_changed",
+        projectId: "membership",
+      }),
     getAgent,
     getAgents,
     isAgentActive,
@@ -168,8 +171,10 @@ export function createExtensionContext(
       }
     },
     logger: {
-      info: (...args: unknown[]) => console.log(...args),
-      warn: (...args: unknown[]) => console.warn(...args),
+      info: (message: unknown, ...details: unknown[]) =>
+        logInfo(String(message), { details }),
+      warn: (message: unknown, ...details: unknown[]) =>
+        logWarn(String(message), { details }),
       error: (...args: unknown[]) => {
         const [msg, error] = args;
         logError(String(msg), error ?? msg);

@@ -7,6 +7,7 @@ import type {
   FullHistoryMessage,
   ModelMeta,
 } from "@yoplai/shared";
+import { sanitizeForStorage } from "@yoplai/shared";
 import { CONFIG_DIR, getAgent } from "../config/index.js";
 import type { ExtensionRuntime } from "../extensions/runtime.js";
 import { getFullSessionHistory, runAgent } from "./runner.js";
@@ -110,7 +111,11 @@ async function seedPiSession(params: {
 
   const push = (entry: Record<string, unknown>) => {
     const id = eventId();
-    lines.push(JSON.stringify({ id, parentId, timestamp: now, ...entry }));
+    lines.push(
+      JSON.stringify(
+        sanitizeForStorage({ id, parentId, timestamp: now, ...entry })
+      )
+    );
     parentId = id;
   };
 

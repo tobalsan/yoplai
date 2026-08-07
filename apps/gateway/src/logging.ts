@@ -1,3 +1,5 @@
+import { sanitizeForStorage, sanitizeSensitiveText } from "@yoplai/shared";
+
 const DETAILS_LIMIT = 500;
 
 type ErrorWithFields = Error & {
@@ -21,10 +23,17 @@ function truncateDetails(details: unknown): string | undefined {
     }
   }
 
-  return text.length > DETAILS_LIMIT ? `${text.slice(0, DETAILS_LIMIT)}…` : text;
+  const sanitized = sanitizeSensitiveText(text);
+  return sanitized.length > DETAILS_LIMIT
+    ? `${sanitized.slice(0, DETAILS_LIMIT)}…`
+    : sanitized;
 }
 
-function createJsonReplacer(): (this: object, key: string, value: unknown) => unknown {
+function createJsonReplacer(): (
+  this: object,
+  key: string,
+  value: unknown
+) => unknown {
   const seen = new WeakSet<object>();
   return function (_key: string, value: unknown): unknown {
     if (typeof value === "bigint") return value.toString();
@@ -42,12 +51,28 @@ function createJsonReplacer(): (this: object, key: string, value: unknown) => un
   };
 }
 
-export function logInfo(msg: string, fields: Record<string, unknown> = {}): void {
-  console.log(JSON.stringify({ level: "info", msg, ...fields }, createJsonReplacer()));
+export function logInfo(
+  msg: string,
+  fields: Record<string, unknown> = {}
+): void {
+  console.log(
+    JSON.stringify(
+      sanitizeForStorage({ level: "info", msg, ...fields }),
+      createJsonReplacer()
+    )
+  );
 }
 
-export function logWarn(msg: string, fields: Record<string, unknown> = {}): void {
-  console.warn(JSON.stringify({ level: "warn", msg, ...fields }, createJsonReplacer()));
+export function logWarn(
+  msg: string,
+  fields: Record<string, unknown> = {}
+): void {
+  console.warn(
+    JSON.stringify(
+      sanitizeForStorage({ level: "warn", msg, ...fields }),
+      createJsonReplacer()
+    )
+  );
 }
 
 export function logError(
@@ -59,16 +84,19 @@ export function logError(
   const message = error instanceof Error ? error.message : String(error);
 
   console.error(
-    JSON.stringify({
-      level: "error",
-      msg,
-      ...fields,
-      status: structured?.status,
-      endpoint: structured?.endpoint,
-      requestId: structured?.requestId,
-      details: truncateDetails(structured?.details),
-      message,
-      stack: error instanceof Error ? error.stack : undefined,
-    }, createJsonReplacer())
+    JSON.stringify(
+      sanitizeForStorage({
+        level: "error",
+        msg,
+        ...fields,
+        status: structured?.status,
+        endpoint: structured?.endpoint,
+        requestId: structured?.requestId,
+        details: truncateDetails(structured?.details),
+        message,
+        stack: error instanceof Error ? error.stack : undefined,
+      }),
+      createJsonReplacer()
+    )
   );
 }

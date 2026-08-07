@@ -29,6 +29,11 @@
       "development": "./src/node/system-files.ts",
       "import": "./dist/node/system-files.js",
       "types": "./dist/node/system-files.d.ts"
+    },
+    "./node/sanitize-session": {
+      "development": "./src/node/sanitize-session.ts",
+      "import": "./dist/node/sanitize-session.js",
+      "types": "./dist/node/sanitize-session.d.ts"
     }
   },
   "scripts": {

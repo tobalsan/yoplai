@@ -14,9 +14,10 @@ import type {
   HistoryEvent,
 } from "../types.js";
 import { CONFIG_DIR, loadConfig, resolveAgentEnv } from "../../config/index.js";
-import { logError } from "../../logging.js";
+import { logError, logWarn } from "../../logging.js";
 import { buildOnecliEnv } from "../../config/onecli.js";
 import { resolveSystemFiles } from "@yoplai/shared/node/system-files";
+import { createRuntimeSessionFile } from "@yoplai/shared/node/sanitize-session";
 import {
   FIRST_RUN_BOOTSTRAP_PROMPT,
   ensureWorkspaceFiles,
@@ -166,11 +167,17 @@ export const piAdapter: SdkAdapter = {
   },
 
   async run(params: SdkRunParams): Promise<SdkRunResult> {
+    let persistSession: (() => Promise<void>) | undefined;
     return withPiOnecliEnv(params.agentId, async () => {
-      const sessionFile = await resolveSessionFile(
+      const persistentSessionFile = await resolveSessionFile(
         params.agentId,
         params.sessionId
       );
+      const runtimeSession = await createRuntimeSessionFile(
+        persistentSessionFile
+      );
+      const sessionFile = runtimeSession.file;
+      persistSession = runtimeSession.persist;
 
       // Ensure core workspace files exist
       const isFirstRun = await ensureWorkspaceFiles(params.workspaceDir);
@@ -268,7 +275,7 @@ export const piAdapter: SdkAdapter = {
       const systemFiles = await resolveSystemFiles({
         workspaceDir: params.workspaceDir,
         systemFiles: agent.system_files,
-        warn: (message) => console.warn(message),
+        warn: (message) => logWarn(message),
       });
       const contextFiles = systemFiles.map((file) => ({
         path: file.path,
@@ -577,6 +584,8 @@ export const piAdapter: SdkAdapter = {
       agentSession.dispose();
 
       return { text: finalText, aborted };
+    }).finally(async () => {
+      await persistSession?.();
     });
   },
 

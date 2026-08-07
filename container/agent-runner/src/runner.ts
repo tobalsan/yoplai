@@ -23,6 +23,7 @@ import {
   type ContainerRunnerProtocolEvent,
   type HistoryEvent,
 } from "@yoplai/shared";
+import { createRuntimeSessionFile } from "@yoplai/shared/node/sanitize-session";
 import { callGatewayTool } from "./gateway-client.js";
 
 const CONTAINER_SYSTEM_PROMPT = `You are an AI agent running inside an isolated Yoplai container. Use the mounted workspace as your working directory. Coding tools run inside this container. Orchestration tools call back to the gateway.
@@ -150,124 +151,136 @@ export async function runAgent(
   let aborted = false;
 
   await fs.mkdir(input.sessionDir, { recursive: true });
-  const sessionFile = path.join(input.sessionDir, `${input.sessionId}.jsonl`);
-
-  const authStorage = AuthStorage.inMemory();
-  authStorage.setRuntimeApiKey(provider, "onecli-proxy-managed");
-  const modelRegistry = ModelRegistry.create(
-    authStorage,
-    path.join(input.sessionDir, "models.json")
+  const persistentSessionFile = path.join(
+    input.sessionDir,
+    `${input.sessionId}.jsonl`
   );
-  const model = modelRegistry.find(provider, input.sdkConfig.model.model);
-  if (!model) {
-    throw new Error(
-      `Model not found: ${provider}/${input.sdkConfig.model.model}`
-    );
-  }
-
-  const contextFiles = await loadContextFiles(input);
-  const settingsManager = SettingsManager.create(
-    input.workspaceDir,
-    input.sessionDir
-  );
-  const resourceLoader = new DefaultResourceLoader({
-    cwd: input.workspaceDir,
-    agentDir: input.sessionDir,
-    settingsManager,
-    additionalSkillPaths: [path.join(input.workspaceDir, "skills")],
-    appendSystemPrompt: [
-      CONTAINER_SYSTEM_PROMPT,
-      ...(input.extensionSystemPrompts ?? []),
-      renderedContext || undefined,
-    ].filter((prompt): prompt is string => Boolean(prompt)),
-    agentsFilesOverride: () => ({ agentsFiles: contextFiles }),
-  });
-  await resourceLoader.reload();
-
-  const sessionManager = SessionManager.open(sessionFile, input.sessionDir);
-  const builtInTools = ["read", "bash", "edit", "write"];
-  const usedToolNames = new Set<string>();
-  const customTools = [
-    ...createExtensionTools(input, usedToolNames),
-    createSendFileTool(onStreamEvent, usedToolNames),
-  ];
-  // Pi treats `tools` as an allowlist when provided, so custom tool names must be included.
-  const tools = [...builtInTools, ...customTools.map((tool) => tool.name)];
-
-  const { session } = await createAgentSession({
-    cwd: input.workspaceDir,
-    agentDir: input.sessionDir,
-    authStorage,
-    modelRegistry,
-    model,
-    ...(input.thinkLevel && { thinkingLevel: input.thinkLevel }),
-    tools,
-    customTools,
-    resourceLoader,
-    sessionManager,
-    settingsManager,
-  });
-  activeSession = session;
-
-  const systemPrompt = session.agent.state.systemPrompt;
-  if (typeof systemPrompt === "string" && systemPrompt.trim().length > 0) {
-    const systemPromptEvent: HistoryEvent = {
-      type: "system_prompt",
-      text: systemPrompt,
-      timestamp: Date.now(),
-    };
-    history.push(systemPromptEvent);
-    onStreamEvent?.(systemPromptEvent);
-  }
-
-  const unsubscribe = session.subscribe((evt) => {
-    const collectedEvents = collectHistoryEvent(evt, history);
-    for (const event of collectedEvents) {
-      onStreamEvent?.(event);
-    }
-  });
+  const runtimeSession = await createRuntimeSessionFile(persistentSessionFile);
+  const sessionFile = runtimeSession.file;
 
   try {
-    for (const message of pendingFollowUps.splice(0)) {
-      await session.sendUserMessage(message, { deliverAs: "steer" });
+    const authStorage = AuthStorage.inMemory();
+    authStorage.setRuntimeApiKey(provider, "onecli-proxy-managed");
+    const modelRegistry = ModelRegistry.create(
+      authStorage,
+      path.join(input.sessionDir, "models.json")
+    );
+    const model = modelRegistry.find(provider, input.sdkConfig.model.model);
+    if (!model) {
+      throw new Error(
+        `Model not found: ${provider}/${input.sdkConfig.model.model}`
+      );
     }
 
-    await session.prompt(promptText, await loadPromptOptions(input));
-  } catch (error) {
-    if (isAbortLikeError(error)) {
-      aborted = true;
-    } else {
+    const contextFiles = await loadContextFiles(input);
+    const settingsManager = SettingsManager.create(
+      input.workspaceDir,
+      input.sessionDir
+    );
+    const resourceLoader = new DefaultResourceLoader({
+      cwd: input.workspaceDir,
+      agentDir: input.sessionDir,
+      settingsManager,
+      additionalSkillPaths: [path.join(input.workspaceDir, "skills")],
+      appendSystemPrompt: [
+        CONTAINER_SYSTEM_PROMPT,
+        ...(input.extensionSystemPrompts ?? []),
+        renderedContext || undefined,
+      ].filter((prompt): prompt is string => Boolean(prompt)),
+      agentsFilesOverride: () => ({ agentsFiles: contextFiles }),
+    });
+    await resourceLoader.reload();
+
+    const sessionManager = SessionManager.open(sessionFile, input.sessionDir);
+    const builtInTools = ["read", "bash", "edit", "write"];
+    const usedToolNames = new Set<string>();
+    const customTools = [
+      ...createExtensionTools(input, usedToolNames),
+      createSendFileTool(onStreamEvent, usedToolNames),
+    ];
+    // Pi treats `tools` as an allowlist when provided, so custom tool names must be included.
+    const tools = [...builtInTools, ...customTools.map((tool) => tool.name)];
+
+    const { session } = await createAgentSession({
+      cwd: input.workspaceDir,
+      agentDir: input.sessionDir,
+      authStorage,
+      modelRegistry,
+      model,
+      ...(input.thinkLevel && { thinkingLevel: input.thinkLevel }),
+      tools,
+      customTools,
+      resourceLoader,
+      sessionManager,
+      settingsManager,
+    });
+    activeSession = session;
+
+    const systemPrompt = session.agent.state.systemPrompt;
+    if (typeof systemPrompt === "string" && systemPrompt.trim().length > 0) {
+      const systemPromptEvent: HistoryEvent = {
+        type: "system_prompt",
+        text: systemPrompt,
+        timestamp: Date.now(),
+      };
+      history.push(systemPromptEvent);
+      onStreamEvent?.(systemPromptEvent);
+    }
+
+    const unsubscribe = session.subscribe((evt) => {
+      const collectedEvents = collectHistoryEvent(evt, history);
+      for (const event of collectedEvents) {
+        onStreamEvent?.(event);
+      }
+    });
+
+    try {
+      for (const message of pendingFollowUps.splice(0)) {
+        await session.sendUserMessage(message, { deliverAs: "steer" });
+      }
+
+      await session.prompt(promptText, await loadPromptOptions(input));
+    } catch (error) {
+      if (isAbortLikeError(error)) {
+        aborted = true;
+      } else {
+        session.dispose();
+        await runtimeSession.persist();
+        activeSession = undefined;
+        pendingFollowUps = [];
+        throw error;
+      }
+    } finally {
+      unsubscribe();
+    }
+
+    const lastAssistant = findLastAssistant(session.messages);
+    const lastAssistantRecord = lastAssistant as
+      | (Record<string, unknown> & AssistantMessage)
+      | undefined;
+    if (lastAssistantRecord?.stopReason === "error") {
+      const message =
+        typeof lastAssistantRecord.errorMessage === "string" &&
+        lastAssistantRecord.errorMessage
+          ? lastAssistantRecord.errorMessage
+          : "unknown error";
       session.dispose();
+      await runtimeSession.persist();
       activeSession = undefined;
       pendingFollowUps = [];
-      throw error;
+      throw new Error(`Agent error: ${message}`);
     }
-  } finally {
-    unsubscribe();
-  }
 
-  const lastAssistant = findLastAssistant(session.messages);
-  const lastAssistantRecord = lastAssistant as
-    | (Record<string, unknown> & AssistantMessage)
-    | undefined;
-  if (lastAssistantRecord?.stopReason === "error") {
-    const message =
-      typeof lastAssistantRecord.errorMessage === "string" &&
-      lastAssistantRecord.errorMessage
-        ? lastAssistantRecord.errorMessage
-        : "unknown error";
+    const text = lastAssistant ? extractAssistantText(lastAssistant) : "";
     session.dispose();
+    await runtimeSession.persist();
     activeSession = undefined;
     pendingFollowUps = [];
-    throw new Error(`Agent error: ${message}`);
+
+    return { text, aborted, history };
+  } finally {
+    await runtimeSession.persist();
   }
-
-  const text = lastAssistant ? extractAssistantText(lastAssistant) : "";
-  session.dispose();
-  activeSession = undefined;
-  pendingFollowUps = [];
-
-  return { text, aborted, history };
 }
 
 function formatNonImageAttachmentContext(input: ContainerInput): string {
@@ -558,7 +571,9 @@ function normalizeUsage(
 }
 
 function readNumber(value: unknown): number | undefined {
-  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+  return typeof value === "number" && Number.isFinite(value)
+    ? value
+    : undefined;
 }
 
 async function formatGatewayToolResult(

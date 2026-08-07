@@ -69,4 +69,32 @@ describe("runDream", () => {
     await expect(runDream("alpha")).resolves.toMatchObject({ status: "skipped", sessions: [] });
     expect(runAgent).not.toHaveBeenCalled();
   });
+
+  it("redacts fallback journal output", async () => {
+    root = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-dream-"));
+    configDir = path.join(root, "config");
+    const workspace = path.join(root, "workspace");
+    const history = path.join(configDir, "history", "session.jsonl");
+    const canary = "dream-private-canary";
+    await fs.mkdir(path.dirname(history), { recursive: true });
+    await fs.writeFile(
+      history,
+      `${JSON.stringify({ agentId: "alpha", sessionId: "session-1", timestamp: Date.now() })}\n`
+    );
+    await fs.mkdir(workspace, { recursive: true });
+    getAgent.mockReturnValue({ id: "alpha", workspace, dream: true });
+    runAgent.mockResolvedValue({
+      meta: { aborted: false },
+      payloads: [{ text: `Authorization: Bearer ${canary}` }],
+    });
+
+    const { runDream } = await import("./service.js");
+    await runDream("alpha");
+
+    const journal = await fs.readFile(
+      path.join(workspace, "dreams", `${new Date().toISOString().slice(0, 10)}.md`),
+      "utf8"
+    );
+    expect(journal).not.toContain(canary);
+  });
 });
