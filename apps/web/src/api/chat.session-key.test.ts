@@ -1,10 +1,15 @@
 // @vitest-environment jsdom
-import { beforeEach, describe, expect, it } from "vitest";
-import { getSessionKey, setSessionKey } from "./chat";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { getSessionKey, postCompact, setSessionKey } from "./chat";
 
 describe("getSessionKey after the aihub -> yoplai rename", () => {
   beforeEach(() => {
     localStorage.clear();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
   });
 
   it("keeps a conversation that was stored under the legacy key", () => {
@@ -36,5 +41,28 @@ describe("getSessionKey after the aihub -> yoplai rename", () => {
 
   it("falls back to the default session with nothing stored", () => {
     expect(getSessionKey("lead")).toBe("main");
+  });
+
+  it("times out a stalled compaction request", async () => {
+    vi.useFakeTimers();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        (_input: RequestInfo | URL, init?: RequestInit) =>
+          new Promise((_resolve, reject) => {
+            init?.signal?.addEventListener("abort", () =>
+              reject(new DOMException("Aborted", "AbortError"))
+            );
+          })
+      )
+    );
+
+    const request = postCompact("lead", "main");
+    const timeoutError = expect(request).rejects.toThrow(
+      "Compaction timed out. Try again."
+    );
+    await vi.advanceTimersByTimeAsync(60_000);
+
+    await timeoutError;
   });
 });

@@ -9,6 +9,10 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ## [Unreleased]
 
+### Fixed
+
+- The web chat compaction action now prevents duplicate in-flight requests, shows progress, times out stalled requests, and permits retry after failure.
+
 ### Added
 
 - Agent workspaces can provide curated starting suggestions for new web chats.

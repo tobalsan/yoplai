@@ -40,14 +40,25 @@ const {
   subscribeToSessionMock: vi.fn(),
   subscribeToRealtimeMock: vi.fn(),
   uploadFilesMock: vi.fn(),
-  routeState: { view: undefined as string | undefined, session: undefined as string | undefined },
+  routeState: {
+    view: undefined as string | undefined,
+    session: undefined as string | undefined,
+  },
 }));
 
 vi.mock("@solidjs/router", () => ({
   A: (props: Record<string, unknown>) => <a {...props} />,
   useNavigate: () => navigateMock,
   useParams: () => ({ agentId: "agent-1", view: routeState.view }),
-  useSearchParams: () => [{ get session() { routeVersion(); return routeState.session; } }, vi.fn()],
+  useSearchParams: () => [
+    {
+      get session() {
+        routeVersion();
+        return routeState.session;
+      },
+    },
+    vi.fn(),
+  ],
 }));
 
 vi.mock("../api", () => ({
@@ -170,9 +181,9 @@ describe("ChatView abort handling", () => {
     );
     (container.querySelector(".suggestion-card") as HTMLButtonElement).click();
 
-    expect((container.querySelector("textarea") as HTMLTextAreaElement).value).toBe(
-      "Plan this work"
-    );
+    expect(
+      (container.querySelector("textarea") as HTMLTextAreaElement).value
+    ).toBe("Plan this work");
     expect(streamMessageMock).not.toHaveBeenCalled();
     dispose();
   });
@@ -183,15 +194,11 @@ describe("ChatView abort handling", () => {
       .mockResolvedValueOnce([{ title: "Updated", prompt: "Updated prompt" }]);
     const { container, dispose } = renderView();
 
-    await waitFor(() =>
-      expect(container.textContent).toContain("First")
-    );
+    await waitFor(() => expect(container.textContent).toContain("First"));
     routeState.session = "new-session";
     setRouteVersion((version) => version + 1);
 
-    await waitFor(() =>
-      expect(container.textContent).toContain("Updated")
-    );
+    await waitFor(() => expect(container.textContent).toContain("Updated"));
     expect(fetchAgentSuggestionsMock).toHaveBeenCalledTimes(2);
     dispose();
   });
@@ -404,6 +411,91 @@ describe("ChatView abort handling", () => {
     dispose();
   });
 
+  it("submits one compaction while the request is pending and allows retry after failure", async () => {
+    let rejectCompact: (error: Error) => void = () => undefined;
+    postCompactMock.mockImplementation(
+      () =>
+        new Promise<void>((_, reject) => {
+          rejectCompact = reject;
+        })
+    );
+    const { container, dispose } = renderView();
+    await tick();
+    await tick();
+
+    const textarea = container.querySelector("textarea") as HTMLTextAreaElement;
+    const sendBtn = container.querySelector(".send-btn") as HTMLButtonElement;
+    textarea.value = "/compact";
+    textarea.dispatchEvent(new Event("input", { bubbles: true }));
+    await tick();
+    sendBtn.click();
+    sendBtn.click();
+
+    expect(postCompactMock).toHaveBeenCalledTimes(1);
+    expect(sendBtn.disabled).toBe(true);
+    expect(container.textContent).toContain("Compacting context...");
+
+    rejectCompact(new Error("Compaction timed out. Try again."));
+    await waitFor(() =>
+      expect(container.textContent).toContain(
+        "Compaction timed out. Try again."
+      )
+    );
+    expect(container.textContent).toContain("Compaction timed out. Try again.");
+
+    textarea.value = "/compact";
+    textarea.dispatchEvent(new Event("input", { bubbles: true }));
+    await waitFor(() => expect(sendBtn.disabled).toBe(false));
+    sendBtn.click();
+    await waitFor(() => expect(postCompactMock).toHaveBeenCalledTimes(2));
+    dispose();
+  });
+
+  it("compacts different sessions independently", async () => {
+    postCompactMock.mockImplementation(() => new Promise<void>(() => {}));
+    const { container, dispose } = renderView();
+    await tick();
+    await tick();
+
+    const textarea = container.querySelector("textarea") as HTMLTextAreaElement;
+    const sendBtn = container.querySelector(".send-btn") as HTMLButtonElement;
+    textarea.value = "/compact";
+    textarea.dispatchEvent(new Event("input", { bubbles: true }));
+    await tick();
+    sendBtn.click();
+
+    routeState.session = "past-session";
+    setRouteVersion((version) => version + 1);
+    await tick();
+    await tick();
+
+    textarea.value = "/compact";
+    textarea.dispatchEvent(new Event("input", { bubbles: true }));
+    await waitFor(() => expect(sendBtn.disabled).toBe(false));
+    sendBtn.click();
+
+    expect(postCompactMock).toHaveBeenCalledTimes(2);
+    expect(postCompactMock).toHaveBeenLastCalledWith(
+      "agent-1",
+      "main",
+      "past-session"
+    );
+
+    routeState.session = undefined;
+    setRouteVersion((version) => version + 1);
+    await tick();
+    await tick();
+
+    textarea.value = "/compact";
+    textarea.dispatchEvent(new Event("input", { bubbles: true }));
+    await tick();
+    expect(container.textContent).toContain("Compacting context...");
+    expect(sendBtn.disabled).toBe(true);
+    sendBtn.click();
+    expect(postCompactMock).toHaveBeenCalledTimes(2);
+    dispose();
+  });
+
   it("compacts explicit past session when present", async () => {
     routeState.session = "past-session";
     const { container, dispose } = renderView();
@@ -411,13 +503,15 @@ describe("ChatView abort handling", () => {
     await tick();
 
     const textarea = container.querySelector("textarea");
-    if (!(textarea instanceof HTMLTextAreaElement)) throw new Error("Expected chat textarea");
+    if (!(textarea instanceof HTMLTextAreaElement))
+      throw new Error("Expected chat textarea");
     textarea.value = "/compact";
     textarea.dispatchEvent(new Event("input", { bubbles: true }));
     await tick();
 
     const sendBtn = container.querySelector(".send-btn");
-    if (!(sendBtn instanceof HTMLButtonElement)) throw new Error("Expected send button");
+    if (!(sendBtn instanceof HTMLButtonElement))
+      throw new Error("Expected send button");
     await waitFor(() => expect(sendBtn.disabled).toBe(false));
     sendBtn.click();
     await tick();
@@ -588,13 +682,15 @@ describe("ChatView abort handling", () => {
     await tick();
 
     const textarea = container.querySelector("textarea");
-    if (!(textarea instanceof HTMLTextAreaElement)) throw new Error("Expected chat textarea");
+    if (!(textarea instanceof HTMLTextAreaElement))
+      throw new Error("Expected chat textarea");
     textarea.value = "/new";
     textarea.dispatchEvent(new Event("input", { bubbles: true }));
     await tick();
 
     const sendBtn = container.querySelector(".send-btn");
-    if (!(sendBtn instanceof HTMLButtonElement)) throw new Error("Expected send button");
+    if (!(sendBtn instanceof HTMLButtonElement))
+      throw new Error("Expected send button");
     await waitFor(() => expect(sendBtn.disabled).toBe(false));
     sendBtn.click();
     await tick();
@@ -603,7 +699,9 @@ describe("ChatView abort handling", () => {
     expect(options).not.toHaveProperty("sessionId");
 
     resetHandler?.("fresh-session");
-    expect(navigateMock).toHaveBeenCalledWith("/chat/agent-1?session=fresh-session");
+    expect(navigateMock).toHaveBeenCalledWith(
+      "/chat/agent-1?session=fresh-session"
+    );
 
     dispose();
   });
@@ -961,7 +1059,11 @@ describe("ChatView stale-thinking reconciliation", () => {
 
     let capturedHistoryUpdated: (() => void) | undefined;
     subscribeToSessionMock.mockImplementation(
-      (_agentId: string, _key: string, callbacks: { onHistoryUpdated?: () => void }) => {
+      (
+        _agentId: string,
+        _key: string,
+        callbacks: { onHistoryUpdated?: () => void }
+      ) => {
         capturedHistoryUpdated = callbacks.onHistoryUpdated;
         return () => {};
       }
@@ -980,7 +1082,9 @@ describe("ChatView stale-thinking reconciliation", () => {
       messages: [
         {
           role: "user" as const,
-          content: [{ type: "text" as const, text: "do you have linear tools?" }],
+          content: [
+            { type: "text" as const, text: "do you have linear tools?" },
+          ],
           timestamp: 100,
         },
         {
@@ -1015,17 +1119,21 @@ describe("ChatView stale-thinking reconciliation", () => {
       activeTurn: null,
     });
 
-    let capturedOnEvent: ((event: {
-      type: string;
-      agentId?: string;
-      status?: string;
-      sessionId?: string;
-      sessionStatus?: string;
-    }) => void) | undefined;
-    subscribeToRealtimeMock.mockImplementation(({ onEvent }: { onEvent: (event: unknown) => void }) => {
-      capturedOnEvent = onEvent as typeof capturedOnEvent;
-      return () => {};
-    });
+    let capturedOnEvent:
+      | ((event: {
+          type: string;
+          agentId?: string;
+          status?: string;
+          sessionId?: string;
+          sessionStatus?: string;
+        }) => void)
+      | undefined;
+    subscribeToRealtimeMock.mockImplementation(
+      ({ onEvent }: { onEvent: (event: unknown) => void }) => {
+        capturedOnEvent = onEvent as typeof capturedOnEvent;
+        return () => {};
+      }
+    );
     subscribeToSessionMock.mockImplementation(() => () => {});
 
     const { container, dispose } = renderView();
