@@ -57,6 +57,26 @@ describe("extractText", () => {
     expect(children).toHaveLength(0);
   });
 
+  it("keeps text-layer pages in order while OCRing only sparse pages", async () => {
+    const textLayer = "first page has enough text to keep from the PDF text layer";
+    getPdfText.mockResolvedValueOnce({
+      total: 2,
+      text: `${textLayer}\n`,
+      pages: [{ num: 1, text: textLayer }, { num: 2, text: "" }],
+    });
+
+    const extraction = extractPdfBuffer(Buffer.from("fixture"));
+    await vi.waitFor(() => expect(children).toHaveLength(1));
+    expect(children[0].send).toHaveBeenCalledWith(
+      expect.objectContaining({ pages: [2] }),
+      expect.any(Function)
+    );
+    children[0].emit("message", { pages: [{ number: 2, text: "OCR second page" }] });
+    children[0].emit("exit", 0);
+
+    await expect(extraction).resolves.toBe(`${textLayer}\n\nOCR second page`);
+  });
+
   it("rejects OCR work beyond the 50MiB aggregate admission limit", async () => {
     const input = Buffer.alloc(25 * 1024 * 1024);
     const first = runPdfOcr(input, [1]);
