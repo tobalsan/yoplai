@@ -1,4 +1,4 @@
-import type { StreamEvent } from "@yoplai/shared";
+import type { ContainerDeliveryContext, StreamEvent } from "@yoplai/shared";
 import {
   abortSession,
   bufferPendingMessage,
@@ -43,6 +43,7 @@ type LifecycleContext = {
   sessionKey?: string;
   userId?: string;
   source?: string;
+  slackDelivery?: ContainerDeliveryContext["slack"];
   background?: boolean;
   trace?: AgentStreamEvent["trace"];
   onEvent?: (event: StreamEvent) => void;
@@ -124,7 +125,11 @@ export class SessionRunLifecycle {
         const existingHandle = await this.waitForSessionHandle();
         if (existingHandle) {
           try {
-            await policy.adapter.queueMessage(existingHandle, policy.message);
+            await policy.adapter.queueMessage(
+              existingHandle,
+              policy.message,
+              this.buildDeliveryContext()
+            );
             deliveredToCurrentRun = true;
           } catch (error) {
             // The run settled while we still advertised it as streaming.
@@ -180,9 +185,16 @@ export class SessionRunLifecycle {
         this.context.sessionId
       );
       for (const msg of buffered) {
-        adapter.queueMessage(handle, msg);
+        adapter.queueMessage(handle, msg, this.buildDeliveryContext());
       }
     }
+  }
+
+  private buildDeliveryContext(): ContainerDeliveryContext {
+    return {
+      source: this.context.source,
+      slack: this.context.slackDelivery,
+    };
   }
 
   acceptHistoryEvent(event: HistoryEvent): void {

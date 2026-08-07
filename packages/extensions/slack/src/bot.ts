@@ -205,6 +205,18 @@ function claimSlackMessageEvent(
   return false;
 }
 
+// Releases a claim taken above when handling the event failed without the
+// failure ever being reported anywhere (see the release() calls in
+// handleSlackMessage). This re-opens the message/app_mention overlap window
+// for this event, which is acceptable: losing the message outright is worse.
+function releaseSlackMessageEvent(
+  deduper: SlackEventDeduper,
+  body: unknown,
+  data: MessageData
+): void {
+  deduper.release(toSlackEventIdentity(body, data));
+}
+
 function slackThreadUnlockKey(
   data: MessageData,
   includeRoot = false
@@ -714,6 +726,11 @@ async function handleBangCommand(
         message: "/stop",
         sessionKey: effectiveSessionKey,
         source: "slack",
+        slackDelivery: {
+          channel: data.channel,
+          threadTs: data.thread_ts,
+          eventId: data.ts,
+        },
       });
       await client.chat.postEphemeral({
         channel: data.channel,
@@ -742,7 +759,11 @@ async function handleSlackMessage(
   target: SlackMessageTarget,
   botUserId: string | undefined,
   // Returns false when this delivery duplicates one already being acted on.
-  claimEvent: () => boolean = () => true
+  claimEvent: () => boolean = () => true,
+  // Drops the claim taken via claimEvent above. Only called on a genuine
+  // unhandled failure (see the two call sites below), never when an error
+  // was already caught and reported to the user.
+  releaseEvent: () => void = () => {}
 ): Promise<void> {
   // Detect bang commands on raw text before any normalization/mention gating.
   // Bang commands bypass mention requirements — they're slash-command alternatives.
@@ -754,10 +775,25 @@ async function handleSlackMessage(
   // normal handling must not be rejected by its own earlier claim.
   let claimResult: boolean | undefined;
   const claimOnce = (): boolean => (claimResult ??= claimEvent());
+  // Drops the claim taken above, if any, and resets the memo so this same
+  // call cannot short-circuit back to a claim that no longer exists.
+  const releaseClaim = (): void => {
+    if (!claimResult) return;
+    releaseEvent();
+    claimResult = undefined;
+  };
   if (rawBang) {
     if (!claimOnce()) return;
-    const handled = await handleBangCommand(data, client, target, rawBang);
-    if (handled) return;
+    try {
+      const handled = await handleBangCommand(data, client, target, rawBang);
+      if (handled) return;
+    } catch (err) {
+      // handleBangCommand already catches and reports its own errors via
+      // postEphemeral; reaching here means even that report failed, so
+      // nothing was communicated. Release so Slack's retry is processed.
+      releaseClaim();
+      throw err;
+    }
   }
 
   let boundSessionId: string | undefined;
@@ -916,6 +952,11 @@ async function handleSlackMessage(
         ...(sessionId ? { sessionId } : {}),
         sessionKey,
         source: "slack",
+        slackDelivery: {
+          channel: data.channel,
+          threadTs: data.thread_ts,
+          eventId: data.ts,
+        },
         background: Boolean(sessionId),
         context,
         onEvent: (event) => {
@@ -979,9 +1020,18 @@ async function handleSlackMessage(
     await stopThinkingReaction(client, data.channel, data.ts);
   } catch (err) {
     console.error(`${target.logPrefix} Error:`, err);
-    await sendSlackError(client, data.channel, replyThreadTs, err);
-    await thinkingDisplay?.cleanup();
-    await stopThinkingReaction(client, data.channel, data.ts);
+    try {
+      await sendSlackError(client, data.channel, replyThreadTs, err);
+      await thinkingDisplay?.cleanup();
+      await stopThinkingReaction(client, data.channel, data.ts);
+    } catch (reportErr) {
+      // The error above couldn't even be reported to the user (e.g. Slack
+      // itself is unreachable), so nothing was actually communicated.
+      // Release so Slack's retry is processed instead of being suppressed
+      // for the rest of the claim's TTL.
+      releaseClaim();
+      throw reportErr;
+    }
   }
 }
 
@@ -1059,6 +1109,11 @@ async function handleSlackReaction(
       message: formatReactionMessage(data, action),
       sessionKey: buildSlackSessionKey(result.channel, reactionThreadTs),
       source: "slack",
+      slackDelivery: {
+        channel: result.channel,
+        threadTs: reactionThreadTs,
+        eventId: result.messageTs,
+      },
       context,
     });
   } catch (err) {
@@ -1301,7 +1356,8 @@ export function createSlackBot(
       eventClient as unknown as SlackWebClient,
       effectiveTarget,
       botUserId,
-      () => claimSlackMessageEvent(deduper, body, data, target.logPrefix)
+      () => claimSlackMessageEvent(deduper, body, data, target.logPrefix),
+      () => releaseSlackMessageEvent(deduper, body, data)
     );
   });
 
@@ -1324,7 +1380,8 @@ export function createSlackBot(
       eventClient as unknown as SlackWebClient,
       effectiveTarget,
       botUserId,
-      () => claimSlackMessageEvent(deduper, body, data, target.logPrefix)
+      () => claimSlackMessageEvent(deduper, body, data, target.logPrefix),
+      () => releaseSlackMessageEvent(deduper, body, data)
     );
   });
 
@@ -1592,7 +1649,8 @@ export function createSlackAgentBot(agent: AgentConfig): SlackBot | null {
       eventClient as unknown as SlackWebClient,
       effectiveTarget,
       botUserId,
-      () => claimSlackMessageEvent(deduper, body, data, target.logPrefix)
+      () => claimSlackMessageEvent(deduper, body, data, target.logPrefix),
+      () => releaseSlackMessageEvent(deduper, body, data)
     );
   });
 
@@ -1615,7 +1673,8 @@ export function createSlackAgentBot(agent: AgentConfig): SlackBot | null {
       eventClient as unknown as SlackWebClient,
       effectiveTarget,
       botUserId,
-      () => claimSlackMessageEvent(deduper, body, data, target.logPrefix)
+      () => claimSlackMessageEvent(deduper, body, data, target.logPrefix),
+      () => releaseSlackMessageEvent(deduper, body, data)
     );
   });
 

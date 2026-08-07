@@ -324,6 +324,93 @@ describe("Slack inbound event deduplication", () => {
   });
 });
 
+describe("Slack inbound event claim release on failure", () => {
+  beforeEach(async () => {
+    dataDir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-slack-dedupe-"));
+    apps.length = 0;
+    receivers.length = 0;
+    vi.clearAllMocks();
+    clearAllHistory();
+    mockGetSessionEntry.mockResolvedValue(undefined);
+    mockClearSessionEntry.mockResolvedValue({
+      sessionId: "session",
+      updatedAt: 1,
+      createdAt: 1,
+    });
+    mockDeleteSession.mockReturnValue(undefined);
+    mockInvalidateHistoryCache.mockResolvedValue(undefined);
+    mockRunAgent.mockResolvedValue({
+      payloads: [{ text: "ok" }],
+      meta: { durationMs: 1, sessionId: "session" },
+    });
+  });
+
+  afterEach(async () => {
+    clearActiveBots();
+    await fs.rm(dataDir, { recursive: true, force: true });
+  });
+
+  it("does not suppress a retry when handling throws without the failure being reported", async () => {
+    const { createSlackBot } = await import("./bot.js");
+    const bot = createSlackBot([agent], config);
+    await bot?.start();
+
+    const messageHandler = getMessageHandler(apps[0]);
+    const message = {
+      ts: "1.1",
+      text: "hello",
+      channel: "C1",
+      user: "U1",
+      channel_type: "channel",
+    };
+    const body = { event_id: "Ev1", team_id: "T1" };
+
+    // The agent turn fails, and even the error report back to Slack fails
+    // (e.g. Slack itself is unreachable), so the user was never told anything.
+    mockRunAgent.mockRejectedValueOnce(new Error("agent boom"));
+    apps[0].client.chat.postMessage.mockRejectedValueOnce(
+      new Error("slack unreachable")
+    );
+
+    await expect(
+      messageHandler({ message, client: apps[0].client, body })
+    ).rejects.toThrow("slack unreachable");
+
+    // Slack retries the same event; it must produce a second agent turn
+    // rather than being suppressed as a duplicate of the lost delivery.
+    await messageHandler({ message, client: apps[0].client, body });
+
+    expect(mockRunAgent).toHaveBeenCalledTimes(2);
+  });
+
+  it("still suppresses a retry when handling fails but the error is successfully reported", async () => {
+    const { createSlackBot } = await import("./bot.js");
+    const bot = createSlackBot([agent], config);
+    await bot?.start();
+
+    const messageHandler = getMessageHandler(apps[0]);
+    const message = {
+      ts: "1.1",
+      text: "hello",
+      channel: "C1",
+      user: "U1",
+      channel_type: "channel",
+    };
+    const body = { event_id: "Ev1", team_id: "T1" };
+
+    // The agent turn fails, but the error report to Slack succeeds: the user
+    // was told, so this counts as successfully handled.
+    mockRunAgent.mockRejectedValueOnce(new Error("agent boom"));
+
+    await messageHandler({ message, client: apps[0].client, body });
+    // Slack redelivers the same event; it must still be suppressed.
+    await messageHandler({ message, client: apps[0].client, body });
+
+    expect(mockRunAgent).toHaveBeenCalledTimes(1);
+    expect(apps[0].client.chat.postMessage).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe("per-agent Slack bot inbound event deduplication", () => {
   const slackAgent: AgentConfig = {
     ...agent,

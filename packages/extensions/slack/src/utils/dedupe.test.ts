@@ -74,6 +74,33 @@ describe("Slack inbound event claims", () => {
     expect(deduper.claim(target, start + 5 * 60 * 1000)).toBe(false);
   });
 
+  it("release() lets a previously claimed identity be reclaimed", () => {
+    const identity = { eventId: "Ev1", team: "T1", channel: "C1", ts: "1.1" };
+    expect(deduper.claim(identity)).toBe(true);
+    expect(deduper.claim(identity)).toBe(false);
+
+    deduper.release(identity);
+
+    expect(deduper.claim(identity)).toBe(true);
+  });
+
+  it("release() also drops the channel/ts fallback key so the sibling delivery is not blocked either", () => {
+    const identity = { eventId: "Ev1", team: "T1", channel: "C1", ts: "1.1" };
+    expect(deduper.claim(identity)).toBe(true);
+
+    deduper.release(identity);
+
+    expect(
+      deduper.claim({ eventId: "Ev2", team: "T1", channel: "C1", ts: "1.1" })
+    ).toBe(true);
+  });
+
+  it("release() on an identity that was never claimed is a harmless no-op", () => {
+    const identity = { eventId: "Ev1", team: "T1", channel: "C1", ts: "1.1" };
+    expect(() => deduper.release(identity)).not.toThrow();
+    expect(deduper.claim(identity)).toBe(true);
+  });
+
   it("evicts expired claims even when a later claim was refreshed", () => {
     const small = createSlackEventDeduper(4);
     const start = Date.now();

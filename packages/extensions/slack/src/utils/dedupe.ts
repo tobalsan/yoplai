@@ -40,6 +40,14 @@ export type SlackEventDeduper = {
    * suppress it).
    */
   claim(identity: SlackEventIdentity, now?: number): boolean;
+  /**
+   * Drops a previously made claim so a later delivery of the same identity
+   * (Slack's own retry, or the sibling message/app_mention event) is no
+   * longer treated as a duplicate. Used when handling a claimed event failed
+   * without the failure being reported anywhere, so the claim would
+   * otherwise silently swallow the retry that could have actually served it.
+   */
+  release(identity: SlackEventIdentity): void;
   clear(): void;
 };
 
@@ -83,6 +91,11 @@ export function createSlackEventDeduper(
       }
 
       return !isDuplicate;
+    },
+    release(identity: SlackEventIdentity): void {
+      for (const key of identityKeys(identity)) {
+        claims.delete(key);
+      }
     },
     clear(): void {
       claims.clear();

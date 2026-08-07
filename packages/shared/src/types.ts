@@ -1094,6 +1094,8 @@ export type RunAgentParams = {
   model?: RequiredModelConfig;
   context?: AgentContext;
   source?: string;
+  /** Slack channel/thread/event identity for follow-up delivery envelopes. */
+  slackDelivery?: ContainerDeliveryContext["slack"];
   /** Exclude this run from agent-wide UI streaming status. */
   background?: boolean;
   trace?: AgentTraceContext;

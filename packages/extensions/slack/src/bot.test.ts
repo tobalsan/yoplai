@@ -493,6 +493,30 @@ describe("createSlackBot", () => {
     );
   });
 
+  it("carries Slack channel/thread/event identity for a threaded follow-up message", async () => {
+    const { createSlackBot } = await import("./bot.js");
+    const bot = createSlackBot([agent], config);
+    await bot?.start();
+
+    await getMessageHandler(apps[0])({
+      message: {
+        ts: "1.1",
+        thread_ts: "1.0",
+        text: "follow up",
+        channel: "C1",
+        user: "U1",
+        channel_type: "channel",
+      },
+      client: apps[0].client,
+    });
+
+    expect(mockRunAgent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        slackDelivery: { channel: "C1", threadTs: "1.0", eventId: "1.1" },
+      })
+    );
+  });
+
   it("keeps bound replies in their thread when thread policy is never", async () => {
     const store = createSlackThreadSessionBindingStore(dataDir);
     store.setBinding({
@@ -1637,7 +1661,11 @@ describe("createSlackBot", () => {
       });
 
       expect(mockRunAgent).toHaveBeenCalledWith(
-        expect.objectContaining({ message: "/stop", sessionKey: "slack:C1" })
+        expect.objectContaining({
+          message: "/stop",
+          sessionKey: "slack:C1",
+          slackDelivery: { channel: "C1", threadTs: undefined, eventId: "1.1" },
+        })
       );
       expect(mockClearSessionEntry).not.toHaveBeenCalled();
       expect(apps[0].client.chat.postEphemeral).toHaveBeenCalledWith(
@@ -2177,7 +2205,10 @@ describe("createSlackBot", () => {
 
       expect(apps[0].client.conversations.history).not.toHaveBeenCalled();
       expect(mockRunAgent).toHaveBeenCalledWith(
-        expect.objectContaining({ sessionKey: "slack:C1:1.1" })
+        expect.objectContaining({
+          sessionKey: "slack:C1:1.1",
+          slackDelivery: { channel: "C1", threadTs: "1.1", eventId: "2.2" },
+        })
       );
     });
 

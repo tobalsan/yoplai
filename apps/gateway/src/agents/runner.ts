@@ -141,6 +141,7 @@ export async function runAgent(
       sessionKey: params.sessionKey,
       background: params.background,
       source: params.source,
+      slackDelivery: params.slackDelivery,
       trace: params.trace,
       onEvent: params.onEvent,
     });
@@ -189,6 +190,7 @@ export async function runAgent(
     sessionKey,
     userId: params.userId,
     source: params.source,
+    slackDelivery: params.slackDelivery,
     trace: params.trace,
     onEvent: params.onEvent,
   });
@@ -427,6 +429,7 @@ export async function runAgent(
           thinkLevel: params.thinkLevel,
           extensionRuntime,
           source: params.source,
+          slackDelivery: params.slackDelivery,
           trace: params.trace,
           // onEvent omitted - events go to agentEventBus only
         });

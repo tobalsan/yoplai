@@ -101,7 +101,77 @@ describe("SessionRunLifecycle", () => {
         queued: true,
       },
     });
-    expect(queueMessage).toHaveBeenCalledWith(handle, "follow-up");
+    expect(queueMessage).toHaveBeenCalledWith(handle, "follow-up", {
+      source: undefined,
+      slack: undefined,
+    });
+
+    lifecycle.finishRun();
+  });
+
+  it("carries source and no slack sub-object for a web-originated follow-up", async () => {
+    const sessionId = `web-source-${Date.now()}`;
+    const lifecycle = new SessionRunLifecycle({
+      agentId: "agent-lifecycle-test",
+      sessionId,
+      source: "web",
+    });
+    const queueMessage = vi.fn(async () => undefined);
+    const adapter = makeAdapter({ queueMessage });
+    const handle = { id: "handle" };
+
+    lifecycle.beginRun();
+    lifecycle.acceptSessionHandle(handle, adapter, nativeCapabilities);
+
+    await lifecycle.handleJoin({
+      queueMode: "queue",
+      capabilities: nativeCapabilities,
+      adapter,
+      message: "follow-up",
+    });
+
+    expect(queueMessage).toHaveBeenCalledWith(handle, "follow-up", {
+      source: "web",
+      slack: undefined,
+    });
+
+    lifecycle.finishRun();
+  });
+
+  it("carries Slack channel/thread/event identity for a Slack-originated follow-up", async () => {
+    const sessionId = `slack-source-${Date.now()}`;
+    const lifecycle = new SessionRunLifecycle({
+      agentId: "agent-lifecycle-test",
+      sessionId,
+      source: "slack",
+      slackDelivery: {
+        channel: "C123",
+        threadTs: "111.222",
+        eventId: "111.333",
+      },
+    });
+    const queueMessage = vi.fn(async () => undefined);
+    const adapter = makeAdapter({ queueMessage });
+    const handle = { id: "handle" };
+
+    lifecycle.beginRun();
+    lifecycle.acceptSessionHandle(handle, adapter, nativeCapabilities);
+
+    await lifecycle.handleJoin({
+      queueMode: "queue",
+      capabilities: nativeCapabilities,
+      adapter,
+      message: "follow-up",
+    });
+
+    expect(queueMessage).toHaveBeenCalledWith(handle, "follow-up", {
+      source: "slack",
+      slack: {
+        channel: "C123",
+        threadTs: "111.222",
+        eventId: "111.333",
+      },
+    });
 
     lifecycle.finishRun();
   });
