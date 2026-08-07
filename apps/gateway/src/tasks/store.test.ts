@@ -87,4 +87,53 @@ describe("task ledger", () => {
     );
     expect(fs.writeFile).not.toHaveBeenCalled();
   });
+  it("does not publish a task when persistence fails", async () => {
+    const store = await import("./store.js");
+    vi.mocked(fs.writeFile).mockRejectedValueOnce(
+      new Error("disk unavailable")
+    );
+
+    await expect(store.adoptTask("agent", "session", "Task A")).rejects.toThrow(
+      "disk unavailable"
+    );
+    expect(await store.getTask("agent", "session")).toBeUndefined();
+
+    await store.adoptTask("agent", "session", "Task B");
+    expect(await store.getTask("agent", "session")).toMatchObject({
+      title: "Task B",
+    });
+  });
+  it("keeps existing state when an update or completion cannot persist", async () => {
+    const store = await import("./store.js");
+    await store.adoptTask("agent", "session", "Task A");
+    vi.mocked(fs.writeFile).mockRejectedValueOnce(
+      new Error("disk unavailable")
+    );
+    await expect(
+      store.updateTask("agent", "session", undefined, { checkpoint: "halfway" })
+    ).rejects.toThrow("disk unavailable");
+    expect(await store.getTask("agent", "session")).not.toHaveProperty(
+      "checkpoint"
+    );
+
+    vi.mocked(fs.writeFile).mockRejectedValueOnce(
+      new Error("disk unavailable")
+    );
+    await expect(store.completeTask("agent", "session")).rejects.toThrow(
+      "disk unavailable"
+    );
+    expect(await store.getTask("agent", "session")).toMatchObject({
+      title: "Task A",
+    });
+  });
+  it("serializes overlapping mutations", async () => {
+    const store = await import("./store.js");
+    const [first, second] = await Promise.allSettled([
+      store.adoptTask("agent", "session", "Task A"),
+      store.adoptTask("agent", "session", "Task B"),
+    ]);
+
+    expect([first.status, second.status]).toEqual(["fulfilled", "rejected"]);
+    expect(await store.getTasks("agent", "session")).toHaveLength(1);
+  });
 });

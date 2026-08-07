@@ -15,7 +15,12 @@ export type AgentTask = {
 };
 
 type Ledger = Record<string, AgentTask[]>;
-type State = { ledger: Ledger; loaded: boolean; loading?: Promise<void>; saving: Promise<void> };
+type State = {
+  ledger: Ledger;
+  loaded: boolean;
+  loading?: Promise<void>;
+  saving: Promise<void>;
+};
 const states = new Map<string, State>();
 
 function file(userId?: string) {
@@ -60,16 +65,29 @@ async function state(userId?: string) {
   }
   return current;
 }
-async function persist(userId: string | undefined, current: State) {
+async function persist(userId: string | undefined, ledger: Ledger) {
   const target = file(userId);
+  await fs.mkdir(path.dirname(target), { recursive: true });
+  const tmp = `${target}.${process.pid}.${crypto.randomUUID()}.tmp`;
+  await fs.writeFile(tmp, JSON.stringify(ledger, null, 2));
+  await fs.rename(tmp, target);
+}
+async function commit<T>(
+  userId: string | undefined,
+  current: State,
+  change: (ledger: Ledger) => { ledger: Ledger; result: T }
+) {
   const write = current.saving.then(async () => {
-    await fs.mkdir(path.dirname(target), { recursive: true });
-    const tmp = `${target}.${process.pid}.${crypto.randomUUID()}.tmp`;
-    await fs.writeFile(tmp, JSON.stringify(current.ledger, null, 2));
-    await fs.rename(tmp, target);
+    const { ledger, result } = change(current.ledger);
+    await persist(userId, ledger);
+    current.ledger = ledger;
+    return result;
   });
-  current.saving = write.catch(() => {});
-  await write;
+  current.saving = write.then(
+    () => undefined,
+    () => undefined
+  );
+  return write;
 }
 
 export async function getTask(
@@ -96,19 +114,20 @@ export async function adoptTask(
   userId?: string
 ) {
   const current = await state(userId);
-  const tasks = current.ledger[key(agentId, sessionId)] ?? [];
-  if (tasks.some((task) => task.status === "active"))
-    throw new Error("An unfinished task already exists for this session");
-  const task: AgentTask = {
-    id: crypto.randomUUID(),
-    title,
-    status: "active",
-    createdAt: Date.now(),
-    updatedAt: Date.now(),
-  };
-  current.ledger[key(agentId, sessionId)] = [...tasks, task];
-  await persist(userId, current);
-  return task;
+  return commit(userId, current, (ledger) => {
+    const taskKey = key(agentId, sessionId);
+    const tasks = ledger[taskKey] ?? [];
+    if (tasks.some((task) => task.status === "active"))
+      throw new Error("An unfinished task already exists for this session");
+    const task: AgentTask = {
+      id: crypto.randomUUID(),
+      title,
+      status: "active",
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    };
+    return { ledger: { ...ledger, [taskKey]: [...tasks, task] }, result: task };
+  });
 }
 export async function updateTask(
   agentId: string,
@@ -118,22 +137,35 @@ export async function updateTask(
   taskId?: string
 ) {
   const current = await state(userId);
-  const tasks = current.ledger[key(agentId, sessionId)] ?? [];
-  if (update.status === "active" && tasks.some((task) => task.status === "active"))
-    throw new Error("An active task already exists for this session");
-  const task = taskId
-    ? tasks.find((candidate) => candidate.id === taskId)
-    : tasks.find((candidate) =>
-        update.status === "active"
-          ? candidate.status === "paused"
-          : candidate.status === "active"
-      );
-  if (!task) throw new Error("No active task for this session");
-  if (update.status === "active" && task.status !== "paused")
-    throw new Error("Only a paused task can be resumed");
-  Object.assign(task, update, { updatedAt: Date.now() });
-  await persist(userId, current);
-  return task;
+  return commit(userId, current, (ledger) => {
+    const taskKey = key(agentId, sessionId);
+    const tasks = ledger[taskKey] ?? [];
+    if (
+      update.status === "active" &&
+      tasks.some((task) => task.status === "active")
+    )
+      throw new Error("An active task already exists for this session");
+    const task = taskId
+      ? tasks.find((candidate) => candidate.id === taskId)
+      : tasks.find((candidate) =>
+          update.status === "active"
+            ? candidate.status === "paused"
+            : candidate.status === "active"
+        );
+    if (!task) throw new Error("No active task for this session");
+    if (update.status === "active" && task.status !== "paused")
+      throw new Error("Only a paused task can be resumed");
+    const updated = { ...task, ...update, updatedAt: Date.now() };
+    return {
+      ledger: {
+        ...ledger,
+        [taskKey]: tasks.map((candidate) =>
+          candidate.id === task.id ? updated : candidate
+        ),
+      },
+      result: updated,
+    };
+  });
 }
 export async function completeTask(
   agentId: string,
@@ -142,16 +174,19 @@ export async function completeTask(
   taskId?: string
 ) {
   const current = await state(userId);
-  const tasks = current.ledger[key(agentId, sessionId)] ?? [];
-  const task = taskId
-    ? tasks.find((candidate) => candidate.id === taskId)
-    : tasks.find((candidate) => candidate.status === "active");
-  if (!task) throw new Error("No active task for this session");
-  const remaining = tasks.filter((candidate) => candidate.id !== task.id);
-  if (remaining.length) current.ledger[key(agentId, sessionId)] = remaining;
-  else delete current.ledger[key(agentId, sessionId)];
-  await persist(userId, current);
-  return task;
+  return commit(userId, current, (ledger) => {
+    const taskKey = key(agentId, sessionId);
+    const tasks = ledger[taskKey] ?? [];
+    const task = taskId
+      ? tasks.find((candidate) => candidate.id === taskId)
+      : tasks.find((candidate) => candidate.status === "active");
+    if (!task) throw new Error("No active task for this session");
+    const remaining = tasks.filter((candidate) => candidate.id !== task.id);
+    const next = { ...ledger };
+    if (remaining.length) next[taskKey] = remaining;
+    else delete next[taskKey];
+    return { ledger: next, result: task };
+  });
 }
 export function resetTaskStoreForTests() {
   states.clear();
