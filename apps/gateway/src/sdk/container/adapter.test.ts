@@ -450,6 +450,114 @@ describe("container adapter", () => {
     });
   });
 
+  it("hides lifecycle tool events from the container stream", async () => {
+    const root = tempDir();
+    process.env.YOPLAI_HOME = path.join(root, "yoplai");
+    const agent = createAgent(root);
+    setConfig(agent, root);
+    mockGetExtensionAgentTools.mockReturnValue([
+      {
+        extensionId: "taskLifecycle",
+        name: "task.adopt",
+        description: "Adopt task",
+        parameters: { type: "object", properties: {} },
+      },
+    ]);
+    const { processes } = mockSpawn();
+    mockExecFile();
+    const params = createParams(agent);
+
+    const run = getContainerAdapter().run(params);
+    await tick();
+    processes[0].emitStreamEvent({
+      type: "tool_call",
+      id: "task-1",
+      name: "task.adopt",
+      args: {},
+      timestamp: 1,
+    });
+    processes[0].emitStreamEvent({
+      type: "tool_call",
+      id: "bash-1",
+      name: "bash",
+      args: {},
+      timestamp: 2,
+    });
+    processes[0].emitOutput({ text: "done" });
+    processes[0].finish(0);
+
+    await expect(run).resolves.toEqual({ text: "done", aborted: undefined });
+    expect(params.onHistoryEvent).not.toHaveBeenCalledWith(
+      expect.objectContaining({ name: "task.adopt" })
+    );
+    expect(params.onEvent).not.toHaveBeenCalledWith(
+      expect.objectContaining({ toolName: "task.adopt" })
+    );
+    expect(params.onHistoryEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ name: "bash" })
+    );
+    expect(params.onEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ toolName: "bash" })
+    );
+  });
+
+  it("hides lifecycle tool events from final container history", async () => {
+    const root = tempDir();
+    process.env.YOPLAI_HOME = path.join(root, "yoplai");
+    const agent = createAgent(root);
+    setConfig(agent, root);
+    mockGetExtensionAgentTools.mockReturnValue([
+      {
+        extensionId: "taskLifecycle",
+        name: "task.adopt",
+        description: "Adopt task",
+        parameters: { type: "object", properties: {} },
+      },
+    ]);
+    const { processes } = mockSpawn();
+    mockExecFile();
+    const params = createParams(agent);
+
+    const run = getContainerAdapter().run(params);
+    await tick();
+    processes[0].emitOutput({
+      text: "done",
+      history: [
+        {
+          type: "tool_call",
+          id: "task-1",
+          name: "task.adopt",
+          args: {},
+          timestamp: 1,
+        },
+        {
+          type: "tool_result",
+          id: "task-1",
+          name: "task.adopt",
+          content: "ok",
+          isError: false,
+          timestamp: 2,
+        },
+        {
+          type: "tool_call",
+          id: "bash-1",
+          name: "bash",
+          args: {},
+          timestamp: 3,
+        },
+      ],
+    });
+    processes[0].finish(0);
+
+    await expect(run).resolves.toEqual({ text: "done", aborted: undefined });
+    expect(params.onHistoryEvent).not.toHaveBeenCalledWith(
+      expect.objectContaining({ name: "task.adopt" })
+    );
+    expect(params.onHistoryEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ name: "bash" })
+    );
+  });
+
   it("emits system_context from gateway for container runs", async () => {
     const root = tempDir();
     process.env.YOPLAI_HOME = path.join(root, "yoplai");
@@ -735,16 +843,16 @@ describe("container adapter", () => {
       new Error("workspace unavailable")
     );
 
-    await expect(getContainerAdapter().run(createParams(agent))).rejects.toThrow(
-      "workspace unavailable"
-    );
+    await expect(
+      getContainerAdapter().run(createParams(agent))
+    ).rejects.toThrow("workspace unavailable");
 
     // The run Promise's cleanup() never ran, so the pre-spawn path owns the
     // release. Nothing may be left under the agent's ipc root.
     const agentIpcRoot = path.join(homeDir, "ipc", "cloud");
-    expect(fs.existsSync(agentIpcRoot) ? fs.readdirSync(agentIpcRoot) : []).toEqual(
-      []
-    );
+    expect(
+      fs.existsSync(agentIpcRoot) ? fs.readdirSync(agentIpcRoot) : []
+    ).toEqual([]);
   });
 
   it("refuses to write into a settled run's removed namespace", async () => {

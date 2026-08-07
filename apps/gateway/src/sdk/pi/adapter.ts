@@ -89,31 +89,37 @@ async function createPiExtensionTools(
   agent: AgentConfig,
   usedToolNames: Set<string>,
   params: SdkRunParams
-): Promise<AgentTool[]> {
+): Promise<{ tools: AgentTool[]; invisibleToolNames: Set<string> }> {
   const config = loadConfig();
   const env = resolveAgentEnv(agent, config);
   const tools = params.extensionRuntime
     ? await getExtensionAgentTools(agent, config, params.extensionRuntime)
     : await getExtensionAgentTools(agent, config);
-  return tools.map((tool) => ({
-    name: claimAgentToolName(tool.name, usedToolNames),
-    label: tool.description,
-    description: tool.description,
-    parameters: tool.parameters as unknown as AgentTool["parameters"],
-    execute: async (_toolCallId, toolParams) => {
-      const result = await tool.execute(toolParams, {
-        agent,
-        config,
-        env,
-        sessionId: params.sessionId,
-        userId: params.userId,
-      });
-      return {
-        content: [{ type: "text", text: stringifyToolResult(result) }],
-        details: result,
-      };
-    },
-  }));
+  const invisibleToolNames = new Set<string>();
+  const piTools: AgentTool[] = tools.map((tool): AgentTool => {
+    const name = claimAgentToolName(tool.name, usedToolNames);
+    if (tool.extensionId === "taskLifecycle") invisibleToolNames.add(name);
+    return {
+      name,
+      label: tool.description,
+      description: tool.description,
+      parameters: tool.parameters as unknown as AgentTool["parameters"],
+      execute: async (_toolCallId, toolParams) => {
+        const result = await tool.execute(toolParams, {
+          agent,
+          config,
+          env,
+          sessionId: params.sessionId,
+          userId: params.userId,
+        });
+        return {
+          content: [{ type: "text", text: stringifyToolResult(result) }],
+          details: result,
+        };
+      },
+    };
+  });
+  return { tools: piTools, invisibleToolNames };
 }
 
 async function withPiOnecliEnv<T>(
@@ -280,11 +286,8 @@ export const piAdapter: SdkAdapter = {
       // Pi treats `tools` as an allowlist when provided, so custom tool names must be included.
       const builtInTools = ["read", "bash", "edit", "write"];
       const usedToolNames = new Set<string>();
-      const extensionTools = await createPiExtensionTools(
-        agent,
-        usedToolNames,
-        params
-      );
+      const { tools: extensionTools, invisibleToolNames } =
+        await createPiExtensionTools(agent, usedToolNames, params);
       const tools = [
         ...builtInTools,
         ...extensionTools.map((tool) => tool.name),
@@ -455,6 +458,7 @@ export const piAdapter: SdkAdapter = {
             (evt as { toolCallId?: string }).toolCallId ?? `call_${Date.now()}`;
           const args = (evt as { args?: unknown }).args;
 
+          if (invisibleToolNames.has(toolName)) return;
           params.onEvent({ type: "tool_start", toolName });
           params.onEvent({
             type: "tool_call",
@@ -477,6 +481,7 @@ export const piAdapter: SdkAdapter = {
           const isError = (evt as { isError?: boolean }).isError ?? false;
           const rawResult = (evt as { result?: unknown }).result;
 
+          if (invisibleToolNames.has(toolName)) return;
           // Extract text from result - handle both string and structured formats
           let content = "";
           if (typeof rawResult === "string") {

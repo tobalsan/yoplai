@@ -119,7 +119,11 @@ function stopThenKill(containerName: string): void {
 const isHistoryEvent = (event: unknown): event is HistoryEvent =>
   HistoryEventSchema.safeParse(event).success;
 
-function forwardStreamEvent(params: SdkRunParams, event: HistoryEvent): void {
+function forwardStreamEvent(
+  params: SdkRunParams,
+  event: HistoryEvent,
+  invisibleToolNames: Set<string>
+): void {
   if (event.type === "assistant_text") {
     params.onEvent({ type: "text", data: event.text });
     return;
@@ -139,6 +143,7 @@ function forwardStreamEvent(params: SdkRunParams, event: HistoryEvent): void {
     return;
   }
   if (event.type === "tool_call") {
+    if (invisibleToolNames.has(event.name)) return;
     params.onEvent({ type: "tool_start", toolName: event.name });
     params.onEvent({
       type: "tool_call",
@@ -149,6 +154,7 @@ function forwardStreamEvent(params: SdkRunParams, event: HistoryEvent): void {
     return;
   }
   if (event.type === "tool_result") {
+    if (invisibleToolNames.has(event.name)) return;
     params.onEvent({
       type: "tool_end",
       toolName: event.name,
@@ -166,13 +172,19 @@ function forwardStreamEvent(params: SdkRunParams, event: HistoryEvent): void {
   }
 }
 
-function emitHistory(params: SdkRunParams, output: ContainerOutput): void {
+function emitHistory(
+  params: SdkRunParams,
+  output: ContainerOutput,
+  invisibleToolNames: Set<string>
+): void {
   if (output.history?.length) {
     for (const event of output.history) {
       if (
         isHistoryEvent(event) &&
         event.type !== "user" &&
-        event.type !== "system_context"
+        event.type !== "system_context" &&
+        !(event.type === "tool_call" && invisibleToolNames.has(event.name)) &&
+        !(event.type === "tool_result" && invisibleToolNames.has(event.name))
       ) {
         params.onHistoryEvent(event);
       }
@@ -272,6 +284,7 @@ export function getContainerAdapter(): SdkAdapter {
       let agentToken: string | undefined;
       let child: childProcess.ChildProcess;
       let input: ContainerInput;
+      let invisibleToolNames = new Set<string>();
       try {
         const isFirstRun = await ensureWorkspaceFiles(params.workspaceDir);
 
@@ -294,6 +307,11 @@ export function getContainerAdapter(): SdkAdapter {
           agentToken,
           isFirstRun ? FIRST_RUN_BOOTSTRAP_PROMPT : undefined,
           runId
+        );
+        invisibleToolNames = new Set(
+          input.extensionTools
+            ?.filter((tool) => tool.extensionId === "taskLifecycle")
+            .map((tool) => tool.name)
         );
         child = childProcess.spawn("docker", args, {
           stdio: ["pipe", "pipe", "pipe"],
@@ -425,10 +443,13 @@ export function getContainerAdapter(): SdkAdapter {
             if (event.type !== "file_output") {
               recordActivity(`history_${event.type}`);
               sawStreamingHistory = true;
-              if (event.type !== "system_context") {
+              const isInvisibleToolEvent =
+                (event.type === "tool_call" || event.type === "tool_result") &&
+                invisibleToolNames.has(event.name);
+              if (event.type !== "system_context" && !isInvisibleToolEvent) {
                 params.onHistoryEvent(event);
               }
-              forwardStreamEvent(params, event);
+              forwardStreamEvent(params, event, invisibleToolNames);
               return;
             }
             recordActivity("file_output");
@@ -488,7 +509,7 @@ export function getContainerAdapter(): SdkAdapter {
           }
 
           if (!sawStreamingHistory) {
-            emitHistory(params, output);
+            emitHistory(params, output, invisibleToolNames);
             if (output.text) {
               params.onEvent({ type: "text", data: output.text });
             }
