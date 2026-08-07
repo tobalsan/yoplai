@@ -289,12 +289,18 @@ export function getContainerAdapter(): SdkAdapter {
         const isFirstRun = await ensureWorkspaceFiles(params.workspaceDir);
 
         agentToken = randomUUID();
-        registerContainerToken(
-          agentToken,
-          params.agentId,
+        registerContainerToken(agentToken, {
+          agentId: params.agentId,
+          sessionId: params.sessionId,
+          runId,
           containerName,
-          params.userId
-        );
+          roots: {
+            workspace: params.workspaceDir,
+            data: hostDataDir,
+            uploads: launchSpec.hostUploadsDir,
+          },
+          userId: params.userId,
+        });
         const attachmentContext = hasReadableDocumentAttachment(params)
           ? await buildDocumentAttachmentContext(params.attachments)
           : "";
