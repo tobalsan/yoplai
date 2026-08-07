@@ -1,15 +1,46 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { describe, expect, it } from "vitest";
+import { EventEmitter } from "node:events";
+import { describe, expect, it, vi } from "vitest";
 import XLSX from "xlsx";
-import { extractText } from "./extract.js";
+
+const children: EventEmitter[] = [];
+vi.mock("node:child_process", () => ({
+  fork: vi.fn(() => {
+    const child = new EventEmitter() as EventEmitter & { kill: ReturnType<typeof vi.fn>; send: ReturnType<typeof vi.fn> };
+    child.kill = vi.fn();
+    child.send = vi.fn();
+    children.push(child);
+    return child;
+  }),
+}));
+
+const { extractText, runPdfOcr } = await import("./extract.js");
 
 const XLS_MIME = "application/vnd.ms-excel";
 const XLSX_MIME =
   "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
 
 describe("extractText", () => {
+  it("rejects OCR work beyond the 50MiB aggregate admission limit", async () => {
+    const input = Buffer.alloc(25 * 1024 * 1024);
+    const first = runPdfOcr(input, [1]);
+    const second = runPdfOcr(input, [1]);
+    await expect(runPdfOcr(Buffer.alloc(1), [1])).rejects.toThrow("admission limit");
+    for (const child of children.splice(0)) child.emit("exit", 0);
+    await expect(first).rejects.toThrow("exited before completing");
+    await expect(second).rejects.toThrow("exited before completing");
+  });
+
+  it("releases a timed-out OCR slot when a child never exits", async () => {
+    vi.useFakeTimers();
+    const pending = runPdfOcr(Buffer.alloc(1), [1]);
+    const rejected = expect(pending).rejects.toThrow("timed out");
+    await vi.advanceTimersByTimeAsync(47_000);
+    await rejected;
+    vi.useRealTimers();
+  });
   it.each([
     ["xlsx", XLSX_MIME],
     ["xls", XLS_MIME],
