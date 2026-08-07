@@ -731,7 +731,9 @@ export async function replaceCanonicalHistoryWithCompaction(params: {
   const tmp = `${file}.${process.pid}.${Date.now()}.tmp`;
   await fs.writeFile(
     tmp,
-    entries.map((entry) => JSON.stringify(entry)).join("\n") + "\n",
+    entries
+      .map((entry) => JSON.stringify(sanitizeForStorage(entry)))
+      .join("\n") + "\n",
     "utf-8"
   );
   await fs.rename(tmp, file);
