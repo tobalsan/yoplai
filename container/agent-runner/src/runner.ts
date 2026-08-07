@@ -23,6 +23,7 @@ import {
   type ContainerRunnerProtocolEvent,
   type HistoryEvent,
 } from "@yoplai/shared";
+import { sanitizeSessionFile } from "@yoplai/shared/node/sanitize-session";
 import { callGatewayTool } from "./gateway-client.js";
 
 const CONTAINER_SYSTEM_PROMPT = `You are an AI agent running inside an isolated Yoplai container. Use the mounted workspace as your working directory. Coding tools run inside this container. Orchestration tools call back to the gateway.
@@ -238,6 +239,7 @@ export async function runAgent(
       aborted = true;
     } else {
       session.dispose();
+      await sanitizeSessionFile(sessionFile);
       activeSession = undefined;
       pendingFollowUps = [];
       throw error;
@@ -257,6 +259,7 @@ export async function runAgent(
         ? lastAssistantRecord.errorMessage
         : "unknown error";
     session.dispose();
+    await sanitizeSessionFile(sessionFile);
     activeSession = undefined;
     pendingFollowUps = [];
     throw new Error(`Agent error: ${message}`);
@@ -264,6 +267,7 @@ export async function runAgent(
 
   const text = lastAssistant ? extractAssistantText(lastAssistant) : "";
   session.dispose();
+  await sanitizeSessionFile(sessionFile);
   activeSession = undefined;
   pendingFollowUps = [];
 

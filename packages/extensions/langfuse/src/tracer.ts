@@ -395,7 +395,7 @@ export class LangfuseTracer {
     try {
       await langfuse.flushAsync();
     } catch (error) {
-      console.warn("[langfuse] flushAsync failed", error);
+      console.warn("[langfuse] flushAsync failed", sanitizeForStorage(error));
     }
   }
 
@@ -403,7 +403,7 @@ export class LangfuseTracer {
     try {
       await langfuse.shutdownAsync();
     } catch (error) {
-      console.warn("[langfuse] shutdownAsync failed", error);
+      console.warn("[langfuse] shutdownAsync failed", sanitizeForStorage(error));
     }
   }
 

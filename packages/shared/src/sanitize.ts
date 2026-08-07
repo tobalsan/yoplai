@@ -42,7 +42,7 @@ export function sanitizeSensitiveText(value: string): string {
   return redactUrl(value)
     .replace(/\b(authorization\s*[:=]\s*)[^\r\n]+/gi, `$1${REDACTED}`)
     .replace(
-      /\b((?:[A-Za-z][A-Za-z0-9_-]*[_-])?token\s*[:=]\s*)[^\s,;&]+/gi,
+      /\b((?:token|[A-Za-z][A-Za-z0-9_-]*(?:token|secret|password|credential|api[-_]?key|signature)[A-Za-z0-9_-]*)\s*[:=]\s*)[^\s,;&]+/gi,
       `$1${REDACTED}`
     )
     .replace(

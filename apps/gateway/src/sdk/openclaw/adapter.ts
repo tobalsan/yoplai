@@ -3,6 +3,7 @@ import type { AgentConfig } from "@yoplai/shared";
 import { renderAgentContext } from "@yoplai/shared";
 import type { SdkAdapter, SdkRunParams, SdkRunResult } from "../types.js";
 import { randomUUID } from "node:crypto";
+import { sanitizeSensitiveText } from "@yoplai/shared";
 import {
   appendAttachmentContext,
   buildDocumentAttachmentContext,
@@ -248,7 +249,9 @@ export const openclawAdapter: SdkAdapter = {
             params: {
               sessionKey,
               message: messageToSend,
-              ...(renderedContext ? { extraSystemPrompt: renderedContext } : {}),
+              ...(renderedContext
+                ? { extraSystemPrompt: renderedContext }
+                : {}),
               deliver: true,
               idempotencyKey: randomUUID(),
             },
@@ -302,7 +305,7 @@ export const openclawAdapter: SdkAdapter = {
         try {
           raw = typeof data === "string" ? data : data.toString();
           if (debugEnabled) {
-            console.debug("[openclaw] recv", raw);
+            console.debug("[openclaw] recv", sanitizeSensitiveText(raw));
           }
           msg = JSON.parse(raw) as Record<string, unknown>;
         } catch (err) {

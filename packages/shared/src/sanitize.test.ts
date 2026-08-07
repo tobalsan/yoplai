@@ -35,6 +35,17 @@ describe("sanitizeForStorage", () => {
     expect(sanitized).toContain("Authorization: [REDACTED]");
   });
 
+  it("redacts provider credentials from shell environment output", () => {
+    const canary = "canary-private-value";
+    const sanitized = sanitizeSensitiveText(
+      `OPENAI_API_KEY=${canary}\nAWS_SECRET_ACCESS_KEY=${canary}`
+    );
+
+    expect(sanitized).not.toContain(canary);
+    expect(sanitized).toContain("OPENAI_API_KEY=[REDACTED]");
+    expect(sanitized).toContain("AWS_SECRET_ACCESS_KEY=[REDACTED]");
+  });
+
   it("sanitizes event-bus exports", () => {
     const canary = "canary-private-value";
     const bus = new AgentEventBus();

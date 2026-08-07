@@ -17,6 +17,7 @@ import { CONFIG_DIR, loadConfig, resolveAgentEnv } from "../../config/index.js";
 import { logError } from "../../logging.js";
 import { buildOnecliEnv } from "../../config/onecli.js";
 import { resolveSystemFiles } from "@yoplai/shared/node/system-files";
+import { sanitizeSessionFile } from "@yoplai/shared/node/sanitize-session";
 import {
   FIRST_RUN_BOOTSTRAP_PROMPT,
   ensureWorkspaceFiles,
@@ -166,8 +167,9 @@ export const piAdapter: SdkAdapter = {
   },
 
   async run(params: SdkRunParams): Promise<SdkRunResult> {
+    let sessionFile: string | undefined;
     return withPiOnecliEnv(params.agentId, async () => {
-      const sessionFile = await resolveSessionFile(
+      sessionFile = await resolveSessionFile(
         params.agentId,
         params.sessionId
       );
@@ -577,6 +579,8 @@ export const piAdapter: SdkAdapter = {
       agentSession.dispose();
 
       return { text: finalText, aborted };
+    }).finally(async () => {
+      if (sessionFile) await sanitizeSessionFile(sessionFile);
     });
   },
 
