@@ -5,11 +5,16 @@ import { EventEmitter } from "node:events";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import XLSX from "xlsx";
 
-const children: EventEmitter[] = [];
+type MockChild = EventEmitter & {
+  kill: ReturnType<typeof vi.fn>;
+  send: ReturnType<typeof vi.fn>;
+};
+
+const children: MockChild[] = [];
 const getPdfText = vi.fn();
 vi.mock("node:child_process", () => ({
   fork: vi.fn(() => {
-    const child = new EventEmitter() as EventEmitter & { kill: ReturnType<typeof vi.fn>; send: ReturnType<typeof vi.fn> };
+    const child = new EventEmitter() as MockChild;
     child.kill = vi.fn();
     child.send = vi.fn();
     children.push(child);
