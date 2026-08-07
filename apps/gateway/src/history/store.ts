@@ -9,6 +9,7 @@ import type {
   FileAttachment,
   FileBlock,
 } from "@yoplai/shared";
+import { sanitizeForStorage } from "@yoplai/shared";
 import type { HistoryEvent } from "../sdk/types.js";
 import { CONFIG_DIR } from "../config/index.js";
 import { getUserHistoryDir } from "@yoplai/extension-multi-user/isolation";
@@ -151,7 +152,9 @@ async function appendRawEntry(
 ): Promise<void> {
   const file = await resolveHistoryFile(agentId, sessionId, userId);
   const line =
-    JSON.stringify({ type: "history", agentId, sessionId, ...entry }) + "\n";
+    JSON.stringify(
+      sanitizeForStorage({ type: "history", agentId, sessionId, ...entry })
+    ) + "\n";
   await fs.appendFile(file, line, "utf-8");
 }
 
@@ -168,7 +171,7 @@ export async function appendSessionMeta(
 ): Promise<void> {
   const file = await resolveHistoryFile(agentId, sessionId, userId);
   const entry: MetaEntry = { type: "meta", key, value, timestamp: Date.now() };
-  const line = JSON.stringify(entry) + "\n";
+  const line = JSON.stringify(sanitizeForStorage(entry)) + "\n";
   await fs.appendFile(file, line, "utf-8");
 }
 
@@ -578,12 +581,20 @@ export async function getSimpleHistory(
         }
       } catch (err) {
         // Expected: malformed JSON lines in history file
-        console.warn("[history] Skipping malformed line in simple history", { agentId, sessionId, error: String(err) });
+        console.warn("[history] Skipping malformed line in simple history", {
+          agentId,
+          sessionId,
+          error: String(err),
+        });
       }
     }
   } catch (err) {
     // Expected: history file may not exist yet for new sessions
-    console.warn("[history] Could not read simple history file", { agentId, sessionId, error: String(err) });
+    console.warn("[history] Could not read simple history file", {
+      agentId,
+      sessionId,
+      error: String(err),
+    });
   }
 
   return orderMessagesByTimestamp(messages);
@@ -643,12 +654,20 @@ export async function getFullHistory(
         }
       } catch (err) {
         // Expected: malformed JSON lines in history file
-        console.warn("[history] Skipping malformed line in full history", { agentId, sessionId, error: String(err) });
+        console.warn("[history] Skipping malformed line in full history", {
+          agentId,
+          sessionId,
+          error: String(err),
+        });
       }
     }
   } catch (err) {
     // Expected: history file may not exist yet for new sessions
-    console.warn("[history] Could not read full history file", { agentId, sessionId, error: String(err) });
+    console.warn("[history] Could not read full history file", {
+      agentId,
+      sessionId,
+      error: String(err),
+    });
   }
 
   return orderMessagesByTimestamp(messages);
@@ -756,8 +775,6 @@ async function resolvePiSessionFile(
   });
 }
 
-
-
 /**
  * Backfill canonical history from Pi session file (one-time migration)
  * Returns true if backfill was performed, false if not needed
@@ -778,7 +795,11 @@ export async function backfillFromPiSession(
     content = await fs.readFile(piFile, "utf-8");
   } catch {
     // Expected: Pi session file may not exist during backfill
-    console.warn("[history] Pi session file not found during backfill", { agentId, sessionId, piFile });
+    console.warn("[history] Pi session file not found during backfill", {
+      agentId,
+      sessionId,
+      piFile,
+    });
     return false;
   }
 
@@ -854,7 +875,11 @@ export async function backfillFromPiSession(
       }
     } catch (err) {
       // Expected: malformed JSON lines in Pi session file
-      console.warn("[history] Skipping malformed line in Pi backfill", { agentId, sessionId, error: String(err) });
+      console.warn("[history] Skipping malformed line in Pi backfill", {
+        agentId,
+        sessionId,
+        error: String(err),
+      });
     }
   }
 
@@ -878,7 +903,11 @@ export async function readPiSessionHistory(
     content = await fs.readFile(piFile, "utf-8");
   } catch {
     // Expected: Pi session file may not exist
-    console.warn("[history] Pi session file not found for history read", { agentId, sessionId, piFile });
+    console.warn("[history] Pi session file not found for history read", {
+      agentId,
+      sessionId,
+      piFile,
+    });
     return [];
   }
 
@@ -937,7 +966,11 @@ export async function readPiSessionHistory(
       }
     } catch (err) {
       // Expected: malformed JSON lines in Pi session file
-      console.warn("[history] Skipping malformed line in Pi history read", { agentId, sessionId, error: String(err) });
+      console.warn("[history] Skipping malformed line in Pi history read", {
+        agentId,
+        sessionId,
+        error: String(err),
+      });
     }
   }
 

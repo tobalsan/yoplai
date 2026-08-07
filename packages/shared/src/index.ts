@@ -17,3 +17,4 @@ export * from "./default-project-manager.js";
 export * from "./extensions/index.js";
 export * from "./lead-sessions/types.js";
 export * from "./oauth/index.js";
+export * from "./sanitize.js";
