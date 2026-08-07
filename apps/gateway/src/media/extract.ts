@@ -2,7 +2,7 @@ import fs from "node:fs/promises";
 import { fork } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import mammoth from "mammoth";
-import { PDFParse } from "pdf-parse";
+import { PDFParse, PasswordException } from "pdf-parse";
 import XLSX from "xlsx";
 
 const RAW_TEXT_MIME_TYPES = new Set([
@@ -86,6 +86,11 @@ export async function extractPdfBuffer(buffer: Buffer): Promise<string> {
       .join("\n\n");
     if (text.length > MAX_PDF_OUTPUT) throw new Error("PDF text exceeds output limit");
     return text;
+  } catch (error) {
+    if (error instanceof PasswordException) {
+      throw new Error("PDF is encrypted and cannot be extracted");
+    }
+    throw error;
   } finally {
     await parser.destroy();
   }

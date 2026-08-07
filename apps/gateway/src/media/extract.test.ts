@@ -22,6 +22,7 @@ vi.mock("node:child_process", () => ({
   }),
 }));
 vi.mock("pdf-parse", () => ({
+  PasswordException: class extends Error {},
   PDFParse: class {
     getText = getPdfText;
     destroy = vi.fn();
