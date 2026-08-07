@@ -88,7 +88,17 @@ async function extractDocument(
   } catch {
     throw new Error("Document was not found under an approved container root");
   }
-  const approved = Object.values(context.roots).some((root) => {
+  const approvedRoots = await Promise.all(
+    Object.values(context.roots).map(async (root) => {
+      try {
+        return await fs.realpath(root);
+      } catch {
+        return undefined;
+      }
+    })
+  );
+  const approved = approvedRoots.some((root) => {
+    if (!root) return false;
     const relative = path.relative(root, realPath);
     return !relative.startsWith("..") && !path.isAbsolute(relative);
   });

@@ -1,3 +1,6 @@
+import fs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { GatewayConfig } from "@yoplai/shared";
 import {
@@ -8,15 +11,40 @@ import { createInternalTools } from "./internal-tools.js";
 
 const registeredTokens: string[] = [];
 
-function registerToken(token: string, agentId = "agent-1"): void {
+function registerToken(
+  token: string,
+  agentId = "agent-1",
+  roots = { workspace: "/tmp/workspace", data: "/tmp/data", uploads: "/tmp/uploads" }
+): void {
   registerContainerToken(token, {
     agentId,
     sessionId: "session-1",
     runId: "run-1",
     containerName: "container-1",
-    roots: { workspace: "/tmp/workspace", data: "/tmp/data", uploads: "/tmp/uploads" },
+    roots,
   });
   registeredTokens.push(token);
+}
+
+function textPdf(text: string): Buffer {
+  const content = `BT /F1 18 Tf 72 720 Td (${text}) Tj ET\n`;
+  const objects = [
+    "<< /Type /Catalog /Pages 2 0 R >>",
+    "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+    "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R >>",
+    `<< /Length ${Buffer.byteLength(content)} >>\nstream\n${content}endstream`,
+    "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+  ];
+  let pdf = "%PDF-1.4\n";
+  const offsets = [0];
+  for (const [index, object] of objects.entries()) {
+    offsets.push(Buffer.byteLength(pdf));
+    pdf += `${index + 1} 0 obj\n${object}\nendobj\n`;
+  }
+  const xref = Buffer.byteLength(pdf);
+  pdf += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n`;
+  pdf += offsets.slice(1).map((offset) => `${String(offset).padStart(10, "0")} 00000 n \n`).join("");
+  return Buffer.from(`${pdf}trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`);
 }
 
 function createDeps(agentId = "agent-1") {
@@ -182,6 +210,63 @@ describe("internal tools", () => {
 
     expect(response.status).toBe(500);
     expect(await response.json()).toEqual({ error: "Document path is outside approved container roots" });
+  });
+
+  it("rejects an approved-root path that resolves through a symlink", async () => {
+    const { app } = createDeps();
+    const workspace = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-workspace-"));
+    const outside = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-outside-"));
+    await fs.writeFile(path.join(outside, "report.pdf"), textPdf("outside workspace document with sufficient text-layer content"));
+    await fs.symlink(path.join(outside, "report.pdf"), path.join(workspace, "report.pdf"));
+    registerToken("token-symlink", "agent-1", {
+      workspace,
+      data: path.join(workspace, "data"),
+      uploads: path.join(workspace, "uploads"),
+    });
+
+    try {
+      const response = await postTool(app, {
+        tool: "extract_document",
+        args: { path: "/workspace/report.pdf" },
+        agentId: "agent-1",
+        agentToken: "token-symlink",
+      });
+
+      expect(response.status).toBe(500);
+      expect(await response.json()).toEqual({ error: "Document path is outside approved container roots" });
+    } finally {
+      await Promise.all([
+        fs.rm(workspace, { recursive: true, force: true }),
+        fs.rm(outside, { recursive: true, force: true }),
+      ]);
+    }
+  });
+
+  it("extracts a text-layer PDF from an approved workspace path", async () => {
+    const { app } = createDeps();
+    const workspace = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-workspace-"));
+    const document = path.join(workspace, "report.pdf");
+    const expectedText = "approved gateway document with sufficient text-layer content";
+    await fs.writeFile(document, textPdf(expectedText));
+    registerToken("token-document", "agent-1", {
+      workspace,
+      data: path.join(workspace, "data"),
+      uploads: path.join(workspace, "uploads"),
+    });
+
+    try {
+      const response = await postTool(app, {
+        tool: "extract_document",
+        args: { path: "/workspace/report.pdf" },
+        agentId: "agent-1",
+        agentToken: "token-document",
+      });
+
+      expect(response.status).toBe(200);
+      await expect(response.json()).resolves.toEqual({ text: expect.stringContaining(expectedText) });
+    } finally {
+      await fs.rm(workspace, { recursive: true, force: true });
+    }
   });
 
   it("dispatches tools through enabled extensions", async () => {
