@@ -9,7 +9,13 @@ import { createInternalTools } from "./internal-tools.js";
 const registeredTokens: string[] = [];
 
 function registerToken(token: string, agentId = "agent-1"): void {
-  registerContainerToken(token, agentId, "container-1");
+  registerContainerToken(token, {
+    agentId,
+    sessionId: "session-1",
+    runId: "run-1",
+    containerName: "container-1",
+    roots: { workspace: "/tmp/workspace", data: "/tmp/data", uploads: "/tmp/uploads" },
+  });
   registeredTokens.push(token);
 }
 
@@ -93,7 +99,7 @@ describe("internal tools", () => {
       { projectId: "PRO-1" },
       expect.objectContaining({ agents: expect.any(Array), extensions: {} }),
       runtime,
-      undefined
+      "session-1"
     );
     expect(consoleWarn).toHaveBeenCalledWith(
       expect.stringContaining("sandbox image is likely stale")
@@ -130,6 +136,54 @@ describe("internal tools", () => {
     expect(executeExtensionTool).not.toHaveBeenCalled();
   });
 
+  it("derives session context from the token and rejects caller mismatches", async () => {
+    const { app, executeExtensionTool } = createDeps();
+    registerToken("token-context");
+
+    const response = await postTool(app, {
+      tool: "project.get",
+      args: { projectId: "PRO-1" },
+      agentId: "agent-1",
+      agentToken: "token-context",
+      sessionId: "another-session",
+      runId: "run-1",
+    });
+
+    expect(response.status).toBe(403);
+    expect(executeExtensionTool).not.toHaveBeenCalled();
+  });
+
+  it("rejects a token after cleanup", async () => {
+    const { app, executeExtensionTool } = createDeps();
+    registerToken("token-expired");
+    removeContainerToken("token-expired");
+
+    const response = await postTool(app, {
+      tool: "project.get",
+      args: { projectId: "PRO-1" },
+      agentId: "agent-1",
+      agentToken: "token-expired",
+    });
+
+    expect(response.status).toBe(403);
+    expect(executeExtensionTool).not.toHaveBeenCalled();
+  });
+
+  it("rejects extract_document paths outside the container roots", async () => {
+    const { app } = createDeps();
+    registerToken("token-path");
+
+    const response = await postTool(app, {
+      tool: "extract_document",
+      args: { path: "/etc/report.pdf" },
+      agentId: "agent-1",
+      agentToken: "token-path",
+    });
+
+    expect(response.status).toBe(500);
+    expect(await response.json()).toEqual({ error: "Document path is outside approved container roots" });
+  });
+
   it("dispatches tools through enabled extensions", async () => {
     const { app, executeExtensionTool, runtime } = createDeps();
     registerToken("token-3");
@@ -152,7 +206,7 @@ describe("internal tools", () => {
       { projectId: "PRO-1" },
       expect.objectContaining({ agents: expect.any(Array), extensions: {} }),
       runtime,
-      undefined
+      "session-1"
     );
   });
 
@@ -179,7 +233,7 @@ describe("internal tools", () => {
       {},
       expect.objectContaining({ agents: expect.any(Array), extensions: {} }),
       runtime,
-      undefined
+      "session-1"
     );
   });
 

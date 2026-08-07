@@ -33,6 +33,15 @@ export class ContainerToolBridge {
       name: tool.name,
       description: tool.description,
       parameters: tool.parameters,
-    }));
+    })).concat({
+      extensionId: "gateway",
+      name: "extract_document",
+      description: "Extract normalized text from a PDF under /workspace, /workspace/data, or /workspace/uploads.",
+      parameters: {
+        type: "object",
+        properties: { path: { type: "string", description: "Absolute container path to a PDF" } },
+        required: ["path"],
+      },
+    });
   }
 }

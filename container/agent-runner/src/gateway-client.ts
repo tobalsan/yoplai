@@ -4,7 +4,8 @@ export async function callGatewayTool(
   tool: string,
   args: unknown,
   agentId = "",
-  sessionId?: string
+  sessionId?: string,
+  runId?: string
 ): Promise<unknown> {
   const response = await fetch(new URL("/internal/tools", gatewayUrl), {
     method: "POST",
@@ -19,6 +20,7 @@ export async function callGatewayTool(
       agentId,
       agentToken,
       sessionId,
+      runId,
     }),
   });
 

@@ -1,35 +1,38 @@
 const activeTokens = new Map<
   string,
-  { agentId: string; containerName: string; createdAt: number; userId?: string }
+  ContainerTokenContext
 >();
+
+export type ContainerTokenContext = {
+  agentId: string;
+  sessionId: string;
+  runId: string;
+  containerName: string;
+  roots: { workspace: string; data: string; uploads: string };
+  userId?: string;
+  createdAt: number;
+};
 
 export function registerContainerToken(
   token: string,
-  agentId: string,
-  containerName: string,
-  userId?: string
+  context: Omit<ContainerTokenContext, "createdAt">
 ): void {
-  activeTokens.set(token, {
-    agentId,
-    containerName,
-    userId,
-    createdAt: Date.now(),
-  });
+  activeTokens.set(token, { ...context, createdAt: Date.now() });
 }
 
-export function getContainerTokenUserId(
-  token: string,
-  agentId: string
-): string | undefined {
+export function validateContainerToken(token: string, agentId: string): boolean {
+  return activeTokens.get(token)?.agentId === agentId;
+}
+
+export function getContainerTokenUserId(token: string, agentId: string): string | undefined {
   const entry = activeTokens.get(token);
   return entry?.agentId === agentId ? entry.userId : undefined;
 }
 
-export function validateContainerToken(
-  token: string,
-  agentId: string
-): boolean {
-  return activeTokens.get(token)?.agentId === agentId;
+export function getContainerTokenContext(
+  token: string
+): ContainerTokenContext | undefined {
+  return activeTokens.get(token);
 }
 
 export function removeContainerToken(token: string): void {
