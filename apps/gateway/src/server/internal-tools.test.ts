@@ -181,6 +181,19 @@ describe("internal tools", () => {
     expect(executeExtensionTool).not.toHaveBeenCalled();
   });
 
+  it.each([
+    ["runId", "another-run"],
+    ["containerName", "another-container"],
+  ])("rejects a mismatched %s", async (field, value) => {
+    const { app, executeExtensionTool } = createDeps();
+    registerToken("token-identity");
+    const response = await postTool(app, {
+      tool: "project.get", args: { projectId: "PRO-1" }, agentId: "agent-1", agentToken: "token-identity", [field]: value,
+    });
+    expect(response.status).toBe(403);
+    expect(executeExtensionTool).not.toHaveBeenCalled();
+  });
+
   it("rejects a token after cleanup", async () => {
     const { app, executeExtensionTool } = createDeps();
     registerToken("token-expired");
@@ -210,6 +223,16 @@ describe("internal tools", () => {
 
     expect(response.status).toBe(500);
     expect(await response.json()).toEqual({ error: "Document path is outside approved container roots" });
+  });
+
+  it("rejects traversal under an approved container root", async () => {
+    const { app } = createDeps();
+    registerToken("token-traversal");
+    const response = await postTool(app, {
+      tool: "extract_document", args: { path: "/workspace/../report.pdf" }, agentId: "agent-1", agentToken: "token-traversal",
+    });
+    expect(response.status).toBe(500);
+    expect(await response.json()).toEqual({ error: "Document path traversal is not allowed" });
   });
 
   it("rejects an approved-root path that resolves through a symlink", async () => {
