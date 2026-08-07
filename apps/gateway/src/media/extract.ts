@@ -21,6 +21,7 @@ export const PDF_OCR_LIMITS = {
   bytes: 25 * 1024 * 1024, pages: 30, outputChars: 250_000,
   executionMs: 45_000, concurrency: 2, queue: 8, queueWaitMs: 10_000,
   aggregateInputBytes: 50 * 1024 * 1024, childRssMb: 512,
+  childCpuMs: 40_000,
 } as const;
 const MAX_PDF_BYTES = PDF_OCR_LIMITS.bytes;
 const MAX_PDF_PAGES = PDF_OCR_LIMITS.pages;
@@ -146,8 +147,9 @@ export function runPdfOcr(data: Buffer, pages: number[]): Promise<Map<number, st
       return;
     }
     const timer = setTimeout(() => finish(new Error("PDF OCR timed out after 45 seconds")), OCR_TIMEOUT_MS);
-    child.on("message", (message: { pages?: Array<{ number: number; text: string }>; error?: string; rss?: number }) => {
+    child.on("message", (message: { pages?: Array<{ number: number; text: string }>; error?: string; rss?: number; cpuMs?: number }) => {
       if (message.rss && message.rss > PDF_OCR_LIMITS.childRssMb * 1024 * 1024) finish(new Error("PDF OCR exceeded the 512MB memory limit"));
+      else if (message.cpuMs !== undefined && message.cpuMs > PDF_OCR_LIMITS.childCpuMs) finish(new Error("PDF OCR exceeded the 40 second CPU limit"));
       else if (message.error) finish(new Error(message.error));
       else if (message.pages) finish(undefined, message.pages);
     });

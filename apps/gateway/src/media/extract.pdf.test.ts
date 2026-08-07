@@ -7,7 +7,7 @@ const { fork } = vi.hoisted(() => ({ fork: vi.fn() }));
 vi.mock("node:child_process", () => ({ fork }));
 
 import { extractPdfBuffer } from "./extract.js";
-import { assertRenderPixels, ocrPdfPages } from "./pdf-ocr-worker.js";
+import { assertRenderPixels, bundledTessdataAssets, ocrPdfPages } from "./pdf-ocr-worker.js";
 
 const corruptFixture = fileURLToPath(new URL("./__fixtures__/corrupt.pdf", import.meta.url));
 // Source: https://github.com/ArturT/Test-PDF-Files/blob/master/encrypted.pdf
@@ -25,6 +25,10 @@ describe("extractPdfBuffer fixtures", () => {
 
   it("rejects pages above the render-pixel limit before rasterization", () => {
     expect(() => assertRenderPixels([0, 0, 2_001, 2_000])).toThrow("PDF page exceeds render pixel limit");
+  });
+
+  it("locates both bundled OCR language assets without a network request", async () => {
+    await expect(Promise.all(bundledTessdataAssets().map((asset) => fs.access(asset)))).resolves.toHaveLength(2);
   });
 
   it("keeps a real text-layer PDF on the extraction fast path", async () => {
