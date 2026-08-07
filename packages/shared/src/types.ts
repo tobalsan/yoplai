@@ -2207,6 +2207,9 @@ export type ContainerSystemFile = z.infer<typeof ContainerSystemFileSchema>;
 export const ContainerInputSchema = z.object({
   agentId: z.string(),
   sessionId: z.string(),
+  // Optional for back-compat with containers launched before per-run IPC
+  // namespaces existed.
+  runId: z.string().optional(),
   userId: z.string().optional(),
   message: z.string(),
   attachments: z.array(FileAttachmentSchema).optional(),
@@ -2233,6 +2236,32 @@ export const ContainerInputSchema = z.object({
   }),
 });
 export type ContainerInput = z.infer<typeof ContainerInputSchema>;
+
+// Queued follow-up message written into a run's IPC namespace. The identity
+// fields let the container reject anything that was not addressed to it.
+export const ContainerDeliveryEnvelopeSchema = z.object({
+  message: z.string(),
+  timestamp: z.number(),
+  agentId: z.string(),
+  sessionId: z.string(),
+  runId: z.string(),
+  source: z.string().optional(),
+  slack: z
+    .object({
+      channel: z.string().optional(),
+      threadTs: z.string().optional(),
+      eventId: z.string().optional(),
+    })
+    .optional(),
+});
+export type ContainerDeliveryEnvelope = z.infer<
+  typeof ContainerDeliveryEnvelopeSchema
+>;
+
+export type ContainerDeliveryContext = Pick<
+  ContainerDeliveryEnvelope,
+  "source" | "slack"
+>;
 
 export const ContainerOutputSchema = z.object({
   text: z.string(),

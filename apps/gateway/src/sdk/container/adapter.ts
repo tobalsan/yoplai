@@ -2,7 +2,13 @@ import * as childProcess from "node:child_process";
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
-import type { AgentConfig, ContainerOutput } from "@yoplai/shared";
+import type {
+  AgentConfig,
+  ContainerDeliveryContext,
+  ContainerDeliveryEnvelope,
+  ContainerInput,
+  ContainerOutput,
+} from "@yoplai/shared";
 import {
   ContainerRunnerProtocolEventSchema,
   HistoryEventSchema,
@@ -10,6 +16,7 @@ import {
 } from "@yoplai/shared";
 import { loadConfig } from "../../config/index.js";
 import { logInfo } from "../../logging.js";
+import { RunSettledError } from "../run-settled.js";
 import {
   FIRST_RUN_BOOTSTRAP_PROMPT,
   ensureWorkspaceFiles,
@@ -29,6 +36,7 @@ import type {
 } from "../types.js";
 import {
   buildContainerLaunchSpec,
+  cleanupLaunchFilesystem,
   prepareLaunchFilesystem,
 } from "./launch-spec.js";
 import { ContainerInputBuilder } from "./input-builder.js";
@@ -42,6 +50,11 @@ const STOP_GRACE_MS = 10_000;
 type ContainerSessionHandle = {
   containerName: string;
   ipcDir: string;
+  agentId: string;
+  sessionId: string;
+  runId: string;
+  /** True once the run's IPC namespace has been removed. */
+  isSettled?: () => boolean;
   recordQueuedMessageActivity?: () => void;
 };
 
@@ -55,15 +68,18 @@ function hasReadableDocumentAttachment(params: SdkRunParams): boolean {
   );
 }
 
+const HANDLE_IDENTITY_KEYS = [
+  "containerName",
+  "ipcDir",
+  "agentId",
+  "sessionId",
+  "runId",
+] as const;
+
 function isContainerHandle(handle: unknown): handle is ContainerSessionHandle {
-  return (
-    typeof handle === "object" &&
-    handle !== null &&
-    "containerName" in handle &&
-    "ipcDir" in handle &&
-    typeof handle.containerName === "string" &&
-    typeof handle.ipcDir === "string"
-  );
+  if (typeof handle !== "object" || handle === null) return false;
+  const record = handle as Record<string, unknown>;
+  return HANDLE_IDENTITY_KEYS.every((key) => typeof record[key] === "string");
 }
 
 function assertContainerHandle(handle: unknown): ContainerSessionHandle {
@@ -241,50 +257,65 @@ export function getContainerAdapter(): SdkAdapter {
     async run(params: SdkRunParams) {
       const config = loadConfig();
       const launchSpec = buildContainerLaunchSpec(params, config);
-      const { args, containerName, ipcDir, hostDataDir } = launchSpec;
+      const { args, containerName, ipcDir, runId, hostDataDir } = launchSpec;
       prepareLaunchFilesystem(params, launchSpec);
-      const isFirstRun = await ensureWorkspaceFiles(params.workspaceDir);
-
-      const agentToken = randomUUID();
-      registerContainerToken(agentToken, params.agentId, containerName);
-      const attachmentContext = hasReadableDocumentAttachment(params)
-        ? await buildDocumentAttachmentContext(params.attachments)
-        : "";
-      const input = await new ContainerInputBuilder().build(
-        {
-          ...params,
-          message: appendAttachmentContext(params.message, attachmentContext),
-        },
-        config,
-        agentToken,
-        isFirstRun ? FIRST_RUN_BOOTSTRAP_PROMPT : undefined
-      );
-      const child = childProcess.spawn("docker", args, {
-        stdio: ["pipe", "pipe", "pipe"],
+      logInfo("[container] ipc namespace claimed", {
+        agentId: params.agentId,
+        sessionId: params.sessionId,
+        runId,
+        containerName,
       });
+      // Everything between claiming the namespace and handing ownership to the
+      // run Promise must release it on failure: the Promise's cleanup() never
+      // runs for these paths, so without this the namespace would leak.
       let stderr = "";
-      child.stderr?.on("data", (chunk: Buffer | string) => {
-        const text = chunk.toString();
-        stderr += text;
-        logInfo("[container] stderr", {
-          agentId: params.agentId,
-          message: text.trimEnd(),
+      let agentToken: string | undefined;
+      let child: childProcess.ChildProcess;
+      let input: ContainerInput;
+      try {
+        const isFirstRun = await ensureWorkspaceFiles(params.workspaceDir);
+
+        agentToken = randomUUID();
+        registerContainerToken(agentToken, params.agentId, containerName);
+        const attachmentContext = hasReadableDocumentAttachment(params)
+          ? await buildDocumentAttachmentContext(params.attachments)
+          : "";
+        input = await new ContainerInputBuilder().build(
+          {
+            ...params,
+            message: appendAttachmentContext(params.message, attachmentContext),
+          },
+          config,
+          agentToken,
+          isFirstRun ? FIRST_RUN_BOOTSTRAP_PROMPT : undefined,
+          runId
+        );
+        child = childProcess.spawn("docker", args, {
+          stdio: ["pipe", "pipe", "pipe"],
         });
-      });
-      const extraNetwork = config.onecli?.sandbox?.network;
-      if (extraNetwork) {
-        try {
+        child.stderr?.on("data", (chunk: Buffer | string) => {
+          const text = chunk.toString();
+          stderr += text;
+          logInfo("[container] stderr", {
+            agentId: params.agentId,
+            message: text.trimEnd(),
+          });
+        });
+        const extraNetwork = config.onecli?.sandbox?.network;
+        if (extraNetwork) {
           await attachExtraNetwork(
             containerName,
             extraNetwork,
             child,
             () => stderr
           );
-        } catch (error) {
-          removeContainerToken(agentToken);
-          throw error;
         }
+      } catch (error) {
+        if (agentToken) removeContainerToken(agentToken);
+        cleanupLaunchFilesystem(launchSpec);
+        throw error;
       }
+      const runAgentToken = agentToken;
       let timeoutKind: "idle" | "max" | undefined;
       let aborted = false;
       let settled = false;
@@ -305,13 +336,19 @@ export function getContainerAdapter(): SdkAdapter {
       const renderedContext = params.context
         ? renderAgentContext(params.context)
         : "";
+      let handleSettled = false;
 
       return new Promise<SdkRunResult>((resolve, reject) => {
         const cleanup = () => {
           if (idleTimer) clearTimeout(idleTimer);
           if (maxRunTimeTimer) clearTimeout(maxRunTimeTimer);
           params.abortSignal.removeEventListener("abort", onAbort);
-          removeContainerToken(agentToken);
+          removeContainerToken(runAgentToken);
+          // The namespace is gone from here on, so the handle must stop
+          // accepting deliveries: a write after this point would recreate the
+          // directory with nothing left alive to poll it.
+          handleSettled = true;
+          cleanupLaunchFilesystem(launchSpec);
         };
 
         const describeLastActivity = (): string => {
@@ -346,6 +383,10 @@ export function getContainerAdapter(): SdkAdapter {
         const handle: ContainerSessionHandle = {
           containerName,
           ipcDir,
+          agentId: params.agentId,
+          sessionId: params.sessionId,
+          runId,
+          isSettled: () => handleSettled,
           recordQueuedMessageActivity: () =>
             recordActivity("queued_user_message"),
         };
@@ -485,21 +526,62 @@ export function getContainerAdapter(): SdkAdapter {
         child.stdin?.end(`${JSON.stringify(input)}\n`);
       });
     },
-    async queueMessage(handle: unknown, message: string) {
-      const { ipcDir, recordQueuedMessageActivity } =
-        assertContainerHandle(handle);
+    async queueMessage(
+      handle: unknown,
+      message: string,
+      context?: ContainerDeliveryContext
+    ) {
+      const {
+        ipcDir,
+        agentId,
+        sessionId,
+        runId,
+        isSettled,
+        recordQueuedMessageActivity,
+      } = assertContainerHandle(handle);
+      if (isSettled?.()) {
+        throw new RunSettledError(
+          `Run ${runId} for agent ${agentId} session ${sessionId} already settled`
+        );
+      }
       const inputDir = path.join(ipcDir, "input");
       const timestamp = Date.now();
+      const envelope: ContainerDeliveryEnvelope = {
+        message,
+        timestamp,
+        agentId,
+        sessionId,
+        runId,
+        ...(context?.source ? { source: context.source } : {}),
+        ...(context?.slack ? { slack: context.slack } : {}),
+      };
       fs.mkdirSync(inputDir, { recursive: true });
       fs.writeFileSync(
         path.join(inputDir, `${timestamp}-${randomUUID()}.json`),
-        JSON.stringify({ message, timestamp })
+        JSON.stringify(envelope)
       );
+      logInfo("[container] follow-up queued", {
+        agentId,
+        sessionId,
+        runId,
+        source: context?.source,
+        messageLength: message.length,
+      });
       recordQueuedMessageActivity?.();
     },
     abort(handle: unknown) {
-      const { containerName, ipcDir } = assertContainerHandle(handle);
+      const { containerName, ipcDir, agentId, sessionId, runId, isSettled } =
+        assertContainerHandle(handle);
+      // Nothing left to interrupt, and the sentinel would resurrect the
+      // already-removed namespace.
+      if (isSettled?.()) return;
       writeCloseSentinel(ipcDir);
+      logInfo("[container] abort sentinel written", {
+        agentId,
+        sessionId,
+        runId,
+        containerName,
+      });
       stopThenKill(containerName);
     },
   };

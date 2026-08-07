@@ -3,6 +3,7 @@ import type {
   AgentConfig,
   ThinkLevel,
   AgentContext,
+  ContainerDeliveryContext,
   FileAttachment,
   HistoryEvent,
   RequiredModelConfig,
@@ -58,6 +59,10 @@ export type SdkAdapter = {
     model?: string;
   };
   run(params: SdkRunParams): Promise<SdkRunResult>;
-  queueMessage?: (handle: unknown, message: string) => Promise<void>;
+  queueMessage?: (
+    handle: unknown,
+    message: string,
+    context?: ContainerDeliveryContext
+  ) => Promise<void>;
   abort?: (handle: unknown) => void;
 };

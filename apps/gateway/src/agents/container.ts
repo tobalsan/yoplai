@@ -4,6 +4,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { resolveHomeDir } from "@yoplai/shared";
 import type {
   AgentConfig,
   GlobalSandboxConfig,
@@ -123,6 +124,25 @@ export function getAgentDataDir(homeDir: string, agentId: string): string {
   );
 }
 
+/**
+ * IPC namespace for a single run. Scoping by session + run keeps concurrent
+ * containers for the same agent from consuming each other's queued follow-ups
+ * and abort sentinels.
+ */
+export function getRunIpcDir(
+  homeDir: string,
+  agentId: string,
+  sessionId: string,
+  runId: string
+): string {
+  return path.join(
+    resolveHostPath(homeDir),
+    "ipc",
+    sanitizePathSegment(agentId),
+    `${sanitizePathSegment(sessionId)}-${sanitizePathSegment(runId)}`
+  );
+}
+
 export function getSessionUploadsDir(
   homeDir: string,
   agentId: string,
@@ -182,6 +202,7 @@ export function buildVolumeMounts(
   agent: AgentConfig,
   globalSandbox: GlobalSandboxConfig,
   homeDir: string,
+  ipcDir: string,
   userId?: string,
   onecli?: OnecliConfig,
   sessionId?: string
@@ -222,7 +243,7 @@ export function buildVolumeMounts(
   }
 
   addMount(mounts, path.join(home, "sessions", agent.id), "/sessions", false);
-  addMount(mounts, path.join(home, "ipc", agent.id), "/workspace/ipc", false);
+  addMount(mounts, ipcDir, "/workspace/ipc", false);
 
   const modelsPath = path.join(home, "models.json");
   if (fs.existsSync(modelsPath)) {
@@ -556,5 +577,29 @@ export function cleanupOrphanContainers(): void {
 
   if (containerIds.length) {
     execFileSync("docker", ["rm", "-f", ...containerIds], { stdio: "ignore" });
+  }
+
+  cleanupOrphanIpcNamespaces();
+}
+
+/**
+ * Drops every per-run IPC namespace under <home>/ipc. A run's namespace is
+ * normally removed when its run settles, but a crashed or force-killed gateway
+ * takes that deleter with it, and per-run namespaces would otherwise pile up
+ * forever. Only safe next to cleanupOrphanContainers, which has just removed
+ * every agent container, so no live poller can own a namespace.
+ */
+export function cleanupOrphanIpcNamespaces(
+  homeDir: string = resolveHomeDir()
+): void {
+  const ipcRoot = path.join(resolveHostPath(homeDir), "ipc");
+  let agentDirs: string[];
+  try {
+    agentDirs = fs.readdirSync(ipcRoot);
+  } catch {
+    return; // nothing has ever claimed a namespace on this host
+  }
+  for (const agentDir of agentDirs) {
+    fs.rmSync(path.join(ipcRoot, agentDir), { recursive: true, force: true });
   }
 }

@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { resolveHomeDir, type FileAttachment, type GatewayConfig } from "@yoplai/shared";
@@ -7,6 +8,7 @@ import {
   buildVolumeMounts,
   CONTAINER_UPLOADS_DIR,
   getAgentDataDir,
+  getRunIpcDir,
   getSessionUploadsDir,
 } from "../../agents/container.js";
 import { getMediaInboundDir } from "../../media/metadata.js";
@@ -14,6 +16,7 @@ import { getMediaInboundDir } from "../../media/metadata.js";
 export type ContainerLaunchSpec = {
   args: string[];
   containerName: string;
+  runId: string;
   homeDir: string;
   ipcDir: string;
   ipcInputDir: string;
@@ -27,10 +30,13 @@ export function buildContainerLaunchSpec(
 ): ContainerLaunchSpec {
   const globalSandbox = config.sandbox ?? {};
   const homeDir = resolveHomeDir();
+  const runId = randomUUID();
+  const ipcDir = getRunIpcDir(homeDir, params.agentId, params.sessionId, runId);
   const mounts = buildVolumeMounts(
     params.agent,
     globalSandbox,
     homeDir,
+    ipcDir,
     params.userId,
     config.onecli,
     params.sessionId
@@ -45,10 +51,10 @@ export function buildContainerLaunchSpec(
     config.env
   );
   const containerName = getArgValue(args, "--name");
-  const ipcDir = path.join(homeDir, "ipc", params.agentId);
   return {
     args,
     containerName,
+    runId,
     homeDir,
     ipcDir,
     ipcInputDir: path.join(ipcDir, "input"),
@@ -76,6 +82,14 @@ export function prepareLaunchFilesystem(
     });
   }
   prepareContainerUploads(params.attachments, spec.hostUploadsDir);
+}
+
+/**
+ * Removes only this run's IPC namespace. Sibling namespaces belong to other
+ * live containers for the same agent and must be left alone.
+ */
+export function cleanupLaunchFilesystem(spec: ContainerLaunchSpec): void {
+  fs.rmSync(spec.ipcDir, { recursive: true, force: true });
 }
 
 export function prepareContainerUploads(

@@ -55,7 +55,13 @@ describe("container input builder", () => {
 
     const previousGatewayPort = process.env.YOPLAI_GATEWAY_PORT;
     delete process.env.YOPLAI_GATEWAY_PORT;
-    const input = await builder.build(params, config, "token-1");
+    const input = await builder.build(
+      params,
+      config,
+      "token-1",
+      undefined,
+      "run-1"
+    );
     if (previousGatewayPort === undefined) {
       delete process.env.YOPLAI_GATEWAY_PORT;
     } else {
@@ -65,6 +71,7 @@ describe("container input builder", () => {
     expect(input).toMatchObject({
       agentId: "cloud",
       sessionId: "session-1",
+      runId: "run-1",
       gatewayUrl: "http://host.docker.internal:4100",
       agentToken: "token-1",
       extensionSystemPrompts: ["extra prompt"],

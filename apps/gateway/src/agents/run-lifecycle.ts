@@ -23,6 +23,7 @@ import type {
   SdkAdapter,
   SdkCapabilities,
 } from "../sdk/types.js";
+import { isRunSettledError } from "../sdk/run-settled.js";
 import {
   bufferHistoryEvent,
   createTurnBuffer,
@@ -109,6 +110,7 @@ export class SessionRunLifecycle {
     if (!this.isStreaming()) return { handled: false };
 
     if (policy.queueMode === "queue") {
+      let deliveredToCurrentRun = false;
       if (
         policy.capabilities.queueWhileStreaming &&
         policy.adapter.queueMessage
@@ -121,15 +123,19 @@ export class SessionRunLifecycle {
         );
         const existingHandle = await this.waitForSessionHandle();
         if (existingHandle) {
-          await policy.adapter.queueMessage(existingHandle, policy.message);
-        } else {
-          bufferPendingMessage(
-            this.context.agentId,
-            this.context.sessionId,
-            policy.message
-          );
+          try {
+            await policy.adapter.queueMessage(existingHandle, policy.message);
+            deliveredToCurrentRun = true;
+          } catch (error) {
+            // The run settled while we still advertised it as streaming.
+            // Re-buffer so the next run picks the message up instead of
+            // writing it into a runtime nothing is polling.
+            if (!isRunSettledError(error)) throw error;
+          }
         }
-      } else {
+      }
+
+      if (!deliveredToCurrentRun) {
         bufferPendingMessage(
           this.context.agentId,
           this.context.sessionId,
@@ -137,7 +143,7 @@ export class SessionRunLifecycle {
         );
       }
 
-      const text = policy.capabilities.queueWhileStreaming
+      const text = deliveredToCurrentRun
         ? "Message queued into current run"
         : "Message queued for next run";
       return { handled: true, result: { text, queued: true } };

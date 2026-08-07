@@ -15,7 +15,8 @@ export class ContainerInputBuilder {
     params: SdkRunParams,
     config: GatewayConfig,
     agentToken: string,
-    bootstrapPrompt?: string
+    bootstrapPrompt?: string,
+    runId?: string
   ): Promise<ContainerInput> {
     const extensionSystemPrompts = await this.toolBridge.buildSystemPrompts(
       params,
@@ -30,6 +31,7 @@ export class ContainerInputBuilder {
     return {
       agentId: params.agentId,
       sessionId: params.sessionId,
+      runId,
       userId: params.userId,
       message: params.message,
       attachments: remapAttachmentsToContainer(params.attachments),

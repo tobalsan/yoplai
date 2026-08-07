@@ -22,7 +22,9 @@ import {
   clearConfigCacheForTests,
   setLoadedConfig,
 } from "../../config/index.js";
+import { ensureWorkspaceFiles } from "../../agents/workspace.js";
 import { getContainerAdapter } from "./adapter.js";
+import { isRunSettledError } from "../run-settled.js";
 import { validateContainerToken } from "./tokens.js";
 import type { SdkRunParams } from "../types.js";
 
@@ -188,6 +190,39 @@ function createParams(agent: AgentConfig): SdkRunParams {
   };
 }
 
+type ContainerSessionHandleShape = {
+  containerName: string;
+  ipcDir: string;
+  agentId: string;
+  sessionId: string;
+  runId: string;
+};
+
+/** Handle shape the adapter hands to run-lifecycle, keyed to one run. */
+function createHandle(
+  ipcDir: string,
+  extra: Record<string, unknown> = {}
+): ContainerSessionHandleShape & Record<string, unknown> {
+  const [sessionId, runId] = path.basename(ipcDir).split("-run-");
+  return {
+    containerName: "container",
+    ipcDir,
+    agentId: "cloud",
+    sessionId,
+    runId: `run-${runId}`,
+    ...extra,
+  };
+}
+
+function readQueuedMessages(ipcDir: string): unknown[] {
+  const inputDir = path.join(ipcDir, "input");
+  return fs
+    .readdirSync(inputDir)
+    .map((filename) =>
+      JSON.parse(fs.readFileSync(path.join(inputDir, filename), "utf8"))
+    );
+}
+
 function mockSpawn(): {
   processes: FakeDockerProcess[];
   spy: MockInstance;
@@ -302,9 +337,13 @@ describe("container adapter", () => {
     expect(params.onSessionHandle).toHaveBeenCalledWith(
       expect.objectContaining({
         containerName: expect.stringMatching(/^yoplai-agent-cloud-/),
-        ipcDir: path.join(homeDir, "ipc", "cloud"),
+        agentId: "cloud",
+        sessionId: "session-1",
+        runId: input.runId,
+        ipcDir: expect.stringContaining(path.join(homeDir, "ipc", "cloud")),
       })
     );
+    expect(input.runId).toEqual(expect.any(String));
     expect(params.onEvent).toHaveBeenCalledWith({
       type: "text",
       data: "hello back",
@@ -537,41 +576,70 @@ describe("container adapter", () => {
 
   it("writes every queued message to a unique IPC file", async () => {
     const root = tempDir();
-    const ipcDir = path.join(root, "ipc", "cloud");
+    const ipcDir = path.join(root, "ipc", "cloud", "session-1-run-1");
     vi.spyOn(Date, "now").mockReturnValue(123);
 
     const recordQueuedMessageActivity = vi.fn();
-    const handle = {
-      containerName: "container",
-      ipcDir,
+    const handle = createHandle(ipcDir, {
       recordQueuedMessageActivity,
-    };
+    });
 
     await getContainerAdapter().queueMessage?.(handle, "first follow up");
-    await getContainerAdapter().queueMessage?.(handle, "second follow up");
+    await getContainerAdapter().queueMessage?.(handle, "second follow up", {
+      source: "slack",
+      slack: { channel: "C1", threadTs: "1.2" },
+    });
 
-    const inputDir = path.join(ipcDir, "input");
-    const messages = fs
-      .readdirSync(inputDir)
-      .map((filename) =>
-        JSON.parse(fs.readFileSync(path.join(inputDir, filename), "utf8"))
-      );
+    const messages = readQueuedMessages(ipcDir);
     expect(messages).toEqual(
       expect.arrayContaining([
-        { message: "first follow up", timestamp: 123 },
-        { message: "second follow up", timestamp: 123 },
+        {
+          message: "first follow up",
+          timestamp: 123,
+          agentId: "cloud",
+          sessionId: "session-1",
+          runId: "run-1",
+        },
+        {
+          message: "second follow up",
+          timestamp: 123,
+          agentId: "cloud",
+          sessionId: "session-1",
+          runId: "run-1",
+          source: "slack",
+          slack: { channel: "C1", threadTs: "1.2" },
+        },
       ])
     );
     expect(messages).toHaveLength(2);
     expect(recordQueuedMessageActivity).toHaveBeenCalledTimes(2);
   });
 
+  it("stamps run identity on the queued envelope", async () => {
+    const root = tempDir();
+    const runOne = path.join(root, "ipc", "cloud", "session-1-run-1");
+
+    await getContainerAdapter().queueMessage?.(
+      createHandle(runOne),
+      "only for run one"
+    );
+
+    expect(readQueuedMessages(runOne)).toEqual([
+      expect.objectContaining({
+        message: "only for run one",
+        agentId: "cloud",
+        sessionId: "session-1",
+        runId: "run-1",
+      }),
+    ]);
+  });
+
   it("writes close sentinel and stops on abort", () => {
     const root = tempDir();
-    const ipcDir = path.join(root, "ipc", "cloud");
+    const ipcDir = path.join(root, "ipc", "cloud", "session-1-run-1");
     const execSpy = mockExecFile();
 
-    getContainerAdapter().abort?.({ containerName: "container", ipcDir });
+    getContainerAdapter().abort?.(createHandle(ipcDir));
 
     expect(fs.existsSync(path.join(ipcDir, "input", "_close"))).toBe(true);
     expect(execSpy).toHaveBeenCalledWith(
@@ -580,6 +648,131 @@ describe("container adapter", () => {
       { timeout: 10_000 },
       expect.any(Function)
     );
+  });
+
+  it("isolates follow-ups and aborts between two live runs of one agent", async () => {
+    const root = tempDir();
+    const homeDir = path.join(root, "yoplai");
+    process.env.YOPLAI_HOME = homeDir;
+    const agent = createAgent(root);
+    setConfig(agent, root);
+    const { processes } = mockSpawn();
+    mockExecFile();
+
+    // Two concurrent runs of the same agent, with namespaces derived by
+    // production code rather than fabricated by the test.
+    const paramsOne = createParams(agent);
+    const paramsTwo = { ...createParams(agent), sessionId: "session-2" };
+    const runOne = getContainerAdapter().run(paramsOne);
+    const runTwo = getContainerAdapter().run(paramsTwo);
+    await tick();
+
+    const handleOne = vi.mocked(paramsOne.onSessionHandle!).mock
+      .calls[0][0] as ContainerSessionHandleShape;
+    const handleTwo = vi.mocked(paramsTwo.onSessionHandle!).mock
+      .calls[0][0] as ContainerSessionHandleShape;
+    expect(handleOne.ipcDir).not.toBe(handleTwo.ipcDir);
+
+    await getContainerAdapter().queueMessage?.(handleOne, "only for run one");
+    expect(readQueuedMessages(handleOne.ipcDir)).toEqual([
+      expect.objectContaining({
+        message: "only for run one",
+        runId: handleOne.runId,
+      }),
+    ]);
+    expect(readQueuedMessages(handleTwo.ipcDir)).toEqual([]);
+
+    getContainerAdapter().abort?.(handleOne);
+    expect(fs.existsSync(path.join(handleOne.ipcDir, "input", "_close"))).toBe(
+      true
+    );
+    expect(fs.existsSync(path.join(handleTwo.ipcDir, "input", "_close"))).toBe(
+      false
+    );
+
+    processes[0].emitOutput({ text: "one" });
+    processes[0].finish(0);
+    processes[1].emitOutput({ text: "two" });
+    processes[1].finish(0);
+    await Promise.all([runOne, runTwo]);
+  });
+
+  it("removes only its own ipc namespace when the run settles", async () => {
+    const root = tempDir();
+    const homeDir = path.join(root, "yoplai");
+    process.env.YOPLAI_HOME = homeDir;
+    const agent = createAgent(root);
+    setConfig(agent, root);
+    const { processes } = mockSpawn();
+    mockExecFile();
+    const params = createParams(agent);
+    const sibling = path.join(homeDir, "ipc", "cloud", "session-9-run-9");
+    fs.mkdirSync(path.join(sibling, "input"), { recursive: true });
+
+    const run = getContainerAdapter().run(params);
+    await tick();
+    const handle = vi.mocked(params.onSessionHandle!).mock
+      .calls[0][0] as ContainerSessionHandleShape;
+    expect(fs.existsSync(handle.ipcDir)).toBe(true);
+
+    processes[0].emitOutput({ text: "done" });
+    processes[0].finish(0);
+    await expect(run).resolves.toEqual({ text: "done", aborted: undefined });
+
+    expect(fs.existsSync(handle.ipcDir)).toBe(false);
+    expect(fs.existsSync(path.join(sibling, "input"))).toBe(true);
+  });
+
+  it("releases the ipc namespace when the run fails before spawning", async () => {
+    const root = tempDir();
+    const homeDir = path.join(root, "yoplai");
+    process.env.YOPLAI_HOME = homeDir;
+    const agent = createAgent(root);
+    setConfig(agent, root);
+    mockSpawn();
+    mockExecFile();
+    vi.mocked(ensureWorkspaceFiles).mockRejectedValueOnce(
+      new Error("workspace unavailable")
+    );
+
+    await expect(getContainerAdapter().run(createParams(agent))).rejects.toThrow(
+      "workspace unavailable"
+    );
+
+    // The run Promise's cleanup() never ran, so the pre-spawn path owns the
+    // release. Nothing may be left under the agent's ipc root.
+    const agentIpcRoot = path.join(homeDir, "ipc", "cloud");
+    expect(fs.existsSync(agentIpcRoot) ? fs.readdirSync(agentIpcRoot) : []).toEqual(
+      []
+    );
+  });
+
+  it("refuses to write into a settled run's removed namespace", async () => {
+    const root = tempDir();
+    process.env.YOPLAI_HOME = path.join(root, "yoplai");
+    const agent = createAgent(root);
+    setConfig(agent, root);
+    const { processes } = mockSpawn();
+    mockExecFile();
+    const params = createParams(agent);
+
+    const run = getContainerAdapter().run(params);
+    await tick();
+    const handle = vi.mocked(params.onSessionHandle!).mock
+      .calls[0][0] as ContainerSessionHandleShape;
+
+    processes[0].emitOutput({ text: "done" });
+    processes[0].finish(0);
+    await run;
+
+    // The gateway keeps advertising the session as streaming until history is
+    // flushed, so a late join can still reach this handle. It must be refused
+    // rather than recreating a namespace nothing is polling.
+    await expect(
+      getContainerAdapter().queueMessage?.(handle, "too late")
+    ).rejects.toSatisfy(isRunSettledError);
+    getContainerAdapter().abort?.(handle);
+    expect(fs.existsSync(handle.ipcDir)).toBe(false);
   });
 
   it("stops then kills on legacy hard runtime timeout", async () => {

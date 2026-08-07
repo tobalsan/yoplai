@@ -52,11 +52,13 @@ export async function runAgentRunner(
       input.ipcDir,
       async (message) => {
         writeStderr(
-          `[agent-runner] Received follow-up IPC message ${JSON.stringify(
-            message
-          )}\n`
+          `[agent-runner] Received follow-up IPC message for agent ${input.agentId} session ${input.sessionId} run ${input.runId ?? "unknown"}\n`
         );
-        await sendFollowUpMessage(message);
+        await sendFollowUpMessage(message, {
+          agentId: input.agentId,
+          sessionId: input.sessionId,
+          runId: input.runId,
+        });
       },
       () => {
         writeStderr("[agent-runner] Received close IPC sentinel\n");

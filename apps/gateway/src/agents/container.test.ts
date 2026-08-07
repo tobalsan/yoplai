@@ -14,10 +14,12 @@ import {
 import {
   buildContainerArgs,
   buildVolumeMounts,
+  cleanupOrphanIpcNamespaces,
   ensureAgentImage,
   filterSecretEnvVars,
   getAgentImageHash,
   getAgentDataDir,
+  getRunIpcDir,
   getSessionUploadsDir,
   validateMount,
   type ContainerVolumeMount,
@@ -179,10 +181,12 @@ describe("buildVolumeMounts", () => {
       ca: { source: "file" as const, path: caPath },
     };
 
+    const ipcDir = getRunIpcDir(homeDir, "cloud", "session-1", "run-1");
     const mounts = buildVolumeMounts(
       agent,
       globalSandbox,
       homeDir,
+      ipcDir,
       "user-1",
       onecliConfig
     );
@@ -207,7 +211,7 @@ describe("buildVolumeMounts", () => {
           readonly: false,
         },
         {
-          source: path.join(homeDir, "ipc", "cloud"),
+          source: ipcDir,
           target: "/workspace/ipc",
           readonly: false,
         },
@@ -234,7 +238,12 @@ describe("buildVolumeMounts", () => {
       model: { provider: "anthropic", model: "claude" },
       sandbox: { workspaceWritable: true },
     });
-    const mounts = buildVolumeMounts(agent, {}, path.join(root, "yoplai"));
+    const mounts = buildVolumeMounts(
+      agent,
+      {},
+      path.join(root, "yoplai"),
+      path.join(root, "yoplai", "ipc", "agent", "session-1-run-1")
+    );
 
     expect(mounts[0]).toEqual({
       source: workspace,
@@ -260,6 +269,7 @@ describe("buildVolumeMounts", () => {
       agent,
       {},
       homeDir,
+      getRunIpcDir(homeDir, "agent", "session-1", "run-1"),
       undefined,
       undefined,
       "session-1"
@@ -474,7 +484,12 @@ describe("buildContainerArgs", () => {
       model: { provider: "anthropic", model: "claude" },
       sandbox: {},
     });
-    const mounts = buildVolumeMounts(agent, {}, homeDir);
+    const mounts = buildVolumeMounts(
+      agent,
+      {},
+      homeDir,
+      getRunIpcDir(homeDir, "cloud", "session-1", "run-1")
+    );
     const args = buildContainerArgs(
       agent,
       {},
@@ -612,5 +627,30 @@ describe("validateMount", () => {
         allowlist
       )
     ).toThrow(/absolute/);
+  });
+});
+
+describe("cleanupOrphanIpcNamespaces", () => {
+  it("drops per-run namespaces left behind by a crashed gateway", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "yoplai-ipc-sweep-"));
+    const stale = getRunIpcDir(home, "cloud", "session-1", "run-1");
+    const legacy = path.join(home, "ipc", "cloud", "input");
+    fs.mkdirSync(path.join(stale, "input"), { recursive: true });
+    fs.mkdirSync(legacy, { recursive: true });
+    fs.writeFileSync(path.join(legacy, "1-old.json"), "{}");
+
+    cleanupOrphanIpcNamespaces(home);
+
+    expect(fs.existsSync(stale)).toBe(false);
+    expect(fs.existsSync(legacy)).toBe(false);
+    expect(fs.readdirSync(path.join(home, "ipc"))).toEqual([]);
+
+    fs.rmSync(home, { recursive: true, force: true });
+  });
+
+  it("is a no-op when no namespace has ever been claimed", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "yoplai-ipc-sweep-"));
+    expect(() => cleanupOrphanIpcNamespaces(home)).not.toThrow();
+    fs.rmSync(home, { recursive: true, force: true });
   });
 });

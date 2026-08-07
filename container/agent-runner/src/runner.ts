@@ -13,6 +13,7 @@ import {
   type ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
 import {
+  ContainerDeliveryEnvelopeSchema,
   ContainerFileOutputRequestSchema,
   claimAgentToolName,
   renderAgentContext,
@@ -35,16 +36,69 @@ const LARGE_TOOL_RESULT_PREVIEW_LENGTH = 2_000;
 let activeSession: AgentSession | undefined;
 let pendingFollowUps: string[] = [];
 
-export async function sendFollowUpMessage(message: unknown): Promise<void> {
+export type DeliveryOwner = Pick<
+  ContainerInput,
+  "agentId" | "sessionId" | "runId"
+>;
+
+export type DeliveryDecision =
+  | { accepted: true; text: string; identified: boolean }
+  | { accepted: false; reason: string };
+
+/**
+ * Decides whether a queued IPC file was addressed to this container. Envelopes
+ * carrying a different agent/session/run belong to another live container and
+ * must never be steered into this session.
+ */
+export function resolveIpcDelivery(
+  message: unknown,
+  owner?: DeliveryOwner
+): DeliveryDecision {
+  const envelope = ContainerDeliveryEnvelopeSchema.safeParse(message);
+  if (envelope.success) {
+    const { agentId, sessionId, runId, message: text } = envelope.data;
+    if (owner) {
+      if (agentId !== owner.agentId) {
+        return { accepted: false, reason: "agent_mismatch" };
+      }
+      if (sessionId !== owner.sessionId) {
+        return { accepted: false, reason: "session_mismatch" };
+      }
+      if (owner.runId && runId !== owner.runId) {
+        return { accepted: false, reason: "run_mismatch" };
+      }
+    }
+    return { accepted: true, text, identified: true };
+  }
+
   const text = getIpcMessageText(message);
-  if (!text) return;
+  if (!text) return { accepted: false, reason: "unreadable" };
+  return { accepted: true, text, identified: false };
+}
+
+export async function sendFollowUpMessage(
+  message: unknown,
+  owner?: DeliveryOwner
+): Promise<void> {
+  const decision = resolveIpcDelivery(message, owner);
+  if (!decision.accepted) {
+    console.error(
+      `[agent-runner] Suppressed IPC delivery (${decision.reason}) for agent ${owner?.agentId ?? "unknown"} session ${owner?.sessionId ?? "unknown"} run ${owner?.runId ?? "unknown"}`
+    );
+    return;
+  }
+  if (!decision.identified) {
+    console.error(
+      `[agent-runner] Delivering IPC message without identity (${decision.text.length} chars)`
+    );
+  }
 
   if (!activeSession) {
-    pendingFollowUps.push(text);
+    pendingFollowUps.push(decision.text);
     return;
   }
 
-  await activeSession.sendUserMessage(text, { deliverAs: "steer" });
+  await activeSession.sendUserMessage(decision.text, { deliverAs: "steer" });
 }
 
 export function abortActiveAgent(): void {

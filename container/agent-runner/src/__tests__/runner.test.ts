@@ -442,6 +442,138 @@ describe("Pi runner", () => {
     await fs.rm(tempDir, { recursive: true, force: true });
   });
 
+  it("delivers a matching envelope and suppresses ones addressed elsewhere", async () => {
+    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-runner-"));
+    const workspaceDir = path.join(tempDir, "workspace");
+    const sessionDir = path.join(tempDir, "sessions");
+    await fs.mkdir(workspaceDir, { recursive: true });
+    await fs.mkdir(sessionDir, { recursive: true });
+
+    const owner = {
+      agentId: "agent-1",
+      sessionId: "session-1",
+      runId: "run-1",
+    };
+    const envelope = (
+      overrides: Partial<typeof owner> & { message: string }
+    ) => ({
+      timestamp: 1,
+      agentId: owner.agentId,
+      sessionId: owner.sessionId,
+      runId: owner.runId,
+      ...overrides,
+    });
+
+    piMock.session.prompt.mockImplementationOnce(async () => {
+      await sendFollowUpMessage(
+        envelope({ message: "other session", sessionId: "session-2" }),
+        owner
+      );
+      await sendFollowUpMessage(
+        envelope({ message: "other run", runId: "run-2" }),
+        owner
+      );
+      await sendFollowUpMessage(
+        envelope({ message: "other agent", agentId: "agent-2" }),
+        owner
+      );
+      await sendFollowUpMessage(envelope({ message: "for me" }), owner);
+      piMock.session.messages.push({
+        role: "assistant",
+        content: [{ type: "text", text: "done" }],
+      });
+    });
+
+    await runAgent(createInput({ workspaceDir, sessionDir, runId: "run-1" }));
+
+    expect(piMock.session.sendUserMessage).toHaveBeenCalledTimes(1);
+    expect(piMock.session.sendUserMessage).toHaveBeenCalledWith("for me", {
+      deliverAs: "steer",
+    });
+
+    await fs.rm(tempDir, { recursive: true, force: true });
+  });
+
+  it("still delivers legacy identity-free IPC messages", async () => {
+    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-runner-"));
+    const workspaceDir = path.join(tempDir, "workspace");
+    const sessionDir = path.join(tempDir, "sessions");
+    await fs.mkdir(workspaceDir, { recursive: true });
+    await fs.mkdir(sessionDir, { recursive: true });
+
+    piMock.session.prompt.mockImplementationOnce(async () => {
+      await sendFollowUpMessage("bare string", {
+        agentId: "agent-1",
+        sessionId: "session-1",
+        runId: "run-1",
+      });
+      piMock.session.messages.push({
+        role: "assistant",
+        content: [{ type: "text", text: "done" }],
+      });
+    });
+
+    await runAgent(createInput({ workspaceDir, sessionDir, runId: "run-1" }));
+
+    expect(piMock.session.sendUserMessage).toHaveBeenCalledWith("bare string", {
+      deliverAs: "steer",
+    });
+
+    await fs.rm(tempDir, { recursive: true, force: true });
+  });
+
+  it("delivers to a container launched without a runId but still rejects other sessions", async () => {
+    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-runner-"));
+    const workspaceDir = path.join(tempDir, "workspace");
+    const sessionDir = path.join(tempDir, "sessions");
+    await fs.mkdir(workspaceDir, { recursive: true });
+    await fs.mkdir(sessionDir, { recursive: true });
+
+    // Containers from the previous image carry no runId, so ownership falls
+    // back to agent + session rather than rejecting every follow-up.
+    const legacyOwner = {
+      agentId: "agent-1",
+      sessionId: "session-1",
+      runId: undefined,
+    };
+
+    piMock.session.prompt.mockImplementationOnce(async () => {
+      await sendFollowUpMessage(
+        {
+          message: "other session",
+          timestamp: 1,
+          agentId: "agent-1",
+          sessionId: "session-2",
+          runId: "run-9",
+        },
+        legacyOwner
+      );
+      await sendFollowUpMessage(
+        {
+          message: "for me",
+          timestamp: 1,
+          agentId: "agent-1",
+          sessionId: "session-1",
+          runId: "run-9",
+        },
+        legacyOwner
+      );
+      piMock.session.messages.push({
+        role: "assistant",
+        content: [{ type: "text", text: "done" }],
+      });
+    });
+
+    await runAgent(createInput({ workspaceDir, sessionDir }));
+
+    expect(piMock.session.sendUserMessage).toHaveBeenCalledTimes(1);
+    expect(piMock.session.sendUserMessage).toHaveBeenCalledWith("for me", {
+      deliverAs: "steer",
+    });
+
+    await fs.rm(tempDir, { recursive: true, force: true });
+  });
+
   it("queues IPC messages received before the Pi session is ready", async () => {
     const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-runner-"));
     const workspaceDir = path.join(tempDir, "workspace");
@@ -615,10 +747,12 @@ function createInput(paths: {
   extensionTools?: ContainerInput["extensionTools"];
   context?: ContainerInput["context"];
   attachments?: ContainerInput["attachments"];
+  runId?: string;
 }): ContainerInput {
   return {
     agentId: "agent-1",
     sessionId: "session-1",
+    runId: paths.runId,
     message: "hello",
     workspaceDir: paths.workspaceDir,
     sessionDir: paths.sessionDir,

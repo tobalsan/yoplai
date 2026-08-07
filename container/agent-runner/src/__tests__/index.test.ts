@@ -153,6 +153,158 @@ describe("IPC poller", () => {
   });
 });
 
+describe("concurrent same-agent containers", () => {
+  it("delivers one queued follow-up to exactly one live container", async () => {
+    const home = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-ipc-home-"));
+    // Reproduce the incident shape: BOTH live containers for agent-1 poll the
+    // SAME directory (the pre-fix `ipc/<agentId>` layout), so only the
+    // envelope's ownership check can keep the follow-up out of the wrong run.
+    const sharedIpc = path.join(home, "ipc", "agent-1");
+    await fs.mkdir(path.join(sharedIpc, "input"), { recursive: true });
+
+    const suppressed = vi.spyOn(console, "error").mockImplementation(() => {});
+    const stderrA: string[] = [];
+    const stderrB: string[] = [];
+    let releaseA: (() => void) | undefined;
+    let releaseB: (() => void) | undefined;
+    const holdA = new Promise<void>((resolve) => {
+      releaseA = resolve;
+    });
+    const holdB = new Promise<void>((resolve) => {
+      releaseB = resolve;
+    });
+
+    const runA = runAgentRunner({
+      readStdin: async () =>
+        JSON.stringify({
+          ...input,
+          sessionId: "session-1",
+          runId: "run-1",
+          ipcDir: sharedIpc,
+        }),
+      writeStdout: () => undefined,
+      writeStderr: (chunk) => stderrA.push(chunk),
+      runAgent: async () => {
+        await holdA;
+        return { text: "" };
+      },
+    });
+    const runB = runAgentRunner({
+      readStdin: async () =>
+        JSON.stringify({
+          ...input,
+          sessionId: "session-2",
+          runId: "run-2",
+          ipcDir: sharedIpc,
+        }),
+      writeStdout: () => undefined,
+      writeStderr: (chunk) => stderrB.push(chunk),
+      runAgent: async () => {
+        await holdB;
+        return { text: "" };
+      },
+    });
+
+    try {
+      // One follow-up, addressed to container A's run.
+      await fs.writeFile(
+        path.join(sharedIpc, "input", `${Date.now()}-follow-up.json`),
+        JSON.stringify({
+          message: "keep going",
+          timestamp: Date.now(),
+          agentId: "agent-1",
+          sessionId: "session-1",
+          runId: "run-1",
+        })
+      );
+
+      await waitFor(() =>
+        stderrA.join("").includes("Received follow-up IPC message")
+      );
+      await waitFor(() =>
+        stderrB.join("").includes("Received follow-up IPC message")
+      );
+      await new Promise((resolve) => setTimeout(resolve, 600));
+
+      // Both pollers read the file — that is the hazard the ownership check
+      // exists for. Exactly one of them refuses it, so exactly one steers it.
+      const suppressions = suppressed.mock.calls
+        .map(([message]) => String(message))
+        .filter((message) => message.includes("Suppressed IPC delivery"));
+      expect(suppressions).toHaveLength(1);
+      expect(suppressions[0]).toContain("session_mismatch");
+      expect(suppressions[0]).toContain("session session-2");
+      // Follow-up text never reaches stderr, on either container.
+      expect(stderrA.join("")).not.toContain("keep going");
+      expect(stderrB.join("")).not.toContain("keep going");
+    } finally {
+      releaseA?.();
+      releaseB?.();
+      await Promise.all([runA, runB]);
+      suppressed.mockRestore();
+      await fs.rm(home, { recursive: true, force: true });
+    }
+  });
+
+  it("does not steer a misaddressed envelope into the session", async () => {
+    const home = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-ipc-home-"));
+    const ipcA = path.join(home, "ipc", "agent-1", "session-1-run-1");
+    await fs.mkdir(path.join(ipcA, "input"), { recursive: true });
+
+    const suppressed = vi.spyOn(console, "error").mockImplementation(() => {});
+    const stderrA: string[] = [];
+    let releaseA: (() => void) | undefined;
+    const holdA = new Promise<void>((resolve) => {
+      releaseA = resolve;
+    });
+
+    const runA = runAgentRunner({
+      readStdin: async () =>
+        JSON.stringify({
+          ...input,
+          sessionId: "session-1",
+          runId: "run-1",
+          ipcDir: ipcA,
+        }),
+      writeStdout: () => undefined,
+      writeStderr: (chunk) => stderrA.push(chunk),
+      runAgent: async () => {
+        await holdA;
+        return { text: "" };
+      },
+    });
+
+    try {
+      await fs.writeFile(
+        path.join(ipcA, "input", `${Date.now()}-stray.json`),
+        JSON.stringify({
+          message: "not for you",
+          timestamp: Date.now(),
+          agentId: "agent-1",
+          sessionId: "session-9",
+          runId: "run-9",
+        })
+      );
+
+      await waitFor(() =>
+        suppressed.mock.calls.some(([message]) =>
+          String(message).includes("Suppressed IPC delivery")
+        )
+      );
+      expect(
+        suppressed.mock.calls.some(([message]) =>
+          String(message).includes("session_mismatch")
+        )
+      ).toBe(true);
+    } finally {
+      releaseA?.();
+      await runA;
+      suppressed.mockRestore();
+      await fs.rm(home, { recursive: true, force: true });
+    }
+  });
+});
+
 describe("gateway client", () => {
   it("posts tool calls to the internal tools endpoint", async () => {
     const fetchMock = vi.fn<FetchMock>(async () =>
