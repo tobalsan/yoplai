@@ -2,7 +2,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { EventEmitter } from "node:events";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import XLSX from "xlsx";
 
 const children: EventEmitter[] = [];
@@ -30,6 +30,11 @@ const XLSX_MIME =
   "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
 
 describe("extractText", () => {
+  beforeEach(() => {
+    children.length = 0;
+    getPdfText.mockReset();
+  });
+
   it("keeps usable text-layer pages on the no-OCR fast path", async () => {
     getPdfText.mockResolvedValueOnce({
       total: 1,
@@ -37,6 +42,18 @@ describe("extractText", () => {
       pages: [{ num: 1, text: "Gateway text layer with enough content to skip OCR extraction." }],
     });
     await expect(extractPdfBuffer(Buffer.from("fixture"))).resolves.toBe("Gateway text layer with enough content to skip OCR extraction.");
+    expect(children).toHaveLength(0);
+  });
+
+  it("rejects oversized PDFs before parsing or OCR", async () => {
+    await expect(extractPdfBuffer(Buffer.alloc(25 * 1024 * 1024 + 1))).rejects.toThrow("25MB extraction limit");
+    expect(getPdfText).not.toHaveBeenCalled();
+    expect(children).toHaveLength(0);
+  });
+
+  it("rejects PDFs over the page limit before OCR", async () => {
+    getPdfText.mockResolvedValueOnce({ total: 31, text: "", pages: [] });
+    await expect(extractPdfBuffer(Buffer.from("fixture"))).rejects.toThrow("31 pages; limit is 30");
     expect(children).toHaveLength(0);
   });
 
