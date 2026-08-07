@@ -18,7 +18,10 @@ function buildHookContext(
   return {
     config,
     env: resolveAgentEnv(agent, config),
-    resolveOAuth: (agent: AgentConfig, requirement: OAuthRequirement): Promise<ResolvedOAuth> =>
+    resolveOAuth: (
+      agent: AgentConfig,
+      requirement: OAuthRequirement
+    ): Promise<ResolvedOAuth> =>
       getOAuthService().resolveToken(agent.id, requirement),
   };
 }
@@ -169,7 +172,11 @@ export class ExtensionRuntime {
             (await extension.getAgentTools?.(agent, hookContext)) ?? [];
           return tools.map((tool) => ({ ...tool, extensionId: extension.id }));
         } catch (error) {
-          console.warn("Skipping extension tools", { extensionId: extension.id, agentId: agent.id, fields: extensionConfigFieldNames(error) });
+          console.warn("Skipping extension tools", {
+            extensionId: extension.id,
+            agentId: agent.id,
+            fields: extensionConfigFieldNames(error),
+          });
           return [];
         }
       })
@@ -200,14 +207,21 @@ export class ExtensionRuntime {
     toolName: string,
     args: unknown,
     config: GatewayConfig,
-    sessionId?: string
+    sessionId?: string,
+    userId?: string
   ): Promise<{ found: boolean; result?: unknown }> {
     const tool = await this.getTool(agent, toolName, config);
     if (!tool) return { found: false };
     const env = resolveAgentEnv(agent, config);
     return {
       found: true,
-      result: await tool.execute(args, { agent, config, env, sessionId }),
+      result: await tool.execute(args, {
+        agent,
+        config,
+        env,
+        sessionId,
+        userId,
+      }),
     };
   }
 
@@ -226,7 +240,11 @@ export class ExtensionRuntime {
           if (!contribution) return [];
           return Array.isArray(contribution) ? contribution : [contribution];
         } catch (error) {
-          console.warn("Skipping extension prompt", { extensionId: extension.id, agentId: agent.id, fields: extensionConfigFieldNames(error) });
+          console.warn("Skipping extension prompt", {
+            extensionId: extension.id,
+            agentId: agent.id,
+            fields: extensionConfigFieldNames(error),
+          });
           return [];
         }
       })
@@ -243,12 +261,15 @@ export class ExtensionRuntime {
   }
 
   getCapabilities(): ExtensionCapabilities {
+    const visibleExtensions = this.#extensions.filter(
+      (extension) => extension.id !== "taskLifecycle"
+    );
     return {
       extensions: Object.fromEntries(
-        this.#extensions.map((extension) => [extension.id, true])
+        visibleExtensions.map((extension) => [extension.id, true])
       ),
       capabilities: Object.fromEntries(
-        this.#extensions.map((extension) => [
+        visibleExtensions.map((extension) => [
           extension.id,
           extension.capabilities(),
         ])

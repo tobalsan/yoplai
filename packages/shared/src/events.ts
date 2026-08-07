@@ -1,6 +1,7 @@
 // Event payload types and event bus shared between gateway and extensions.
 
 import { EventEmitter } from "node:events";
+import { sanitizeForStorage } from "./sanitize.js";
 import type { StreamEvent, HistoryEvent, AgentTraceContext } from "./types.js";
 import type { LeadSessionChangedEvent } from "./lead-sessions/types.js";
 
@@ -77,7 +78,7 @@ export class AgentEventBus extends EventEmitter {
   }
 
   emitStreamEvent(event: AgentStreamEvent) {
-    this.emit("stream", event);
+    this.emit("stream", sanitizeForStorage(event));
   }
 
   onStreamEvent(handler: (event: AgentStreamEvent) => void) {
@@ -86,7 +87,7 @@ export class AgentEventBus extends EventEmitter {
   }
 
   emitHistoryEvent(event: AgentHistoryEvent) {
-    this.emit("history", event);
+    this.emit("history", sanitizeForStorage(event));
   }
 
   onHistoryEvent(handler: (event: AgentHistoryEvent) => void) {

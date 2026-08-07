@@ -9,9 +9,7 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ## [Unreleased]
 
-### Fixed
-
-- The web chat compaction action now prevents duplicate in-flight requests, shows progress, times out stalled requests, and permits retry after failure.
+- Durable, session-scoped lifecycle tools for agents to adopt, checkpoint, pause, resume, and complete work.
 
 ### Added
 
@@ -30,6 +28,8 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Fixed
 
+- The web chat compaction action now prevents duplicate in-flight requests, shows progress, times out stalled requests, and permits retry after failure.
+- Gateway observability and Pi runtime session files now redact credentials and signed URL authorization after authorized execution.
 - Follow-up messages and stop requests now reach only the run they were sent to: each container run gets its own IPC namespace and every queued message carries its target agent, session, and run, so a second chat with the same agent can no longer swallow another chat's follow-up or be interrupted by another chat's stop.
 - A follow-up sent in the moment a run is finishing is now held for the next run instead of being silently dropped, and the reply says "queued for next run" when that happens.
 - Slack no longer answers the same message twice: a Slack retry, or the overlapping message and mention deliveries of one @-mention, now produce a single agent turn. Duplicate suppression is per bot, so two Slack apps in the same channel each still receive the message, and a message the bot ignores no longer silences the mention that would have been answered.

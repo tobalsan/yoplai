@@ -3,6 +3,7 @@ import path from "node:path";
 import type { FileAttachment } from "@yoplai/shared";
 import { extractText } from "../media/extract.js";
 import { getMediaInboundDir } from "../media/metadata.js";
+import { logWarn } from "../logging.js";
 
 export function isImageAttachment(attachment: FileAttachment): boolean {
   return attachment.mimeType.startsWith("image/");
@@ -60,9 +61,10 @@ export async function buildDocumentAttachmentContext(
       text = await extractText(normalized.path, attachment.mimeType);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      console.warn(
-        `Failed to extract attachment text from ${getAttachmentFilename(attachment)}: ${message}`
-      );
+      logWarn("Failed to extract attachment text", {
+        filename: getAttachmentFilename(attachment),
+        error: message,
+      });
       text = null;
     }
     const content = text?.trim();

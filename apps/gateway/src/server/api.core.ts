@@ -231,7 +231,9 @@ api.get("/branding/logo", async (c) => {
 
 api.get("/capabilities", async (c) => {
   const extensions = Object.fromEntries(
-    getLoadedExtensions().map((extension) => [extension.id, true])
+    getLoadedExtensions()
+      .filter((extension) => extension.id !== "taskLifecycle")
+      .map((extension) => [extension.id, true])
   );
   const isMultiUserEnabled = isExtensionLoaded("multiUser");
   const authContext = isMultiUserEnabled

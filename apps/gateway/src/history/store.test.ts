@@ -25,14 +25,14 @@ vi.mock("../sessions/store.js", () => ({
 }));
 
 vi.mock("../sessions/files.js", () => ({
-  resolveSessionDataFile: vi.fn(async ({ dir, agentId, sessionId, createdAt }) =>
-    `${dir}/${createdAt ?? 0 ? "1970-01-01T00-00-00-000Z" : "1970-01-01T00-00-00-000Z"}_${agentId}-${sessionId}.jsonl`
+  resolveSessionDataFile: vi.fn(
+    async ({ dir, agentId, sessionId, createdAt }) =>
+      `${dir}/${(createdAt ?? 0) ? "1970-01-01T00-00-00-000Z" : "1970-01-01T00-00-00-000Z"}_${agentId}-${sessionId}.jsonl`
   ),
   timestampedSessionFileName: vi.fn(
     () => "1970-01-01T00-00-00-000Z_agent-1-session-1.jsonl"
   ),
 }));
-
 
 describe("history store isolation", () => {
   beforeEach(() => {
@@ -67,6 +67,20 @@ describe("history store isolation", () => {
       "/tmp/yoplai-test/sessions/users/user-123/history/1970-01-01T00-00-00-000Z_agent-1-session-1.jsonl",
       expect.any(String),
       "utf-8"
+    );
+  });
+
+  it("redacts sensitive session metadata before persistence", async () => {
+    const { appendSessionMeta } = await import("./store.js");
+    const canary = "canary-private-value";
+
+    await appendSessionMeta("agent-1", "session-1", "tool", {
+      authorization: `Bearer ${canary}`,
+      output: `https://files.example.test/report?X-Amz-Signature=${canary}`,
+    });
+
+    expect(String(vi.mocked(fs.appendFile).mock.calls[0]?.[1])).not.toContain(
+      canary
     );
   });
 

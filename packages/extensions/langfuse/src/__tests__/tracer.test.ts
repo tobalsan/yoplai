@@ -322,6 +322,45 @@ describe("LangfuseTracer", () => {
     await tracer.stop();
   });
 
+  it("redacts serialized tool payloads before Langfuse export", async () => {
+    const tracer = startTracer();
+    const canary = "canary-private-value";
+
+    await tracer.handleStreamEvent(streamEvent({ type: "text", data: "running" }));
+    tracer.handleHistoryEvent(
+      historyEvent({
+        type: "tool_call",
+        id: "tool-1",
+        name: "download",
+        args: {
+          url: `https://files.example.test/report.csv?X-Amz-Signature=${canary}`,
+          authorization: `Bearer ${canary}`,
+        },
+        timestamp: 1,
+      })
+    );
+    tracer.handleHistoryEvent(
+      historyEvent({
+        type: "tool_result",
+        id: "tool-1",
+        name: "download",
+        content: `Authorization: Bearer ${canary}-result`,
+        details: {
+          diff: `https://files.example.test/report.csv?X-Amz-Credential=${canary}-details`,
+        },
+        isError: true,
+        timestamp: 2,
+      })
+    );
+    await tracer.handleStreamEvent(
+      streamEvent({ type: "error", message: `access_token=${canary}-error` })
+    );
+
+    expect(JSON.stringify(langfuseMock.generations)).not.toContain(canary);
+    expect(JSON.stringify(langfuseMock.spans)).not.toContain(canary);
+    await tracer.stop();
+  });
+
   it("stores meta model and usage on the generation", async () => {
     const tracer = startTracer();
 

@@ -74,10 +74,12 @@ describe("extension registry", () => {
     const result = await loadExtensions(config);
 
     expect(result.map((extension) => extension.id)).toEqual([
+      "taskLifecycle",
       "scheduler",
       "heartbeat",
     ]);
     expect(getLoadedExtensions().map((extension) => extension.id)).toEqual([
+      "taskLifecycle",
       "scheduler",
       "heartbeat",
     ]);
@@ -141,7 +143,7 @@ describe("extension registry", () => {
     const result = await loadExtensions(config);
 
     // scheduler and heartbeat must be opted in via config — only multiUser loads here
-    expect(result.map((extension) => extension.id)).toEqual(["multiUser"]);
+    expect(result.map((extension) => extension.id)).toEqual(["taskLifecycle", "multiUser"]);
     expect(isExtensionLoaded("multiUser")).toBe(true);
     expect(isExtensionLoaded("scheduler")).toBe(false);
     expect(isExtensionLoaded("heartbeat")).toBe(false);
@@ -164,7 +166,7 @@ describe("extension registry", () => {
 
     const result = await loadExtensions(config);
 
-    expect(result.map((extension) => extension.id)).toEqual(["heartbeat"]);
+    expect(result.map((extension) => extension.id)).toEqual(["taskLifecycle", "heartbeat"]);
     expect(isExtensionLoaded("heartbeat")).toBe(true);
   });
 
@@ -263,7 +265,7 @@ describe("extension registry", () => {
 
     const result = await loadExtensions(config);
 
-    expect(result.map((extension) => extension.id)).toEqual(["scheduler"]);
+    expect(result.map((extension) => extension.id)).toEqual(["taskLifecycle", "scheduler"]);
     expect(isExtensionLoaded("scheduler")).toBe(true);
   });
 
@@ -287,6 +289,7 @@ describe("extension registry", () => {
     const result = await loadExtensions(config);
 
     expect(result.map((extension) => extension.id)).toEqual([
+      "taskLifecycle",
       "scheduler",
       "heartbeat",
     ]);
@@ -310,7 +313,7 @@ describe("extension registry", () => {
 
     const result = await loadExtensions(config);
 
-    expect(result.map((extension) => extension.id)).toEqual(["heartbeat"]);
+    expect(result.map((extension) => extension.id)).toEqual(["taskLifecycle", "heartbeat"]);
   });
 
   it("returns known extension route metadata without loading extensions", () => {
