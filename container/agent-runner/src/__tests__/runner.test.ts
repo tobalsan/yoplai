@@ -95,6 +95,24 @@ afterEach(() => {
 });
 
 describe("Pi runner", () => {
+  it("publishes and cleans up the runtime session when setup fails", async () => {
+    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-runner-"));
+    const workspaceDir = path.join(tempDir, "workspace");
+    const sessionDir = path.join(tempDir, "sessions");
+    await fs.mkdir(workspaceDir, { recursive: true });
+    await fs.mkdir(sessionDir, { recursive: true });
+    piMock.resourceReload.mockRejectedValueOnce(new Error("setup failed"));
+
+    await expect(
+      runAgent(createInput({ workspaceDir, sessionDir }))
+    ).rejects.toThrow("setup failed");
+
+    await expect(
+      fs.readFile(path.join(sessionDir, "session-1.jsonl"), "utf8")
+    ).resolves.toBe("");
+    await fs.rm(tempDir, { recursive: true, force: true });
+  });
+
   it("runs the Pi session, returns history events, and streams events", async () => {
     const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-runner-"));
     const workspaceDir = path.join(tempDir, "workspace");
@@ -223,20 +241,22 @@ describe("Pi runner", () => {
     );
 
     const createAgentSessionCalls = piMock.createAgentSession.mock
-      .calls as unknown as Array<[
-      {
-        tools: string[];
-        customTools: Array<{
-          name: string;
-          execute: (_id: string, args: unknown) => Promise<unknown>;
-        }>;
-        resourceLoader: {
-          options?: {
-            appendSystemPrompt?: string[];
+      .calls as unknown as Array<
+      [
+        {
+          tools: string[];
+          customTools: Array<{
+            name: string;
+            execute: (_id: string, args: unknown) => Promise<unknown>;
+          }>;
+          resourceLoader: {
+            options?: {
+              appendSystemPrompt?: string[];
+            };
           };
-        };
-      },
-    ]>;
+        },
+      ]
+    >;
     const createAgentSessionArgs = createAgentSessionCalls[0]?.[0];
     if (!createAgentSessionArgs) {
       throw new Error("createAgentSession was not called");
@@ -297,15 +317,17 @@ describe("Pi runner", () => {
       })
     );
 
-    expect(createAgentSessionArgs.resourceLoader.options?.appendSystemPrompt).toEqual(
+    expect(
+      createAgentSessionArgs.resourceLoader.options?.appendSystemPrompt
+    ).toEqual(
       expect.arrayContaining([
         expect.stringContaining("isolated Yoplai container"),
         "Use extension tools first.",
       ])
     );
-    expect(
-      createAgentSessionArgs.resourceLoader.options
-    ).not.toHaveProperty("systemPromptOverride");
+    expect(createAgentSessionArgs.resourceLoader.options).not.toHaveProperty(
+      "systemPromptOverride"
+    );
 
     await fs.rm(tempDir, { recursive: true, force: true });
   });
@@ -346,20 +368,22 @@ describe("Pi runner", () => {
     );
 
     const createAgentSessionCalls = piMock.createAgentSession.mock
-      .calls as unknown as Array<[
-      {
-        customTools: Array<{
-          name: string;
-          execute: (
-            id: string,
-            args: unknown
-          ) => Promise<{
-            content: Array<{ type: "text"; text: string }>;
-            details: unknown;
+      .calls as unknown as Array<
+      [
+        {
+          customTools: Array<{
+            name: string;
+            execute: (
+              id: string,
+              args: unknown
+            ) => Promise<{
+              content: Array<{ type: "text"; text: string }>;
+              details: unknown;
+            }>;
           }>;
-        }>;
-      },
-    ]>;
+        },
+      ]
+    >;
     const tool = createAgentSessionCalls[0]?.[0].customTools.find(
       (candidate) => candidate.name === "gsheets_read_sheet"
     );
@@ -395,7 +419,8 @@ describe("Pi runner", () => {
       streamedEvents.push(event);
     });
 
-    const createAgentSessionArgs = piMock.createAgentSession.mock.calls[0]?.[0] as
+    const createAgentSessionArgs = piMock.createAgentSession.mock
+      .calls[0]?.[0] as
       | {
           customTools: Array<{
             name: string;
@@ -599,7 +624,7 @@ describe("Pi runner", () => {
     await fs.rm(tempDir, { recursive: true, force: true });
   });
 
-  it("writes the session file directly under sessionDir as .jsonl", async () => {
+  it("publishes the Pi session under sessionDir after the runtime ends", async () => {
     const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-runner-"));
     const workspaceDir = path.join(tempDir, "workspace");
     const sessionDir = path.join(tempDir, "sessions");
@@ -615,10 +640,13 @@ describe("Pi runner", () => {
 
     await runAgent(createInput({ workspaceDir, sessionDir }));
 
-    expect(piMock.sessionManagerOpen).toHaveBeenCalledWith(
+    expect(piMock.sessionManagerOpen).not.toHaveBeenCalledWith(
       path.join(sessionDir, "session-1.jsonl"),
       sessionDir
     );
+    await expect(
+      fs.readFile(path.join(sessionDir, "session-1.jsonl"), "utf8")
+    ).resolves.toBe("");
 
     await fs.rm(tempDir, { recursive: true, force: true });
   });
@@ -700,7 +728,8 @@ describe("Pi runner", () => {
       })
     );
 
-    const createAgentSessionArgs = piMock.createAgentSession.mock.calls[0]?.[0] as
+    const createAgentSessionArgs = piMock.createAgentSession.mock
+      .calls[0]?.[0] as
       | {
           resourceLoader: {
             options?: {
