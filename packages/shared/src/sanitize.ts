@@ -61,11 +61,25 @@ function sanitize(value: unknown, seen: WeakMap<object, unknown>): unknown {
   if (!value || typeof value !== "object") return value;
   if (seen.has(value)) return seen.get(value);
   if (value instanceof Error) {
-    const copy = {
-      name: value.name,
-      message: sanitizeSensitiveText(value.message),
-    };
+    const copy = new Error(sanitizeSensitiveText(value.message));
+    copy.name = value.name;
+    if (value.stack) copy.stack = sanitizeSensitiveText(value.stack);
     seen.set(value, copy);
+    const error = value as Error & { cause?: unknown; errors?: unknown[] };
+    if (error.cause !== undefined) {
+      copy.cause = sanitize(error.cause, seen);
+    }
+    if (error.errors) {
+      Object.defineProperty(copy, "errors", {
+        value: error.errors.map((item) => sanitize(item, seen)),
+      });
+    }
+    for (const [key, item] of Object.entries(value)) {
+      if (key === "errors" && error.errors) continue;
+      (copy as unknown as Record<string, unknown>)[key] = isSensitiveKey(key)
+        ? REDACTED
+        : sanitize(item, seen);
+    }
     return copy;
   }
   if (Array.isArray(value)) {

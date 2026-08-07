@@ -46,6 +46,34 @@ describe("sanitizeForStorage", () => {
     expect(sanitized).toContain("AWS_SECRET_ACCESS_KEY=[REDACTED]");
   });
 
+  it("preserves error diagnostics without retaining credentials", () => {
+    const canary = "canary-private-value";
+    const error = Object.assign(
+      new Error(`request failed: Authorization: Bearer ${canary}`, {
+        cause: { authorization: `Bearer ${canary}` },
+      }),
+      { status: 401, details: `token=${canary}` }
+    );
+    const sanitized = sanitizeForStorage(error);
+
+    expect(sanitized).toBeInstanceOf(Error);
+    expect(sanitized.message).not.toContain(canary);
+    expect(sanitized.stack).not.toContain(canary);
+    expect(sanitized.cause).toEqual({ authorization: "[REDACTED]" });
+    expect(sanitized).toMatchObject({ status: 401, details: "token=[REDACTED]" });
+  });
+
+  it("sanitizes enumerable aggregate errors", () => {
+    const canary = "canary-private-value";
+    const error = Object.assign(new Error("multiple failures"), {
+      errors: [new Error(`Authorization: Bearer ${canary}`)],
+    });
+
+    expect(() => sanitizeForStorage(error)).not.toThrow();
+    const sanitized = sanitizeForStorage(error) as Error & { errors: Error[] };
+    expect(sanitized.errors[0]?.message).not.toContain(canary);
+  });
+
   it("sanitizes event-bus exports", () => {
     const canary = "canary-private-value";
     const bus = new AgentEventBus();
