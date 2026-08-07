@@ -111,6 +111,24 @@ describe("extractText", () => {
     await expect(second).rejects.toThrow("exited before completing");
   });
 
+  it("caps OCR concurrency at two workers and rejects a full queue", async () => {
+    vi.useFakeTimers();
+    try {
+      const jobs = Array.from({ length: 10 }, () => runPdfOcr(Buffer.alloc(1), [1]));
+      await vi.waitFor(() => expect(children).toHaveLength(2));
+      await expect(runPdfOcr(Buffer.alloc(1), [1])).rejects.toThrow("queue is full");
+      const queued = jobs.slice(2).map((job) => expect(job).rejects.toThrow("queue timed out"));
+      await vi.advanceTimersByTimeAsync(10_000);
+      await Promise.all(queued);
+      children[0].emit("exit", 0);
+      children[1].emit("exit", 0);
+      await expect(jobs[0]).rejects.toThrow("exited before completing");
+      await expect(jobs[1]).rejects.toThrow("exited before completing");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("releases a timed-out OCR slot when a child never exits", async () => {
     vi.useFakeTimers();
     const pending = runPdfOcr(Buffer.alloc(1), [1]);
