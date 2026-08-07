@@ -83,6 +83,24 @@ describe("extractText", () => {
     await expect(extraction).resolves.toBe(`${textLayer}\n\nOCR second page`);
   });
 
+  it("rejects OCR output beyond the configured limit", async () => {
+    getPdfText.mockResolvedValueOnce({ total: 1, text: "", pages: [{ num: 1, text: "" }] });
+    const extraction = extractPdfBuffer(Buffer.from("fixture"));
+    await vi.waitFor(() => expect(children).toHaveLength(1));
+    children[0].emit("message", { pages: [{ number: 1, text: "x".repeat(250_001) }] });
+    children[0].emit("exit", 0);
+    await expect(extraction).rejects.toThrow("PDF text exceeds output limit");
+  });
+
+  it("terminates an OCR child that exceeds the RSS limit", async () => {
+    const extraction = runPdfOcr(Buffer.alloc(1), [1]);
+    await vi.waitFor(() => expect(children).toHaveLength(1));
+    children[0].emit("message", { rss: 512 * 1024 * 1024 + 1 });
+    expect(children[0].kill).toHaveBeenCalled();
+    children[0].emit("exit", 0);
+    await expect(extraction).rejects.toThrow("512MB memory limit");
+  });
+
   it("rejects OCR work beyond the 50MiB aggregate admission limit", async () => {
     const input = Buffer.alloc(25 * 1024 * 1024);
     const first = runPdfOcr(input, [1]);
@@ -100,6 +118,13 @@ describe("extractText", () => {
     await vi.advanceTimersByTimeAsync(47_000);
     await rejected;
     vi.useRealTimers();
+    const next = runPdfOcr(Buffer.alloc(1), [1]);
+    const nextTwo = runPdfOcr(Buffer.alloc(1), [1]);
+    await vi.waitFor(() => expect(children).toHaveLength(3));
+    children[1].emit("exit", 0);
+    children[2].emit("exit", 0);
+    await expect(next).rejects.toThrow("exited before completing");
+    await expect(nextTwo).rejects.toThrow("exited before completing");
   });
   it.each([
     ["xlsx", XLSX_MIME],
