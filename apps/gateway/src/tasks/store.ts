@@ -167,6 +167,20 @@ export async function updateTask(
     };
   });
 }
+/** Pause work only for an explicit gateway control command. */
+export async function pauseTaskForControlCommand(
+  agentId: string,
+  sessionId: string,
+  command: string,
+  userId?: string
+) {
+  const task = await getTask(agentId, sessionId, userId);
+  if (!task || task.status !== "active") return undefined;
+  return updateTask(agentId, sessionId, userId, {
+    status: "paused",
+    pauseReason: `Paused by ${command}`,
+  });
+}
 export async function completeTask(
   agentId: string,
   sessionId: string,

@@ -29,6 +29,7 @@ import { getSdkAdapter, getDefaultSdkId } from "../sdk/registry.js";
 import type { SdkId, HistoryEvent } from "../sdk/types.js";
 import type { ExtensionRuntime } from "../extensions/runtime.js";
 import { getExtensionRuntime } from "../extensions/registry.js";
+import { getTask, pauseTaskForControlCommand } from "../tasks/store.js";
 import {
   getSimpleHistory as getCanonicalSimpleHistory,
   getFullHistory as getCanonicalFullHistory,
@@ -146,6 +147,16 @@ export async function runAgent(
       onEvent: params.onEvent,
     });
     const aborted = await lifecycle.abortActiveRun(adapter, capabilities);
+
+    // Only explicit gateway controls may alter task ownership without an agent
+    // lifecycle-tool call. Preserve the task so its work can be resumed, even
+    // when the adapter has just settled before the control arrives.
+    await pauseTaskForControlCommand(
+      params.agentId,
+      sessionId,
+      params.message.trim().split(/\s+/, 1)[0]!,
+      params.userId
+    );
 
     const ackText = aborted ? "Run aborted." : "No active run.";
     lifecycle.emit({ type: "text", data: ackText });
@@ -289,8 +300,12 @@ export async function runAgent(
     resolvedThinkLevel = params.thinkLevel ?? resolveAgentThinkLevel(agent);
   }
 
+  // An ordinary inbound message must never implicitly interrupt work that is
+  // durably active. It remains a conversational follow-up until the agent
+  // explicitly changes the task through its lifecycle tools.
+  const activeTask = await getTask(params.agentId, sessionId, params.userId);
   const join = await lifecycle.handleJoin({
-    queueMode: agent.queueMode,
+    queueMode: activeTask?.status === "active" ? "queue" : agent.queueMode,
     capabilities,
     adapter,
     message,
