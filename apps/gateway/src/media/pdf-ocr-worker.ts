@@ -10,7 +10,7 @@ const eng = require("@tesseract.js-data/eng") as { langPath: string; gzip: boole
 const fra = require("@tesseract.js-data/fra") as { langPath: string; gzip: boolean };
 
 type Input = { data: Uint8Array; pages: number[]; maxPages: number; maxOutput: number };
-const MAX_RENDER_PIXELS = 16_000_000;
+export const MAX_RENDER_PIXELS = 16_000_000;
 const tessdataDir = path.join(os.tmpdir(), "yoplai-tessdata-v1");
 const tessdataLock = `${tessdataDir}.lock`;
 
@@ -82,6 +82,11 @@ async function copyTessdata(): Promise<void> {
   }));
 }
 
+export function assertRenderPixels(bounds: number[]): void {
+  const pixels = Math.abs(bounds[2] - bounds[0]) * 2 * Math.abs(bounds[3] - bounds[1]) * 2;
+  if (pixels > MAX_RENDER_PIXELS) throw new Error("PDF page exceeds render pixel limit");
+}
+
 export async function ocrPdfPages(input: Input): Promise<Array<{ number: number; text: string }>> {
   const document = mupdf.Document.openDocument(input.data, "application/pdf");
   if (document.needsPassword()) throw new Error("PDF is encrypted and cannot be extracted");
@@ -94,8 +99,7 @@ export async function ocrPdfPages(input: Input): Promise<Array<{ number: number;
     for (const number of input.pages) {
       const page = document.loadPage(number - 1);
       const bounds = page.getBounds() as unknown as number[];
-      const pixels = Math.abs(bounds[2] - bounds[0]) * 2 * Math.abs(bounds[3] - bounds[1]) * 2;
-      if (pixels > MAX_RENDER_PIXELS) throw new Error("PDF page exceeds render pixel limit");
+      assertRenderPixels(bounds);
       const pixmap = page.toPixmap(mupdf.Matrix.scale(2, 2), mupdf.ColorSpace.DeviceRGB, false);
       const image = Buffer.from(pixmap.asPNG());
       const text = (await worker.recognize(image)).data.text.trim();
