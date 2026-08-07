@@ -1,6 +1,10 @@
 import Langfuse from "langfuse";
 
-import type { AgentHistoryEvent, AgentStreamEvent } from "@yoplai/shared";
+import {
+  sanitizeForStorage,
+  type AgentHistoryEvent,
+  type AgentStreamEvent,
+} from "@yoplai/shared";
 import type { GenerationState, SpanState, TraceState } from "./types.js";
 
 const IDLE_CLEANUP_INTERVAL_MS = 5 * 60 * 1000;
@@ -84,6 +88,7 @@ export class LangfuseTracer {
   }
 
   async handleStreamEvent(event: AgentStreamEvent): Promise<void> {
+    event = sanitizeForStorage(event);
     if (!this.langfuse) return;
     if (event.trace?.enabled === false) return;
     if (!isTracedStreamEvent(event)) return;
@@ -121,6 +126,7 @@ export class LangfuseTracer {
   }
 
   handleHistoryEvent(event: AgentHistoryEvent): void {
+    event = sanitizeForStorage(event);
     if (!this.langfuse) return;
     if (event.trace?.enabled === false) return;
     if (!isTracedHistoryEvent(event)) return;
@@ -280,7 +286,10 @@ export class LangfuseTracer {
     if (trace.currentGeneration) {
       trace.currentGeneration.userInput = input;
       trace.currentGeneration.generation.update({
-        input: buildGenerationInput(trace.currentGeneration.systemPrompt, input),
+        input: buildGenerationInput(
+          trace.currentGeneration.systemPrompt,
+          input
+        ),
       });
       return;
     }
@@ -386,7 +395,7 @@ export class LangfuseTracer {
     try {
       await langfuse.flushAsync();
     } catch (error) {
-      console.warn("[langfuse] flushAsync failed", error);
+      console.warn("[langfuse] flushAsync failed", sanitizeForStorage(error));
     }
   }
 
@@ -394,7 +403,7 @@ export class LangfuseTracer {
     try {
       await langfuse.shutdownAsync();
     } catch (error) {
-      console.warn("[langfuse] shutdownAsync failed", error);
+      console.warn("[langfuse] shutdownAsync failed", sanitizeForStorage(error));
     }
   }
 

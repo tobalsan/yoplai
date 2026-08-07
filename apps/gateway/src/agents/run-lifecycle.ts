@@ -1,4 +1,8 @@
-import type { ContainerDeliveryContext, StreamEvent } from "@yoplai/shared";
+import {
+  sanitizeForStorage,
+  type ContainerDeliveryContext,
+  type StreamEvent,
+} from "@yoplai/shared";
 import {
   abortSession,
   bufferPendingMessage,
@@ -72,9 +76,10 @@ export class SessionRunLifecycle {
   }
 
   emit(event: StreamEvent) {
-    this.context.onEvent?.(event);
+    const sanitizedEvent = sanitizeForStorage(event);
+    this.context.onEvent?.(sanitizedEvent);
     agentEventBus.emitStreamEvent({
-      ...event,
+      ...sanitizedEvent,
       agentId: this.context.agentId,
       sessionId: this.context.sessionId,
       sessionKey: this.context.sessionKey,
@@ -198,8 +203,9 @@ export class SessionRunLifecycle {
   }
 
   acceptHistoryEvent(event: HistoryEvent): void {
+    const sanitizedEvent = sanitizeForStorage(event);
     agentEventBus.emitHistoryEvent({
-      ...event,
+      ...sanitizedEvent,
       agentId: this.context.agentId,
       sessionId: this.context.sessionId,
       sessionKey: this.context.sessionKey,
@@ -207,16 +213,16 @@ export class SessionRunLifecycle {
       trace: this.context.trace,
     } as AgentHistoryEvent);
 
-    if (event.type === "user") {
-      this.startTurnWithUser(event);
+    if (sanitizedEvent.type === "user") {
+      this.startTurnWithUser(sanitizedEvent);
       return;
     }
-    if (event.type === "turn_end") {
+    if (sanitizedEvent.type === "turn_end") {
       this.finishCurrentTurn();
       return;
     }
     const buffer = this.ensureCurrentTurn();
-    bufferHistoryEvent(buffer, event);
+    bufferHistoryEvent(buffer, sanitizedEvent);
   }
 
   async flushTurns() {

@@ -5,6 +5,7 @@ import type { SdkRunParams } from "../types.js";
 import { getMountedOnecliCaPath } from "../../agents/container.js";
 import { remapAttachmentsToContainer } from "./launch-spec.js";
 import { ContainerToolBridge } from "./tool-bridge.js";
+import { logWarn } from "../../logging.js";
 
 const DEFAULT_GATEWAY_PORT = 4000;
 
@@ -26,7 +27,7 @@ export class ContainerInputBuilder {
     const systemFiles = await resolveSystemFiles({
       workspaceDir: params.workspaceDir,
       systemFiles: params.agent.system_files,
-      warn: (message) => console.warn(message),
+      warn: (message) => logWarn(message),
     });
     return {
       agentId: params.agentId,

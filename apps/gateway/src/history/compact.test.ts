@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readdir, readFile, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -140,5 +140,34 @@ describe("compact history rewrite", () => {
     expect(assistant).not.toMatchObject({
       meta: { usage: expect.anything() },
     });
+  });
+
+  it("redacts sensitive values before rewriting compacted history", async () => {
+    const { replaceCanonicalHistoryWithCompaction } = await import("./store.js");
+    const canary = "compact-history-canary";
+
+    await replaceCanonicalHistoryWithCompaction({
+      agentId: "alpha",
+      sessionId: "session-1",
+      summary: `Authorization: Bearer ${canary}`,
+      recentMessages: [
+        {
+          role: "user",
+          content: [
+            {
+              type: "text",
+              text: `https://files.example.test/archive?X-Amz-Signature=${canary}`,
+            },
+          ],
+          timestamp: 100,
+        },
+      ],
+    });
+
+    const historyDir = path.join(tmpDir, "history");
+    const [historyFile] = await readdir(historyDir);
+    const stored = await readFile(path.join(historyDir, historyFile!), "utf-8");
+    expect(stored).not.toContain(canary);
+    expect(stored).toContain("https://files.example.test/archive?");
   });
 });

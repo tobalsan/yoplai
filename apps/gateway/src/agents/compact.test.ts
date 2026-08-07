@@ -202,4 +202,32 @@ describe("compact agent session helpers", () => {
       stopReason: "stop",
     });
   });
+
+  it("redacts sensitive values before reseeding the Pi session", async () => {
+    const { compactAgentSession } = await import("./compact.js");
+    const canary = "pi-session-canary";
+    getFullSessionHistory.mockResolvedValue([
+      {
+        role: "user",
+        content: [{ type: "text", text: `Authorization: Bearer ${canary}` }],
+        timestamp: 1,
+      },
+    ]);
+    runAgent.mockResolvedValue({
+      payloads: [{ text: `summary with token=${canary}` }],
+    });
+
+    await compactAgentSession({
+      agentId: "alpha",
+      sessionId: "s1",
+      sessionKey: "main",
+      userId: "u1",
+    });
+
+    const stored =
+      (writeFile.mock.calls.at(-1) as unknown as [string, string] | undefined)
+        ?.at(1) ?? "";
+    expect(stored).not.toContain(canary);
+    expect(stored).toContain("Authorization: [REDACTED]");
+  });
 });

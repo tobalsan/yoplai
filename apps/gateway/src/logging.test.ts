@@ -10,7 +10,9 @@ describe("logError", () => {
       endpoint: circular,
       details: () => "details",
     });
-    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    const consoleError = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => {});
 
     logError("tool failed", error, { circular });
 
@@ -21,9 +23,22 @@ describe("logError", () => {
       level: "error",
       msg: "tool failed",
       status: "502",
-      details: "\"() => \\\"details\\\"\"",
+      details: '"() => \\"details\\""',
       message: "failed\nrequest",
     });
+  });
+
+  it("redacts sensitive error details and command output", () => {
+    const canary = "canary-private-value";
+    const consoleError = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => {});
+
+    logError("tool failed", new Error(`Authorization: Bearer ${canary}`), {
+      output: `curl https://files.example.test/report?X-Amz-Signature=${canary}`,
+    });
+
+    expect(String(consoleError.mock.calls[0]?.[0])).not.toContain(canary);
   });
 });
 
