@@ -1,5 +1,5 @@
 import fs from "node:fs/promises";
-import { Worker } from "node:worker_threads";
+import { fork } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import mammoth from "mammoth";
 import { PDFParse } from "pdf-parse";
@@ -16,13 +16,19 @@ const SPREADSHEET_MIME_TYPES = new Set([
   "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
 ]);
 
-const MAX_PDF_BYTES = 25 * 1024 * 1024;
-const MAX_PDF_PAGES = 30;
-const MAX_PDF_OUTPUT = 250_000;
-const OCR_TIMEOUT_MS = 45_000;
-const MAX_OCR_CONCURRENCY = 2;
+export const PDF_OCR_LIMITS = {
+  bytes: 25 * 1024 * 1024, pages: 30, outputChars: 250_000,
+  executionMs: 45_000, concurrency: 2, queue: 8, queueWaitMs: 10_000,
+  aggregateInputBytes: 50 * 1024 * 1024, childRssMb: 512,
+} as const;
+const MAX_PDF_BYTES = PDF_OCR_LIMITS.bytes;
+const MAX_PDF_PAGES = PDF_OCR_LIMITS.pages;
+const MAX_PDF_OUTPUT = PDF_OCR_LIMITS.outputChars;
+const OCR_TIMEOUT_MS = PDF_OCR_LIMITS.executionMs;
+const MAX_OCR_CONCURRENCY = PDF_OCR_LIMITS.concurrency;
 let activeOcrWorkers = 0;
-const ocrWaiters: Array<() => void> = [];
+let admittedOcrBytes = 0;
+const ocrWaiters: Array<{ bytes: number; resolve: () => void; reject: (error: Error) => void; timer: NodeJS.Timeout }> = [];
 
 export async function extractText(
   filePath: string,
@@ -85,43 +91,82 @@ export async function extractPdfBuffer(buffer: Buffer): Promise<string> {
   }
 }
 
-function runPdfOcr(data: Buffer, pages: number[]): Promise<Map<number, string>> {
-  return acquireOcrSlot().then(() => new Promise((resolve, reject) => {
+export function runPdfOcr(data: Buffer, pages: number[]): Promise<Map<number, string>> {
+  return acquireOcrSlot(data.length).then(() => new Promise((resolve, reject) => {
     let released = false;
     const release = () => {
       if (released) return;
       released = true;
       activeOcrWorkers -= 1;
-      ocrWaiters.shift()?.();
+      admittedOcrBytes -= data.length;
+      ocrWaiters.shift()?.resolve();
     };
-    let worker: Worker;
+    let child: ReturnType<typeof fork>;
+    let settled = false;
+    let result: Array<{ number: number; text: string }> | undefined;
+    let failure: Error | undefined;
+    let killTimer: NodeJS.Timeout | undefined;
+    let settleTimer: NodeJS.Timeout | undefined;
+    const finish = (error?: Error, pagesResult?: Array<{ number: number; text: string }>) => {
+      if (settled) return;
+      settled = true;
+      failure = error;
+      result = pagesResult;
+      clearTimeout(timer);
+      child.kill();
+      killTimer = setTimeout(() => child.kill("SIGKILL"), 1_000);
+      settleTimer = setTimeout(() => {
+        release();
+        if (failure) reject(failure);
+        else resolve(new Map(result?.map((page) => [page.number, page.text])));
+      }, 2_000);
+    };
     try {
-      worker = new Worker(fileURLToPath(new URL("./pdf-ocr-worker.js", import.meta.url)), {
-        workerData: { data, pages, maxPages: MAX_PDF_PAGES, maxOutput: MAX_PDF_OUTPUT },
+      child = fork(fileURLToPath(new URL("./pdf-ocr-worker.js", import.meta.url)), [], {
+        serialization: "advanced",
+        execArgv: ["--max-old-space-size=256"],
+        stdio: ["ignore", "ignore", "ignore", "ipc"],
       });
     } catch (error) {
       release();
       reject(error);
       return;
     }
-    const timer = setTimeout(() => void worker.terminate().then(() => { release(); reject(new Error("PDF OCR timed out after 45 seconds")); }), OCR_TIMEOUT_MS);
-    worker.once("message", (message: { pages?: Array<{ number: number; text: string }>; error?: string }) => {
-      clearTimeout(timer);
-      release();
-      if (message.error) reject(new Error(message.error));
-      else resolve(new Map(message.pages?.map((page) => [page.number, page.text])));
+    const timer = setTimeout(() => finish(new Error("PDF OCR timed out after 45 seconds")), OCR_TIMEOUT_MS);
+    child.on("message", (message: { pages?: Array<{ number: number; text: string }>; error?: string; rss?: number }) => {
+      if (message.rss && message.rss > PDF_OCR_LIMITS.childRssMb * 1024 * 1024) finish(new Error("PDF OCR exceeded the 512MB memory limit"));
+      else if (message.error) finish(new Error(message.error));
+      else if (message.pages) finish(undefined, message.pages);
     });
-    worker.once("error", (error) => { clearTimeout(timer); release(); reject(error); });
-    worker.once("exit", (code) => { if (code !== 0) { clearTimeout(timer); release(); reject(new Error(`PDF OCR worker exited with code ${code}`)); } });
+    child.once("error", (error) => finish(error));
+    child.once("exit", (code) => {
+      clearTimeout(timer); release();
+      if (killTimer) clearTimeout(killTimer);
+      if (settleTimer) clearTimeout(settleTimer);
+      if (!settled) reject(new Error(`PDF OCR child exited before completing (code ${code ?? "unknown"})`));
+      else if (failure) reject(failure);
+      else resolve(new Map(result?.map((page) => [page.number, page.text])));
+    });
+    try {
+      child.send({ data, pages, maxPages: MAX_PDF_PAGES, maxOutput: MAX_PDF_OUTPUT }, (error) => { if (error) finish(error); });
+    } catch (error) {
+      finish(error instanceof Error ? error : new Error(String(error)));
+    }
   }));
 }
 
-function acquireOcrSlot(): Promise<void> {
+function acquireOcrSlot(bytes: number): Promise<void> {
+  if (admittedOcrBytes + bytes > PDF_OCR_LIMITS.aggregateInputBytes) return Promise.reject(new Error("PDF OCR input admission limit reached; try again shortly"));
+  admittedOcrBytes += bytes;
   if (activeOcrWorkers < MAX_OCR_CONCURRENCY) {
     activeOcrWorkers += 1;
     return Promise.resolve();
   }
-  return new Promise((resolve) => ocrWaiters.push(() => { activeOcrWorkers += 1; resolve(); }));
+  if (ocrWaiters.length >= PDF_OCR_LIMITS.queue) { admittedOcrBytes -= bytes; return Promise.reject(new Error("PDF OCR queue is full; try again shortly")); }
+  return new Promise((resolve, reject) => {
+    const waiter = { bytes, resolve: () => { clearTimeout(waiter.timer); activeOcrWorkers += 1; resolve(); }, reject, timer: setTimeout(() => { const index = ocrWaiters.indexOf(waiter); if (index >= 0) ocrWaiters.splice(index, 1); admittedOcrBytes -= bytes; reject(new Error("PDF OCR queue timed out after 10 seconds")); }, PDF_OCR_LIMITS.queueWaitMs) };
+    ocrWaiters.push(waiter);
+  });
 }
 
 function extractSpreadsheetText(filePath: string): string {
