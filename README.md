@@ -388,7 +388,7 @@ When `sandbox.enabled` is `true`, the gateway replaces the normal in-process age
 
 The public adapter remains `getContainerAdapter()`, with internal container modules for launch specs, protocol framing, input building, file output registration, and extension tool bridging.
 
-**Follow-up messages** while a container is running are delivered via filesystem IPC — the gateway writes JSON files to a bind-mounted input directory that the agent-runner polls.
+**Follow-up messages** while a container is running are delivered via filesystem IPC — the gateway writes JSON files to a bind-mounted input directory that the agent-runner polls. Each run gets its own directory (`ipc/<agentId>/<sessionId>-<runId>`) and each message carries the target agent/session/run, so concurrent containers for the same agent never pick up each other's follow-ups or abort signals.
 
 **Orchestration tools** (subagent spawn, project CRUD) call back to the gateway's `/internal/tools` endpoint from inside the container.
 

@@ -26,6 +26,12 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Fixed
 
+- Follow-up messages and stop requests now reach only the run they were sent to: each container run gets its own IPC namespace and every queued message carries its target agent, session, and run, so a second chat with the same agent can no longer swallow another chat's follow-up or be interrupted by another chat's stop.
+- A follow-up sent in the moment a run is finishing is now held for the next run instead of being silently dropped, and the reply says "queued for next run" when that happens.
+- Slack no longer answers the same message twice: a Slack retry, or the overlapping message and mention deliveries of one @-mention, now produce a single agent turn. Duplicate suppression is per bot, so two Slack apps in the same channel each still receive the message, and a message the bot ignores no longer silences the mention that would have been answered.
+- Chat composer no longer sends a half-typed message when Enter confirms an IME composition (Japanese, Chinese, Korean input).
+- Simultaneous compaction requests for the same session now share one compaction run instead of racing two rewrites of the same history.
+- Container IPC directories left behind by a failed launch or a crashed gateway are now reclaimed instead of accumulating on disk.
 - Switching a team to All users no longer erases its explicit member roster; unchecking All users restores the saved members instead of leaving the roster empty.
 - Team deletion warnings now name users who would become teamless, including when the team uses the All users rule.
 - Changing a fork's team assignment no longer restores its retired pre-migration team after a service restart.
