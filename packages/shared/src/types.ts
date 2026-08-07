@@ -124,16 +124,25 @@ export type HeartbeatConfig = z.infer<typeof HeartbeatConfigSchema>;
 
 export const DreamConfigSchema = z.union([
   z.literal(true),
-  z.object({
-    enabled: z.boolean().optional().default(true),
-    provider: z.string().min(1).optional(),
-    model: z.string().min(1).optional(),
-    time: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, "time must be HH:MM").optional().default("00:00"),
-  }).superRefine((value, ctx) => {
-    if (Boolean(value.provider) !== Boolean(value.model)) {
-      ctx.addIssue({ code: z.ZodIssueCode.custom, message: "provider and model must be set together" });
-    }
-  }),
+  z
+    .object({
+      enabled: z.boolean().optional().default(true),
+      provider: z.string().min(1).optional(),
+      model: z.string().min(1).optional(),
+      time: z
+        .string()
+        .regex(/^([01]\d|2[0-3]):[0-5]\d$/, "time must be HH:MM")
+        .optional()
+        .default("00:00"),
+    })
+    .superRefine((value, ctx) => {
+      if (Boolean(value.provider) !== Boolean(value.model)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "provider and model must be set together",
+        });
+      }
+    }),
 ]);
 export type DreamConfig = z.infer<typeof DreamConfigSchema>;
 
@@ -336,17 +345,30 @@ export const SchedulePayloadSchema = z
       reject("payload.noAgent requires payload.script", "noAgent");
     } else if (value.noAgent && value.message !== undefined) {
       reject("payload.noAgent rejects payload.message", "noAgent");
-    } else if (script !== undefined && !value.noAgent && message === undefined) {
-      reject("payload.script requires payload.message unless noAgent is true", "script");
+    } else if (
+      script !== undefined &&
+      !value.noAgent &&
+      message === undefined
+    ) {
+      reject(
+        "payload.script requires payload.message unless noAgent is true",
+        "script"
+      );
     } else if (script === undefined && message === undefined) {
-      reject("payload.message is required when payload.script is absent", "message");
+      reject(
+        "payload.message is required when payload.script is absent",
+        "message"
+      );
     } else if (value.quietOutput && script === undefined) {
       reject("payload.quietOutput requires payload.script", "quietOutput");
     } else if (
       script !== undefined &&
       (script.startsWith("/") || script.split("/").includes(".."))
     ) {
-      reject("payload.script must be a relative path contained in the agent root", "script");
+      reject(
+        "payload.script must be a relative path contained in the agent root",
+        "script"
+      );
     }
   });
 export type SchedulePayload = z.infer<typeof SchedulePayloadSchema>;
@@ -1230,6 +1252,7 @@ export type ExtensionAgentToolContext = {
   config: GatewayConfig;
   env?: Record<string, string>;
   sessionId?: string;
+  userId?: string;
 };
 
 export type ExtensionAgentTool = {

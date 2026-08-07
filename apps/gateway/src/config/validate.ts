@@ -128,7 +128,9 @@ export async function prepareStartupConfig(
     throw new Error(errors.join("\n"));
   }
 
-  const loaded = extensions.map((extension) => extension.id);
+  const loaded = extensions
+    .filter((extension) => extension.id !== "taskLifecycle")
+    .map((extension) => extension.id);
   const skipped = Object.keys(resolvedConfig.extensions ?? {}).filter(
     (id) => !loaded.includes(id)
   );

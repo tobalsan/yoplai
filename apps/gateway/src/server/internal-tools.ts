@@ -2,7 +2,10 @@ import { Hono } from "hono";
 import { z } from "zod";
 import { type GatewayConfig } from "@yoplai/shared";
 import { loadConfig } from "../config/index.js";
-import { validateContainerToken } from "../sdk/container/tokens.js";
+import {
+  getContainerTokenUserId,
+  validateContainerToken,
+} from "../sdk/container/tokens.js";
 import { executeExtensionAgentTool } from "../extensions/tools.js";
 import { getExtensionRuntime } from "../extensions/registry.js";
 import type { ExtensionRuntime } from "../extensions/runtime.js";
@@ -20,6 +23,7 @@ type InternalToolsDeps = {
   getConfig: () => GatewayConfig;
   getRuntime: () => ExtensionRuntime;
   validateToken: (token: string, agentId: string) => boolean;
+  getTokenUserId: (token: string, agentId: string) => string | undefined;
   executeExtensionTool: typeof executeExtensionAgentTool;
 };
 
@@ -27,6 +31,7 @@ const defaultDeps: InternalToolsDeps = {
   getConfig: loadConfig,
   getRuntime: getExtensionRuntime,
   validateToken: validateContainerToken,
+  getTokenUserId: getContainerTokenUserId,
   executeExtensionTool: executeExtensionAgentTool,
 };
 
@@ -37,19 +42,31 @@ async function dispatchInternalTool(
   tool: string,
   args: unknown,
   agentId: string,
-  sessionId?: string
+  sessionId?: string,
+  userId?: string
 ): Promise<unknown> {
   const config = deps.getConfig();
   const agent = config.agents.find((candidate) => candidate.id === agentId);
   if (!agent) throw new Error(`Unknown agent: ${agentId}`);
-  const extensionResult = await deps.executeExtensionTool(
-    agent,
-    tool,
-    args,
-    config,
-    deps.getRuntime(),
-    sessionId
-  );
+  const extensionResult =
+    userId === undefined
+      ? await deps.executeExtensionTool(
+          agent,
+          tool,
+          args,
+          config,
+          deps.getRuntime(),
+          sessionId
+        )
+      : await deps.executeExtensionTool(
+          agent,
+          tool,
+          args,
+          config,
+          deps.getRuntime(),
+          sessionId,
+          userId
+        );
   if (extensionResult.found) return extensionResult.result;
   throw new Error(`Unknown tool: ${tool}`);
 }
@@ -94,7 +111,8 @@ export function createInternalTools(
         parsed.data.tool,
         parsed.data.args,
         parsed.data.agentId,
-        parsed.data.sessionId
+        parsed.data.sessionId,
+        deps.getTokenUserId(parsed.data.agentToken, parsed.data.agentId)
       );
       return c.json(result);
     } catch (error) {

@@ -3,6 +3,7 @@ import type { AgentConfig, Extension, GatewayConfig } from "@yoplai/shared";
 import { discoverExternalExtensions, readEnv } from "@yoplai/shared";
 import { CONFIG_DIR } from "../config/index.js";
 import { ExtensionRuntime } from "./runtime.js";
+import { taskLifecycleExtension } from "../tasks/extension.js";
 
 type ExtensionRegistration = {
   load: () => Promise<Extension>;
@@ -108,7 +109,8 @@ const EXTENSION_LOAD_PRIORITY: Record<string, number> = {
 const EXTENSION_REGISTRY: Record<string, ExtensionRegistration> = {
   irc: {
     packageName: "@yoplai/extension-irc",
-    load: () => import("@yoplai/extension-irc").then((module) => module.ircExtension),
+    load: () =>
+      import("@yoplai/extension-irc").then((module) => module.ircExtension),
     getConfig: (config) => {
       const hasPerAgent = config.agents?.some((agent) => agent.irc);
       const rootConfig = config.extensions?.irc;
@@ -192,15 +194,19 @@ const EXTENSION_REGISTRY: Record<string, ExtensionRegistration> = {
     },
     routePrefixes: ["/api/agents/:id/heartbeat"],
   },
-  projects: builtInExtension("@yoplai/extension-projects", "projectsExtension", {
-    getConfig: (config) => config.extensions?.projects,
-    routePrefixes: [
-      "/api/areas",
-      "/api/projects",
-      "/api/activity",
-      "/api/taskboard",
-    ],
-  }),
+  projects: builtInExtension(
+    "@yoplai/extension-projects",
+    "projectsExtension",
+    {
+      getConfig: (config) => config.extensions?.projects,
+      routePrefixes: [
+        "/api/areas",
+        "/api/projects",
+        "/api/activity",
+        "/api/taskboard",
+      ],
+    }
+  ),
   subagents: {
     load: () =>
       import("@yoplai/extension-subagents").then(
@@ -397,7 +403,7 @@ export function setExtensionActivator(activator: ExtensionActivator): void {
 async function deriveExtensionsToLoad(
   config: GatewayConfig
 ): Promise<{ extensions: Extension[]; homeExtensionId: string | undefined }> {
-  const extensions: Extension[] = [];
+  const extensions: Extension[] = [taskLifecycleExtension];
   const rawConfigs = new Map<string, Record<string, unknown>>();
 
   const registrations = Object.entries(EXTENSION_REGISTRY).sort(
@@ -549,9 +555,7 @@ export async function reloadExtensions(
   // Preserve everything already running; append the new ones. Re-topo the
   // union so newly added dependencies are ordered ahead of their dependents.
   const merged = topoSort([...current, ...newlyNeeded]);
-  const newlyNeededIds = new Set(
-    newlyNeeded.map((extension) => extension.id)
-  );
+  const newlyNeededIds = new Set(newlyNeeded.map((extension) => extension.id));
 
   // Activate (register routes + start) only the new extensions, in topo order.
   for (const extension of merged) {

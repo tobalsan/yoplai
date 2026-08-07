@@ -9,6 +9,8 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ## [Unreleased]
 
+- Durable, session-scoped lifecycle tools for agents to adopt, checkpoint, pause, resume, and complete work.
+
 ### Added
 
 - Agent workspaces can provide curated starting suggestions for new web chats.

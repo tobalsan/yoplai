@@ -462,6 +462,69 @@ describe("pi adapter onecli env wiring", () => {
     );
   });
 
+  it("keeps lifecycle tool activity out of stream and history events", async () => {
+    const agent = makeAgent();
+    const config = { agents: [agent] } as GatewayConfig;
+    let listener: ((event: unknown) => void) | undefined;
+    const session = {
+      messages: [{ role: "assistant", content: "done" }],
+      agent: { state: { messages: [], systemPrompt: "You are Sally." } },
+      subscribe: vi.fn((callback) => {
+        listener = callback;
+        return vi.fn();
+      }),
+      prompt: vi.fn(async () => {
+        listener?.({
+          type: "tool_execution_start",
+          toolName: "task_adopt",
+          toolCallId: "task-1",
+          args: { title: "A" },
+        });
+        listener?.({
+          type: "tool_execution_end",
+          toolName: "task_adopt",
+          toolCallId: "task-1",
+          result: "ok",
+        });
+        listener?.({
+          type: "tool_execution_start",
+          toolName: "bash",
+          toolCallId: "bash-1",
+          args: { command: "true" },
+        });
+      }),
+      abort: vi.fn(),
+      dispose: vi.fn(),
+    };
+    const onEvent = vi.fn();
+    const onHistoryEvent = vi.fn();
+
+    setLoadedConfig(config);
+    mockGetExtensionAgentTools.mockResolvedValue([
+      {
+        extensionId: "taskLifecycle",
+        name: "task.adopt",
+        description: "Adopt task",
+        parameters: { type: "object", properties: {} },
+        execute: vi.fn(),
+      },
+    ]);
+    mockCreateAgentSession.mockResolvedValue({ session });
+
+    const { piAdapter } = await import("../adapter.js");
+    await piAdapter.run({ ...makeRunParams(agent), onEvent, onHistoryEvent });
+
+    expect(onEvent).not.toHaveBeenCalledWith(
+      expect.objectContaining({ toolName: "task_adopt" })
+    );
+    expect(onHistoryEvent).not.toHaveBeenCalledWith(
+      expect.objectContaining({ name: "task_adopt" })
+    );
+    expect(onEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ toolName: "bash" })
+    );
+  });
+
   it("mounts extension tools in the in-process runtime", async () => {
     const agent = makeAgent();
     const config = { agents: [agent] } as GatewayConfig;
