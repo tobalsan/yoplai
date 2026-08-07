@@ -82,7 +82,7 @@ async function copyTessdata(): Promise<void> {
   }));
 }
 
-async function main(input: Input): Promise<Array<{ number: number; text: string }>> {
+export async function ocrPdfPages(input: Input): Promise<Array<{ number: number; text: string }>> {
   const document = mupdf.Document.openDocument(input.data, "application/pdf");
   if (document.needsPassword()) throw new Error("PDF is encrypted and cannot be extracted");
   const pages = document.countPages();
@@ -108,10 +108,12 @@ async function main(input: Input): Promise<Array<{ number: number; text: string 
   }
 }
 
-setInterval(() => process.send?.({ rss: process.memoryUsage().rss }), 250).unref();
-process.once("message", (input: Input) => {
-  void main(input).then(
-    (pages) => process.send?.({ pages }),
-    (error: unknown) => process.send?.({ error: error instanceof Error ? error.message : String(error) })
-  );
-});
+if (process.send && !process.env.VITEST) {
+  setInterval(() => process.send?.({ rss: process.memoryUsage().rss }), 250).unref();
+  process.once("message", (input: Input) => {
+    void ocrPdfPages(input).then(
+      (pages) => process.send?.({ pages }),
+      (error: unknown) => process.send?.({ error: error instanceof Error ? error.message : String(error) })
+    );
+  });
+}
