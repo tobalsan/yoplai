@@ -101,6 +101,15 @@ describe("extractText", () => {
     await expect(extraction).rejects.toThrow("512MB memory limit");
   });
 
+  it("terminates an OCR child that exceeds the CPU limit", async () => {
+    const extraction = runPdfOcr(Buffer.alloc(1), [1]);
+    await vi.waitFor(() => expect(children).toHaveLength(1));
+    children[0].emit("message", { pages: [{ number: 1, text: "late result" }], cpuMs: 40_001 });
+    expect(children[0].kill).toHaveBeenCalled();
+    children[0].emit("exit", 0);
+    await expect(extraction).rejects.toThrow("40 second CPU limit");
+  });
+
   it("rejects OCR work beyond the 50MiB aggregate admission limit", async () => {
     const input = Buffer.alloc(25 * 1024 * 1024);
     const first = runPdfOcr(input, [1]);

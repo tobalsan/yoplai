@@ -27,6 +27,15 @@ describe("PDF OCR gateway integration", () => {
     expect(mixed.match(/HELLO OCR ENGLISH/g)).toHaveLength(1);
   }, 30_000);
 
+  it("OCRs with runtime network access disabled", async () => {
+    process.env.YOPLAI_PDF_OCR_OFFLINE = "1";
+    try {
+      await expect(extractPdfBuffer(await fs.readFile(englishFixture))).resolves.toContain("HELLO OCR ENGLISH");
+    } finally {
+      delete process.env.YOPLAI_PDF_OCR_OFFLINE;
+    }
+  }, 30_000);
+
   it("extracts a scanned PDF through the authenticated container callback", async () => {
     const workspace = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-ocr-workspace-"));
     const token = "ocr-integration-token";

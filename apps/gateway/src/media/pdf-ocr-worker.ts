@@ -14,6 +14,13 @@ export const MAX_RENDER_PIXELS = 16_000_000;
 const tessdataDir = path.join(os.tmpdir(), "yoplai-tessdata-v1");
 const tessdataLock = `${tessdataDir}.lock`;
 
+export function bundledTessdataAssets(): string[] {
+  return [
+    path.join(eng.langPath, "eng.traineddata.gz"),
+    path.join(fra.langPath, "fra.traineddata.gz"),
+  ];
+}
+
 async function ensureTessdata(): Promise<string> {
   if (await hasTessdata()) return tessdataDir;
   for (let attempt = 0; attempt < 50; attempt += 1) {
@@ -73,11 +80,10 @@ async function hasTessdata(): Promise<boolean> {
 
 async function copyTessdata(): Promise<void> {
   await fs.mkdir(tessdataDir, { recursive: true });
-  await Promise.all(["eng", "fra"].map(async (language) => {
-    const source = language === "eng" ? eng.langPath : fra.langPath;
-    const target = path.join(tessdataDir, `${language}.traineddata.gz`);
+  await Promise.all(bundledTessdataAssets().map(async (source) => {
+    const target = path.join(tessdataDir, path.basename(source));
     const temporary = `${target}.${process.pid}.tmp`;
-    await fs.copyFile(path.join(source, `${language}.traineddata.gz`), temporary);
+    await fs.copyFile(source, temporary);
     await fs.rename(temporary, target);
   }));
 }
@@ -113,11 +119,20 @@ export async function ocrPdfPages(input: Input): Promise<Array<{ number: number;
 }
 
 if (process.send && process.env.YOPLAI_PDF_OCR_WORKER === "1") {
-  setInterval(() => process.send?.({ rss: process.memoryUsage().rss }), 250).unref();
+  if (process.env.YOPLAI_PDF_OCR_OFFLINE === "1") {
+    globalThis.fetch = async () => { throw new Error("OCR must not download runtime assets"); };
+  }
+  const usage = () => {
+    const cpu = process.cpuUsage();
+    return { rss: process.memoryUsage().rss, cpuMs: (cpu.user + cpu.system) / 1_000 };
+  };
+  setInterval(() => {
+    process.send?.(usage());
+  }, 250).unref();
   process.once("message", (input: Input) => {
     void ocrPdfPages(input).then(
-      (pages) => process.send?.({ pages }),
-      (error: unknown) => process.send?.({ error: error instanceof Error ? error.message : String(error) })
+      (pages) => process.send?.({ pages, ...usage() }),
+      (error: unknown) => process.send?.({ error: error instanceof Error ? error.message : String(error), ...usage() })
     );
   });
 }
