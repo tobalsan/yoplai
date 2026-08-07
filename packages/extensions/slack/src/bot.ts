@@ -42,6 +42,12 @@ import {
 import { matchesUserAllowlist } from "./utils/allowlist.js";
 import { splitMessage } from "./utils/chunk.js";
 import { buildSlackContext } from "./utils/context.js";
+import {
+  createSlackEventDeduper,
+  describeSlackEventIdentity,
+  type SlackEventDeduper,
+  type SlackEventIdentity,
+} from "./utils/dedupe.js";
 import { clearHistory, getHistory, recordMessage } from "./utils/history.js";
 import { markdownToMrkdwn } from "./utils/mrkdwn.js";
 import { createProactiveDmNoteStore } from "./proactive-dm-notes.js";
@@ -162,6 +168,41 @@ function toMessageData(raw: unknown, isAppMention = false): MessageData | null {
     isAppMention,
     files: toSlackFiles(event.files),
   };
+}
+
+function toSlackEventIdentity(
+  body: unknown,
+  data: MessageData
+): SlackEventIdentity {
+  const envelope = asRecord(body);
+  return {
+    eventId: asString(envelope.event_id),
+    team: asString(envelope.team_id),
+    channel: data.channel,
+    ts: data.ts,
+  };
+}
+
+// Claims the inbound Slack event's identity just before an agent turn is
+// started. Returns false (and logs by identity only, never message text)
+// when the event was already claimed — by Slack's own retry or by the
+// overlapping message/app_mention listeners firing for the same action.
+//
+// Deliberately called only once the bot has decided it will reply: claiming a
+// delivery the bot then ignores would burn the shared channel/ts key and
+// silence the sibling delivery that would have answered.
+function claimSlackMessageEvent(
+  deduper: SlackEventDeduper,
+  body: unknown,
+  data: MessageData,
+  logPrefix: string
+): boolean {
+  const identity = toSlackEventIdentity(body, data);
+  if (deduper.claim(identity)) return true;
+  console.debug(
+    `${logPrefix} Suppressed duplicate Slack event: ${describeSlackEventIdentity(identity)}`
+  );
+  return false;
 }
 
 function slackThreadUnlockKey(
@@ -699,7 +740,9 @@ async function handleSlackMessage(
   data: MessageData,
   client: SlackWebClient,
   target: SlackMessageTarget,
-  botUserId: string | undefined
+  botUserId: string | undefined,
+  // Returns false when this delivery duplicates one already being acted on.
+  claimEvent: () => boolean = () => true
 ): Promise<void> {
   // Detect bang commands on raw text before any normalization/mention gating.
   // Bang commands bypass mention requirements — they're slash-command alternatives.
@@ -707,7 +750,12 @@ async function handleSlackMessage(
   if (rawBang && (data.bot_id || (botUserId && data.user === botUserId))) {
     return; // never process bot's own messages
   }
+  // Claim at most once per delivery: a bang command that falls through to
+  // normal handling must not be rejected by its own earlier claim.
+  let claimResult: boolean | undefined;
+  const claimOnce = (): boolean => (claimResult ??= claimEvent());
   if (rawBang) {
+    if (!claimOnce()) return;
     const handled = await handleBangCommand(data, client, target, rawBang);
     if (handled) return;
   }
@@ -747,6 +795,8 @@ async function handleSlackMessage(
     }
     return;
   }
+
+  if (!claimOnce()) return;
 
   const sessionKey = target.isMainSession
     ? DEFAULT_MAIN_KEY
@@ -1166,6 +1216,10 @@ export function createSlackBot(
   const client = app.client as unknown as SlackWebClient;
   const textAccumulators = new Map<string, string>();
   const unlockedThreadKeys = new Set<string>();
+  // One claim store per bot: sibling bots in the same channel see the same
+  // user message under different event_ids, so a shared store would let one
+  // bot's claim suppress every other bot's copy.
+  const deduper = createSlackEventDeduper();
   const logPrefix = "[slack]";
   let cleanupBroadcasts: (() => void) | null = null;
   let botUserId: string | undefined;
@@ -1227,7 +1281,7 @@ export function createSlackBot(
       : null;
   };
 
-  app.message(async ({ message, client: eventClient }) => {
+  app.message(async ({ message, client: eventClient, body }) => {
     const data = toMessageData(message);
     if (!data) return;
     const target = resolveMessageTarget(data);
@@ -1246,11 +1300,12 @@ export function createSlackBot(
       data,
       eventClient as unknown as SlackWebClient,
       effectiveTarget,
-      botUserId
+      botUserId,
+      () => claimSlackMessageEvent(deduper, body, data, target.logPrefix)
     );
   });
 
-  app.event("app_mention", async ({ event, client: eventClient }) => {
+  app.event("app_mention", async ({ event, client: eventClient, body }) => {
     const data = toMessageData(event, true);
     if (!data) return;
     const target = resolveMessageTarget(data);
@@ -1268,7 +1323,8 @@ export function createSlackBot(
       data,
       eventClient as unknown as SlackWebClient,
       effectiveTarget,
-      botUserId
+      botUserId,
+      () => claimSlackMessageEvent(deduper, body, data, target.logPrefix)
     );
   });
 
@@ -1391,6 +1447,8 @@ export function createSlackAgentBot(agent: AgentConfig): SlackBot | null {
   const client = app.client as unknown as SlackWebClient;
   const textAccumulators = new Map<string, string>();
   const unlockedThreadKeys = new Set<string>();
+  // One claim store per bot — see createSlackBot.
+  const deduper = createSlackEventDeduper();
   const logPrefix = `[slack:${agent.id}]`;
   let cleanupBroadcasts: (() => void) | null = null;
   let botUserId: string | undefined;
@@ -1514,7 +1572,7 @@ export function createSlackAgentBot(agent: AgentConfig): SlackBot | null {
     return null;
   };
 
-  app.message(async ({ message, client: eventClient }) => {
+  app.message(async ({ message, client: eventClient, body }) => {
     const data = toMessageData(message);
     if (!data) return;
     const target = resolveMessageTarget(data);
@@ -1533,11 +1591,12 @@ export function createSlackAgentBot(agent: AgentConfig): SlackBot | null {
       data,
       eventClient as unknown as SlackWebClient,
       effectiveTarget,
-      botUserId
+      botUserId,
+      () => claimSlackMessageEvent(deduper, body, data, target.logPrefix)
     );
   });
 
-  app.event("app_mention", async ({ event, client: eventClient }) => {
+  app.event("app_mention", async ({ event, client: eventClient, body }) => {
     const data = toMessageData(event, true);
     if (!data) return;
     const target = resolveMessageTarget(data);
@@ -1555,7 +1614,8 @@ export function createSlackAgentBot(agent: AgentConfig): SlackBot | null {
       data,
       eventClient as unknown as SlackWebClient,
       effectiveTarget,
-      botUserId
+      botUserId,
+      () => claimSlackMessageEvent(deduper, body, data, target.logPrefix)
     );
   });
 
