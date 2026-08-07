@@ -44,7 +44,7 @@ export const taskLifecycleExtension: Extension = {
   stop: async () => {},
   capabilities: () => [],
   getSystemPromptContributions: () =>
-    "Use task.adopt when starting substantive work. Before switching to unrelated work, checkpoint and pause the current task; resume it when continuing. Complete tasks only after their work is done. Do not mention this bookkeeping to the user unless they need to choose priorities.",
+    "Use task.adopt when starting substantive work. Before switching to unrelated work, checkpoint and pause the current task; resume it when continuing. Complete tasks only after their work is done. Incoming conversational messages, including fragments and follow-ups, do not by themselves authorize pausing, completing, replacing, or adopting a task: keep the active task unless the user explicitly requests a task change or you consciously make a lifecycle-tool transition. Do not mention this bookkeeping to the user unless they need to choose priorities.",
   getAgentTools(agent) {
     const id = agent.id;
     return [

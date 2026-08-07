@@ -9,6 +9,9 @@ const getDefaultSdkId = vi.fn(() => "pi");
 const getSessionThinkLevel = vi.fn();
 const setSessionThinkLevel = vi.fn();
 const appendSessionMeta = vi.fn();
+const isAbortTrigger = vi.fn(() => false);
+const pauseTaskForControlCommand = vi.fn();
+const getTask = vi.fn();
 
 vi.mock("../config/index.js", () => ({
   CONFIG_DIR: "/tmp/yoplai-runner-test",
@@ -28,8 +31,10 @@ vi.mock("../sdk/container/adapter.js", () => ({
 vi.mock("../sessions/index.js", () => ({
   resolveSessionId: vi.fn(),
   getSessionEntry: vi.fn(),
-  isAbortTrigger: vi.fn(() => false),
+  isAbortTrigger,
 }));
+
+vi.mock("../tasks/store.js", () => ({ getTask, pauseTaskForControlCommand }));
 
 vi.mock("../sessions/store.js", () => ({
   DEFAULT_MAIN_KEY: "main",
@@ -139,4 +144,71 @@ describe("runAgent think level resolution", () => {
       expect.objectContaining({ thinkLevel: "medium" })
     );
   });
+});
+
+describe("runAgent control commands", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    isAbortTrigger.mockReturnValue(false);
+    getTask.mockResolvedValue(undefined);
+  });
+
+  it("pauses the active durable task for an explicit abort command", async () => {
+    const adapter = createAdapter();
+    getSdkAdapter.mockReturnValue(adapter);
+    getAgent.mockReturnValue(createAgent({}));
+    isAbortTrigger.mockReturnValue(true);
+    const { setSessionStreaming } = await import("./sessions.js");
+    setSessionStreaming("alpha", "session-1", true);
+
+    const { runAgent } = await import("./runner.js");
+    await runAgent({
+      agentId: "alpha",
+      message: "/abort",
+      sessionId: "session-1",
+      userId: "user-1",
+    });
+
+    expect(pauseTaskForControlCommand).toHaveBeenCalledWith(
+      "alpha",
+      "session-1",
+      "/abort",
+      "user-1"
+    );
+  });
+
+  it("does not alter task state for ordinary follow-ups", async () => {
+    const adapter = createAdapter();
+    getSdkAdapter.mockReturnValue(adapter);
+    getAgent.mockReturnValue(createAgent({}));
+
+    const { runAgent } = await import("./runner.js");
+    await runAgent({ agentId: "alpha", message: "moment", sessionId: "session-2" });
+
+    expect(pauseTaskForControlCommand).not.toHaveBeenCalled();
+  });
+
+  it.each(["web", "slack"])(
+    "queues a %s fragment instead of interrupting active work",
+    async (source) => {
+      const adapter = createAdapter();
+      getSdkAdapter.mockReturnValue(adapter);
+      getAgent.mockReturnValue(createAgent({ queueMode: "interrupt" }));
+      getTask.mockResolvedValue({ id: "task-a", status: "active" });
+      const { setSessionStreaming } = await import("./sessions.js");
+      setSessionStreaming("alpha", `session-${source}`, true);
+
+      const { runAgent } = await import("./runner.js");
+      const result = await runAgent({
+        agentId: "alpha",
+        message: "moment",
+        sessionId: `session-${source}`,
+        source,
+      });
+
+      expect(result.meta).toMatchObject({ queued: true });
+      expect(adapter.run).not.toHaveBeenCalled();
+      expect(pauseTaskForControlCommand).not.toHaveBeenCalled();
+    }
+  );
 });

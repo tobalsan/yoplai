@@ -9,6 +9,10 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ## [Unreleased]
 
+### Fixed
+
+- Preserve active durable tasks when explicit `/stop` or `/abort` interrupts a run, and queue ordinary follow-ups instead of interrupting them.
+
 - Durable, session-scoped lifecycle tools for agents to adopt, checkpoint, pause, resume, and complete work.
 
 ### Added

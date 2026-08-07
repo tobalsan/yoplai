@@ -64,6 +64,21 @@ describe("task ledger", () => {
       status: "active",
     });
   });
+  it("pauses an active task only for an explicit control command", async () => {
+    const store = await import("./store.js");
+    await store.adoptTask("agent", "session", "Task A");
+
+    await expect(
+      store.pauseTaskForControlCommand("agent", "session", "/stop")
+    ).resolves.toMatchObject({
+      status: "paused",
+      pauseReason: "Paused by /stop",
+    });
+    expect(await store.getTask("agent", "session")).toMatchObject({
+      title: "Task A",
+      status: "paused",
+    });
+  });
   it("isolates agents, users, and sessions", async () => {
     const store = await import("./store.js");
     await store.adoptTask("agent-a", "session-a", "A", "user-a");
