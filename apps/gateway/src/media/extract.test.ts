@@ -6,6 +6,7 @@ import { describe, expect, it, vi } from "vitest";
 import XLSX from "xlsx";
 
 const children: EventEmitter[] = [];
+const getPdfText = vi.fn();
 vi.mock("node:child_process", () => ({
   fork: vi.fn(() => {
     const child = new EventEmitter() as EventEmitter & { kill: ReturnType<typeof vi.fn>; send: ReturnType<typeof vi.fn> };
@@ -15,14 +16,30 @@ vi.mock("node:child_process", () => ({
     return child;
   }),
 }));
+vi.mock("pdf-parse", () => ({
+  PDFParse: class {
+    getText = getPdfText;
+    destroy = vi.fn();
+  },
+}));
 
-const { extractText, runPdfOcr } = await import("./extract.js");
+const { extractPdfBuffer, extractText, runPdfOcr } = await import("./extract.js");
 
 const XLS_MIME = "application/vnd.ms-excel";
 const XLSX_MIME =
   "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
 
 describe("extractText", () => {
+  it("keeps usable text-layer pages on the no-OCR fast path", async () => {
+    getPdfText.mockResolvedValueOnce({
+      total: 1,
+      text: "Gateway text layer with enough content to skip OCR extraction.",
+      pages: [{ num: 1, text: "Gateway text layer with enough content to skip OCR extraction." }],
+    });
+    await expect(extractPdfBuffer(Buffer.from("fixture"))).resolves.toBe("Gateway text layer with enough content to skip OCR extraction.");
+    expect(children).toHaveLength(0);
+  });
+
   it("rejects OCR work beyond the 50MiB aggregate admission limit", async () => {
     const input = Buffer.alloc(25 * 1024 * 1024);
     const first = runPdfOcr(input, [1]);
