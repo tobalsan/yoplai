@@ -86,7 +86,7 @@ export const taskLifecycleExtension: Extension = {
           const task = await updateTask(id, session, user, {
             checkpoint: a.checkpoint,
           });
-          emitProgress?.({ label: a.checkpoint!, taskId: task.id });
+          emitProgress?.({ label: "Progress updated.", taskId: task.id });
           return task;
         }
       ),

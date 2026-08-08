@@ -101,6 +101,25 @@ type ThinkingStreamDisplay = {
 const MAX_THINKING_CHARS = 3000;
 const THINKING_UPDATE_INTERVAL_MS = 3000;
 const SLACK_CLIENT_PING_TIMEOUT_MS = 20_000;
+const PROGRESS_ORPHAN_TIMEOUT_MS = 60_000;
+
+async function recoverTimedOutSlackProgress(
+  owners: string[],
+  client: SlackWebClient
+): Promise<void> {
+  await getSlackProgressStore()?.recoverTimedOut(
+    owners,
+    PROGRESS_ORPHAN_TIMEOUT_MS,
+    async (record) => {
+      await client.chat.update({
+        channel: record.channel,
+        ts: record.ts,
+        text: "Interrupted.",
+        mrkdwn: true,
+      });
+    }
+  );
+}
 
 function createSocketModeApp(token: string, appToken: string): App {
   return new App({
@@ -1300,6 +1319,7 @@ export function createSlackBot(
   const deduper = createSlackEventDeduper();
   const logPrefix = "[slack]";
   let cleanupBroadcasts: (() => void) | null = null;
+  let progressRecovery: ReturnType<typeof setInterval> | undefined;
   let botUserId: string | undefined;
   let botId: string | undefined;
 
@@ -1495,17 +1515,15 @@ export function createSlackBot(
         botId = undefined;
       }
       await app.start();
-      await getSlackProgressStore()?.recover(
-        [...routedAgentIds].map((agentId) => `[slack:${agentId}]`),
-        async (record) => {
-        await client.chat.update({
-          channel: record.channel,
-          ts: record.ts,
-          text: "Interrupted.",
-          mrkdwn: true,
-        });
-        }
+      await recoverTimedOutSlackProgress(
+        [...routedAgentIds].map((agentId) => `[slack:${agentId}]`), client
       );
+      progressRecovery = setInterval(() => {
+        void recoverTimedOutSlackProgress(
+          [...routedAgentIds].map((agentId) => `[slack:${agentId}]`),
+          client
+        );
+      }, PROGRESS_ORPHAN_TIMEOUT_MS);
       cleanupBroadcasts = setupSlackBroadcasts({
         client,
         textAccumulators,
@@ -1517,6 +1535,7 @@ export function createSlackBot(
     },
     stop: async () => {
       cleanupBroadcasts?.();
+      if (progressRecovery) clearInterval(progressRecovery);
       cleanupBroadcasts = null;
       textAccumulators.clear();
       unlockedThreadKeys.clear();
@@ -1542,6 +1561,7 @@ export function createSlackAgentBot(agent: AgentConfig): SlackBot | null {
   const deduper = createSlackEventDeduper();
   const logPrefix = `[slack:${agent.id}]`;
   let cleanupBroadcasts: (() => void) | null = null;
+  let progressRecovery: ReturnType<typeof setInterval> | undefined;
   let botUserId: string | undefined;
   let botId: string | undefined;
 
@@ -1794,14 +1814,10 @@ export function createSlackAgentBot(agent: AgentConfig): SlackBot | null {
         botId = undefined;
       }
       await app.start();
-      await getSlackProgressStore()?.recover([logPrefix], async (record) => {
-        await client.chat.update({
-          channel: record.channel,
-          ts: record.ts,
-          text: "Interrupted.",
-          mrkdwn: true,
-        });
-      });
+      await recoverTimedOutSlackProgress([logPrefix], client);
+      progressRecovery = setInterval(() => {
+        void recoverTimedOutSlackProgress([logPrefix], client);
+      }, PROGRESS_ORPHAN_TIMEOUT_MS);
       cleanupBroadcasts = setupSlackBroadcasts({
         client,
         textAccumulators,
@@ -1813,6 +1829,7 @@ export function createSlackAgentBot(agent: AgentConfig): SlackBot | null {
     },
     stop: async () => {
       cleanupBroadcasts?.();
+      if (progressRecovery) clearInterval(progressRecovery);
       cleanupBroadcasts = null;
       textAccumulators.clear();
       unlockedThreadKeys.clear();

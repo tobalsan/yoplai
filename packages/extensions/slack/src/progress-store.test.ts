@@ -27,4 +27,16 @@ describe("Slack progress store", () => {
       expect.objectContaining({ ts: "2.0" }),
     ]);
   });
+
+  it("recovers only timed-out records", async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "slack-progress-"));
+    dirs.push(dir);
+    const store = new SlackProgressStore(dir);
+    await store.add({ owner: "bot", channel: "C1", ts: "old", updatedAt: 1 });
+    await store.add({ owner: "bot", channel: "C1", ts: "new", updatedAt: 99 });
+    const update = vi.fn().mockResolvedValue(undefined);
+    await store.recoverTimedOut(["bot"], 50, update, 100);
+    expect(update).toHaveBeenCalledWith(expect.objectContaining({ ts: "old" }));
+    expect(JSON.parse(await fs.readFile(path.join(dir, "progress-messages.json"), "utf8"))).toEqual([expect.objectContaining({ ts: "new" })]);
+  });
 });

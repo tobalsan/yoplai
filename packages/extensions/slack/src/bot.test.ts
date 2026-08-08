@@ -1212,6 +1212,20 @@ describe("createSlackBot", () => {
     });
   });
 
+  it("updates one threaded progress message for a lifecycle milestone and completion", async () => {
+    const { createSlackBot } = await import("./bot.js");
+    const bot = createSlackBot([agent], config);
+    await bot?.start();
+    mockRunAgent.mockImplementationOnce(async (params) => {
+      params.onEvent?.({ type: "progress", label: "internal detail" });
+      return { payloads: [{ text: "done" }], meta: { durationMs: 1, sessionId: "session" } };
+    });
+    await getMessageHandler(apps[0])({ message: { ts: "1.2", text: "work", channel: "C1", user: "U1", channel_type: "channel" }, client: apps[0].client });
+    expect(apps[0].client.chat.postMessage).toHaveBeenCalledWith(expect.objectContaining({ thread_ts: "1.2", text: "Working on it…" }));
+    expect(apps[0].client.chat.update).toHaveBeenCalledWith(expect.objectContaining({ text: "Progress updated." }));
+    expect(apps[0].client.chat.update).toHaveBeenLastCalledWith(expect.objectContaining({ text: "Completed." }));
+  });
+
   it("blocks /new for users outside channel allowlist", async () => {
     const { createSlackBot } = await import("./bot.js");
     createSlackBot([agent], {

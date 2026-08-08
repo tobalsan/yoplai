@@ -188,6 +188,25 @@ describe("ChatView abort handling", () => {
     dispose();
   });
 
+  it("renders a safe progress status during a stream", async () => {
+    let onProgress: ((progress: { label: string }) => void) | undefined;
+    streamMessageMock.mockImplementation((...args: unknown[]) => {
+      onProgress = (args[6] as { onProgress?: typeof onProgress }).onProgress;
+      return () => {};
+    });
+    const { container, dispose } = renderView();
+    await tick();
+    const textarea = container.querySelector("textarea") as HTMLTextAreaElement;
+    textarea.value = "hello";
+    textarea.dispatchEvent(new Event("input", { bubbles: true }));
+    await tick();
+    (container.querySelector(".send-btn") as HTMLButtonElement).click();
+    await tick();
+    onProgress?.({ label: "Progress updated." });
+    expect(container.textContent).toContain("Progress updated.");
+    dispose();
+  });
+
   it("refreshes suggestions for a new session with the same agent", async () => {
     fetchAgentSuggestionsMock
       .mockResolvedValueOnce([{ title: "First", prompt: "First prompt" }])

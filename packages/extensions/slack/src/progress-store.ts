@@ -43,6 +43,16 @@ export class SlackProgressStore {
     });
   }
 
+  async touch(ts: string, updatedAt: number) {
+    await this.enqueue(async () => {
+      await this.write(
+        (await this.read()).map((record) =>
+          record.ts === ts ? { ...record, updatedAt } : record
+        )
+      );
+    });
+  }
+
   private async enqueue(write: () => Promise<void>) {
     const next = this.saving.then(write);
     this.saving = next.catch(() => undefined);
@@ -63,6 +73,31 @@ export class SlackProgressStore {
       }
       await this.remove(record.ts);
     }
+  }
+
+  async recoverTimedOut(
+    owners: Iterable<string>,
+    timeoutMs: number,
+    update: (record: SlackProgressRecord) => Promise<void>,
+    now = Date.now()
+  ) {
+    const ownerSet = new Set(owners);
+    await this.enqueue(async () => {
+      const records = await this.read();
+      const retained: SlackProgressRecord[] = [];
+      for (const record of records) {
+        if (!ownerSet.has(record.owner) || now - record.updatedAt < timeoutMs) {
+          retained.push(record);
+          continue;
+        }
+        try {
+          await update(record);
+        } catch {
+          retained.push(record);
+        }
+      }
+      await this.write(retained);
+    });
   }
 }
 

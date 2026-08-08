@@ -37,7 +37,7 @@ describe("Slack progress display", () => {
     }
   });
 
-  it("does not expose raw tool payloads in a milestone", async () => {
+  it("does not expose raw milestone content", async () => {
     const client = {
       chat: {
         postMessage: vi.fn().mockResolvedValue({ ts: "progress-ts" }),
@@ -51,10 +51,10 @@ describe("Slack progress display", () => {
       logPrefix: "[test]",
     });
     await display.publish();
-    display.milestone("Checking the configuration");
+    display.milestone("secret=should-not-appear");
     await Promise.resolve();
     expect(client.chat.update).toHaveBeenCalledWith(
-      expect.objectContaining({ text: "Checking the configuration" })
+      expect.objectContaining({ text: "Progress updated." })
     );
   });
 
@@ -87,6 +87,36 @@ describe("Slack progress display", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it("retries an initial post and keeps a single progress message", async () => {
+    vi.useFakeTimers();
+    try {
+      const client = {
+        chat: {
+          postMessage: vi.fn().mockRejectedValueOnce(new Error("rate_limited")).mockResolvedValue({ ts: "progress-ts" }),
+          update: vi.fn().mockResolvedValue({}),
+        },
+      };
+      const display = createSlackProgressDisplay({ client: client as never, channel: "C1", threadTs: "1.0", logPrefix: "[test]" });
+      await display.publish();
+      await vi.advanceTimersByTimeAsync(1_000);
+      await display.finish("completed");
+      expect(client.chat.postMessage).toHaveBeenCalledTimes(2);
+      expect(client.chat.update).toHaveBeenLastCalledWith(expect.objectContaining({ text: "Completed." }));
+    } finally { vi.useRealTimers(); }
+  });
+
+  it("applies a terminal state after a delayed initial post", async () => {
+    vi.useFakeTimers();
+    try {
+      const client = { chat: { postMessage: vi.fn().mockRejectedValueOnce(new Error("temporary")).mockResolvedValue({ ts: "progress-ts" }), update: vi.fn().mockResolvedValue({}) } };
+      const display = createSlackProgressDisplay({ client: client as never, channel: "C1", threadTs: "1.0", logPrefix: "[test]" });
+      await display.publish();
+      await display.finish("interrupted");
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(client.chat.update).toHaveBeenLastCalledWith(expect.objectContaining({ text: "Interrupted." }));
+    } finally { vi.useRealTimers(); }
   });
 
   it("sends the terminal state after an in-flight update", async () => {

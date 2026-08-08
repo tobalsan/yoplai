@@ -37,6 +37,14 @@ export function createSlackProgressDisplay(options: {
   let closed = false;
   let terminalRequested = false;
   let heartbeat: ReturnType<typeof setInterval> | undefined;
+  let publishRetry: ReturnType<typeof setTimeout> | undefined;
+
+  const touch = (): void => {
+    if (!ts) return;
+    void options.store?.touch(ts, now()).catch((error) =>
+      console.debug(`${options.logPrefix} Progress activity persistence failed:`, error)
+    );
+  };
 
   const update = async (terminal = false): Promise<void> => {
     if (!ts) return;
@@ -44,9 +52,13 @@ export function createSlackProgressDisplay(options: {
       if (terminal) terminalRequested = true;
       return;
     }
-    if (!terminal && now() - lastUpdateAt < UPDATE_MS) return;
+    if (!terminal && now() - lastUpdateAt < UPDATE_MS) {
+      if (!retry) retry = setTimeoutFn(() => { retry = undefined; void update(); }, UPDATE_MS);
+      return;
+    }
     pending = true;
     const text = latest;
+    touch();
     try {
       await options.client.chat.update({
         channel: options.channel,
@@ -56,7 +68,9 @@ export function createSlackProgressDisplay(options: {
       });
       lastUpdateAt = now();
       if (closed && text === latest && terminalRequested) {
-        void options.store?.remove(ts);
+        await options.store?.remove(ts).catch((error) =>
+          console.debug(`${options.logPrefix} Progress removal failed:`, error)
+        );
       }
     } catch (error) {
       console.debug(`${options.logPrefix} Progress update failed:`, error);
@@ -69,6 +83,7 @@ export function createSlackProgressDisplay(options: {
     } finally {
       pending = false;
       if (terminalRequested && text !== latest) void update(true);
+      else if (!closed && text !== latest) void update();
     }
   };
 
@@ -81,6 +96,7 @@ export function createSlackProgressDisplay(options: {
 
   return {
     async publish() {
+      if (ts) return;
       try {
         const result = await options.client.chat.postMessage({
           channel: options.channel,
@@ -97,17 +113,24 @@ export function createSlackProgressDisplay(options: {
             ts,
             updatedAt: now(),
           });
+          if (closed) await update(true);
         }
       } catch (error) {
         console.debug(
           `${options.logPrefix} Progress message post failed:`,
           error
         );
+        if (!publishRetry) {
+          publishRetry = setTimeoutFn(() => {
+            publishRetry = undefined;
+            void this.publish();
+          }, UPDATE_MS);
+        }
       }
     },
     milestone(label) {
       if (closed || !label.trim()) return;
-      latest = label.trim();
+      latest = "Progress updated.";
       lastVisibleAt = now();
       void update();
     },
