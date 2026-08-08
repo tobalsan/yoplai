@@ -10,6 +10,12 @@ export type ContainerTokenContext = {
   containerName: string;
   roots: { workspace: string; data: string; uploads: string };
   userId?: string;
+  emitProgress?: (event: {
+    label: string;
+    current?: number;
+    total?: number;
+    taskId?: string;
+  }) => void;
   createdAt: number;
 };
 

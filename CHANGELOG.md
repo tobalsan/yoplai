@@ -12,6 +12,7 @@ Breaking changes are marked **⚠ BREAKING**.
 ### Fixed
 
 - Slack now keeps one in-thread progress message updated with heartbeats and a clear completed, failed, or interrupted outcome for each agent run.
+- Sandboxed agents now deliver lifecycle checkpoints to that same safe progress message.
 
 - Preserve active durable tasks when explicit `/stop` or `/abort` interrupts a run, and queue ordinary follow-ups instead of interrupting them.
 
