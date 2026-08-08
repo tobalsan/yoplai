@@ -53,6 +53,13 @@ export type WsStreamEvent =
       isError?: boolean;
     }
   | {
+      type: "progress";
+      label: string;
+      current?: number;
+      total?: number;
+      taskId?: string;
+    }
+  | {
       type: "file_output";
       fileId: string;
       filename: string;
@@ -119,6 +126,14 @@ export function dispatchWsEvent(
       break;
     case "tool_end":
       callbacks.onToolEnd?.(event.toolName, event.isError ?? false);
+      break;
+    case "progress":
+      callbacks.onProgress?.({
+        label: "Progress updated.",
+        current: event.current,
+        total: event.total,
+        taskId: event.taskId,
+      });
       break;
     case "file_output":
       callbacks.onFileOutput?.({

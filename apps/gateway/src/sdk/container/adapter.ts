@@ -300,6 +300,7 @@ export function getContainerAdapter(): SdkAdapter {
             uploads: launchSpec.hostUploadsDir,
           },
           userId: params.userId,
+          emitProgress: (event) => params.onEvent({ type: "progress", ...event }),
         });
         const attachmentContext = hasReadableDocumentAttachment(params)
           ? await buildDocumentAttachmentContext(params.attachments)

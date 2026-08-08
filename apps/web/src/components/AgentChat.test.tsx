@@ -283,6 +283,7 @@ describe("AgentChat stop/send behavior", () => {
       | {
           onToolCall?: (id: string, name: string, args: unknown) => void;
           onText?: (text: string) => void;
+          onProgress?: () => void;
         }
       | undefined;
     subscribeToSessionMock.mockImplementation(
@@ -303,6 +304,7 @@ describe("AgentChat stop/send behavior", () => {
     expect(container.querySelector(".log-line.pending")).not.toBeNull();
 
     callbacks?.onToolCall?.("tool-1", "read", { path: "README.md" });
+    callbacks?.onProgress?.();
     callbacks?.onText?.("Working...");
     await tick();
     await tick();
@@ -312,6 +314,7 @@ describe("AgentChat stop/send behavior", () => {
       "project:PRO-1:lead-1"
     );
     expect(container.textContent).toContain("Working...");
+    expect(container.textContent).toContain("Progress updated.");
     expect(container.querySelector(".log-line.pending")).toBeNull();
 
     dispose();

@@ -112,13 +112,24 @@ async function dispatchInternalTool(
   args: unknown,
   agentId: string,
   sessionId?: string,
-  userId?: string
+  userId?: string,
+  emitProgress?: ContainerTokenContext["emitProgress"]
 ): Promise<unknown> {
   const config = deps.getConfig();
   const agent = config.agents.find((candidate) => candidate.id === agentId);
   if (!agent) throw new Error(`Unknown agent: ${agentId}`);
-  const extensionResult =
-    userId === undefined
+  const extensionResult = emitProgress
+    ? await deps.executeExtensionTool(
+        agent,
+        tool,
+        args,
+        config,
+        deps.getRuntime(),
+        sessionId,
+        userId,
+        emitProgress
+      )
+    : userId === undefined
       ? await deps.executeExtensionTool(
           agent,
           tool,
@@ -179,7 +190,15 @@ export function createInternalTools(
     try {
       const result = parsed.data.tool === "extract_document"
         ? await extractDocument(parsed.data.args, context)
-        : await dispatchInternalTool(deps, parsed.data.tool, parsed.data.args, context.agentId, context.sessionId, context.userId);
+        : await dispatchInternalTool(
+          deps,
+          parsed.data.tool,
+          parsed.data.args,
+          context.agentId,
+          context.sessionId,
+          context.userId,
+          context.emitProgress
+        );
       return c.json(result);
     } catch (error) {
       const message =

@@ -1876,6 +1876,10 @@ export function AgentChat(props: AgentChatProps) {
       onThinking: () => {
         markLeadStreamActivity();
       },
+      onProgress: () => {
+        markLeadStreamActivity();
+        setLeadLive((prev) => `${prev}${prev ? "\n" : ""}Progress updated.`);
+      },
       onToolCall: (id, name, args) => {
         markLeadStreamActivity();
         appendStreamingToolCall(id, name, args);
@@ -2373,6 +2377,10 @@ export function AgentChat(props: AgentChatProps) {
               pending: false,
               queued: false,
             });
+          },
+          onProgress: () => {
+            updateLeadUserLogState(clientId, { pending: false, queued: false });
+            setLeadLive((prev) => `${prev}${prev ? "\n" : ""}Progress updated.`);
           },
           onToolCall: (_id, _name, _args) => {
             updateLeadUserLogState(clientId, {

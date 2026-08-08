@@ -70,6 +70,7 @@ describe("streamMessage", () => {
     const onToolStart = vi.fn();
     const onToolEnd = vi.fn();
     const onSessionReset = vi.fn();
+    const onProgress = vi.fn();
 
     const cleanup = streamMessage(
       "agent-1",
@@ -84,6 +85,7 @@ describe("streamMessage", () => {
         onToolStart,
         onToolEnd,
         onSessionReset,
+        onProgress,
       }
     );
 
@@ -105,6 +107,7 @@ describe("streamMessage", () => {
     ws.receive({ type: "tool_start", toolName: "bash" });
     ws.receive({ type: "tool_end", toolName: "bash", isError: false });
     ws.receive({ type: "session_reset", sessionId: "s1" });
+    ws.receive({ type: "progress", label: "Checking files", current: 1, total: 2, taskId: "task-1" });
     ws.receive({ type: "done", meta: { durationMs: 12 } });
     ws.receive({ type: "error", message: "nope" });
 
@@ -114,6 +117,7 @@ describe("streamMessage", () => {
     expect(onToolStart).toHaveBeenCalledWith("bash");
     expect(onToolEnd).toHaveBeenCalledWith("bash", false);
     expect(onSessionReset).toHaveBeenCalledWith("s1");
+    expect(onProgress).toHaveBeenCalledWith({ label: "Progress updated.", current: 1, total: 2, taskId: "task-1" });
     expect(onDone).toHaveBeenCalledWith({ durationMs: 12 });
     expect(onError).toHaveBeenCalledWith("nope");
 

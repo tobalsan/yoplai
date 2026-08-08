@@ -20,6 +20,7 @@ export type SubscriptionCallbacks = {
   ) => void;
   onToolStart?: (toolName: string) => void;
   onToolEnd?: (toolName: string, isError: boolean) => void;
+  onProgress?: (progress: { label: string; current?: number; total?: number; taskId?: string }) => void;
   onFileOutput?: (file: {
     fileId: string;
     filename: string;

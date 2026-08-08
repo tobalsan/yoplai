@@ -65,6 +65,11 @@ import {
   stopThinkingReaction,
 } from "./utils/typing.js";
 import type { SlackWebClient } from "./types.js";
+import {
+  createSlackProgressDisplay,
+  type SlackProgressDisplay,
+} from "./progress.js";
+import { getSlackProgressStore } from "./progress-store.js";
 
 export type SlackBot = {
   app: App;
@@ -96,6 +101,25 @@ type ThinkingStreamDisplay = {
 const MAX_THINKING_CHARS = 3000;
 const THINKING_UPDATE_INTERVAL_MS = 3000;
 const SLACK_CLIENT_PING_TIMEOUT_MS = 20_000;
+const PROGRESS_ORPHAN_TIMEOUT_MS = 60_000;
+
+async function recoverTimedOutSlackProgress(
+  owners: string[],
+  client: SlackWebClient
+): Promise<void> {
+  await getSlackProgressStore()?.recoverTimedOut(
+    owners,
+    PROGRESS_ORPHAN_TIMEOUT_MS,
+    async (record) => {
+      await client.chat.update({
+        channel: record.channel,
+        ts: record.ts,
+        text: "Interrupted.",
+        mrkdwn: true,
+      });
+    }
+  );
+}
 
 function createSocketModeApp(token: string, appToken: string): App {
   return new App({
@@ -847,6 +871,7 @@ async function handleSlackMessage(
   const fileThreadTs = data.thread_ts ?? data.ts;
 
   let thinkingDisplay: ThinkingStreamDisplay | null = null;
+  let progressDisplay: SlackProgressDisplay | null = null;
   try {
     const { contentSuffix, attachments } = await collectSlackAttachments({
       data,
@@ -890,6 +915,15 @@ async function handleSlackMessage(
           logPrefix: target.logPrefix,
         })
       : null;
+    progressDisplay = createSlackProgressDisplay({
+      client,
+      channel: data.channel,
+      threadTs: replyThreadTs ?? data.ts,
+      logPrefix: target.logPrefix,
+      store: getSlackProgressStore(),
+      owner: target.logPrefix,
+    });
+    await progressDisplay.publish();
 
     const [channelMeta, threadParent, senderName] = await Promise.all([
       getChannelMetadata(client, data.channel),
@@ -960,6 +994,8 @@ async function handleSlackMessage(
         background: Boolean(sessionId),
         context,
         onEvent: (event) => {
+          if (event.type === "progress")
+            progressDisplay?.milestone(event.label);
           if (
             event.type === "tool_call" &&
             slackToolTargetsThread(event, data.channel, replyThreadTs)
@@ -999,6 +1035,7 @@ async function handleSlackMessage(
     thinkingDisplay?.setSessionId(agentResult.meta.sessionId);
 
     if (agentResult.meta.queued) {
+      await progressDisplay.finish("waiting");
       await thinkingDisplay?.cleanup();
       return;
     }
@@ -1013,6 +1050,10 @@ async function handleSlackMessage(
     }
     await Promise.all(fileUploads);
 
+    await progressDisplay.finish(
+      agentResult.meta.aborted ? "interrupted" : "completed"
+    );
+
     if (target.config.clearHistoryAfterReply === true) {
       clearHistory(historyKey);
     }
@@ -1021,6 +1062,7 @@ async function handleSlackMessage(
   } catch (err) {
     console.error(`${target.logPrefix} Error:`, err);
     try {
+      await progressDisplay?.finish("failed");
       await sendSlackError(client, data.channel, replyThreadTs, err);
       await thinkingDisplay?.cleanup();
       await stopThinkingReaction(client, data.channel, data.ts);
@@ -1277,6 +1319,7 @@ export function createSlackBot(
   const deduper = createSlackEventDeduper();
   const logPrefix = "[slack]";
   let cleanupBroadcasts: (() => void) | null = null;
+  let progressRecovery: ReturnType<typeof setInterval> | undefined;
   let botUserId: string | undefined;
   let botId: string | undefined;
 
@@ -1472,6 +1515,15 @@ export function createSlackBot(
         botId = undefined;
       }
       await app.start();
+      await recoverTimedOutSlackProgress(
+        [...routedAgentIds].map((agentId) => `[slack:${agentId}]`), client
+      );
+      progressRecovery = setInterval(() => {
+        void recoverTimedOutSlackProgress(
+          [...routedAgentIds].map((agentId) => `[slack:${agentId}]`),
+          client
+        );
+      }, PROGRESS_ORPHAN_TIMEOUT_MS);
       cleanupBroadcasts = setupSlackBroadcasts({
         client,
         textAccumulators,
@@ -1483,6 +1535,7 @@ export function createSlackBot(
     },
     stop: async () => {
       cleanupBroadcasts?.();
+      if (progressRecovery) clearInterval(progressRecovery);
       cleanupBroadcasts = null;
       textAccumulators.clear();
       unlockedThreadKeys.clear();
@@ -1508,6 +1561,7 @@ export function createSlackAgentBot(agent: AgentConfig): SlackBot | null {
   const deduper = createSlackEventDeduper();
   const logPrefix = `[slack:${agent.id}]`;
   let cleanupBroadcasts: (() => void) | null = null;
+  let progressRecovery: ReturnType<typeof setInterval> | undefined;
   let botUserId: string | undefined;
   let botId: string | undefined;
 
@@ -1760,6 +1814,10 @@ export function createSlackAgentBot(agent: AgentConfig): SlackBot | null {
         botId = undefined;
       }
       await app.start();
+      await recoverTimedOutSlackProgress([logPrefix], client);
+      progressRecovery = setInterval(() => {
+        void recoverTimedOutSlackProgress([logPrefix], client);
+      }, PROGRESS_ORPHAN_TIMEOUT_MS);
       cleanupBroadcasts = setupSlackBroadcasts({
         client,
         textAccumulators,
@@ -1771,6 +1829,7 @@ export function createSlackAgentBot(agent: AgentConfig): SlackBot | null {
     },
     stop: async () => {
       cleanupBroadcasts?.();
+      if (progressRecovery) clearInterval(progressRecovery);
       cleanupBroadcasts = null;
       textAccumulators.clear();
       unlockedThreadKeys.clear();
