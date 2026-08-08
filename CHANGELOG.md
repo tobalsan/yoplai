@@ -12,7 +12,7 @@ Breaking changes are marked **⚠ BREAKING**.
 ### Fixed
 
 - Show Slack follow-ups queued behind active work as waiting, rather than interrupted.
-- Slack now keeps one in-thread progress message updated with safe checkpoint milestones, heartbeats, and a clear completed, failed, or interrupted outcome for each agent run.
+- Slack now keeps one in-thread progress message updated with sanitized, descriptive checkpoint milestones, heartbeats, and a clear completed, failed, or interrupted outcome for each agent run.
 - Sandboxed agents now deliver lifecycle checkpoints to that same safe progress message.
 
 - Preserve active durable tasks when explicit `/stop` or `/abort` interrupts a run, and queue ordinary follow-ups instead of interrupting them.

@@ -3,8 +3,20 @@ import type { SlackProgressStore } from "./progress-store.js";
 
 const HEARTBEAT_MS = 30_000;
 const UPDATE_MS = 1_000;
+const MAX_MILESTONE_LENGTH = 100;
 
-function safeMilestone(label: string): string {
+const unsafeMilestonePatterns = [
+  /[\r\n\t]/,
+  /\b(?:api[-_ ]?key|authorization|cookie|credential|password|private[-_ ]?key|secret|token)\b/i,
+  /\b(?:gh[pousr]|sk|xox[baprs])[-_][a-z0-9_-]{8,}\b/i,
+  /\beyJ[a-z0-9_-]+\.[a-z0-9_-]+\.[a-z0-9_-]+\b/i,
+  /\b[A-Z][A-Z0-9_]{2,}\s*=/,
+  /(?:https?|file|ssh):\/\//i,
+  /(?:^|\s)(?:\/(?:Users|etc|home|private|tmp|var|workspace)\/|[A-Z]:\\)/i,
+  /[`{}[\]<>|]/,
+];
+
+function genericMilestone(label: string): string {
   const normalized = label.toLowerCase();
   if (/test/.test(normalized)) return "Running tests…";
   if (/review/.test(normalized)) return "Reviewing changes…";
@@ -13,6 +25,20 @@ function safeMilestone(label: string): string {
   if (/check|inspect|read/.test(normalized)) return "Checking progress…";
   if (/wait/.test(normalized)) return "Waiting…";
   return "Progress updated.";
+}
+
+function safeMilestone(label: string): string {
+  const cleaned = label.replace(/\s+/g, " ").trim();
+  const fallback = genericMilestone(cleaned);
+  if (
+    !cleaned ||
+    cleaned.length > MAX_MILESTONE_LENGTH ||
+    !/^[\p{L}\p{N}\s.,:;!?()'’&+\-–—]+$/u.test(cleaned) ||
+    unsafeMilestonePatterns.some((pattern) => pattern.test(label))
+  ) {
+    return fallback;
+  }
+  return `${cleaned.replace(/[.!?…]+$/, "")}…`;
 }
 
 export type SlackProgressDisplay = {
