@@ -1,5 +1,9 @@
 import { z } from "zod";
-import type { Extension, ExtensionAgentTool } from "@yoplai/shared";
+import type {
+  Extension,
+  ExtensionAgentTool,
+  ExtensionAgentToolContext,
+} from "@yoplai/shared";
 import { adoptTask, completeTask, getTasks, updateTask } from "./store.js";
 
 const empty = z.object({});
@@ -13,7 +17,8 @@ function tool(
   execute: (
     args: TaskArgs,
     sessionId: string,
-    userId?: string
+    userId?: string,
+    emitProgress?: ExtensionAgentToolContext["emitProgress"]
   ) => Promise<unknown>
 ): ExtensionAgentTool {
   return {
@@ -22,11 +27,13 @@ function tool(
     parameters,
     execute: async (raw, context) => {
       if (!context.sessionId) throw new Error("Task tools require a session");
-      return execute(
+      const result = await execute(
         parser.parse(raw) as TaskArgs,
         context.sessionId,
-        context.userId
+        context.userId,
+        context.emitProgress
       );
+      return result;
     },
   };
 }
@@ -75,8 +82,13 @@ export const taskLifecycleExtension: Extension = {
           required: ["checkpoint"],
         },
         schema({ checkpoint: z.string().min(1) }),
-        (a, session, user) =>
-          updateTask(id, session, user, { checkpoint: a.checkpoint })
+        async (a, session, user, emitProgress) => {
+          const task = await updateTask(id, session, user, {
+            checkpoint: a.checkpoint,
+          });
+          emitProgress?.({ label: a.checkpoint!, taskId: task.id });
+          return task;
+        }
       ),
       tool(
         "task.pause",

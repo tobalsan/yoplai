@@ -30,4 +30,21 @@ describe("task lifecycle tools", () => {
       expect.objectContaining({ title: "Task A", status: "active" }),
     ]);
   });
+
+  it("emits a semantic progress event for a checkpoint", async () => {
+    const { taskLifecycleExtension } = await import("./extension.js");
+    const tools = await taskLifecycleExtension.getAgentTools!({ id: "agent" } as never);
+    const progress = vi.fn();
+    const context = { sessionId: `web:user:${randomUUID()}`, emitProgress: progress };
+    const tool = (name: string, args: Record<string, string> = {}) =>
+      tools.find((candidate) => candidate.name === name)!.execute(args, context as never);
+
+    await tool("task.adopt", { title: "Task A" });
+    const task = await tool("task.checkpoint", { checkpoint: "Tests are passing" });
+
+    expect(progress).toHaveBeenCalledWith({
+      label: "Tests are passing",
+      taskId: (task as { id: string }).id,
+    });
+  });
 });

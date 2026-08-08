@@ -65,6 +65,11 @@ import {
   stopThinkingReaction,
 } from "./utils/typing.js";
 import type { SlackWebClient } from "./types.js";
+import {
+  createSlackProgressDisplay,
+  type SlackProgressDisplay,
+} from "./progress.js";
+import { getSlackProgressStore } from "./progress-store.js";
 
 export type SlackBot = {
   app: App;
@@ -847,6 +852,7 @@ async function handleSlackMessage(
   const fileThreadTs = data.thread_ts ?? data.ts;
 
   let thinkingDisplay: ThinkingStreamDisplay | null = null;
+  let progressDisplay: SlackProgressDisplay | null = null;
   try {
     const { contentSuffix, attachments } = await collectSlackAttachments({
       data,
@@ -890,6 +896,15 @@ async function handleSlackMessage(
           logPrefix: target.logPrefix,
         })
       : null;
+    progressDisplay = createSlackProgressDisplay({
+      client,
+      channel: data.channel,
+      threadTs: replyThreadTs ?? data.ts,
+      logPrefix: target.logPrefix,
+      store: getSlackProgressStore(),
+      owner: target.logPrefix,
+    });
+    await progressDisplay.publish();
 
     const [channelMeta, threadParent, senderName] = await Promise.all([
       getChannelMetadata(client, data.channel),
@@ -960,6 +975,8 @@ async function handleSlackMessage(
         background: Boolean(sessionId),
         context,
         onEvent: (event) => {
+          if (event.type === "progress")
+            progressDisplay?.milestone(event.label);
           if (
             event.type === "tool_call" &&
             slackToolTargetsThread(event, data.channel, replyThreadTs)
@@ -999,6 +1016,7 @@ async function handleSlackMessage(
     thinkingDisplay?.setSessionId(agentResult.meta.sessionId);
 
     if (agentResult.meta.queued) {
+      await progressDisplay.finish("interrupted");
       await thinkingDisplay?.cleanup();
       return;
     }
@@ -1013,6 +1031,10 @@ async function handleSlackMessage(
     }
     await Promise.all(fileUploads);
 
+    await progressDisplay.finish(
+      agentResult.meta.aborted ? "interrupted" : "completed"
+    );
+
     if (target.config.clearHistoryAfterReply === true) {
       clearHistory(historyKey);
     }
@@ -1021,6 +1043,7 @@ async function handleSlackMessage(
   } catch (err) {
     console.error(`${target.logPrefix} Error:`, err);
     try {
+      await progressDisplay?.finish("failed");
       await sendSlackError(client, data.channel, replyThreadTs, err);
       await thinkingDisplay?.cleanup();
       await stopThinkingReaction(client, data.channel, data.ts);
@@ -1472,6 +1495,17 @@ export function createSlackBot(
         botId = undefined;
       }
       await app.start();
+      await getSlackProgressStore()?.recover(
+        [...routedAgentIds].map((agentId) => `[slack:${agentId}]`),
+        async (record) => {
+        await client.chat.update({
+          channel: record.channel,
+          ts: record.ts,
+          text: "Interrupted.",
+          mrkdwn: true,
+        });
+        }
+      );
       cleanupBroadcasts = setupSlackBroadcasts({
         client,
         textAccumulators,
@@ -1760,6 +1794,14 @@ export function createSlackAgentBot(agent: AgentConfig): SlackBot | null {
         botId = undefined;
       }
       await app.start();
+      await getSlackProgressStore()?.recover([logPrefix], async (record) => {
+        await client.chat.update({
+          channel: record.channel,
+          ts: record.ts,
+          text: "Interrupted.",
+          mrkdwn: true,
+        });
+      });
       cleanupBroadcasts = setupSlackBroadcasts({
         client,
         textAccumulators,

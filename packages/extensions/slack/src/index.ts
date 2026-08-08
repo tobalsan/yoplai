@@ -22,6 +22,10 @@ import {
   createSlackDeliverySink,
   slackAgentTools,
 } from "./agent-tools.js";
+import {
+  SlackProgressStore,
+  setSlackProgressStore,
+} from "./progress-store.js";
 
 type StartSlackBotsOptions = {
   agents: AgentConfig[];
@@ -33,6 +37,7 @@ export async function startSlackBots(
   options?: StartSlackBotsOptions
 ): Promise<void> {
   setSlackContext(ctx);
+  setSlackProgressStore(new SlackProgressStore(ctx.getDataDir()));
 
   if (options) {
     const bot = createSlackBot(options.agents, options.componentConfig);
@@ -78,6 +83,7 @@ export async function stopSlackBots(): Promise<void> {
   }
   clearActiveBots();
   clearSlackClientCache();
+  setSlackProgressStore(undefined);
 }
 
 export { getActiveBot };

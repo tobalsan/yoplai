@@ -1253,6 +1253,12 @@ export type ExtensionAgentToolContext = {
   env?: Record<string, string>;
   sessionId?: string;
   userId?: string;
+  emitProgress?: (event: {
+    label: string;
+    current?: number;
+    total?: number;
+    taskId?: string;
+  }) => void;
 };
 
 export type ExtensionAgentTool = {
@@ -1693,6 +1699,13 @@ export const StreamEventSchema = z.discriminatedUnion("type", [
     type: z.literal("tool_end"),
     toolName: z.string(),
     isError: z.boolean().optional(),
+  }),
+  z.object({
+    type: z.literal("progress"),
+    label: z.string(),
+    current: z.number().optional(),
+    total: z.number().optional(),
+    taskId: z.string().optional(),
   }),
   z.object({
     type: z.literal("done"),
