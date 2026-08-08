@@ -66,6 +66,34 @@ describe("Slack progress display", () => {
     );
   });
 
+  it("heartbeats 30 seconds after a milestone instead of waiting for the original interval", async () => {
+    vi.useFakeTimers();
+    try {
+      const client = {
+        chat: {
+          postMessage: vi.fn().mockResolvedValue({ ts: "progress-ts" }),
+          update: vi.fn().mockResolvedValue({}),
+        },
+      };
+      const display = createSlackProgressDisplay({
+        client: client as never,
+        channel: "C1",
+        threadTs: "1.0",
+        logPrefix: "[test]",
+      });
+      await display.publish();
+      await vi.advanceTimersByTimeAsync(1_000);
+      display.milestone("Checking files");
+      await vi.advanceTimersByTimeAsync(30_000);
+
+      expect(client.chat.update).toHaveBeenLastCalledWith(
+        expect.objectContaining({ text: "Still working…" })
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("retries a failed terminal update without affecting the run", async () => {
     vi.useFakeTimers();
     try {

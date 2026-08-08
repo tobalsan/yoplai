@@ -27,16 +27,12 @@ export function createSlackProgressDisplay(options: {
   threadTs: string;
   logPrefix: string;
   now?: () => number;
-  setIntervalFn?: typeof setInterval;
-  clearIntervalFn?: typeof clearInterval;
   setTimeoutFn?: typeof setTimeout;
   clearTimeoutFn?: typeof clearTimeout;
   store?: SlackProgressStore;
   owner?: string;
 }): SlackProgressDisplay {
   const now = options.now ?? Date.now;
-  const setIntervalFn = options.setIntervalFn ?? setInterval;
-  const clearIntervalFn = options.clearIntervalFn ?? clearInterval;
   const setTimeoutFn = options.setTimeoutFn ?? setTimeout;
   const clearTimeoutFn = options.clearTimeoutFn ?? clearTimeout;
   let ts: string | undefined;
@@ -47,7 +43,7 @@ export function createSlackProgressDisplay(options: {
   let retry: ReturnType<typeof setTimeout> | undefined;
   let closed = false;
   let terminalRequested = false;
-  let heartbeat: ReturnType<typeof setInterval> | undefined;
+  let heartbeat: ReturnType<typeof setTimeout> | undefined;
   let publishRetry: ReturnType<typeof setTimeout> | undefined;
 
   const touch = (): void => {
@@ -99,10 +95,21 @@ export function createSlackProgressDisplay(options: {
   };
 
   const tick = (): void => {
-    if (closed || now() - lastVisibleAt < HEARTBEAT_MS) return;
+    if (closed) return;
+    if (now() - lastVisibleAt < HEARTBEAT_MS) {
+      scheduleHeartbeat();
+      return;
+    }
     latest = "Still working…";
     lastVisibleAt = now();
     void update();
+    scheduleHeartbeat();
+  };
+
+  const scheduleHeartbeat = (): void => {
+    if (closed || !ts) return;
+    if (heartbeat) clearTimeoutFn(heartbeat);
+    heartbeat = setTimeoutFn(tick, Math.max(0, HEARTBEAT_MS - (now() - lastVisibleAt)));
   };
 
   return {
@@ -117,7 +124,7 @@ export function createSlackProgressDisplay(options: {
         });
         ts = result.ts;
         if (ts) {
-          heartbeat = setIntervalFn(tick, HEARTBEAT_MS);
+          scheduleHeartbeat();
           await options.store?.add({
             owner: options.owner ?? options.logPrefix,
             channel: options.channel,
@@ -144,13 +151,14 @@ export function createSlackProgressDisplay(options: {
       if (closed) return;
       latest = safe;
       lastVisibleAt = now();
+      scheduleHeartbeat();
       void update();
     },
     async finish(state) {
       if (closed) return;
       closed = true;
       terminalRequested = true;
-      if (heartbeat) clearIntervalFn(heartbeat);
+      if (heartbeat) clearTimeoutFn(heartbeat);
       if (retry) {
         clearTimeoutFn(retry);
         retry = undefined;
