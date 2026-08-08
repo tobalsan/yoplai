@@ -7,7 +7,7 @@ const UPDATE_MS = 1_000;
 export type SlackProgressDisplay = {
   publish: () => Promise<void>;
   milestone: (label: string) => void;
-  finish: (state: "completed" | "failed" | "interrupted") => Promise<void>;
+  finish: (state: "completed" | "failed" | "interrupted" | "waiting") => Promise<void>;
 };
 
 export function createSlackProgressDisplay(options: {
@@ -148,7 +148,9 @@ export function createSlackProgressDisplay(options: {
           ? "Completed."
           : state === "interrupted"
             ? "Interrupted."
-            : "Failed.";
+            : state === "waiting"
+              ? "Waiting for current work."
+              : "Failed.";
       latest = text;
       await update(true);
     },

@@ -1226,6 +1226,21 @@ describe("createSlackBot", () => {
     expect(apps[0].client.chat.update).toHaveBeenLastCalledWith(expect.objectContaining({ text: "Completed." }));
   });
 
+  it("shows queued work as waiting rather than interrupted", async () => {
+    const { createSlackBot } = await import("./bot.js");
+    const bot = createSlackBot([agent], config);
+    await bot?.start();
+    mockRunAgent.mockResolvedValueOnce({
+      payloads: [{ text: "Message queued into current run" }],
+      meta: { durationMs: 0, sessionId: "session", queued: true },
+    });
+
+    await getMessageHandler(apps[0])({ message: { ts: "1.3", text: "follow up", channel: "C1", user: "U1", channel_type: "channel" }, client: apps[0].client });
+
+    expect(apps[0].client.chat.postMessage).toHaveBeenCalledOnce();
+    expect(apps[0].client.chat.update).toHaveBeenLastCalledWith(expect.objectContaining({ text: "Waiting for current work." }));
+  });
+
   it("blocks /new for users outside channel allowlist", async () => {
     const { createSlackBot } = await import("./bot.js");
     createSlackBot([agent], {

@@ -1035,7 +1035,7 @@ async function handleSlackMessage(
     thinkingDisplay?.setSessionId(agentResult.meta.sessionId);
 
     if (agentResult.meta.queued) {
-      await progressDisplay.finish("interrupted");
+      await progressDisplay.finish("waiting");
       await thinkingDisplay?.cleanup();
       return;
     }
