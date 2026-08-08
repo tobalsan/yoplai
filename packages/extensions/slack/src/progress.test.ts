@@ -37,7 +37,7 @@ describe("Slack progress display", () => {
     }
   });
 
-  it("does not expose raw milestone content", async () => {
+  it("shows a semantic milestone without exposing raw detail", async () => {
     const client = {
       chat: {
         postMessage: vi.fn().mockResolvedValue({ ts: "progress-ts" }),
@@ -51,10 +51,18 @@ describe("Slack progress display", () => {
       logPrefix: "[test]",
     });
     await display.publish();
-    display.milestone("secret=should-not-appear");
+    display.milestone("Checking files");
     await Promise.resolve();
     expect(client.chat.update).toHaveBeenCalledWith(
-      expect.objectContaining({ text: "Progress updated." })
+      expect.objectContaining({ text: "Checking progress…" })
+    );
+    display.milestone("Read /Users/alice/.ssh/id_ed25519 secret=should-not-appear");
+    await Promise.resolve();
+    expect(client.chat.update).toHaveBeenLastCalledWith(
+      expect.objectContaining({ text: "Checking progress…" })
+    );
+    expect(client.chat.update).not.toHaveBeenCalledWith(
+      expect.objectContaining({ text: expect.stringContaining("id_ed25519") })
     );
   });
 

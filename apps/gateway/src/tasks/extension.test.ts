@@ -43,7 +43,7 @@ describe("task lifecycle tools", () => {
     const task = await tool("task.checkpoint", { checkpoint: "Tests are passing" });
 
     expect(progress).toHaveBeenCalledWith({
-      label: "Progress updated.",
+      label: "Tests are passing",
       taskId: (task as { id: string }).id,
     });
   });

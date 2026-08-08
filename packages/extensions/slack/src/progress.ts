@@ -4,6 +4,17 @@ import type { SlackProgressStore } from "./progress-store.js";
 const HEARTBEAT_MS = 30_000;
 const UPDATE_MS = 1_000;
 
+function safeMilestone(label: string): string {
+  const normalized = label.toLowerCase();
+  if (/test/.test(normalized)) return "Running tests…";
+  if (/review/.test(normalized)) return "Reviewing changes…";
+  if (/implement|edit|code|build/.test(normalized)) return "Implementing changes…";
+  if (/investigat|debug|diagnos/.test(normalized)) return "Investigating…";
+  if (/check|inspect|read/.test(normalized)) return "Checking progress…";
+  if (/wait/.test(normalized)) return "Waiting…";
+  return "Progress updated.";
+}
+
 export type SlackProgressDisplay = {
   publish: () => Promise<void>;
   milestone: (label: string) => void;
@@ -129,8 +140,9 @@ export function createSlackProgressDisplay(options: {
       }
     },
     milestone(label) {
-      if (closed || !label.trim()) return;
-      latest = "Progress updated.";
+      const safe = safeMilestone(label);
+      if (closed) return;
+      latest = safe;
       lastVisibleAt = now();
       void update();
     },
