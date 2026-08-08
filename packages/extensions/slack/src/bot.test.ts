@@ -487,7 +487,7 @@ describe("createSlackBot", () => {
         background: true,
       })
     );
-    expect(apps[0].client.chat.postMessage).toHaveBeenCalledTimes(1);
+    expect(apps[0].client.chat.postMessage).toHaveBeenCalledTimes(2);
     expect(apps[0].client.chat.postMessage).toHaveBeenCalledWith(
       expect.objectContaining({ thread_ts: "1.0", text: "ok" })
     );
@@ -644,7 +644,9 @@ describe("createSlackBot", () => {
       client: apps[0].client,
     });
 
-    expect(apps[0].client.chat.postMessage).not.toHaveBeenCalled();
+    expect(apps[0].client.chat.postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ text: "Working on it…", thread_ts: "1.0" })
+    );
   });
 
   it("auto-delivers when a thread-targeted Slack tool call fails", async () => {
@@ -691,7 +693,7 @@ describe("createSlackBot", () => {
       client: apps[0].client,
     });
 
-    expect(apps[0].client.chat.postMessage).toHaveBeenCalledOnce();
+    expect(apps[0].client.chat.postMessage).toHaveBeenCalledTimes(2);
     expect(apps[0].client.chat.postMessage).toHaveBeenCalledWith(
       expect.objectContaining({ thread_ts: "1.0", text: "fallback" })
     );
@@ -1210,6 +1212,35 @@ describe("createSlackBot", () => {
     });
   });
 
+  it("updates one threaded progress message for a lifecycle milestone and completion", async () => {
+    const { createSlackBot } = await import("./bot.js");
+    const bot = createSlackBot([agent], config);
+    await bot?.start();
+    mockRunAgent.mockImplementationOnce(async (params) => {
+      params.onEvent?.({ type: "progress", label: "Checking files" });
+      return { payloads: [{ text: "done" }], meta: { durationMs: 1, sessionId: "session" } };
+    });
+    await getMessageHandler(apps[0])({ message: { ts: "1.2", text: "work", channel: "C1", user: "U1", channel_type: "channel" }, client: apps[0].client });
+    expect(apps[0].client.chat.postMessage).toHaveBeenCalledWith(expect.objectContaining({ thread_ts: "1.2", text: "Working on it…" }));
+    expect(apps[0].client.chat.update).toHaveBeenCalledWith(expect.objectContaining({ text: "Checking files…" }));
+    expect(apps[0].client.chat.update).toHaveBeenLastCalledWith(expect.objectContaining({ text: "Completed." }));
+  });
+
+  it("shows queued work as waiting rather than interrupted", async () => {
+    const { createSlackBot } = await import("./bot.js");
+    const bot = createSlackBot([agent], config);
+    await bot?.start();
+    mockRunAgent.mockResolvedValueOnce({
+      payloads: [{ text: "Message queued into current run" }],
+      meta: { durationMs: 0, sessionId: "session", queued: true },
+    });
+
+    await getMessageHandler(apps[0])({ message: { ts: "1.3", text: "follow up", channel: "C1", user: "U1", channel_type: "channel" }, client: apps[0].client });
+
+    expect(apps[0].client.chat.postMessage).toHaveBeenCalledOnce();
+    expect(apps[0].client.chat.update).toHaveBeenLastCalledWith(expect.objectContaining({ text: "Waiting for current work." }));
+  });
+
   it("blocks /new for users outside channel allowlist", async () => {
     const { createSlackBot } = await import("./bot.js");
     createSlackBot([agent], {
@@ -1362,6 +1393,9 @@ describe("createSlackBot", () => {
     const pendingPost = new Promise<{ ts?: string }>((resolve) => {
       resolvePost = resolve;
     });
+    apps[0].client.chat.postMessage.mockImplementationOnce(() =>
+      Promise.resolve({ ts: "progress-ts" })
+    );
     apps[0].client.chat.postMessage.mockImplementationOnce(() => pendingPost);
 
     mockRunAgent.mockImplementationOnce(async (params) => {
@@ -2061,7 +2095,10 @@ describe("createSlackBot", () => {
       await bot?.start();
 
       for (const name of ["reaction_added", "reaction_removed"] as const) {
-        await getEventHandler(apps[0], name)({
+        await getEventHandler(
+          apps[0],
+          name
+        )({
           event: {
             reaction: "eyes",
             user: "U1",
@@ -2093,7 +2130,10 @@ describe("createSlackBot", () => {
         messages: [{ ts: "2.2", thread_ts: "1.1", user: "Ubot" }],
       });
 
-      await getEventHandler(apps[0], "reaction_added")({
+      await getEventHandler(
+        apps[0],
+        "reaction_added"
+      )({
         event: {
           reaction: "eyes",
           user: "U1",
@@ -2122,7 +2162,10 @@ describe("createSlackBot", () => {
         messages: [{ ts: "2.2", bot_id: "Bbot" }],
       });
 
-      await getEventHandler(apps[0], "reaction_added")({
+      await getEventHandler(
+        apps[0],
+        "reaction_added"
+      )({
         event: {
           reaction: "eyes",
           user: "U1",
@@ -2139,7 +2182,10 @@ describe("createSlackBot", () => {
       const bot = createSlackBot([agent], config);
       await bot?.start();
 
-      await getEventHandler(apps[0], "reaction_added")({
+      await getEventHandler(
+        apps[0],
+        "reaction_added"
+      )({
         event: {
           reaction: "thinking",
           user: "Ubot",

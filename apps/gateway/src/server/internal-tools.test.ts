@@ -14,7 +14,8 @@ const registeredTokens: string[] = [];
 function registerToken(
   token: string,
   agentId = "agent-1",
-  roots = { workspace: "/tmp/workspace", data: "/tmp/data", uploads: "/tmp/uploads" }
+  roots = { workspace: "/tmp/workspace", data: "/tmp/data", uploads: "/tmp/uploads" },
+  emitProgress?: (event: { label: string; taskId?: string }) => void
 ): void {
   registerContainerToken(token, {
     agentId,
@@ -22,6 +23,7 @@ function registerToken(
     runId: "run-1",
     containerName: "container-1",
     roots,
+    emitProgress,
   });
   registeredTokens.push(token);
 }
@@ -104,6 +106,30 @@ afterEach(() => {
 });
 
 describe("internal tools", () => {
+  it("forwards task checkpoint progress to the owning container run", async () => {
+    const { app, executeExtensionTool } = createDeps();
+    const emitProgress = vi.fn();
+    registerToken("token-1", "agent-1", undefined, emitProgress);
+
+    executeExtensionTool.mockImplementationOnce(async (...args) => {
+      args[7]?.({ label: "Checkpoint saved.", taskId: "task-1" });
+      return { found: true, result: {} };
+    });
+    const response = await postTool(app, {
+      tool: "task.checkpoint",
+      args: { checkpoint: "Saved safely" },
+      agentId: "agent-1",
+      agentToken: "token-1",
+      sessionId: "session-1",
+    });
+
+    expect(response.status).toBe(200);
+    expect(emitProgress).toHaveBeenCalledWith({
+      label: "Checkpoint saved.",
+      taskId: "task-1",
+    });
+  });
+
   it("accepts a valid container token", async () => {
     const { app, executeExtensionTool, runtime } = createDeps();
     const consoleWarn = vi.spyOn(console, "warn").mockImplementation(() => {});

@@ -43,6 +43,7 @@ describe("formatToolNote", () => {
   it("ignores non-tool events", () => {
     expect(formatToolNote({ type: "text", data: "hi" })).toBeNull();
     expect(formatToolNote({ type: "thinking", data: "hmm" })).toBeNull();
+    expect(formatToolNote({ type: "progress", label: "Checking files" })).toBeNull();
   });
 
   it("clamps a long argument hint", () => {

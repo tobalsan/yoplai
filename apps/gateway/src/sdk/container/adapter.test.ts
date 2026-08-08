@@ -294,6 +294,15 @@ describe("container adapter", () => {
       sessionId: "session-1",
       containerName: expect.stringMatching(/^yoplai-agent-cloud-/),
     });
+    getContainerTokenContext(input.agentToken)?.emitProgress?.({
+      label: "Checkpoint saved.",
+      taskId: "task-1",
+    });
+    expect(params.onEvent).toHaveBeenCalledWith({
+      type: "progress",
+      label: "Checkpoint saved.",
+      taskId: "task-1",
+    });
 
     dockerProcess.emitOutput({ text: "hello back" });
     dockerProcess.finish(0);

@@ -208,7 +208,8 @@ export class ExtensionRuntime {
     args: unknown,
     config: GatewayConfig,
     sessionId?: string,
-    userId?: string
+    userId?: string,
+    emitProgress?: import("@yoplai/shared").ExtensionAgentToolContext["emitProgress"]
   ): Promise<{ found: boolean; result?: unknown }> {
     const tool = await this.getTool(agent, toolName, config);
     if (!tool) return { found: false };
@@ -221,6 +222,7 @@ export class ExtensionRuntime {
         env,
         sessionId,
         userId,
+        emitProgress,
       }),
     };
   }

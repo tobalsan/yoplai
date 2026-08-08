@@ -112,6 +112,8 @@ async function createPiExtensionTools(
           env,
           sessionId: params.sessionId,
           userId: params.userId,
+          emitProgress: (event) =>
+            params.onEvent({ type: "progress", ...event }),
         });
         return {
           content: [{ type: "text", text: stringifyToolResult(result) }],
