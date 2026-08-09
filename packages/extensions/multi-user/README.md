@@ -15,7 +15,7 @@ config with `enabled: true`, OAuth client credentials, and a session secret.
 - A SQLite database (`auth.db`) of users, sessions, agent assignments, and
   API keys, managed by [Better Auth](https://better-auth.com).
 - Google OAuth sign-in via Better Auth's social provider integration.
-- An admin role (auto-assigned to the first registered user) plus an
+- A superadmin role (auto-assigned to the first registered user) plus an
   `approved` flag gating non-admin access.
 - Team membership, pool-agent forks, and team-based agent access. Non-staff
   users only see and run forked agents assigned to one of their teams; staff
@@ -65,11 +65,11 @@ Custom tables:
   "extensions": {
     "multiUser": {
       "enabled": true,
-      "sessionSecret": { "envVar": "YOPLAI_SESSION_SECRET" },
+      "sessionSecret": "$env:YOPLAI_SESSION_SECRET",
       "oauth": {
         "google": {
-          "clientId": { "envVar": "GOOGLE_CLIENT_ID" },
-          "clientSecret": { "envVar": "GOOGLE_CLIENT_SECRET" },
+          "clientId": "$env:GOOGLE_CLIENT_ID",
+          "clientSecret": "$env:GOOGLE_CLIENT_SECRET",
         },
       },
       "allowedDomains": ["example.com"],
@@ -84,12 +84,12 @@ Custom tables:
 - `allowedDomains` — optional email-domain allowlist. Sign-in is rejected for
   any other domain. Omit to allow all.
 
-`sessionSecret` and OAuth credentials are `SecretRef`s, so they can resolve
-from env vars, files, or inline literals.
+`sessionSecret` and OAuth credentials are strings. Prefer `$env:NAME`
+references so plaintext secrets stay outside tracked configuration.
 
 ### Approval flow
 
-The very first user to sign in is auto-approved and granted the `admin` role.
+The very first user to sign in is auto-approved and granted the `superadmin` role.
 Every subsequent user lands with `approved: false` and the default `user`
 role. Until an admin promotes / approves them via `PATCH /api/admin/users/:id`,
 their requests are rejected with `403 forbidden` (but the session is created

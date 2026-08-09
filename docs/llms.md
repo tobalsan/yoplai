@@ -4,7 +4,7 @@
 
 Yoplai is a lightweight, self-hosted multi-agent gateway. It runs agents across web chat, messaging, CLI, scheduled jobs, and project orchestration while keeping configuration and runtime data local.
 
-This document is the cross-package map for coding agents. Use it to find ownership and understand invariants; use package READMEs for feature configuration and operational detail. `README.md` remains the human-facing setup guide.
+This document is the cross-package map for coding agents. Use it to find ownership and understand invariants. `README.md` is the beginner self-hosting path, `docs/README.md` indexes advanced user guides, and package READMEs remain authoritative for exhaustive extension detail.
 
 ## Repository layout
 
@@ -123,21 +123,21 @@ Key rules:
 
 Unless noted, paths are under `$YOPLAI_HOME`:
 
-| Path | Owner / meaning |
-| --- | --- |
-| `yoplai.json` | Instance v3 config |
-| `models.json` | Custom Pi model providers/context overrides |
-| `agents/<id>/agent.yaml` | Agent definition |
-| `agents/<id>/cron/jobs.json` | Per-agent scheduler jobs |
-| `history/*.jsonl` | Canonical single-user transcript store |
-| `sessions/*.jsonl` | Pi SDK runtime resume state; not canonical product history |
-| `sessions.json` | Logical session-key to runtime-session mapping |
-| `sessions/users/<userId>/...` | Multi-user session/history isolation |
-| `sessions/subagents/runs/<runId>/` | Project-agnostic CLI subagent state/logs/history |
-| `media/` | Managed inbound/outbound files |
-| `oauth/` | Per-agent OAuth connection records |
-| `auth.db` | Better Auth SQLite DB when multi-user extension is enabled |
-| `projects.json` | Project numeric ID counter |
+| Path                               | Owner / meaning                                            |
+| ---------------------------------- | ---------------------------------------------------------- |
+| `yoplai.json`                      | Instance v3 config                                         |
+| `models.json`                      | Custom Pi model providers/context overrides                |
+| `agents/<id>/agent.yaml`           | Agent definition                                           |
+| `agents/<id>/cron/jobs.json`       | Per-agent scheduler jobs                                   |
+| `history/*.jsonl`                  | Canonical single-user transcript store                     |
+| `sessions/*.jsonl`                 | Pi SDK runtime resume state; not canonical product history |
+| `sessions.json`                    | Logical session-key to runtime-session mapping             |
+| `sessions/users/<userId>/...`      | Multi-user session/history isolation                       |
+| `sessions/subagents/runs/<runId>/` | Project-agnostic CLI subagent state/logs/history           |
+| `media/`                           | Managed inbound/outbound files                             |
+| `oauth/`                           | Per-agent OAuth connection records                         |
+| `auth.db`                          | Better Auth SQLite DB when multi-user extension is enabled |
+| `projects.json`                    | Project numeric ID counter                                 |
 
 Canonical history drives history APIs, web UI, Langfuse, compaction, channel context, and media blocks. Pi session files are SDK-owned runtime state; code may use them only for resume/backfill/fallback behavior.
 
@@ -196,21 +196,21 @@ Pi supports extension tools in and out of containers. Sandbox Claude fails loudl
 
 Extensions load through `extensions.<id>` unless documented auto-load compatibility applies. Package README is authoritative for configuration and detailed behavior.
 
-| Extension | Ownership | Reference |
-| --- | --- | --- |
-| `board` | Board/project web shell and board APIs; depends on projects + subagents | [README](../packages/extensions/board/README.md) |
-| `discord` | Discord routing, forum threads, reactions, proactive tools/delivery | [README](../packages/extensions/discord/README.md) |
-| `heartbeat` | Periodic agent check-ins gated by scheduler | [`packages/extensions/heartbeat`](../packages/extensions/heartbeat/) |
-| `irc` | IRC transport, routing, batching, formatting | [README](../packages/extensions/irc/README.md) |
-| `langfuse` | Stream/history tracing and observations | [`packages/extensions/langfuse`](../packages/extensions/langfuse/) |
-| `multiUser` | Better Auth, teams, pool/forks, access isolation, bearer tokens | [README](../packages/extensions/multi-user/README.md) |
-| `orchestrator` | Tracker-driven daemon and protocol worker runners | [README](../packages/extensions/orchestrator/README.md) |
-| `projects` | Project/slice documents, subagent runs, Space integration, CLI/API | [README](../packages/extensions/projects/README.md) |
-| `scheduler` | Cron jobs, scripts/gates, outputs, delivery sinks | [README](../packages/extensions/scheduler/README.md) |
-| `slack` | Slack Socket Mode transport, threads, files, proactive tools | [README](../packages/extensions/slack/README.md) |
-| `subagents` | Project-agnostic CLI subagent runtime | [README](../packages/extensions/subagents/README.md) |
-| `telegram` | Telegram transport and proactive delivery | [README](../packages/extensions/telegram/README.md) |
-| `webhooks` | Signed inbound webhooks and isolated webhook sessions | [`packages/extensions/webhooks`](../packages/extensions/webhooks/) |
+| Extension      | Ownership                                                               | Reference                                                            |
+| -------------- | ----------------------------------------------------------------------- | -------------------------------------------------------------------- |
+| `board`        | Board/project web shell and board APIs; depends on projects + subagents | [README](../packages/extensions/board/README.md)                     |
+| `discord`      | Discord routing, forum threads, reactions, proactive tools/delivery     | [README](../packages/extensions/discord/README.md)                   |
+| `heartbeat`    | Periodic agent check-ins gated by scheduler                             | [`packages/extensions/heartbeat`](../packages/extensions/heartbeat/) |
+| `irc`          | IRC transport, routing, batching, formatting                            | [README](../packages/extensions/irc/README.md)                       |
+| `langfuse`     | Stream/history tracing and observations                                 | [`packages/extensions/langfuse`](../packages/extensions/langfuse/)   |
+| `multiUser`    | Better Auth, teams, pool/forks, access isolation, bearer tokens         | [README](../packages/extensions/multi-user/README.md)                |
+| `orchestrator` | Tracker-driven daemon and protocol worker runners                       | [README](../packages/extensions/orchestrator/README.md)              |
+| `projects`     | Project/slice documents, subagent runs, Space integration, CLI/API      | [README](../packages/extensions/projects/README.md)                  |
+| `scheduler`    | Cron jobs, scripts/gates, outputs, delivery sinks                       | [README](../packages/extensions/scheduler/README.md)                 |
+| `slack`        | Slack Socket Mode transport, threads, files, proactive tools            | [README](../packages/extensions/slack/README.md)                     |
+| `subagents`    | Project-agnostic CLI subagent runtime                                   | [README](../packages/extensions/subagents/README.md)                 |
+| `telegram`     | Telegram transport and proactive delivery                               | [README](../packages/extensions/telegram/README.md)                  |
+| `webhooks`     | Signed inbound webhooks and isolated webhook sessions                   | [`packages/extensions/webhooks`](../packages/extensions/webhooks/)   |
 
 Tool-style extensions use `packages/shared/src/tool-extension.ts`. Extensions may contribute routes, CLI commands, capabilities, services, system-prompt text, tools, delivery sinks, OAuth requirements, and web routes. Keep behavior with its owning package; core should depend only on extension contracts and optional imports.
 
@@ -307,8 +307,9 @@ Dev entrypoints use `NODE_OPTIONS=--conditions=development`, allowing shared/ext
 ## Change-placement rules
 
 - Cross-package invariants and ownership maps belong here.
-- Setup and user workflows belong in root `README.md`.
-- Extension configuration and feature detail belong in package README.
+- Beginner installation and first-agent setup belong in root `README.md`.
+- Advanced cross-domain user workflows belong under `docs/` and its index.
+- Exhaustive extension schemas and feature detail belong in package README.
 - Shared protocol changes require schema/type updates in `packages/shared` before consumers.
 - Optional extension code must stay optional in gateway and web import graphs.
 - User-visible behavior/API/config/UI changes require `CHANGELOG.md` entry under `## [Unreleased]`.
