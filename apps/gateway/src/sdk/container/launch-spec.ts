@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { resolveHomeDir, type FileAttachment, type GatewayConfig } from "@yoplai/shared";
@@ -96,7 +97,6 @@ export function prepareContainerUploads(
   attachments: FileAttachment[] | undefined,
   uploadsDir: string
 ): void {
-  fs.rmSync(uploadsDir, { recursive: true, force: true });
   fs.mkdirSync(uploadsDir, { recursive: true });
 
   if (!attachments?.length) return;
@@ -111,16 +111,20 @@ export function remapAttachmentsToContainer(
   attachments: FileAttachment[] | undefined
 ): FileAttachment[] | undefined {
   if (!attachments?.length) return attachments;
-  return attachments.map((attachment, index) => {
+  return attachments.map((attachment) => {
     const safeName = sanitizeFilename(
       attachment.filename ?? path.basename(attachment.path),
       path.basename(attachment.path)
     );
     return {
       ...attachment,
-      path: path.join(CONTAINER_UPLOADS_DIR, `${index + 1}-${safeName}`),
+      path: path.join(CONTAINER_UPLOADS_DIR, `${attachmentKey(attachment.path)}-${safeName}`),
     };
   });
+}
+
+function attachmentKey(filePath: string): string {
+  return createHash("sha256").update(filePath).digest("hex").slice(0, 12);
 }
 
 export function sanitizeFilename(
@@ -138,7 +142,7 @@ export function sanitizeFilename(
 
 function copyUploadAttachment(
   attachment: FileAttachment,
-  index: number,
+  _index: number,
   realInboundDir: string,
   uploadsDir: string
 ): void {
@@ -148,7 +152,7 @@ function copyUploadAttachment(
     attachment.filename ?? path.basename(source),
     path.basename(source)
   );
-  const target = path.join(uploadsDir, `${index + 1}-${safeName}`);
+  const target = path.join(uploadsDir, `${attachmentKey(attachment.path)}-${safeName}`);
   fs.copyFileSync(source, target);
 }
 

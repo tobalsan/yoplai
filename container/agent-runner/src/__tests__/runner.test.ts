@@ -694,6 +694,20 @@ describe("Pi runner", () => {
     await fs.rm(tempDir, { recursive: true, force: true });
   });
 
+  it("does not load image pixels when the gateway supplied image descriptions", async () => {
+    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-runner-"));
+    const workspaceDir = path.join(tempDir, "workspace");
+    const sessionDir = path.join(tempDir, "sessions");
+    await fs.mkdir(workspaceDir, { recursive: true });
+    await fs.mkdir(sessionDir, { recursive: true });
+    piMock.session.prompt.mockImplementationOnce(async () => {
+      piMock.session.messages.push({ role: "assistant", content: [{ type: "text", text: "ok" }], stopReason: "end_turn" });
+    });
+    await runAgent(createInput({ workspaceDir, sessionDir, message: "[Image 1 description — generated from, not the original image]" , attachments: [{ path: "/workspace/uploads/missing.png", mimeType: "image/png" }], imageInputSupported: false }));
+    expect(piMock.session.prompt).toHaveBeenCalledWith(expect.stringContaining("generated from, not the original image"), undefined);
+    await fs.rm(tempDir, { recursive: true, force: true });
+  });
+
   it("appends channel context to the system prompt and emits full/system context history", async () => {
     const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-runner-"));
     const workspaceDir = path.join(tempDir, "workspace");
@@ -776,13 +790,15 @@ function createInput(paths: {
   extensionTools?: ContainerInput["extensionTools"];
   context?: ContainerInput["context"];
   attachments?: ContainerInput["attachments"];
+  message?: string;
+  imageInputSupported?: boolean;
   runId?: string;
 }): ContainerInput {
   return {
     agentId: "agent-1",
     sessionId: "session-1",
     runId: paths.runId,
-    message: "hello",
+    message: paths.message ?? "hello",
     workspaceDir: paths.workspaceDir,
     sessionDir: paths.sessionDir,
     ipcDir: "/ipc",
@@ -792,6 +808,7 @@ function createInput(paths: {
     extensionTools: paths.extensionTools,
     context: paths.context,
     attachments: paths.attachments,
+    imageInputSupported: paths.imageInputSupported,
     sdkConfig: {
       sdk: "pi",
       model: {

@@ -46,4 +46,16 @@ describe("container tool bridge", () => {
       expect.objectContaining({ extensionId: "gateway", name: "extract_document" }),
     ]);
   });
+
+  it("only exposes describe_image when the resolved agent model lacks vision", async () => {
+    const bridge = new ContainerToolBridge();
+    const params = { agent: { id: "cloud" } };
+    const config = { agents: [params.agent], extensions: {} };
+    await expect(bridge.buildTools(params as never, config as never, true)).resolves.toContainEqual(
+      expect.objectContaining({ extensionId: "gateway", name: "describe_image" })
+    );
+    await expect(bridge.buildTools(params as never, config as never, false)).resolves.not.toContainEqual(
+      expect.objectContaining({ extensionId: "gateway", name: "describe_image" })
+    );
+  });
 });

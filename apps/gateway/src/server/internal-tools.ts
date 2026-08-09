@@ -9,6 +9,7 @@ import {
   type ContainerTokenContext,
 } from "../sdk/container/tokens.js";
 import { extractText } from "../media/extract.js";
+import { describeImage } from "../media/describe.js";
 import { executeExtensionAgentTool } from "../extensions/tools.js";
 import { getExtensionRuntime } from "../extensions/registry.js";
 import type { ExtensionRuntime } from "../extensions/runtime.js";
@@ -106,6 +107,18 @@ async function extractDocument(
   return { text: (await extractText(realPath, "application/pdf")) ?? "" };
 }
 
+async function describeContainerImage(args: unknown, context: ContainerTokenContext, config: GatewayConfig): Promise<{ description: string }> {
+  const parsed = z.object({ path: z.string().min(1), question: z.string().optional() }).safeParse(args);
+  if (!parsed.success) throw new Error("describe_image requires a path");
+  const filePath = resolveDocumentPath(parsed.data.path, context.roots);
+  const mimeType = { ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".gif": "image/gif", ".webp": "image/webp", ".svg": "image/svg+xml" }[path.extname(filePath).toLowerCase()];
+  if (!mimeType) throw new Error("describe_image supports PNG, JPEG, GIF, WebP, and SVG files only");
+  const realPath = await fs.realpath(filePath).catch(() => { throw new Error("Image was not found under an approved container root"); });
+  const roots = await Promise.all(Object.values(context.roots).map((root) => fs.realpath(root).catch(() => undefined)));
+  if (!roots.some((root) => root && !path.relative(root, realPath).startsWith("..") && !path.isAbsolute(path.relative(root, realPath)))) throw new Error("Image path is outside approved container roots");
+  return { description: await describeImage(await fs.readFile(realPath), mimeType, config, parsed.data.question) };
+}
+
 async function dispatchInternalTool(
   deps: InternalToolsDeps,
   tool: string,
@@ -190,6 +203,8 @@ export function createInternalTools(
     try {
       const result = parsed.data.tool === "extract_document"
         ? await extractDocument(parsed.data.args, context)
+        : parsed.data.tool === "describe_image"
+          ? await describeContainerImage(parsed.data.args, context, deps.getConfig())
         : await dispatchInternalTool(
           deps,
           parsed.data.tool,

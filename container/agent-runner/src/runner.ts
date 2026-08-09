@@ -239,7 +239,7 @@ export async function runAgent(
         await session.sendUserMessage(message, { deliverAs: "steer" });
       }
 
-      await session.prompt(promptText, await loadPromptOptions(input));
+      await session.prompt(promptText, input.imageInputSupported === false ? undefined : await loadPromptOptions(input));
     } catch (error) {
       if (isAbortLikeError(error)) {
         aborted = true;
