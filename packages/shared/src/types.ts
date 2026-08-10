@@ -2087,7 +2087,11 @@ const ContextMetadataBlockSchema = z.object({
   type: z.literal("metadata"),
   channel: z.enum(["discord", "slack", "telegram", "irc"]),
   place: z.string(),
-  conversationType: z.enum(["direct_message", "group", "channel", "thread"]),
+  conversationType: z.enum([
+    "direct_message",
+    "channel_message",
+    "thread_reply",
+  ]),
   sender: z.string(),
 });
 
