@@ -9,19 +9,18 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ## [Unreleased]
 
-### Fixed
+## v0.23.0 — Slack live progress, document understanding + agent dreams
 
-- Slack progress message now only appears for runs longer than 30s, and follows the same thread/reply policy as the final response (was: posted on every message, always in a thread).
-- Show Slack follow-ups queued behind active work as waiting, rather than interrupted.
-- Slack now keeps one in-thread progress message updated with sanitized, descriptive checkpoint milestones, heartbeats, and a clear completed, failed, or interrupted outcome for each agent run.
-- Sandboxed agents now deliver lifecycle checkpoints to that same safe progress message.
-
-- Preserve active durable tasks when explicit `/stop` or `/abort` interrupts a run, and queue ordinary follow-ups instead of interrupting them.
-
-- Durable, session-scoped lifecycle tools for agents to adopt, checkpoint, pause, resume, and complete work.
+Agent runs now report durable, sanitized live progress in Slack, backed by new
+session-scoped task lifecycle tools. Text-only models can understand images
+through generated descriptions, PDF uploads gain bounded OCR extraction, and
+opt-in nightly dreams consolidate recent sessions into workspace memory.
+Scheduler jobs can run scripts and deliver results straight to chat surfaces,
+and teams gain a standing All users membership rule.
 
 ### Added
 
+- Durable, session-scoped lifecycle tools for agents to adopt, checkpoint, pause, resume, and complete work.
 - Agents running text-only models now receive generated descriptions for attached images and can re-query them with `describe_image`.
 - PDF uploads now fall back to bounded English/French OCR, and sandboxed agents can extract PDFs from their approved workspace paths with `extract_document`.
 - Agent workspaces can provide curated starting suggestions for new web chats.
@@ -39,6 +38,15 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Fixed
 
+- Slack progress message now only appears for runs longer than 30s, and follows the same thread/reply policy as the final response (was: posted on every message, always in a thread).
+- Show Slack follow-ups queued behind active work as waiting, rather than interrupted.
+- Slack now keeps one in-thread progress message updated with sanitized, descriptive checkpoint milestones, heartbeats, and a clear completed, failed, or interrupted outcome for each agent run.
+- Sandboxed agents now deliver lifecycle checkpoints to that same safe progress message.
+- Preserve active durable tasks when explicit `/stop` or `/abort` interrupts a run, and queue ordinary follow-ups instead of interrupting them.
+- Sandbox agent images are rebuilt when their baked runner output drifts after a gateway upgrade, and dev-mode image rebuilds no longer fail from a wrong relative Dockerfile path.
+- An agent extension with incomplete configuration no longer stops that agent's runs; the UI routes unconfigured extensions to their setup flow and rejects invalid enables instead of writing partial config.
+- Google sign-in now returns users to the configured web base path instead of the server root.
+- Container callback identities sent as empty strings are now rejected instead of bypassing the run-bound identity guard, and malformed container/history protocol payloads are rejected at the seam.
 - The web chat compaction action now prevents duplicate in-flight requests, shows progress, times out stalled requests, and permits retry after failure.
 - Gateway observability and Pi runtime session files now redact credentials and signed URL authorization after authorized execution.
 - Follow-up messages and stop requests now reach only the run they were sent to: each container run gets its own IPC namespace and every queued message carries its target agent, session, and run, so a second chat with the same agent can no longer swallow another chat's follow-up or be interrupted by another chat's stop.
