@@ -11,6 +11,7 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Fixed
 
+- Slack progress message now only appears for runs longer than 30s, and follows the same thread/reply policy as the final response (was: posted on every message, always in a thread).
 - Show Slack follow-ups queued behind active work as waiting, rather than interrupted.
 - Slack now keeps one in-thread progress message updated with sanitized, descriptive checkpoint milestones, heartbeats, and a clear completed, failed, or interrupted outcome for each agent run.
 - Sandboxed agents now deliver lifecycle checkpoints to that same safe progress message.

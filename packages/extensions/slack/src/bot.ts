@@ -918,12 +918,12 @@ async function handleSlackMessage(
     progressDisplay = createSlackProgressDisplay({
       client,
       channel: data.channel,
-      threadTs: replyThreadTs ?? data.ts,
+      threadTs: replyThreadTs,
       logPrefix: target.logPrefix,
       store: getSlackProgressStore(),
       owner: target.logPrefix,
     });
-    await progressDisplay.publish();
+    progressDisplay.start();
 
     const [channelMeta, threadParent, senderName] = await Promise.all([
       getChannelMetadata(client, data.channel),
@@ -1029,13 +1029,36 @@ async function handleSlackMessage(
         `${target.logPrefix} Bound session unavailable; falling back:`,
         err
       );
+      // The progress display was created against the bound thread's
+      // threadTs; retarget it to the fallback thread before rerunning so any
+      // bubble it posts lands where the reply will actually go. onEvent
+      // reads `progressDisplay` from this closure, so reassigning it here is
+      // enough for the in-flight run to pick up the new display.
+      await progressDisplay.finish("interrupted");
       replyThreadTs = defaultReplyThreadTs;
+      progressDisplay = createSlackProgressDisplay({
+        client,
+        channel: data.channel,
+        threadTs: replyThreadTs,
+        logPrefix: target.logPrefix,
+        store: getSlackProgressStore(),
+        owner: target.logPrefix,
+      });
+      progressDisplay.start();
       agentResult = await runAgent();
     }
     thinkingDisplay?.setSessionId(agentResult.meta.sessionId);
 
     if (agentResult.meta.queued) {
-      await progressDisplay.finish("waiting");
+      const shown = await progressDisplay.finish("waiting");
+      if (!shown) {
+        await sendSlackReply(
+          client,
+          data.channel,
+          [{ text: "Waiting for current work." }],
+          replyThreadTs
+        );
+      }
       await thinkingDisplay?.cleanup();
       return;
     }

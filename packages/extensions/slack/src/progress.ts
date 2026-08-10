@@ -4,6 +4,7 @@ import type { SlackProgressStore } from "./progress-store.js";
 const HEARTBEAT_MS = 30_000;
 const UPDATE_MS = 1_000;
 const MAX_MILESTONE_LENGTH = 100;
+const PUBLISH_DELAY_MS = 30_000;
 
 const unsafeMilestonePatterns = [
   /[\r\n\t]/,
@@ -42,15 +43,18 @@ function safeMilestone(label: string): string {
 }
 
 export type SlackProgressDisplay = {
+  start: () => void;
   publish: () => Promise<void>;
   milestone: (label: string) => void;
-  finish: (state: "completed" | "failed" | "interrupted" | "waiting") => Promise<void>;
+  // Resolves true if a terminal Slack edit was made (a bubble existed),
+  // false if nothing was ever posted.
+  finish: (state: "completed" | "failed" | "interrupted" | "waiting") => Promise<boolean>;
 };
 
 export function createSlackProgressDisplay(options: {
   client: SlackWebClient;
   channel: string;
-  threadTs: string;
+  threadTs?: string;
   logPrefix: string;
   now?: () => number;
   setTimeoutFn?: typeof setTimeout;
@@ -71,6 +75,8 @@ export function createSlackProgressDisplay(options: {
   let terminalRequested = false;
   let heartbeat: ReturnType<typeof setTimeout> | undefined;
   let publishRetry: ReturnType<typeof setTimeout> | undefined;
+  let startTimer: ReturnType<typeof setTimeout> | undefined;
+  let publishPromise: Promise<void> | undefined;
 
   const touch = (): void => {
     if (!ts) return;
@@ -138,50 +144,86 @@ export function createSlackProgressDisplay(options: {
     heartbeat = setTimeoutFn(tick, Math.max(0, HEARTBEAT_MS - (now() - lastVisibleAt)));
   };
 
-  return {
-    async publish() {
-      if (ts) return;
-      try {
-        const result = await options.client.chat.postMessage({
+  // No `this` dependency: called from timer callbacks and from within
+  // `publish` itself, so it must not rely on method-call binding.
+  const doPublish = async (): Promise<void> => {
+    try {
+      const result = await options.client.chat.postMessage({
+        channel: options.channel,
+        thread_ts: options.threadTs,
+        text: latest,
+        mrkdwn: true,
+      });
+      ts = result.ts;
+      if (ts) {
+        // Reset the heartbeat clock to the post time, not construction time,
+        // so the next heartbeat fires a full interval after the bubble
+        // actually became visible rather than instantly.
+        lastVisibleAt = now();
+        scheduleHeartbeat();
+        await options.store?.add({
+          owner: options.owner ?? options.logPrefix,
           channel: options.channel,
-          thread_ts: options.threadTs,
-          text: latest,
-          mrkdwn: true,
+          ts,
+          updatedAt: now(),
         });
-        ts = result.ts;
-        if (ts) {
-          scheduleHeartbeat();
-          await options.store?.add({
-            owner: options.owner ?? options.logPrefix,
-            channel: options.channel,
-            ts,
-            updatedAt: now(),
-          });
-          if (closed) await update(true);
-        }
-      } catch (error) {
-        console.debug(
-          `${options.logPrefix} Progress message post failed:`,
-          error
-        );
-        if (!publishRetry) {
-          publishRetry = setTimeoutFn(() => {
-            publishRetry = undefined;
-            void this.publish();
-          }, UPDATE_MS);
-        }
       }
+    } catch (error) {
+      console.debug(
+        `${options.logPrefix} Progress message post failed:`,
+        error
+      );
+      if (!publishRetry) {
+        publishRetry = setTimeoutFn(() => {
+          publishRetry = undefined;
+          void publish();
+        }, UPDATE_MS);
+      }
+    }
+  };
+
+  // Memoizes the in-flight publish so two callers within the same tick (e.g.
+  // two rapid milestone() calls, or a milestone during a pending
+  // publishRetry) share one postMessage/store.add instead of each posting
+  // an orphaned bubble.
+  const publish = (): Promise<void> => {
+    if (ts || closed) return Promise.resolve();
+    if (publishPromise) return publishPromise;
+    publishPromise = doPublish().finally(() => {
+      publishPromise = undefined;
+    });
+    return publishPromise;
+  };
+
+  return {
+    start() {
+      if (ts || closed || startTimer) return;
+      startTimer = setTimeoutFn(() => {
+        startTimer = undefined;
+        void publish();
+      }, PUBLISH_DELAY_MS);
     },
+    publish,
     milestone(label) {
       const safe = safeMilestone(label);
       if (closed) return;
+      if (!ts) {
+        if (startTimer) {
+          clearTimeoutFn(startTimer);
+          startTimer = undefined;
+        }
+        latest = safe;
+        lastVisibleAt = now();
+        void publish();
+        return;
+      }
       latest = safe;
       lastVisibleAt = now();
       scheduleHeartbeat();
       void update();
     },
     async finish(state) {
-      if (closed) return;
+      if (closed) return false;
       closed = true;
       terminalRequested = true;
       if (heartbeat) clearTimeoutFn(heartbeat);
@@ -189,6 +231,20 @@ export function createSlackProgressDisplay(options: {
         clearTimeoutFn(retry);
         retry = undefined;
       }
+      if (startTimer) {
+        clearTimeoutFn(startTimer);
+        startTimer = undefined;
+      }
+      if (publishRetry) {
+        clearTimeoutFn(publishRetry);
+        publishRetry = undefined;
+      }
+      // A publish may already be in flight (e.g. the delayed start() timer
+      // just fired, or a milestone triggered an immediate publish). Wait for
+      // it to settle so we know whether a bubble exists before deciding
+      // whether there's anything left to terminal-edit.
+      if (publishPromise) await publishPromise;
+      if (!ts) return false;
       const text =
         state === "completed"
           ? "Completed."
@@ -199,6 +255,7 @@ export function createSlackProgressDisplay(options: {
               : "Failed.";
       latest = text;
       await update(true);
+      return true;
     },
   };
 }

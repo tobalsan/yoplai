@@ -487,7 +487,7 @@ describe("createSlackBot", () => {
         background: true,
       })
     );
-    expect(apps[0].client.chat.postMessage).toHaveBeenCalledTimes(2);
+    expect(apps[0].client.chat.postMessage).toHaveBeenCalledTimes(1);
     expect(apps[0].client.chat.postMessage).toHaveBeenCalledWith(
       expect.objectContaining({ thread_ts: "1.0", text: "ok" })
     );
@@ -561,9 +561,15 @@ describe("createSlackBot", () => {
     store.close();
     mockRunAgent
       .mockRejectedValueOnce(new Error("session not found"))
-      .mockResolvedValueOnce({
-        payloads: [{ text: "fallback" }],
-        meta: { durationMs: 1, sessionId: "new-session" },
+      .mockImplementationOnce(async (params) => {
+        // Fired on the retried (fallback) run: proves the progress display
+        // was recreated against the fallback thread target rather than
+        // still posting to the stale bound-session threadTs.
+        params.onEvent?.({ type: "progress", label: "Checking files" });
+        return {
+          payloads: [{ text: "fallback" }],
+          meta: { durationMs: 1, sessionId: "new-session" },
+        };
       });
     const { createSlackBot } = await import("./bot.js");
     const bot = createSlackBot([agent], {
@@ -597,6 +603,14 @@ describe("createSlackBot", () => {
     );
     expect(apps[0].client.chat.postMessage).toHaveBeenCalledWith(
       expect.not.objectContaining({ thread_ts: expect.anything() })
+    );
+    // The mid-run progress milestone must land on the recreated (fallback)
+    // progress display, never on the stale bound-thread one.
+    expect(apps[0].client.chat.postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ text: "Checking files…" })
+    );
+    expect(apps[0].client.chat.postMessage).not.toHaveBeenCalledWith(
+      expect.objectContaining({ thread_ts: "1.0" })
     );
   });
 
@@ -644,9 +658,7 @@ describe("createSlackBot", () => {
       client: apps[0].client,
     });
 
-    expect(apps[0].client.chat.postMessage).toHaveBeenCalledWith(
-      expect.objectContaining({ text: "Working on it…", thread_ts: "1.0" })
-    );
+    expect(apps[0].client.chat.postMessage).not.toHaveBeenCalled();
   });
 
   it("auto-delivers when a thread-targeted Slack tool call fails", async () => {
@@ -693,7 +705,7 @@ describe("createSlackBot", () => {
       client: apps[0].client,
     });
 
-    expect(apps[0].client.chat.postMessage).toHaveBeenCalledTimes(2);
+    expect(apps[0].client.chat.postMessage).toHaveBeenCalledTimes(1);
     expect(apps[0].client.chat.postMessage).toHaveBeenCalledWith(
       expect.objectContaining({ thread_ts: "1.0", text: "fallback" })
     );
@@ -1221,9 +1233,29 @@ describe("createSlackBot", () => {
       return { payloads: [{ text: "done" }], meta: { durationMs: 1, sessionId: "session" } };
     });
     await getMessageHandler(apps[0])({ message: { ts: "1.2", text: "work", channel: "C1", user: "U1", channel_type: "channel" }, client: apps[0].client });
-    expect(apps[0].client.chat.postMessage).toHaveBeenCalledWith(expect.objectContaining({ thread_ts: "1.2", text: "Working on it…" }));
-    expect(apps[0].client.chat.update).toHaveBeenCalledWith(expect.objectContaining({ text: "Checking files…" }));
+    expect(apps[0].client.chat.postMessage).toHaveBeenCalledWith(expect.objectContaining({ thread_ts: "1.2", text: "Checking files…" }));
     expect(apps[0].client.chat.update).toHaveBeenLastCalledWith(expect.objectContaining({ text: "Completed." }));
+  });
+
+  it("keeps the progress message on the same no-thread policy as the final reply", async () => {
+    const { createSlackBot } = await import("./bot.js");
+    const bot = createSlackBot([agent], {
+      ...config,
+      channels: { C1: { agent: "main", requireMention: false, threadPolicy: "never" } },
+    });
+    await bot?.start();
+    mockRunAgent.mockImplementationOnce(async (params) => {
+      params.onEvent?.({ type: "progress", label: "Checking files" });
+      return { payloads: [{ text: "done" }], meta: { durationMs: 1, sessionId: "session" } };
+    });
+    await getMessageHandler(apps[0])({ message: { ts: "1.2", text: "work", channel: "C1", user: "U1", channel_type: "channel" }, client: apps[0].client });
+
+    expect(apps[0].client.chat.postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ text: "Checking files…" })
+    );
+    expect(apps[0].client.chat.postMessage).not.toHaveBeenCalledWith(
+      expect.objectContaining({ thread_ts: expect.anything() })
+    );
   });
 
   it("shows queued work as waiting rather than interrupted", async () => {
@@ -1237,8 +1269,16 @@ describe("createSlackBot", () => {
 
     await getMessageHandler(apps[0])({ message: { ts: "1.3", text: "follow up", channel: "C1", user: "U1", channel_type: "channel" }, client: apps[0].client });
 
-    expect(apps[0].client.chat.postMessage).toHaveBeenCalledOnce();
-    expect(apps[0].client.chat.update).toHaveBeenLastCalledWith(expect.objectContaining({ text: "Waiting for current work." }));
+    // The queue resolves before the progress bubble's publish delay elapses,
+    // so no bubble ever exists to terminal-edit; the user must still see
+    // some acknowledgement that their message was queued.
+    expect(apps[0].client.chat.update).not.toHaveBeenCalled();
+    expect(apps[0].client.chat.postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        text: "Waiting for current work.",
+        thread_ts: "1.3",
+      })
+    );
   });
 
   it("blocks /new for users outside channel allowlist", async () => {
@@ -1393,9 +1433,6 @@ describe("createSlackBot", () => {
     const pendingPost = new Promise<{ ts?: string }>((resolve) => {
       resolvePost = resolve;
     });
-    apps[0].client.chat.postMessage.mockImplementationOnce(() =>
-      Promise.resolve({ ts: "progress-ts" })
-    );
     apps[0].client.chat.postMessage.mockImplementationOnce(() => pendingPost);
 
     mockRunAgent.mockImplementationOnce(async (params) => {
