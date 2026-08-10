@@ -22,6 +22,14 @@ describe("describeImage", () => {
     expect(completeSimple).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ messages: [expect.objectContaining({ content: expect.arrayContaining([expect.objectContaining({ text: expect.stringContaining("Read row 4") })]) })] }), expect.anything());
   });
 
+  it("fails loudly when the describer errors or returns nothing", async () => {
+    find.mockReturnValue({ input: ["text", "image"] });
+    completeSimple.mockResolvedValue({ stopReason: "error", errorMessage: "No API key for provider: openrouter", content: [] });
+    await expect(describeImage(Buffer.from("image"), "image/png", config)).rejects.toThrow("No API key for provider: openrouter");
+    completeSimple.mockResolvedValue({ content: [{ type: "text", text: "   " }] });
+    await expect(describeImage(Buffer.from("image"), "image/png", config)).rejects.toThrow("returned no text");
+  });
+
   it("rejects a configured model without image input", async () => {
     find.mockReturnValue({ input: ["text"] });
     await expect(describeImage(Buffer.from("image"), "image/png", config)).rejects.toThrow("does not support image input");

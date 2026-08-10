@@ -25,7 +25,11 @@ export async function describeImage(
     { type: "image", data: bytes.toString("base64"), mimeType },
   ] }] };
   const response = await completeSimple(model, context, { maxTokens: 8_000, temperature: 0 });
-  return response.content.filter((part): part is { type: "text"; text: string } => part.type === "text").map((part) => part.text).join("\n").trim();
+  if (response.stopReason === "error") throw new Error(response.errorMessage ?? "Image description failed");
+  const description = response.content.filter((part): part is { type: "text"; text: string } => part.type === "text").map((part) => part.text).join("\n").trim();
+  // An empty description reads as a successful "nothing there"; fail instead so callers emit the failure notice.
+  if (!description) throw new Error("Image description returned no text");
+  return description;
 }
 
 export function configuredModelSupportsImages(config: GatewayConfig, provider: string, modelId: string): boolean {
