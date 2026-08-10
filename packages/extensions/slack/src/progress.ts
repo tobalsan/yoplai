@@ -217,6 +217,11 @@ export function createSlackProgressDisplay(options: {
         void publish();
         return;
       }
+      if (safe === latest) {
+        lastVisibleAt = now();
+        scheduleHeartbeat();
+        return;
+      }
       latest = safe;
       lastVisibleAt = now();
       scheduleHeartbeat();

@@ -70,6 +70,7 @@ import {
   type SlackProgressDisplay,
 } from "./progress.js";
 import { getSlackProgressStore } from "./progress-store.js";
+import { toolCallMilestone } from "./tool-milestones.js";
 
 export type SlackBot = {
   app: App;
@@ -996,6 +997,10 @@ async function handleSlackMessage(
         onEvent: (event) => {
           if (event.type === "progress")
             progressDisplay?.milestone(event.label);
+          if (event.type === "tool_call") {
+            const toolMilestone = toolCallMilestone(event.name);
+            if (toolMilestone) progressDisplay?.milestone(toolMilestone);
+          }
           if (
             event.type === "tool_call" &&
             slackToolTargetsThread(event, data.channel, replyThreadTs)

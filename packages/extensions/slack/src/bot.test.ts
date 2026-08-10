@@ -658,7 +658,15 @@ describe("createSlackBot", () => {
       client: apps[0].client,
     });
 
-    expect(apps[0].client.chat.postMessage).not.toHaveBeenCalled();
+    // The progress-milestone bubble for the slack.send_message tool call
+    // still posts, but the agent's own reply payload must never be re-sent.
+    expect(apps[0].client.chat.postMessage).toHaveBeenCalledTimes(1);
+    expect(apps[0].client.chat.postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ thread_ts: "1.0", text: "Using Slack…" })
+    );
+    expect(apps[0].client.chat.postMessage).not.toHaveBeenCalledWith(
+      expect.objectContaining({ text: "duplicate" })
+    );
   });
 
   it("auto-delivers when a thread-targeted Slack tool call fails", async () => {
@@ -705,7 +713,12 @@ describe("createSlackBot", () => {
       client: apps[0].client,
     });
 
-    expect(apps[0].client.chat.postMessage).toHaveBeenCalledTimes(1);
+    // One post is the progress-milestone bubble for the slack.send_message
+    // tool call; the other is the actual fallback delivery.
+    expect(apps[0].client.chat.postMessage).toHaveBeenCalledTimes(2);
+    expect(apps[0].client.chat.postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ thread_ts: "1.0", text: "Using Slack…" })
+    );
     expect(apps[0].client.chat.postMessage).toHaveBeenCalledWith(
       expect.objectContaining({ thread_ts: "1.0", text: "fallback" })
     );
@@ -1235,6 +1248,18 @@ describe("createSlackBot", () => {
     await getMessageHandler(apps[0])({ message: { ts: "1.2", text: "work", channel: "C1", user: "U1", channel_type: "channel" }, client: apps[0].client });
     expect(apps[0].client.chat.postMessage).toHaveBeenCalledWith(expect.objectContaining({ thread_ts: "1.2", text: "Checking files…" }));
     expect(apps[0].client.chat.update).toHaveBeenLastCalledWith(expect.objectContaining({ text: "Completed." }));
+  });
+
+  it("derives a progress milestone from a tool_call event", async () => {
+    const { createSlackBot } = await import("./bot.js");
+    const bot = createSlackBot([agent], config);
+    await bot?.start();
+    mockRunAgent.mockImplementationOnce(async (params) => {
+      params.onEvent?.({ type: "tool_call", id: "1", name: "extract_document", arguments: {} });
+      return { payloads: [{ text: "done" }], meta: { durationMs: 1, sessionId: "session" } };
+    });
+    await getMessageHandler(apps[0])({ message: { ts: "1.2", text: "work", channel: "C1", user: "U1", channel_type: "channel" }, client: apps[0].client });
+    expect(apps[0].client.chat.postMessage).toHaveBeenCalledWith(expect.objectContaining({ thread_ts: "1.2", text: "Reading documents…" }));
   });
 
   it("keeps the progress message on the same no-thread policy as the final reply", async () => {

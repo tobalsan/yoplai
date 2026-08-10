@@ -344,6 +344,30 @@ describe("Slack progress display", () => {
     expect(store.add).toHaveBeenCalledOnce();
   });
 
+  it("skips a redundant chat.update when the same milestone repeats while a bubble exists", async () => {
+    const client = {
+      chat: {
+        postMessage: vi.fn().mockResolvedValue({ ts: "progress-ts" }),
+        update: vi.fn().mockResolvedValue({}),
+      },
+    };
+    const display = createSlackProgressDisplay({
+      client: client as never,
+      channel: "C1",
+      threadTs: "1.0",
+      logPrefix: "[test]",
+    });
+    await display.publish();
+    display.milestone("Reading documents");
+    await Promise.resolve();
+    expect(client.chat.update).toHaveBeenCalledOnce();
+
+    display.milestone("Reading documents");
+    display.milestone("Reading documents");
+    await Promise.resolve();
+    expect(client.chat.update).toHaveBeenCalledOnce();
+  });
+
   it("finishes correctly when finish() runs while the initial publish is still in flight", async () => {
     let resolvePost: ((value: { ts: string }) => void) | undefined;
     const store = {
