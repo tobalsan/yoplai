@@ -86,7 +86,7 @@ describe("container launch spec", () => {
       ])
     ).toEqual([
       {
-        path: "/workspace/uploads/1-a.txt",
+        path: "/workspace/uploads/d78f174823f6-a.txt",
         filename: "../a.txt",
         mimeType: "text/plain",
         size: 1,
@@ -108,9 +108,10 @@ describe("container launch spec", () => {
       uploads
     );
 
-    expect(fs.readFileSync(path.join(uploads, "1-note.txt"), "utf8")).toBe(
-      "hello"
-    );
+    const remapped = remapAttachmentsToContainer([
+      { path: source, filename: "note.txt", mimeType: "text/plain", size: 5 },
+    ]);
+    expect(fs.readFileSync(path.join(uploads, path.basename(remapped![0].path)), "utf8")).toBe("hello");
   });
 });
 

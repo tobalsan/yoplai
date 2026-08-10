@@ -76,7 +76,7 @@ describe("container input builder", () => {
       agentToken: "token-1",
       extensionSystemPrompts: ["extra prompt"],
       extensionTools: [{ extensionId: "board", name: "scratchpad.read" }],
-      attachments: [{ path: "/workspace/uploads/1-a.txt" }],
+      attachments: [{ path: "/workspace/uploads/d78f174823f6-a.txt" }],
       sdkConfig: {
         sdk: "pi",
         model: { provider: "anthropic", model: "claude-sonnet" },

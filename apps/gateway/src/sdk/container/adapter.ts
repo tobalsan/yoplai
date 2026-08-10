@@ -26,6 +26,8 @@ import { registerContainerToken, removeContainerToken } from "./tokens.js";
 import {
   appendAttachmentContext,
   buildDocumentAttachmentContext,
+  isImageAttachment,
+  readInboundAttachment,
 } from "../attachments.js";
 import type {
   HistoryEvent,
@@ -37,9 +39,12 @@ import type {
 import {
   buildContainerLaunchSpec,
   cleanupLaunchFilesystem,
+  remapAttachmentsToContainer,
   prepareLaunchFilesystem,
 } from "./launch-spec.js";
 import { ContainerInputBuilder } from "./input-builder.js";
+import { configuredModelSupportsImages, describeImage } from "../../media/describe.js";
+import { formatImageDescriptionBlocks } from "@yoplai/shared";
 import { ContainerFileOutputAdapter } from "./file-output.js";
 import { ContainerProtocolDecoder, getMeaningfulStderr } from "./protocol.js";
 
@@ -305,10 +310,27 @@ export function getContainerAdapter(): SdkAdapter {
         const attachmentContext = hasReadableDocumentAttachment(params)
           ? await buildDocumentAttachmentContext(params.attachments)
           : "";
+        const provider = params.model?.provider ?? params.agent.model.provider;
+        const model = params.model?.model ?? params.agent.model.model;
+        const needsDescriptions = config.imageDescription?.enabled === true && (!provider || !configuredModelSupportsImages(config, provider, model));
+        const imageAttachments = needsDescriptions
+          ? (params.attachments ?? []).filter(isImageAttachment)
+          : [];
+        const remappedImages = (remapAttachmentsToContainer(params.attachments) ?? [])
+          .filter(isImageAttachment);
+        const imageDescriptionContext = imageAttachments.length
+          ? formatImageDescriptionBlocks(await Promise.all(imageAttachments.map(async (attachment, index) => {
+              try {
+                return { path: remappedImages[index].path, description: await describeImage(await readInboundAttachment(attachment), attachment.mimeType, config) };
+              } catch {
+                return { path: remappedImages[index].path, description: "Description failed; the image could not be read." };
+              }
+            })))
+          : "";
         input = await new ContainerInputBuilder().build(
           {
             ...params,
-            message: appendAttachmentContext(params.message, attachmentContext),
+            message: appendAttachmentContext(params.message, [attachmentContext, imageDescriptionContext].filter(Boolean).join("\n\n")),
           },
           config,
           agentToken,

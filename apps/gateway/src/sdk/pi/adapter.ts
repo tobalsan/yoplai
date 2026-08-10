@@ -6,7 +6,7 @@ import type { AgentTool } from "@earendil-works/pi-agent-core";
 import type { AssistantMessage, ImageContent } from "@earendil-works/pi-ai";
 import type { AgentSession as PiAgentSession } from "@earendil-works/pi-coding-agent";
 import type { AgentConfig } from "@yoplai/shared";
-import { claimAgentToolName, renderAgentContext } from "@yoplai/shared";
+import { claimAgentToolName, formatImageDescriptionBlocks, modelSupportsImages, renderAgentContext } from "@yoplai/shared";
 import type {
   SdkAdapter,
   SdkRunParams,
@@ -33,6 +33,9 @@ import {
   isImageAttachment,
   readInboundAttachment,
 } from "../attachments.js";
+import { describeImage } from "../../media/describe.js";
+import { getFullHistory } from "../../history/store.js";
+import { getMediaFileMetadata } from "../../media/metadata.js";
 
 const SESSIONS_DIR = path.join(CONFIG_DIR, "sessions");
 let piEnvLock: Promise<void> = Promise.resolve();
@@ -89,7 +92,8 @@ function stringifyToolResult(result: unknown): string {
 async function createPiExtensionTools(
   agent: AgentConfig,
   usedToolNames: Set<string>,
-  params: SdkRunParams
+  params: SdkRunParams,
+  includeDescribeImage = false
 ): Promise<{ tools: AgentTool[]; invisibleToolNames: Set<string> }> {
   const config = loadConfig();
   const env = resolveAgentEnv(agent, config);
@@ -122,7 +126,42 @@ async function createPiExtensionTools(
       },
     };
   });
+  if (includeDescribeImage && config.imageDescription?.enabled === true) {
+    const name = claimAgentToolName("describe_image", usedToolNames);
+    piTools.push({
+      name,
+      label: "Describe an attached image",
+      description: "Re-query an image already attached to this conversation. Use the exact attachment path shown in its generated description.",
+      parameters: { type: "object", properties: { path: { type: "string" }, question: { type: "string" } }, required: ["path"] } as AgentTool["parameters"],
+      execute: async (_toolCallId, toolParams) => {
+        const args = toolParams as { path?: unknown; question?: unknown };
+        if (typeof args.path !== "string") throw new Error("describe_image requires an image path");
+        const attachment = await findSessionImageAttachment(agent.id, params.sessionId, params.userId, args.path);
+        if (!attachment) throw new Error("describe_image path is not an image attached to this session");
+        const description = await describeImage(
+          await readInboundAttachment(attachment), attachment.mimeType, config,
+          typeof args.question === "string" ? args.question : undefined
+        );
+        return { content: [{ type: "text", text: description }], details: { description } };
+      },
+    });
+  }
   return { tools: piTools, invisibleToolNames };
+}
+
+export async function findSessionImageAttachment(agentId: string, sessionId: string, userId: string | undefined, requestedPath: string) {
+  const history = await getFullHistory(agentId, sessionId, userId);
+  for (const message of history) {
+    if (message.role !== "user" || !Array.isArray(message.content)) continue;
+    for (const block of message.content) {
+      if (block.type !== "file" || block.direction !== "inbound" || !block.mimeType.startsWith("image/")) continue;
+      const metadata = await getMediaFileMetadata(block.fileId);
+      if (metadata?.path === requestedPath && metadata.agentId === agentId && metadata.sessionId === sessionId) {
+        return { path: metadata.path, mimeType: metadata.mimeType, filename: metadata.filename, size: metadata.size };
+      }
+    }
+  }
+  return undefined;
 }
 
 async function withPiOnecliEnv<T>(
@@ -296,7 +335,7 @@ export const piAdapter: SdkAdapter = {
       const builtInTools = ["read", "bash", "edit", "write"];
       const usedToolNames = new Set<string>();
       const { tools: extensionTools, invisibleToolNames } =
-        await createPiExtensionTools(agent, usedToolNames, params);
+        await createPiExtensionTools(agent, usedToolNames, params, !modelSupportsImages(model));
       const tools = [
         ...builtInTools,
         ...extensionTools.map((tool) => tool.name),
@@ -393,21 +432,24 @@ export const piAdapter: SdkAdapter = {
         });
       }
 
-      // Load images from file paths
+      // Preserve pixels for vision models; otherwise inject durable labelled text.
       let images: ImageContent[] | undefined;
+      let imageDescriptionContext = "";
       if (params.attachments && params.attachments.length > 0) {
         const imageAttachments = params.attachments.filter(isImageAttachment);
         if (imageAttachments.length > 0) {
-          images = await Promise.all(
-            imageAttachments.map(async (attachment) => {
-              const buffer = await readInboundAttachment(attachment);
-              return {
-                type: "image" as const,
-                data: buffer.toString("base64"),
-                mimeType: attachment.mimeType,
-              };
-            })
-          );
+          if (modelSupportsImages(model)) {
+            images = await Promise.all(imageAttachments.map(async (attachment) => ({
+              type: "image" as const, data: (await readInboundAttachment(attachment)).toString("base64"), mimeType: attachment.mimeType,
+            })));
+          } else if (loadConfig().imageDescription?.enabled === true) {
+            const config = loadConfig();
+            const descriptions = await Promise.all(imageAttachments.map(async (attachment) => {
+              try { return { path: attachment.path, description: await describeImage(await readInboundAttachment(attachment), attachment.mimeType, config) }; }
+              catch { return { path: attachment.path, description: "Description failed; the image could not be read." }; }
+            }));
+            imageDescriptionContext = formatImageDescriptionBlocks(descriptions);
+          }
         }
       }
 
@@ -416,7 +458,7 @@ export const piAdapter: SdkAdapter = {
       );
       const messageWithAttachments = appendAttachmentContext(
         params.message,
-        attachmentContext
+        [attachmentContext, imageDescriptionContext].filter(Boolean).join("\n\n")
       );
 
       // Emit user message to history (without context preamble)

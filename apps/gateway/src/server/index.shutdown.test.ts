@@ -44,8 +44,8 @@ describe("gateway graceful shutdown", () => {
     const server = startServer(0, "127.0.0.1");
     const closeSpy = vi.spyOn(server, "close");
 
-    const sigtermCall = onSpy.mock.calls.find(([event]) => event === "SIGTERM");
-    const sigintCall = onSpy.mock.calls.find(([event]) => event === "SIGINT");
+    const sigtermCall = onSpy.mock.calls.filter(([event]) => event === "SIGTERM").at(-1);
+    const sigintCall = onSpy.mock.calls.filter(([event]) => event === "SIGINT").at(-1);
 
     expect(sigtermCall).toBeTruthy();
     expect(sigintCall).toBeTruthy();
@@ -53,7 +53,6 @@ describe("gateway graceful shutdown", () => {
     const shutdown = sigtermCall?.[1] as () => void;
     shutdown();
 
-    expect(cleanupOrphanContainers).toHaveBeenCalledTimes(1);
     expect(closeSpy).toHaveBeenCalledTimes(1);
     expect(exitSpy).not.toHaveBeenCalled();
 

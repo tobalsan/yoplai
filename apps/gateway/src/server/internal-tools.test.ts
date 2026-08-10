@@ -265,6 +265,16 @@ describe("internal tools", () => {
     expect(await response.json()).toEqual({ error: "Document path traversal is not allowed" });
   });
 
+  it("rejects describe_image paths outside the container roots", async () => {
+    const { app } = createDeps();
+    registerToken("token-image-path");
+    const response = await postTool(app, {
+      tool: "describe_image", args: { path: "/etc/screenshot.png" }, agentId: "agent-1", agentToken: "token-image-path",
+    });
+    expect(response.status).toBe(500);
+    expect(await response.json()).toEqual({ error: "Document path is outside approved container roots" });
+  });
+
   it("rejects an approved-root path that resolves through a symlink", async () => {
     const { app } = createDeps();
     const workspace = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-workspace-"));

@@ -6,6 +6,7 @@ import { getMountedOnecliCaPath } from "../../agents/container.js";
 import { remapAttachmentsToContainer } from "./launch-spec.js";
 import { ContainerToolBridge } from "./tool-bridge.js";
 import { logWarn } from "../../logging.js";
+import { configuredModelSupportsImages } from "../../media/describe.js";
 
 const DEFAULT_GATEWAY_PORT = 4000;
 
@@ -23,7 +24,12 @@ export class ContainerInputBuilder {
       params,
       config
     );
-    const extensionTools = await this.toolBridge.buildTools(params, config);
+    const provider = params.model?.provider ?? params.agent.model.provider;
+    const model = params.model?.model ?? params.agent.model.model;
+    const imageInputSupported = provider
+      ? configuredModelSupportsImages(config, provider, model)
+      : false;
+    const extensionTools = await this.toolBridge.buildTools(params, config, !imageInputSupported && config.imageDescription?.enabled === true);
     const systemFiles = await resolveSystemFiles({
       workspaceDir: params.workspaceDir,
       systemFiles: params.agent.system_files,
@@ -36,6 +42,7 @@ export class ContainerInputBuilder {
       userId: params.userId,
       message: params.message,
       attachments: remapAttachmentsToContainer(params.attachments),
+      imageInputSupported,
       thinkLevel: params.thinkLevel,
       context: params.context,
       systemFiles: systemFiles.map((file) => ({
@@ -67,8 +74,8 @@ export class ContainerInputBuilder {
       sdkConfig: {
         sdk: params.agent.sdk ?? getDefaultSdkId(),
         model: {
-          provider: params.model?.provider ?? params.agent.model.provider,
-          model: params.model?.model ?? params.agent.model.model,
+          provider,
+          model,
         },
       },
     };
