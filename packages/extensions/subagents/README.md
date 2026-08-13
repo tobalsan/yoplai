@@ -99,6 +99,15 @@ screens migrate to the runtime extension. Those templates use `cli`:
 }
 ```
 
+## Authentication
+
+With the multi-user extension enabled, all `/api/subagents` routes require
+authentication, so CLI commands must send a bearer token. The CLI resolves it
+from `YOPLAI_TOKEN`, falling back to the token cached by
+`yoplai user token create --user <email>` (see the
+[multi-user README](../multi-user/README.md#cli-yoplai-user-token)).
+Without multi-user, no token is needed.
+
 ## CLI Examples
 
 Start a Codex subagent in a repo:
