@@ -1,6 +1,9 @@
 const REDACTED = "[REDACTED]";
 
 function isSensitiveKey(key: string): boolean {
+  // Anthropic thinking-block integrity signature: must be replayed verbatim
+  // in session history or the API rejects the conversation; not a credential.
+  if (key === "thinkingSignature") return false;
   if (
     /(authorization|secret|password|credential|api[-_]?key|signature|sig|x-amz-[\w-]+)/i.test(
       key

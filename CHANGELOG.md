@@ -11,6 +11,7 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Fixed
 
+- Session persistence no longer redacts Anthropic thinking-block signatures (`thinkingSignature`), which bricked pi-adapter sessions on the next turn with API 400 `Invalid signature in thinking block`. Sessions already redacted need a fresh session.
 - `yoplai user token create` no longer fails when unrelated extensions reference env vars absent from the current shell (e.g. `DISCORD_TOKEN`); only multi-user secrets are resolved.
 - `yoplai subagent` and `yoplai subagents` CLI calls now authenticate to the gateway with a bearer token (`YOPLAI_TOKEN` env var, falling back to the cached `yoplai user token create` token), so they work when the multi-user extension is enabled instead of failing with `unauthorized`.
 

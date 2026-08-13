@@ -24,6 +24,18 @@ describe("sanitizeForStorage", () => {
     expect(sanitized.output).toContain("page=2");
   });
 
+  it("preserves thinking-block signatures required for history replay", () => {
+    const signature = "EoIFCokBCBAYAipAseJtlUgxbB";
+    const sanitized = sanitizeForStorage({
+      role: "assistant",
+      content: [
+        { type: "thinking", thinking: "reasoning", thinkingSignature: signature },
+      ],
+    });
+
+    expect(sanitized.content[0].thinkingSignature).toBe(signature);
+  });
+
   it("redacts credential-bearing environment and header text", () => {
     const canary = "canary-private-value";
     const sanitized = sanitizeSensitiveText(
