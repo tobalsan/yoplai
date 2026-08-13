@@ -90,15 +90,17 @@ export async function createTokenInProcess(opts: {
 }): Promise<{ token: string; tokenId: string; userId: string }> {
   // loadConfig() loads $YOPLAI_HOME/.env into process.env but leaves $env: refs
   // unresolved on the returned object; the gateway proper resolves them via
-  // prepareStartupConfig(). The CLI bootstrap mirrors that step so baseUrl /
-  // sessionSecret / OAuth refs reach better-auth as real strings.
-  const config = await resolveConfigSecrets(loadConfig());
-  const mu = config.extensions?.multiUser;
-  if (!mu?.enabled) {
+  // prepareStartupConfig(). Resolve only the multi-user subtree here: better-auth
+  // needs sessionSecret / OAuth refs as real strings, while resolving the full
+  // config would fail on unrelated extensions' $env refs (e.g. DISCORD_TOKEN).
+  const config = loadConfig();
+  const muRaw = config.extensions?.multiUser;
+  if (!muRaw?.enabled) {
     throw new Error(
       "multi-user extension is not enabled in this Yoplai config"
     );
   }
+  const mu = await resolveConfigSecrets(muRaw);
 
   const dataDir = opts.dataDir ?? CONFIG_DIR;
   const { initializeMultiUserDatabase, createMultiUserAuth } = await import(
