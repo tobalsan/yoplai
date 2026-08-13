@@ -6,7 +6,7 @@
  * - ui.port: dev server port (default 3000)
  * - ui.bind: "loopback" | "lan" | "tailnet"
  * - ui.tailscale.mode: "off" | "serve" (enables HTTPS via tailscale serve)
- * - ui.tailscale.resetOnExit: reset tailscale serve on exit (default true)
+ * - ui.tailscale.resetOnExit: reset tailscale serve on exit (default false)
  */
 import fs from "node:fs";
 import path from "node:path";
@@ -57,7 +57,7 @@ async function main() {
 
   // In dev mode, skip tailscale serve entirely
   const tailscaleMode = isDevMode ? "off" : (uiConfig.tailscale?.mode ?? "off");
-  const resetOnExit = uiConfig.tailscale?.resetOnExit ?? true;
+  const resetOnExit = uiConfig.tailscale?.resetOnExit ?? false;
 
   let tailscaleHostname: string | null = null;
 

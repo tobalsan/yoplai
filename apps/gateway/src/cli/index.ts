@@ -237,7 +237,7 @@ function startWebUI(
   const port = uiConfig.port ?? 3000;
   const host = resolveUiHost(uiConfig.bind);
   const useTailscaleServe = uiConfig.tailscale?.mode === "serve";
-  const resetOnExit = uiConfig.tailscale?.resetOnExit ?? true;
+  const resetOnExit = uiConfig.tailscale?.resetOnExit ?? false;
   const useDevServer = readEnv("WEB_DEV") === "1";
 
   // Get monorepo root (gateway is at apps/gateway/dist/cli or apps/gateway/src/cli)

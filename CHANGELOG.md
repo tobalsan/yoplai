@@ -9,6 +9,10 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ## [Unreleased]
 
+### Changed
+
+- `ui.tailscale.resetOnExit` now defaults to `false`. The previous default ran `tailscale serve reset` on gateway shutdown/restart, which wipes the machine's entire Tailscale serve config — including entries Yoplai didn't create. Set it to `true` explicitly to opt back in.
+
 ### Fixed
 
 - Pi CLI subagent runs now surface the assistant's final answer in `latestOutput` (`yoplai subagents list`/`status`) instead of the raw `{"type":"agent_settled"}` event, and the logs view no longer shows raw token-delta noise.

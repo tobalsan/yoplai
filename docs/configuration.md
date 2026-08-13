@@ -166,7 +166,7 @@ See [Extensions](extensions.md).
 | `ui.port`                  | UI port; default 3000                   |
 | `ui.bind`                  | `loopback`, `lan`, or `tailnet`         |
 | `ui.tailscale.mode`        | `off` or `serve`                        |
-| `ui.tailscale.resetOnExit` | Reset serve config on exit              |
+| `ui.tailscale.resetOnExit` | Reset serve config on exit (`tailscale serve reset`, wipes non-Yoplai entries too); default false |
 
 Prefer `loopback` until authentication and a secure access path are configured. For Tailscale Serve, both gateway and UI binds must be loopback; Yoplai maps UI below `/yoplai` and API/WS to gateway.
 
