@@ -375,4 +375,115 @@ describe("subagent runtime logs", () => {
       { type: "result", text: "Final result." },
     ]);
   });
+
+  it("hides Pi runtime lifecycle and delta noise", async () => {
+    await writeRun("run-1", [
+      JSON.stringify({ type: "agent_start" }),
+      JSON.stringify({ type: "turn_start" }),
+      JSON.stringify({ type: "message_start" }),
+      JSON.stringify({ type: "text_start" }),
+      JSON.stringify({ type: "text_delta", text: "Hel" }),
+      JSON.stringify({ type: "text_delta", text: "lo" }),
+      JSON.stringify({ type: "text_end" }),
+      JSON.stringify({ type: "thinking_start" }),
+      JSON.stringify({ type: "thinking_delta", thinking: "hmm" }),
+      JSON.stringify({ type: "thinking_end" }),
+      JSON.stringify({ type: "toolcall_start" }),
+      JSON.stringify({ type: "toolcall_delta" }),
+      JSON.stringify({ type: "toolcall_end" }),
+      JSON.stringify({ type: "tool_execution_start" }),
+      JSON.stringify({ type: "tool_execution_update" }),
+      JSON.stringify({ type: "message_end" }),
+      JSON.stringify({ type: "agent_settled" }),
+    ]);
+
+    const logs = await getSubagentLogs(runtimeOptions(), "run-1", 0);
+
+    expect(logs.events).toEqual([]);
+  });
+
+  it("extracts assistant text from a Pi turn_end message, excluding thinking blocks", async () => {
+    await writeRun("run-1", [
+      JSON.stringify({
+        type: "turn_end",
+        message: {
+          role: "assistant",
+          content: [
+            { type: "thinking", thinking: "internal reasoning" },
+            { type: "text", text: "final answer" },
+          ],
+        },
+      }),
+    ]);
+
+    const logs = await getSubagentLogs(runtimeOptions(), "run-1", 0);
+
+    expect(logs.events).toEqual([{ type: "assistant", text: "final answer" }]);
+  });
+
+  it("ignores a non-assistant Pi turn_end message", async () => {
+    await writeRun("run-1", [
+      JSON.stringify({
+        type: "turn_end",
+        message: {
+          role: "toolResult",
+          content: [{ type: "text", text: "tool output" }],
+        },
+      }),
+    ]);
+
+    const logs = await getSubagentLogs(runtimeOptions(), "run-1", 0);
+
+    expect(logs.events).toEqual([]);
+  });
+
+  it("extracts the last assistant message from a Pi agent_end payload", async () => {
+    await writeRun("run-1", [
+      JSON.stringify({
+        type: "agent_end",
+        messages: [
+          {
+            role: "user",
+            content: [{ type: "text", text: "do the thing" }],
+          },
+          {
+            role: "assistant",
+            content: [{ type: "text", text: "first answer" }],
+          },
+          {
+            role: "toolResult",
+            content: [{ type: "text", text: "tool output" }],
+          },
+          {
+            role: "assistant",
+            content: [
+              { type: "thinking", thinking: "internal reasoning" },
+              { type: "text", text: "last answer" },
+            ],
+          },
+        ],
+      }),
+    ]);
+
+    const logs = await getSubagentLogs(runtimeOptions(), "run-1", 0);
+
+    expect(logs.events).toEqual([{ type: "assistant", text: "last answer" }]);
+  });
+
+  it("uses the real final answer from a Pi turn_end line for latestOutput instead of raw agent_settled JSON", async () => {
+    await writeRun("run-1", [
+      JSON.stringify({
+        type: "turn_end",
+        message: {
+          role: "assistant",
+          content: [{ type: "text", text: "The real final answer." }],
+        },
+      }),
+      JSON.stringify({ type: "agent_settled" }),
+    ]);
+
+    const runs = await listSubagentRuns(runtimeOptions());
+
+    expect(runs[0]?.latestOutput).toBe("The real final answer.");
+  });
 });

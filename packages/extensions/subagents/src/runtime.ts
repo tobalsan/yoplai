@@ -350,7 +350,25 @@ function shouldHideParsedLog(parsed: Record<string, unknown>): boolean {
     type === "rate_limit_event" ||
     type === "thread.started" ||
     type === "turn.started" ||
-    type === "turn.completed"
+    type === "turn.completed" ||
+    type === "agent_start" ||
+    type === "agent_settled" ||
+    type === "turn_start" ||
+    type === "message_start" ||
+    type === "message_update" ||
+    type === "message_end" ||
+    type === "text_start" ||
+    type === "text_delta" ||
+    type === "text_end" ||
+    type === "thinking_start" ||
+    type === "thinking_delta" ||
+    type === "thinking_end" ||
+    type === "thinking" ||
+    type === "toolcall_start" ||
+    type === "toolcall_delta" ||
+    type === "toolcall_end" ||
+    type === "tool_execution_start" ||
+    type === "tool_execution_update"
   ) {
     return true;
   }
@@ -428,6 +446,22 @@ function normalizeParsedLog(
     const id =
       typeof toolResult.tool_use_id === "string" ? toolResult.tool_use_id : "";
     return text ? { type: "tool_output", text, tool: { id } } : null;
+  }
+  if (type === "turn_end") {
+    const message = getRecord(parsed.message);
+    if (message?.role !== "assistant") return null;
+    const text = extractTextFromContentBlocks(message.content);
+    return text ? { type: "assistant", text } : null;
+  }
+  if (type === "agent_end") {
+    const messages = Array.isArray(parsed.messages) ? parsed.messages : [];
+    for (let i = messages.length - 1; i >= 0; i--) {
+      const message = getRecord(messages[i]);
+      if (message?.role !== "assistant") continue;
+      const text = extractTextFromContentBlocks(message.content);
+      if (text) return { type: "assistant", text };
+    }
+    return null;
   }
   if (type === "event_msg") {
     const payload = getRecord(parsed.payload);
