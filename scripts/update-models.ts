@@ -10,6 +10,20 @@ type ModelsDevProvider = {
   models?: Record<string, { id?: string; limit?: { context?: number } }>;
 };
 
+function addModelsFromSubagentList(
+  configuredModels: Set<string>,
+  subagents: unknown
+): void {
+  if (!Array.isArray(subagents)) return;
+  for (const sub of subagents) {
+    if (!sub || typeof sub !== "object") continue;
+    const subModel = (sub as { model?: unknown }).model;
+    if (typeof subModel === "string" && subModel) {
+      configuredModels.add(subModel);
+    }
+  }
+}
+
 function addModelsFromAgents(
   configuredModels: Set<string>,
   agents: unknown
@@ -19,17 +33,10 @@ function addModelsFromAgents(
     if (!agent || typeof agent !== "object") continue;
     const model = (agent as { model?: { model?: unknown } }).model?.model;
     if (typeof model === "string" && model) configuredModels.add(model);
-
-    const subagents = (agent as { subagents?: unknown }).subagents;
-    if (Array.isArray(subagents)) {
-      for (const sub of subagents) {
-        if (!sub || typeof sub !== "object") continue;
-        const subModel = (sub as { model?: unknown }).model;
-        if (typeof subModel === "string" && subModel) {
-          configuredModels.add(subModel);
-        }
-      }
-    }
+    addModelsFromSubagentList(
+      configuredModels,
+      (agent as { subagents?: unknown }).subagents
+    );
   }
 }
 
@@ -44,6 +51,10 @@ export function collectConfiguredModels(
     addModelsFromAgents(
       configuredModels,
       (config as { agents?: unknown }).agents
+    );
+    addModelsFromSubagentList(
+      configuredModels,
+      (config as { subagents?: unknown }).subagents
     );
   }
   addModelsFromAgents(configuredModels, agentConfigs);
@@ -148,15 +159,31 @@ export function readAgentYamlModelConfig(content: string): unknown {
   return { model: model ? { model } : undefined, subagents };
 }
 
-function readAgentYamlConfigs(config: unknown, configPath: string): unknown[] {
+function normalizePatterns(patterns: unknown): string[] {
+  if (typeof patterns === "string") return [patterns];
+  if (Array.isArray(patterns)) {
+    return patterns.filter(
+      (pattern): pattern is string => typeof pattern === "string" && !!pattern
+    );
+  }
+  return [];
+}
+
+export function readAgentYamlConfigs(config: unknown, configPath: string): unknown[] {
   if (!config || typeof config !== "object") return [];
-  const agents = (config as { agents?: unknown }).agents;
-  if (!Array.isArray(agents)) return [];
+  const hasPool = Object.prototype.hasOwnProperty.call(config, "pool");
+  const agentsField = (config as { agents?: unknown }).agents;
+  const agentDiscovery =
+    agentsField ?? (hasPool ? undefined : "$YOPLAI_HOME/agents/*");
+  const patterns = [
+    ...normalizePatterns(agentDiscovery),
+    ...normalizePatterns((config as { pool?: unknown }).pool),
+  ];
+  if (patterns.length === 0) return [];
   const configDir = dirname(configPath);
   const result: unknown[] = [];
 
-  for (const agent of agents) {
-    if (typeof agent !== "string" || !agent) continue;
+  for (const agent of patterns) {
     if (agent.includes("?") || agent.includes("[")) {
       continue;
     }
