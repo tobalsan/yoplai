@@ -40,6 +40,8 @@ Add `$YOPLAI_HOME/models.json`:
 
 `pnpm update-models` refreshes web context-window metadata for configured v3 agents and custom models. Explicit `contextWindow` is preserved; otherwise updater checks OpenRouter then models.dev.
 
+The script is build-time only: it rewrites `packages/shared/src/model-context-data.json`, which is statically imported and compiled into `packages/shared/dist/` and the web bundle. A running gateway never fetches model data at runtime. To update a production install: `pnpm update-models` → `pnpm build` → `yoplai gateway restart`.
+
 ## Reasoning
 
 Agent `reasoning` values: `off`, `minimal`, `low`, `medium`, `high`, `xhigh`. Harness-specific supported values may differ; project/orchestrator profiles validate before run.

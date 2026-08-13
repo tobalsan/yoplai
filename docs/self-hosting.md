@@ -69,6 +69,8 @@ pnpm build:web
 
 Then restart gateway. Review `CHANGELOG.md` before upgrade and back up data/config first. Run documented migration commands only when release notes require them.
 
+Model context-window metadata (used by the web UI) is a build-time snapshot, not fetched at runtime. To refresh it on a prod install, run `pnpm update-models` before the build steps above (see `docs/models-and-skills.md`).
+
 ## Backups
 
 Back up:
