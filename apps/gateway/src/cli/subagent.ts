@@ -2,6 +2,19 @@ import { Command } from "commander";
 import { readEnv, resolveBindHost } from "@yoplai/shared";
 import { loadConfig } from "../config/index.js";
 import { logError } from "../logging.js";
+import { loadCachedToken } from "./user-token.js";
+
+function resolveBearerToken(): string | undefined {
+  return readEnv("YOPLAI_TOKEN") ?? loadCachedToken()?.token ?? undefined;
+}
+
+function withAuthHeaders(init?: RequestInit): RequestInit | undefined {
+  const token = resolveBearerToken();
+  if (!token) return init;
+  const headers = new Headers(init?.headers ?? {});
+  headers.set("Authorization", `Bearer ${token}`);
+  return { ...init, headers };
+}
 
 type FetchLike = (url: string, init?: RequestInit) => Promise<Response>;
 
@@ -114,7 +127,7 @@ export function createSubagentHandlers(options?: {
 
   const requestJson = (path: string, init?: RequestInit) => {
     const url = new URL(`/api${path}`, baseUrl).toString();
-    return fetchImpl(url, init);
+    return fetchImpl(url, withAuthHeaders(init));
   };
 
   return {
@@ -168,7 +181,7 @@ export function createRuntimeSubagentHandlers(options?: {
 
   const requestJson = (path: string, init?: RequestInit) => {
     const url = new URL(`/api${path}`, baseUrl).toString();
-    return fetchImpl(url, init);
+    return fetchImpl(url, withAuthHeaders(init));
   };
 
   return {

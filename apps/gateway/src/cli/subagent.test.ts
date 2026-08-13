@@ -9,6 +9,10 @@ import {
   registerSubagentCommands,
 } from "./subagent.js";
 
+vi.mock("./user-token.js", () => ({
+  loadCachedToken: vi.fn(() => null),
+}));
+
 function stubConsoleLog(): string[] {
   const lines: string[] = [];
   vi.spyOn(console, "log").mockImplementation((line?: unknown) => {
@@ -37,6 +41,7 @@ afterEach(() => {
   else process.env.YOPLAI_API_URL = previousApiUrl;
   clearConfigCacheForTests();
   vi.restoreAllMocks();
+  vi.unstubAllEnvs();
 });
 
 describe("subagent CLI handlers", () => {
@@ -170,6 +175,44 @@ describe("runtime subagents CLI handlers", () => {
     expect(calls[0].url).toBe(
       "http://localhost:4000/api/subagents?parent=board%3Amain&status=running&includeArchived=true"
     );
+  });
+
+  it("sends Authorization header when YOPLAI_TOKEN is set", async () => {
+    vi.stubEnv("YOPLAI_TOKEN", "test-token-123");
+    const calls: Array<{ url: string; init?: RequestInit }> = [];
+    const fetchImpl = async (url: string, init?: RequestInit) => {
+      calls.push({ url, init });
+      return new Response(JSON.stringify({ items: [] }), { status: 200 });
+    };
+
+    const handlers = createRuntimeSubagentHandlers({
+      baseUrl: "http://localhost:4000",
+      fetchImpl,
+    });
+
+    await handlers.list({});
+
+    expect(new Headers(calls[0].init?.headers).get("authorization")).toBe(
+      "Bearer test-token-123"
+    );
+  });
+
+  it("omits Authorization header when no token is available", async () => {
+    vi.stubEnv("YOPLAI_TOKEN", "");
+    const calls: Array<{ url: string; init?: RequestInit }> = [];
+    const fetchImpl = async (url: string, init?: RequestInit) => {
+      calls.push({ url, init });
+      return new Response(JSON.stringify({ items: [] }), { status: 200 });
+    };
+
+    const handlers = createRuntimeSubagentHandlers({
+      baseUrl: "http://localhost:4000",
+      fetchImpl,
+    });
+
+    await handlers.list({});
+
+    expect(new Headers(calls[0].init?.headers).get("authorization")).toBeNull();
   });
 });
 

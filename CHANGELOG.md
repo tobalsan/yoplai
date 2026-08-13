@@ -9,6 +9,10 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ## [Unreleased]
 
+### Fixed
+
+- `yoplai subagent` and `yoplai subagents` CLI calls now authenticate to the gateway with a bearer token (`YOPLAI_TOKEN` env var, falling back to the cached `yoplai user token create` token), so they work when the multi-user extension is enabled instead of failing with `unauthorized`.
+
 ## v0.23.0 — Slack live progress, document understanding + agent dreams
 
 Agent runs now report durable, sanitized live progress in Slack, backed by new
