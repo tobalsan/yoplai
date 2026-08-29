@@ -17,3 +17,7 @@ minimumReleaseAgeExclude:
   - '@earendil-works/pi-tui@0.80.6'
 overrides:
   minimatch: ^9.0.5
+  # better-auth pins @better-auth/core to an exact version, but
+  # @better-auth/api-key only declares a caret peer range, which lets
+  # pnpm hoist a newer minor whose internals no longer match.
+  '@better-auth/core': 1.6.30

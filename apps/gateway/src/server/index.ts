@@ -22,6 +22,49 @@ import { accessLogger } from "./access-log.js";
 type RequestAuthContext =
   import("@yoplai/extension-multi-user").RequestAuthContext;
 
+function toOrigin(value: string | undefined): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const trimmed = value.trim();
+  if (!trimmed) return undefined;
+  try {
+    return new URL(trimmed).origin;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Browser origins allowed to make credentialed cross-origin calls: the
+ * configured public base URL plus loopback dev origins. Mirrors the
+ * `trustedOrigins` list better-auth is built with in the multi-user
+ * extension. `loadConfig()` is cached, so this is cheap per request and
+ * still follows config hot reloads.
+ */
+function allowedCorsOrigins(): string[] {
+  let config: GatewayConfig | undefined;
+  try {
+    config = loadConfig();
+  } catch {
+    config = undefined;
+  }
+
+  const gatewayPort = config?.gateway?.port ?? config?.server?.port ?? 4000;
+  const uiPort = config?.ui?.port ?? 3000;
+
+  return [
+    ...new Set(
+      [
+        toOrigin(config?.server?.baseUrl),
+        toOrigin(config?.web?.baseUrl),
+        `http://localhost:${uiPort}`,
+        `http://127.0.0.1:${uiPort}`,
+        `http://localhost:${gatewayPort}`,
+        `http://127.0.0.1:${gatewayPort}`,
+      ].filter((value): value is string => !!value)
+    ),
+  ];
+}
+
 const app = new Hono();
 let activeExtensionRuntime: ExtensionRuntime | undefined;
 
@@ -47,7 +90,15 @@ function isExtensionEnabled(
   return runtime.isEnabled(extensionId, config);
 }
 
-app.use("*", cors());
+app.use(
+  "*",
+  cors({
+    // Reflect only known origins. `credentials: true` is incompatible with a
+    // wildcard, and the web client calls the API with `credentials: "include"`.
+    origin: (origin) => (allowedCorsOrigins().includes(origin) ? origin : null),
+    credentials: true,
+  })
+);
 app.use("*", accessLogger());
 app.route("/internal", internalTools);
 app.use("/api/*", async (c, next) => {
