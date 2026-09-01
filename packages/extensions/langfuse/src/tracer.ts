@@ -2,6 +2,7 @@ import Langfuse from "langfuse";
 
 import {
   sanitizeForStorage,
+  type AgentContext,
   type AgentHistoryEvent,
   type AgentStreamEvent,
 } from "@yoplai/shared";
@@ -40,6 +41,22 @@ function toSurface(event: AgentStreamEvent | AgentHistoryEvent): string {
   if (event.sessionKey?.startsWith("project:")) return "project";
   if (event.sessionKey?.startsWith("webhook:")) return "webhook";
   return "chat";
+}
+
+function contextAttributes(context: AgentContext): {
+  userId?: string;
+  tags?: string[];
+} {
+  if (context.kind === "web") {
+    return { userId: context.name, tags: ["channel:web"] };
+  }
+  const tags = [`channel:${context.kind}`];
+  for (const block of context.blocks) {
+    if (block.type === "metadata") {
+      return { userId: block.sender, tags: [...tags, `place:${block.place}`] };
+    }
+  }
+  return { tags };
 }
 
 export class LangfuseTracer {
@@ -142,6 +159,7 @@ export class LangfuseTracer {
     switch (event.type) {
       case "system_context":
         trace.trace.update({
+          ...contextAttributes(event.context),
           metadata: {
             source: event.source,
             sessionKey: event.sessionKey,
@@ -224,10 +242,14 @@ export class LangfuseTracer {
 
     const surface = toSurface(event);
     const traceName = event.trace?.name ?? `yoplai:${surface}:${event.agentId}`;
+    const rawSessionId = event.sessionId.startsWith(`${surface}:`)
+      ? event.sessionId.slice(surface.length + 1)
+      : event.sessionId;
+    const sessionId = `yoplai:${surface}:${event.agentId}:${rawSessionId}`;
 
     const trace = this.langfuse.trace({
       name: traceName,
-      sessionId: event.sessionId,
+      sessionId,
       input: undefined,
       output: undefined,
       metadata: {

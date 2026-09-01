@@ -471,6 +471,8 @@ describe("LangfuseTracer", () => {
       input: "hello",
     });
     expect(langfuseMock.traces[0]?.update).toHaveBeenCalledWith({
+      userId: "Thinh",
+      tags: ["channel:slack", "place:direct message / Thinh"],
       metadata: {
         source: "web",
         sessionKey: "main",
@@ -679,10 +681,10 @@ describe("LangfuseTracer", () => {
 
     expect(langfuseMock.traces).toHaveLength(2);
     expect(langfuseMock.traces[0]?.args).toEqual(
-      expect.objectContaining({ sessionId: "session-a" })
+      expect.objectContaining({ sessionId: "yoplai:chat:agent-1:session-a" })
     );
     expect(langfuseMock.traces[1]?.args).toEqual(
-      expect.objectContaining({ sessionId: "session-b" })
+      expect.objectContaining({ sessionId: "yoplai:chat:agent-1:session-b" })
     );
 
     await tracer.stop();
