@@ -58,15 +58,15 @@ const piMock = vi.hoisted(() => {
   };
 });
 
+vi.mock("@earendil-works/pi-ai", () => ({
+  InMemoryCredentialStore: class {},
+}));
+
 vi.mock("@earendil-works/pi-coding-agent", () => ({
-  AuthStorage: {
-    inMemory: vi.fn(() => ({
+  ModelRuntime: {
+    create: vi.fn(async () => ({
       setRuntimeApiKey: piMock.setRuntimeApiKey,
-    })),
-  },
-  ModelRegistry: {
-    create: vi.fn(() => ({
-      find: vi.fn(() => piMock.model),
+      getModel: vi.fn(() => piMock.model),
     })),
   },
   SessionManager: {

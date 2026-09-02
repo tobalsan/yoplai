@@ -536,14 +536,14 @@ authCmd
   )
   .action(async (provider?: string) => {
     try {
-      const { AuthStorage } = await import("@earendil-works/pi-coding-agent");
-      const authStorage = AuthStorage.create(
-        path.join(CONFIG_DIR, "auth.json")
-      );
-      const providers = authStorage.getOAuthProviders() as Array<{
-        id: string;
-        name: string;
-      }>;
+      const { ModelRuntime } = await import("@earendil-works/pi-coding-agent");
+      const runtime = await ModelRuntime.create({
+        authPath: path.join(CONFIG_DIR, "auth.json"),
+      });
+      const providers = runtime
+        .getProviders()
+        .filter((p) => p.auth.oauth)
+        .map((p) => ({ id: p.id, name: p.auth.oauth?.name ?? p.name }));
 
       // If no provider specified, show menu
       let selectedProvider = provider;
@@ -583,55 +583,39 @@ authCmd
         input: process.stdin,
         output: process.stdout,
       });
-      await authStorage.login(
-        selectedProvider as Parameters<typeof authStorage.login>[0],
-        {
-          onAuth: (info: { url: string; instructions?: string }) => {
-            console.log(`\nOpen this URL in your browser:\n${info.url}`);
-            if (info.instructions) console.log(info.instructions);
+      const ask = (question: string) =>
+        new Promise<string>((resolve) => rl.question(question, resolve));
+      await runtime.login(selectedProvider, "oauth", {
+        notify: (event) => {
+          if (event.type === "auth_url") {
+            console.log(`\nOpen this URL in your browser:\n${event.url}`);
+            if (event.instructions) console.log(event.instructions);
             console.log();
-          },
-          onDeviceCode: (info: {
-            userCode: string;
-            verificationUri: string;
-            intervalSeconds?: number;
-            expiresInSeconds?: number;
-          }) => {
-            console.log(`\nOpen this URL in your browser:\n${info.verificationUri}`);
-            console.log(`Enter code: ${info.userCode}`);
-            if (info.expiresInSeconds) {
-              console.log(`Code expires in ${info.expiresInSeconds} seconds.`);
+          } else if (event.type === "device_code") {
+            console.log(`\nOpen this URL in your browser:\n${event.verificationUri}`);
+            console.log(`Enter code: ${event.userCode}`);
+            if (event.expiresInSeconds) {
+              console.log(`Code expires in ${event.expiresInSeconds} seconds.`);
             }
             console.log();
-          },
-          onPrompt: async (prompt: {
-            message: string;
-            placeholder?: string;
-          }) => {
-            return new Promise((resolve) =>
-              rl.question(
-                `${prompt.message}${prompt.placeholder ? ` (${prompt.placeholder})` : ""}: `,
-                resolve
-              )
-            );
-          },
-          onSelect: async (prompt: {
-            message: string;
-            options: Array<{ id: string; label: string }>;
-          }) => {
+          } else {
+            console.log(event.message);
+          }
+        },
+        prompt: async (prompt) => {
+          if (prompt.type === "select") {
             console.log(`\n${prompt.message}`);
             prompt.options.forEach((option, i) => {
               console.log(`  ${i + 1}. ${option.label}`);
             });
-            const choice = await new Promise<string>((resolve) =>
-              rl.question("Enter number: ", resolve)
-            );
-            const index = parseInt(choice, 10) - 1;
-            return prompt.options[index]?.id;
-          },
-          onProgress: (msg: string) => console.log(msg),
-        }
-      );
+            const index = parseInt(await ask("Enter number: "), 10) - 1;
+            return prompt.options[index]?.id ?? "";
+          }
+          return ask(
+            `${prompt.message}${prompt.placeholder ? ` (${prompt.placeholder})` : ""}: `
+          );
+        },
+      });
       rl.close();
 
       console.log(`\nLogged in to ${providerInfo.name}`);
@@ -646,11 +630,14 @@ authCmd
   .description("Show authentication status")
   .action(async () => {
     try {
-      const { AuthStorage } = await import("@earendil-works/pi-coding-agent");
-      const authStorage = AuthStorage.create(
-        path.join(CONFIG_DIR, "auth.json")
+      const { ModelRuntime, readStoredCredential } = await import(
+        "@earendil-works/pi-coding-agent"
       );
-      const providers = authStorage.list();
+      const authPath = path.join(CONFIG_DIR, "auth.json");
+      const runtime = await ModelRuntime.create({ authPath });
+      const providers = (await runtime.listCredentials()).map(
+        (info) => info.providerId
+      );
 
       if (providers.length === 0) {
         console.log(
@@ -661,7 +648,7 @@ authCmd
 
       console.log("Authenticated providers:");
       for (const provider of providers) {
-        const cred = authStorage.get(provider);
+        const cred = readStoredCredential(provider, authPath);
         if (!cred) continue;
         if (cred.type === "oauth") {
           const expires = new Date((cred as { expires: number }).expires);
@@ -684,17 +671,18 @@ authCmd
   .description("Logout from a provider")
   .action(async (provider: string) => {
     try {
-      const { AuthStorage } = await import("@earendil-works/pi-coding-agent");
-      const authStorage = AuthStorage.create(
-        path.join(CONFIG_DIR, "auth.json")
+      const { ModelRuntime, readStoredCredential } = await import(
+        "@earendil-works/pi-coding-agent"
       );
+      const authPath = path.join(CONFIG_DIR, "auth.json");
 
-      if (!authStorage.has(provider)) {
+      if (!readStoredCredential(provider, authPath)) {
         console.log(`Not logged in to ${provider}`);
         return;
       }
 
-      authStorage.logout(provider);
+      const runtime = await ModelRuntime.create({ authPath });
+      await runtime.logout(provider);
       console.log(`Logged out from ${provider}`);
     } catch (err) {
       logError("Error", err);

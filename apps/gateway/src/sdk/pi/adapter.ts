@@ -235,8 +235,8 @@ export const piAdapter: SdkAdapter = {
         createAgentSession,
         SessionManager,
         SettingsManager,
-        AuthStorage,
-        ModelRegistry,
+        ModelRuntime,
+        readStoredCredential,
         DefaultResourceLoader,
       } = await import("@earendil-works/pi-coding-agent");
       const { getEnvApiKey } = await import("@earendil-works/pi-ai/compat");
@@ -250,20 +250,18 @@ export const piAdapter: SdkAdapter = {
       if (!agent) {
         throw new Error(`Agent not found: ${params.agentId}`);
       }
-      const authStorage = AuthStorage.create(
-        path.join(CONFIG_DIR, "auth.json")
-      );
-      const modelRegistry = ModelRegistry.create(
-        authStorage,
-        path.join(CONFIG_DIR, "models.json")
-      );
+      const authPath = path.join(CONFIG_DIR, "auth.json");
+      const modelRuntime = await ModelRuntime.create({
+        authPath,
+        modelsPath: path.join(CONFIG_DIR, "models.json"),
+      });
       const effectiveModel = params.model ?? agent.model;
       if (!effectiveModel.provider) {
         throw new Error(
           `Pi SDK requires model.provider to be set for agent: ${agent.id}`
         );
       }
-      const model = modelRegistry.find(
+      const model = modelRuntime.getModel(
         effectiveModel.provider,
         effectiveModel.model
       );
@@ -280,21 +278,18 @@ export const piAdapter: SdkAdapter = {
 
       if (authMode === "oauth") {
         // OAuth mode: require OAuth credentials
-        const cred = authStorage.get(model.provider);
+        const cred = readStoredCredential(model.provider, authPath);
         if (!cred || cred.type !== "oauth") {
           throw new Error(
             `No OAuth credentials for provider: ${model.provider}. Run 'yoplai auth login ${model.provider}' first.`
           );
         }
-        const auth = await modelRegistry.getApiKeyAndHeaders(model);
-        if (!auth.ok) {
-          throw new Error(auth.error);
-        }
-        apiKey = auth.apiKey ?? null;
+        const auth = await modelRuntime.getAuth(model);
+        apiKey = auth?.auth.apiKey ?? null;
       } else if (authMode === "api_key") {
         // API key mode: only use API key credentials or env vars, skip OAuth
-        const cred = authStorage.get(model.provider);
-        if (cred?.type === "api_key") {
+        const cred = readStoredCredential(model.provider, authPath);
+        if (cred?.type === "api_key" && cred.key) {
           apiKey = cred.key;
         } else {
           apiKey = getEnvApiKey(model.provider) ?? null;
@@ -307,17 +302,14 @@ export const piAdapter: SdkAdapter = {
           );
         }
       } else {
-        const auth = await modelRegistry.getApiKeyAndHeaders(model);
-        if (!auth.ok) {
-          throw new Error(auth.error);
-        }
-        apiKey = auth.apiKey ?? null;
+        const auth = await modelRuntime.getAuth(model);
+        apiKey = auth?.auth.apiKey ?? null;
       }
 
       if (!apiKey) {
         throw new Error(`No API key for provider: ${model.provider}`);
       }
-      authStorage.setRuntimeApiKey(model.provider, apiKey);
+      await modelRuntime.setRuntimeApiKey(model.provider, apiKey);
 
       // Load configured system files
       const systemFiles = await resolveSystemFiles({
@@ -389,8 +381,7 @@ export const piAdapter: SdkAdapter = {
       const { session: agentSession } = await createAgentSession({
         cwd: params.workspaceDir,
         agentDir: CONFIG_DIR,
-        authStorage,
-        modelRegistry,
+        modelRuntime,
         model,
         ...(params.thinkLevel && { thinkingLevel: params.thinkLevel }),
         tools,

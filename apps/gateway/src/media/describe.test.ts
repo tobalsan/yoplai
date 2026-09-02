@@ -6,8 +6,7 @@ const find = vi.hoisted(() => vi.fn());
 
 vi.mock("@earendil-works/pi-ai/compat", () => ({ completeSimple }));
 vi.mock("@earendil-works/pi-coding-agent", () => ({
-  AuthStorage: { create: vi.fn(() => ({})) },
-  ModelRegistry: { create: vi.fn(() => ({ find })) },
+  ModelRuntime: { create: vi.fn(async () => ({ getModel: find })) },
 }));
 
 const config = {

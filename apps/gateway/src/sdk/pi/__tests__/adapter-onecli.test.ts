@@ -57,19 +57,12 @@ vi.mock("@earendil-works/pi-coding-agent", () => ({
   SettingsManager: {
     create: vi.fn(() => ({})),
   },
-  AuthStorage: {
-    create: vi.fn(() => ({
-      get: vi.fn(() => undefined),
-      setRuntimeApiKey: vi.fn(),
-    })),
-  },
-  ModelRegistry: {
-    create: vi.fn(() => ({
-      find: vi.fn(() => ({ provider: "anthropic" })),
-      getApiKeyAndHeaders: vi.fn(async () => ({
-        ok: true,
-        apiKey: "runtime-key",
-      })),
+  readStoredCredential: vi.fn(() => undefined),
+  ModelRuntime: {
+    create: vi.fn(async () => ({
+      getModel: vi.fn(() => ({ provider: "anthropic" })),
+      getAuth: vi.fn(async () => ({ auth: { apiKey: "runtime-key" } })),
+      setRuntimeApiKey: vi.fn(async () => undefined),
     })),
   },
   DefaultResourceLoader: class {

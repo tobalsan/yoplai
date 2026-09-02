@@ -27,7 +27,7 @@ export class ContainerInputBuilder {
     const provider = params.model?.provider ?? params.agent.model.provider;
     const model = params.model?.model ?? params.agent.model.model;
     const imageInputSupported = provider
-      ? configuredModelSupportsImages(config, provider, model)
+      ? await configuredModelSupportsImages(config, provider, model)
       : false;
     const extensionTools = await this.toolBridge.buildTools(params, config, !imageInputSupported && config.imageDescription?.enabled === true);
     const systemFiles = await resolveSystemFiles({

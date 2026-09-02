@@ -6,7 +6,7 @@ import type {
   Model,
 } from "@earendil-works/pi-ai";
 import { completeSimple as defaultCompleteSimple } from "@earendil-works/pi-ai/compat";
-import { AuthStorage, ModelRegistry } from "@earendil-works/pi-coding-agent";
+import { ModelRuntime } from "@earendil-works/pi-coding-agent";
 import type { GatewayConfig, LeadSession } from "@yoplai/shared";
 import { getProjectsContext } from "../context.js";
 import { findLeadSession, updateLeadSessionInProject } from "./store.js";
@@ -22,7 +22,7 @@ type TitleModel = Model<Api>;
 
 type AutoTitleDeps = {
   completeSimple?: typeof defaultCompleteSimple;
-  getAvailableModels?: () => TitleModel[];
+  getAvailableModels?: () => TitleModel[] | Promise<TitleModel[]>;
   timeoutMs?: number;
   warn?: (message: string) => void;
 };
@@ -80,19 +80,27 @@ function byCheapest(a: TitleModel, b: TitleModel): number {
   return aCost - bCost;
 }
 
-function loadAvailableModelsFromHost(dataDir: string): TitleModel[] {
-  const authStorage = AuthStorage.create(path.join(dataDir, "auth.json"));
-  const registry = ModelRegistry.create(
-    authStorage,
-    path.join(dataDir, "models.json")
-  );
-  return registry.getAvailable() as TitleModel[];
+async function loadAvailableModelsFromHost(
+  dataDir: string
+): Promise<TitleModel[]> {
+  const runtime = await ModelRuntime.create({
+    authPath: path.join(dataDir, "auth.json"),
+    modelsPath: path.join(dataDir, "models.json"),
+  });
+  return [...(await runtime.getAvailable())];
 }
 
-export function resolveAutoTitleModel(
+function loadAvailableModels(deps: AutoTitleDeps): Promise<TitleModel[]> {
+  const load = deps.getAvailableModels ?? testDeps.getAvailableModels;
+  return load
+    ? Promise.resolve(load())
+    : loadAvailableModelsFromHost(getProjectsContext().getDataDir());
+}
+
+export async function resolveAutoTitleModel(
   config: GatewayConfig,
   deps: AutoTitleDeps = {}
-): string | null {
+): Promise<string | null> {
   const configured = configuredAutoTitleModel(config);
   if (configured) {
     if (isUnsafeTitleModel(configured)) {
@@ -108,10 +116,7 @@ export function resolveAutoTitleModel(
     return configured;
   }
 
-  const models =
-    deps.getAvailableModels?.() ??
-    testDeps.getAvailableModels?.() ??
-    loadAvailableModelsFromHost(getProjectsContext().getDataDir());
+  const models = await loadAvailableModels(deps);
   const haiku = models
     .filter(
       (model) =>
@@ -132,16 +137,13 @@ export function resolveAutoTitleModel(
   return modelKey(haiku);
 }
 
-function resolveTitleModelObject(
+async function resolveTitleModelObject(
   config: GatewayConfig,
   deps: AutoTitleDeps = {}
-): TitleModel | null {
-  const ref = resolveAutoTitleModel(config, deps);
+): Promise<TitleModel | null> {
+  const ref = await resolveAutoTitleModel(config, deps);
   if (!ref) return null;
-  const models =
-    deps.getAvailableModels?.() ??
-    testDeps.getAvailableModels?.() ??
-    loadAvailableModelsFromHost(getProjectsContext().getDataDir());
+  const models = await loadAvailableModels(deps);
   const model = models.find((item) => matchesModelRef(item, ref));
   if (!model) {
     warnOnce(
@@ -220,7 +222,7 @@ async function generateTitle(
   assistantText: string,
   deps: AutoTitleDeps
 ): Promise<string | null> {
-  const model = resolveTitleModelObject(config, deps);
+  const model = await resolveTitleModelObject(config, deps);
   if (!model) return null;
   const result = await completeWithTimeout(
     model,

@@ -36,6 +36,11 @@ vi.mock("../../extensions/tools.js", () => ({
   getExtensionAgentTools: mockGetExtensionAgentTools,
 }));
 
+vi.mock("../../media/describe.js", () => ({
+  configuredModelSupportsImages: vi.fn(async () => true),
+  describeImage: vi.fn(async () => ""),
+}));
+
 vi.mock("@yoplai/shared/node/system-files", () => ({
   resolveSystemFiles: vi.fn(async () => [{ path: "SOUL.md", content: "soul" }]),
 }));

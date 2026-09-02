@@ -107,21 +107,21 @@ afterEach(async () => {
 });
 
 describe("lead session auto-title", () => {
-  it("resolves configured autoTitleModel verbatim", () => {
+  it("resolves configured autoTitleModel verbatim", async () => {
     const config = {
       agents: [agent],
       extensions: { sessions: { autoTitleModel: "anthropic/custom-haiku" } },
     } as unknown as GatewayConfig;
 
-    expect(
+    await expect(
       resolveAutoTitleModel(config, { getAvailableModels: () => [] })
-    ).toBe("anthropic/custom-haiku");
+    ).resolves.toBe("anthropic/custom-haiku");
   });
 
-  it("picks the cheapest available Anthropic Haiku model", () => {
+  it("picks the cheapest available Anthropic Haiku model", async () => {
     const warn = vi.fn();
 
-    expect(
+    await expect(
       resolveAutoTitleModel(
         { agents: [agent], extensions: {} } as GatewayConfig,
         {
@@ -132,11 +132,11 @@ describe("lead session auto-title", () => {
           ],
         }
       )
-    ).toBe("anthropic/claude-3-haiku");
+    ).resolves.toBe("anthropic/claude-3-haiku");
     expect(warn).not.toHaveBeenCalled();
   });
 
-  it("warns once and returns null when no Haiku model is available", () => {
+  it("warns once and returns null when no Haiku model is available", async () => {
     const warn = vi.fn();
     const config = { agents: [agent], extensions: {} } as GatewayConfig;
     const deps = {
@@ -144,15 +144,15 @@ describe("lead session auto-title", () => {
       getAvailableModels: () => [model("claude-sonnet", 1, 1)],
     };
 
-    expect(resolveAutoTitleModel(config, deps)).toBeNull();
-    expect(resolveAutoTitleModel(config, deps)).toBeNull();
+    await expect(resolveAutoTitleModel(config, deps)).resolves.toBeNull();
+    await expect(resolveAutoTitleModel(config, deps)).resolves.toBeNull();
     expect(warn).toHaveBeenCalledTimes(1);
   });
 
-  it("refuses Opus or thinking title models", () => {
+  it("refuses Opus or thinking title models", async () => {
     const warn = vi.fn();
 
-    expect(
+    await expect(
       resolveAutoTitleModel(
         {
           agents: [agent],
@@ -160,7 +160,7 @@ describe("lead session auto-title", () => {
         } as unknown as GatewayConfig,
         { warn, getAvailableModels: () => [] }
       )
-    ).toBeNull();
+    ).resolves.toBeNull();
     expect(warn).toHaveBeenCalledTimes(1);
   });
 

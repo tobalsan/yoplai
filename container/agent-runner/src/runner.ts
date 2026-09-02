@@ -1,11 +1,14 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
-import type { AssistantMessage, ImageContent } from "@earendil-works/pi-ai";
 import {
-  AuthStorage,
+  InMemoryCredentialStore,
+  type AssistantMessage,
+  type ImageContent,
+} from "@earendil-works/pi-ai";
+import {
   DefaultResourceLoader,
-  ModelRegistry,
+  ModelRuntime,
   SessionManager,
   SettingsManager,
   createAgentSession,
@@ -159,13 +162,12 @@ export async function runAgent(
   const sessionFile = runtimeSession.file;
 
   try {
-    const authStorage = AuthStorage.inMemory();
-    authStorage.setRuntimeApiKey(provider, "onecli-proxy-managed");
-    const modelRegistry = ModelRegistry.create(
-      authStorage,
-      path.join(input.sessionDir, "models.json")
-    );
-    const model = modelRegistry.find(provider, input.sdkConfig.model.model);
+    const modelRuntime = await ModelRuntime.create({
+      credentials: new InMemoryCredentialStore(),
+      modelsPath: path.join(input.sessionDir, "models.json"),
+    });
+    await modelRuntime.setRuntimeApiKey(provider, "onecli-proxy-managed");
+    const model = modelRuntime.getModel(provider, input.sdkConfig.model.model);
     if (!model) {
       throw new Error(
         `Model not found: ${provider}/${input.sdkConfig.model.model}`
@@ -204,8 +206,7 @@ export async function runAgent(
     const { session } = await createAgentSession({
       cwd: input.workspaceDir,
       agentDir: input.sessionDir,
-      authStorage,
-      modelRegistry,
+      modelRuntime,
       model,
       ...(input.thinkLevel && { thinkingLevel: input.thinkLevel }),
       tools,

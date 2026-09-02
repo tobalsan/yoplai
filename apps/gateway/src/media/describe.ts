@@ -1,7 +1,7 @@
 import path from "node:path";
 import type { Api, Context, Model } from "@earendil-works/pi-ai";
 import { completeSimple } from "@earendil-works/pi-ai/compat";
-import { AuthStorage, ModelRegistry } from "@earendil-works/pi-coding-agent";
+import { ModelRuntime } from "@earendil-works/pi-coding-agent";
 import { modelSupportsImages, type GatewayConfig } from "@yoplai/shared";
 import { CONFIG_DIR } from "../config/index.js";
 
@@ -15,9 +15,8 @@ export async function describeImage(
 ): Promise<string> {
   const configured = config.imageDescription;
   if (!configured?.enabled) throw new Error("Image description is not configured");
-  const auth = AuthStorage.create(path.join(CONFIG_DIR, "auth.json"));
-  const registry = ModelRegistry.create(auth, path.join(CONFIG_DIR, "models.json"));
-  const model = registry.find(configured.provider, configured.model) as Model<Api> | undefined;
+  const runtime = await createModelRuntime();
+  const model = runtime.getModel(configured.provider, configured.model) as Model<Api> | undefined;
   if (!model) throw new Error(`Image description model not found: ${configured.provider}/${configured.model}`);
   if (!modelSupportsImages(model)) throw new Error("Image description model does not support image input");
   const context: Context = { messages: [{ role: "user", timestamp: Date.now(), content: [
@@ -32,8 +31,14 @@ export async function describeImage(
   return description;
 }
 
-export function configuredModelSupportsImages(config: GatewayConfig, provider: string, modelId: string): boolean {
-  const auth = AuthStorage.create(path.join(CONFIG_DIR, "auth.json"));
-  const registry = ModelRegistry.create(auth, path.join(CONFIG_DIR, "models.json"));
-  return modelSupportsImages(registry.find(provider, modelId));
+export async function configuredModelSupportsImages(config: GatewayConfig, provider: string, modelId: string): Promise<boolean> {
+  const runtime = await createModelRuntime();
+  return modelSupportsImages(runtime.getModel(provider, modelId));
+}
+
+function createModelRuntime(): Promise<ModelRuntime> {
+  return ModelRuntime.create({
+    authPath: path.join(CONFIG_DIR, "auth.json"),
+    modelsPath: path.join(CONFIG_DIR, "models.json"),
+  });
 }

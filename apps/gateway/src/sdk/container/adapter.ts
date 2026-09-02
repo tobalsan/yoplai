@@ -312,7 +312,7 @@ export function getContainerAdapter(): SdkAdapter {
           : "";
         const provider = params.model?.provider ?? params.agent.model.provider;
         const model = params.model?.model ?? params.agent.model.model;
-        const needsDescriptions = config.imageDescription?.enabled === true && (!provider || !configuredModelSupportsImages(config, provider, model));
+        const needsDescriptions = config.imageDescription?.enabled === true && (!provider || !(await configuredModelSupportsImages(config, provider, model)));
         const imageAttachments = needsDescriptions
           ? (params.attachments ?? []).filter(isImageAttachment)
           : [];
