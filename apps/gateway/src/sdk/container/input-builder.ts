@@ -1,4 +1,8 @@
-import { readEnv, type ContainerInput, type GatewayConfig } from "@yoplai/shared";
+import {
+  readEnv,
+  type ContainerInput,
+  type GatewayConfig,
+} from "@yoplai/shared";
 import { resolveSystemFiles } from "@yoplai/shared/node/system-files";
 import { getDefaultSdkId } from "../registry.js";
 import type { SdkRunParams } from "../types.js";
@@ -29,7 +33,11 @@ export class ContainerInputBuilder {
     const imageInputSupported = provider
       ? await configuredModelSupportsImages(config, provider, model)
       : false;
-    const extensionTools = await this.toolBridge.buildTools(params, config, !imageInputSupported && config.imageDescription?.enabled === true);
+    const extensionTools = await this.toolBridge.buildTools(
+      params,
+      config,
+      !imageInputSupported && config.imageDescription?.enabled === true
+    );
     const systemFiles = await resolveSystemFiles({
       workspaceDir: params.workspaceDir,
       systemFiles: params.agent.system_files,
@@ -56,6 +64,10 @@ export class ContainerInputBuilder {
             )
           : undefined,
       extensionTools: extensionTools.length > 0 ? extensionTools : undefined,
+      retry: {
+        maxAttempts: params.agent.sandbox?.retryMaxAttempts ?? 3,
+        baseDelaySeconds: params.agent.sandbox?.retryBaseDelay ?? 2,
+      },
       workspaceDir: "/workspace",
       sessionDir: "/sessions",
       ipcDir: "/workspace/ipc",

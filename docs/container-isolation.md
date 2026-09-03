@@ -33,18 +33,22 @@ sandbox:
 
 Defaults:
 
-| Field               | Default               | Meaning                        |
-| ------------------- | --------------------- | ------------------------------ |
-| `image`             | `yoplai-agent:latest` | Docker image                   |
-| `network`           | global network        | Docker network                 |
-| `memory`            | `2g`                  | Memory limit                   |
-| `cpus`              | `1`                   | CPU limit                      |
-| `maxRunTime`        | `1800`                | Kill deadline in seconds       |
-| `workspaceWritable` | `false`               | Workspace mount writes         |
-| `env`               | `{}`                  | Explicit container environment |
-| `mounts`            | `[]`                  | Additional validated binds     |
+| Field               | Default               | Meaning                                             |
+| ------------------- | --------------------- | --------------------------------------------------- |
+| `image`             | `yoplai-agent:latest` | Docker image                                        |
+| `network`           | global network        | Docker network                                      |
+| `memory`            | `2g`                  | Memory limit                                        |
+| `cpus`              | `1`                   | CPU limit                                           |
+| `maxRunTime`        | `1800`                | Kill deadline in seconds                            |
+| `retryMaxAttempts`  | `3`                   | Attempts for a zero-output transient provider error |
+| `retryBaseDelay`    | `2`                   | Initial retry delay in seconds                      |
+| `workspaceWritable` | `false`               | Workspace mount writes                              |
+| `env`               | `{}`                  | Explicit container environment                      |
+| `mounts`            | `[]`                  | Additional validated binds                          |
 
 `timeout` remains legacy fallback for `maxRunTime`.
+
+Retry delays double after each attempt unless the provider supplies a `Retry-After` hint. Only a failed turn with no emitted text, thinking, or tool activity is retried.
 
 ## Global sandbox policy
 

@@ -16,6 +16,7 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Fixed
 
+- Sandboxed agent turns now retry transient provider failures (rate limits, 5xx responses, queue/backpressure hints, and connection resets) in place before failing the run. Configure `sandbox.retryMaxAttempts` and `sandbox.retryBaseDelay` per agent when the defaults of three attempts and a two-second initial delay do not fit the provider.
 - `pnpm update-models` now discovers models like the gateway does: it falls back to `$YOPLAI_HOME/agents/*` when `agents` is unset in `yoplai.json`, scans `pool` agent directories, and collects top-level `subagents` models. Previously it required an explicit `agents` list and missed pool/subagent models.
 - Pi CLI subagent runs now surface the assistant's final answer in `latestOutput` (`yoplai subagents list`/`status`) instead of the raw `{"type":"agent_settled"}` event, and the logs view no longer shows raw token-delta noise.
 - Session persistence no longer redacts Anthropic thinking-block signatures (`thinkingSignature`), which bricked pi-adapter sessions on the next turn with API 400 `Invalid signature in thinking block`. Sessions already redacted need a fresh session.
