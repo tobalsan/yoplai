@@ -16,13 +16,18 @@ const piMock = vi.hoisted(() => {
     id: "claude-sonnet-4-6",
     model: "claude-sonnet-4-6",
   };
-  const session = {
-    messages: [] as unknown[],
-    agent: {
-      state: {
-        systemPrompt: "You are Sally.\n\n[CHANNEL CONTEXT]\nchannel: slack",
-      },
+  const agent = {
+    state: {
+      systemPrompt: "You are Sally.\n\n[CHANNEL CONTEXT]\nchannel: slack",
+      messages: [] as unknown[],
     },
+    continue: vi.fn(async () => undefined),
+  };
+  const session = {
+    get messages() {
+      return agent.state.messages;
+    },
+    agent,
     subscribe: vi.fn((listener: (event: unknown) => void) => {
       subscribers.push(listener);
       return vi.fn();
@@ -38,12 +43,15 @@ const piMock = vi.hoisted(() => {
     setRuntimeApiKey,
     sessionManagerOpen,
     model,
+    agent,
     session,
     createAgentSession: vi.fn(async (_options: unknown) => ({ session })),
     resourceReload: vi.fn(async () => undefined),
     reset() {
       subscribers.length = 0;
-      session.messages = [];
+      agent.state.messages = [];
+      agent.continue.mockReset();
+      agent.continue.mockResolvedValue(undefined);
       session.subscribe.mockClear();
       session.prompt.mockReset();
       session.prompt.mockResolvedValue(undefined);
@@ -134,33 +142,102 @@ describe("Pi runner", () => {
     await fs.rm(tempDir, { recursive: true, force: true });
   });
 
-  it("retries a retryable error stop reason without restarting the run", async () => {
+  it("retries a retryable error stop reason without re-sending the user prompt", async () => {
     const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-runner-"));
     const workspaceDir = path.join(tempDir, "workspace");
     const sessionDir = path.join(tempDir, "sessions");
     await fs.mkdir(workspaceDir, { recursive: true });
     await fs.mkdir(sessionDir, { recursive: true });
-    piMock.session.prompt
-      .mockImplementationOnce(async () => {
-        piMock.session.messages.push({
+    piMock.session.prompt.mockImplementationOnce(async () => {
+      piMock.session.messages.push(
+        { role: "user", content: [{ type: "text", text: "Say hi" }] },
+        {
           role: "assistant",
           content: [],
           stopReason: "error",
           errorMessage: "Upstream queue backpressure. Retry after 0s.",
-        });
-      })
-      .mockImplementationOnce(async () => {
-        piMock.session.messages.push({
-          role: "assistant",
-          content: [{ type: "text", text: "recovered" }],
-          stopReason: "end_turn",
-        });
+        }
+      );
+    });
+    piMock.agent.continue.mockImplementationOnce(async () => {
+      piMock.session.messages.push({
+        role: "assistant",
+        content: [{ type: "text", text: "recovered" }],
+        stopReason: "end_turn",
       });
+    });
 
     await expect(
       runAgent(createInput({ workspaceDir, sessionDir }))
     ).resolves.toMatchObject({ text: "recovered" });
-    expect(piMock.session.prompt).toHaveBeenCalledTimes(2);
+    expect(piMock.session.prompt).toHaveBeenCalledTimes(1);
+    expect(piMock.agent.continue).toHaveBeenCalledTimes(1);
+    expect(
+      piMock.session.messages.map(
+        (message) => (message as { role: string }).role
+      )
+    ).toEqual(["user", "assistant"]);
+    await fs.rm(tempDir, { recursive: true, force: true });
+  });
+
+  it("retries a failed turn that follows earlier tool activity", async () => {
+    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-runner-"));
+    const workspaceDir = path.join(tempDir, "workspace");
+    const sessionDir = path.join(tempDir, "sessions");
+    await fs.mkdir(workspaceDir, { recursive: true });
+    await fs.mkdir(sessionDir, { recursive: true });
+    const events: unknown[] = [];
+    piMock.session.prompt.mockImplementationOnce(async () => {
+      for (const subscriber of piMock.subscribers) {
+        subscriber({
+          type: "tool_execution_start",
+          toolCallId: "tool-1",
+          toolName: "bash",
+          args: { command: "echo hi" },
+        });
+        subscriber({
+          type: "tool_execution_end",
+          toolCallId: "tool-1",
+          toolName: "bash",
+          result: { content: [{ type: "text", text: "hi" }] },
+          isError: false,
+        });
+      }
+      piMock.session.messages.push(
+        { role: "user", content: [{ type: "text", text: "Say hi" }] },
+        { role: "assistant", content: [{ type: "toolCall", id: "tool-1" }] },
+        { role: "toolResult", content: [{ type: "text", text: "hi" }] },
+        {
+          role: "assistant",
+          content: [],
+          stopReason: "error",
+          errorMessage:
+            "Upstream error from Relace: Queued past the 0.2s queue-time bound. Retry after 0s.",
+        }
+      );
+    });
+    piMock.agent.continue.mockImplementationOnce(async () => {
+      piMock.session.messages.push({
+        role: "assistant",
+        content: [{ type: "text", text: "recovered" }],
+        stopReason: "end_turn",
+      });
+    });
+
+    await expect(
+      runAgent(createInput({ workspaceDir, sessionDir }), (event) =>
+        events.push(event)
+      )
+    ).resolves.toMatchObject({ text: "recovered" });
+    expect(piMock.agent.continue).toHaveBeenCalledTimes(1);
+    expect(events).toContainEqual(
+      expect.objectContaining({ type: "retry", attempt: 1, delaySeconds: 0 })
+    );
+    expect(
+      piMock.session.messages.map(
+        (message) => (message as { role: string }).role
+      )
+    ).toEqual(["user", "assistant", "toolResult", "assistant"]);
     await fs.rm(tempDir, { recursive: true, force: true });
   });
 

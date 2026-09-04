@@ -228,18 +228,9 @@ export async function runAgent(
       onStreamEvent?.(systemPromptEvent);
     }
 
-    let attemptEmittedOutput = false;
     const unsubscribe = session.subscribe((evt) => {
       const collectedEvents = collectHistoryEvent(evt, history);
       for (const event of collectedEvents) {
-        if (
-          event.type === "assistant_text" ||
-          event.type === "assistant_thinking" ||
-          event.type === "tool_call" ||
-          event.type === "tool_result"
-        ) {
-          attemptEmittedOutput = true;
-        }
         onStreamEvent?.(event);
       }
     });
@@ -256,50 +247,42 @@ export async function runAgent(
       const maxAttempts = input.retry?.maxAttempts ?? 3;
       const baseDelaySeconds = input.retry?.baseDelaySeconds ?? 2;
       for (let attempt = 1; ; attempt += 1) {
-        attemptEmittedOutput = false;
+        let failure: TurnFailure | undefined;
         try {
-          await session.prompt(promptText, promptOptions);
+          if (attempt === 1) {
+            await session.prompt(promptText, promptOptions);
+          } else {
+            await resumeAfterFailedTurn(session, promptText, promptOptions);
+          }
         } catch (error) {
-          const message = getErrorMessage(error);
-          if (
-            !isRetryableProviderError(error, message) ||
-            attemptEmittedOutput ||
-            attempt >= maxAttempts
-          )
-            throw error;
-          const delaySeconds = getRetryDelaySeconds(
-            error,
-            message,
-            baseDelaySeconds,
-            attempt
-          );
-          onStreamEvent?.({ type: "retry", attempt, delaySeconds, message });
-          await delay(delaySeconds * 1000);
-          continue;
+          if (isAbortLikeError(error)) throw error;
+          failure = {
+            source: error,
+            message: getErrorMessage(error),
+            thrown: true,
+          };
         }
-
-        const lastAssistant = findLastAssistant(session.messages) as
-          | (Record<string, unknown> & AssistantMessage)
-          | undefined;
-        if (lastAssistant?.stopReason !== "error") break;
-        const message =
-          typeof lastAssistant.errorMessage === "string" &&
-          lastAssistant.errorMessage
-            ? lastAssistant.errorMessage
-            : "unknown error";
+        failure ??= findFailedTurn(session.messages);
+        if (!failure) break;
         if (
-          !isRetryableProviderError(lastAssistant, message) ||
-          attemptEmittedOutput ||
+          !isRetryableProviderError(failure.source, failure.message) ||
           attempt >= maxAttempts
-        )
+        ) {
+          if (failure.thrown) throw failure.source;
           break;
+        }
         const delaySeconds = getRetryDelaySeconds(
-          lastAssistant,
-          message,
+          failure.source,
+          failure.message,
           baseDelaySeconds,
           attempt
         );
-        onStreamEvent?.({ type: "retry", attempt, delaySeconds, message });
+        onStreamEvent?.({
+          type: "retry",
+          attempt,
+          delaySeconds,
+          message: failure.message,
+        });
         await delay(delaySeconds * 1000);
       }
     } catch (error) {
@@ -367,6 +350,53 @@ function formatNonImageAttachmentContext(input: ContainerInput): string {
 
 function getErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+/** A model turn that ended in failure, either thrown or reported as an errored assistant message. */
+type TurnFailure = { source: unknown; message: string; thrown: boolean };
+
+/**
+ * Report the last turn as failed when the model answered with an error stop
+ * reason. Eligibility is per turn: earlier successful turns (including their
+ * tool calls and results) do not disqualify a retry.
+ */
+function findFailedTurn(messages: AgentMessage[]): TurnFailure | undefined {
+  const lastAssistant = findLastAssistant(messages) as
+    | (Record<string, unknown> & AssistantMessage)
+    | undefined;
+  if (lastAssistant?.stopReason !== "error") return undefined;
+  return {
+    source: lastAssistant,
+    message:
+      typeof lastAssistant.errorMessage === "string" &&
+      lastAssistant.errorMessage
+        ? lastAssistant.errorMessage
+        : "unknown error",
+    thrown: false,
+  };
+}
+
+/**
+ * Resume the run after a failed turn without appending a duplicate user
+ * message. The failed assistant message is dropped from the agent context (it
+ * stays in the session transcript for history) and the agent continues from the
+ * preceding user or tool-result message, mirroring pi's own auto-retry. Any
+ * partial text the failed turn streamed is discarded with it.
+ */
+async function resumeAfterFailedTurn(
+  session: AgentSession,
+  promptText: string,
+  promptOptions: { images?: ImageContent[] } | undefined
+): Promise<void> {
+  const messages = session.agent.state.messages;
+  if (messages[messages.length - 1]?.role === "assistant") {
+    session.agent.state.messages = messages.slice(0, -1);
+  }
+  if (session.agent.state.messages.length === 0) {
+    await session.prompt(promptText, promptOptions);
+    return;
+  }
+  await session.agent.continue();
 }
 
 function isRetryableProviderError(error: unknown, message: string): boolean {
