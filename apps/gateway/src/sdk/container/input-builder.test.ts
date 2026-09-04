@@ -112,6 +112,36 @@ describe("container input builder", () => {
     expect(input.sdkConfig.model).toEqual({ provider: "openai", model: "gpt-5" });
   });
 
+  it("forwards the agent fallback model to the container", async () => {
+    const workspaceDir = await fs.mkdtemp(
+      path.join(os.tmpdir(), "yoplai-container-input-")
+    );
+    await fs.writeFile(path.join(workspaceDir, "SOUL.md"), "soul");
+    const builder = new ContainerInputBuilder({
+      buildSystemPrompts: async () => [],
+      buildTools: async () => [],
+    });
+    const params = {
+      agentId: "cloud",
+      sessionId: "session-1",
+      message: "hello",
+      workspaceDir,
+      agent: {
+        id: "cloud",
+        model: { provider: "anthropic", model: "claude-sonnet" },
+        fallback_model: { provider: "openai", model: "gpt-5" },
+      },
+    } as SdkRunParams;
+    const config = { agents: [params.agent], extensions: {} } as GatewayConfig;
+
+    const input = await builder.build(params, config, "token-1");
+
+    expect(input.sdkConfig.fallbackModel).toEqual({
+      provider: "openai",
+      model: "gpt-5",
+    });
+  });
+
   it("prepends first-run bootstrap prompt", async () => {
     const workspaceDir = await fs.mkdtemp(
       path.join(os.tmpdir(), "yoplai-container-input-")

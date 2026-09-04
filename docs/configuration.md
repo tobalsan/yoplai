@@ -65,6 +65,7 @@ Common fields:
 | `thinkLevel`                          | Deprecated alias for `reasoning`                            |
 | `queueMode`                           | `queue` or `interrupt`                                      |
 | `retryMaxAttempts`                    | Attempts for a transient provider error; default 3          |
+| `fallback_model`                      | Optional fallback `{ provider, model }`                     |
 | `retryBaseDelay`                      | Initial retry delay in seconds; default 2                   |
 | `introMessage`                        | Custom message shown after `/new`                           |
 | `discord`, `slack`, `telegram`, `irc` | Supported per-agent transport config                        |

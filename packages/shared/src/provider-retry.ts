@@ -15,6 +15,7 @@ export type RetryableTurnMessage = {
   role: string;
   stopReason?: unknown;
   errorMessage?: unknown;
+  content?: unknown;
 };
 
 /** A model turn that ended in failure, either thrown or reported as an errored assistant message. */
@@ -42,6 +43,34 @@ export function findFailedTurn(
         : "unknown error",
     thrown: false,
   };
+}
+
+/**
+ * Report whether the failed turn may be replayed on a fallback model.
+ *
+ * Eligibility is read from the failed turn itself, the same message
+ * `findFailedTurn` reports: it may be replayed only when its assistant message
+ * shows no text and calls no tool, because `resumeAfterFailedTurn` drops that
+ * message and a replay would otherwise repeat what the user already saw.
+ * Thinking blocks are discarded with the turn, so they are not visible output.
+ * Text and tool calls from earlier *completed* turns stay in the context and
+ * are never replayed, so they do not disqualify a later zero-output failure.
+ */
+export function isReplayableFailedTurn(
+  messages: readonly RetryableTurnMessage[]
+): boolean {
+  const lastAssistant = messages
+    .slice()
+    .reverse()
+    .find((message) => message.role === "assistant");
+  const content = lastAssistant?.content;
+  if (!Array.isArray(content)) return true;
+  return !content.some((block: unknown) => {
+    if (!block || typeof block !== "object") return false;
+    const { type, text } = block as { type?: unknown; text?: unknown };
+    if (type === "toolCall") return true;
+    return type === "text" && typeof text === "string" && text.trim() !== "";
+  });
 }
 
 /**
@@ -75,15 +104,28 @@ export function isRetryableProviderError(
 ): boolean {
   const status = getErrorStatus(error);
   if (
+    status === 408 ||
     status === 429 ||
     (status !== undefined && status >= 500 && status <= 599)
   ) {
     return true;
   }
   if (/\b(?:http\s*)?(?:429|5\d\d)\b/i.test(message)) return true;
-  return /\b(queue(?:d|ing)?|backpressure|retry[- ]after|too many requests|rate limit|econnreset|connection reset|socket hang up|etimedout)\b/i.test(
+  return /\b(queue(?:d|ing)?|backpressure|retry[- ]after|too many requests|rate limit|quota(?: exhaustion| exceeded)?|econnreset|econnrefused|enotfound|connection reset|connection (?:failed|refused)|network (?:error|failure)|socket hang up|etimedout|timeout|timed out|temporar(?:y|ily) unavailable|model (?:is )?(?:unavailable|overloaded)|overloaded)\b/i.test(
     message
   );
+}
+
+export function getProviderErrorCategory(
+  error: unknown,
+  message: string
+): "rate_limit" | "timeout" | "network" | "unavailable" | undefined {
+  const status = getErrorStatus(error);
+  if (status === 429 || /rate limit|too many requests|quota/i.test(message)) return "rate_limit";
+  if (status === 408 || /timeout|timed out|etimedout/i.test(message)) return "timeout";
+  if (/econnreset|econnrefused|enotfound|connection|network|socket hang up/i.test(message)) return "network";
+  if ((status !== undefined && status >= 500) || /queue|backpressure|unavailable|overloaded/i.test(message)) return "unavailable";
+  return undefined;
 }
 
 export function getRetryDelaySeconds(
@@ -110,6 +152,7 @@ export type ProviderRetryLoopOptions = {
   /** Aborted runs are never retried, whether the abort threw or errored the turn. */
   isAbort: (error: unknown) => boolean;
   onRetry: (attempt: number, delaySeconds: number, message: string) => void;
+  onAttempt?: (attempt: number, durationMs: number, failure?: TurnFailure) => void;
   sleep: (milliseconds: number) => Promise<void>;
 };
 
@@ -123,6 +166,7 @@ export async function runTurnWithProviderRetry(
   options: ProviderRetryLoopOptions
 ): Promise<void> {
   for (let attempt = 1; ; attempt += 1) {
+    const startedAt = Date.now();
     let failure: TurnFailure | undefined;
     try {
       await options.runTurn(attempt);
@@ -134,6 +178,7 @@ export async function runTurnWithProviderRetry(
       };
     }
     failure ??= findFailedTurn(options.getMessages());
+    options.onAttempt?.(attempt, Date.now() - startedAt, failure);
     if (!failure) return;
     if (
       options.isAbort(failure.source) ||

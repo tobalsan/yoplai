@@ -1,6 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   findFailedTurn,
+  getProviderErrorCategory,
+  isReplayableFailedTurn,
   getRetryDelaySeconds,
   isRetryableProviderError,
   resumeAfterFailedTurn,
@@ -16,6 +18,12 @@ function erroredTurn(errorMessage = RELACE_ERROR): RetryableTurnMessage {
 }
 
 describe("isRetryableProviderError", () => {
+  it("categorizes eligible provider failures for observability", () => {
+    expect(getProviderErrorCategory({ status: 429 }, "nope")).toBe("rate_limit");
+    expect(getProviderErrorCategory(undefined, "request timed out")).toBe("timeout");
+    expect(getProviderErrorCategory(undefined, "network failure")).toBe("network");
+    expect(getProviderErrorCategory({ status: 503 }, "nope")).toBe("unavailable");
+  });
   it("retries rate limits and server errors reported as a status", () => {
     expect(isRetryableProviderError({ status: 429 }, "nope")).toBe(true);
     expect(isRetryableProviderError({ statusCode: 503 }, "nope")).toBe(true);
@@ -34,6 +42,10 @@ describe("isRetryableProviderError", () => {
       "socket hang up",
       "read ECONNRESET",
       "connect ETIMEDOUT",
+      "request timed out",
+      "network failure contacting provider",
+      "model temporarily unavailable",
+      "quota exhaustion",
     ]) {
       expect(isRetryableProviderError(undefined, message)).toBe(true);
     }
@@ -47,6 +59,75 @@ describe("isRetryableProviderError", () => {
       false
     );
     expect(isRetryableProviderError(undefined, "tool not found")).toBe(false);
+  });
+
+  it("does not retry failures that only the caller can fix", () => {
+    for (const message of [
+      "authentication_error: invalid x-api-key",
+      "permission denied for this organization",
+      "model `gpt-5-turbo` does not exist or you do not have access to it",
+      "invalid_request_error: unknown parameter 'temperatur'",
+      "Your request was rejected as a result of our safety system",
+      "the assistant refused to answer",
+      "prompt is too long: 210000 tokens > 200000 maximum",
+      "context_length_exceeded",
+      "tool `bash` failed: exit code 1",
+      "tool not found: send_file",
+    ]) {
+      expect(isRetryableProviderError(undefined, message)).toBe(false);
+      expect(getProviderErrorCategory(undefined, message)).toBeUndefined();
+    }
+  });
+});
+
+describe("isReplayableFailedTurn", () => {
+  it("replays a failed turn that produced nothing, whatever came before", () => {
+    expect(isReplayableFailedTurn([{ role: "user" }, erroredTurn()])).toBe(
+      true
+    );
+    expect(
+      isReplayableFailedTurn([
+        { role: "user" },
+        {
+          role: "assistant",
+          stopReason: "toolUse",
+          content: [{ type: "toolCall", id: "t1" }],
+        },
+        { role: "toolResult" },
+        erroredTurn(),
+      ])
+    ).toBe(true);
+  });
+
+  it("treats thinking-only output as nothing the user keeps", () => {
+    expect(
+      isReplayableFailedTurn([
+        { role: "user" },
+        { ...erroredTurn(), content: [{ type: "thinking", thinking: "hmm" }] },
+      ])
+    ).toBe(true);
+  });
+
+  it("refuses to replay a failed turn that showed text or called a tool", () => {
+    expect(
+      isReplayableFailedTurn([
+        { role: "user" },
+        { ...erroredTurn(), content: [{ type: "text", text: "partial" }] },
+      ])
+    ).toBe(false);
+    expect(
+      isReplayableFailedTurn([
+        { role: "user" },
+        { ...erroredTurn(), content: [{ type: "toolCall", id: "t1" }] },
+      ])
+    ).toBe(false);
+    expect(
+      isReplayableFailedTurn([
+        { role: "user" },
+        { ...erroredTurn(), content: [{ type: "toolCall", id: "t1" }] },
+        { role: "toolResult" },
+      ])
+    ).toBe(false);
   });
 });
 
@@ -157,11 +238,13 @@ describe("runTurnWithProviderRetry", () => {
   ) {
     const attempts: number[] = [];
     const retries: Array<{ attempt: number; delaySeconds: number }> = [];
+    const attemptDurations: number[] = [];
     const slept: number[] = [];
     let messages: RetryableTurnMessage[] = [];
     return {
       attempts,
       retries,
+      attemptDurations,
       slept,
       run: () =>
         runTurnWithProviderRetry({
@@ -177,6 +260,7 @@ describe("runTurnWithProviderRetry", () => {
           isAbort: () => false,
           onRetry: (attempt, delaySeconds) =>
             retries.push({ attempt, delaySeconds }),
+          onAttempt: (_attempt, durationMs) => attemptDurations.push(durationMs),
           sleep: async (milliseconds) => {
             slept.push(milliseconds);
           },
@@ -200,6 +284,7 @@ describe("runTurnWithProviderRetry", () => {
       { attempt: 2, delaySeconds: 2 },
     ]);
     expect(loop.slept).toEqual([2000, 2000]);
+    expect(loop.attemptDurations).toHaveLength(3);
   });
 
   it("stops at maxAttempts and leaves the failed turn for the caller", async () => {

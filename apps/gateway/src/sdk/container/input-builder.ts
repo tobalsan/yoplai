@@ -32,9 +32,19 @@ export class ContainerInputBuilder {
     );
     const provider = params.model?.provider ?? params.agent.model.provider;
     const model = params.model?.model ?? params.agent.model.model;
-    const imageInputSupported = provider
+    const primaryImageInputSupported = provider
       ? await configuredModelSupportsImages(config, provider, model)
       : false;
+    const fallbackImageInputSupported = params.agent.fallback_model
+      ? await configuredModelSupportsImages(
+          config,
+          params.agent.fallback_model.provider,
+          params.agent.fallback_model.model
+        )
+      : true;
+    // A single prompt representation must remain valid if the turn falls back.
+    const imageInputSupported =
+      primaryImageInputSupported && fallbackImageInputSupported;
     const extensionTools = await this.toolBridge.buildTools(
       params,
       config,
@@ -93,6 +103,7 @@ export class ContainerInputBuilder {
           provider,
           model,
         },
+        fallbackModel: params.agent.fallback_model,
       },
     };
   }
