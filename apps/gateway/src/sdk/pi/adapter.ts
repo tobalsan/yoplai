@@ -6,7 +6,19 @@ import type { AgentTool } from "@earendil-works/pi-agent-core";
 import type { AssistantMessage, ImageContent } from "@earendil-works/pi-ai";
 import type { AgentSession as PiAgentSession } from "@earendil-works/pi-coding-agent";
 import type { AgentConfig } from "@yoplai/shared";
-import { DEFAULT_RETRY_BASE_DELAY_SECONDS, DEFAULT_RETRY_MAX_ATTEMPTS, claimAgentToolName, formatImageDescriptionBlocks, modelSupportsImages, renderAgentContext, resumeAfterFailedTurn, runTurnWithProviderRetry } from "@yoplai/shared";
+import {
+  DEFAULT_RETRY_BASE_DELAY_SECONDS,
+  DEFAULT_RETRY_MAX_ATTEMPTS,
+  claimAgentToolName,
+  findFailedTurn,
+  formatImageDescriptionBlocks,
+  getProviderErrorCategory,
+  isRetryableProviderError,
+  modelSupportsImages,
+  renderAgentContext,
+  resumeAfterFailedTurn,
+  runTurnWithProviderRetry,
+} from "@yoplai/shared";
 import type {
   SdkAdapter,
   SdkRunParams,
@@ -135,33 +147,71 @@ async function createPiExtensionTools(
     piTools.push({
       name,
       label: "Describe an attached image",
-      description: "Re-query an image already attached to this conversation. Use the exact attachment path shown in its generated description.",
-      parameters: { type: "object", properties: { path: { type: "string" }, question: { type: "string" } }, required: ["path"] } as AgentTool["parameters"],
+      description:
+        "Re-query an image already attached to this conversation. Use the exact attachment path shown in its generated description.",
+      parameters: {
+        type: "object",
+        properties: { path: { type: "string" }, question: { type: "string" } },
+        required: ["path"],
+      } as AgentTool["parameters"],
       execute: async (_toolCallId, toolParams) => {
         const args = toolParams as { path?: unknown; question?: unknown };
-        if (typeof args.path !== "string") throw new Error("describe_image requires an image path");
-        const attachment = await findSessionImageAttachment(agent.id, params.sessionId, params.userId, args.path);
-        if (!attachment) throw new Error("describe_image path is not an image attached to this session");
+        if (typeof args.path !== "string")
+          throw new Error("describe_image requires an image path");
+        const attachment = await findSessionImageAttachment(
+          agent.id,
+          params.sessionId,
+          params.userId,
+          args.path
+        );
+        if (!attachment)
+          throw new Error(
+            "describe_image path is not an image attached to this session"
+          );
         const description = await describeImage(
-          await readInboundAttachment(attachment), attachment.mimeType, config,
+          await readInboundAttachment(attachment),
+          attachment.mimeType,
+          config,
           typeof args.question === "string" ? args.question : undefined
         );
-        return { content: [{ type: "text", text: description }], details: { description } };
+        return {
+          content: [{ type: "text", text: description }],
+          details: { description },
+        };
       },
     });
   }
   return { tools: piTools, invisibleToolNames };
 }
 
-export async function findSessionImageAttachment(agentId: string, sessionId: string, userId: string | undefined, requestedPath: string) {
+export async function findSessionImageAttachment(
+  agentId: string,
+  sessionId: string,
+  userId: string | undefined,
+  requestedPath: string
+) {
   const history = await getFullHistory(agentId, sessionId, userId);
   for (const message of history) {
     if (message.role !== "user" || !Array.isArray(message.content)) continue;
     for (const block of message.content) {
-      if (block.type !== "file" || block.direction !== "inbound" || !block.mimeType.startsWith("image/")) continue;
+      if (
+        block.type !== "file" ||
+        block.direction !== "inbound" ||
+        !block.mimeType.startsWith("image/")
+      )
+        continue;
       const metadata = await getMediaFileMetadata(block.fileId);
-      if (metadata?.path === requestedPath && metadata.agentId === agentId && metadata.sessionId === sessionId) {
-        return { path: metadata.path, mimeType: metadata.mimeType, filename: metadata.filename, size: metadata.size };
+      if (
+        metadata?.path === requestedPath &&
+        metadata.agentId === agentId &&
+        metadata.sessionId === sessionId
+      ) {
+        return {
+          path: metadata.path,
+          mimeType: metadata.mimeType,
+          filename: metadata.filename,
+          size: metadata.size,
+        };
       }
     }
   }
@@ -329,9 +379,25 @@ export const piAdapter: SdkAdapter = {
       // Enable Pi's built-in coding tools plus extension custom tools for the run workspace.
       // Pi treats `tools` as an allowlist when provided, so custom tool names must be included.
       const builtInTools = ["read", "bash", "edit", "write"];
+      const configuredFallback = agent.fallback_model
+        ? modelRuntime.getModel(
+            agent.fallback_model.provider,
+            agent.fallback_model.model
+          )
+        : undefined;
+      // Build the turn for the least capable configured model. A fallback must
+      // receive the same attachment representation and image tools as primary.
+      const turnSupportsImages =
+        modelSupportsImages(model) &&
+        (!configuredFallback || modelSupportsImages(configuredFallback));
       const usedToolNames = new Set<string>();
       const { tools: extensionTools, invisibleToolNames } =
-        await createPiExtensionTools(agent, usedToolNames, params, !modelSupportsImages(model));
+        await createPiExtensionTools(
+          agent,
+          usedToolNames,
+          params,
+          !turnSupportsImages
+        );
       const tools = [
         ...builtInTools,
         ...extensionTools.map((tool) => tool.name),
@@ -433,17 +499,40 @@ export const piAdapter: SdkAdapter = {
       if (params.attachments && params.attachments.length > 0) {
         const imageAttachments = params.attachments.filter(isImageAttachment);
         if (imageAttachments.length > 0) {
-          if (modelSupportsImages(model)) {
-            images = await Promise.all(imageAttachments.map(async (attachment) => ({
-              type: "image" as const, data: (await readInboundAttachment(attachment)).toString("base64"), mimeType: attachment.mimeType,
-            })));
+          if (turnSupportsImages) {
+            images = await Promise.all(
+              imageAttachments.map(async (attachment) => ({
+                type: "image" as const,
+                data: (await readInboundAttachment(attachment)).toString(
+                  "base64"
+                ),
+                mimeType: attachment.mimeType,
+              }))
+            );
           } else if (loadConfig().imageDescription?.enabled === true) {
             const config = loadConfig();
-            const descriptions = await Promise.all(imageAttachments.map(async (attachment) => {
-              try { return { path: attachment.path, description: await describeImage(await readInboundAttachment(attachment), attachment.mimeType, config) }; }
-              catch { return { path: attachment.path, description: "Description failed; the image could not be read." }; }
-            }));
-            imageDescriptionContext = formatImageDescriptionBlocks(descriptions);
+            const descriptions = await Promise.all(
+              imageAttachments.map(async (attachment) => {
+                try {
+                  return {
+                    path: attachment.path,
+                    description: await describeImage(
+                      await readInboundAttachment(attachment),
+                      attachment.mimeType,
+                      config
+                    ),
+                  };
+                } catch {
+                  return {
+                    path: attachment.path,
+                    description:
+                      "Description failed; the image could not be read.",
+                  };
+                }
+              })
+            );
+            imageDescriptionContext =
+              formatImageDescriptionBlocks(descriptions);
           }
         }
       }
@@ -453,7 +542,9 @@ export const piAdapter: SdkAdapter = {
       );
       const messageWithAttachments = appendAttachmentContext(
         params.message,
-        [attachmentContext, imageDescriptionContext].filter(Boolean).join("\n\n")
+        [attachmentContext, imageDescriptionContext]
+          .filter(Boolean)
+          .join("\n\n")
       );
 
       // Emit user message to history (without context preamble)
@@ -465,6 +556,8 @@ export const piAdapter: SdkAdapter = {
       });
 
       // Subscribe to streaming events
+      let failedTurnProducedVisibleOutput = false;
+      let failedTurnInvokedTool = false;
 
       const unsubscribe = agentSession.subscribe((evt) => {
         if (evt.type === "message_update") {
@@ -477,6 +570,7 @@ export const piAdapter: SdkAdapter = {
             if (evtType === "text_delta") {
               const chunk = assistantEvent?.delta as string;
               if (chunk) {
+                failedTurnProducedVisibleOutput = true;
                 params.onEvent({ type: "text", data: chunk });
                 params.onHistoryEvent({
                   type: "assistant_text",
@@ -487,6 +581,7 @@ export const piAdapter: SdkAdapter = {
             } else if (evtType === "thinking_delta") {
               const chunk = assistantEvent?.delta as string;
               if (chunk) {
+                failedTurnProducedVisibleOutput = true;
                 params.onEvent({ type: "thinking", data: chunk });
                 params.onHistoryEvent({
                   type: "assistant_thinking",
@@ -499,6 +594,7 @@ export const piAdapter: SdkAdapter = {
         }
 
         if (evt.type === "tool_execution_start") {
+          failedTurnInvokedTool = true;
           const toolName = (evt as { toolName?: string }).toolName ?? "unknown";
           const toolCallId =
             (evt as { toolCallId?: string }).toolCallId ?? `call_${Date.now()}`;
@@ -564,7 +660,7 @@ export const piAdapter: SdkAdapter = {
         // Capture meta from message end
         if (evt.type === "message_end") {
           const msg = (evt as { message?: AgentMessage }).message;
-          if (msg?.role === "assistant") {
+          if (msg?.role === "assistant" && msg.stopReason !== "error") {
             const assistantMsg = msg as unknown as Record<string, unknown>;
             params.onHistoryEvent({
               type: "meta",
@@ -588,7 +684,11 @@ export const piAdapter: SdkAdapter = {
         }
       });
 
-      const promptOptions = images && images.length > 0 ? { images } : undefined;
+      const promptOptions =
+        images && images.length > 0 ? { images } : undefined;
+      try {
+      const primaryStartedAt = Date.now();
+      let primaryThrown: unknown;
       try {
         // Keep the subscription alive across attempts so a resumed turn still streams.
         await runTurnWithProviderRetry({
@@ -609,9 +709,95 @@ export const piAdapter: SdkAdapter = {
               `[agent] retrying transient provider error (attempt ${attempt}, delay ${delaySeconds}s): ${message}`,
               { agentId: params.agent.id }
             ),
+          onAttempt: (attempt, durationMs, failure) =>
+            logWarn("[agent] primary model attempt completed", {
+              agentId: params.agent.id,
+              provider: effectiveModel.provider,
+              model: effectiveModel.model,
+              attempt,
+              durationMs,
+              outcome: failure ? "failure" : "success",
+              failureCategory: failure
+                ? getProviderErrorCategory(failure.source, failure.message)
+                : undefined,
+              failure: failure?.message,
+            }),
           sleep: (milliseconds) =>
             new Promise((resolve) => setTimeout(resolve, milliseconds)),
         });
+      } catch (error) {
+        primaryThrown = error;
+      }
+      const primaryFailure = primaryThrown
+        ? {
+            source: primaryThrown,
+            message:
+              primaryThrown instanceof Error
+                ? primaryThrown.message
+                : String(primaryThrown),
+          }
+        : findFailedTurn(agentSession.messages);
+      if (
+        primaryFailure &&
+        params.agent.fallback_model &&
+        !failedTurnProducedVisibleOutput &&
+        !failedTurnInvokedTool &&
+        isRetryableProviderError(primaryFailure.source, primaryFailure.message)
+      ) {
+        const fallbackStartedAt = Date.now();
+        const logFallback = (outcome: "success" | "failure", fallbackFailure?: string) =>
+          logWarn("[agent] fallback model attempt completed", {
+            agentId: params.agent.id,
+            primaryProvider: effectiveModel.provider,
+            primaryModel: effectiveModel.model,
+            primaryFailureCategory: getProviderErrorCategory(primaryFailure.source, primaryFailure.message),
+            primaryFailure: primaryFailure.message,
+            primaryDurationMs: fallbackStartedAt - primaryStartedAt,
+            fallbackProvider: params.agent.fallback_model!.provider,
+            fallbackModel: params.agent.fallback_model!.model,
+            fallbackOutcome: outcome,
+            fallbackFailure,
+            fallbackDurationMs: Date.now() - fallbackStartedAt,
+          });
+        const fallback = modelRuntime.getModel(
+          params.agent.fallback_model.provider,
+          params.agent.fallback_model.model
+        );
+        if (!fallback) {
+          logFallback("failure", "model not found");
+          throw new Error(
+            `Primary ${effectiveModel.provider}/${effectiveModel.model} failed: ${primaryFailure.message}; fallback ${params.agent.fallback_model.provider}/${params.agent.fallback_model.model} failed: model not found`
+          );
+        }
+        try {
+          const fallbackAuth = await modelRuntime.getAuth(fallback);
+          const fallbackKey = fallbackAuth?.auth.apiKey;
+          if (fallbackKey) {
+            await modelRuntime.setRuntimeApiKey(fallback.provider, fallbackKey);
+          }
+          await agentSession.setModel(fallback);
+          await resumeAfterFailedTurn(agentSession, () =>
+            agentSession.prompt(messageWithAttachments, promptOptions)
+          );
+        } catch (error) {
+          const fallbackMessage =
+            error instanceof Error ? error.message : String(error);
+          logFallback("failure", fallbackMessage);
+          throw new Error(
+            `Primary ${effectiveModel.provider}/${effectiveModel.model} failed: ${primaryFailure.message}; fallback ${params.agent.fallback_model.provider}/${params.agent.fallback_model.model} failed: ${fallbackMessage}`
+          );
+        }
+        const fallbackFailure = findFailedTurn(agentSession.messages);
+        if (fallbackFailure) {
+          logFallback("failure", fallbackFailure.message);
+          throw new Error(
+            `Primary ${effectiveModel.provider}/${effectiveModel.model} failed: ${primaryFailure.message}; fallback ${params.agent.fallback_model.provider}/${params.agent.fallback_model.model} failed: ${fallbackFailure.message}`
+          );
+        }
+        logFallback("success");
+      } else if (primaryThrown) {
+        throw primaryThrown;
+      }
       } finally {
         unsubscribe();
       }

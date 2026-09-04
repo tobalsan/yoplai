@@ -32,6 +32,7 @@ const piMock = vi.hoisted(() => {
       subscribers.push(listener);
       return vi.fn();
     }),
+    setModel: vi.fn(async () => undefined),
     prompt: vi.fn(async () => undefined),
     sendUserMessage: vi.fn(async () => undefined),
     abort: vi.fn(async () => undefined),
@@ -53,6 +54,7 @@ const piMock = vi.hoisted(() => {
       agent.continue.mockReset();
       agent.continue.mockResolvedValue(undefined);
       session.subscribe.mockClear();
+      session.setModel.mockClear();
       session.prompt.mockReset();
       session.prompt.mockResolvedValue(undefined);
       session.sendUserMessage.mockClear();
@@ -177,6 +179,67 @@ describe("Pi runner", () => {
         (message) => (message as { role: string }).role
       )
     ).toEqual(["user", "assistant"]);
+    await fs.rm(tempDir, { recursive: true, force: true });
+  });
+
+  it("uses the fallback model after primary retries exhaust without output or tools", async () => {
+    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-runner-"));
+    const workspaceDir = path.join(tempDir, "workspace");
+    const sessionDir = path.join(tempDir, "sessions");
+    await fs.mkdir(workspaceDir, { recursive: true });
+    await fs.mkdir(sessionDir, { recursive: true });
+    piMock.session.prompt.mockImplementationOnce(async () => {
+      const failed = {
+        role: "assistant",
+        content: [],
+        stopReason: "error",
+        errorMessage: "HTTP 503 Service Unavailable",
+      };
+      piMock.session.messages.push(
+        { role: "user", content: [{ type: "text", text: "Say hi" }] },
+        failed
+      );
+      for (const subscriber of piMock.subscribers) {
+        subscriber({ type: "message_end", message: failed });
+      }
+    });
+    piMock.agent.continue.mockImplementationOnce(async () => {
+      piMock.session.messages.push({
+        role: "assistant",
+        content: [{ type: "text", text: "fallback answer" }],
+        stopReason: "end_turn",
+      });
+    });
+    const stderr = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    const output = await runAgent(
+      createInput({
+        workspaceDir,
+        sessionDir,
+        retry: { maxAttempts: 1, baseDelaySeconds: 0 },
+        fallbackModel: { provider: "openai", model: "gpt-5" },
+      })
+    );
+    expect(output).toMatchObject({ text: "fallback answer" });
+    expect(piMock.session.setModel).toHaveBeenCalledWith(piMock.model);
+    expect(piMock.agent.continue).toHaveBeenCalledTimes(1);
+    expect(output.history).not.toContainEqual(
+      expect.objectContaining({ type: "meta", stopReason: "error" })
+    );
+    expect(
+      stderr.mock.calls
+        .map(([entry]) => String(entry))
+        .filter((entry) => entry.startsWith("{"))
+        .map((entry) => JSON.parse(entry))
+        .find((entry) => entry.event === "model_fallback")
+    ).toMatchObject({
+      primaryProvider: "anthropic",
+      fallbackProvider: "openai",
+      primaryFailureCategory: "unavailable",
+      fallbackOutcome: "success",
+      primaryDurationMs: expect.any(Number),
+      fallbackDurationMs: expect.any(Number),
+    });
     await fs.rm(tempDir, { recursive: true, force: true });
   });
 
@@ -958,6 +1021,7 @@ function createInput(paths: {
   imageInputSupported?: boolean;
   runId?: string;
   retry?: ContainerInput["retry"];
+  fallbackModel?: NonNullable<ContainerInput["sdkConfig"]["fallbackModel"]>;
 }): ContainerInput {
   return {
     agentId: "agent-1",
@@ -981,6 +1045,7 @@ function createInput(paths: {
         provider: "anthropic",
         model: "claude-sonnet-4-6",
       },
+      fallbackModel: paths.fallbackModel,
     },
   };
 }

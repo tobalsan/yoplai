@@ -21,6 +21,9 @@ import {
   DEFAULT_RETRY_BASE_DELAY_SECONDS,
   DEFAULT_RETRY_MAX_ATTEMPTS,
   claimAgentToolName,
+  findFailedTurn,
+  getProviderErrorCategory,
+  isRetryableProviderError,
   renderAgentContext,
   resumeAfterFailedTurn,
   runTurnWithProviderRetry,
@@ -232,9 +235,19 @@ export async function runAgent(
       onStreamEvent?.(systemPromptEvent);
     }
 
+    let failedTurnProducedVisibleOutput = false;
+    let failedTurnInvokedTool = false;
     const unsubscribe = session.subscribe((evt) => {
       const collectedEvents = collectHistoryEvent(evt, history);
       for (const event of collectedEvents) {
+        if (
+          event.type === "assistant_text" ||
+          event.type === "assistant_thinking" ||
+          event.type === "assistant_file"
+        ) {
+          failedTurnProducedVisibleOutput = true;
+        }
+        if (event.type === "tool_call") failedTurnInvokedTool = true;
         onStreamEvent?.(event);
       }
     });
@@ -244,26 +257,119 @@ export async function runAgent(
         await session.sendUserMessage(message, { deliverAs: "steer" });
       }
 
-      const promptOptions =
+    const promptOptions =
         input.imageInputSupported === false
           ? undefined
           : await loadPromptOptions(input);
-      await runTurnWithProviderRetry({
-        maxAttempts: input.retry?.maxAttempts ?? DEFAULT_RETRY_MAX_ATTEMPTS,
-        baseDelaySeconds:
-          input.retry?.baseDelaySeconds ?? DEFAULT_RETRY_BASE_DELAY_SECONDS,
-        runTurn: (attempt) =>
-          attempt === 1
-            ? session.prompt(promptText, promptOptions)
-            : resumeAfterFailedTurn(session, () =>
-                session.prompt(promptText, promptOptions)
-              ),
-        getMessages: () => session.messages,
-        isAbort: isAbortLikeError,
-        onRetry: (attempt, delaySeconds, message) =>
-          onStreamEvent?.({ type: "retry", attempt, delaySeconds, message }),
-        sleep: delay,
-      });
+      const primaryStartedAt = Date.now();
+      let primaryThrown: unknown;
+      try {
+        await runTurnWithProviderRetry({
+          maxAttempts: input.retry?.maxAttempts ?? DEFAULT_RETRY_MAX_ATTEMPTS,
+          baseDelaySeconds:
+            input.retry?.baseDelaySeconds ?? DEFAULT_RETRY_BASE_DELAY_SECONDS,
+          runTurn: (attempt) =>
+            attempt === 1
+              ? session.prompt(promptText, promptOptions)
+              : resumeAfterFailedTurn(session, () =>
+                  session.prompt(promptText, promptOptions)
+                ),
+          getMessages: () => session.messages,
+          isAbort: isAbortLikeError,
+          onRetry: (attempt, delaySeconds, message) =>
+            onStreamEvent?.({ type: "retry", attempt, delaySeconds, message }),
+          onAttempt: (attempt, durationMs, failure) =>
+            console.error(
+              JSON.stringify({
+                event: "model_primary_attempt",
+                provider,
+                model: input.sdkConfig.model.model,
+                attempt,
+                durationMs,
+                outcome: failure ? "failure" : "success",
+                failureCategory: failure
+                  ? getProviderErrorCategory(failure.source, failure.message)
+                  : undefined,
+                failure: failure?.message,
+              })
+            ),
+          sleep: delay,
+        });
+      } catch (error) {
+        primaryThrown = error;
+      }
+      const primaryFailure = primaryThrown
+        ? {
+            source: primaryThrown,
+            message:
+              primaryThrown instanceof Error
+                ? primaryThrown.message
+                : String(primaryThrown),
+          }
+        : findFailedTurn(session.messages);
+      const fallbackConfig = input.sdkConfig.fallbackModel;
+      if (
+        primaryFailure &&
+        fallbackConfig &&
+        !failedTurnProducedVisibleOutput &&
+        !failedTurnInvokedTool &&
+        isRetryableProviderError(primaryFailure.source, primaryFailure.message)
+      ) {
+        const fallbackStartedAt = Date.now();
+        const logFallback = (outcome: "success" | "failure", fallbackFailure?: string) =>
+          console.error(
+            JSON.stringify({
+              event: "model_fallback",
+              primaryProvider: provider,
+              primaryModel: input.sdkConfig.model.model,
+              primaryFailureCategory: getProviderErrorCategory(primaryFailure.source, primaryFailure.message),
+              primaryFailure: primaryFailure.message,
+              primaryDurationMs: fallbackStartedAt - primaryStartedAt,
+              fallbackProvider: fallbackConfig.provider,
+              fallbackModel: fallbackConfig.model,
+              fallbackOutcome: outcome,
+              fallbackFailure,
+              fallbackDurationMs: Date.now() - fallbackStartedAt,
+            })
+          );
+        const fallback = modelRuntime.getModel(
+          fallbackConfig.provider,
+          fallbackConfig.model
+        );
+        if (!fallback) {
+          logFallback("failure", "model not found");
+          throw new Error(
+            `Primary ${provider}/${input.sdkConfig.model.model} failed: ${primaryFailure.message}; fallback ${fallbackConfig.provider}/${fallbackConfig.model} failed: model not found`
+          );
+        }
+        try {
+          await modelRuntime.setRuntimeApiKey(
+            fallback.provider,
+            "onecli-proxy-managed"
+          );
+          await session.setModel(fallback);
+          await resumeAfterFailedTurn(session, () =>
+            session.prompt(promptText, promptOptions)
+          );
+        } catch (error) {
+          const message =
+            error instanceof Error ? error.message : String(error);
+          logFallback("failure", message);
+          throw new Error(
+            `Primary ${provider}/${input.sdkConfig.model.model} failed: ${primaryFailure.message}; fallback ${fallbackConfig.provider}/${fallbackConfig.model} failed: ${message}`
+          );
+        }
+        const fallbackFailure = findFailedTurn(session.messages);
+        if (fallbackFailure) {
+          logFallback("failure", fallbackFailure.message);
+          throw new Error(
+            `Primary ${provider}/${input.sdkConfig.model.model} failed: ${primaryFailure.message}; fallback ${fallbackConfig.provider}/${fallbackConfig.model} failed: ${fallbackFailure.message}`
+          );
+        }
+        logFallback("success");
+      } else if (primaryThrown) {
+        throw primaryThrown;
+      }
     } catch (error) {
       if (isAbortLikeError(error)) {
         aborted = true;
@@ -516,6 +622,7 @@ function collectHistoryEvent(
     const msg = event.message as AgentMessage | undefined;
     if (msg?.role !== "assistant") return collected;
     const assistant = msg as unknown as Record<string, unknown>;
+    if (assistant.stopReason === "error") return collected;
     collected.push({
       type: "meta",
       provider:

@@ -11,6 +11,7 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Added
 
+- Agents can opt into a single `fallback_model` in `agent.yaml`; after transient primary-model retries are exhausted, a silent, tool-free failed Pi turn retries once with that model.
 - Added `yoplai models refresh` to fetch Pi's latest provider model catalogs into `$YOPLAI_HOME/models-store.json`, allowing newly released models to be used without upgrading Yoplai.
 
 ### Changed

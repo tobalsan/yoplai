@@ -242,6 +242,7 @@ const AgentConfigBaseSchema = z.object({
   system_files: z.array(SystemFileEntrySchema).optional(),
   sdk: SdkIdSchema.optional(), // default "pi"
   model: AgentModelConfigSchema.optional(),
+  fallback_model: RequiredModelConfigSchema.optional(),
   openclaw: OpenClawConfigSchema.optional(),
   auth: AgentAuthConfigSchema.optional(), // OAuth/API key auth config
   discord: DiscordConfigSchema.optional(),
@@ -2305,6 +2306,7 @@ export const ContainerInputSchema = z.object({
   sdkConfig: z.object({
     sdk: SdkIdSchema,
     model: AgentModelConfigSchema,
+    fallbackModel: RequiredModelConfigSchema.optional(),
   }),
 });
 export type ContainerInput = z.infer<typeof ContainerInputSchema>;

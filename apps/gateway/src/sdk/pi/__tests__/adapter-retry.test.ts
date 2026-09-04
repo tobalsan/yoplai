@@ -7,6 +7,7 @@ import {
 } from "../../../config/index.js";
 
 const mockCreateAgentSession = vi.fn();
+const mockGetModel = vi.fn((provider: string, model: string) => ({ provider, model }));
 const mockGetLoadedExtensions = vi.fn<() => Partial<Extension>[]>(() => []);
 const mockGetExtensionAgentTools = vi.fn<() => Promise<unknown[]>>(
   async () => []
@@ -48,7 +49,7 @@ vi.mock("@earendil-works/pi-coding-agent", () => ({
   readStoredCredential: vi.fn(() => undefined),
   ModelRuntime: {
     create: vi.fn(async () => ({
-      getModel: vi.fn(() => ({ provider: "anthropic" })),
+      getModel: mockGetModel,
       getAuth: vi.fn(async () => ({ auth: { apiKey: "runtime-key" } })),
       setRuntimeApiKey: vi.fn(async () => undefined),
     })),
@@ -76,10 +77,20 @@ function makeSession() {
     },
     agent,
     subscribe: vi.fn(() => vi.fn()),
+    setModel: vi.fn(async () => undefined),
     prompt: vi.fn(async () => undefined),
     abort: vi.fn(),
     dispose: vi.fn(),
   };
+}
+
+function emit(session: ReturnType<typeof makeSession>, event: unknown) {
+  const listener = (session.subscribe.mock.calls as unknown as Array<
+    [(event: unknown) => void]
+  >)[0]?.[0] as
+    | ((event: unknown) => void)
+    | undefined;
+  listener?.(event);
 }
 
 function erroredTurn(errorMessage = RELACE_ERROR): MockMessage {
@@ -136,6 +147,7 @@ describe("pi adapter transient provider retry", () => {
     clearConfigCacheForTests();
     mockGetLoadedExtensions.mockReturnValue([]);
     mockGetExtensionAgentTools.mockResolvedValue([]);
+    mockGetModel.mockClear();
   });
 
   it("retries a failed turn that follows tool activity without re-sending the prompt", async () => {
@@ -175,6 +187,130 @@ describe("pi adapter transient provider retry", () => {
         agentId: "pi-agent",
       },
     ]);
+  });
+
+  it("uses the configured fallback after retries exhaust without output or tools", async () => {
+    const agent = makeAgent({
+      retryMaxAttempts: 1,
+      fallback_model: { provider: "openai", model: "gpt-5" },
+    });
+    setLoadedConfig({ agents: [agent] } as GatewayConfig);
+    const session = makeSession();
+    session.prompt.mockImplementationOnce(async () => {
+      const failed = erroredTurn();
+      session.agent.state.messages.push(
+        { role: "user", content: [{ type: "text", text: "Say hi" }] },
+        failed
+      );
+      emit(session, { type: "message_end", message: failed });
+    });
+    session.agent.continue.mockImplementationOnce(async () => {
+      session.agent.state.messages.push(successTurn("fallback answer"));
+    });
+    mockCreateAgentSession.mockResolvedValue({ session });
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    const { piAdapter } = await import("../adapter.js");
+    const params = makeRunParams(agent);
+    await expect(piAdapter.run(params)).resolves.toEqual({
+      text: "fallback answer",
+      aborted: false,
+    });
+    expect(session.setModel).toHaveBeenCalledWith({
+      provider: "openai",
+      model: "gpt-5",
+    });
+    expect(session.agent.continue).toHaveBeenCalledTimes(1);
+    expect(params.onHistoryEvent).not.toHaveBeenCalledWith(
+      expect.objectContaining({ type: "meta", stopReason: "error" })
+    );
+    expect(
+      warn.mock.calls.map(([entry]) => JSON.parse(String(entry))).find(
+        (entry) => entry.fallbackOutcome === "success"
+      )
+    ).toMatchObject({
+      primaryProvider: "anthropic",
+      fallbackProvider: "openai",
+      primaryFailureCategory: "unavailable",
+      primaryDurationMs: expect.any(Number),
+      fallbackDurationMs: expect.any(Number),
+    });
+  });
+
+  it("reports both failures when the fallback fails", async () => {
+    const agent = makeAgent({
+      retryMaxAttempts: 1,
+      fallback_model: { provider: "openai", model: "gpt-5" },
+    });
+    setLoadedConfig({ agents: [agent] } as GatewayConfig);
+    const session = makeSession();
+    session.prompt.mockImplementationOnce(async () => {
+      session.agent.state.messages.push(
+        { role: "user", content: [{ type: "text", text: "Say hi" }] },
+        erroredTurn("HTTP 503 Service Unavailable")
+      );
+    });
+    session.agent.continue.mockRejectedValueOnce(new Error("fallback timed out"));
+    mockCreateAgentSession.mockResolvedValue({ session });
+
+    const { piAdapter } = await import("../adapter.js");
+    await expect(piAdapter.run(makeRunParams(agent))).rejects.toThrow(
+      "Primary anthropic/claude-3-5-sonnet-20241022 failed: HTTP 503 Service Unavailable; fallback openai/gpt-5 failed: fallback timed out"
+    );
+  });
+
+  it("does not use the fallback after the failed turn streamed text", async () => {
+    const agent = makeAgent({
+      retryMaxAttempts: 1,
+      fallback_model: { provider: "openai", model: "gpt-5" },
+    });
+    setLoadedConfig({ agents: [agent] } as GatewayConfig);
+    const session = makeSession();
+    session.prompt.mockImplementationOnce(async () => {
+      emit(session, {
+        type: "message_update",
+        message: { role: "assistant" },
+        assistantMessageEvent: { type: "text_delta", delta: "partial" },
+      });
+      session.agent.state.messages.push(
+        { role: "user", content: [{ type: "text", text: "Say hi" }] },
+        erroredTurn()
+      );
+    });
+    mockCreateAgentSession.mockResolvedValue({ session });
+    vi.spyOn(console, "error").mockImplementation(() => {});
+
+    const { piAdapter } = await import("../adapter.js");
+    await expect(piAdapter.run(makeRunParams(agent))).rejects.toThrow(
+      `Agent error: ${RELACE_ERROR}`
+    );
+    expect(session.setModel).not.toHaveBeenCalled();
+    expect(session.agent.continue).not.toHaveBeenCalled();
+  });
+
+  it("does not use the fallback after the failed turn invoked a tool", async () => {
+    const agent = makeAgent({
+      retryMaxAttempts: 1,
+      fallback_model: { provider: "openai", model: "gpt-5" },
+    });
+    setLoadedConfig({ agents: [agent] } as GatewayConfig);
+    const session = makeSession();
+    session.prompt.mockImplementationOnce(async () => {
+      emit(session, { type: "tool_execution_start", toolName: "write", toolCallId: "tool-1" });
+      session.agent.state.messages.push(
+        { role: "user", content: [{ type: "text", text: "Say hi" }] },
+        erroredTurn()
+      );
+    });
+    mockCreateAgentSession.mockResolvedValue({ session });
+    vi.spyOn(console, "error").mockImplementation(() => {});
+
+    const { piAdapter } = await import("../adapter.js");
+    await expect(piAdapter.run(makeRunParams(agent))).rejects.toThrow(
+      `Agent error: ${RELACE_ERROR}`
+    );
+    expect(session.setModel).not.toHaveBeenCalled();
+    expect(session.agent.continue).not.toHaveBeenCalled();
   });
 
   it("does not retry a non-transient failure", async () => {

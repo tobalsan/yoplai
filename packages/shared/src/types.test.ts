@@ -13,6 +13,27 @@ import {
 } from "./types.js";
 
 describe("AgentConfigSchema openclaw model handling", () => {
+  it("accepts a complete fallback model and rejects incomplete identities", () => {
+    expect(
+      AgentConfigSchema.parse({
+        id: "fallback-agent",
+        name: "Fallback Agent",
+        workspace: "~/agents/fallback",
+        model: { provider: "anthropic", model: "claude" },
+        fallback_model: { provider: "openai", model: "gpt-5" },
+      }).fallback_model
+    ).toEqual({ provider: "openai", model: "gpt-5" });
+    expect(
+      AgentConfigSchema.safeParse({
+        id: "fallback-agent",
+        name: "Fallback Agent",
+        workspace: "~/agents/fallback",
+        model: { provider: "anthropic", model: "claude" },
+        fallback_model: { provider: "openai" },
+      }).success
+    ).toBe(false);
+  });
+
   it("accepts reasoning as lead-agent thinking config", () => {
     const result = AgentConfigSchema.parse({
       id: "reasoning-agent",

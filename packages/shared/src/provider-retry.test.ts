@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   findFailedTurn,
+  getProviderErrorCategory,
   getRetryDelaySeconds,
   isRetryableProviderError,
   resumeAfterFailedTurn,
@@ -16,6 +17,12 @@ function erroredTurn(errorMessage = RELACE_ERROR): RetryableTurnMessage {
 }
 
 describe("isRetryableProviderError", () => {
+  it("categorizes eligible provider failures for observability", () => {
+    expect(getProviderErrorCategory({ status: 429 }, "nope")).toBe("rate_limit");
+    expect(getProviderErrorCategory(undefined, "request timed out")).toBe("timeout");
+    expect(getProviderErrorCategory(undefined, "network failure")).toBe("network");
+    expect(getProviderErrorCategory({ status: 503 }, "nope")).toBe("unavailable");
+  });
   it("retries rate limits and server errors reported as a status", () => {
     expect(isRetryableProviderError({ status: 429 }, "nope")).toBe(true);
     expect(isRetryableProviderError({ statusCode: 503 }, "nope")).toBe(true);
@@ -34,6 +41,10 @@ describe("isRetryableProviderError", () => {
       "socket hang up",
       "read ECONNRESET",
       "connect ETIMEDOUT",
+      "request timed out",
+      "network failure contacting provider",
+      "model temporarily unavailable",
+      "quota exhaustion",
     ]) {
       expect(isRetryableProviderError(undefined, message)).toBe(true);
     }
@@ -157,11 +168,13 @@ describe("runTurnWithProviderRetry", () => {
   ) {
     const attempts: number[] = [];
     const retries: Array<{ attempt: number; delaySeconds: number }> = [];
+    const attemptDurations: number[] = [];
     const slept: number[] = [];
     let messages: RetryableTurnMessage[] = [];
     return {
       attempts,
       retries,
+      attemptDurations,
       slept,
       run: () =>
         runTurnWithProviderRetry({
@@ -177,6 +190,7 @@ describe("runTurnWithProviderRetry", () => {
           isAbort: () => false,
           onRetry: (attempt, delaySeconds) =>
             retries.push({ attempt, delaySeconds }),
+          onAttempt: (_attempt, durationMs) => attemptDurations.push(durationMs),
           sleep: async (milliseconds) => {
             slept.push(milliseconds);
           },
@@ -200,6 +214,7 @@ describe("runTurnWithProviderRetry", () => {
       { attempt: 2, delaySeconds: 2 },
     ]);
     expect(loop.slept).toEqual([2000, 2000]);
+    expect(loop.attemptDurations).toHaveLength(3);
   });
 
   it("stops at maxAttempts and leaves the failed turn for the caller", async () => {
