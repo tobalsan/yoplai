@@ -243,6 +243,144 @@ describe("Pi runner", () => {
     await fs.rm(tempDir, { recursive: true, force: true });
   });
 
+  it("uses the fallback when only an earlier completed turn ran a tool", async () => {
+    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-runner-"));
+    const workspaceDir = path.join(tempDir, "workspace");
+    const sessionDir = path.join(tempDir, "sessions");
+    await fs.mkdir(workspaceDir, { recursive: true });
+    await fs.mkdir(sessionDir, { recursive: true });
+    piMock.session.prompt.mockImplementationOnce(async () => {
+      for (const subscriber of piMock.subscribers) {
+        subscriber({
+          type: "tool_execution_start",
+          toolCallId: "tool-1",
+          toolName: "bash",
+          args: { command: "echo hi" },
+        });
+        subscriber({
+          type: "tool_execution_end",
+          toolCallId: "tool-1",
+          toolName: "bash",
+          result: { content: [{ type: "text", text: "hi" }] },
+          isError: false,
+        });
+      }
+      piMock.session.messages.push(
+        { role: "user", content: [{ type: "text", text: "Say hi" }] },
+        {
+          role: "assistant",
+          content: [{ type: "toolCall", id: "tool-1" }],
+          stopReason: "toolUse",
+        },
+        { role: "toolResult", content: [{ type: "text", text: "hi" }] },
+        {
+          role: "assistant",
+          content: [],
+          stopReason: "error",
+          errorMessage: "HTTP 503 Service Unavailable",
+        }
+      );
+    });
+    piMock.agent.continue.mockImplementationOnce(async () => {
+      piMock.session.messages.push({
+        role: "assistant",
+        content: [{ type: "text", text: "fallback answer" }],
+        stopReason: "end_turn",
+      });
+    });
+    vi.spyOn(console, "error").mockImplementation(() => {});
+
+    const output = await runAgent(
+      createInput({
+        workspaceDir,
+        sessionDir,
+        retry: { maxAttempts: 1, baseDelaySeconds: 0 },
+        fallbackModel: { provider: "openai", model: "gpt-5" },
+      })
+    );
+
+    expect(output).toMatchObject({ text: "fallback answer" });
+    expect(piMock.session.setModel).toHaveBeenCalledWith(piMock.model);
+    expect(piMock.agent.continue).toHaveBeenCalledTimes(1);
+    expect(
+      piMock.session.messages.map(
+        (message) => (message as { role: string }).role
+      )
+    ).toEqual(["user", "assistant", "toolResult", "assistant"]);
+    expect(
+      output.history?.filter((event) => event.type === "tool_result")
+    ).toHaveLength(1);
+    await fs.rm(tempDir, { recursive: true, force: true });
+  });
+
+  it("does not use the fallback when the failed turn itself called a tool", async () => {
+    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-runner-"));
+    const workspaceDir = path.join(tempDir, "workspace");
+    const sessionDir = path.join(tempDir, "sessions");
+    await fs.mkdir(workspaceDir, { recursive: true });
+    await fs.mkdir(sessionDir, { recursive: true });
+    piMock.session.prompt.mockImplementationOnce(async () => {
+      piMock.session.messages.push(
+        { role: "user", content: [{ type: "text", text: "Say hi" }] },
+        {
+          role: "assistant",
+          content: [{ type: "toolCall", id: "tool-1" }],
+          stopReason: "error",
+          errorMessage: "HTTP 503 Service Unavailable",
+        }
+      );
+    });
+    vi.spyOn(console, "error").mockImplementation(() => {});
+
+    await expect(
+      runAgent(
+        createInput({
+          workspaceDir,
+          sessionDir,
+          retry: { maxAttempts: 1, baseDelaySeconds: 0 },
+          fallbackModel: { provider: "openai", model: "gpt-5" },
+        })
+      )
+    ).rejects.toThrow("Agent error: HTTP 503 Service Unavailable");
+    expect(piMock.session.setModel).not.toHaveBeenCalled();
+    expect(piMock.agent.continue).not.toHaveBeenCalled();
+    await fs.rm(tempDir, { recursive: true, force: true });
+  });
+
+  it("does not use the fallback when the failed turn showed partial text", async () => {
+    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-runner-"));
+    const workspaceDir = path.join(tempDir, "workspace");
+    const sessionDir = path.join(tempDir, "sessions");
+    await fs.mkdir(workspaceDir, { recursive: true });
+    await fs.mkdir(sessionDir, { recursive: true });
+    piMock.session.prompt.mockImplementationOnce(async () => {
+      piMock.session.messages.push(
+        { role: "user", content: [{ type: "text", text: "Say hi" }] },
+        {
+          role: "assistant",
+          content: [{ type: "text", text: "partial" }],
+          stopReason: "error",
+          errorMessage: "HTTP 503 Service Unavailable",
+        }
+      );
+    });
+    vi.spyOn(console, "error").mockImplementation(() => {});
+
+    await expect(
+      runAgent(
+        createInput({
+          workspaceDir,
+          sessionDir,
+          retry: { maxAttempts: 1, baseDelaySeconds: 0 },
+          fallbackModel: { provider: "openai", model: "gpt-5" },
+        })
+      )
+    ).rejects.toThrow("Agent error: HTTP 503 Service Unavailable");
+    expect(piMock.session.setModel).not.toHaveBeenCalled();
+    expect(piMock.agent.continue).not.toHaveBeenCalled();
+    await fs.rm(tempDir, { recursive: true, force: true });
+  });
+
   it("retries a failed turn that follows earlier tool activity", async () => {
     const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-runner-"));
     const workspaceDir = path.join(tempDir, "workspace");

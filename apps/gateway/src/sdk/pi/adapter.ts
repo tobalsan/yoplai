@@ -13,6 +13,7 @@ import {
   findFailedTurn,
   formatImageDescriptionBlocks,
   getProviderErrorCategory,
+  isReplayableFailedTurn,
   isRetryableProviderError,
   modelSupportsImages,
   renderAgentContext,
@@ -556,9 +557,6 @@ export const piAdapter: SdkAdapter = {
       });
 
       // Subscribe to streaming events
-      let failedTurnProducedVisibleOutput = false;
-      let failedTurnInvokedTool = false;
-
       const unsubscribe = agentSession.subscribe((evt) => {
         if (evt.type === "message_update") {
           const msg = (evt as { message?: AgentMessage }).message;
@@ -570,7 +568,6 @@ export const piAdapter: SdkAdapter = {
             if (evtType === "text_delta") {
               const chunk = assistantEvent?.delta as string;
               if (chunk) {
-                failedTurnProducedVisibleOutput = true;
                 params.onEvent({ type: "text", data: chunk });
                 params.onHistoryEvent({
                   type: "assistant_text",
@@ -581,7 +578,6 @@ export const piAdapter: SdkAdapter = {
             } else if (evtType === "thinking_delta") {
               const chunk = assistantEvent?.delta as string;
               if (chunk) {
-                failedTurnProducedVisibleOutput = true;
                 params.onEvent({ type: "thinking", data: chunk });
                 params.onHistoryEvent({
                   type: "assistant_thinking",
@@ -594,7 +590,6 @@ export const piAdapter: SdkAdapter = {
         }
 
         if (evt.type === "tool_execution_start") {
-          failedTurnInvokedTool = true;
           const toolName = (evt as { toolName?: string }).toolName ?? "unknown";
           const toolCallId =
             (evt as { toolCallId?: string }).toolCallId ?? `call_${Date.now()}`;
@@ -740,8 +735,7 @@ export const piAdapter: SdkAdapter = {
       if (
         primaryFailure &&
         params.agent.fallback_model &&
-        !failedTurnProducedVisibleOutput &&
-        !failedTurnInvokedTool &&
+        isReplayableFailedTurn(agentSession.messages) &&
         isRetryableProviderError(primaryFailure.source, primaryFailure.message)
       ) {
         const fallbackStartedAt = Date.now();

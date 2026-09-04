@@ -274,7 +274,7 @@ describe("pi adapter transient provider retry", () => {
       });
       session.agent.state.messages.push(
         { role: "user", content: [{ type: "text", text: "Say hi" }] },
-        erroredTurn()
+        { ...erroredTurn(), content: [{ type: "text", text: "partial" }] }
       );
     });
     mockCreateAgentSession.mockResolvedValue({ session });
@@ -299,7 +299,7 @@ describe("pi adapter transient provider retry", () => {
       emit(session, { type: "tool_execution_start", toolName: "write", toolCallId: "tool-1" });
       session.agent.state.messages.push(
         { role: "user", content: [{ type: "text", text: "Say hi" }] },
-        erroredTurn()
+        { ...erroredTurn(), content: [{ type: "toolCall", id: "tool-1" }] }
       );
     });
     mockCreateAgentSession.mockResolvedValue({ session });
@@ -311,6 +311,66 @@ describe("pi adapter transient provider retry", () => {
     );
     expect(session.setModel).not.toHaveBeenCalled();
     expect(session.agent.continue).not.toHaveBeenCalled();
+  });
+
+  it("uses the fallback when only an earlier completed turn ran a tool", async () => {
+    const agent = makeAgent({
+      retryMaxAttempts: 1,
+      fallback_model: { provider: "openai", model: "gpt-5" },
+    });
+    setLoadedConfig({ agents: [agent] } as GatewayConfig);
+    const session = makeSession();
+    session.prompt.mockImplementationOnce(async () => {
+      emit(session, {
+        type: "tool_execution_start",
+        toolName: "write",
+        toolCallId: "tool-1",
+      });
+      emit(session, {
+        type: "tool_execution_end",
+        toolName: "write",
+        toolCallId: "tool-1",
+        result: "written",
+      });
+      session.agent.state.messages.push(
+        { role: "user", content: [{ type: "text", text: "Say hi" }] },
+        {
+          role: "assistant",
+          content: [{ type: "toolCall", id: "tool-1" }],
+          stopReason: "toolUse",
+        },
+        { role: "toolResult", content: [{ type: "text", text: "written" }] },
+        erroredTurn()
+      );
+    });
+    session.agent.continue.mockImplementationOnce(async () => {
+      session.agent.state.messages.push(successTurn("fallback answer"));
+    });
+    mockCreateAgentSession.mockResolvedValue({ session });
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    const { piAdapter } = await import("../adapter.js");
+    const params = makeRunParams(agent);
+    await expect(piAdapter.run(params)).resolves.toEqual({
+      text: "fallback answer",
+      aborted: false,
+    });
+    expect(session.setModel).toHaveBeenCalledWith({
+      provider: "openai",
+      model: "gpt-5",
+    });
+    expect(session.agent.continue).toHaveBeenCalledTimes(1);
+    expect(session.agent.state.messages.map((m) => m.role)).toEqual([
+      "user",
+      "assistant",
+      "toolResult",
+      "assistant",
+    ]);
+    expect(
+      (params.onHistoryEvent as ReturnType<typeof vi.fn>).mock.calls.filter(
+        ([event]) => (event as { type: string }).type === "tool_result"
+      )
+    ).toHaveLength(1);
   });
 
   it("does not retry a non-transient failure", async () => {

@@ -15,6 +15,7 @@ export type RetryableTurnMessage = {
   role: string;
   stopReason?: unknown;
   errorMessage?: unknown;
+  content?: unknown;
 };
 
 /** A model turn that ended in failure, either thrown or reported as an errored assistant message. */
@@ -42,6 +43,34 @@ export function findFailedTurn(
         : "unknown error",
     thrown: false,
   };
+}
+
+/**
+ * Report whether the failed turn may be replayed on a fallback model.
+ *
+ * Eligibility is read from the failed turn itself, the same message
+ * `findFailedTurn` reports: it may be replayed only when its assistant message
+ * shows no text and calls no tool, because `resumeAfterFailedTurn` drops that
+ * message and a replay would otherwise repeat what the user already saw.
+ * Thinking blocks are discarded with the turn, so they are not visible output.
+ * Text and tool calls from earlier *completed* turns stay in the context and
+ * are never replayed, so they do not disqualify a later zero-output failure.
+ */
+export function isReplayableFailedTurn(
+  messages: readonly RetryableTurnMessage[]
+): boolean {
+  const lastAssistant = messages
+    .slice()
+    .reverse()
+    .find((message) => message.role === "assistant");
+  const content = lastAssistant?.content;
+  if (!Array.isArray(content)) return true;
+  return !content.some((block: unknown) => {
+    if (!block || typeof block !== "object") return false;
+    const { type, text } = block as { type?: unknown; text?: unknown };
+    if (type === "toolCall") return true;
+    return type === "text" && typeof text === "string" && text.trim() !== "";
+  });
 }
 
 /**

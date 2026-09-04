@@ -23,6 +23,7 @@ import {
   claimAgentToolName,
   findFailedTurn,
   getProviderErrorCategory,
+  isReplayableFailedTurn,
   isRetryableProviderError,
   renderAgentContext,
   resumeAfterFailedTurn,
@@ -235,19 +236,8 @@ export async function runAgent(
       onStreamEvent?.(systemPromptEvent);
     }
 
-    let failedTurnProducedVisibleOutput = false;
-    let failedTurnInvokedTool = false;
     const unsubscribe = session.subscribe((evt) => {
-      const collectedEvents = collectHistoryEvent(evt, history);
-      for (const event of collectedEvents) {
-        if (
-          event.type === "assistant_text" ||
-          event.type === "assistant_thinking" ||
-          event.type === "assistant_file"
-        ) {
-          failedTurnProducedVisibleOutput = true;
-        }
-        if (event.type === "tool_call") failedTurnInvokedTool = true;
+      for (const event of collectHistoryEvent(evt, history)) {
         onStreamEvent?.(event);
       }
     });
@@ -311,8 +301,7 @@ export async function runAgent(
       if (
         primaryFailure &&
         fallbackConfig &&
-        !failedTurnProducedVisibleOutput &&
-        !failedTurnInvokedTool &&
+        isReplayableFailedTurn(session.messages) &&
         isRetryableProviderError(primaryFailure.source, primaryFailure.message)
       ) {
         const fallbackStartedAt = Date.now();

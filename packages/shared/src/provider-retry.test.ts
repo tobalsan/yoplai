@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   findFailedTurn,
   getProviderErrorCategory,
+  isReplayableFailedTurn,
   getRetryDelaySeconds,
   isRetryableProviderError,
   resumeAfterFailedTurn,
@@ -58,6 +59,75 @@ describe("isRetryableProviderError", () => {
       false
     );
     expect(isRetryableProviderError(undefined, "tool not found")).toBe(false);
+  });
+
+  it("does not retry failures that only the caller can fix", () => {
+    for (const message of [
+      "authentication_error: invalid x-api-key",
+      "permission denied for this organization",
+      "model `gpt-5-turbo` does not exist or you do not have access to it",
+      "invalid_request_error: unknown parameter 'temperatur'",
+      "Your request was rejected as a result of our safety system",
+      "the assistant refused to answer",
+      "prompt is too long: 210000 tokens > 200000 maximum",
+      "context_length_exceeded",
+      "tool `bash` failed: exit code 1",
+      "tool not found: send_file",
+    ]) {
+      expect(isRetryableProviderError(undefined, message)).toBe(false);
+      expect(getProviderErrorCategory(undefined, message)).toBeUndefined();
+    }
+  });
+});
+
+describe("isReplayableFailedTurn", () => {
+  it("replays a failed turn that produced nothing, whatever came before", () => {
+    expect(isReplayableFailedTurn([{ role: "user" }, erroredTurn()])).toBe(
+      true
+    );
+    expect(
+      isReplayableFailedTurn([
+        { role: "user" },
+        {
+          role: "assistant",
+          stopReason: "toolUse",
+          content: [{ type: "toolCall", id: "t1" }],
+        },
+        { role: "toolResult" },
+        erroredTurn(),
+      ])
+    ).toBe(true);
+  });
+
+  it("treats thinking-only output as nothing the user keeps", () => {
+    expect(
+      isReplayableFailedTurn([
+        { role: "user" },
+        { ...erroredTurn(), content: [{ type: "thinking", thinking: "hmm" }] },
+      ])
+    ).toBe(true);
+  });
+
+  it("refuses to replay a failed turn that showed text or called a tool", () => {
+    expect(
+      isReplayableFailedTurn([
+        { role: "user" },
+        { ...erroredTurn(), content: [{ type: "text", text: "partial" }] },
+      ])
+    ).toBe(false);
+    expect(
+      isReplayableFailedTurn([
+        { role: "user" },
+        { ...erroredTurn(), content: [{ type: "toolCall", id: "t1" }] },
+      ])
+    ).toBe(false);
+    expect(
+      isReplayableFailedTurn([
+        { role: "user" },
+        { ...erroredTurn(), content: [{ type: "toolCall", id: "t1" }] },
+        { role: "toolResult" },
+      ])
+    ).toBe(false);
   });
 });
 
