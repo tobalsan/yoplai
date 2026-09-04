@@ -265,6 +265,7 @@ Primary commands include:
 - `yoplai gateway ...` — run/install/manage gateway
 - `yoplai agent list`, `yoplai agents migrate`
 - `yoplai send`, `yoplai notify`
+- `yoplai models refresh` — refresh Pi provider catalogs in `$YOPLAI_HOME/models-store.json`
 - `yoplai scheduler ...`
 - `yoplai projects ...`, `yoplai slices ...`
 - `yoplai subagents ...`

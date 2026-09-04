@@ -94,6 +94,8 @@ pnpm yoplai auth status
 
 Follow OAuth instructions printed in terminal. Credentials are stored under `$YOPLAI_HOME`; do not commit that directory. For API-key providers, use shell environment variables or `$YOPLAI_HOME/.env` and `$env:NAME` references—never put plaintext secrets in tracked configuration.
 
+If a newly released Pi model is missing from Yoplai's bundled catalog, run `pnpm yoplai models refresh` to update `$YOPLAI_HOME/models-store.json`, then restart the gateway.
+
 ### 6. Start Yoplai
 
 ```bash

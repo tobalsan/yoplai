@@ -22,6 +22,7 @@ yoplai agent list           list agents
 yoplai agents migrate       migrate centralized v2 agents to v3 folders
 yoplai send ...             send agent message
 yoplai notify ...           send configured channel notification
+yoplai models refresh       refresh Pi's cached model catalogs
 yoplai auth ...             provider OAuth login/status/logout
 yoplai user token ...       multi-user bearer token management
 yoplai scheduler ...        cron job management
@@ -50,6 +51,7 @@ pnpm yoplai notify --channel default --message "Build finished"
 pnpm yoplai projects list --status active
 pnpm yoplai slices list --project PRO-1
 pnpm yoplai subagents profiles
+pnpm yoplai models refresh
 pnpm yoplai auth status
 ```
 

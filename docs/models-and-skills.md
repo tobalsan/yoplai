@@ -14,6 +14,14 @@ model:
 
 Authentication options are covered in [OAuth](oauth.md). Use `auth.mode: oauth`, `api_key`, or `proxy` as provider requires.
 
+Pi ships a built-in model catalog and can merge newer provider catalogs from a local cache. Refresh that cache from the network with:
+
+```bash
+yoplai models refresh
+```
+
+The command writes `$YOPLAI_HOME/models-store.json`. Gateway runs then use the refreshed catalog; restart a running gateway before retrying a model that was previously unavailable.
+
 ## Custom providers
 
 Add `$YOPLAI_HOME/models.json`:

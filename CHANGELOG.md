@@ -9,6 +9,10 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ## [Unreleased]
 
+### Added
+
+- Added `yoplai models refresh` to fetch Pi's latest provider model catalogs into `$YOPLAI_HOME/models-store.json`, allowing newly released models to be used without upgrading Yoplai.
+
 ### Changed
 
 - Upgraded the pi SDK packages (`@earendil-works/pi-ai`, `pi-agent-core`, `pi-coding-agent`) from 0.80.6 to 0.84.4 across the gateway, agent-runner container, and projects extension. Model and credential resolution now goes through pi's `ModelRuntime`; `yoplai auth login/status/logout` keep the same behavior on the new provider-owned login flow.
