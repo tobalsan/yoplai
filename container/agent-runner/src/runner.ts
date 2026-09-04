@@ -240,7 +240,51 @@ export async function runAgent(
         await session.sendUserMessage(message, { deliverAs: "steer" });
       }
 
-      await session.prompt(promptText, input.imageInputSupported === false ? undefined : await loadPromptOptions(input));
+      const promptOptions =
+        input.imageInputSupported === false
+          ? undefined
+          : await loadPromptOptions(input);
+      const maxAttempts = input.retry?.maxAttempts ?? 3;
+      const baseDelaySeconds = input.retry?.baseDelaySeconds ?? 2;
+      for (let attempt = 1; ; attempt += 1) {
+        let failure: TurnFailure | undefined;
+        try {
+          if (attempt === 1) {
+            await session.prompt(promptText, promptOptions);
+          } else {
+            await resumeAfterFailedTurn(session, promptText, promptOptions);
+          }
+        } catch (error) {
+          if (isAbortLikeError(error)) throw error;
+          failure = {
+            source: error,
+            message: getErrorMessage(error),
+            thrown: true,
+          };
+        }
+        failure ??= findFailedTurn(session.messages);
+        if (!failure) break;
+        if (
+          !isRetryableProviderError(failure.source, failure.message) ||
+          attempt >= maxAttempts
+        ) {
+          if (failure.thrown) throw failure.source;
+          break;
+        }
+        const delaySeconds = getRetryDelaySeconds(
+          failure.source,
+          failure.message,
+          baseDelaySeconds,
+          attempt
+        );
+        onStreamEvent?.({
+          type: "retry",
+          attempt,
+          delaySeconds,
+          message: failure.message,
+        });
+        await delay(delaySeconds * 1000);
+      }
     } catch (error) {
       if (isAbortLikeError(error)) {
         aborted = true;
@@ -302,6 +346,123 @@ function formatNonImageAttachmentContext(input: ContainerInput): string {
     ...lines,
     "Use read/bash to inspect them if extracted text is not included above.",
   ].join("\n");
+}
+
+function getErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+/** A model turn that ended in failure, either thrown or reported as an errored assistant message. */
+type TurnFailure = { source: unknown; message: string; thrown: boolean };
+
+/**
+ * Report the last turn as failed when the model answered with an error stop
+ * reason. Eligibility is per turn: earlier successful turns (including their
+ * tool calls and results) do not disqualify a retry.
+ */
+function findFailedTurn(messages: AgentMessage[]): TurnFailure | undefined {
+  const lastAssistant = findLastAssistant(messages) as
+    | (Record<string, unknown> & AssistantMessage)
+    | undefined;
+  if (lastAssistant?.stopReason !== "error") return undefined;
+  return {
+    source: lastAssistant,
+    message:
+      typeof lastAssistant.errorMessage === "string" &&
+      lastAssistant.errorMessage
+        ? lastAssistant.errorMessage
+        : "unknown error",
+    thrown: false,
+  };
+}
+
+/**
+ * Resume the run after a failed turn without appending a duplicate user
+ * message. The failed assistant message is dropped from the agent context (it
+ * stays in the session transcript for history) and the agent continues from the
+ * preceding user or tool-result message, mirroring pi's own auto-retry. Any
+ * partial text the failed turn streamed is discarded with it.
+ */
+async function resumeAfterFailedTurn(
+  session: AgentSession,
+  promptText: string,
+  promptOptions: { images?: ImageContent[] } | undefined
+): Promise<void> {
+  const messages = session.agent.state.messages;
+  if (messages[messages.length - 1]?.role === "assistant") {
+    session.agent.state.messages = messages.slice(0, -1);
+  }
+  if (session.agent.state.messages.length === 0) {
+    await session.prompt(promptText, promptOptions);
+    return;
+  }
+  await session.agent.continue();
+}
+
+function isRetryableProviderError(error: unknown, message: string): boolean {
+  const status = getErrorStatus(error);
+  if (
+    status === 429 ||
+    (status !== undefined && status >= 500 && status <= 599)
+  ) {
+    return true;
+  }
+  if (/\b(?:http\s*)?(?:429|5\d\d)\b/i.test(message)) return true;
+  return /\b(queue(?:d|ing)?|backpressure|retry[- ]after|too many requests|rate limit|econnreset|connection reset|socket hang up|etimedout)\b/i.test(
+    message
+  );
+}
+
+function getErrorStatus(error: unknown): number | undefined {
+  if (!error || typeof error !== "object") return undefined;
+  const record = error as Record<string, unknown>;
+  for (const value of [
+    record.status,
+    record.statusCode,
+    (record.response as Record<string, unknown> | undefined)?.status,
+  ]) {
+    if (typeof value === "number") return value;
+  }
+  return undefined;
+}
+
+function getRetryDelaySeconds(
+  error: unknown,
+  message: string,
+  baseDelaySeconds: number,
+  attempt: number
+): number {
+  const retryAfter = getRetryAfterSeconds(error);
+  if (retryAfter !== undefined) return retryAfter;
+  const hint = /retry[- ]after\s+(\d+(?:\.\d+)?)\s*s(?:econds?)?\b/i.exec(
+    message
+  );
+  return hint ? Number(hint[1]) : baseDelaySeconds * 2 ** (attempt - 1);
+}
+
+function getRetryAfterSeconds(error: unknown): number | undefined {
+  if (!error || typeof error !== "object") return undefined;
+  const record = error as Record<string, unknown>;
+  const response = record.response as Record<string, unknown> | undefined;
+  const headers = response?.headers ?? record.headers;
+  if (!headers || typeof headers !== "object") return undefined;
+  const value =
+    headers instanceof Headers
+      ? headers.get("retry-after")
+      : Object.entries(headers as Record<string, unknown>).find(
+          ([key]) => key.toLowerCase() === "retry-after"
+        )?.[1];
+  if (typeof value !== "string" && typeof value !== "number") return undefined;
+  const seconds = Number(value);
+  if (Number.isFinite(seconds) && seconds >= 0) return seconds;
+  const retryAt = Date.parse(String(value));
+  return Number.isNaN(retryAt)
+    ? undefined
+    : Math.max(0, Math.ceil((retryAt - Date.now()) / 1000));
+}
+
+function delay(milliseconds: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, milliseconds));
 }
 
 async function loadContextFiles(

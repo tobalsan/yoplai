@@ -15,7 +15,7 @@ import {
   renderAgentContext,
 } from "@yoplai/shared";
 import { loadConfig } from "../../config/index.js";
-import { logInfo } from "../../logging.js";
+import { logInfo, logWarn } from "../../logging.js";
 import { RunSettledError } from "../run-settled.js";
 import {
   FIRST_RUN_BOOTSTRAP_PROMPT,
@@ -43,7 +43,10 @@ import {
   prepareLaunchFilesystem,
 } from "./launch-spec.js";
 import { ContainerInputBuilder } from "./input-builder.js";
-import { configuredModelSupportsImages, describeImage } from "../../media/describe.js";
+import {
+  configuredModelSupportsImages,
+  describeImage,
+} from "../../media/describe.js";
 import { formatImageDescriptionBlocks } from "@yoplai/shared";
 import { ContainerFileOutputAdapter } from "./file-output.js";
 import { ContainerProtocolDecoder, getMeaningfulStderr } from "./protocol.js";
@@ -305,32 +308,57 @@ export function getContainerAdapter(): SdkAdapter {
             uploads: launchSpec.hostUploadsDir,
           },
           userId: params.userId,
-          emitProgress: (event) => params.onEvent({ type: "progress", ...event }),
+          emitProgress: (event) =>
+            params.onEvent({ type: "progress", ...event }),
         });
         const attachmentContext = hasReadableDocumentAttachment(params)
           ? await buildDocumentAttachmentContext(params.attachments)
           : "";
         const provider = params.model?.provider ?? params.agent.model.provider;
         const model = params.model?.model ?? params.agent.model.model;
-        const needsDescriptions = config.imageDescription?.enabled === true && (!provider || !(await configuredModelSupportsImages(config, provider, model)));
+        const needsDescriptions =
+          config.imageDescription?.enabled === true &&
+          (!provider ||
+            !(await configuredModelSupportsImages(config, provider, model)));
         const imageAttachments = needsDescriptions
           ? (params.attachments ?? []).filter(isImageAttachment)
           : [];
-        const remappedImages = (remapAttachmentsToContainer(params.attachments) ?? [])
-          .filter(isImageAttachment);
+        const remappedImages = (
+          remapAttachmentsToContainer(params.attachments) ?? []
+        ).filter(isImageAttachment);
         const imageDescriptionContext = imageAttachments.length
-          ? formatImageDescriptionBlocks(await Promise.all(imageAttachments.map(async (attachment, index) => {
-              try {
-                return { path: remappedImages[index].path, description: await describeImage(await readInboundAttachment(attachment), attachment.mimeType, config) };
-              } catch {
-                return { path: remappedImages[index].path, description: "Description failed; the image could not be read." };
-              }
-            })))
+          ? formatImageDescriptionBlocks(
+              await Promise.all(
+                imageAttachments.map(async (attachment, index) => {
+                  try {
+                    return {
+                      path: remappedImages[index].path,
+                      description: await describeImage(
+                        await readInboundAttachment(attachment),
+                        attachment.mimeType,
+                        config
+                      ),
+                    };
+                  } catch {
+                    return {
+                      path: remappedImages[index].path,
+                      description:
+                        "Description failed; the image could not be read.",
+                    };
+                  }
+                })
+              )
+            )
           : "";
         input = await new ContainerInputBuilder().build(
           {
             ...params,
-            message: appendAttachmentContext(params.message, [attachmentContext, imageDescriptionContext].filter(Boolean).join("\n\n")),
+            message: appendAttachmentContext(
+              params.message,
+              [attachmentContext, imageDescriptionContext]
+                .filter(Boolean)
+                .join("\n\n")
+            ),
           },
           config,
           agentToken,
@@ -469,6 +497,12 @@ export function getContainerAdapter(): SdkAdapter {
             const event = ContainerRunnerProtocolEventSchema.parse(
               JSON.parse(rawEvent)
             );
+            if (event.type === "retry") {
+              logWarn(
+                `[agent] retrying transient provider error (attempt ${event.attempt}, delay ${event.delaySeconds}s): ${event.message}`
+              );
+              return;
+            }
             if (event.type !== "file_output") {
               recordActivity(`history_${event.type}`);
               sawStreamingHistory = true;

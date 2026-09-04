@@ -197,6 +197,8 @@ export const AgentSandboxConfigSchema = z
     timeout: z.number().optional(),
     idleTimeout: z.number().optional().default(300),
     maxRunTime: z.number().optional(),
+    retryMaxAttempts: z.number().int().positive().optional().default(3),
+    retryBaseDelay: z.number().positive().optional().default(2),
     workspaceWritable: z.boolean().optional().default(false),
     env: z.record(z.string(), z.string()).optional(),
     mounts: z.array(SandboxMountSchema).optional(),
@@ -1022,7 +1024,13 @@ export const GatewayRootConfigSchema = z.object({
   defaultProjectManager: z.string().optional(),
   sandbox: GlobalSandboxConfigSchema.optional(),
   onecli: OnecliConfigSchema.optional(),
-  imageDescription: z.object({ provider: z.string(), model: z.string(), enabled: z.boolean().default(true) }).optional(),
+  imageDescription: z
+    .object({
+      provider: z.string(),
+      model: z.string(),
+      enabled: z.boolean().default(true),
+    })
+    .optional(),
   oauth: OAuthConfigSchema.optional(),
   extensions: ExtensionsConfigSchema,
   extensionsPath: z.string().optional(),
@@ -1066,7 +1074,13 @@ export const GatewayConfigSchema = z.object({
   defaultProjectManager: z.string().optional(),
   sandbox: GlobalSandboxConfigSchema.optional(),
   onecli: OnecliConfigSchema.optional(),
-  imageDescription: z.object({ provider: z.string(), model: z.string(), enabled: z.boolean().default(true) }).optional(),
+  imageDescription: z
+    .object({
+      provider: z.string(),
+      model: z.string(),
+      enabled: z.boolean().default(true),
+    })
+    .optional(),
   oauth: OAuthConfigSchema.optional(),
   extensions: ExtensionsConfigSchema,
   extensionsPath: z.string().optional(),
@@ -2227,6 +2241,12 @@ export type ContainerFileOutputRequest = z.infer<
 export const ContainerRunnerProtocolEventSchema = z.discriminatedUnion("type", [
   ...HistoryEventSchema.options,
   ContainerFileOutputRequestSchema,
+  z.object({
+    type: z.literal("retry"),
+    attempt: z.number().int().positive(),
+    delaySeconds: z.number().nonnegative(),
+    message: z.string(),
+  }),
 ]);
 export type ContainerRunnerProtocolEvent = z.infer<
   typeof ContainerRunnerProtocolEventSchema
@@ -2268,6 +2288,12 @@ export const ContainerInputSchema = z.object({
   systemFiles: z.array(ContainerSystemFileSchema).optional(),
   extensionSystemPrompts: z.array(z.string()).optional(),
   extensionTools: z.array(ContainerExtensionToolSchema).optional(),
+  retry: z
+    .object({
+      maxAttempts: z.number().int().positive(),
+      baseDelaySeconds: z.number().positive(),
+    })
+    .optional(),
   onecli: z
     .object({
       enabled: z.boolean(),
