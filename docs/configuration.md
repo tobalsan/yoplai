@@ -64,6 +64,8 @@ Common fields:
 | `reasoning`                           | `off`, `minimal`, `low`, `medium`, `high`, `xhigh`          |
 | `thinkLevel`                          | Deprecated alias for `reasoning`                            |
 | `queueMode`                           | `queue` or `interrupt`                                      |
+| `retryMaxAttempts`                    | Attempts for a transient provider error; default 3          |
+| `retryBaseDelay`                      | Initial retry delay in seconds; default 2                   |
 | `introMessage`                        | Custom message shown after `/new`                           |
 | `discord`, `slack`, `telegram`, `irc` | Supported per-agent transport config                        |
 | `heartbeat`, `dream`, `webhooks`      | Periodic and webhook-triggered behavior                     |
@@ -73,6 +75,8 @@ Common fields:
 | `onecliToken`                         | Per-agent OneCLI proxy token, usually `$env:...`            |
 
 On first run Yoplai creates missing `AGENTS.md`, `SOUL.md`, and `USER.md` without overwriting existing files.
+
+Pi turns that fail on a transient provider error (rate limit, 5xx, queue/backpressure hint, connection reset) are retried in place, on the host and inside the sandbox alike. Retry delays double after each attempt unless the provider supplies a `Retry-After` hint. Eligibility is per turn, not per run: only the failed assistant turn is dropped from the model context, then the run resumes in place, so tool calls and results from earlier turns are preserved and the user message is never re-sent. Partial text streamed by the failed turn is discarded with it. The dropped turn stays in the session transcript for history.
 
 ## Environment and secrets
 

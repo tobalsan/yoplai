@@ -1,4 +1,6 @@
 import {
+  DEFAULT_RETRY_BASE_DELAY_SECONDS,
+  DEFAULT_RETRY_MAX_ATTEMPTS,
   readEnv,
   type ContainerInput,
   type GatewayConfig,
@@ -65,8 +67,10 @@ export class ContainerInputBuilder {
           : undefined,
       extensionTools: extensionTools.length > 0 ? extensionTools : undefined,
       retry: {
-        maxAttempts: params.agent.sandbox?.retryMaxAttempts ?? 3,
-        baseDelaySeconds: params.agent.sandbox?.retryBaseDelay ?? 2,
+        maxAttempts:
+          params.agent.retryMaxAttempts ?? DEFAULT_RETRY_MAX_ATTEMPTS,
+        baseDelaySeconds:
+          params.agent.retryBaseDelay ?? DEFAULT_RETRY_BASE_DELAY_SECONDS,
       },
       workspaceDir: "/workspace",
       sessionDir: "/sessions",

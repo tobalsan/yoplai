@@ -6,7 +6,7 @@ import type { AgentTool } from "@earendil-works/pi-agent-core";
 import type { AssistantMessage, ImageContent } from "@earendil-works/pi-ai";
 import type { AgentSession as PiAgentSession } from "@earendil-works/pi-coding-agent";
 import type { AgentConfig } from "@yoplai/shared";
-import { claimAgentToolName, formatImageDescriptionBlocks, modelSupportsImages, renderAgentContext } from "@yoplai/shared";
+import { DEFAULT_RETRY_BASE_DELAY_SECONDS, DEFAULT_RETRY_MAX_ATTEMPTS, claimAgentToolName, formatImageDescriptionBlocks, modelSupportsImages, renderAgentContext, resumeAfterFailedTurn, runTurnWithProviderRetry } from "@yoplai/shared";
 import type {
   SdkAdapter,
   SdkRunParams,
@@ -83,6 +83,10 @@ function extractAssistantText(msg: AssistantMessage): string {
       .join("\n");
   }
   return "";
+}
+
+function isAbortLikeError(error: unknown): boolean {
+  return error instanceof Error && error.name === "AbortError";
 }
 
 function stringifyToolResult(result: unknown): string {
@@ -584,11 +588,30 @@ export const piAdapter: SdkAdapter = {
         }
       });
 
+      const promptOptions = images && images.length > 0 ? { images } : undefined;
       try {
-        await agentSession.prompt(
-          messageWithAttachments,
-          images && images.length > 0 ? { images } : undefined
-        );
+        // Keep the subscription alive across attempts so a resumed turn still streams.
+        await runTurnWithProviderRetry({
+          maxAttempts:
+            params.agent.retryMaxAttempts ?? DEFAULT_RETRY_MAX_ATTEMPTS,
+          baseDelaySeconds:
+            params.agent.retryBaseDelay ?? DEFAULT_RETRY_BASE_DELAY_SECONDS,
+          runTurn: (attempt) =>
+            attempt === 1
+              ? agentSession.prompt(messageWithAttachments, promptOptions)
+              : resumeAfterFailedTurn(agentSession, () =>
+                  agentSession.prompt(messageWithAttachments, promptOptions)
+                ),
+          getMessages: () => agentSession.messages,
+          isAbort: (error) => aborted || isAbortLikeError(error),
+          onRetry: (attempt, delaySeconds, message) =>
+            logWarn(
+              `[agent] retrying transient provider error (attempt ${attempt}, delay ${delaySeconds}s): ${message}`,
+              { agentId: params.agent.id }
+            ),
+          sleep: (milliseconds) =>
+            new Promise((resolve) => setTimeout(resolve, milliseconds)),
+        });
       } finally {
         unsubscribe();
       }

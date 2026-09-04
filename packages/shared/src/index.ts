@@ -6,6 +6,7 @@ export * from "./projectPrompt.js";
 export * from "./config-migrate.js";
 export * from "./config-path.js";
 export * from "./network.js";
+export * from "./provider-retry.js";
 export * from "./tool-names.js";
 export * from "./tool-extension.js";
 export * from "./notify.js";

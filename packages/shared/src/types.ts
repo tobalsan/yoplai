@@ -197,8 +197,6 @@ export const AgentSandboxConfigSchema = z
     timeout: z.number().optional(),
     idleTimeout: z.number().optional().default(300),
     maxRunTime: z.number().optional(),
-    retryMaxAttempts: z.number().int().positive().optional().default(3),
-    retryBaseDelay: z.number().positive().optional().default(2),
     workspaceWritable: z.boolean().optional().default(false),
     env: z.record(z.string(), z.string()).optional(),
     mounts: z.array(SandboxMountSchema).optional(),
@@ -253,6 +251,9 @@ const AgentConfigBaseSchema = z.object({
   reasoning: ThinkLevelSchema.optional(),
   thinkLevel: ThinkLevelSchema.optional(),
   queueMode: z.enum(["queue", "interrupt"]).optional().default("queue"),
+  // Transient provider-error retry, shared by host and sandboxed Pi runs.
+  retryMaxAttempts: z.number().int().positive().optional(),
+  retryBaseDelay: z.number().positive().optional(),
   heartbeat: HeartbeatConfigSchema.optional(), // Periodic heartbeat config
   dream: DreamConfigSchema.optional(),
   webhooks: z.record(z.string(), WebhookConfigSchema).optional(),
