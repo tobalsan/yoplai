@@ -4,6 +4,7 @@ import { discoverExternalExtensions, readEnv } from "@yoplai/shared";
 import { CONFIG_DIR } from "../config/index.js";
 import { ExtensionRuntime } from "./runtime.js";
 import { taskLifecycleExtension } from "../tasks/extension.js";
+import { capabilityDiscoveryExtension } from "../capabilities/extension.js";
 
 type ExtensionRegistration = {
   load: () => Promise<Extension>;
@@ -403,7 +404,10 @@ export function setExtensionActivator(activator: ExtensionActivator): void {
 async function deriveExtensionsToLoad(
   config: GatewayConfig
 ): Promise<{ extensions: Extension[]; homeExtensionId: string | undefined }> {
-  const extensions: Extension[] = [taskLifecycleExtension];
+  const extensions: Extension[] = [
+    taskLifecycleExtension,
+    capabilityDiscoveryExtension,
+  ];
   const rawConfigs = new Map<string, Record<string, unknown>>();
 
   const registrations = Object.entries(EXTENSION_REGISTRY).sort(

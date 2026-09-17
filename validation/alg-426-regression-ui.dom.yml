@@ -1,0 +1,34 @@
+- generic [ref=e4]:
+  - complementary [ref=e5]:
+    - generic [ref=e6]:
+      - generic [ref=e7]:
+        - link "Yoplai" [ref=e8] [cursor=pointer]:
+          - /url: /
+        - generic [ref=e10]: DEV
+        - button "«" [ref=e11] [cursor=pointer]
+      - generic [ref=e12]:
+        - navigation "Primary" [ref=e13]:
+          - link "Agents" [ref=e14] [cursor=pointer]:
+            - /url: /agents
+            - generic [aria-hidden] [ref=e15]: 
+        - region "Sessions" [ref=e17]:
+          - generic [ref=e18]:
+            - generic [ref=e19]: Sessions
+            - button "Search sessions" [ref=e20] [cursor=pointer]: ⌕
+      - button "Switch to dark mode" [ref=e23] [cursor=pointer]:
+        - generic [ref=e26]: Dark
+  - generic [ref=e28]:
+    - heading "Agents" [level=1] [ref=e29]
+    - generic [ref=e30]:
+      - generic [ref=e31]:
+        - link "Edit Casey" [ref=e32] [cursor=pointer]:
+          - /url: /agents/casey/edit
+        - generic [ref=e35]: Casey
+        - link "Chat" [ref=e37] [cursor=pointer]:
+          - /url: /chat/casey
+      - generic [ref=e38]:
+        - link "Edit Support" [ref=e39] [cursor=pointer]:
+          - /url: /agents/support/edit
+        - generic [ref=e42]: Support
+        - link "Chat" [ref=e44] [cursor=pointer]:
+          - /url: /chat/support

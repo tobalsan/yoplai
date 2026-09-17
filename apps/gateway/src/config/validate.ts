@@ -129,7 +129,11 @@ export async function prepareStartupConfig(
   }
 
   const loaded = extensions
-    .filter((extension) => extension.id !== "taskLifecycle")
+    .filter(
+      (extension) =>
+        extension.id !== "taskLifecycle" &&
+        extension.id !== "capabilityDiscovery"
+    )
     .map((extension) => extension.id);
   const skipped = Object.keys(resolvedConfig.extensions ?? {}).filter(
     (id) => !loaded.includes(id)

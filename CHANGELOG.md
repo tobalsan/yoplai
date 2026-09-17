@@ -11,6 +11,7 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Added
 
+- Agents can now discover platform extensions and MCP servers when their enabled tools reach a dead end, redirect to agents that already have a match, and self-enable no-secret capabilities after chat confirmation.
 - Slack agents can now retrieve newest-first channel history with the `slack.get_channel_history` tool, including bounded time windows and pagination metadata.
 - Chat header now has a "New chat" button (top right, after the Simple/Full toggle) that starts a fresh chat for the agent, showing the empty-chat hero like the Agents page "Chat" action.
 - Web chat now opens on a centered "new chat" hero: agent avatar, a randomly-picked greeting one-liner (from a pool of 30), the composer, and prompt suggestions when configured (or a subtle note when none exist). Sending the first message slides the composer down to its docked position with a smooth ~0.4s animation. The transcript and composer now share one 720px content rail, and attach/send buttons live inside the input pill.

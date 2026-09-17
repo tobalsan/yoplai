@@ -1376,6 +1376,8 @@ export interface Extension {
    * enable-able via agent.yaml.
    */
   factory?: boolean;
+  /** OAuth requirement exposed for discovery and the post-enable connect link. */
+  oauth?: import("./oauth/types.js").OAuthRequirement;
   validateConfig(raw: unknown): ValidationResult;
   registerRoutes(app: Hono): void;
   start(ctx: ExtensionContext): Promise<void>;
@@ -1389,6 +1391,11 @@ export interface Extension {
     agent: AgentConfig,
     context?: ExtensionHookContext
   ): ExtensionAgentTool[] | Promise<ExtensionAgentTool[]>;
+  /**
+   * Build descriptive tools with an empty config, for capability discovery.
+   * This must never resolve secrets, OAuth, or start the extension.
+   */
+  getDiscoveryTools?(): ExtensionAgentTool[] | Promise<ExtensionAgentTool[]>;
   validateAgentConfigs?(config: GatewayConfig): ValidationResult;
   /** Validate this extension's config for one agent before it is enabled. */
   validateAgentConfig?(
@@ -1426,6 +1433,9 @@ export const ExtensionDefinitionSchema = z.object({
     })
     .optional(),
   factory: z.boolean().optional(),
+  oauth: z
+    .object({ provider: z.string(), scopes: z.array(z.string()).optional() })
+    .optional(),
   validateConfig: z
     .function()
     .args(z.unknown())
@@ -1436,6 +1446,7 @@ export const ExtensionDefinitionSchema = z.object({
   capabilities: z.function().args().returns(z.array(z.string())),
   getSystemPromptContributions: z.function().optional(),
   getAgentTools: z.function().optional(),
+  getDiscoveryTools: z.function().optional(),
   validateAgentConfigs: z.function().optional(),
 });
 

@@ -232,7 +232,11 @@ api.get("/branding/logo", async (c) => {
 api.get("/capabilities", async (c) => {
   const extensions = Object.fromEntries(
     getLoadedExtensions()
-      .filter((extension) => extension.id !== "taskLifecycle")
+      .filter(
+        (extension) =>
+          extension.id !== "taskLifecycle" &&
+          extension.id !== "capabilityDiscovery"
+      )
       .map((extension) => [extension.id, true])
   );
   const isMultiUserEnabled = isExtensionLoaded("multiUser");

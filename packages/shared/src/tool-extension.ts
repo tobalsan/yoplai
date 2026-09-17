@@ -242,6 +242,7 @@ export function defineToolExtension(
     requiredSecrets: definition.requiredSecrets,
     advancedConfigFields: definition.advancedConfigFields,
     configRoute: definition.configRoute,
+    oauth: definition.oauth,
     routePrefixes: [],
     validateConfig(raw) {
       const result = ExtensionBaseConfigSchema.safeParse(raw ?? {});
@@ -274,6 +275,22 @@ export function defineToolExtension(
     },
     capabilities() {
       return [];
+    },
+    getDiscoveryTools() {
+      const empty: ResolvedToolExtensionConfig = {
+        global: {},
+        root: {},
+        agent: {},
+        merged: {},
+      };
+      return definition.createTools(empty).map((tool) => ({
+        name: getMountedToolName(definition, tool.name),
+        description: tool.description,
+        parameters: zodToJsonSchema(tool.parameters, {
+          $refStrategy: "none",
+        }) as Record<string, unknown>,
+        execute: (params, context) => tool.execute(params, context),
+      }));
     },
     async getSystemPromptContributions(agent, context) {
       if (!context) return undefined;

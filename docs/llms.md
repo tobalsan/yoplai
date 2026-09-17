@@ -215,6 +215,8 @@ Extensions load through `extensions.<id>` unless documented auto-load compatibil
 
 Tool-style extensions use `packages/shared/src/tool-extension.ts`. Extensions may contribute routes, CLI commands, capabilities, services, system-prompt text, tools, delivery sinks, OAuth requirements, and web routes. Keep behavior with its owning package; core should depend only on extension contracts and optional imports.
 
+Capability discovery is a factory meta-extension that is always loaded alongside task lifecycle tools. It reads the current built-in/external registry and agent `mcp.json` files on each dead-end lookup; it never resolves extension secrets while listing tools. Its self-enable path reuses the agent extension config writer and live extension reload.
+
 ## Projects and orchestration essentials
 
 ### Projects

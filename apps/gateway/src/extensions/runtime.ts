@@ -264,7 +264,9 @@ export class ExtensionRuntime {
 
   getCapabilities(): ExtensionCapabilities {
     const visibleExtensions = this.#extensions.filter(
-      (extension) => extension.id !== "taskLifecycle"
+      (extension) =>
+        extension.id !== "taskLifecycle" &&
+        extension.id !== "capabilityDiscovery"
     );
     return {
       extensions: Object.fromEntries(
