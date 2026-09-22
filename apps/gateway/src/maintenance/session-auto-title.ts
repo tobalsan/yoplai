@@ -88,9 +88,8 @@ export async function autoTitleSession(
   if (await hasTitle(params.agentId, params.sessionId, "title", params.userId)) {
     return null;
   }
-  // First turn only: a tool-using turn may hold several assistant steps.
-  const users = history.filter((message) => message.role === "user");
-  if (users.length !== 1) return null;
+  // hasTitle already makes this once per session; an untitled later turn
+  // (e.g. the first one was aborted) still deserves a title.
   const userText = firstText(history, "user");
   const assistantText = lastAssistantText(history);
   if (!userText || !assistantText) return null;
