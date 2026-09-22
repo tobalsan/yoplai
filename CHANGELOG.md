@@ -9,6 +9,18 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ## [Unreleased]
 
+## v0.24.0 — Capability discovery, auto-titled sessions + resilient model runs
+
+Agents that hit a dead end can now discover platform extensions and MCP
+servers, redirect to a better-equipped colleague, or self-enable no-secret
+capabilities after confirmation. Web chat gets a centered new-chat hero, a
+"New chat" button, auto-generated session titles, and a sidebar redesign.
+Model runs are far more resilient: transient provider errors retry in place,
+agents can declare a `fallback_model`, sandboxed agents can use OAuth-only
+providers, and `yoplai models refresh` picks up newly released models without
+an upgrade. Langfuse sessions become filterable, and the gateway tightens
+CORS and bumps better-auth for security advisories.
+
 ### Added
 
 - Core sessions now receive a short automatic sidebar title after their first successful Pi response. Configure the optional root `maintenance: { provider, model }` to select one shared model for gateway-owned LLM work; it uses the model runtime's OAuth, stored-key, or host-environment credential resolution.
@@ -22,6 +34,7 @@ Breaking changes are marked **⚠ BREAKING**.
 - Added `yoplai models refresh` to fetch Pi's latest provider model catalogs into `$YOPLAI_HOME/models-store.json`, allowing newly released models to be used without upgrading Yoplai.
 - Scheduler jobs in `cron/jobs.json` accept an optional `reasoning` field to override the agent's reasoning level per job.
 - Agents and scheduler jobs now accept `max` as a Pi reasoning level.
+- Langfuse sessions are now filterable: session IDs are formatted as `yoplai:<surface>:<agent>:<id>` and stamped with `userId` plus channel/place tags, so sessions can be filtered by agent, user, and channel like traces. Traces also record the resolved `thinkingLevel` in metadata.
 
 ### Changed
 
@@ -30,11 +43,13 @@ Breaking changes are marked **⚠ BREAKING**.
 - Clicking "Chat" on an agent in the web Agents catalog now always starts a fresh chat session instead of resuming the agent's default "main" session. Each click mints a new logical session key; the gateway creates the new session lazily on the first message. Previous sessions remain available from the sidebar session list.
 - Upgraded the pi SDK packages (`@earendil-works/pi-ai`, `pi-agent-core`, `pi-coding-agent`) from 0.80.6 to 0.84.4 across the gateway, agent-runner container, and projects extension. Model and credential resolution now goes through pi's `ModelRuntime`; `yoplai auth login/status/logout` keep the same behavior on the new provider-owned login flow.
 - `ui.tailscale.resetOnExit` now defaults to `false`. The previous default ran `tailscale serve reset` on gateway shutdown/restart, which wipes the machine's entire Tailscale serve config — including entries Yoplai didn't create. Set it to `true` explicitly to opt back in.
+- **Security:** better-auth bumped to 1.6.30 across web and multi-user (covers the 1.6.11 advisories, including the OAuth implicit-linking account takeover), and the gateway now reflects only the configured server/web base URL origins plus loopback dev origins in CORS instead of a wildcard.
+- Toolchain now targets pnpm 12.
 
 ### Fixed
 
 - Sandboxed Pi agents now use the same Yoplai base system prompt as host Pi agents, while retaining container-specific instructions.
-
+- Manual scheduler runs (`yoplai scheduler run`) are now detached, so long jobs no longer trip CLI fetch timeouts while they keep running.
 - Scheduler model overrides can now use an OAuth provider independently of the agent's configured provider and auth mode, including inside sandboxed runs; OAuth renewal remains scoped to the provider selected for that run.
 - Agent-level Slack config (`slack:` in `agent.yaml`) no longer requires an `agent` field on each `channels` entry; the agent is implied. Previously the agent config failed validation with `slack.channels.<id>.agent: Required`.
 - A chat message is no longer lost when the model run fails before the model starts (unknown model/provider, missing credentials): the message is persisted to session history before the run begins, so it survives reloads and the session stays visible in the sidebar. Also fixes a latent duplicate user entry on thinking-level fallback retries.
