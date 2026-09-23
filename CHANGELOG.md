@@ -12,6 +12,7 @@ Breaking changes are marked **⚠ BREAKING**.
 ### Fixed
 
 - Upgraded the Pi SDK packages to 0.87.1 so Anthropic OAuth requests for Claude Opus 5.5 report the required Claude Code 2.1.280 version; gateway retries and interrupted tool-call repair now update Pi's canonical session context.
+- Ensure gateway shutdown stops the Vite preview process tree, and bind Tailscale-served UIs to loopback even with LAN UI configuration.
 
 ## v0.24.0 — Capability discovery, auto-titled sessions + resilient model runs
 

@@ -178,6 +178,9 @@ function clearLegacyTailscaleServePath(): void {
     execSync(`${cmd} serve --bg --yes --set-path=${LEGACY_SERVE_PATH} off`, {
       encoding: "utf-8",
       timeout: 15000,
+      // This compatibility cleanup may target a path absent on fresh installs.
+      // Capture its expected CLI diagnostic without hiding errors elsewhere.
+      stdio: ["ignore", "ignore", "pipe"],
     });
   } catch {
     // Ignore errors clearing the legacy path
@@ -212,11 +215,23 @@ function startTailscaleServeRefresh(port: number, gatewayPort: number): void {
   }, TAILSCALE_SERVE_REFRESH_INTERVAL_MS);
 }
 
-function resolveUiHost(bind?: string): string {
-  if (!bind || bind === "loopback") return "127.0.0.1";
+export function resolveUiHost(bind?: string, tailscaleServe = false): string {
+  if (tailscaleServe || !bind || bind === "loopback") return "127.0.0.1";
   if (bind === "lan") return "0.0.0.0";
-  // For tailnet bind with tailscale serve, Vite preview must bind to loopback
   return "127.0.0.1";
+}
+
+export function stopWebUIProcess(child: ChildProcess): void {
+  if (process.platform !== "win32" && child.pid) {
+    // pnpm launches Vite as a descendant; kill its process group as well.
+    try {
+      process.kill(-child.pid, "SIGTERM");
+      return;
+    } catch {
+      // Fall back to the direct child if the process group is already gone.
+    }
+  }
+  child.kill("SIGTERM");
 }
 
 function getApiBaseUrl(): string {
@@ -229,15 +244,15 @@ function getApiBaseUrl(): string {
   return `http://${host}:${port}`;
 }
 
-function startWebUI(
+export function startWebUI(
   uiConfig: UiConfig,
   gatewayPort: number
 ): ChildProcess | null {
   if (readEnv("SKIP_WEB")) return null;
 
   const port = uiConfig.port ?? 3000;
-  const host = resolveUiHost(uiConfig.bind);
   const useTailscaleServe = uiConfig.tailscale?.mode === "serve";
+  const host = resolveUiHost(uiConfig.bind, useTailscaleServe);
   const resetOnExit = uiConfig.tailscale?.resetOnExit ?? false;
   const useDevServer = readEnv("WEB_DEV") === "1";
 
@@ -257,11 +272,13 @@ function startWebUI(
     String(port),
     "--host",
     host,
+    ...(!useDevServer ? ["--strictPort"] : []),
   ];
   const child = spawn("pnpm", args, {
     cwd: monorepoRoot,
     stdio: "inherit",
     env: { ...process.env, YOPLAI_SKIP_WEB: "1" },
+    ...(process.platform !== "win32" ? { detached: true } : {}),
   });
 
   let tailscaleReady = false;
@@ -351,7 +368,7 @@ const gatewayCmd = program
         console.log("\nShutting down...");
         const { stopDreamTimers } = await import("../dream/service.js");
         stopDreamTimers();
-        if (webProcess) webProcess.kill("SIGTERM");
+        if (webProcess) stopWebUIProcess(webProcess);
         stopTailscaleServeRefresh();
         if (tailscaleServeEnabled && tailscaleServeResetOnExit) {
           resetTailscaleServe();
