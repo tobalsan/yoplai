@@ -215,6 +215,71 @@ describe("resumeAfterFailedTurn", () => {
     expect(reprompt).not.toHaveBeenCalled();
   });
 
+  it("omits the failed turn through canonical SessionManager context edits", async () => {
+    const reprompt = vi.fn(async () => undefined);
+    const state = {
+      messages: [{ role: "user" }, erroredTurn()] as RetryableTurnMessage[],
+    };
+    const appendContextEdit = vi.fn();
+    const refreshContext = vi.fn(() => {
+      state.messages = state.messages.slice(0, -1);
+    });
+    const session = {
+      agent: {
+        state,
+        continue: vi.fn(async () => undefined),
+      },
+      sessionManager: {
+        appendContextEdit,
+        getLeafEntry: () => ({
+          id: "failed-entry",
+          type: "message",
+          message: erroredTurn(),
+        }),
+      },
+      refreshContext,
+    };
+
+    await resumeAfterFailedTurn(session, reprompt);
+
+    expect(appendContextEdit).toHaveBeenCalledWith("failed-entry", null);
+    expect(refreshContext).toHaveBeenCalledTimes(1);
+    expect(session.agent.state.messages.map((m) => m.role)).toEqual(["user"]);
+    expect(session.agent.continue).toHaveBeenCalledTimes(1);
+    expect(reprompt).not.toHaveBeenCalled();
+  });
+
+  it("re-prompts when canonical context edit empties the context", async () => {
+    const reprompt = vi.fn(async () => undefined);
+    const state = { messages: [erroredTurn()] as RetryableTurnMessage[] };
+    const session = {
+      agent: {
+        state,
+        continue: vi.fn(async () => undefined),
+      },
+      sessionManager: {
+        appendContextEdit: vi.fn(),
+        getLeafEntry: () => ({
+          id: "failed-entry",
+          type: "message",
+          message: erroredTurn(),
+        }),
+      },
+      refreshContext: vi.fn(() => {
+        state.messages = [];
+      }),
+    };
+
+    await resumeAfterFailedTurn(session, reprompt);
+
+    expect(session.sessionManager.appendContextEdit).toHaveBeenCalledWith(
+      "failed-entry",
+      null
+    );
+    expect(reprompt).toHaveBeenCalledTimes(1);
+    expect(session.agent.continue).not.toHaveBeenCalled();
+  });
+
   it("re-prompts when dropping the failed turn empties the context", async () => {
     const reprompt = vi.fn(async () => undefined);
     const session = {

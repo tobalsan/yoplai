@@ -1,5 +1,6 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
+import { SessionManager } from "@earendil-works/pi-coding-agent";
 import { repairOrphanedToolCalls } from "../session-repair.js";
 
 type ToolResultMessage = AgentMessage & {
@@ -108,6 +109,119 @@ describe("repairOrphanedToolCalls", () => {
     expect((result[2] as ToolResultMessage).toolCallId).toBe("tc2");
     expect((result[1] as ToolResultMessage).isError).toBe(true);
     expect((result[2] as ToolResultMessage).isError).toBe(true);
+  });
+
+  it("uses canonical session manager append when available", () => {
+    const session = makeSession([
+      {
+        role: "user",
+        content: [{ type: "text", text: "run it" }],
+      } as AgentMessage,
+      {
+        role: "assistant",
+        stopReason: "toolUse",
+        content: [{ type: "toolCall", id: "tc_abc", name: "bash" }],
+      } as AgentMessage,
+    ]);
+    const appendMessage = vi.fn();
+    const refreshContext = vi.fn();
+
+    repairOrphanedToolCalls({
+      ...session,
+      sessionManager: { appendMessage },
+      refreshContext,
+    });
+
+    expect(appendMessage).toHaveBeenCalledTimes(1);
+    expect(appendMessage.mock.calls[0]?.[0]).toMatchObject({
+      role: "toolResult",
+      toolCallId: "tc_abc",
+      toolName: "bash",
+      isError: true,
+    });
+    expect(refreshContext).toHaveBeenCalledTimes(1);
+    expect(session.agent.state.messages).toHaveLength(2);
+  });
+
+  it("repairs canonical provider context when a later user message exists", () => {
+    const manager = SessionManager.inMemory(process.cwd());
+    manager.appendMessage({
+      role: "user",
+      content: [{ type: "text", text: "run it" }],
+      timestamp: 1,
+    });
+    manager.appendMessage({
+      role: "assistant",
+      stopReason: "toolUse",
+      content: [
+        { type: "toolCall", id: "tc_abc", name: "bash", arguments: {} },
+      ],
+      timestamp: 2,
+    } as Parameters<typeof manager.appendMessage>[0]);
+    manager.appendMessage({
+      role: "user",
+      content: [{ type: "text", text: "and then?" }],
+      timestamp: 3,
+    });
+    const state = { messages: manager.buildSessionProjection().messages };
+    const refreshContext = () => {
+      state.messages = manager.buildSessionProjection().messages;
+    };
+
+    repairOrphanedToolCalls({
+      agent: { state },
+      sessionManager: manager,
+      refreshContext,
+    });
+
+    const context = manager.buildSessionProjection().messages;
+    expect(typeof (context[2] as { timestamp?: number }).timestamp).toBe("number");
+    expect(context.map((message) => message.role)).toEqual([
+      "user",
+      "assistant",
+      "toolResult",
+      "user",
+    ]);
+    expect((context[2] as ToolResultMessage).toolCallId).toBe("tc_abc");
+    expect(
+      (context[3] as { content: Array<{ text: string }> }).content[0].text
+    ).toBe("and then?");
+    expect(state.messages).toEqual(context);
+  });
+
+  it("fails closed if canonical edits after the orphan cannot be replayed", () => {
+    const manager = SessionManager.inMemory(process.cwd());
+    const firstUserId = manager.appendMessage({
+      role: "user",
+      content: [{ type: "text", text: "run it" }],
+      timestamp: 1,
+    });
+    manager.appendMessage({
+      role: "assistant",
+      stopReason: "toolUse",
+      content: [
+        { type: "toolCall", id: "tc_abc", name: "bash", arguments: {} },
+      ],
+      timestamp: 2,
+    } as Parameters<typeof manager.appendMessage>[0]);
+    manager.appendMessage({
+      role: "user",
+      content: [{ type: "text", text: "and then?" }],
+      timestamp: 3,
+    });
+    manager.appendContextEdit(firstUserId, {
+      content: [{ type: "text", text: "edited instruction" }],
+    });
+    const state = { messages: manager.buildSessionProjection().messages };
+    const leafBefore = manager.getLeafId();
+    const refreshContext = vi.fn();
+
+    expect(() =>
+      repairOrphanedToolCalls({ agent: { state }, sessionManager: manager, refreshContext })
+    ).toThrow("Cannot repair orphaned tool calls in canonical session context");
+    expect(manager.getLeafId()).toBe(leafBefore);
+    expect(manager.buildSessionProjection().messages).toEqual(state.messages);
+    expect(refreshContext).not.toHaveBeenCalled();
   });
 
   it("no-ops when toolUse has no toolCall blocks", () => {

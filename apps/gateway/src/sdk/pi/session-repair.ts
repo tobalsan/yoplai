@@ -19,6 +19,15 @@ type AssistantMsg = AgentMessage & {
  */
 export function repairOrphanedToolCalls(agentSession: {
   agent: { state: { messages: AgentMessage[] } };
+  sessionManager?: {
+    appendMessage(message: AgentMessage): string;
+    branch?(entryId: string): void;
+    buildSessionProjection?(): {
+      entries: Array<{ sourceEntry: { id: string }; messages: AgentMessage[] }>;
+    };
+    getBranch?(): Array<{ id: string; type: string }>;
+  };
+  refreshContext?: () => void;
 }): void {
   const messages = agentSession.agent.state.messages;
   if (!messages || messages.length === 0) return;
@@ -63,9 +72,51 @@ export function repairOrphanedToolCalls(agentSession: {
       },
     ],
     isError: true,
+    timestamp: Date.now(),
   } as AgentMessage));
 
-  // Append after the orphaned assistant message
+  // Pi 0.87 derives provider context from SessionManager, not agent state.
+  if (agentSession.sessionManager && agentSession.refreshContext) {
+    const manager = agentSession.sessionManager;
+    if (lastAssistantIdx < messages.length - 1) {
+      const projection = manager.buildSessionProjection?.();
+      let messageIndex = 0;
+      let assistantEntryId: string | undefined;
+      for (const entry of projection?.entries ?? []) {
+        if (
+          messageIndex <= lastAssistantIdx &&
+          lastAssistantIdx < messageIndex + entry.messages.length
+        ) {
+          assistantEntryId = entry.sourceEntry.id;
+          break;
+        }
+        messageIndex += entry.messages.length;
+      }
+      const branch = manager.getBranch?.();
+      const assistantBranchIdx =
+        branch?.findIndex((entry) => entry.id === assistantEntryId) ?? -1;
+      if (
+        !assistantEntryId ||
+        !manager.branch ||
+        assistantBranchIdx < 0 ||
+        branch?.slice(assistantBranchIdx + 1).some((entry) => entry.type !== "message")
+      ) {
+        throw new Error(
+          "Cannot repair orphaned tool calls in canonical session context"
+        );
+      }
+      // Branch at the orphan, preserving the later messages after the missing
+      // tool results. The old branch stays in the append-only session history.
+      manager.branch(assistantEntryId);
+    }
+    for (const result of syntheticResults) manager.appendMessage(result);
+    for (const message of messages.slice(lastAssistantIdx + 1))
+      manager.appendMessage(message);
+    agentSession.refreshContext();
+    return;
+  }
+
+  // Fallback for tests/older SDK shapes, preserving the original repair.
   agentSession.agent.state.messages = [
     ...messages.slice(0, lastAssistantIdx + 1),
     ...syntheticResults,

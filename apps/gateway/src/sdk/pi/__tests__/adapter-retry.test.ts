@@ -80,11 +80,27 @@ type MockMessage = {
 function makeSession() {
   const state = { messages: [] as MockMessage[], systemPrompt: "You are Pi." };
   const agent = { state, continue: vi.fn(async () => undefined) };
+  const sessionManager = {
+    appendContextEdit: vi.fn(),
+    getLeafEntry: vi.fn(() => {
+      const last = state.messages.at(-1);
+      return last?.role === "assistant"
+        ? { id: "failed-assistant-entry", type: "message", message: last }
+        : undefined;
+    }),
+  };
+  const refreshContext = vi.fn(() => {
+    if (state.messages.at(-1)?.role === "assistant") {
+      state.messages = state.messages.slice(0, -1);
+    }
+  });
   return {
     get messages() {
       return state.messages;
     },
     agent,
+    sessionManager,
+    refreshContext,
     subscribe: vi.fn(() => vi.fn()),
     setModel: vi.fn(async () => undefined),
     prompt: vi.fn(async () => undefined),
@@ -215,6 +231,11 @@ describe("pi adapter transient provider retry", () => {
 
     expect(result).toEqual({ text: "recovered", aborted: false });
     expect(session.prompt).toHaveBeenCalledTimes(1);
+    expect(session.sessionManager.appendContextEdit).toHaveBeenCalledWith(
+      "failed-assistant-entry",
+      null
+    );
+    expect(session.refreshContext).toHaveBeenCalledTimes(1);
     expect(session.agent.continue).toHaveBeenCalledTimes(1);
     expect(session.agent.state.messages.map((m) => m.role)).toEqual([
       "user",

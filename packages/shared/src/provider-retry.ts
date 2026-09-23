@@ -81,15 +81,71 @@ export function isReplayableFailedTurn(
  * partial text the failed turn streamed is discarded with it. `reprompt` is
  * only used when dropping the turn leaves the context empty.
  */
+type CanonicalRetrySessionManager<M extends RetryableTurnMessage> = {
+  appendContextEdit?: (targetId: string, replacement: null) => string;
+  getLeafEntry?: () =>
+    | { id?: string; type?: string; message?: M }
+    | undefined;
+  buildSessionProjection?: () => {
+    entries?: Array<{
+      sourceEntry?: { id?: string; type?: string; message?: M };
+      messages?: M[];
+    }>;
+  };
+};
+
+function omitFailedAssistantFromCanonicalContext<
+  M extends RetryableTurnMessage,
+>(session: {
+  sessionManager?: CanonicalRetrySessionManager<M>;
+  refreshContext?: () => void;
+}): boolean {
+  const { sessionManager } = session;
+  if (!sessionManager?.appendContextEdit || !session.refreshContext) {
+    return false;
+  }
+
+  const leaf = sessionManager.getLeafEntry?.();
+  if (
+    leaf?.id &&
+    leaf.type === "message" &&
+    leaf.message?.role === "assistant"
+  ) {
+    sessionManager.appendContextEdit(leaf.id, null);
+    session.refreshContext();
+    return true;
+  }
+
+  const entries = sessionManager.buildSessionProjection?.().entries ?? [];
+  for (let index = entries.length - 1; index >= 0; index -= 1) {
+    const entry = entries[index];
+    const messages = entry?.messages ?? [];
+    if (messages.some((message) => message.role === "assistant")) {
+      const targetId = entry?.sourceEntry?.id;
+      if (!targetId) return false;
+      sessionManager.appendContextEdit(targetId, null);
+      session.refreshContext();
+      return true;
+    }
+  }
+
+  return false;
+}
+
 export async function resumeAfterFailedTurn<M extends RetryableTurnMessage>(
   session: {
     agent: { state: { messages: M[] }; continue: () => Promise<unknown> };
+    sessionManager?: CanonicalRetrySessionManager<M>;
+    refreshContext?: () => void;
   },
   reprompt: () => Promise<unknown>
 ): Promise<void> {
   const messages = session.agent.state.messages;
   if (messages[messages.length - 1]?.role === "assistant") {
-    session.agent.state.messages = messages.slice(0, -1);
+    const omitted = omitFailedAssistantFromCanonicalContext(session);
+    if (!omitted) {
+      session.agent.state.messages = messages.slice(0, -1);
+    }
   }
   if (session.agent.state.messages.length === 0) {
     await reprompt();

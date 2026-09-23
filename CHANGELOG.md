@@ -9,6 +9,10 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ## [Unreleased]
 
+### Fixed
+
+- Upgraded the Pi SDK packages to 0.87.1 so Anthropic OAuth requests for Claude Opus 5.5 report the required Claude Code 2.1.280 version; gateway retries and interrupted tool-call repair now update Pi's canonical session context.
+
 ## v0.24.0 — Capability discovery, auto-titled sessions + resilient model runs
 
 Agents that hit a dead end can now discover platform extensions and MCP servers, redirect to a better-equipped colleague, or self-enable no-secret capabilities after confirmation. Web chat gets a centered new-chat hero, a "New chat" button, auto-generated session titles, and a sidebar redesign. Model runs are far more resilient: transient provider errors retry in place, agents can declare a `fallback_model`, sandboxed agents can use OAuth-only providers, and `yoplai models refresh` picks up newly released models without an upgrade. Langfuse sessions become filterable, and the gateway tightens CORS and bumps better-auth for security advisories.
