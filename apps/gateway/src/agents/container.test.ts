@@ -577,6 +577,49 @@ describe("buildContainerArgs", () => {
       "GATEWAY_URL=http://gateway:4000",
     ]);
   });
+
+  describe("container user", () => {
+    const agent = AgentConfigSchema.parse({
+      id: "cloud",
+      name: "Cloud",
+      workspace: "/workspace",
+      model: { provider: "anthropic", model: "claude" },
+      sandbox: {},
+    });
+
+    afterEach(() => {
+      vi.unstubAllEnvs();
+    });
+
+    it("defaults to the gateway process uid:gid", () => {
+      vi.stubEnv("YOPLAI_CONTAINER_USER", "");
+      vi.stubEnv("AIHUB_CONTAINER_USER", "");
+      vi.spyOn(process as Required<NodeJS.Process>, "getuid").mockReturnValue(
+        1234
+      );
+      vi.spyOn(process as Required<NodeJS.Process>, "getgid").mockReturnValue(
+        5678
+      );
+
+      const args = buildContainerArgs(agent, {}, [], "/yoplai");
+
+      expect(argValues(args, "--user")).toEqual(["1234:5678"]);
+    });
+
+    it("uses YOPLAI_CONTAINER_USER when set, for rootless Docker", () => {
+      vi.stubEnv("YOPLAI_CONTAINER_USER", "0:0");
+      vi.spyOn(process as Required<NodeJS.Process>, "getuid").mockReturnValue(
+        1234
+      );
+      vi.spyOn(process as Required<NodeJS.Process>, "getgid").mockReturnValue(
+        5678
+      );
+
+      const args = buildContainerArgs(agent, {}, [], "/yoplai");
+
+      expect(argValues(args, "--user")).toEqual(["0:0"]);
+    });
+  });
 });
 
 describe("validateMount", () => {

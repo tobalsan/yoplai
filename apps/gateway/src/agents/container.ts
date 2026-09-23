@@ -4,7 +4,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { resolveHomeDir } from "@yoplai/shared";
+import { readEnv, resolveHomeDir } from "@yoplai/shared";
 import type {
   AgentConfig,
   GlobalSandboxConfig,
@@ -356,7 +356,12 @@ export function buildContainerArgs(
     "--name",
     createContainerName(agent.id),
     "--user",
-    `${process.getuid?.() ?? 1000}:${process.getgid?.() ?? 1000}`,
+    // Rootless Docker maps the daemon owner's host uid to container uid 0, so
+    // the gateway's own uid names an id that owns nothing there and every bind
+    // mount fails with EACCES. A rootful daemon maps uid to uid, where it is
+    // correct. Which applies is a property of the daemon, not of this process.
+    readEnv("CONTAINER_USER") ??
+      `${process.getuid?.() ?? 1000}:${process.getgid?.() ?? 1000}`,
     "--memory",
     sandbox?.memory ?? DEFAULT_MEMORY,
     "--cpus",

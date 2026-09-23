@@ -40,6 +40,8 @@ Agents that hit a dead end can now discover platform extensions and MCP servers,
 
 ### Fixed
 
+- Sandboxed agents can now run under rootless Docker. `YOPLAI_CONTAINER_USER` sets the container `uid:gid`; it defaults to the gateway process uid, which is correct for a rootful daemon but names an id owning nothing under a rootless one, making every bind mount fail with `EACCES`.
+
 - Sandboxed Pi agents now use the same Yoplai base system prompt as host Pi agents, while retaining container-specific instructions.
 - Manual scheduler runs (`yoplai scheduler run`) are now detached, so long jobs no longer trip CLI fetch timeouts while they keep running.
 - Scheduler model overrides can now use an OAuth provider independently of the agent's configured provider and auth mode, including inside sandboxed runs; OAuth renewal remains scoped to the provider selected for that run.

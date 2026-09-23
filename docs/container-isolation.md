@@ -19,6 +19,10 @@ docker build -t yoplai-agent:latest -f container/agent-runner/Dockerfile .
 
 Default image is also content-hashed and rebuilt by gateway when relevant build inputs drift; custom images are never auto-rebuilt.
 
+### Rootless Docker
+
+Rootless Docker maps the daemon owner's host uid to container uid 0, so the gateway's own uid names an id that owns nothing inside the container and every bind mount fails with `EACCES`. Set `YOPLAI_CONTAINER_USER=0:0` in the gateway environment. A rootful daemon maps uid to uid and needs no change.
+
 ## Enable one agent
 
 ```yaml
