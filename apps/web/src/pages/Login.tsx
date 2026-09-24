@@ -3,6 +3,7 @@ import { Show, createEffect, createMemo, createSignal } from "solid-js";
 import { capabilities } from "../lib/capabilities";
 import { usePendingApprovalRefresh } from "../auth/approval";
 import { signIn, useSession } from "../auth/client";
+import { safeReturnTo } from "../auth/return-to";
 
 type SessionUser = {
   id?: string;
@@ -12,6 +13,11 @@ type SessionUser = {
 export default function LoginPage() {
   const navigate = useNavigate();
   const session = useSession();
+  const returnTo = safeReturnTo(window.location.search);
+  const callbackURL = new URL(
+    returnTo ?? import.meta.env.BASE_URL,
+    window.location.origin
+  ).href;
   const [isSubmitting, setIsSubmitting] = createSignal(false);
   const [error, setError] = createSignal<string | null>(null);
   const user = createMemo(
@@ -28,7 +34,7 @@ export default function LoginPage() {
       return;
     }
     if (hasAccess()) {
-      void navigate("/", { replace: true });
+      window.location.assign(callbackURL);
     }
   });
 
@@ -38,8 +44,7 @@ export default function LoginPage() {
     try {
       const result = await signIn.social({
         provider: "google",
-        callbackURL: new URL(import.meta.env.BASE_URL, window.location.origin)
-          .href,
+        callbackURL,
       });
       if (result?.error) {
         setError(result.error.message ?? "Sign-in failed.");

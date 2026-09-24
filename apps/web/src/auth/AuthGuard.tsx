@@ -1,4 +1,4 @@
-import { useNavigate } from "@solidjs/router";
+import { useLocation, useNavigate } from "@solidjs/router";
 import { Show, createEffect, createMemo, type JSX } from "solid-js";
 import { useSession } from "./client";
 import { usePendingApprovalRefresh } from "./approval";
@@ -111,6 +111,7 @@ function PendingApproval() {
 
 export default function AuthGuard(props: { children?: JSX.Element }) {
   const navigate = useNavigate();
+  const location = useLocation();
   const session = useSession();
   const sessionState = createMemo(() => session());
   const user = createMemo(
@@ -126,7 +127,8 @@ export default function AuthGuard(props: { children?: JSX.Element }) {
     const state = sessionState();
     if (state.isPending) return;
     if (!state.data) {
-      void navigate("/login", { replace: true });
+      const returnTo = encodeURIComponent(location.pathname + location.search);
+      void navigate(`/login?returnTo=${returnTo}`, { replace: true });
     }
   });
 
