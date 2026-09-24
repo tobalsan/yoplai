@@ -76,12 +76,14 @@ describe("extension registry", () => {
     expect(result.map((extension) => extension.id)).toEqual([
       "taskLifecycle",
       "capabilityDiscovery",
+      "canvas",
       "scheduler",
       "heartbeat",
     ]);
     expect(getLoadedExtensions().map((extension) => extension.id)).toEqual([
       "taskLifecycle",
       "capabilityDiscovery",
+      "canvas",
       "scheduler",
       "heartbeat",
     ]);
@@ -93,11 +95,19 @@ describe("extension registry", () => {
   it("auto-loads IRC from top-level agent config", async () => {
     const config = GatewayConfigSchema.parse({
       version: 2,
-      agents: [{
-        id: "main", name: "Main", workspace: "~/agents/main",
-        model: { provider: "anthropic", model: "claude" },
-        irc: { host: "irc.example.com", nick: "main-bot", channels: { "#team": { mode: "reply-all" } } },
-      }],
+      agents: [
+        {
+          id: "main",
+          name: "Main",
+          workspace: "~/agents/main",
+          model: { provider: "anthropic", model: "claude" },
+          irc: {
+            host: "irc.example.com",
+            nick: "main-bot",
+            channels: { "#team": { mode: "reply-all" } },
+          },
+        },
+      ],
     });
     const result = await loadExtensions(config);
     expect(result.map((extension) => extension.id)).toContain("irc");
@@ -106,12 +116,18 @@ describe("extension registry", () => {
   it("loads per-agent IRC when shared IRC is disabled", async () => {
     const config = GatewayConfigSchema.parse({
       version: 2,
-      agents: [{
-        id: "main", name: "Main", workspace: "~/agents/main",
-        model: { provider: "anthropic", model: "claude" },
-        irc: { host: "irc.example.com", nick: "main-bot" },
-      }],
-      extensions: { irc: { enabled: false, host: "shared.example.com", nick: "shared-bot" } },
+      agents: [
+        {
+          id: "main",
+          name: "Main",
+          workspace: "~/agents/main",
+          model: { provider: "anthropic", model: "claude" },
+          irc: { host: "irc.example.com", nick: "main-bot" },
+        },
+      ],
+      extensions: {
+        irc: { enabled: false, host: "shared.example.com", nick: "shared-bot" },
+      },
     });
     const result = await loadExtensions(config);
     expect(result.map((extension) => extension.id)).toContain("irc");
@@ -148,6 +164,7 @@ describe("extension registry", () => {
     expect(result.map((extension) => extension.id)).toEqual([
       "taskLifecycle",
       "capabilityDiscovery",
+      "canvas",
       "multiUser",
     ]);
     expect(isExtensionLoaded("multiUser")).toBe(true);
@@ -175,6 +192,7 @@ describe("extension registry", () => {
     expect(result.map((extension) => extension.id)).toEqual([
       "taskLifecycle",
       "capabilityDiscovery",
+      "canvas",
       "heartbeat",
     ]);
     expect(isExtensionLoaded("heartbeat")).toBe(true);
@@ -278,6 +296,7 @@ describe("extension registry", () => {
     expect(result.map((extension) => extension.id)).toEqual([
       "taskLifecycle",
       "capabilityDiscovery",
+      "canvas",
       "scheduler",
     ]);
     expect(isExtensionLoaded("scheduler")).toBe(true);
@@ -305,6 +324,7 @@ describe("extension registry", () => {
     expect(result.map((extension) => extension.id)).toEqual([
       "taskLifecycle",
       "capabilityDiscovery",
+      "canvas",
       "scheduler",
       "heartbeat",
     ]);
@@ -331,6 +351,7 @@ describe("extension registry", () => {
     expect(result.map((extension) => extension.id)).toEqual([
       "taskLifecycle",
       "capabilityDiscovery",
+      "canvas",
       "heartbeat",
     ]);
   });

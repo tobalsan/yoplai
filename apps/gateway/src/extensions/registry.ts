@@ -5,6 +5,7 @@ import { CONFIG_DIR } from "../config/index.js";
 import { ExtensionRuntime } from "./runtime.js";
 import { taskLifecycleExtension } from "../tasks/extension.js";
 import { capabilityDiscoveryExtension } from "../capabilities/extension.js";
+import { canvasExtension } from "../canvas/index.js";
 
 type ExtensionRegistration = {
   load: () => Promise<Extension>;
@@ -407,6 +408,7 @@ async function deriveExtensionsToLoad(
   const extensions: Extension[] = [
     taskLifecycleExtension,
     capabilityDiscoveryExtension,
+    canvasExtension,
   ];
   const rawConfigs = new Map<string, Record<string, unknown>>();
 

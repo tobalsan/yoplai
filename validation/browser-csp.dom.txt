@@ -1,0 +1,3 @@
+<body data-api="blocked">
+  <h1>Canvas E2E v1</h1>
+</body>

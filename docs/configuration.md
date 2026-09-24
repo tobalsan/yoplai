@@ -103,6 +103,7 @@ Core `yoplai.json` fields:
 | `pool`                               | Optional pool-agent directory/glob for forked multi-user mode       |
 | `defaultProjectManager`              | Preferred board/project lead agent id                               |
 | `gateway`, `ui`, `server`, `web`     | Network and public/base URL settings                                |
+| `canvas`                             | Dashboard serving (`enabled`, optional public `baseUrl`)            |
 | `sessions.idleMinutes`               | Logical-session idle rotation; default 360                          |
 | `extensions`                         | Built-in/external extension configuration                           |
 | `extensionsPath`                     | External extension directory; defaults to `$YOPLAI_HOME/extensions` |
@@ -178,15 +179,15 @@ See [Extensions](extensions.md).
 
 ## Gateway and UI
 
-| Setting                    | Meaning                                 |
-| -------------------------- | --------------------------------------- |
-| `gateway.port`             | API/WS port; default 4000               |
-| `gateway.bind`             | `loopback`, `lan`, or `tailnet`         |
-| `gateway.host`             | Explicit bind host override             |
-| `ui.enabled`               | Start web UI with gateway; default true |
-| `ui.port`                  | UI port; default 3000                   |
-| `ui.bind`                  | `loopback`, `lan`, or `tailnet`         |
-| `ui.tailscale.mode`        | `off` or `serve`                        |
+| Setting                    | Meaning                                                                                           |
+| -------------------------- | ------------------------------------------------------------------------------------------------- |
+| `gateway.port`             | API/WS port; default 4000                                                                         |
+| `gateway.bind`             | `loopback`, `lan`, or `tailnet`                                                                   |
+| `gateway.host`             | Explicit bind host override                                                                       |
+| `ui.enabled`               | Start web UI with gateway; default true                                                           |
+| `ui.port`                  | UI port; default 3000                                                                             |
+| `ui.bind`                  | `loopback`, `lan`, or `tailnet`                                                                   |
+| `ui.tailscale.mode`        | `off` or `serve`                                                                                  |
 | `ui.tailscale.resetOnExit` | Reset serve config on exit (`tailscale serve reset`, wipes non-Yoplai entries too); default false |
 
 Prefer `loopback` until authentication and a secure access path are configured. For Tailscale Serve, both gateway and UI binds must be loopback; Yoplai maps UI below `/yoplai` and API/WS to gateway.

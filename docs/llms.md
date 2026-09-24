@@ -137,6 +137,7 @@ Unless noted, paths are under `$YOPLAI_HOME`:
 | `sessions/subagents/runs/<runId>/` | Project-agnostic CLI subagent state/logs/history           |
 | `media/`                           | Managed inbound/outbound files                             |
 | `oauth/`                           | Per-agent OAuth connection records                         |
+| `canvas/registry.json`             | Stable dashboard link ids and their owning agent/file      |
 | `auth.db`                          | Better Auth SQLite DB when multi-user extension is enabled |
 | `projects.json`                    | Project numeric ID counter                                 |
 
@@ -216,6 +217,8 @@ Extensions load through `extensions.<id>` unless documented auto-load compatibil
 | `webhooks`     | Signed inbound webhooks and isolated webhook sessions                   | [`packages/extensions/webhooks`](../packages/extensions/webhooks/)   |
 
 Tool-style extensions use `packages/shared/src/tool-extension.ts`. Extensions may contribute routes, CLI commands, capabilities, services, system-prompt text, tools, delivery sinks, OAuth requirements, and web routes. Keep behavior with its owning package; core should depend only on extension contracts and optional imports.
+
+Canvas is a core gateway feature. Agents use `dashboard_link` to publish a single `.html` file from their workspace `dashboards/` directory. Configure it with root `canvas.enabled` and optional `canvas.baseUrl`; links default to the platform public URL. Viewer requests require the normal login flow and agent team access when multi-user mode is enabled, and every page is served under a restrictive sandbox CSP.
 
 Capability discovery is a factory meta-extension that is always loaded alongside task lifecycle tools. It reads the current built-in/external registry and agent `mcp.json` files on each dead-end lookup; it never resolves extension secrets while listing tools. Its self-enable path reuses the agent extension config writer and live extension reload.
 
