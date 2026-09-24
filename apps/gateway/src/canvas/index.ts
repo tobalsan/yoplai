@@ -11,6 +11,7 @@ import type {
 import { resolveHomeDir } from "@yoplai/shared";
 import { getAgentDataDir } from "../agents/container.js";
 import { DashboardRegistry } from "./store.js";
+import { executeDashboardQueries } from "./sql.js";
 
 let extensionContext: ExtensionContext | undefined;
 let extensionRegistry: DashboardRegistry | undefined;
@@ -107,10 +108,17 @@ async function dashboardInfo(
   const file = await openDashboardFile(agent, entry.slug);
   try {
     const stat = await file.stat();
+    const html = await file.readFile("utf8");
+    const { errors } = await executeDashboardQueries(agent, html, {
+      viewer_email: null,
+      viewer_name: null,
+      today: new Date().toISOString().slice(0, 10),
+    });
     return {
       slug: entry.slug,
       updatedAt: stat.mtime.toISOString(),
       link: `${dashboardBaseUrl(config)}/d/${entry.id}`,
+      queryErrors: errors,
     };
   } finally {
     await file.close();
@@ -120,7 +128,9 @@ async function dashboardInfo(
 async function discoverDashboards(agent: AgentConfig, config: GatewayConfig) {
   let files: string[];
   try {
-    files = (await fs.readdir(dashboardDirectory(agent), { withFileTypes: true }))
+    files = (
+      await fs.readdir(dashboardDirectory(agent), { withFileTypes: true })
+    )
       .filter((entry) => entry.isFile())
       .map((entry) => entry.name)
       .filter((name) => {
@@ -146,10 +156,17 @@ async function discoverDashboards(agent: AgentConfig, config: GatewayConfig) {
         registry().link(agent.id, slug),
         file.stat(),
       ]);
+      const html = await file.readFile("utf8");
+      const { errors } = await executeDashboardQueries(agent, html, {
+        viewer_email: null,
+        viewer_name: null,
+        today: new Date().toISOString().slice(0, 10),
+      });
       results.push({
         slug,
         updatedAt: stat.mtime.toISOString(),
         link: `${dashboardBaseUrl(config)}/d/${entry.id}`,
+        queryErrors: errors,
       });
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
