@@ -2,7 +2,10 @@ import { defineConfig } from "vite";
 import solid from "vite-plugin-solid";
 import fs from "node:fs";
 import { execSync } from "node:child_process";
-import { readEnv, resolveConfigPath } from "../../packages/shared/src/config-path.js";
+import {
+  readEnv,
+  resolveConfigPath,
+} from "../../packages/shared/src/config-path.js";
 import { resolveBindHost } from "../../packages/shared/src/network.js";
 
 type BindMode = "loopback" | "lan" | "tailnet";
@@ -126,7 +129,8 @@ const hmrHostOverride = readEnv("HMR_HOST");
 const gatewayBindHost = gatewayConfig.host ?? resolveHost(gatewayConfig.bind);
 // The proxy connects (not listens), so 0.0.0.0 isn't a valid destination on
 // macOS — rewrite to loopback. The gateway still listens on all interfaces.
-const gatewayHost = gatewayBindHost === "0.0.0.0" ? "127.0.0.1" : gatewayBindHost;
+const gatewayHost =
+  gatewayBindHost === "0.0.0.0" ? "127.0.0.1" : gatewayBindHost;
 const gatewayPort = readEnv("GATEWAY_PORT")
   ? parseInt(readEnv("GATEWAY_PORT")!, 10)
   : (gatewayConfig.port ?? 4000);
@@ -146,7 +150,8 @@ export default defineConfig({
   server: {
     host,
     port,
-    allowedHosts: configuredHostnames.length > 0 ? configuredHostnames : undefined,
+    allowedHosts:
+      configuredHostnames.length > 0 ? configuredHostnames : undefined,
     // Let HMR follow the browser host by default; allow override if needed
     hmr: hmrHostOverride ? { host: hmrHostOverride } : undefined,
     proxy: {
@@ -158,11 +163,15 @@ export default defineConfig({
         target: gatewayTarget,
         ws: true,
       },
+      "/d": {
+        target: gatewayTarget,
+      },
     },
   },
   preview: {
     host,
     port,
-    allowedHosts: configuredHostnames.length > 0 ? configuredHostnames : undefined,
+    allowedHosts:
+      configuredHostnames.length > 0 ? configuredHostnames : undefined,
   },
 });

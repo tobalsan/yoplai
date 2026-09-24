@@ -1048,6 +1048,12 @@ export const GatewayRootConfigSchema = z.object({
     })
     .optional(),
   agentFab: z.boolean().optional().default(false),
+  canvas: z
+    .object({
+      enabled: z.boolean().optional().default(true),
+      baseUrl: z.string().url().optional(),
+    })
+    .optional(),
   server: z
     .object({
       host: z.string().optional(),
@@ -1099,6 +1105,12 @@ export const GatewayConfigSchema = z.object({
     })
     .optional(),
   agentFab: z.boolean().optional().default(false),
+  canvas: z
+    .object({
+      enabled: z.boolean().optional().default(true),
+      baseUrl: z.string().url().optional(),
+    })
+    .optional(),
   server: z
     .object({
       host: z.string().optional(),

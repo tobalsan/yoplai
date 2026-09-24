@@ -18,6 +18,9 @@ import { getExtensionRuntime } from "../extensions/registry.js";
 import type { ExtensionRuntime } from "../extensions/runtime.js";
 import { WsBroker, type WsBrokerAuthAdapter } from "./ws-broker.js";
 import { accessLogger } from "./access-log.js";
+import { getAgent, CONFIG_DIR } from "../config/index.js";
+import { createDashboardRoutes } from "../canvas/routes.js";
+import { DashboardRegistry } from "../canvas/store.js";
 
 type RequestAuthContext =
   import("@yoplai/extension-multi-user").RequestAuthContext;
@@ -101,6 +104,27 @@ app.use(
 );
 app.use("*", accessLogger());
 app.route("/internal", internalTools);
+app.route(
+  "/d",
+  createDashboardRoutes({
+    getConfig: loadConfig,
+    getAgent,
+    registry: new DashboardRegistry(
+      path.join(CONFIG_DIR, "canvas", "registry.json")
+    ),
+    async authenticate(request) {
+      if (!currentExtensionRuntime().isEnabled("multiUser")) return {};
+      const { validateWebSocketRequest } =
+        await loadMultiUserMiddlewareModule();
+      return validateWebSocketRequest(request);
+    },
+    async hasAgentAccess(auth, agentId) {
+      if (!currentExtensionRuntime().isEnabled("multiUser")) return true;
+      const { hasAgentAccess } = await loadMultiUserMiddlewareModule();
+      return hasAgentAccess(auth as RequestAuthContext, agentId);
+    },
+  })
+);
 app.use("/api/*", async (c, next) => {
   let config: GatewayConfig;
   try {

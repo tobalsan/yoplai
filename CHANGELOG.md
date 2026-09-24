@@ -9,6 +9,10 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ## [Unreleased]
 
+### Added
+
+- Agents can publish self-contained HTML files from their `dashboards/` directory through stable, team-authorized, CSP-sandboxed Canvas links using the `dashboard_link` tool.
+
 ### Fixed
 
 - Upgraded the Pi SDK packages to 0.87.1 so Anthropic OAuth requests for Claude Opus 5.5 report the required Claude Code 2.1.280 version; gateway retries and interrupted tool-call repair now update Pi's canonical session context.
