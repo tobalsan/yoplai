@@ -16,7 +16,7 @@ describe("multi-user component", () => {
     });
   });
 
-  it("rejects enabled config without google oauth credentials", async () => {
+  it("rejects enabled config without any sign-in method", async () => {
     const { multiUserExtension } = await import("./index.js");
 
     expect(
@@ -26,7 +26,9 @@ describe("multi-user component", () => {
       })
     ).toEqual({
       valid: false,
-      errors: expect.arrayContaining(["Required"]),
+      errors: [
+        "multiUser requires at least one auth method: oauth.google or emailAndPassword.enabled",
+      ],
     });
   });
 

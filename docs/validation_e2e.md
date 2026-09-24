@@ -9,7 +9,9 @@ steps to the slice they implemented.
 
 ## Principles
 
-- Never validate against `~/.yoplai` or a real customer config.
+- Never validate against `~/.yoplai` or a real customer config, and never use
+  real OAuth credentials (e.g. a customer `YOPLAI_HOME`). E2E auth uses
+  email/password with dummy accounts; no human OAuth step is needed.
 - Always use a temporary `YOPLAI_HOME` inside the working repo.
 - Always launch the actual gateway/web stack, not only unit tests.
 - Capture evidence under `validation/`.
@@ -73,12 +75,7 @@ cat > .yoplai-e2e/yoplai.json <<'EOF'
   "extensions": {
     "multiUser": {
       "enabled": true,
-      "oauth": {
-        "google": {
-          "clientId": "e2e-google-client",
-          "clientSecret": "e2e-google-secret"
-        }
-      },
+      "emailAndPassword": { "enabled": true },
       "sessionSecret": "e2e-session-secret-at-least-32-characters"
     }
   }
@@ -129,7 +126,65 @@ export YOPLAI_E2E_API="http://127.0.0.1:<gateway-port>"
 export YOPLAI_E2E_UI="http://127.0.0.1:<ui-port>"
 ```
 
-## 4. Seed Slice-Specific State
+## 4. Sign In Without OAuth
+
+The seed config enables email/password auth only. The first account to sign up
+becomes an approved `superadmin`; later accounts are `user` and unapproved
+until an admin approves them.
+
+Create users with one cookie jar each (password `e2e-password-123`):
+
+```bash
+mkdir -p .yoplai-e2e/cookies
+for u in admin alice bob; do
+  curl -s -c ".yoplai-e2e/cookies/$u.txt" \
+    -H 'content-type: application/json' \
+    -X POST "$YOPLAI_E2E_API/api/auth/sign-up/email" \
+    -d "{\"email\":\"$u@e2e.test\",\"password\":\"e2e-password-123\",\"name\":\"$u\"}"
+done
+```
+
+Approve a user with the admin jar (`PATCH /api/admin/users/:id`, body
+`{"approved": true}`; add `"role": "admin"` to promote, superadmin only):
+
+```bash
+ALICE_ID=$(curl -s -b .yoplai-e2e/cookies/alice.txt \
+  "$YOPLAI_E2E_API/api/auth/get-session" | jq -r .user.id)
+curl -s -b .yoplai-e2e/cookies/admin.txt \
+  -H 'content-type: application/json' \
+  -X PATCH "$YOPLAI_E2E_API/api/admin/users/$ALICE_ID" \
+  -d '{"approved":true}' | jq .user
+```
+
+Sign in again later (e.g. after a restart) with `POST /api/auth/sign-in/email`.
+Better Auth rejects `/api/auth/*` POSTs that carry a cookie but no `Origin`
+(`403 MISSING_OR_NULL_ORIGIN`), so always send an `Origin` header there:
+
+```bash
+curl -s -b .yoplai-e2e/cookies/bob.txt -c .yoplai-e2e/cookies/bob.txt \
+  -H "Origin: $YOPLAI_E2E_API" -H 'content-type: application/json' \
+  -X POST "$YOPLAI_E2E_API/api/auth/sign-in/email" \
+  -d '{"email":"bob@e2e.test","password":"e2e-password-123"}'
+```
+
+Gateway routes such as `/api/admin/*` do not need the `Origin` header.
+
+In the browser, prefer the login page form: open
+`$YOPLAI_E2E_UI/login` (optionally `?returnTo=/agents`), enter the email and
+password, and submit. This exercises the real post-login redirect. "No account?
+Create one" switches the form to sign-up. As a shortcut, run this from a page on
+the UI origin:
+
+```js
+await fetch("/api/auth/sign-in/email", {
+  method: "POST",
+  headers: { "content-type": "application/json" },
+  body: JSON.stringify({ email: "alice@e2e.test", password: "e2e-password-123" }),
+});
+location.reload();
+```
+
+## 5. Seed Slice-Specific State
 
 Seed only what the issue needs.
 
@@ -149,7 +204,7 @@ Examples:
 Prefer public/admin APIs or UI flows. Direct SQLite writes are acceptable only
 when the slice under test is not responsible for creating that data.
 
-## 5. Validate Through the Browser
+## 6. Validate Through the Browser
 
 Drive browser scenarios with either the `playwright-cli` skill or the
 claude-in-chrome MCP tools. Save screenshots and DOM snapshots into
@@ -171,7 +226,7 @@ For chat/access slices, browser validation must prove the actual user path:
 - A denied user can see the pool/team information but cannot chat/run it.
 - A staff user can bypass team membership when the PRD says staff bypass applies.
 
-## 6. Validate APIs and Persistence
+## 7. Validate APIs and Persistence
 
 After the browser check, re-fetch server state.
 
@@ -196,7 +251,7 @@ For assignment/access slices, verify both sides:
 - Database: team, membership, and agent-team link rows match the UI.
 - Runtime/API: allowed users can access the agent; denied users cannot.
 
-## 7. Guard-Surface Checklist
+## 8. Guard-Surface Checklist
 
 Use this when the slice touches access control.
 
@@ -214,7 +269,7 @@ Prove the denied user is blocked from every surface implemented by that slice:
 Do not stop at "the Chat button is hidden". Hidden UI is not an access control
 proof.
 
-## 8. Evidence to Leave Behind
+## 9. Evidence to Leave Behind
 
 Leave `validation/` with:
 

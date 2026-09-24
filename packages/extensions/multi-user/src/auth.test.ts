@@ -203,3 +203,96 @@ describe("multi-user auth", () => {
     db.close();
   });
 });
+
+describe("email/password auth", () => {
+  async function setup(
+    methods: Record<string, unknown>,
+    allowedDomains?: string[]
+  ) {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "yoplai-auth-"));
+    tempDirs.push(tempDir);
+    const config = GatewayConfigSchema.parse({
+      version: 2,
+      agents: [
+        {
+          id: "main",
+          name: "Main",
+          workspace: "~/agents/main",
+          model: { provider: "anthropic", model: "claude" },
+        },
+      ],
+      gateway: { port: 4126 },
+      extensions: {
+        multiUser: {
+          enabled: true,
+          sessionSecret: "x".repeat(32),
+          ...(allowedDomains ? { allowedDomains } : {}),
+          ...methods,
+        },
+      },
+    });
+    const db = initializeMultiUserDatabase(path.join(tempDir, "auth.db"));
+    const multiUserConfig = config.extensions?.multiUser;
+    if (!multiUserConfig || !multiUserConfig.enabled) {
+      throw new Error("multiUser config missing");
+    }
+    const auth = await createMultiUserAuth(config, multiUserConfig, db);
+    const signUp = (email: string) =>
+      auth.handler(
+        new Request("http://127.0.0.1:4126/api/auth/sign-up/email", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            email,
+            password: "e2e-password-123",
+            name: email.split("@")[0],
+          }),
+        })
+      );
+    const userRow = (email: string) =>
+      db
+        .prepare("SELECT role, approved FROM user WHERE email = ?")
+        .get(email) as { role: string | null; approved: number } | undefined;
+    return { db, signUp, userRow };
+  }
+
+  it("bootstraps the first password sign-up as approved superadmin", async () => {
+    const { db, signUp, userRow } = await setup({
+      emailAndPassword: { enabled: true },
+    });
+
+    expect((await signUp("admin@e2e.test")).status).toBe(200);
+    expect((await signUp("alice@e2e.test")).status).toBe(200);
+
+    expect(userRow("admin@e2e.test")).toEqual({
+      role: "superadmin",
+      approved: 1,
+    });
+    expect(userRow("alice@e2e.test")).toEqual({ role: "user", approved: 0 });
+    db.close();
+  });
+
+  it("applies allowedDomains to password sign-ups", async () => {
+    const { db, signUp, userRow } = await setup(
+      { emailAndPassword: { enabled: true } },
+      ["e2e.test"]
+    );
+
+    expect((await signUp("mallory@evil.test")).status).toBe(403);
+    expect(userRow("mallory@evil.test")).toBeUndefined();
+    db.close();
+  });
+
+  it("rejects password sign-up when emailAndPassword is not enabled", async () => {
+    const { db, signUp, userRow } = await setup({
+      oauth: {
+        google: { clientId: "client-id", clientSecret: "client-secret" },
+      },
+    });
+
+    const res = await signUp("admin@e2e.test");
+    expect(res.status).toBeGreaterThanOrEqual(400);
+    expect(userRow("admin@e2e.test")).toBeUndefined();
+    db.close();
+  });
+});

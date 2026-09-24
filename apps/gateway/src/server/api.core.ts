@@ -250,12 +250,21 @@ api.get("/capabilities", async (c) => {
   const config = loadConfig();
   const branding = config.branding;
   const home = getHomeExtension();
+  const multiUserConfig = config.extensions?.multiUser;
 
   return c.json({
     version: 2,
     extensions,
     agents: agents.map((agent) => agent.id),
     multiUser: isMultiUserEnabled,
+    ...(isMultiUserEnabled
+      ? {
+          authMethods: {
+            google: Boolean(multiUserConfig?.oauth?.google),
+            emailAndPassword: multiUserConfig?.emailAndPassword?.enabled === true,
+          },
+        }
+      : {}),
     forkedAgents: config.forkedAgents ?? false,
     agentFab: config.agentFab ?? false,
     ...(home ? { home } : {}),

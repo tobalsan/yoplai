@@ -61,7 +61,17 @@ vi.mock(
       getAgent,
       getActiveAgents,
       isAgentActive: () => true,
-      loadConfig: () => ({ agents: [], forkedAgents: true }),
+      loadConfig: () => ({
+        agents: [],
+        forkedAgents: true,
+        extensions: {
+          multiUser: {
+            enabled: true,
+            sessionSecret: "secret",
+            emailAndPassword: { enabled: true },
+          },
+        },
+      }),
       resolveWorkspaceDir: (workspace: string) => workspace,
     };
   }
@@ -1235,6 +1245,7 @@ describe("multi-user api core", () => {
       extensions: { multiUser: true },
       agents: ["agent-b"],
       multiUser: true,
+      authMethods: { google: false, emailAndPassword: true },
       agentFab: false,
       forkedAgents: true,
       user: {

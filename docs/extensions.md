@@ -68,7 +68,9 @@ Enable under `extensions.multiUser`:
 }
 ```
 
-Gateway creates `$YOPLAI_HOME/auth.db`. First OAuth user becomes an approved superadmin; admins approve later users and manage teams. Sessions and history become user-scoped. Enabling multi-user mode does not migrate existing single-user history.
+At least one sign-in method is required: `oauth.google` and/or `"emailAndPassword": { "enabled": true }` (Better Auth email/password; the login page shows whichever are configured).
+
+Gateway creates `$YOPLAI_HOME/auth.db`. First registered user becomes an approved superadmin; admins approve later users and manage teams. Sessions and history become user-scoped. Enabling multi-user mode does not migrate existing single-user history.
 
 Roles are user/admin/superadmin. Headless clients can use `yoplai user token create|list|revoke` and bearer authentication. Full setup and pool/team behavior: [multi-user README](../packages/extensions/multi-user/README.md).
 

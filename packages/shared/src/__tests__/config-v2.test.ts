@@ -68,25 +68,54 @@ describe("GatewayConfigSchema v2", () => {
     expect(result.extensions?.multiUser).toEqual({ enabled: false });
   });
 
-  it("requires oauth config when multiUser is enabled", () => {
-    expect(() =>
-      GatewayConfigSchema.parse({
-        version: 2,
-        agents: [
-          {
-            id: "main",
-            name: "Main",
-            workspace: "~/agents/main",
-            model: { provider: "anthropic", model: "claude" },
+  it("requires at least one auth method when multiUser is enabled", () => {
+    for (const methods of [{}, { emailAndPassword: { enabled: false } }]) {
+      expect(() =>
+        GatewayConfigSchema.parse({
+          version: 2,
+          agents: [
+            {
+              id: "main",
+              name: "Main",
+              workspace: "~/agents/main",
+              model: { provider: "anthropic", model: "claude" },
+            },
+          ],
+          extensions: {
+            multiUser: {
+              enabled: true,
+              sessionSecret: "secret",
+              ...methods,
+            },
           },
-        ],
-        extensions: {
-          multiUser: {
-            enabled: true,
-            sessionSecret: "secret",
-          },
+        })
+      ).toThrow(/at least one auth method/);
+    }
+  });
+
+  it("accepts emailAndPassword as the only multiUser auth method", () => {
+    const result = GatewayConfigSchema.parse({
+      version: 2,
+      agents: [
+        {
+          id: "main",
+          name: "Main",
+          workspace: "~/agents/main",
+          model: { provider: "anthropic", model: "claude" },
         },
-      })
-    ).toThrow();
+      ],
+      extensions: {
+        multiUser: {
+          enabled: true,
+          sessionSecret: "secret",
+          emailAndPassword: { enabled: true },
+        },
+      },
+    });
+
+    expect(result.extensions?.multiUser).toMatchObject({
+      enabled: true,
+      emailAndPassword: { enabled: true },
+    });
   });
 });

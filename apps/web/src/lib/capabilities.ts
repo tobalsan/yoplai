@@ -64,6 +64,7 @@ export function setCapabilitiesForTests(
     extensions: value.extensions ?? defaultCapabilities.extensions,
     agents: value.agents ?? defaultCapabilities.agents,
     multiUser: value.multiUser ?? defaultCapabilities.multiUser,
+    authMethods: value.authMethods,
     forkedAgents: value.forkedAgents ?? defaultCapabilities.forkedAgents,
     agentFab: value.agentFab ?? defaultCapabilities.agentFab,
     user: value.user,

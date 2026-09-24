@@ -114,7 +114,7 @@ Key rules:
 - Agent-local resolved values are passed to extension hooks as `ctx.env`; do not assume they enter global `process.env` or sandbox env.
 - External extensions default to `$YOPLAI_HOME/extensions` or `extensionsPath`; directories and symlinked directories are supported.
 - Projects root is `extensions.projects.root`; top-level `projects.root` is deprecated fallback only.
-- Multi-user mode is enabled with `extensions.multiUser.enabled: true`, not a top-level `multiUser` key.
+- Multi-user mode is enabled with `extensions.multiUser.enabled: true`, not a top-level `multiUser` key. It needs at least one sign-in method: `oauth.google` and/or `emailAndPassword: { enabled: true }`; `/api/capabilities` exposes `authMethods` so the login page renders only configured methods.
 - Secrets written by the agent-extension config API become `$env:` references in `agent.yaml`; plaintext values go into the agent `.env`.
 - Host OAuth token persistence requires `oauth.encryptionKey` (typically `$env:OAUTH_ENCRYPTION_KEY`) and fails closed rather than writing plaintext.
 - Sandboxed runs using OAuth, whether selected by `agent.yaml` or a per-run model override, have provider credentials pre-refreshed on the host and receive short-lived access tokens via `ContainerInput.oauthTokens` (`apps/gateway/src/sdk/container/oauth-tokens.ts`); the runner renews only providers authorized for that run through `POST /internal/oauth-token` under a 10-minute threshold. Refresh tokens never enter the container. See `docs/container-isolation.md`.

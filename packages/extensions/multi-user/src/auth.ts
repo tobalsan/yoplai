@@ -106,6 +106,7 @@ function buildMultiUserAuth(
   multiUserConfig: Extract<MultiUserConfig, { enabled: true }>,
   db: Database.Database
 ) {
+  const google = multiUserConfig.oauth?.google;
   return betterAuth({
     appName: "Yoplai",
     baseURL: getAuthBaseUrl(config),
@@ -113,12 +114,17 @@ function buildMultiUserAuth(
     secret: multiUserConfig.sessionSecret,
     database: db,
     trustedOrigins: getTrustedOrigins(config),
-    socialProviders: {
-      google: {
-        clientId: multiUserConfig.oauth.google.clientId,
-        clientSecret: multiUserConfig.oauth.google.clientSecret,
-        prompt: "select_account",
-      },
+    socialProviders: google
+      ? {
+          google: {
+            clientId: google.clientId,
+            clientSecret: google.clientSecret,
+            prompt: "select_account",
+          },
+        }
+      : {},
+    emailAndPassword: {
+      enabled: multiUserConfig.emailAndPassword?.enabled === true,
     },
     user: {
       additionalFields: {
@@ -153,8 +159,9 @@ function buildMultiUserAuth(
         //     admin cannot escalate an existing user's role.
         //   - Without `create`, the built-in `POST /admin/create-user` rejects
         //     admins, so an admin cannot mint a brand-new superadmin account.
-        // Users self-register via Google OAuth, so admins never need the
-        // built-in create-user endpoint.
+        // Users self-register via the configured sign-in methods (Google
+        // OAuth and/or email/password), so admins never need the built-in
+        // create-user endpoint.
         roles: {
           user: userAc,
           // Stock admin permissions minus `create` and `set-role`.

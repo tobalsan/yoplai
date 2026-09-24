@@ -2,7 +2,7 @@ import { useNavigate } from "@solidjs/router";
 import { Show, createEffect, createMemo, createSignal } from "solid-js";
 import { capabilities } from "../lib/capabilities";
 import { usePendingApprovalRefresh } from "../auth/approval";
-import { signIn, useSession } from "../auth/client";
+import { signIn, signUp, useSession } from "../auth/client";
 import { safeReturnTo } from "../auth/return-to";
 
 type SessionUser = {
@@ -20,6 +20,14 @@ export default function LoginPage() {
   ).href;
   const [isSubmitting, setIsSubmitting] = createSignal(false);
   const [error, setError] = createSignal<string | null>(null);
+  const [mode, setMode] = createSignal<"signIn" | "signUp">("signIn");
+  const [name, setName] = createSignal("");
+  const [email, setEmail] = createSignal("");
+  const [password, setPassword] = createSignal("");
+  // Older gateways omit authMethods; they only supported Google.
+  const googleEnabled = () => capabilities.authMethods?.google ?? true;
+  const passwordEnabled = () =>
+    capabilities.authMethods?.emailAndPassword ?? false;
   const user = createMemo(
     () => (session().data?.user ?? null) as SessionUser | null
   );
@@ -56,6 +64,31 @@ export default function LoginPage() {
     }
   }
 
+  async function handlePasswordSubmit(event: SubmitEvent) {
+    event.preventDefault();
+    setIsSubmitting(true);
+    setError(null);
+    try {
+      // On success the session refreshes and the effect above performs the
+      // same post-login redirect as the Google flow.
+      const result =
+        mode() === "signUp"
+          ? await signUp.email({
+              name: name().trim() || email(),
+              email: email(),
+              password: password(),
+            })
+          : await signIn.email({ email: email(), password: password() });
+      if (result?.error) {
+        setError(result.error.message ?? "Sign-in failed.");
+      }
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Sign-in failed.");
+    } finally {
+      setIsSubmitting(false);
+    }
+  }
+
   return (
     <>
       <main class="login-page">
@@ -80,21 +113,82 @@ export default function LoginPage() {
               <p class="login-eyebrow">
                 {capabilities.branding?.name ?? "Yoplai"}
               </p>
-              <h1>Sign in with Google</h1>
+              <h1>{passwordEnabled() ? "Sign in" : "Sign in with Google"}</h1>
             </div>
           </div>
-          <p class="login-copy">Use your Google account to continue.</p>
-          <button
-            class="login-google-button"
-            type="button"
-            onClick={() => void handleGoogleSignIn()}
-            disabled={isSubmitting()}
-          >
-            <span class="login-google-icon" aria-hidden="true">
-              G
-            </span>
-            <span>{isSubmitting() ? "Redirecting…" : "Continue with Google"}</span>
-          </button>
+          <Show when={googleEnabled()}>
+            <p class="login-copy">Use your Google account to continue.</p>
+            <button
+              class="login-google-button"
+              type="button"
+              onClick={() => void handleGoogleSignIn()}
+              disabled={isSubmitting()}
+            >
+              <span class="login-google-icon" aria-hidden="true">
+                G
+              </span>
+              <span>{isSubmitting() ? "Redirecting…" : "Continue with Google"}</span>
+            </button>
+          </Show>
+          <Show when={passwordEnabled()}>
+            <form
+              class="login-form"
+              onSubmit={(event) => void handlePasswordSubmit(event)}
+            >
+              <Show when={mode() === "signUp"}>
+                <input
+                  class="login-input"
+                  type="text"
+                  name="name"
+                  placeholder="Name"
+                  autocomplete="name"
+                  value={name()}
+                  onInput={(event) => setName(event.currentTarget.value)}
+                />
+              </Show>
+              <input
+                class="login-input"
+                type="email"
+                name="email"
+                placeholder="Email"
+                autocomplete="email"
+                required
+                value={email()}
+                onInput={(event) => setEmail(event.currentTarget.value)}
+              />
+              <input
+                class="login-input"
+                type="password"
+                name="password"
+                placeholder="Password"
+                autocomplete={
+                  mode() === "signUp" ? "new-password" : "current-password"
+                }
+                required
+                value={password()}
+                onInput={(event) => setPassword(event.currentTarget.value)}
+              />
+              <button
+                class="login-google-button"
+                type="submit"
+                disabled={isSubmitting()}
+              >
+                {mode() === "signUp" ? "Create account" : "Sign in"}
+              </button>
+              <button
+                class="login-toggle"
+                type="button"
+                onClick={() => {
+                  setError(null);
+                  setMode(mode() === "signUp" ? "signIn" : "signUp");
+                }}
+              >
+                {mode() === "signUp"
+                  ? "Have an account? Sign in"
+                  : "No account? Create one"}
+              </button>
+            </form>
+          </Show>
           <Show when={session().data && user()?.approved === false && !approvedFromMe()}>
             <p class="login-note">
               Signed in already. Your account is waiting for admin approval.
@@ -212,6 +306,30 @@ export default function LoginPage() {
           color: white;
           font-size: 0.95rem;
           font-weight: 700;
+        }
+
+        .login-form {
+          display: grid;
+          gap: 10px;
+          margin-top: 18px;
+        }
+
+        .login-input {
+          min-height: 44px;
+          padding: 0 14px;
+          border: 1px solid var(--border-default);
+          border-radius: 12px;
+          background: var(--bg-primary);
+          color: var(--text-primary);
+          font-size: 0.95rem;
+        }
+
+        .login-toggle {
+          border: none;
+          background: none;
+          color: var(--text-secondary);
+          font-size: 0.85rem;
+          cursor: pointer;
         }
 
         .login-error {

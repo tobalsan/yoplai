@@ -529,18 +529,38 @@ const MultiUserConfigBaseSchema = z.object({
   allowedDomains: z.array(z.string().min(1)).optional(),
 });
 
-export const MultiUserConfigSchema = z.discriminatedUnion("enabled", [
-  MultiUserConfigBaseSchema.extend({
-    enabled: z.literal(false),
-    oauth: MultiUserOAuthConfigSchema.optional(),
-    sessionSecret: SecretRefSchema.optional(),
-  }),
-  MultiUserConfigBaseSchema.extend({
-    enabled: z.literal(true),
-    oauth: MultiUserOAuthConfigSchema,
-    sessionSecret: SecretRefSchema.min(1),
-  }),
-]);
+export const MultiUserEmailAndPasswordConfigSchema = z.object({
+  enabled: z.boolean(),
+});
+
+export const MultiUserConfigSchema = z
+  .discriminatedUnion("enabled", [
+    MultiUserConfigBaseSchema.extend({
+      enabled: z.literal(false),
+      oauth: MultiUserOAuthConfigSchema.optional(),
+      emailAndPassword: MultiUserEmailAndPasswordConfigSchema.optional(),
+      sessionSecret: SecretRefSchema.optional(),
+    }),
+    MultiUserConfigBaseSchema.extend({
+      enabled: z.literal(true),
+      oauth: MultiUserOAuthConfigSchema.optional(),
+      emailAndPassword: MultiUserEmailAndPasswordConfigSchema.optional(),
+      sessionSecret: SecretRefSchema.min(1),
+    }),
+  ])
+  .superRefine((config, ctx) => {
+    if (
+      config.enabled &&
+      !config.oauth?.google &&
+      !config.emailAndPassword?.enabled
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message:
+          "multiUser requires at least one auth method: oauth.google or emailAndPassword.enabled",
+      });
+    }
+  });
 export type MultiUserConfig = z.infer<typeof MultiUserConfigSchema>;
 
 export const OnecliCaConfigSchema = z.discriminatedUnion("source", [
@@ -1496,6 +1516,9 @@ export const CapabilitiesResponseSchema = z.object({
   extensions: z.record(z.string(), z.boolean()),
   agents: z.array(z.string()),
   multiUser: z.boolean(),
+  authMethods: z
+    .object({ google: z.boolean(), emailAndPassword: z.boolean() })
+    .optional(),
   forkedAgents: z.boolean().optional().default(false),
   agentFab: z.boolean(),
   home: z.string().optional(),

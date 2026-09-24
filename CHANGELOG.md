@@ -11,7 +11,13 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Added
 
+- Multi-user mode supports email/password sign-in (`extensions.multiUser.emailAndPassword.enabled`), with a sign-in / create-account form on the login page.
+
 - Agents can publish self-contained HTML files from their `dashboards/` directory through stable, team-authorized, CSP-sandboxed Canvas links using the `dashboard_link` tool.
+
+### Changed
+
+- Multi-user mode no longer requires `oauth.google`; any configured sign-in method is enough. `/api/capabilities` now reports `authMethods`.
 
 ### Fixed
 

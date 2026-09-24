@@ -1,6 +1,6 @@
 # Multi-User Extension
 
-The `multi-user` extension adds OAuth authentication, per-user agent access
+The `multi-user` extension adds Better Auth authentication, per-user agent access
 control, and per-user isolation of session/history state to Yoplai. Without it,
 Yoplai runs as a single-user gateway with no authentication on `/api/*`. With
 it, every `/api/*` route requires either a Better Auth session cookie or an
@@ -8,13 +8,14 @@ it, every `/api/*` route requires either a Better Auth session cookie or an
 scoped to the calling user.
 
 The extension is opt-in: add an `extensions.multiUser` block to the gateway
-config with `enabled: true`, OAuth client credentials, and a session secret.
+config with `enabled: true`, at least one sign-in method (Google OAuth and/or
+email/password), and a session secret.
 
 ## What It Owns
 
 - A SQLite database (`auth.db`) of users, sessions, agent assignments, and
   API keys, managed by [Better Auth](https://better-auth.com).
-- Google OAuth sign-in via Better Auth's social provider integration.
+- Google OAuth and/or email/password sign-in via Better Auth.
 - A superadmin role (auto-assigned to the first registered user) plus an
   `approved` flag gating non-admin access.
 - Team membership, pool-agent forks, and team-based agent access. Non-staff
@@ -72,6 +73,7 @@ Custom tables:
           "clientSecret": "$env:GOOGLE_CLIENT_SECRET",
         },
       },
+      "emailAndPassword": { "enabled": true },
       "allowedDomains": ["example.com"],
     },
   },
@@ -79,8 +81,14 @@ Custom tables:
 ```
 
 - `sessionSecret` — required when enabled. Signs Better Auth session cookies.
-- `oauth.google.clientId` / `clientSecret` — required. The only social
+- `oauth.google.clientId` / `clientSecret` — optional. The only social
   provider currently wired.
+- `emailAndPassword.enabled` — optional. Enables Better Auth email/password
+  sign-up and sign-in (`POST /api/auth/sign-up/email`,
+  `POST /api/auth/sign-in/email`) and the login page form.
+- At least one of `oauth.google` or `emailAndPassword.enabled: true` is
+  required when enabled. `/api/capabilities` reports the active methods as
+  `authMethods: { google, emailAndPassword }`.
 - `allowedDomains` — optional email-domain allowlist. Sign-in is rejected for
   any other domain. Omit to allow all.
 
