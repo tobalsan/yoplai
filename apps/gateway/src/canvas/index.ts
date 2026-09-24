@@ -83,7 +83,8 @@ export async function openDashboardFile(
       !directoryStatAfter.isDirectory() ||
       openedStat.dev !== candidateStat.dev ||
       openedStat.ino !== candidateStat.ino ||
-      relative.startsWith("..") ||
+      relative === ".." ||
+      relative.startsWith(`..${path.sep}`) ||
       path.isAbsolute(relative)
     ) {
       throw new DashboardNotFoundError(`Dashboard not found: ${slug}`);
@@ -116,6 +117,49 @@ async function dashboardInfo(
   }
 }
 
+async function discoverDashboards(agent: AgentConfig, config: GatewayConfig) {
+  let files: string[];
+  try {
+    files = (await fs.readdir(dashboardDirectory(agent), { withFileTypes: true }))
+      .filter((entry) => entry.isFile())
+      .map((entry) => entry.name)
+      .filter((name) => {
+        try {
+          normalizeDashboardSlug(name);
+          return true;
+        } catch {
+          return false;
+        }
+      })
+      .sort();
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
+    throw error;
+  }
+
+  const results = [];
+  for (const slug of files) {
+    let file: fs.FileHandle | undefined;
+    try {
+      file = await openDashboardFile(agent, slug);
+      const [entry, stat] = await Promise.all([
+        registry().link(agent.id, slug),
+        file.stat(),
+      ]);
+      results.push({
+        slug,
+        updatedAt: stat.mtime.toISOString(),
+        link: `${dashboardBaseUrl(config)}/d/${entry.id}`,
+      });
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    } finally {
+      await file?.close();
+    }
+  }
+  return results;
+}
+
 export const canvasExtension: Extension = {
   id: "canvas",
   displayName: "Canvas",
@@ -143,26 +187,21 @@ export const canvasExtension: Extension = {
       {
         name: "dashboard_link",
         description:
-          "Link one HTML dashboard from dashboards/, or list linked dashboards when slug is omitted.",
+          "Link one HTML dashboard from dashboards/, or list all dashboards when slug is omitted.",
         parameters: {
           type: "object",
           properties: { slug: { type: "string" } },
         },
         async execute(raw) {
           const args = z.object({ slug: z.string().optional() }).parse(raw);
-          let entries;
           if (args.slug) {
             const slug = normalizeDashboardSlug(args.slug);
             const file = await openDashboardFile(agent, slug);
             await file.close();
-            entries = [await registry().link(agent.id, slug)];
-          } else {
-            entries = await registry().list(agent.id);
+            const entry = await registry().link(agent.id, slug);
+            return dashboardInfo(agent, entry, hook!.config);
           }
-          const results = await Promise.all(
-            entries.map((entry) => dashboardInfo(agent, entry, hook!.config))
-          );
-          return args.slug ? results[0] : results;
+          return discoverDashboards(agent, hook!.config);
         },
       },
     ];

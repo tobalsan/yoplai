@@ -1,0 +1,2 @@
+<html><head><title>Canvas discovery</title></head><body><h1>Discovered dashboard</h1>
+</body></html>

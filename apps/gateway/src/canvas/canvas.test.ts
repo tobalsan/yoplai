@@ -1,7 +1,7 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AgentConfig, GatewayConfig } from "@yoplai/shared";
 import { resolveHomeDir } from "@yoplai/shared";
 import { getAgentDataDir } from "../agents/container.js";
@@ -34,6 +34,7 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
+  vi.restoreAllMocks();
   await canvasExtension.stop();
   await fs.rm(root, { recursive: true, force: true });
 });
@@ -70,6 +71,53 @@ describe("dashboard registry and tool", () => {
     expect(second.link).toBe(first.link);
     expect(listed).toEqual([
       expect.objectContaining({ slug: "hello.html", link: first.link }),
+    ]);
+  });
+
+  it("discovers and links dashboard files when listing", async () => {
+    await fs.writeFile(
+      path.join(workspace, "dashboards", "hello.html"),
+      "<h1>hello</h1>"
+    );
+    await canvasExtension.start({
+      getDataDir: () => root,
+    } as never);
+    const tools = await canvasExtension.getAgentTools!(agent(), { config });
+    const tool = tools[0];
+
+    const first = (await tool.execute({}, {} as never)) as Array<{
+      link: string;
+      slug: string;
+    }>;
+    const second = (await tool.execute({}, {} as never)) as Array<{
+      link: string;
+      slug: string;
+    }>;
+
+    expect(first).toEqual([
+      expect.objectContaining({ slug: "hello.html", link: expect.any(String) }),
+    ]);
+    expect(second).toEqual(first);
+  });
+
+  it("continues listing when one dashboard becomes unavailable", async () => {
+    const dashboards = path.join(workspace, "dashboards");
+    await fs.writeFile(path.join(dashboards, "gone.html"), "gone");
+    await fs.writeFile(path.join(dashboards, "hello.html"), "hello");
+    const open = fs.open.bind(fs);
+    vi.spyOn(fs, "open").mockImplementation(async (candidate, ...args) => {
+      if (String(candidate).endsWith("gone.html")) {
+        throw Object.assign(new Error("gone"), { code: "ENOENT" });
+      }
+      return open(candidate, ...args);
+    });
+    await canvasExtension.start({
+      getDataDir: () => root,
+    } as never);
+    const [tool] = await canvasExtension.getAgentTools!(agent(), { config });
+
+    await expect(tool.execute({}, {} as never)).resolves.toEqual([
+      expect.objectContaining({ slug: "hello.html" }),
     ]);
   });
 
