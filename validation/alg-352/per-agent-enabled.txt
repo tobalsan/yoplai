@@ -1,2 +1,0 @@
-sales acme-crm enabled: true | telegram enabled: false
-support acme-crm enabled: false | telegram enabled: false

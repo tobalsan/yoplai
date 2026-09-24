@@ -1,9 +1,0 @@
-teamsForUser(user-1)=["alpha","beta"]
-usersForTeam(alpha)=["user-1","user-2"]
-usersForTeam(beta)=["user-1"]
-alpha row count for user-1 (idempotency, expect 1)=1
-addedBy preserved (expect admin-1)=admin-1
-usersOnlyInTeam(alpha) (expect [user-2])=["user-2"]
-after remove usersForTeam(alpha)=["user-2"]
-deleteTeam(beta)={"deleted":true,"teamlessUsers":["user-1"],"teamlessAgents":[]}
-after beta delete, teamsForUser(user-1) (cascade, expect [])=[]

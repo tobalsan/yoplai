@@ -1,3 +1,0 @@
-account agent_forks session user
-agent_assignments apikey team_members verification
-agent_fork_teams schema_migrations teams

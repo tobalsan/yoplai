@@ -1,1 +1,0 @@
-[{"id":"e2e","name":"E2E Agent","model":{"provider":"openai","model":"gpt-4o-mini"},"sdk":"pi","workspace":"/Users/agents/orchestration/worker/workspaces/ALG-383/aihub/.aihub-e2e/agents/e2e","queueMode":"queue","isDefaultProjectManager":true}]

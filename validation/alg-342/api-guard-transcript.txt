@@ -1,6 +1,0 @@
-=== GET /api/teams/alpha/members (unauth, expect 401) ===
-status=401
-=== POST /api/admin/teams/alpha/members (unauth, expect 401) ===
-status=401
-=== DELETE /api/admin/teams/alpha/members/user-1 (unauth, expect 401) ===
-status=401

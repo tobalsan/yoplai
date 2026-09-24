@@ -1,1 +1,0 @@
-<section class="oauth-card"><div class="oauth-card-head"><div class="oauth-provider"><span class="oauth-provider-name">Google Drive</span><span class="oauth-badge oauth-badge-off">Not connected</span></div><button class="oauth-btn oauth-btn-primary">Connect Google Drive</button></div></section>

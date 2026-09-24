@@ -1,3 +1,0 @@
-{"type":"history","agentId":"assistant","sessionId":"01a0c512-aaee-7c14-b7a3-51e61a257c94","role":"user","content":[{"type":"text","text":"Help me plan the quarterly budget"}],"timestamp":1790012730095}
-{"type":"history","agentId":"assistant","sessionId":"01a0c512-aaee-7c14-b7a3-51e61a257c94","role":"assistant","content":[{"type":"text","text":"Here is a concise budget plan."}],"meta":{"provider":"mock","model":"mock-model","api":"openai-completions","usage":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0,"totalTokens":0,"cost":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0,"total":0}},"stopReason":"stop"},"timestamp":1790012730210}
-{"type":"meta","key":"title","value":"Quarterly Budget Planning","timestamp":1790012730221}

@@ -1,9 +1,0 @@
-pool agents: sales, support
-
-=== agent sales ===
-  bespoke-crm    tier=bespoke-route enabled=false configRoutePath="/agents/sales/extensions/bespoke-crm" requiredSecrets=[] hasSchema=true
-  exa-search     tier=auto-form     enabled=false configRoutePath=null requiredSecrets=["apiKey"] hasSchema=true
-
-=== agent support ===
-  bespoke-crm    tier=bespoke-route enabled=false configRoutePath="/agents/support/extensions/bespoke-crm" requiredSecrets=[] hasSchema=true
-  exa-search     tier=auto-form     enabled=false configRoutePath=null requiredSecrets=["apiKey"] hasSchema=true
