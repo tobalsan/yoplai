@@ -50,6 +50,7 @@ import {
 import { describeImage } from "../../media/describe.js";
 import { getFullHistory } from "../../history/store.js";
 import { getMediaFileMetadata } from "../../media/metadata.js";
+import { getBuiltInSkillsDir } from "./skills.js";
 
 const SESSIONS_DIR = path.join(CONFIG_DIR, "sessions");
 let piEnvLock: Promise<void> = Promise.resolve();
@@ -428,7 +429,7 @@ export const piAdapter: SdkAdapter = {
         systemPromptOverride: () => PI_SYSTEM_PROMPT,
         appendSystemPrompt:
           allAppendedPrompts.length > 0 ? allAppendedPrompts : undefined,
-        additionalSkillPaths: [workspaceSkillsDir],
+        additionalSkillPaths: [getBuiltInSkillsDir(), workspaceSkillsDir],
         agentsFilesOverride: () => ({ agentsFiles: contextFiles }),
         ...(!includeGlobalSkills && {
           skillsOverride: (result) => ({

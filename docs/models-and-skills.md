@@ -76,6 +76,8 @@ ln -s agent .pi
 
 This makes `agent/skills` available as `.pi/skills`. Check symlink does not already exist before creating. Other coding harnesses may use different resource locations; do not assume Pi skill format is portable without adaptation.
 
+Yoplai's built-in `dashboard` skill is always discoverable by host and sandboxed Pi agents. It documents the Canvas contract and provides cloneable HR (`okr-me`, `okr-company`, `pto-me`, `pto-team`, `ats`, `candidate`) and customer-success (`clients`, `client`, `qbr`) templates with sample SQLite data.
+
 ## System prompt contributions
 
 Enabled extensions may append guidance and expose tools. Provider-facing names are sanitized while gateway retains extension/tool identity. Sandbox/container delivery differs; see [Container isolation](container-isolation.md).

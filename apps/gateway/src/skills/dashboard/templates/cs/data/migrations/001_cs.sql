@@ -1,0 +1,11 @@
+PRAGMA foreign_keys = ON;
+CREATE TABLE clients (id TEXT PRIMARY KEY, name TEXT NOT NULL, owner_email TEXT NOT NULL, segment TEXT NOT NULL, health TEXT NOT NULL, arr INTEGER NOT NULL, renewal_date TEXT NOT NULL, summary TEXT NOT NULL, updated_at TEXT NOT NULL);
+CREATE TABLE integrations (id INTEGER PRIMARY KEY, client_id TEXT NOT NULL REFERENCES clients(id), name TEXT NOT NULL, status TEXT NOT NULL, updated_at TEXT NOT NULL);
+CREATE TABLE tickets (id TEXT PRIMARY KEY, client_id TEXT NOT NULL REFERENCES clients(id), subject TEXT NOT NULL, priority TEXT NOT NULL, status TEXT NOT NULL, opened_at TEXT NOT NULL, updated_at TEXT NOT NULL);
+CREATE TABLE weekly_themes (id INTEGER PRIMARY KEY, client_id TEXT NOT NULL REFERENCES clients(id), week TEXT NOT NULL, theme TEXT NOT NULL, mentions INTEGER NOT NULL, updated_at TEXT NOT NULL);
+CREATE TABLE quarterly_metrics (id INTEGER PRIMARY KEY, client_id TEXT NOT NULL REFERENCES clients(id), quarter TEXT NOT NULL, active_users INTEGER NOT NULL, adoption INTEGER NOT NULL, tickets INTEGER NOT NULL, csat REAL NOT NULL, updated_at TEXT NOT NULL, UNIQUE(client_id,quarter));
+CREATE INDEX clients_owner_idx ON clients(owner_email);
+CREATE INDEX integrations_client_idx ON integrations(client_id);
+CREATE INDEX tickets_client_idx ON tickets(client_id);
+CREATE INDEX themes_client_idx ON weekly_themes(client_id);
+CREATE INDEX metrics_client_idx ON quarterly_metrics(client_id,quarter);

@@ -47,20 +47,23 @@ function agent(): AgentConfig {
 beforeEach(async () => {
   root = await fs.mkdtemp(path.join(os.tmpdir(), "canvas-test-"));
   workspace = path.join(root, "agent");
-  await fs.mkdir(path.join(workspace, "dashboards"), { recursive: true });
+  await fs.mkdir(path.join(workspace, "data", "dashboards"), {
+    recursive: true,
+  });
   await fs.mkdir(path.join(workspace, "data"), { recursive: true });
   registry = new DashboardRegistry(path.join(root, "registry.json"));
 });
 
 afterEach(async () => {
   vi.restoreAllMocks();
+  vi.unstubAllEnvs();
   await canvasExtension.stop();
   await fs.rm(root, { recursive: true, force: true });
 });
 
 describe("dashboard registry and tool", () => {
   it("keeps a stable unguessable link across edits and lists updated files", async () => {
-    const file = path.join(workspace, "dashboards", "hello.html");
+    const file = path.join(workspace, "data", "dashboards", "hello.html");
     await fs.writeFile(file, "<h1>one</h1>");
     await canvasExtension.start({
       getDataDir: () => root,
@@ -95,7 +98,7 @@ describe("dashboard registry and tool", () => {
 
   it("discovers and links dashboard files when listing", async () => {
     await fs.writeFile(
-      path.join(workspace, "dashboards", "hello.html"),
+      path.join(workspace, "data", "dashboards", "hello.html"),
       "<h1>hello</h1>"
     );
     await canvasExtension.start({
@@ -122,7 +125,7 @@ describe("dashboard registry and tool", () => {
   it("reports query errors through dashboard_link", async () => {
     new Database(path.join(workspace, "data", "bad.db")).close();
     await fs.writeFile(
-      path.join(workspace, "dashboards", "bad.html"),
+      path.join(workspace, "data", "dashboards", "bad.html"),
       `<script type="application/sql" data-name="broken" data-db="data/bad.db">select * from missing</script>`
     );
     await canvasExtension.start({ getDataDir: () => root } as never);
@@ -136,7 +139,7 @@ describe("dashboard registry and tool", () => {
   });
 
   it("continues listing when one dashboard becomes unavailable", async () => {
-    const dashboards = path.join(workspace, "dashboards");
+    const dashboards = path.join(workspace, "data", "dashboards");
     await fs.writeFile(path.join(dashboards, "gone.html"), "gone");
     await fs.writeFile(path.join(dashboards, "hello.html"), "hello");
     const open = fs.open.bind(fs);
@@ -172,23 +175,77 @@ describe("dashboard registry and tool", () => {
     );
   });
 
+  it("reads host dashboards from data/dashboards, not dashboards/", async () => {
+    await fs.writeFile(
+      path.join(workspace, "data", "dashboards", "new.html"),
+      "new"
+    );
+    await fs.mkdir(path.join(workspace, "dashboards"));
+    await fs.writeFile(path.join(workspace, "dashboards", "old.html"), "old");
+    const file = await openDashboardFile(agent(), "new.html");
+    await file.close();
+    await expect(openDashboardFile(agent(), "old.html")).rejects.toThrow(
+      "Dashboard not found: data/dashboards/old.html"
+    );
+  });
+
+  it("links sandboxed dashboards and queries data/ from the data directory", async () => {
+    vi.stubEnv("YOPLAI_HOME", path.join(root, "home"));
+    const sandboxed = { ...agent(), sandbox: { enabled: true } } as AgentConfig;
+    const dataDir = getAgentDataDir(resolveHomeDir(), sandboxed.id);
+    await fs.mkdir(path.join(dataDir, "dashboards"), { recursive: true });
+    const db = new Database(path.join(dataDir, "x.db"));
+    db.exec("create table items(id integer); insert into items values (7)");
+    db.close();
+    await fs.writeFile(
+      path.join(dataDir, "dashboards", "box.html"),
+      `<script type="application/sql" data-name="items" data-db="data/x.db">select id from items</script>`
+    );
+    await canvasExtension.start({ getDataDir: () => root } as never);
+    const [tool] = await canvasExtension.getAgentTools!(sandboxed, { config });
+    const result = (await tool.execute({ slug: "box.html" }, {} as never)) as {
+      queryErrors: unknown[];
+    };
+    expect(result.queryErrors).toEqual([]);
+    const queried = await executeDashboardQueries(
+      sandboxed,
+      `<script type="application/sql" data-name="items" data-db="data/x.db">select id from items</script>`,
+      {}
+    );
+    expect(queried).toEqual({ data: { items: [{ id: 7 }] }, errors: [] });
+
+    new Database(path.join(root, "home", "agents", "x.db")).close();
+    for (const database of ["x.db", "../x.db", "data/../../x.db", "data/"]) {
+      await expect(
+        resolveDashboardDatabase(sandboxed, database)
+      ).rejects.toThrow(
+        "Sandboxed dashboards can only read databases under data/"
+      );
+    }
+    await expect(
+      resolveDashboardDatabase(sandboxed, path.join(dataDir, "x.db"))
+    ).rejects.toThrow("relative to the workspace root");
+  });
+
   it("rejects symlinked dashboard files and directories", async () => {
     const outside = path.join(root, "outside.html");
     await fs.writeFile(outside, "secret");
     await fs.symlink(
       outside,
-      path.join(workspace, "dashboards", "linked.html")
+      path.join(workspace, "data", "dashboards", "linked.html")
     );
     await expect(openDashboardFile(agent(), "linked.html")).rejects.toThrow(
       "Dashboard not found"
     );
 
-    await fs.rm(path.join(workspace, "dashboards"), { recursive: true });
+    await fs.rm(path.join(workspace, "data", "dashboards"), {
+      recursive: true,
+    });
     await fs.mkdir(path.join(root, "outside"));
     await fs.writeFile(path.join(root, "outside", "hello.html"), "secret");
     await fs.symlink(
       path.join(root, "outside"),
-      path.join(workspace, "dashboards")
+      path.join(workspace, "data", "dashboards")
     );
     await expect(openDashboardFile(agent(), "hello.html")).rejects.toThrow(
       "Dashboard not found"
@@ -242,7 +299,7 @@ describe("dashboard viewer", () => {
 
   it("serves the current file with the sandbox CSP to a member", async () => {
     await fs.writeFile(
-      path.join(workspace, "dashboards", "hello.html"),
+      path.join(workspace, "data", "dashboards", "hello.html"),
       "<script>fetch('/api/me',{credentials:'include'})</script>"
     );
     const { app: routes, entry } = await app({}, true);
@@ -255,7 +312,7 @@ describe("dashboard viewer", () => {
       "connect-src 'none'"
     );
     await fs.writeFile(
-      path.join(workspace, "dashboards", "hello.html"),
+      path.join(workspace, "data", "dashboards", "hello.html"),
       "<h1>edited</h1>"
     );
     expect(await (await routes.request(`/${entry.id}`)).text()).toContain(
@@ -272,11 +329,11 @@ describe("dashboard viewer", () => {
     db.close();
     const dashboard = `<script type="application/sql" data-name="items" data-db="data/live.db">select label from items where owner = :viewer_email and id = :id</script><script type="application/sql" data-name="summary" data-db="data/live.db">select count(*) as count, :viewer_name as viewer_name, :today as today from items</script><script>window.seen=YOPLAI.data.items</script>`;
     await fs.writeFile(
-      path.join(workspace, "dashboards", "hello.html"),
+      path.join(workspace, "data", "dashboards", "hello.html"),
       dashboard
     );
     await fs.writeFile(
-      path.join(workspace, "dashboards", "detail.html"),
+      path.join(workspace, "data", "dashboards", "detail.html"),
       "<h1>detail</h1>"
     );
     const { app: routes, entry } = await app(
@@ -314,7 +371,7 @@ describe("dashboard viewer", () => {
     db.exec("create table items(id text); insert into items values ('safe')");
     db.close();
     await fs.writeFile(
-      path.join(workspace, "dashboards", "hello.html"),
+      path.join(workspace, "data", "dashboards", "hello.html"),
       `<script type="application/sql" data-name="items" data-db="data/safe.db">select id from items where id = :id</script>`
     );
     const { app: routes, entry } = await app({}, true);
@@ -329,7 +386,7 @@ describe("dashboard viewer", () => {
     const databasePath = path.join(workspace, "data", "bad.db");
     new Database(databasePath).close();
     await fs.writeFile(
-      path.join(workspace, "dashboards", "hello.html"),
+      path.join(workspace, "data", "dashboards", "hello.html"),
       `<script type="application/sql" data-name="broken" data-db="data/bad.db">select * from missing</script>`
     );
     const { app: routes, entry } = await app({}, true);
@@ -364,9 +421,7 @@ describe("dashboard kit assets", () => {
   it("sandboxes the sample.html asset with the dashboard CSP but not kit.js", async () => {
     const routes = createDashboardAssetRoutes(() => config);
     const sample = await routes.request("/v1/sample.html");
-    expect(sample.headers.get("content-security-policy")).toMatch(
-      /^sandbox/
-    );
+    expect(sample.headers.get("content-security-policy")).toMatch(/^sandbox/);
     const kit = await routes.request("/v1/kit.js");
     expect(kit.headers.get("content-security-policy")).toBeNull();
   });

@@ -8,7 +8,7 @@
     "aihub": "./dist/cli/index.js"
   },
   "scripts": {
-    "build": "tsc && mkdir -p dist/canvas/assets && cp -R src/canvas/assets/. dist/canvas/assets/",
+    "build": "tsc && mkdir -p dist/canvas/assets dist/skills && cp -R src/canvas/assets/. dist/canvas/assets/ && cp -R src/skills/. dist/skills/",
     "dev": "tsx watch src/index.ts",
     "start": "node dist/cli/index.js gateway"
   },

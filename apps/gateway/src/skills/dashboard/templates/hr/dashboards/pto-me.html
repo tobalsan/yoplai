@@ -1,0 +1,40 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width" />
+    <title>My PTO</title>
+    <link rel="stylesheet" href="/d-assets/v1/kit.css" />
+    <script src="/d-assets/v1/kit.js"></script>
+  </head>
+  <body>
+    <main>
+      <h1>My PTO</h1>
+      <div id="summary"></div>
+      <div id="pto"></div>
+    </main>
+    <script type="application/sql" data-name="pto" data-db="data/hr.db">
+      SELECT start_date,end_date,days,status,type FROM pto WHERE lower(employee_email)=lower(:viewer_email) ORDER BY start_date
+    </script>
+    <script>
+      const rows = YOPLAI.data.pto;
+      DashboardKit.kpi("#summary", {
+        label: "Approved days",
+        value: rows
+          .filter((r) => r.status === "Approved")
+          .reduce((n, r) => n + r.days, 0),
+      });
+      DashboardKit.table("#pto", {
+        filename: "my-pto.csv",
+        columns: [
+          { key: "start_date", label: "Start" },
+          { key: "end_date", label: "End" },
+          { key: "days", label: "Days" },
+          { key: "type", label: "Type" },
+          { key: "status", label: "Status" },
+        ],
+        rows,
+      });
+    </script>
+  </body>
+</html>

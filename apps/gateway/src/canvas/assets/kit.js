@@ -214,7 +214,11 @@
       backgroundColor: "transparent",
       textStyle: { color: color("--dk-text") },
       title: { textStyle: { color: color("--dk-text") } },
-      legend: { textStyle: { color: color("--dk-muted") } },
+      legend: {
+        top: "bottom",
+        textStyle: { color: color("--dk-muted") },
+      },
+      grid: { top: 24, bottom: 40, containLabel: true },
       categoryAxis: {
         axisLabel: { color: color("--dk-muted") },
         axisLine: { lineStyle: { color: color("--dk-border") } },

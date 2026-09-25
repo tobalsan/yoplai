@@ -1,0 +1,26 @@
+{
+  "skill_name": "dashboard",
+  "evals": [
+    {
+      "id": 0,
+      "name": "pto-team-slack",
+      "prompt": "Henry asks in Slack: make me a PTO dashboard for my team.",
+      "expected_output": "Creates data/hr.db plus data/dashboards/pto-team.html from the HR starter, validates the :viewer_email query with henry@example.com, calls dashboard_link, and replies in the same Slack thread with the absolute clickable link.",
+      "files": []
+    },
+    {
+      "id": 1,
+      "name": "cs-wiki-to-qbr",
+      "prompt": "Turn data/wiki/clients.md into a customer dashboard with client drill-downs and printable QBRs.",
+      "expected_output": "Rebuilds data/cs.db from the authoritative markdown, creates clients.html, client.html, and qbr.html, validates concrete viewer/id/quarter queries, confirms clients → client → QBR links, calls dashboard_link for all three, and returns absolute links.",
+      "files": ["templates/cs/wiki/clients.md"]
+    },
+    {
+      "id": 2,
+      "name": "maintain-existing",
+      "prompt": "Change Acme's health to Yellow and add CSAT to the existing client dashboard.",
+      "expected_output": "Updates the existing client row and updated_at, surgically edits the existing client.html instead of replacing it, reruns affected SQL with a concrete id, calls dashboard_link again, and returns the stable absolute link without exposing secrets.",
+      "files": []
+    }
+  ]
+}

@@ -4,7 +4,7 @@ import { fork } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { AgentConfig } from "@yoplai/shared";
-import { dashboardDirectory } from "./index.js";
+import { dashboardDatabasePath } from "./index.js";
 
 export const DASHBOARD_QUERY_ROW_LIMIT = 5_000;
 export const DASHBOARD_QUERY_TIMEOUT_MS = 2_000;
@@ -70,23 +70,19 @@ export function parseDashboardQueries(html: string): DashboardQuery[] {
 export async function resolveDashboardDatabase(
   agent: AgentConfig,
   database: string
-): Promise<string> {
-  const root = path.dirname(dashboardDirectory(agent));
-  if (!database || path.isAbsolute(database))
-    throw new Error(
-      "Database path must be relative to the agent data directory"
-    );
-  const realRoot = await fs.realpath(root);
-  const realDatabase = await fs.realpath(path.resolve(root, database));
+): Promise<{ root: string; database: string }> {
+  const location = dashboardDatabasePath(agent, database);
+  const realRoot = await fs.realpath(location.root);
+  const realDatabase = await fs.realpath(location.path);
   const relative = path.relative(realRoot, realDatabase);
   if (
     relative === ".." ||
     relative.startsWith(`..${path.sep}`) ||
     path.isAbsolute(relative)
   ) {
-    throw new Error("Database path escapes the agent data directory");
+    throw new Error("Database path escapes the agent workspace");
   }
-  return realDatabase;
+  return { root: realRoot, database: realDatabase };
 }
 
 export function runDashboardQuery(
@@ -281,8 +277,10 @@ export async function executeDashboardQueries(
   }
   for (const query of queries) {
     try {
-      const database = await resolveDashboardDatabase(agent, query.database);
-      const root = await fs.realpath(path.dirname(dashboardDirectory(agent)));
+      const { root, database } = await resolveDashboardDatabase(
+        agent,
+        query.database
+      );
       const queryBindings = { ...bindings };
       for (const match of query.sql.matchAll(/[:@$]([A-Za-z_]\w*)/g)) {
         queryBindings[match[1]] ??= null;
