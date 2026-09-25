@@ -1,4 +1,4 @@
-import { randomBytes } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
 
@@ -6,14 +6,40 @@ export type DashboardRegistration = {
   id: string;
   agentId: string;
   slug: string;
+  versions?: DashboardVersion[];
 };
+
+export type DashboardVersion = {
+  id: string;
+  createdAt: string;
+  hash: string;
+};
+
+export const DASHBOARD_VERSION_LIMIT = 20;
 
 type Registry = { dashboards: DashboardRegistration[] };
 
-export class DashboardRegistry {
-  private pendingWrite: Promise<void> = Promise.resolve();
+const pendingWrites = new Map<string, Promise<void>>();
 
+export class DashboardRegistry {
   constructor(private readonly file: string) {}
+
+  private async mutate<T>(operation: () => Promise<T>): Promise<T> {
+    const previous = pendingWrites.get(this.file) ?? Promise.resolve();
+    const current = previous.then(operation, operation);
+    const settled = current.then(
+      () => undefined,
+      () => undefined
+    );
+    pendingWrites.set(this.file, settled);
+    try {
+      return await current;
+    } finally {
+      if (pendingWrites.get(this.file) === settled) {
+        pendingWrites.delete(this.file);
+      }
+    }
+  }
 
   private async read(): Promise<Registry> {
     try {
@@ -59,13 +85,85 @@ export class DashboardRegistry {
       await fs.writeFile(temporary, `${JSON.stringify(registry, null, 2)}\n`);
       await fs.rename(temporary, this.file);
     };
-    const operation = this.pendingWrite.then(write, write);
-    this.pendingWrite = operation.then(
-      () => undefined,
-      () => undefined
-    );
-    await operation;
+    await this.mutate(write);
     if (!result) throw new Error("Dashboard registry write failed");
     return result!;
+  }
+
+  async recordVersion(
+    registrationId: string,
+    content: string
+  ): Promise<DashboardVersion | undefined> {
+    let result: DashboardVersion | undefined;
+    const write = async () => {
+      const registry = await this.read();
+      const entry = registry.dashboards.find(
+        (dashboard) => dashboard.id === registrationId
+      );
+      if (!entry) throw new Error("Dashboard registration not found");
+
+      const hash = createHash("sha256").update(content).digest("hex");
+      if (entry.versions?.at(-1)?.hash === hash) return;
+
+      result = {
+        id: `${Date.now().toString(36)}-${randomBytes(6).toString("hex")}`,
+        createdAt: new Date().toISOString(),
+        hash,
+      };
+      const directory = path.join(
+        path.dirname(this.file),
+        "versions",
+        registrationId
+      );
+      await fs.mkdir(directory, { recursive: true });
+      await fs.writeFile(path.join(directory, `${result.id}.html`), content);
+
+      const versions = [...(entry.versions ?? []), result];
+      const pruned = versions.slice(0, -DASHBOARD_VERSION_LIMIT);
+      entry.versions = versions.slice(-DASHBOARD_VERSION_LIMIT);
+      await this.write(registry);
+      await Promise.all(
+        pruned.map((version) =>
+          fs.rm(path.join(directory, `${version.id}.html`), { force: true })
+        )
+      );
+    };
+    await this.mutate(write);
+    return result;
+  }
+
+  async listVersions(registrationId: string): Promise<DashboardVersion[]> {
+    const entry = (await this.read()).dashboards.find(
+      (dashboard) => dashboard.id === registrationId
+    );
+    return [...(entry?.versions ?? [])].reverse();
+  }
+
+  async readVersion(
+    registrationId: string,
+    versionId: string
+  ): Promise<string> {
+    const entry = (await this.read()).dashboards.find(
+      (dashboard) => dashboard.id === registrationId
+    );
+    if (!entry?.versions?.some((version) => version.id === versionId)) {
+      throw new Error("Dashboard version not found");
+    }
+    return fs.readFile(
+      path.join(
+        path.dirname(this.file),
+        "versions",
+        registrationId,
+        `${versionId}.html`
+      ),
+      "utf8"
+    );
+  }
+
+  private async write(registry: Registry): Promise<void> {
+    await fs.mkdir(path.dirname(this.file), { recursive: true });
+    const temporary = `${this.file}.${process.pid}.${randomBytes(6).toString("hex")}.tmp`;
+    await fs.writeFile(temporary, `${JSON.stringify(registry, null, 2)}\n`);
+    await fs.rename(temporary, this.file);
   }
 }
