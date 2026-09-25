@@ -1,11 +1,16 @@
+import fs from "node:fs/promises";
 import { Hono } from "hono";
 import type { AgentConfig, GatewayConfig } from "@yoplai/shared";
 import {
   dashboardBaseUrl,
+  dashboardDirectory,
   normalizeDashboardSlug,
   openDashboardFile,
 } from "./index.js";
 import { DashboardRegistry } from "./store.js";
+import { executeDashboardQueries } from "./sql.js";
+
+type Viewer = { email?: string; name?: string };
 
 export type DashboardRouteDependencies = {
   getConfig(): GatewayConfig;
@@ -52,6 +57,46 @@ export function createDashboardRoutes(deps: DashboardRouteDependencies): Hono {
       } finally {
         await file.close();
       }
+      const viewer =
+        typeof auth === "object" && auth && "user" in auth
+          ? ((auth as { user?: Viewer }).user ?? {})
+          : {};
+      const url = new URL(c.req.url);
+      const params = Object.fromEntries(url.searchParams.entries());
+      const bindings: Record<string, string | null> = {
+        ...params,
+        viewer_email: viewer.email ?? null,
+        viewer_name: viewer.name ?? null,
+        today: new Date().toISOString().slice(0, 10),
+      };
+      const result = await executeDashboardQueries(agent, html, bindings);
+      const files = await fs.readdir(dashboardDirectory(agent), {
+        withFileTypes: true,
+      });
+      const dashboards = await Promise.all(
+        files
+          .filter((file) => file.isFile())
+          .map((file) => file.name)
+          .filter((file) => {
+            try {
+              normalizeDashboardSlug(file);
+              return true;
+            } catch {
+              return false;
+            }
+          })
+          .map((file) => deps.registry.link(agent.id, file))
+      );
+      const links = Object.fromEntries(
+        dashboards.map((dashboard) => [dashboard.slug, `/d/${dashboard.id}`])
+      );
+      html = injectDashboardRuntime(html, {
+        data: result.data,
+        viewer: { email: viewer.email ?? null, name: viewer.name ?? null },
+        params,
+        links,
+        errors: result.errors,
+      });
       c.header("Content-Security-Policy", dashboardCsp(config));
       c.header("Cache-Control", "no-store");
       return c.html(html);
@@ -62,4 +107,40 @@ export function createDashboardRoutes(deps: DashboardRouteDependencies): Hono {
     }
   });
   return routes;
+}
+
+function safeJson(value: unknown): string {
+  return JSON.stringify(value)
+    .replaceAll("<", "\\u003c")
+    .replaceAll("\u2028", "\\u2028")
+    .replaceAll("\u2029", "\\u2029");
+}
+
+export function injectDashboardRuntime(
+  html: string,
+  runtime: {
+    data: Record<string, unknown[]>;
+    viewer: { email: string | null; name: string | null };
+    params: Record<string, string>;
+    links: Record<string, string>;
+    errors: Array<{ name: string; error: string }>;
+  }
+): string {
+  const bootstrap = `<script>(function(r){const build=(base,p)=>{const u=new URL(base,location.origin);for(const [k,v] of Object.entries(p||{}))u.searchParams.set(k,String(v));return u.pathname+u.search};window.YOPLAI={data:r.data,viewer:r.viewer,params:r.params,link:(slug,p)=>{const base=r.links[slug];if(!base)throw new Error("Unknown dashboard: "+slug);return build(base,p)}}})(${safeJson(runtime)});</script>`;
+  const errors = runtime.errors.length
+    ? `<section role="alert" style="font:14px sans-serif;background:#fee;color:#900;border:1px solid #d88;padding:12px;margin:12px"><strong>Dashboard query error</strong>${runtime.errors.map((error) => `<div><code>${escapeHtml(error.name)}</code>: ${escapeHtml(error.error)}</div>`).join("")}</section>`
+    : "";
+  const insertion = `${bootstrap}${errors}`;
+  const doctype = html.match(/^\s*<!doctype[^>]*>/i);
+  return doctype
+    ? `${html.slice(0, doctype[0].length)}${insertion}${html.slice(doctype[0].length)}`
+    : `${insertion}${html}`;
+}
+
+function escapeHtml(value: string): string {
+  return value
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;");
 }
