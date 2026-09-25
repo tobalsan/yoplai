@@ -15,6 +15,8 @@ Breaking changes are marked **⚠ BREAKING**.
 
 - Agents can publish self-contained HTML files from their `dashboards/` directory through stable, team-authorized, CSP-sandboxed Canvas links using the `dashboard_link` tool.
 
+- Agents can trigger a manual run of their own scheduler jobs with the `scheduler.run_job` tool.
+
 ### Changed
 
 - Multi-user mode no longer requires `oauth.google`; any configured sign-in method is enough. `/api/capabilities` now reports `authMethods`.

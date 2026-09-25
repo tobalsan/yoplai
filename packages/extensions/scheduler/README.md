@@ -415,6 +415,7 @@ When `extensions.scheduler.enabled` is not `false`, agents receive scheduler too
 - `scheduler.create_job`
 - `scheduler.update_job`
 - `scheduler.delete_job`
+- `scheduler.run_job` (manual run now, detached; same as `POST /api/schedules/:agentId/:id/run`)
 - `scheduler.get_latest_output`
 
 Tools use raw cron + timezone input, generate job ids server-side, create enabled jobs by default, and support optional `sessionId`. They do not expose model or reasoning overrides. `create_job`/`update_job` accept `script`, `noAgent`, and `quietOutput` alongside `message`, following the same shape rules as the payload schema (see Job shapes above), plus an optional `timeoutMs`: the per-run timeout in milliseconds (default 30 minutes; falls back to `extensions.scheduler.jobTimeoutMs`, then the 30-minute built-in). `update_job` only changes payload fields you pass; omitted fields keep their existing value.

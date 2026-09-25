@@ -103,6 +103,11 @@ describe("scheduler agent tools", () => {
     expect(cleared.job.payload).toMatchObject({ message: "Run updated" });
     expect(cleared.job.payload.sessionId).toBeUndefined();
 
+    const run = await byName.get("scheduler.run_job")!.execute({ jobId }, { agent: alpha, config }) as { ok: boolean; status?: string };
+    expect(run).toMatchObject({ ok: true, status: "accepted" });
+    const betaRun = await byName.get("scheduler.run_job")!.execute({ jobId }, { agent: beta, config }) as { ok: boolean };
+    expect(betaRun.ok).toBe(false);
+
     const deleted = await byName.get("scheduler.delete_job")!.execute({ jobId }, { agent: alpha, config }) as { ok: boolean };
     expect(deleted.ok).toBe(true);
   });

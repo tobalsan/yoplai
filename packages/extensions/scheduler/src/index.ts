@@ -322,6 +322,25 @@ function schedulerAgentTools(): ExtensionAgentTool[] {
       },
     },
     {
+      name: "scheduler.run_job",
+      description:
+        "Trigger one of this agent's scheduler jobs immediately, outside its cron schedule. Runs in the background; use scheduler.get_latest_output later to read the result.",
+      parameters: {
+        type: "object",
+        properties: { jobId: { type: "string" } },
+        required: ["jobId"],
+      },
+      async execute(args, { agent }) {
+        try {
+          const input = jobIdToolSchema.parse(args);
+          const result = await getScheduler().runNowDetached(agent.id, input.jobId);
+          return { ok: true, status: result.status, sessionId: result.sessionId, firedAt: result.firedAt };
+        } catch (error) {
+          return toolError(error);
+        }
+      },
+    },
+    {
       name: "scheduler.get_latest_output",
       description:
         "Get a bounded preview of one scheduler job's latest output. First call scheduler.list_jobs, then pass the selected job's id as jobId. If output is not found, that job has not produced stored output yet.",
