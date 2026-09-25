@@ -1,0 +1,177 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width" />
+    <title>Dashboard Kit</title>
+    <link rel="stylesheet" href="/d-assets/v1/kit.css" />
+    <script src="/d-assets/v1/echarts.js"></script>
+    <script src="/d-assets/v1/marked.js"></script>
+    <script src="/d-assets/v1/purify.js"></script>
+    <script src="/d-assets/v1/kit.js"></script>
+  </head>
+  <body>
+    <main>
+      <h1>Dashboard Kit sample</h1>
+      <div class="dk-grid">
+        <div id="kpi"></div>
+        <div id="list"></div>
+      </div>
+      <div id="filters"></div>
+      <div id="table"></div>
+      <div id="tabs"></div>
+      <div id="markdown"></div>
+      <div class="dk-grid" id="charts"></div>
+    </main>
+    <script>
+      DashboardKit.kpi("#kpi", {
+        label: "Revenue",
+        value: "€1.2M",
+        delta: "+12%",
+        direction: "up",
+      });
+      DashboardKit.list("#list", {
+        items: [
+          { label: "North", value: "€420k", href: "?region=north" },
+          { label: "West", value: "€310k", href: "?region=west" },
+        ],
+      });
+      DashboardKit.filters("#filters", {
+        fields: [
+          {
+            type: "select",
+            name: "team",
+            label: "Team",
+            options: [
+              { label: "All", value: "all" },
+              { label: "Sales", value: "sales" },
+            ],
+          },
+          { type: "date", name: "from", label: "From" },
+          { type: "date", name: "to", label: "To" },
+          {
+            type: "range",
+            name: "confidence",
+            label: "Confidence",
+            min: "0",
+            max: "100",
+            value: "70",
+          },
+        ],
+        onChange: console.log,
+      });
+      DashboardKit.table("#table", {
+        filename: "sample.csv",
+        columns: [
+          { key: "name", label: "Name" },
+          { key: "value", label: "Value" },
+        ],
+        rows: [
+          { name: "Alpha", value: 30 },
+          { name: "Beta", value: 20 },
+        ],
+      });
+      DashboardKit.tabs("#tabs", {
+        tabs: [
+          { id: "summary", label: "Summary", content: "Quarter summary" },
+          { id: "notes", label: "Notes", content: "Forecast notes" },
+        ],
+      });
+      DashboardKit.md(
+        "#markdown",
+        "## Safe markdown\n\n**Bold**, links, and lists are supported."
+      );
+      const charts = [
+        [
+          "bar",
+          {
+            xAxis: { type: "category", data: ["A", "B"] },
+            yAxis: {},
+            series: [{ type: "bar", data: [3, 7] }],
+          },
+        ],
+        [
+          "line",
+          {
+            xAxis: { type: "category", data: ["A", "B"] },
+            yAxis: {},
+            series: [{ type: "line", data: [3, 7] }],
+          },
+        ],
+        [
+          "donut",
+          {
+            series: [
+              {
+                type: "pie",
+                radius: ["45%", "70%"],
+                data: [
+                  { value: 3, name: "A" },
+                  { value: 7, name: "B" },
+                ],
+              },
+            ],
+          },
+        ],
+        ["gauge", { series: [{ type: "gauge", data: [{ value: 72 }] }] }],
+        [
+          "heatmap",
+          {
+            xAxis: { type: "category", data: ["A", "B"] },
+            yAxis: { type: "category", data: ["X", "Y"] },
+            visualMap: { min: 0, max: 9 },
+            series: [
+              {
+                type: "heatmap",
+                data: [
+                  [0, 0, 3],
+                  [1, 1, 8],
+                ],
+              },
+            ],
+          },
+        ],
+        [
+          "funnel",
+          {
+            series: [
+              {
+                type: "funnel",
+                data: [
+                  { value: 100, name: "Visit" },
+                  { value: 45, name: "Buy" },
+                ],
+              },
+            ],
+          },
+        ],
+        [
+          "tree",
+          {
+            series: [
+              {
+                type: "tree",
+                data: [
+                  {
+                    name: "CEO",
+                    children: [{ name: "Sales" }, { name: "Product" }],
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+      ];
+      const host = document.querySelector("#charts");
+      const chartTargets = charts.map(([name, option]) => {
+        const section = document.createElement("section");
+        section.innerHTML = "<h2>" + name + '</h2><div class="dk-chart"></div>';
+        host.append(section);
+        return [section.lastChild, option];
+      });
+      chartTargets.forEach(([target, option]) =>
+        DashboardKit.chart(target, option)
+      );
+    </script>
+  </body>
+</html>

@@ -11,6 +11,8 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Added
 
+- Canvas dashboards now have a versioned public Dashboard Kit with light/dark and A4 print themes, common interactive components, sanitized Markdown, CSV export, and vendored ECharts charting.
+
 - Canvas dashboards can run confined read-only SQLite queries on every load with bound viewer/URL parameters, capped results, drill-down links, and visible query diagnostics.
 - Multi-user mode supports email/password sign-in (`extensions.multiUser.emailAndPassword.enabled`), with a sign-in / create-account form on the login page.
 

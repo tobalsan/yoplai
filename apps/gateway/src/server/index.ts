@@ -19,7 +19,7 @@ import type { ExtensionRuntime } from "../extensions/runtime.js";
 import { WsBroker, type WsBrokerAuthAdapter } from "./ws-broker.js";
 import { accessLogger } from "./access-log.js";
 import { getAgent, CONFIG_DIR } from "../config/index.js";
-import { createDashboardRoutes } from "../canvas/routes.js";
+import { createDashboardAssetRoutes, createDashboardRoutes } from "../canvas/routes.js";
 import { DashboardRegistry } from "../canvas/store.js";
 
 type RequestAuthContext =
@@ -104,6 +104,7 @@ app.use(
 );
 app.use("*", accessLogger());
 app.route("/internal", internalTools);
+app.route("/d-assets", createDashboardAssetRoutes());
 app.route(
   "/d",
   createDashboardRoutes({

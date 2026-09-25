@@ -10,6 +10,44 @@ import {
 import { DashboardRegistry } from "./store.js";
 import { executeDashboardQueries } from "./sql.js";
 
+const ASSET_VERSION = "v1";
+const IMMUTABLE_CACHE = "public, max-age=31536000, immutable";
+const ASSETS = {
+  "kit.js": {
+    url: new URL("./assets/kit.js", import.meta.url),
+    type: "text/javascript; charset=utf-8",
+  },
+  "kit.css": {
+    url: new URL("./assets/kit.css", import.meta.url),
+    type: "text/css; charset=utf-8",
+  },
+  "sample.html": {
+    url: new URL("./assets/sample.html", import.meta.url),
+    type: "text/html; charset=utf-8",
+  },
+  "echarts.js": {
+    url: new URL(
+      "../../node_modules/echarts/dist/echarts.min.js",
+      import.meta.url
+    ),
+    type: "text/javascript; charset=utf-8",
+  },
+  "marked.js": {
+    url: new URL(
+      "../../node_modules/marked/lib/marked.umd.js",
+      import.meta.url
+    ),
+    type: "text/javascript; charset=utf-8",
+  },
+  "purify.js": {
+    url: new URL(
+      "../../node_modules/dompurify/dist/purify.min.js",
+      import.meta.url
+    ),
+    type: "text/javascript; charset=utf-8",
+  },
+} as const;
+
 type Viewer = { email?: string; name?: string };
 
 export type DashboardRouteDependencies = {
@@ -23,6 +61,29 @@ export type DashboardRouteDependencies = {
 export function dashboardCsp(config: GatewayConfig): string {
   const assets = `${dashboardBaseUrl(config)}/d-assets/`;
   return `sandbox allow-scripts allow-downloads allow-modals; default-src 'none'; script-src 'unsafe-inline' ${assets}; style-src 'unsafe-inline' ${assets}; img-src data: blob:; font-src data: ${assets}; connect-src 'none'`;
+}
+
+export function createDashboardAssetRoutes(): Hono {
+  const routes = new Hono();
+  routes.get("/:asset", (c) => {
+    const asset = c.req.param("asset");
+    if (asset !== "kit.js" && asset !== "kit.css") return c.notFound();
+    c.header("Cache-Control", "public, max-age=300");
+    return c.redirect(`/d-assets/${ASSET_VERSION}/${asset}`, 302);
+  });
+  routes.get(`/${ASSET_VERSION}/:asset`, async (c) => {
+    const asset = ASSETS[c.req.param("asset") as keyof typeof ASSETS];
+    if (!asset) return c.notFound();
+    const body = await fs.readFile(asset.url);
+    return new Response(body, {
+      headers: {
+        "Content-Type": asset.type,
+        "Cache-Control": IMMUTABLE_CACHE,
+        "X-Content-Type-Options": "nosniff",
+      },
+    });
+  });
+  return routes;
 }
 
 export function createDashboardRoutes(deps: DashboardRouteDependencies): Hono {
