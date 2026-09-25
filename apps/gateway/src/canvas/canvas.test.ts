@@ -370,6 +370,140 @@ describe("dashboard registry and tool", () => {
     ).rejects.toThrow("relative to the workspace root");
   });
 
+  it.each([false, true])(
+    "deletes dashboard files, links, and versions idempotently (sandboxed: %s)",
+    async (sandboxed) => {
+      vi.stubEnv("YOPLAI_HOME", path.join(root, "home"));
+      const configuredAgent = sandboxed
+        ? ({ ...agent(), sandbox: { enabled: true } } as AgentConfig)
+        : agent();
+      const dashboards = dashboardDirectory(configuredAgent);
+      await fs.mkdir(dashboards, { recursive: true });
+      const file = path.join(dashboards, "hello.html");
+      const database = path.join(path.dirname(dashboards), "shared.db");
+      await fs.writeFile(file, "<h1>first</h1>");
+      await fs.writeFile(database, "preserve");
+      await canvasExtension.start({ getDataDir: () => root } as never);
+      const toolRegistry = getDashboardRegistry(
+        path.join(root, "canvas", "registry.json")
+      );
+      const [linkTool, versionsTool, deleteTool] =
+        await canvasExtension.getAgentTools!(configuredAgent, { config });
+      const first = (await linkTool.execute(
+        { slug: "hello.html" },
+        {} as never
+      )) as { link: string };
+      await fs.writeFile(file, "<h1>second</h1>");
+      await versionsTool.execute({ slug: "hello.html" }, {} as never);
+      const registration = (await toolRegistry.list(configuredAgent.id))[0];
+      const versionsDirectory = path.join(
+        root,
+        "canvas",
+        "versions",
+        registration.id
+      );
+      const routes = createDashboardRoutes({
+        getConfig: () => config,
+        getAgent: () => configuredAgent,
+        registry: toolRegistry,
+        authenticate: async () => ({}),
+        hasAgentAccess: async () => true,
+      });
+
+      await expect(
+        deleteTool.execute({ slug: "hello.html" }, {} as never)
+      ).resolves.toEqual({
+        slug: "hello.html",
+        removed: { file: true, registry: true, versions: true },
+        message: "Dashboard deleted",
+      });
+      await expect(fs.access(file)).rejects.toThrow();
+      await expect(fs.access(versionsDirectory)).rejects.toThrow();
+      expect(await toolRegistry.list(configuredAgent.id)).toEqual([]);
+      expect(
+        await listAgentDashboards(configuredAgent, toolRegistry, config)
+      ).toEqual([]);
+      expect((await routes.request(new URL(first.link).pathname)).status).toBe(
+        404
+      );
+      expect(await fs.readFile(database, "utf8")).toBe("preserve");
+
+      await expect(
+        deleteTool.execute({ slug: "hello.html" }, {} as never)
+      ).resolves.toEqual({
+        slug: "hello.html",
+        removed: { file: false, registry: false, versions: false },
+        message: "Nothing to delete",
+      });
+
+      await fs.writeFile(file, "<h1>new</h1>");
+      const recreated = (await linkTool.execute(
+        { slug: "hello.html" },
+        {} as never
+      )) as { link: string };
+      expect(recreated.link).not.toBe(first.link);
+      const recreatedRegistration = (
+        await toolRegistry.list(configuredAgent.id)
+      )[0];
+      expect(
+        await toolRegistry.listVersions(recreatedRegistration.id)
+      ).toHaveLength(1);
+    }
+  );
+
+  it("does not follow a dashboard directory swapped during deletion", async () => {
+    const dashboards = dashboardDirectory(agent());
+    const outside = path.join(root, "outside");
+    const moved = path.join(root, "moved-dashboards");
+    await fs.mkdir(outside);
+    await fs.writeFile(path.join(dashboards, "hello.html"), "inside");
+    await fs.writeFile(path.join(outside, "hello.html"), "outside");
+    await canvasExtension.start({ getDataDir: () => root } as never);
+    const tools = await canvasExtension.getAgentTools!(agent(), { config });
+    await tools[0].execute({ slug: "hello.html" }, {} as never);
+
+    const realpath = fs.realpath.bind(fs);
+    let directoryChecks = 0;
+    vi.spyOn(fs, "realpath").mockImplementation(async (candidate) => {
+      if (String(candidate) === dashboards && ++directoryChecks === 3) {
+        await fs.rename(dashboards, moved);
+        await fs.symlink(outside, dashboards);
+      }
+      return realpath(candidate);
+    });
+
+    await expect(
+      tools[2].execute({ slug: "hello.html" }, {} as never)
+    ).rejects.toThrow("Dashboard not found");
+    expect(await fs.readFile(path.join(outside, "hello.html"), "utf8")).toBe(
+      "outside"
+    );
+  });
+
+  it("rejects unsafe registration ids without deleting outside versions", async () => {
+    const registryFile = path.join(root, "unsafe", "registry.json");
+    const outside = path.join(root, "outside-versions");
+    await fs.mkdir(path.dirname(registryFile), { recursive: true });
+    await fs.mkdir(outside);
+    await fs.writeFile(path.join(outside, "keep.html"), "keep");
+    await fs.writeFile(
+      registryFile,
+      JSON.stringify({
+        dashboards: [
+          { id: "../../outside-versions", agentId: "agent-1", slug: "x.html" },
+        ],
+      })
+    );
+    const unsafeRegistry = new DashboardRegistry(registryFile);
+
+    await expect(unsafeRegistry.delete("agent-1", "x.html")).rejects.toThrow(
+      "Invalid dashboard registration id"
+    );
+    expect(await fs.readFile(path.join(outside, "keep.html"), "utf8")).toBe(
+      "keep"
+    );
+  });
+
   it("rejects symlinked dashboard files and directories", async () => {
     const outside = path.join(root, "outside.html");
     await fs.writeFile(outside, "secret");

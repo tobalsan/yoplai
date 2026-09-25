@@ -21,6 +21,7 @@ Create a dashboard when the answer is recurring, data-heavy, or will be revisite
 6. Personalize with `:viewer_email`; use URL parameters for drill-downs. Never put credentials, tokens, private keys, or other secrets in HTML, SQL, URLs, or browser data.
 7. Validate every query before sharing. `dashboard_link` checks without a viewer or URL parameters, so personalized and drill-down queries may appear empty. Substitute a real email/id and run each query with `sqlite3`; confirm expected rows.
 8. Call `dashboard_link` after every create or update, and every time you share a dashboard link, even one published earlier. Reply on the current channel—web, Slack, Discord, or elsewhere—with the `link` it returns, copied exactly; never rewrite its host or path from memory or other docs. Never say only “it is in your dashboards tab.” When summarizing the dashboard in that reply, quote numbers only from the query results you actually ran with `sqlite3`; never compute or estimate figures in prose.
+9. When asked to remove a dashboard, call `dashboard_delete` with its slug. This removes the HTML, stable link, and saved versions while preserving shared `.db` files.
 
 ## Start from a template
 
