@@ -218,17 +218,30 @@
       categoryAxis: {
         axisLabel: { color: color("--dk-muted") },
         axisLine: { lineStyle: { color: color("--dk-border") } },
+        axisTick: { lineStyle: { color: color("--dk-border") } },
+        splitLine: { lineStyle: { color: color("--dk-border") } },
       },
       valueAxis: {
         axisLabel: { color: color("--dk-muted") },
         axisLine: { lineStyle: { color: color("--dk-border") } },
+        axisTick: { lineStyle: { color: color("--dk-border") } },
+        splitLine: { lineStyle: { color: color("--dk-border") } },
+      },
+      pie: {
+        label: { color: color("--dk-text") },
+        labelLine: { lineStyle: { color: color("--dk-border") } },
       },
       gauge: {
         axisLabel: { color: color("--dk-muted") },
+        splitLine: { lineStyle: { color: color("--dk-border") } },
+        axisTick: { lineStyle: { color: color("--dk-border") } },
         detail: { color: color("--dk-text") },
       },
       funnel: { label: { color: color("--dk-text") } },
-      tree: { label: { color: color("--dk-text") } },
+      tree: {
+        label: { color: color("--dk-text") },
+        lineStyle: { color: color("--dk-border") },
+      },
       visualMap: { textStyle: { color: color("--dk-text") } },
     });
     const instance = global.echarts.init(find(target), "dashboard-kit", {

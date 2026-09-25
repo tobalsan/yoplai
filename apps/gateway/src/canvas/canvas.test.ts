@@ -341,7 +341,7 @@ describe("dashboard viewer", () => {
 
 describe("dashboard kit assets", () => {
   it("serves only fixed versioned public assets with immutable caching", async () => {
-    const routes = createDashboardAssetRoutes();
+    const routes = createDashboardAssetRoutes(() => config);
     const response = await routes.request("/v1/kit.js");
     expect(response.status).toBe(200);
     expect(response.headers.get("cache-control")).toBe(
@@ -361,8 +361,18 @@ describe("dashboard kit assets", () => {
     expect((await routes.request("/echarts.js")).status).toBe(404);
   });
 
+  it("sandboxes the sample.html asset with the dashboard CSP but not kit.js", async () => {
+    const routes = createDashboardAssetRoutes(() => config);
+    const sample = await routes.request("/v1/sample.html");
+    expect(sample.headers.get("content-security-policy")).toMatch(
+      /^sandbox/
+    );
+    const kit = await routes.request("/v1/kit.js");
+    expect(kit.headers.get("content-security-policy")).toBeNull();
+  });
+
   it("sanitizes markdown and exports valid CSV", async () => {
-    const routes = createDashboardAssetRoutes();
+    const routes = createDashboardAssetRoutes(() => config);
     const dom = new JSDOM("<div id='markdown'></div>", {
       runScripts: "outside-only",
       url: "https://yoplai.test",

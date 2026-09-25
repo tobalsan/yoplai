@@ -27,6 +27,19 @@
   --dk-positive: #55c998;
   --dk-negative: #ff7f87;
 }
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --dk-bg: #10131a;
+    --dk-surface: #191e29;
+    --dk-text: #edf1f7;
+    --dk-muted: #a5aec0;
+    --dk-border: #343d50;
+    --dk-accent: #7aa2ff;
+    --dk-positive: #55c998;
+    --dk-negative: #ff7f87;
+  }
+}
 * {
   box-sizing: border-box;
 }

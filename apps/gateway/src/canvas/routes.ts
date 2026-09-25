@@ -63,7 +63,7 @@ export function dashboardCsp(config: GatewayConfig): string {
   return `sandbox allow-scripts allow-downloads allow-modals; default-src 'none'; script-src 'unsafe-inline' ${assets}; style-src 'unsafe-inline' ${assets}; img-src data: blob:; font-src data: ${assets}; connect-src 'none'`;
 }
 
-export function createDashboardAssetRoutes(): Hono {
+export function createDashboardAssetRoutes(getConfig: () => GatewayConfig): Hono {
   const routes = new Hono();
   routes.get("/:asset", (c) => {
     const asset = c.req.param("asset");
@@ -75,13 +75,15 @@ export function createDashboardAssetRoutes(): Hono {
     const asset = ASSETS[c.req.param("asset") as keyof typeof ASSETS];
     if (!asset) return c.notFound();
     const body = await fs.readFile(asset.url);
-    return new Response(body, {
-      headers: {
-        "Content-Type": asset.type,
-        "Cache-Control": IMMUTABLE_CACHE,
-        "X-Content-Type-Options": "nosniff",
-      },
-    });
+    const headers: Record<string, string> = {
+      "Content-Type": asset.type,
+      "Cache-Control": IMMUTABLE_CACHE,
+      "X-Content-Type-Options": "nosniff",
+    };
+    if (asset.type.startsWith("text/html")) {
+      headers["Content-Security-Policy"] = dashboardCsp(getConfig());
+    }
+    return new Response(body, { headers });
   });
   return routes;
 }

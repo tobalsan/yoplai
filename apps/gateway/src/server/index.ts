@@ -104,7 +104,7 @@ app.use(
 );
 app.use("*", accessLogger());
 app.route("/internal", internalTools);
-app.route("/d-assets", createDashboardAssetRoutes());
+app.route("/d-assets", createDashboardAssetRoutes(loadConfig));
 app.route(
   "/d",
   createDashboardRoutes({
