@@ -169,7 +169,7 @@ select,
     break-inside: avoid;
     box-shadow: none;
   }
-  .dk-chart {
-    height: 220px;
+  .dk-grid > section {
+    break-inside: avoid;
   }
 }
