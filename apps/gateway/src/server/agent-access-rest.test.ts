@@ -237,6 +237,21 @@ describe("REST per-agent access gating (multi-user)", () => {
     ).toBe(200);
   });
 
+  it("gates dashboards and returns an empty list for an accessible agent", async () => {
+    expect(
+      await get("/api/agents/allowed-agent/dashboards", authHeader("mallory"))
+    ).toBe(403);
+    const response = await fetch(
+      `http://127.0.0.1:${port}/api/agents/allowed-agent/dashboards`,
+      { headers: authHeader("alice") }
+    );
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual([]);
+    expect(
+      await get("/api/agents/missing-agent/dashboards", authHeader("boss", "admin"))
+    ).toBe(404);
+  });
+
   it("rejects run dispatch to an agent without access", async () => {
     const res = await fetch(
       `http://127.0.0.1:${port}/api/agents/allowed-agent/messages`,

@@ -19,7 +19,12 @@ import {
   dashboardCsp,
   injectDashboardRuntime,
 } from "./routes.js";
-import { DASHBOARD_VERSION_LIMIT, DashboardRegistry } from "./store.js";
+import {
+  DASHBOARD_VERSION_LIMIT,
+  DashboardRegistry,
+  getDashboardRegistry,
+} from "./store.js";
+import { listAgentDashboards } from "./list.js";
 import {
   DASHBOARD_QUERY_ROW_LIMIT,
   DASHBOARD_RESULT_BYTE_LIMIT,
@@ -62,6 +67,28 @@ afterEach(async () => {
 });
 
 describe("dashboard registry and tool", () => {
+  it("lists dashboard titles, modified times, and stable viewer links", async () => {
+    const file = path.join(workspace, "data", "dashboards", "sales.html");
+    await fs.writeFile(
+      file,
+      "<html><head><title>Sales Overview</title></head></html>"
+    );
+    const first = await listAgentDashboards(agent(), registry, config);
+    const second = await listAgentDashboards(agent(), registry, config);
+    expect(first).toEqual([
+      {
+        title: "Sales Overview",
+        slug: "sales.html",
+        updatedAt: expect.any(String),
+        link: expect.stringMatching(
+          /^https:\/\/yoplai\.test\/d\/[A-Za-z0-9_-]{32}$/
+        ),
+      },
+    ]);
+    expect(second).toEqual(first);
+    expect(await registry.list("agent-1")).toHaveLength(1);
+  });
+
   it("keeps a stable unguessable link across edits and lists updated files", async () => {
     const file = path.join(workspace, "data", "dashboards", "hello.html");
     await fs.writeFile(file, "<h1>one</h1>");
@@ -277,6 +304,11 @@ describe("dashboard registry and tool", () => {
     ]);
     expect(second.id).toBe(first.id);
     expect(await registry.list("agent-1")).toHaveLength(1);
+  });
+
+  it("shares one registry for every writer using the same file", () => {
+    const file = path.join(root, "shared-registry.json");
+    expect(getDashboardRegistry(file)).toBe(getDashboardRegistry(file));
   });
 
   it("uses the mounted data directory for sandboxed agents", () => {

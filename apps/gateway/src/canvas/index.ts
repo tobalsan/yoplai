@@ -11,7 +11,11 @@ import type {
 } from "@yoplai/shared";
 import { resolveHomeDir } from "@yoplai/shared";
 import { getAgentDataDir } from "../agents/container.js";
-import { DashboardRegistry, type DashboardRegistration } from "./store.js";
+import {
+  DashboardRegistry,
+  getDashboardRegistry,
+  type DashboardRegistration,
+} from "./store.js";
 import { executeDashboardQueries } from "./sql.js";
 
 let extensionContext: ExtensionContext | undefined;
@@ -327,7 +331,7 @@ export const canvasExtension: Extension = {
   registerRoutes: () => {},
   async start(context) {
     extensionContext = context;
-    extensionRegistry = new DashboardRegistry(
+    extensionRegistry = getDashboardRegistry(
       path.join(extensionContext.getDataDir(), "canvas", "registry.json")
     );
   },

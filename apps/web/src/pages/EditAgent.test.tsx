@@ -9,6 +9,8 @@ import type { AgentFork, Team } from "../api/teams";
 const {
   fetchPoolMock,
   fetchAgentsMock,
+  fetchAgentDashboardsMock,
+  fetchPoolActionsMock,
   fetchTeamsMock,
   fetchForksMock,
   setForkTeamsMock,
@@ -20,6 +22,8 @@ const {
 } = vi.hoisted(() => ({
   fetchPoolMock: vi.fn(),
   fetchAgentsMock: vi.fn(),
+  fetchAgentDashboardsMock: vi.fn(),
+  fetchPoolActionsMock: vi.fn(),
   fetchTeamsMock: vi.fn(),
   fetchForksMock: vi.fn(),
   setForkTeamsMock: vi.fn(),
@@ -33,6 +37,7 @@ const {
 vi.mock("../api", () => ({
   fetchPool: fetchPoolMock,
   fetchAgents: fetchAgentsMock,
+  fetchAgentDashboards: fetchAgentDashboardsMock,
 }));
 
 vi.mock("../api/extensions", () => ({
@@ -47,6 +52,7 @@ vi.mock("../api/extensions", () => ({
 vi.mock("../api/teams", () => ({
   fetchTeams: fetchTeamsMock,
   fetchForks: fetchForksMock,
+  fetchPoolActions: fetchPoolActionsMock,
   setForkTeams: setForkTeamsMock,
 }));
 
@@ -123,6 +129,8 @@ beforeEach(() => {
   setCapabilitiesForTests({ forkedAgents: true });
   fetchPoolMock.mockReset();
   fetchAgentsMock.mockReset().mockResolvedValue([]);
+  fetchAgentDashboardsMock.mockReset().mockResolvedValue([]);
+  fetchPoolActionsMock.mockReset().mockResolvedValue([]);
   fetchTeamsMock.mockReset().mockResolvedValue([] as Team[]);
   fetchForksMock.mockReset().mockResolvedValue([] as AgentFork[]);
   fetchAgentExtensionsMock.mockReset().mockResolvedValue([]);
@@ -177,6 +185,55 @@ describe("EditAgent", () => {
     expect(navigateMock).not.toHaveBeenCalledWith("/", { replace: true });
     expect(container.querySelector(".edit-agent")).not.toBeNull();
     expect(fetchAgentExtensionsMock).toHaveBeenCalledWith("scribe");
+  });
+
+  it("shows dashboards for the accessible fork with working open and copy links", async () => {
+    setSession("user");
+    fetchPoolMock.mockResolvedValue([agent({ id: "scribe" })]);
+    fetchPoolActionsMock.mockResolvedValue([{
+      poolId: "scribe", action: "chat", chatAgentId: "scribe-fork",
+      forked: true, reason: null, teamName: "Writers",
+    }]);
+    fetchAgentDashboardsMock.mockResolvedValue([{
+      title: "Writing Report", slug: "report.html",
+      updatedAt: "2026-09-25T10:00:00.000Z", link: "https://yoplai.test/d/stable-link",
+    }]);
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText } });
+    await mountEdit("scribe");
+    container.querySelectorAll<HTMLButtonElement>('[role="tab"]')[1]!.click();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(fetchAgentDashboardsMock).toHaveBeenCalledWith("scribe-fork", expect.any(Object));
+    expect(container.textContent).toContain("Writing Report");
+    expect(container.textContent).toContain("report.html");
+    expect(container.textContent).toContain("Updated");
+    expect(container.querySelector<HTMLAnchorElement>(".edit-agent-dashboard a")?.getAttribute("href")).toBe("https://yoplai.test/d/stable-link");
+    container.querySelector<HTMLButtonElement>(".edit-agent-dashboard button")!.click();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(writeText).toHaveBeenCalledWith("https://yoplai.test/d/stable-link");
+  });
+
+  it("shows an empty dashboard state for an accessible agent", async () => {
+    setCapabilitiesForTests({ forkedAgents: false });
+    setSession("user");
+    fetchAgentsMock.mockResolvedValue([agent({ id: "scribe" })]);
+    await mountEdit("scribe");
+    container.querySelectorAll<HTMLButtonElement>('[role="tab"]')[1]!.click();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(fetchAgentDashboardsMock).toHaveBeenCalledWith("scribe", expect.any(Object));
+    expect(container.textContent).toContain("No dashboards yet.");
+  });
+
+  it("shows a dashboard load error", async () => {
+    setCapabilitiesForTests({ forkedAgents: false });
+    setSession("user");
+    fetchAgentsMock.mockResolvedValue([agent({ id: "scribe" })]);
+    fetchAgentDashboardsMock.mockRejectedValue(new Error("network"));
+    await mountEdit("scribe");
+    container.querySelectorAll<HTMLButtonElement>('[role="tab"]')[1]!.click();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(container.textContent).toContain("Failed to load dashboards.");
   });
 
   it("sets explicit teams for a never-forked agent", async () => {

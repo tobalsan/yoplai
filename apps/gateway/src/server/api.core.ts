@@ -69,6 +69,8 @@ import {
 import { resolveSessionDataFile } from "../sessions/files.js";
 import { createOAuthRoutes } from "../oauth/routes.js";
 import { loadSuggestions } from "../suggestions/loader.js";
+import { listAgentDashboards } from "../canvas/list.js";
+import { getDashboardRegistry } from "../canvas/store.js";
 
 const api = new Hono();
 const UUID_RE =
@@ -622,6 +624,19 @@ api.get("/agents/:id", async (c) => {
     authMode: agent.auth?.mode,
     queueMode: agent.queueMode ?? "queue",
   });
+});
+
+// The outer /api/agents/:id/* middleware applies requireAgentAccess before this route.
+api.get("/agents/:id/dashboards", async (c) => {
+  const agentId = c.req.param("id");
+  const agent = getAgent(agentId);
+  if (!agent || !isAgentActive(agentId)) {
+    return c.json({ error: "Agent not found" }, 404);
+  }
+  const config = loadConfig();
+  if (config.canvas?.enabled === false) return c.json([]);
+  const registry = getDashboardRegistry(path.join(CONFIG_DIR, "canvas", "registry.json"));
+  return c.json(await listAgentDashboards(agent, registry, config));
 });
 
 // GET /api/agents/:id/suggestions - workspace-authored starting prompts.

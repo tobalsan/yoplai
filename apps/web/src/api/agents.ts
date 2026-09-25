@@ -39,6 +39,19 @@ export async function fetchAgent(agentId: string): Promise<Agent> {
   return res.json();
 }
 
+export type AgentDashboard = {
+  title: string;
+  slug: string;
+  updatedAt: string;
+  link: string;
+};
+
+export async function fetchAgentDashboards(agentId: string): Promise<AgentDashboard[]> {
+  const res = await fetch(`${API_BASE}/agents/${encodeURIComponent(agentId)}/dashboards`);
+  if (!res.ok) throw new Error("Failed to fetch dashboards");
+  return res.json();
+}
+
 export async function fetchAgentSuggestions(agentId: string): Promise<Suggestion[]> {
   const res = await fetch(`${API_BASE}/agents/${agentId}/suggestions`);
   if (!res.ok) return [];

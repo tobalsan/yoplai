@@ -13,6 +13,7 @@ Breaking changes are marked **⚠ BREAKING**.
 
 - Agents now discover a built-in dashboard skill with nine cloneable HR and customer-success Canvas templates, seeded SQLite schemas, and a rebuildable CS wiki workflow.
 - Canvas keeps the latest 20 observed copies of dashboards outside Git workspaces and provides a `dashboard_versions` tool to list or restore them without changing their links.
+- Each accessible agent now has a Dashboards tab with dashboard titles, last updates, and Open/Copy link actions.
 
 - Canvas dashboards now have a versioned public Dashboard Kit with light/dark and A4 print themes (dark follows the OS `prefers-color-scheme`, overridable with `data-theme="light"`/`"dark"`), common interactive components, sanitized Markdown, CSV export, and vendored ECharts charting.
 

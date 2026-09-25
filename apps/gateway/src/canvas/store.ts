@@ -167,3 +167,14 @@ export class DashboardRegistry {
     await fs.rename(temporary, this.file);
   }
 }
+
+const registries = new Map<string, DashboardRegistry>();
+
+export function getDashboardRegistry(file: string): DashboardRegistry {
+  let registry = registries.get(file);
+  if (!registry) {
+    registry = new DashboardRegistry(file);
+    registries.set(file, registry);
+  }
+  return registry;
+}
