@@ -30,6 +30,7 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Fixed
 
+- Canvas dashboards now inherit deployment colours from `$YOPLAI_HOME/theme.css`.
 - Keep Canvas chart headings with their charts across printed page breaks.
 - Move the Dashboard Kit chart legend to the bottom and reserve grid margins so it no longer overlaps card/chart titles on multi-series charts.
 - Return users to their requested dashboard or app deep link after Google sign-in.

@@ -1,6 +1,11 @@
 import fs from "node:fs/promises";
+import path from "node:path";
 import { Hono } from "hono";
-import type { AgentConfig, GatewayConfig } from "@yoplai/shared";
+import {
+  resolveHomeDir,
+  type AgentConfig,
+  type GatewayConfig,
+} from "@yoplai/shared";
 import {
   dashboardBaseUrl,
   dashboardDirectory,
@@ -13,6 +18,14 @@ import { executeDashboardQueries } from "./sql.js";
 
 const ASSET_VERSION = "v1";
 const IMMUTABLE_CACHE = "public, max-age=31536000, immutable";
+const THEME_MAPPING = `:root:root:not([data-yoplai-dashboard-theme]) {
+  --dk-bg: var(--bg-base);
+  --dk-surface: var(--bg-surface);
+  --dk-text: var(--text-primary);
+  --dk-muted: var(--text-secondary);
+  --dk-border: var(--border-default);
+  --dk-accent: var(--bg-accent);
+}\n`;
 const ASSETS = {
   "kit.js": {
     url: new URL("./assets/kit.js", import.meta.url),
@@ -68,6 +81,19 @@ export function createDashboardAssetRoutes(
   getConfig: () => GatewayConfig
 ): Hono {
   const routes = new Hono();
+  routes.get("/theme.css", async (c) => {
+    c.header("Content-Type", "text/css; charset=utf-8");
+    c.header("Cache-Control", "no-cache");
+    try {
+      const css = await fs.readFile(
+        path.join(resolveHomeDir(), "theme.css"),
+        "utf8"
+      );
+      return c.body(`${THEME_MAPPING}${css}`);
+    } catch {
+      return c.body("");
+    }
+  });
   routes.get("/:asset", (c) => {
     const asset = c.req.param("asset");
     if (asset !== "kit.js" && asset !== "kit.css") return c.notFound();
@@ -193,11 +219,14 @@ export function injectDashboardRuntime(
     errors: Array<{ name: string; error: string }>;
   }
 ): string {
+  const theme = '<link rel="stylesheet" href="/d-assets/theme.css">';
+  const hasClosingHead = /<\/head\s*>/i.test(html);
+  if (hasClosingHead) html = html.replace(/<\/head\s*>/i, `${theme}</head>`);
   const bootstrap = `<script>(function(r){const build=(base,p)=>{const u=new URL(base,location.origin);for(const [k,v] of Object.entries(p||{}))u.searchParams.set(k,String(v));return u.pathname+u.search};window.YOPLAI={data:r.data,viewer:r.viewer,params:r.params,link:(slug,p)=>{const base=r.links[slug];if(!base)throw new Error("Unknown dashboard: "+slug);return build(base,p)}}})(${safeJson(runtime)});</script>`;
   const errors = runtime.errors.length
     ? `<section role="alert" style="font:14px sans-serif;background:#fee;color:#900;border:1px solid #d88;padding:12px;margin:12px"><strong>Dashboard query error</strong>${runtime.errors.map((error) => `<div><code>${escapeHtml(error.name)}</code>: ${escapeHtml(error.error)}</div>`).join("")}</section>`
     : "";
-  const insertion = `${bootstrap}${errors}`;
+  const insertion = `${hasClosingHead ? "" : theme}${bootstrap}${errors}`;
   const doctype = html.match(/^\s*<!doctype[^>]*>/i);
   return doctype
     ? `${html.slice(0, doctype[0].length)}${insertion}${html.slice(doctype[0].length)}`
