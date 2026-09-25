@@ -161,6 +161,48 @@ export async function openDashboardFile(
   }
 }
 
+async function deleteDashboardFile(
+  agent: AgentConfig,
+  slug: string
+): Promise<boolean> {
+  let file: fs.FileHandle;
+  try {
+    file = await openDashboardFile(agent, slug);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
+    throw error;
+  }
+  try {
+    const directory = dashboardDirectory(agent);
+    const candidate = path.join(directory, slug);
+    const [expected, expectedDirectory, realDirectory] = await Promise.all([
+      file.stat(),
+      fs.lstat(directory),
+      fs.realpath(directory),
+    ]);
+    const [actual, actualDirectory, currentRealDirectory] = await Promise.all([
+      fs.lstat(candidate),
+      fs.lstat(directory),
+      fs.realpath(directory),
+    ]);
+    if (
+      expected.dev !== actual.dev ||
+      expected.ino !== actual.ino ||
+      expectedDirectory.dev !== actualDirectory.dev ||
+      expectedDirectory.ino !== actualDirectory.ino ||
+      realDirectory !== currentRealDirectory
+    ) {
+      throw new DashboardNotFoundError(
+        `Dashboard not found: data/dashboards/${slug}`
+      );
+    }
+    await fs.unlink(candidate);
+    return true;
+  } finally {
+    await file.close();
+  }
+}
+
 async function replaceDashboardFile(
   agent: AgentConfig,
   slug: string,
@@ -411,6 +453,34 @@ export const canvasExtension: Extension = {
             managed: true,
             restored: args.restore,
             versions: await registry().listVersions(entry.id),
+          };
+        },
+      },
+      {
+        name: "dashboard_delete",
+        description:
+          "Delete one dashboard, its stable link registration, and its saved versions. SQLite database files are preserved.",
+        parameters: {
+          type: "object",
+          properties: { slug: { type: "string" } },
+          required: ["slug"],
+        },
+        async execute(raw) {
+          const args = z.object({ slug: z.string() }).parse(raw);
+          const slug = normalizeDashboardSlug(args.slug);
+          const file = await deleteDashboardFile(agent, slug);
+          const removed = await registry().delete(agent.id, slug);
+          const result = {
+            file,
+            registry: Boolean(removed.registration),
+            versions: removed.versions,
+          };
+          return {
+            slug,
+            removed: result,
+            message: Object.values(result).some(Boolean)
+              ? "Dashboard deleted"
+              : "Nothing to delete",
           };
         },
       },

@@ -62,6 +62,40 @@ export class DashboardRegistry {
     );
   }
 
+  async delete(
+    agentId: string,
+    slug: string
+  ): Promise<{ registration?: DashboardRegistration; versions: boolean }> {
+    let registration: DashboardRegistration | undefined;
+    let versions = false;
+    await this.mutate(async () => {
+      const registry = await this.read();
+      const index = registry.dashboards.findIndex(
+        (entry) => entry.agentId === agentId && entry.slug === slug
+      );
+      if (index === -1) return;
+
+      [registration] = registry.dashboards.splice(index, 1);
+      if (!/^[A-Za-z0-9_-]{32}$/.test(registration!.id)) {
+        throw new Error("Invalid dashboard registration id");
+      }
+      const directory = path.join(
+        path.dirname(this.file),
+        "versions",
+        registration!.id
+      );
+      try {
+        await fs.lstat(directory);
+        versions = true;
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+      }
+      await fs.rm(directory, { recursive: true, force: true });
+      await this.write(registry);
+    });
+    return { registration, versions };
+  }
+
   async link(agentId: string, slug: string): Promise<DashboardRegistration> {
     let result: DashboardRegistration | undefined;
     const write = async () => {

@@ -224,6 +224,8 @@ Canvas is a core gateway feature. Agents use `dashboard_link` to publish a singl
 
 Canvas records the latest 20 distinct dashboard contents observed by `dashboard_link`, `dashboard_versions`, or a viewer request. Agents can use `dashboard_versions` to list or restore those copies without changing the dashboard link. Managed versions are skipped when the agent workspace has its own `.git` entry because Git already provides history.
 
+Agents use `dashboard_delete` to remove a dashboard HTML file, its stable registry entry, and its managed versions. Deletion is idempotent, preserves `.db` files, invalidates the old viewer link, and lets a recreated slug receive a new link with fresh history.
+
 The web agent detail page has a Dashboards tab for accessible agents. `GET /api/agents/:id/dashboards` uses the per-agent access middleware and discovers workspace HTML files through the Canvas registry; it returns each dashboard's HTML title (or filename), slug, file modification time, and viewer link.
 
 Dashboard pages can use the public, immutable Dashboard Kit at `/d-assets/v1/kit.css` and `/d-assets/v1/kit.js`. Load `/d-assets/v1/echarts.js`, `/d-assets/v1/marked.js`, and `/d-assets/v1/purify.js` as needed; `/d-assets/v1/sample.html` demonstrates KPIs, searchable/sortable CSV tables, ranked links, tabs, filters, sanitized markdown, supported chart types, dark tokens, and print styling. Dark theme follows the OS `prefers-color-scheme` automatically; set `data-theme="light"` or `data-theme="dark"` on `<html>` to override. Asset routes are a fixed allowlist and contain no agent or user data; HTML assets (`sample.html`) are served with the same sandbox CSP as dashboards.
