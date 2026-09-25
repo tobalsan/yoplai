@@ -19,7 +19,7 @@ import {
   dashboardCsp,
   injectDashboardRuntime,
 } from "./routes.js";
-import { DashboardRegistry } from "./store.js";
+import { DASHBOARD_VERSION_LIMIT, DashboardRegistry } from "./store.js";
 import {
   DASHBOARD_QUERY_ROW_LIMIT,
   DASHBOARD_RESULT_BYTE_LIMIT,
@@ -94,6 +94,117 @@ describe("dashboard registry and tool", () => {
     expect(listed).toEqual([
       expect.objectContaining({ slug: "hello.html", link: first.link }),
     ]);
+  });
+
+  it("lists observed edits, restores content, keeps the link, and prunes old versions", async () => {
+    const file = path.join(workspace, "data", "dashboards", "hello.html");
+    await canvasExtension.start({ getDataDir: () => root } as never);
+    const [linkTool, versionsTool] = await canvasExtension.getAgentTools!(
+      agent(),
+      { config }
+    );
+    let link = "";
+    for (let index = 0; index < DASHBOARD_VERSION_LIMIT + 2; index += 1) {
+      await fs.writeFile(file, `<h1>${index}</h1>`);
+      const result = (await linkTool.execute(
+        { slug: "hello.html" },
+        {} as never
+      )) as { link: string };
+      link ||= result.link;
+      expect(result.link).toBe(link);
+    }
+
+    const listed = (await versionsTool.execute(
+      { slug: "hello.html" },
+      {} as never
+    )) as {
+      link: string;
+      versions: Array<{ id: string }>;
+    };
+    expect(listed.link).toBe(link);
+    expect(listed.versions).toHaveLength(DASHBOARD_VERSION_LIMIT);
+
+    const oldestRetained = listed.versions.at(-1)!;
+    await fs.writeFile(file, "<h1>unseen edit</h1>");
+    const restored = (await versionsTool.execute(
+      { slug: "hello.html", restore: oldestRetained.id },
+      {} as never
+    )) as { link: string; restored: string };
+    expect(restored).toEqual(
+      expect.objectContaining({ link, restored: oldestRetained.id })
+    );
+    expect(await fs.readFile(file, "utf8")).toBe("<h1>2</h1>");
+  });
+
+  it("serializes version writes across registry instances", async () => {
+    const registryFile = path.join(root, "shared-registry.json");
+    const firstRegistry = new DashboardRegistry(registryFile);
+    const secondRegistry = new DashboardRegistry(registryFile);
+    const entry = await firstRegistry.link("agent-1", "hello.html");
+
+    await Promise.all(
+      Array.from({ length: DASHBOARD_VERSION_LIMIT }, (_, index) =>
+        (index % 2 ? firstRegistry : secondRegistry).recordVersion(
+          entry.id,
+          `version-${index}`
+        )
+      )
+    );
+
+    expect(await firstRegistry.listVersions(entry.id)).toHaveLength(
+      DASHBOARD_VERSION_LIMIT
+    );
+  });
+
+  it("restores concurrent versions atomically", async () => {
+    const file = path.join(workspace, "data", "dashboards", "hello.html");
+    const firstContent = `first-${"a".repeat(200_000)}`;
+    const secondContent = `second-${"b".repeat(200_000)}`;
+    await canvasExtension.start({ getDataDir: () => root } as never);
+    const [linkTool, versionsTool] = await canvasExtension.getAgentTools!(
+      agent(),
+      { config }
+    );
+    await fs.writeFile(file, firstContent);
+    await linkTool.execute({ slug: "hello.html" }, {} as never);
+    await fs.writeFile(file, secondContent);
+    await linkTool.execute({ slug: "hello.html" }, {} as never);
+    const listed = (await versionsTool.execute(
+      { slug: "hello.html" },
+      {} as never
+    )) as { versions: Array<{ id: string }> };
+
+    await Promise.all(
+      listed.versions.map((version) =>
+        versionsTool.execute(
+          { slug: "hello.html", restore: version.id },
+          {} as never
+        )
+      )
+    );
+
+    expect([firstContent, secondContent]).toContain(
+      await fs.readFile(file, "utf8")
+    );
+  });
+
+  it("uses Git history instead of managed dashboard versions", async () => {
+    await fs.mkdir(path.join(workspace, ".git"));
+    await fs.writeFile(
+      path.join(workspace, "data", "dashboards", "hello.html"),
+      "<h1>git</h1>"
+    );
+    await canvasExtension.start({ getDataDir: () => root } as never);
+    const [linkTool, versionsTool] = await canvasExtension.getAgentTools!(
+      agent(),
+      { config }
+    );
+    await linkTool.execute({ slug: "hello.html" }, {} as never);
+    await expect(
+      versionsTool.execute({ slug: "hello.html" }, {} as never)
+    ).resolves.toEqual(
+      expect.objectContaining({ managed: false, versions: [] })
+    );
   });
 
   it("discovers and links dashboard files when listing", async () => {
@@ -318,6 +429,7 @@ describe("dashboard viewer", () => {
     expect(await (await routes.request(`/${entry.id}`)).text()).toContain(
       "edited"
     );
+    expect(await registry.listVersions(entry.id)).toHaveLength(2);
   });
 
   it("injects live query data, viewer bindings, params, and dashboard links before page scripts", async () => {

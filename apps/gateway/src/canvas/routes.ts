@@ -6,6 +6,7 @@ import {
   dashboardDirectory,
   normalizeDashboardSlug,
   openDashboardFile,
+  recordDashboardVersion,
 } from "./index.js";
 import { DashboardRegistry } from "./store.js";
 import { executeDashboardQueries } from "./sql.js";
@@ -63,7 +64,9 @@ export function dashboardCsp(config: GatewayConfig): string {
   return `sandbox allow-scripts allow-downloads allow-modals; default-src 'none'; script-src 'unsafe-inline' ${assets}; style-src 'unsafe-inline' ${assets}; img-src data: blob:; font-src data: ${assets}; connect-src 'none'`;
 }
 
-export function createDashboardAssetRoutes(getConfig: () => GatewayConfig): Hono {
+export function createDashboardAssetRoutes(
+  getConfig: () => GatewayConfig
+): Hono {
   const routes = new Hono();
   routes.get("/:asset", (c) => {
     const asset = c.req.param("asset");
@@ -120,6 +123,7 @@ export function createDashboardRoutes(deps: DashboardRouteDependencies): Hono {
       } finally {
         await file.close();
       }
+      await recordDashboardVersion(agent, entry, html, deps.registry);
       const viewer =
         typeof auth === "object" && auth && "user" in auth
           ? ((auth as { user?: Viewer }).user ?? {})

@@ -1,3 +1,4 @@
+import { randomBytes } from "node:crypto";
 import fs from "node:fs/promises";
 import { constants } from "node:fs";
 import path from "node:path";
@@ -10,11 +11,12 @@ import type {
 } from "@yoplai/shared";
 import { resolveHomeDir } from "@yoplai/shared";
 import { getAgentDataDir } from "../agents/container.js";
-import { DashboardRegistry } from "./store.js";
+import { DashboardRegistry, type DashboardRegistration } from "./store.js";
 import { executeDashboardQueries } from "./sql.js";
 
 let extensionContext: ExtensionContext | undefined;
 let extensionRegistry: DashboardRegistry | undefined;
+const dashboardWrites = new Map<string, Promise<void>>();
 
 class DashboardNotFoundError extends Error {
   code = "ENOENT";
@@ -85,6 +87,28 @@ function registry(): DashboardRegistry {
   return extensionRegistry;
 }
 
+async function hasGitHistory(agent: AgentConfig): Promise<boolean> {
+  if (agent.sandbox?.enabled) return false;
+  try {
+    await fs.lstat(path.join(agent.workspaceDir ?? agent.workspace, ".git"));
+    return true;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
+    throw error;
+  }
+}
+
+export async function recordDashboardVersion(
+  agent: AgentConfig,
+  entry: Pick<DashboardRegistration, "id">,
+  html: string,
+  dashboardRegistry = registry()
+): Promise<void> {
+  if (!(await hasGitHistory(agent))) {
+    await dashboardRegistry.recordVersion(entry.id, html);
+  }
+}
+
 export async function openDashboardFile(
   agent: AgentConfig,
   slug: string
@@ -133,6 +157,85 @@ export async function openDashboardFile(
   }
 }
 
+async function replaceDashboardFile(
+  agent: AgentConfig,
+  slug: string,
+  content: string
+): Promise<void> {
+  const directory = dashboardDirectory(agent);
+  const readable = await openDashboardFile(agent, slug);
+  const candidate = path.join(directory, slug);
+  const temporary = path.join(
+    directory,
+    `.${slug}.${process.pid}.${randomBytes(6).toString("hex")}.tmp`
+  );
+  let writable: fs.FileHandle | undefined;
+  try {
+    const [expected, expectedDirectory, realDirectory] = await Promise.all([
+      readable.stat(),
+      fs.lstat(directory),
+      fs.realpath(directory),
+    ]);
+    writable = await fs.open(
+      temporary,
+      constants.O_WRONLY |
+        constants.O_CREAT |
+        constants.O_EXCL |
+        constants.O_NOFOLLOW,
+      0o600
+    );
+    await writable.writeFile(content, "utf8");
+    await writable.sync();
+    await writable.close();
+    writable = undefined;
+
+    const [actual, actualDirectory, currentRealDirectory] = await Promise.all([
+      fs.lstat(candidate),
+      fs.lstat(directory),
+      fs.realpath(directory),
+    ]);
+    if (
+      expected.dev !== actual.dev ||
+      expected.ino !== actual.ino ||
+      expectedDirectory.dev !== actualDirectory.dev ||
+      expectedDirectory.ino !== actualDirectory.ino ||
+      realDirectory !== currentRealDirectory
+    ) {
+      throw new DashboardNotFoundError(`Dashboard not found: ${slug}`);
+    }
+    await fs.rename(temporary, candidate);
+  } finally {
+    await writable?.close();
+    await readable.close();
+    await fs.rm(temporary, { force: true });
+  }
+}
+
+async function writeDashboardFile(
+  agent: AgentConfig,
+  slug: string,
+  content: string
+): Promise<void> {
+  const candidate = path.join(dashboardDirectory(agent), slug);
+  const previous = dashboardWrites.get(candidate) ?? Promise.resolve();
+  const current = previous.then(
+    () => replaceDashboardFile(agent, slug, content),
+    () => replaceDashboardFile(agent, slug, content)
+  );
+  const settled = current.then(
+    () => undefined,
+    () => undefined
+  );
+  dashboardWrites.set(candidate, settled);
+  try {
+    await current;
+  } finally {
+    if (dashboardWrites.get(candidate) === settled) {
+      dashboardWrites.delete(candidate);
+    }
+  }
+}
+
 async function dashboardInfo(
   agent: AgentConfig,
   entry: { id: string; slug: string },
@@ -142,6 +245,7 @@ async function dashboardInfo(
   try {
     const stat = await file.stat();
     const html = await file.readFile("utf8");
+    await recordDashboardVersion(agent, entry, html);
     const { errors } = await executeDashboardQueries(agent, html, {
       viewer_email: null,
       viewer_name: null,
@@ -190,6 +294,7 @@ async function discoverDashboards(agent: AgentConfig, config: GatewayConfig) {
         file.stat(),
       ]);
       const html = await file.readFile("utf8");
+      await recordDashboardVersion(agent, entry, html);
       const { errors } = await executeDashboardQueries(agent, html, {
         viewer_email: null,
         viewer_name: null,
@@ -252,6 +357,57 @@ export const canvasExtension: Extension = {
             return dashboardInfo(agent, entry, hook!.config);
           }
           return discoverDashboards(agent, hook!.config);
+        },
+      },
+      {
+        name: "dashboard_versions",
+        description:
+          "List saved versions of one dashboard, or restore a version without changing its link.",
+        parameters: {
+          type: "object",
+          properties: {
+            slug: { type: "string" },
+            restore: { type: "string" },
+          },
+          required: ["slug"],
+        },
+        async execute(raw) {
+          const args = z
+            .object({ slug: z.string(), restore: z.string().optional() })
+            .parse(raw);
+          const slug = normalizeDashboardSlug(args.slug);
+          const file = await openDashboardFile(agent, slug);
+          let html: string;
+          try {
+            html = await file.readFile("utf8");
+          } finally {
+            await file.close();
+          }
+          const entry = await registry().link(agent.id, slug);
+          const managed = !(await hasGitHistory(agent));
+          if (!managed) {
+            return {
+              slug,
+              link: `${dashboardBaseUrl(hook!.config)}/d/${entry.id}`,
+              managed: false,
+              versions: [],
+            };
+          }
+
+          const restoredContent = args.restore
+            ? await registry().readVersion(entry.id, args.restore)
+            : undefined;
+          await registry().recordVersion(entry.id, html);
+          if (args.restore) {
+            await writeDashboardFile(agent, slug, restoredContent!);
+          }
+          return {
+            slug,
+            link: `${dashboardBaseUrl(hook!.config)}/d/${entry.id}`,
+            managed: true,
+            restored: args.restore,
+            versions: await registry().listVersions(entry.id),
+          };
         },
       },
     ];
