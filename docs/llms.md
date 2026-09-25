@@ -159,6 +159,8 @@ Workspace bootstrap creates missing `AGENTS.md`, `SOUL.md`, and `USER.md` from `
 
 Pi discovers skills and commands from workspace and user Pi directories. Extension tool names are provider-sanitized for the model while gateway dispatch retains original extension/tool identity.
 
+Yoplai also ships a built-in `dashboard` skill to host and sandboxed Pi agents. It teaches the Canvas file/data/maintenance contract and includes cloneable HR and customer-success templates backed by seeded SQLite data; workspace skills can complement it without requiring a global-skills opt-in.
+
 ### Sessions and concurrency
 
 - `sessionKey` is a logical key, default `main`; mapping persists in `sessions.json`.

@@ -17,6 +17,7 @@ import {
   type AgentSession,
   type ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
+import { getBuiltInSkillsDir } from "./skills.js";
 import {
   ContainerDeliveryEnvelopeSchema,
   ContainerFileOutputRequestSchema,
@@ -388,7 +389,10 @@ export async function runAgent(
       cwd: input.workspaceDir,
       agentDir: input.sessionDir,
       settingsManager,
-      additionalSkillPaths: [path.join(input.workspaceDir, "skills")],
+      additionalSkillPaths: [
+        getBuiltInSkillsDir(),
+        path.join(input.workspaceDir, "skills"),
+      ],
       systemPromptOverride: () => PI_SYSTEM_PROMPT,
       appendSystemPrompt: [
         CONTAINER_SYSTEM_PROMPT,

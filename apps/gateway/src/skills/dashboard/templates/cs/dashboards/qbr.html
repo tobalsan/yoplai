@@ -1,0 +1,70 @@
+<!doctype html>
+<html data-theme="light">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width" />
+    <title>QBR</title>
+    <link rel="stylesheet" href="/d-assets/v1/kit.css" />
+    <script src="/d-assets/v1/echarts.js"></script>
+    <script src="/d-assets/v1/kit.js"></script>
+  </head>
+  <body>
+    <main>
+      <header>
+        <h1 id="title">Quarterly business review</h1>
+        <p id="summary"></p>
+      </header>
+      <div id="cards" class="dk-grid"></div>
+      <h2>Adoption</h2>
+      <div id="adoption-chart" class="dk-chart"></div>
+      <h2>Support themes</h2>
+      <div id="themes"></div>
+    </main>
+    <script type="application/sql" data-name="client" data-db="data/cs.db">
+      SELECT id,name,health,arr,renewal_date,summary FROM clients WHERE id=:id AND lower(owner_email)=lower(:viewer_email) LIMIT 1
+    </script>
+    <script type="application/sql" data-name="metrics" data-db="data/cs.db">
+      SELECT q.quarter,q.active_users,q.adoption,q.tickets,q.csat FROM quarterly_metrics q JOIN clients c ON c.id=q.client_id WHERE q.client_id=:id AND q.quarter=:quarter AND lower(c.owner_email)=lower(:viewer_email) LIMIT 1
+    </script>
+    <script type="application/sql" data-name="themes" data-db="data/cs.db">
+      SELECT w.theme,w.mentions,w.week FROM weekly_themes w JOIN clients c ON c.id=w.client_id WHERE w.client_id=:id AND lower(c.owner_email)=lower(:viewer_email) ORDER BY w.mentions DESC
+    </script>
+    <script>
+      const c = YOPLAI.data.client[0],
+        m = YOPLAI.data.metrics[0];
+      if (c && m) {
+        document.querySelector("#title").textContent =
+          c.name + " · " + m.quarter + " QBR";
+        document.querySelector("#summary").textContent = c.summary;
+        document.querySelector("#cards").innerHTML =
+          '<div id="users"></div><div id="adoption"></div><div id="tickets"></div><div id="csat"></div>';
+        DashboardKit.kpi("#users", {
+          label: "Active users",
+          value: m.active_users.toLocaleString(),
+        });
+        DashboardKit.kpi("#adoption", {
+          label: "Adoption",
+          value: m.adoption + "%",
+        });
+        DashboardKit.kpi("#tickets", {
+          label: "Support tickets",
+          value: m.tickets,
+        });
+        DashboardKit.kpi("#csat", { label: "CSAT", value: m.csat });
+        DashboardKit.chart("#adoption-chart", {
+          series: [
+            { type: "gauge", data: [{ value: m.adoption, name: "Adoption" }] },
+          ],
+        });
+        DashboardKit.table("#themes", {
+          columns: [
+            { key: "theme", label: "Theme" },
+            { key: "mentions", label: "Mentions" },
+            { key: "week", label: "Week" },
+          ],
+          rows: YOPLAI.data.themes,
+        });
+      }
+    </script>
+  </body>
+</html>

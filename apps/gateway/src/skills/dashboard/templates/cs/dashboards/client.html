@@ -1,0 +1,97 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width" />
+    <title>Client</title>
+    <link rel="stylesheet" href="/d-assets/v1/kit.css" />
+    <script src="/d-assets/v1/echarts.js"></script>
+    <script src="/d-assets/v1/kit.js"></script>
+  </head>
+  <body>
+    <main>
+      <h1 id="name">Client</h1>
+      <p id="summary"></p>
+      <div id="cards" class="dk-grid"></div>
+      <h2>Integrations</h2>
+      <div id="integrations"></div>
+      <h2>Latest tickets</h2>
+      <div id="tickets"></div>
+      <h2>Weekly themes</h2>
+      <div id="themes" class="dk-chart"></div>
+      <p><a id="qbr">Open printable QBR</a></p>
+    </main>
+    <script type="application/sql" data-name="client" data-db="data/cs.db">
+      SELECT id,name,health,arr,renewal_date,summary FROM clients WHERE id=:id AND lower(owner_email)=lower(:viewer_email) LIMIT 1
+    </script>
+    <script
+      type="application/sql"
+      data-name="integrations"
+      data-db="data/cs.db"
+    >
+      SELECT i.name,i.status FROM integrations i JOIN clients c ON c.id=i.client_id WHERE i.client_id=:id AND lower(c.owner_email)=lower(:viewer_email) ORDER BY i.name
+    </script>
+    <script type="application/sql" data-name="tickets" data-db="data/cs.db">
+      SELECT t.id,t.subject,t.priority,t.status,t.opened_at FROM tickets t JOIN clients c ON c.id=t.client_id WHERE t.client_id=:id AND lower(c.owner_email)=lower(:viewer_email) ORDER BY t.opened_at DESC LIMIT 10
+    </script>
+    <script type="application/sql" data-name="themes" data-db="data/cs.db">
+      SELECT w.week,w.theme,w.mentions FROM weekly_themes w JOIN clients c ON c.id=w.client_id WHERE w.client_id=:id AND lower(c.owner_email)=lower(:viewer_email) ORDER BY w.week
+    </script>
+    <script
+      type="application/sql"
+      data-name="latest_quarter"
+      data-db="data/cs.db"
+    >
+      SELECT q.quarter,q.active_users,q.adoption,q.tickets,q.csat FROM quarterly_metrics q JOIN clients c ON c.id=q.client_id WHERE q.client_id=:id AND lower(c.owner_email)=lower(:viewer_email) ORDER BY q.quarter DESC LIMIT 1
+    </script>
+    <script>
+      const c = YOPLAI.data.client[0],
+        m = YOPLAI.data.latest_quarter[0];
+      if (c) {
+        document.querySelector("#name").textContent = c.name;
+        document.querySelector("#summary").textContent = c.summary;
+        document.querySelector("#cards").innerHTML =
+          '<div id="health"></div><div id="arr"></div><div id="adoption"></div><div id="support"></div>';
+        DashboardKit.kpi("#health", { label: "Health", value: c.health });
+        DashboardKit.kpi("#arr", {
+          label: "ARR",
+          value: "$" + c.arr.toLocaleString(),
+        });
+        DashboardKit.kpi("#adoption", {
+          label: "Adoption",
+          value: (m?.adoption ?? 0) + "%",
+        });
+        DashboardKit.kpi("#support", {
+          label: "Quarter tickets",
+          value: m?.tickets ?? 0,
+        });
+        DashboardKit.table("#integrations", {
+          columns: [
+            { key: "name", label: "Integration" },
+            { key: "status", label: "Status" },
+          ],
+          rows: YOPLAI.data.integrations,
+        });
+        DashboardKit.table("#tickets", {
+          columns: [
+            { key: "id", label: "Ticket" },
+            { key: "subject", label: "Subject" },
+            { key: "priority", label: "Priority" },
+            { key: "status", label: "Status" },
+          ],
+          rows: YOPLAI.data.tickets,
+        });
+        const themes = YOPLAI.data.themes;
+        DashboardKit.chart("#themes", {
+          xAxis: { type: "category", data: themes.map((r) => r.week) },
+          yAxis: {},
+          series: [{ type: "bar", data: themes.map((r) => r.mentions) }],
+        });
+        document.querySelector("#qbr").href = YOPLAI.link("qbr.html", {
+          id: c.id,
+          quarter: m?.quarter || "",
+        });
+      }
+    </script>
+  </body>
+</html>

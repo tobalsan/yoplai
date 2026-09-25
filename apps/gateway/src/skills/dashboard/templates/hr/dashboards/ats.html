@@ -1,0 +1,47 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width" />
+    <title>ATS Pipeline</title>
+    <link rel="stylesheet" href="/d-assets/v1/kit.css" />
+    <script src="/d-assets/v1/echarts.js"></script>
+    <script src="/d-assets/v1/kit.js"></script>
+  </head>
+  <body>
+    <main>
+      <h1>ATS Pipeline</h1>
+      <div id="pipeline" class="dk-chart"></div>
+      <div id="candidates"></div>
+    </main>
+    <script type="application/sql" data-name="candidates" data-db="data/hr.db">
+      SELECT id,name,role,stage,source,score,next_step FROM candidates ORDER BY updated_at DESC
+    </script>
+    <script>
+      const rows = YOPLAI.data.candidates,
+        stages = [...new Set(rows.map((r) => r.stage))];
+      DashboardKit.chart("#pipeline", {
+        series: [
+          {
+            type: "funnel",
+            data: stages.map((s) => ({
+              name: s,
+              value: rows.filter((r) => r.stage === s).length,
+            })),
+          },
+        ],
+      });
+      DashboardKit.table("#candidates", {
+        filename: "ats.csv",
+        columns: [
+          { key: "name", label: "Candidate" },
+          { key: "role", label: "Role" },
+          { key: "stage", label: "Stage" },
+          { key: "score", label: "Score" },
+          { key: "next_step", label: "Next step" },
+        ],
+        rows,
+      });
+    </script>
+  </body>
+</html>

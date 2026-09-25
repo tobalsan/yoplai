@@ -1,0 +1,53 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width" />
+    <title>Team PTO</title>
+    <link rel="stylesheet" href="/d-assets/v1/kit.css" />
+    <script src="/d-assets/v1/echarts.js"></script>
+    <script src="/d-assets/v1/kit.js"></script>
+  </head>
+  <body>
+    <main>
+      <h1>Team PTO</h1>
+      <div id="heatmap" class="dk-chart"></div>
+      <div id="pto"></div>
+    </main>
+    <script type="application/sql" data-name="pto" data-db="data/hr.db">
+      SELECT e.name,p.start_date,p.end_date,p.days,p.status,p.type FROM employees e JOIN pto p ON p.employee_email=e.email WHERE lower(e.manager_email)=lower(:viewer_email) OR lower(e.email)=lower(:viewer_email) ORDER BY p.start_date,e.name
+    </script>
+    <script>
+      const rows = YOPLAI.data.pto,
+        names = [...new Set(rows.map((r) => r.name))],
+        dates = [...new Set(rows.map((r) => r.start_date))];
+      DashboardKit.chart("#heatmap", {
+        tooltip: {},
+        xAxis: { type: "category", data: dates },
+        yAxis: { type: "category", data: names },
+        visualMap: { min: 0, max: 5, show: false },
+        series: [
+          {
+            type: "heatmap",
+            data: rows.map((r) => [
+              dates.indexOf(r.start_date),
+              names.indexOf(r.name),
+              r.days,
+            ]),
+          },
+        ],
+      });
+      DashboardKit.table("#pto", {
+        filename: "team-pto.csv",
+        columns: [
+          { key: "name", label: "Person" },
+          { key: "start_date", label: "Start" },
+          { key: "end_date", label: "End" },
+          { key: "days", label: "Days" },
+          { key: "status", label: "Status" },
+        ],
+        rows,
+      });
+    </script>
+  </body>
+</html>
