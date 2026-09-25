@@ -20,7 +20,7 @@ import { WsBroker, type WsBrokerAuthAdapter } from "./ws-broker.js";
 import { accessLogger } from "./access-log.js";
 import { getAgent, CONFIG_DIR } from "../config/index.js";
 import { createDashboardAssetRoutes, createDashboardRoutes } from "../canvas/routes.js";
-import { DashboardRegistry } from "../canvas/store.js";
+import { getDashboardRegistry } from "../canvas/store.js";
 
 type RequestAuthContext =
   import("@yoplai/extension-multi-user").RequestAuthContext;
@@ -110,7 +110,7 @@ app.route(
   createDashboardRoutes({
     getConfig: loadConfig,
     getAgent,
-    registry: new DashboardRegistry(
+    registry: getDashboardRegistry(
       path.join(CONFIG_DIR, "canvas", "registry.json")
     ),
     async authenticate(request) {

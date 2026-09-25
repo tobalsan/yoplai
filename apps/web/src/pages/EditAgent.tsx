@@ -7,7 +7,7 @@ import {
   Show,
 } from "solid-js";
 import { A, useNavigate, useParams } from "@solidjs/router";
-import { fetchAgents, fetchPool } from "../api";
+import { fetchAgentDashboards, fetchAgents, fetchPool } from "../api";
 import {
   autoFormPath,
   detailsPath,
@@ -17,6 +17,7 @@ import {
 } from "../api/extensions";
 import {
   fetchForks,
+  fetchPoolActions,
   fetchTeams,
   setForkTeams,
   type AgentFork,
@@ -165,6 +166,31 @@ export function EditAgent() {
   const fork = createMemo(() =>
     (forks() ?? []).find((entry) => entry.sourcePoolId === params.agentId)
   );
+  const [poolActions] = createResource(
+    () => capabilities.forkedAgents && !isAdmin(),
+    (enabled) => enabled ? fetchPoolActions() : Promise.resolve([])
+  );
+  const dashboardAgentId = createMemo(() =>
+    capabilities.forkedAgents
+      ? fork()?.forkAgentId ?? (poolActions.error ? undefined : poolActions())?.find((entry) =>
+          entry.poolId === params.agentId && entry.action === "chat"
+        )?.chatAgentId
+      : params.agentId
+  );
+  const [tab, setTab] = createSignal<"extensions" | "dashboards">("extensions");
+  const [dashboards] = createResource(
+    () => tab() === "dashboards" ? dashboardAgentId() : null,
+    fetchAgentDashboards
+  );
+  const [copiedSlug, setCopiedSlug] = createSignal<string | null>(null);
+  const copyDashboardLink = async (slug: string, link: string) => {
+    try {
+      await navigator.clipboard.writeText(new URL(link, window.location.origin).href);
+      setCopiedSlug(slug);
+    } catch {
+      setCopiedSlug(null);
+    }
+  };
 
   const [extensions, { mutate: mutateExtensions, refetch: refetchExtensions }] =
     createResource(() => fetchAgentExtensions(params.agentId));
@@ -276,7 +302,42 @@ export function EditAgent() {
           />
         </Show>
 
-        <Show when={agent()}>
+        <Show when={agent() && dashboardAgentId()}>
+          <div class="edit-agent-tabs" role="tablist" aria-label="Agent sections">
+            <button type="button" role="tab" aria-selected={tab() === "extensions"} onClick={() => setTab("extensions")}>Extensions</button>
+            <button type="button" role="tab" aria-selected={tab() === "dashboards"} onClick={() => setTab("dashboards")}>Dashboards</button>
+          </div>
+        </Show>
+
+        <Show when={agent() && tab() === "dashboards" && dashboardAgentId()}>
+          <section class="edit-agent-dashboards" role="tabpanel">
+            <Show when={dashboards.loading}><p>Loading dashboards…</p></Show>
+            <Show when={dashboards.error}><p>Failed to load dashboards.</p></Show>
+            <Show when={!dashboards.loading && !dashboards.error && dashboards()?.length === 0}>
+              <p>No dashboards yet.</p>
+            </Show>
+            <Show when={!dashboards.error}>
+              <ul class="edit-agent-dashboard-list">
+                <For each={dashboards() ?? []}>{(dashboard) => (
+                  <li class="edit-agent-dashboard">
+                    <div>
+                      <strong>{dashboard.title}</strong>
+                      <span>{dashboard.slug} · Updated {new Date(dashboard.updatedAt).toLocaleString()}</span>
+                    </div>
+                    <div class="edit-agent-dashboard-actions">
+                      <a href={dashboard.link} target="_blank" rel="noopener noreferrer">Open</a>
+                      <button type="button" onClick={() => void copyDashboardLink(dashboard.slug, dashboard.link)}>
+                        {copiedSlug() === dashboard.slug ? "Copied" : "Copy link"}
+                      </button>
+                    </div>
+                  </li>
+                )}</For>
+              </ul>
+            </Show>
+          </section>
+        </Show>
+
+        <Show when={agent() && tab() === "extensions"}>
           <section class="edit-agent-extensions">
             <h2 class="edit-agent-section-title">Extensions</h2>
             <Show when={extensions.loading}>
@@ -381,6 +442,59 @@ export function EditAgent() {
       <style>{`
         .edit-agent {
           padding: 24px;
+        }
+
+        .edit-agent-tabs {
+          display: flex;
+          gap: 16px;
+          margin-top: 28px;
+          border-bottom: 1px solid var(--border-default);
+        }
+
+        .edit-agent-tabs button {
+          padding: 8px 2px;
+          border: 0;
+          border-bottom: 2px solid transparent;
+          background: none;
+          color: var(--text-secondary);
+          cursor: pointer;
+        }
+
+        .edit-agent-tabs button[aria-selected="true"] {
+          border-bottom-color: var(--accent, #3b82f6);
+          color: var(--text-primary);
+        }
+
+        .edit-agent-dashboards {
+          max-width: 800px;
+          color: var(--text-secondary);
+        }
+
+        .edit-agent-dashboard-list {
+          list-style: none;
+          padding: 0;
+        }
+
+        .edit-agent-dashboard {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 16px;
+          padding: 14px 0;
+          border-bottom: 1px solid var(--border-default);
+        }
+
+        .edit-agent-dashboard strong, .edit-agent-dashboard span { display: block; }
+        .edit-agent-dashboard strong { color: var(--text-primary); }
+        .edit-agent-dashboard span { margin-top: 4px; font-size: 12px; }
+        .edit-agent-dashboard-actions { display: flex; gap: 12px; white-space: nowrap; }
+        .edit-agent-dashboard-actions a, .edit-agent-dashboard-actions button {
+          border: 0;
+          background: none;
+          color: var(--accent, #3b82f6);
+          cursor: pointer;
+          font: inherit;
+          text-decoration: none;
         }
 
         .edit-agent-back {
