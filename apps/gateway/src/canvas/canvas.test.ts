@@ -97,7 +97,7 @@ describe("dashboard registry and tool", () => {
   });
 
   it("lists observed edits, restores content, keeps the link, and prunes old versions", async () => {
-    const file = path.join(workspace, "dashboards", "hello.html");
+    const file = path.join(workspace, "data", "dashboards", "hello.html");
     await canvasExtension.start({ getDataDir: () => root } as never);
     const [linkTool, versionsTool] = await canvasExtension.getAgentTools!(
       agent(),
@@ -157,7 +157,7 @@ describe("dashboard registry and tool", () => {
   });
 
   it("restores concurrent versions atomically", async () => {
-    const file = path.join(workspace, "dashboards", "hello.html");
+    const file = path.join(workspace, "data", "dashboards", "hello.html");
     const firstContent = `first-${"a".repeat(200_000)}`;
     const secondContent = `second-${"b".repeat(200_000)}`;
     await canvasExtension.start({ getDataDir: () => root } as never);
@@ -191,7 +191,7 @@ describe("dashboard registry and tool", () => {
   it("uses Git history instead of managed dashboard versions", async () => {
     await fs.mkdir(path.join(workspace, ".git"));
     await fs.writeFile(
-      path.join(workspace, "dashboards", "hello.html"),
+      path.join(workspace, "data", "dashboards", "hello.html"),
       "<h1>git</h1>"
     );
     await canvasExtension.start({ getDataDir: () => root } as never);
