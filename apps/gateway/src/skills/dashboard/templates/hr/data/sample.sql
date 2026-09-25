@@ -3,11 +3,6 @@ INSERT INTO employees VALUES
  ('amina@example.com','Amina Diallo','Customer Success','henry@example.com','2026-09-20T09:00:00Z'),
  ('leo@example.com','Leo Martin','Customer Success','henry@example.com','2026-09-20T09:00:00Z'),
  ('maya@example.com','Maya Chen','Leadership','ceo@example.com','2026-09-20T09:00:00Z');
-INSERT INTO okrs VALUES
- ('okr-1','henry@example.com','person','Raise customer outcomes','Complete success plans for strategic clients',72,'On track','2026-09-22T14:00:00Z'),
- ('okr-2','henry@example.com','person','Develop the CS team','Finish coaching plans',55,'At risk','2026-09-22T14:00:00Z'),
- ('okr-3',NULL,'company','Earn durable customer trust','Reach 94% gross retention',81,'On track','2026-09-22T14:00:00Z'),
- ('okr-4',NULL,'company','Grow efficiently','Reach 115% net retention',68,'On track','2026-09-22T14:00:00Z');
 INSERT INTO pto VALUES
  ('pto-1','henry@example.com','2026-10-12','2026-10-16',5,'Approved','Vacation','2026-09-20T09:00:00Z'),
  ('pto-2','amina@example.com','2026-10-05','2026-10-07',3,'Approved','Vacation','2026-09-20T09:00:00Z'),

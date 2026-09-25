@@ -76,7 +76,7 @@ ln -s agent .pi
 
 This makes `agent/skills` available as `.pi/skills`. Check symlink does not already exist before creating. Other coding harnesses may use different resource locations; do not assume Pi skill format is portable without adaptation.
 
-Yoplai's built-in `dashboard` skill is always discoverable by host and sandboxed Pi agents. It documents the Canvas contract and provides cloneable HR (`okr-me`, `okr-company`, `pto-me`, `pto-team`, `ats`, `candidate`) and customer-success (`clients`, `client`, `qbr`) templates with sample SQLite data.
+Yoplai's built-in `dashboard` skill is always discoverable by host and sandboxed Pi agents. It documents the Canvas contract and provides cloneable HR (`pto-me`, `pto-team`, `ats`, `candidate`), OKR (`okr-teams`, `okr-me`, `okr-reports`, on their own `data/okr.db`), and customer-success (`clients`, `client`, `qbr`) templates with sample SQLite data.
 
 ## System prompt contributions
 

@@ -1,0 +1,105 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width" />
+    <title>My OKRs</title>
+    <link rel="stylesheet" href="/d-assets/v1/kit.css" />
+    <script src="/d-assets/v1/echarts.js"></script>
+    <script src="/d-assets/v1/kit.js"></script>
+  </head>
+  <body>
+    <main>
+      <h1>My OKRs</h1>
+      <p id="subtitle"></p>
+      <div id="summary" class="dk-grid"></div>
+      <h2>Items</h2>
+      <div id="items"></div>
+      <h2>Weekly trend</h2>
+      <div id="trend-chart" class="dk-chart"></div>
+    </main>
+    <script type="application/sql" data-name="summary" data-db="data/okr.db">
+      SELECT name,team,contribution,items FROM okr_person_progress
+      WHERE period=COALESCE(NULLIF(:period,''),(SELECT max(period) FROM okr_items))
+      AND lower(owner_email)=lower(
+        CASE WHEN :owner IS NOT NULL AND EXISTS (
+          SELECT 1 FROM employees WHERE lower(email)=lower(:owner) AND lower(manager_email)=lower(:viewer_email)
+        ) THEN :owner ELSE :viewer_email END
+      )
+    </script>
+    <script type="application/sql" data-name="items" data-db="data/okr.db">
+      SELECT objective,title,weight,completion,status,date(updated_at) AS updated_at,
+        ROUND(weight*completion/SUM(weight) OVER (PARTITION BY owner_email,period),1) AS contribution
+      FROM okr_items
+      WHERE period=COALESCE(NULLIF(:period,''),(SELECT max(period) FROM okr_items))
+      AND lower(owner_email)=lower(
+        CASE WHEN :owner IS NOT NULL AND EXISTS (
+          SELECT 1 FROM employees WHERE lower(email)=lower(:owner) AND lower(manager_email)=lower(:viewer_email)
+        ) THEN :owner ELSE :viewer_email END
+      )
+      ORDER BY objective,title
+    </script>
+    <script type="application/sql" data-name="trend" data-db="data/okr.db">
+      SELECT week,contribution FROM okr_snapshots
+      WHERE period=COALESCE(NULLIF(:period,''),(SELECT max(period) FROM okr_items))
+      AND lower(owner_email)=lower(
+        CASE WHEN :owner IS NOT NULL AND EXISTS (
+          SELECT 1 FROM employees WHERE lower(email)=lower(:owner) AND lower(manager_email)=lower(:viewer_email)
+        ) THEN :owner ELSE :viewer_email END
+      )
+      ORDER BY week
+    </script>
+    <script>
+      const STATUS_LABELS = {
+        on_track: "On track",
+        at_risk: "At risk",
+        off_track: "Off track",
+        done: "Done",
+      };
+      const who = YOPLAI.data.summary[0];
+      const items = YOPLAI.data.items;
+      document.querySelector("#subtitle").textContent = who
+        ? who.name + " · " + who.team
+        : YOPLAI.viewer.name || YOPLAI.viewer.email || "Personal view";
+      document.querySelector("#summary").innerHTML =
+        '<div id="contribution"></div><div id="count"></div><div id="needs-attention"></div>';
+      DashboardKit.kpi("#contribution", {
+        label: "Contribution",
+        value: (who ? who.contribution : 0) + "%",
+      });
+      DashboardKit.kpi("#count", {
+        label: "Items",
+        value: who ? who.items : 0,
+      });
+      const needsAttention = items.filter(
+        (r) => r.status === "at_risk" || r.status === "off_track"
+      ).length;
+      DashboardKit.kpi("#needs-attention", {
+        label: "Needs attention",
+        value: needsAttention,
+      });
+      DashboardKit.table("#items", {
+        filename: "my-okrs.csv",
+        columns: [
+          { key: "objective", label: "Objective" },
+          { key: "title", label: "Title" },
+          { key: "weight", label: "Weight %" },
+          { key: "completion", label: "Completion %" },
+          { key: "status", label: "Status" },
+          { key: "contribution", label: "Contribution %" },
+          { key: "updated_at", label: "Updated" },
+        ],
+        rows: items.map((r) => ({
+          ...r,
+          status: STATUS_LABELS[r.status] || r.status,
+        })),
+      });
+      const trend = YOPLAI.data.trend;
+      DashboardKit.chart("#trend-chart", {
+        xAxis: { type: "category", data: trend.map((r) => r.week) },
+        yAxis: { type: "value", max: 100 },
+        series: [{ type: "line", data: trend.map((r) => r.contribution) }],
+      });
+    </script>
+  </body>
+</html>

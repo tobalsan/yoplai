@@ -1,0 +1,86 @@
+INSERT INTO employees VALUES
+ ('olivia@example.com','Olivia Park','Leadership',NULL,'U0OLIVIA01','2026-09-20T09:00:00Z'),
+ ('henry@example.com','Henry Cole','Global Operations','olivia@example.com','U0HENRY001','2026-09-20T09:00:00Z'),
+ ('amina@example.com','Amina Diallo','Global Operations','henry@example.com','U0AMINA001','2026-09-20T09:00:00Z'),
+ ('leo@example.com','Leo Martin','Global Operations','henry@example.com',NULL,'2026-09-20T09:00:00Z'),
+ ('priya@example.com','Priya Nair','Global Operations','henry@example.com','U0PRIYA001','2026-09-20T09:00:00Z'),
+ ('dmitri@example.com','Dmitri Orlov','Global Operations','henry@example.com',NULL,'2026-09-20T09:00:00Z'),
+ ('farah@example.com','Farah Haddad','Global Operations','henry@example.com',NULL,'2026-09-20T09:00:00Z'),
+ ('grace@example.com','Grace Kim','Growth','olivia@example.com','U0GRACE001','2026-09-20T09:00:00Z'),
+ ('marcus@example.com','Marcus Webb','Growth','grace@example.com','U0MARCUS01','2026-09-20T09:00:00Z'),
+ ('sofia@example.com','Sofia Ibanez','Growth','grace@example.com',NULL,'2026-09-20T09:00:00Z'),
+ ('noah@example.com','Noah Bennett','Growth','grace@example.com',NULL,'2026-09-20T09:00:00Z');
+
+INSERT INTO okr_items VALUES
+ ('okr-henry-1','henry@example.com','2026-Q4','Reliable vendor operations','Renew 5 critical vendor contracts before Nov 15',30,80,'on_track','2026-10-26T09:00:00Z'),
+ ('okr-henry-2','henry@example.com','2026-Q4','Reliable vendor operations','Cut vendor incident response time to under 4 hours',25,60,'at_risk','2026-10-26T09:00:00Z'),
+ ('okr-henry-3','henry@example.com','2026-Q4','Develop the ops team','Complete Q4 coaching plans for all direct reports',25,40,'at_risk','2026-10-26T09:00:00Z'),
+ ('okr-henry-4','henry@example.com','2026-Q4','Develop the ops team','Fill the open logistics analyst role',20,90,'on_track','2026-10-26T09:00:00Z'),
+
+ ('okr-amina-1','amina@example.com','2026-Q4','Warehouse efficiency','Reduce pick-pack cycle time by 15%',40,70,'on_track','2026-10-26T09:00:00Z'),
+ ('okr-amina-2','amina@example.com','2026-Q4','Warehouse efficiency','Roll out the new WMS module',35,50,'at_risk','2026-10-26T09:00:00Z'),
+ ('okr-amina-3','amina@example.com','2026-Q4','Vendor compliance','Complete SOC2 vendor audits',25,100,'done','2026-10-26T09:00:00Z'),
+
+ ('okr-leo-1','leo@example.com','2026-Q4','Shipping reliability','Reach 98% on-time delivery',50,55,'at_risk','2026-10-26T09:00:00Z'),
+ ('okr-leo-2','leo@example.com','2026-Q4','Shipping reliability','Cut freight cost per unit by 8%',30,65,'on_track','2026-10-26T09:00:00Z'),
+ ('okr-leo-3','leo@example.com','2026-Q4','Process documentation','Publish the updated SOP library',20,20,'off_track','2026-10-26T09:00:00Z'),
+
+ ('okr-priya-1','priya@example.com','2026-Q4','Inventory accuracy','Reach 99.5% cycle count accuracy',45,80,'on_track','2026-10-26T09:00:00Z'),
+ ('okr-priya-2','priya@example.com','2026-Q4','Inventory accuracy','Automate reorder point alerts',30,100,'done','2026-10-26T09:00:00Z'),
+ ('okr-priya-3','priya@example.com','2026-Q4','Vendor compliance','Onboard 2 backup vendors for critical SKUs',25,40,'at_risk','2026-10-26T09:00:00Z'),
+
+ ('okr-dmitri-1','dmitri@example.com','2026-Q4','Warehouse efficiency','Cut receiving dock turnaround time by 20%',35,60,'at_risk','2026-10-26T09:00:00Z'),
+ ('okr-dmitri-2','dmitri@example.com','2026-Q4','Warehouse efficiency','Cross-train 6 associates on 2 stations each',35,46,'at_risk','2026-10-26T09:00:00Z'),
+ ('okr-dmitri-3','dmitri@example.com','2026-Q4','Process documentation','Publish the shift-handoff checklist',30,20,'off_track','2026-10-26T09:00:00Z'),
+
+ ('okr-grace-1','grace@example.com','2026-Q4','Grow qualified pipeline','Increase MQLs by 25% QoQ',35,75,'on_track','2026-10-26T09:00:00Z'),
+ ('okr-grace-2','grace@example.com','2026-Q4','Grow qualified pipeline','Launch an ABM program for the top 50 accounts',35,55,'at_risk','2026-10-26T09:00:00Z'),
+ ('okr-grace-3','grace@example.com','2026-Q4','Expand market share','Enter 2 new verticals',30,90,'on_track','2026-10-26T09:00:00Z'),
+
+ ('okr-marcus-1','marcus@example.com','2026-Q4','Content engine','Publish 12 SEO-optimized long-form posts',40,65,'on_track','2026-10-26T09:00:00Z'),
+ ('okr-marcus-2','marcus@example.com','2026-Q4','Content engine','Rebuild the content calendar tooling',30,30,'off_track','2026-10-26T09:00:00Z'),
+ ('okr-marcus-3','marcus@example.com','2026-Q4','Paid growth','Cut CAC by 10% across paid channels',30,80,'on_track','2026-10-26T09:00:00Z'),
+
+ ('okr-sofia-1','sofia@example.com','2026-Q4','Paid growth','Launch performance marketing in 2 new regions',50,95,'on_track','2026-10-26T09:00:00Z'),
+ ('okr-sofia-2','sofia@example.com','2026-Q4','Lifecycle marketing','Ship the revamped onboarding email flow',50,45,'at_risk','2026-10-26T09:00:00Z'),
+
+ ('okr-noah-1','noah@example.com','2026-Q4','Lifecycle marketing','Build a churn-risk scoring model',60,20,'off_track','2026-10-26T09:00:00Z'),
+ ('okr-noah-2','noah@example.com','2026-Q4','Brand','Refresh brand guidelines and asset library',40,85,'on_track','2026-10-26T09:00:00Z');
+
+INSERT INTO okr_snapshots VALUES
+ ('2026-Q4','2026-10-05','henry@example.com',49.0,'2026-10-26T09:00:00Z'),
+ ('2026-Q4','2026-10-12','henry@example.com',55.0,'2026-10-26T09:00:00Z'),
+ ('2026-Q4','2026-10-19','henry@example.com',61.0,'2026-10-26T09:00:00Z'),
+ ('2026-Q4','2026-10-26','henry@example.com',67.0,'2026-10-26T09:00:00Z'),
+ ('2026-Q4','2026-10-05','amina@example.com',52.5,'2026-10-26T09:00:00Z'),
+ ('2026-Q4','2026-10-12','amina@example.com',58.5,'2026-10-26T09:00:00Z'),
+ ('2026-Q4','2026-10-19','amina@example.com',64.5,'2026-10-26T09:00:00Z'),
+ ('2026-Q4','2026-10-26','amina@example.com',70.5,'2026-10-26T09:00:00Z'),
+ ('2026-Q4','2026-10-05','leo@example.com',33.0,'2026-10-26T09:00:00Z'),
+ ('2026-Q4','2026-10-12','leo@example.com',39.0,'2026-10-26T09:00:00Z'),
+ ('2026-Q4','2026-10-19','leo@example.com',45.0,'2026-10-26T09:00:00Z'),
+ ('2026-Q4','2026-10-26','leo@example.com',51.0,'2026-10-26T09:00:00Z'),
+ ('2026-Q4','2026-10-05','priya@example.com',58.0,'2026-10-26T09:00:00Z'),
+ ('2026-Q4','2026-10-12','priya@example.com',64.0,'2026-10-26T09:00:00Z'),
+ ('2026-Q4','2026-10-19','priya@example.com',70.0,'2026-10-26T09:00:00Z'),
+ ('2026-Q4','2026-10-26','priya@example.com',76.0,'2026-10-26T09:00:00Z'),
+ ('2026-Q4','2026-10-05','dmitri@example.com',25.1,'2026-10-26T09:00:00Z'),
+ ('2026-Q4','2026-10-12','dmitri@example.com',31.1,'2026-10-26T09:00:00Z'),
+ ('2026-Q4','2026-10-19','dmitri@example.com',37.1,'2026-10-26T09:00:00Z'),
+ ('2026-Q4','2026-10-26','dmitri@example.com',43.1,'2026-10-26T09:00:00Z'),
+ ('2026-Q4','2026-10-05','grace@example.com',54.5,'2026-10-26T09:00:00Z'),
+ ('2026-Q4','2026-10-12','grace@example.com',60.5,'2026-10-26T09:00:00Z'),
+ ('2026-Q4','2026-10-19','grace@example.com',66.5,'2026-10-26T09:00:00Z'),
+ ('2026-Q4','2026-10-26','grace@example.com',72.5,'2026-10-26T09:00:00Z'),
+ ('2026-Q4','2026-10-05','marcus@example.com',41.0,'2026-10-26T09:00:00Z'),
+ ('2026-Q4','2026-10-12','marcus@example.com',47.0,'2026-10-26T09:00:00Z'),
+ ('2026-Q4','2026-10-19','marcus@example.com',53.0,'2026-10-26T09:00:00Z'),
+ ('2026-Q4','2026-10-26','marcus@example.com',59.0,'2026-10-26T09:00:00Z'),
+ ('2026-Q4','2026-10-05','sofia@example.com',52.0,'2026-10-26T09:00:00Z'),
+ ('2026-Q4','2026-10-12','sofia@example.com',58.0,'2026-10-26T09:00:00Z'),
+ ('2026-Q4','2026-10-19','sofia@example.com',64.0,'2026-10-26T09:00:00Z'),
+ ('2026-Q4','2026-10-26','sofia@example.com',70.0,'2026-10-26T09:00:00Z'),
+ ('2026-Q4','2026-10-05','noah@example.com',28.0,'2026-10-26T09:00:00Z'),
+ ('2026-Q4','2026-10-12','noah@example.com',34.0,'2026-10-26T09:00:00Z'),
+ ('2026-Q4','2026-10-19','noah@example.com',40.0,'2026-10-26T09:00:00Z'),
+ ('2026-Q4','2026-10-26','noah@example.com',46.0,'2026-10-26T09:00:00Z');

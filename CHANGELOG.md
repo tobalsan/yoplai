@@ -12,7 +12,7 @@ Breaking changes are marked **⚠ BREAKING**.
 ### Added
 
 - Agents can fully remove Canvas dashboards with `dashboard_delete`, clearing the HTML file, stable link registration, and saved versions while preserving shared databases.
-- Agents now discover a built-in dashboard skill with nine cloneable HR and customer-success Canvas templates, seeded SQLite schemas, and a rebuildable CS wiki workflow.
+- Agents now discover a built-in dashboard skill with ten cloneable HR, OKR, and customer-success Canvas templates, seeded SQLite schemas, and a rebuildable CS wiki workflow.
 - Canvas keeps the latest 20 observed copies of dashboards outside Git workspaces and provides a `dashboard_versions` tool to list or restore them without changing their links.
 - Each accessible agent now has a Dashboards tab with dashboard titles, last updates, and Open/Copy link actions.
 
