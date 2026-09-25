@@ -8,7 +8,7 @@
     "aihub": "./dist/cli/index.js"
   },
   "scripts": {
-    "build": "tsc",
+    "build": "tsc && mkdir -p dist/canvas/assets && cp -R src/canvas/assets/. dist/canvas/assets/",
     "dev": "tsx watch src/index.ts",
     "start": "node dist/cli/index.js gateway"
   },
@@ -33,10 +33,13 @@
     "@hono/node-server": "^1.19.9",
     "better-sqlite3": "^12.10.0",
     "commander": "^12.1.0",
+    "dompurify": "^3.3.1",
+    "echarts": "^6.1.0",
     "fast-glob": "^3.3.3",
     "hono": "^4.11.4",
     "js-yaml": "^4.1.1",
     "mammoth": "^1.12.0",
+    "marked": "^17.0.1",
     "mupdf": "^1.28.0",
     "pdf-parse": "^2.4.5",
     "proper-lockfile": "^4.1.2",

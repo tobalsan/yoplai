@@ -14,6 +14,7 @@ import {
   openDashboardFile,
 } from "./index.js";
 import {
+  createDashboardAssetRoutes,
   createDashboardRoutes,
   dashboardCsp,
   injectDashboardRuntime,
@@ -335,6 +336,82 @@ describe("dashboard viewer", () => {
     const response = await routes.request(`/${entry.id}`);
     expect(response.status).toBe(200);
     expect(await response.text()).toContain("Dashboard query error");
+  });
+});
+
+describe("dashboard kit assets", () => {
+  it("serves only fixed versioned public assets with immutable caching", async () => {
+    const routes = createDashboardAssetRoutes(() => config);
+    const response = await routes.request("/v1/kit.js");
+    expect(response.status).toBe(200);
+    expect(response.headers.get("cache-control")).toBe(
+      "public, max-age=31536000, immutable"
+    );
+    expect(response.headers.get("x-content-type-options")).toBe("nosniff");
+    expect(await response.text()).toContain("DashboardKit");
+    expect((await routes.request("/v2/kit.js")).status).toBe(404);
+    expect((await routes.request("/v1/../routes.ts")).status).toBe(404);
+    const alias = await routes.request("/kit.js");
+    expect(alias.status).toBe(302);
+    expect(alias.headers.get("location")).toBe("/d-assets/v1/kit.js");
+    expect(alias.headers.get("cache-control")).toBe("public, max-age=300");
+    expect((await routes.request("/kit.css")).headers.get("location")).toBe(
+      "/d-assets/v1/kit.css"
+    );
+    expect((await routes.request("/echarts.js")).status).toBe(404);
+  });
+
+  it("sandboxes the sample.html asset with the dashboard CSP but not kit.js", async () => {
+    const routes = createDashboardAssetRoutes(() => config);
+    const sample = await routes.request("/v1/sample.html");
+    expect(sample.headers.get("content-security-policy")).toMatch(
+      /^sandbox/
+    );
+    const kit = await routes.request("/v1/kit.js");
+    expect(kit.headers.get("content-security-policy")).toBeNull();
+  });
+
+  it("sanitizes markdown and exports valid CSV", async () => {
+    const routes = createDashboardAssetRoutes(() => config);
+    const dom = new JSDOM("<div id='markdown'></div>", {
+      runScripts: "outside-only",
+      url: "https://yoplai.test",
+    });
+    for (const asset of ["marked.js", "purify.js", "kit.js"]) {
+      dom.window.eval(await (await routes.request(`/v1/${asset}`)).text());
+    }
+    const kit = (
+      dom.window as unknown as {
+        DashboardKit: {
+          md(target: string, markdown: string): void;
+          csv(
+            rows: Array<Record<string, unknown>>,
+            columns: Array<{ key: string; label: string }>
+          ): string;
+        };
+      }
+    ).DashboardKit;
+    kit.md(
+      "#markdown",
+      '# Hello\n<script>window.pwned=true</script><img src=x onerror="window.pwned=true">'
+    );
+    expect(dom.window.document.querySelector("h1")?.textContent).toBe("Hello");
+    expect(dom.window.document.querySelector("script")).toBeNull();
+    expect(
+      dom.window.document.querySelector("img")?.hasAttribute("onerror")
+    ).toBe(false);
+    expect(
+      (dom.window as unknown as { pwned?: boolean }).pwned
+    ).toBeUndefined();
+    expect(
+      kit.csv(
+        [{ name: 'A "quote"', value: "1,200" }],
+        [
+          { key: "name", label: "Name" },
+          { key: "value", label: "Value" },
+        ]
+      )
+    ).toBe('"Name","Value"\r\n"A ""quote""","1,200"');
   });
 });
 

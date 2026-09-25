@@ -11,6 +11,8 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Added
 
+- Canvas dashboards now have a versioned public Dashboard Kit with light/dark and A4 print themes (dark follows the OS `prefers-color-scheme`, overridable with `data-theme="light"`/`"dark"`), common interactive components, sanitized Markdown, CSV export, and vendored ECharts charting.
+
 - Canvas dashboards can run confined read-only SQLite queries on every load with bound viewer/URL parameters, capped results, drill-down links, and visible query diagnostics.
 - Multi-user mode supports email/password sign-in (`extensions.multiUser.emailAndPassword.enabled`), with a sign-in / create-account form on the login page.
 
@@ -24,6 +26,7 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Fixed
 
+- Keep Canvas chart headings with their charts across printed page breaks.
 - Return users to their requested dashboard or app deep link after Google sign-in.
 - Upgraded the Pi SDK packages to 0.87.1 so Anthropic OAuth requests for Claude Opus 5.5 report the required Claude Code 2.1.280 version; gateway retries and interrupted tool-call repair now update Pi's canonical session context.
 - Ensure gateway shutdown stops the Vite preview process tree, and bind Tailscale-served UIs to loopback even with LAN UI configuration.
