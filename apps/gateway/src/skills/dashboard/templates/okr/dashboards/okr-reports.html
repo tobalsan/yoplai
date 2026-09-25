@@ -1,0 +1,69 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width" />
+    <title>My Reports' OKRs</title>
+    <link rel="stylesheet" href="/d-assets/v1/kit.css" />
+    <script src="/d-assets/v1/kit.js"></script>
+  </head>
+  <body>
+    <main>
+      <h1>My Reports' OKRs</h1>
+      <p id="subtitle"></p>
+      <div id="reports"></div>
+      <p id="empty" hidden>You have no direct reports for this period.</p>
+    </main>
+    <script type="application/sql" data-name="reports" data-db="data/okr.db">
+      SELECT e.email AS owner_email,e.name AS name,p.contribution AS contribution,
+        COALESCE(p.items,0) AS items,
+        (SELECT COALESCE(NULLIF(:period,''),(SELECT max(period) FROM okr_items))) AS period
+      FROM employees e
+      LEFT JOIN okr_person_progress p
+        ON p.owner_email=e.email
+        AND p.period=(SELECT COALESCE(NULLIF(:period,''),(SELECT max(period) FROM okr_items)))
+      WHERE lower(e.manager_email)=lower(:viewer_email)
+      ORDER BY e.name
+    </script>
+    <script type="application/sql" data-name="at_risk" data-db="data/okr.db">
+      SELECT owner_email,COUNT(*) AS at_risk
+      FROM okr_items
+      WHERE period=COALESCE(NULLIF(:period,''),(SELECT max(period) FROM okr_items))
+      AND status IN ('at_risk','off_track')
+      AND lower(owner_email) IN (
+        SELECT lower(email) FROM employees WHERE lower(manager_email)=lower(:viewer_email)
+      )
+      GROUP BY owner_email
+    </script>
+    <script>
+      const rows = YOPLAI.data.reports;
+      const period = rows[0] ? rows[0].period : "";
+      document.querySelector("#subtitle").textContent = period
+        ? "Period " + period
+        : "";
+      if (!rows.length) {
+        document.querySelector("#empty").hidden = false;
+      } else {
+        const atRiskByOwner = new Map(
+          YOPLAI.data.at_risk.map((r) => [r.owner_email, r.at_risk])
+        );
+        DashboardKit.list("#reports", {
+          items: rows.map((r) => ({
+            label:
+              r.name +
+              " · " +
+              (r.contribution == null ? "—" : r.contribution + "%"),
+            value:
+              r.items +
+              " items · " +
+              (atRiskByOwner.get(r.owner_email) || 0) +
+              " at risk",
+            href: period
+              ? YOPLAI.link("okr-me.html", { owner: r.owner_email, period })
+              : YOPLAI.link("okr-me.html", { owner: r.owner_email }),
+          })),
+        });
+      }
+    </script>
+  </body>
+</html>

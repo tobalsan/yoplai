@@ -1,0 +1,87 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width" />
+    <title>Team OKRs</title>
+    <link rel="stylesheet" href="/d-assets/v1/kit.css" />
+    <script src="/d-assets/v1/echarts.js"></script>
+    <script src="/d-assets/v1/kit.js"></script>
+  </head>
+  <body>
+    <main>
+      <h1>Team OKRs</h1>
+      <p id="subtitle"></p>
+      <div id="summary" class="dk-grid"></div>
+      <h2>Team contribution</h2>
+      <div id="teams-chart" class="dk-chart"></div>
+      <h2>Weekly trend</h2>
+      <div id="trend-chart" class="dk-chart"></div>
+    </main>
+    <script type="application/sql" data-name="teams" data-db="data/okr.db">
+      SELECT period,team,members,contribution FROM okr_team_progress
+      WHERE period=COALESCE(NULLIF(:period,''),(SELECT max(period) FROM okr_items))
+      AND members>=3
+      ORDER BY team
+    </script>
+    <script type="application/sql" data-name="company" data-db="data/okr.db">
+      SELECT ROUND(AVG(p.contribution),1) AS avg_contribution,
+        COUNT(*) AS headcount
+      FROM okr_person_progress p
+      WHERE p.period=COALESCE(NULLIF(:period,''),(SELECT max(period) FROM okr_items))
+      AND p.team IN (
+        SELECT team FROM okr_team_progress
+        WHERE period=COALESCE(NULLIF(:period,''),(SELECT max(period) FROM okr_items))
+        AND members>=3
+      )
+    </script>
+    <script type="application/sql" data-name="trend" data-db="data/okr.db">
+      SELECT s.week AS week,e.team AS team,ROUND(AVG(s.contribution),1) AS contribution
+      FROM okr_snapshots s JOIN employees e ON e.email=s.owner_email
+      WHERE s.period=COALESCE(NULLIF(:period,''),(SELECT max(period) FROM okr_items))
+      AND e.team IN (
+        SELECT team FROM okr_team_progress
+        WHERE period=COALESCE(NULLIF(:period,''),(SELECT max(period) FROM okr_items))
+        AND members>=3
+      )
+      GROUP BY s.week,e.team
+      ORDER BY s.week,e.team
+    </script>
+    <script>
+      const teams = YOPLAI.data.teams;
+      const period = teams[0] ? teams[0].period : "";
+      document.querySelector("#subtitle").textContent = period
+        ? "Period " + period
+        : "No data yet";
+      document.querySelector("#summary").innerHTML =
+        '<div id="company-avg"></div><div id="team-count"></div>';
+      const company = YOPLAI.data.company[0];
+      DashboardKit.kpi("#company-avg", {
+        label: "Company average",
+        value: (company ? company.avg_contribution : 0) + "%",
+      });
+      DashboardKit.kpi("#team-count", { label: "Teams", value: teams.length });
+      DashboardKit.chart("#teams-chart", {
+        xAxis: { type: "value", max: 100 },
+        yAxis: { type: "category", data: teams.map((r) => r.team) },
+        series: [{ type: "bar", data: teams.map((r) => r.contribution) }],
+      });
+      const trend = YOPLAI.data.trend;
+      const weeks = [...new Set(trend.map((r) => r.week))];
+      const trendTeams = [...new Set(trend.map((r) => r.team))];
+      DashboardKit.chart("#trend-chart", {
+        legend: {},
+        xAxis: { type: "category", data: weeks },
+        yAxis: { type: "value", max: 100 },
+        series: trendTeams.map((team) => ({
+          type: "line",
+          name: team,
+          data: weeks.map((week) => {
+            const row = trend.find((r) => r.week === week && r.team === team);
+            return row ? row.contribution : null;
+          }),
+        })),
+      });
+    </script>
+  </body>
+</html>

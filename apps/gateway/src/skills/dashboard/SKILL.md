@@ -3,8 +3,9 @@ name: dashboard
 description: >-
   Build and maintain Yoplai Canvas dashboards backed by live SQLite data. Use
   when an answer is recurring, data-heavy, or something people will revisit;
-  when asked for a dashboard, report, OKRs, PTO, recruiting/ATS, clients,
-  customer health, or a QBR; or when updating an existing dashboard.
+  when asked for a dashboard, report, OKRs, team/company KPI rollups, PTO,
+  recruiting/ATS, clients, customer health, or a QBR; or when updating an
+  existing dashboard.
 ---
 
 # Dashboard
@@ -14,7 +15,7 @@ Create a dashboard when the answer is recurring, data-heavy, or will be revisite
 ## Required workflow
 
 1. Inspect existing `data/dashboards/`, `data/`, and `data/migrations/`. Update existing files in place; do not rewrite a dashboard that only needs a refinement.
-2. For a starter, copy the matching files from this skill's `templates/` directory. Available HR templates: `okr-me`, `okr-company`, `pto-me`, `pto-team`, `ats`, `candidate`. Available CS templates: `clients`, `client`, `qbr`.
+2. For a starter, copy the matching files from this skill's `templates/` directory. Available HR templates: `pto-me`, `pto-team`, `ats`, `candidate`. Available OKR templates: `okr-teams`, `okr-me`, `okr-reports` (see [okr.md](references/okr.md) — OKRs live in their own `data/okr.db`, never in `data/hr.db`, because they get shared more widely than confidential HR data). Available CS templates: `clients`, `client`, `qbr`.
 3. Keep derived SQLite databases under `data/`. Keep their schema in `data/migrations/`; every mutable table has an `updated_at` column. If markdown or another source is authoritative, keep the database rebuildable from it. See [data.md](references/data.md).
 4. Put each page at `data/dashboards/<slug>.html`; `data-db` paths are relative to the workspace root (for example `data/hr.db`). Use live SQL blocks and the Canvas runtime exactly as described in [canvas.md](references/canvas.md). Use the Dashboard Kit and ECharts patterns in [kit.md](references/kit.md).
 5. Aggregate in SQL. For large sources, precompute rollups with scheduled jobs instead of sending raw rows to the browser.

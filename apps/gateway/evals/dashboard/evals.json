@@ -21,6 +21,13 @@
       "prompt": "Change Acme's health to Yellow and add CSAT to the existing client dashboard.",
       "expected_output": "Updates the existing client row and updated_at, surgically edits the existing client.html instead of replacing it, reruns affected SQL with a concrete id, calls dashboard_link again, and returns the stable absolute link without exposing secrets.",
       "files": []
+    },
+    {
+      "id": 3,
+      "name": "okr-team-rollup",
+      "prompt": "Phuong asks: I want an OKR dashboard of the whole company (public view) and an individual private view for each person, where each person's tasks contribute to their team's KPI. Public should show team KPI only, not tasks. Managers should see their direct reports.",
+      "expected_output": "Uses the OKR starter family in its own data/okr.db, never co-located with hr.db, and creates okr-teams.html, okr-me.html, and okr-reports.html. Models each person's items as weighted (weight, completion) rows whose contribution rolls up as Σ(weight×completion)/Σweight, and team KPI as the average of member contributions. The public okr-teams.html query selects only team-level aggregates, never item titles or per-person rows. okr-me.html scopes to :viewer_email and only allows a manager to view a direct report's items via an :owner parameter guarded in SQL. okr-reports.html scopes to the viewer's direct reports and links to each report's okr-me.html. Validates every query with concrete viewer/owner/period bindings via sqlite3 before sharing. Proposes a weekly Monday check-in scheduler job that snapshots contributions, posts the team % to Slack (no item titles), and DMs each person their private link. Calls dashboard_link for all three dashboards and replies with the exact links returned.",
+      "files": []
     }
   ]
 }
