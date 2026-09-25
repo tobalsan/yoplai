@@ -541,6 +541,35 @@ describe("dashboard viewer", () => {
 });
 
 describe("dashboard kit assets", () => {
+  it("serves the deployment theme mapping without caching", async () => {
+    vi.stubEnv("YOPLAI_HOME", root);
+    await fs.writeFile(
+      path.join(root, "theme.css"),
+      ":root { --bg-base: #010203; }"
+    );
+    const response = await createDashboardAssetRoutes(() => config).request(
+      "/theme.css"
+    );
+    const css = await response.text();
+    expect(response.status).toBe(200);
+    expect(response.headers.get("cache-control")).toBe("no-cache");
+    expect(response.headers.get("content-type")).toContain("text/css");
+    expect(css).toContain("--dk-bg: var(--bg-base)");
+    expect(css).toContain(":root:root:not(");
+    expect(css).not.toContain("--dk-positive");
+    expect(css).toMatch(/}\n:root \{ --bg-base: #010203; \}$/);
+  });
+
+  it("serves an empty deployment theme when theme.css is absent", async () => {
+    vi.stubEnv("YOPLAI_HOME", root);
+    const response = await createDashboardAssetRoutes(() => config).request(
+      "/theme.css"
+    );
+    expect(response.status).toBe(200);
+    expect(response.headers.get("cache-control")).toBe("no-cache");
+    expect(await response.text()).toBe("");
+  });
+
   it("serves only fixed versioned public assets with immutable caching", async () => {
     const routes = createDashboardAssetRoutes(() => config);
     const response = await routes.request("/v1/kit.js");
@@ -785,15 +814,18 @@ describe("dashboard SQL", () => {
   });
 
   it("executes YOPLAI.link and safely serializes closing script text", () => {
-    const html = injectDashboardRuntime("<script>window.loaded=true</script>", {
-      data: {
-        rows: [{ value: "</script><script>window.pwned=true</script>" }],
-      },
-      viewer: { email: null, name: null },
-      params: {},
-      links: { "detail.html": "/d/detail-id" },
-      errors: [],
-    });
+    const html = injectDashboardRuntime(
+      '<html><head><link href="/d-assets/v1/kit.css" rel="stylesheet"></head><body><script>window.loaded=true</script></body></html>',
+      {
+        data: {
+          rows: [{ value: "</script><script>window.pwned=true</script>" }],
+        },
+        viewer: { email: null, name: null },
+        params: {},
+        links: { "detail.html": "/d/detail-id" },
+        errors: [],
+      }
+    );
     const dom = new JSDOM(html, {
       runScripts: "dangerously",
       url: "https://yoplai.test/d/source",
@@ -808,6 +840,46 @@ describe("dashboard SQL", () => {
     );
     expect(window.loaded).toBe(true);
     expect(window.pwned).toBeUndefined();
+    const styles = [
+      ...dom.window.document.querySelectorAll("link[rel=stylesheet]"),
+    ];
+    expect(styles.map((style) => style.getAttribute("href"))).toEqual([
+      "/d-assets/v1/kit.css",
+      "/d-assets/theme.css",
+    ]);
+    dom.window.close();
+  });
+
+  it("injects the deployment theme into dashboard fragments", () => {
+    const html = injectDashboardRuntime("<main>Dashboard</main>", {
+      data: {},
+      viewer: { email: null, name: null },
+      params: {},
+      links: {},
+      errors: [],
+    });
+    expect(html).toContain(
+      '<link rel="stylesheet" href="/d-assets/theme.css">'
+    );
+    expect(html.indexOf("/d-assets/theme.css")).toBeLessThan(
+      html.indexOf("<main>")
+    );
+  });
+
+  it("preserves standards mode when a dashboard omits the closing head", () => {
+    const html = injectDashboardRuntime(
+      "<!doctype html><html><body>Dashboard</body></html>",
+      {
+        data: {},
+        viewer: { email: null, name: null },
+        params: {},
+        links: {},
+        errors: [],
+      }
+    );
+    const dom = new JSDOM(html);
+    expect(html).toMatch(/^<!doctype html><link rel="stylesheet"/);
+    expect(dom.window.document.compatMode).toBe("CSS1Compat");
     dom.window.close();
   });
 
