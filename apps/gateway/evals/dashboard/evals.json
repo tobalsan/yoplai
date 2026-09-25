@@ -5,7 +5,7 @@
       "id": 0,
       "name": "pto-team-slack",
       "prompt": "Henry asks in Slack: make me a PTO dashboard for my team.",
-      "expected_output": "Creates data/hr.db plus dashboards/pto-team.html from the HR starter, validates the :viewer_email query with henry@example.com, calls dashboard_link, and replies in the same Slack thread with the absolute clickable link.",
+      "expected_output": "Creates data/hr.db plus data/dashboards/pto-team.html from the HR starter, validates the :viewer_email query with henry@example.com, calls dashboard_link, and replies in the same Slack thread with the absolute clickable link.",
       "files": []
     },
     {

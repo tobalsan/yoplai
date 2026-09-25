@@ -1,6 +1,7 @@
 # Canvas file contract
 
-- Dashboard files are single HTML documents at `dashboards/<slug>.html`.
+- Dashboard files are single HTML documents at `data/dashboards/<slug>.html`.
+- `data-db` is a path relative to the workspace root, such as `data/app.db`. Keep databases under `data/`; sandboxed agents can only read databases there.
 - Live query:
 
 ```html

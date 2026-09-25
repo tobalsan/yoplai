@@ -15,10 +15,10 @@ Breaking changes are marked **⚠ BREAKING**.
 
 - Canvas dashboards now have a versioned public Dashboard Kit with light/dark and A4 print themes (dark follows the OS `prefers-color-scheme`, overridable with `data-theme="light"`/`"dark"`), common interactive components, sanitized Markdown, CSV export, and vendored ECharts charting.
 
-- Canvas dashboards can run confined read-only SQLite queries on every load with bound viewer/URL parameters, capped results, drill-down links, and visible query diagnostics.
+- Canvas dashboards can run confined read-only SQLite queries on every load with bound viewer/URL parameters, capped results, drill-down links, and visible query diagnostics. `data-db` paths are relative to the agent workspace root (e.g. `data/app.db`); sandboxed agents can only query databases under `data/`.
 - Multi-user mode supports email/password sign-in (`extensions.multiUser.emailAndPassword.enabled`), with a sign-in / create-account form on the login page.
 
-- Agents can publish self-contained HTML files from their `dashboards/` directory through stable, team-authorized, CSP-sandboxed Canvas links using the `dashboard_link` tool.
+- Agents can publish self-contained HTML files from their `data/dashboards/` directory through stable, team-authorized, CSP-sandboxed Canvas links using the `dashboard_link` tool.
 
 - Agents can trigger a manual run of their own scheduler jobs with the `scheduler.run_job` tool.
 
@@ -29,6 +29,7 @@ Breaking changes are marked **⚠ BREAKING**.
 ### Fixed
 
 - Keep Canvas chart headings with their charts across printed page breaks.
+- Move the Dashboard Kit chart legend to the bottom and reserve grid margins so it no longer overlaps card/chart titles on multi-series charts.
 - Return users to their requested dashboard or app deep link after Google sign-in.
 - Upgraded the Pi SDK packages to 0.87.1 so Anthropic OAuth requests for Claude Opus 5.5 report the required Claude Code 2.1.280 version; gateway retries and interrupted tool-call repair now update Pi's canonical session context.
 - Ensure gateway shutdown stops the Vite preview process tree, and bind Tailscale-served UIs to loopback even with LAN UI configuration.

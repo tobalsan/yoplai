@@ -27,16 +27,48 @@ export function normalizeDashboardSlug(value: string): string {
     path.posix.extname(value).toLowerCase() !== ".html" ||
     value === ".html"
   ) {
-    throw new Error("Dashboard slug must be one .html filename");
+    throw new Error(
+      "Dashboard slug must be one .html filename, e.g. pto-team.html"
+    );
   }
   return value;
 }
 
-export function dashboardDirectory(agent: AgentConfig): string {
+function agentDataDirectory(agent: AgentConfig): string {
   if (agent.sandbox?.enabled) {
-    return path.join(getAgentDataDir(resolveHomeDir(), agent.id), "dashboards");
+    return getAgentDataDir(resolveHomeDir(), agent.id);
   }
-  return path.join(agent.workspaceDir ?? agent.workspace, "dashboards");
+  return path.join(agent.workspaceDir ?? agent.workspace, "data");
+}
+
+export function dashboardDirectory(agent: AgentConfig): string {
+  return path.join(agentDataDirectory(agent), "dashboards");
+}
+
+// Maps a data-db path (relative to the agent's own workspace root) to the
+// host path and the root it must stay confined to. Sandboxed agents only see
+// their data directory from the host, mounted at data/ in the container.
+export function dashboardDatabasePath(
+  agent: AgentConfig,
+  database: string
+): { root: string; path: string } {
+  if (!database || path.isAbsolute(database)) {
+    throw new Error(
+      "Database path must be relative to the workspace root, e.g. data/app.db"
+    );
+  }
+  if (!agent.sandbox?.enabled) {
+    const root = agent.workspaceDir ?? agent.workspace;
+    return { root, path: path.resolve(root, database) };
+  }
+  const normalized = path.posix.normalize(database);
+  if (!normalized.startsWith("data/") || normalized === "data/") {
+    throw new Error(
+      "Sandboxed dashboards can only read databases under data/, e.g. data/app.db"
+    );
+  }
+  const root = agentDataDirectory(agent);
+  return { root, path: path.resolve(root, normalized.slice("data/".length)) };
 }
 
 export function dashboardBaseUrl(config: GatewayConfig): string {
@@ -59,12 +91,13 @@ export async function openDashboardFile(
 ): Promise<fs.FileHandle> {
   const directory = dashboardDirectory(agent);
   const candidate = path.join(directory, slug);
+  const notFound = `Dashboard not found: data/dashboards/${slug}`;
   let fileHandle: fs.FileHandle | undefined;
   try {
     const directoryStat = await fs.lstat(directory);
     const realDirectory = await fs.realpath(directory);
     if (!directoryStat.isDirectory()) {
-      throw new DashboardNotFoundError(`Dashboard not found: ${slug}`);
+      throw new DashboardNotFoundError(notFound);
     }
     fileHandle = await fs.open(
       candidate,
@@ -88,13 +121,13 @@ export async function openDashboardFile(
       relative.startsWith(`..${path.sep}`) ||
       path.isAbsolute(relative)
     ) {
-      throw new DashboardNotFoundError(`Dashboard not found: ${slug}`);
+      throw new DashboardNotFoundError(notFound);
     }
     return fileHandle;
   } catch (error) {
     await fileHandle?.close();
     if (error instanceof DashboardNotFoundError) throw error;
-    throw new DashboardNotFoundError(`Dashboard not found: ${slug}`, {
+    throw new DashboardNotFoundError(notFound, {
       cause: error,
     });
   }
@@ -204,7 +237,7 @@ export const canvasExtension: Extension = {
       {
         name: "dashboard_link",
         description:
-          "Link one HTML dashboard from dashboards/, or list all dashboards when slug is omitted.",
+          "Link one HTML dashboard from data/dashboards/<slug>.html, or list all dashboards when slug is omitted. SQL data-db paths are relative to the workspace root, e.g. data/app.db.",
         parameters: {
           type: "object",
           properties: { slug: { type: "string" } },
