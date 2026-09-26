@@ -91,6 +91,11 @@
           id: c.id,
           quarter: m?.quarter || "",
         });
+      } else {
+        document.querySelector("#summary").innerHTML =
+          'No client selected. <a href="' +
+          YOPLAI.link("clients.html", {}) +
+          '">Open Clients</a>';
       }
     </script>
   </body>

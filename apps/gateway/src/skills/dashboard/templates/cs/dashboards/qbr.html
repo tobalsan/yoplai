@@ -64,6 +64,11 @@
           ],
           rows: YOPLAI.data.themes,
         });
+      } else {
+        document.querySelector("#summary").innerHTML =
+          'No client or quarter selected. <a href="' +
+          YOPLAI.link("clients.html", {}) +
+          '">Open Clients</a>';
       }
     </script>
   </body>

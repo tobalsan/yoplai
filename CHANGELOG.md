@@ -33,6 +33,7 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Fixed
 
+- Agents sharing drill-down dashboards now include the query string in the link itself, and the CS `client`/`qbr` templates show a "No client selected" link back to Clients instead of a blank page when opened without parameters.
 - Opening a Canvas drill-down link while logged out now keeps its query string through login, instead of landing on an empty page.
 - The "Context compacted." notice now stays where compaction happened in the chat instead of pinning to the bottom below newer messages.
 - Sessions no longer fail on every prompt after `/compact` with `Cannot read properties of undefined (reading 'input')`: retained assistant messages are reseeded with zeroed token usage instead of none.
