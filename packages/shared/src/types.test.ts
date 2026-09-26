@@ -9,8 +9,35 @@ import {
   GatewayConfigSchema,
   HistoryEventSchema,
   ProjectsOrchestratorConfigSchema,
+  ScheduleSchema,
   StreamEventSchema,
 } from "./types.js";
+
+describe("ScheduleSchema", () => {
+  it("requires exactly one schedule kind", () => {
+    expect(
+      ScheduleSchema.safeParse({ cron: "0 9 * * *", tz: "UTC" }).success
+    ).toBe(true);
+    expect(
+      ScheduleSchema.safeParse({ runAt: "2026-05-11T09:00:00Z" }).success
+    ).toBe(true);
+    expect(ScheduleSchema.safeParse({}).success).toBe(false);
+    expect(
+      ScheduleSchema.safeParse({
+        cron: "0 9 * * *",
+        tz: "UTC",
+        runAt: "2026-05-11T09:00:00Z",
+      }).success
+    ).toBe(false);
+    expect(
+      ScheduleSchema.safeParse({
+        runAt: "2026-05-11T09:00:00Z",
+        startAt: "2026-05-01T09:00:00Z",
+      }).success
+    ).toBe(false);
+    expect(ScheduleSchema.safeParse({ runAt: "tomorrow" }).success).toBe(false);
+  });
+});
 
 describe("AgentConfigSchema openclaw model handling", () => {
   it("accepts a complete fallback model and rejects incomplete identities", () => {
@@ -75,19 +102,33 @@ describe("AgentConfigSchema openclaw model handling", () => {
   });
 
   it("accepts dream shorthand and validates model overrides", () => {
-    expect(AgentConfigSchema.parse({
-      id: "dreamer", name: "Dreamer", workspace: "~/agents/dreamer",
-      model: { provider: "openai", model: "gpt" }, dream: true,
-    }).dream).toBe(true);
-    expect(AgentConfigSchema.parse({
-      id: "dreamer", name: "Dreamer", workspace: "~/agents/dreamer",
-      model: { provider: "openai", model: "gpt" },
-      dream: { provider: "anthropic", model: "claude" },
-    }).dream).toMatchObject({ enabled: true, time: "00:00" });
-    expect(AgentConfigSchema.safeParse({
-      id: "dreamer", name: "Dreamer", workspace: "~/agents/dreamer",
-      model: { provider: "openai", model: "gpt" }, dream: { provider: "anthropic" },
-    }).success).toBe(false);
+    expect(
+      AgentConfigSchema.parse({
+        id: "dreamer",
+        name: "Dreamer",
+        workspace: "~/agents/dreamer",
+        model: { provider: "openai", model: "gpt" },
+        dream: true,
+      }).dream
+    ).toBe(true);
+    expect(
+      AgentConfigSchema.parse({
+        id: "dreamer",
+        name: "Dreamer",
+        workspace: "~/agents/dreamer",
+        model: { provider: "openai", model: "gpt" },
+        dream: { provider: "anthropic", model: "claude" },
+      }).dream
+    ).toMatchObject({ enabled: true, time: "00:00" });
+    expect(
+      AgentConfigSchema.safeParse({
+        id: "dreamer",
+        name: "Dreamer",
+        workspace: "~/agents/dreamer",
+        model: { provider: "openai", model: "gpt" },
+        dream: { provider: "anthropic" },
+      }).success
+    ).toBe(false);
   });
 
   it("allows openclaw agents to omit model", () => {

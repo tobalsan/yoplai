@@ -35,6 +35,29 @@ describe("buildScheduleFromOpts", () => {
     expect(() => buildScheduleFromOpts({ tz: "UTC" })).toThrow(/--cron/);
     expect(() => buildScheduleFromOpts({ cron: "* * * * *" })).toThrow(/--tz/);
   });
+
+  it("builds an absolute one-shot and rejects mixed schedule options", () => {
+    expect(
+      buildScheduleFromOpts({ runAt: "2026-05-11T09:00:00+02:00" })
+    ).toEqual({ runAt: "2026-05-11T07:00:00.000Z" });
+    expect(() =>
+      buildScheduleFromOpts({ cron: "* * * * *", runAt: "in 2h", tz: "UTC" })
+    ).toThrow(/either --cron or --run-at/);
+    expect(() => buildScheduleFromOpts({ runAt: "in 2h", tz: "UTC" })).toThrow(
+      /apply only to --cron/
+    );
+  });
+
+  it("resolves relative one-shot time at creation", () => {
+    const before = Date.now();
+    const schedule = buildScheduleFromOpts({ runAt: "in 30m" });
+    expect(Date.parse(schedule.runAt!)).toBeGreaterThanOrEqual(
+      before + 30 * 60_000
+    );
+    expect(Date.parse(schedule.runAt!)).toBeLessThanOrEqual(
+      Date.now() + 30 * 60_000
+    );
+  });
 });
 
 describe("defaultJobName", () => {
@@ -87,11 +110,15 @@ describe("parseDeliverFlag", () => {
   });
 
   it("rejects a value with an empty target", () => {
-    expect(() => parseDeliverFlag(":channel:C0123")).toThrow(/Invalid --deliver/);
+    expect(() => parseDeliverFlag(":channel:C0123")).toThrow(
+      /Invalid --deliver/
+    );
   });
 
   it("rejects a value with an empty destination", () => {
-    expect(() => parseDeliverFlag("slack:channel:")).toThrow(/Invalid --deliver/);
+    expect(() => parseDeliverFlag("slack:channel:")).toThrow(
+      /Invalid --deliver/
+    );
   });
 
   it("rejects a value whose second segment is neither channel nor user", () => {
@@ -137,7 +164,10 @@ describe("renderJobsTable", () => {
         enabled: true,
         schedule: { cron: "0 8 * * *", tz: "UTC" },
         payload: { message: "go" },
-        state: { nextRunAtMs: Date.UTC(2026, 4, 11, 9, 0, 0), lastStatus: "ok" },
+        state: {
+          nextRunAtMs: Date.UTC(2026, 4, 11, 9, 0, 0),
+          lastStatus: "ok",
+        },
       },
     ]);
     expect(out).toContain(
@@ -172,8 +202,12 @@ describe("renderJobsTable", () => {
     ]);
     const rows = out.split("\n");
     expect(rows[0]).toContain("deliver");
-    expect(rows.find((row) => row.startsWith("| abc"))).toContain("slack:C0123");
-    expect(rows.find((row) => row.startsWith("| def"))).not.toContain("slack:C0123");
+    expect(rows.find((row) => row.startsWith("| abc"))).toContain(
+      "slack:C0123"
+    );
+    expect(rows.find((row) => row.startsWith("| def"))).not.toContain(
+      "slack:C0123"
+    );
   });
 
   it("renders script and gated kinds", () => {

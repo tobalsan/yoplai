@@ -79,7 +79,11 @@ function failedRunOutputPath(err: unknown): string | undefined {
     return undefined;
   }
   const result = (data as { result?: unknown }).result;
-  if (typeof result !== "object" || result === null || !("outputPath" in result)) {
+  if (
+    typeof result !== "object" ||
+    result === null ||
+    !("outputPath" in result)
+  ) {
     return undefined;
   }
   const outputPath = (result as { outputPath?: unknown }).outputPath;
@@ -103,7 +107,9 @@ function buildModelOverride(opts: { provider?: string; model?: string }) {
   const model = opts.model?.trim();
   if (!provider && !model) return undefined;
   if (!provider || !model) {
-    throw new Error("Both --provider and --model are required for model override.");
+    throw new Error(
+      "Both --provider and --model are required for model override."
+    );
   }
   return { provider, model };
 }
@@ -189,7 +195,11 @@ export function buildUpdateBody(
   if (opts.enable) body.enabled = true;
   if (opts.disable) body.enabled = false;
 
-  const hasScheduleOpt = Boolean(opts.cron) || Boolean(opts.tz) || Boolean(opts.startAt);
+  const hasScheduleOpt =
+    Boolean(opts.cron) ||
+    Boolean(opts.runAt) ||
+    Boolean(opts.tz) ||
+    Boolean(opts.startAt);
   if (hasScheduleOpt) body.schedule = buildScheduleFromOpts(opts);
 
   const model = buildModelOverride(opts);
@@ -227,7 +237,7 @@ export function buildUpdateBody(
 
   if (Object.keys(body).length === 0) {
     throw new Error(
-      "Nothing to update. Pass --name/--enable/--disable/--cron/-m/--script/--model/--deliver/--clear-deliver."
+      "Nothing to update. Pass --name/--enable/--disable/--cron/--run-at/-m/--script/--model/--deliver/--clear-deliver."
     );
   }
   return body;
@@ -253,18 +263,34 @@ export function registerSchedulerCommands(program: Command): Command {
     .alias("create")
     .description("Create a schedule")
     .argument("<agent-id>", "Agent id to invoke")
-    .option("-m, --message <text>", "Message to send on each fire (or the wake prompt for a gated job)")
-    .option("--script <path>", "Relative script path (from the agent workspace) to run at fire time")
-    .option("--no-agent", "Script-only job: run the script and never call the agent (requires --script)")
-    .option("--quiet-output", "Skip the output file for uneventful script runs (requires --script)")
+    .option(
+      "-m, --message <text>",
+      "Message to send on each fire (or the wake prompt for a gated job)"
+    )
+    .option(
+      "--script <path>",
+      "Relative script path (from the agent workspace) to run at fire time"
+    )
+    .option(
+      "--no-agent",
+      "Script-only job: run the script and never call the agent (requires --script)"
+    )
+    .option(
+      "--quiet-output",
+      "Skip the output file for uneventful script runs (requires --script)"
+    )
     .option(
       "--deliver <target:channel|user:value>",
       "Push this job's result to a delivery sink (repeatable), e.g. slack:channel:C0123",
       parseDeliverFlag,
       [] as DeliverTarget[]
     )
-    .requiredOption("--cron <expr>", "Cron expression, e.g. '0 8 * * *'")
-    .requiredOption("--tz <iana>", "IANA timezone")
+    .option("--cron <expr>", "Cron expression, e.g. '0 8 * * *'")
+    .option(
+      "--run-at <time>",
+      "One-shot ISO 8601 time or relative time, e.g. 'in 30m'"
+    )
+    .option("--tz <iana>", "IANA timezone for cron schedules")
     .option("--name <name>", "Schedule name (default: <agent>-<cron>)")
     .option("--start-at <iso>", "ISO 8601 anchor")
     .option("--session <id>", "Session id override")
@@ -297,12 +323,25 @@ export function registerSchedulerCommands(program: Command): Command {
     .option("--enable", "Enable the schedule")
     .option("--disable", "Disable the schedule")
     .option("--cron <expr>", "Cron expression")
+    .option(
+      "--run-at <time>",
+      "One-shot ISO 8601 time or relative time, e.g. 'in 2h'"
+    )
     .option("--tz <iana>", "IANA timezone")
     .option("--start-at <iso>", "Anchor")
-    .option("-m, --message <text>", "Replace payload message (or the wake prompt for a gated job)")
+    .option(
+      "-m, --message <text>",
+      "Replace payload message (or the wake prompt for a gated job)"
+    )
     .option("--script <path>", "Replace payload script path")
-    .option("--no-agent", "Script-only job: run the script and never call the agent (requires --script)")
-    .option("--quiet-output", "Skip the output file for uneventful script runs (requires --script)")
+    .option(
+      "--no-agent",
+      "Script-only job: run the script and never call the agent (requires --script)"
+    )
+    .option(
+      "--quiet-output",
+      "Skip the output file for uneventful script runs (requires --script)"
+    )
     .option(
       "--deliver <target:channel|user:value>",
       "Replace the job's delivery list (repeatable), e.g. slack:channel:C0123",
@@ -311,24 +350,40 @@ export function registerSchedulerCommands(program: Command): Command {
     )
     .option("--clear-deliver", "Remove all delivery targets from the job")
     .option("--session <id>", "Replace payload session id (requires -m)")
-    .option("--provider <provider>", "Model provider override (requires --model)")
+    .option(
+      "--provider <provider>",
+      "Model provider override (requires --model)"
+    )
     .option("--model <model>", "Model name override (requires --provider)")
     .option("-j, --json", "JSON output")
-    .action(async (agentId: string, id: string, opts: UpdateOpts, command: Command) => {
-      try {
-        const noAgentExplicit = command.getOptionValueSource("agent") === "cli";
-        const client = getClient();
-        const existing = (await client.listSchedules(agentId)).find(
-          (candidate) => candidate.id === id
-        );
-        if (!existing) throw new Error(`Schedule not found: ${agentId}/${id}`);
-        const body = buildUpdateBody(opts, noAgentExplicit, existing.payload);
-        const job = (await client.updateSchedule(agentId, id, body)) as JobWithState;
-        printJobs([job], opts.json);
-      } catch (err) {
-        fail(err);
+    .action(
+      async (
+        agentId: string,
+        id: string,
+        opts: UpdateOpts,
+        command: Command
+      ) => {
+        try {
+          const noAgentExplicit =
+            command.getOptionValueSource("agent") === "cli";
+          const client = getClient();
+          const existing = (await client.listSchedules(agentId)).find(
+            (candidate) => candidate.id === id
+          );
+          if (!existing)
+            throw new Error(`Schedule not found: ${agentId}/${id}`);
+          const body = buildUpdateBody(opts, noAgentExplicit, existing.payload);
+          const job = (await client.updateSchedule(
+            agentId,
+            id,
+            body
+          )) as JobWithState;
+          printJobs([job], opts.json);
+        } catch (err) {
+          fail(err);
+        }
       }
-    });
+    );
 
   program
     .command("rm")

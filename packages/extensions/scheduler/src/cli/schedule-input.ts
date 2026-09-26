@@ -1,9 +1,10 @@
 import { InvalidArgumentError } from "commander";
 import type { DeliverTarget, Schedule, ScheduleJob } from "@yoplai/shared";
-import { formatSchedule } from "../schedule.js";
+import { formatSchedule, parseRunAtInput } from "../schedule.js";
 
 export type ScheduleInputOpts = {
   cron?: string;
+  runAt?: string;
   tz?: string;
   startAt?: string;
 };
@@ -18,9 +19,11 @@ export function parseDeliverFlag(
   value: string,
   previous: DeliverTarget[] = []
 ): DeliverTarget[] {
-  const usage = 'Use <target>:<channel|user>:<value>, e.g. slack:channel:C0123.';
+  const usage =
+    "Use <target>:<channel|user>:<value>, e.g. slack:channel:C0123.";
   const firstColon = value.indexOf(":");
-  const secondColon = firstColon === -1 ? -1 : value.indexOf(":", firstColon + 1);
+  const secondColon =
+    firstColon === -1 ? -1 : value.indexOf(":", firstColon + 1);
   if (
     firstColon <= 0 ||
     secondColon === -1 ||
@@ -33,19 +36,34 @@ export function parseDeliverFlag(
   const kind = value.slice(firstColon + 1, secondColon);
   const destValue = value.slice(secondColon + 1);
   if (kind !== "channel" && kind !== "user") {
-    throw new InvalidArgumentError(`Invalid --deliver "${value}": second segment must be "channel" or "user". ${usage}`);
+    throw new InvalidArgumentError(
+      `Invalid --deliver "${value}": second segment must be "channel" or "user". ${usage}`
+    );
   }
   return [...previous, { target, [kind]: destValue } as DeliverTarget];
 }
 
 export function formatDeliver(deliver?: DeliverTarget[]): string {
   if (!deliver?.length) return "";
-  return deliver.map((entry) => `${entry.target}:${entry.channel ?? entry.user}`).join(", ");
+  return deliver
+    .map((entry) => `${entry.target}:${entry.channel ?? entry.user}`)
+    .join(", ");
 }
 
 export function buildScheduleFromOpts(opts: ScheduleInputOpts): Schedule {
+  if (opts.cron && opts.runAt) {
+    throw new Error("Use either --cron or --run-at, not both.");
+  }
+  if (opts.runAt) {
+    if (opts.tz || opts.startAt) {
+      throw new Error("--tz and --start-at apply only to --cron.");
+    }
+    return { runAt: parseRunAtInput(opts.runAt) };
+  }
   if (!opts.cron) {
-    throw new Error("Schedule required: pass --cron <expr>.");
+    throw new Error(
+      "Schedule required: pass --cron <expr> or --run-at <time>."
+    );
   }
   if (!opts.tz) {
     throw new Error("Timezone required: pass --tz <iana>.");
@@ -62,6 +80,7 @@ export function buildScheduleFromOpts(opts: ScheduleInputOpts): Schedule {
 }
 
 export function defaultJobName(agentId: string, schedule: Schedule): string {
+  if (schedule.runAt !== undefined) return `${agentId}-once-${schedule.runAt}`;
   return `${agentId}-${schedule.cron.replace(/\s+/g, "-")}`;
 }
 
@@ -114,16 +133,18 @@ export function renderJobsTable(jobs: JobWithState[]): string {
     job.agentId,
     jobKind(job.payload),
     formatSchedule(job.schedule),
-    job.state?.nextRunAtMs
-      ? new Date(job.state.nextRunAtMs).toISOString()
-      : "",
+    job.state?.nextRunAtMs ? new Date(job.state.nextRunAtMs).toISOString() : "",
     job.state?.lastStatus ?? "",
-    job.state?.runningForMs != null ? formatDuration(job.state.runningForMs) : "",
+    job.state?.runningForMs != null
+      ? formatDuration(job.state.runningForMs)
+      : "",
     formatDeliver(job.deliver),
   ]);
 
   const headerRow = `| ${headers.join(" | ")} |`;
   const separator = `| ${headers.map(() => "---").join(" | ")} |`;
-  const body = rows.map((row) => `| ${row.map(formatCell).join(" | ")} |`).join("\n");
+  const body = rows
+    .map((row) => `| ${row.map(formatCell).join(" | ")} |`)
+    .join("\n");
   return [headerRow, separator, body].filter(Boolean).join("\n");
 }

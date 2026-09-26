@@ -54,6 +54,7 @@ type JobWithState = ScheduleJob & {
 
 type CompleteRunInput = {
   job: JobWithState;
+  scheduledRunAt?: string;
   agent: AgentConfig;
   workspaceDir: string;
   model: { provider: string; model: string };
@@ -291,7 +292,7 @@ export class SchedulerService {
     const result = await this.executeJob(job);
     const skippedScheduledFire = this.skippedScheduledFireKeys.delete(key);
 
-    if (!skippedScheduledFire) {
+    if (!skippedScheduledFire && job.schedule.runAt === undefined) {
       job.state = job.state ?? {};
       if (previousNextRunAtMs === undefined) {
         delete job.state.nextRunAtMs;
@@ -305,7 +306,10 @@ export class SchedulerService {
     return result;
   }
 
-  async runNowDetached(agentId: string, id: string): Promise<SchedulerRunResult> {
+  async runNowDetached(
+    agentId: string,
+    id: string
+  ): Promise<SchedulerRunResult> {
     await this.load();
     const job = this.findJob(agentId, id);
     if (!job) throw new Error(`Schedule not found: ${agentId}/${id}`);
@@ -316,12 +320,15 @@ export class SchedulerService {
     }
 
     const firedAt = new Date();
-    const sessionId = job.payload.sessionId ?? `scheduler:${job.id}:${uuidv7()}`;
+    const sessionId =
+      job.payload.sessionId ?? `scheduler:${job.id}:${uuidv7()}`;
     const previousNextRunAtMs = job.state?.nextRunAtMs;
 
-    void this.executeJob(job, { sessionId, previousNextRunAtMs }).catch((error) => {
-      console.error(`[scheduler] Detached job failed: ${job.name}`, error);
-    });
+    void this.executeJob(job, { sessionId, previousNextRunAtMs }).catch(
+      (error) => {
+        console.error(`[scheduler] Detached job failed: ${job.name}`, error);
+      }
+    );
 
     return {
       job,
@@ -342,6 +349,27 @@ export class SchedulerService {
     return this.store.jobs.find(
       (job) => job.agentId === agentId && job.id === id
     ) as JobWithState | undefined;
+  }
+
+  private disableCompletedOneShot(job: JobWithState, completedRunAt: string) {
+    if (job.schedule.runAt === completedRunAt) {
+      job.enabled = false;
+      job.state = job.state ?? {};
+      delete job.state.nextRunAtMs;
+    }
+
+    // A disk refresh may replace the object while the run is in flight. Only
+    // finish the same one-shot schedule; a deleted or rescheduled job wins.
+    const current = this.findJob(job.agentId, job.id);
+    if (
+      current &&
+      current !== job &&
+      current.schedule.runAt === completedRunAt
+    ) {
+      current.enabled = false;
+      current.state = { ...current.state, ...job.state };
+      delete current.state.nextRunAtMs;
+    }
   }
 
   private recomputeNextRuns() {
@@ -422,10 +450,10 @@ export class SchedulerService {
           if (error instanceof ScheduleAlreadyRunningError) {
             getSchedulerContext().logger.warn(error.message);
             job.state = job.state ?? {};
-            job.state.nextRunAtMs = computeNextRunAtMs(
-              job.schedule,
-              Date.now()
-            );
+            job.state.nextRunAtMs =
+              job.schedule.runAt === undefined
+                ? computeNextRunAtMs(job.schedule, Date.now())
+                : undefined;
             this.skippedScheduledFireKeys.add(this.executionKey(job));
             await this.saveAgent(job.agentId);
             return;
@@ -447,11 +475,16 @@ export class SchedulerService {
     detached?: { sessionId: string; previousNextRunAtMs?: number }
   ): Promise<SchedulerRunResult> {
     const key = this.executionKey(job);
+    const scheduledRunAt = job.schedule.runAt;
     if (this.executingJobs.has(key)) {
       throw new ScheduleAlreadyRunningError(job.agentId, job.id);
     }
     this.executingJobs.add(key);
     this.runningJobStartedAtMs.set(key, Date.now());
+    if (scheduledRunAt !== undefined) {
+      job.state = job.state ?? {};
+      delete job.state.nextRunAtMs;
+    }
 
     const ctx = getSchedulerContext();
     const config = ctx.getConfig();
@@ -462,7 +495,9 @@ export class SchedulerService {
     const agent = ctx.getAgent(job.agentId);
     const firedAt = new Date();
     const sessionId =
-      detached?.sessionId ?? job.payload.sessionId ?? `scheduler:${job.id}:${uuidv7()}`;
+      detached?.sessionId ??
+      job.payload.sessionId ??
+      `scheduler:${job.id}:${uuidv7()}`;
 
     if (!agent) {
       console.error(`[scheduler] Agent not found: ${job.agentId}`);
@@ -472,7 +507,12 @@ export class SchedulerService {
       job.state.lastStatus = "error";
       job.state.lastError = "Agent not found";
       job.state.lastRunAtMs = firedAt.getTime();
-      job.state.nextRunAtMs = computeNextRunAtMs(job.schedule, Date.now());
+      if (scheduledRunAt !== undefined) {
+        this.disableCompletedOneShot(job, scheduledRunAt);
+        await this.saveAgent(job.agentId);
+      } else {
+        job.state.nextRunAtMs = computeNextRunAtMs(job.schedule, Date.now());
+      }
       return {
         job,
         status: "error",
@@ -488,7 +528,12 @@ export class SchedulerService {
       this.executingJobs.delete(key);
       this.runningJobStartedAtMs.delete(key);
       job.state = job.state ?? {};
-      job.state.nextRunAtMs = computeNextRunAtMs(job.schedule, Date.now());
+      if (scheduledRunAt !== undefined) {
+        this.disableCompletedOneShot(job, scheduledRunAt);
+        await this.saveAgent(job.agentId);
+      } else {
+        job.state.nextRunAtMs = computeNextRunAtMs(job.schedule, Date.now());
+      }
       return {
         job,
         status: "skipped",
@@ -528,6 +573,7 @@ export class SchedulerService {
         console.error(`[scheduler] Job script failed: ${job.name}`, err);
         return this.completeAndRelease(key, {
           job,
+          scheduledRunAt,
           agent,
           workspaceDir,
           model: outputModel,
@@ -544,6 +590,7 @@ export class SchedulerService {
       if (job.payload.noAgent) {
         return this.completeAndRelease(key, {
           job,
+          scheduledRunAt,
           agent,
           workspaceDir,
           model: outputModel,
@@ -559,6 +606,7 @@ export class SchedulerService {
       if (!gate.wake) {
         return this.completeAndRelease(key, {
           job,
+          scheduledRunAt,
           agent,
           workspaceDir,
           model: outputModel,
@@ -599,9 +647,11 @@ export class SchedulerService {
       signal: controller.signal,
     });
 
-    const runSettled = runPromise.catch(() => {}).then(() => {
-      this.executingJobControllers.delete(key);
-    });
+    const runSettled = runPromise
+      .catch(() => {})
+      .then(() => {
+        this.executingJobControllers.delete(key);
+      });
 
     let timeoutId: NodeJS.Timeout | undefined;
     const timeoutPromise = new Promise<never>((_, reject) => {
@@ -635,6 +685,7 @@ export class SchedulerService {
     try {
       const result = await this.completeRun({
         job,
+        scheduledRunAt,
         agent,
         workspaceDir,
         model: outputModel,
@@ -656,7 +707,7 @@ export class SchedulerService {
       });
       if (detached) {
         const skippedScheduledFire = this.skippedScheduledFireKeys.delete(key);
-        if (!skippedScheduledFire) {
+        if (!skippedScheduledFire && job.schedule.runAt === undefined) {
           job.state = job.state ?? {};
           if (detached.previousNextRunAtMs === undefined) {
             delete job.state.nextRunAtMs;
@@ -770,7 +821,11 @@ export class SchedulerService {
 
     const finishedAt = new Date();
     job.state.lastRunAtMs = firedAt.getTime();
-    job.state.nextRunAtMs = computeNextRunAtMs(job.schedule, Date.now());
+    if (input.scheduledRunAt !== undefined) {
+      this.disableCompletedOneShot(job, input.scheduledRunAt);
+    } else {
+      job.state.nextRunAtMs = computeNextRunAtMs(job.schedule, Date.now());
+    }
     await this.saveAgent(job.agentId);
     return {
       job,

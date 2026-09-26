@@ -1,5 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
+import type { Schedule } from "@yoplai/shared";
+import { formatSchedule } from "./schedule.js";
 import type { DeliveryOutcome } from "./deliver.js";
 
 export type CronRunOutputInput = {
@@ -41,7 +43,8 @@ export async function writeCronRunOutput(
 }
 
 export function renderCronRunOutput(input: CronRunOutputInput): string {
-  const title = input.runType === "heartbeat" ? "Heartbeat" : `Cron Job: ${input.name}`;
+  const title =
+    input.runType === "heartbeat" ? "Heartbeat" : `Cron Job: ${input.name}`;
   const lines = [
     "---",
     `job_id: ${yamlString(input.jobId)}`,
@@ -79,7 +82,12 @@ export function renderCronRunOutput(input: CronRunOutputInput): string {
     lines.push("## Prompt", "", input.prompt, "");
   }
   if (input.gateOutput !== undefined) {
-    lines.push("## Gate Output", "", input.gateOutput.trim() || "[no output]", "");
+    lines.push(
+      "## Gate Output",
+      "",
+      input.gateOutput.trim() || "[no output]",
+      ""
+    );
   }
   if (input.status === "ok") {
     lines.push("## Response", "", input.response?.trim() || "[no response]");
@@ -102,7 +110,9 @@ function formatDeliveryOutcome(outcome: DeliveryOutcome): string {
     : `${outcome.target}: warning: ${outcome.error}`;
 }
 
-export function latestAssistantText(payloads: Array<{ text?: string }>): string {
+export function latestAssistantText(
+  payloads: Array<{ text?: string }>
+): string {
   for (let i = payloads.length - 1; i >= 0; i--) {
     const text = payloads[i]?.text?.trim();
     if (text) return text;
@@ -110,13 +120,8 @@ export function latestAssistantText(payloads: Array<{ text?: string }>): string 
   return "";
 }
 
-export function formatScheduleForOutput(schedule: {
-  cron: string;
-  tz: string;
-  startAt?: string;
-}): string {
-  const base = `${schedule.cron} ${schedule.tz}`;
-  return schedule.startAt ? `${base} @ ${schedule.startAt}` : base;
+export function formatScheduleForOutput(schedule: Schedule): string {
+  return formatSchedule(schedule);
 }
 
 function formatFileTimestamp(date: Date): string {

@@ -1,6 +1,6 @@
 # Scheduler Extension
 
-Yoplai scheduler stores jobs per agent and fires them with cron expressions.
+Yoplai scheduler stores jobs per agent and fires them on a recurring cron schedule or once at a specified time.
 
 ## Enable / disable
 
@@ -59,6 +59,12 @@ Disk shape omits `agentId`; it is implied by the workspace:
 
 `timeoutMs` is an optional top-level job field: the per-run timeout in milliseconds for that job. Falls back to `extensions.scheduler.jobTimeoutMs`, then the 30-minute built-in default.
 
+## One-shot schedules
+
+Use `schedule: { "runAt": "2026-10-05T14:30:00Z" }` for a job that runs once. Exactly one of `runAt` or `cron` is required; recurring jobs still require `cron` and `tz`, and `startAt` remains a cron-only not-before floor. A missed `runAt` remains due and fires after gateway restart. After any completed run, including a failed script or agent run, the job is disabled; its output and job record remain available.
+
+The API and `cron/jobs.json` accept an ISO 8601 timestamp with timezone. The CLI and agent tools also accept `in 30m` and `in 2h`, resolving these to an absolute timestamp when the job is created or updated. `scheduler list` displays one-shot schedules as `once <timestamp>` with an empty next-run column after completion.
+
 Malformed `cron/jobs.json` logs one warning and is treated as empty for that
 agent. In-process writes for one agent are serialized and atomically renamed,
 so concurrent API/tool/run-state updates cannot overwrite newer job snapshots.
@@ -68,11 +74,11 @@ Gateway hot reload also refreshes manual file edits.
 
 There is no `kind` field. A job's `payload` shape decides what fires. All three shapes can be created by writing/editing `cron/jobs.json` directly, through `POST`/`PATCH` on the HTTP API, or via the `scheduler.create_job`/`scheduler.update_job` agent tools — all three validate through the same `SchedulePayloadSchema`. The `yoplai scheduler` CLI has not been extended for `script`/`noAgent`/`quietOutput` yet; it still only creates plain agent jobs.
 
-| Shape | Payload | What runs |
-| --- | --- | --- |
-| Agent job (default, unchanged) | `message` only | `runAgent` with `message` as the prompt |
-| Script-only | `script` + `noAgent: true` | The script runs as a subprocess; the **exit code** decides `ok`/`error`. `runAgent` is never called. `message` is rejected on this shape. |
-| Gated agent job | `script` + `message` (no `noAgent`) | The script runs first as a $0 gate; its final stdout line decides whether `runAgent` fires at all. |
+| Shape                          | Payload                             | What runs                                                                                                                                 |
+| ------------------------------ | ----------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| Agent job (default, unchanged) | `message` only                      | `runAgent` with `message` as the prompt                                                                                                   |
+| Script-only                    | `script` + `noAgent: true`          | The script runs as a subprocess; the **exit code** decides `ok`/`error`. `runAgent` is never called. `message` is rejected on this shape. |
+| Gated agent job                | `script` + `message` (no `noAgent`) | The script runs first as a $0 gate; its final stdout line decides whether `runAgent` fires at all.                                        |
 
 `script` is a path relative to the agent's workspace directory (never absolute, never containing a `..` segment — see Containment below).
 
@@ -90,7 +96,7 @@ There is no `kind` field. A job's `payload` shape decides what fires. All three 
 
 ### 2. Script-only (`noAgent: true`)
 
-Use this for deterministic recurring work where the script itself *is* the job — token rotation, watchdogs, health checks. No tokens spent, no agent loop; success is decided mechanically from the exit code, so a failing script can never be misreported as a success.
+Use this for deterministic recurring work where the script itself _is_ the job — token rotation, watchdogs, health checks. No tokens spent, no agent loop; success is decided mechanically from the exit code, so a failing script can never be misreported as a success.
 
 ```json
 {
@@ -132,11 +138,11 @@ Use this for a cheap, frequent check that should only spend tokens when somethin
 
 On a gated job (`script` + `message`) the scheduler runs the script first and parses its **final stdout line** (last non-empty trimmed line) as JSON:
 
-| Final stdout line | Result |
-| --- | --- |
-| `{"wakeAgent": false}` | **Silent tick** — no `runAgent` call, no tokens spent. Recorded as an `ok` run with the `ok (silent tick)` status. |
-| `{"wakeAgent": true, "context": {...}}` | Agent runs with `message` as the prompt, with the serialized `context` object appended. |
-| `wakeAgent` key omitted, final line isn't valid JSON, or there's no stdout at all | **Defaults to `true`** — the agent runs with `message` unchanged. |
+| Final stdout line                                                                 | Result                                                                                                             |
+| --------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
+| `{"wakeAgent": false}`                                                            | **Silent tick** — no `runAgent` call, no tokens spent. Recorded as an `ok` run with the `ok (silent tick)` status. |
+| `{"wakeAgent": true, "context": {...}}`                                           | Agent runs with `message` as the prompt, with the serialized `context` object appended.                            |
+| `wakeAgent` key omitted, final line isn't valid JSON, or there's no stdout at all | **Defaults to `true`** — the agent runs with `message` unchanged.                                                  |
 
 Non-zero exit or a timed-out script is always recorded as `error` (exit code + stderr) and the agent is **never invoked** — a watchdog that fails cannot fail silently into a false "ok".
 
@@ -155,7 +161,7 @@ Gate context:
 
 ### Sample gate script: a file-change gate
 
-A gate script must print exactly one JSON line as the *last* line of stdout — everything before it is free-form and gets stored as the gate output in the run's log. This example wakes the agent only when a watched file's content hash changed since the last tick:
+A gate script must print exactly one JSON line as the _last_ line of stdout — everything before it is free-form and gets stored as the gate output in the run's log. This example wakes the agent only when a watched file's content hash changed since the last tick:
 
 ```bash
 #!/bin/bash
@@ -248,12 +254,12 @@ strings, not IDs the scheduler interprets itself — see each extension's own RE
 
 ### What gets delivered, and when a run stays silent
 
-| Run | Delivered text |
-| --- | --- |
-| Agent job | The runner's final response. |
-| Script-only job | Trimmed stdout. **Empty stdout delivers nothing** — a quiet success stays quiet. |
-| Gated job, silent tick | Nothing — the gate chose not to wake the agent, and that is the point. |
-| Gated job, woke agent | The agent's response. |
+| Run                                                                       | Delivered text                                                                                            |
+| ------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------- |
+| Agent job                                                                 | The runner's final response.                                                                              |
+| Script-only job                                                           | Trimmed stdout. **Empty stdout delivers nothing** — a quiet success stays quiet.                          |
+| Gated job, silent tick                                                    | Nothing — the gate chose not to wake the agent, and that is the point.                                    |
+| Gated job, woke agent                                                     | The agent's response.                                                                                     |
 | Any shape, run errored (non-zero exit, script timeout, or runner failure) | **Always delivered** — an error alert naming the job and the error text. A watchdog cannot fail silently. |
 
 ### Failure is a warning, not a run failure
@@ -295,14 +301,14 @@ Errors, woke-agent runs, and any run with non-empty output **always** write the 
 
 The output file's `**Status:**` line (and `status_label` frontmatter key) is one of:
 
-| Status | Meaning |
-| --- | --- |
-| `ok` | Plain agent job succeeded, or a script-only job exited 0. |
-| `ok (silent tick)` | Gated job; the gate's final line said `wakeAgent: false`. |
-| `woke agent` | Gated job; the gate woke the agent and the agent run completed. |
-| `script failed (exit N)` | The script exited non-zero; `N` is the exit code (also recorded as `exit_code` in frontmatter). |
-| `script failed (exit signal)` | The script was killed by a signal (not via the scheduler's own timeout). |
-| `error` | Any other failure — the underlying agent run failed, or the script's own timeout fired (`script exceeded the <ms>ms timeout and was killed`). The full error text is always in the `## Error` section. |
+| Status                        | Meaning                                                                                                                                                                                                |
+| ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `ok`                          | Plain agent job succeeded, or a script-only job exited 0.                                                                                                                                              |
+| `ok (silent tick)`            | Gated job; the gate's final line said `wakeAgent: false`.                                                                                                                                              |
+| `woke agent`                  | Gated job; the gate woke the agent and the agent run completed.                                                                                                                                        |
+| `script failed (exit N)`      | The script exited non-zero; `N` is the exit code (also recorded as `exit_code` in frontmatter).                                                                                                        |
+| `script failed (exit signal)` | The script was killed by a signal (not via the scheduler's own timeout).                                                                                                                               |
+| `error`                       | Any other failure — the underlying agent run failed, or the script's own timeout fired (`script exceeded the <ms>ms timeout and was killed`). The full error text is always in the `## Error` section. |
 
 For a woke-agent run, the file includes both the script's stdout (`## Gate Output`) and the agent's response (`## Response`). A script-only run's stdout is itself the `## Response`. `session_id` and `## Prompt` are only rendered when the run actually has one — script-only and silent-tick runs never start a session.
 
@@ -391,9 +397,11 @@ are gone.
 
 ```bash
 yoplai scheduler add <agent-id> --cron "0 8 * * *" --tz Europe/Paris -m "..."
+yoplai scheduler add <agent-id> --run-at "in 30m" -m "Remind me..."
 yoplai scheduler add <agent-id> --cron "0 8 * * *" --tz Europe/Paris -m "..." --provider anthropic --model claude-sonnet-4
 yoplai scheduler list [--agent <agent-id>]
 yoplai scheduler update <agent-id> <job-id> --cron "*/30 * * * *" --tz UTC
+yoplai scheduler update <agent-id> <job-id> --run-at "2026-10-05T14:30:00Z"
 yoplai scheduler update <agent-id> <job-id> --provider openai --model gpt-5
 yoplai scheduler rm <agent-id> <job-id>
 yoplai scheduler tail <agent-id> <job-id>
@@ -418,7 +426,9 @@ When `extensions.scheduler.enabled` is not `false`, agents receive scheduler too
 - `scheduler.run_job` (manual run now, detached; same as `POST /api/schedules/:agentId/:id/run`)
 - `scheduler.get_latest_output`
 
-Tools use raw cron + timezone input, generate job ids server-side, create enabled jobs by default, and support optional `sessionId`. They do not expose model or reasoning overrides. `create_job`/`update_job` accept `script`, `noAgent`, and `quietOutput` alongside `message`, following the same shape rules as the payload schema (see Job shapes above), plus an optional `timeoutMs`: the per-run timeout in milliseconds (default 30 minutes; falls back to `extensions.scheduler.jobTimeoutMs`, then the 30-minute built-in). `update_job` only changes payload fields you pass; omitted fields keep their existing value.
+Tools accept either cron + timezone or `runAt`, generate job ids server-side, create enabled jobs by default, and support optional `sessionId`. They do not expose model or reasoning overrides. `create_job`/`update_job` accept `script`, `noAgent`, and `quietOutput` alongside `message`, following the same shape rules as the payload schema (see Job shapes above), plus an optional `timeoutMs`: the per-run timeout in milliseconds (default 30 minutes; falls back to `extensions.scheduler.jobTimeoutMs`, then the 30-minute built-in). `update_job` only changes payload fields you pass; omitted fields keep their existing value.
+
+Run the isolated API and script-only gateway check separately from unit tests with `pnpm test:e2e:scheduler`. It allocates a free port and temporary `YOPLAI_HOME`, waits about one minute for a one-shot job, checks timing/output/disabled state, and removes the temporary home on exit.
 
 `scheduler.get_latest_output` requires `jobId`. Call `scheduler.list_jobs` first and pass a returned `jobs[n].id`; optional `maxChars` bounds preview length from 1 to 20,000 characters (default 4,000). `Output not found` means job has not produced stored output yet.
 

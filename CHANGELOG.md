@@ -11,6 +11,7 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Added
 
+- Scheduler jobs now support one-shot `runAt` times through the API, CLI, and agent tools. Missed jobs fire after restart, then disable themselves while retaining output and history.
 - Agents can fully remove Canvas dashboards with `dashboard_delete`, clearing the HTML file, stable link registration, and saved versions while preserving shared databases.
 - Agents now discover a built-in dashboard skill with ten cloneable HR, OKR, and customer-success Canvas templates, seeded SQLite schemas, and a rebuildable CS wiki workflow.
 - Canvas keeps the latest 20 observed copies of dashboards outside Git workspaces and provides a `dashboard_versions` tool to list or restore them without changing their links.

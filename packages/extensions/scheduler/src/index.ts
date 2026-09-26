@@ -1,6 +1,7 @@
 import {
   CreateScheduleRequestSchema,
   DeliverTargetSchema,
+  ScheduleSchema,
   SchedulerExtensionConfigSchema,
   UpdateScheduleRequestSchema,
   type Extension,
@@ -20,20 +21,29 @@ import {
   startScheduler,
   stopScheduler,
 } from "./service.js";
-import { computeNextRunAtMs } from "./schedule.js";
+import { computeNextRunAtMs, parseRunAtInput } from "./schedule.js";
 import { getAgentJobsPath, readLatestOutputFile } from "./store.js";
 
 const scheduleInputSchema = z.object({
-  cron: z.string().min(1),
-  tz: z.string().min(1),
+  cron: z.string().min(1).optional(),
+  tz: z.string().min(1).optional(),
   startAt: z.string().optional(),
+  runAt: z.string().min(1).optional(),
 });
+
+function parseToolSchedule(input: z.infer<typeof scheduleInputSchema>) {
+  return ScheduleSchema.parse({
+    ...input,
+    runAt: input.runAt === undefined ? undefined : parseRunAtInput(input.runAt),
+  });
+}
 
 const createJobToolSchema = z.object({
   name: z.string().min(1),
-  cron: z.string().min(1),
-  tz: z.string().min(1),
+  cron: z.string().min(1).optional(),
+  tz: z.string().min(1).optional(),
   startAt: z.string().optional(),
+  runAt: z.string().min(1).optional(),
   message: z.string().min(1).optional(),
   sessionId: z.string().optional(),
   script: z.string().min(1).optional(),
@@ -65,15 +75,22 @@ const latestOutputToolSchema = z.object({
 });
 
 function toolError(error: unknown) {
-  return { ok: false, error: error instanceof Error ? error.message : String(error) };
+  return {
+    ok: false,
+    error: error instanceof Error ? error.message : String(error),
+  };
 }
 
 function schedulerAgentTools(): ExtensionAgentTool[] {
   return [
     {
       name: "scheduler.list_jobs",
-      description: "List this agent's scheduler cron jobs",
-      parameters: { type: "object", properties: {}, additionalProperties: false },
+      description: "List this agent's scheduled jobs",
+      parameters: {
+        type: "object",
+        properties: {},
+        additionalProperties: false,
+      },
       async execute(_args, { agent }) {
         try {
           return { ok: true, jobs: await getScheduler().list(agent.id) };
@@ -85,7 +102,7 @@ function schedulerAgentTools(): ExtensionAgentTool[] {
     {
       name: "scheduler.create_job",
       description:
-        "Create an enabled scheduler cron job for this agent. Choose one of three payload shapes: " +
+        "Create an enabled scheduled job for this agent. Set cron + tz for recurrence, or runAt for one shot (ISO 8601 or 'in 30m'/'in 2h'); exactly one of cron and runAt is required. Choose one of three payload shapes: " +
         "(1) message only — an agent job; the LLM runs every tick, use when the tick needs reasoning. " +
         "(2) script + noAgent: true — script-only; the scheduler runs the script as a subprocess and " +
         "success/failure is decided by its exit code alone, never by an LLM self-report — no tokens, " +
@@ -106,6 +123,7 @@ function schedulerAgentTools(): ExtensionAgentTool[] {
           cron: { type: "string" },
           tz: { type: "string" },
           startAt: { type: "string" },
+          runAt: { type: "string" },
           message: {
             type: "string",
             description:
@@ -134,7 +152,8 @@ function schedulerAgentTools(): ExtensionAgentTool[] {
               properties: {
                 target: {
                   type: "string",
-                  description: "Delivery sink id, e.g. \"slack\", \"telegram\", \"discord\".",
+                  description:
+                    'Delivery sink id, e.g. "slack", "telegram", "discord".',
                 },
                 channel: { type: "string" },
                 user: { type: "string" },
@@ -149,7 +168,7 @@ function schedulerAgentTools(): ExtensionAgentTool[] {
           },
           timeoutMs: { type: "number" },
         },
-        required: ["name", "cron", "tz"],
+        required: ["name"],
       },
       async execute(args, { agent }) {
         try {
@@ -157,11 +176,12 @@ function schedulerAgentTools(): ExtensionAgentTool[] {
           const parsed = CreateScheduleRequestSchema.parse({
             agentId: agent.id,
             name: input.name,
-            schedule: {
+            schedule: parseToolSchedule({
               cron: input.cron,
               tz: input.tz,
               startAt: input.startAt,
-            },
+              runAt: input.runAt,
+            }),
             payload: {
               message: input.message,
               sessionId: input.sessionId,
@@ -182,7 +202,7 @@ function schedulerAgentTools(): ExtensionAgentTool[] {
     {
       name: "scheduler.update_job",
       description:
-        "Update this agent's scheduler cron job. Only the fields you provide change; omit a field to " +
+        "Update this agent's scheduled job. A replacement schedule requires cron + tz or runAt (ISO 8601 or relative); exactly one of cron and runAt. Only the fields you provide change; omit a field to " +
         "leave it unchanged, or pass null for message/script/sessionId to clear it (needed when moving " +
         "a job between payload shapes). Payload fields (message, script, noAgent, quietOutput) follow the same " +
         "mode rules as scheduler.create_job: message only = agent job; script + noAgent: true = " +
@@ -204,8 +224,8 @@ function schedulerAgentTools(): ExtensionAgentTool[] {
               cron: { type: "string" },
               tz: { type: "string" },
               startAt: { type: "string" },
+              runAt: { type: "string" },
             },
-            required: ["cron", "tz"],
           },
           message: {
             type: ["string", "null"],
@@ -235,7 +255,8 @@ function schedulerAgentTools(): ExtensionAgentTool[] {
               properties: {
                 target: {
                   type: "string",
-                  description: "Delivery sink id, e.g. \"slack\", \"telegram\", \"discord\".",
+                  description:
+                    'Delivery sink id, e.g. "slack", "telegram", "discord".',
                 },
                 channel: { type: "string" },
                 user: { type: "string" },
@@ -281,13 +302,16 @@ function schedulerAgentTools(): ExtensionAgentTool[] {
                       ? undefined
                       : (input.script ?? existing.payload.script),
                   noAgent: input.noAgent ?? existing.payload.noAgent,
-                  quietOutput: input.quietOutput ?? existing.payload.quietOutput,
+                  quietOutput:
+                    input.quietOutput ?? existing.payload.quietOutput,
                 }
               : undefined;
           const patch = UpdateScheduleRequestSchema.parse({
             name: input.name,
             enabled: input.enabled,
-            schedule: input.schedule,
+            schedule: input.schedule
+              ? parseToolSchedule(input.schedule)
+              : undefined,
             payload,
             deliver: input.deliver,
             timeoutMs: input.timeoutMs,
@@ -303,7 +327,7 @@ function schedulerAgentTools(): ExtensionAgentTool[] {
     },
     {
       name: "scheduler.delete_job",
-      description: "Delete this agent's scheduler cron job by id",
+      description: "Delete this agent's scheduled job by id",
       parameters: {
         type: "object",
         properties: { jobId: { type: "string" } },
@@ -333,8 +357,16 @@ function schedulerAgentTools(): ExtensionAgentTool[] {
       async execute(args, { agent }) {
         try {
           const input = jobIdToolSchema.parse(args);
-          const result = await getScheduler().runNowDetached(agent.id, input.jobId);
-          return { ok: true, status: result.status, sessionId: result.sessionId, firedAt: result.firedAt };
+          const result = await getScheduler().runNowDetached(
+            agent.id,
+            input.jobId
+          );
+          return {
+            ok: true,
+            status: result.status,
+            sessionId: result.sessionId,
+            firedAt: result.firedAt,
+          };
         } catch (error) {
           return toolError(error);
         }
@@ -349,13 +381,15 @@ function schedulerAgentTools(): ExtensionAgentTool[] {
         properties: {
           jobId: {
             type: "string",
-            description: "Required. Job ID from scheduler.list_jobs (jobs[n].id).",
+            description:
+              "Required. Job ID from scheduler.list_jobs (jobs[n].id).",
           },
           maxChars: {
             type: "number",
             minimum: 1,
             maximum: 20000,
-            description: "Optional maximum preview length in characters. Defaults to 4000.",
+            description:
+              "Optional maximum preview length in characters. Defaults to 4000.",
           },
         },
         required: ["jobId"],
@@ -364,7 +398,9 @@ function schedulerAgentTools(): ExtensionAgentTool[] {
         try {
           const parsed = latestOutputToolSchema.safeParse(args);
           if (!parsed.success) {
-            const hasJobIdError = parsed.error.issues.some((issue) => issue.path[0] === "jobId");
+            const hasJobIdError = parsed.error.issues.some(
+              (issue) => issue.path[0] === "jobId"
+            );
             if (hasJobIdError) {
               return {
                 ok: false,
@@ -411,7 +447,9 @@ const schedulerExtension: Extension = {
     const result = SchedulerExtensionConfigSchema.safeParse(raw);
     return {
       valid: result.success,
-      errors: result.success ? [] : result.error.issues.map((issue) => issue.message),
+      errors: result.success
+        ? []
+        : result.error.issues.map((issue) => issue.message),
     };
   },
   getAgentTools(_agent, context) {
@@ -443,7 +481,10 @@ const schedulerExtension: Extension = {
         return c.json(job, 201);
       } catch (error) {
         return c.json(
-          { error: error instanceof Error ? error.message : "Schedule create failed" },
+          {
+            error:
+              error instanceof Error ? error.message : "Schedule create failed",
+          },
           404
         );
       }
@@ -455,7 +496,10 @@ const schedulerExtension: Extension = {
       const ctx = getSchedulerContext();
       const agent = ctx.getAgent(agentId);
       if (!agent) return c.json({ error: "Agent not found" }, 404);
-      const latest = await readLatestOutputFile(ctx.resolveWorkspaceDir(agent), id);
+      const latest = await readLatestOutputFile(
+        ctx.resolveWorkspaceDir(agent),
+        id
+      );
       if (!latest) return c.json({ error: "Output not found" }, 404);
       return c.json(latest);
     });
