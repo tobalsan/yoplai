@@ -230,4 +230,46 @@ describe("compact agent session helpers", () => {
     expect(stored).not.toContain(canary);
     expect(stored).toContain("Authorization: [REDACTED]");
   });
+
+  it("seeds retained assistant messages with zeroed usage so Pi can read it", async () => {
+    const { compactAgentSession } = await import("./compact.js");
+    getFullSessionHistory.mockResolvedValue([
+      { role: "user", content: [{ type: "text", text: "hi" }], timestamp: 1 },
+      {
+        role: "assistant",
+        content: [{ type: "text", text: "hello" }],
+        timestamp: 2,
+        meta: {
+          provider: "anthropic",
+          model: "claude",
+          stopReason: "stop",
+          usage: { input: 120000, output: 10, totalTokens: 120010 },
+        },
+      },
+    ]);
+    runAgent.mockResolvedValue({ payloads: [{ text: "summary" }] });
+
+    await compactAgentSession({
+      agentId: "alpha",
+      sessionId: "s1",
+      sessionKey: "main",
+      userId: "u1",
+    });
+
+    const stored =
+      (writeFile.mock.calls.at(-1) as unknown as [string, string] | undefined)
+        ?.at(1) ?? "";
+    const assistant = stored
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line))
+      .find((entry) => entry.message?.role === "assistant");
+    expect(assistant.message.usage).toMatchObject({
+      input: 0,
+      output: 0,
+      cacheRead: 0,
+      cacheWrite: 0,
+      totalTokens: 0,
+    });
+  });
 });

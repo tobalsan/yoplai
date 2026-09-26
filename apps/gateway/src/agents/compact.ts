@@ -17,6 +17,16 @@ import { resolveSessionDataFile } from "../sessions/files.js";
 
 const RECENT_COMPACT_MESSAGES = 16;
 const COMPACT_SUMMARY_PREFIX = "[COMPACTED CONTEXT SUMMARY]";
+// Pi requires `usage` on assistant messages (isContextOverflow reads usage.input).
+// Zeroed so stale pre-compaction token counts don't re-trigger compaction.
+const ZERO_PI_USAGE = {
+  input: 0,
+  output: 0,
+  cacheRead: 0,
+  cacheWrite: 0,
+  totalTokens: 0,
+  cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+};
 
 function textFromBlocks(message: FullHistoryMessage): string {
   if (message.role === "toolResult") return "";
@@ -152,7 +162,7 @@ async function seedPiSession(params: {
         role: message.role,
         content: message.content,
         ...(message.role === "assistant"
-          ? compactAssistantMeta(message.meta)
+          ? { ...compactAssistantMeta(message.meta), usage: ZERO_PI_USAGE }
           : {}),
         timestamp: message.timestamp,
       },
