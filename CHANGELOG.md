@@ -31,6 +31,7 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Fixed
 
+- Keep live web-chat streams scoped to their originating conversation when switching sessions.
 - Canvas dashboards now inherit deployment colours from `$YOPLAI_HOME/theme.css`.
 - Keep Canvas chart headings with their charts across printed page breaks.
 - Move the Dashboard Kit chart legend to the bottom and reserve grid margins so it no longer overlaps card/chart titles on multi-series charts.
