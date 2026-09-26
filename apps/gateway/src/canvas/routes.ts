@@ -183,13 +183,17 @@ export function createDashboardRoutes(deps: DashboardRouteDependencies): Hono {
       const links = Object.fromEntries(
         dashboards.map((dashboard) => [dashboard.slug, `/d/${dashboard.id}`])
       );
-      html = injectDashboardRuntime(html, {
-        data: result.data,
-        viewer: { email: viewer.email ?? null, name: viewer.name ?? null },
-        params,
-        links,
-        errors: result.errors,
-      });
+      html = injectDashboardRuntime(
+        html,
+        {
+          data: result.data,
+          viewer: { email: viewer.email ?? null, name: viewer.name ?? null },
+          params,
+          links,
+          errors: result.errors,
+        },
+        parseThemeCookie(c.req.header("Cookie"))
+      );
       c.header("Content-Security-Policy", dashboardCsp(config));
       c.header("Cache-Control", "no-store");
       return c.html(html);
@@ -209,6 +213,16 @@ function safeJson(value: unknown): string {
     .replaceAll("\u2029", "\\u2029");
 }
 
+export function parseThemeCookie(
+  header: string | undefined | null
+): "light" | "dark" | null {
+  if (!header) return null;
+  const match = header.match(/(?:^|;\s*)yoplai-theme=([^;]*)/);
+  if (!match) return null;
+  const value = decodeURIComponent(match[1]);
+  return value === "light" || value === "dark" ? value : null;
+}
+
 export function injectDashboardRuntime(
   html: string,
   runtime: {
@@ -217,8 +231,22 @@ export function injectDashboardRuntime(
     params: Record<string, string>;
     links: Record<string, string>;
     errors: Array<{ name: string; error: string }>;
-  }
+  },
+  themeCookie?: "light" | "dark" | null
 ): string {
+  const hasDataTheme = /<html[^>]*\bdata-theme\s*=/i.test(html);
+  let themeScript = "";
+  if (!hasDataTheme) {
+    if (themeCookie === "light" || themeCookie === "dark") {
+      html = html.replace(
+        /<html([^>]*)>/i,
+        (_match, attrs) => `<html${attrs} data-theme="${themeCookie}">`
+      );
+    } else {
+      themeScript =
+        "<script>(function(){try{var d=matchMedia('(prefers-color-scheme: light)').matches?'light':'dark';var h=document.documentElement;if(!h.hasAttribute('data-theme'))h.setAttribute('data-theme',d);}catch(e){}})();</script>";
+    }
+  }
   const theme = '<link rel="stylesheet" href="/d-assets/theme.css">';
   const hasClosingHead = /<\/head\s*>/i.test(html);
   if (hasClosingHead) html = html.replace(/<\/head\s*>/i, `${theme}</head>`);
@@ -226,7 +254,7 @@ export function injectDashboardRuntime(
   const errors = runtime.errors.length
     ? `<section role="alert" style="font:14px sans-serif;background:#fee;color:#900;border:1px solid #d88;padding:12px;margin:12px"><strong>Dashboard query error</strong>${runtime.errors.map((error) => `<div><code>${escapeHtml(error.name)}</code>: ${escapeHtml(error.error)}</div>`).join("")}</section>`
     : "";
-  const insertion = `${hasClosingHead ? "" : theme}${bootstrap}${errors}`;
+  const insertion = `${hasClosingHead ? "" : theme}${themeScript}${bootstrap}${errors}`;
   const doctype = html.match(/^\s*<!doctype[^>]*>/i);
   return doctype
     ? `${html.slice(0, doctype[0].length)}${insertion}${html.slice(doctype[0].length)}`

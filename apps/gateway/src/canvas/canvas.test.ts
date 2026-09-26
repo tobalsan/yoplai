@@ -18,6 +18,7 @@ import {
   createDashboardRoutes,
   dashboardCsp,
   injectDashboardRuntime,
+  parseThemeCookie,
 } from "./routes.js";
 import {
   DASHBOARD_VERSION_LIMIT,
@@ -1015,6 +1016,70 @@ describe("dashboard SQL", () => {
     expect(html).toMatch(/^<!doctype html><link rel="stylesheet"/);
     expect(dom.window.document.compatMode).toBe("CSS1Compat");
     dom.window.close();
+  });
+
+  it("stamps data-theme=light on <html> from a light theme cookie", () => {
+    const html = injectDashboardRuntime(
+      "<html><head></head><body>Dashboard</body></html>",
+      { data: {}, viewer: { email: null, name: null }, params: {}, links: {}, errors: [] },
+      "light"
+    );
+    expect(html).toMatch(/<html[^>]*\bdata-theme="light"/);
+    expect(html).not.toContain("prefers-color-scheme");
+  });
+
+  it("stamps data-theme=dark on <html> from a dark theme cookie", () => {
+    const html = injectDashboardRuntime(
+      "<html><head></head><body>Dashboard</body></html>",
+      { data: {}, viewer: { email: null, name: null }, params: {}, links: {}, errors: [] },
+      "dark"
+    );
+    expect(html).toMatch(/<html[^>]*\bdata-theme="dark"/);
+    expect(html).not.toContain("prefers-color-scheme");
+  });
+
+  it("does not touch an explicit data-theme already set by the agent", () => {
+    const html = injectDashboardRuntime(
+      '<html data-theme="dark"><head></head><body>Dashboard</body></html>',
+      { data: {}, viewer: { email: null, name: null }, params: {}, links: {}, errors: [] },
+      "light"
+    );
+    expect(html.match(/data-theme="/g)).toHaveLength(1);
+    expect(html).toMatch(/<html[^>]*\bdata-theme="dark"/);
+    expect(html).not.toContain("prefers-color-scheme");
+  });
+
+  it("falls back to a prefers-color-scheme script when the cookie is missing or invalid", () => {
+    const missing = injectDashboardRuntime(
+      "<html><head></head><body>Dashboard</body></html>",
+      { data: {}, viewer: { email: null, name: null }, params: {}, links: {}, errors: [] },
+      null
+    );
+    expect(missing).toContain("prefers-color-scheme: light");
+    expect(missing).not.toMatch(/<html[^>]*\bdata-theme=/);
+
+    const invalid = injectDashboardRuntime(
+      "<html><head></head><body>Dashboard</body></html>",
+      { data: {}, viewer: { email: null, name: null }, params: {}, links: {}, errors: [] },
+      "purple" as never
+    );
+    expect(invalid).toContain("prefers-color-scheme: light");
+    expect(invalid).not.toMatch(/<html[^>]*\bdata-theme=/);
+  });
+
+  describe("parseThemeCookie", () => {
+    it("extracts a valid light/dark value from a Cookie header", () => {
+      expect(parseThemeCookie("yoplai-theme=light")).toBe("light");
+      expect(parseThemeCookie("foo=bar; yoplai-theme=dark; baz=qux")).toBe(
+        "dark"
+      );
+    });
+
+    it("returns null for missing or invalid cookies", () => {
+      expect(parseThemeCookie(undefined)).toBeNull();
+      expect(parseThemeCookie("foo=bar")).toBeNull();
+      expect(parseThemeCookie("yoplai-theme=purple")).toBeNull();
+    });
   });
 
   it("terminates a query that exceeds its deadline", async () => {

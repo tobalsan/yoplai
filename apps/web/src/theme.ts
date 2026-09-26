@@ -27,4 +27,5 @@ createEffect(() => {
   const t = theme();
   document.documentElement.setAttribute("data-theme", t);
   localStorage.setItem("yoplai-theme", t);
+  document.cookie = `yoplai-theme=${t}; Path=/; SameSite=Lax; Max-Age=31536000`;
 });

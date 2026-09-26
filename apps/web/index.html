@@ -10,6 +10,7 @@
       var t = localStorage.getItem('yoplai-theme') || localStorage.getItem('aihub-theme');
       if (!t) t = matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
       document.documentElement.setAttribute('data-theme', t);
+      document.cookie = 'yoplai-theme=' + t + '; Path=/; SameSite=Lax; Max-Age=31536000';
     </script>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
