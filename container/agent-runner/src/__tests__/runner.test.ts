@@ -19,12 +19,15 @@ const piMock = vi.hoisted(() => {
   };
   const agent = {
     state: {
-      systemPrompt: "You are Sally.\n\n[CHANNEL CONTEXT]\nchannel: slack",
+      // Pi 0.87 fills agent state only after the first prompt; the session
+      // getter exposes the effective prompt beforehand.
+      systemPrompt: "",
       messages: [] as unknown[],
     },
     continue: vi.fn(async () => undefined),
   };
   const session = {
+    systemPrompt: "You are Sally.\n\n[CHANNEL CONTEXT]\nchannel: slack",
     get messages() {
       return agent.state.messages;
     },

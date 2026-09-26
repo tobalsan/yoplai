@@ -5,7 +5,7 @@ import { getBuiltInSkillsDir } from "../skills.js";
 describe("getBuiltInSkillsDir", () => {
   it("resolves skill assets beside the compiled runner", () => {
     expect(getBuiltInSkillsDir()).toBe(
-      path.resolve(import.meta.dirname, "../../skills")
+      path.resolve(import.meta.dirname, "../skills")
     );
   });
 });
