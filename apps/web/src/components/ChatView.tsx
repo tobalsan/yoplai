@@ -645,6 +645,9 @@ export function ChatView() {
   let textareaRef: HTMLTextAreaElement | undefined;
   let fileInputRef: HTMLInputElement | undefined;
   let cleanup: (() => void) | null = null;
+  let directStreamSession: string | null = null;
+  let displayedSession: string | null = null;
+  let pendingResetSession: string | null = null;
   let subscriptionCleanup: (() => void) | null = null;
   let aborted = false;
   let skipNextHistoryRefresh = false;
@@ -658,6 +661,11 @@ export function ChatView() {
     typeof searchParams.session === "string" && searchParams.session.trim()
       ? searchParams.session
       : undefined;
+  const sessionScope = (sessionId = explicitSessionId()) =>
+    `${params.agentId}:${sessionKey()}:${sessionId ?? ""}`;
+  const currentSession = () => sessionScope();
+  const ownsDisplayedDirectStream = () =>
+    cleanup !== null && directStreamSession === currentSession();
   const [suggestions] = createResource(
     () => [params.agentId, explicitSessionId()] as const,
     ([agentId]) => fetchAgentSuggestions(agentId)
@@ -848,13 +856,14 @@ export function ChatView() {
 
   // Load history based on view mode
   const loadHistory = async (mode: HistoryViewMode) => {
+    const requestedSession = currentSession();
+    const agentId = params.agentId;
+    const key = sessionKey();
+    const sessionId = explicitSessionId();
     setLoading(true);
     if (mode === "full") {
-      const res = await fetchFullHistory(
-        params.agentId,
-        sessionKey(),
-        explicitSessionId()
-      );
+      const res = await fetchFullHistory(agentId, key, sessionId);
+      if (requestedSession !== currentSession()) return;
       const baseMessages = [...res.messages];
       if (res.activeTurn?.userText) {
         baseMessages.push({
@@ -883,11 +892,8 @@ export function ChatView() {
       if (res.sessionId) setResolvedSessionId(res.sessionId);
       applyActiveTurn(res.isStreaming ?? false, res.activeTurn ?? null);
     } else {
-      const res = await fetchFullHistory(
-        params.agentId,
-        sessionKey(),
-        explicitSessionId()
-      );
+      const res = await fetchFullHistory(agentId, key, sessionId);
+      if (requestedSession !== currentSession()) return;
       setContextFullMessages(res.messages);
       const base = fullMessagesToSimpleView(res.messages);
       if (res.activeTurn?.userText) {
@@ -921,11 +927,13 @@ export function ChatView() {
   };
 
   const refreshContextUsage = async () => {
+    const requestedSession = currentSession();
     const res = await fetchFullHistory(
       params.agentId,
       sessionKey(),
       explicitSessionId()
     );
+    if (requestedSession !== currentSession()) return;
     setContextFullMessages(res.messages);
   };
 
@@ -1070,11 +1078,11 @@ export function ChatView() {
     if (!streaming) {
       // Backend says not streaming: clear stale isStreaming if we don't own a
       // direct stream ourselves (cleanup null means no active streamMessage).
-      if (!cleanup && isStreaming()) resetStreamingState();
+      if (!ownsDisplayedDirectStream() && isStreaming()) resetStreamingState();
       return;
     }
     if (!turn) return;
-    if (cleanup) return;
+    if (ownsDisplayedDirectStream()) return;
     applyActiveTurnSnapshot(turn);
   };
 
@@ -1182,7 +1190,22 @@ export function ChatView() {
   // user/error messages for failed runs before history is persisted.
   createEffect(
     on([agent, viewMode, explicitSessionId], ([currentAgent, mode]) => {
-      if (currentAgent) void loadHistory(mode);
+      if (!currentAgent) return;
+      const nextSession = currentSession();
+      const followsReset = pendingResetSession === nextSession;
+      if (
+        displayedSession !== null &&
+        displayedSession !== nextSession &&
+        !followsReset
+      ) {
+        if (cleanup) cleanup();
+        cleanup = null;
+        directStreamSession = null;
+        resetStreamingState();
+      }
+      if (followsReset) pendingResetSession = null;
+      displayedSession = nextSession;
+      void loadHistory(mode);
     })
   );
 
@@ -1191,6 +1214,8 @@ export function ChatView() {
     const agentId = params.agentId;
     const key = sessionKey();
     if (!agentId) return;
+    const subscribedSession = currentSession();
+    const isCurrentSubscription = () => subscribedSession === currentSession();
 
     subscriptionCleanup?.();
     subscriptionCleanup = subscribeToSession(
@@ -1198,7 +1223,8 @@ export function ChatView() {
       key,
       {
         onText: (chunk) => {
-          if (cleanup) return;
+          if (!isCurrentSubscription()) return;
+          if (ownsDisplayedDirectStream()) return;
           setStreamingFinished(false);
           appendStreamingTextBlock(chunk);
           setStreamingText((prev) => prev + chunk);
@@ -1207,7 +1233,8 @@ export function ChatView() {
           setIsStreaming(true);
         },
         onThinking: (chunk) => {
-          if (cleanup) return;
+          if (!isCurrentSubscription()) return;
+          if (ownsDisplayedDirectStream()) return;
           setStreamingFinished(false);
           appendStreamingThinkingBlock(chunk);
           setStreamingThinking((prev) => prev + chunk);
@@ -1216,11 +1243,18 @@ export function ChatView() {
           setIsStreaming(true);
         },
         onProgress: ({ label, current, total }) => {
-          setStreamingProgress(current !== undefined && total !== undefined ? `${label} (${current}/${total})` : label);
+          if (!isCurrentSubscription()) return;
+          if (ownsDisplayedDirectStream()) return;
+          setStreamingProgress(
+            current !== undefined && total !== undefined
+              ? `${label} (${current}/${total})`
+              : label
+          );
           setIsStreaming(true);
         },
         onToolCall: (id, name, args) => {
-          if (cleanup) return;
+          if (!isCurrentSubscription()) return;
+          if (ownsDisplayedDirectStream()) return;
           setStreamingFinished(false);
           appendStreamingToolCallBlock(id, name, args);
           setStreamingToolCalls((prev) => {
@@ -1240,7 +1274,8 @@ export function ChatView() {
           setIsStreaming(true);
         },
         onToolStart: (toolName) => {
-          if (cleanup) return;
+          if (!isCurrentSubscription()) return;
+          if (ownsDisplayedDirectStream()) return;
           setActiveTools((prev) =>
             prev.some((t) => t.toolName === toolName && t.status === "running")
               ? prev
@@ -1251,7 +1286,8 @@ export function ChatView() {
           );
         },
         onToolEnd: (toolName, isError) => {
-          if (cleanup) return;
+          if (!isCurrentSubscription()) return;
+          if (ownsDisplayedDirectStream()) return;
           setActiveTools((prev) =>
             prev.map((t) =>
               t.toolName === toolName && t.status === "running"
@@ -1269,11 +1305,13 @@ export function ChatView() {
           updateStreamingToolBlockStatus(toolName, isError ? "error" : "done");
         },
         onToolResult: (id, name, content, isError, details) => {
-          if (cleanup) return;
+          if (!isCurrentSubscription()) return;
+          if (ownsDisplayedDirectStream()) return;
           attachStreamingToolResult(id, name, content, isError, details);
         },
         onFileOutput: (file) => {
-          if (cleanup) return;
+          if (!isCurrentSubscription()) return;
+          if (ownsDisplayedDirectStream()) return;
           setStreamingFinished(false);
           const fileBlock: FileBlock = {
             type: "file",
@@ -1286,15 +1324,18 @@ export function ChatView() {
           setIsStreaming(true);
         },
         onDone: () => {
-          if (cleanup) return;
+          if (!isCurrentSubscription()) return;
+          if (ownsDisplayedDirectStream()) return;
           if (streamingFinished()) return;
           resetStreamingState();
         },
         onActiveTurn: (turn) => {
-          if (cleanup) return;
+          if (!isCurrentSubscription()) return;
+          if (ownsDisplayedDirectStream()) return;
           applyActiveTurnSnapshot(turn);
         },
         onHistoryUpdated: () => {
+          if (!isCurrentSubscription()) return;
           if (skipNextHistoryRefresh) {
             skipNextHistoryRefresh = false;
             void refreshContextUsage();
@@ -1303,8 +1344,9 @@ export function ChatView() {
           // Refetch history when background run completes. Also reconcile if
           // isStreaming is stale-true but we don't own the direct stream — the
           // history_updated signal means the backend finished and history is ready.
-          if (!isStreaming() || !cleanup) {
-            if (isStreaming() && !cleanup) resetStreamingState();
+          if (!isStreaming() || !ownsDisplayedDirectStream()) {
+            if (isStreaming() && !ownsDisplayedDirectStream())
+              resetStreamingState();
             if (pendingQueuedMessages().length > 0) {
               setPendingQueuedMessages((prev) => prev.slice(1));
             }
@@ -1348,7 +1390,11 @@ export function ChatView() {
         if (status === "streaming" && !isStreaming() && !streamingFinished()) {
           setIsStreaming(true);
           setStreamingStartedAt(Date.now());
-        } else if (status === "idle" && isStreaming() && !cleanup) {
+        } else if (
+          status === "idle" &&
+          isStreaming() &&
+          !ownsDisplayedDirectStream()
+        ) {
           if (streamingFinished()) {
             setIsStreaming(false);
             return;
@@ -1738,6 +1784,12 @@ export function ChatView() {
         status: "running" | "done" | "error";
         timestamp: number;
       }> = [];
+      let queuedSession = currentSession();
+      let queuedResetFrom: string | null = null;
+      const isCurrentQueuedStream = () =>
+        queuedSession === currentSession() ||
+        (queuedResetFrom === currentSession() &&
+          pendingResetSession === queuedSession);
 
       // Send queued message with minimal handlers (queue ack doesn't affect streaming state)
       const queueCleanup = streamMessage(
@@ -1745,6 +1797,7 @@ export function ChatView() {
         messageText,
         sessionKey(),
         (chunk) => {
+          if (!isCurrentQueuedStream()) return;
           queuedText += chunk;
           const last = queuedBlocks.at(-1);
           if (last?.type === "text") {
@@ -1755,6 +1808,10 @@ export function ChatView() {
         },
         (meta?: DoneMeta) => {
           if (meta?.queued) {
+            if (queueCleanup) queueCleanup();
+            return;
+          }
+          if (!isCurrentQueuedStream()) {
             if (queueCleanup) queueCleanup();
             return;
           }
@@ -1859,6 +1916,10 @@ export function ChatView() {
           if (queueCleanup) queueCleanup();
         },
         (error) => {
+          if (!isCurrentQueuedStream()) {
+            if (queueCleanup) queueCleanup();
+            return;
+          }
           const content = `Error: ${error}`;
           setSimpleMessages((prev) => [
             ...prev,
@@ -1873,6 +1934,7 @@ export function ChatView() {
         },
         {
           onThinking: (chunk) => {
+            if (!isCurrentQueuedStream()) return;
             queuedThinking += chunk;
             const last = queuedBlocks.at(-1);
             if (last?.type === "thinking") {
@@ -1882,6 +1944,7 @@ export function ChatView() {
             }
           },
           onToolCall: (id, name, args) => {
+            if (!isCurrentQueuedStream()) return;
             queuedToolCalls.push({
               id,
               name,
@@ -1897,6 +1960,7 @@ export function ChatView() {
             });
           },
           onToolEnd: (toolName, isError) => {
+            if (!isCurrentQueuedStream()) return;
             for (const tc of queuedToolCalls) {
               if (tc.name === toolName && tc.status === "running") {
                 tc.status = isError ? "error" : "done";
@@ -1904,6 +1968,7 @@ export function ChatView() {
             }
           },
           onToolResult: (id, name, content, isError, details) => {
+            if (!isCurrentQueuedStream()) return;
             queuedToolResults.push({
               role: "toolResult",
               toolCallId: id,
@@ -1915,6 +1980,7 @@ export function ChatView() {
             });
           },
           onFileOutput: (file) => {
+            if (!isCurrentQueuedStream()) return;
             const fileBlock: FileBlock = {
               type: "file",
               direction: "outbound",
@@ -1924,6 +1990,10 @@ export function ChatView() {
             queuedBlocks.push(fileBlock);
           },
           onSessionReset: (sessionId) => {
+            if (!isCurrentQueuedStream()) return;
+            queuedResetFrom = queuedSession;
+            queuedSession = sessionScope(sessionId);
+            pendingResetSession = queuedSession;
             // Queued /new or /reset triggered - clear messages and streaming state
             handleSessionReset(sessionId);
             resetStreamingState();
@@ -1956,17 +2026,27 @@ export function ChatView() {
     setStreamingTextAt(null);
     setActiveTools([]);
 
+    let streamSession = currentSession();
+    let resetFromSession: string | null = null;
+    directStreamSession = streamSession;
+    const isCurrentDirectStream = () =>
+      directStreamSession === streamSession &&
+      (currentSession() === streamSession ||
+        (resetFromSession === currentSession() &&
+          pendingResetSession === streamSession));
     cleanup = streamMessage(
       params.agentId,
       messageText,
       sessionKey(),
       (chunk) => {
+        if (!isCurrentDirectStream()) return;
         setStreamingFinished(false);
         appendStreamingTextBlock(chunk);
         setStreamingText((prev) => prev + chunk);
         if (!streamingTextAt()) setStreamingTextAt(Date.now());
       },
       (meta?: DoneMeta) => {
+        if (!isCurrentDirectStream()) return;
         // Queued ack arrived unexpectedly - reset state only if no real stream content
         if (meta?.queued) {
           if (!hasStreamingContent()) {
@@ -2028,6 +2108,7 @@ export function ChatView() {
         });
       },
       (error) => {
+        if (!isCurrentDirectStream()) return;
         const content = `Error: ${error}`;
         setSimpleMessages((prev) => [
           ...prev,
@@ -2051,16 +2132,23 @@ export function ChatView() {
       },
       {
         onThinking: (chunk) => {
+          if (!isCurrentDirectStream()) return;
           setStreamingFinished(false);
           appendStreamingThinkingBlock(chunk);
           setStreamingThinking((prev) => prev + chunk);
           if (!streamingThinkingAt()) setStreamingThinkingAt(Date.now());
         },
         onProgress: ({ label, current, total }) => {
-          setStreamingProgress(current !== undefined && total !== undefined ? `${label} (${current}/${total})` : label);
+          if (!isCurrentDirectStream()) return;
+          setStreamingProgress(
+            current !== undefined && total !== undefined
+              ? `${label} (${current}/${total})`
+              : label
+          );
           setIsStreaming(true);
         },
         onToolCall: (id, name, args) => {
+          if (!isCurrentDirectStream()) return;
           setStreamingFinished(false);
           appendStreamingToolCallBlock(id, name, args);
           setStreamingToolCalls((prev) => [
@@ -2075,12 +2163,14 @@ export function ChatView() {
           ]);
         },
         onToolStart: (toolName) => {
+          if (!isCurrentDirectStream()) return;
           setActiveTools((prev) => [
             ...prev,
             { id: crypto.randomUUID(), toolName, status: "running" },
           ]);
         },
         onToolEnd: (toolName, isError) => {
+          if (!isCurrentDirectStream()) return;
           // Update activeTools for the pill display
           setActiveTools((prev) =>
             prev.map((t) =>
@@ -2100,9 +2190,11 @@ export function ChatView() {
           updateStreamingToolBlockStatus(toolName, isError ? "error" : "done");
         },
         onToolResult: (id, name, content, isError, details) => {
+          if (!isCurrentDirectStream()) return;
           attachStreamingToolResult(id, name, content, isError, details);
         },
         onFileOutput: (file) => {
+          if (!isCurrentDirectStream()) return;
           setStreamingFinished(false);
           const fileBlock: FileBlock = {
             type: "file",
@@ -2113,6 +2205,11 @@ export function ChatView() {
           appendStreamingFileBlock(fileBlock);
         },
         onSessionReset: (sessionId) => {
+          if (!isCurrentDirectStream()) return;
+          resetFromSession = streamSession;
+          streamSession = sessionScope(sessionId);
+          directStreamSession = streamSession;
+          pendingResetSession = streamSession;
           // Clear messages when session resets (e.g., /new command)
           handleSessionReset(sessionId);
         },
@@ -2272,6 +2369,10 @@ export function ChatView() {
           aria-label="Start a new chat"
           title="New chat"
           onClick={() => {
+            if (cleanup) cleanup();
+            cleanup = null;
+            directStreamSession = null;
+            resetStreamingState();
             startNewChat(params.agentId);
             setSimpleMessages([]);
             setFullMessages([]);

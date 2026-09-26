@@ -31,6 +31,7 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Fixed
 
+- Keep live web-chat streams scoped to their originating conversation when switching sessions.
 - Sandboxed Pi agents now load the built-in skills (such as `dashboard`); the runner looked for them outside its build output.
 - Record the system prompt in Langfuse again for new Pi sessions, host and sandboxed, after the Pi 0.87 upgrade left it empty until the first turn.
 - Canvas dashboards now inherit deployment colours from `$YOPLAI_HOME/theme.css`.

@@ -240,6 +240,148 @@ describe("ChatView abort handling", () => {
     dispose();
   });
 
+  it("keeps a direct stream scoped when switching conversations", async () => {
+    let onText: ((chunk: string) => void) | undefined;
+    let onDone: (() => void) | undefined;
+    let onError: ((error: string) => void) | undefined;
+    let callbacks:
+      | {
+          onThinking?: (chunk: string) => void;
+          onToolCall?: (id: string, name: string, args: unknown) => void;
+        }
+      | undefined;
+    const detach = vi.fn();
+    const sessionSubscriptions = new Map<
+      string | undefined,
+      { onText?: (chunk: string) => void; onHistoryUpdated?: () => void }
+    >();
+    let sessionALoads = 0;
+
+    routeState.session = "session-a";
+    fetchFullHistoryMock.mockImplementation(
+      async (_agentId: string, _key: string, sessionId?: string) => {
+        if (sessionId === "session-b") {
+          return {
+            messages: [
+              {
+                role: "assistant" as const,
+                content: [{ type: "text" as const, text: "B history" }],
+                timestamp: 20,
+              },
+            ],
+            sessionId,
+            isStreaming: false,
+            activeTurn: null,
+          };
+        }
+        sessionALoads += 1;
+        if (sessionALoads > 2) {
+          return {
+            messages: [
+              {
+                role: "assistant" as const,
+                content: [{ type: "text" as const, text: "A final reply" }],
+                timestamp: 30,
+              },
+            ],
+            sessionId: "session-a",
+            isStreaming: false,
+            activeTurn: null,
+          };
+        }
+        return {
+          messages: [],
+          sessionId: "session-a",
+          isStreaming: sessionALoads > 1,
+          activeTurn:
+            sessionALoads > 1
+              ? {
+                  userText: "hello A",
+                  userTimestamp: 10,
+                  startedAt: 11,
+                  thinking: "rehydrated thinking",
+                  text: "rehydrated A",
+                  toolCalls: [],
+                }
+              : null,
+        };
+      }
+    );
+    streamMessageMock.mockImplementation(
+      (
+        _agentId: string,
+        _message: string,
+        _sessionKey: string,
+        nextOnText: (chunk: string) => void,
+        nextOnDone: () => void,
+        nextOnError: (error: string) => void,
+        nextCallbacks?: typeof callbacks
+      ) => {
+        onText = nextOnText;
+        onDone = nextOnDone;
+        onError = nextOnError;
+        callbacks = nextCallbacks;
+        return detach;
+      }
+    );
+    subscribeToSessionMock.mockImplementation(
+      (
+        _agentId: string,
+        _key: string,
+        subscriptionCallbacks,
+        sessionId?: string
+      ) => {
+        sessionSubscriptions.set(sessionId, subscriptionCallbacks);
+        return vi.fn();
+      }
+    );
+
+    const { container, dispose } = renderView();
+    await waitFor(() =>
+      expect(container.querySelector("textarea")).not.toBeNull()
+    );
+    const textarea = container.querySelector("textarea") as HTMLTextAreaElement;
+    textarea.value = "hello A";
+    textarea.dispatchEvent(new Event("input", { bubbles: true }));
+    await tick();
+    (container.querySelector(".send-btn") as HTMLButtonElement).click();
+    await tick();
+    onText?.("A live text");
+    await waitFor(() => expect(container.textContent).toContain("A live text"));
+
+    routeState.session = "session-b";
+    setRouteVersion((version) => version + 1);
+    await waitFor(() => expect(container.textContent).toContain("B history"));
+    expect(detach).toHaveBeenCalledOnce();
+    expect(container.textContent).not.toContain("A live text");
+
+    onText?.("foreign text");
+    callbacks?.onThinking?.("foreign thinking");
+    callbacks?.onToolCall?.("tool-a", "foreign-tool", {});
+    onError?.("foreign error");
+    onDone?.();
+    sessionSubscriptions.get("session-a")?.onText?.("foreign subscription");
+    sessionSubscriptions.get("session-a")?.onHistoryUpdated?.();
+    await tick();
+    expect(container.textContent).toContain("B history");
+    expect(container.textContent).not.toContain("foreign");
+
+    routeState.session = "session-a";
+    setRouteVersion((version) => version + 1);
+    await waitFor(() =>
+      expect(container.textContent).toContain("rehydrated A")
+    );
+    expect(container.textContent).not.toContain("B history");
+
+    sessionSubscriptions.get("session-a")?.onHistoryUpdated?.();
+    await waitFor(() => expect(container.textContent).toContain("A final reply"));
+    routeState.session = "session-b";
+    setRouteVersion((version) => version + 1);
+    await waitFor(() => expect(container.textContent).toContain("B history"));
+    expect(container.textContent).not.toContain("A final reply");
+    dispose();
+  });
+
   it("renders thinking traces in simple history", async () => {
     fetchFullHistoryMock.mockResolvedValue({
       messages: [
@@ -699,16 +841,20 @@ describe("ChatView abort handling", () => {
   it("sends /new through session key and navigates when viewing past session", async () => {
     routeState.session = "past-session";
     let resetHandler: ((sessionId: string) => void) | undefined;
+    let onText: ((chunk: string) => void) | undefined;
+    let onDone: (() => void) | undefined;
     streamMessageMock.mockImplementation(
       (
         _agentId: string,
         _message: string,
         _sessionKey: string,
-        _onText: (chunk: string) => void,
-        _onDone: () => void,
+        nextOnText: (chunk: string) => void,
+        nextOnDone: () => void,
         _onError: (error: string) => void,
         callbacks?: { onSessionReset?: (sessionId: string) => void }
       ) => {
+        onText = nextOnText;
+        onDone = nextOnDone;
         resetHandler = callbacks?.onSessionReset;
         return vi.fn();
       }
@@ -739,6 +885,13 @@ describe("ChatView abort handling", () => {
     expect(navigateMock).toHaveBeenCalledWith(
       "/chat/agent-1?session=fresh-session"
     );
+    routeState.session = "fresh-session";
+    setRouteVersion((version) => version + 1);
+    await tick();
+    onText?.("Started a fresh session");
+    onDone?.();
+    await tick();
+    expect(container.textContent).toContain("Started a fresh session");
 
     dispose();
   });
