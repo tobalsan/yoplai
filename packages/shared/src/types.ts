@@ -310,9 +310,10 @@ export const AgentYamlConfigSchema = AgentYamlConfigBaseSchema.superRefine(
 export type AgentYamlConfig = z.infer<typeof AgentYamlConfigSchema>;
 
 // Schedule types
-export const ScheduleSchema = z.object({
+const CronScheduleSchema = z.object({
   cron: z.string().min(1),
   tz: z.string().min(1),
+  runAt: z.never().optional(),
   startAt: z
     .string()
     .refine((value) => !Number.isNaN(Date.parse(value)), {
@@ -320,6 +321,13 @@ export const ScheduleSchema = z.object({
     })
     .optional(),
 });
+const OnceScheduleSchema = z.object({
+  runAt: z.string().datetime({ offset: true }),
+  cron: z.never().optional(),
+  tz: z.never().optional(),
+  startAt: z.never().optional(),
+});
+export const ScheduleSchema = z.union([CronScheduleSchema, OnceScheduleSchema]);
 export type Schedule = z.infer<typeof ScheduleSchema>;
 
 // A job's behavior is determined by which payload fields are present (no

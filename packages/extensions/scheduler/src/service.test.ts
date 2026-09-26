@@ -90,6 +90,198 @@ describe("SchedulerService.runNow", () => {
     if (tmpDir) await fs.rm(tmpDir, { recursive: true, force: true });
   });
 
+  it("fires a missed one-shot once after restart, then persists it disabled", async () => {
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-once-service-"));
+    const alpha = agent("alpha", path.join(tmpDir, "alpha"));
+    await fs.mkdir(path.join(alpha.workspace, "cron"), { recursive: true });
+    await fs.writeFile(
+      path.join(alpha.workspace, "mark.sh"),
+      "#!/bin/bash\nprintf 'fired\\n' >> marker.txt\n"
+    );
+    await fs.writeFile(
+      path.join(alpha.workspace, "cron/jobs.json"),
+      JSON.stringify({
+        version: 1,
+        jobs: [
+          {
+            id: "once",
+            name: "Once",
+            enabled: true,
+            schedule: { runAt: new Date(Date.now() - 1000).toISOString() },
+            payload: { script: "mark.sh", noAgent: true },
+          },
+        ],
+      })
+    );
+    const config: GatewayConfig = {
+      version: 3,
+      agents: [alpha],
+      extensions: { scheduler: { enabled: true } },
+      sessions: { idleMinutes: 360 },
+      agentFab: false,
+    };
+    setSchedulerContext(context(config));
+    const scheduler = new SchedulerService();
+    await scheduler.start();
+    for (let attempt = 0; attempt < 100; attempt++) {
+      const [job] = await scheduler.list("alpha");
+      if (job && !job.enabled) break;
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    const [job] = await scheduler.list("alpha");
+    expect(job?.enabled).toBe(false);
+    expect(
+      (job as { state?: { nextRunAtMs?: number } }).state?.nextRunAtMs
+    ).toBeUndefined();
+    expect(
+      await fs.readFile(path.join(alpha.workspace, "marker.txt"), "utf8")
+    ).toBe("fired\n");
+    const outputs = await fs.readdir(
+      path.join(alpha.workspace, "cron/output/once")
+    );
+    expect(outputs).toHaveLength(1);
+    await scheduler.stop();
+    const restarted = new SchedulerService();
+    await restarted.start();
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(
+      await fs.readFile(path.join(alpha.workspace, "marker.txt"), "utf8")
+    ).toBe("fired\n");
+    await restarted.stop();
+  });
+
+  it.each([
+    "unchanged",
+    "deleted",
+    "rescheduled",
+    "rescheduled-in-place",
+  ] as const)(
+    "handles a %s one-shot during a disk refresh while its run finishes",
+    async (change) => {
+      vi.spyOn(console, "log").mockImplementation(() => {});
+      tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-once-refresh-"));
+      const alpha = agent("alpha", path.join(tmpDir, "alpha"));
+      const config: GatewayConfig = {
+        version: 3,
+        agents: [alpha],
+        extensions: { scheduler: { enabled: true } },
+        sessions: { idleMinutes: 360 },
+        agentFab: false,
+      };
+      let signalStarted!: () => void;
+      const started = new Promise<void>((resolve) => {
+        signalStarted = resolve;
+      });
+      let finish!: (value: unknown) => void;
+      const runAgent = vi.fn(
+        () =>
+          new Promise((resolve) => {
+            finish = resolve;
+            signalStarted();
+          })
+      );
+      setSchedulerContext(context(config, runAgent));
+      const scheduler = new SchedulerService();
+      const originalRunAt = new Date(Date.now() + 60_000).toISOString();
+      const job = await scheduler.add("alpha", {
+        name: "Once",
+        schedule: { runAt: originalRunAt },
+        payload: jobPayload({ message: "Run" }),
+      });
+      const run = scheduler.runNow("alpha", job.id);
+      await started;
+      if (change !== "rescheduled-in-place") await scheduler.refreshFromDisk();
+
+      const newRunAt = new Date(Date.now() + 120_000).toISOString();
+      if (change === "deleted") await scheduler.remove("alpha", job.id);
+      if (change === "rescheduled" || change === "rescheduled-in-place") {
+        await scheduler.update("alpha", job.id, {
+          schedule: { runAt: newRunAt },
+        });
+      }
+      finish({
+        payloads: [{ text: "done" }],
+        meta: { durationMs: 1, sessionId: "s" },
+      });
+      await run;
+
+      const [current] = await scheduler.list("alpha");
+      const disk = JSON.parse(
+        await fs.readFile(path.join(alpha.workspace, "cron/jobs.json"), "utf8")
+      );
+      if (change === "deleted") {
+        expect(current).toBeUndefined();
+        expect(disk.jobs).toHaveLength(0);
+      } else if (
+        change === "rescheduled" ||
+        change === "rescheduled-in-place"
+      ) {
+        expect(current?.enabled).toBe(true);
+        expect(current?.schedule).toEqual({ runAt: newRunAt });
+        expect(disk.jobs[0].enabled).toBe(true);
+      } else {
+        expect(current?.enabled).toBe(false);
+        expect(
+          (current as { state?: { nextRunAtMs?: number } }).state?.nextRunAtMs
+        ).toBeUndefined();
+        expect(disk.jobs[0].enabled).toBe(false);
+      }
+      await scheduler.stop();
+    }
+  );
+
+  it.each(["missing", "inactive"] as const)(
+    "disables a one-shot after a %s agent attempt without a retry timer",
+    async (reason) => {
+      vi.spyOn(console, "log").mockImplementation(() => {});
+      vi.spyOn(console, "error").mockImplementation(() => {});
+      tmpDir = await fs.mkdtemp(
+        path.join(os.tmpdir(), "yoplai-once-unavailable-")
+      );
+      const alpha = agent("alpha", path.join(tmpDir, "alpha"));
+      const config: GatewayConfig = {
+        version: 3,
+        agents: [alpha],
+        extensions: { scheduler: { enabled: true } },
+        sessions: { idleMinutes: 360 },
+        agentFab: false,
+      };
+      const ctx = context(config);
+      setSchedulerContext(ctx);
+      const scheduler = new SchedulerService();
+      await scheduler.add("alpha", {
+        name: "Once",
+        schedule: { runAt: new Date(Date.now() + 60_000).toISOString() },
+        payload: jobPayload({ message: "Run" }),
+      });
+      if (reason === "missing") ctx.getAgent = () => undefined;
+      else ctx.isAgentActive = () => false;
+      const [loaded] = (await scheduler.list("alpha")) as Array<{
+        enabled: boolean;
+        state?: { nextRunAtMs?: number };
+      }>;
+      loaded!.state!.nextRunAtMs = Date.now() - 1;
+      await scheduler.runDueJobs();
+      scheduler.armTimer();
+
+      const [after] = (await scheduler.list("alpha")) as Array<{
+        enabled: boolean;
+        state?: { nextRunAtMs?: number };
+      }>;
+      expect(after?.enabled).toBe(false);
+      expect(after?.state?.nextRunAtMs).toBeUndefined();
+      expect((scheduler as unknown as SchedulerWithInternals).timer).toBeNull();
+      const disk = JSON.parse(
+        await fs.readFile(path.join(alpha.workspace, "cron/jobs.json"), "utf8")
+      );
+      expect(disk.jobs[0].enabled).toBe(false);
+      await scheduler.runDueJobs();
+      expect((scheduler as unknown as SchedulerWithInternals).timer).toBeNull();
+      await scheduler.stop();
+    }
+  );
+
   it("runs a disabled job immediately without changing its next scheduled fire", async () => {
     vi.spyOn(console, "log").mockImplementation(() => {});
     tmpDir = await fs.mkdtemp(
@@ -948,9 +1140,9 @@ describe("SchedulerService delivery", () => {
 
     expect(result.status).toBe("ok");
     expect(delivered).toEqual([]);
-    await expect(fs.readFile(result.outputPath!, "utf8")).resolves.not.toContain(
-      "## Delivery"
-    );
+    await expect(
+      fs.readFile(result.outputPath!, "utf8")
+    ).resolves.not.toContain("## Delivery");
   });
 
   it("delivers a script-only job's trimmed stdout", async () => {
@@ -1161,7 +1353,9 @@ describe("SchedulerService delivery", () => {
 
   it("holds the overlap guard while an agent job is still delivering", async () => {
     const slack = blockingSink();
-    const { scheduler, runAgent } = await setup({ sinks: { slack: slack.sink } });
+    const { scheduler, runAgent } = await setup({
+      sinks: { slack: slack.sink },
+    });
     const job = await scheduler.add("alpha", {
       name: "Digest",
       schedule: { cron: "0 8 * * *", tz: "UTC" },

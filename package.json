@@ -16,6 +16,7 @@
     "test:gateway": "vitest run --dir apps/gateway/src",
     "test:shared": "vitest run --dir packages/shared/src",
     "test:cli": "vitest run --dir packages/extensions/projects/src/cli",
+    "test:e2e:scheduler": "node scripts/e2e-scheduler-once.mjs",
     "yoplai": "node apps/gateway/dist/cli/index.js",
     "yoplai:dev": "tsx apps/gateway/src/cli/index.ts",
     "subagent": "pnpm --filter @yoplai/gateway exec tsx src/cli/subagent.ts",
