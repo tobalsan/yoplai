@@ -558,10 +558,12 @@ describe("dashboard viewer", () => {
 
   it("redirects unauthenticated viewers to login", async () => {
     const { app: routes, entry } = await app(null, false);
-    const response = await routes.request(`https://yoplai.test/${entry.id}`);
+    const response = await routes.request(
+      `https://yoplai.test/${entry.id}?id=acme&quarter=2026-Q3`
+    );
     expect(response.status).toBe(302);
     expect(response.headers.get("location")).toBe(
-      `https://yoplai.test/login?returnTo=%2F${entry.id}`
+      `https://yoplai.test/login?returnTo=%2F${entry.id}%3Fid%3Dacme%26quarter%3D2026-Q3`
     );
   });
 

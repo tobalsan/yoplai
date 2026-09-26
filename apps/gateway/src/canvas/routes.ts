@@ -128,7 +128,8 @@ export function createDashboardRoutes(deps: DashboardRouteDependencies): Hono {
     const auth = await deps.authenticate(c.req.raw);
     if (!auth) {
       const login = new URL("/login", dashboardBaseUrl(config));
-      login.searchParams.set("returnTo", new URL(c.req.url).pathname);
+      const target = new URL(c.req.url);
+      login.searchParams.set("returnTo", target.pathname + target.search);
       return c.redirect(login.toString(), 302);
     }
     if (!(await deps.hasAgentAccess(auth, entry.agentId))) return c.notFound();
