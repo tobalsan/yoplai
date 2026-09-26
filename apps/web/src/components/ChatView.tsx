@@ -143,7 +143,21 @@ type StreamingBlock =
 type CompactStatus = {
   state: "running" | "done" | "error";
   text: string;
+  /** When compaction settled; anchors the status inline in the history. */
+  at?: number;
 };
+
+function CompactStatusView(props: { status: CompactStatus | undefined }) {
+  return (
+    <Show when={props.status}>
+      {(status) => (
+        <div class={`message compact-status ${status().state}`}>
+          <div class="content">{status().text}</div>
+        </div>
+      )}
+    </Show>
+  );
+}
 
 function isLongContent(content: string): boolean {
   return content.length > COLLAPSE_THRESHOLD;
@@ -945,6 +959,20 @@ export function ChatView() {
       compactKey(params.agentId, sessionKey(), explicitSessionId())
     );
 
+  // Index of the last visible message at or before compaction settled; the
+  // status renders right after it so later messages flow below. -1 = before
+  // all messages; null = bottom (still running).
+  const compactStatusAnchorIndex = createMemo((): number | null => {
+    const at = compactStatusForCurrentSession()?.at;
+    if (at === undefined) return null;
+    const list: { role: string; timestamp: number }[] =
+      viewMode() === "simple" ? simpleMessages() : visibleFullMessages();
+    for (let i = list.length - 1; i >= 0; i--) {
+      if (list[i].role !== "toolResult" && list[i].timestamp <= at) return i;
+    }
+    return -1;
+  });
+
   const setCompactStatus = (key: string, status: CompactStatus) => {
     setCompactStatuses((statuses) => new Map(statuses).set(key, status));
   };
@@ -969,12 +997,16 @@ export function ChatView() {
         ) {
           await loadHistory(viewMode());
         }
-        setCompactStatus(key, { state: "done", text: "Context compacted." });
+        setCompactStatus(key, {
+          state: "done",
+          text: "Context compacted.",
+          at: Date.now(),
+        });
         scrollToBottom(true);
       } catch (error) {
         const message =
           error instanceof Error ? error.message : "Failed to compact context";
-        setCompactStatus(key, { state: "error", text: message });
+        setCompactStatus(key, { state: "error", text: message, at: Date.now() });
         scrollToBottom(true);
         throw error;
       } finally {
@@ -2447,11 +2479,16 @@ export function ChatView() {
           "drop-target": isFileDragActive() && activeDropZone() === "history",
         }}
       >
+        <Show when={compactStatusAnchorIndex() === -1}>
+          <CompactStatusView status={compactStatusForCurrentSession()} />
+        </Show>
+
         <Show when={viewMode() === "simple"}>
           <For each={simpleMessages()}>
-            {(msg) => {
+            {(msg, index) => {
               const skipAnim = noAnimIds.delete(msg.id);
               return (
+                <>
                 <div class={`message ${msg.role}${skipAnim ? " no-anim" : ""}`}>
                   {msg.role === "tool" ? (
                     <SimpleToolBlock name={msg.toolName} />
@@ -2486,6 +2523,10 @@ export function ChatView() {
                     </div>
                   </Show>
                 </div>
+                <Show when={index() === compactStatusAnchorIndex()}>
+                  <CompactStatusView status={compactStatusForCurrentSession()} />
+                </Show>
+                </>
               );
             }}
           </For>
@@ -2493,7 +2534,9 @@ export function ChatView() {
 
         <Show when={viewMode() === "full"}>
           <For each={visibleFullMessages()}>
-            {(msg) => {
+            {(msg, index) => (
+              <>
+              {(() => {
               if (msg.role === "user") {
                 const textContent = msg.content
                   .filter(
@@ -2558,7 +2601,12 @@ export function ChatView() {
                 return null;
               }
               return null;
-            }}
+              })()}
+              <Show when={index() === compactStatusAnchorIndex()}>
+                <CompactStatusView status={compactStatusForCurrentSession()} />
+              </Show>
+              </>
+            )}
           </For>
         </Show>
 
@@ -2766,12 +2814,8 @@ export function ChatView() {
           </div>
         </Show>
 
-        <Show when={compactStatusForCurrentSession()}>
-          {(status) => (
-            <div class={`message compact-status ${status().state}`}>
-              <div class="content">{status().text}</div>
-            </div>
-          )}
+        <Show when={compactStatusAnchorIndex() === null}>
+          <CompactStatusView status={compactStatusForCurrentSession()} />
         </Show>
 
         <div data-scroll-anchor />

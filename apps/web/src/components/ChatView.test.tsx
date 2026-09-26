@@ -587,6 +587,24 @@ describe("ChatView abort handling", () => {
     expect(streamMessageMock).not.toHaveBeenCalled();
     expect(container.textContent).toContain("Context compacted.");
 
+    // Later messages flow below the status instead of above it.
+    await new Promise((resolve) => setTimeout(resolve, 2));
+    textarea.value = "after compact";
+    textarea.dispatchEvent(new Event("input", { bubbles: true }));
+    await tick();
+    await waitFor(() => expect(sendBtn.disabled).toBe(false));
+    sendBtn.click();
+    await tick();
+
+    const status = container.querySelector(".compact-status");
+    const userMessages = container.querySelectorAll(".message.user");
+    const lastUser = userMessages[userMessages.length - 1];
+    expect(lastUser?.textContent).toContain("after compact");
+    expect(
+      status!.compareDocumentPosition(lastUser!) &
+        Node.DOCUMENT_POSITION_FOLLOWING
+    ).toBeTruthy();
+
     dispose();
   });
 
