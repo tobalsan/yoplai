@@ -1,12 +1,12 @@
 import type { ModelUsage } from "@yoplai/shared";
 import type {
-  LangfuseGenerationClient,
-  LangfuseSpanClient,
-  LangfuseTraceClient,
-} from "langfuse";
+  LangfuseGeneration,
+  LangfuseSpan,
+  LangfuseTool,
+} from "@langfuse/tracing";
 
 export type SpanState = {
-  span: LangfuseSpanClient;
+  span: LangfuseTool;
   id: string;
   name: string;
   input: unknown;
@@ -14,7 +14,7 @@ export type SpanState = {
 };
 
 export type GenerationState = {
-  generation: LangfuseGenerationClient;
+  generation: LangfuseGeneration;
   openSpans: Map<string, SpanState>;
   output: string[];
   thinking: string[];
@@ -29,7 +29,15 @@ export type GenerationState = {
 };
 
 export type TraceState = {
-  trace: LangfuseTraceClient;
+  /** Root observation; represents the Langfuse trace. */
+  trace: LangfuseSpan;
+  traceName: string;
+  /** `yoplai:<surface>:<agentId>:<rawSessionId>`; propagated to every observation. */
+  sessionId: string;
+  userId?: string;
+  tags?: string[];
+  /** String-only trace metadata propagated to every observation. */
+  propagatedMetadata: Record<string, string>;
   currentGeneration?: GenerationState;
   pendingUserInput?: string;
   pendingSystemPrompt?: string;
