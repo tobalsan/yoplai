@@ -407,12 +407,10 @@ describe("pi adapter onecli env wiring", () => {
     const config = { agents: [agent] } as GatewayConfig;
     const session = {
       messages: [{ role: "assistant", content: "done" }],
-      agent: {
-        state: {
-          messages: [],
-          systemPrompt: "You are Sally.\n\n[CHANNEL CONTEXT]\nchannel: slack",
-        },
-      },
+      // Pi 0.87 fills agent state only after the first prompt; the session
+      // getter exposes the effective prompt beforehand.
+      systemPrompt: "You are Sally.\n\n[CHANNEL CONTEXT]\nchannel: slack",
+      agent: { state: { messages: [], systemPrompt: "" } },
       subscribe: vi.fn(() => vi.fn()),
       prompt: vi.fn(async () => undefined),
       abort: vi.fn(),

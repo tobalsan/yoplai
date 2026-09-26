@@ -428,7 +428,7 @@ export async function runAgent(
     activeSession = session;
     activeOAuthContext = { ctx: oauthCtx, provider };
 
-    const systemPrompt = session.agent.state.systemPrompt;
+    const systemPrompt = session.systemPrompt;
     if (typeof systemPrompt === "string" && systemPrompt.trim().length > 0) {
       const systemPromptEvent: HistoryEvent = {
         type: "system_prompt",

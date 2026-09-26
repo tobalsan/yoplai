@@ -469,7 +469,7 @@ export const piAdapter: SdkAdapter = {
         agentSession.abort();
       });
 
-      const systemPrompt = agentSession.agent.state.systemPrompt;
+      const systemPrompt = agentSession.systemPrompt;
       if (typeof systemPrompt === "string" && systemPrompt.trim().length > 0) {
         params.onHistoryEvent({
           type: "system_prompt",
