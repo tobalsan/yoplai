@@ -249,7 +249,7 @@ async function resolveCliCommand(
   throw new Error(`${execName} not found`);
 }
 
-function buildArgs(
+export function buildArgs(
   cli: SubagentRuntimeCli,
   prompt: string,
   options: {
@@ -282,7 +282,7 @@ function buildArgs(
       ];
       if (options.model) args.push("-m", options.model);
       if (options.reasoningEffort) {
-        args.push("-c", `reasoning_effort=${options.reasoningEffort}`);
+        args.push("-c", `model_reasoning_effort=${options.reasoningEffort}`);
       }
       return options.sessionId
         ? [...args, "resume", options.sessionId, prompt]
@@ -292,6 +292,9 @@ function buildArgs(
       if (!options.sessionFile) throw new Error("Missing Pi session file path");
       const args = ["--mode", "json", "--session", options.sessionFile];
       if (options.model) args.push("--model", options.model);
+      if (options.reasoningEffort) {
+        args.push("--thinking", options.reasoningEffort);
+      }
       args.push(prompt);
       return args;
     }

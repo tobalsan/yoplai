@@ -3,6 +3,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
+  buildArgs,
   getSubagentLogs,
   listSubagentRuns,
   startSubagentRun,
@@ -485,5 +486,33 @@ describe("subagent runtime logs", () => {
     const runs = await listSubagentRuns(runtimeOptions());
 
     expect(runs[0]?.latestOutput).toBe("The real final answer.");
+  });
+});
+
+describe("subagent harness args", () => {
+  it("passes reasoning effort to codex via model_reasoning_effort", () => {
+    const args = buildArgs("codex", "hi", { model: "m", reasoningEffort: "high" });
+    expect(args).toContain("model_reasoning_effort=high");
+    expect(args).not.toContain("reasoning_effort=high");
+  });
+
+  it("passes reasoning effort to claude via --effort", () => {
+    const args = buildArgs("claude", "hi", { reasoningEffort: "low" });
+    expect(args).toEqual(expect.arrayContaining(["--effort", "low"]));
+  });
+
+  it("passes reasoning effort to pi via --thinking", () => {
+    const args = buildArgs("pi", "hi", {
+      sessionFile: "/tmp/s.jsonl",
+      model: "anthropic/x",
+      reasoningEffort: "low",
+    });
+    expect(args).toEqual(expect.arrayContaining(["--thinking", "low"]));
+    expect(args[args.length - 1]).toBe("hi");
+  });
+
+  it("omits effort flags when unset", () => {
+    expect(buildArgs("pi", "hi", { sessionFile: "/tmp/s.jsonl" })).not.toContain("--thinking");
+    expect(buildArgs("codex", "hi", {}).join(" ")).not.toContain("reasoning_effort");
   });
 });

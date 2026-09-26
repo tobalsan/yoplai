@@ -55,6 +55,7 @@ export function piThinkingForRunner(input: { workflow: WorkflowConfig; profile: 
   const workflowThinking = workflowAgentThinking(input.workflow.agent);
   const runner = runnerForWorkflow(input);
   validateWorkflowThinkingForRunner(runner, input.workflow.agent);
-  if (runner === "pi") return workflowThinking ?? input.profile.thinking;
-  return input.profile.thinking;
+  const profileThinking = input.profile.thinking ?? input.profile.reasoningEffort ?? input.profile.reasoning;
+  if (runner === "pi") return workflowThinking ?? profileThinking;
+  return profileThinking;
 }

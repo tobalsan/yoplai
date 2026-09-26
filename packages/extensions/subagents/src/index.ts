@@ -184,7 +184,10 @@ function registerSubagentRoutes(app: Hono): void {
     const label = readOptionalString(body.label) ?? profile?.labelPrefix;
     const model = readOptionalString(body.model) ?? profile?.model;
     const reasoningEffort =
-      readOptionalString(body.reasoningEffort) ?? profile?.reasoningEffort;
+      readOptionalString(body.reasoningEffort) ??
+      profile?.reasoningEffort ??
+      profile?.reasoning ??
+      profile?.thinking;
     const parent = readParent(body.parent);
     const projectId = readOptionalString(body.projectId);
     const sliceId = readOptionalString(body.sliceId);
