@@ -38,6 +38,65 @@ describe("sanitizeSessionFile", () => {
     expect(stored).toContain("page=2");
   });
 
+  it("keeps system-message tool declarations verbatim while redacting other entries", async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-sanitize-"));
+    tempDirs.push(dir);
+    const file = path.join(dir, "session.jsonl");
+    const canary = "disposable-tool-schema-canary";
+    const toolsAdded = [
+      {
+        name: "list_issues",
+        description: "List issues. Pass assignee or signature filters.",
+        parameters: {
+          type: "object",
+          properties: {
+            assignee: { type: "string", description: "User id or name" },
+            signature: { type: "string" },
+          },
+          required: ["assignee"],
+        },
+      },
+    ];
+    const toolsRemoved = [{ name: "design_signoff" }];
+    const systemEntry = {
+      type: "message",
+      id: "sys1",
+      message: {
+        role: "system",
+        content: `apiKey=${canary}`,
+        toolsAdded,
+        toolsRemoved,
+        timestamp: 1,
+      },
+    };
+    const userEntry = {
+      type: "message",
+      id: "user1",
+      message: {
+        role: "user",
+        content: `Use Bearer ${canary}`,
+        apiKey: canary,
+        timestamp: 2,
+      },
+    };
+    await fs.writeFile(
+      file,
+      `${JSON.stringify(systemEntry)}\n${JSON.stringify(userEntry)}\n`
+    );
+
+    await sanitizeSessionFile(file);
+
+    const [storedSystem, storedUser] = (await fs.readFile(file, "utf8"))
+      .split("\n")
+      .filter(Boolean)
+      .map((line) => JSON.parse(line));
+    expect(storedSystem.message.toolsAdded).toEqual(toolsAdded);
+    expect(storedSystem.message.toolsRemoved).toEqual(toolsRemoved);
+    expect(storedSystem.message.content).toBe("apiKey=[REDACTED]");
+    expect(storedUser.message.apiKey).toBe("[REDACTED]");
+    expect(storedUser.message.content).toBe("Use Bearer [REDACTED]");
+  });
+
   it("keeps raw Pi writes out of the durable session file", async () => {
     const dir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-sanitize-"));
     tempDirs.push(dir);

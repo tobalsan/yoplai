@@ -3,6 +3,35 @@ import os from "node:os";
 import path from "node:path";
 import { sanitizeForStorage, sanitizeSensitiveText } from "../sanitize.js";
 
+/**
+ * Pi replays system-message tool declarations (`toolsAdded`/`toolsRemoved`) as
+ * the provider tool list, so they must stay verbatim: redacting schema keys
+ * such as `assignee` (matches `sig`) makes the provider reject the tool schema.
+ * They are model-facing declarations, not credentials.
+ */
+function sanitizeSessionEntry(entry: unknown): unknown {
+  const sanitized = sanitizeForStorage(entry);
+  if (!isRecord(entry) || !isRecord(sanitized)) return sanitized;
+  const message = entry.message;
+  const sanitizedMessage = sanitized.message;
+  if (
+    entry.type !== "message" ||
+    !isRecord(message) ||
+    message.role !== "system" ||
+    !isRecord(sanitizedMessage)
+  ) {
+    return sanitized;
+  }
+  for (const key of ["toolsAdded", "toolsRemoved"] as const) {
+    if (key in message) sanitizedMessage[key] = message[key];
+  }
+  return sanitized;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
 /** Redacts a Pi SDK JSONL session after its authorized runtime use completes. */
 export async function sanitizeSessionFile(file: string): Promise<void> {
   let content: string;
@@ -18,7 +47,7 @@ export async function sanitizeSessionFile(file: string): Promise<void> {
     .map((line) => {
       if (!line) return line;
       try {
-        return JSON.stringify(sanitizeForStorage(JSON.parse(line)));
+        return JSON.stringify(sanitizeSessionEntry(JSON.parse(line)));
       } catch {
         return sanitizeSensitiveText(line);
       }
