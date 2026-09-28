@@ -12,6 +12,7 @@ import {
 } from "solid-js";
 
 import { useParams, useNavigate, useSearchParams, A } from "@solidjs/router";
+import { isNoReply } from "@yoplai/shared/no-reply";
 import {
   streamMessage,
   uploadFiles,
@@ -347,7 +348,7 @@ function fullMessagesToSimpleView(
     }
 
     for (const block of message.content) {
-      if (block.type === "text" && block.text.trim()) {
+      if (block.type === "text" && block.text.trim() && !isNoReply(block.text)) {
         simple.push({
           id: crypto.randomUUID(),
           role: "assistant",
@@ -2159,7 +2160,12 @@ export function ChatView() {
         }
 
         batch(() => {
+          // A silent (NO_REPLY) turn streams no text; load it from history.
+          const streamedText =
+            !!streamingText() ||
+            streamingBlocks().some((block) => block.type === "text");
           appendStreamingAssistantMessage();
+          if (!streamedText) void loadHistory("full");
           skipNextHistoryRefresh = true;
           // Update thinkingLevel if pending was used
           if (pendingThinkLevel()) {

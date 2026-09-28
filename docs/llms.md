@@ -170,6 +170,7 @@ Yoplai also ships a built-in `dashboard` skill to host and sandboxed Pi agents. 
 - queue mode buffers/follows active work; interrupt mode aborts current run then starts the new turn.
 - explicit `/abort` and `/stop` pause active durable tasks; ordinary durable-task follow-ups are forced to queue.
 - canonical history preserves normalized user, assistant, thinking, tool, system-context, and file blocks.
+- An assistant turn whose complete text is `NO_REPLY` (optionally wrapped in Markdown or followed by a period) remains in canonical history but emits no text or delivery payload; the web UI hides it in simple view and shows the raw token in full view.
 
 ### WebSocket
 

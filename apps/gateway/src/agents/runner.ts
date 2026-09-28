@@ -23,7 +23,8 @@ import {
 } from "../sessions/store.js";
 import { appendSessionMeta } from "../history/store.js";
 import { agentEventBus, type AgentStreamEvent } from "./events.js";
-import { logError } from "../logging.js";
+import { logError, logInfo } from "../logging.js";
+import { createNoReplyHoldback, isNoReply } from "./no-reply.js";
 import { getContainerAdapter } from "../sdk/container/adapter.js";
 import { getSdkAdapter, getDefaultSdkId } from "../sdk/registry.js";
 import type { SdkId, HistoryEvent } from "../sdk/types.js";
@@ -340,6 +341,7 @@ export async function runAgent(
   const started = Date.now();
   let aborted = false;
   let runCompleted = false;
+  const holdback = createNoReplyHoldback(emit);
 
   try {
     // Persist the user message before the adapter runs so a failure before
@@ -374,7 +376,7 @@ export async function runAgent(
         if (event.type === "text" || event.type === "thinking") {
           hasEmittedContent = true;
         }
-        emit(event);
+        holdback.push(event);
       },
       onHistoryEvent: (event: HistoryEvent) =>
         lifecycle.acceptHistoryEvent(event),
@@ -423,10 +425,17 @@ export async function runAgent(
       }
     }
 
-    // Add fallback note if a different level was used
-    if (fallbackUsed && actualThinkLevel !== resolvedThinkLevel) {
-      const note = `\n\n_Note: Used thinking level "${actualThinkLevel}" ("${resolvedThinkLevel}" not supported by model)_`;
-      emit({ type: "text", data: note });
+    const silent = isNoReply(result.text);
+    if (silent) {
+      holdback.drop();
+      logInfo("[agent] silent turn", { agentId: params.agentId, sessionId });
+    } else {
+      holdback.flush();
+      // Add fallback note if a different level was used.
+      if (fallbackUsed && actualThinkLevel !== resolvedThinkLevel) {
+        const note = `\n\n_Note: Used thinking level "${actualThinkLevel}" ("${resolvedThinkLevel}" not supported by model)_`;
+        emit({ type: "text", data: note });
+      }
     }
 
     aborted = result.aborted ?? false;
@@ -445,12 +454,13 @@ export async function runAgent(
     }
 
     return {
-      payloads: result.text ? [{ text: result.text }] : [],
-      meta: { durationMs, sessionId, aborted },
+      payloads: silent || !result.text ? [] : [{ text: result.text }],
+      meta: { durationMs, sessionId, aborted, silent },
     };
   } catch (err) {
     const errMessage = err instanceof Error ? err.message : String(err);
     logError("[agent] run failed", err, { agentId: params.agentId, sessionId });
+    holdback.finishSegment();
     emit({ type: "error", message: errMessage });
     throw err;
   } finally {

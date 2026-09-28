@@ -420,3 +420,103 @@ describe("runAgent control commands", () => {
     }
   );
 });
+
+describe("runAgent silent response", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    isAbortTrigger.mockReturnValue(false);
+    getTask.mockResolvedValue(undefined);
+  });
+
+  it("suppresses NO_REPLY text while retaining normal completion", async () => {
+    const adapter = createAdapter();
+    adapter.run.mockImplementation(async (params: { onEvent: (event: unknown) => void }) => {
+      params.onEvent({ type: "text", data: "NO_" });
+      params.onEvent({ type: "text", data: "REPLY" });
+      return { text: "NO_REPLY" };
+    });
+    getSdkAdapter.mockReturnValue(adapter);
+    getAgent.mockReturnValue(createAgent({}));
+    const onEvent = vi.fn();
+
+    const { runAgent } = await import("./runner.js");
+    const result = await runAgent({
+      agentId: "alpha",
+      message: "do not reply",
+      sessionId: "silent-session",
+      onEvent,
+    });
+
+    expect(result.payloads).toEqual([]);
+    expect(result.meta.silent).toBe(true);
+    expect(onEvent.mock.calls.map(([event]) => event.type)).toEqual(["done"]);
+  });
+
+  it("streams an earlier assistant message but suppresses a final NO_REPLY message", async () => {
+    const adapter = createAdapter();
+    adapter.run.mockImplementation(async (params: { onEvent: (event: unknown) => void }) => {
+      params.onEvent({ type: "text", data: "Let me check" });
+      params.onEvent({ type: "tool_start", toolName: "check" });
+      params.onEvent({ type: "tool_end", toolName: "check" });
+      params.onEvent({ type: "text", data: "NO_REPLY" });
+      return { text: "NO_REPLY" };
+    });
+    getSdkAdapter.mockReturnValue(adapter);
+    getAgent.mockReturnValue(createAgent({}));
+    const onEvent = vi.fn();
+
+    const { runAgent } = await import("./runner.js");
+    const result = await runAgent({
+      agentId: "alpha",
+      message: "check",
+      sessionId: "silent-multi-message",
+      onEvent,
+    });
+
+    expect(result.payloads).toEqual([]);
+    expect(onEvent.mock.calls.map(([event]) => event)).toEqual([
+      { type: "text", data: "Let me check" },
+      { type: "tool_start", toolName: "check" },
+      { type: "tool_end", toolName: "check" },
+      expect.objectContaining({ type: "done" }),
+    ]);
+  });
+
+  it("flushes buffered non-token text before a thrown failure", async () => {
+    const adapter = createAdapter();
+    adapter.run.mockImplementation(async (params: { onEvent: (event: unknown) => void }) => {
+      params.onEvent({ type: "text", data: "NO" });
+      throw new Error("failed");
+    });
+    getSdkAdapter.mockReturnValue(adapter);
+    getAgent.mockReturnValue(createAgent({}));
+    const onEvent = vi.fn();
+
+    const { runAgent } = await import("./runner.js");
+    await expect(runAgent({
+      agentId: "alpha",
+      message: "fail",
+      sessionId: "buffered-failure",
+      onEvent,
+    })).rejects.toThrow("failed");
+    expect(onEvent.mock.calls.map(([event]) => event)).toEqual([
+      { type: "text", data: "NO" },
+      { type: "error", message: "failed" },
+    ]);
+  });
+
+  it("returns non-silent result text unchanged", async () => {
+    const adapter = createAdapter();
+    adapter.run.mockResolvedValue({ text: "Hello NO_REPLY world" });
+    getSdkAdapter.mockReturnValue(adapter);
+    getAgent.mockReturnValue(createAgent({}));
+
+    const { runAgent } = await import("./runner.js");
+    const result = await runAgent({
+      agentId: "alpha",
+      message: "hello",
+      sessionId: "non-silent-token",
+    });
+    expect(result.payloads).toEqual([{ text: "Hello NO_REPLY world" }]);
+  });
+});

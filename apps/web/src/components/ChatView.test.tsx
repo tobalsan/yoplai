@@ -468,6 +468,55 @@ describe("ChatView abort handling", () => {
     dispose();
   });
 
+  it("shows raw NO_REPLY in full view", async () => {
+    routeState.view = "full";
+    fetchFullHistoryMock.mockResolvedValue({
+      messages: [
+        {
+          role: "assistant",
+          content: [{ type: "text", text: "**NO_REPLY**" }],
+          timestamp: 123,
+        },
+      ],
+      thinkingLevel: undefined,
+      isStreaming: false,
+      activeTurn: null,
+    });
+
+    const { container, dispose } = renderView();
+    await tick();
+    await tick();
+
+    expect(container.textContent).toContain("NO_REPLY");
+
+    dispose();
+  });
+
+  it("hides a no-reply assistant turn in simple view", async () => {
+    routeState.view = "simple";
+    fetchFullHistoryMock.mockResolvedValue({
+      messages: [
+        {
+          role: "assistant",
+          content: [{ type: "text", text: "**NO_REPLY**" }],
+          timestamp: 123,
+        },
+      ],
+      thinkingLevel: undefined,
+      isStreaming: false,
+      activeTurn: null,
+    });
+
+    const { container, dispose } = renderView();
+    await tick();
+    await tick();
+
+    expect(container.querySelector(".message.assistant")).toBeNull();
+    expect(container.textContent).not.toContain("NO_REPLY");
+
+    dispose();
+  });
+
   it("forces simple view and hides view toggle for non-admin users", async () => {
     routeState.view = "full";
     setCapabilitiesForTests({
@@ -1000,6 +1049,57 @@ describe("ChatView abort handling", () => {
       )
     );
 
+    dispose();
+  });
+
+  it("loads a silent turn from history after a live full-view completion", async () => {
+    routeState.view = "full";
+    let onDone: (() => void) | undefined;
+    let onThinking: ((chunk: string) => void) | undefined;
+    fetchFullHistoryMock
+      .mockResolvedValueOnce({
+        messages: [],
+        thinkingLevel: undefined,
+        isStreaming: false,
+        activeTurn: null,
+      })
+      .mockResolvedValueOnce({
+        messages: [
+          {
+            role: "assistant",
+            content: [{ type: "text", text: "NO_REPLY" }],
+            timestamp: 2,
+          },
+        ],
+        thinkingLevel: undefined,
+        isStreaming: false,
+        activeTurn: null,
+      });
+    streamMessageMock.mockImplementation(
+      (_agentId, _message, _sessionKey, _onText, nextOnDone, _onError, callbacks) => {
+        onDone = nextOnDone;
+        onThinking = callbacks?.onThinking;
+        return vi.fn();
+      }
+    );
+
+    const { container, dispose } = renderView();
+    await tick();
+    await tick();
+    const textarea = container.querySelector("textarea");
+    const sendBtn = container.querySelector(".send-btn");
+    if (!(textarea instanceof HTMLTextAreaElement) || !(sendBtn instanceof HTMLButtonElement)) {
+      throw new Error("Expected chat controls");
+    }
+    textarea.value = "don't reply";
+    textarea.dispatchEvent(new Event("input", { bubbles: true }));
+    await waitFor(() => expect(sendBtn.disabled).toBe(false));
+    sendBtn.click();
+    await tick();
+
+    onThinking?.("User asked for silence.");
+    onDone?.();
+    await waitFor(() => expect(container.textContent).toContain("NO_REPLY"));
     dispose();
   });
 

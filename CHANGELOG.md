@@ -12,6 +12,7 @@ Breaking changes are marked **⚠ BREAKING**.
 ### Added
 
 - Slack agents can read thread parents and replies with `slack.get_thread_replies`, including cursor paging and time windows.
+- Agents can return exactly `NO_REPLY` to keep a turn in conversation history without delivering text on any channel; web chat hides it in simple view and shows the raw token in full view.
 - Scheduler jobs now support one-shot `runAt` times through the API, CLI, and agent tools. Missed jobs fire after restart, then disable themselves while retaining output and history.
 - Agents can fully remove Canvas dashboards with `dashboard_delete`, clearing the HTML file, stable link registration, and saved versions while preserving shared databases.
 - Agents now discover a built-in dashboard skill with ten cloneable HR, OKR, and customer-success Canvas templates, seeded SQLite schemas, and a rebuildable CS wiki workflow.

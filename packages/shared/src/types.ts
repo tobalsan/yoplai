@@ -1196,6 +1196,7 @@ export type RunAgentResult = {
     sessionId: string;
     aborted?: boolean;
     queued?: boolean;
+    silent?: boolean;
   };
 };
 
