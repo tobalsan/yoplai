@@ -1199,6 +1199,10 @@ export function ChatView() {
       details,
       timestamp: Date.now(),
     };
+    if (flushedRunningToolIds.delete(id)) {
+      setFullMessages((prev) => [...prev, result]);
+      return;
+    }
     const status = isError ? "error" : "done";
     setStreamingBlocks((blocks) =>
       blocks.map((b) =>
@@ -1667,6 +1671,30 @@ export function ChatView() {
     return true;
   };
 
+  // Tool calls committed to history while still running; their results arrive
+  // after the flush and must be appended to history directly.
+  const flushedRunningToolIds = new Set<string>();
+
+  // Commit everything streamed so far to history so a mid-turn queued user
+  // message lands after it, keeping chronological order.
+  const flushStreamingBeforeQueuedMessage = () => {
+    batch(() => {
+      for (const b of streamingBlocks()) {
+        if (b.type === "toolCall" && b.status === "running") {
+          flushedRunningToolIds.add(b.id);
+        }
+      }
+      if (!appendStreamingAssistantMessage()) return;
+      setStreamingBlocks([]);
+      setStreamingText("");
+      setStreamingThinking("");
+      setStreamingFiles([]);
+      setStreamingToolCalls([]);
+      setStreamingTextAt(null);
+      setStreamingThinkingAt(null);
+    });
+  };
+
   // Check if stream has any content (used to guard against wiping real stream)
   const hasStreamingContent = () =>
     streamingText() ||
@@ -1776,6 +1804,9 @@ export function ChatView() {
       timestamp: Date.now(),
     };
     setShowInterrupted(false);
+    if (isStreaming() && queueMode === "queue") {
+      flushStreamingBeforeQueuedMessage();
+    }
     setSimpleMessages((prev) => [...prev, userMsg]);
     setFullMessages((prev) => [
       ...prev,
