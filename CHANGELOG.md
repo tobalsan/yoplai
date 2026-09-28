@@ -35,6 +35,7 @@ Breaking changes are marked **⚠ BREAKING**.
 ### Fixed
 
 - Messages sent mid-turn now appear after the agent's already-streamed thinking, text, and tool calls (including still-running ones) instead of jumping above them.
+- Pi agent history now keeps each assistant message together with its own tool calls, so reloaded chats show messages sent mid-turn in the order they were sent instead of splitting thinking from tool calls.
 - Agents sharing drill-down dashboards now include the query string in the link itself, and the CS `client`/`qbr` templates show a "No client selected" link back to Clients instead of a blank page when opened without parameters.
 - Opening a Canvas drill-down link while logged out now keeps its query string through login, instead of landing on an empty page.
 - Pi sessions (host and sandboxed) no longer break permanently with `tools.N.custom.input_schema: JSON schema is invalid` when an MCP tool schema has a field such as `assignee`: session redaction now keeps tool declarations verbatim instead of masking schema keys that look sensitive.

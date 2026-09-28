@@ -664,11 +664,17 @@ export const piAdapter: SdkAdapter = {
               stopReason: assistantMsg.stopReason as string | undefined,
               timestamp: Date.now(),
             });
-            params.onHistoryEvent({
-              type: "turn_end",
-              timestamp: Date.now(),
-            });
           }
+        }
+
+        // Pi's turn_end fires after the assistant message AND its tool
+        // executions, so tool calls/results stay in the same history turn
+        // as the message that issued them.
+        if (evt.type === "turn_end") {
+          params.onHistoryEvent({
+            type: "turn_end",
+            timestamp: Date.now(),
+          });
         }
       });
 
