@@ -97,6 +97,7 @@ export const DiscordConfigSchema = z.object({
   clearHistoryAfterReply: z.boolean().optional().default(true),
   replyToMode: z.enum(["off", "all", "first"]).default("off"),
   mentionPatterns: z.array(z.string()).optional(),
+  allowBots: z.union([z.boolean(), z.array(z.string())]).optional(),
 
   // Yoplai-only: broadcast main-session responses to a Discord channel
   broadcastToChannel: z.string().optional(),
@@ -629,6 +630,7 @@ export const DiscordExtensionConfigSchema = z.object({
   guilds: DiscordConfigSchema.shape.guilds.optional(),
   groupPolicy: DiscordConfigSchema.shape.groupPolicy.optional(),
   mentionPatterns: z.array(z.string()).optional(),
+  allowBots: z.union([z.boolean(), z.array(z.string())]).optional(),
   broadcastToChannel: z.string().optional(),
   clearHistoryAfterReply: z.boolean().optional(),
 

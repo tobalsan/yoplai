@@ -39,6 +39,48 @@ describe("processMessage", () => {
       expect(result.reason).toBe("author_is_bot");
     });
 
+    it("allows any other bot when enabled and explicitly mentioned", () => {
+      const msg = createMessage({
+        author: { id: "bot-1", bot: true },
+        content: "<@my-bot-id> hello",
+        mentions: [{ id: "my-bot-id" }],
+      });
+      expect(processMessage(msg, createConfig({ allowBots: true }), "my-bot-id").shouldReply).toBe(true);
+    });
+
+    it("allows only matching bot IDs from an allowlist", () => {
+      const mentioned = {
+        content: "<@my-bot-id> hello",
+        mentions: [{ id: "my-bot-id" }],
+      };
+      expect(processMessage(createMessage({ ...mentioned, author: { id: "bot-1", bot: true } }), createConfig({ allowBots: ["bot-1"] }), "my-bot-id").shouldReply).toBe(true);
+      expect(processMessage(createMessage({ ...mentioned, author: { id: "bot-2", bot: true } }), createConfig({ allowBots: ["bot-1"] }), "my-bot-id").shouldReply).toBe(false);
+    });
+
+    it("always rejects our own bot", () => {
+      const msg = createMessage({
+        author: { id: "my-bot-id", bot: true },
+        content: "<@my-bot-id> hello",
+        mentions: [{ id: "my-bot-id" }],
+      });
+      expect(processMessage(msg, createConfig({ allowBots: true }), "my-bot-id").shouldReply).toBe(false);
+    });
+
+    it("requires allowed bots to mention us even when requireMention is false", () => {
+      const msg = createMessage({ author: { id: "bot-1", bot: true } });
+      const config = createConfig({
+        allowBots: true,
+        guilds: { "guild-1": { requireMention: false, reactionNotifications: "off" } },
+      });
+      expect(processMessage(msg, config, "my-bot-id").reason).toBe("mention_required");
+    });
+
+    it("accepts configured mention patterns from allowed bots", () => {
+      const msg = createMessage({ author: { id: "bot-1", bot: true }, content: "@yoplai hello" });
+      const config = createConfig({ allowBots: true, mentionPatterns: ["@yoplai"] });
+      expect(processMessage(msg, config, "my-bot-id").shouldReply).toBe(true);
+    });
+
     it("rejects Discord system messages such as thread-created events", () => {
       const msg = createMessage({ type: 18, content: "New thread title" });
       const result = processMessage(

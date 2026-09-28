@@ -240,6 +240,7 @@ That binding is what lets a user's reply in the created forum thread resume the 
     "clearHistoryAfterReply": true,
     "replyToMode": "off | first | all",
     "mentionPatterns": ["hey bot", "^!agent"],
+    "allowBots": false,
     "broadcastToChannel": "CHANNEL_ID",
     "showToolCalls": false
   }
@@ -277,6 +278,12 @@ Example - restrict to specific guilds:
 
 Number of recent channel messages included as context for the agent (default: 20). Set to 0 to disable.
 
+### allowBots
+
+Set top-level `extensions.discord.allowBots` to `true` to accept messages from any other Discord bot, or to an array of Discord bot user IDs to accept only those bots. Default `false` ignores bot-authored triggers. Allowed bots must explicitly mention this bot through Discord mentions or `mentionPatterns`, even where `requireMention` is false. This bot's own messages and webhook messages are always ignored. Other bots' non-webhook messages remain in channel history even when not allowed to trigger a run. In forum threads, other bots' messages that do not trigger a run are handed to each bound agent as context on its next run in that thread.
+
+Bot-triggered turns use Discord agent sender identity so gateway agent-loop limits apply. Human turns retain same session key and reset consecutive-agent counter.
+
 ### clearHistoryAfterReply
 
 When `true` (default), clears the channel history buffer after the bot replies. This prevents the same messages from being included in subsequent requests.
@@ -299,7 +306,7 @@ Opt-in tool-call visibility (default: off). When `true`, the agent's tool calls 
 
 - **Channel defaults**: `enabled` defaults to `true`; `requireMention` inherits from guild (default `true`). Minimal config: `"CHANNEL_ID": {}`.
 - **Session routing**: DMs share `main` session with web UI. Guild channels use isolated sessions (`discord:CHANNEL_ID`). Forum threads created by subscribed channels bind to the thread ID and resume the stored agent session on replies.
-- **Mention gating**: When `requireMention: true`, bot only responds when @mentioned or `mentionPatterns` match.
+- **Mention gating**: When `requireMention: true`, bot only responds when @mentioned or `mentionPatterns` match. Bot-authored messages always require explicit mention.
 - **User allowlists**: Accepts user IDs, usernames, or `username#discriminator`. Prefix with `discord:/user:` for explicit IDs.
 - **Typing indicator**: Shows while agent is processing; stops on completion or after 30s timeout.
 - **Acknowledgement cleanup**: The configured reaction is removed on streamed and non-streamed completion, failure, empty replies, and same-thread forum replies delivered by a Discord tool.

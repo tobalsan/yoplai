@@ -171,7 +171,7 @@ Yoplai also ships a built-in `dashboard` skill to host and sandboxed Pi agents. 
 - explicit `/abort` and `/stop` pause active durable tasks; ordinary durable-task follow-ups are forced to queue.
 - canonical history preserves normalized user, assistant, thinking, tool, system-context, and file blocks.
 - An assistant turn whose complete text is `NO_REPLY` (optionally wrapped in Markdown or followed by a period) remains in canonical history but emits no text or delivery payload; the web UI hides it in simple view and shows the raw token in full view.
-- Agent-authored inbound turns may identify their sender and hop count. The runner stops conversations that exceed `agentLoop.maxAgentTurns` (default 8 consecutive agent turns) or `agentLoop.maxHops` (default 5); a human-authored turn resets the consecutive-turn counter.
+- Agent-authored inbound turns may identify their sender and hop count. The runner stops conversations that exceed `agentLoop.maxAgentTurns` (default 8 consecutive agent turns) or `agentLoop.maxHops` (default 5); a human-authored turn resets the consecutive-turn counter. Discord's top-level `extensions.discord.allowBots` can admit explicitly mentioning bot authors and maps them to `discord:<botUserId>` agent senders on the same channel session.
 
 ### WebSocket
 

@@ -90,7 +90,7 @@ import { createDiscordBot, createDiscordComponentBot } from "./bot.js";
 import { createCarbonClient } from "./client.js";
 import { startTyping, stopAllTyping } from "./utils/typing.js";
 import { getThreadStarter } from "./utils/threads.js";
-import { recordMessage, clearHistory } from "./utils/history.js";
+import { recordMessage, getHistory, clearHistory } from "./utils/history.js";
 import { createThreadSessionBindingStore } from "./thread-session-bindings.js";
 
 // Type helpers
@@ -196,6 +196,94 @@ describe("Discord bot integration", () => {
   });
 
   describe("message handling", () => {
+    describe("bot authors", () => {
+      const botMessage = (id = "other-bot") => ({
+        id: `msg-${id}`,
+        content: "<@bot-123> hello",
+        channel_id: "channel-1",
+        guild_id: "guild-1",
+        author: { id, username: id, bot: true },
+        mentions: [{ id: "bot-123" }],
+      });
+
+      it("records other bots even when triggering is disabled", async () => {
+        await createDiscordBot(createTestAgent());
+        capturedHandlers.onReady?.({ user: { id: "bot-123", username: "TestBot" } }, mockClient);
+        await capturedHandlers.onMessage?.(botMessage(), mockClient);
+
+        expect(recordMessage).toHaveBeenCalledTimes(1);
+        expect(mockRunAgent).not.toHaveBeenCalled();
+      });
+
+      it("passes agent sender for allowed bots and no sender for humans", async () => {
+        await createDiscordBot(createTestAgent({ allowBots: true }));
+        capturedHandlers.onReady?.({ user: { id: "bot-123", username: "TestBot" } }, mockClient);
+        await capturedHandlers.onMessage?.(botMessage(), mockClient);
+        expect(mockRunAgent).toHaveBeenLastCalledWith(expect.objectContaining({
+          sessionKey: "discord:channel-1",
+          sender: { kind: "agent", agentId: "discord:other-bot" },
+        }));
+
+        await capturedHandlers.onMessage?.({
+          ...botMessage("human"),
+          author: { id: "human", username: "human", bot: false },
+        }, mockClient);
+        const humanParams = mockRunAgent.mock.calls.at(-1)?.[0] as Record<string, unknown>;
+        expect(humanParams.sessionKey).toBe("discord:channel-1");
+        expect(humanParams).not.toHaveProperty("sender");
+      });
+
+      it("does not record or trigger self and webhook messages", async () => {
+        await createDiscordBot(createTestAgent({ allowBots: true }));
+        capturedHandlers.onReady?.({ user: { id: "bot-123", username: "TestBot" } }, mockClient);
+        await capturedHandlers.onMessage?.(botMessage("bot-123"), mockClient);
+        await capturedHandlers.onMessage?.({ ...botMessage(), webhook_id: "webhook-1" }, mockClient);
+
+        expect(recordMessage).not.toHaveBeenCalled();
+        expect(mockRunAgent).not.toHaveBeenCalled();
+      });
+
+      it("does not record or trigger a webhook thread starter", async () => {
+        await createDiscordBot(createTestAgent({ allowBots: true }));
+        capturedHandlers.onReady?.({ user: { id: "bot-123", username: "TestBot" } }, mockClient);
+        mockClient.rest.get.mockResolvedValueOnce([
+          { ...botMessage("webhook-1"), channel_id: "thread-1", webhook_id: "webhook-1" },
+        ]);
+        await capturedHandlers.onThreadCreate?.(
+          { id: "thread-1", guild_id: "guild-1", parent_id: "channel-1", newly_created: true },
+          mockClient
+        );
+        await flushPromises();
+
+        expect(recordMessage).not.toHaveBeenCalled();
+        expect(mockRunAgent).not.toHaveBeenCalled();
+      });
+
+      it("does not let a disallowed bot mention unlock a thread for humans", async () => {
+        await createDiscordBot(createTestAgent({
+          guilds: { "guild-1": { requireMention: true, reactionNotifications: "off" } },
+        }));
+        capturedHandlers.onReady?.({ user: { id: "bot-123", username: "TestBot" } }, mockClient);
+        mockClient.rest.get.mockResolvedValue({
+          id: "thread-1",
+          type: 11,
+          parent_id: "channel-1",
+          guild_id: "guild-1",
+        });
+        await capturedHandlers.onMessage?.({ ...botMessage(), channel_id: "thread-1" }, mockClient);
+        await capturedHandlers.onMessage?.({
+          id: "msg-human",
+          content: "no mention here",
+          channel_id: "thread-1",
+          guild_id: "guild-1",
+          author: { id: "human", username: "human", bot: false },
+          mentions: [],
+        }, mockClient);
+
+        expect(mockRunAgent).not.toHaveBeenCalled();
+      });
+    });
+
     describe("guild messages with requireMention", () => {
       it("ignores message without mention when requireMention=true (default)", async () => {
         const agent = createTestAgent({
@@ -564,8 +652,8 @@ describe("Discord bot integration", () => {
         );
 
         expect(mockRunAgent).not.toHaveBeenCalled();
-        // Bot messages should not be recorded either
-        expect(recordMessage).not.toHaveBeenCalled();
+        // Other bot messages remain available as channel history context.
+        expect(recordMessage).toHaveBeenCalledTimes(1);
       });
     });
   });
@@ -2109,7 +2197,57 @@ describe("Discord component bot", () => {
 
       expect(mockClient.rest.get).not.toHaveBeenCalled();
       expect(mockRunAgent).not.toHaveBeenCalled();
+      expect(recordMessage).toHaveBeenCalledTimes(1);
+      expect(recordMessage).toHaveBeenCalledWith(
+        "forum:thread-1:alpha",
+        expect.objectContaining({ author: "bot", content: "Bot echo" }),
+        20,
+        "msg-bot"
+      );
     } finally {
+      await fs.rm(dataDir, { recursive: true, force: true });
+    }
+  });
+
+  it("gives the next forum run the bot messages it missed", async () => {
+    const dataDir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-discord-forum-"));
+    mockGetDataDir.mockReturnValue(dataDir);
+
+    const alpha = createTestAgent({ forumChannels: ["forum-1"] });
+    alpha.id = "alpha";
+    const store = createThreadSessionBindingStore(dataDir);
+    store.setBinding({
+      threadId: "thread-1",
+      sessionId: "session-alpha",
+      agentId: "alpha",
+      channelId: "forum-1",
+    });
+    store.close();
+    vi.mocked(getHistory).mockImplementation((key: string) =>
+      key === "forum:thread-1:alpha"
+        ? [{ author: "other-bot", content: "Bot status update", timestamp: 1 }]
+        : []
+    );
+
+    try {
+      await createDiscordComponentBot([alpha], { token: "test-token" });
+      await capturedHandlers.onMessage?.(
+        {
+          id: "msg-1",
+          content: "What did the bot say?",
+          channel_id: "thread-1",
+          guild_id: "guild-1",
+          author: { id: "user-1", username: "testuser", bot: false },
+          mentions: [],
+        },
+        mockClient
+      );
+      await flushPromises();
+
+      expect(JSON.stringify(mockRunAgent.mock.calls[0][0].context)).toContain("Bot status update");
+      expect(clearHistory).toHaveBeenCalledWith("forum:thread-1:alpha");
+    } finally {
+      vi.mocked(getHistory).mockImplementation(() => []);
       await fs.rm(dataDir, { recursive: true, force: true });
     }
   });
@@ -2173,6 +2311,43 @@ describe("Discord component bot", () => {
       } finally {
         store.close();
       }
+    } finally {
+      await fs.rm(dataDir, { recursive: true, force: true });
+    }
+  });
+
+  it("lets a human open a forum thread after a rejected bot message", async () => {
+    const dataDir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-discord-forum-"));
+    mockGetDataDir.mockReturnValue(dataDir);
+
+    const alpha = createTestAgent({ forumChannels: ["forum-1"] });
+    alpha.id = "alpha";
+    mockClient.rest.get.mockResolvedValue({
+      id: "thread-1",
+      type: 11,
+      parent_id: "forum-1",
+      guild_id: "guild-1",
+    });
+
+    try {
+      await createDiscordComponentBot([alpha], { token: "test-token" });
+      const message = (id: string, bot: boolean) => ({
+        id: `msg-${id}`,
+        content: `hello from ${id}`,
+        channel_id: "thread-1",
+        guild_id: "guild-1",
+        author: { id, username: id, bot },
+        mentions: [],
+      });
+
+      await capturedHandlers.onMessage?.(message("other-bot", true), mockClient);
+      await capturedHandlers.onMessage?.(message("user-1", false), mockClient);
+      await flushPromises();
+
+      expect(mockRunAgent).toHaveBeenCalledTimes(1);
+      expect(mockRunAgent).toHaveBeenCalledWith(
+        expect.objectContaining({ message: "hello from user-1" })
+      );
     } finally {
       await fs.rm(dataDir, { recursive: true, force: true });
     }

@@ -12,6 +12,7 @@ Breaking changes are marked **⚠ BREAKING**.
 ### Added
 
 - Slack agents can read thread parents and replies with `slack.get_thread_replies`, including cursor paging and time windows.
+- Discord can allow all or selected bot users to trigger agents with explicit mentions through `extensions.discord.allowBots`, with self/webhook protection, history capture, and gateway loop guarding.
 - Agents can return exactly `NO_REPLY` to keep a turn in conversation history without delivering text on any channel; web chat hides it in simple view and shows the raw token in full view.
 - Agent-authored runs support configurable consecutive-turn and hop-count loop guards through global or per-agent `agentLoop` settings.
 - Scheduler jobs now support one-shot `runAt` times through the API, CLI, and agent tools. Missed jobs fire after restart, then disable themselves while retaining output and history.

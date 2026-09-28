@@ -17,13 +17,18 @@ import {
   type ReadyHandler,
   type ThreadHandler,
 } from "./client.js";
-import { processMessage, type MessageData } from "./handlers/message.js";
+import { containsMention, processMessage, type MessageData } from "./handlers/message.js";
 import { processReaction, formatEmoji, type ReactionData } from "./handlers/reactions.js";
 import { createSlashCommands } from "./handlers/commands.js";
 import { buildDiscordContext } from "./utils/context.js";
 import { getChannelMetadata } from "./utils/channel.js";
 import { getThreadStarter } from "./utils/threads.js";
-import { recordMessage, getHistory, clearHistory } from "./utils/history.js";
+import {
+  recordMessage,
+  getHistory,
+  clearHistory,
+  type HistoryMessage,
+} from "./utils/history.js";
 import { splitMessage } from "./utils/chunk.js";
 import { startTyping, stopAllTyping } from "./utils/typing.js";
 import { getDiscordContext } from "./context.js";
@@ -211,7 +216,11 @@ async function handleDiscordMessage(
 ): Promise<void> {
   const result = processMessage(data, target.config, botUserId);
 
-  if (!data.author.bot) {
+  // Webhooks can arrive via the fetched thread-starter path, which skips
+  // the ingress filter.
+  if (data.webhook_id) return;
+
+  if (!data.author.bot || data.author.id !== botUserId) {
     recordMessage(
       data.channel_id,
       {
@@ -355,6 +364,9 @@ async function handleDiscordMessage(
       sessionKey,
       source: "discord",
       context,
+      ...(data.author.bot
+        ? { sender: { kind: "agent" as const, agentId: `discord:${data.author.id}` } }
+        : {}),
       onEvent: (event) => {
         if (event.type === "text") {
           accumulatedText += event.data;
@@ -493,16 +505,72 @@ async function handleDiscordReaction(
   }
 }
 
+function forumBotCanTrigger(
+  data: MessageData,
+  config: DiscordConfig,
+  botUserId: string | undefined
+): boolean {
+  if (data.webhook_id) return false;
+  if (!data.author.bot) return true;
+  if (data.author.id === botUserId) return false;
+  const allowBots = config.allowBots;
+  if (allowBots !== true && (!Array.isArray(allowBots) || !allowBots.includes(data.author.id))) {
+    return false;
+  }
+  return containsMention(data.content?.trim() ?? "", botUserId, data.mentions, config.mentionPatterns).mentioned;
+}
+
+// Forum sessions persist every triggering message, so the buffer only holds
+// bot messages that did not trigger. Keyed per agent so each bound session
+// drains its own copy.
+function forumHistoryKey(threadId: string, agentId: string): string {
+  return `forum:${threadId}:${agentId}`;
+}
+
+function recordForumBotMessage(
+  data: MessageData,
+  target: ResolvedDiscordForumTarget,
+  threadId: string,
+  botUserId: string | undefined
+): void {
+  if (!data.author.bot || data.webhook_id || data.author.id === botUserId) return;
+  recordMessage(
+    forumHistoryKey(threadId, target.agent.id),
+    {
+      author: data.author.username ?? data.author.id,
+      content: data.content ?? "",
+      timestamp: Date.now(),
+    },
+    target.config.historyLimit ?? 20,
+    data.id
+  );
+}
+
+function drainForumHistory(
+  target: ResolvedDiscordForumTarget,
+  threadId: string
+): HistoryMessage[] | undefined {
+  const key = forumHistoryKey(threadId, target.agent.id);
+  const history = getHistory(key, target.config.historyLimit ?? 20);
+  clearHistory(key);
+  return history.length > 0 ? history : undefined;
+}
+
 async function handleForumThreadOpening(
   data: MessageData,
   client: CarbonClient,
   target: ResolvedDiscordForumTarget,
   threadId: string,
   parentChannelId: string,
+  botUserId: string | undefined,
   onSettled?: () => void
 ): Promise<void> {
   const content = data.content?.trim() ?? "";
-  if ((!content && !(data.attachments?.length)) || data.author.bot) return;
+  if ((!content && !(data.attachments?.length)) || !forumBotCanTrigger(data, target.config, botUserId)) {
+    recordForumBotMessage(data, target, threadId, botUserId);
+    onSettled?.();
+    return;
+  }
   const sessionKey = `discord:forum:${threadId}:${target.agent.id}`;
   startTyping(client, threadId, target.agent.id, { sessionKey }, false);
   const ack = target.config.acknowledgeMessages === false ? null : new AckReaction(client, threadId, data.id, target.config.ackEmoji ?? "👀");
@@ -542,6 +610,7 @@ async function handleForumThreadOpening(
         content,
         timestamp: Date.now(),
       },
+      history: drainForumHistory(target, threadId),
     });
   } catch (err) {
     console.error(`${target.logPrefix} Forum thread context error:`, err);
@@ -580,6 +649,9 @@ async function handleForumThreadOpening(
       sessionKey,
       source: "discord",
       context,
+      ...(data.author.bot
+        ? { sender: { kind: "agent" as const, agentId: `discord:${data.author.id}` } }
+        : {}),
       onEvent: (event) => {
         if (event.type === "text") {
           accumulatedText += event.data;
@@ -675,10 +747,14 @@ async function handleForumThreadReply(
   target: ResolvedDiscordForumTarget,
   sessionId: string,
   threadId: string,
-  parentChannelId: string
+  parentChannelId: string,
+  botUserId: string | undefined
 ): Promise<void> {
   const content = data.content?.trim() ?? "";
-  if ((!content && !(data.attachments?.length)) || data.author.bot) return;
+  if ((!content && !(data.attachments?.length)) || !forumBotCanTrigger(data, target.config, botUserId)) {
+    recordForumBotMessage(data, target, threadId, botUserId);
+    return;
+  }
   const sessionKey = `discord:forum:${threadId}:${target.agent.id}`;
   startTyping(client, threadId, target.agent.id, { sessionKey }, false);
   const ack = target.config.acknowledgeMessages === false ? null : new AckReaction(client, threadId, data.id, target.config.ackEmoji ?? "👀");
@@ -715,6 +791,7 @@ async function handleForumThreadReply(
       channelTopic: parentChannelMeta.topic,
       threadName: channelMeta.name ?? `thread:${threadId}`,
       threadStarter: threadStarter ?? undefined,
+      history: drainForumHistory(target, threadId),
     });
   } catch (err) {
     console.error(`${target.logPrefix} Forum thread context error:`, err);
@@ -754,6 +831,9 @@ async function handleForumThreadReply(
       sessionKey,
       source: "discord",
       context,
+      ...(data.author.bot
+        ? { sender: { kind: "agent" as const, agentId: `discord:${data.author.id}` } }
+        : {}),
       onEvent: (event) => {
         if (discordToolTargetsChannel(event, threadId)) {
           discordToolPostedToThread = true;
@@ -838,6 +918,7 @@ function toMessageData(data: {
   type?: number;
   channel_id: string;
   guild_id?: string;
+  webhook_id?: string;
   author: {
     id: string;
     username?: string;
@@ -853,6 +934,7 @@ function toMessageData(data: {
     type: data.type,
     channel_id: data.channel_id,
     guild_id: data.guild_id,
+    webhook_id: data.webhook_id,
     author: {
       id: data.author.id,
       username: data.author.username,
@@ -942,6 +1024,7 @@ async function getLatestThreadMessage(
   type?: number;
   channel_id: string;
   guild_id?: string;
+  webhook_id?: string;
   author: {
     id: string;
     username?: string;
@@ -959,6 +1042,7 @@ async function getLatestThreadMessage(
       type?: number;
       channel_id: string;
       guild_id?: string;
+      webhook_id?: string;
       author: {
         id: string;
         username?: string;
@@ -1145,7 +1229,8 @@ async function createConfiguredDiscordBot(
               client,
               target,
               thread.id,
-              thread.parentId
+              thread.parentId,
+              botUserId
             );
           }
           return;
@@ -1153,7 +1238,8 @@ async function createConfiguredDiscordBot(
       }
       const target = options.resolveMessageTarget(msgData);
       if (!target) return;
-      if (mentionsBot(msgData, botUserId)) {
+      // Only humans unlock a thread; bots must always mention us.
+      if (!msgData.author.bot && mentionsBot(msgData, botUserId)) {
         unlockedThreadIds.add(msgData.channel_id);
       }
       const effectiveTarget =
@@ -1183,7 +1269,7 @@ async function createConfiguredDiscordBot(
   };
 
   const handleMessage: MessageHandler = async (data, client) => {
-    if (data.author.bot || "webhook_id" in data) return;
+    if ("webhook_id" in data || (data.author.bot && data.author.id === botUserId)) return;
 
     if (data.type === MessageType.ThreadCreated) {
       await handleCreatedThread(
@@ -1229,7 +1315,8 @@ async function createConfiguredDiscordBot(
           target,
           binding.sessionId,
           binding.threadId,
-          binding.channelId
+          binding.channelId,
+          botUserId
         );
       }
       return;
@@ -1260,6 +1347,7 @@ async function createConfiguredDiscordBot(
             target,
             enrichedMsgData.channel_id,
             enrichedMsgData.parent_channel_id,
+            botUserId,
             markOpeningSettled
           );
         }
@@ -1275,7 +1363,8 @@ async function createConfiguredDiscordBot(
     const { data: msgData, target } = resolved;
     if (!target) return;
 
-    const shouldUnlockThread = mentionsBot(msgData, botUserId);
+    // Only humans unlock a thread; bots must always mention us.
+    const shouldUnlockThread = !msgData.author.bot && mentionsBot(msgData, botUserId);
     const threadMessage =
       unlockedThreadIds.has(msgData.channel_id) || shouldUnlockThread
         ? await enrichThreadParent(msgData, client)
@@ -1466,6 +1555,7 @@ function buildDiscordRouteConfig(
     clearHistoryAfterReply: componentConfig.clearHistoryAfterReply ?? true,
     replyToMode: componentConfig.replyToMode ?? "off",
     mentionPatterns: componentConfig.mentionPatterns,
+    allowBots: componentConfig.allowBots,
     broadcastToChannel: componentConfig.broadcastToChannel,
     showToolCalls: componentConfig.showToolCalls,
   };
@@ -1483,6 +1573,7 @@ function buildDiscordDmRouteConfig(
     clearHistoryAfterReply: componentConfig.clearHistoryAfterReply ?? true,
     replyToMode: componentConfig.replyToMode ?? "off",
     mentionPatterns: componentConfig.mentionPatterns,
+    allowBots: componentConfig.allowBots,
     broadcastToChannel: componentConfig.broadcastToChannel,
     showToolCalls: componentConfig.showToolCalls,
   };

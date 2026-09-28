@@ -15,6 +15,7 @@ export type MessageData = {
   channel_id: string;
   parent_channel_id?: string;
   guild_id?: string;
+  webhook_id?: string;
   author: {
     id: string;
     username?: string;
@@ -61,7 +62,7 @@ function getChannelConfig(
 /**
  * Check if content contains a bot mention or matches configured patterns
  */
-function containsMention(
+export function containsMention(
   content: string,
   botId: string | undefined,
   mentions: Array<{ id: string }> | undefined,
@@ -111,9 +112,15 @@ export function processMessage(
   const content = data.content?.trim() ?? "";
   const isDm = !data.guild_id;
 
-  // 1. Ignore bots
+  // 1. Ignore our own bot and gate other bots through the extension-level policy.
   if (data.author.bot) {
-    return { shouldReply: false, reason: "author_is_bot", normalizedContent: content, isDm };
+    if (data.author.id === botId) {
+      return { shouldReply: false, reason: "author_is_bot", normalizedContent: content, isDm };
+    }
+    const allowBots = config.allowBots;
+    if (allowBots !== true && (!Array.isArray(allowBots) || !allowBots.includes(data.author.id))) {
+      return { shouldReply: false, reason: "author_is_bot", normalizedContent: content, isDm };
+    }
   }
 
   // Discord emits system messages such as THREAD_CREATED into the parent
@@ -247,7 +254,7 @@ export function processMessage(
     config.mentionPatterns
   );
 
-  if (requireMention && !mentioned) {
+  if ((requireMention || data.author.bot === true) && !mentioned) {
     return {
       shouldReply: false,
       reason: "mention_required",
