@@ -290,6 +290,7 @@ describe("SessionRunLifecycle", () => {
       capabilities: bufferedCapabilities,
       adapter,
       message: "next turn",
+      sender: { kind: "agent", agentId: "beta", hops: 2 },
     });
     lifecycle.finishRun();
 
@@ -300,7 +301,12 @@ describe("SessionRunLifecycle", () => {
         queued: true,
       },
     });
-    expect(lifecycle.drainPendingMessages()).toEqual(["next turn"]);
+    expect(lifecycle.drainPendingMessages()).toEqual([
+      {
+        message: "next turn",
+        sender: { kind: "agent", agentId: "beta", hops: 2 },
+      },
+    ]);
   });
 
   it("aborts active adapter handle and observes streaming shutdown", async () => {

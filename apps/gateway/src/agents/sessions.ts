@@ -1,5 +1,11 @@
 import { agentEventBus } from "./events.js";
+import type { RunAgentParams } from "@yoplai/shared";
 import type { TurnBuffer } from "../history/store.js";
+
+export type PendingMessage = {
+  message: string;
+  sender?: RunAgentParams["sender"];
+};
 
 export type AgentSession = {
   agentId: string;
@@ -9,7 +15,7 @@ export type AgentSession = {
   lastActivity: number;
   abortController?: AbortController;
   sessionHandle?: unknown; // SDK-agnostic session handle
-  pendingMessages: string[];
+  pendingMessages: PendingMessage[];
   pendingUserMessages: Array<{ text: string; timestamp: number }>;
   currentTurn?: TurnBuffer | null;
 };
@@ -56,13 +62,18 @@ export function getOrCreateSession(agentId: string, sessionId: string): AgentSes
 }
 
 /** Buffer a message to be queued once session handle is available */
-export function bufferPendingMessage(agentId: string, sessionId: string, message: string) {
+export function bufferPendingMessage(
+  agentId: string,
+  sessionId: string,
+  message: string,
+  sender?: RunAgentParams["sender"]
+) {
   const session = getOrCreateSession(agentId, sessionId);
-  session.pendingMessages.push(message);
+  session.pendingMessages.push({ message, sender });
 }
 
 /** Get and clear pending messages */
-export function popPendingMessages(agentId: string, sessionId: string): string[] {
+export function popPendingMessages(agentId: string, sessionId: string): PendingMessage[] {
   const session = getSession(agentId, sessionId);
   if (!session) return [];
   const messages = session.pendingMessages;

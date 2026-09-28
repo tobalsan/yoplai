@@ -2,6 +2,7 @@ import {
   sanitizeForStorage,
   type ContainerDeliveryContext,
   type FileAttachment,
+  type RunAgentParams,
   type StreamEvent,
 } from "@yoplai/shared";
 import {
@@ -17,6 +18,7 @@ import {
   setSessionHandle,
   setSessionStreaming,
   shiftPendingUserMessage,
+  type PendingMessage,
 } from "./sessions.js";
 import {
   agentEventBus,
@@ -60,6 +62,7 @@ type QueuePolicy = {
   capabilities: SdkCapabilities;
   adapter: SdkAdapter;
   message: string;
+  sender?: RunAgentParams["sender"];
 };
 
 type QueueDecision =
@@ -165,7 +168,8 @@ export class SessionRunLifecycle {
         bufferPendingMessage(
           this.context.agentId,
           this.context.sessionId,
-          policy.message
+          policy.message,
+          policy.sender
         );
       }
 
@@ -205,8 +209,8 @@ export class SessionRunLifecycle {
         this.context.agentId,
         this.context.sessionId
       );
-      for (const msg of buffered) {
-        adapter.queueMessage(handle, msg, this.buildDeliveryContext());
+      for (const { message } of buffered) {
+        adapter.queueMessage(handle, message, this.buildDeliveryContext());
       }
     }
   }
@@ -292,7 +296,7 @@ export class SessionRunLifecycle {
     setSessionStreaming(this.context.agentId, this.context.sessionId, false);
   }
 
-  drainPendingMessages(): string[] {
+  drainPendingMessages(): PendingMessage[] {
     return popPendingMessages(this.context.agentId, this.context.sessionId);
   }
 

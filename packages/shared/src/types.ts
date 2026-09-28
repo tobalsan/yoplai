@@ -231,6 +231,12 @@ export const SystemFileEntrySchema = z.union([
 ]);
 export type SystemFileEntry = z.infer<typeof SystemFileEntrySchema>;
 
+export const AgentLoopConfigSchema = z.object({
+  maxAgentTurns: z.number().int().positive().optional(),
+  maxHops: z.number().int().nonnegative().optional(),
+});
+export type AgentLoopConfig = z.infer<typeof AgentLoopConfigSchema>;
+
 // Agent config
 const AgentConfigBaseSchema = z.object({
   id: z.string(),
@@ -253,6 +259,7 @@ const AgentConfigBaseSchema = z.object({
   reasoning: ThinkLevelSchema.optional(),
   thinkLevel: ThinkLevelSchema.optional(),
   queueMode: z.enum(["queue", "interrupt"]).optional().default("queue"),
+  agentLoop: AgentLoopConfigSchema.optional(),
   // Transient provider-error retry, shared by host and sandboxed Pi runs.
   retryMaxAttempts: z.number().int().positive().optional(),
   retryBaseDelay: z.number().positive().optional(),
@@ -1091,6 +1098,7 @@ export const GatewayRootConfigSchema = z.object({
     .optional(),
   gateway: GatewayServerConfigSchema.optional(),
   sessions: SessionsConfigSchema.optional().default({}),
+  agentLoop: AgentLoopConfigSchema.optional(),
   web: z
     .object({
       baseUrl: z.string().optional(),
@@ -1148,6 +1156,7 @@ export const GatewayConfigSchema = z.object({
     .optional(),
   gateway: GatewayServerConfigSchema.optional(),
   sessions: SessionsConfigSchema.optional().default({}),
+  agentLoop: AgentLoopConfigSchema.optional(),
   web: z
     .object({
       baseUrl: z.string().optional(),
@@ -1187,6 +1196,7 @@ export type RunAgentParams = {
   trace?: AgentTraceContext;
   onEvent?: (event: StreamEvent) => void;
   signal?: AbortSignal;
+  sender?: { kind: "agent"; agentId: string; hops?: number };
 };
 
 export type RunAgentResult = {
@@ -1197,6 +1207,7 @@ export type RunAgentResult = {
     aborted?: boolean;
     queued?: boolean;
     silent?: boolean;
+    loopGuard?: "max_agent_turns" | "max_hops";
   };
 };
 

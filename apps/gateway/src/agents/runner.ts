@@ -9,7 +9,12 @@ import type {
   FullHistoryMessage,
   HistoryViewMode,
 } from "@yoplai/shared";
-import { getAgent, resolveWorkspaceDir, CONFIG_DIR } from "../config/index.js";
+import {
+  getAgent,
+  loadConfig,
+  resolveWorkspaceDir,
+  CONFIG_DIR,
+} from "../config/index.js";
 import { SessionRunLifecycle } from "./run-lifecycle.js";
 import {
   resolveSessionId,
@@ -23,8 +28,13 @@ import {
 } from "../sessions/store.js";
 import { appendSessionMeta } from "../history/store.js";
 import { agentEventBus, type AgentStreamEvent } from "./events.js";
-import { logError, logInfo } from "../logging.js";
+import { logError, logInfo, logWarn } from "../logging.js";
 import { createNoReplyHoldback, isNoReply } from "./no-reply.js";
+import {
+  checkAgentLoop,
+  DEFAULT_MAX_AGENT_TURNS,
+  DEFAULT_MAX_HOPS,
+} from "./loop-guard.js";
 import { getContainerAdapter } from "../sdk/container/adapter.js";
 import { getSdkAdapter, getDefaultSdkId } from "../sdk/registry.js";
 import type { SdkId, HistoryEvent } from "../sdk/types.js";
@@ -210,6 +220,33 @@ export async function runAgent(
   });
   const emit = (event: StreamEvent) => lifecycle.emit(event);
 
+  const globalLoop = loadConfig().agentLoop;
+  const maxAgentTurns =
+    agent.agentLoop?.maxAgentTurns ??
+    globalLoop?.maxAgentTurns ??
+    DEFAULT_MAX_AGENT_TURNS;
+  const maxHops =
+    agent.agentLoop?.maxHops ?? globalLoop?.maxHops ?? DEFAULT_MAX_HOPS;
+  const loopGuard = checkAgentLoop({
+    key: `${params.agentId}:${params.userId ?? "default"}:${sessionId}`,
+    sender: params.sender,
+    maxAgentTurns,
+    maxHops,
+  });
+  if (loopGuard) {
+    logWarn("[agent] loop guard blocked turn", {
+      agentId: params.agentId,
+      sessionId,
+      senderAgentId: params.sender?.agentId,
+      reason: loopGuard,
+    });
+    params.onEvent?.({ type: "done", meta: { durationMs: 0 } });
+    return {
+      payloads: [],
+      meta: { durationMs: 0, sessionId, silent: true, loopGuard },
+    };
+  }
+
   // Resolve sessionKey for thinkLevel persistence (OAuth only)
   const resolvedSessionKey = sessionKey ?? DEFAULT_MAIN_KEY;
   const isOAuth = agent.auth?.mode === "oauth";
@@ -316,6 +353,7 @@ export async function runAgent(
     capabilities,
     adapter,
     message,
+    sender: params.sender,
   });
   if (join.handled) {
     emit({ type: "text", data: join.result.text });
@@ -469,12 +507,13 @@ export async function runAgent(
     // Drain pending queue if adapter lacks native queue support
     if (runCompleted && !capabilities.queueWhileStreaming) {
       const pendingMessages = lifecycle.drainPendingMessages();
-      for (const pendingMsg of pendingMessages) {
+      for (const pending of pendingMessages) {
         // Run next message - omit onEvent to use agentEventBus only
         await runAgent({
           agentId: params.agentId,
           userId: params.userId,
-          message: pendingMsg,
+          message: pending.message,
+          sender: pending.sender,
           sessionId,
           sessionKey,
           thinkLevel: params.thinkLevel,

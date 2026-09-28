@@ -19,6 +19,7 @@ const resolveSessionId = vi.fn();
 vi.mock("../config/index.js", () => ({
   CONFIG_DIR: tmpHome,
   getAgent,
+  loadConfig: vi.fn(() => ({ agents: [], extensions: {}, sessions: {} })),
   resolveWorkspaceDir,
 }));
 

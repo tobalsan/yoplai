@@ -105,6 +105,7 @@ Core `yoplai.json` fields:
 | `gateway`, `ui`, `server`, `web`     | Network and public/base URL settings                                |
 | `canvas`                             | Dashboard serving (`enabled`, optional public `baseUrl`)            |
 | `sessions.idleMinutes`               | Logical-session idle rotation; default 360                          |
+| `agentLoop`                          | Agent-to-agent loop limits (`maxAgentTurns`, `maxHops`)             |
 | `extensions`                         | Built-in/external extension configuration                           |
 | `extensionsPath`                     | External extension directory; defaults to `$YOPLAI_HOME/extensions` |
 | `sandbox`, `onecli`, `oauth`         | Isolation, proxy, and host OAuth settings                           |
@@ -195,6 +196,8 @@ Prefer `loopback` until authentication and a secure access path are configured. 
 ## Sessions
 
 `sessionKey` is logical conversation name (default `main`). `sessions.idleMinutes` defaults to 360. Agent `queueMode: queue` appends follow-ups to active work; `interrupt` aborts active run before starting new one.
+
+Agent-to-agent callers can identify the sending agent and hop count. Root `agentLoop.maxAgentTurns` defaults to 8 consecutive agent-authored inbound turns per conversation, and `agentLoop.maxHops` defaults to 5. Either value can be overridden for an agent with the same `agentLoop` object in `agent.yaml`. Human-authored turns reset the consecutive-turn counter; turns over either limit are completed silently without invoking the model.
 
 ## Project and board roots
 

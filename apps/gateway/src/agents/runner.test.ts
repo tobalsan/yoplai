@@ -13,10 +13,12 @@ const isAbortTrigger = vi.fn(() => false);
 const pauseTaskForControlCommand = vi.fn();
 const getTask = vi.fn();
 const maybeAutoTitleSession = vi.fn();
+const loadConfig = vi.fn(() => ({ agents: [], extensions: {}, sessions: {} }));
 
 vi.mock("../config/index.js", () => ({
   CONFIG_DIR: "/tmp/yoplai-runner-test",
   getAgent,
+  loadConfig,
   resolveWorkspaceDir,
 }));
 
@@ -518,5 +520,26 @@ describe("runAgent silent response", () => {
       sessionId: "non-silent-token",
     });
     expect(result.payloads).toEqual([{ text: "Hello NO_REPLY world" }]);
+  });
+
+  it("does not broadcast done when the loop guard blocks a turn", async () => {
+    const adapter = createAdapter();
+    getSdkAdapter.mockReturnValue(adapter);
+    getAgent.mockReturnValue(createAgent({}));
+    const onEvent = vi.fn();
+    const { agentEventBus } = await import("./events.js");
+
+    const { runAgent } = await import("./runner.js");
+    await runAgent({
+      agentId: "alpha",
+      message: "loop",
+      sessionId: "blocked-loop",
+      sender: { kind: "agent", agentId: "beta", hops: 99 },
+      onEvent,
+    });
+
+    expect(onEvent).toHaveBeenCalledWith({ type: "done", meta: { durationMs: 0 } });
+    expect(agentEventBus.emitStreamEvent).not.toHaveBeenCalled();
+    expect(adapter.run).not.toHaveBeenCalled();
   });
 });
