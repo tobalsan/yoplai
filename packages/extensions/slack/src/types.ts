@@ -94,6 +94,27 @@ export type SlackWebClient = {
       has_more?: boolean;
       response_metadata?: { next_cursor?: string };
     }>;
+    replies(params: {
+      channel: string;
+      ts: string;
+      latest?: string;
+      oldest?: string;
+      inclusive?: boolean;
+      cursor?: string;
+      limit?: number;
+    }): Promise<{
+      messages?: Array<{
+        user?: string;
+        username?: string;
+        text?: string;
+        ts?: string;
+        thread_ts?: string;
+        reply_count?: number;
+        bot_id?: string;
+      }>;
+      has_more?: boolean;
+      response_metadata?: { next_cursor?: string };
+    }>;
   };
   reactions: {
     add(params: {

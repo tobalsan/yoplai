@@ -57,13 +57,14 @@ describe("slack agent tools", () => {
     vi.clearAllMocks();
   });
 
-  it("exposes create_thread, send_message, list_channels, list_users, and get_channel_history", () => {
+  it("exposes the Slack agent tools", () => {
     expect(slackAgentTools().map((t) => t.name)).toEqual([
       "slack.create_thread",
       "slack.send_message",
       "slack.list_channels",
       "slack.list_users",
       "slack.get_channel_history",
+      "slack.get_thread_replies",
     ]);
   });
 
@@ -481,6 +482,127 @@ describe("slack agent tools", () => {
     );
 
     expect(result).toEqual({ ok: false, error: "channel_not_found" });
+  });
+
+  it("get_thread_replies includes the parent and pages through replies", async () => {
+    const replies = vi
+      .fn()
+      .mockResolvedValueOnce({
+        messages: [
+          { ts: "1.0", user: "U1", text: "parent", reply_count: 2 },
+          { ts: "2.0", bot_id: "B1", text: "reply", thread_ts: "1.0" },
+          { user: "U2", text: "missing timestamp" },
+        ],
+        has_more: true,
+        response_metadata: { next_cursor: "page-2" },
+      })
+      .mockResolvedValueOnce({
+        messages: [{ ts: "3.0", user: "U2", text: "last", thread_ts: "1.0" }],
+        has_more: false,
+      });
+    registerMockBot("alpha", { conversations: { replies } as never });
+
+    const first = await tool("slack.get_thread_replies").execute(
+      { channel: "C123", threadTs: "1.0", limit: 2 },
+      { agent: agent("alpha"), config: config() }
+    );
+    const second = await tool("slack.get_thread_replies").execute(
+      { channel: "C123", threadTs: "1.0", limit: 2, cursor: "page-2" },
+      { agent: agent("alpha"), config: config() }
+    );
+
+    expect(first).toStrictEqual({
+      ok: true,
+      channel: "C123",
+      threadTs: "1.0",
+      messages: [
+        { ts: "1.0", user: "U1", text: "parent", replyCount: 2 },
+        { ts: "2.0", botId: "B1", text: "reply", threadTs: "1.0" },
+      ],
+      nextCursor: "page-2",
+      hasMore: true,
+    });
+    expect(second).toStrictEqual({
+      ok: true,
+      channel: "C123",
+      threadTs: "1.0",
+      messages: [{ ts: "3.0", user: "U2", text: "last", threadTs: "1.0" }],
+      nextCursor: undefined,
+      hasMore: false,
+    });
+    expect(replies).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({
+        channel: "C123",
+        ts: "1.0",
+        limit: 2,
+        cursor: undefined,
+      })
+    );
+    expect(replies).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        channel: "C123",
+        ts: "1.0",
+        limit: 2,
+        cursor: "page-2",
+      })
+    );
+  });
+
+  it("get_thread_replies forwards the time window and defaults to 50 messages", async () => {
+    const replies = vi.fn().mockResolvedValue({ messages: [] });
+    registerMockBot("alpha", { conversations: { replies } as never });
+
+    await tool("slack.get_thread_replies").execute(
+      {
+        channel: "G123",
+        threadTs: "1.0",
+        oldest: "2.0",
+        latest: "3.0",
+        inclusive: true,
+      },
+      { agent: agent("alpha"), config: config() }
+    );
+
+    expect(replies).toHaveBeenCalledWith(
+      expect.objectContaining({
+        channel: "G123",
+        ts: "1.0",
+        limit: 50,
+        oldest: "2.0",
+        latest: "3.0",
+        inclusive: true,
+      })
+    );
+  });
+
+  it.each([0, 201, 1.5])(
+    "get_thread_replies rejects invalid limit %s",
+    async (limit) => {
+      const replies = vi.fn();
+      registerMockBot("alpha", { conversations: { replies } as never });
+
+      const result = await tool("slack.get_thread_replies").execute(
+        { channel: "C123", threadTs: "1.0", limit },
+        { agent: agent("alpha"), config: config() }
+      );
+
+      expect(result).toMatchObject({ ok: false });
+      expect(replies).not.toHaveBeenCalled();
+    }
+  );
+
+  it("get_thread_replies reports Slack API failures", async () => {
+    const replies = vi.fn().mockRejectedValue(new Error("thread_not_found"));
+    registerMockBot("alpha", { conversations: { replies } as never });
+
+    const result = await tool("slack.get_thread_replies").execute(
+      { channel: "C123", threadTs: "1.0" },
+      { agent: agent("alpha"), config: config() }
+    );
+
+    expect(result).toEqual({ ok: false, error: "thread_not_found" });
   });
 
   it("falls back to component bot client when agent-specific bot is absent", async () => {
