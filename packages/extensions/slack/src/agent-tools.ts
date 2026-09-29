@@ -46,6 +46,38 @@ const channelHistorySchema = z.object({
   inclusive: z.boolean().optional(),
 });
 
+const threadRepliesSchema = channelHistorySchema.extend({
+  threadTs: z.string().min(1),
+  cursor: z.string().min(1).optional(),
+});
+
+type SlackHistoryMessage = NonNullable<
+  Awaited<ReturnType<SlackWebClient["conversations"]["history"]>>["messages"]
+>[number];
+
+function compactMessages(messages: SlackHistoryMessage[]) {
+  return messages.flatMap((message) => {
+    if (!message.ts) return [];
+    return [
+      {
+        ts: message.ts,
+        ...(message.user !== undefined ? { user: message.user } : {}),
+        ...(message.username !== undefined
+          ? { username: message.username }
+          : {}),
+        ...(message.bot_id !== undefined ? { botId: message.bot_id } : {}),
+        ...(message.text !== undefined ? { text: message.text } : {}),
+        ...(message.thread_ts !== undefined
+          ? { threadTs: message.thread_ts }
+          : {}),
+        ...(message.reply_count !== undefined
+          ? { replyCount: message.reply_count }
+          : {}),
+      },
+    ];
+  });
+}
+
 function toolError(error: unknown) {
   return {
     ok: false as const,
@@ -386,7 +418,7 @@ export function slackAgentTools(): ExtensionAgentTool[] {
     {
       name: "slack.get_channel_history",
       description:
-        "Retrieve a channel's recent message history via conversations.history. Provide channel as a conversation ID (C..., D..., or G...); use slack.list_channels to resolve channel IDs. Messages are returned newest-first. To page backward, pass the oldest ts from the previous result as latest. threadTs and replyCount identify reply threads, but thread replies are not expanded.",
+        "Retrieve a channel's recent message history via conversations.history. Provide channel as a conversation ID (C..., D..., or G...); use slack.list_channels to resolve channel IDs. Messages are returned newest-first. To page backward, pass the oldest ts from the previous result as latest. threadTs and replyCount identify reply threads; use slack.get_thread_replies to read their messages.",
       parameters: {
         type: "object",
         properties: {
@@ -451,28 +483,7 @@ export function slackAgentTools(): ExtensionAgentTool[] {
               cursor,
               limit: remaining,
             });
-            const mapped = (page.messages ?? []).flatMap((message) => {
-              if (!message.ts) return [];
-              return [
-                {
-                  ts: message.ts,
-                  ...(message.user !== undefined ? { user: message.user } : {}),
-                  ...(message.username !== undefined
-                    ? { username: message.username }
-                    : {}),
-                  ...(message.bot_id !== undefined
-                    ? { botId: message.bot_id }
-                    : {}),
-                  ...(message.text !== undefined ? { text: message.text } : {}),
-                  ...(message.thread_ts !== undefined
-                    ? { threadTs: message.thread_ts }
-                    : {}),
-                  ...(message.reply_count !== undefined
-                    ? { replyCount: message.reply_count }
-                    : {}),
-                },
-              ];
-            });
+            const mapped = compactMessages(page.messages ?? []);
             const accepted = mapped.slice(0, remaining);
             messages.push(...accepted);
             const overflow = mapped.length > accepted.length;
@@ -481,6 +492,84 @@ export function slackAgentTools(): ExtensionAgentTool[] {
           } while (cursor && messages.length < limit);
 
           return { ok: true, channel: input.channel, messages, hasMore };
+        } catch (error) {
+          return toolError(error);
+        }
+      },
+    },
+    {
+      name: "slack.get_thread_replies",
+      description:
+        "Read a Slack thread, including its parent message, via conversations.replies. Provide a conversation ID and the parent's threadTs. Messages are returned oldest-first. Pass nextCursor as cursor to read more replies until hasMore is false.",
+      parameters: {
+        type: "object",
+        properties: {
+          channel: {
+            type: "string",
+            description:
+              "Conversation ID (C..., D..., or G...), not a user ID.",
+          },
+          threadTs: {
+            type: "string",
+            description: "Parent message timestamp identifying the thread.",
+          },
+          limit: {
+            type: "number",
+            description: "Maximum messages per page (default 50, max 200).",
+          },
+          oldest: {
+            type: "string",
+            description: "Optional exclusive lower-bound Slack timestamp.",
+          },
+          latest: {
+            type: "string",
+            description: "Optional exclusive upper-bound Slack timestamp.",
+          },
+          inclusive: {
+            type: "boolean",
+            description:
+              "Include messages exactly at oldest/latest boundaries.",
+          },
+          cursor: {
+            type: "string",
+            description:
+              "nextCursor from a previous result to fetch the next page.",
+          },
+        },
+        required: ["channel", "threadTs"],
+        additionalProperties: false,
+      },
+      async execute(args, { agent, config, env }) {
+        try {
+          const input = threadRepliesSchema.parse(args);
+          const client = resolveSlackClient(agent, config, env);
+          if (!client) {
+            return toolError("No Slack token is configured for this agent.");
+          }
+          if (!client.conversations?.replies) {
+            return toolError(
+              "Slack thread replies are not available for this agent."
+            );
+          }
+
+          const page = await client.conversations.replies({
+            channel: input.channel,
+            ts: input.threadTs,
+            limit: input.limit ?? 50,
+            oldest: input.oldest,
+            latest: input.latest,
+            inclusive: input.inclusive,
+            cursor: input.cursor,
+          });
+          const nextCursor = page.response_metadata?.next_cursor || undefined;
+          return {
+            ok: true,
+            channel: input.channel,
+            threadTs: input.threadTs,
+            messages: compactMessages(page.messages ?? []),
+            nextCursor,
+            hasMore: Boolean(nextCursor) || Boolean(page.has_more),
+          };
         } catch (error) {
           return toolError(error);
         }
