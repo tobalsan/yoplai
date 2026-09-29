@@ -11,6 +11,7 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Added
 
+- Dashboard Kit v2 (`/d-assets/v2/`): "needs attention" callouts, KPI strips with number/currency/percent formatting, deltas and sparklines, status pills, segmented filters, table column formatters, pills, links, severity dots and a show-all row cap, a `format` helper, and calmer chart theming (faint grids, area fills, readable heatmaps for skewed data). The dashboard skill now ships design rules agents follow. Existing `/d-assets/v1/` pages keep working and pick up the refreshed styles.
 - Slack agents can read thread parents and replies with `slack.get_thread_replies`, including cursor paging and time windows.
 - Discord can allow all or selected bot users to trigger agents with explicit mentions through `extensions.discord.allowBots`, with self/webhook protection, history capture, and gateway loop guarding.
 - Agents can return exactly `NO_REPLY` to keep a turn in conversation history without delivering text on any channel; web chat hides it in simple view and shows the raw token in full view.
@@ -37,6 +38,7 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Fixed
 
+- A Canvas chart no longer blanks the rest of the dashboard when ECharts is missing or its option is invalid; the chart area shows a short message instead, and re-rendering a chart on the same element replaces it cleanly.
 - Messages sent mid-turn now appear after the agent's already-streamed thinking, text, and tool calls (including still-running ones) instead of jumping above them.
 - Pi agent history now keeps each assistant message together with its own tool calls, so reloaded chats show messages sent mid-turn in the order they were sent instead of splitting thinking from tool calls.
 - Agents sharing drill-down dashboards now include the query string in the link itself, and the CS `client`/`qbr` templates show a "No client selected" link back to Clients instead of a blank page when opened without parameters.

@@ -4,39 +4,174 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width" />
     <title>Dashboard Kit</title>
-    <link rel="stylesheet" href="/d-assets/v1/kit.css" />
-    <script src="/d-assets/v1/echarts.js"></script>
-    <script src="/d-assets/v1/marked.js"></script>
-    <script src="/d-assets/v1/purify.js"></script>
-    <script src="/d-assets/v1/kit.js"></script>
+    <link rel="stylesheet" href="/d-assets/v2/kit.css" />
+    <script src="/d-assets/v2/echarts.js"></script>
+    <script src="/d-assets/v2/marked.js"></script>
+    <script src="/d-assets/v2/purify.js"></script>
+    <script src="/d-assets/v2/kit.js"></script>
   </head>
   <body>
     <main>
-      <h1>Dashboard Kit sample</h1>
-      <div class="dk-grid">
-        <div id="kpi"></div>
-        <div id="list"></div>
+      <header class="dk-header">
+        <h1>Dashboard Kit sample</h1>
+        <p class="dk-subtitle">
+          Every component, in the order a dashboard page uses them.
+        </p>
+        <p class="dk-meta">
+          <span>Updated Sep 29, 2026</span><span>Sample data</span>
+        </p>
+      </header>
+
+      <div id="attention"></div>
+      <div id="segment"></div>
+      <div id="kpis" style="margin-top: 20px"></div>
+
+      <section class="dk-section">
+        <h2>Pills and tones</h2>
+        <p id="pills"></p>
+      </section>
+
+      <div class="dk-cols">
+        <section class="dk-section">
+          <h2>How is revenue trending?</h2>
+          <div id="line" class="dk-chart"></div>
+        </section>
+        <section class="dk-section">
+          <h2>Which regions lead?</h2>
+          <div id="bar" class="dk-chart"></div>
+        </section>
       </div>
-      <div id="filters"></div>
-      <div id="table"></div>
-      <div id="tabs"></div>
-      <div id="markdown"></div>
-      <div class="dk-grid" id="charts"></div>
+
+      <section class="dk-section">
+        <h2>Which accounts need follow-up?</h2>
+        <p class="dk-note">
+          Formatted columns, status pills, links, severity markers, and a 5-row
+          cap.
+        </p>
+        <div id="filters"></div>
+        <div id="table"></div>
+      </section>
+
+      <div class="dk-cols">
+        <section class="dk-section">
+          <h2>Top regions</h2>
+          <div id="list"></div>
+        </section>
+        <section class="dk-section">
+          <h2>Legacy KPI cards</h2>
+          <div class="dk-grid">
+            <div id="kpi"></div>
+            <div id="kpi2"></div>
+          </div>
+        </section>
+      </div>
+
+      <section class="dk-section">
+        <h2>Tabs and markdown</h2>
+        <div id="tabs"></div>
+        <div id="markdown" style="margin-top: 16px"></div>
+      </section>
+
+      <section class="dk-section">
+        <h2>Chart types</h2>
+        <div class="dk-grid" id="charts"></div>
+      </section>
     </main>
     <script>
-      DashboardKit.kpi("#kpi", {
-        label: "Revenue",
-        value: "€1.2M",
-        delta: "+12%",
-        direction: "up",
-      });
-      DashboardKit.list("#list", {
+      const K = DashboardKit;
+      K.callout("#attention", {
+        title: "Needs attention",
         items: [
-          { label: "North", value: "€420k", href: "?region=north" },
-          { label: "West", value: "€310k", href: "?region=west" },
+          {
+            tone: "critical",
+            text: "3 renewals due this month have no owner",
+            href: "#table",
+          },
+          {
+            tone: "warn",
+            text: "Pipeline coverage is below 3x for Q4",
+            value: "2.4x",
+          },
+          { tone: "info", text: "12 accounts were imported without a region" },
         ],
       });
-      DashboardKit.filters("#filters", {
+      K.segmented("#segment", {
+        label: "Segment",
+        options: ["All", "Enterprise", "Mid-market"],
+        onChange: console.log,
+      });
+      K.kpis("#kpis", {
+        items: [
+          {
+            label: "Revenue",
+            value: 1243500,
+            format: "compact:EUR",
+            delta: 0.12,
+            deltaFormat: "percent",
+            note: "vs last quarter",
+            emphasis: true,
+          },
+          {
+            label: "Customers",
+            value: 1842,
+            format: "number",
+            delta: 36,
+            trend: [1702, 1731, 1750, 1768, 1790, 1806, 1842],
+          },
+          {
+            label: "Churn",
+            value: 0.021,
+            format: "percent",
+            delta: -0.004,
+            deltaFormat: "percent",
+            good: "down",
+          },
+          {
+            label: "Open tickets",
+            value: 57,
+            delta: 9,
+            good: "down",
+            note: "this week",
+          },
+          { label: "CSAT", value: "4.6 / 5" },
+        ],
+      });
+      document
+        .querySelector("#pills")
+        .append(
+          ...["neutral", "info", "good", "warn", "critical", "accent"].map(
+            (tone) => K.pill(tone, tone)
+          )
+        );
+
+      const quarters = ["Q1", "Q2", "Q3", "Q4", "Q1", "Q2", "Q3"];
+      K.chart("#line", {
+        xAxis: { type: "category", data: quarters },
+        yAxis: {},
+        series: [
+          {
+            name: "Revenue",
+            type: "line",
+            data: [820, 870, 910, 980, 1040, 1150, 1243],
+          },
+        ],
+      });
+      K.chart("#bar", {
+        legend: {},
+        xAxis: { type: "category", data: ["North", "West", "South", "East"] },
+        yAxis: {},
+        series: [
+          { name: "This year", type: "bar", data: [420, 310, 260, 190] },
+          {
+            name: "Last year",
+            type: "bar",
+            color: "var(--dk-chart-5)",
+            data: [380, 330, 210, 170],
+          },
+        ],
+      });
+
+      K.filters("#filters", {
         fields: [
           {
             type: "select",
@@ -48,7 +183,6 @@
             ],
           },
           { type: "date", name: "from", label: "From" },
-          { type: "date", name: "to", label: "To" },
           {
             type: "range",
             name: "confidence",
@@ -60,54 +194,146 @@
         ],
         onChange: console.log,
       });
-      DashboardKit.table("#table", {
+      const health = {
+        Healthy: "good",
+        "At risk": "warn",
+        Critical: "critical",
+      };
+      K.table("#table", {
         filename: "sample.csv",
+        limit: 5,
+        rowTone: (row) => health[row.status],
         columns: [
-          { key: "name", label: "Name" },
-          { key: "value", label: "Value" },
+          {
+            key: "name",
+            label: "Account",
+            href: (row) => "?account=" + encodeURIComponent(row.name),
+          },
+          { key: "status", label: "Health", pill: health },
+          { key: "arr", label: "ARR", format: "currency:EUR" },
+          { key: "growth", label: "Growth", format: "percent" },
+          { key: "renewal", label: "Renewal", format: "date" },
         ],
         rows: [
-          { name: "Alpha", value: 30 },
-          { name: "Beta", value: 20 },
+          {
+            name: "Alpha Corp",
+            status: "Healthy",
+            arr: 184000,
+            growth: 0.18,
+            renewal: "2026-12-01",
+          },
+          {
+            name: "Beta GmbH",
+            status: "At risk",
+            arr: 96500,
+            growth: -0.04,
+            renewal: "2026-10-15",
+          },
+          {
+            name: "Gamma SA",
+            status: "Critical",
+            arr: 45200,
+            growth: -0.22,
+            renewal: "2026-10-03",
+          },
+          {
+            name: "Delta Ltd",
+            status: "Healthy",
+            arr: 312000,
+            growth: 0.09,
+            renewal: "2027-03-30",
+          },
+          {
+            name: "Epsilon BV",
+            status: "At risk",
+            arr: 78000,
+            growth: 0.01,
+            renewal: "2026-11-20",
+          },
+          {
+            name: "Zeta Inc",
+            status: "Healthy",
+            arr: 128400,
+            growth: 0.27,
+            renewal: "2027-01-12",
+          },
+          {
+            name: "Eta Oy",
+            status: "Healthy",
+            arr: 64000,
+            growth: 0.05,
+            renewal: "2027-02-08",
+          },
         ],
       });
-      DashboardKit.tabs("#tabs", {
+      K.list("#list", {
+        items: [
+          { label: "North", value: "€420k", href: "?region=north" },
+          { label: "West", value: "€310k", href: "?region=west" },
+          { label: "South", value: "€260k", href: "?region=south" },
+        ],
+      });
+      K.kpi("#kpi", {
+        label: "Revenue",
+        value: "€1.2M",
+        delta: "+12%",
+        direction: "up",
+      });
+      K.kpi("#kpi2", {
+        label: "Tickets",
+        value: 12840,
+        delta: "-3%",
+        direction: "down",
+      });
+      K.tabs("#tabs", {
         tabs: [
           { id: "summary", label: "Summary", content: "Quarter summary" },
           { id: "notes", label: "Notes", content: "Forecast notes" },
         ],
       });
-      DashboardKit.md(
+      K.md(
         "#markdown",
-        "## Safe markdown\n\n**Bold**, links, and lists are supported."
+        "## Safe markdown\n\n**Bold**, `code`, links, and lists are supported."
       );
+
+      const days = ["Mon", "Tue", "Wed", "Thu", "Fri"];
+      const people = ["Ana", "Ben", "Chloé", "Dev"];
+      const skewed = [
+        [0, 0, 2],
+        [1, 0, 4],
+        [2, 0, 1],
+        [3, 0, 0],
+        [4, 0, 3],
+        [0, 1, 8],
+        [1, 1, 3],
+        [2, 1, 96],
+        [3, 1, 6],
+        [4, 1, 2],
+        [0, 2, 0],
+        [1, 2, 5],
+        [2, 2, 12],
+        [3, 2, 1],
+        [4, 2, 0],
+        [0, 3, 7],
+        [1, 3, 2],
+        [2, 3, 4],
+        [3, 3, 18],
+        [4, 3, 3],
+      ];
       const charts = [
-        [
-          "bar",
-          {
-            xAxis: { type: "category", data: ["A", "B"] },
-            yAxis: {},
-            series: [{ type: "bar", data: [3, 7] }],
-          },
-        ],
-        [
-          "line",
-          {
-            xAxis: { type: "category", data: ["A", "B"] },
-            yAxis: {},
-            series: [{ type: "line", data: [3, 7] }],
-          },
-        ],
         [
           "donut",
           {
+            legend: {},
             series: [
               {
                 type: "pie",
-                radius: ["35%", "55%"],
+                radius: ["45%", "65%"],
+                label: { show: false },
                 data: [
                   { value: 3, name: "A" },
                   { value: 7, name: "B" },
+                  { value: 4, name: "C" },
                 ],
               },
             ],
@@ -115,20 +341,12 @@
         ],
         ["gauge", { series: [{ type: "gauge", data: [{ value: 72 }] }] }],
         [
-          "heatmap",
+          "heatmap (skewed)",
           {
-            xAxis: { type: "category", data: ["A", "B"] },
-            yAxis: { type: "category", data: ["X", "Y"] },
-            visualMap: { min: 0, max: 9 },
-            series: [
-              {
-                type: "heatmap",
-                data: [
-                  [0, 0, 3],
-                  [1, 1, 8],
-                ],
-              },
-            ],
+            xAxis: { type: "category", data: days },
+            yAxis: { type: "category", data: people },
+            visualMap: { min: 0, max: 96, show: false },
+            series: [{ type: "heatmap", data: skewed, label: { show: true } }],
           },
         ],
         [
@@ -139,6 +357,7 @@
                 type: "funnel",
                 data: [
                   { value: 100, name: "Visit" },
+                  { value: 60, name: "Trial" },
                   { value: 45, name: "Buy" },
                 ],
               },
@@ -163,15 +382,17 @@
         ],
       ];
       const host = document.querySelector("#charts");
-      const chartTargets = charts.map(([name, option]) => {
+      charts.forEach(([name, option]) => {
         const section = document.createElement("section");
-        section.innerHTML = "<h2>" + name + '</h2><div class="dk-chart"></div>';
+        const title = document.createElement("h3");
+        title.textContent = name;
+        const target = document.createElement("div");
+        target.className = "dk-chart";
+        target.style.height = "260px";
+        section.append(title, target);
         host.append(section);
-        return [section.lastChild, option];
+        K.chart(target, option);
       });
-      chartTargets.forEach(([target, option]) =>
-        DashboardKit.chart(target, option)
-      );
     </script>
   </body>
 </html>

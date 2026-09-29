@@ -16,7 +16,10 @@ import {
 import { DashboardRegistry } from "./store.js";
 import { executeDashboardQueries } from "./sql.js";
 
-const ASSET_VERSION = "v1";
+// Versions are immutable-cached; bump when the kit changes. Older versions keep
+// resolving to the current (backward-compatible) files.
+const ASSET_VERSION = "v2";
+const ASSET_VERSIONS = new Set(["v1", ASSET_VERSION]);
 const IMMUTABLE_CACHE = "public, max-age=31536000, immutable";
 const THEME_MAPPING = `:root:root:not([data-yoplai-dashboard-theme]) {
   --dk-bg: var(--bg-base);
@@ -100,7 +103,8 @@ export function createDashboardAssetRoutes(
     c.header("Cache-Control", "public, max-age=300");
     return c.redirect(`/d-assets/${ASSET_VERSION}/${asset}`, 302);
   });
-  routes.get(`/${ASSET_VERSION}/:asset`, async (c) => {
+  routes.get("/:version/:asset", async (c) => {
+    if (!ASSET_VERSIONS.has(c.req.param("version"))) return c.notFound();
     const asset = ASSETS[c.req.param("asset") as keyof typeof ASSETS];
     if (!asset) return c.notFound();
     const body = await fs.readFile(asset.url);

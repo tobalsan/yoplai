@@ -709,21 +709,23 @@ describe("dashboard kit assets", () => {
 
   it("serves only fixed versioned public assets with immutable caching", async () => {
     const routes = createDashboardAssetRoutes(() => config);
-    const response = await routes.request("/v1/kit.js");
+    const response = await routes.request("/v2/kit.js");
     expect(response.status).toBe(200);
     expect(response.headers.get("cache-control")).toBe(
       "public, max-age=31536000, immutable"
     );
     expect(response.headers.get("x-content-type-options")).toBe("nosniff");
     expect(await response.text()).toContain("DashboardKit");
-    expect((await routes.request("/v2/kit.js")).status).toBe(404);
-    expect((await routes.request("/v1/../routes.ts")).status).toBe(404);
+    expect((await routes.request("/v1/kit.js")).status).toBe(200);
+    expect((await routes.request("/v3/kit.js")).status).toBe(404);
+    expect((await routes.request("/v2/../routes.ts")).status).toBe(404);
+    expect((await routes.request("/v2/routes.ts")).status).toBe(404);
     const alias = await routes.request("/kit.js");
     expect(alias.status).toBe(302);
-    expect(alias.headers.get("location")).toBe("/d-assets/v1/kit.js");
+    expect(alias.headers.get("location")).toBe("/d-assets/v2/kit.js");
     expect(alias.headers.get("cache-control")).toBe("public, max-age=300");
     expect((await routes.request("/kit.css")).headers.get("location")).toBe(
-      "/d-assets/v1/kit.css"
+      "/d-assets/v2/kit.css"
     );
     expect((await routes.request("/echarts.js")).status).toBe(404);
   });
@@ -777,6 +779,84 @@ describe("dashboard kit assets", () => {
         ]
       )
     ).toBe('"Name","Value"\r\n"A ""quote""","1,200"');
+  });
+
+  it("formats values, caps tables, and degrades charts without ECharts", async () => {
+    const routes = createDashboardAssetRoutes(() => config);
+    const dom = new JSDOM(
+      "<div id='kpis'></div><div id='table'></div><div id='chart'></div><div id='callout'></div>",
+      { runScripts: "outside-only", url: "https://yoplai.test" }
+    );
+    dom.window.eval(await (await routes.request("/v2/kit.js")).text());
+    const kit = (
+      dom.window as unknown as {
+        DashboardKit: {
+          locale?: string;
+          format(value: unknown, spec?: string): string;
+          kpis(target: string, options: unknown): void;
+          table(target: string, options: unknown): void;
+          callout(target: string, options: unknown): void;
+          chart(target: string, option: unknown): unknown;
+        };
+      }
+    ).DashboardKit;
+    const $ = (selector: string) => dom.window.document.querySelector(selector);
+    const $$ = (selector: string) =>
+      dom.window.document.querySelectorAll(selector);
+    kit.locale = "en-US";
+    expect(kit.format(4507354, "number")).toBe("4,507,354");
+    expect(kit.format(4507354, "compact:EUR")).toBe("€4.5M");
+    expect(kit.format(1200, "currency:EUR")).toBe("€1,200");
+    expect(kit.format(0.125, "percent")).toBe("12.5%");
+    expect(kit.format("2026-03-06", "date")).toBe("Mar 6, 2026");
+    expect(kit.format(null, "number")).toBe("—");
+
+    kit.kpis("#kpis", {
+      items: [
+        { label: "Pipeline", value: 1279 },
+        {
+          label: "Churn",
+          value: 0.02,
+          format: "percent",
+          delta: 0.01,
+          good: "down",
+        },
+        { label: "Legacy", value: "€1.2M", delta: "+12%", direction: "up" },
+      ],
+    });
+    expect($$(".dk-kpis .dk-kpi")).toHaveLength(3);
+    expect($(".dk-value")?.textContent).toBe("1,279");
+    expect($$(".dk-delta")[0].getAttribute("data-sentiment")).toBe("negative");
+    expect($$(".dk-delta")[1].getAttribute("data-direction")).toBe("up");
+
+    kit.table("#table", {
+      limit: 2,
+      columns: [
+        { key: "name", href: (row: { name: string }) => `?id=${row.name}` },
+        { key: "state", pill: { Late: "critical" } },
+        { key: "arr", format: "currency:EUR" },
+      ],
+      rows: ["a", "b", "c"].map((name, i) => ({
+        name,
+        state: "Late",
+        arr: i * 1000,
+      })),
+    });
+    expect($$("#table tbody tr")).toHaveLength(2);
+    expect($("#table .dk-pill")?.getAttribute("data-tone")).toBe("critical");
+    expect($("#table td.dk-num")?.textContent).toBe("€0");
+    expect($("#table tbody a")?.getAttribute("href")).toBe("?id=a");
+    ($("#table .dk-link-button") as unknown as { click(): void }).click();
+    expect($$("#table tbody tr")).toHaveLength(3);
+
+    kit.callout("#callout", {
+      title: "Needs attention",
+      items: [{ text: "x", tone: "warn" }],
+    });
+    expect($(".dk-callout")?.getAttribute("data-tone")).toBe("warn");
+
+    expect(kit.chart("#chart", { series: [] })).toBeNull();
+    expect($("#chart .dk-notice")?.textContent).toContain("echarts.js");
   });
 });
 
@@ -1023,7 +1103,13 @@ describe("dashboard SQL", () => {
   it("stamps data-theme=light on <html> from a light theme cookie", () => {
     const html = injectDashboardRuntime(
       "<html><head></head><body>Dashboard</body></html>",
-      { data: {}, viewer: { email: null, name: null }, params: {}, links: {}, errors: [] },
+      {
+        data: {},
+        viewer: { email: null, name: null },
+        params: {},
+        links: {},
+        errors: [],
+      },
       "light"
     );
     expect(html).toMatch(/<html[^>]*\bdata-theme="light"/);
@@ -1033,7 +1119,13 @@ describe("dashboard SQL", () => {
   it("stamps data-theme=dark on <html> from a dark theme cookie", () => {
     const html = injectDashboardRuntime(
       "<html><head></head><body>Dashboard</body></html>",
-      { data: {}, viewer: { email: null, name: null }, params: {}, links: {}, errors: [] },
+      {
+        data: {},
+        viewer: { email: null, name: null },
+        params: {},
+        links: {},
+        errors: [],
+      },
       "dark"
     );
     expect(html).toMatch(/<html[^>]*\bdata-theme="dark"/);
@@ -1043,7 +1135,13 @@ describe("dashboard SQL", () => {
   it("does not touch an explicit data-theme already set by the agent", () => {
     const html = injectDashboardRuntime(
       '<html data-theme="dark"><head></head><body>Dashboard</body></html>',
-      { data: {}, viewer: { email: null, name: null }, params: {}, links: {}, errors: [] },
+      {
+        data: {},
+        viewer: { email: null, name: null },
+        params: {},
+        links: {},
+        errors: [],
+      },
       "light"
     );
     expect(html.match(/data-theme="/g)).toHaveLength(1);
@@ -1054,7 +1152,13 @@ describe("dashboard SQL", () => {
   it("falls back to a prefers-color-scheme script when the cookie is missing or invalid", () => {
     const missing = injectDashboardRuntime(
       "<html><head></head><body>Dashboard</body></html>",
-      { data: {}, viewer: { email: null, name: null }, params: {}, links: {}, errors: [] },
+      {
+        data: {},
+        viewer: { email: null, name: null },
+        params: {},
+        links: {},
+        errors: [],
+      },
       null
     );
     expect(missing).toContain("prefers-color-scheme: light");
@@ -1062,7 +1166,13 @@ describe("dashboard SQL", () => {
 
     const invalid = injectDashboardRuntime(
       "<html><head></head><body>Dashboard</body></html>",
-      { data: {}, viewer: { email: null, name: null }, params: {}, links: {}, errors: [] },
+      {
+        data: {},
+        viewer: { email: null, name: null },
+        params: {},
+        links: {},
+        errors: [],
+      },
       "purple" as never
     );
     expect(invalid).toContain("prefers-color-scheme: light");
