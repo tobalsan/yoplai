@@ -172,9 +172,14 @@ export async function buildCapabilityCatalog(
     if (extension.factory || seen.has(extension.id)) continue;
     seen.add(extension.id);
     const tools = await discoveryTools(extension);
-    const settingsPath =
-      resolveAgentConfigRoute(extension.configRoute, caller.id) ??
-      `/agents/${encodeURIComponent(caller.id)}/extensions/${encodeURIComponent(extension.id)}/config`;
+    const configRoutePath = resolveAgentConfigRoute(
+      extension.configRoute,
+      caller.id
+    );
+    const detailsPath = `/agents/${encodeURIComponent(caller.id)}/extensions/${encodeURIComponent(extension.id)}`;
+    const settingsPath = configRoutePath ?? `${detailsPath}/config`;
+    const connectPath =
+      extension.oauth && !configRoutePath ? detailsPath : settingsPath;
     const enabledOnAgents = input.agents
       .filter((agent) => enabledForAgent(agent, extension.id))
       .map((agent) => agent.id)
@@ -204,8 +209,8 @@ export async function buildCapabilityCatalog(
         : { requiredSecrets: [...(extension.requiredSecrets ?? [])] }),
       ...(extension.oauth
         ? {
-            connectPath: settingsPath,
-            connectUrl: `${input.webBaseUrl}${settingsPath}`,
+            connectPath,
+            connectUrl: `${input.webBaseUrl}${connectPath}`,
           }
         : {}),
     });

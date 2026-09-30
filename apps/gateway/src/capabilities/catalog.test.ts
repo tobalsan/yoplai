@@ -116,6 +116,26 @@ describe("buildCapabilityCatalog", () => {
     expect(catalog.map((entry) => entry.id)).not.toContain("internal");
   });
 
+  it("links OAuth without a bespoke route to extension details", async () => {
+    const catalog = await buildCapabilityCatalog({
+      callingAgentId: "support",
+      webBaseUrl: "https://cloudi-fi.example",
+      agents: [agent("support")],
+      extensions: [
+        extension({
+          id: "gmail",
+          oauth: { provider: "google", scopes: ["gmail.modify"] },
+        }),
+      ],
+    });
+
+    expect(catalog[0]).toMatchObject({
+      settingsPath: "/agents/support/extensions/gmail/config",
+      connectPath: "/agents/support/extensions/gmail",
+      connectUrl: "https://cloudi-fi.example/agents/support/extensions/gmail",
+    });
+  });
+
   it("derives the MCP auth hint from server config shape", async () => {
     const catalog = await buildCapabilityCatalog({
       callingAgentId: "support",
@@ -184,9 +204,9 @@ describe("resolveWebBaseUrl", () => {
     expect(resolveWebBaseUrl({} as GatewayConfig)).toBe(
       "http://localhost:3000"
     );
-    expect(
-      resolveWebBaseUrl({ ui: { port: 4100 } } as GatewayConfig)
-    ).toBe("http://localhost:4100");
+    expect(resolveWebBaseUrl({ ui: { port: 4100 } } as GatewayConfig)).toBe(
+      "http://localhost:4100"
+    );
   });
 });
 

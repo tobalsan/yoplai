@@ -1,6 +1,7 @@
 import { createMemo, createResource, Show } from "solid-js";
 import { A, useParams } from "@solidjs/router";
 import { autoFormPath, fetchAgentExtensions } from "../api/extensions";
+import { OAuthConnectCard } from "../components/OAuthConnectCard";
 
 /**
  * Read-only details page for one extension on one agent, reached by clicking
@@ -70,6 +71,17 @@ export function ExtensionDetails() {
               <h1 class="ext-details-name">{ext().displayName}</h1>
               <p class="ext-details-desc">{ext().description}</p>
 
+              <Show when={ext().oauth}>
+                {(oauth) => (
+                  <OAuthConnectCard
+                    agentId={params.agentId}
+                    provider={oauth().provider}
+                    scopes={oauth().scopes}
+                    label={ext().displayName}
+                  />
+                )}
+              </Show>
+
               <Show
                 when={
                   ext().tier === "auto-form"
@@ -79,10 +91,12 @@ export function ExtensionDetails() {
                       : null
                 }
                 fallback={
-                  <div class="ext-details-settings">
-                    Settings for this extension aren't available yet — this
-                    extension hasn't adopted the configuration contract.
-                  </div>
+                  <Show when={!ext().oauth}>
+                    <div class="ext-details-settings">
+                      Settings for this extension aren't available yet — this
+                      extension hasn't adopted the configuration contract.
+                    </div>
+                  </Show>
                 }
               >
                 {(href) => (

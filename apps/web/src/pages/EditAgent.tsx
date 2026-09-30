@@ -227,6 +227,8 @@ export function EditAgent() {
       mutateExtensions(next);
       if (enabling && ext.tier === "bespoke-route" && ext.configRoutePath) {
         void navigate(ext.configRoutePath);
+      } else if (enabling && ext.oauth) {
+        void navigate(detailsPath(params.agentId, ext.id));
       } else if (enabling && ext.tier === "auto-form") {
         void navigate(autoFormPath(params.agentId, ext.id));
       }

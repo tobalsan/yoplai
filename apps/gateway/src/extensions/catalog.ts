@@ -122,6 +122,8 @@ export type ExtensionCatalogEntry = {
    * for `bespoke-route` extensions.
    */
   configRoutePath: string | null;
+  /** OAuth grant required by this extension, when applicable. */
+  oauth: { provider: string; scopes: string[] } | null;
   tier: ExtensionConfigTier;
   /**
    * Auto-detected `icon.svg`/`icon.png` from the extension's root directory,
@@ -224,6 +226,12 @@ function toCatalogEntry(
     advancedConfigFields: extension.advancedConfigFields ?? [],
     configValues: configValuesForAgent(agent, extension),
     configRoutePath,
+    oauth: extension.oauth
+      ? {
+          provider: extension.oauth.provider,
+          scopes: [...(extension.oauth.scopes ?? [])],
+        }
+      : null,
     tier: resolveTier(configRoutePath, configJsonSchema),
     iconDataUri: resolveIconDataUri(dir),
   };

@@ -22,6 +22,7 @@ export type ExtensionCatalogEntry = {
    * for `bespoke-route` extensions.
    */
   configRoutePath: string | null;
+  oauth: { provider: string; scopes: string[] } | null;
   tier: ExtensionConfigTier;
   /** Optional data: URI for the extension's icon, when the catalog provides one. */
   iconDataUri?: string;

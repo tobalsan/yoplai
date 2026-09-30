@@ -27,6 +27,7 @@ async function writeExternalExtension(
     requiredSecrets?: string;
     advancedConfigFields?: string;
     configRoute?: string;
+    oauth?: string;
     factory?: boolean;
     validateAgentConfig?: string;
   } = {}
@@ -55,6 +56,7 @@ async function writeExternalExtension(
         ? `  advancedConfigFields: ${body.advancedConfigFields},`
         : "",
       body.configRoute ? `  configRoute: ${body.configRoute},` : "",
+      body.oauth ? `  oauth: ${body.oauth},` : "",
       body.validateAgentConfig
         ? `  validateAgentConfig: ${body.validateAgentConfig},`
         : "",
@@ -140,6 +142,19 @@ describe("buildExtensionCatalog", () => {
     expect(new Set(allIds).size).toBe(allIds.length);
   });
 
+  it("exposes an extension OAuth requirement", async () => {
+    await writeExternalExtension(root, "oauth-tool", {
+      oauth: `{ provider: "google", scopes: ["scope.one"] }`,
+    });
+    const agent = makeAgent();
+    const catalog = await buildExtensionCatalog(configWith(agent, root), agent);
+
+    expect(catalog.find((entry) => entry.id === "oauth-tool")?.oauth).toEqual({
+      provider: "google",
+      scopes: ["scope.one"],
+    });
+  });
+
   it("includes runtime-scanned external extensions alongside built-ins", async () => {
     await writeExternalExtension(root, "acme-tool");
     const agent = makeAgent();
@@ -215,14 +230,17 @@ describe("buildExtensionCatalog", () => {
       { slack: { token: "x", appToken: "x" } }
     );
 
-    const disabledEntry = (await buildExtensionCatalog(configWith(disabled, root), disabled)).find(
-      (entry) => entry.id === "slack"
-    );
-    const enabledEntry = (await buildExtensionCatalog(configWith(enabled, root), enabled)).find(
-      (entry) => entry.id === "slack"
-    );
+    const disabledEntry = (
+      await buildExtensionCatalog(configWith(disabled, root), disabled)
+    ).find((entry) => entry.id === "slack");
+    const enabledEntry = (
+      await buildExtensionCatalog(configWith(enabled, root), enabled)
+    ).find((entry) => entry.id === "slack");
 
-    expect(disabledEntry).toMatchObject({ enabled: false, managedAtRoot: false });
+    expect(disabledEntry).toMatchObject({
+      enabled: false,
+      managedAtRoot: false,
+    });
     expect(enabledEntry).toMatchObject({ enabled: true, managedAtRoot: false });
   });
 
@@ -234,20 +252,27 @@ describe("buildExtensionCatalog", () => {
     });
     const neither = makeAgent();
 
-    const emptyEntry = (await buildExtensionCatalog(
-      configWith(emptyWebhooks, root),
-      emptyWebhooks
-    )).find((entry) => entry.id === "webhooks");
-    const populatedEntry = (await buildExtensionCatalog(
-      configWith(populatedWebhooks, root),
-      populatedWebhooks
-    )).find((entry) => entry.id === "webhooks");
-    const noRootEntry = (await buildExtensionCatalog(configWith(neither, root), neither)).find(
-      (entry) => entry.id === "no-root"
-    );
+    const emptyEntry = (
+      await buildExtensionCatalog(
+        configWith(emptyWebhooks, root),
+        emptyWebhooks
+      )
+    ).find((entry) => entry.id === "webhooks");
+    const populatedEntry = (
+      await buildExtensionCatalog(
+        configWith(populatedWebhooks, root),
+        populatedWebhooks
+      )
+    ).find((entry) => entry.id === "webhooks");
+    const noRootEntry = (
+      await buildExtensionCatalog(configWith(neither, root), neither)
+    ).find((entry) => entry.id === "no-root");
 
     expect(emptyEntry).toMatchObject({ enabled: false, managedAtRoot: false });
-    expect(populatedEntry).toMatchObject({ enabled: true, managedAtRoot: true });
+    expect(populatedEntry).toMatchObject({
+      enabled: true,
+      managedAtRoot: true,
+    });
     expect(noRootEntry).toMatchObject({ enabled: false, managedAtRoot: false });
   });
 

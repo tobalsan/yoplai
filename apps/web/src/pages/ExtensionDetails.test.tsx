@@ -3,18 +3,23 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { render } from "solid-js/web";
 import type { ExtensionCatalogEntry } from "../api/extensions";
 
-const { fetchAgentExtensionsMock, useSessionMock, useParamsMock, navigateMock } =
-  vi.hoisted(() => ({
-    fetchAgentExtensionsMock: vi.fn(),
-    useSessionMock: vi.fn(),
-    useParamsMock: vi.fn(),
-    navigateMock: vi.fn(),
-  }));
+const {
+  fetchAgentExtensionsMock,
+  useSessionMock,
+  useParamsMock,
+  navigateMock,
+} = vi.hoisted(() => ({
+  fetchAgentExtensionsMock: vi.fn(),
+  useSessionMock: vi.fn(),
+  useParamsMock: vi.fn(),
+  navigateMock: vi.fn(),
+}));
 
 vi.mock("../api/extensions", async () => {
-  const actual = await vi.importActual<typeof import("../api/extensions")>(
-    "../api/extensions"
-  );
+  const actual =
+    await vi.importActual<typeof import("../api/extensions")>(
+      "../api/extensions"
+    );
   return {
     ...actual,
     fetchAgentExtensions: fetchAgentExtensionsMock,
@@ -37,7 +42,9 @@ vi.mock("@solidjs/router", () => ({
 
 import { ExtensionDetails } from "./ExtensionDetails";
 
-function entry(partial: Partial<ExtensionCatalogEntry> = {}): ExtensionCatalogEntry {
+function entry(
+  partial: Partial<ExtensionCatalogEntry> = {}
+): ExtensionCatalogEntry {
   return {
     id: "exa",
     displayName: "Exa",
@@ -53,6 +60,7 @@ function entry(partial: Partial<ExtensionCatalogEntry> = {}): ExtensionCatalogEn
     advancedConfigFields: [],
     configValues: {},
     configRoutePath: null,
+    oauth: null,
     tier: "toggle-only",
     ...partial,
   };
@@ -153,9 +161,82 @@ describe("ExtensionDetails", () => {
     );
   });
 
+  it("shows Connected when the OAuth grant contains every required scope", async () => {
+    setSession("admin");
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          state: "connected",
+          connected: true,
+          provider: "google",
+          scopes: ["gmail.modify", "userinfo.email"],
+        }),
+      })
+    );
+    fetchAgentExtensionsMock.mockResolvedValue([
+      entry({
+        oauth: {
+          provider: "google",
+          scopes: ["gmail.modify", "userinfo.email"],
+        },
+      }),
+    ]);
+    await mount("scribe", "exa");
+
+    expect(container.querySelector(".oauth-badge")?.textContent).toBe(
+      "Connected"
+    );
+    vi.unstubAllGlobals();
+  });
+
+  it("renders OAuth grant state and includes required scopes in authorize URL", async () => {
+    setSession("admin");
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        state: "connected",
+        connected: true,
+        provider: "google",
+        account: "user@example.com",
+        scopes: ["openid"],
+      }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const openMock = vi.spyOn(window, "open").mockImplementation(() => null);
+    fetchAgentExtensionsMock.mockResolvedValue([
+      entry({
+        id: "gmail",
+        displayName: "Gmail",
+        oauth: {
+          provider: "google",
+          scopes: ["gmail.modify", "userinfo.email"],
+        },
+      }),
+    ]);
+    await mount("scribe", "gmail");
+
+    expect(container.textContent).toContain("Not granted");
+    expect(container.querySelector(".ext-details-settings")).toBeNull();
+    const grant = Array.from(container.querySelectorAll("button")).find(
+      (button) => button.textContent?.includes("Grant Gmail access")
+    );
+    grant?.click();
+    expect(openMock).toHaveBeenCalledWith(
+      "/api/oauth/google/authorize?agent=scribe&scopes=gmail.modify%2Cuserinfo.email",
+      "yoplai-oauth",
+      "width=520,height=640"
+    );
+    openMock.mockRestore();
+    vi.unstubAllGlobals();
+  });
+
   it("renders the placeholder for toggle-only tier", async () => {
     setSession("admin");
-    fetchAgentExtensionsMock.mockResolvedValue([entry({ tier: "toggle-only" })]);
+    fetchAgentExtensionsMock.mockResolvedValue([
+      entry({ tier: "toggle-only" }),
+    ]);
     await mount("scribe", "exa");
 
     expect(

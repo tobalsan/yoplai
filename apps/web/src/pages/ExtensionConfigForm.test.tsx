@@ -66,6 +66,7 @@ function exaEntry(
     advancedConfigFields: [],
     configValues: {},
     configRoutePath: null,
+    oauth: null,
     tier: "auto-form",
     ...partial,
   };
