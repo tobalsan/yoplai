@@ -67,6 +67,12 @@ configured authentication behavior.
 
 Host OAuth framework manages provider authorize/callback/status/disconnect routes per agent. Extensions declare required provider/scopes and receive refreshed access token through runtime context.
 
+In the web connection card, choose **Just me** to use your Google account only for your own requests, or **Whole team** to share it with everyone on that agent. Personal connections require a signed-in Yoplai user (multi-user mode). At each tool call, the gateway selects that requester's personal connection, falls back to the team connection if none exists, or returns a connect link. It never uses another user's personal connection. A revoked personal grant requires reconnecting rather than silently switching accounts.
+
+The connection card shows and disconnects the selected scope. Google extensions on the same agent reuse that scoped Google connection. Existing agent-only connections are read as team connections and move to encrypted scoped records on their next save; current agents keep their access. Runs without a Yoplai user continue to use team credentials.
+
+`GET /api/oauth/:provider/authorize?agent=<id>` asks for the scope; passing `scope=personal` or `scope=team` starts authorization directly. Personal ownership comes from the authenticated session, never a caller-supplied user ID. Status and disconnect accept the same scope; status without it reports the requester's effective connection.
+
 Tokens are stored under `$YOPLAI_HOME/oauth/`. Persistence requires `oauth.encryptionKey` and fails closed rather than writing plaintext:
 
 ```json

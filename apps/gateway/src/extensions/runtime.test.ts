@@ -162,6 +162,38 @@ describe("ExtensionRuntime", () => {
     );
   });
 
+  it("passes requester identity into extension hooks and tool execution", async () => {
+    let promptUserId: string | undefined;
+    let toolUserId: string | undefined;
+    const runtime = new ExtensionRuntime();
+    runtime.load([
+      extension({
+        id: "identity",
+        getSystemPromptContributions: (_agent, context) => {
+          promptUserId = context?.userId;
+          return "identity prompt";
+        },
+        getAgentTools: (_agent, context) => {
+          expect(context?.userId).toBe("user-1");
+          return [{
+            name: "identity_run",
+            description: "Run identity",
+            parameters: {},
+            execute: async (_args, toolContext) => {
+              toolUserId = toolContext.userId;
+            },
+          }];
+        },
+      }),
+    ]);
+
+    await runtime.getPromptContributions(agent, config, "user-1");
+    await runtime.executeTool(agent, "identity_run", {}, config, undefined, "user-1");
+
+    expect(promptUserId).toBe("user-1");
+    expect(toolUserId).toBe("user-1");
+  });
+
   it("rejects duplicate tool names", async () => {
     const runtime = new ExtensionRuntime();
     runtime.load([

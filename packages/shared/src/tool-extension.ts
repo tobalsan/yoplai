@@ -55,7 +55,8 @@ export interface ToolExtensionDefinition {
   /**
    * Declares that this extension needs an OAuth token. When set, `createTools`
    * receives `config.oauth` with a fresh access token (or a not-connected
-   * signal) resolved at tool-build time by the host.
+   * signal) from the host. The host refreshes this value when building tools
+   * and resolves it again for each call using that call's requester identity.
    */
   oauth?: OAuthRequirement;
   createTools(config: ResolvedToolExtensionConfig): ToolExtensionTool[];
@@ -177,7 +178,7 @@ async function resolveOAuthForDefinition(
       message: `OAuth provider "${definition.oauth.provider}" is not configured on this host.`,
     };
   }
-  return context.resolveOAuth(agent, definition.oauth);
+  return context.resolveOAuth(agent, definition.oauth, context.userId);
 }
 
 function validateToolExtensionAgentConfigs(
@@ -325,13 +326,32 @@ export function defineToolExtension(
         agent,
         context
       );
-      return definition.createTools(resolved).map((tool) => ({
+      const tools = definition.createTools(resolved);
+      return tools.map((tool) => ({
         name: getMountedToolName(definition, tool.name),
         description: tool.description,
         parameters: zodToJsonSchema(tool.parameters, {
           $refStrategy: "none",
         }) as Record<string, unknown>,
-        execute: (params, context) => tool.execute(params, context),
+        execute: async (params, toolContext) => {
+          if (!definition.oauth || !context.resolveOAuth) {
+            return tool.execute(params, toolContext);
+          }
+          const oauth = await context.resolveOAuth(
+            agent,
+            definition.oauth,
+            toolContext.userId
+          );
+          const callTimeTool = definition
+            .createTools({ ...resolved, oauth })
+            .find((candidate) => candidate.name === tool.name);
+          if (!callTimeTool) {
+            throw new Error(
+              `OAuth tool "${getMountedToolName(definition, tool.name)}" is no longer available`
+            );
+          }
+          return callTimeTool.execute(params, toolContext);
+        },
       }));
     },
   };

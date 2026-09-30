@@ -1356,12 +1356,14 @@ export type ExtensionAgentTool = {
  */
 export type OAuthTokenResolver = (
   agent: AgentConfig,
-  requirement: import("./oauth/types.js").OAuthRequirement
+  requirement: import("./oauth/types.js").OAuthRequirement,
+  userId?: string
 ) => Promise<import("./oauth/types.js").ResolvedOAuth>;
 
 export type ExtensionHookContext = {
   config: GatewayConfig;
   env?: Record<string, string>;
+  userId?: string;
   resolveOAuth?: OAuthTokenResolver;
 };
 

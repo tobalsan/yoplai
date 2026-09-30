@@ -108,8 +108,13 @@ async function createPiExtensionTools(
   const config = loadConfig();
   const env = resolveAgentEnv(agent, config);
   const tools = params.extensionRuntime
-    ? await getExtensionAgentTools(agent, config, params.extensionRuntime)
-    : await getExtensionAgentTools(agent, config);
+    ? await getExtensionAgentTools(
+        agent,
+        config,
+        params.extensionRuntime,
+        params.userId
+      )
+    : await getExtensionAgentTools(agent, config, undefined, params.userId);
   const invisibleToolNames = new Set<string>();
   const piTools: AgentTool[] = tools.map((tool): AgentTool => {
     const name = claimAgentToolName(tool.name, usedToolNames);
@@ -400,9 +405,15 @@ export const piAdapter: SdkAdapter = {
         ? await getExtensionSystemPromptContributions(
             agent,
             loadConfig(),
-            params.extensionRuntime
+            params.extensionRuntime,
+            params.userId
           )
-        : await getExtensionSystemPromptContributions(agent);
+        : await getExtensionSystemPromptContributions(
+            agent,
+            loadConfig(),
+            undefined,
+            params.userId
+          );
       const renderedContext = params.context
         ? renderAgentContext(params.context)
         : "";

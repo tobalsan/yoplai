@@ -191,7 +191,7 @@ function contentDispositionFilename(filename: string): string {
 }
 
 // OAuth connect framework (authorize + callback + status/disconnect).
-api.route("/", createOAuthRoutes(undefined, callerHasAgentAccess));
+api.route("/", createOAuthRoutes(undefined, callerHasAgentAccess, getRequestUserId));
 
 api.get("/theme.css", async (c) => {
   const themePath = path.join(resolveHomeDir(), "theme.css");
