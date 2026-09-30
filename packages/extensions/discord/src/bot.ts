@@ -353,7 +353,9 @@ async function handleDiscordMessage(
     });
     return noteChain;
   };
-  const display = target.config.streamReplies === false
+  // Bots act on MESSAGE_CREATE only, so a reply streamed by edits reaches them
+  // half-written. Post bot-triggered replies once, complete.
+  const display = target.config.streamReplies === false || data.author.bot
     ? null
     : new StreamingDisplay(client, data.channel_id, async () => ack?.remove(), undefined, { messageId: data.id, mode: replyToMode }, async () => { if (toolNotes) await noteChain; }, async () => ack?.remove());
 
@@ -623,7 +625,7 @@ async function handleForumThreadOpening(
 
   let accumulatedText = "";
   let replyHandled = false;
-  const display = target.config.streamReplies === false ? null : new StreamingDisplay(client, threadId, async () => ack?.remove(), undefined, { messageId: data.id, mode: target.config.replyToMode ?? "off" }, async () => { if (toolNotes) await noteChain; }, async () => ack?.remove());
+  const display = target.config.streamReplies === false || data.author.bot ? null : new StreamingDisplay(client, threadId, async () => ack?.remove(), undefined, { messageId: data.id, mode: target.config.replyToMode ?? "off" }, async () => { if (toolNotes) await noteChain; }, async () => ack?.remove());
 
   // Opt-in tool-call visibility (ALG-292): batched one-line tool-call notes,
   // OFF by default. Posted as plain thread messages, serialized so the final
@@ -804,7 +806,7 @@ async function handleForumThreadReply(
   let accumulatedText = "";
   let replyHandled = false;
   let discordToolPostedToThread = false;
-  const display = target.config.streamReplies === false ? null : new StreamingDisplay(client, threadId, async () => ack?.remove(), undefined, { messageId: data.id, mode: target.config.replyToMode ?? "off" }, async () => { if (toolNotes) await noteChain; }, async () => ack?.remove());
+  const display = target.config.streamReplies === false || data.author.bot ? null : new StreamingDisplay(client, threadId, async () => ack?.remove(), undefined, { messageId: data.id, mode: target.config.replyToMode ?? "off" }, async () => { if (toolNotes) await noteChain; }, async () => ack?.remove());
 
   // Opt-in tool-call visibility (ALG-292): batched one-line tool-call notes,
   // OFF by default. Posted as plain thread messages, serialized so the final

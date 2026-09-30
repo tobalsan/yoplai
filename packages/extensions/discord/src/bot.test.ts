@@ -236,6 +236,37 @@ describe("Discord bot integration", () => {
         expect(humanParams).not.toHaveProperty("sender");
       });
 
+      it("posts bot-triggered replies once, complete, instead of streaming", async () => {
+        const patch = vi.fn(() => Promise.resolve());
+        (mockClient.rest as { patch?: unknown }).patch = patch;
+        const post = vi.fn((_route: string, _init?: unknown) => Promise.resolve({ id: "reply-1" }));
+        (mockClient.rest as { post: unknown }).post = post;
+        mockRunAgent.mockImplementation((params: { onEvent?: (event: unknown) => void }) => {
+          params.onEvent?.({ type: "text", data: "Hello" });
+          params.onEvent?.({ type: "text", data: " there, bot" });
+          params.onEvent?.({ type: "done", meta: { durationMs: 100 } });
+          return Promise.resolve({
+            payloads: [{ text: "Hello there, bot" }],
+            meta: { durationMs: 100, sessionId: "test-session" },
+          });
+        });
+        await createDiscordBot(createTestAgent({ allowBots: true }));
+        capturedHandlers.onReady?.({ user: { id: "bot-123", username: "TestBot" } }, mockClient);
+        await capturedHandlers.onMessage?.(botMessage(), mockClient);
+        await flushPromises();
+
+        const replies = post.mock.calls.filter(
+          ([route]) => route === "/channels/channel-1/messages"
+        );
+        expect(replies).toHaveLength(1);
+        expect(replies[0][1]).toEqual(
+          expect.objectContaining({
+            body: expect.objectContaining({ content: "Hello there, bot" }),
+          })
+        );
+        expect(patch).not.toHaveBeenCalled();
+      });
+
       it("does not record or trigger self and webhook messages", async () => {
         await createDiscordBot(createTestAgent({ allowBots: true }));
         capturedHandlers.onReady?.({ user: { id: "bot-123", username: "TestBot" } }, mockClient);

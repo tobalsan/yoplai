@@ -284,6 +284,8 @@ Set top-level `extensions.discord.allowBots` to `true` to accept messages from a
 
 To let agents reply to other bots, the agent-facing sender, recent history, and thread starter label each author as `name (<@id>)`, with `, bot` added for bots, and `discord.list_users` includes bot accounts flagged `bot: true`. Listing members requires the bot's Server Members Intent.
 
+Replies to runs triggered by another bot are never streamed: they are posted once, complete, whatever `streamReplies` says. Bots only read a message when it is first posted, not its later edits, so a streamed reply would reach them half-written, without the final text or even the @-mention. Replies to humans still follow `streamReplies`.
+
 Bot-triggered turns use Discord agent sender identity so gateway agent-loop limits apply. Human turns retain same session key and reset consecutive-agent counter.
 
 ### clearHistoryAfterReply
