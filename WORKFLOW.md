@@ -46,11 +46,38 @@ Keep that same tracker comment updated with progress, validation results, blocke
 
 ## Dependencies
 
-Before coding, inspect the current issue's dependencies in the configured tracker. Fetch each blocker and confirm it is in a terminal/completed state such as `Done`, `Closed`, `Cancelled`, `Canceled`, or `Duplicate`. If any blocker is incomplete, update the tracker comment with the blocker and stop without coding.
+Before coding, inspect the current issue's dependencies in the configured tracker. Fetch each blocker and confirm it is in a terminal/completed state such as `In Review` (PR open), `Done`, `Closed`, `Cancelled`, `Canceled`, or `Duplicate`. If any blocker is incomplete, update the tracker comment with the blocker and stop without coding. A blocker in `In Review` is satisfied: build on its open PR (see **Stacked PRs** below for issues in a project).
 
 For completed blockers, read their comments for prior workspace, branch, commit, and PR notes. If a completed dependency has an available workspace or branch, base your work on it so changes stack instead of diverging.
 
 When this issue is a sub-issue of a parent that has other sub-issues, stack on already-resolved sibling work. Use one PR per parent: if a PR already exists for the parent, push your work onto that branch and update that PR; if no PR exists yet, create one.
+
+When this issue belongs to a tracker **project** (and is not a sub-issue), follow **Stacked PRs** below instead: one PR per issue, stacked with the project's other PRs in the same repo.
+
+## Stacked PRs (issues in the same project)
+
+Issues in the same project ship as a **GitHub stack**: one PR per issue, chained so each PR only shows its own layer. Docs: https://docs.github.com/en/pull-requests/get-started/about-stacked-prs. Tool: the `gh stack` GitHub CLI extension (if `gh stack --help` fails, run `gh extension install github/gh-stack`). It uses the same `GH_TOKEN` as `gh` (see step 6 of the PR flow).
+
+What matters about stacks:
+- A stack is a **single linear chain** in **one repo**: the bottom PR targets `main`, every other PR targets the branch of the PR below it. No trees, no cross-repo, no forks.
+- Merging is **bottom-up only**. Merging a PR also merges every unmerged PR below it; the PRs above are retargeted automatically.
+- Required checks and reviews apply to every PR as if it targeted `main`.
+- A stack needs a linear history to merge. When a lower branch changes or `main` moves, the upper branches need a cascading rebase.
+
+Rules:
+1. **One stack per (project, repo).** The tracker's blocker graph can be a tree, but a stack is a line, so PRs are appended in the order issues are worked. Your blockers are `In Review` or `Done` before you are dispatched, so the current top of the stack always contains your unmerged blockers.
+2. **Find the stack.** Read the handoff comments / PR links of the project's other issues to find open PRs in your repo. In your workspace clone, run `gh stack checkout <one-of-those-pr-numbers>` then `gh stack view --json` to get the stack number and the top branch. If there is one open project PR but no stack yet, that PR's branch is the top. If no project PR is open in this repo (first issue, or everything already merged), you start from `origin/main`.
+3. **Branch from the top.** Create your `<issue-id>-<short-slug>` branch from the top branch (or `origin/main` when starting). This replaces the "base on `origin/main` if it advanced" rule in Workspace: to pick up newer `main`, run `gh stack sync` rather than leaving the stack.
+4. **Open the PR yourself, then link it.** Always `gh pr create --base <top-branch>` (or `--base main` when starting) with your own title (including the issue ID) and body, so `gh stack` never auto-generates a PR. Then:
+   - first PR in the repo for this project: nothing to link yet;
+   - second PR: `gh stack link <first-pr-number> <your-pr-number>` creates the stack;
+   - later PRs: `gh stack link <stack-number> <your-pr-number>` appends yours to the top.
+5. **Race check before linking.** Other workers in the same project may append at the same time. Right before linking, re-read the stack (`gh stack sync`, then `gh stack view --json`). If the top is no longer the branch you based on: `git rebase --onto <new-top> <old-base>`, rerun your tests, `git push --force-with-lease`, `gh pr edit --base <new-top>`, then link. After linking, confirm with `gh stack view --json` that your PR is on top and not flagged as needing a rebase.
+6. **Review only your layer.** Your reviewer subagent reviews `git diff <base-branch>...HEAD`, not the whole stack.
+7. **Lower layers belong to their own issue.** Don't patch a lower PR's code from your layer. If your issue *is* the fix for a lower PR (e.g. review feedback): `gh stack checkout <that-pr>`, commit on its branch, `gh stack rebase --upstack`, `gh stack push`. If a rebase conflicts and you can't resolve it confidently, `gh stack rebase --abort`, then move to `Needs Human`.
+8. **Non-interactive only.** Always pass explicit arguments. Never run interactive commands (`gh stack modify`, `gh stack switch`, bare `gh stack checkout` / `gh stack submit`); if you use `submit`, pass `--auto`. Never unstack or delete a stack.
+9. **Handoff comment** includes: PR URL, stack number, your position in the stack, and the branch directly below yours.
+10. **Merging** (whoever merges): bottom-up only, with `gh stack merge <pr-number> --yes --merge` (lands that PR and everything below it in one operation). Only do it when every PR up to that one is approved and green. Don't `gh pr merge` a mid-stack PR, and don't enable auto-merge (unsupported on stacks).
 
 ## Workspace
 
@@ -88,10 +115,10 @@ When code changes are needed:
 
 1. Make the focused change in the issue worktree.
 2. If the repo has a `CHANGELOG.md`, add a concise line for your change in the same PR under the `## [Unreleased]` section (Added/Changed/Fixed) — create that section at the top if it is missing. User-facing changes only; skip pure chore/test/docs churn.
-3. Spawn a reviewer subagent and ask it to review the code changes.
+3. Spawn a reviewer subagent and ask it to review the code changes (for a stacked PR: only your layer's diff against its base branch).
 4. Do not commit until the reviewer comes back clean.
 5. After a clean review, commit the work in the worktree.
-6. Create or update the GitHub PR using `gh`. Mint the token with the repo owner explicit — `GH_TOKEN=$(gh-app-token --owner <owner>)` (e.g. `--owner tobalsan` for `tobalsan/yoplai`). Do NOT call the credential helper without a repo path: with no owner it falls back to the default installation (a different account) and `gh pr create` fails with `Resource not accessible by integration`. `git push` works regardless because git supplies the owner automatically.
+6. Create or update the GitHub PR using `gh` (for project issues, with the base branch and stack linking from **Stacked PRs**). Mint the token with the repo owner explicit — `GH_TOKEN=$(gh-app-token --owner <owner>)` (e.g. `--owner tobalsan` for `tobalsan/yoplai`). Do NOT call the credential helper without a repo path: with no owner it falls back to the default installation (a different account) and `gh pr create` fails with `Resource not accessible by integration`. `git push` works regardless because git supplies the owner automatically.
 7. Link the PR to the current tracker issue when the configured tracker supports it; otherwise include the PR URL in the final tracker comment. If PR can't be linked directly, you must include the issue ID directly in the PR title.
 8. Post your final handoff comment.
 9. Move the issue to `In Review` **last** (see ordering rule below).
