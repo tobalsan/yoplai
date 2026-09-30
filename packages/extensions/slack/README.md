@@ -88,6 +88,11 @@ This is the path used by scheduled jobs.
 | `slack.canvas_edit` | Insert, replace, or delete canvas Markdown by section (`canvases.edit`). |
 | `slack.canvas_share` | Grant channels or users read or write access (`canvases.access.set`). |
 | `slack.canvas_delete` | Delete a canvas (`canvases.delete`). |
+| `slack.list_lists` | List Slack Lists visible to the bot, optionally by channel, with page-based paging (`files.list` with `types=list`; undocumented by Slack but verified live). |
+| `slack.list_read` | Read Slack List rows and, when non-empty, column IDs, names, types, and select choices needed for updates. |
+| `slack.list_update_cells` | Update up to 100 typed cells in Slack List rows. |
+| `slack.list_item_create` | Create a Slack List row with typed initial cell values. |
+| `slack.list_item_delete` | Delete a Slack List row. |
 
 ### Bound thread handoffs
 
@@ -150,11 +155,12 @@ The bot token needs scopes matching the features you use:
 | `slack.list_users` | `users:read` |
 | `slack.get_channel_history`, `slack.get_thread_replies` | `channels:history` (public), `groups:history` (private), `im:history` (DM), `mpim:history` (group DM) |
 | Canvas tools | `canvases:read`, `canvases:write`, `files:read` (reading content) |
+| Lists tools | `files:read` (`slack.list_lists`), `lists:read` (`slack.list_read`), `lists:write` (create, update, delete); Slack Lists require a paid workspace plan |
 | Socket Mode events | `app_mentions:read`, `channels:history`, `im:history`, `reactions:read`, plus an app-level token (`xapp-...`) for `connections:write` |
 
 `conversations.list` only returns private channels the bot is a member of.
 Missing scopes surface as a `missing_scope` error in the tool result.
-After adding Canvas scopes, reinstall the Slack app so the bot token receives them.
+After adding Canvas or Lists scopes, reinstall the Slack app so the bot token receives them.
 
 History and thread retrieval also require the bot to be a member of private channels and
 DMs; scopes alone do not grant access. Both tools accept

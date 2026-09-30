@@ -56,7 +56,7 @@ const canvasIdSchema = z.string().transform((value, ctx) => {
   if (!id) {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
-      message: "Expected a Slack canvas ID or URL.",
+      message: "Expected a Slack file ID or URL.",
     });
     return z.NEVER;
   }
@@ -121,11 +121,124 @@ const canvasShareSchema = z
     message: "channels or users is required.",
   });
 const canvasDeleteSchema = z.object({ canvas: canvasIdSchema });
+async function listSlackFiles(
+  list: NonNullable<NonNullable<SlackWebClient["files"]>["list"]>,
+  types: "canvas" | "list",
+  input: { channel?: string; limit: number; page?: number }
+) {
+  const result = await list({
+    types,
+    channel: input.channel,
+    count: input.limit,
+    page: input.page,
+  });
+  const page = result.paging?.page ?? input.page ?? 1;
+  const hasMore = page < (result.paging?.pages ?? page);
+  return {
+    files: (result.files ?? []).map((file) => ({
+      id: file.id,
+      title: file.title,
+      permalink: file.permalink,
+      created: file.created,
+      updated: file.updated,
+    })),
+    hasMore,
+    ...(hasMore ? { nextPage: page + 1 } : {}),
+  };
+}
+
 const canvasListSchema = z.object({
   channel: z.string().min(1).optional(),
   limit: z.number().int().positive().max(100).default(20),
   page: z.number().int().positive().optional(),
 });
+
+const listValueSchema = z.union([
+  z.object({ text: z.string() }).strict(),
+  z.object({ select: z.array(z.string()) }).strict(),
+  z.object({ user: z.array(z.string()) }).strict(),
+  z.object({ channel: z.array(z.string()) }).strict(),
+  z.object({ date: z.array(z.string()) }).strict(),
+  z.object({ email: z.array(z.string()) }).strict(),
+  z.object({ phone: z.array(z.string()) }).strict(),
+  z.object({ number: z.array(z.number()) }).strict(),
+  z.object({ rating: z.array(z.number()) }).strict(),
+  z.object({ checkbox: z.boolean() }).strict(),
+  z.object({ link: z.array(z.string()) }).strict(),
+]);
+const listReadSchema = z.object({
+  list: canvasIdSchema,
+  limit: z.number().int().min(1).max(1000).default(100),
+  cursor: z.string().min(1).optional(),
+  archived: z.boolean().optional(),
+});
+const listUpdateCellsSchema = z.object({
+  list: canvasIdSchema,
+  cells: z.array(z.object({
+    rowId: z.string().min(1),
+    columnId: z.string().min(1),
+    value: listValueSchema,
+  })).min(1).max(100),
+});
+const listItemCreateSchema = z.object({
+  list: canvasIdSchema,
+  cells: z.array(z.object({
+    columnId: z.string().min(1),
+    value: listValueSchema,
+  })).min(1),
+});
+const listItemDeleteSchema = z.object({
+  list: canvasIdSchema,
+  rowId: z.string().min(1),
+});
+
+type ListValue = z.infer<typeof listValueSchema>;
+
+const listValueParameters = {
+  type: "object",
+  properties: {
+    text: { type: "string" },
+    select: { type: "array", items: { type: "string" } },
+    user: { type: "array", items: { type: "string" } },
+    channel: { type: "array", items: { type: "string" } },
+    date: { type: "array", items: { type: "string" } },
+    email: { type: "array", items: { type: "string" } },
+    phone: { type: "array", items: { type: "string" } },
+    number: { type: "array", items: { type: "number" } },
+    rating: { type: "array", items: { type: "number" } },
+    checkbox: { type: "boolean" },
+    link: { type: "array", items: { type: "string" } },
+  },
+  minProperties: 1,
+  maxProperties: 1,
+  additionalProperties: false,
+} as const;
+
+function toListField(columnId: string, value: ListValue) {
+  if ("text" in value) {
+    return {
+      column_id: columnId,
+      rich_text: [{
+        type: "rich_text" as const,
+        elements: [{
+          type: "rich_text_section" as const,
+          elements: [{ type: "text" as const, text: value.text }],
+        }],
+      }],
+    };
+  }
+  if ("link" in value) {
+    return {
+      column_id: columnId,
+      link: value.link.map((url) => ({
+        original_url: url,
+        display_as_url: true,
+        display_name: url,
+      })),
+    };
+  }
+  return { column_id: columnId, ...value };
+}
 
 type SlackHistoryMessage = NonNullable<
   Awaited<ReturnType<SlackWebClient["conversations"]["history"]>>["messages"]
@@ -678,26 +791,8 @@ export function slackAgentTools(): ExtensionAgentTool[] {
           const client = resolveSlackClient(agent, config, env);
           if (!client?.files?.list)
             return toolError("Slack Canvas is not available for this agent.");
-          const result = await client.files.list({
-            types: "canvas",
-            channel: input.channel,
-            count: input.limit,
-            page: input.page,
-          });
-          const page = result.paging?.page ?? input.page ?? 1;
-          const hasMore = page < (result.paging?.pages ?? page);
-          return {
-            ok: true,
-            canvases: (result.files ?? []).map((file) => ({
-              id: file.id,
-              title: file.title,
-              permalink: file.permalink,
-              created: file.created,
-              updated: file.updated,
-            })),
-            hasMore,
-            ...(hasMore ? { nextPage: page + 1 } : {}),
-          };
+          const { files, ...paging } = await listSlackFiles(client.files.list, "canvas", input);
+          return { ok: true, canvases: files, ...paging };
         } catch (error) {
           return toolError(error);
         }
@@ -955,6 +1050,183 @@ export function slackAgentTools(): ExtensionAgentTool[] {
             return toolError("Slack Canvas is not available for this agent.");
           await client.canvases.delete({ canvas_id: input.canvas });
           return { ok: true, canvasId: input.canvas };
+        } catch (error) {
+          return toolError(error);
+        }
+      },
+    },
+    {
+      name: "slack.list_lists",
+      description:
+        "List Slack Lists visible to the bot (files.list types=list). Optionally filter by channel ID. Pass nextPage as page while hasMore is true. Use slack.list_read with the returned id.",
+      parameters: {
+        type: "object",
+        properties: {
+          channel: {
+            type: "string",
+            description: "Channel ID (C...) to list Slack Lists shared there.",
+          },
+          limit: {
+            type: "integer",
+            minimum: 1,
+            maximum: 100,
+            description: "Lists per page (default 20, max 100).",
+          },
+          page: { type: "integer", minimum: 1 },
+        },
+        additionalProperties: false,
+      },
+      async execute(args, { agent, config, env }) {
+        try {
+          const input = canvasListSchema.parse(args);
+          const client = resolveSlackClient(agent, config, env);
+          if (!client?.files?.list)
+            return toolError("Slack Lists is not available for this agent.");
+          const { files, ...paging } = await listSlackFiles(client.files.list, "list", input);
+          return { ok: true, lists: files, ...paging };
+        } catch (error) {
+          return toolError(error);
+        }
+      },
+    },
+    {
+      name: "slack.list_read",
+      description:
+        "Read rows from a Slack List. Columns include columnId and select choice values needed for updates; columns are unknown when the list is empty.",
+      parameters: {
+        type: "object",
+        properties: {
+          list: { type: "string", description: "List ID (F...) or Slack List URL." },
+          limit: { type: "integer", minimum: 1, maximum: 1000, default: 100 },
+          cursor: { type: "string" },
+          archived: { type: "boolean" },
+        },
+        required: ["list"],
+        additionalProperties: false,
+      },
+      async execute(args, { agent, config, env }) {
+        try {
+          const input = listReadSchema.parse(args);
+          const client = resolveSlackClient(agent, config, env);
+          if (!client?.slackLists?.items)
+            return toolError("Slack Lists is not available for this agent.");
+          const result = await client.slackLists.items.list({
+            list_id: input.list,
+            limit: input.limit,
+            cursor: input.cursor,
+            archived: input.archived,
+          });
+          const items = result.items ?? [];
+          const info = items.length
+            ? await client.slackLists.items.info({ list_id: input.list, id: items[0].id })
+            : undefined;
+          const schema = info?.list?.list_metadata?.schema ?? [];
+          const names = new Map(schema.map((column) => [column.id, column.name || column.key]));
+          const nextCursor = result.response_metadata?.next_cursor || undefined;
+          return {
+            ok: true,
+            listId: input.list,
+            ...(info?.list?.title ? { title: info.list.title } : {}),
+            ...(info?.list?.permalink ? { permalink: info.list.permalink } : {}),
+            columns: schema.map((column) => ({
+              id: column.id,
+              key: column.key,
+              name: column.name,
+              type: column.type,
+              ...(column.options?.choices
+                ? { choices: column.options.choices.map(({ value, label }) => ({ value, label })) }
+                : {}),
+            })),
+            rows: items.map((item) => ({
+              id: item.id,
+              cells: Object.fromEntries(item.fields.map((field) => [
+                names.get(field.column_id) ?? field.key ?? field.column_id,
+                field.text ?? field.value,
+              ])),
+            })),
+            ...(nextCursor ? { nextCursor } : {}),
+          };
+        } catch (error) {
+          return toolError(error);
+        }
+      },
+    },
+    {
+      name: "slack.list_update_cells",
+      description: "Update up to 100 cells in a Slack List using row and column IDs.",
+      parameters: {
+        type: "object",
+        properties: {
+          list: { type: "string" },
+          cells: {
+            type: "array", minItems: 1, maxItems: 100,
+            items: { type: "object", properties: { rowId: { type: "string" }, columnId: { type: "string" }, value: listValueParameters }, required: ["rowId", "columnId", "value"], additionalProperties: false },
+          },
+        },
+        required: ["list", "cells"],
+        additionalProperties: false,
+      },
+      async execute(args, { agent, config, env }) {
+        try {
+          const input = listUpdateCellsSchema.parse(args);
+          const client = resolveSlackClient(agent, config, env);
+          if (!client?.slackLists?.items)
+            return toolError("Slack Lists is not available for this agent.");
+          await client.slackLists.items.update({
+            list_id: input.list,
+            cells: input.cells.map((cell) => ({ row_id: cell.rowId, ...toListField(cell.columnId, cell.value) })),
+          });
+          return { ok: true, listId: input.list };
+        } catch (error) {
+          return toolError(error);
+        }
+      },
+    },
+    {
+      name: "slack.list_item_create",
+      description: "Create a row in a Slack List using column IDs and typed values.",
+      parameters: {
+        type: "object",
+        properties: {
+          list: { type: "string" },
+          cells: { type: "array", minItems: 1, items: { type: "object", properties: { columnId: { type: "string" }, value: listValueParameters }, required: ["columnId", "value"], additionalProperties: false } },
+        },
+        required: ["list", "cells"],
+        additionalProperties: false,
+      },
+      async execute(args, { agent, config, env }) {
+        try {
+          const input = listItemCreateSchema.parse(args);
+          const client = resolveSlackClient(agent, config, env);
+          if (!client?.slackLists?.items)
+            return toolError("Slack Lists is not available for this agent.");
+          const result = await client.slackLists.items.create({
+            list_id: input.list,
+            initial_fields: input.cells.map((cell) => toListField(cell.columnId, cell.value)),
+          });
+          return { ok: true, listId: input.list, rowId: result.item?.id };
+        } catch (error) {
+          return toolError(error);
+        }
+      },
+    },
+    {
+      name: "slack.list_item_delete",
+      description: "Delete a row from a Slack List.",
+      parameters: {
+        type: "object",
+        properties: { list: { type: "string" }, rowId: { type: "string" } },
+        required: ["list", "rowId"],
+        additionalProperties: false,
+      },
+      async execute(args, { agent, config, env }) {
+        try {
+          const input = listItemDeleteSchema.parse(args);
+          const client = resolveSlackClient(agent, config, env);
+          if (!client?.slackLists?.items)
+            return toolError("Slack Lists is not available for this agent.");
+          await client.slackLists.items.delete({ list_id: input.list, id: input.rowId });
+          return { ok: true, listId: input.list, rowId: input.rowId };
         } catch (error) {
           return toolError(error);
         }

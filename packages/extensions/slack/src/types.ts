@@ -141,6 +141,53 @@ export type SlackWebClient = {
       }): Promise<unknown>;
     };
   };
+  slackLists?: {
+    items: {
+      list(params: {
+        list_id: string;
+        limit?: number;
+        cursor?: string;
+        archived?: boolean;
+      }): Promise<{
+        items?: Array<{
+          id: string;
+          fields: Array<{
+            key?: string;
+            column_id: string;
+            value?: unknown;
+            text?: unknown;
+          }>;
+        }>;
+        response_metadata?: { next_cursor?: string };
+      }>;
+      info(params: { list_id: string; id: string }): Promise<{
+        list?: {
+          title?: string;
+          permalink?: string;
+          list_metadata?: {
+            schema?: Array<{
+              id: string;
+              key: string;
+              name: string;
+              type: string;
+              options?: {
+                choices?: Array<{ value: string; label: string; color?: string }>;
+              };
+            }>;
+          };
+        };
+      }>;
+      update(params: {
+        list_id: string;
+        cells: Array<Record<string, unknown> & { row_id: string; column_id: string }>;
+      }): Promise<unknown>;
+      create(params: {
+        list_id: string;
+        initial_fields: Array<Record<string, unknown> & { column_id: string }>;
+      }): Promise<{ item?: { id?: string } }>;
+      delete(params: { list_id: string; id: string }): Promise<unknown>;
+    };
+  };
   conversations: {
     info(params: { channel: string }): Promise<{
       channel?: { name?: string; topic?: { value?: string } };

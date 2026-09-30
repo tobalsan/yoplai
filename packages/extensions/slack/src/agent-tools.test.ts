@@ -73,6 +73,11 @@ describe("slack agent tools", () => {
       "slack.canvas_edit",
       "slack.canvas_share",
       "slack.canvas_delete",
+      "slack.list_lists",
+      "slack.list_read",
+      "slack.list_update_cells",
+      "slack.list_item_create",
+      "slack.list_item_delete",
     ]);
   });
 
@@ -770,6 +775,24 @@ describe("slack agent tools", () => {
     expect(edit).not.toHaveBeenCalled();
   });
 
+  it("lists Slack Lists via files.list types=list", async () => {
+    const list = vi.fn().mockResolvedValue({
+      files: [{ id: "F9", title: "OKRs", permalink: "https://slack.test/F9", created: 1, updated: 2 }],
+      paging: { page: 2, pages: 2 },
+    });
+    registerMockBot("alpha", { files: { list } as never });
+    const result = await tool("slack.list_lists").execute(
+      { page: 2 },
+      { agent: agent("alpha"), config: config() }
+    );
+    expect(list).toHaveBeenCalledWith({ types: "list", channel: undefined, count: 20, page: 2 });
+    expect(result).toEqual({
+      ok: true,
+      lists: [{ id: "F9", title: "OKRs", permalink: "https://slack.test/F9", created: 1, updated: 2 }],
+      hasMore: false,
+    });
+  });
+
   it("lists canvases with channel filter and paging", async () => {
     const list = vi.fn().mockResolvedValue({
       files: [{ id: "F1", title: "Plan", permalink: "https://slack.test/F1", created: 1, updated: 2 }],
@@ -813,4 +836,89 @@ describe("slack agent tools", () => {
     ).toEqual({ ok: true, canvasId: "F123" });
     expect(remove).toHaveBeenCalledWith({ canvas_id: "F123" });
   });
+
+  it("reads Slack List rows and schema using an ID from a URL", async () => {
+    const list = vi.fn().mockResolvedValue({
+      items: [{ id: "row1", fields: [{ column_id: "col1", key: "title", text: "Ship it", value: "ignored" }] }],
+      response_metadata: { next_cursor: "next" },
+    });
+    const info = vi.fn().mockResolvedValue({
+      list: {
+        title: "Roadmap",
+        permalink: "https://slack.test/list",
+        list_metadata: { schema: [{ id: "col1", key: "title", name: "Title", type: "text", options: { choices: [{ value: "v1", label: "One", color: "red" }] } }] },
+      },
+    });
+    registerMockBot("alpha", { slackLists: { items: { list, info } } as never });
+
+    const result = await tool("slack.list_read").execute(
+      { list: "https://x.slack.com/lists/T0ABCDEFG/F1234567" },
+      { agent: agent("alpha"), config: config() }
+    );
+
+    expect(list).toHaveBeenCalledWith({ list_id: "F1234567", limit: 100, cursor: undefined, archived: undefined });
+    expect(info).toHaveBeenCalledWith({ list_id: "F1234567", id: "row1" });
+    expect(result).toEqual({
+      ok: true, listId: "F1234567", title: "Roadmap", permalink: "https://slack.test/list",
+      columns: [{ id: "col1", key: "title", name: "Title", type: "text", choices: [{ value: "v1", label: "One" }] }],
+      rows: [{ id: "row1", cells: { Title: "Ship it" } }], nextCursor: "next",
+    });
+  });
+
+  it("skips Slack List schema lookup for an empty list", async () => {
+    const list = vi.fn().mockResolvedValue({ items: [] });
+    const info = vi.fn();
+    registerMockBot("alpha", { slackLists: { items: { list, info } } as never });
+    const result = await tool("slack.list_read").execute(
+      { list: "F123" }, { agent: agent("alpha"), config: config() }
+    );
+    expect(info).not.toHaveBeenCalled();
+    expect(result).toEqual({ ok: true, listId: "F123", columns: [], rows: [] });
+  });
+
+  it("converts typed values when updating Slack List cells", async () => {
+    const update = vi.fn().mockResolvedValue({ ok: true });
+    registerMockBot("alpha", { slackLists: { items: { update } } as never });
+    await tool("slack.list_update_cells").execute({ list: "F123", cells: [
+      { rowId: "r1", columnId: "c1", value: { text: "Hello" } },
+      { rowId: "r1", columnId: "c2", value: { select: ["choice"] } },
+      { rowId: "r1", columnId: "c3", value: { checkbox: true } },
+      { rowId: "r1", columnId: "c4", value: { link: ["https://example.com"] } },
+    ] }, { agent: agent("alpha"), config: config() });
+    expect(update).toHaveBeenCalledWith({ list_id: "F123", cells: [
+      { row_id: "r1", column_id: "c1", rich_text: [{ type: "rich_text", elements: [{ type: "rich_text_section", elements: [{ type: "text", text: "Hello" }] }] }] },
+      { row_id: "r1", column_id: "c2", select: ["choice"] },
+      { row_id: "r1", column_id: "c3", checkbox: true },
+      { row_id: "r1", column_id: "c4", link: [{ original_url: "https://example.com", display_as_url: true, display_name: "https://example.com" }] },
+    ] });
+  });
+
+  it("creates and deletes Slack List rows", async () => {
+    const create = vi.fn().mockResolvedValue({ item: { id: "row1" } });
+    const remove = vi.fn().mockResolvedValue({ ok: true });
+    registerMockBot("alpha", { slackLists: { items: { create, delete: remove } } as never });
+    const context = { agent: agent("alpha"), config: config() };
+    expect(await tool("slack.list_item_create").execute(
+      { list: "F123", cells: [{ columnId: "c1", value: { checkbox: true } }] }, context
+    )).toEqual({ ok: true, listId: "F123", rowId: "row1" });
+    expect(create).toHaveBeenCalledWith({ list_id: "F123", initial_fields: [{ column_id: "c1", checkbox: true }] });
+    expect(await tool("slack.list_item_delete").execute(
+      { list: "F123", rowId: "row1" }, context
+    )).toEqual({ ok: true, listId: "F123", rowId: "row1" });
+    expect(remove).toHaveBeenCalledWith({ list_id: "F123", id: "row1" });
+  });
+
+  it.each([{ value: {} }, { value: { text: "x", checkbox: true } }])(
+    "rejects Slack List values without exactly one typed key",
+    async ({ value }) => {
+      const update = vi.fn();
+      registerMockBot("alpha", { slackLists: { items: { update } } as never });
+      const result = await tool("slack.list_update_cells").execute(
+        { list: "F123", cells: [{ rowId: "r1", columnId: "c1", value }] },
+        { agent: agent("alpha"), config: config() }
+      );
+      expect(result).toMatchObject({ ok: false });
+      expect(update).not.toHaveBeenCalled();
+    }
+  );
 });
