@@ -11,6 +11,7 @@
   "claude-sonnet-4-6-thinking-10000": 200000,
   "claude-sonnet-4-6-thinking-32000": 200000,
   "claude-sonnet-4-6-thinking-4000": 200000,
+  "claude-sonnet-5-5": 1000000,
   "deepseek-v4.1-flash": 1050000,
   "deepseek/deepseek-v4-flash": 1048576,
   "deepseek/deepseek-v4-flash-0731": 1048576,
