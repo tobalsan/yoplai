@@ -16,11 +16,11 @@ import {
 import { DashboardRegistry } from "./store.js";
 import { executeDashboardQueries } from "./sql.js";
 
-// Versions are immutable-cached; bump when the kit changes. Older versions keep
+// Versions are cached for a week; bump when the kit changes. Older versions keep
 // resolving to the current (backward-compatible) files.
 const ASSET_VERSION = "v2";
 const ASSET_VERSIONS = new Set(["v1", ASSET_VERSION]);
-const IMMUTABLE_CACHE = "public, max-age=31536000, immutable";
+const ASSET_CACHE = "public, max-age=604800";
 const THEME_MAPPING = `:root:root:not([data-yoplai-dashboard-theme]) {
   --dk-bg: var(--bg-base);
   --dk-surface: var(--bg-surface);
@@ -110,7 +110,7 @@ export function createDashboardAssetRoutes(
     const body = await fs.readFile(asset.url);
     const headers: Record<string, string> = {
       "Content-Type": asset.type,
-      "Cache-Control": IMMUTABLE_CACHE,
+      "Cache-Control": ASSET_CACHE,
       "X-Content-Type-Options": "nosniff",
     };
     if (asset.type.startsWith("text/html")) {

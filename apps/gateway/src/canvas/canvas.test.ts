@@ -728,12 +728,12 @@ describe("dashboard kit assets", () => {
     expect(await response.text()).toBe("");
   });
 
-  it("serves only fixed versioned public assets with immutable caching", async () => {
+  it("serves only fixed versioned public assets with week-long caching", async () => {
     const routes = createDashboardAssetRoutes(() => config);
     const response = await routes.request("/v2/kit.js");
     expect(response.status).toBe(200);
     expect(response.headers.get("cache-control")).toBe(
-      "public, max-age=31536000, immutable"
+      "public, max-age=604800"
     );
     expect(response.headers.get("x-content-type-options")).toBe("nosniff");
     expect(await response.text()).toContain("DashboardKit");
