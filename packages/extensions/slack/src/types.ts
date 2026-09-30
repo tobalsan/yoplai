@@ -52,6 +52,7 @@ export type SlackWebClient = {
       thread_ts?: string;
     }): Promise<unknown>;
   };
+  token?: string;
   files?: {
     uploadV2(params: {
       channel_id: string;
@@ -60,6 +61,85 @@ export type SlackWebClient = {
       filename: string;
       title?: string;
     }): Promise<unknown>;
+    info(params: { file: string }): Promise<{
+      file?: {
+        id?: string;
+        title?: string;
+        permalink?: string;
+        url_private?: string;
+        url_private_download?: string;
+      };
+    }>;
+    list?(params: {
+      types?: string;
+      channel?: string;
+      count?: number;
+      page?: number;
+    }): Promise<{
+      files?: Array<{
+        id?: string;
+        title?: string;
+        permalink?: string;
+        created?: number;
+        updated?: number;
+      }>;
+      paging?: { page?: number; pages?: number };
+    }>;
+  };
+  canvases?: {
+    create(params: {
+      title?: string;
+      document_content?: { type: "markdown"; markdown: string };
+      channel_id?: string;
+    }): Promise<{ canvas_id?: string }>;
+    edit(params: {
+      canvas_id: string;
+      changes: [
+        {
+          operation:
+            | "insert_after"
+            | "insert_before"
+            | "insert_at_start"
+            | "insert_at_end"
+            | "replace"
+            | "delete";
+          section_id?: string;
+          document_content?: { type: "markdown"; markdown: string };
+        },
+        ...Array<{
+          operation:
+            | "insert_after"
+            | "insert_before"
+            | "insert_at_start"
+            | "insert_at_end"
+            | "replace"
+            | "delete";
+          section_id?: string;
+          document_content?: { type: "markdown"; markdown: string };
+        }>,
+      ];
+    }): Promise<unknown>;
+    delete(params: { canvas_id: string }): Promise<unknown>;
+    sections: {
+      lookup(params: {
+        canvas_id: string;
+        criteria: {
+          section_types?: [
+            "h1" | "h2" | "h3" | "any_header",
+            ...Array<"h1" | "h2" | "h3" | "any_header">,
+          ];
+          contains_text?: string;
+        };
+      }): Promise<{ sections?: Array<{ id?: string }> }>;
+    };
+    access: {
+      set(params: {
+        canvas_id: string;
+        access_level: "read" | "write";
+        channel_ids?: string[];
+        user_ids?: string[];
+      }): Promise<unknown>;
+    };
   };
   conversations: {
     info(params: { channel: string }): Promise<{

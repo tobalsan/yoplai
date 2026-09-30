@@ -11,6 +11,7 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Added
 
+- Slack agents can list, create, read, find sections in, edit, share, and delete Slack Canvases with dedicated agent tools.
 - `dashboard_link` now lints each dashboard page without running its code and returns a `problems` list: script syntax errors, top-level names that collide with browser globals (`top`, `window`, `document`, `location`) or other scripts, echarts.js/kit.js load order, `/d-assets/v1/` use, undeclared `YOPLAI.data` names, inline `on*=` handlers next to module scripts, and queries returning 0 rows. Dashboard Kit also shows a banner when a page throws at runtime, and the dashboard skill and templates now put page code in `<script type="module">`. Dashboard assets are now cached for a week instead of a year.
 - Dashboard Kit v2 (`/d-assets/v2/`): "needs attention" callouts, KPI strips with number/currency/percent formatting, deltas and sparklines, status pills, segmented filters, table column formatters, pills, links, severity dots and a show-all row cap, a `format` helper, and calmer chart theming (faint grids, area fills, readable heatmaps for skewed data). The dashboard skill now ships design rules agents follow. Existing `/d-assets/v1/` pages keep working and pick up the refreshed styles.
 - Slack agents can read thread parents and replies with `slack.get_thread_replies`, including cursor paging and time windows.

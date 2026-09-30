@@ -81,6 +81,13 @@ This is the path used by scheduled jobs.
 | `slack.list_users` | List user IDs + display names (filterable) for DM targeting. Backed by the `users.list` Web API. |
 | `slack.get_channel_history` | Retrieve channel history by conversation ID (`C...`, `D...`, or `G...`) in newest-first order. Page backward by passing the previous result's oldest `ts` as `latest`. Thread metadata identifies threads; use `slack.get_thread_replies` to read them. Backed by the `conversations.history` Web API. |
 | `slack.get_thread_replies` | Read a thread by conversation ID and parent `threadTs`, including the parent, in oldest-first order. Supports `limit`, `oldest`, `latest`, and `inclusive`; pass `nextCursor` as `cursor` until `hasMore` is false. Backed by the `conversations.replies` Web API. |
+| `slack.canvas_list` | List canvases visible to the bot, optionally by channel, with page-based paging (`files.list` with `types=canvas`). |
+| `slack.canvas_create` | Create a canvas from optional Markdown. Without `channel` it is private to the bot; share it with `slack.canvas_share`. |
+| `slack.canvas_read` | Read a canvas (ID or URL) as Slack HTML (`files.info` + authenticated download), truncated to `maxChars`. Element ids are section ids for editing. |
+| `slack.canvas_find_sections` | Find section ids by header type or contained text (`canvases.sections.lookup`). |
+| `slack.canvas_edit` | Insert, replace, or delete canvas Markdown by section (`canvases.edit`). |
+| `slack.canvas_share` | Grant channels or users read or write access (`canvases.access.set`). |
+| `slack.canvas_delete` | Delete a canvas (`canvases.delete`). |
 
 ### Bound thread handoffs
 
@@ -142,10 +149,12 @@ The bot token needs scopes matching the features you use:
 | `slack.list_channels` | `channels:read` (public), `groups:read` (private) |
 | `slack.list_users` | `users:read` |
 | `slack.get_channel_history`, `slack.get_thread_replies` | `channels:history` (public), `groups:history` (private), `im:history` (DM), `mpim:history` (group DM) |
+| Canvas tools | `canvases:read`, `canvases:write`, `files:read` (reading content) |
 | Socket Mode events | `app_mentions:read`, `channels:history`, `im:history`, `reactions:read`, plus an app-level token (`xapp-...`) for `connections:write` |
 
 `conversations.list` only returns private channels the bot is a member of.
 Missing scopes surface as a `missing_scope` error in the tool result.
+After adding Canvas scopes, reinstall the Slack app so the bot token receives them.
 
 History and thread retrieval also require the bot to be a member of private channels and
 DMs; scopes alone do not grant access. Both tools accept

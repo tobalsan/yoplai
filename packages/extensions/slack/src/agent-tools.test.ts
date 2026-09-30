@@ -55,6 +55,7 @@ describe("slack agent tools", () => {
     clearSlackClientCache();
     clearSlackContext();
     vi.clearAllMocks();
+    vi.unstubAllGlobals();
   });
 
   it("exposes the Slack agent tools", () => {
@@ -65,6 +66,13 @@ describe("slack agent tools", () => {
       "slack.list_users",
       "slack.get_channel_history",
       "slack.get_thread_replies",
+      "slack.canvas_list",
+      "slack.canvas_create",
+      "slack.canvas_read",
+      "slack.canvas_find_sections",
+      "slack.canvas_edit",
+      "slack.canvas_share",
+      "slack.canvas_delete",
     ]);
   });
 
@@ -615,5 +623,194 @@ describe("slack agent tools", () => {
     );
 
     expect(result).toMatchObject({ ok: true, ts: "3.3" });
+  });
+
+  it("maps canvas create arguments and normalizes its result", async () => {
+    const create = vi.fn().mockResolvedValue({ canvas_id: "F123ABC" });
+    registerMockBot("alpha", { canvases: { create } as never });
+
+    const result = await tool("slack.canvas_create").execute(
+      { title: "Plan", markdown: "# Plan", channel: "C123" },
+      { agent: agent("alpha"), config: config() }
+    );
+
+    expect(create).toHaveBeenCalledWith({
+      title: "Plan",
+      document_content: { type: "markdown", markdown: "# Plan" },
+      channel_id: "C123",
+    });
+    expect(result).toEqual({ ok: true, canvasId: "F123ABC" });
+  });
+
+  it("reads and truncates canvas HTML using an id extracted from a URL", async () => {
+    const info = vi
+      .fn()
+      .mockResolvedValue({
+        file: {
+          id: "F123ABC",
+          title: "Plan",
+          permalink: "https://slack.test/doc",
+          url_private_download: "https://files.test/doc",
+        },
+      });
+    registerMockBot("alpha", { token: "xoxb-test", files: { info } as never });
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue(
+        new Response("<html>hello</html>", {
+          headers: { "content-type": "text/html; charset=utf-8" },
+        })
+      );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await tool("slack.canvas_read").execute(
+      { canvas: "https://workspace.slack.com/docs/T06TQF57079/F123ABC", maxChars: 6 },
+      { agent: agent("alpha"), config: config() }
+    );
+
+    expect(info).toHaveBeenCalledWith({ file: "F123ABC" });
+    expect(fetchMock).toHaveBeenCalledWith("https://files.test/doc", {
+      headers: { Authorization: "Bearer xoxb-test" },
+    });
+    expect(result).toEqual({
+      ok: true,
+      canvasId: "F123ABC",
+      title: "Plan",
+      permalink: "https://slack.test/doc",
+      html: "<html>",
+      truncated: true,
+    });
+  });
+
+  it("reports non-success canvas downloads", async () => {
+    const info = vi
+      .fn()
+      .mockResolvedValue({ file: { url_private: "https://files.test/doc" } });
+    registerMockBot("alpha", { token: "xoxb-test", files: { info } as never });
+    vi.stubGlobal(
+      "fetch",
+      vi
+        .fn()
+        .mockResolvedValue(
+          new Response("no", {
+            status: 403,
+            headers: { "content-type": "text/html" },
+          })
+        )
+    );
+
+    const result = await tool("slack.canvas_read").execute(
+      { canvas: "F123" },
+      { agent: agent("alpha"), config: config() }
+    );
+    expect(result).toEqual({
+      ok: false,
+      error: "Slack canvas download failed with HTTP 403.",
+    });
+  });
+
+  it("finds canvas sections and maps URL ids", async () => {
+    const lookup = vi.fn().mockResolvedValue({ sections: [{ id: "s1" }, {}] });
+    registerMockBot("alpha", { canvases: { sections: { lookup } } as never });
+    const result = await tool("slack.canvas_find_sections").execute(
+      {
+        canvas: "https://slack.com/docs/FABC123",
+        sectionTypes: ["h1"],
+        containsText: "Roadmap",
+      },
+      { agent: agent("alpha"), config: config() }
+    );
+    expect(lookup).toHaveBeenCalledWith({
+      canvas_id: "FABC123",
+      criteria: { section_types: ["h1"], contains_text: "Roadmap" },
+    });
+    expect(result).toEqual({ ok: true, sections: [{ id: "s1" }] });
+  });
+
+  it("maps canvas edits and normalizes the result", async () => {
+    const edit = vi.fn().mockResolvedValue({ ok: true });
+    registerMockBot("alpha", { canvases: { edit } as never });
+    const result = await tool("slack.canvas_edit").execute(
+      {
+        canvas: "F123",
+        changes: [
+          { operation: "insert_after", sectionId: "s1", markdown: "New" },
+          { operation: "delete", sectionId: "s2" },
+        ],
+      },
+      { agent: agent("alpha"), config: config() }
+    );
+    expect(edit).toHaveBeenCalledWith({
+      canvas_id: "F123",
+      changes: [
+        {
+          operation: "insert_after",
+          section_id: "s1",
+          document_content: { type: "markdown", markdown: "New" },
+        },
+        { operation: "delete", section_id: "s2" },
+      ],
+    });
+    expect(result).toEqual({ ok: true, canvasId: "F123" });
+  });
+
+  it.each([
+    { operation: "insert_after", markdown: "x" },
+    { operation: "insert_at_start", sectionId: "s1", markdown: "x" },
+    { operation: "replace", sectionId: "s1" },
+    { operation: "delete", sectionId: "s1", markdown: "x" },
+  ])("rejects invalid canvas edit change $operation", async (change) => {
+    const edit = vi.fn();
+    registerMockBot("alpha", { canvases: { edit } as never });
+    const result = await tool("slack.canvas_edit").execute(
+      { canvas: "F123", changes: [change] },
+      { agent: agent("alpha"), config: config() }
+    );
+    expect(result).toMatchObject({ ok: false });
+    expect(edit).not.toHaveBeenCalled();
+  });
+
+  it("lists canvases with channel filter and paging", async () => {
+    const list = vi.fn().mockResolvedValue({
+      files: [{ id: "F1", title: "Plan", permalink: "https://slack.test/F1", created: 1, updated: 2 }],
+      paging: { page: 1, pages: 3 },
+    });
+    registerMockBot("alpha", { files: { list } as never });
+    const result = await tool("slack.canvas_list").execute(
+      { channel: "C1", limit: 5 },
+      { agent: agent("alpha"), config: config() }
+    );
+    expect(list).toHaveBeenCalledWith({ types: "canvas", channel: "C1", count: 5, page: undefined });
+    expect(result).toEqual({
+      ok: true,
+      canvases: [{ id: "F1", title: "Plan", permalink: "https://slack.test/F1", created: 1, updated: 2 }],
+      hasMore: true,
+      nextPage: 2,
+    });
+  });
+
+  it("shares and deletes a canvas with normalized results", async () => {
+    const set = vi.fn().mockResolvedValue({ ok: true });
+    const remove = vi.fn().mockResolvedValue({ ok: true });
+    registerMockBot("alpha", {
+      canvases: { access: { set }, delete: remove } as never,
+    });
+    const context = { agent: agent("alpha"), config: config() };
+    expect(
+      await tool("slack.canvas_share").execute(
+        { canvas: "F123", access: "write", channels: ["C1"], users: ["U1"] },
+        context
+      )
+    ).toEqual({ ok: true, canvasId: "F123" });
+    expect(set).toHaveBeenCalledWith({
+      canvas_id: "F123",
+      access_level: "write",
+      channel_ids: ["C1"],
+      user_ids: ["U1"],
+    });
+    expect(
+      await tool("slack.canvas_delete").execute({ canvas: "F123" }, context)
+    ).toEqual({ ok: true, canvasId: "F123" });
+    expect(remove).toHaveBeenCalledWith({ canvas_id: "F123" });
   });
 });

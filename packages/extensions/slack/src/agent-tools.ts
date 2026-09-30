@@ -51,6 +51,82 @@ const threadRepliesSchema = channelHistorySchema.extend({
   cursor: z.string().min(1).optional(),
 });
 
+const canvasIdSchema = z.string().transform((value, ctx) => {
+  const id = value.match(/(?:^|[/-])(F[A-Z0-9]+)(?=$|[/?#])/)?.[1];
+  if (!id) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "Expected a Slack canvas ID or URL.",
+    });
+    return z.NEVER;
+  }
+  return id;
+});
+const canvasCreateSchema = z.object({
+  title: z.string().min(1).optional(),
+  markdown: z.string().optional(),
+  channel: z.string().min(1).optional(),
+});
+const canvasReadSchema = z.object({
+  canvas: canvasIdSchema,
+  maxChars: z.number().int().positive().default(100_000),
+});
+const canvasFindSectionsSchema = z
+  .object({
+    canvas: canvasIdSchema,
+    sectionTypes: z
+      .array(z.enum(["h1", "h2", "h3", "any_header"]))
+      .min(1)
+      .max(3)
+      .optional(),
+    containsText: z.string().min(1).optional(),
+  })
+  .refine((value) => value.sectionTypes || value.containsText, {
+    message: "sectionTypes or containsText is required.",
+  });
+const canvasChangeSchema = z.discriminatedUnion("operation", [
+  z.object({
+    operation: z.enum(["insert_after", "insert_before"]),
+    sectionId: z.string().min(1),
+    markdown: z.string().min(1),
+  }),
+  z.object({
+    operation: z.enum(["insert_at_start", "insert_at_end"]),
+    markdown: z.string().min(1),
+    sectionId: z.never().optional(),
+  }),
+  z.object({
+    operation: z.literal("replace"),
+    sectionId: z.string().min(1).optional(),
+    markdown: z.string().min(1),
+  }),
+  z.object({
+    operation: z.literal("delete"),
+    sectionId: z.string().min(1),
+    markdown: z.never().optional(),
+  }),
+]);
+const canvasEditSchema = z.object({
+  canvas: canvasIdSchema,
+  changes: z.array(canvasChangeSchema).min(1),
+});
+const canvasShareSchema = z
+  .object({
+    canvas: canvasIdSchema,
+    access: z.enum(["read", "write"]),
+    channels: z.array(z.string().min(1)).min(1).optional(),
+    users: z.array(z.string().min(1)).min(1).optional(),
+  })
+  .refine((value) => value.channels || value.users, {
+    message: "channels or users is required.",
+  });
+const canvasDeleteSchema = z.object({ canvas: canvasIdSchema });
+const canvasListSchema = z.object({
+  channel: z.string().min(1).optional(),
+  limit: z.number().int().positive().max(100).default(20),
+  page: z.number().int().positive().optional(),
+});
+
 type SlackHistoryMessage = NonNullable<
   Awaited<ReturnType<SlackWebClient["conversations"]["history"]>>["messages"]
 >[number];
@@ -570,6 +646,315 @@ export function slackAgentTools(): ExtensionAgentTool[] {
             nextCursor,
             hasMore: Boolean(nextCursor) || Boolean(page.has_more),
           };
+        } catch (error) {
+          return toolError(error);
+        }
+      },
+    },
+    {
+      name: "slack.canvas_list",
+      description:
+        "List Slack canvases visible to the bot (files.list types=canvas). Optionally filter by channel ID. Pass nextPage as page while hasMore is true.",
+      parameters: {
+        type: "object",
+        properties: {
+          channel: {
+            type: "string",
+            description: "Channel ID (C...) to list canvases shared there.",
+          },
+          limit: {
+            type: "integer",
+            minimum: 1,
+            maximum: 100,
+            description: "Canvases per page (default 20, max 100).",
+          },
+          page: { type: "integer", minimum: 1 },
+        },
+        additionalProperties: false,
+      },
+      async execute(args, { agent, config, env }) {
+        try {
+          const input = canvasListSchema.parse(args);
+          const client = resolveSlackClient(agent, config, env);
+          if (!client?.files?.list)
+            return toolError("Slack Canvas is not available for this agent.");
+          const result = await client.files.list({
+            types: "canvas",
+            channel: input.channel,
+            count: input.limit,
+            page: input.page,
+          });
+          const page = result.paging?.page ?? input.page ?? 1;
+          const hasMore = page < (result.paging?.pages ?? page);
+          return {
+            ok: true,
+            canvases: (result.files ?? []).map((file) => ({
+              id: file.id,
+              title: file.title,
+              permalink: file.permalink,
+              created: file.created,
+              updated: file.updated,
+            })),
+            hasMore,
+            ...(hasMore ? { nextPage: page + 1 } : {}),
+          };
+        } catch (error) {
+          return toolError(error);
+        }
+      },
+    },
+    {
+      name: "slack.canvas_create",
+      description:
+        "Create a Slack canvas. Without channel it is private to the bot; use slack.canvas_share (or pass channel) so humans can see it.",
+      parameters: {
+        type: "object",
+        properties: {
+          title: { type: "string" },
+          markdown: {
+            type: "string",
+            description:
+              "Canvas body. Standard markdown (headers, lists, checklists, tables up to 300 cells); mention users as ![](@U123), channels as ![](#C123).",
+          },
+          channel: {
+            type: "string",
+            description: "Channel ID to attach the canvas to as a tab.",
+          },
+        },
+        additionalProperties: false,
+      },
+      async execute(args, { agent, config, env }) {
+        try {
+          const input = canvasCreateSchema.parse(args);
+          const client = resolveSlackClient(agent, config, env);
+          if (!client?.canvases)
+            return toolError("Slack Canvas is not available for this agent.");
+          const result = await client.canvases.create({
+            title: input.title,
+            document_content:
+              input.markdown === undefined
+                ? undefined
+                : { type: "markdown", markdown: input.markdown },
+            channel_id: input.channel,
+          });
+          return { ok: true, canvasId: result.canvas_id };
+        } catch (error) {
+          return toolError(error);
+        }
+      },
+    },
+    {
+      name: "slack.canvas_read",
+      description:
+        "Read Slack's canvas HTML. Element ids are section ids usable with slack.canvas_edit.",
+      parameters: {
+        type: "object",
+        properties: {
+          canvas: {
+            type: "string",
+            description: "Canvas ID (F...) or Slack canvas URL.",
+          },
+          maxChars: { type: "number", default: 100000 },
+        },
+        required: ["canvas"],
+        additionalProperties: false,
+      },
+      async execute(args, { agent, config, env }) {
+        try {
+          const input = canvasReadSchema.parse(args);
+          const client = resolveSlackClient(agent, config, env);
+          const token = client?.token ?? resolveSlackToken(agent, config, env);
+          if (!client?.files?.info || !token)
+            return toolError(
+              "Slack Canvas reading is not available for this agent."
+            );
+          const result = await client.files.info({ file: input.canvas });
+          const file = result.file;
+          const url = file?.url_private_download ?? file?.url_private;
+          if (!url)
+            return toolError("Slack did not return a canvas download URL.");
+          const response = await fetch(url, {
+            headers: { Authorization: `Bearer ${token}` },
+          });
+          if (!response.ok)
+            return toolError(
+              `Slack canvas download failed with HTTP ${response.status}.`
+            );
+          const fullHtml = await response.text();
+          return {
+            ok: true,
+            canvasId: file?.id ?? input.canvas,
+            title: file?.title,
+            permalink: file?.permalink,
+            html: fullHtml.slice(0, input.maxChars),
+            truncated: fullHtml.length > input.maxChars,
+          };
+        } catch (error) {
+          return toolError(error);
+        }
+      },
+    },
+    {
+      name: "slack.canvas_find_sections",
+      description:
+        "Find Slack canvas section ids by header type or contained text.",
+      parameters: {
+        type: "object",
+        properties: {
+          canvas: { type: "string" },
+          sectionTypes: {
+            type: "array",
+            items: { type: "string", enum: ["h1", "h2", "h3", "any_header"] },
+            minItems: 1,
+            maxItems: 3,
+          },
+          containsText: { type: "string" },
+        },
+        required: ["canvas"],
+        additionalProperties: false,
+      },
+      async execute(args, { agent, config, env }) {
+        try {
+          const input = canvasFindSectionsSchema.parse(args);
+          const client = resolveSlackClient(agent, config, env);
+          if (!client?.canvases)
+            return toolError("Slack Canvas is not available for this agent.");
+          const result = await client.canvases.sections.lookup({
+            canvas_id: input.canvas,
+            criteria: {
+              section_types: input.sectionTypes as
+                | [
+                    "h1" | "h2" | "h3" | "any_header",
+                    ...Array<"h1" | "h2" | "h3" | "any_header">,
+                  ]
+                | undefined,
+              contains_text: input.containsText,
+            },
+          });
+          return {
+            ok: true,
+            sections: (result.sections ?? []).flatMap((section) =>
+              section.id ? [{ id: section.id }] : []
+            ),
+          };
+        } catch (error) {
+          return toolError(error);
+        }
+      },
+    },
+    {
+      name: "slack.canvas_edit",
+      description:
+        "Edit Slack canvas content. Get section ids from slack.canvas_find_sections or slack.canvas_read. insert_after/insert_before need sectionId+markdown; insert_at_start/insert_at_end need markdown; replace needs markdown (omit sectionId to replace whole canvas); delete needs sectionId.",
+      parameters: {
+        type: "object",
+        properties: {
+          canvas: { type: "string" },
+          changes: {
+            type: "array",
+            minItems: 1,
+            items: {
+              type: "object",
+              properties: {
+                operation: {
+                  type: "string",
+                  enum: [
+                    "insert_after",
+                    "insert_before",
+                    "insert_at_start",
+                    "insert_at_end",
+                    "replace",
+                    "delete",
+                  ],
+                },
+                sectionId: { type: "string" },
+                markdown: { type: "string" },
+              },
+              required: ["operation"],
+              additionalProperties: false,
+            },
+          },
+        },
+        required: ["canvas", "changes"],
+        additionalProperties: false,
+      },
+      async execute(args, { agent, config, env }) {
+        try {
+          const input = canvasEditSchema.parse(args);
+          const client = resolveSlackClient(agent, config, env);
+          if (!client?.canvases)
+            return toolError("Slack Canvas is not available for this agent.");
+          const changes = input.changes.map((change) => ({
+            operation: change.operation,
+            ...(change.sectionId ? { section_id: change.sectionId } : {}),
+            ...(change.markdown !== undefined
+              ? {
+                  document_content: {
+                    type: "markdown" as const,
+                    markdown: change.markdown,
+                  },
+                }
+              : {}),
+          })) as Parameters<
+            NonNullable<SlackWebClient["canvases"]>["edit"]
+          >[0]["changes"];
+          await client.canvases.edit({ canvas_id: input.canvas, changes });
+          return { ok: true, canvasId: input.canvas };
+        } catch (error) {
+          return toolError(error);
+        }
+      },
+    },
+    {
+      name: "slack.canvas_share",
+      description:
+        "Grant Slack channels or users read or write access to a canvas.",
+      parameters: {
+        type: "object",
+        properties: {
+          canvas: { type: "string" },
+          access: { type: "string", enum: ["read", "write"] },
+          channels: { type: "array", items: { type: "string" } },
+          users: { type: "array", items: { type: "string" } },
+        },
+        required: ["canvas", "access"],
+        additionalProperties: false,
+      },
+      async execute(args, { agent, config, env }) {
+        try {
+          const input = canvasShareSchema.parse(args);
+          const client = resolveSlackClient(agent, config, env);
+          if (!client?.canvases)
+            return toolError("Slack Canvas is not available for this agent.");
+          await client.canvases.access.set({
+            canvas_id: input.canvas,
+            access_level: input.access,
+            channel_ids: input.channels,
+            user_ids: input.users,
+          });
+          return { ok: true, canvasId: input.canvas };
+        } catch (error) {
+          return toolError(error);
+        }
+      },
+    },
+    {
+      name: "slack.canvas_delete",
+      description: "Delete a Slack canvas.",
+      parameters: {
+        type: "object",
+        properties: { canvas: { type: "string" } },
+        required: ["canvas"],
+        additionalProperties: false,
+      },
+      async execute(args, { agent, config, env }) {
+        try {
+          const input = canvasDeleteSchema.parse(args);
+          const client = resolveSlackClient(agent, config, env);
+          if (!client?.canvases)
+            return toolError("Slack Canvas is not available for this agent.");
+          await client.canvases.delete({ canvas_id: input.canvas });
+          return { ok: true, canvasId: input.canvas };
         } catch (error) {
           return toolError(error);
         }
