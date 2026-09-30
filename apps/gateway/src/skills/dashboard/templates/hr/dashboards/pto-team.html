@@ -17,7 +17,7 @@
     <script type="application/sql" data-name="pto" data-db="data/hr.db">
       SELECT e.name,p.start_date,p.end_date,p.days,p.status,p.type FROM employees e JOIN pto p ON p.employee_email=e.email WHERE lower(e.manager_email)=lower(:viewer_email) OR lower(e.email)=lower(:viewer_email) ORDER BY p.start_date,e.name
     </script>
-    <script>
+    <script type="module">
       const rows = YOPLAI.data.pto,
         names = [...new Set(rows.map((r) => r.name))],
         dates = [...new Set(rows.map((r) => r.start_date))];

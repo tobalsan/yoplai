@@ -35,7 +35,7 @@
       )
       GROUP BY owner_email
     </script>
-    <script>
+    <script type="module">
       const rows = YOPLAI.data.reports;
       const period = rows[0] ? rows[0].period : "";
       document.querySelector("#subtitle").textContent = period

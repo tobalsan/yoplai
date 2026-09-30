@@ -16,7 +16,7 @@
     <script type="application/sql" data-name="clients" data-db="data/cs.db">
       SELECT id,name,segment,health,arr,renewal_date FROM clients WHERE lower(owner_email)=lower(:viewer_email) ORDER BY arr DESC
     </script>
-    <script>
+    <script type="module">
       const rows = YOPLAI.data.clients;
       DashboardKit.kpi("#summary", {
         label: "Managed ARR",

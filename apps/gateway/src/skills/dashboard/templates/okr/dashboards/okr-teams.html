@@ -47,7 +47,7 @@
       GROUP BY s.week,e.team
       ORDER BY s.week,e.team
     </script>
-    <script>
+    <script type="module">
       const teams = YOPLAI.data.teams;
       const period = teams[0] ? teams[0].period : "";
       document.querySelector("#subtitle").textContent = period

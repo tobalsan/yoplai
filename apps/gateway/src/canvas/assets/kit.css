@@ -724,3 +724,18 @@ input[type="range"] {
     break-inside: avoid;
   }
 }
+.dk-error-banner {
+  position: fixed;
+  inset: 0 0 auto;
+  z-index: 1000;
+  padding: 10px 16px;
+  background: var(--dk-surface, #fff);
+  color: var(--dk-negative, #c43b3b);
+  border-bottom: 2px solid var(--dk-negative, #c43b3b);
+  font: 0.8125rem/1.5 var(--dk-font, sans-serif);
+}
+@media print {
+  .dk-error-banner {
+    display: none;
+  }
+}

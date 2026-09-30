@@ -44,7 +44,7 @@
     >
       SELECT q.quarter,q.active_users,q.adoption,q.tickets,q.csat FROM quarterly_metrics q JOIN clients c ON c.id=q.client_id WHERE q.client_id=:id AND lower(c.owner_email)=lower(:viewer_email) ORDER BY q.quarter DESC LIMIT 1
     </script>
-    <script>
+    <script type="module">
       const c = YOPLAI.data.client[0],
         m = YOPLAI.data.latest_quarter[0];
       if (c) {

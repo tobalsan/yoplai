@@ -29,7 +29,7 @@
     <script type="application/sql" data-name="themes" data-db="data/cs.db">
       SELECT w.theme,w.mentions,w.week FROM weekly_themes w JOIN clients c ON c.id=w.client_id WHERE w.client_id=:id AND lower(c.owner_email)=lower(:viewer_email) ORDER BY w.mentions DESC
     </script>
-    <script>
+    <script type="module">
       const c = YOPLAI.data.client[0],
         m = YOPLAI.data.metrics[0];
       if (c && m) {

@@ -16,7 +16,7 @@
     <script type="application/sql" data-name="candidate" data-db="data/hr.db">
       SELECT id,name,role,stage,source,score,next_step,owner_email,updated_at FROM candidates WHERE id=:id LIMIT 1
     </script>
-    <script>
+    <script type="module">
       const row = YOPLAI.data.candidate[0];
       if (row) {
         document.querySelector("#name").textContent = row.name;

@@ -16,6 +16,7 @@ import {
   getDashboardRegistry,
   type DashboardRegistration,
 } from "./store.js";
+import { lintDashboardHtml } from "./lint.js";
 import { executeDashboardQueries } from "./sql.js";
 
 let extensionContext: ExtensionContext | undefined;
@@ -282,6 +283,24 @@ async function writeDashboardFile(
   }
 }
 
+async function dashboardDiagnostics(agent: AgentConfig, html: string) {
+  const { data, errors } = await executeDashboardQueries(agent, html, {
+    viewer_email: null,
+    viewer_name: null,
+    today: new Date().toISOString().slice(0, 10),
+  });
+  const emptyQueryWarnings = Object.entries(data)
+    .filter(([, rows]) => rows.length === 0)
+    .map(
+      ([name]) =>
+        `Query "${name}" returned 0 rows — charts/tables using it will be empty.`
+    );
+  return {
+    queryErrors: errors,
+    problems: [...lintDashboardHtml(html), ...emptyQueryWarnings],
+  };
+}
+
 async function dashboardInfo(
   agent: AgentConfig,
   entry: { id: string; slug: string },
@@ -292,16 +311,11 @@ async function dashboardInfo(
     const stat = await file.stat();
     const html = await file.readFile("utf8");
     await recordDashboardVersion(agent, entry, html);
-    const { errors } = await executeDashboardQueries(agent, html, {
-      viewer_email: null,
-      viewer_name: null,
-      today: new Date().toISOString().slice(0, 10),
-    });
     return {
       slug: entry.slug,
       updatedAt: stat.mtime.toISOString(),
       link: `${dashboardBaseUrl(config)}/d/${entry.id}`,
-      queryErrors: errors,
+      ...(await dashboardDiagnostics(agent, html)),
     };
   } finally {
     await file.close();
@@ -341,16 +355,11 @@ async function discoverDashboards(agent: AgentConfig, config: GatewayConfig) {
       ]);
       const html = await file.readFile("utf8");
       await recordDashboardVersion(agent, entry, html);
-      const { errors } = await executeDashboardQueries(agent, html, {
-        viewer_email: null,
-        viewer_name: null,
-        today: new Date().toISOString().slice(0, 10),
-      });
       results.push({
         slug,
         updatedAt: stat.mtime.toISOString(),
         link: `${dashboardBaseUrl(config)}/d/${entry.id}`,
-        queryErrors: errors,
+        ...(await dashboardDiagnostics(agent, html)),
       });
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
@@ -388,7 +397,7 @@ export const canvasExtension: Extension = {
       {
         name: "dashboard_link",
         description:
-          "Link one HTML dashboard from data/dashboards/<slug>.html, or list all dashboards when slug is omitted. SQL data-db paths are relative to the workspace root, e.g. data/app.db.",
+          "Link one HTML dashboard from data/dashboards/<slug>.html, or list all dashboards when slug is omitted. SQL data-db paths are relative to the workspace root, e.g. data/app.db. Fix every entry in `problems` and `queryErrors`, then call again, before sharing the link. (Queries using :viewer_email or URL params run with them null, so they may report 0 rows.)",
         parameters: {
           type: "object",
           properties: { slug: { type: "string" } },

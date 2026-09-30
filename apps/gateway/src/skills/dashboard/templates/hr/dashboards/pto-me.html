@@ -16,7 +16,7 @@
     <script type="application/sql" data-name="pto" data-db="data/hr.db">
       SELECT start_date,end_date,days,status,type FROM pto WHERE lower(employee_email)=lower(:viewer_email) ORDER BY start_date
     </script>
-    <script>
+    <script type="module">
       const rows = YOPLAI.data.pto;
       DashboardKit.kpi("#summary", {
         label: "Approved days",

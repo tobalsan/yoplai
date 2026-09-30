@@ -10,6 +10,8 @@ Load only platform assets; remote scripts and styles are blocked by Canvas CSP.
 <script src="/d-assets/v2/kit.js"></script>
 ```
 
+Put all page code in one `<script type="module">` after the markup (never a classic `<script>`: top-level `const top`, `window`, `document`, or `location` throw and blank the page). Module code has its own scope, so never use inline `on*=` handlers; attach them with `addEventListener`. Every snippet below goes inside that module.
+
 `DashboardKit` components: `callout`, `kpis`/`kpi`, `table`, `pill`, `segmented`, `filters`, `tabs`, ranked `list`, sanitized `md`, `chart`, and `format`. `/d-assets/v2/sample.html` shows every one. Pages that still load `/d-assets/v1/` keep working; use `v2` for new pages.
 
 The theme follows the viewer's light/dark mode (`data-theme="light|dark"` overrides it) and inherits deployment colors from `$YOPLAI_HOME/theme.css`. Print styles are A4 and hide filters, search, and buttons. Use DOM APIs or Kit helpers for dynamic content; use `textContent`, never interpolate untrusted values into `innerHTML`. The CSP permits platform `/d-assets/`, inline page script/style, data/blob images, and no network connections.

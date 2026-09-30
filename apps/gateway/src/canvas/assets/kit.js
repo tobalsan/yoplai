@@ -2,6 +2,35 @@
   "use strict";
 
   const { document, URL, Blob, getComputedStyle } = global;
+
+  // Uncaught page errors otherwise leave a blank page; surface them in a banner.
+  const seenErrors = new Set();
+  function showError(message, line) {
+    const detail = message + (line ? ` (line ${line})` : "");
+    if (seenErrors.has(detail) || seenErrors.size >= 3) return;
+    seenErrors.add(detail);
+    const render = () => {
+      let banner = document.querySelector(".dk-error-banner");
+      if (!banner) {
+        banner = document.createElement("div");
+        banner.className = "dk-error-banner";
+        banner.setAttribute("role", "alert");
+        document.body.prepend(banner);
+      }
+      const row = document.createElement("div");
+      row.textContent = `This dashboard hit an error: ${detail}`;
+      banner.append(row);
+    };
+    if (document.body) render();
+    else document.addEventListener("DOMContentLoaded", render, { once: true });
+  }
+  global.addEventListener("error", (event) =>
+    showError(event.message, event.lineno)
+  );
+  global.addEventListener("unhandledrejection", (event) => {
+    const reason = event.reason;
+    showError(reason && reason.message ? reason.message : String(reason));
+  });
   const SVG_NS = "http://www.w3.org/2000/svg";
   const AUTO = { type: "number" };
   const NUMERIC = new Set([

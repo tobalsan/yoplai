@@ -17,7 +17,7 @@
     <script type="application/sql" data-name="candidates" data-db="data/hr.db">
       SELECT id,name,role,stage,source,score,next_step FROM candidates ORDER BY updated_at DESC
     </script>
-    <script>
+    <script type="module">
       const rows = YOPLAI.data.candidates,
         stages = [...new Set(rows.map((r) => r.stage))];
       DashboardKit.chart("#pipeline", {

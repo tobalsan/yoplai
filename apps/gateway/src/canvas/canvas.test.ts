@@ -277,6 +277,27 @@ describe("dashboard registry and tool", () => {
     ]);
   });
 
+  it("returns lint problems and empty-query warnings through dashboard_link", async () => {
+    const db = new Database(path.join(workspace, "data", "empty.db"));
+    db.exec("create table items(id integer)");
+    db.close();
+    await fs.writeFile(
+      path.join(workspace, "data", "dashboards", "lint.html"),
+      `<script type="application/sql" data-name="items" data-db="data/empty.db">select id from items</script><script>const top = 1;</script>`
+    );
+    await canvasExtension.start({ getDataDir: () => root } as never);
+    const [tool] = await canvasExtension.getAgentTools!(agent(), { config });
+    const result = (await tool.execute({ slug: "lint.html" }, {} as never)) as {
+      problems: string[];
+      queryErrors: unknown[];
+    };
+    expect(result.queryErrors).toEqual([]);
+    expect(result.problems).toEqual([
+      expect.stringContaining("Identifier 'top' has already been declared"),
+      'Query "items" returned 0 rows — charts/tables using it will be empty.',
+    ]);
+  });
+
   it("continues listing when one dashboard becomes unavailable", async () => {
     const dashboards = path.join(workspace, "data", "dashboards");
     await fs.writeFile(path.join(dashboards, "gone.html"), "gone");
@@ -779,6 +800,32 @@ describe("dashboard kit assets", () => {
         ]
       )
     ).toBe('"Name","Value"\r\n"A ""quote""","1,200"');
+  });
+
+  it("shows a deduplicated error banner for uncaught page errors", async () => {
+    const routes = createDashboardAssetRoutes(() => config);
+    const dom = new JSDOM("<main></main>", {
+      runScripts: "outside-only",
+      url: "https://yoplai.test",
+    });
+    dom.window.eval(await (await routes.request("/v2/kit.js")).text());
+    const fail = (message: string) =>
+      dom.window.dispatchEvent(
+        new dom.window.ErrorEvent("error", { message, lineno: 7 })
+      );
+    fail("boom");
+    fail("boom");
+    fail("two");
+    fail("three");
+    fail("four");
+    const rows = [
+      ...dom.window.document.querySelectorAll(".dk-error-banner div"),
+    ].map((row) => row.textContent);
+    expect(rows).toEqual([
+      "This dashboard hit an error: boom (line 7)",
+      "This dashboard hit an error: two (line 7)",
+      "This dashboard hit an error: three (line 7)",
+    ]);
   });
 
   it("formats values, caps tables, and degrades charts without ECharts", async () => {
