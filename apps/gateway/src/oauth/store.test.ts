@@ -115,14 +115,10 @@ describe("OAuthConnectionStore encryption at rest", () => {
     expect(rawOnDisk).not.toContain(connection.accessToken);
     expect(rawOnDisk).not.toContain(connection.refreshToken);
 
-    // The stored token fields are our AES-GCM envelope.
+    // The entire payload is an AES-GCM envelope, including account metadata.
     const parsed = JSON.parse(rawOnDisk);
-    expect(isEncrypted(parsed.accessToken)).toBe(true);
-    expect(isEncrypted(parsed.refreshToken)).toBe(true);
-
-    // Non-secret metadata is still readable.
-    expect(parsed.account).toBe(connection.account);
-    expect(parsed.provider).toBe("google");
+    expect(isEncrypted(parsed)).toBe(true);
+    expect(rawOnDisk).not.toContain(connection.account);
   });
 
   it("decrypts tokens transparently on read", () => {
@@ -177,5 +173,32 @@ describe("OAuthConnectionStore encryption at rest", () => {
     );
     // Nothing was written to disk: no plaintext token row was created.
     expect(fs.readdirSync(tmpDir)).toHaveLength(0);
+  });
+
+  it("reads encrypted legacy rows as team and migrates on update without personal leakage", () => {
+    const connection = makeConnection();
+    const legacyFile = path.join(tmpDir, "main__google.json");
+    fs.writeFileSync(legacyFile, JSON.stringify({
+      ...connection,
+      accessToken: cipher.encrypt(connection.accessToken),
+      refreshToken: cipher.encrypt(connection.refreshToken ?? ""),
+    }));
+    const store = new OAuthConnectionStore(tmpDir, cipher);
+    expect(store.get("main", "google")?.scope).toBe("team");
+    expect(store.get("main", "google", { type: "personal", userId: "alice" })).toBeUndefined();
+    store.update("main", "google", { accessToken: "refreshed-team" });
+    expect(fs.existsSync(legacyFile)).toBe(false);
+    expect(store.get("main", "google")?.accessToken).toBe("refreshed-team");
+    expect(fs.readdirSync(tmpDir)).toHaveLength(1);
+    store.delete("main", "google");
+    expect(store.get("main", "google")).toBeUndefined();
+  });
+
+  it("does not return a colliding legacy filename for another agent", () => {
+    fs.writeFileSync(path.join(tmpDir, "a_b__google.json"), JSON.stringify(makeConnection({ agentId: "a/b" })));
+    const store = new OAuthConnectionStore(tmpDir, cipher);
+    expect(store.get("a_b", "google")).toBeUndefined();
+    store.delete("a_b", "google");
+    expect(store.get("a/b", "google")?.agentId).toBe("a/b");
   });
 });

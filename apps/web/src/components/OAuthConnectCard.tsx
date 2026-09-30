@@ -6,6 +6,7 @@ import {
   Show,
   Switch,
 } from "solid-js";
+import { useSession } from "../auth/client";
 
 type ConnectionState = "connected" | "needs_reconnect" | "disconnected";
 
@@ -39,24 +40,28 @@ export function OAuthConnectCard(props: {
   const [status, setStatus] = createSignal<OAuthStatus>();
   const [loading, setLoading] = createSignal(false);
   const [error, setError] = createSignal<string>();
+  const session = useSession();
+  const [scope, setScope] = createSignal<"team" | "personal">("team");
+  let statusRequest = 0;
 
   const refreshStatus = async () => {
     if (!props.agentId) return;
+    const request = ++statusRequest;
     setLoading(true);
     try {
       const response = await fetch(
-        `/api/oauth/${encodeURIComponent(props.provider)}/status?agent=${encodeURIComponent(props.agentId)}`
+        `/api/oauth/${encodeURIComponent(props.provider)}/status?agent=${encodeURIComponent(props.agentId)}&scope=${scope()}`
       );
-      setStatus(
-        response.ok
-          ? ((await response.json()) as OAuthStatus)
-          : { connected: false, provider: props.provider }
-      );
+      const nextStatus = response.ok
+        ? ((await response.json()) as OAuthStatus)
+        : { connected: false, provider: props.provider };
+      if (request !== statusRequest) return;
+      setStatus(nextStatus);
       setError(undefined);
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause));
+      if (request === statusRequest) setError(cause instanceof Error ? cause.message : String(cause));
     } finally {
-      setLoading(false);
+      if (request === statusRequest) setLoading(false);
     }
   };
 
@@ -93,6 +98,7 @@ export function OAuthConnectCard(props: {
     if (!props.agentId) return;
     const query = new URLSearchParams({ agent: props.agentId });
     if (props.scopes?.length) query.set("scopes", props.scopes.join(","));
+    query.set("scope", scope());
     window.open(
       `/api/oauth/${encodeURIComponent(props.provider)}/authorize?${query.toString()}`,
       "yoplai-oauth",
@@ -102,7 +108,7 @@ export function OAuthConnectCard(props: {
 
   const disconnect = async () => {
     await fetch(
-      `/api/oauth/${encodeURIComponent(props.provider)}/disconnect?agent=${encodeURIComponent(props.agentId)}`,
+      `/api/oauth/${encodeURIComponent(props.provider)}/disconnect?agent=${encodeURIComponent(props.agentId)}&scope=${scope()}`,
       { method: "POST" }
     );
     await refreshStatus();
@@ -115,6 +121,16 @@ export function OAuthConnectCard(props: {
         {(message) => <div class="oauth-error">{message()}</div>}
       </Show>
       <section class="oauth-card">
+        <label class="oauth-scope">
+          Connection for
+          <select value={scope()} onChange={(event) => {
+            setStatus(undefined);
+            setScope(event.currentTarget.value as "team" | "personal");
+          }}>
+            <option value="personal" disabled={!session().data?.user}>Just me</option>
+            <option value="team">Whole team</option>
+          </select>
+        </label>
         <div class="oauth-card-head">
           <div class="oauth-provider">
             <span class="oauth-provider-name">{props.label}</span>
@@ -206,8 +222,9 @@ export function OAuthConnectCard(props: {
         </Show>
         <Show when={connected() || needsGrant()}>
           <p class="oauth-shared-note">
-            Shared by all {providerLabel(props.provider)} extensions on this
-            agent — disconnecting removes access for all of them.
+            {scope() === "personal"
+              ? "Used only for your requests. Without it, your requests use the team connection when available."
+              : "Used by everyone on this agent who has no personal connection."}
           </p>
         </Show>
         <Show when={loading() && !status()}>
@@ -221,6 +238,8 @@ export function OAuthConnectCard(props: {
 export const OAUTH_CONNECT_CARD_STYLES = `
 .oauth-error { margin-bottom: 16px; padding: 10px 14px; border-radius: 10px; background: color-mix(in srgb, #ef4444 10%, transparent); border: 1px solid color-mix(in srgb, #ef4444 40%, transparent); color: var(--text-primary); font-size: 13px; }
 .oauth-card { border: 1px solid var(--border-default); border-radius: 14px; background: var(--bg-surface); padding: 20px; }
+.oauth-scope { display: flex; align-items: center; gap: 12px; margin-bottom: 16px; color: var(--text-secondary); font-size: 13px; }
+.oauth-scope select { padding: 8px; border: 1px solid var(--border-default); border-radius: 8px; background: var(--bg-base); color: var(--text-primary); }
 .oauth-card-head { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
 .oauth-provider, .oauth-actions { display: flex; align-items: center; gap: 8px; }
 .oauth-provider-name { font-size: 16px; font-weight: 600; color: var(--text-primary); }

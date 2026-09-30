@@ -186,6 +186,7 @@ Start with the [documentation index](docs/README.md).
 - [CLI](docs/cli.md) and [API](docs/api.md)
 - [Projects](docs/projects.md), [Scheduling](docs/scheduling.md), and [Channels](docs/channels.md)
 - [OAuth](docs/oauth.md) and [OpenClaw](docs/openclaw.md)
+- Google tool connections support **Just me** (your signed-in web requests) or **Whole team** (shared fallback); existing connections remain shared. See [connection scopes](docs/oauth.md#extension-oauth-connections).
 - [Models and skills](docs/models-and-skills.md)
 - [Development](docs/development.md) and [data layout](docs/data-layout.md)
 

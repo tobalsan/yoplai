@@ -63,13 +63,18 @@ export const ConnectionStateSchema = z.enum([
 export type ConnectionState = z.infer<typeof ConnectionStateSchema>;
 
 /**
- * A stored connection, scoped to a single (agent, provider) pair. There is no
- * per-user dimension in this slice: one workspace/agent has at most one
- * connection per provider.
+ * Team credentials are shared by an agent; personal credentials belong only
+ * to the named requester. Missing scope on legacy connections means team.
  */
+export type CredentialScope =
+  | { type: "team" }
+  | { type: "personal"; userId: string };
+
 export const OAuthConnectionSchema = z.object({
   agentId: z.string(),
   provider: z.string(),
+  scope: z.enum(["team", "personal"]).optional(),
+  userId: z.string().min(1).optional(),
   accessToken: z.string(),
   refreshToken: z.string().optional(),
   /** Epoch millis when the access token expires, if known. */
@@ -87,6 +92,21 @@ export const OAuthConnectionSchema = z.object({
   status: z.enum(["connected", "needs_reconnect"]).optional(),
   connectedAt: z.number(),
   updatedAt: z.number(),
+}).superRefine((connection, ctx) => {
+  if (connection.scope === "personal" && !connection.userId) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["userId"],
+      message: "Personal credentials require a userId",
+    });
+  }
+  if (connection.scope !== "personal" && connection.userId !== undefined) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["userId"],
+      message: "Team credentials cannot have a userId",
+    });
+  }
 });
 export type OAuthConnection = z.infer<typeof OAuthConnectionSchema>;
 

@@ -224,7 +224,7 @@ describe("ExtensionDetails", () => {
     );
     grant?.click();
     expect(openMock).toHaveBeenCalledWith(
-      "/api/oauth/google/authorize?agent=scribe&scopes=gmail.modify%2Cuserinfo.email",
+      "/api/oauth/google/authorize?agent=scribe&scopes=gmail.modify%2Cuserinfo.email&scope=team",
       "yoplai-oauth",
       "width=520,height=640"
     );
