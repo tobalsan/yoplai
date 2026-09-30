@@ -282,6 +282,8 @@ Number of recent channel messages included as context for the agent (default: 20
 
 Set top-level `extensions.discord.allowBots` to `true` to accept messages from any other Discord bot, or to an array of Discord bot user IDs to accept only those bots. Default `false` ignores bot-authored triggers. Allowed bots must explicitly mention this bot through Discord mentions or `mentionPatterns`, even where `requireMention` is false. This bot's own messages and webhook messages are always ignored. Other bots' non-webhook messages remain in channel history even when not allowed to trigger a run. In forum threads, other bots' messages that do not trigger a run are handed to each bound agent as context on its next run in that thread.
 
+To let agents reply to other bots, the agent-facing sender, recent history, and thread starter label each author as `name (<@id>)`, with `, bot` added for bots, and `discord.list_users` includes bot accounts flagged `bot: true`. Listing members requires the bot's Server Members Intent.
+
 Bot-triggered turns use Discord agent sender identity so gateway agent-loop limits apply. Human turns retain same session key and reset consecutive-agent counter.
 
 ### clearHistoryAfterReply

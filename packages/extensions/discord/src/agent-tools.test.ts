@@ -404,6 +404,7 @@ describe("discord agent tools", () => {
     expect(result.users).toEqual([
       { id: "u1", name: "Alice A", guildId: "g1" },
       { id: "u2", name: "Bob B", guildId: "g1" },
+      { id: "u4", name: "buildbot", guildId: "g1", bot: true },
       { id: "u3", name: "cara", guildId: "g2" },
     ]);
   });

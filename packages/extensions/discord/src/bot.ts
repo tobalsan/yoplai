@@ -31,6 +31,7 @@ import {
 } from "./utils/history.js";
 import { splitMessage } from "./utils/chunk.js";
 import { startTyping, stopAllTyping } from "./utils/typing.js";
+import { formatDiscordAuthor } from "./utils/author.js";
 import { getDiscordContext } from "./context.js";
 import { getForumSubscribers } from "./forum-subscribers.js";
 import { ToolNotes } from "./utils/tool-notes.js";
@@ -224,7 +225,7 @@ async function handleDiscordMessage(
     recordMessage(
       data.channel_id,
       {
-        author: data.author.username ?? data.author.id,
+        author: formatDiscordAuthor(data.author),
         content: data.content ?? "",
         timestamp: Date.now(),
       },
@@ -265,7 +266,7 @@ async function handleDiscordMessage(
       isDiscordThreadType(channelMeta.type) && channelMeta.parentId
         ? await getChannelMetadata(client, channelMeta.parentId)
         : undefined;
-    const sender = data.author.username ?? data.author.id;
+    const sender = formatDiscordAuthor(data.author);
     const conversationType = !data.guild_id
       ? "direct_message"
       : isDiscordThreadType(channelMeta.type)
@@ -282,7 +283,7 @@ async function handleDiscordMessage(
     const placeChannel = `#${channelName ?? data.channel_id}`;
     const place =
       conversationType === "direct_message"
-        ? `direct message / ${sender}`
+        ? `direct message / ${data.author.username ?? data.author.id}`
         : conversationType === "thread_reply"
           ? `${placeChannel} / ${threadName}`
           : placeChannel;
@@ -537,7 +538,7 @@ function recordForumBotMessage(
   recordMessage(
     forumHistoryKey(threadId, target.agent.id),
     {
-      author: data.author.username ?? data.author.id,
+      author: formatDiscordAuthor(data.author),
       content: data.content ?? "",
       timestamp: Date.now(),
     },
@@ -592,7 +593,7 @@ async function handleForumThreadOpening(
       getChannelMetadata(client, threadId),
       getChannelMetadata(client, parentChannelId),
     ]);
-    const sender = data.author.username ?? data.author.id;
+    const sender = formatDiscordAuthor(data.author);
     context = buildDiscordContext({
       metadata: {
         channel: "discord",
@@ -777,7 +778,7 @@ async function handleForumThreadReply(
       getChannelMetadata(client, parentChannelId),
       getThreadStarter(client, threadId),
     ]);
-    const sender = data.author.username ?? data.author.id;
+    const sender = formatDiscordAuthor(data.author);
     context = buildDiscordContext({
       metadata: {
         channel: "discord",

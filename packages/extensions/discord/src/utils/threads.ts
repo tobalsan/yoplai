@@ -4,6 +4,7 @@
  */
 
 import type { Client } from "@buape/carbon";
+import { formatDiscordAuthor } from "./author.js";
 
 export type ThreadStarterInfo = {
   author: string;
@@ -46,13 +47,15 @@ export async function getThreadStarter(
     const starterMessage = (await client.rest.get(
       `/channels/${parentId}/messages/${channelId}`
     )) as {
-      author?: { username?: string };
+      author?: { id: string; username?: string; bot?: boolean };
       content?: string;
       timestamp?: string;
     };
 
     const info: ThreadStarterInfo = {
-      author: starterMessage.author?.username ?? "Unknown",
+      author: starterMessage.author
+        ? formatDiscordAuthor(starterMessage.author)
+        : "Unknown",
       content: starterMessage.content ?? "",
       timestamp: starterMessage.timestamp
         ? new Date(starterMessage.timestamp).getTime()

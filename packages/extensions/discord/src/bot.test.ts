@@ -223,6 +223,9 @@ describe("Discord bot integration", () => {
           sessionKey: "discord:channel-1",
           sender: { kind: "agent", agentId: "discord:other-bot" },
         }));
+        expect(JSON.stringify(mockRunAgent.mock.calls.at(-1)?.[0].context)).toContain(
+          "other-bot (<@other-bot>, bot)"
+        );
 
         await capturedHandlers.onMessage?.({
           ...botMessage("human"),
@@ -545,7 +548,7 @@ describe("Discord bot integration", () => {
         expect(recordMessage).toHaveBeenCalledWith(
           "channel-1",
           expect.objectContaining({
-            author: "testuser",
+            author: "testuser (<@user-1>)",
             content: "Regular chat message",
           }),
           20, // default historyLimit
@@ -2200,7 +2203,7 @@ describe("Discord component bot", () => {
       expect(recordMessage).toHaveBeenCalledTimes(1);
       expect(recordMessage).toHaveBeenCalledWith(
         "forum:thread-1:alpha",
-        expect.objectContaining({ author: "bot", content: "Bot echo" }),
+        expect.objectContaining({ author: "bot (<@bot-1>, bot)", content: "Bot echo" }),
         20,
         "msg-bot"
       );

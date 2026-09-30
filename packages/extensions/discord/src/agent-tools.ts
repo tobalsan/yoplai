@@ -663,7 +663,7 @@ export function discordAgentTools(): ExtensionAgentTool[] {
     {
       name: "discord.list_users",
       description:
-        "List Discord guild members the bot can see, returning user IDs and display names for direct messaging. Optionally filter by name or a single guild ID.",
+        "List Discord guild members the bot can see, including other bots (flagged bot: true), returning user IDs and display names. Mention a user or bot in a message as <@id>; bots only respond when mentioned. Optionally filter by name or a single guild ID.",
       parameters: {
         type: "object",
         properties: {
@@ -696,8 +696,12 @@ export function discordAgentTools(): ExtensionAgentTool[] {
           const client = resolved.rest;
           const limit = input.limit ?? 100;
           const query = input.query?.toLowerCase();
-          const users: Array<{ id: string; name: string; guildId?: string }> =
-            [];
+          const users: Array<{
+            id: string;
+            name: string;
+            guildId?: string;
+            bot?: true;
+          }> = [];
           const seen = new Set<string>();
 
           const guilds =
@@ -731,10 +735,15 @@ export function discordAgentTools(): ExtensionAgentTool[] {
               for (const member of members) {
                 const id = member.user?.id;
                 const name = displayUser(member);
-                if (!id || !name || member.user?.bot || seen.has(id)) continue;
+                if (!id || !name || seen.has(id)) continue;
                 if (query && !name.toLowerCase().includes(query)) continue;
                 seen.add(id);
-                users.push({ id, name, guildId: guild.id });
+                users.push({
+                  id,
+                  name,
+                  guildId: guild.id,
+                  ...(member.user?.bot ? { bot: true as const } : {}),
+                });
                 if (users.length >= limit) break;
               }
               const lastId = members.at(-1)?.user?.id;
