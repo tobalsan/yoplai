@@ -1973,6 +1973,10 @@ export type SimpleHistoryMessage = {
 export type ThinkingBlock = {
   type: "thinking";
   thinking: string;
+  /** Epoch ms when first thinking chunk arrived */
+  startedAt?: number;
+  /** Epoch ms of last thinking chunk */
+  endedAt?: number;
 };
 
 export type TextBlock = {

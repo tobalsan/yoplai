@@ -59,6 +59,7 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Fixed
 
+- Thinking and activity durations in web chat now survive page reloads and stopped runs: gateway history stores start and end times on thinking blocks.
 - A Canvas chart no longer blanks the rest of the dashboard when ECharts is missing or its option is invalid; the chart area shows a short message instead, and re-rendering a chart on the same element replaces it cleanly.
 - Messages sent mid-turn now appear after the agent's already-streamed thinking, text, and tool calls (including still-running ones) instead of jumping above them.
 - Pi agent history now keeps each assistant message together with its own tool calls, so reloaded chats show messages sent mid-turn in the order they were sent instead of splitting thinking from tool calls.

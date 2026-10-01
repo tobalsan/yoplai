@@ -449,13 +449,23 @@ function appendAssistantText(buffer: TurnBuffer, text: string): void {
   buffer.assistantContent.push({ type: "text", text });
 }
 
-function appendAssistantThinking(buffer: TurnBuffer, text: string): void {
+function appendAssistantThinking(
+  buffer: TurnBuffer,
+  text: string,
+  timestamp: number
+): void {
   const last = buffer.assistantContent.at(-1);
   if (last?.type === "thinking") {
     last.thinking += text;
+    last.endedAt = timestamp;
     return;
   }
-  buffer.assistantContent.push({ type: "thinking", thinking: text });
+  buffer.assistantContent.push({
+    type: "thinking",
+    thinking: text,
+    startedAt: timestamp,
+    endedAt: timestamp,
+  });
 }
 
 /**
@@ -492,7 +502,7 @@ export function bufferHistoryEvent(
         buffer.startTimestamp = event.timestamp;
       }
       buffer.thinkingText += event.text;
-      appendAssistantThinking(buffer, event.text);
+      appendAssistantThinking(buffer, event.text, event.timestamp);
       break;
     case "assistant_file":
       if (!buffer.assistantStarted) {
@@ -1073,7 +1083,16 @@ function convertPiContent(content: unknown[]): ContentBlock[] {
   for (const c of content) {
     const block = c as Record<string, unknown>;
     if (block.type === "thinking" && typeof block.thinking === "string") {
-      blocks.push({ type: "thinking", thinking: block.thinking });
+      blocks.push({
+        type: "thinking",
+        thinking: block.thinking,
+        ...(typeof block.startedAt === "number"
+          ? { startedAt: block.startedAt }
+          : {}),
+        ...(typeof block.endedAt === "number"
+          ? { endedAt: block.endedAt }
+          : {}),
+      });
     } else if (block.type === "text" && typeof block.text === "string") {
       blocks.push({ type: "text", text: block.text });
     } else if (block.type === "toolCall" && typeof block.id === "string") {
