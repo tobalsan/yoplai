@@ -44,7 +44,17 @@ External extensions load from `extensionsPath`, or `$YOPLAI_HOME/extensions` by 
 
 Extensions can contribute routes, services, lifecycle hooks, capabilities, CLI commands, web routes, prompt text, tools, delivery sinks, and OAuth requirements. Tool bundles use `packages/shared/src/tool-extension.ts` and object-shaped Zod parameter schemas.
 
-Secrets resolve before extension validation. Missing IDs, invalid config, or missing required secrets fail or warn at startup according to extension contract. Agent-local `.env` lets two agents reuse names such as `SLACK_TOKEN` without sharing values.
+Secrets resolve before extension validation. Missing IDs and invalid config fail or warn at startup according to extension contract. Missing tool-extension tokens remain configurable at runtime: affected calls return a configuration link while unrelated tools keep working. Agent-local `.env` lets two agents reuse names such as `SLACK_TOKEN` without sharing values.
+
+## Personal extension API tokens
+
+Open an agent's extension configuration form and paste your token with **Just me** selected. This is available to signed-in users with access to that agent. Admins can select **Whole team** and change shared non-secret settings; single-user installations keep the existing shared configuration behavior.
+
+Each tool call uses your personal token first, then existing team configuration. Without either, it asks you to configure the extension using an exact form link. Scheduled jobs and other runs without a signed-in requester use team configuration only. Existing YAML/env tokens remain shared; no migration is needed. Saving or rotating a personal token takes effect on the next call, including tools already collected for a conversation.
+
+Personal token fields are encrypted in `$YOPLAI_HOME/credentials` using `oauth.encryptionKey`; a missing encryption key prevents saving. The UI and model receive field presence and links, never stored personal token values. Personal tokens are literal values, so `$env:` references are rejected. Shared fields such as Zendesk's email/subdomain remain managed by an admin; Pennylane's `apiToken` and Zendesk's `apiKey` are scoped independently per requester.
+
+The existing `PATCH /api/agents/:id/extensions/:extensionId` endpoint accepts `{"credentialScope":"personal","secrets":{"apiToken":"<token>"}}`. Only declared secret fields may be changed in personal scope; the server derives the user from authentication and rejects a supplied `userId`. `credentialScope: "team"` or an omitted scope uses the existing config/env writer and requires an admin in multi-user mode. The catalog includes `personalSecretFields` (names only) and `canConfigureTeam` for token-backed extensions in multi-user mode.
 
 ## Multi-user mode
 

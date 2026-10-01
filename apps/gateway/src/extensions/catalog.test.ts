@@ -5,13 +5,14 @@ import { createRequire } from "node:module";
 import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { GatewayConfigSchema, type AgentConfig } from "@yoplai/shared";
 import {
   buildExtensionCatalog,
   resolveExtensionDefinition,
 } from "./catalog.js";
 import { getBuiltInExtensionRegistrations } from "./registry.js";
+import { CredentialStore } from "../credentials/store.js";
 
 const require = createRequire(import.meta.url);
 const zodUrl = pathToFileURL(require.resolve("zod")).href;
@@ -370,6 +371,21 @@ describe("buildExtensionCatalog", () => {
       apiKey: "********",
       region: "eu",
     });
+  });
+
+  it("never exposes personal tokens in validator messages or catalog config", async () => {
+    await writeExternalExtension(root, "personal-token", {
+      requiredSecrets: '["apiKey"]',
+      configJsonSchema: '{ properties: { apiKey: { type: "string" } } }',
+      validateAgentConfig: `(agent) => ({ valid: false, errors: ["apiKey", "Invalid token " + agent.extensions["personal-token"].apiKey] })`,
+    });
+    const agent = makeAgent({ "personal-token": { enabled: true } });
+    const lookup = vi.spyOn(CredentialStore.prototype, "get").mockImplementation((key) => key.integration === "extension-config:personal-token" ? { apiKey: "alice-private-token" } : undefined);
+    try {
+      const catalog = await buildExtensionCatalog(configWith(agent, root), agent, { requesterUserId: "alice" });
+      expect(catalog.find((entry) => entry.id === "personal-token")).toMatchObject({ configured: false, missingConfig: ["apiKey", "config"], configValues: {} });
+      expect(JSON.stringify(catalog)).not.toContain("alice-private-token");
+    } finally { lookup.mockRestore(); }
   });
 
   it("reports missing configuration fields without exposing values", async () => {
