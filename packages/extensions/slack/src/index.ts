@@ -26,6 +26,10 @@ import {
   SlackProgressStore,
   setSlackProgressStore,
 } from "./progress-store.js";
+import { getSlackPairingService, setSlackPairingService, SlackPairingService } from "./pairing.js";
+import { registerSlackPairingRoutes } from "./pairing-routes.js";
+
+export { getSlackPairingService, SlackPairingService } from "./pairing.js";
 
 type StartSlackBotsOptions = {
   agents: AgentConfig[];
@@ -102,7 +106,7 @@ const slackExtension: Extension = {
   description: "Slack integration for channel and DM routing",
   dependencies: [],
   configSchema: SlackExtensionConfigSchema,
-  routePrefixes: [],
+  routePrefixes: ["/api/slack"],
   validateConfig(raw) {
     if (
       !raw ||
@@ -121,12 +125,17 @@ const slackExtension: Extension = {
         : result.error.issues.map((issue) => issue.message),
     };
   },
-  registerRoutes() {},
+  registerRoutes: registerSlackPairingRoutes,
   getAgentTools(_agent, context) {
     if (context?.config.extensions?.slack?.enabled === false) return [];
     return slackAgentTools();
   },
   async start(ctx) {
+    const config = ctx.getConfig();
+    if (config.extensions?.multiUser?.enabled) {
+      const baseUrl = config.server?.baseUrl ?? config.web?.baseUrl ?? `http://localhost:${config.ui?.port ?? 3000}`;
+      setSlackPairingService(new SlackPairingService(ctx.getDataDir(), baseUrl));
+    }
     const rawConfig = ctx.getConfig().extensions?.slack;
 
     if (rawConfig) {
@@ -149,6 +158,8 @@ const slackExtension: Extension = {
     await stopSlackBots();
     unregisterDeliverySink?.();
     unregisterDeliverySink = undefined;
+    getSlackPairingService()?.close();
+    setSlackPairingService(undefined);
     clearSlackContext();
   },
   capabilities() {

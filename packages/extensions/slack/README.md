@@ -144,6 +144,33 @@ agent, the tools return `{ ok: false, error }`.
 `enabled: false` only stops the bot from listening — the agent tools still
 function via the token fallback.
 
+## Account pairing
+
+With multi-user web sign-in enabled, send `!pair` to the bot in an allowed channel,
+thread, or DM. The bot replies privately with a single-use link that expires after
+ten minutes. Open it, sign in to your **existing** Yoplai account, check the Slack
+identity shown, and select **Connect Slack**. Pairing never creates a Yoplai account.
+Subsequent requests resolve your personal credentials first, then team credentials;
+unpaired Slack users only use team credentials. Every sender in a shared thread
+is resolved independently, including reactions and control commands.
+
+Your Slack and Yoplai emails must be the same (comparison ignores case and outer
+whitespace). Different emails intentionally cannot pair. A forwarded link cannot
+pair to a recipient with a different email: the server fetches the original
+Slack user's email again at redemption and refuses mismatches. Hidden/missing
+email, Slack API errors, or timeouts also refuse pairing; no unchecked fallback.
+
+Administrators: enable web login, configure the public UI URL (`server.baseUrl`,
+or `web.baseUrl` when the former is unset),
+and grant the bot `users:read` and **`users:read.email`**, reinstalling the Slack
+app after changing scopes. Pairing records and hashed expiring tokens live in
+`$YOPLAI_HOME/slack-pairing.db`; no Slack token is stored there.
+
+A future alternative is **Sign in with Slack** (Slack OpenID Connect): redirect
+from Yoplai to Slack, then pair only when Slack's verified user ID equals the
+link's original user ID. This supports differing emails, but needs Slack sign-in
+scopes, a redirect URL, and one extra first-use consent click; it is not implemented.
+
 ## Required OAuth scopes
 
 The bot token needs scopes matching the features you use:
@@ -153,6 +180,7 @@ The bot token needs scopes matching the features you use:
 | `slack.create_thread`, `slack.send_message` | `chat:write` (and `chat:write.public` to post to channels the bot has not joined) |
 | `slack.list_channels` | `channels:read` (public), `groups:read` (private) |
 | `slack.list_users` | `users:read` |
+| `!pair` account pairing | `users:read`, `users:read.email` |
 | `slack.get_channel_history`, `slack.get_thread_replies` | `channels:history` (public), `groups:history` (private), `im:history` (DM), `mpim:history` (group DM) |
 | Canvas tools | `canvases:read`, `canvases:write`, `files:read` (reading content) |
 | Lists tools | `files:read` (`slack.list_lists`), `lists:read` (`slack.list_read`), `lists:write` (create, update, delete); Slack Lists require a paid workspace plan |

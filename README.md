@@ -11,6 +11,7 @@ Yoplai keeps configuration, conversations, and project data on your machine. Sta
 - Web chat with streaming, tool calls, files, and session history
 - Multiple configurable agents and external CLI subagents
 - Optional Discord, Slack, Telegram, IRC, and webhook entry points
+- Slack `!pair` links an existing web account for personal credentials; [setup and email requirements](packages/extensions/slack/README.md#account-pairing).
 - Scheduled jobs, project boards, slices, and orchestration
 - File-based runtime data by default; SQLite only for optional features such as multi-user auth
 

@@ -1184,6 +1184,8 @@ export type AgentTraceContext = {
 
 export type RunAgentParams = {
   agentId: string;
+  /** Trusted requester resolved by the host or messaging transport; absent when unpaired. */
+  userId?: string;
   message: string;
   attachments?: FileAttachment[];
   sessionId?: string;
