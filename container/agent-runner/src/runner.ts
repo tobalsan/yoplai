@@ -215,6 +215,10 @@ const LARGE_TOOL_RESULT_PREVIEW_LENGTH = 2_000;
 
 let activeSession: AgentSession | undefined;
 let pendingFollowUps: string[] = [];
+// Follow-ups stay buffered until the initial prompt's agent run has started.
+// Sending them earlier would start a separate run on the idle session that
+// pi awaits to completion before the user's original message is prompted.
+let initialRunStarted = false;
 // Tracks the model currently in use (updated on a fallback switch) so a
 // follow-up delivered to an already-active session — pi's `sendUserMessage`
 // always triggers a turn — renews first instead of prompting on a stale
@@ -280,7 +284,7 @@ export async function sendFollowUpMessage(
     );
   }
 
-  if (!activeSession) {
+  if (!activeSession || !initialRunStarted) {
     pendingFollowUps.push(decision.text);
     return;
   }
@@ -293,6 +297,18 @@ export async function sendFollowUpMessage(
   }
 
   await activeSession.sendUserMessage(decision.text, { deliverAs: "steer" });
+}
+
+async function steerPendingFollowUps(session: AgentSession): Promise<void> {
+  for (const message of pendingFollowUps.splice(0)) {
+    try {
+      await session.sendUserMessage(message, { deliverAs: "steer" });
+    } catch (error) {
+      console.error(
+        `[agent-runner] Failed to steer buffered follow-up: ${error instanceof Error ? error.message : String(error)}`
+      );
+    }
+  }
 }
 
 export function abortActiveAgent(): void {
@@ -313,6 +329,7 @@ export async function runAgent(
 
   activeSession = undefined;
   activeOAuthContext = undefined;
+  initialRunStarted = false;
 
   const provider = input.sdkConfig.model.provider;
   if (!provider) {
@@ -440,19 +457,16 @@ export async function runAgent(
     }
 
     const unsubscribe = session.subscribe((evt) => {
+      if (evt.type === "agent_start" && !initialRunStarted) {
+        initialRunStarted = true;
+        void steerPendingFollowUps(session);
+      }
       for (const event of collectHistoryEvent(evt, history)) {
         onStreamEvent?.(event);
       }
     });
 
     try {
-      if (pendingFollowUps.length > 0) {
-        await ensureFreshOAuthToken(provider, oauthCtx);
-      }
-      for (const message of pendingFollowUps.splice(0)) {
-        await session.sendUserMessage(message, { deliverAs: "steer" });
-      }
-
       const promptOptions =
         input.imageInputSupported === false
           ? undefined
@@ -530,13 +544,19 @@ export async function runAgent(
           isOAuthRefreshError(primaryFailure.source))
       ) {
         const fallbackStartedAt = Date.now();
-        const logFallback = (outcome: "success" | "failure", fallbackFailure?: string) =>
+        const logFallback = (
+          outcome: "success" | "failure",
+          fallbackFailure?: string
+        ) =>
           console.error(
             JSON.stringify({
               event: "model_fallback",
               primaryProvider: provider,
               primaryModel: input.sdkConfig.model.model,
-              primaryFailureCategory: getProviderErrorCategory(primaryFailure.source, primaryFailure.message),
+              primaryFailureCategory: getProviderErrorCategory(
+                primaryFailure.source,
+                primaryFailure.message
+              ),
               primaryFailure: primaryFailure.message,
               primaryDurationMs: fallbackStartedAt - primaryStartedAt,
               fallbackProvider: fallbackConfig.provider,

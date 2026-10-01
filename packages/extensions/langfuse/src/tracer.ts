@@ -382,7 +382,10 @@ export class LangfuseTracer {
       });
       return;
     }
-    trace.pendingUserInput = input;
+    // Messages queued before the first generation reach the model together.
+    trace.pendingUserInput = trace.pendingUserInput
+      ? `${trace.pendingUserInput}\n\n${input}`
+      : input;
   }
 
   private setSystemPrompt(trace: TraceState, prompt: string): void {

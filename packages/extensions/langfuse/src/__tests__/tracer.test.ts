@@ -376,6 +376,28 @@ describe("LangfuseTracer", () => {
     ]);
   });
 
+  it("combines user messages queued before the first generation", async () => {
+    const t = startTracer();
+
+    t.handleHistoryEvent(
+      historyEvent({
+        type: "user",
+        text: "can you access slack canva",
+        timestamp: 1,
+      })
+    );
+    t.handleHistoryEvent(
+      historyEvent({ type: "user", text: "canva", timestamp: 2 })
+    );
+    await t.handleStreamEvent(streamEvent({ type: "text", data: "answer" }));
+    await t.handleStreamEvent(streamEvent({ type: "done" }));
+
+    expect(byType("span")[0]?.input).toBe("can you access slack canva");
+    expect(byType("generation")[0]?.input).toEqual([
+      { role: "user", content: "can you access slack canva\n\ncanva" },
+    ]);
+  });
+
   it("stores system prompt and channel context", async () => {
     const t = startTracer();
     const prompt = "You are Sally.\n\n[CHANNEL CONTEXT]\nchannel: slack";

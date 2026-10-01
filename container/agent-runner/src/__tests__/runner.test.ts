@@ -129,6 +129,12 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
+function startAgentRun(): void {
+  for (const subscriber of piMock.subscribers) {
+    subscriber({ type: "agent_start" });
+  }
+}
+
 describe("Pi runner", () => {
   it("retries a zero-output retryable provider failure in the active session", async () => {
     const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-runner-"));
@@ -883,6 +889,7 @@ describe("Pi runner", () => {
     // threshold — so any renewal observed below can only come from
     // `sendFollowUpMessage`'s own check on the already-active session.
     piMock.session.prompt.mockImplementationOnce(async () => {
+      startAgentRun();
       vi.setSystemTime(startedAt + 6 * 60 * 1000);
       await sendFollowUpMessage({ message: "keep going" });
       piMock.session.messages.push({
@@ -1178,6 +1185,7 @@ describe("Pi runner", () => {
     await fs.mkdir(sessionDir, { recursive: true });
 
     piMock.session.prompt.mockImplementationOnce(async () => {
+      startAgentRun();
       await sendFollowUpMessage({ message: "keep going" });
       piMock.session.messages.push({
         role: "assistant",
@@ -1217,6 +1225,7 @@ describe("Pi runner", () => {
     });
 
     piMock.session.prompt.mockImplementationOnce(async () => {
+      startAgentRun();
       await sendFollowUpMessage(
         envelope({ message: "other session", sessionId: "session-2" }),
         owner
@@ -1254,6 +1263,7 @@ describe("Pi runner", () => {
     await fs.mkdir(sessionDir, { recursive: true });
 
     piMock.session.prompt.mockImplementationOnce(async () => {
+      startAgentRun();
       await sendFollowUpMessage("bare string", {
         agentId: "agent-1",
         sessionId: "session-1",
@@ -1290,6 +1300,7 @@ describe("Pi runner", () => {
     };
 
     piMock.session.prompt.mockImplementationOnce(async () => {
+      startAgentRun();
       await sendFollowUpMessage(
         {
           message: "other session",
@@ -1335,6 +1346,13 @@ describe("Pi runner", () => {
     await sendFollowUpMessage({ message: "already queued" });
 
     piMock.session.prompt.mockImplementationOnce(async () => {
+      // A follow-up sent before the initial run starts would make pi start a
+      // separate run ahead of the user's original message.
+      expect(piMock.session.sendUserMessage).not.toHaveBeenCalled();
+      await sendFollowUpMessage({ message: "still starting" });
+      expect(piMock.session.sendUserMessage).not.toHaveBeenCalled();
+      startAgentRun();
+      await Promise.resolve();
       piMock.session.messages.push({
         role: "assistant",
         content: [{ type: "text", text: "done" }],
@@ -1343,10 +1361,10 @@ describe("Pi runner", () => {
 
     await runAgent(createInput({ workspaceDir, sessionDir }));
 
-    expect(piMock.session.sendUserMessage).toHaveBeenCalledWith(
-      "already queued",
-      { deliverAs: "steer" }
-    );
+    expect(piMock.session.sendUserMessage.mock.calls).toEqual([
+      ["already queued", { deliverAs: "steer" }],
+      ["still starting", { deliverAs: "steer" }],
+    ]);
 
     await fs.rm(tempDir, { recursive: true, force: true });
   });
