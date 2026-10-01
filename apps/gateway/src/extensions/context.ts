@@ -8,6 +8,7 @@ import type {
   ProjectFileChangedEvent,
   ProjectAgentChangedEvent,
   GatewayConfig,
+  ExtensionCredentials,
 } from "@yoplai/shared";
 import {
   CONFIG_DIR,
@@ -36,6 +37,9 @@ import {
   resolveMediaFilePath,
 } from "../media/metadata.js";
 
+import { CredentialStore } from "../credentials/store.js";
+import { resolveCredential } from "../credentials/resolver.js";
+
 export function createExtensionContext(
   _resolvedConfig: GatewayConfig
 ): Parameters<Extension["start"]>[0] {
@@ -43,8 +47,17 @@ export function createExtensionContext(
   // their entry in `stop` via the returned unregister, so a restart re-registers
   // cleanly instead of leaving a stale sink behind.
   const deliverySinks = new Map<string, DeliverySink>();
+  let credentialStore: CredentialStore | undefined;
+  const getCredentialStore = () => credentialStore ??= new CredentialStore();
 
   return {
+    credentials: {
+      get: (key) => getCredentialStore().get(key),
+      save: (key, payload) => getCredentialStore().save(key, payload),
+      delete: (key) => getCredentialStore().delete(key),
+      resolve: <T>(input: Parameters<ExtensionCredentials["resolve"]>[0]) =>
+        resolveCredential<T>({ ...input, store: getCredentialStore() }),
+    },
     getConfig: () => loadConfig(),
     getDataDir: () => CONFIG_DIR,
     reloadConfig: () => reloadConfig(),

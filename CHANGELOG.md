@@ -11,6 +11,8 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Added
 
+- Remote MCP OAuth connections support personal ("Just me") and shared ("Whole team") credentials, with requester-specific reconnect links and existing grants retained as team.
+
 - Google OAuth connections can be personal ("Just me") or shared ("Whole team"); web tool calls use the requester's personal account, then the team account, otherwise a connect link. Existing connections remain shared.
 - Slack agents can find Slack Lists and read, create, update, and delete their items with dedicated agent tools.
 - Slack agents can list, create, read, find sections in, edit, share, and delete Slack Canvases with dedicated agent tools.

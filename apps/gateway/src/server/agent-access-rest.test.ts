@@ -2,6 +2,7 @@ import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import os from "node:os";
+import type { Context } from "hono";
 import type { AddressInfo } from "node:net";
 import { writeTestV3Config } from "../test-utils/v3-config.js";
 
@@ -161,6 +162,8 @@ describe("REST per-agent access gating (multi-user)", () => {
     const { clearConfigCacheForTests } = await import("../config/index.js");
     clearConfigCacheForTests();
 
+    const { api } = await import("./api.core.js");
+    api.get("/mcp/oauth/identity", (c: Context) => c.json({ auth: c.get("multiUserAuthContext") ?? null }));
     const serverMod = await import("./index.js");
     server = serverMod.startServer(0, "127.0.0.1");
     await new Promise<void>((resolve) => {
@@ -200,6 +203,27 @@ describe("REST per-agent access gating (multi-user)", () => {
     const res = await fetch(`http://127.0.0.1:${port}${urlPath}`, { headers });
     return res.status;
   }
+
+  it("carries the authenticated requester into extension contexts and ignores spoofed headers", async () => {
+    const spoofed = encodeAuth({ user: { id: "mallory" }, session: { id: "spoof", userId: "mallory" } });
+    const response = await fetch(`http://127.0.0.1:${port}/api/mcp/oauth/identity?agent=allowed-agent`, {
+      headers: { ...authHeader("alice"), [HEADER]: spoofed },
+    });
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ auth: { user: { id: "alice" } } });
+    const { api } = await import("./api.core.js");
+    const directResponse = await api.request("/mcp/oauth/identity", { headers: { [HEADER]: spoofed } });
+    expect(await directResponse.json()).toEqual({ auth: null });
+  });
+
+  it("guards MCP OAuth agent query routes while allowing callbacks", async () => {
+    for (const action of ["status", "authorize", "disconnect"]) {
+      expect(await get(`/api/mcp/oauth/${action}?agent=allowed-agent&scope=personal`, authHeader("mallory"))).toBe(403);
+      expect(await get(`/api/mcp/oauth/${action}?agent=allowed-agent&scope=personal`, authHeader("alice"))).toBe(404);
+    }
+    expect(await get("/api/mcp/oauth/status", authHeader("alice"))).toBe(400);
+    expect(await get("/api/mcp/oauth/callback", authHeader("mallory"))).toBe(404);
+  });
 
   it("rejects reading a single agent without access", async () => {
     expect(
