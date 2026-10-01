@@ -84,6 +84,36 @@ describe("history store isolation", () => {
     );
   });
 
+  it("persists thinking timing and reads it back, including aborted turns", async () => {
+    const store = await import("./store.js");
+    for (const stopReason of ["stop", "aborted"]) {
+      vi.mocked(fs.appendFile).mockClear();
+      const buffer = store.createTurnBuffer();
+      store.bufferHistoryEvent(buffer, {
+        type: "assistant_thinking",
+        text: "a",
+        timestamp: 1000,
+      });
+      store.bufferHistoryEvent(buffer, {
+        type: "assistant_thinking",
+        text: "b",
+        timestamp: 4000,
+      });
+      buffer.meta = { stopReason };
+      await store.flushTurnBuffer("agent-1", "session-1", buffer);
+      const written = vi
+        .mocked(fs.appendFile)
+        .mock.calls.map((c) => String(c[1]))
+        .join("");
+      vi.mocked(fs.readFile).mockResolvedValueOnce(written);
+      const history = await store.getFullHistory("agent-1", "session-1");
+      const assistant = history.find((m) => m.role === "assistant");
+      expect(assistant?.content).toEqual([
+        { type: "thinking", thinking: "ab", startedAt: 1000, endedAt: 4000 },
+      ]);
+    }
+  });
+
   it("recognizes an empty title meta entry as an intentional title", async () => {
     const { hasSessionMeta } = await import("./store.js");
     vi.mocked(fs.readFile).mockResolvedValueOnce(
