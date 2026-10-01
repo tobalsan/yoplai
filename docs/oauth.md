@@ -91,6 +91,8 @@ Tokens are stored under `$YOPLAI_HOME/oauth/`. Persistence requires `oauth.encry
 
 Connections expose connected, needs-reconnect, or disconnected state. Refresh failures that invalidate grant require reconnect; disconnect best-effort revokes provider grant.
 
+Remote MCP servers (such as Claap) use the same personal/team choice from the agent’s **MCP servers** page. URL-only OAuth connections are encrypted in the host scoped credential store; existing MCP connections migrate as team. Each tool call and refresh uses the requester’s selected credential, and reconnect links let that requester connect their own account.
+
 For Google Drive, follow [Google Drive OAuth setup](oauth-google-drive-setup.md).
 
 ## Multi-user Google login

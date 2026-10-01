@@ -22,6 +22,29 @@ describe("createExtensionContext media helpers", () => {
     await fs.rm(tmpDir, { recursive: true, force: true });
   });
 
+  it("exposes encrypted personal and team credential resolution", async () => {
+    const { writeTestV3Config } = await import("../test-utils/v3-config.js");
+    await writeTestV3Config(tmpDir, {
+      agents: [],
+      extraConfig: { oauth: { encryptionKey: "context-test-encryption-key" } },
+    });
+    const { createExtensionContext } = await import("./context.js");
+    const ctx = createExtensionContext({} as GatewayConfig);
+    const credentials = ctx.credentials!;
+    const team = { agentId: "probe", integration: "mcp:claap", scope: { type: "team" } as const };
+    const personal = { ...team, scope: { type: "personal", userId: "alice" } as const };
+    credentials.save(team, { account: "shared" });
+    credentials.save(personal, { account: "alice" });
+    const lookup = { agentId: "probe", integration: "mcp:claap", connectUrl: "/connect" };
+    expect(credentials.resolve({ ...lookup, requesterUserId: "alice" })).toMatchObject({ payload: { account: "alice" } });
+    expect(credentials.resolve({ ...lookup, requesterUserId: "bob" })).toMatchObject({ payload: { account: "shared" } });
+    const files = await fs.readdir(path.join(tmpDir, "credentials"));
+    for (const file of files) expect(await fs.readFile(path.join(tmpDir, "credentials", file), "utf8")).not.toContain("shared");
+    credentials.delete(team);
+    expect(credentials.resolve({ ...lookup, requesterUserId: "bob" })).toEqual({ connected: false, reason: "not_connected", connectUrl: "/connect" });
+    expect(credentials.get(personal)).toEqual({ account: "alice" });
+  });
+
   it("rejects tampered media metadata paths outside the media directory", async () => {
     const outsidePath = path.join(tmpDir, "outside.txt");
     await fs.writeFile(outsidePath, "secret", "utf8");
