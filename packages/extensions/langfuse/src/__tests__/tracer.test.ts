@@ -354,6 +354,28 @@ describe("LangfuseTracer", () => {
     ]);
   });
 
+  it("keeps the first user input on the trace for follow-ups", async () => {
+    const t = startTracer();
+
+    t.handleHistoryEvent(
+      historyEvent({ type: "user", text: "first", timestamp: 1 })
+    );
+    await t.handleStreamEvent(streamEvent({ type: "text", data: "a" }));
+    t.handleHistoryEvent(historyEvent({ type: "turn_end", timestamp: 2 }));
+    t.handleHistoryEvent(
+      historyEvent({ type: "user", text: "follow-up", timestamp: 3 })
+    );
+    await t.handleStreamEvent(streamEvent({ type: "text", data: "b" }));
+    await t.handleStreamEvent(streamEvent({ type: "done" }));
+
+    const [root] = byType("span");
+    expect(root?.input).toBe("first");
+    expect(byType("generation").map((g) => g.input)).toEqual([
+      [{ role: "user", content: "first" }],
+      [{ role: "user", content: "follow-up" }],
+    ]);
+  });
+
   it("stores system prompt and channel context", async () => {
     const t = startTracer();
     const prompt = "You are Sally.\n\n[CHANNEL CONTEXT]\nchannel: slack";

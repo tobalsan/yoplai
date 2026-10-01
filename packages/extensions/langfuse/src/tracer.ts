@@ -367,8 +367,11 @@ export class LangfuseTracer {
   }
 
   private setUserInput(trace: TraceState, input: string): void {
-    trace.trace.update({ input });
-    trace.trace.setTraceIO({ input });
+    if (!trace.hasTraceInput) {
+      trace.hasTraceInput = true;
+      trace.trace.update({ input });
+      trace.trace.setTraceIO({ input });
+    }
     if (trace.currentGeneration) {
       trace.currentGeneration.userInput = input;
       trace.currentGeneration.generation.update({

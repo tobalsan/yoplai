@@ -356,8 +356,7 @@ export async function runAgent(
     sender: params.sender,
   });
   if (join.handled) {
-    emit({ type: "text", data: join.result.text });
-    emit({ type: "done", meta: { durationMs: 0, queued: true } });
+    lifecycle.emitQueuedAck(message, join.result.text);
     return {
       payloads: [{ text: join.result.text }],
       meta: { durationMs: 0, sessionId, queued: true },

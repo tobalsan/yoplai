@@ -40,6 +40,8 @@ export type TraceState = {
   propagatedMetadata: Record<string, string>;
   currentGeneration?: GenerationState;
   pendingUserInput?: string;
+  /** Trace-level input is the run's first user message; follow-ups only feed generations. */
+  hasTraceInput?: boolean;
   pendingSystemPrompt?: string;
   output: string[];
   lastActivity: number;

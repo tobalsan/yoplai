@@ -464,3 +464,37 @@ describe("SessionRunLifecycle", () => {
     });
   });
 });
+
+describe("emitQueuedAck", () => {
+  it("traces the queued message as user input and leaves the ack untraced", () => {
+    const sessionId = `queued-ack-${Date.now()}`;
+    const onEvent = vi.fn();
+    const lifecycle = new SessionRunLifecycle({
+      agentId: "agent-lifecycle-test",
+      sessionId,
+      onEvent,
+    });
+    const history: unknown[] = [];
+    const stream: Array<{ type: string; trace?: { enabled?: boolean } }> = [];
+    const offHistory = agentEventBus.onHistoryEvent((e) => {
+      if (e.sessionId === sessionId) history.push(e);
+    });
+    const offStream = agentEventBus.onStreamEvent((e) => {
+      if (e.sessionId === sessionId) stream.push(e);
+    });
+
+    lifecycle.emitQueuedAck("canvas", "Message queued into current run");
+    offHistory();
+    offStream();
+
+    expect(history).toEqual([
+      expect.objectContaining({ type: "user", text: "canvas", sessionId }),
+    ]);
+    expect(stream.map((e) => e.type)).toEqual(["text", "done"]);
+    expect(stream.every((e) => e.trace?.enabled === false)).toBe(true);
+    expect(onEvent).toHaveBeenCalledWith({
+      type: "text",
+      data: "Message queued into current run",
+    });
+  });
+});

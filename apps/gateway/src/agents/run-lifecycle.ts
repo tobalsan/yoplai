@@ -107,6 +107,44 @@ export class SessionRunLifecycle {
     } as AgentStreamEvent);
   }
 
+  /**
+   * Acknowledge a message queued behind an active run. The queued text is
+   * traced as a user input of the session's active trace, while the ack
+   * itself is untraced so it neither creates an input-less trace nor closes
+   * the active run's trace (traces are keyed by agent+session).
+   */
+  emitQueuedAck(message: string, text: string): void {
+    if (message.trim()) {
+      agentEventBus.emitHistoryEvent({
+        ...sanitizeForStorage({
+          type: "user",
+          text: message,
+          timestamp: Date.now(),
+        } as HistoryEvent),
+        agentId: this.context.agentId,
+        sessionId: this.context.sessionId,
+        sessionKey: this.context.sessionKey,
+        source: this.context.source,
+        trace: this.context.trace,
+      } as AgentHistoryEvent);
+    }
+    const trace = { ...this.context.trace, enabled: false };
+    for (const event of [
+      { type: "text", data: text },
+      { type: "done", meta: { durationMs: 0, queued: true } },
+    ] as StreamEvent[]) {
+      this.context.onEvent?.(event);
+      agentEventBus.emitStreamEvent({
+        ...event,
+        agentId: this.context.agentId,
+        sessionId: this.context.sessionId,
+        sessionKey: this.context.sessionKey,
+        source: this.context.source,
+        trace,
+      } as AgentStreamEvent);
+    }
+  }
+
   async abortActiveRun(
     adapter: SdkAdapter,
     capabilities: SdkCapabilities
