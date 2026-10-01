@@ -14,6 +14,9 @@ export type ExtensionCatalogEntry = {
   managedAtRoot: boolean;
   configJsonSchema: Record<string, unknown> | null;
   requiredSecrets: string[];
+  /** Present in multi-user mode; contains field names only. */
+  personalSecretFields?: string[];
+  canConfigureTeam?: boolean;
   advancedConfigFields: string[];
   configValues: Record<string, unknown>;
   /**
@@ -75,6 +78,7 @@ export async function fetchAgentExtension(
 }
 
 export type ExtensionConfigPatch = {
+  credentialScope?: "personal" | "team";
   enabled?: boolean;
   config?: Record<string, unknown>;
   secrets?: Record<string, string>;

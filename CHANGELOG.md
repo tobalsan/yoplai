@@ -11,6 +11,8 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Added
 
+- Extension API tokens support **Just me** credentials encrypted per requester, with existing team credentials as fallback and a configuration link when missing. Admins can select **Whole team**; existing configs remain shared.
+
 - Remote MCP OAuth connections support personal ("Just me") and shared ("Whole team") credentials, with requester-specific reconnect links and existing grants retained as team.
 
 - Google OAuth connections can be personal ("Just me") or shared ("Whole team"); web tool calls use the requester's personal account, then the team account, otherwise a connect link. Existing connections remain shared.

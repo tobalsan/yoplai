@@ -14,6 +14,8 @@ import {
   getBuiltInExtensionRegistrations,
   getExternalExtensionsPath,
 } from "../extensions/registry.js";
+import { resolveWebBaseUrl } from "../util/web-url.js";
+export { resolveWebBaseUrl } from "../util/web-url.js";
 
 export type CapabilityKind = "extension" | "mcp-server";
 export type CapabilityEnableTier = "self-enable" | "settings-page";
@@ -62,26 +64,6 @@ export type CapabilityCatalogInput = {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function nonEmptyString(value: string | undefined | null): string | undefined {
-  if (typeof value !== "string") return undefined;
-  const trimmed = value.trim();
-  return trimmed.length > 0 ? trimmed : undefined;
-}
-
-/**
- * Resolve the public web base URL used to build clickable settings/connect
- * links, matching the resolution order used for auth's trusted origins in
- * packages/extensions/multi-user/src/auth.ts: the first non-empty of
- * `server.baseUrl`, `web.baseUrl`, else `http://localhost:<ui.port ?? 3000>`.
- */
-export function resolveWebBaseUrl(config: GatewayConfig): string {
-  const base =
-    nonEmptyString(config.server?.baseUrl) ??
-    nonEmptyString(config.web?.baseUrl) ??
-    `http://localhost:${config.ui?.port ?? 3000}`;
-  return base.replace(/\/+$/, "");
 }
 
 function enabledForAgent(agent: AgentConfig, extensionId: string): boolean {
