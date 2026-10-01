@@ -324,7 +324,7 @@ describe("LangfuseTracer", () => {
 
     const [gen] = byType("generation");
     expect(gen?.attrs["langfuse.observation.model.name"]).toBe(
-      "claude-sonnet-4-5"
+      "anthropic/claude-sonnet-4-5"
     );
     expect(parse(gen?.attrs["langfuse.observation.usage_details"])).toEqual({
       input: 10,

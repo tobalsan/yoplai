@@ -423,7 +423,13 @@ export class LangfuseTracer {
       generation.userInput
     );
     if (input !== undefined) update.input = input;
-    if (generation.model) update.model = generation.model;
+    if (generation.model) {
+      const { model, provider } = generation;
+      update.model =
+        provider && !model.startsWith(`${provider}/`)
+          ? `${provider}/${model}`
+          : model;
+    }
     const usageDetails = toUsageDetails(generation.usage);
     if (usageDetails) update.usageDetails = usageDetails;
 
