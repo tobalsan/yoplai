@@ -9,6 +9,10 @@ import {
   Show,
   on,
   batch,
+  untrack,
+  Switch,
+  Match,
+  type JSX,
 } from "solid-js";
 
 import { useParams, useNavigate, useSearchParams, A } from "@solidjs/router";
@@ -56,9 +60,56 @@ import {
 import { createChatAttachmentRuntime } from "../lib/chat-runtime";
 import { impersonationStatus } from "./ImpersonationBanner";
 import { SuggestionCards } from "./SuggestionCards";
+import {
+  groupActivityItems,
+  lastFiveWords,
+  type ActivitySegment,
+} from "../lib/chat-activity";
 
 function isEmoji(str: string): boolean {
   return /^\p{Emoji}/u.test(str) && str.length <= 4;
+}
+
+function neverRow(value: never): never {
+  throw new Error(`Unexpected display row: ${String(value)}`);
+}
+
+function neverSegment(value: never): never {
+  throw new Error(`Unexpected activity segment: ${String(value)}`);
+}
+
+function activityItems<T>(segment: ActivitySegment<T>): T[] {
+  return segment.kind === "activity" ? segment.items : [];
+}
+
+function userText(message: FullHistoryMessage): string {
+  return message.content
+    .filter((b): b is { type: "text"; text: string } => b.type === "text")
+    .map((b) => b.text)
+    .join("\n");
+}
+
+function SegmentView<T>(props: {
+  segment: ActivitySegment<T>;
+  activity: (items: () => T[]) => JSX.Element;
+  message: (item: () => T) => JSX.Element;
+}) {
+  return (
+    <Show
+      when={props.segment.kind === "activity"}
+      fallback={
+        <Show when={messageItem(props.segment)}>
+          {(item) => props.message(item as () => T)}
+        </Show>
+      }
+    >
+      {props.activity(() => activityItems(props.segment))}
+    </Show>
+  );
+}
+
+function messageItem<T>(segment: ActivitySegment<T>): T | undefined {
+  return segment.kind === "message" ? segment.item : undefined;
 }
 
 // Greeting one-liners for the empty-chat hero; one is picked at random
@@ -99,8 +150,6 @@ const HERO_ONE_LINERS = [
 const pickHeroOneLiner = () =>
   HERO_ONE_LINERS[Math.floor(Math.random() * HERO_ONE_LINERS.length)];
 
-// Threshold for auto-collapsing content
-const COLLAPSE_THRESHOLD = 200;
 type DropZone = "history" | "composer" | "attach";
 
 type SimpleToolMessage = {
@@ -115,6 +164,7 @@ type SimpleThinkingMessage = {
   role: "thinking";
   content: string;
   timestamp: number;
+  endedAt?: number;
 };
 
 type SimpleViewMessage = Message | SimpleToolMessage | SimpleThinkingMessage;
@@ -160,10 +210,6 @@ function CompactStatusView(props: { status: CompactStatus | undefined }) {
   );
 }
 
-function isLongContent(content: string): boolean {
-  return content.length > COLLAPSE_THRESHOLD;
-}
-
 function getFileIcon(mimeType: string): string {
   if (mimeType.startsWith("image/")) return "IMG";
   if (mimeType === "application/pdf") return "PDF";
@@ -181,42 +227,6 @@ function formatJson(args: unknown): string {
   } catch {
     return String(args);
   }
-}
-
-// Collapsible block component
-function CollapsibleBlock(props: {
-  title: string;
-  content: string;
-  defaultCollapsed?: boolean;
-  isError?: boolean;
-  mono?: boolean;
-  timestamp?: number;
-}) {
-  const shouldCollapse = props.defaultCollapsed ?? isLongContent(props.content);
-  const [collapsed, setCollapsed] = createSignal(shouldCollapse);
-
-  return (
-    <div class={`collapsible-block ${props.isError ? "error" : ""}`}>
-      <button
-        class="collapse-header"
-        onClick={() => setCollapsed(!collapsed())}
-      >
-        <span class="collapse-icon">{collapsed() ? "▶" : "▼"}</span>
-        <span class="collapse-title">{props.title}</span>
-        {collapsed() && (
-          <span class="collapse-hint">{props.content.slice(0, 50)}...</span>
-        )}
-      </button>
-      <Show when={!collapsed()}>
-        <div class={`collapse-content ${props.mono ? "mono" : ""}`}>
-          {props.content}
-        </div>
-      </Show>
-      {props.timestamp && (
-        <div class="block-time">{formatTimestamp(props.timestamp)}</div>
-      )}
-    </div>
-  );
 }
 
 function getToolResultText(result?: FullToolResultMessage): string {
@@ -257,26 +267,18 @@ function ToolBlock(props: {
   const failed = () => props.status === "error" || props.result?.isError;
   const summary = () =>
     truncateInline(getToolInputSummary(props.name, props.arguments));
-  const preview = () => truncateInline(resultText() || argsText(), 120);
-  const [collapsed, setCollapsed] = createSignal(Boolean(props.result));
-  const [autoCollapsed, setAutoCollapsed] = createSignal(Boolean(props.result));
-
-  createEffect(() => {
-    if (props.result && !autoCollapsed()) {
-      setCollapsed(true);
-      setAutoCollapsed(true);
-    }
-  });
+  const [collapsed, setCollapsed] = createSignal(true);
 
   return (
     <div class={`tool-block ${failed() ? "error" : ""}`}>
       <button class="tool-header" onClick={() => setCollapsed(!collapsed())}>
-        <span class="collapse-icon">{collapsed() ? "▶" : "▼"}</span>
+        <i
+          class="fa-solid fa-chevron-right collapse-icon"
+          classList={{ expanded: !collapsed() }}
+          aria-hidden="true"
+        />
         <span class="tool-kind">{props.name}</span>
         <span class="tool-title">{summary()}</span>
-        <Show when={collapsed()}>
-          <span class="tool-preview">{preview()}</span>
-        </Show>
       </button>
       <Show when={!collapsed()}>
         <div class="tool-body">
@@ -311,14 +313,230 @@ function ToolBlock(props: {
 }
 
 function SimpleToolBlock(props: { name: string }) {
+  return <div class="activity-line">Called tool: {props.name}</div>;
+}
+
+type ActivityItem =
+  | {
+      type: "thinking";
+      content: string;
+      startedAt?: number;
+      endedAt?: number;
+      active?: boolean;
+    }
+  | {
+      type: "tool";
+      name: string;
+      arguments?: unknown;
+      result?: FullToolResultMessage;
+      status?: "running" | "done" | "error";
+      /** When the tool was called (epoch ms). */
+      at?: number;
+    };
+
+export function ThinkingLine(
+  props: Extract<ActivityItem, { type: "thinking" }>
+) {
+  const [expanded, setExpanded] = createSignal(false);
+  const [ticker, setTicker] = createSignal(lastFiveWords(props.content));
+  // Memo dedupes: props.active is re-read on every token, but the timer must
+  // only restart when the boolean actually flips.
+  const active = createMemo(() => Boolean(props.active));
+  createEffect(
+    on(active, (active) => {
+      if (!active) return;
+      setTicker(lastFiveWords(untrack(() => props.content)));
+      const timer = window.setInterval(
+        () => setTicker(lastFiveWords(props.content)),
+        5000
+      );
+      onCleanup(() => window.clearInterval(timer));
+    })
+  );
+  const duration = () =>
+    props.startedAt && props.endedAt
+      ? Math.max(0, Math.round((props.endedAt - props.startedAt) / 1000))
+      : undefined;
+  const label = () =>
+    props.active
+      ? ticker() || "Thinking"
+      : duration() !== undefined
+        ? `Thought for ${duration()}s`
+        : "Thought";
   return (
-    <div class="tool-block simple-tool-block">
-      <div class="tool-header simple-tool-header">
-        <span class="tool-title">Called tool:</span>
-        <span class="tool-kind">{props.name}</span>
-      </div>
+    <div class="activity-item">
+      <button class="activity-line" onClick={() => setExpanded(!expanded())}>
+        <i
+          class="fa-solid fa-chevron-right collapse-icon"
+          classList={{ expanded: expanded() }}
+          aria-hidden="true"
+        />
+        {label()}
+      </button>
+      <Show when={expanded()}>
+        <div class="activity-thinking-content">{props.content}</div>
+      </Show>
     </div>
   );
+}
+
+function ActivityGroup(props: {
+  items: ActivityItem[];
+  simple?: boolean;
+  streaming?: boolean;
+  /** Agent is still producing activity in this group. */
+  working?: boolean;
+}) {
+  const [expanded, setExpanded] = createSignal(Boolean(props.streaming));
+  createEffect(() => {
+    if (props.streaming) setExpanded(true);
+    else setExpanded(false);
+  });
+  const summary = () => {
+    const tools = props.items.filter((item) => item.type === "tool").length;
+    // Wall-clock span from first to last known activity timestamp.
+    const starts: number[] = [];
+    const ends: number[] = [];
+    for (const item of props.items) {
+      if (item.type === "thinking") {
+        if (item.startedAt) starts.push(item.startedAt);
+        if (item.endedAt) ends.push(item.endedAt);
+      } else {
+        if (item.at) {
+          starts.push(item.at);
+          ends.push(item.at);
+        }
+        if (item.result?.timestamp) ends.push(item.result.timestamp);
+      }
+    }
+    const span =
+      starts.length && ends.length
+        ? Math.max(...ends) - Math.min(...starts)
+        : 0;
+    const label = props.working
+      ? "Working"
+      : span > 0
+        ? `Worked for ${Math.round(span / 1000)}s`
+        : "Worked";
+    return tools
+      ? `${label} · ${tools} tool call${tools === 1 ? "" : "s"}`
+      : label;
+  };
+  return (
+    <div class="activity-group">
+      <button
+        class="activity-group-header"
+        onClick={() => setExpanded(!expanded())}
+      >
+        <i
+          class="fa-solid fa-chevron-right collapse-icon"
+          classList={{ expanded: expanded() }}
+          aria-hidden="true"
+        />
+        {summary()}
+      </button>
+      <Show when={expanded()}>
+        <div class="activity-group-items">
+          <Index each={props.items}>
+            {(item) => {
+              const thinking = () =>
+                item() as Extract<ActivityItem, { type: "thinking" }>;
+              const tool = () =>
+                item() as Extract<ActivityItem, { type: "tool" }>;
+              return (
+                <Switch>
+                  <Match when={item().type === "thinking"}>
+                    <ThinkingLine
+                      type="thinking"
+                      content={thinking().content}
+                      startedAt={thinking().startedAt}
+                      endedAt={thinking().endedAt}
+                      active={thinking().active}
+                    />
+                  </Match>
+                  <Match when={item().type === "tool" && props.simple}>
+                    <SimpleToolBlock name={tool().name} />
+                  </Match>
+                  <Match when={item().type === "tool"}>
+                    <ToolBlock
+                      name={tool().name}
+                      arguments={tool().arguments}
+                      result={tool().result}
+                      status={tool().status}
+                    />
+                  </Match>
+                </Switch>
+              );
+            }}
+          </Index>
+        </div>
+      </Show>
+    </div>
+  );
+}
+
+type FullDisplayRow =
+  | { kind: "activity"; item: ActivityItem }
+  | {
+      kind: "assistant-content";
+      block: Extract<ContentBlock, { type: "text" | "file" }>;
+      timestamp: number;
+      meta?: ModelMeta;
+      footer: boolean;
+    }
+  | { kind: "message"; message: FullHistoryMessage; historyIndex: number };
+
+function fullHistoryDisplayRows(
+  messages: FullHistoryMessage[],
+  toolResults: Map<string, FullToolResultMessage>
+): FullDisplayRow[] {
+  const rows: FullDisplayRow[] = [];
+  messages.forEach((message, historyIndex) => {
+    if (message.role === "toolResult") return;
+    if (message.role !== "assistant") {
+      rows.push({ kind: "message", message, historyIndex });
+      return;
+    }
+    const visibleBlocks = message.content.filter(
+      (block): block is Extract<ContentBlock, { type: "text" | "file" }> =>
+        block.type === "text" || block.type === "file"
+    );
+    let visibleIndex = 0;
+    for (const block of message.content) {
+      if (block.type === "thinking") {
+        rows.push({
+          kind: "activity",
+          item: {
+            type: "thinking",
+            content: block.thinking,
+            startedAt: block.startedAt,
+            endedAt: block.endedAt,
+          },
+        });
+      } else if (block.type === "toolCall") {
+        rows.push({
+          kind: "activity",
+          item: {
+            type: "tool",
+            name: block.name,
+            arguments: block.arguments,
+            result: toolResults.get(block.id),
+            at: message.timestamp,
+          },
+        });
+      } else if (block.type === "text" || block.type === "file") {
+        visibleIndex += 1;
+        rows.push({
+          kind: "assistant-content",
+          block,
+          timestamp: message.timestamp,
+          meta: message.meta,
+          footer: visibleIndex === visibleBlocks.length,
+        });
+      }
+    }
+  });
+  return rows;
 }
 
 function fullMessagesToSimpleView(
@@ -360,7 +578,8 @@ function fullMessagesToSimpleView(
           id: crypto.randomUUID(),
           role: "thinking",
           content: block.thinking,
-          timestamp: message.timestamp,
+          timestamp: block.startedAt ?? message.timestamp,
+          endedAt: block.endedAt,
         });
       } else if (block.type === "toolCall") {
         simple.push({
@@ -389,41 +608,46 @@ function ContentBlocks(props: {
   timestamp?: number;
   toolResultsMap?: Map<string, FullToolResultMessage>;
 }) {
+  const segments = () =>
+    groupActivityItems(
+      props.blocks,
+      (block) => block.type === "thinking" || block.type === "toolCall"
+    );
   return (
     <div class="content-blocks">
-      <For each={props.blocks}>
-        {(block) => {
-          if (block.type === "text") {
+      <For each={segments()}>
+        {(segment) => {
+          if (segment.kind === "activity") {
+            return (
+              <ActivityGroup
+                items={segment.items.map((block) =>
+                  block.type === "thinking"
+                    ? { type: "thinking" as const, content: block.thinking }
+                    : (() => {
+                        const tool = block as Extract<
+                          ContentBlock,
+                          { type: "toolCall" }
+                        >;
+                        return {
+                          type: "tool" as const,
+                          name: tool.name,
+                          arguments: tool.arguments,
+                          result: props.toolResultsMap?.get(tool.id),
+                        };
+                      })()
+                )}
+              />
+            );
+          }
+          const block = segment.item;
+          if (block.type === "text")
             return (
               <div
                 class="block-text markdown-content"
                 innerHTML={renderMarkdown(block.text)}
               />
             );
-          }
-          if (block.type === "thinking") {
-            return (
-              <CollapsibleBlock
-                title="Thinking"
-                content={block.thinking}
-                defaultCollapsed={true}
-                timestamp={props.timestamp}
-              />
-            );
-          }
-          if (block.type === "toolCall") {
-            const result = props.toolResultsMap?.get(block.id);
-            return (
-              <ToolBlock
-                name={block.name}
-                arguments={block.arguments}
-                result={result}
-              />
-            );
-          }
-          if (block.type === "file") {
-            return <FileCard file={block} />;
-          }
+          if (block.type === "file") return <FileCard file={block} />;
           return null;
         }}
       </For>
@@ -756,6 +980,12 @@ export function ChatView() {
 
   const visibleFullMessages = createMemo(() =>
     fullMessages().filter((message) => !isCompactSummaryMessage(message))
+  );
+  const fullDisplaySegments = createMemo(() =>
+    groupActivityItems(
+      fullHistoryDisplayRows(visibleFullMessages(), toolResultsMap()),
+      (row) => row.kind === "activity"
+    )
   );
 
   const fullMessageKey = (message: FullHistoryMessage) =>
@@ -1569,9 +1799,10 @@ export function ChatView() {
       return false;
     }
 
+    const completedAt = Date.now();
     const contentBlocks: ContentBlock[] =
       blocks.length > 0
-        ? blocks.map((block) => {
+        ? blocks.map((block, index) => {
             if (block.type === "toolCall") {
               return {
                 type: "toolCall",
@@ -1581,7 +1812,12 @@ export function ChatView() {
               };
             }
             if (block.type === "thinking") {
-              return { type: "thinking", thinking: block.thinking };
+              return {
+                type: "thinking",
+                thinking: block.thinking,
+                startedAt: block.timestamp,
+                endedAt: blocks[index + 1]?.timestamp ?? completedAt,
+              };
             }
             if (block.type === "text") {
               return { type: "text", text: block.text };
@@ -1618,6 +1854,8 @@ export function ChatView() {
                   role: "thinking",
                   content: block.thinking,
                   timestamp: block.timestamp,
+                  endedAt:
+                    blocks[blocks.indexOf(block) + 1]?.timestamp ?? completedAt,
                 },
               ];
             }
@@ -2497,315 +2735,466 @@ export function ChatView() {
         <div
           class="messages"
           ref={messagesContainerRef}
-        onScroll={handleScroll}
-        onWheel={handleUserScrollIntent}
-        onTouchMove={handleUserScrollIntent}
-        onKeyDown={(e) => {
-          if (
-            e.key === "PageUp" ||
-            e.key === "PageDown" ||
-            e.key === "ArrowUp" ||
-            e.key === "ArrowDown" ||
-            e.key === "Home" ||
-            e.key === "End"
-          ) {
-            handleUserScrollIntent();
-          }
-        }}
-        classList={{
-          "drop-target": isFileDragActive() && activeDropZone() === "history",
-        }}
-      >
-        <Show when={compactStatusAnchorIndex() === -1}>
-          <CompactStatusView status={compactStatusForCurrentSession()} />
-        </Show>
+          onScroll={handleScroll}
+          onWheel={handleUserScrollIntent}
+          onTouchMove={handleUserScrollIntent}
+          onKeyDown={(e) => {
+            if (
+              e.key === "PageUp" ||
+              e.key === "PageDown" ||
+              e.key === "ArrowUp" ||
+              e.key === "ArrowDown" ||
+              e.key === "Home" ||
+              e.key === "End"
+            ) {
+              handleUserScrollIntent();
+            }
+          }}
+          classList={{
+            "drop-target": isFileDragActive() && activeDropZone() === "history",
+          }}
+        >
+          <Show when={compactStatusAnchorIndex() === -1}>
+            <CompactStatusView status={compactStatusForCurrentSession()} />
+          </Show>
 
-        <Show when={viewMode() === "simple"}>
-          <For each={simpleMessages()}>
-            {(msg, index) => {
-              const skipAnim = noAnimIds.delete(msg.id);
-              return (
-                <>
-                <div class={`message ${msg.role}${skipAnim ? " no-anim" : ""}`}>
-                  {msg.role === "tool" ? (
-                    <SimpleToolBlock name={msg.toolName} />
-                  ) : msg.role === "thinking" ? (
-                    <CollapsibleBlock
-                      title="Thinking"
-                      content={msg.content}
-                      defaultCollapsed={true}
-                      timestamp={msg.timestamp}
-                    />
-                  ) : msg.role === "assistant" ? (
+          <Show when={viewMode() === "simple"}>
+            <Index
+              each={groupActivityItems(
+                simpleMessages(),
+                (msg) => msg.role === "tool" || msg.role === "thinking"
+              )}
+            >
+              {(segment) => (
+                <SegmentView
+                  segment={segment()}
+                  activity={(items) => (
                     <>
-                      <Show when={msg.content}>
-                        <div
-                          class="content markdown-content"
-                          innerHTML={renderMarkdown(msg.content)}
+                      <ActivityGroup
+                        simple
+                        items={items().map((msg) =>
+                          msg.role === "thinking"
+                            ? {
+                                type: "thinking" as const,
+                                content: msg.content,
+                                startedAt: msg.timestamp,
+                                endedAt: msg.endedAt,
+                              }
+                            : {
+                                type: "tool" as const,
+                                name: (msg as SimpleToolMessage).toolName,
+                                at: msg.timestamp,
+                              }
+                        )}
+                      />
+                      <Show
+                        when={segment().endIndex === compactStatusAnchorIndex()}
+                      >
+                        <CompactStatusView
+                          status={compactStatusForCurrentSession()}
                         />
                       </Show>
-                      <For each={msg.files ?? []}>
-                        {(file) => <FileCard file={file} />}
-                      </For>
-                    </>
-                  ) : (
-                    <>
-                      <div class="content">{msg.content}</div>
-                      <FileAttachmentList files={msg.files} />
                     </>
                   )}
-                  <Show when={msg.role !== "tool" && msg.role !== "thinking"}>
-                    <div class="message-time">
-                      {formatTimestamp(msg.timestamp)}
-                    </div>
-                  </Show>
-                </div>
-                <Show when={index() === compactStatusAnchorIndex()}>
-                  <CompactStatusView status={compactStatusForCurrentSession()} />
-                </Show>
-                </>
-              );
-            }}
-          </For>
-        </Show>
+                  message={(row) => {
+                    const skipAnim = noAnimIds.delete(row().id);
+                    const visible = () => {
+                      const message = row();
+                      return message.role === "tool" ||
+                        message.role === "thinking"
+                        ? undefined
+                        : message;
+                    };
+                    return (
+                      <>
+                        <Show when={visible()}>
+                          {(item) => (
+                            <div
+                              class={`message ${item().role}${skipAnim ? " no-anim" : ""}`}
+                            >
+                              {item().role === "assistant" ? (
+                                <>
+                                  <Show when={item().content}>
+                                    <div
+                                      class="content markdown-content"
+                                      innerHTML={renderMarkdown(item().content)}
+                                    />
+                                  </Show>
+                                  <For each={item().files ?? []}>
+                                    {(file) => <FileCard file={file} />}
+                                  </For>
+                                </>
+                              ) : (
+                                <>
+                                  <div class="content">{item().content}</div>
+                                  <FileAttachmentList files={item().files} />
+                                </>
+                              )}
+                              <div class="message-time">
+                                {formatTimestamp(item().timestamp)}
+                              </div>
+                            </div>
+                          )}
+                        </Show>
+                        <Show
+                          when={
+                            segment().endIndex === compactStatusAnchorIndex()
+                          }
+                        >
+                          <CompactStatusView
+                            status={compactStatusForCurrentSession()}
+                          />
+                        </Show>
+                      </>
+                    );
+                  }}
+                />
+              )}
+            </Index>
+          </Show>
 
-        <Show when={viewMode() === "full"}>
-          <For each={visibleFullMessages()}>
-            {(msg, index) => (
-              <>
-              {(() => {
-              if (msg.role === "user") {
-                const textContent = msg.content
-                  .filter(
-                    (b): b is { type: "text"; text: string } =>
-                      b.type === "text"
-                  )
-                  .map((b) => b.text)
-                  .join("\n");
-                return (
-                  <div class="message user">
-                    <Show when={textContent}>
-                      <div class="content">{textContent}</div>
-                    </Show>
-                    <FileAttachmentList
-                      files={msg.content.filter(
-                        (b): b is FileBlock => b.type === "file"
+          <Show when={viewMode() === "full"}>
+            <Index each={fullDisplaySegments()}>
+              {(segment) => (
+                <SegmentView
+                  segment={segment()}
+                  activity={(items) => (
+                    <ActivityGroup
+                      items={items().map(
+                        (row) =>
+                          (row as Extract<FullDisplayRow, { kind: "activity" }>)
+                            .item
                       )}
                     />
-                    <div class="message-time">
-                      {formatTimestamp(msg.timestamp)}
-                    </div>
-                  </div>
-                );
-              }
-              if (msg.role === "assistant") {
-                const skipAnim = noAnimFullMessageKeys.delete(
-                  fullMessageKey(msg)
-                );
-                return (
-                  <div
-                    class="message assistant full-message"
-                    classList={{ "no-anim": skipAnim }}
-                  >
-                    <ContentBlocks
-                      blocks={msg.content}
-                      timestamp={msg.timestamp}
-                      toolResultsMap={toolResultsMap()}
-                    />
-                    {msg.meta && <ModelMetaDisplay meta={msg.meta} />}
-                    <div class="message-time">
-                      {formatTimestamp(msg.timestamp)}
-                    </div>
-                  </div>
-                );
-              }
-              if (msg.role === "system") {
-                return (
-                  <div class="message assistant full-message system-message">
-                    <ContentBlocks
-                      blocks={msg.content}
-                      timestamp={msg.timestamp}
-                      toolResultsMap={toolResultsMap()}
-                    />
-                    <div class="message-time">
-                      {formatTimestamp(msg.timestamp)}
-                    </div>
-                  </div>
-                );
-              }
-              // Skip toolResult messages - they are now rendered inline with their tool calls
-              if (msg.role === "toolResult") {
-                return null;
-              }
-              return null;
-              })()}
-              <Show when={index() === compactStatusAnchorIndex()}>
-                <CompactStatusView status={compactStatusForCurrentSession()} />
-              </Show>
-              </>
-            )}
-          </For>
-        </Show>
+                  )}
+                  message={(row) => (
+                    <Switch>
+                      <Match when={row().kind === "assistant-content"}>
+                        {(() => {
+                          const assistantRow = () =>
+                            row() as Extract<
+                              FullDisplayRow,
+                              { kind: "assistant-content" }
+                            >;
+                          return (
+                            <div class="message assistant full-message">
+                              <Show
+                                when={assistantRow().block.type === "text"}
+                                fallback={
+                                  <FileCard
+                                    file={assistantRow().block as FileBlock}
+                                  />
+                                }
+                              >
+                                <div
+                                  class="block-text markdown-content"
+                                  innerHTML={renderMarkdown(
+                                    (
+                                      assistantRow().block as {
+                                        type: "text";
+                                        text: string;
+                                      }
+                                    ).text
+                                  )}
+                                />
+                              </Show>
+                              <Show when={assistantRow().footer}>
+                                {assistantRow().meta && (
+                                  <ModelMetaDisplay
+                                    meta={assistantRow().meta!}
+                                  />
+                                )}
+                                <div class="message-time">
+                                  {formatTimestamp(assistantRow().timestamp)}
+                                </div>
+                              </Show>
+                            </div>
+                          );
+                        })()}
+                      </Match>
+                      <Match when={row().kind === "message"}>
+                        {(() => {
+                          const msg = () =>
+                            (
+                              row() as Extract<
+                                FullDisplayRow,
+                                { kind: "message" }
+                              >
+                            ).message;
+                          return (
+                            <>
+                              <Show when={msg().role === "user"}>
+                                <div class="message user">
+                                  <Show when={userText(msg())}>
+                                    <div class="content">{userText(msg())}</div>
+                                  </Show>
+                                  <FileAttachmentList
+                                    files={msg().content.filter(
+                                      (b): b is FileBlock => b.type === "file"
+                                    )}
+                                  />
+                                  <div class="message-time">
+                                    {formatTimestamp(msg().timestamp)}
+                                  </div>
+                                </div>
+                              </Show>
+                              <Show when={msg().role === "system"}>
+                                <div class="message assistant full-message system-message">
+                                  <ContentBlocks
+                                    blocks={msg().content}
+                                    timestamp={msg().timestamp}
+                                    toolResultsMap={toolResultsMap()}
+                                  />
+                                  <div class="message-time">
+                                    {formatTimestamp(msg().timestamp)}
+                                  </div>
+                                </div>
+                              </Show>
+                            </>
+                          );
+                        })()}
+                      </Match>
+                    </Switch>
+                  )}
+                />
+              )}
+            </Index>
+          </Show>
 
-        {/* Streaming content in full mode - show blocks incrementally */}
-        <Show
-          when={
-            viewMode() === "full" &&
-            (isStreaming() || streamingFinished()) &&
-            (streamingBlocks().length > 0 ||
-              streamingText() ||
-              streamingFiles().length > 0)
-          }
-        >
-          <div
-            class="message assistant full-message"
-            classList={{ streaming: isStreaming() }}
+          {/* Streaming content in full mode - show blocks incrementally */}
+          <Show
+            when={
+              viewMode() === "full" &&
+              (isStreaming() || streamingFinished()) &&
+              (streamingBlocks().length > 0 ||
+                streamingText() ||
+                streamingFiles().length > 0)
+            }
           >
-            <div class="content-blocks">
-              <Index each={streamingBlocks()}>
-                {(blockAccessor) => {
-                  const initial = blockAccessor();
-                  if (initial.type === "thinking") {
+            <div
+              class="message assistant full-message"
+              classList={{ streaming: isStreaming() }}
+            >
+              <div class="content-blocks">
+                <Index
+                  each={groupActivityItems(
+                    streamingBlocks(),
+                    (block) =>
+                      block.type === "thinking" || block.type === "toolCall"
+                  )}
+                >
+                  {(segmentAccessor) => {
+                    const segment = () => segmentAccessor();
                     return (
-                      <CollapsibleBlock
-                        title="Thinking"
-                        content={
-                          (blockAccessor() as { thinking: string }).thinking
-                        }
-                        defaultCollapsed={false}
-                        timestamp={initial.timestamp}
-                      />
-                    );
-                  }
-                  if (initial.type === "text") {
-                    return (
-                      <div
-                        class="block-text markdown-content"
-                        innerHTML={renderMarkdown(
-                          (blockAccessor() as { text: string }).text
+                      <SegmentView
+                        segment={segment()}
+                        activity={() => (
+                          <ActivityGroup
+                            streaming={isStreaming()}
+                            working={
+                              isStreaming() &&
+                              segment().endIndex ===
+                                streamingBlocks().length - 1
+                            }
+                            items={activityItems(segment()).map(
+                              (block, itemIndex) =>
+                                block.type === "thinking"
+                                  ? {
+                                      type: "thinking" as const,
+                                      content: block.thinking,
+                                      startedAt: block.timestamp,
+                                      endedAt:
+                                        streamingBlocks()[
+                                          segment().startIndex + itemIndex + 1
+                                        ]?.timestamp ??
+                                        (isStreaming() &&
+                                        segment().endIndex ===
+                                          streamingBlocks().length - 1
+                                          ? undefined
+                                          : Date.now()),
+                                      active:
+                                        isStreaming() &&
+                                        segment().endIndex ===
+                                          streamingBlocks().length - 1 &&
+                                        itemIndex ===
+                                          activityItems(segment()).length - 1,
+                                    }
+                                  : (() => {
+                                      const tool = block as Extract<
+                                        StreamingBlock,
+                                        { type: "toolCall" }
+                                      >;
+                                      return {
+                                        type: "tool" as const,
+                                        name: tool.name,
+                                        arguments: tool.arguments,
+                                        result: tool.result,
+                                        status: tool.status,
+                                        at: tool.timestamp,
+                                      };
+                                    })()
+                            )}
+                          />
                         )}
+                        message={() => {
+                          const block = () => messageItem(segment());
+                          return (
+                            <Switch>
+                              <Match when={block()?.type === "text"}>
+                                <div
+                                  class="block-text markdown-content"
+                                  innerHTML={renderMarkdown(
+                                    (block() as { text: string }).text
+                                  )}
+                                />
+                              </Match>
+                              <Match when={block()?.type === "file"}>
+                                <FileCard file={block() as FileBlock} />
+                              </Match>
+                            </Switch>
+                          );
+                        }}
                       />
                     );
-                  }
-                  if (initial.type === "toolCall") {
-                    return (
-                      <ToolBlock
-                        name={initial.name}
-                        arguments={initial.arguments}
-                        result={
-                          (
-                            blockAccessor() as {
-                              result?: FullToolResultMessage;
-                            }
-                          ).result
-                        }
-                        status={
-                          (
-                            blockAccessor() as {
-                              status: "running" | "done" | "error";
-                            }
-                          ).status
-                        }
-                      />
-                    );
-                  }
-                  return <FileCard file={blockAccessor() as FileBlock} />;
+                  }}
+                </Index>
+              </div>
+              <Show
+                when={
+                  streamingStartedAt() &&
+                  streamingBlocks().some(
+                    (block) => block.type === "text" || block.type === "file"
+                  )
+                }
+              >
+                <div class="message-time">
+                  {formatTimestamp(streamingStartedAt()!)}
+                </div>
+              </Show>
+            </div>
+          </Show>
+
+          {/* Streaming content in simple mode */}
+          <Show
+            when={
+              viewMode() === "simple" &&
+              isStreaming() &&
+              (streamingBlocks().length > 0 ||
+                streamingText() ||
+                streamingFiles().length > 0)
+            }
+          >
+            <div class="simple-stream-blocks">
+              <Show when={streamingBlocks().length === 0 && streamingText()}>
+                <div class="message assistant streaming">
+                  <div
+                    class="content markdown-content"
+                    innerHTML={renderMarkdown(streamingText())}
+                  />
+                  {(streamingTextAt() || streamingStartedAt()) && (
+                    <div class="message-time">
+                      {formatTimestamp(
+                        (streamingTextAt() ?? streamingStartedAt()) as number
+                      )}
+                    </div>
+                  )}
+                </div>
+              </Show>
+              <Index
+                each={groupActivityItems(
+                  streamingBlocks(),
+                  (block) =>
+                    block.type === "thinking" || block.type === "toolCall"
+                )}
+              >
+                {(segmentAccessor) => {
+                  const segment = () => segmentAccessor();
+                  return (
+                    <SegmentView
+                      segment={segment()}
+                      activity={() => (
+                        <ActivityGroup
+                          simple
+                          streaming={isStreaming()}
+                          working={
+                            isStreaming() &&
+                            segment().endIndex === streamingBlocks().length - 1
+                          }
+                          items={activityItems(segment()).map(
+                            (block, itemIndex) =>
+                              block.type === "thinking"
+                                ? {
+                                    type: "thinking" as const,
+                                    content: block.thinking,
+                                    startedAt: block.timestamp,
+                                    endedAt:
+                                      streamingBlocks()[
+                                        segment().startIndex + itemIndex + 1
+                                      ]?.timestamp ??
+                                      (isStreaming() &&
+                                      segment().endIndex ===
+                                        streamingBlocks().length - 1
+                                        ? undefined
+                                        : Date.now()),
+                                    active:
+                                      isStreaming() &&
+                                      segment().endIndex ===
+                                        streamingBlocks().length - 1 &&
+                                      itemIndex ===
+                                        activityItems(segment()).length - 1,
+                                  }
+                                : {
+                                    type: "tool" as const,
+                                    name: (
+                                      block as Extract<
+                                        StreamingBlock,
+                                        { type: "toolCall" }
+                                      >
+                                    ).name,
+                                    at: block.timestamp,
+                                  }
+                          )}
+                        />
+                      )}
+                      message={() => {
+                        const block = () => messageItem(segment());
+                        return (
+                          <Switch>
+                            <Match when={block()?.type === "text"}>
+                              <div class="message assistant streaming">
+                                <div
+                                  class="content markdown-content"
+                                  innerHTML={renderMarkdown(
+                                    (block() as { text: string }).text
+                                  )}
+                                />
+                                <div class="message-time">
+                                  {formatTimestamp(block()!.timestamp)}
+                                </div>
+                              </div>
+                            </Match>
+                            <Match when={block()?.type === "file"}>
+                              <div class="message assistant">
+                                <FileCard file={block() as FileBlock} />
+                                <div class="message-time">
+                                  {formatTimestamp(block()!.timestamp)}
+                                </div>
+                              </div>
+                            </Match>
+                          </Switch>
+                        );
+                      }}
+                    />
+                  );
                 }}
               </Index>
+              <Show when={streamingBlocks().length === 0}>
+                <For each={streamingFiles()}>
+                  {(file) => <FileCard file={file} />}
+                </For>
+              </Show>
             </div>
-            {streamingStartedAt() && (
-              <div class="message-time">
-                {formatTimestamp(streamingStartedAt()!)}
-              </div>
-            )}
-          </div>
-        </Show>
-
-        {/* Streaming content in simple mode */}
-        <Show
-          when={
-            viewMode() === "simple" &&
-            isStreaming() &&
-            (streamingBlocks().length > 0 ||
-              streamingText() ||
-              streamingFiles().length > 0)
-          }
-        >
-          <div class="simple-stream-blocks">
-            <Show when={streamingBlocks().length === 0 && streamingText()}>
-              <div class="message assistant streaming">
-                <div
-                  class="content markdown-content"
-                  innerHTML={renderMarkdown(streamingText())}
-                />
-                {(streamingTextAt() || streamingStartedAt()) && (
-                  <div class="message-time">
-                    {formatTimestamp(
-                      (streamingTextAt() ?? streamingStartedAt()) as number
-                    )}
-                  </div>
-                )}
-              </div>
-            </Show>
-            <Index each={streamingBlocks()}>
-              {(blockAccessor) => {
-                const initial = blockAccessor();
-                if (initial.type === "text") {
-                  return (
-                    <div class="message assistant streaming">
-                      <div
-                        class="content markdown-content"
-                        innerHTML={renderMarkdown(
-                          (blockAccessor() as { text: string }).text
-                        )}
-                      />
-                      <div class="message-time">
-                        {formatTimestamp(initial.timestamp)}
-                      </div>
-                    </div>
-                  );
-                }
-                if (initial.type === "thinking") {
-                  return (
-                    <div class="message thinking streaming">
-                      <CollapsibleBlock
-                        title="Thinking"
-                        content={
-                          (blockAccessor() as { thinking: string }).thinking
-                        }
-                        defaultCollapsed={false}
-                        timestamp={initial.timestamp}
-                      />
-                    </div>
-                  );
-                }
-                if (initial.type === "toolCall") {
-                  return (
-                    <div class="message tool">
-                      <SimpleToolBlock name={initial.name} />
-                    </div>
-                  );
-                }
-                if (initial.type === "file") {
-                  return (
-                    <div class="message assistant">
-                      <FileCard file={initial} />
-                      <div class="message-time">
-                        {formatTimestamp(initial.timestamp)}
-                      </div>
-                    </div>
-                  );
-                }
-                return null;
-              }}
-            </Index>
-            <Show when={streamingBlocks().length === 0}>
-              <For each={streamingFiles()}>
-                {(file) => <FileCard file={file} />}
-              </For>
-            </Show>
-          </div>
-        </Show>
+          </Show>
 
         {/* Thinking dots when waiting (nothing received yet) */}
         {isStreaming() &&
@@ -3126,7 +3515,8 @@ export function ChatView() {
         .stop-btn:focus-visible,
         .attachment-remove:focus-visible,
         .file-download:focus-visible,
-        .collapse-header:focus-visible,
+        .activity-group-header:focus-visible,
+        .activity-line:focus-visible,
         .tool-header:focus-visible {
           outline: 2px solid var(--accent);
           outline-offset: 2px;
@@ -3650,10 +4040,6 @@ export function ChatView() {
           50% { opacity: 0; }
         }
 
-        .message.thinking {
-          padding: 14px 0;
-        }
-
         .thinking-dots {
           display: flex;
           gap: 6px;
@@ -3675,78 +4061,57 @@ export function ChatView() {
           40% { opacity: 1; transform: scale(1); }
         }
 
-        .collapsible-block {
-          background: var(--tool-bg);
-          border: 1px solid var(--tool-border);
-          border-radius: 14px;
-          overflow: hidden;
-          margin: 2px 0;
-        }
-
-        .collapsible-block.error {
-          border-color: var(--error);
-        }
-
-        .collapse-header {
-          display: flex;
-          align-items: center;
-          gap: 8px;
-          width: 100%;
-          padding: 9px 14px;
-          background: transparent;
-          border: none;
-          color: var(--text-secondary);
-          font-size: 14px;
-          cursor: pointer;
-          text-align: left;
-        }
-
-        .collapse-header:hover {
-          background: color-mix(in srgb, var(--text-primary) 4%, transparent);
-        }
-
         .collapse-icon {
+          flex-shrink: 0;
           font-size: 9px;
+          width: 10px;
+          text-align: center;
+          transition: transform 0.15s ease;
           color: var(--text-muted);
         }
 
-        .collapse-title {
-          font-weight: 560;
-          color: var(--text-primary);
+        .collapse-icon.expanded {
+          transform: rotate(90deg);
         }
 
-        .collapse-hint {
-          flex: 1;
+        .activity-group {
+          align-self: flex-start;
+          width: min(78ch, 100%);
           color: var(--text-muted);
           font-size: 12px;
-          overflow: hidden;
-          text-overflow: ellipsis;
-          white-space: nowrap;
         }
 
-        .collapse-content {
-          padding: 12px 14px 14px;
-          border-top: 1px solid color-mix(in srgb, var(--tool-border) 84%, transparent);
-          font-size: 13px;
-          color: var(--text-secondary);
-          white-space: pre-wrap;
-          word-break: break-word;
+        .activity-group-header,
+        .activity-line {
+          display: flex;
+          align-items: center;
+          gap: 7px;
+          padding: 2px 0;
+          border: 0;
+          background: transparent;
+          color: var(--text-muted);
+          font: inherit;
+          line-height: 1.5;
+          text-align: left;
+        }
+
+        button.activity-group-header,
+        button.activity-line { cursor: pointer; }
+
+        .activity-group-items {
+          display: flex;
+          flex-direction: column;
+          gap: 2px;
+          padding: 3px 0 3px 14px;
+        }
+
+        .activity-thinking-content {
           max-height: 300px;
           overflow-y: auto;
-        }
-
-        .collapse-content.mono {
-          font-family: 'SF Mono', 'Cascadia Code', 'Consolas', monospace;
-          font-size: 12.5px;
-          line-height: 1.62;
-        }
-
-        .block-time {
-          padding: 0 14px 10px;
-          font-size: 11px;
+          padding: 4px 0 6px 16px;
           color: var(--text-muted);
-          text-align: left;
-          font-variant-numeric: tabular-nums;
+          white-space: pre-wrap;
+          word-break: break-word;
         }
 
         .content-blocks {
@@ -3755,24 +4120,17 @@ export function ChatView() {
           gap: 16px;
         }
 
-        .tool-block {
-          background: var(--tool-bg);
-          border: 1px solid var(--tool-border);
-          border-radius: 14px;
-          overflow: hidden;
-        }
+        .tool-block { color: var(--text-muted); }
 
-        .tool-block.error {
-          border-color: color-mix(in srgb, var(--error) 42%, var(--tool-border));
-        }
+        .tool-block.error .tool-header { color: color-mix(in srgb, var(--error) 72%, var(--text-muted)); }
 
         .tool-header {
           display: flex;
           align-items: center;
           gap: 8px;
           width: 100%;
-          min-height: 42px;
-          padding: 8px 14px;
+          min-height: 0;
+          padding: 2px 0;
           background: transparent;
           border: none;
           color: var(--text-secondary);
@@ -3780,56 +4138,21 @@ export function ChatView() {
           text-align: left;
         }
 
-        .tool-header:hover {
-          background: color-mix(in srgb, var(--text-primary) 4%, transparent);
-        }
-
-        .simple-tool-block {
-          display: inline-flex;
-          max-width: 100%;
-        }
-
-        .simple-tool-header {
-          width: auto;
-          min-height: 34px;
-          padding: 6px 11px;
-          cursor: default;
-        }
-
-        .simple-tool-header:hover {
-          background: transparent;
-        }
-
         .tool-title {
           min-width: 0;
           overflow: hidden;
           text-overflow: ellipsis;
           white-space: nowrap;
-          color: var(--text-primary);
-          font-size: 14px;
-          font-weight: 560;
+          color: inherit;
+          font-size: 12px;
+          font-weight: 400;
         }
 
         .tool-kind {
           flex-shrink: 0;
-          padding: 1px 6px;
-          border-radius: 999px;
-          background: color-mix(in srgb, var(--text-primary) 6%, transparent);
-          color: var(--text-muted);
+          color: inherit;
           font-family: 'SF Mono', 'Cascadia Code', 'Consolas', monospace;
           font-size: 11px;
-          letter-spacing: 0;
-        }
-
-        .tool-preview {
-          min-width: 120px;
-          flex: 1;
-          overflow: hidden;
-          text-overflow: ellipsis;
-          white-space: nowrap;
-          color: var(--text-muted);
-          font-family: 'SF Mono', 'Cascadia Code', 'Consolas', monospace;
-          font-size: 12px;
         }
 
         .tool-body {
