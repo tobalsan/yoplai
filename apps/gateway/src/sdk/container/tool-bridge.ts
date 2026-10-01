@@ -12,9 +12,15 @@ export class ContainerToolBridge {
       ? getExtensionSystemPromptContributions(
           params.agent,
           config,
-          params.extensionRuntime
+          params.extensionRuntime,
+          params.userId
         )
-      : getExtensionSystemPromptContributions(params.agent);
+      : getExtensionSystemPromptContributions(
+          params.agent,
+          config,
+          undefined,
+          params.userId
+        );
   }
 
   async buildTools(
@@ -26,9 +32,15 @@ export class ContainerToolBridge {
       ? await getExtensionAgentTools(
           params.agent,
           config,
-          params.extensionRuntime
+          params.extensionRuntime,
+          params.userId
         )
-      : await getExtensionAgentTools(params.agent);
+      : await getExtensionAgentTools(
+          params.agent,
+          config,
+          undefined,
+          params.userId
+        );
     const gatewayTools: ContainerExtensionTool[] = [{
       extensionId: "gateway",
       name: "extract_document",

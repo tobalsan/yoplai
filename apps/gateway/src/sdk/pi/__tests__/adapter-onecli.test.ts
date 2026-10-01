@@ -544,7 +544,7 @@ describe("pi adapter onecli env wiring", () => {
     const { piAdapter } = await import("../adapter.js");
     await piAdapter.run(makeRunParams(agent));
 
-    expect(mockGetExtensionAgentTools).toHaveBeenCalledWith(agent, config);
+    expect(mockGetExtensionAgentTools).toHaveBeenCalledWith(agent, config, undefined, undefined);
     const options = mockCreateAgentSession.mock.calls[0]?.[0] as {
       tools?: string[];
       customTools?: Array<{

@@ -1,12 +1,14 @@
 import { createEffect, createSignal, For, Show } from "solid-js";
+import { useSearchParams } from "@solidjs/router";
 import { LeftNavShell } from "../../components/LeftNavShell";
 import { OAuthConnectCard } from "../../components/OAuthConnectCard";
 import { fetchAgents } from "../../api/agents";
 import type { Agent } from "../../api/types";
 
 function OAuthConnectPage() {
+  const [query] = useSearchParams();
   const [agents, setAgents] = createSignal<Agent[]>([]);
-  const [selectedAgent, setSelectedAgent] = createSignal("");
+  const [selectedAgent, setSelectedAgent] = createSignal(typeof query.agent === "string" ? query.agent : "");
   const [agentsError, setAgentsError] = createSignal<string>();
 
   createEffect(() => {
@@ -34,8 +36,7 @@ function OAuthConnectPage() {
         <header class="oauth-header">
           <h1>Connections</h1>
           <p>
-            Connect external accounts per agent. Tokens are scoped to the agent
-            workspace.
+            Connect external accounts for just yourself or the whole team on an agent.
           </p>
         </header>
         <Show when={agentsError()}>

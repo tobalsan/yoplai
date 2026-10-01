@@ -11,6 +11,7 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Added
 
+- Google OAuth connections can be personal ("Just me") or shared ("Whole team"); web tool calls use the requester's personal account, then the team account, otherwise a connect link. Existing connections remain shared.
 - Slack agents can find Slack Lists and read, create, update, and delete their items with dedicated agent tools.
 - Slack agents can list, create, read, find sections in, edit, share, and delete Slack Canvases with dedicated agent tools.
 - `dashboard_link` now lints each dashboard page without running its code and returns a `problems` list: script syntax errors, top-level names that collide with browser globals (`top`, `window`, `document`, `location`) or other scripts, echarts.js/kit.js load order, `/d-assets/v1/` use, undeclared `YOPLAI.data` names, inline `on*=` handlers next to module scripts, and queries returning 0 rows. Dashboard Kit also shows a banner when a page throws at runtime, and the dashboard skill and templates now put page code in `<script type="module">`. Dashboard assets are now cached for a week instead of a year.

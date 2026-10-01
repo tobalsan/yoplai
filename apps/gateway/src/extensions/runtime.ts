@@ -13,16 +13,19 @@ import { getOAuthService } from "../oauth/service.js";
 
 function buildHookContext(
   agent: AgentConfig,
-  config: GatewayConfig
+  config: GatewayConfig,
+  userId?: string
 ): ExtensionHookContext {
   return {
     config,
     env: resolveAgentEnv(agent, config),
+    userId,
     resolveOAuth: (
       agent: AgentConfig,
-      requirement: OAuthRequirement
+      requirement: OAuthRequirement,
+      requesterUserId?: string
     ): Promise<ResolvedOAuth> =>
-      getOAuthService().resolveToken(agent.id, requirement),
+      getOAuthService().resolveToken(agent.id, requirement, requesterUserId),
   };
 }
 
@@ -162,9 +165,10 @@ export class ExtensionRuntime {
 
   async getTools(
     agent: AgentConfig,
-    config: GatewayConfig
+    config: GatewayConfig,
+    userId?: string
   ): Promise<LoadedExtensionAgentTool[]> {
-    const hookContext = buildHookContext(agent, config);
+    const hookContext = buildHookContext(agent, config, userId);
     const groups = await Promise.all(
       this.#extensions.map(async (extension) => {
         try {
@@ -195,9 +199,10 @@ export class ExtensionRuntime {
   async getTool(
     agent: AgentConfig,
     toolName: string,
-    config: GatewayConfig
+    config: GatewayConfig,
+    userId?: string
   ): Promise<LoadedExtensionAgentTool | undefined> {
-    return (await this.getTools(agent, config)).find(
+    return (await this.getTools(agent, config, userId)).find(
       (tool) => tool.name === toolName
     );
   }
@@ -211,7 +216,7 @@ export class ExtensionRuntime {
     userId?: string,
     emitProgress?: import("@yoplai/shared").ExtensionAgentToolContext["emitProgress"]
   ): Promise<{ found: boolean; result?: unknown }> {
-    const tool = await this.getTool(agent, toolName, config);
+    const tool = await this.getTool(agent, toolName, config, userId);
     if (!tool) return { found: false };
     const env = resolveAgentEnv(agent, config);
     return {
@@ -229,9 +234,10 @@ export class ExtensionRuntime {
 
   async getPromptContributions(
     agent: AgentConfig,
-    config: GatewayConfig
+    config: GatewayConfig,
+    userId?: string
   ): Promise<string[]> {
-    const hookContext = buildHookContext(agent, config);
+    const hookContext = buildHookContext(agent, config, userId);
     const contributions = await Promise.all(
       this.#extensions.map(async (extension) => {
         try {
@@ -257,9 +263,10 @@ export class ExtensionRuntime {
 
   async getPrompts(
     agent: AgentConfig,
-    config: GatewayConfig
+    config: GatewayConfig,
+    userId?: string
   ): Promise<string[]> {
-    return this.getPromptContributions(agent, config);
+    return this.getPromptContributions(agent, config, userId);
   }
 
   getCapabilities(): ExtensionCapabilities {
