@@ -140,6 +140,7 @@ Unless noted, paths are under `$YOPLAI_HOME`:
 | `canvas/registry.json`             | Stable dashboard link ids and their owning agent/file      |
 | `auth.db`                          | Better Auth SQLite DB when multi-user extension is enabled |
 | `projects.json`                    | Project numeric ID counter                                 |
+| `tool-labels.json`                 | Maintenance-model-generated friendly tool-call label templates (`GET /api/tool-labels`) |
 
 Canonical history drives history APIs, web UI, Langfuse, compaction, channel context, and media blocks. Pi session files are SDK-owned runtime state; code may use them only for resume/backfill/fallback behavior.
 

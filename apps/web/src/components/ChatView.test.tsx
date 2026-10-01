@@ -478,6 +478,99 @@ describe("ChatView abort handling", () => {
     dispose();
   });
 
+  describe("tool run sections", () => {
+    const history = (calls: { name: string; arguments: unknown }[]) => ({
+      messages: [
+        {
+          role: "assistant",
+          content: [
+            ...calls.map((c, i) => ({
+              type: "toolCall",
+              id: `t${i}`,
+              name: c.name,
+              arguments: c.arguments,
+            })),
+            { type: "text", text: "done" },
+          ],
+          timestamp: 100,
+        },
+        ...calls.map((c, i) => ({
+          role: "toolResult",
+          toolCallId: `t${i}`,
+          toolName: c.name,
+          content: [{ type: "text", text: `out-${i}` }],
+          isError: false,
+          timestamp: 110,
+        })),
+      ],
+      thinkingLevel: undefined,
+      isStreaming: false,
+      activeTurn: null,
+    });
+    const open = async (
+      calls: { name: string; arguments: unknown }[],
+      view: "simple" | "full" = "simple"
+    ) => {
+      routeState.view = view;
+      fetchFullHistoryMock.mockResolvedValue(history(calls));
+      const r = renderView();
+      await waitFor(() => expect(r.container.textContent).toContain("done"));
+      return r;
+    };
+    const click = async (el: Element | null) => {
+      if (!(el instanceof HTMLButtonElement)) throw new Error("no button");
+      el.click();
+      await tick();
+    };
+
+    it.each([
+      [[{ name: "bash", arguments: { command: "ls" } }], "Ran commands"],
+      [[{ name: "read", arguments: {} }], "Called tools"],
+      [
+        [
+          { name: "bash", arguments: { command: "ls" } },
+          { name: "read", arguments: {} },
+        ],
+        "Ran commands, called tools",
+      ],
+    ])("labels section %#", async (calls, label) => {
+      const { container, dispose } = await open(calls);
+      await click(container.querySelector(".activity-group-header"));
+      const line = container.querySelector("button.activity-line");
+      expect(line?.textContent).toBe(label);
+      expect(container.querySelector(".activity-tool-run")).toBeNull();
+      dispose();
+    });
+
+    it("expands to show calls with command in code", async () => {
+      const { container, dispose } = await open([
+        { name: "bash", arguments: { command: "ls -la" } },
+      ]);
+      await click(container.querySelector(".activity-group-header"));
+      await click(container.querySelector("button.activity-line"));
+      const code = container.querySelector(".activity-tool-run code");
+      expect(code?.textContent).toBe("ls -la");
+      expect(container.querySelector(".activity-tool-run")?.textContent).toContain(
+        "Ran ls -la"
+      );
+      dispose();
+    });
+
+    it("renders full-view bash output in a code block", async () => {
+      const { container, dispose } = await open(
+        [{ name: "bash", arguments: { command: "ls" } }],
+        "full"
+      );
+      await click(container.querySelector(".activity-group-header"));
+      await click(container.querySelector("button.activity-line"));
+      await click(container.querySelector(".tool-header"));
+      const block = container.querySelector("pre.tool-terminal");
+      expect(block?.textContent).toContain("$ ls");
+      expect(block?.textContent).toContain("out-0");
+      dispose();
+    });
+  });
+
   it("shows context usage even before any model usage is available", async () => {
     const { container, dispose } = renderView();
     await tick();
@@ -1278,7 +1371,13 @@ describe("ChatView abort handling", () => {
     callbacks?.onToolCall?.("tool-1", "bash", { command: "date" });
     callbacks?.onToolResult?.("tool-1", "bash", "tool output", false);
     onText?.(" Last text.");
-    await waitFor(() => expect(container.textContent).toContain("bash"));
+    await waitFor(() =>
+      expect(container.textContent).toContain("Ran commands")
+    );
+    (
+      container.querySelector("button.activity-line") as HTMLButtonElement
+    ).click();
+    await waitFor(() => expect(container.querySelector(".tool-header")).toBeTruthy());
     const toolToggle = container.querySelector(".tool-header");
     if (!(toolToggle instanceof HTMLButtonElement))
       throw new Error("Expected tool toggle");
@@ -1286,14 +1385,14 @@ describe("ChatView abort handling", () => {
     await waitFor(() => {
       const text = container.textContent ?? "";
       expect(text).toContain("First text.");
-      expect(text).toContain("bash");
+      expect(text).toContain("Ran date");
       expect(text).toContain("tool output");
       expect(text).toContain("Last text.");
     });
 
     const liveText = container.textContent ?? "";
     expect(liveText.indexOf("First text.")).toBeLessThan(
-      liveText.indexOf("bash")
+      liveText.indexOf("Ran date")
     );
     expect(liveText.indexOf("tool output")).toBeLessThan(
       liveText.indexOf("Last text.")
@@ -1504,7 +1603,7 @@ describe("ChatView abort handling", () => {
       );
       const text = container.textContent ?? "";
       const thought = text.search(/plan it|Thinking|Thought/);
-      const tool = text.indexOf("bash");
+      const tool = text.indexOf("Running commands");
       expect(thought).toBeGreaterThanOrEqual(0);
       expect(thought).toBeLessThan(tool);
       dispose();

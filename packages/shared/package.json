@@ -15,6 +15,11 @@
       "import": "./dist/types.js",
       "types": "./dist/types.d.ts"
     },
+    "./tool-labels": {
+      "development": "./src/tool-labels.ts",
+      "import": "./dist/tool-labels.js",
+      "types": "./dist/tool-labels.d.ts"
+    },
     "./no-reply": {
       "development": "./src/no-reply.ts",
       "import": "./dist/no-reply.js",

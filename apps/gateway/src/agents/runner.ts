@@ -50,6 +50,7 @@ import {
   invalidateResolvedHistoryFile,
 } from "../history/store.js";
 import { maybeAutoTitleSession } from "../maintenance/session-auto-title.js";
+import { maybeGenerateToolLabel } from "../maintenance/tool-labels.js";
 
 export type InternalRunAgentParams = SharedRunAgentParams & {
   userId?: string;
@@ -412,6 +413,15 @@ export async function runAgent(
       onEvent: (event: StreamEvent) => {
         if (event.type === "text" || event.type === "thinking") {
           hasEmittedContent = true;
+        }
+        if (event.type === "tool_call") {
+          maybeGenerateToolLabel({
+            agentId: params.agentId,
+            sessionId,
+            userId: params.userId,
+            toolName: event.name,
+            args: event.arguments,
+          });
         }
         holdback.push(event);
       },

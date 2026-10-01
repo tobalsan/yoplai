@@ -17,6 +17,8 @@ import {
 
 import { useParams, useNavigate, useSearchParams, A } from "@solidjs/router";
 import { isNoReply } from "@yoplai/shared/no-reply";
+import { toolLabel } from "@yoplai/shared/tool-labels";
+import { refreshToolLabels, toolLabelTemplates } from "../lib/tool-labels";
 import {
   streamMessage,
   uploadFiles,
@@ -156,6 +158,7 @@ type SimpleToolMessage = {
   id: string;
   role: "tool";
   toolName: string;
+  arguments?: unknown;
   timestamp: number;
 };
 
@@ -256,6 +259,23 @@ function truncateInline(value: string, max = 96): string {
     : singleLine;
 }
 
+function ToolLabelText(props: { label: string }) {
+  const parts = () => props.label.split("`");
+  return (
+    <>
+      <For each={parts()}>
+        {(part, i) =>
+          i() % 2 === 1 && i() < parts().length - 1 ? (
+            <code class="tool-label-code">{part}</code>
+          ) : (
+            <>{i() % 2 === 1 ? `\`${part}` : part}</>
+          )
+        }
+      </For>
+    </>
+  );
+}
+
 function ToolBlock(props: {
   name: string;
   arguments: unknown;
@@ -266,7 +286,7 @@ function ToolBlock(props: {
   const resultText = () => getToolResultText(props.result);
   const failed = () => props.status === "error" || props.result?.isError;
   const summary = () =>
-    truncateInline(getToolInputSummary(props.name, props.arguments));
+    truncateInline(toolLabel(props.name, props.arguments, toolLabelTemplates()));
   const [collapsed, setCollapsed] = createSignal(true);
 
   return (
@@ -277,8 +297,9 @@ function ToolBlock(props: {
           classList={{ expanded: !collapsed() }}
           aria-hidden="true"
         />
-        <span class="tool-kind">{props.name}</span>
-        <span class="tool-title">{summary()}</span>
+        <span class="tool-title" title={props.name}>
+          <ToolLabelText label={summary()} />
+        </span>
       </button>
       <Show when={!collapsed()}>
         <div class="tool-body">
@@ -296,7 +317,7 @@ function ToolBlock(props: {
             }
           >
             <div class="tool-section-label">Shell</div>
-            <pre class="tool-code">
+            <pre class="tool-code tool-terminal">
               {`$ ${getToolInputSummary(props.name, props.arguments)}${
                 props.result ? `\n\n${resultText() || "(no output)"}` : ""
               }`}
@@ -312,8 +333,69 @@ function ToolBlock(props: {
   );
 }
 
-function SimpleToolBlock(props: { name: string }) {
-  return <div class="activity-line">Called tool: {props.name}</div>;
+function SimpleToolBlock(props: { name: string; arguments?: unknown }) {
+  return (
+    <div class="activity-line" title={props.name}>
+      <ToolLabelText
+        label={toolLabel(props.name, props.arguments, toolLabelTemplates())}
+      />
+    </div>
+  );
+}
+
+function ToolRunSection(props: {
+  tools: Extract<ActivityItem, { type: "tool" }>[];
+  simple?: boolean;
+  running: boolean;
+}) {
+  const [expanded, setExpanded] = createSignal(false);
+  const label = () => {
+    const bash = props.tools.filter((t) => t.name === "bash").length;
+    const kind =
+      bash === props.tools.length ? "bash" : bash === 0 ? "tools" : "mixed";
+    if (props.running) {
+      return kind === "bash"
+        ? "Running commands"
+        : kind === "tools"
+          ? "Calling tools"
+          : "Running commands, calling tools";
+    }
+    return kind === "bash"
+      ? "Ran commands"
+      : kind === "tools"
+        ? "Called tools"
+        : "Ran commands, called tools";
+  };
+  return (
+    <div class="activity-item">
+      <button class="activity-line" onClick={() => setExpanded(!expanded())}>
+        <i
+          class="fa-solid fa-chevron-right collapse-icon"
+          classList={{ expanded: expanded() }}
+          aria-hidden="true"
+        />
+        {label()}
+      </button>
+      <Show when={expanded()}>
+        <div class="activity-tool-run">
+          <Index each={props.tools}>
+            {(tool) =>
+              props.simple ? (
+                <SimpleToolBlock name={tool().name} arguments={tool().arguments} />
+              ) : (
+                <ToolBlock
+                  name={tool().name}
+                  arguments={tool().arguments}
+                  result={tool().result}
+                  status={tool().status}
+                />
+              )
+            }
+          </Index>
+        </div>
+      </Show>
+    </div>
+  );
 }
 
 type ActivityItem =
@@ -392,6 +474,24 @@ function ActivityGroup(props: {
     if (props.streaming) setExpanded(true);
     else setExpanded(false);
   });
+  const segments = createMemo(
+    () => {
+      const out: (
+        | { kind: "thinking"; index: number }
+        | { kind: "tools"; start: number; end: number }
+      )[] = [];
+      props.items.forEach((item, index) => {
+        if (item.type === "thinking") {
+          out.push({ kind: "thinking", index });
+          return;
+        }
+        const last = out[out.length - 1];
+        if (last?.kind === "tools" && last.end === index) last.end = index + 1;
+        else out.push({ kind: "tools", start: index, end: index + 1 });
+      });
+      return out;
+    }
+  );
   const summary = () => {
     const tools = props.items.filter((item) => item.type === "tool").length;
     // Wall-clock span from first to last known activity timestamp.
@@ -437,32 +537,46 @@ function ActivityGroup(props: {
       </button>
       <Show when={expanded()}>
         <div class="activity-group-items">
-          <Index each={props.items}>
-            {(item) => {
-              const thinking = () =>
-                item() as Extract<ActivityItem, { type: "thinking" }>;
-              const tool = () =>
-                item() as Extract<ActivityItem, { type: "tool" }>;
+          <Index each={segments()}>
+            {(segment) => {
+              const thinking = () => {
+                const seg = segment();
+                return (seg.kind === "thinking"
+                  ? props.items[seg.index]
+                  : undefined) as
+                  | Extract<ActivityItem, { type: "thinking" }>
+                  | undefined;
+              };
+              const tools = () => {
+                const seg = segment();
+                return seg.kind === "tools"
+                  ? (props.items.slice(seg.start, seg.end) as Extract<
+                      ActivityItem,
+                      { type: "tool" }
+                    >[])
+                  : [];
+              };
               return (
                 <Switch>
-                  <Match when={item().type === "thinking"}>
+                  <Match when={segment().kind === "thinking" && thinking()}>
                     <ThinkingLine
                       type="thinking"
-                      content={thinking().content}
-                      startedAt={thinking().startedAt}
-                      endedAt={thinking().endedAt}
-                      active={thinking().active}
+                      content={thinking()!.content}
+                      startedAt={thinking()!.startedAt}
+                      endedAt={thinking()!.endedAt}
+                      active={thinking()!.active}
                     />
                   </Match>
-                  <Match when={item().type === "tool" && props.simple}>
-                    <SimpleToolBlock name={tool().name} />
-                  </Match>
-                  <Match when={item().type === "tool"}>
-                    <ToolBlock
-                      name={tool().name}
-                      arguments={tool().arguments}
-                      result={tool().result}
-                      status={tool().status}
+                  <Match when={segment().kind === "tools"}>
+                    <ToolRunSection
+                      tools={tools()}
+                      simple={props.simple}
+                      running={
+                        Boolean(props.working) &&
+                        segment().kind === "tools" &&
+                        (segment() as { end: number }).end ===
+                          props.items.length
+                      }
                     />
                   </Match>
                 </Switch>
@@ -586,6 +700,7 @@ function fullMessagesToSimpleView(
           id: crypto.randomUUID(),
           role: "tool",
           toolName: block.name,
+          arguments: block.arguments,
           timestamp: message.timestamp,
         });
       } else if (block.type === "file") {
@@ -744,6 +859,7 @@ function ActiveToolIndicator(props: { tools: ActiveToolCall[] }) {
 }
 
 export function ChatView() {
+  void refreshToolLabels();
   const params = useParams<{ agentId: string; view?: string }>();
   const navigate = useNavigate();
   const [agent] = createResource(() => params.agentId, fetchAgent);
@@ -1591,6 +1707,7 @@ export function ChatView() {
           setIsStreaming(true);
         },
         onDone: () => {
+          void refreshToolLabels();
           if (!isCurrentSubscription()) return;
           if (ownsDisplayedDirectStream()) return;
           if (streamingFinished()) return;
@@ -1865,6 +1982,7 @@ export function ChatView() {
                   id: crypto.randomUUID(),
                   role: "tool",
                   toolName: block.name,
+                  arguments: block.arguments,
                   timestamp: block.timestamp,
                 },
               ];
@@ -2179,6 +2297,7 @@ export function ChatView() {
                       id: crypto.randomUUID(),
                       role: "tool",
                       toolName: block.name,
+                      arguments: block.arguments,
                       timestamp,
                     },
                   ];
@@ -2783,6 +2902,7 @@ export function ChatView() {
                             : {
                                 type: "tool" as const,
                                 name: (msg as SimpleToolMessage).toolName,
+                                arguments: (msg as SimpleToolMessage).arguments,
                                 at: msg.timestamp,
                               }
                         )}
@@ -3151,6 +3271,12 @@ export function ChatView() {
                                         { type: "toolCall" }
                                       >
                                     ).name,
+                                    arguments: (
+                                      block as Extract<
+                                        StreamingBlock,
+                                        { type: "toolCall" }
+                                      >
+                                    ).arguments,
                                     at: block.timestamp,
                                   }
                           )}
@@ -4103,6 +4229,29 @@ export function ChatView() {
           flex-direction: column;
           gap: 2px;
           padding: 3px 0 3px 14px;
+        }
+
+        .activity-tool-run {
+          display: flex;
+          flex-direction: column;
+          gap: 2px;
+          padding: 2px 0 4px 16px;
+        }
+
+        .tool-label-code {
+          font-family: var(--font-mono, ui-monospace, monospace);
+          font-size: 11px;
+        }
+
+        .tool-terminal {
+          font-family: var(--font-mono, ui-monospace, monospace);
+          background: rgba(127, 127, 127, 0.12);
+          border-radius: 4px;
+          padding: 6px 8px;
+          white-space: pre-wrap;
+          word-break: break-word;
+          max-height: 300px;
+          overflow-y: auto;
         }
 
         .activity-thinking-content {
