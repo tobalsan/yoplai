@@ -314,7 +314,7 @@ describe("AgentChat stop/send behavior", () => {
       "project:PRO-1:lead-1"
     );
     expect(container.textContent).toContain("Working...");
-    expect(container.textContent).toContain("Progress updated.");
+    expect(container.textContent).not.toContain("Progress updated.");
     expect(container.querySelector(".log-line.pending")).toBeNull();
 
     dispose();

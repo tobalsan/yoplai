@@ -1878,7 +1878,6 @@ export function AgentChat(props: AgentChatProps) {
       },
       onProgress: () => {
         markLeadStreamActivity();
-        setLeadLive((prev) => `${prev}${prev ? "\n" : ""}Progress updated.`);
       },
       onToolCall: (id, name, args) => {
         markLeadStreamActivity();
@@ -2380,7 +2379,6 @@ export function AgentChat(props: AgentChatProps) {
           },
           onProgress: () => {
             updateLeadUserLogState(clientId, { pending: false, queued: false });
-            setLeadLive((prev) => `${prev}${prev ? "\n" : ""}Progress updated.`);
           },
           onToolCall: (_id, _name, _args) => {
             updateLeadUserLogState(clientId, {

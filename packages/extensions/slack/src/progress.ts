@@ -17,7 +17,7 @@ const unsafeMilestonePatterns = [
   /[`{}[\]<>|]/,
 ];
 
-function genericMilestone(label: string): string {
+function genericMilestone(label: string): string | null {
   const normalized = label.toLowerCase();
   if (/test/.test(normalized)) return "Running tests…";
   if (/review/.test(normalized)) return "Reviewing changes…";
@@ -25,10 +25,11 @@ function genericMilestone(label: string): string {
   if (/investigat|debug|diagnos/.test(normalized)) return "Investigating…";
   if (/check|inspect|read/.test(normalized)) return "Checking progress…";
   if (/wait/.test(normalized)) return "Waiting…";
-  return "Progress updated.";
+  // No meaningful milestone: keep the current bubble text.
+  return null;
 }
 
-function safeMilestone(label: string): string {
+function safeMilestone(label: string): string | null {
   const cleaned = label.replace(/\s+/g, " ").trim();
   const fallback = genericMilestone(cleaned);
   if (
@@ -206,7 +207,7 @@ export function createSlackProgressDisplay(options: {
     publish,
     milestone(label) {
       const safe = safeMilestone(label);
-      if (closed) return;
+      if (closed || !safe) return;
       if (!ts) {
         if (startTimer) {
           clearTimeoutFn(startTimer);
