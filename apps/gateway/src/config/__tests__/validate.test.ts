@@ -232,7 +232,7 @@ describe("startup validation", () => {
     delete process.env.TEST_RUNTIME_SECRET;
   });
 
-  it("fails early when an extension rejects agent config", async () => {
+  it("logs an error but starts when an extension rejects agent config", async () => {
     const config = GatewayConfigSchema.parse({
       version: 2,
       agents: [
@@ -268,8 +268,22 @@ describe("startup validation", () => {
       capabilities: () => [],
     };
 
-    await expect(prepareStartupConfig(config, [extension])).rejects.toThrow(
-      'Extension "sample" for agent "main" missing required secret "apiKey"'
-    );
+    const logged: string[] = [];
+    const originalError = console.error;
+    console.error = (...args: unknown[]) => {
+      logged.push(args.join(" "));
+    };
+    try {
+      await expect(prepareStartupConfig(config, [extension])).resolves.toBeDefined();
+    } finally {
+      console.error = originalError;
+    }
+    expect(logged).toHaveLength(1);
+    expect(JSON.parse(logged[0]!)).toMatchObject({
+      level: "error",
+      msg: "Extension config invalid; disabled for agent",
+      extensionId: "sample",
+      message: 'Extension "sample" for agent "main" missing required secret "apiKey"',
+    });
   });
 });

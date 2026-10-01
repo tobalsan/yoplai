@@ -5,6 +5,7 @@ import type {
 } from "@yoplai/shared";
 import { resolveAgentEnv } from "./index.js";
 import { resolveConfigSecrets } from "./secrets.js";
+import { logError } from "../logging.js";
 
 function uniqueAgentIdValidation(config: GatewayConfig): ValidationResult {
   const seen = new Set<string>();
@@ -77,15 +78,17 @@ function validateComponentConfigs(
 
   for (const extension of extensions) {
     const rawConfig = getComponentConfig(config, extension);
-    const results = [
-      extension.validateConfig(rawConfig),
-      extension.validateAgentConfigs?.(config),
-    ].filter((result): result is ValidationResult => Boolean(result));
-    for (const result of results) {
-      if (result.valid) continue;
-      for (const error of result.errors) {
-        errors.push(`Component "${extension.id}" config invalid: ${error}`);
-      }
+    const result = extension.validateConfig(rawConfig);
+    for (const error of result.valid ? [] : result.errors) {
+      errors.push(`Component "${extension.id}" config invalid: ${error}`);
+    }
+    // Bad per-agent config must not take the gateway down: the runtime skips
+    // the extension for that agent, so log loudly and keep starting.
+    const agentResult = extension.validateAgentConfigs?.(config);
+    for (const error of agentResult?.valid === false ? agentResult.errors : []) {
+      logError("Extension config invalid; disabled for agent", error, {
+        extensionId: extension.id,
+      });
     }
   }
 
