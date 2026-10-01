@@ -188,7 +188,7 @@ describe("ChatView abort handling", () => {
     dispose();
   });
 
-  it("renders a safe progress status during a stream", async () => {
+  it("does not render generic progress text during a stream", async () => {
     let onProgress: ((progress: { label: string }) => void) | undefined;
     streamMessageMock.mockImplementation((...args: unknown[]) => {
       onProgress = (args[6] as { onProgress?: typeof onProgress }).onProgress;
@@ -203,7 +203,8 @@ describe("ChatView abort handling", () => {
     (container.querySelector(".send-btn") as HTMLButtonElement).click();
     await tick();
     onProgress?.({ label: "Progress updated." });
-    expect(container.textContent).toContain("Progress updated.");
+    await tick();
+    expect(container.textContent).not.toContain("Progress updated.");
     dispose();
   });
 

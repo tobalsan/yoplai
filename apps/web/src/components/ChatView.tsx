@@ -908,7 +908,6 @@ export function ChatView() {
     string | undefined
   >(undefined);
   const [streamingThinking, setStreamingThinking] = createSignal("");
-  const [streamingProgress, setStreamingProgress] = createSignal<string | null>(null);
   const [streamingThinkingAt, setStreamingThinkingAt] = createSignal<
     number | null
   >(null);
@@ -1625,14 +1624,9 @@ export function ChatView() {
           if (!streamingStartedAt()) setStreamingStartedAt(Date.now());
           setIsStreaming(true);
         },
-        onProgress: ({ label, current, total }) => {
+        onProgress: () => {
           if (!isCurrentSubscription()) return;
           if (ownsDisplayedDirectStream()) return;
-          setStreamingProgress(
-            current !== undefined && total !== undefined
-              ? `${label} (${current}/${total})`
-              : label
-          );
           setIsStreaming(true);
         },
         onToolCall: (id, name, args) => {
@@ -1895,7 +1889,6 @@ export function ChatView() {
   // Helper to reset streaming state (used by onDone and onError)
   const resetStreamingState = () => {
     setStreamingThinking("");
-    setStreamingProgress(null);
     setStreamingThinkingAt(null);
     setStreamingToolCalls([]);
     setStreamingText("");
@@ -2564,13 +2557,8 @@ export function ChatView() {
           setStreamingThinking((prev) => prev + chunk);
           if (!streamingThinkingAt()) setStreamingThinkingAt(Date.now());
         },
-        onProgress: ({ label, current, total }) => {
+        onProgress: () => {
           if (!isCurrentDirectStream()) return;
-          setStreamingProgress(
-            current !== undefined && total !== undefined
-              ? `${label} (${current}/${total})`
-              : label
-          );
           setIsStreaming(true);
         },
         onToolCall: (id, name, args) => {
@@ -3350,14 +3338,6 @@ export function ChatView() {
           }
         >
           <ActiveToolIndicator tools={activeTools()} />
-        </Show>
-
-        <Show when={streamingProgress()}>
-          {(progress) => (
-            <div class="message assistant progress-status">
-              <div class="content">{progress()}</div>
-            </div>
-          )}
         </Show>
 
         <Show when={showInterrupted()}>

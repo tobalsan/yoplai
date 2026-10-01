@@ -310,7 +310,6 @@ export function createChatRuntime(deps: Partial<ChatRuntimeDeps> = {}) {
     },
     onProgress() {
       setWaitingForFirstText(false);
-      setStreamingBlocks((prev) => appendStreamingText(prev, "Progress updated."));
     },
     onToolCall(id, name, args) {
       setStreamingBlocks((prev) =>

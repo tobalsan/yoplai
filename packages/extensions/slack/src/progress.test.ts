@@ -344,6 +344,25 @@ describe("Slack progress display", () => {
     expect(store.add).toHaveBeenCalledOnce();
   });
 
+  it("ignores unsafe milestones with no meaningful category instead of posting generic text", async () => {
+    const client = {
+      chat: {
+        postMessage: vi.fn().mockResolvedValue({ ts: "progress-ts" }),
+        update: vi.fn().mockResolvedValue({}),
+      },
+    };
+    const display = createSlackProgressDisplay({
+      client: client as never,
+      channel: "C1",
+      logPrefix: "[test]",
+    });
+    display.milestone("{\"step\": 3}");
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(client.chat.postMessage).not.toHaveBeenCalled();
+    expect(client.chat.update).not.toHaveBeenCalled();
+  });
+
   it("skips a redundant chat.update when the same milestone repeats while a bubble exists", async () => {
     const client = {
       chat: {
