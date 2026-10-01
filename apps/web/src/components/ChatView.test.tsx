@@ -2,7 +2,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createSignal } from "solid-js";
 import { delegateEvents, render } from "solid-js/web";
-import { ChatView } from "./ChatView";
+import { ChatView, ThinkingLine } from "./ChatView";
 import {
   resetCapabilitiesForTests,
   setCapabilitiesForTests,
@@ -403,20 +403,78 @@ describe("ChatView abort handling", () => {
     await tick();
     await tick();
 
-    expect(container.textContent).toContain("Thinking");
+    expect(container.textContent).toContain("Worked");
     expect(container.textContent).toContain("final answer");
 
-    const thinkingToggle = Array.from(
-      container.querySelectorAll("button")
-    ).find((button) => button.textContent?.includes("Thinking"));
-    if (!(thinkingToggle instanceof HTMLButtonElement)) {
+    const groupToggle = container.querySelector(".activity-group-header");
+    if (!(groupToggle instanceof HTMLButtonElement))
+      throw new Error("Expected activity group toggle");
+    groupToggle.click();
+    await tick();
+    const thinkingToggle = container.querySelector("button.activity-line");
+    if (!(thinkingToggle instanceof HTMLButtonElement))
       throw new Error("Expected thinking toggle");
-    }
     thinkingToggle.click();
     await tick();
 
     expect(container.textContent).toContain("private chain summary");
 
+    dispose();
+  });
+
+  it("groups full-history activity across assistant and tool-result messages", async () => {
+    routeState.view = "full";
+    fetchFullHistoryMock.mockResolvedValue({
+      messages: [
+        {
+          role: "assistant",
+          content: [
+            { type: "thinking", thinking: "first thought" },
+            { type: "toolCall", id: "tool-a", name: "bash", arguments: {} },
+          ],
+          timestamp: 100,
+        },
+        {
+          role: "toolResult",
+          toolCallId: "tool-a",
+          toolName: "bash",
+          content: [{ type: "text", text: "A result" }],
+          isError: false,
+          timestamp: 110,
+        },
+        {
+          role: "assistant",
+          content: [
+            { type: "thinking", thinking: "second thought" },
+            { type: "toolCall", id: "tool-b", name: "read", arguments: {} },
+            { type: "text", text: "answer" },
+          ],
+          timestamp: 120,
+        },
+        {
+          role: "user",
+          content: [{ type: "text", text: "next turn" }],
+          timestamp: 130,
+        },
+      ],
+      thinkingLevel: undefined,
+      isStreaming: false,
+      activeTurn: null,
+    });
+
+    const { container, dispose } = renderView();
+    await waitFor(() => expect(container.textContent).toContain("next turn"));
+
+    expect(container.querySelectorAll(".activity-group")).toHaveLength(1);
+    expect(
+      container.querySelector(".activity-group-header")?.textContent
+    ).toContain("2 tool calls");
+    expect((container.textContent ?? "").indexOf("2 tool calls")).toBeLessThan(
+      (container.textContent ?? "").indexOf("answer")
+    );
+    expect((container.textContent ?? "").indexOf("answer")).toBeLessThan(
+      (container.textContent ?? "").indexOf("next turn")
+    );
     dispose();
   });
 
@@ -1103,6 +1161,54 @@ describe("ChatView abort handling", () => {
     dispose();
   });
 
+  it("preserves thinking duration when a live stream completes", async () => {
+    let onDone: (() => void) | undefined;
+    let onThinking: ((chunk: string) => void) | undefined;
+    streamMessageMock.mockImplementation(
+      (
+        _agentId: string,
+        _message: string,
+        _sessionKey: string,
+        _onText: (chunk: string) => void,
+        nextOnDone: () => void,
+        _onError: (error: string) => void,
+        callbacks?: { onThinking?: (chunk: string) => void }
+      ) => {
+        onDone = nextOnDone;
+        onThinking = callbacks?.onThinking;
+        return vi.fn();
+      }
+    );
+
+    const { container, dispose } = renderView();
+    await tick();
+    await tick();
+    const textarea = container.querySelector("textarea") as HTMLTextAreaElement;
+    textarea.value = "hello";
+    textarea.dispatchEvent(new Event("input", { bubbles: true }));
+    await tick();
+    const sendBtn = container.querySelector(".send-btn") as HTMLButtonElement;
+    await waitFor(() => expect(sendBtn.disabled).toBe(false));
+    sendBtn.click();
+    await tick();
+
+    const now = vi.spyOn(Date, "now").mockReturnValue(1_000);
+    onThinking?.("working through problem");
+    await tick();
+    expect(
+      container.querySelector(".activity-group-header")?.textContent
+    ).toContain("Working");
+    now.mockReturnValue(7_000);
+    onDone?.();
+    await tick();
+    now.mockRestore();
+
+    expect(
+      container.querySelector(".activity-group-header")?.textContent
+    ).toContain("Worked for 6s");
+    dispose();
+  });
+
   it("renders full-mode stream blocks chronologically", async () => {
     let onText: ((chunk: string) => void) | undefined;
     let onDone: (() => void) | undefined;
@@ -1172,6 +1278,11 @@ describe("ChatView abort handling", () => {
     callbacks?.onToolCall?.("tool-1", "bash", { command: "date" });
     callbacks?.onToolResult?.("tool-1", "bash", "tool output", false);
     onText?.(" Last text.");
+    await waitFor(() => expect(container.textContent).toContain("bash"));
+    const toolToggle = container.querySelector(".tool-header");
+    if (!(toolToggle instanceof HTMLButtonElement))
+      throw new Error("Expected tool toggle");
+    toolToggle.click();
     await waitFor(() => {
       const text = container.textContent ?? "";
       expect(text).toContain("First text.");
@@ -1193,15 +1304,16 @@ describe("ChatView abort handling", () => {
 
     const finalText = container.textContent ?? "";
     expect(finalText.indexOf("First text.")).toBeLessThan(
-      finalText.indexOf("bash")
+      finalText.indexOf("1 tool call")
     );
-    expect(finalText.indexOf("tool output")).toBeLessThan(
+    expect(finalText.indexOf("1 tool call")).toBeLessThan(
       finalText.indexOf("Last text.")
     );
+    expect(finalText).not.toContain("tool output");
     expect(fetchFullHistoryMock.mock.calls.length).toBe(fetchesBeforeDone);
     subscriptionCallbacks?.onDone?.();
     await tick();
-    expect(container.textContent).toContain("tool output");
+    expect(container.textContent).toContain("1 tool call");
     subscriptionCallbacks?.onHistoryUpdated?.();
     await tick();
     expect(fetchFullHistoryMock.mock.calls.length).toBe(fetchesBeforeDone + 1);
@@ -1311,6 +1423,217 @@ describe("ChatView abort handling", () => {
       "Drop files to attach them to your next message."
     );
 
+    dispose();
+  });
+
+  async function startFullStream() {
+    let callbacks:
+      | {
+          onThinking?: (chunk: string) => void;
+          onToolCall?: (id: string, name: string, args: unknown) => void;
+        }
+      | undefined;
+    let onText: ((chunk: string) => void) | undefined;
+    streamMessageMock.mockImplementation(
+      (
+        _agentId: string,
+        _message: string,
+        _sessionKey: string,
+        nextOnText: (chunk: string) => void,
+        _nextOnDone: () => void,
+        _onError: (error: string) => void,
+        nextCallbacks?: typeof callbacks
+      ) => {
+        onText = nextOnText;
+        callbacks = nextCallbacks;
+        return vi.fn();
+      }
+    );
+    const view = renderView();
+    await tick();
+    await tick();
+    const textarea = view.container.querySelector(
+      "textarea"
+    ) as HTMLTextAreaElement;
+    textarea.value = "hello";
+    textarea.dispatchEvent(new Event("input", { bubbles: true }));
+    await tick();
+    const sendBtn = view.container.querySelector(
+      ".send-btn"
+    ) as HTMLButtonElement;
+    await waitFor(() => expect(sendBtn.disabled).toBe(false));
+    sendBtn.click();
+    await tick();
+    return {
+      ...view,
+      onText: (c: string) => onText?.(c),
+      callbacks: () => callbacks,
+    };
+  }
+
+  it.each(["full", "simple"] as const)(
+    "re-renders streamed text chunks in %s view",
+    async (mode) => {
+      routeState.view = mode;
+      const { container, dispose, onText } = await startFullStream();
+      onText("Hello");
+      await tick();
+      onText(" world");
+      await waitFor(() =>
+        expect(container.textContent).toContain("Hello world")
+      );
+      dispose();
+    }
+  );
+
+  it.each(["full", "simple"] as const)(
+    "keeps thinking before tool call while streaming in %s view",
+    async (mode) => {
+      routeState.view = mode;
+      const { container, dispose, callbacks } = await startFullStream();
+      callbacks()?.onThinking?.("plan it");
+      await tick();
+      callbacks()?.onToolCall?.("t1", "bash", {});
+      await tick();
+      await waitFor(() =>
+        expect(
+          container.querySelectorAll(
+            ".activity-item,.tool-block,.activity-line"
+          ).length
+        ).toBeGreaterThan(1)
+      );
+      const text = container.textContent ?? "";
+      const thought = text.search(/plan it|Thinking|Thought/);
+      const tool = text.indexOf("bash");
+      expect(thought).toBeGreaterThanOrEqual(0);
+      expect(thought).toBeLessThan(tool);
+      dispose();
+    }
+  );
+
+  it("keeps an expanded history activity group expanded when a message is appended", async () => {
+    routeState.view = "full";
+    const history = (extra: unknown[]) => ({
+      messages: [
+        {
+          role: "assistant",
+          content: [
+            { type: "thinking", thinking: "t" },
+            { type: "toolCall", id: "a", name: "bash", arguments: {} },
+            { type: "text", text: "answer" },
+          ],
+          timestamp: 100,
+        },
+        ...extra,
+      ],
+      thinkingLevel: undefined,
+      isStreaming: false,
+      activeTurn: null,
+    });
+    fetchFullHistoryMock.mockResolvedValue(history([]));
+    let subscription: { onHistoryUpdated?: () => void } | undefined;
+    subscribeToSessionMock.mockImplementation(
+      (_agentId: string, _sessionKey: string, callbacksArg) => {
+        subscription = callbacksArg;
+        return vi.fn();
+      }
+    );
+    const { container, dispose } = renderView();
+    await waitFor(() => expect(container.textContent).toContain("answer"));
+    (
+      container.querySelector(".activity-group-header") as HTMLButtonElement
+    ).click();
+    await tick();
+    expect(container.querySelector(".activity-group-items")).not.toBeNull();
+
+    fetchFullHistoryMock.mockResolvedValue(
+      history([
+        {
+          role: "user",
+          content: [{ type: "text", text: "appended" }],
+          timestamp: 200,
+        },
+      ])
+    );
+    subscription?.onHistoryUpdated?.();
+    await waitFor(() => expect(container.textContent).toContain("appended"));
+    expect(container.querySelector(".activity-group-items")).not.toBeNull();
+    dispose();
+  });
+});
+
+describe("ThinkingLine ticker", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+    document.body.innerHTML = "";
+  });
+
+  it("samples streamed content every five seconds and clears its interval", () => {
+    vi.useFakeTimers();
+    const [content, setContent] = createSignal("one two three four five ");
+    const [active, setActive] = createSignal(true);
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const dispose = render(
+      () => (
+        <ThinkingLine type="thinking" content={content()} active={active()} />
+      ),
+      container
+    );
+
+    expect(container.textContent).toContain("one two three four five…");
+    setContent("six seven eight nine ten ");
+    vi.advanceTimersByTime(4999);
+    expect(container.textContent).toContain("one two three four five…");
+    vi.advanceTimersByTime(1);
+    expect(container.textContent).toContain("six seven eight nine ten…");
+
+    setActive(false);
+    expect(container.textContent).toContain("Thought");
+    expect(vi.getTimerCount()).toBe(0);
+    setActive(true);
+    expect(vi.getTimerCount()).toBe(1);
+    dispose();
+    expect(vi.getTimerCount()).toBe(0);
+  });
+});
+
+describe("ThinkingLine ticker (shared item source)", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+    document.body.innerHTML = "";
+  });
+
+  it("does not resample per token when content and active share a source", () => {
+    vi.useFakeTimers();
+    const [item, setItem] = createSignal({
+      content: "one two three four five ",
+      active: true,
+    });
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const dispose = render(
+      () => (
+        <ThinkingLine
+          type="thinking"
+          content={item().content}
+          active={item().active}
+        />
+      ),
+      container
+    );
+
+    setItem({ content: "six seven eight nine ten ", active: true });
+    vi.advanceTimersByTime(2000);
+    setItem({
+      content: "eleven twelve thirteen fourteen fifteen ",
+      active: true,
+    });
+    expect(container.textContent).toContain("one two three four five…");
+    vi.advanceTimersByTime(3000);
+    expect(container.textContent).toContain(
+      "eleven twelve thirteen fourteen fifteen…"
+    );
     dispose();
   });
 });
