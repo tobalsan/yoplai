@@ -71,6 +71,7 @@ import {
 } from "../history/store.js";
 import { resolveSessionDataFile } from "../sessions/files.js";
 import { createOAuthRoutes } from "../oauth/routes.js";
+import { readToolLabels } from "../maintenance/tool-labels.js";
 import { loadSuggestions } from "../suggestions/loader.js";
 import { listAgentDashboards } from "../canvas/list.js";
 import { getDashboardRegistry } from "../canvas/store.js";
@@ -268,6 +269,8 @@ api.get("/branding/logo", async (c) => {
     return c.json({ error: "Not found" }, 404);
   }
 });
+
+api.get("/tool-labels", async (c) => c.json(await readToolLabels()));
 
 api.get("/capabilities", async (c) => {
   const extensions = Object.fromEntries(
