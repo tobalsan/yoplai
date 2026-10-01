@@ -11,6 +11,8 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Added
 
+- Slack users can link existing Yoplai accounts with private, single-use, ten-minute `!pair` links; each sender's requests use their own personal credentials, with team-only credentials for unpaired users.
+
 - Extension API tokens support **Just me** credentials encrypted per requester, with existing team credentials as fallback and a configuration link when missing. Admins can select **Whole team**; existing configs remain shared.
 
 - Remote MCP OAuth connections support personal ("Just me") and shared ("Whole team") credentials, with requester-specific reconnect links and existing grants retained as team.

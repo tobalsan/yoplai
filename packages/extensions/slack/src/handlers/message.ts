@@ -17,7 +17,7 @@ export type MessageData = {
   files?: SlackFile[];
 };
 
-export type BangCommand = "new" | "stop";
+export type BangCommand = "new" | "stop" | "pair";
 
 export type BangCommandMatch = {
   command: BangCommand;
@@ -27,7 +27,7 @@ export type BangCommandMatch = {
 export function detectBangCommand(
   content: string
 ): BangCommandMatch | undefined {
-  const match = content.match(/^!(new|stop)\b(.*)/i);
+  const match = content.match(/^!(new|stop|pair)\b(.*)/i);
   if (!match) return undefined;
   return {
     command: match[1].toLowerCase() as BangCommand,

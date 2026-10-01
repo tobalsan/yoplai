@@ -15,6 +15,7 @@
     "build": "tsc"
   },
   "dependencies": {
+    "@yoplai/extension-multi-user": "workspace:*",
     "@yoplai/shared": "workspace:*",
     "@slack/bolt": "^4.6.0",
     "@slack/web-api": "^7.15.1",

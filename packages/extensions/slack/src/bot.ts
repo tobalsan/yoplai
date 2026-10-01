@@ -71,6 +71,8 @@ import {
 } from "./progress.js";
 import { getSlackProgressStore } from "./progress-store.js";
 import { toolCallMilestone } from "./tool-milestones.js";
+import { getSlackPairingService, SlackPairingError } from "./pairing.js";
+import { getSlackWorkspace, resolveSlackRequester } from "./requester.js";
 
 export type SlackBot = {
   app: App;
@@ -706,9 +708,31 @@ async function handleBangCommand(
   data: MessageData,
   client: SlackWebClient,
   target: SlackMessageTarget,
-  bang: { command: "new" | "stop"; arg?: string }
+  bang: { command: "new" | "stop" | "pair"; arg?: string }
 ): Promise<boolean> {
   if (!data.user) return false;
+
+  if (bang.command === "pair") {
+    const pairing = getSlackPairingService();
+    const workspace = pairing ? await getSlackWorkspace(client) : undefined;
+    let text = "Account pairing requires web login and a verified Slack workspace. Contact your administrator.";
+    if (pairing && workspace) {
+      try {
+        const link = await pairing.issue(workspace, data.user, client);
+        text = `Link your existing Yoplai account: ${link}\nThis single-use link expires in 10 minutes.`;
+      } catch (error) {
+        text = error instanceof SlackPairingError ? error.message : "Slack pairing is unavailable. Please try again.";
+      }
+    }
+    await client.chat.postEphemeral({
+      channel: data.channel,
+      user: data.user,
+      text,
+      thread_ts: data.thread_ts,
+      mrkdwn: true,
+    });
+    return true;
+  }
 
   const sessionKey = target.isMainSession
     ? DEFAULT_MAIN_KEY
@@ -718,13 +742,15 @@ async function handleBangCommand(
   if (bang.command === "new") {
     try {
       const ctx = getSlackContext();
+      const requesterUserId = await resolveSlackRequester(client, data.user);
       const cleared = await ctx.clearSessionEntry(
         target.agent.id,
-        effectiveSessionKey
+        effectiveSessionKey,
+        requesterUserId
       );
       if (cleared) {
         ctx.deleteSession(target.agent.id, cleared.sessionId);
-        await ctx.invalidateHistoryCache(target.agent.id, cleared.sessionId);
+        await ctx.invalidateHistoryCache(target.agent.id, cleared.sessionId, requesterUserId);
       }
       await client.chat.postEphemeral({
         channel: data.channel,
@@ -748,6 +774,7 @@ async function handleBangCommand(
     try {
       const agentResult = await getSlackContext().runAgent({
         agentId: target.agent.id,
+        userId: await resolveSlackRequester(client, data.user),
         message: "/stop",
         sessionKey: effectiveSessionKey,
         source: "slack",
@@ -977,11 +1004,13 @@ async function handleSlackMessage(
     });
 
     const fileUploads: Promise<void>[] = [];
+    const requesterUserId = await resolveSlackRequester(client, data.user);
     let slackToolPostedToThread = false;
     const slackToolCallsToThread = new Set<string>();
     const runAgent = (sessionId?: string) =>
       getSlackContext().runAgent({
         agentId: target.agent.id,
+        userId: requesterUserId,
         message: content,
         attachments,
         ...(sessionId ? { sessionId } : {}),
@@ -1176,6 +1205,7 @@ async function handleSlackReaction(
     const reactionThreadTs = data.item.thread_ts ?? messageInfo?.threadTs;
     await getSlackContext().runAgent({
       agentId: target.agent.id,
+      userId: await resolveSlackRequester(client, data.user),
       message: formatReactionMessage(data, action),
       sessionKey: buildSlackSessionKey(result.channel, reactionThreadTs),
       source: "slack",
@@ -1517,6 +1547,7 @@ export function createSlackBot(
         {
           channel_id: command.channel_id,
           user_id: command.user_id,
+          requesterUserId: await resolveSlackRequester(client, command.user_id),
           text: command.text,
         },
         target,
@@ -1538,6 +1569,7 @@ export function createSlackBot(
         const auth = await client.auth?.test();
         botUserId = auth?.user_id;
         botId = auth?.bot_id;
+        if (auth?.team_id) getSlackPairingService()?.registerClient(auth.team_id, client);
       } catch {
         botUserId = undefined;
         botId = undefined;
@@ -1816,6 +1848,7 @@ export function createSlackAgentBot(agent: AgentConfig): SlackBot | null {
         {
           channel_id: command.channel_id,
           user_id: command.user_id,
+          requesterUserId: await resolveSlackRequester(client, command.user_id),
           text: command.text,
         },
         target,
@@ -1837,6 +1870,7 @@ export function createSlackAgentBot(agent: AgentConfig): SlackBot | null {
         const auth = await client.auth?.test();
         botUserId = auth?.user_id;
         botId = auth?.bot_id;
+        if (auth?.team_id) getSlackPairingService()?.registerClient(auth.team_id, client);
       } catch {
         botUserId = undefined;
         botId = undefined;
