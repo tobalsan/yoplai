@@ -19,6 +19,8 @@ vi.mock("../../components/LeftNavShell", () => ({
   LeftNavShell: (props: { children: unknown }) => props.children,
 }));
 
+vi.mock("../../auth/client", () => ({ useSession: () => () => ({ data: { user: { id: "alice" } } }) }));
+
 import { McpConfigPage } from "./routes";
 
 const server = (state: "connected" | "disconnected" | "needs_reconnect" | "static", auth = state === "static" ? "static" : "oauth") => ({
@@ -43,6 +45,7 @@ function status(servers: object[]) {
 }
 
 beforeEach(() => {
+  window.history.replaceState({}, "", "/");
   container = document.createElement("div");
   document.body.appendChild(container);
   fetchMock = vi.fn();
@@ -89,7 +92,7 @@ describe("McpConfigPage", () => {
     await mount();
     container.querySelector<HTMLButtonElement>("button")!.click();
     expect(window.open).toHaveBeenCalledWith(
-      "/api/mcp/oauth/authorize?agent=casey&server=Claap",
+      "/api/mcp/oauth/authorize?agent=casey&server=Claap&scope=team",
       "yoplai-oauth",
       "width=520,height=640"
     );
@@ -124,7 +127,7 @@ describe("McpConfigPage", () => {
 
     expect(fetchMock).toHaveBeenNthCalledWith(
       2,
-      "/api/mcp/oauth/disconnect?agent=casey&server=Claap",
+      "/api/mcp/oauth/disconnect?agent=casey&server=Claap&scope=team",
       { method: "POST" }
     );
     expect(container.textContent).toContain("Not connected");
@@ -141,3 +144,54 @@ describe("McpConfigPage", () => {
     }
   );
 });
+
+  it("uses personal scope for authorization and disconnect", async () => {
+    fetchMock.mockResolvedValue(status([server("disconnected")]));
+    await mount();
+    const select = container.querySelector<HTMLSelectElement>("select")!;
+    select.value = "personal";
+    select.dispatchEvent(new Event("change", { bubbles: true }));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    container.querySelector<HTMLButtonElement>("button")!.click();
+    expect(window.open).toHaveBeenCalledWith(
+      "/api/mcp/oauth/authorize?agent=casey&server=Claap&scope=personal",
+      "yoplai-oauth", "width=520,height=640"
+    );
+    fetchMock.mockResolvedValue(status([server("connected")]));
+    window.dispatchEvent(new Event("focus"));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    container.querySelector<HTMLButtonElement>("button")!.click();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/mcp/oauth/disconnect?agent=casey&server=Claap&scope=personal", { method: "POST" }
+    );
+  });
+
+  it("ignores a stale team response after switching to personal", async () => {
+    let finishTeam: (value: ReturnType<typeof status>) => void = () => {};
+    fetchMock.mockImplementation((input: string) => input.includes("scope=personal")
+      ? Promise.resolve(status([server("connected")]))
+      : new Promise<ReturnType<typeof status>>((resolve) => { finishTeam = resolve; }));
+    await mount();
+    const select = container.querySelector<HTMLSelectElement>("select")!;
+    select.value = "personal";
+    select.dispatchEvent(new Event("change", { bubbles: true }));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    finishTeam(status([server("disconnected")]));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(container.textContent).toContain("Connected");
+    expect(container.textContent).not.toContain("Not connected");
+  });
+
+  it("opens the requester personal connection from a reconnect link", async () => {
+    window.history.replaceState({}, "", "/agents/casey/extensions/mcp?scope=personal");
+    fetchMock.mockResolvedValue(status([server("needs_reconnect")]));
+    await mount();
+    expect(container.querySelector<HTMLSelectElement>("select")!.value).toBe("personal");
+    expect(fetchMock).toHaveBeenCalledWith("/api/mcp/oauth/status?agent=casey&scope=personal");
+    container.querySelector<HTMLButtonElement>("button")!.click();
+    expect(window.open).toHaveBeenCalledWith(
+      "/api/mcp/oauth/authorize?agent=casey&server=Claap&scope=personal",
+      "yoplai-oauth", "width=520,height=640"
+    );
+  });

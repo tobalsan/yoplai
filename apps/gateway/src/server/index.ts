@@ -187,6 +187,21 @@ app.use("/api/*", async (c, next) => {
   await next();
 });
 
+// External MCP OAuth routes carry the agent in a query parameter.
+app.use("/api/mcp/oauth/*", async (c, next) => {
+  if (!currentExtensionRuntime().isEnabled("multiUser") || c.req.path.endsWith("/callback")) {
+    await next();
+    return;
+  }
+  const agentId = c.req.query("agent");
+  if (!agentId) return c.json({ error: "missing_agent" }, 400);
+  const { getRequestAuthContext, hasAgentAccess } = await loadMultiUserMiddlewareModule();
+  if (!(await hasAgentAccess(getRequestAuthContext(c), agentId))) {
+    return c.json({ error: "forbidden" }, 403);
+  }
+  await next();
+});
+
 // Aggregate agent endpoints (`/api/agents/status`, `/api/agents/sessions`)
 // are shaped like `/api/agents/:id` but are not addressed to a single agent —
 // they already filter their payload per-user via `getVisibleAgents`. Gating
@@ -241,13 +256,15 @@ app.all("/api/*", async (c) => {
   url.pathname = pathname || "/";
   const request = new Request(url, c.req.raw);
 
+  let authContext: RequestAuthContext | null = null;
   if (currentExtensionRuntime().isEnabled("multiUser")) {
     const { forwardAuthContextToRequest, getRequestAuthContext } =
       await loadMultiUserMiddlewareModule();
-    forwardAuthContextToRequest(request, getRequestAuthContext(c));
+    authContext = getRequestAuthContext(c);
+    forwardAuthContextToRequest(request, authContext);
   }
 
-  return api.fetch(request);
+  return api.fetch(request, { multiUserAuthContext: authContext });
 });
 
 app.all("/hooks/*", async (c) => {

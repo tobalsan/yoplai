@@ -4,6 +4,7 @@ import type {
   LeadSessionChangedEvent,
 } from "./lead-sessions/types.js";
 import type { Hono } from "hono";
+import type { CredentialScope } from "./oauth/types.js";
 
 export type { LeadSession, LeadSessionChangedEvent };
 
@@ -1249,7 +1250,31 @@ export type DeliverySink = (input: {
   text: string;
 }) => Promise<void>;
 
+export interface CredentialKey {
+  agentId: string;
+  integration: string;
+  scope: CredentialScope;
+}
+
+export type ResolvedCredential<T> =
+  | { connected: true; payload: T; scope: CredentialScope }
+  | { connected: false; reason: "not_connected"; connectUrl: string };
+
+export interface ExtensionCredentials {
+  get<T>(key: CredentialKey): T | undefined;
+  save<T>(key: CredentialKey, payload: T): T;
+  delete(key: CredentialKey): void;
+  resolve<T>(input: {
+    agentId: string;
+    integration: string;
+    requesterUserId?: string;
+    connectUrl: string;
+  }): ResolvedCredential<T>;
+}
+
 export interface ExtensionContext {
+  // Host-owned encrypted credentials, available to external extensions.
+  credentials?: ExtensionCredentials;
   // Config
   getConfig(): GatewayConfig;
   getDataDir(): string;

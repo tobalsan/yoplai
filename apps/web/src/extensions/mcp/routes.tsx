@@ -1,6 +1,7 @@
 import { createEffect, createSignal, For, onCleanup, Show } from "solid-js";
 import type { Component } from "solid-js";
 import { A, useParams } from "@solidjs/router";
+import { useSession } from "../../auth/client";
 import { LeftNavShell } from "../../components/LeftNavShell";
 
 type ServerAuth = "oauth" | "static";
@@ -23,8 +24,8 @@ type McpStatus = { servers: McpServer[] };
 // Do not remove until that version-skew window is no longer a concern.
 const OAUTH_POPUP_MESSAGE_TYPES = new Set(["yoplai-oauth", "aihub-oauth"]);
 
-async function fetchStatus(agentId: string): Promise<McpStatus> {
-  const res = await fetch(`/api/mcp/oauth/status?agent=${encodeURIComponent(agentId)}`);
+async function fetchStatus(agentId: string, scope: "team" | "personal"): Promise<McpStatus> {
+  const res = await fetch(`/api/mcp/oauth/status?agent=${encodeURIComponent(agentId)}&scope=${scope}`);
   if (!res.ok) throw new Error("Failed to load MCP server status.");
   return (await res.json()) as McpStatus;
 }
@@ -43,18 +44,27 @@ export function McpConfigPage(): ReturnType<Component> {
   const [servers, setServers] = createSignal<McpServer[]>();
   const [error, setError] = createSignal<string>();
   const [loading, setLoading] = createSignal(false);
+  const session = useSession();
+  const requestedScope = new URLSearchParams(window.location.search).get("scope");
+  const [scope, setScope] = createSignal<"team" | "personal">(
+    requestedScope === "personal" ? "personal" : "team"
+  );
+  let statusRequest = 0;
 
   const refreshStatus = async () => {
     const agentId = params.agentId;
     if (!agentId) return;
+    const request = ++statusRequest;
     setLoading(true);
     try {
-      setServers((await fetchStatus(agentId)).servers);
+      const status = await fetchStatus(agentId, scope());
+      if (request !== statusRequest) return;
+      setServers(status.servers);
       setError(undefined);
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Failed to load MCP server status.");
+      if (request === statusRequest) setError(cause instanceof Error ? cause.message : "Failed to load MCP server status.");
     } finally {
-      setLoading(false);
+      if (request === statusRequest) setLoading(false);
     }
   };
 
@@ -83,14 +93,14 @@ export function McpConfigPage(): ReturnType<Component> {
   });
 
   const connect = (server: McpServer) => {
-    const url = `/api/mcp/oauth/authorize?agent=${encodeURIComponent(params.agentId)}&server=${encodeURIComponent(server.name)}`;
+    const url = `/api/mcp/oauth/authorize?agent=${encodeURIComponent(params.agentId)}&server=${encodeURIComponent(server.name)}&scope=${scope()}`;
     window.open(url, "yoplai-oauth", "width=520,height=640");
   };
 
   const disconnect = async (server: McpServer) => {
     try {
       const res = await fetch(
-        `/api/mcp/oauth/disconnect?agent=${encodeURIComponent(params.agentId)}&server=${encodeURIComponent(server.name)}`,
+        `/api/mcp/oauth/disconnect?agent=${encodeURIComponent(params.agentId)}&server=${encodeURIComponent(server.name)}&scope=${scope()}`,
         { method: "POST" }
       );
       if (!res.ok) throw new Error(`Failed to disconnect ${server.name}.`);
@@ -109,6 +119,17 @@ export function McpConfigPage(): ReturnType<Component> {
           <h1>MCP servers</h1>
           <p>Connect OAuth-protected remote MCP servers for this agent.</p>
         </header>
+        <label class="mcp-config-scope">
+          Connection for
+          <select value={scope()} onChange={(event) => {
+            setServers(undefined);
+            setError(undefined);
+            setScope(event.currentTarget.value as "team" | "personal");
+          }}>
+            <option value="personal" disabled={!session().data?.user}>Just me</option>
+            <option value="team">Whole team</option>
+          </select>
+        </label>
         <Show when={error()}>{(message) => <div class="mcp-config-error">{message()}</div>}</Show>
         <Show when={loading() && !servers()}><div class="mcp-config-quiet">Checking servers…</div></Show>
         <Show when={servers()?.length === 0}><div class="mcp-config-empty">No remote MCP servers are configured for this agent.</div></Show>
@@ -146,6 +167,8 @@ const MCP_STYLES = `
 .mcp-config-back { display: inline-block; margin-bottom: 20px; font-size: 14px; color: var(--text-secondary); text-decoration: none; }
 .mcp-config-header h1 { margin: 0 0 6px; font-size: 22px; color: var(--text-primary); }
 .mcp-config-header p { margin: 0 0 24px; color: var(--text-secondary); font-size: 14px; }
+.mcp-config-scope { display: flex; align-items: center; gap: 12px; margin-bottom: 16px; color: var(--text-secondary); font-size: 13px; }
+.mcp-config-scope select { padding: 8px; border: 1px solid var(--border-default); border-radius: 8px; background: var(--bg-base); color: var(--text-primary); }
 .mcp-config-error, .mcp-config-empty { margin-bottom: 16px; padding: 10px 14px; border-radius: 10px; color: var(--text-primary); font-size: 13px; }
 .mcp-config-error { background: color-mix(in srgb, #ef4444 10%, transparent); border: 1px solid color-mix(in srgb, #ef4444 40%, transparent); }
 .mcp-config-empty { border: 1px solid var(--border-default); background: var(--bg-surface); color: var(--text-secondary); }
