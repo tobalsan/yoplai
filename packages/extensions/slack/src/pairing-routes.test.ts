@@ -6,6 +6,7 @@ import { Hono } from "hono";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { SlackPairingService, setSlackPairingService } from "./pairing.js";
 import { registerSlackPairingRoutes } from "./pairing-routes.js";
+import { clearSlackContext, setSlackContext } from "./context.js";
 
 const state = vi.hoisted(() => ({ runtime: null as unknown }));
 vi.mock("@yoplai/extension-multi-user", () => ({ getMultiUserRuntime: () => state.runtime }));
@@ -37,10 +38,27 @@ describe("Slack pairing web routes", () => {
 
   afterEach(async () => {
     setSlackPairingService(undefined);
+    clearSlackContext();
     state.runtime = null;
     service.close();
     db.close();
     await fs.rm(dataDir, { recursive: true, force: true });
+  });
+
+  it("uses the platform theme and defaults the brand to Yoplai", async () => {
+    const html = await (await app.request(url)).text();
+    expect(html).toContain("<title>Connect Slack to Yoplai</title>");
+    expect(html).toContain('href="/api/theme.css"');
+    expect(html).not.toContain("/api/branding/logo");
+  });
+
+  it("uses configured branding name and logo", async () => {
+    setSlackContext({ getConfig: () => ({ branding: { name: "Acme <Hub>", logo: "logo.png" } }) } as never);
+    const html = await (await app.request(url)).text();
+    expect(html).toContain("<h1>Connect Slack to Acme &lt;Hub&gt;</h1>");
+    expect(html).toContain("existing Acme &lt;Hub&gt; account");
+    expect(html).toContain('src="/api/branding/logo"');
+    expect(html).not.toContain("Yoplai");
   });
 
   it("renders escaped Slack identity and login returnTo without redeeming", async () => {
