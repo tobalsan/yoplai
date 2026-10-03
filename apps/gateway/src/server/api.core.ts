@@ -218,7 +218,13 @@ function contentDispositionFilename(filename: string): string {
 }
 
 // OAuth connect framework (authorize + callback + status/disconnect).
-api.route("/", createOAuthRoutes(undefined, callerHasAgentAccess, getRequestUserId));
+api.route("/", createOAuthRoutes(
+  undefined,
+  callerHasAgentAccess,
+  getRequestUserId,
+  // Team grants act for everyone, so only staff may set or remove them.
+  canViewAgentPrivateMeta
+));
 
 api.get("/theme.css", async (c) => {
   const themePath = path.join(resolveHomeDir(), "theme.css");

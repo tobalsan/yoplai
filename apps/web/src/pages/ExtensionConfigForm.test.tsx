@@ -318,7 +318,7 @@ describe("ExtensionConfigForm", () => {
     await mount("scribe", "exa");
     const scope = container.querySelector<HTMLSelectElement>("select")!;
     expect(scope.value).toBe("personal");
-    expect(Array.from(scope.options).map((option) => option.text)).toEqual(["Just me"]);
+    expect(Array.from(scope.options).map((option) => option.text)).toEqual(["Just me", "Whole team"]);
     expect(container.querySelector<HTMLInputElement>("#ext-field-baseUrl")?.disabled).toBe(true);
     const input = container.querySelector<HTMLInputElement>("#ext-field-apiKey")!;
     expect(input.value).toBe("");
@@ -329,6 +329,36 @@ describe("ExtensionConfigForm", () => {
     expect(patchAgentExtensionMock).toHaveBeenCalledWith("scribe", "exa", { credentialScope: "personal", secrets: { apiKey: "alice-personal" } });
     expect(container.querySelector<HTMLInputElement>("#ext-field-apiKey")?.value).toBe("********");
     expect(container.textContent).not.toContain("alice-personal");
+  });
+
+  it("shows non-admins the admin-managed team credentials read-only", async () => {
+    const teamEntry = (configValues: Record<string, unknown>) => exaEntry({ personalSecretFields: [], canConfigureTeam: false,
+      configJsonSchema: { properties: { apiKey: { type: "string" }, baseUrl: { type: "string" } }, required: ["apiKey"] },
+      configValues,
+    });
+    const selectTeam = () => {
+      const scope = container.querySelector<HTMLSelectElement>("select")!;
+      scope.value = "team";
+      scope.dispatchEvent(new Event("change", { bubbles: true }));
+    };
+
+    fetchAgentExtensionMock.mockResolvedValue(teamEntry({ apiKey: "********", baseUrl: "https://shared.test" }));
+    await mount("scribe", "exa");
+    selectTeam();
+    expect(container.querySelector<HTMLInputElement>("#ext-field-apiKey")?.disabled).toBe(true);
+    expect(container.querySelector<HTMLInputElement>("#ext-field-apiKey")?.value).toBe("********");
+    expect(container.querySelector<HTMLInputElement>("#ext-field-baseUrl")?.value).toBe("https://shared.test");
+    expect(container.querySelector(".ext-config-save")).toBeNull();
+    expect(container.textContent).toContain("managed by an admin");
+    dispose();
+    container.replaceChildren();
+
+    fetchAgentExtensionMock.mockResolvedValue(teamEntry({}));
+    await mount("scribe", "exa");
+    selectTeam();
+    expect(container.querySelector("#ext-field-apiKey")).toBeNull();
+    expect(container.querySelector(".ext-config-save")).toBeNull();
+    expect(container.textContent).toContain("An admin must configure them");
   });
 
   it("lets admins select Whole team and keeps scope-specific secret presence separate", async () => {

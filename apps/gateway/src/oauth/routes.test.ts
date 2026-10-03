@@ -94,6 +94,16 @@ describe("oauth routes", () => {
     expect(await response.text()).toContain("Just me");
   });
 
+  it("restricts team connections to callers allowed to configure the team", async () => {
+    const app = createOAuthRoutes(new OAuthService({ store, loadConfig: makeConfig }), undefined, async () => "alice", async () => false);
+    const page = await (await app.request("/oauth/google/authorize?agent=a1")).text();
+    expect(page).toContain("Just me");
+    expect(page).not.toContain("Whole team");
+    expect((await app.request("/oauth/google/authorize?agent=a1&scope=team")).status).toBe(403);
+    expect((await app.request("/oauth/google/disconnect?agent=a1&scope=team", { method: "POST" })).status).toBe(403);
+    expect(await (await app.request("/oauth/google/status?agent=a1&scope=personal")).json()).toMatchObject({ canConfigureTeam: false });
+  });
+
   it("binds personal callback ownership to the authenticated initiator, never query userId", async () => {
     const fetchImpl = vi.fn(async (input: RequestInfo | URL) => new Response(JSON.stringify(
       String(input).includes("token") ? { access_token: "alice-token", expires_in: 3600 } : { email: "alice@example.com" }

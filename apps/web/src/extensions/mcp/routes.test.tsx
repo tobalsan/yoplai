@@ -195,3 +195,25 @@ describe("McpConfigPage", () => {
       "yoplai-oauth", "width=520,height=640"
     );
   });
+
+describe("McpConfigPage team access", () => {
+  it("defaults non-admins to Just me and shows team connections read-only", async () => {
+    fetchMock.mockImplementation(async (input: string) => ({ ok: true, json: vi.fn().mockResolvedValue({
+      servers: [server(input.includes("scope=team") ? "connected" : "disconnected")], canConfigureTeam: false,
+    }) }));
+    await mount();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const selector = container.querySelector("select")!;
+    expect(Array.from(selector.options).map((option) => option.text)).toEqual(["Just me", "Whole team"]);
+    expect(selector.value).toBe("personal");
+    expect(container.querySelector("button")).not.toBeNull();
+
+    selector.value = "team";
+    selector.dispatchEvent(new Event("change", { bubbles: true }));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(selector.value).toBe("team");
+    expect(container.textContent).toContain("Connected");
+    expect(container.textContent).toContain("managed by an admin");
+    expect(container.querySelector("button")).toBeNull();
+  });
+});
