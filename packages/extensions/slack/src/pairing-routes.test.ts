@@ -50,7 +50,7 @@ describe("Slack pairing web routes", () => {
     expect(html).toContain("&lt;slack&gt;");
     expect(html).toContain("person@example.com");
     expect(html).toContain("https://yoplai.test/login?returnTo=%2Fapi%2Fslack%2Fpair%2F");
-    expect(response.headers.get("referrer-policy")).toBe("no-referrer");
+    expect(response.headers.get("referrer-policy")).toBe("same-origin");
     expect(response.headers.get("cache-control")).toBe("no-store");
     expect(service.resolve("T1", "U1")).toBeUndefined();
     expect((db.prepare("SELECT COUNT(*) AS count FROM user").get() as { count: number }).count).toBe(1);

@@ -7,7 +7,8 @@ const page = (content: string) => `<!doctype html><html lang="en"><meta charset=
 export function registerSlackPairingRoutes(app: Hono): void {
   app.on(["GET", "POST"], "/slack/pair/:token", async (c) => {
     c.header("Cache-Control", "no-store");
-    c.header("Referrer-Policy", "no-referrer");
+    // no-referrer would make browsers send `Origin: null` on the form POST.
+    c.header("Referrer-Policy", "same-origin");
     c.header("Content-Security-Policy", "default-src 'none'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'");
     const service = getSlackPairingService();
     if (!service) return c.html(page("<p>Slack pairing is unavailable.</p>"), 503);
