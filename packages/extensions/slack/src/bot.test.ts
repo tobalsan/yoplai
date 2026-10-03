@@ -153,6 +153,7 @@ vi.mock("./context.js", () => ({
   })),
   getSlackContextIfInitialized: vi.fn(() => ({
     getDataDir: () => dataDir,
+    getSessionEntry: mockGetSessionEntry,
   })),
 }));
 
@@ -435,6 +436,37 @@ describe("createSlackBot", () => {
     expect(pairing.issue).toHaveBeenCalledWith("T1", "UA", apps[0].client);
     expect(apps[0].client.chat.postEphemeral).toHaveBeenCalledWith(expect.objectContaining({ user: "UA", text: expect.stringContaining("https://yoplai.test/api/slack/pair/test-link") }));
     expect(mockRunAgent).not.toHaveBeenCalled();
+    await bot?.stop();
+  });
+
+  it("lets slack.pair link the run's trusted sender via a reply placeholder and ignores invented args", async () => {
+    const { createSlackBot } = await import("./bot.js");
+    const { slackAgentTools } = await import("./agent-tools.js");
+    const pairTool = slackAgentTools().find((t) => t.name === "slack.pair")!;
+    pairing.enabled = true;
+    pairing.resolve.mockReturnValue(undefined);
+    pairing.issue.mockResolvedValue("https://yoplai.test/api/slack/pair/agent-link");
+    mockGetSessionEntry.mockResolvedValue({ sessionId: "s1" });
+    let toolResult: unknown;
+    mockRunAgent.mockImplementationOnce(async () => {
+      toolResult = await pairTool.execute({ channel: "UOTHER" }, { agent, config: {} as never, sessionId: "s1" });
+      return { payloads: [{ text: "Open <slack-pair-link> to link." }], meta: { durationMs: 1, sessionId: "s1" } };
+    });
+    const bot = createSlackBot([agent], { ...config, channels: { C1: { agent: "main" } } });
+    apps[0].client.auth.test.mockResolvedValue({ user_id: "Ubot", team_id: "T1" });
+    await bot?.start();
+    await getMessageHandler(apps[0])({
+      message: { ts: "1.1", channel: "C1", user: "UC", text: "<@Ubot> check my email", channel_type: "channel" },
+      client: apps[0].client,
+    });
+    expect(pairing.issue).toHaveBeenCalledWith("T1", "UC", apps[0].client);
+    expect(toolResult).toMatchObject({ ok: true, link: "<slack-pair-link>" });
+    expect(JSON.stringify(toolResult)).not.toContain("agent-link");
+    expect(apps[0].client.chat.postMessage).toHaveBeenCalledWith(expect.objectContaining({
+      text: expect.stringContaining("Open https://yoplai.test/api/slack/pair/agent-link to link."),
+    }));
+    expect(apps[0].client.chat.postEphemeral).not.toHaveBeenCalled();
+    expect(await pairTool.execute({}, { agent, config: {} as never, sessionId: "s1" })).toMatchObject({ ok: false });
     await bot?.stop();
   });
 

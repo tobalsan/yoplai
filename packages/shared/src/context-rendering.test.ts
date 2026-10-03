@@ -66,10 +66,10 @@ describe("renderAgentContext telegram context", () => {
 describe("renderAgentContext slack sender identity", () => {
   const metadata = { channel: "slack" as const, place: "#ops", conversationType: "channel_message" as const, sender: "Thinh" };
 
-  it("tells the model an unpaired sender should use !pair", () => {
+  it("tells the model to pair an unpaired sender", () => {
     const rendered = renderAgentContext(buildSlackContext({ metadata, unpairedSender: true }));
     expect(rendered).toContain("sender_identity: unpaired");
-    expect(rendered).toContain("`!pair`");
+    expect(rendered).toContain("slack.pair");
   });
 
   it("omits the note for paired senders", () => {

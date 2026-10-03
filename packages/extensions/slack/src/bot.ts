@@ -72,7 +72,13 @@ import {
 import { getSlackProgressStore } from "./progress-store.js";
 import { toolCallMilestone } from "./tool-milestones.js";
 import { getSlackPairingService, SlackPairingError } from "./pairing.js";
-import { getSlackWorkspace, resolveSlackRequester } from "./requester.js";
+import {
+  type ActiveSlackSender,
+  getSlackWorkspace,
+  resolveSlackRequester,
+  SLACK_PAIR_LINK_PLACEHOLDER,
+  trackSlackSender,
+} from "./requester.js";
 
 export type SlackBot = {
   app: App;
@@ -364,6 +370,21 @@ function slackToolTargetsThread(
         ? (candidate.args as Record<string, unknown>)
         : undefined;
   return input?.channel === channel && input.threadTs === threadTs;
+}
+
+/** Models mangle long random tokens, so replies carry a placeholder the bot fills in. */
+function withPairingLink(
+  payloads: Array<{ text?: string }>,
+  link: string | undefined
+): Array<{ text?: string }> {
+  if (!link) return payloads;
+  if (!payloads.some((p) => p.text?.includes(SLACK_PAIR_LINK_PLACEHOLDER))) {
+    return [...payloads, { text: `Link your Yoplai account: ${link}` }];
+  }
+  return payloads.map((p) => ({
+    ...p,
+    text: p.text?.split(SLACK_PAIR_LINK_PLACEHOLDER).join(link),
+  }));
 }
 
 async function sendSlackReply(
@@ -704,6 +725,27 @@ function startThinkingStreamDisplay(params: {
   return { cleanup, setSessionId };
 }
 
+/** Posts a pairing link privately to the trusted Slack sender (never model-chosen). */
+async function sendPairingLink(
+  client: SlackWebClient,
+  channel: string,
+  user: string,
+  threadTs: string | undefined
+): Promise<void> {
+  const pairing = getSlackPairingService();
+  const workspace = pairing ? await getSlackWorkspace(client) : undefined;
+  let text = "Account pairing requires web login and a verified Slack workspace. Contact your administrator.";
+  if (pairing && workspace) {
+    try {
+      const link = await pairing.issue(workspace, user, client);
+      text = `Link your existing Yoplai account: ${link}\nThis single-use link expires in 10 minutes.`;
+    } catch (error) {
+      text = error instanceof SlackPairingError ? error.message : "Slack pairing is unavailable. Please try again.";
+    }
+  }
+  await client.chat.postEphemeral({ channel, user, text, thread_ts: threadTs, mrkdwn: true });
+}
+
 async function handleBangCommand(
   data: MessageData,
   client: SlackWebClient,
@@ -713,24 +755,7 @@ async function handleBangCommand(
   if (!data.user) return false;
 
   if (bang.command === "pair") {
-    const pairing = getSlackPairingService();
-    const workspace = pairing ? await getSlackWorkspace(client) : undefined;
-    let text = "Account pairing requires web login and a verified Slack workspace. Contact your administrator.";
-    if (pairing && workspace) {
-      try {
-        const link = await pairing.issue(workspace, data.user, client);
-        text = `Link your existing Yoplai account: ${link}\nThis single-use link expires in 10 minutes.`;
-      } catch (error) {
-        text = error instanceof SlackPairingError ? error.message : "Slack pairing is unavailable. Please try again.";
-      }
-    }
-    await client.chat.postEphemeral({
-      channel: data.channel,
-      user: data.user,
-      text,
-      thread_ts: data.thread_ts,
-      mrkdwn: true,
-    });
+    await sendPairingLink(client, data.channel, data.user, data.thread_ts);
     return true;
   }
 
@@ -1008,7 +1033,20 @@ async function handleSlackMessage(
     const fileUploads: Promise<void>[] = [];
     let slackToolPostedToThread = false;
     const slackToolCallsToThread = new Set<string>();
-    const runAgent = (sessionId?: string) =>
+    const activeSender: ActiveSlackSender | undefined = data.user
+      ? { agentId: target.agent.id, sessionKey, client, user: data.user }
+      : undefined;
+    const runAgent = async (sessionId?: string) => {
+      const untrack = activeSender
+        ? trackSlackSender(Object.assign(activeSender, { sessionId }))
+        : undefined;
+      try {
+        return await runAgentFor(sessionId);
+      } finally {
+        untrack?.();
+      }
+    };
+    const runAgentFor = (sessionId?: string) =>
       getSlackContext().runAgent({
         agentId: target.agent.id,
         userId: requesterUserId,
@@ -1102,7 +1140,7 @@ async function handleSlackMessage(
       await sendSlackReply(
         client,
         data.channel,
-        agentResult.payloads,
+        withPairingLink(agentResult.payloads, activeSender?.pairingLink),
         replyThreadTs
       );
     }
