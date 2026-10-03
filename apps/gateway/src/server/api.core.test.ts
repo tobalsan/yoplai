@@ -1,6 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import fs from "node:fs/promises";
 import path from "node:path";
+import { z } from "zod";
+import { defineToolExtension } from "@yoplai/shared";
 
 const getAgent = vi.fn();
 const getActiveAgents = vi.fn();
@@ -83,6 +85,16 @@ vi.mock("../extensions/catalog.js", () => ({
 }));
 
 const updateAgentExtensionConfig = vi.fn();
+const credentialState = vi.hoisted(() => ({ records: new Map<string, unknown>(), failSave: false }));
+vi.mock("../credentials/store.js", () => ({
+  CredentialStore: class {
+    get<T>(key: unknown): T | undefined { return credentialState.records.get(JSON.stringify(key)) as T | undefined; }
+    save(key: unknown, value: unknown) {
+      if (credentialState.failSave) throw new Error("encryption key missing");
+      credentialState.records.set(JSON.stringify(key), value);
+    }
+  },
+}));
 
 vi.mock("../extensions/agent-config-writer.js", () => ({
   updateAgentExtensionConfig,
@@ -121,6 +133,8 @@ describe("api core session resolution", () => {
   beforeEach(() => {
     vi.resetModules();
     vi.clearAllMocks();
+    credentialState.records.clear();
+    credentialState.failSave = false;
     getAgent.mockImplementation((agentId: string) =>
       agentId === "alpha"
         ? {
@@ -938,7 +952,8 @@ describe("api core session resolution", () => {
       expect(reloadExtensions).toHaveBeenCalledWith(resolvedReloaded);
       expect(buildExtensionCatalog).toHaveBeenCalledWith(
         resolvedReloaded,
-        resolvedReloaded.agents[0]
+        resolvedReloaded.agents[0],
+        { configurable: true }
       );
     });
 
@@ -1064,7 +1079,7 @@ describe("api core session resolution", () => {
       );
     });
 
-    it("allows same-team members to write extension config", async () => {
+    it("rejects legacy team config writes by same-team members", async () => {
       loadConfigValue = {
         agents: [{ id: "alpha", name: "Alpha", workspace: "/ws/alpha" }],
         pool: [],
@@ -1087,13 +1102,8 @@ describe("api core session resolution", () => {
         })
       );
 
-      expect(response.status).toBe(200);
-      expect(updateAgentExtensionConfig).toHaveBeenCalledWith(
-        "/ws/alpha",
-        "acme",
-        { enabled: true },
-        expect.any(Function)
-      );
+      expect(response.status).toBe(403);
+      expect(updateAgentExtensionConfig).not.toHaveBeenCalled();
     });
 
     it("403s when a non-member writes extension config", async () => {
@@ -1223,6 +1233,87 @@ describe("api core session resolution", () => {
       );
 
       expect(response.status).toBe(400);
+    });
+
+    describe("personal credential scope", () => {
+      beforeEach(() => {
+        loadConfigValue = { agents: [{ id: "alpha", name: "Alpha", workspace: "/ws/alpha", extensions: { acme: { enabled: true } } }], pool: [] };
+        multiUserState.loaded = true;
+        multiUserState.authContext = { user: { id: "alice", role: "user" }, session: { id: "s1", userId: "alice" } };
+        resolveExtensionDefinition.mockResolvedValue({ id: "acme", requiredSecrets: ["apiKey"], configJsonSchema: { properties: { apiKey: { type: "string" } } } });
+        buildExtensionCatalog.mockResolvedValue([{ ...catalog[0], requiredSecrets: ["apiKey"] }]);
+      });
+
+      async function patch(body: unknown) {
+        const { api } = await import("./api.core.js");
+        return api.request(new Request("http://localhost/agents/alpha/extensions/acme", { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify(body) }));
+      }
+
+      it("stores only requester-owned tokens, returns field presence, and never writes shared configuration", async () => {
+        const response = await patch({ credentialScope: "personal", secrets: { apiKey: "alice-private" } });
+        expect(response.status).toBe(200);
+        const body = await response.json();
+        expect(body.extensions[0]).toMatchObject({ personalSecretFields: ["apiKey"], canConfigureTeam: false });
+        expect(JSON.stringify(body)).not.toContain("alice-private");
+        expect([...credentialState.records.entries()]).toEqual([[JSON.stringify({ agentId: "alpha", integration: "extension-config:acme", scope: { type: "personal", userId: "alice" } }), { apiKey: "alice-private" }]]);
+        expect(updateAgentExtensionConfig).not.toHaveBeenCalled();
+        expect(reloadConfig).not.toHaveBeenCalled();
+        multiUserState.authContext = { user: { id: "bob", role: "user" }, session: { id: "s2", userId: "bob" } };
+        const { api } = await import("./api.core.js");
+        const bob = await api.request(new Request("http://localhost/agents/alpha/extensions"));
+        expect((await bob.json()).extensions[0].personalSecretFields).toEqual([]);
+      });
+
+      it.each([
+        { credentialScope: "personal", userId: "bob", secrets: { apiKey: "secret" } },
+        { credentialScope: { type: "personal", userId: "bob" }, secrets: { apiKey: "secret" } },
+        { credentialScope: "personal", config: { baseUrl: "https://other.test" }, secrets: { apiKey: "secret" } },
+        { credentialScope: "personal", secrets: { undeclared: "secret" } },
+        { credentialScope: "personal", config: { apiKey: "secret" } },
+        { credentialScope: "personal", secrets: { apiKey: "********" } },
+        { credentialScope: "personal", secrets: { apiKey: "$env:HOST_ADMIN_SECRET" } },
+      ])("rejects spoofed identity and personal shared-config writes: %j", async (body) => {
+        expect((await patch(body)).status).toBe(400);
+        expect(credentialState.records.size).toBe(0);
+        expect(updateAgentExtensionConfig).not.toHaveBeenCalled();
+      });
+
+      it("rejects personal credential writes without authentication or agent access", async () => {
+        multiUserState.agentAccess = false;
+        expect((await patch({ credentialScope: "personal", secrets: { apiKey: "secret" } })).status).toBe(403);
+        multiUserState.loaded = false;
+        expect((await patch({ credentialScope: "personal", secrets: { apiKey: "secret" } })).status).toBe(401);
+        expect(credentialState.records.size).toBe(0);
+      });
+
+      it("fails closed on encryption failure without echoing secrets", async () => {
+        credentialState.failSave = true;
+        const response = await patch({ credentialScope: "personal", secrets: { apiKey: "secret" } });
+        expect(response.status).toBe(400);
+        expect(await response.text()).not.toContain("secret");
+        expect(credentialState.records.size).toBe(0);
+        expect(updateAgentExtensionConfig).not.toHaveBeenCalled();
+      });
+
+      it("never returns token-bearing validator messages", async () => {
+        resolveExtensionDefinition.mockResolvedValue({ id: "acme", requiredSecrets: ["apiKey"], validateAgentConfig: () => ({ valid: false, errors: ["invalid token secret-value"] }) });
+        const response = await patch({ credentialScope: "personal", secrets: { apiKey: "secret-value" } });
+        expect(response.status).toBe(422);
+        expect(await response.json()).toEqual({ error: "Extension configuration is invalid", fields: ["config"] });
+        expect(credentialState.records.size).toBe(0);
+      });
+
+      it("allows admin activation without a team token while still validating shared settings", async () => {
+        multiUserState.authContext = { user: { id: "admin", role: "admin" }, session: { id: "s0", userId: "admin" } };
+        resolveExtensionDefinition.mockResolvedValue(defineToolExtension({ id: "acme", displayName: "Acme", description: "fixture", requiredSecrets: ["apiKey"], configSchema: z.object({ apiKey: z.string().min(1), baseUrl: z.string().url() }), createTools: () => [] }));
+        updateAgentExtensionConfig.mockImplementation(async (_workspace, _id, currentPatch, validate) => {
+          validate({ extensions: { acme: { enabled: true, ...currentPatch.config } } }, {});
+          return {};
+        });
+        expect((await patch({ credentialScope: "team", enabled: true, config: { baseUrl: "https://shared.test" } })).status).toBe(200);
+        expect(credentialState.records.size).toBe(0);
+        expect((await patch({ credentialScope: "team", enabled: true, config: { baseUrl: "invalid" } })).status).toBe(422);
+      });
     });
   });
 });

@@ -6,6 +6,10 @@ import {
 } from "./auto-form-schema";
 
 describe("buildAutoFormFields", () => {
+  it("masks schema-marked optional credential fields without making them required", () => {
+    const fields = buildAutoFormFields({ properties: { password: { type: "string", writeOnly: true }, token: { type: "string", format: "password" } } });
+    expect(fields).toMatchObject([{ name: "password", secret: true, required: false }, { name: "token", secret: true, required: false }]);
+  });
   it("returns no fields for a null/empty schema", () => {
     expect(buildAutoFormFields(null, [])).toEqual([]);
     expect(buildAutoFormFields({}, [])).toEqual([]);

@@ -100,7 +100,7 @@ export function buildAutoFormFields(
   for (const [name, rawProp] of Object.entries(properties)) {
     if (name === "enabled") continue;
     const prop = asRecord(rawProp) ?? {};
-    const secret = secretSet.has(name);
+    const secret = secretSet.has(name) || prop.writeOnly === true || prop.format === "password";
     const title =
       typeof prop.title === "string" ? prop.title : humanizeName(name);
     const description =
@@ -110,7 +110,7 @@ export function buildAutoFormFields(
       label: title,
       description,
       type: fieldType(prop, secret),
-      required: requiredSet.has(name) || secret,
+      required: requiredSet.has(name) || secretSet.has(name),
       secret,
       advanced: advancedSet.has(name),
     });

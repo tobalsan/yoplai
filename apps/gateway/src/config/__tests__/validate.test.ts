@@ -1,8 +1,9 @@
 import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { describe, expect, it } from "vitest";
-import { GatewayConfigSchema, type Extension } from "@yoplai/shared";
+import { describe, expect, it, vi } from "vitest";
+import { z } from "zod";
+import { defineToolExtension, GatewayConfigSchema, type Extension } from "@yoplai/shared";
 import { loadExtensions } from "../../extensions/registry.js";
 import {
   logComponentSummary,
@@ -12,6 +13,20 @@ import {
 } from "../validate.js";
 
 describe("startup validation", () => {
+  it("keeps a personal-only token extension enabled while checking shared settings", async () => {
+    const extension = defineToolExtension({ id: "personal", displayName: "Personal", description: "fixture", requiredSecrets: ["apiKey"], configSchema: z.object({ apiKey: z.string().min(1), baseUrl: z.string().url() }), createTools: () => [] });
+    const config = GatewayConfigSchema.parse({ version: 2, agents: [{ id: "main", name: "Main", workspace: "~/agents/main", model: { provider: "anthropic", model: "claude" }, extensions: { personal: { enabled: true, baseUrl: "https://fixture.test" } } }] });
+    const logged = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    try {
+      const prepared = await prepareStartupConfig(config, [extension]);
+      expect(prepared.summary.loaded).toEqual(["personal"]);
+      expect(prepared.resolvedConfig.agents[0].extensions?.personal).toEqual({ enabled: true, baseUrl: "https://fixture.test" });
+      expect(logged).not.toHaveBeenCalled();
+      config.agents[0].extensions!.personal = { enabled: true, baseUrl: "invalid" };
+      await prepareStartupConfig(config, [extension]);
+      expect(logged).toHaveBeenCalledOnce();
+    } finally { logged.mockRestore(); }
+  });
   it("warns for missing agent extensions without failing startup", async () => {
     const warnings: string[] = [];
     const originalWarn = console.warn;
