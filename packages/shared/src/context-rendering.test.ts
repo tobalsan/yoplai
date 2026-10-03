@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  buildSlackContext,
   buildTelegramContext,
   buildUserContext,
   renderAgentContext,
@@ -59,5 +60,19 @@ describe("renderAgentContext telegram context", () => {
 
   it("returns empty string without metadata", () => {
     expect(renderAgentContext(buildTelegramContext({}))).toBe("");
+  });
+});
+
+describe("renderAgentContext slack sender identity", () => {
+  const metadata = { channel: "slack" as const, place: "#ops", conversationType: "channel_message" as const, sender: "Thinh" };
+
+  it("tells the model an unpaired sender should use !pair", () => {
+    const rendered = renderAgentContext(buildSlackContext({ metadata, unpairedSender: true }));
+    expect(rendered).toContain("sender_identity: unpaired");
+    expect(rendered).toContain("`!pair`");
+  });
+
+  it("omits the note for paired senders", () => {
+    expect(renderAgentContext(buildSlackContext({ metadata }))).not.toContain("sender_identity");
   });
 });
