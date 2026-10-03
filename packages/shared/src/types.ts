@@ -2127,6 +2127,7 @@ export type SlackContextBlock =
       timestamp: number;
     }
   | { type: "proactive_dm_notes"; notes: string[] }
+  | { type: "sender_identity"; unpaired: true }
   | {
       type: "history";
       messages: Array<{ author: string; content: string; timestamp: number }>;
@@ -2230,6 +2231,7 @@ const RichContextBlockSchema = z.union([
     type: z.literal("proactive_dm_notes"),
     notes: z.array(z.string()),
   }),
+  z.object({ type: z.literal("sender_identity"), unpaired: z.literal(true) }),
   z.object({
     type: z.literal("reaction"),
     emoji: z.string(),

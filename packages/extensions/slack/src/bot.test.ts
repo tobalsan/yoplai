@@ -412,6 +412,9 @@ describe("createSlackBot", () => {
       });
     }
     expect(mockRunAgent.mock.calls.map(([request]) => request.userId)).toEqual(["alice", "bob", undefined, "alice"]);
+    expect(mockRunAgent.mock.calls.map(([request]) =>
+      request.context.blocks.some((block: { type: string }) => block.type === "sender_identity")
+    )).toEqual([false, false, true, false]);
     expect(pairing.resolve.mock.calls.map((call) => call.slice(0, 2))).toEqual([
       ["T1", "UA"], ["T1", "UB"], ["T1", "UC"], ["T1", "UA"],
     ]);

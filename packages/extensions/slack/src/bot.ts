@@ -988,6 +988,7 @@ async function handleSlackMessage(
         : conversationType === "thread_reply"
           ? `${placeChannel} / ${threadName}`
           : placeChannel;
+    const requesterUserId = await resolveSlackRequester(client, data.user);
     const context = buildSlackContext({
       metadata: {
         channel: "slack",
@@ -1000,11 +1001,11 @@ async function handleSlackMessage(
       threadName,
       threadParent: threadParent ?? undefined,
       proactiveDmNotes: proactiveDmNotes.map((note) => note.text),
+      unpairedSender: Boolean(getSlackPairingService()) && !requesterUserId,
       history: getHistory(historyKey, historyLimit),
     });
 
     const fileUploads: Promise<void>[] = [];
-    const requesterUserId = await resolveSlackRequester(client, data.user);
     let slackToolPostedToThread = false;
     const slackToolCallsToThread = new Set<string>();
     const runAgent = (sessionId?: string) =>
