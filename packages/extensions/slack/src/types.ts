@@ -3,14 +3,18 @@ export type SlackWebClient = {
     test(params?: Record<string, unknown>): Promise<{
       user_id?: string;
       bot_id?: string;
+      team_id?: string;
     }>;
   };
   users?: {
     info(params: { user: string }): Promise<{
+      ok?: boolean;
       user?: {
+        id?: string;
         profile?: {
           display_name?: string;
           real_name?: string;
+          email?: string;
         };
         real_name?: string;
         name?: string;

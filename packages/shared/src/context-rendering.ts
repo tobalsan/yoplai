@@ -95,6 +95,7 @@ function renderChannelContext(
   );
   const recentHistory = renderHistory(getBlock(blocks, "history")?.messages);
   const proactiveDmNotes = getBlock(blocks, "proactive_dm_notes")?.notes;
+  const unpaired = getBlock(blocks, "sender_identity")?.unpaired;
 
   const parts = [
     "[CHANNEL CONTEXT]",
@@ -102,6 +103,7 @@ function renderChannelContext(
     `place: ${metadata.place}`,
     `conversation_type: ${metadata.conversationType}`,
     `sender: ${metadata.sender}`,
+    ...(unpaired ? [UNPAIRED_SENDER_NOTE] : []),
     "proactive_dm_notes:",
     proactiveDmNotes?.map((note) => `- ${note}`).join("\n") ?? "- none",
     `channel_name: ${channelName}`,
@@ -119,6 +121,9 @@ function renderChannelContext(
 
   return parts.join("\n");
 }
+
+const UNPAIRED_SENDER_NOTE =
+  "sender_identity: unpaired — this Slack user is not linked to a Yoplai account, so tools use team credentials only (never their personal connections). If a tool reports not_connected or the user expects their own account/data, call the slack.pair tool right away and share the link as its result instructs, instead of asking them to type a command; if team credentials are used, say the data is the team's, not theirs.";
 
 function renderBlockOrFallback(
   block: DiscordContextBlock | SlackContextBlock | undefined,
@@ -256,6 +261,7 @@ export function buildSlackContext(opts: {
   threadName?: string;
   threadParent?: { author: string; content: string; timestamp: number };
   proactiveDmNotes?: string[];
+  unpairedSender?: boolean;
   history?: Array<{ author: string; content: string; timestamp: number }>;
   reaction?: { emoji: string; user: string; messageId: string; action: "add" | "remove" };
 }): SlackContext {
@@ -284,6 +290,9 @@ export function buildSlackContext(opts: {
   }
   if (opts.proactiveDmNotes && opts.proactiveDmNotes.length > 0) {
     blocks.push({ type: "proactive_dm_notes", notes: opts.proactiveDmNotes });
+  }
+  if (opts.unpairedSender) {
+    blocks.push({ type: "sender_identity", unpaired: true });
   }
   if (opts.history && opts.history.length > 0) {
     blocks.push({ type: "history", messages: opts.history });

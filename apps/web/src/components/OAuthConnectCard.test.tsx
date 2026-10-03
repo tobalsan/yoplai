@@ -56,4 +56,39 @@ describe("OAuthConnectCard scope", () => {
     await flush();
     expect(fetchMock).toHaveBeenCalledWith("/api/oauth/google/disconnect?agent=probe&scope=personal", { method: "POST" });
   });
+
+  it("defaults non-admins to Just me and shows the team connection read-only", async () => {
+    const fetchMock = vi.fn(async (input: string) => new Response(JSON.stringify(input.includes("scope=team")
+      ? { connected: true, provider: "google", account: "team@example.test", scopes: [], canConfigureTeam: false }
+      : { connected: false, provider: "google", canConfigureTeam: false })));
+    vi.stubGlobal("fetch", fetchMock);
+    dispose = render(() => <OAuthConnectCard agentId="probe" provider="google" label="Google" />, document.body);
+    await flush();
+    await flush();
+    const selector = document.querySelector("select")!;
+    expect(Array.from(selector.options).map((option) => option.text)).toEqual(["Just me", "Whole team"]);
+    expect(selector.value).toBe("personal");
+    expect(document.querySelector(".oauth-btn-primary")).not.toBeNull();
+
+    selector.value = "team";
+    selector.dispatchEvent(new Event("change", { bubbles: true }));
+    await flush();
+    expect(selector.value).toBe("team");
+    expect(document.body.textContent).toContain("team@example.test");
+    expect(document.body.textContent).toContain("managed by an admin");
+    expect(document.querySelector(".oauth-btn")).toBeNull();
+  });
+
+  it("tells non-admins an admin must set up a missing team connection", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ connected: false, provider: "google", canConfigureTeam: false }))));
+    dispose = render(() => <OAuthConnectCard agentId="probe" provider="google" label="Google" />, document.body);
+    await flush();
+    await flush();
+    const selector = document.querySelector("select")!;
+    selector.value = "team";
+    selector.dispatchEvent(new Event("change", { bubbles: true }));
+    await flush();
+    expect(document.body.textContent).toContain("An admin must connect it");
+    expect(document.querySelector(".oauth-btn")).toBeNull();
+  });
 });

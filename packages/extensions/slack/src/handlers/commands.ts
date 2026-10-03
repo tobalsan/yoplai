@@ -10,6 +10,7 @@ import { buildSlackSessionKey } from "../utils/threads.js";
 export type SlackCommandData = {
   channel_id: string;
   user_id: string;
+  requesterUserId?: string;
   text?: string;
 };
 
@@ -49,6 +50,7 @@ async function runControlCommand(
   try {
     const result = await getSlackContext().runAgent({
       agentId: target.agent.id,
+      userId: command.requesterUserId,
       message,
       sessionKey: commandSessionKey(target, command),
       source: "slack",
@@ -69,10 +71,10 @@ async function clearSlackSession(
 ): Promise<void> {
   const ctx = getSlackContext();
   const sessionKey = commandSessionKey(target, command);
-  const cleared = await ctx.clearSessionEntry(target.agent.id, sessionKey);
+  const cleared = await ctx.clearSessionEntry(target.agent.id, sessionKey, command.requesterUserId);
   if (!cleared) return;
   ctx.deleteSession(target.agent.id, cleared.sessionId);
-  await ctx.invalidateHistoryCache(target.agent.id, cleared.sessionId);
+  await ctx.invalidateHistoryCache(target.agent.id, cleared.sessionId, command.requesterUserId);
 }
 
 export async function handleNewCommand(
@@ -124,6 +126,7 @@ export async function handleHelpCommand(
     "`/stop [session]` - Stop the current run",
     "`!new [session]` - Same as `/new` but works inside threads (per-thread session)",
     "`!stop [session]` - Same as `/stop` but works inside threads",
+    "`!pair` - Link your existing Yoplai account (same email as Slack)",
     "`/help` - Show this help message",
     "`/ping` - Health check",
     "",

@@ -12,6 +12,8 @@ import { z } from "zod";
 import { getActiveBot } from "./bot-registry.js";
 import { getSlackContextIfInitialized } from "./context.js";
 import { createProactiveDmNoteStore } from "./proactive-dm-notes.js";
+import { getSlackPairingService, SlackPairingError } from "./pairing.js";
+import { findSlackSender, getSlackWorkspace, SLACK_PAIR_LINK_PLACEHOLDER } from "./requester.js";
 import { createSlackThreadSessionBindingStore } from "./thread-session-bindings.js";
 import { markdownToMrkdwn } from "./utils/mrkdwn.js";
 import { splitMessage } from "./utils/chunk.js";
@@ -457,6 +459,39 @@ export function slackAgentTools(): ExtensionAgentTool[] {
           return { ok: true, channel, ts: result.ts };
         } catch (error) {
           return toolError(error);
+        }
+      },
+    },
+    {
+      name: "slack.pair",
+      description:
+        "Create a single-use link (valid 10 minutes) that pairs the current Slack sender with their Yoplai account. Call it when the sender is unpaired and needs their own data or connections (e.g. \"check my email\"), then write the returned placeholder in your reply. Takes no arguments.",
+      parameters: { type: "object", properties: {} },
+      async execute(_args, { agent, sessionId }) {
+        const pairing = getSlackPairingService();
+        const context = getSlackContextIfInitialized();
+        const sender = context
+          ? await findSlackSender(agent.id, sessionId, async (agentId, key) =>
+              (await context.getSessionEntry(agentId, key))?.sessionId
+            )
+          : undefined;
+        if (!pairing || !sender) {
+          return { ok: false, error: "Pairing is only available for Slack messages with web sign-in enabled." };
+        }
+        const workspace = await getSlackWorkspace(sender.client);
+        if (!workspace) return { ok: false, error: "Slack workspace is unavailable. Try again later." };
+        if (pairing.resolve(workspace, sender.user)) {
+          return { ok: false, error: "This Slack account is already paired." };
+        }
+        try {
+          sender.pairingLink = await pairing.issue(workspace, sender.user, sender.client);
+          return {
+            ok: true,
+            link: SLACK_PAIR_LINK_PLACEHOLDER,
+            instructions: `Write ${SLACK_PAIR_LINK_PLACEHOLDER} verbatim in your reply where the link should go; it is replaced with the real link when sent. It expires in 10 minutes, works once, and only for this sender after signing in to Yoplai with the same email as Slack. After pairing, they should ask again.`,
+          };
+        } catch (error) {
+          return { ok: false, error: error instanceof SlackPairingError ? error.message : "Slack pairing is unavailable. Try again." };
         }
       },
     },

@@ -13,6 +13,22 @@ afterEach(() => {
 });
 
 describe("multi-user middleware", () => {
+  it("allows only the exact Slack pairing GET landing publicly", async () => {
+    getMultiUserRuntime.mockReturnValue({
+      auth: { api: { getSession: vi.fn(async () => null) } },
+    });
+    const { createAuthMiddleware } = await import("./middleware.js");
+    const app = new Hono();
+    app.use("/api/*", createAuthMiddleware());
+    app.on(["GET", "POST"], "/api/slack/*", (c) => c.json({ ok: true }));
+    const landing = `/api/slack/pair/${"a".repeat(43)}`;
+    expect((await app.request(landing)).status).toBe(200);
+    expect((await app.request(landing, { method: "POST" })).status).toBe(401);
+    expect((await app.request(`${landing}/extra`)).status).toBe(401);
+    expect((await app.request("/api/slack/pair/short")).status).toBe(401);
+    expect((await app.request(`/api/slack/other/${"a".repeat(43)}`)).status).toBe(401);
+  });
+
   it("returns 401 when session is missing", async () => {
     getMultiUserRuntime.mockReturnValue({
       auth: {

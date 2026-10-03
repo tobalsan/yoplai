@@ -71,11 +71,11 @@ describe("Slack command handlers", () => {
       respond
     );
 
-    expect(mockClearSessionEntry).toHaveBeenCalledWith("main", "slack:C1");
+    expect(mockClearSessionEntry).toHaveBeenCalledWith("main", "slack:C1", undefined);
     expect(mockDeleteSession).toHaveBeenCalledWith("main", "session");
     expect(mockInvalidateHistoryCache).toHaveBeenCalledWith(
       "main",
-      "session"
+      "session", undefined
     );
     expect(mockRunAgent).not.toHaveBeenCalled();
     expect(respond).toHaveBeenCalledWith({
@@ -103,7 +103,7 @@ describe("Slack command handlers", () => {
       { ...target, isDm: true, channelConfig: undefined },
       respond
     );
-    expect(mockClearSessionEntry).toHaveBeenCalledWith("main", "main");
+    expect(mockClearSessionEntry).toHaveBeenCalledWith("main", "main", undefined);
   });
 
   it("responds to help and ping ephemerally", async () => {

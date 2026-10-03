@@ -11,6 +11,8 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Added
 
+- Slack users can link existing Yoplai accounts with private, single-use, ten-minute `!pair` links; each sender's requests use their own personal credentials, with team-only credentials for unpaired users. Agents are told when a Slack sender is unpaired, and can call the new `slack.pair` tool to get a pairing link for that sender and share it in their reply, so users never need to type `!pair`. The pairing page uses the platform theme (`theme.css`, Inter) and `branding.name`/logo, defaulting to Yoplai.
+
 - Extension API tokens support **Just me** credentials encrypted per requester, with existing team credentials as fallback and a configuration link when missing. Admins can select **Whole team**; existing configs remain shared.
 
 - Remote MCP OAuth connections support personal ("Just me") and shared ("Whole team") credentials, with requester-specific reconnect links and existing grants retained as team.
@@ -43,6 +45,7 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Changed
 
+- In multi-user mode, only admins can connect or disconnect **Whole team** Google OAuth and MCP server connections; other users can still view the team connection or credentials read-only (or see that an admin must set them up), matching extension API credentials.
 - Langfuse tracing now uses the Langfuse JS SDK v5 (OpenTelemetry) instead of the legacy v3 SDK, so traces keep flowing once the server moves to `events_only` ingestion. Session IDs, environment, metadata, and the trace → `llm-turn` generation → tool tree are unchanged; session/user/tags are now stamped on every observation. Config is unchanged, and missing keys now disable tracing instead of failing.
 - Multi-user mode no longer requires `oauth.google`; any configured sign-in method is enough. `/api/capabilities` now reports `authMethods`.
 

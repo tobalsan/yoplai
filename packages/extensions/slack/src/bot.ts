@@ -71,6 +71,14 @@ import {
 } from "./progress.js";
 import { getSlackProgressStore } from "./progress-store.js";
 import { toolCallMilestone } from "./tool-milestones.js";
+import { getSlackPairingService, SlackPairingError } from "./pairing.js";
+import {
+  type ActiveSlackSender,
+  getSlackWorkspace,
+  resolveSlackRequester,
+  SLACK_PAIR_LINK_PLACEHOLDER,
+  trackSlackSender,
+} from "./requester.js";
 
 export type SlackBot = {
   app: App;
@@ -362,6 +370,21 @@ function slackToolTargetsThread(
         ? (candidate.args as Record<string, unknown>)
         : undefined;
   return input?.channel === channel && input.threadTs === threadTs;
+}
+
+/** Models mangle long random tokens, so replies carry a placeholder the bot fills in. */
+function withPairingLink(
+  payloads: Array<{ text?: string }>,
+  link: string | undefined
+): Array<{ text?: string }> {
+  if (!link) return payloads;
+  if (!payloads.some((p) => p.text?.includes(SLACK_PAIR_LINK_PLACEHOLDER))) {
+    return [...payloads, { text: `Link your Yoplai account: ${link}` }];
+  }
+  return payloads.map((p) => ({
+    ...p,
+    text: p.text?.split(SLACK_PAIR_LINK_PLACEHOLDER).join(link),
+  }));
 }
 
 async function sendSlackReply(
@@ -702,13 +725,39 @@ function startThinkingStreamDisplay(params: {
   return { cleanup, setSessionId };
 }
 
+/** Posts a pairing link privately to the trusted Slack sender (never model-chosen). */
+async function sendPairingLink(
+  client: SlackWebClient,
+  channel: string,
+  user: string,
+  threadTs: string | undefined
+): Promise<void> {
+  const pairing = getSlackPairingService();
+  const workspace = pairing ? await getSlackWorkspace(client) : undefined;
+  let text = "Account pairing requires web login and a verified Slack workspace. Contact your administrator.";
+  if (pairing && workspace) {
+    try {
+      const link = await pairing.issue(workspace, user, client);
+      text = `Link your existing Yoplai account: ${link}\nThis single-use link expires in 10 minutes.`;
+    } catch (error) {
+      text = error instanceof SlackPairingError ? error.message : "Slack pairing is unavailable. Please try again.";
+    }
+  }
+  await client.chat.postEphemeral({ channel, user, text, thread_ts: threadTs, mrkdwn: true });
+}
+
 async function handleBangCommand(
   data: MessageData,
   client: SlackWebClient,
   target: SlackMessageTarget,
-  bang: { command: "new" | "stop"; arg?: string }
+  bang: { command: "new" | "stop" | "pair"; arg?: string }
 ): Promise<boolean> {
   if (!data.user) return false;
+
+  if (bang.command === "pair") {
+    await sendPairingLink(client, data.channel, data.user, data.thread_ts);
+    return true;
+  }
 
   const sessionKey = target.isMainSession
     ? DEFAULT_MAIN_KEY
@@ -718,13 +767,15 @@ async function handleBangCommand(
   if (bang.command === "new") {
     try {
       const ctx = getSlackContext();
+      const requesterUserId = await resolveSlackRequester(client, data.user);
       const cleared = await ctx.clearSessionEntry(
         target.agent.id,
-        effectiveSessionKey
+        effectiveSessionKey,
+        requesterUserId
       );
       if (cleared) {
         ctx.deleteSession(target.agent.id, cleared.sessionId);
-        await ctx.invalidateHistoryCache(target.agent.id, cleared.sessionId);
+        await ctx.invalidateHistoryCache(target.agent.id, cleared.sessionId, requesterUserId);
       }
       await client.chat.postEphemeral({
         channel: data.channel,
@@ -748,6 +799,7 @@ async function handleBangCommand(
     try {
       const agentResult = await getSlackContext().runAgent({
         agentId: target.agent.id,
+        userId: await resolveSlackRequester(client, data.user),
         message: "/stop",
         sessionKey: effectiveSessionKey,
         source: "slack",
@@ -961,6 +1013,7 @@ async function handleSlackMessage(
         : conversationType === "thread_reply"
           ? `${placeChannel} / ${threadName}`
           : placeChannel;
+    const requesterUserId = await resolveSlackRequester(client, data.user);
     const context = buildSlackContext({
       metadata: {
         channel: "slack",
@@ -973,15 +1026,30 @@ async function handleSlackMessage(
       threadName,
       threadParent: threadParent ?? undefined,
       proactiveDmNotes: proactiveDmNotes.map((note) => note.text),
+      unpairedSender: Boolean(getSlackPairingService()) && !requesterUserId,
       history: getHistory(historyKey, historyLimit),
     });
 
     const fileUploads: Promise<void>[] = [];
     let slackToolPostedToThread = false;
     const slackToolCallsToThread = new Set<string>();
-    const runAgent = (sessionId?: string) =>
+    const activeSender: ActiveSlackSender | undefined = data.user
+      ? { agentId: target.agent.id, sessionKey, client, user: data.user }
+      : undefined;
+    const runAgent = async (sessionId?: string) => {
+      const untrack = activeSender
+        ? trackSlackSender(Object.assign(activeSender, { sessionId }))
+        : undefined;
+      try {
+        return await runAgentFor(sessionId);
+      } finally {
+        untrack?.();
+      }
+    };
+    const runAgentFor = (sessionId?: string) =>
       getSlackContext().runAgent({
         agentId: target.agent.id,
+        userId: requesterUserId,
         message: content,
         attachments,
         ...(sessionId ? { sessionId } : {}),
@@ -1072,7 +1140,7 @@ async function handleSlackMessage(
       await sendSlackReply(
         client,
         data.channel,
-        agentResult.payloads,
+        withPairingLink(agentResult.payloads, activeSender?.pairingLink),
         replyThreadTs
       );
     }
@@ -1176,6 +1244,7 @@ async function handleSlackReaction(
     const reactionThreadTs = data.item.thread_ts ?? messageInfo?.threadTs;
     await getSlackContext().runAgent({
       agentId: target.agent.id,
+      userId: await resolveSlackRequester(client, data.user),
       message: formatReactionMessage(data, action),
       sessionKey: buildSlackSessionKey(result.channel, reactionThreadTs),
       source: "slack",
@@ -1517,6 +1586,7 @@ export function createSlackBot(
         {
           channel_id: command.channel_id,
           user_id: command.user_id,
+          requesterUserId: await resolveSlackRequester(client, command.user_id),
           text: command.text,
         },
         target,
@@ -1538,6 +1608,7 @@ export function createSlackBot(
         const auth = await client.auth?.test();
         botUserId = auth?.user_id;
         botId = auth?.bot_id;
+        if (auth?.team_id) getSlackPairingService()?.registerClient(auth.team_id, client);
       } catch {
         botUserId = undefined;
         botId = undefined;
@@ -1816,6 +1887,7 @@ export function createSlackAgentBot(agent: AgentConfig): SlackBot | null {
         {
           channel_id: command.channel_id,
           user_id: command.user_id,
+          requesterUserId: await resolveSlackRequester(client, command.user_id),
           text: command.text,
         },
         target,
@@ -1837,6 +1909,7 @@ export function createSlackAgentBot(agent: AgentConfig): SlackBot | null {
         const auth = await client.auth?.test();
         botUserId = auth?.user_id;
         botId = auth?.bot_id;
+        if (auth?.team_id) getSlackPairingService()?.registerClient(auth.team_id, client);
       } catch {
         botUserId = undefined;
         botId = undefined;
