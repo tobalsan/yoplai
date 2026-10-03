@@ -31,3 +31,37 @@ export async function resolveSlackRequester(
   // Missing workspace or pairing is an unpaired run: team credentials only.
   return workspace ? pairing.resolve(workspace, slackUserId) : undefined;
 }
+
+/** Trusted Slack sender of an in-flight run, so tools can act for them without model input. */
+export type ActiveSlackSender = {
+  agentId: string;
+  sessionKey: string;
+  sessionId?: string;
+  client: SlackWebClient;
+  user: string;
+  /** Set by slack.pair; the bot substitutes it for the reply placeholder. */
+  pairingLink?: string;
+};
+
+export const SLACK_PAIR_LINK_PLACEHOLDER = "<slack-pair-link>";
+
+const activeSenders = new Set<ActiveSlackSender>();
+
+export function trackSlackSender(sender: ActiveSlackSender): () => void {
+  activeSenders.add(sender);
+  return () => activeSenders.delete(sender);
+}
+
+export async function findSlackSender(
+  agentId: string,
+  sessionId: string | undefined,
+  resolveSessionId: (agentId: string, sessionKey: string) => Promise<string | undefined>
+): Promise<ActiveSlackSender | undefined> {
+  if (!sessionId) return undefined;
+  for (const sender of activeSenders) {
+    if (sender.agentId !== agentId) continue;
+    const id = sender.sessionId ?? (await resolveSessionId(agentId, sender.sessionKey));
+    if (id === sessionId) return sender;
+  }
+  return undefined;
+}
