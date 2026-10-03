@@ -65,6 +65,16 @@ export function ExtensionConfigForm() {
     if (current.personalSecretFields !== undefined) setCredentialScope("personal");
   });
 
+  // Non-admins may view, but not change, the admin-managed team credentials.
+  const teamReadOnly = () => {
+    const current = entry();
+    return credentialScope() === "team" && current?.personalSecretFields !== undefined && !current.canConfigureTeam;
+  };
+  const teamConfigured = () => {
+    const current = entry();
+    return !!current && fields().some((field) => field.secret && current.configValues[field.name] != null);
+  };
+
   const setValue = (name: string, value: string | number | boolean) => {
     setValues((prev) => ({ ...prev, [name]: value }));
     setSaved(false);
@@ -112,7 +122,7 @@ export function ExtensionConfigForm() {
           <input
             id={`ext-field-${field.name}`}
           type="checkbox"
-          disabled={saving() || credentialScope() === "personal"}
+          disabled={saving() || credentialScope() === "personal" || teamReadOnly()}
             checked={Boolean(values()[field.name])}
             onChange={(e) => setValue(field.name, e.currentTarget.checked)}
           />
@@ -124,7 +134,7 @@ export function ExtensionConfigForm() {
           id={`ext-field-${field.name}`}
           class="ext-config-input"
           type="password"
-          disabled={saving()}
+          disabled={saving() || teamReadOnly()}
           autocomplete="off"
           value={String(values()[field.name] ?? "")}
           onInput={(e) => setValue(field.name, e.currentTarget.value)}
@@ -135,7 +145,7 @@ export function ExtensionConfigForm() {
           id={`ext-field-${field.name}`}
           class="ext-config-input"
           type="number"
-          disabled={saving() || credentialScope() === "personal"}
+          disabled={saving() || credentialScope() === "personal" || teamReadOnly()}
           value={String(values()[field.name] ?? "")}
           onInput={(e) => setValue(field.name, e.currentTarget.value)}
         />
@@ -145,7 +155,7 @@ export function ExtensionConfigForm() {
           id={`ext-field-${field.name}`}
           class="ext-config-input"
           type="text"
-          disabled={saving() || credentialScope() === "personal"}
+          disabled={saving() || credentialScope() === "personal" || teamReadOnly()}
           value={String(values()[field.name] ?? "")}
           onInput={(e) => setValue(field.name, e.currentTarget.value)}
         />
@@ -247,15 +257,21 @@ export function ExtensionConfigForm() {
                       Credentials for
                       <select aria-label="Credentials for" class="ext-config-input" disabled={saving()} value={credentialScope()} onChange={(event) => { setCredentialScope(event.currentTarget.value as "personal" | "team"); setSaved(false); }}>
                         <option value="personal">Just me</option>
-                        <Show when={ext().canConfigureTeam}>
-                          <option value="team">Whole team</option>
-                        </Show>
+                        <option value="team">Whole team</option>
                       </select>
                     </label>
                     <Show when={credentialScope() === "personal"}>
                       <p class="ext-config-hint">Shared settings below are managed by an admin. Your credentials take precedence over team credentials.</p>
                     </Show>
+                    <Show when={teamReadOnly()}>
+                      <p class="ext-config-hint">
+                        {teamConfigured()
+                          ? "Whole team credentials are managed by an admin. They are used when you have no credentials of your own."
+                          : "Whole team credentials are not set up. An admin must configure them."}
+                      </p>
+                    </Show>
                   </Show>
+                  <Show when={!teamReadOnly() || teamConfigured()}>
                   <For each={baseFields()}>{renderField}</For>
 
                   <Show when={advancedFields().length > 0}>
@@ -281,6 +297,8 @@ export function ExtensionConfigForm() {
                     </div>
                   </Show>
 
+                  </Show>
+                  <Show when={!teamReadOnly()}>
                   <div class="ext-config-actions">
                     <button
                       type="submit"
@@ -293,6 +311,7 @@ export function ExtensionConfigForm() {
                       <span class="ext-config-saved">Saved ✓</span>
                     </Show>
                   </div>
+                  </Show>
                   <Show when={error()}>
                     {(message) => (
                       <p class="ext-config-form-error">{message()}</p>

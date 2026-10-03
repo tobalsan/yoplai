@@ -16,7 +16,7 @@ export type McpServer = {
   expiresAt?: string;
 };
 
-type McpStatus = { servers: McpServer[] };
+type McpStatus = { servers: McpServer[]; canConfigureTeam?: boolean };
 
 // The OAuth popup posts "yoplai-oauth", but a SPA left open across a gateway
 // upgrade may still be running old listener code while a new gateway serves
@@ -49,6 +49,8 @@ export function McpConfigPage(): ReturnType<Component> {
   const [scope, setScope] = createSignal<"team" | "personal">(
     requestedScope === "personal" ? "personal" : "team"
   );
+  const [canConfigureTeam, setCanConfigureTeam] = createSignal(true);
+  let scopePicked = requestedScope === "team";
   let statusRequest = 0;
 
   const refreshStatus = async () => {
@@ -59,6 +61,15 @@ export function McpConfigPage(): ReturnType<Component> {
     try {
       const status = await fetchStatus(agentId, scope());
       if (request !== statusRequest) return;
+      if (status.canConfigureTeam === false) {
+        setCanConfigureTeam(false);
+        if (scope() === "team" && !scopePicked) {
+          // Non-admins start on the connections they can manage.
+          setScope("personal");
+          void refreshStatus();
+          return;
+        }
+      }
       setServers(status.servers);
       setError(undefined);
     } catch (cause) {
@@ -92,6 +103,9 @@ export function McpConfigPage(): ReturnType<Component> {
     });
   });
 
+  // Non-admins can see, but not change, admin-managed team connections.
+  const teamReadOnly = () => scope() === "team" && !canConfigureTeam();
+
   const connect = (server: McpServer) => {
     const url = `/api/mcp/oauth/authorize?agent=${encodeURIComponent(params.agentId)}&server=${encodeURIComponent(server.name)}&scope=${scope()}`;
     window.open(url, "yoplai-oauth", "width=520,height=640");
@@ -124,12 +138,16 @@ export function McpConfigPage(): ReturnType<Component> {
           <select value={scope()} onChange={(event) => {
             setServers(undefined);
             setError(undefined);
+            scopePicked = true;
             setScope(event.currentTarget.value as "team" | "personal");
           }}>
             <option value="personal" disabled={!session().data?.user}>Just me</option>
             <option value="team">Whole team</option>
           </select>
         </label>
+        <Show when={teamReadOnly()}>
+          <p class="mcp-config-quiet">Whole team connections are managed by an admin. Servers not connected here must be connected by an admin.</p>
+        </Show>
         <Show when={error()}>{(message) => <div class="mcp-config-error">{message()}</div>}</Show>
         <Show when={loading() && !servers()}><div class="mcp-config-quiet">Checking servers…</div></Show>
         <Show when={servers()?.length === 0}><div class="mcp-config-empty">No remote MCP servers are configured for this agent.</div></Show>
@@ -143,7 +161,7 @@ export function McpConfigPage(): ReturnType<Component> {
                 </div>
                 <span class={`mcp-config-badge mcp-config-badge-${server.state}`}>{badgeLabel(server.state)}</span>
               </div>
-              <Show when={server.auth === "oauth"}>
+              <Show when={server.auth === "oauth" && !teamReadOnly()}>
                 <div class="mcp-config-actions">
                   <Show when={server.state === "connected"} fallback={
                     <button class="mcp-config-btn mcp-config-btn-primary" onClick={() => connect(server)}>

@@ -45,6 +45,7 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Changed
 
+- In multi-user mode, only admins can connect or disconnect **Whole team** Google OAuth and MCP server connections; other users can still view the team connection or credentials read-only (or see that an admin must set them up), matching extension API credentials.
 - Langfuse tracing now uses the Langfuse JS SDK v5 (OpenTelemetry) instead of the legacy v3 SDK, so traces keep flowing once the server moves to `events_only` ingestion. Session IDs, environment, metadata, and the trace → `llm-turn` generation → tool tree are unchanged; session/user/tags are now stamped on every observation. Config is unchanged, and missing keys now disable tracing instead of failing.
 - Multi-user mode no longer requires `oauth.google`; any configured sign-in method is enough. `/api/capabilities` now reports `authMethods`.
 

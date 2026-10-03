@@ -16,6 +16,7 @@ type OAuthStatus = {
   provider: string;
   account?: string;
   scopes?: string[];
+  canConfigureTeam?: boolean;
 };
 
 const OAUTH_POPUP_MESSAGE_TYPES = new Set(["yoplai-oauth", "aihub-oauth"]);
@@ -42,6 +43,8 @@ export function OAuthConnectCard(props: {
   const [error, setError] = createSignal<string>();
   const session = useSession();
   const [scope, setScope] = createSignal<"team" | "personal">("team");
+  const [canConfigureTeam, setCanConfigureTeam] = createSignal(true);
+  let scopePicked = false;
   let statusRequest = 0;
 
   const refreshStatus = async () => {
@@ -56,6 +59,15 @@ export function OAuthConnectCard(props: {
         ? ((await response.json()) as OAuthStatus)
         : { connected: false, provider: props.provider };
       if (request !== statusRequest) return;
+      if (nextStatus.canConfigureTeam === false) {
+        setCanConfigureTeam(false);
+        if (scope() === "team" && !scopePicked) {
+          // Non-admins start on the connection they can manage.
+          setScope("personal");
+          void refreshStatus();
+          return;
+        }
+      }
       setStatus(nextStatus);
       setError(undefined);
     } catch (cause) {
@@ -94,6 +106,9 @@ export function OAuthConnectCard(props: {
   const connected = () => lifecycle() === "connected" && hasRequiredScopes();
   const needsGrant = () => lifecycle() === "connected" && !hasRequiredScopes();
 
+  // Non-admins can see, but not change, the admin-managed team connection.
+  const teamReadOnly = () => scope() === "team" && !canConfigureTeam();
+
   const connect = () => {
     if (!props.agentId) return;
     const query = new URLSearchParams({ agent: props.agentId });
@@ -125,6 +140,7 @@ export function OAuthConnectCard(props: {
           Connection for
           <select value={scope()} onChange={(event) => {
             setStatus(undefined);
+            scopePicked = true;
             setScope(event.currentTarget.value as "team" | "personal");
           }}>
             <option value="personal" disabled={!session().data?.user}>Just me</option>
@@ -152,6 +168,7 @@ export function OAuthConnectCard(props: {
               </Match>
             </Switch>
           </div>
+          <Show when={!teamReadOnly()}>
           <Switch
             fallback={
               <button
@@ -203,8 +220,18 @@ export function OAuthConnectCard(props: {
               </div>
             </Match>
           </Switch>
+          </Show>
         </div>
-        <Show when={lifecycle() === "needs_reconnect"}>
+        <Show when={teamReadOnly()}>
+          <p class="oauth-shared-note">
+            {connected() || needsGrant()
+              ? "The whole team connection is managed by an admin."
+              : lifecycle() === "needs_reconnect"
+                ? "The whole team connection needs reconnecting. An admin must reconnect it."
+                : "The whole team connection is not set up. An admin must connect it."}
+          </p>
+        </Show>
+        <Show when={lifecycle() === "needs_reconnect" && !teamReadOnly()}>
           <div class="oauth-connected-detail">
             <p class="oauth-warn-text">
               This connection can no longer refresh. Reconnect to restore

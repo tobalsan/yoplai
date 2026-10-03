@@ -67,11 +67,11 @@ configured authentication behavior.
 
 Host OAuth framework manages provider authorize/callback/status/disconnect routes per agent. Extensions declare required provider/scopes and receive refreshed access token through runtime context.
 
-In the web connection card, choose **Just me** to use your Google account only for your own requests, or **Whole team** to share it with everyone on that agent. Personal connections require a signed-in Yoplai user (multi-user mode). At each tool call, the gateway selects that requester's personal connection, falls back to the team connection if none exists, or returns a connect link. It never uses another user's personal connection. A revoked personal grant requires reconnecting rather than silently switching accounts.
+In the web connection card, choose **Just me** to use your Google account only for your own requests, or **Whole team** to share it with everyone on that agent. In multi-user mode only admins can change **Whole team**; other users see it read-only, or a note that an admin must set it up. Personal connections require a signed-in Yoplai user (multi-user mode). At each tool call, the gateway selects that requester's personal connection, falls back to the team connection if none exists, or returns a connect link. It never uses another user's personal connection. A revoked personal grant requires reconnecting rather than silently switching accounts.
 
 The connection card shows and disconnects the selected scope. Google extensions on the same agent reuse that scoped Google connection. Existing agent-only connections are read as team connections and move to encrypted scoped records on their next save; current agents keep their access. Runs without a Yoplai user continue to use team credentials.
 
-`GET /api/oauth/:provider/authorize?agent=<id>` asks for the scope; passing `scope=personal` or `scope=team` starts authorization directly. Personal ownership comes from the authenticated session, never a caller-supplied user ID. Status and disconnect accept the same scope; status without it reports the requester's effective connection.
+`GET /api/oauth/:provider/authorize?agent=<id>` asks for the scope; passing `scope=personal` or `scope=team` starts authorization directly. Personal ownership comes from the authenticated session, never a caller-supplied user ID. Status and disconnect accept the same scope; status without it reports the requester's effective connection. Team authorize/disconnect return `403 team_requires_admin` for non-admins in multi-user mode, and status includes `canConfigureTeam`.
 
 Tokens are stored under `$YOPLAI_HOME/oauth/`. Persistence requires `oauth.encryptionKey` and fails closed rather than writing plaintext:
 
@@ -91,7 +91,7 @@ Tokens are stored under `$YOPLAI_HOME/oauth/`. Persistence requires `oauth.encry
 
 Connections expose connected, needs-reconnect, or disconnected state. Refresh failures that invalidate grant require reconnect; disconnect best-effort revokes provider grant.
 
-Remote MCP servers (such as Claap) use the same personal/team choice from the agent’s **MCP servers** page. URL-only OAuth connections are encrypted in the host scoped credential store; existing MCP connections migrate as team. Each tool call and refresh uses the requester’s selected credential, and reconnect links let that requester connect their own account.
+Remote MCP servers (such as Claap) use the same personal/team choice from the agent’s **MCP servers** page, with **Whole team** likewise admin-only in multi-user mode. URL-only OAuth connections are encrypted in the host scoped credential store; existing MCP connections migrate as team. Each tool call and refresh uses the requester’s selected credential, and reconnect links let that requester connect their own account.
 
 For Google Drive, follow [Google Drive OAuth setup](oauth-google-drive-setup.md).
 

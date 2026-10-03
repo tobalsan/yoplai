@@ -18,7 +18,8 @@ export function createOAuthRoutes(
     c: Context,
     agentId: string
   ) => Promise<boolean> = async () => true,
-  getRequesterUserId: (c: Context) => Promise<string | undefined> = async () => undefined
+  getRequesterUserId: (c: Context) => Promise<string | undefined> = async () => undefined,
+  canConfigureTeam: (c: Context) => Promise<boolean> = async () => true
 ): Hono {
   const router = new Hono();
 
@@ -47,10 +48,13 @@ export function createOAuthRoutes(
     if (denied) return denied;
     const scope = c.req.query("scope");
     if (scope === undefined) {
-      return c.html(renderScopePage(provider, agentId, c.req.query("scopes"), !!(await getRequesterUserId(c))));
+      return c.html(renderScopePage(provider, agentId, c.req.query("scopes"), !!(await getRequesterUserId(c)), await canConfigureTeam(c)));
     }
     if (scope !== "team" && scope !== "personal") {
       return c.json({ error: "invalid_scope" }, 400);
+    }
+    if (scope === "team" && !(await canConfigureTeam(c))) {
+      return c.json({ error: "team_requires_admin" }, 403);
     }
     const userId = await getRequesterUserId(c);
     if (scope === "personal" && !userId) {
@@ -142,8 +146,9 @@ export function createOAuthRoutes(
           : { type: "team" })
       : service.getConnection(agentId, provider, userId);
     const state = !connection ? "disconnected" : connection.status === "needs_reconnect" ? "needs_reconnect" : "connected";
+    const teamAllowed = await canConfigureTeam(c);
     if (!connection) {
-      return c.json({ state, connected: false, provider });
+      return c.json({ state, connected: false, provider, canConfigureTeam: teamAllowed });
     }
     // `connected` stays true only for a usable grant; `needs_reconnect` is a
     // first-class state that the UI renders distinctly from "not connected".
@@ -156,6 +161,7 @@ export function createOAuthRoutes(
       connectedAt: connection.connectedAt,
       expiresAt: connection.expiresAt,
       scope: connection.scope ?? "team",
+      canConfigureTeam: teamAllowed,
     });
   });
 
@@ -171,6 +177,9 @@ export function createOAuthRoutes(
     if (requestedScope !== "team" && requestedScope !== "personal") {
       return c.json({ error: "invalid_scope" }, 400);
     }
+    if (requestedScope === "team" && !(await canConfigureTeam(c))) {
+      return c.json({ error: "team_requires_admin" }, 403);
+    }
     const userId = await getRequesterUserId(c);
     if (requestedScope === "personal" && !userId) {
       return c.json({ error: "personal_requires_login" }, 401);
@@ -185,14 +194,14 @@ export function createOAuthRoutes(
   return router;
 }
 
-function renderScopePage(provider: string, agentId: string, scopes: string | undefined, personalAvailable: boolean): string {
+function renderScopePage(provider: string, agentId: string, scopes: string | undefined, personalAvailable: boolean, teamAvailable: boolean): string {
   const query = new URLSearchParams({ agent: agentId });
   if (scopes) query.set("scopes", scopes);
   const base = `/api/oauth/${encodeURIComponent(provider)}/authorize?${query.toString()}`;
   return `<!doctype html><html><head><meta charset="utf-8"><title>Connect ${escapeHtml(provider)}</title></head>
 <body><h1>Who is this connection for?</h1>
 ${personalAvailable ? `<p><a href="${escapeHtml(base)}&amp;scope=personal">Just me</a></p>` : "<p>Sign in with a Yoplai user account to connect just for yourself.</p>"}
-<p><a href="${escapeHtml(base)}&amp;scope=team">Whole team</a></p></body></html>`;
+${teamAvailable ? `<p><a href="${escapeHtml(base)}&amp;scope=team">Whole team</a></p>` : ""}</body></html>`;
 }
 
 function renderResultPage(success: boolean, message: string): string {
