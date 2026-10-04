@@ -11,6 +11,8 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Added
 
+- Agent **My connections** lists your personal OAuth, MCP and extension token connections alongside team availability; disconnect removes your credentials immediately. Account settings list your Slack pairings and let you unpair.
+
 - Scheduled jobs record their creator and let chat and web users choose owner or team credentials; existing jobs continue using team credentials, and unusable personal connections produce a delivered reconnect error.
 
 - External extensions can request Slack connection links and register OAuth completion hooks through the host context; connector registration is restricted to the extension's own ID.

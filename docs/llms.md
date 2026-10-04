@@ -283,6 +283,8 @@ Routes are composed from core plus enabled extensions. Exact route definitions a
 - **Runtime subagents:** `/api/subagents/*`
 - **Orchestrator:** `/api/orchestrator/*` plus tracker webhook routes
 - **OAuth connections:** `/api/oauth/:provider/*`
+- **My connections:** authenticated `/api/agents/:id/connections` lists caller-only OAuth/extension-token presence and team availability; `DELETE /api/agents/:id/connections/:kind/:integration` removes only the caller's personal grant. The web tab also consumes optional MCP scoped status/disconnect routes. OAuth local deletion precedes background upstream revocation, so outages cannot delay fallback.
+- **Account Slack pairings:** authenticated `/api/slack/pairings` lists the caller's workspace/user mappings; `DELETE /api/slack/pairings/:workspaceId/:slackUserId` deletes only a matching caller-owned mapping, with a same-origin check. The next sender resolution is unpaired.
 - **Webhooks:** `/hooks/:agentId/:name/:secret`
 - **Container bridge:** `/internal/tools` with per-run token validation
 

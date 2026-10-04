@@ -52,6 +52,29 @@ describe("Slack pairing web routes", () => {
     expect(html).not.toContain("/api/branding/logo");
   });
 
+  it("lists only caller pairings and unpairs before the next sender resolution", async () => {
+    await service.redeem(new URL(url).pathname.split("/").at(-1)!, { id: "existing", email: "person@example.com" });
+    getSession.mockResolvedValue({ user: { id: "other" } });
+    db.prepare("INSERT INTO user VALUES ('other', 'other@example.com', 1, 'user', 0)").run();
+    expect(await (await app.request("https://yoplai.test/api/slack/pairings")).json()).toEqual({ pairings: [] });
+    const request = { method: "DELETE", headers: { origin: "https://yoplai.test" } };
+    expect((await app.request("https://yoplai.test/api/slack/pairings/T1/U1", request)).status).toBe(200);
+    expect(service.resolve("T1", "U1")).toBe("existing");
+    getSession.mockResolvedValue({ user: { id: "existing" } });
+    const response = await app.request("https://yoplai.test/api/slack/pairings");
+    expect(await response.json()).toEqual({ pairings: [{ workspaceId: "T1", slackUserId: "U1", pairedAt: expect.any(Number) }] });
+    expect((await app.request("https://yoplai.test/api/slack/pairings/T1/U1", request)).status).toBe(200);
+    expect(service.resolve("T1", "U1")).toBeUndefined();
+  });
+
+  it("requires login, an approved account and same-origin unpair requests", async () => {
+    expect((await app.request("https://yoplai.test/api/slack/pairings")).status).toBe(401);
+    getSession.mockResolvedValue({ user: { id: "existing" } });
+    expect((await app.request("https://yoplai.test/api/slack/pairings/T1/U1", { method: "DELETE", headers: { origin: "https://evil.test" } })).status).toBe(403);
+    db.prepare("UPDATE user SET banned = 1").run();
+    expect((await app.request("https://yoplai.test/api/slack/pairings")).status).toBe(403);
+  });
+
   it("uses configured branding name and logo", async () => {
     setSlackContext({ getConfig: () => ({ branding: { name: "Acme <Hub>", logo: "logo.png" } }) } as never);
     const html = await (await app.request(url)).text();

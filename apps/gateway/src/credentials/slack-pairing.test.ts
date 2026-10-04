@@ -79,7 +79,10 @@ it("resolves real pairings to each sender's personal credentials in one thread, 
     await send("UA", "3.1");
     await send("UB", "4.1");
     await send("UC", "5.1");
-    expect(selected).toEqual(["team", "alice-personal", "bob-personal", "team"]);
+    service.unpair("alice", "T1", "UA");
+    await send("UA", "6.1");
+    await send("UB", "7.1");
+    expect(selected).toEqual(["team", "alice-personal", "bob-personal", "team", "team", "bob-personal"]);
   } finally {
     await bot?.stop();
     setSlackPairingService(undefined);

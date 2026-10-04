@@ -58,6 +58,16 @@ export class SlackPairingService {
     this.clients.set(workspaceId, client);
   }
 
+  list(userId: string): { workspaceId: string; slackUserId: string; pairedAt: number }[] {
+    return this.db.prepare("SELECT workspace_id AS workspaceId, slack_user_id AS slackUserId, paired_at AS pairedAt FROM slack_pairings WHERE yoplai_user_id = ? ORDER BY paired_at DESC")
+      .all(userId) as { workspaceId: string; slackUserId: string; pairedAt: number }[];
+  }
+
+  unpair(userId: string, workspaceId: string, slackUserId: string): void {
+    this.db.prepare("DELETE FROM slack_pairings WHERE yoplai_user_id = ? AND workspace_id = ? AND slack_user_id = ?")
+      .run(userId, workspaceId, slackUserId);
+  }
+
   async issue(workspaceId: string, slackUserId: string, client: SlackPairingClient): Promise<string> {
     if (!workspaceId || !slackUserId) throw new SlackPairingError("Slack identity is unavailable.");
     this.registerClient(workspaceId, client);

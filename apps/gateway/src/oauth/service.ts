@@ -275,21 +275,22 @@ export class OAuthService {
 
   /**
    * Disconnect a (agent, provider) pair: best-effort revoke the grant at the
-   * provider so the agent's access is actually withdrawn upstream, then clear
-   * the local record. The resulting state is `disconnected` (no stored record).
+   * provider after clearing the local record immediately. Upstream outages
+   * cannot delay removal or the next request's fallback to team credentials.
    */
   async disconnect(agentId: string, provider: string, scope: CredentialScope = { type: "team" }): Promise<void> {
     const connection = this.#store.get(agentId, provider, scope);
+    // Stop resolving this grant before any potentially slow upstream revocation.
+    this.#store.delete(agentId, provider, scope);
     if (connection) {
       const descriptor = getOAuthProvider(provider);
       if (descriptor) {
         // Revoke the refresh token when present (revoking it invalidates the
         // whole grant on Google), else the access token. Best-effort.
         const token = connection.refreshToken ?? connection.accessToken;
-        await revokeToken(descriptor, token, this.#fetch);
+        void revokeToken(descriptor, token, this.#fetch);
       }
     }
-    this.#store.delete(agentId, provider, scope);
   }
 
   /**

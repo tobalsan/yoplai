@@ -62,6 +62,7 @@ import { normalizeRunRequest } from "./run-request.js";
 import { compactAgentSession } from "../agents/compact.js";
 import { CONFIG_DIR } from "../config/index.js";
 import { CredentialStore } from "../credentials/store.js";
+import { createConnectionRoutes } from "../credentials/routes.js";
 import { extensionSecretFields, extensionTokenIntegration, resolveExtensionTokenConfig } from "../credentials/extension-tokens.js";
 import { getUserHistoryDir } from "@yoplai/extension-multi-user/isolation";
 import {
@@ -218,6 +219,7 @@ function contentDispositionFilename(filename: string): string {
 }
 
 // OAuth connect framework (authorize + callback + status/disconnect).
+api.route("/", createConnectionRoutes({ canAccessAgent: callerHasAgentAccess, getUserId: getRequestUserId }));
 api.route("/", createOAuthRoutes(
   undefined,
   callerHasAgentAccess,

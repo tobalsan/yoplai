@@ -26,6 +26,7 @@ import {
 import { useSession } from "../auth/client";
 import { capabilities, isExtensionEnabled } from "../lib/capabilities";
 import { SchedulesPanel } from "./SchedulesPanel";
+import { AgentConnectionsPanel } from "../components/AgentConnectionsPanel";
 
 function isEmoji(str: string): boolean {
   return /^\p{Emoji}/u.test(str) && str.length <= 4;
@@ -178,7 +179,7 @@ export function EditAgent() {
         )?.chatAgentId
       : params.agentId
   );
-  const [tab, setTab] = createSignal<"extensions" | "dashboards" | "schedules">("extensions");
+  const [tab, setTab] = createSignal<"extensions" | "connections" | "dashboards" | "schedules">("extensions");
   const [dashboards] = createResource(
     () => tab() === "dashboards" ? dashboardAgentId() : null,
     fetchAgentDashboards
@@ -305,12 +306,17 @@ export function EditAgent() {
           />
         </Show>
 
-        <Show when={agent() && (dashboardAgentId() || isExtensionEnabled("scheduler"))}>
+        <Show when={agent()}>
           <div class="edit-agent-tabs" role="tablist" aria-label="Agent sections">
             <button type="button" role="tab" aria-selected={tab() === "extensions"} onClick={() => setTab("extensions")}>Extensions</button>
+            <button type="button" role="tab" aria-selected={tab() === "connections"} onClick={() => setTab("connections")}>My connections</button>
             <Show when={dashboardAgentId()}><button type="button" role="tab" aria-selected={tab() === "dashboards"} onClick={() => setTab("dashboards")}>Dashboards</button></Show>
             <Show when={dashboardAgentId() && isExtensionEnabled("scheduler")}><button type="button" role="tab" aria-selected={tab() === "schedules"} onClick={() => setTab("schedules")}>Scheduled jobs</button></Show>
           </div>
+        </Show>
+
+        <Show when={agent() && tab() === "connections"}>
+          <AgentConnectionsPanel agentId={params.agentId} includeMcp={isExtensionEnabled("mcp")} />
         </Show>
 
         <Show when={agent() && tab() === "schedules" && dashboardAgentId() && isExtensionEnabled("scheduler")}>

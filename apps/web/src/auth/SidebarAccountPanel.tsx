@@ -1,5 +1,6 @@
 import type { Accessor } from "solid-js";
 import { Show, createMemo, createSignal } from "solid-js";
+import { A } from "@solidjs/router";
 import { signOut, useSession } from "./client";
 
 type SidebarAccountPanelProps = {
@@ -53,6 +54,7 @@ export default function SidebarAccountPanel(_props: SidebarAccountPanelProps) {
                 {currentUser().name ?? "Signed in"}
               </div>
               <div class="sidebar-account-email">{currentUser().email}</div>
+              <A class="sidebar-account-settings" href="/account/connections">Account connections</A>
             </div>
             <button
               class="sidebar-account-logout"
@@ -118,6 +120,18 @@ export default function SidebarAccountPanel(_props: SidebarAccountPanelProps) {
             .sidebar-account-email {
               color: var(--text-secondary);
               font-size: 12px;
+            }
+
+            .sidebar-account-settings {
+              display: inline-block;
+              margin-top: 3px;
+              color: var(--text-secondary);
+              font-size: 11px;
+              text-decoration: none;
+            }
+
+            .sidebar-account-settings:hover {
+              color: var(--text-primary);
             }
 
             .sidebar-account-logout {

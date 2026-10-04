@@ -33,6 +33,25 @@ export function page(content: string): string {
 }
 
 export function registerSlackPairingRoutes(app: Hono): void {
+  app.on(["GET", "DELETE"], ["/slack/pairings", "/slack/pairings/:workspaceId/:slackUserId"], async (c) => {
+    c.header("Cache-Control", "no-store");
+    const service = getSlackPairingService();
+    if (!service) return c.json({ error: "slack_unavailable" }, 503);
+    const { getMultiUserRuntime } = await import("@yoplai/extension-multi-user");
+    const runtime = getMultiUserRuntime();
+    const session = await runtime?.auth.api.getSession({ headers: c.req.raw.headers });
+    if (!session || !runtime) return c.json({ error: "login_required" }, 401);
+    const user = runtime.db.prepare("SELECT approved, role, banned FROM user WHERE id = ?").get(session.user.id) as { approved: number; role: string; banned: number } | undefined;
+    if (!user || user.banned || (!user.approved && !["admin", "superadmin"].includes(user.role))) return c.json({ error: "forbidden" }, 403);
+    if (c.req.method === "GET") return c.json({ pairings: service.list(session.user.id) });
+    const workspaceId = c.req.param("workspaceId");
+    const slackUserId = c.req.param("slackUserId");
+    if (!workspaceId || !slackUserId) return c.json({ error: "missing_identity" }, 400);
+    const origin = c.req.header("origin");
+    if (!origin || ![new URL(c.req.url).origin, new URL(service.baseUrl).origin].includes(origin)) return c.json({ error: "invalid_origin" }, 403);
+    service.unpair(session.user.id, workspaceId, slackUserId);
+    return c.json({ ok: true });
+  });
   app.on(["GET", "POST"], "/slack/pair/:token", async (c) => {
     c.header("Cache-Control", "no-store");
     // no-referrer would make browsers send `Origin: null` on the form POST.
