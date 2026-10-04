@@ -35,6 +35,8 @@ export function registerCredentialConnectRoutes(app: Hono): void {
         return c.html(page("<p>Your account does not have access.</p>"), 403);
       }
       if (request.owner && request.owner !== user.id) throw new SlackPairingError("This link was created for another Slack account");
+      // Refuse a forwarded unpaired link before asking for any secret.
+      if (c.req.method === "GET" && !request.owner && request.pairingToken) await pairing.verify(request.pairingToken, user);
       if (request.busy) return c.html(page("<p>This connection is already in progress. Complete it in the provider window, or request a new link in Slack.</p>"), 409);
       if (c.req.method === "GET" && request.owner && request.target.kind !== "token") {
         request.busy = true;

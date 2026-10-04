@@ -152,6 +152,17 @@ describe("single-pass Slack credential connection", () => {
     expect((await app.request(url, submit)).status).toBe(400);
     expect(start).not.toHaveBeenCalled(); expect(pairing.resolve("T1", "U1")).toBeUndefined();
   });
+  it("refuses a forwarded unpaired link on open, before showing a secret form", async () => {
+    const url = await link("token"); session.mockResolvedValue({ user: { id: "other" }, session: { id: "web-session" } });
+    const response = await app.request(url);
+    expect(response.status).toBe(400);
+    const html = await response.text();
+    expect(html).toContain("another Slack account");
+    expect(html).not.toContain("<form");
+    expect(pairing.resolve("T1", "U1")).toBeUndefined();
+    session.mockResolvedValue({ user: { id: "owner" }, session: { id: "web-session" } });
+    expect(await (await app.request(url)).text()).toContain("<form");
+  });
   it("finds the sender of a paired requester's user-scoped session", async () => {
     untrack();
     const keyed = { ...sender, sessionId: undefined };

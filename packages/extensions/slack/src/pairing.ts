@@ -76,14 +76,14 @@ export class SlackPairingService {
     return { workspaceId: row.workspace_id, slackUserId: row.slack_user_id, identity: row.identity };
   }
 
+  /** Fresh Slack email ownership check; does not consume the token. */
+  async verify(token: string, user: { email: string }): Promise<void> {
+    await this.verifyRow(this.getToken(token), user);
+  }
+
   async redeem(token: string, user: { id: string; email: string }): Promise<void> {
     const row = this.getToken(token);
-    const slackUser = await this.lookup(row.workspace_id, row.slack_user_id);
-    const slackEmail = slackUser.profile?.email?.trim().toLowerCase();
-    if (!slackEmail || !user.email.trim()) throw new SlackPairingError("Slack email is unavailable. Please contact your administrator.");
-    if (slackEmail !== user.email.trim().toLowerCase()) {
-      throw new SlackPairingError("This link was created for another Slack account");
-    }
+    await this.verifyRow(row, user);
     // Email matching proves the same address, not ownership across identity providers;
     // Slack OIDC would provide a stronger proof if the instance needs that guarantee.
     this.db.transaction(() => {
@@ -99,6 +99,15 @@ export class SlackPairingService {
   }
 
   close(): void { this.db.close(); }
+
+  private async verifyRow(row: PairingToken, user: { email: string }): Promise<void> {
+    const slackUser = await this.lookup(row.workspace_id, row.slack_user_id);
+    const slackEmail = slackUser.profile?.email?.trim().toLowerCase();
+    if (!slackEmail || !user.email.trim()) throw new SlackPairingError("Slack email is unavailable. Please contact your administrator.");
+    if (slackEmail !== user.email.trim().toLowerCase()) {
+      throw new SlackPairingError("This link was created for another Slack account");
+    }
+  }
 
   private getToken(token: string): PairingToken {
     const row = this.db.prepare("SELECT * FROM slack_pairing_tokens WHERE hash = ?").get(hashToken(token)) as PairingToken | undefined;
