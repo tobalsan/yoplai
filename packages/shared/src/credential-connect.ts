@@ -20,6 +20,8 @@ export type CredentialOAuthConnectorOptions = Omit<CredentialConnectOptions, "on
 };
 
 export interface CredentialConnectHost {
+  registerOAuthConnector(extensionId: string, start: (options: CredentialOAuthConnectorOptions) => Promise<string>): () => void;
+  requestLink(context: ExtensionAgentToolContext, target: CredentialConnectTarget): Promise<string | undefined>;
   start(target: CredentialConnectTarget, options: CredentialConnectOptions): Promise<string>;
   fields(agentId: string, extensionId: string): Promise<Array<{ name: string; label: string; required: boolean }>>;
   save(agentId: string, extensionId: string, userId: string, secrets: Record<string, string>): Promise<void>;

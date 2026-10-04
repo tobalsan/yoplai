@@ -41,6 +41,22 @@ import { CredentialStore } from "../credentials/store.js";
 import { resolveCredential } from "../credentials/resolver.js";
 import { credentialConnectHost } from "../credentials/connect.js";
 
+/** Bind extension-owned connector registration to the extension being started. */
+export function bindExtensionContext(context: ExtensionContext, extensionId: string): ExtensionContext {
+  const credentialConnect = context.credentialConnect;
+  if (!credentialConnect) return context;
+  return {
+    ...context,
+    credentialConnect: {
+      ...credentialConnect,
+      registerOAuthConnector(id, start) {
+        if (id !== extensionId) throw new Error("An extension can only register its own OAuth connector.");
+        return credentialConnect.registerOAuthConnector(id, start);
+      },
+    },
+  };
+}
+
 export function createExtensionContext(
   _resolvedConfig: GatewayConfig
 ): Parameters<Extension["start"]>[0] {

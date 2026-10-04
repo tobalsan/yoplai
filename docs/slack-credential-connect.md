@@ -18,10 +18,11 @@ Without a web session, the link redirects directly to sign-in with the original 
 
 ## Extension-owned OAuth hook
 
-MCP OAuth is implemented by the extensions repository, not this platform slice. An extension can register its start step through `@yoplai/shared`:
+MCP OAuth is implemented by the extensions repository, not this platform slice. External extensions use the host service received in `start(ctx)`, so independently installed copies of `@yoplai/shared` do not split connector/link registries. Capture `ctx.credentialConnect` and register your start step:
 
 ```ts
-const unregister = registerCredentialOAuthConnector("mcp", async ({ agentId, userId, targetId, onComplete }) => {
+const connect = ctx.credentialConnect;
+const unregister = connect.registerOAuthConnector("mcp", async ({ agentId, userId, targetId, onComplete }) => {
   // targetId is the extension-defined server ID captured when the Slack link was issued.
   // Bind agentId, userId, and targetId into expiring CSRF/PKCE state.
   return startPersonalAuthorization({ agentId, userId, targetId, onComplete });
@@ -31,10 +32,12 @@ const unregister = registerCredentialOAuthConnector("mcp", async ({ agentId, use
 A refusing tool requests the same Slack link with:
 
 ```ts
-const link = await requestCredentialConnectLink(toolContext, {
+const link = await connect.requestLink(toolContext, {
   kind: "extension-oauth", extensionId: "mcp", targetId: server.id,
 });
 ```
+
+Registration is bound to the extension ID at gateway startup and runtime activation; attempting to register another extension's ID is refused. Keep the returned unregister and call it in `stop`. Built-in shared exports remain available, but external extensions must use the context service.
 
 At the extension's OAuth callback, load and verify the saved state, then persist the grant for its personal owner and resource before completing:
 

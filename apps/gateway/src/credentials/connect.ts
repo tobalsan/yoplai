@@ -1,4 +1,4 @@
-import { startExtensionCredentialOAuth, type CredentialConnectHost } from "@yoplai/shared";
+import { registerCredentialOAuthConnector, requestCredentialConnectLink, startExtensionCredentialOAuth, type CredentialConnectHost } from "@yoplai/shared";
 import { getAgent, loadConfig } from "../config/index.js";
 import { getLoadedExtensions } from "../extensions/registry.js";
 import { getOAuthService } from "../oauth/service.js";
@@ -15,6 +15,8 @@ function tokenTarget(agentId: string, extensionId: string) {
 
 /** Trusted host hook; calling extension routes must authenticate and check agent access. */
 export const credentialConnectHost: CredentialConnectHost = {
+  registerOAuthConnector: registerCredentialOAuthConnector,
+  requestLink: requestCredentialConnectLink,
   async start(target, options) {
     if (!options.userId || !getAgent(options.agentId)) throw new Error("Personal credentials require an existing user and agent.");
     if (target.kind === "extension-oauth") {

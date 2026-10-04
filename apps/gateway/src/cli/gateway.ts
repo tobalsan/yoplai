@@ -13,7 +13,7 @@ import {
   reloadExtensions,
   setExtensionActivator,
 } from "../extensions/registry.js";
-import { createExtensionContext } from "../extensions/context.js";
+import { bindExtensionContext, createExtensionContext } from "../extensions/context.js";
 import {
   prepareStartupConfig,
   logComponentSummary,
@@ -83,7 +83,7 @@ export async function startGatewayCommand(
   };
   const extensionContext = createExtensionContext(runtimeConfig);
   for (const extension of extensions) {
-    await extension.start(extensionContext);
+    await extension.start(bindExtensionContext(extensionContext, extension.id));
   }
   (await import("../dream/service.js")).startDreamTimers();
 
@@ -91,7 +91,7 @@ export async function startGatewayCommand(
   // config-file edit) to be brought online without a restart.
   setExtensionActivator(async (extension) => {
     extension.registerRoutes(api);
-    await extension.start(extensionContext);
+    await extension.start(bindExtensionContext(extensionContext, extension.id));
   });
 
   startServer(port, opts.host, extensionRuntime);
