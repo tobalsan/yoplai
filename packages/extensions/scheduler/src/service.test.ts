@@ -90,6 +90,35 @@ describe("SchedulerService.runNow", () => {
     if (tmpDir) await fs.rm(tmpDir, { recursive: true, force: true });
   });
 
+  it.each([
+    { error: "oauth_connection_required" },
+    { connected: false, provider: "gmail", reason: "expired" },
+  ])("uses the recorded owner only in owner mode and delivers credential failures: %j", async (refusal) => {
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-scheduler-owner-"));
+    const alpha = agent("alpha", path.join(tmpDir, "alpha"));
+    const runAgent = vi.fn(async (params: { onEvent?: (event: { type: "tool_result"; id: string; name: string; content: string; isError: boolean }) => void }) => {
+      params.onEvent?.({ type: "tool_result", id: "1", name: "gmail.send", content: JSON.stringify(refusal), isError: false });
+      return { payloads: [{ text: "sent" }], meta: { durationMs: 1, sessionId: "session" } };
+    });
+    const config: GatewayConfig = { version: 3, agents: [alpha], extensions: { scheduler: { enabled: true } }, sessions: { idleMinutes: 360 }, agentFab: false };
+    const deliver = vi.fn();
+    setSchedulerContext(context(config, runAgent, { slack: deliver }));
+    const scheduler = new SchedulerService();
+    const owner = await scheduler.add("alpha", { name: "Owner", schedule: { cron: "0 8 * * *", tz: "UTC" }, payload: jobPayload({ message: "Send" }), deliver: [{ target: "slack", channel: "alerts" }] }, "alice");
+    expect(owner).toMatchObject({ ownerUserId: "alice", credentialMode: "owner" });
+    const failed = await scheduler.runNow("alpha", owner.id);
+    expect(failed.status).toBe("error");
+    expect(failed.error).toMatch(/Reconnect gmail/);
+    expect(deliver).toHaveBeenCalledWith(expect.objectContaining({ text: expect.stringContaining("Reconnect gmail") }));
+    expect(runAgent).toHaveBeenCalledWith(expect.objectContaining({ userId: "alice" }));
+    await scheduler.update("alpha", owner.id, { credentialMode: "team" });
+    await scheduler.runNow("alpha", owner.id);
+    expect(runAgent).toHaveBeenLastCalledWith(expect.objectContaining({ userId: undefined }));
+    await scheduler.stop();
+  });
+
   it("fires a missed one-shot once after restart, then persists it disabled", async () => {
     vi.spyOn(console, "log").mockImplementation(() => {});
     tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-once-service-"));

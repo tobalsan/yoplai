@@ -59,6 +59,8 @@ Disk shape omits `agentId`; it is implied by the workspace:
 
 `timeoutMs` is an optional top-level job field: the per-run timeout in milliseconds for that job. Falls back to `extensions.scheduler.jobTimeoutMs`, then the 30-minute built-in default.
 
+`credentialMode` is `"owner"` or `"team"`. Jobs created by an authenticated chat or web user record `ownerUserId` and default to owner mode; jobs loaded from old files or created without a user default to team mode. Owner mode uses the owner's personal credential when present and the team credential when absent. An expired or revoked personal credential fails the job with a reconnect error rather than switching to the team account. Team mode uses only team credentials. Set `credentialMode` on create or update through the API or scheduler tools.
+
 ## One-shot schedules
 
 Use `schedule: { "runAt": "2026-10-05T14:30:00Z" }` for a job that runs once. Exactly one of `runAt` or `cron` is required; recurring jobs still require `cron` and `tz`, and `startAt` remains a cron-only not-before floor. A missed `runAt` remains due and fires after gateway restart. After any completed run, including a failed script or agent run, the job is disabled; its output and job record remain available.

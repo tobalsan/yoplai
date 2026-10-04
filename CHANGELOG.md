@@ -11,6 +11,8 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Added
 
+- Scheduled jobs record their creator and let chat and web users choose owner or team credentials; existing jobs continue using team credentials, and unusable personal connections produce a delivered reconnect error.
+
 - External extensions can request Slack connection links and register OAuth completion hooks through the host context; connector registration is restricted to the extension's own ID.
 
 - Slack credential refusals now provide one personal connection link that pairs an unpaired sender and connects Google OAuth, an extension token, or extension-owned OAuth for a specific resource, with reconnect links and a confirmation in the original thread.

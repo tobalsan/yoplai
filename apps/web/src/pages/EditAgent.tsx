@@ -24,7 +24,8 @@ import {
   type Team,
 } from "../api/teams";
 import { useSession } from "../auth/client";
-import { capabilities } from "../lib/capabilities";
+import { capabilities, isExtensionEnabled } from "../lib/capabilities";
+import { SchedulesPanel } from "./SchedulesPanel";
 
 function isEmoji(str: string): boolean {
   return /^\p{Emoji}/u.test(str) && str.length <= 4;
@@ -177,7 +178,7 @@ export function EditAgent() {
         )?.chatAgentId
       : params.agentId
   );
-  const [tab, setTab] = createSignal<"extensions" | "dashboards">("extensions");
+  const [tab, setTab] = createSignal<"extensions" | "dashboards" | "schedules">("extensions");
   const [dashboards] = createResource(
     () => tab() === "dashboards" ? dashboardAgentId() : null,
     fetchAgentDashboards
@@ -304,11 +305,16 @@ export function EditAgent() {
           />
         </Show>
 
-        <Show when={agent() && dashboardAgentId()}>
+        <Show when={agent() && (dashboardAgentId() || isExtensionEnabled("scheduler"))}>
           <div class="edit-agent-tabs" role="tablist" aria-label="Agent sections">
             <button type="button" role="tab" aria-selected={tab() === "extensions"} onClick={() => setTab("extensions")}>Extensions</button>
-            <button type="button" role="tab" aria-selected={tab() === "dashboards"} onClick={() => setTab("dashboards")}>Dashboards</button>
+            <Show when={dashboardAgentId()}><button type="button" role="tab" aria-selected={tab() === "dashboards"} onClick={() => setTab("dashboards")}>Dashboards</button></Show>
+            <Show when={dashboardAgentId() && isExtensionEnabled("scheduler")}><button type="button" role="tab" aria-selected={tab() === "schedules"} onClick={() => setTab("schedules")}>Scheduled jobs</button></Show>
           </div>
+        </Show>
+
+        <Show when={agent() && tab() === "schedules" && dashboardAgentId() && isExtensionEnabled("scheduler")}>
+          <SchedulesPanel agentId={dashboardAgentId()!} defaultMode={session().data?.user?.id ? "owner" : "team"} />
         </Show>
 
         <Show when={agent() && tab() === "dashboards" && dashboardAgentId()}>
@@ -470,6 +476,45 @@ export function EditAgent() {
         .edit-agent-dashboards {
           max-width: 800px;
           color: var(--text-secondary);
+        }
+
+        .edit-agent-schedules {
+          margin-top: 28px;
+          max-width: 800px;
+          color: var(--text-secondary);
+        }
+
+        .edit-agent-schedule-list {
+          display: grid;
+          gap: 10px;
+          list-style: none;
+          padding: 0;
+        }
+
+        .edit-agent-schedule-item,
+        .edit-agent-schedule-form {
+          display: flex;
+          justify-content: space-between;
+          gap: 16px;
+          padding: 14px;
+          border: 1px solid var(--border-default);
+          border-radius: 8px;
+        }
+
+        .edit-agent-schedule-item > div,
+        .edit-agent-schedule-form label {
+          display: grid;
+          gap: 6px;
+        }
+
+        .edit-agent-schedule-fields {
+          display: flex;
+          gap: 12px;
+          flex-wrap: wrap;
+        }
+
+        .edit-agent-schedule-error {
+          color: #e55;
         }
 
         .edit-agent-dashboard-list {

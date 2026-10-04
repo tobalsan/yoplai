@@ -9,7 +9,7 @@ import {
   type ExtensionContext,
 } from "@yoplai/shared";
 import { z } from "zod";
-import type { Hono } from "hono";
+import type { Context, Hono } from "hono";
 import {
   ScheduleAlreadyRunningError,
   SchedulerService,
@@ -40,6 +40,7 @@ function parseToolSchedule(input: z.infer<typeof scheduleInputSchema>) {
 
 const createJobToolSchema = z.object({
   name: z.string().min(1),
+  credentialMode: z.enum(["owner", "team"]).optional(),
   cron: z.string().min(1).optional(),
   tz: z.string().min(1).optional(),
   startAt: z.string().optional(),
@@ -55,6 +56,7 @@ const createJobToolSchema = z.object({
 
 const updateJobToolSchema = z.object({
   jobId: z.string().min(1),
+  credentialMode: z.enum(["owner", "team"]).optional(),
   name: z.string().min(1).optional(),
   enabled: z.boolean().optional(),
   schedule: scheduleInputSchema.optional(),
@@ -81,6 +83,20 @@ function toolError(error: unknown) {
   };
 }
 
+function requestUserId(c: Context): string | undefined {
+  const context = c as Context<{
+    Variables: { multiUserAuthContext?: { session: { userId: string } } };
+  }>;
+  return context.get("multiUserAuthContext")?.session.userId;
+}
+
+async function canAccessJob(agentId: string, id: string, userId?: string): Promise<boolean> {
+  const job = (await getScheduler().list(agentId)).find(
+    (candidate) => candidate.id === id
+  );
+  return !!job && (!job.ownerUserId || job.ownerUserId === userId);
+}
+
 function schedulerAgentTools(): ExtensionAgentTool[] {
   return [
     {
@@ -91,9 +107,12 @@ function schedulerAgentTools(): ExtensionAgentTool[] {
         properties: {},
         additionalProperties: false,
       },
-      async execute(_args, { agent }) {
+      async execute(_args, { agent, userId }) {
         try {
-          return { ok: true, jobs: await getScheduler().list(agent.id) };
+          const jobs = (await getScheduler().list(agent.id)).filter(
+            (job) => !job.ownerUserId || job.ownerUserId === userId
+          );
+          return { ok: true, jobs };
         } catch (error) {
           return toolError(error);
         }
@@ -120,6 +139,11 @@ function schedulerAgentTools(): ExtensionAgentTool[] {
         type: "object",
         properties: {
           name: { type: "string" },
+          credentialMode: {
+            type: "string",
+            enum: ["owner", "team"],
+            description: "Use the job owner's credentials (falling back to team if absent), or team credentials only. Defaults to owner when you are signed in.",
+          },
           cron: { type: "string" },
           tz: { type: "string" },
           startAt: { type: "string" },
@@ -170,12 +194,13 @@ function schedulerAgentTools(): ExtensionAgentTool[] {
         },
         required: ["name"],
       },
-      async execute(args, { agent }) {
+      async execute(args, { agent, userId }) {
         try {
           const input = createJobToolSchema.parse(args);
           const parsed = CreateScheduleRequestSchema.parse({
             agentId: agent.id,
             name: input.name,
+            credentialMode: input.credentialMode,
             schedule: parseToolSchedule({
               cron: input.cron,
               tz: input.tz,
@@ -193,7 +218,7 @@ function schedulerAgentTools(): ExtensionAgentTool[] {
             timeoutMs: input.timeoutMs,
           });
           const { agentId, ...body } = parsed;
-          return { ok: true, job: await getScheduler().add(agentId!, body) };
+          return { ok: true, job: await getScheduler().add(agentId!, body, userId) };
         } catch (error) {
           return toolError(error);
         }
@@ -216,6 +241,7 @@ function schedulerAgentTools(): ExtensionAgentTool[] {
         type: "object",
         properties: {
           jobId: { type: "string" },
+          credentialMode: { type: "string", enum: ["owner", "team"] },
           name: { type: "string" },
           enabled: { type: "boolean" },
           schedule: {
@@ -272,13 +298,14 @@ function schedulerAgentTools(): ExtensionAgentTool[] {
         },
         required: ["jobId"],
       },
-      async execute(args, { agent }) {
+      async execute(args, { agent, userId }) {
         try {
           const input = updateJobToolSchema.parse(args);
           const [existing] = (await getScheduler().list(agent.id)).filter(
             (job) => job.id === input.jobId
           );
           if (!existing) return { ok: false, error: "Schedule not found" };
+          if (!(await canAccessJob(agent.id, input.jobId, userId))) return { ok: false, error: "Schedule owner access required" };
           const payload =
             input.message !== undefined ||
             input.sessionId !== undefined ||
@@ -308,6 +335,7 @@ function schedulerAgentTools(): ExtensionAgentTool[] {
               : undefined;
           const patch = UpdateScheduleRequestSchema.parse({
             name: input.name,
+            credentialMode: input.credentialMode,
             enabled: input.enabled,
             schedule: input.schedule
               ? parseToolSchedule(input.schedule)
@@ -318,7 +346,7 @@ function schedulerAgentTools(): ExtensionAgentTool[] {
           });
           return {
             ok: true,
-            job: await getScheduler().update(agent.id, input.jobId, patch),
+            job: await getScheduler().update(agent.id, input.jobId, patch, userId),
           };
         } catch (error) {
           return toolError(error);
@@ -333,9 +361,10 @@ function schedulerAgentTools(): ExtensionAgentTool[] {
         properties: { jobId: { type: "string" } },
         required: ["jobId"],
       },
-      async execute(args, { agent }) {
+      async execute(args, { agent, userId }) {
         try {
           const input = jobIdToolSchema.parse(args);
+          if (!(await canAccessJob(agent.id, input.jobId, userId))) return { ok: false, error: "Schedule owner access required" };
           const result = await getScheduler().remove(agent.id, input.jobId);
           return result.removed
             ? { ok: true }
@@ -354,9 +383,10 @@ function schedulerAgentTools(): ExtensionAgentTool[] {
         properties: { jobId: { type: "string" } },
         required: ["jobId"],
       },
-      async execute(args, { agent }) {
+      async execute(args, { agent, userId }) {
         try {
           const input = jobIdToolSchema.parse(args);
+          if (!(await canAccessJob(agent.id, input.jobId, userId))) return { ok: false, error: "Schedule owner access required" };
           const result = await getScheduler().runNowDetached(
             agent.id,
             input.jobId
@@ -394,7 +424,7 @@ function schedulerAgentTools(): ExtensionAgentTool[] {
         },
         required: ["jobId"],
       },
-      async execute(args, { agent }) {
+      async execute(args, { agent, userId }) {
         try {
           const parsed = latestOutputToolSchema.safeParse(args);
           if (!parsed.success) {
@@ -411,6 +441,7 @@ function schedulerAgentTools(): ExtensionAgentTool[] {
             return toolError(parsed.error);
           }
           const input = parsed.data;
+          if (!(await canAccessJob(agent.id, input.jobId, userId))) return { ok: false, error: "Schedule owner access required" };
           const ctx = getSchedulerContext();
           const latest = await readLatestOutputFile(
             ctx.resolveWorkspaceDir(agent),
@@ -460,7 +491,8 @@ const schedulerExtension: Extension = {
     app.get("/schedules", async (c) => {
       const scheduler = getScheduler();
       const agentId = c.req.query("agent") ?? undefined;
-      const jobs = await scheduler.list(agentId);
+      const userId = requestUserId(c);
+      const jobs = (await scheduler.list(agentId)).filter((job) => !job.ownerUserId || job.ownerUserId === userId);
       return c.json(jobs);
     });
 
@@ -477,7 +509,7 @@ const schedulerExtension: Extension = {
       const scheduler = getScheduler();
       const { agentId, ...input } = parsed.data;
       try {
-        const job = await scheduler.add(agentId, input);
+        const job = await scheduler.add(agentId, input, requestUserId(c));
         return c.json(job, 201);
       } catch (error) {
         return c.json(
@@ -493,6 +525,7 @@ const schedulerExtension: Extension = {
     app.get("/schedules/:agentId/:id/tail", async (c) => {
       const agentId = c.req.param("agentId");
       const id = c.req.param("id");
+      if (!(await canAccessJob(agentId, id, requestUserId(c)))) return c.json({ error: "Schedule owner access required" }, 403);
       const ctx = getSchedulerContext();
       const agent = ctx.getAgent(agentId);
       if (!agent) return c.json({ error: "Agent not found" }, 404);
@@ -508,6 +541,7 @@ const schedulerExtension: Extension = {
       const agentId = c.req.param("agentId");
       const id = c.req.param("id");
       const scheduler = getScheduler();
+      if (!(await canAccessJob(agentId, id, requestUserId(c)))) return c.json({ error: "Schedule owner access required" }, 403);
       try {
         const result = await scheduler.runNowDetached(agentId, id);
         return c.json(result, 202);
@@ -529,8 +563,9 @@ const schedulerExtension: Extension = {
       }
 
       const scheduler = getScheduler();
+      if (!(await canAccessJob(agentId, id, requestUserId(c)))) return c.json({ error: "Schedule owner access required" }, 403);
       try {
-        const job = await scheduler.update(agentId, id, parsed.data);
+        const job = await scheduler.update(agentId, id, parsed.data, requestUserId(c));
         return c.json(job);
       } catch {
         return c.json({ error: "Schedule not found" }, 404);
@@ -541,6 +576,7 @@ const schedulerExtension: Extension = {
       const agentId = c.req.param("agentId");
       const id = c.req.param("id");
       const scheduler = getScheduler();
+      if (!(await canAccessJob(agentId, id, requestUserId(c)))) return c.json({ error: "Schedule owner access required" }, 403);
       const result = await scheduler.remove(agentId, id);
       if (!result.removed) {
         return c.json({ error: "Schedule not found" }, 404);

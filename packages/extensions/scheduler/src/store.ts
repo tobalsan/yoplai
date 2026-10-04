@@ -106,7 +106,7 @@ export class PerAgentScheduleStore {
           );
           continue;
         }
-        jobs.push({ ...job.data, agentId: agent.id });
+        jobs.push({ ...job.data, credentialMode: job.data.credentialMode ?? "team", agentId: agent.id });
       }
       return jobs;
     } catch (error) {

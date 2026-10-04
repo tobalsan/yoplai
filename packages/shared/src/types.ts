@@ -424,6 +424,8 @@ export type DeliverTarget = z.infer<typeof DeliverTargetSchema>;
 export const ScheduleJobFileSchema = z.object({
   id: z.string(),
   name: z.string(),
+  ownerUserId: z.string().min(1).optional(),
+  credentialMode: z.enum(["owner", "team"]).optional(),
   enabled: z.boolean().optional().default(true),
   schedule: ScheduleSchema,
   model: RequiredModelConfigSchema.optional(),
@@ -1754,6 +1756,7 @@ export type SubagentLogEvent = {
 export const CreateScheduleRequestSchema = z.object({
   name: z.string(),
   agentId: z.string().optional(),
+  credentialMode: z.enum(["owner", "team"]).optional(),
   schedule: ScheduleSchema,
   model: RequiredModelConfigSchema.optional(),
   payload: SchedulePayloadSchema,
@@ -1764,6 +1767,7 @@ export type CreateScheduleRequest = z.infer<typeof CreateScheduleRequestSchema>;
 
 export const UpdateScheduleRequestSchema = z.object({
   name: z.string().optional(),
+  credentialMode: z.enum(["owner", "team"]).optional(),
   enabled: z.boolean().optional(),
   schedule: ScheduleSchema.optional(),
   model: RequiredModelConfigSchema.optional(),
