@@ -31,6 +31,23 @@ function buildHookContext(
   };
 }
 
+/** External OAuth extensions return their own refusal; give Slack requesters the single-pass connect link instead. */
+function withOAuthConnectLink(
+  extension: Extension,
+  execute: ExtensionAgentTool["execute"]
+): ExtensionAgentTool["execute"] {
+  const requirement = extension.oauth;
+  if (!requirement) return execute;
+  return async (args, context) => {
+    const oauth = await getOAuthService().resolveToken(context.agent.id, requirement, context.userId);
+    if (!oauth.connected && oauth.reason !== "provider_not_configured") {
+      const link = await requestCredentialConnectLink(context, { kind: "oauth", ...requirement });
+      if (link) return { error: "oauth_connection_required", authorizeUrl: link, message: `Connect your personal ${oauth.provider} account at ${link}, then try again.` };
+    }
+    return execute(args, context);
+  };
+}
+
 export type LoadedExtensionAgentTool = ExtensionAgentTool & {
   extensionId: string;
 };
@@ -180,7 +197,7 @@ export class ExtensionRuntime {
           return tools.map((tool) => ({
             ...tool,
             extensionId: extension.id,
-            execute: extensionSecretFields(extension).length === 0 ? tool.execute : async (args: unknown, context: ExtensionAgentToolContext) => {
+            execute: withOAuthConnectLink(extension, extensionSecretFields(extension).length === 0 ? tool.execute : async (args: unknown, context: ExtensionAgentToolContext) => {
               const current = resolveExtensionTokenConfig(extension, context.agent, context.config, context.userId);
               if (current.missing.length) {
                 const connectUrl = await requestCredentialConnectLink(context, { kind: "token", extensionId: extension.id }) ?? current.connectUrl;
@@ -194,7 +211,7 @@ export class ExtensionRuntime {
               const callTool = callTools?.find((candidate) => candidate.name === tool.name);
               if (!callTool) return { error: "extension_tool_unavailable", connectUrl: current.connectUrl };
               return callTool.execute(args, { ...context, agent: current.agent, config: current.config });
-            },
+            }),
           }));
         } catch (error) {
           console.warn("Skipping extension tools", {

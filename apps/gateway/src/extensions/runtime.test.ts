@@ -7,6 +7,7 @@ import {
   type Extension,
 } from "@yoplai/shared";
 import { ExtensionRuntime } from "./runtime.js";
+import { getOAuthService } from "../oauth/service.js";
 
 function extension(overrides: Partial<Extension> & { id: string }): Extension {
   const { id, ...rest } = overrides;
@@ -56,6 +57,22 @@ describe("ExtensionRuntime", () => {
       expect(provider).toHaveBeenCalledWith(expect.objectContaining({ agent: requester, sessionId: "session" }), { kind: "token", extensionId: "sample" });
       expect(execute).not.toHaveBeenCalled();
     } finally { unregister(); }
+  });
+
+  it("refuses a disconnected external OAuth extension with the trusted Slack flow link", async () => {
+    const execute = vi.fn();
+    const provider = vi.fn(async () => "<slack-pair-link>");
+    const unregister = registerCredentialConnectLinkProvider(provider);
+    const resolveToken = vi.spyOn(getOAuthService(), "resolveToken").mockResolvedValue({ connected: false, provider: "google", reason: "not_connected", message: "not connected" });
+    const oauth = { provider: "google", scopes: ["gmail"] };
+    const runtime = new ExtensionRuntime();
+    runtime.load([extension({ id: "sample", oauth, getAgentTools: async () => [{ name: "sample_send", description: "Send", parameters: {}, execute }] })]);
+    try {
+      const result = await runtime.executeTool(agent, "sample_send", {}, config, "session");
+      expect(result.result).toMatchObject({ error: "oauth_connection_required", authorizeUrl: "<slack-pair-link>" });
+      expect(provider).toHaveBeenCalledWith(expect.objectContaining({ sessionId: "session" }), { kind: "oauth", ...oauth });
+      expect(execute).not.toHaveBeenCalled();
+    } finally { unregister(); resolveToken.mockRestore(); }
   });
 
   it("owns loaded extension state and capabilities", () => {
