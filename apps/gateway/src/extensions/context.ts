@@ -92,8 +92,8 @@ export function createExtensionContext(
     resolveWorkspaceDir: (agent) => resolveWorkspaceDir(agent.workspace),
     runAgent,
     getSubagentTemplates,
-    resolveSessionId: async (agentId: string, sessionKey: string) =>
-      getSessionEntry(agentId, sessionKey),
+    resolveSessionId: async (agentId: string, sessionKey: string, userId?: string) =>
+      getSessionEntry(agentId, sessionKey, userId),
     getSessionEntry,
     clearSessionEntry,
     restoreSessionUpdatedAt: (

@@ -26,7 +26,7 @@ export async function createCredentialConnectLink(context: ExtensionAgentToolCon
   const ctx = getSlackContext();
   const pairing = getSlackPairingService();
   if (!pairing || !ctx.credentialConnect) return undefined;
-  const sender = await findSlackSender(context.agent.id, context.sessionId, async (agentId, key) => (await ctx.resolveSessionId(agentId, key))?.sessionId, true);
+  const sender = await findSlackSender(context.agent.id, context.sessionId, async (agentId, key) => (await ctx.resolveSessionId(agentId, key, context.userId))?.sessionId, true);
   if (!sender?.channel || sender.credentialConnectAmbiguous) return undefined;
   const workspace = await getSlackWorkspace(sender.client);
   if (!workspace) return undefined;

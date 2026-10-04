@@ -1300,7 +1300,8 @@ export interface ExtensionContext {
   // Session management
   resolveSessionId(
     agentId: string,
-    sessionKey: string
+    sessionKey: string,
+    userId?: string
   ): Promise<SessionEntry | undefined>;
   getSessionEntry(
     agentId: string,

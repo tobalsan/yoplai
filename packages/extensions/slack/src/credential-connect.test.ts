@@ -152,6 +152,15 @@ describe("single-pass Slack credential connection", () => {
     expect((await app.request(url, submit)).status).toBe(400);
     expect(start).not.toHaveBeenCalled(); expect(pairing.resolve("T1", "U1")).toBeUndefined();
   });
+  it("finds the sender of a paired requester's user-scoped session", async () => {
+    untrack();
+    const keyed = { ...sender, sessionId: undefined };
+    untrack = trackSlackSender(keyed);
+    const resolveSessionId = vi.fn(async (_agentId: string, _key: string, userId?: string) => (userId === "owner" ? { sessionId: "user-session" } : { sessionId: "shared-session" }));
+    setSlackContext({ getConfig: () => ({}), resolveSessionId, credentialConnect: { start, save, fields: async () => [] } } as never);
+    expect(await createCredentialConnectLink({ agent: { id: "connie" }, sessionId: "user-session", userId: "owner" } as never, { kind: "token", extensionId: "probe" })).toBe(SLACK_PAIR_LINK_PLACEHOLDER);
+    expect(resolveSessionId).toHaveBeenCalledWith("connie", "thread", "owner");
+  });
   it.each(["GET", "POST"])("refuses read-only impersonation before credential mutations on %s", async (method) => {
     const url = await link(); state.impersonating = true;
     expect((await app.request(url, { ...submit, method })).status).toBe(403);
