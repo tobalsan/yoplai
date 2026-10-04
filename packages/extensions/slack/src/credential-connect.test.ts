@@ -4,10 +4,11 @@ import path from "node:path";
 import Database from "better-sqlite3";
 import { Hono } from "hono";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { registerCredentialOAuthConnector, startExtensionCredentialOAuth } from "@yoplai/shared";
 import { clearSlackContext, setSlackContext } from "./context.js";
 import { SlackPairingService, setSlackPairingService } from "./pairing.js";
 import { trackSlackSender, SLACK_PAIR_LINK_PLACEHOLDER, type ActiveSlackSender } from "./requester.js";
-import { clearCredentialConnectRequests, createCredentialConnectLink } from "./credential-connect.js";
+import { clearCredentialConnectRequests, createCredentialConnectLink, inspectCredentialConnect } from "./credential-connect.js";
 import { registerCredentialConnectRoutes } from "./credential-connect-routes.js";
 
 const state = vi.hoisted(() => ({ runtime: null as unknown, access: true, impersonating: false }));
@@ -103,6 +104,39 @@ describe("single-pass Slack credential connection", () => {
     await start.mock.calls[0][1].onComplete();
     expect(postMessage).toHaveBeenCalledWith(expect.objectContaining({ channel: "C1", thread_ts: "123", text: "You're connected, try again" }));
     expect((await app.request(url)).status).toBe(400);
+  });
+  it("keeps an extension OAuth resource fixed through link, start, and completion", async () => {
+    const target = { kind: "extension-oauth" as const, extensionId: "mcp", targetId: "server-a" };
+    let complete: (targetId: string) => Promise<void> = async () => {};
+    const unregister = registerCredentialOAuthConnector("mcp", async (options) => {
+      expect(options).toEqual(expect.objectContaining({ agentId: "connie", userId: "owner", targetId: "server-a" }));
+      complete = options.onComplete;
+      return "https://provider.test/authorize";
+    });
+    start.mockImplementation((selected, options) => startExtensionCredentialOAuth(selected.extensionId, selected.targetId, options));
+    try {
+      expect(await createCredentialConnectLink({ agent: { id: "connie" }, sessionId: "session" } as never, target)).toBe(SLACK_PAIR_LINK_PLACEHOLDER);
+      const url = sender.pairingLink!;
+      const token = new URL(url).pathname.split("/").pop()!;
+      target.targetId = "server-b";
+      target.extensionId = "other";
+      const response = await app.request(`${url}?targetId=server-b&extensionId=other`, {
+        ...submit,
+        body: new URLSearchParams({ targetId: "server-b", extensionId: "other" }),
+      });
+      expect(response.status).toBe(302);
+      expect(start).toHaveBeenCalledWith({ kind: "extension-oauth", extensionId: "mcp", targetId: "server-a" }, expect.objectContaining({ agentId: "connie", userId: "owner" }));
+      await expect(complete("server-b")).rejects.toThrow("target ID does not match");
+      expect(inspectCredentialConnect(token).completed).toBe(false);
+      expect(postMessage).not.toHaveBeenCalled();
+      await complete("server-a");
+      expect(postMessage).toHaveBeenCalledWith(expect.objectContaining({ channel: "C1", thread_ts: "123", text: "You're connected, try again" }));
+      expect(() => inspectCredentialConnect(token)).toThrow("already been used");
+    } finally { unregister(); }
+  });
+  it("rejects extension OAuth links without a resource ID", async () => {
+    await expect(createCredentialConnectLink({ agent: { id: "connie" }, sessionId: "session" } as never, { kind: "extension-oauth", extensionId: "mcp", targetId: " " })).rejects.toThrow("target ID is required");
+    expect(sender.pairingLink).toBeUndefined();
   });
   it.each(["mismatch", "unreadable"])("refuses %s before any credential or pairing write", async (reason) => {
     const url = await link();

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { registerCredentialOAuthConnector } from "@yoplai/shared";
+import { registerCredentialOAuthConnector, type CredentialOAuthConnectorOptions } from "@yoplai/shared";
 import { credentialConnectHost } from "./connect.js";
 
 const state = vi.hoisted(() => ({
@@ -31,13 +31,19 @@ describe("host single-pass credential connector", () => {
     await expect(credentialConnectHost.fields("missing", "fixture")).rejects.toThrow("unavailable");
   });
   it("lets an extension-owned OAuth connector join the same flow", async () => {
-    const start = vi.fn(async () => "https://extension.test/authorize");
+    const start = vi.fn(async (_options: CredentialOAuthConnectorOptions) => "https://extension.test/authorize");
     const unregister = registerCredentialOAuthConnector("fixture", start);
     const options = { agentId: "sales", userId: "alice", onComplete: vi.fn(async () => {}) };
     try {
-      await expect(credentialConnectHost.start({ kind: "extension-oauth", extensionId: "fixture" }, options)).resolves.toBe("https://extension.test/authorize");
-      expect(start).toHaveBeenCalledWith(options);
+      await expect(credentialConnectHost.start({ kind: "extension-oauth", extensionId: "fixture", targetId: "server-a" }, options)).resolves.toBe("https://extension.test/authorize");
+      expect(start).toHaveBeenCalledWith(expect.objectContaining({ agentId: "sales", userId: "alice", targetId: "server-a" }));
+      const complete = start.mock.calls[0][0].onComplete;
+      await expect(complete("server-b")).rejects.toThrow("target ID does not match");
+      expect(options.onComplete).not.toHaveBeenCalled();
+      await complete("server-a");
+      expect(options.onComplete).toHaveBeenCalledOnce();
+      await expect(credentialConnectHost.start({ kind: "extension-oauth", extensionId: "fixture", targetId: " " }, options)).rejects.toThrow("target ID is required");
     } finally { unregister(); }
-    await expect(credentialConnectHost.start({ kind: "extension-oauth", extensionId: "fixture" }, options)).rejects.toThrow("does not support");
+    await expect(credentialConnectHost.start({ kind: "extension-oauth", extensionId: "fixture", targetId: "server-a" }, options)).rejects.toThrow("does not support");
   });
 });

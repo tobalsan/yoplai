@@ -22,6 +22,7 @@ const requests = new Map<string, ConnectRequest>();
 export function clearCredentialConnectRequests(): void { requests.clear(); }
 
 export async function createCredentialConnectLink(context: ExtensionAgentToolContext, target: CredentialConnectTarget): Promise<string | undefined> {
+  if (target.kind === "extension-oauth" && !target.targetId.trim()) throw new Error("An extension OAuth target ID is required.");
   const ctx = getSlackContext();
   const pairing = getSlackPairingService();
   if (!pairing || !ctx.credentialConnect) return undefined;
@@ -34,7 +35,10 @@ export async function createCredentialConnectLink(context: ExtensionAgentToolCon
   if (sender.credentialConnectAmbiguous) return undefined;
   const token = randomBytes(32).toString("base64url");
   for (const [key, request] of requests) if (request.expires <= Date.now()) requests.delete(key);
-  requests.set(hash(token), { sender, workspace, target, pairingToken, owner, expires: Date.now() + lifetime, busy: false, completed: false });
+  const snapshot: CredentialConnectTarget = target.kind === "extension-oauth"
+    ? { kind: "extension-oauth", extensionId: target.extensionId, targetId: target.targetId }
+    : target;
+  requests.set(hash(token), { sender, workspace, target: snapshot, pairingToken, owner, expires: Date.now() + lifetime, busy: false, completed: false });
   sender.pairingLink = new URL(`/api/slack/connect/${token}`, pairing.baseUrl).href;
   return SLACK_PAIR_LINK_PLACEHOLDER;
 }

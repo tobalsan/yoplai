@@ -21,10 +21,10 @@ Without a web session, the link redirects directly to sign-in with the original 
 MCP OAuth is implemented by the extensions repository, not this platform slice. An extension can register its start step through `@yoplai/shared`:
 
 ```ts
-const unregister = registerCredentialOAuthConnector("my-extension", async ({ agentId, userId, onComplete }) => {
-  // Create CSRF/PKCE state bound to agentId + personal userId.
-  // Retain onComplete in that pending state; return your provider authorization URL.
-  return startPersonalAuthorization({ agentId, userId, onComplete });
+const unregister = registerCredentialOAuthConnector("mcp", async ({ agentId, userId, targetId, onComplete }) => {
+  // targetId is the extension-defined server ID captured when the Slack link was issued.
+  // Bind agentId, userId, and targetId into expiring CSRF/PKCE state.
+  return startPersonalAuthorization({ agentId, userId, targetId, onComplete });
 });
 ```
 
@@ -32,8 +32,15 @@ A refusing tool requests the same Slack link with:
 
 ```ts
 const link = await requestCredentialConnectLink(toolContext, {
-  kind: "extension-oauth", extensionId: "my-extension",
+  kind: "extension-oauth", extensionId: "mcp", targetId: server.id,
 });
 ```
 
-The tool context must be the host's trusted call context, not model-selected identity. `undefined` means there is no active Slack flow; preserve the extension's normal connect route. The hook starts only after login, agent access, owner verification, and pairing redemption when necessary. Persist only a verified **personal** grant for the supplied `agentId`/`userId`; invoke `onComplete` only after successful persistence. Do not invoke it on denial/error, and do not accept a callback-selected user or scope. Bound external network work and maintain your own state expiry/replay protection; call `unregister` when stopping. Completion is idempotent and Slack delivery is bounded. `ctx.credentialConnect` is a trusted host service, not an authenticated HTTP endpoint.
+At the extension's OAuth callback, load and verify the saved state, then persist the grant for its personal owner and resource before completing:
+
+```ts
+await savePersonalGrant(savedState.agentId, savedState.userId, savedState.targetId, tokens);
+await savedState.onComplete(savedState.targetId);
+```
+
+The extension must resolve `server.id` from its trusted server configuration; the model, browser, URL query, form body, or link opener must not choose it. The platform snapshots the required `targetId` with `extensionId` at link issuance. A different completion ID is rejected without confirming the Slack flow. `undefined` from `requestCredentialConnectLink` means there is no active Slack flow; preserve the extension's normal connect route. The hook starts only after login, agent access, owner verification, and pairing redemption when necessary. Do not invoke completion on denial/error, or accept a callback-selected user, resource, or scope. Bound external network work and maintain your own state expiry/replay protection; call `unregister` when stopping. Completion is idempotent and Slack delivery is bounded. `ctx.credentialConnect` is a trusted host service, not an authenticated HTTP endpoint.

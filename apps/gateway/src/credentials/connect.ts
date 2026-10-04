@@ -18,7 +18,7 @@ export const credentialConnectHost: CredentialConnectHost = {
   async start(target, options) {
     if (!options.userId || !getAgent(options.agentId)) throw new Error("Personal credentials require an existing user and agent.");
     if (target.kind === "extension-oauth") {
-      return startExtensionCredentialOAuth(target.extensionId, options);
+      return startExtensionCredentialOAuth(target.extensionId, target.targetId, options);
     }
     if (target.kind !== "oauth") throw new Error("This target requires a token form.");
     const result = await getOAuthService().startAuthorization({
