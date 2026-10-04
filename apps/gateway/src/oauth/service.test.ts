@@ -87,6 +87,28 @@ describe("OAuthService", () => {
     ).rejects.toThrow(/No OAuth client configured/);
   });
 
+  it.each(["success", "failure", "hang"])("persists personal OAuth before the %s completion notification", async (mode) => {
+    vi.useFakeTimers();
+    try {
+      const fetchImpl = vi.fn(async () => new Response(JSON.stringify({ access_token: "test-access", refresh_token: "test-refresh", expires_in: 3600, email: "alice@example.com" }), { status: 200 }));
+      const service = new OAuthService({ store, loadConfig: () => makeConfig(), fetchImpl });
+      const onComplete = vi.fn(async () => {
+        expect(store.get("a1", "google", { type: "personal", userId: "alice" })).toBeDefined();
+        if (mode === "failure") throw new Error("delivery failed");
+        if (mode === "hang") await new Promise<void>(() => {});
+      });
+      const { state } = await service.startAuthorization({ agentId: "a1", provider: "google", scope: "personal", userId: "alice", onComplete });
+      const completion = service.handleCallback({ provider: "google", code: "test-code", state });
+      await vi.advanceTimersByTimeAsync(5001);
+      await expect(completion).resolves.toMatchObject({ scope: "personal", userId: "alice" });
+      expect(onComplete).toHaveBeenCalledOnce();
+      expect(store.get("a1", "google", { type: "team" })).toBeUndefined();
+      await expect(service.handleCallback({ provider: "google", code: "test-code", state })).rejects.toThrow("Invalid or expired OAuth state");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("callback exchanges the code against a faked Google token endpoint → connected", async () => {
     const fetchImpl = vi.fn(async (input: RequestInfo | URL, _init?: RequestInit) => {
       void _init;

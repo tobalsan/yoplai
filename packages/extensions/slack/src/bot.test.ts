@@ -75,6 +75,7 @@ const pairing = vi.hoisted(() => ({
   issue: vi.fn(),
   registerClient: vi.fn(),
   enabled: false,
+  baseUrl: "https://yoplai.test",
 }));
 vi.mock("./pairing.js", () => ({
   SlackPairingError: class extends Error {},
@@ -135,6 +136,8 @@ let dataDir = "";
 vi.mock("./context.js", () => ({
   getSlackContext: vi.fn(() => ({
     runAgent: mockRunAgent,
+    resolveSessionId: mockGetSessionEntry,
+    credentialConnect: {},
     saveMediaFile: mockSaveMediaFile,
     readMediaFile: mockReadMediaFile,
     getDataDir: () => dataDir,
@@ -467,6 +470,28 @@ describe("createSlackBot", () => {
     }));
     expect(apps[0].client.chat.postEphemeral).not.toHaveBeenCalled();
     expect(await pairTool.execute({}, { agent, config: {} as never, sessionId: "s1" })).toMatchObject({ ok: false });
+    await bot?.stop();
+  });
+
+  it.each([true, false])("substitutes or appends a credential tool link in the originating Slack reply (placeholder %s)", async (includePlaceholder) => {
+    const { createSlackBot } = await import("./bot.js");
+    const { createCredentialConnectLink, clearCredentialConnectRequests } = await import("./credential-connect.js");
+    pairing.enabled = true;
+    pairing.resolve.mockReturnValue(undefined);
+    pairing.issue.mockResolvedValue("https://yoplai.test/api/slack/pair/agent-link");
+    mockGetSessionEntry.mockResolvedValue({ sessionId: "s1" });
+    mockRunAgent.mockImplementationOnce(async () => {
+      const result = await createCredentialConnectLink({ agent, config: {} as never, sessionId: "s1" }, { kind: "oauth", provider: "google" });
+      expect(result).toBe("<slack-pair-link>");
+      return { payloads: [{ text: includePlaceholder ? "Connect <slack-pair-link>" : "Please connect your account." }], meta: { durationMs: 1, sessionId: "s1" } };
+    });
+    const bot = createSlackBot([agent], config);
+    apps[0].client.auth.test.mockResolvedValue({ user_id: "Ubot", team_id: "T1" });
+    await bot?.start();
+    await getMessageHandler(apps[0])({ message: { ts: "1.1", channel: "C1", user: "UC", text: "send email", channel_type: "channel" }, client: apps[0].client });
+    expect(apps[0].client.chat.postMessage).toHaveBeenCalledWith(expect.objectContaining({ text: expect.stringMatching(/https:\/\/yoplai.test\/api\/slack\/connect\/[A-Za-z0-9_-]{43}/) }));
+    expect(pairing.issue).toHaveBeenCalledWith("T1", "UC", apps[0].client);
+    clearCredentialConnectRequests();
     await bot?.stop();
   });
 

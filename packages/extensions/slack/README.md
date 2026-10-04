@@ -196,3 +196,9 @@ conversation IDs (`C...`, `D...`, or `G...`), not user IDs, unlike the send
 tools. Slack may restrict page sizes and rate-limit affected commercially
 distributed apps to roughly one request per minute, so large requested limits
 can require multiple API calls.
+
+## Connect a personal credential from Slack
+
+When a requested tool lacks credentials, the bot shares one ten-minute link to pair (if necessary) and connect Google/Gmail or an extension API token with **Just me** scope. Already-paired users go directly to Google; token connections show only their token fields. Pairing requires matching Slack/Yoplai emails and is refused before connecting when verification fails. Completion posts “You're connected, try again” in the original thread; retry the request yourself. Reconnect uses the same flow. Links are single-use and lost on gateway restart; request a new link after expiry or a failed provider authorization.
+
+See [flow and extension hook](../../../docs/slack-credential-connect.md).

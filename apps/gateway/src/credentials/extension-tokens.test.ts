@@ -6,7 +6,7 @@ import { z } from "zod";
 import type { AgentConfig, Extension, GatewayConfig } from "@yoplai/shared";
 import { GatewayConfigSchema } from "@yoplai/shared";
 import { CredentialStore } from "./store.js";
-import { extensionTokenIntegration, resolveExtensionTokenConfig } from "./extension-tokens.js";
+import { extensionTokenIntegration, resolveExtensionTokenConfig, savePersonalExtensionTokens } from "./extension-tokens.js";
 import { ExtensionRuntime } from "../extensions/runtime.js";
 
 const state = vi.hoisted(() => ({ dir: "", env: {} as Record<string, string> }));
@@ -61,6 +61,21 @@ function save(id: string, userId: string, fields: Record<string, string>) {
 }
 
 describe("requester extension API tokens", () => {
+  it("saves only declared validated personal fields without changing team config", () => {
+    const extension = tokenExtension("pennylane", async () => undefined);
+    const before = JSON.stringify({ agent, config });
+    savePersonalExtensionTokens(extension, agent, config, "alice", { apiToken: "alice-new" }, store);
+    expect(store.get({ agentId: agent.id, integration: extensionTokenIntegration("pennylane"), scope: { type: "personal", userId: "alice" } })).toEqual({ apiToken: "alice-new" });
+    expect(store.get({ agentId: agent.id, integration: extensionTokenIntegration("pennylane"), scope: { type: "personal", userId: "bob" } })).toBeUndefined();
+    expect(JSON.stringify({ agent, config })).toBe(before);
+    const invalid: Record<string, string>[] = [{ apiToken: "$env:HOST_SECRET" }, { apiToken: "********" }, { unexpected: "value" }, { apiToken: "" }];
+    for (const secrets of invalid) {
+      expect(() => savePersonalExtensionTokens(extension, agent, config, "alice", secrets, store)).toThrow("Invalid personal credential fields");
+    }
+    extension.validateAgentConfig = () => ({ valid: false, errors: ["apiToken"] });
+    expect(() => savePersonalExtensionTokens(extension, agent, config, "alice", { apiToken: "rejected" }, store)).toThrow("Extension configuration is invalid");
+    expect(store.get({ agentId: agent.id, integration: extensionTokenIntegration("pennylane"), scope: { type: "personal", userId: "alice" } })).toEqual({ apiToken: "alice-new" });
+  });
   it.each(["zendesk", "pennylane"] as const)("uses personal → existing team credentials for %s, including captured tools", async (id) => {
     const request = vi.fn(async () => ({ records: [] }));
     const runtime = new ExtensionRuntime();

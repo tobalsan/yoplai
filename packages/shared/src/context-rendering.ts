@@ -123,7 +123,7 @@ function renderChannelContext(
 }
 
 const UNPAIRED_SENDER_NOTE =
-  "sender_identity: unpaired — this Slack user is not linked to a Yoplai account, so tools use team credentials only (never their personal connections). If a tool reports not_connected or the user expects their own account/data, call the slack.pair tool right away and share the link as its result instructs, instead of asking them to type a command; if team credentials are used, say the data is the team's, not theirs.";
+  "sender_identity: unpaired — this Slack user is not linked to a Yoplai account, so tools use team credentials only (never their personal connections). If a requested tool needs credentials, call that tool first and share its single connection link, which pairs and connects together. Use slack.pair only when the user explicitly asks to pair or expects their own account/data without needing a credential connection; if team credentials are used, say the data is the team's, not theirs.";
 
 function renderBlockOrFallback(
   block: DiscordContextBlock | SlackContextBlock | undefined,

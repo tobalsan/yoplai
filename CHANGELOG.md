@@ -11,6 +11,8 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Added
 
+- Slack credential refusals now provide one personal connection link that pairs an unpaired sender and connects Google OAuth or an extension token, with reconnect links and a confirmation in the original thread.
+
 - Slack users can link existing Yoplai accounts with private, single-use, ten-minute `!pair` links; each sender's requests use their own personal credentials, with team-only credentials for unpaired users. Agents are told when a Slack sender is unpaired, and can call the new `slack.pair` tool to get a pairing link for that sender and share it in their reply, so users never need to type `!pair`. The pairing page uses the platform theme (`theme.css`, Inter) and `branding.name`/logo, defaulting to Yoplai.
 
 - Extension API tokens support **Just me** credentials encrypted per requester, with existing team credentials as fallback and a configuration link when missing. Admins can select **Whole team**; existing configs remain shared.

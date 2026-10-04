@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 import {
   GatewayConfigSchema,
+  registerCredentialConnectLinkProvider,
   type AgentConfig,
   type Extension,
 } from "@yoplai/shared";
@@ -42,6 +43,21 @@ const config = GatewayConfigSchema.parse({
 });
 
 describe("ExtensionRuntime", () => {
+  it("refuses a missing token with the trusted Slack flow link without executing the extension", async () => {
+    const execute = vi.fn();
+    const provider = vi.fn(async () => "<slack-pair-link>");
+    const unregister = registerCredentialConnectLinkProvider(provider);
+    const runtime = new ExtensionRuntime();
+    runtime.load([extension({ id: "sample", requiredSecrets: ["token"], getAgentTools: async () => [{ name: "sample_send", description: "Send", parameters: {}, execute }] })]);
+    const requester = { ...agent, extensions: { sample: { enabled: true } } };
+    try {
+      const result = await runtime.executeTool(requester, "sample_send", {}, config, "session");
+      expect(result.result).toMatchObject({ error: "extension_credentials_required", connectUrl: "<slack-pair-link>" });
+      expect(provider).toHaveBeenCalledWith(expect.objectContaining({ agent: requester, sessionId: "session" }), { kind: "token", extensionId: "sample" });
+      expect(execute).not.toHaveBeenCalled();
+    } finally { unregister(); }
+  });
+
   it("owns loaded extension state and capabilities", () => {
     const runtime = new ExtensionRuntime();
     runtime.load(

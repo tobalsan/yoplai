@@ -1034,11 +1034,11 @@ async function handleSlackMessage(
     let slackToolPostedToThread = false;
     const slackToolCallsToThread = new Set<string>();
     const activeSender: ActiveSlackSender | undefined = data.user
-      ? { agentId: target.agent.id, sessionKey, client, user: data.user }
+      ? { agentId: target.agent.id, sessionKey, client, user: data.user, channel: data.channel, threadTs: replyThreadTs }
       : undefined;
     const runAgent = async (sessionId?: string) => {
       const untrack = activeSender
-        ? trackSlackSender(Object.assign(activeSender, { sessionId }))
+        ? trackSlackSender(Object.assign(activeSender, { sessionId, threadTs: replyThreadTs }))
         : undefined;
       try {
         return await runAgentFor(sessionId);

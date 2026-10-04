@@ -1275,6 +1275,7 @@ export interface ExtensionCredentials {
 }
 
 export interface ExtensionContext {
+  credentialConnect?: import("./credential-connect.js").CredentialConnectHost;
   // Host-owned encrypted credentials, available to external extensions.
   credentials?: ExtensionCredentials;
   // Config

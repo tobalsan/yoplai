@@ -39,6 +39,7 @@ import {
 
 import { CredentialStore } from "../credentials/store.js";
 import { resolveCredential } from "../credentials/resolver.js";
+import { credentialConnectHost } from "../credentials/connect.js";
 
 export function createExtensionContext(
   _resolvedConfig: GatewayConfig
@@ -51,6 +52,7 @@ export function createExtensionContext(
   const getCredentialStore = () => credentialStore ??= new CredentialStore();
 
   return {
+    credentialConnect: credentialConnectHost,
     credentials: {
       get: (key) => getCredentialStore().get(key),
       save: (key, payload) => getCredentialStore().save(key, payload),

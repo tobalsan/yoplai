@@ -8,7 +8,7 @@ import type {
   OAuthRequirement,
   ResolvedOAuth,
 } from "@yoplai/shared";
-import { extensionConfigFieldNames } from "@yoplai/shared";
+import { requestCredentialConnectLink, extensionConfigFieldNames } from "@yoplai/shared";
 import { resolveAgentEnv } from "../config/index.js";
 import { getOAuthService } from "../oauth/service.js";
 import { extensionSecretFields, resolveExtensionTokenConfig } from "../credentials/extension-tokens.js";
@@ -182,11 +182,14 @@ export class ExtensionRuntime {
             extensionId: extension.id,
             execute: extensionSecretFields(extension).length === 0 ? tool.execute : async (args: unknown, context: ExtensionAgentToolContext) => {
               const current = resolveExtensionTokenConfig(extension, context.agent, context.config, context.userId);
-              if (current.missing.length) return {
-                error: "extension_credentials_required",
-                message: `Add your own token using Just me at [Configure ${extension.displayName}](${current.connectUrl}) before using this tool. An admin can also configure Whole team credentials.`,
-                connectUrl: current.connectUrl,
-              };
+              if (current.missing.length) {
+                const connectUrl = await requestCredentialConnectLink(context, { kind: "token", extensionId: extension.id }) ?? current.connectUrl;
+                return {
+                  error: "extension_credentials_required",
+                  message: `Add your own token using Just me at [Configure ${extension.displayName}](${connectUrl}) before using this tool. An admin can also configure Whole team credentials.`,
+                  connectUrl,
+                };
+              }
               const callTools = await extension.getAgentTools?.(current.agent, buildHookContext(current.agent, current.config, context.userId));
               const callTool = callTools?.find((candidate) => candidate.name === tool.name);
               if (!callTool) return { error: "extension_tool_unavailable", connectUrl: current.connectUrl };
@@ -260,7 +263,7 @@ export class ExtensionRuntime {
         try {
           const scoped = resolveExtensionTokenConfig(extension, agent, config, userId);
           if (scoped.missing.length) return [
-            `${extension.displayName} requires credentials. Ask the user to add their own token using Just me at [Configure ${extension.displayName}](${scoped.connectUrl}) before using its tools. Use this exact link.`,
+            `${extension.displayName} requires credentials. Ask the user to add their own token using Just me at [Configure ${extension.displayName}](${scoped.connectUrl}) before using its tools. For Slack requests, call the requested tool to receive a single personal connection link; do not send this web configuration link.`,
           ];
           const hookContext = buildHookContext(scoped.agent, scoped.config, userId);
           const contribution = await extension.getSystemPromptContributions?.(

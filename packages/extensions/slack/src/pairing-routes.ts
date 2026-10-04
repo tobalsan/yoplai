@@ -2,7 +2,7 @@ import type { Hono } from "hono";
 import { getSlackContextIfInitialized } from "./context.js";
 import { getSlackPairingService, SlackPairingError } from "./pairing.js";
 
-const escapeHtml = (value: string) => value.replace(/[&<>"']/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[char]!);
+export const escapeHtml = (value: string) => value.replace(/[&<>"']/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[char]!);
 const PAGE_STYLE = `
 :root{--bg-base:#0a0a0a;--bg-surface:#1a1a1a;--border-default:#2a2a2a;--text-primary:#fff;--text-secondary:#b6b6b6;--text-tertiary:#888;--bg-accent:#2563eb;--text-on-accent:#fff;--tone-error:#f5b0b0}
 *{box-sizing:border-box;margin:0;padding:0}
@@ -21,7 +21,7 @@ strong{color:var(--text-primary);font-weight:600}
 
 const brandName = () => getSlackContextIfInitialized()?.getConfig().branding?.name?.trim() || "Yoplai";
 
-function page(content: string): string {
+export function page(content: string): string {
   const branding = getSlackContextIfInitialized()?.getConfig().branding;
   const name = escapeHtml(brandName());
   const logo = branding?.logo ? `<img src="/api/branding/logo" alt="">` : "";

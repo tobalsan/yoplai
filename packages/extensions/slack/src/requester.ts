@@ -39,6 +39,10 @@ export type ActiveSlackSender = {
   sessionId?: string;
   client: SlackWebClient;
   user: string;
+  /** Shared-thread overlapping runs cannot safely identify a tool caller. */
+  credentialConnectAmbiguous?: boolean;
+  channel?: string;
+  threadTs?: string;
   /** Set by slack.pair; the bot substitutes it for the reply placeholder. */
   pairingLink?: string;
 };
@@ -48,6 +52,12 @@ export const SLACK_PAIR_LINK_PLACEHOLDER = "<slack-pair-link>";
 const activeSenders = new Set<ActiveSlackSender>();
 
 export function trackSlackSender(sender: ActiveSlackSender): () => void {
+  for (const active of activeSenders) {
+    if (active.agentId === sender.agentId && (active.sessionKey === sender.sessionKey || (active.sessionId && active.sessionId === sender.sessionId))) {
+      active.credentialConnectAmbiguous = true;
+      sender.credentialConnectAmbiguous = true;
+    }
+  }
   activeSenders.add(sender);
   return () => activeSenders.delete(sender);
 }
@@ -55,13 +65,19 @@ export function trackSlackSender(sender: ActiveSlackSender): () => void {
 export async function findSlackSender(
   agentId: string,
   sessionId: string | undefined,
-  resolveSessionId: (agentId: string, sessionKey: string) => Promise<string | undefined>
+  resolveSessionId: (agentId: string, sessionKey: string) => Promise<string | undefined>,
+  requireUnique = false
 ): Promise<ActiveSlackSender | undefined> {
   if (!sessionId) return undefined;
+  let matched: ActiveSlackSender | undefined;
   for (const sender of activeSenders) {
     if (sender.agentId !== agentId) continue;
     const id = sender.sessionId ?? (await resolveSessionId(agentId, sender.sessionKey));
-    if (id === sessionId) return sender;
+    if (id === sessionId) {
+      if (!requireUnique) return sender;
+      if (matched) return undefined;
+      matched = sender;
+    }
   }
-  return undefined;
+  return matched;
 }

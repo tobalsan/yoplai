@@ -1,3 +1,4 @@
+import { requestCredentialConnectLink } from "./credential-connect.js";
 import { z } from "zod";
 import { zodToJsonSchema } from "zod-to-json-schema";
 import {
@@ -342,6 +343,10 @@ export function defineToolExtension(
             definition.oauth,
             toolContext.userId
           );
+          if (!oauth.connected && oauth.reason !== "provider_not_configured") {
+            const link = await requestCredentialConnectLink(toolContext, { kind: "oauth", ...definition.oauth });
+            if (link) return { error: "oauth_connection_required", authorizeUrl: link, message: `Connect your personal ${oauth.provider} account at ${link}, then try again.` };
+          }
           const callTimeTool = definition
             .createTools({ ...resolved, oauth })
             .find((candidate) => candidate.name === tool.name);

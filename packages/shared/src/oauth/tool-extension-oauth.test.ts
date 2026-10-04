@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { describe, expect, it, vi } from "vitest";
+import { registerCredentialConnectLinkProvider } from "../credential-connect.js";
 import { defineToolExtension } from "../tool-extension.js";
 import type { AgentConfig, GatewayConfig } from "../types.js";
 import type { OAuthRequirement, ResolvedOAuth } from "./types.js";
@@ -33,6 +34,17 @@ describe("defineToolExtension oauth injection", () => {
         },
       ];
     },
+  });
+
+  it.each(["not_connected", "needs_reconnect"] as const)("returns one trusted Slack connect placeholder for %s without executing the provider tool", async (reason) => {
+    const provider = vi.fn(async () => "<slack-pair-link>");
+    const unregister = registerCredentialConnectLinkProvider(provider);
+    try {
+      const tools = await extension.getAgentTools!(makeAgent(), { config: makeConfig(), resolveOAuth: async () => ({ connected: false, provider: "google", reason, message: "Connect" }) });
+      const context = { agent: makeAgent(), config: makeConfig(), userId: "alice", sessionId: "session" };
+      expect(await tools[0].execute({}, context)).toEqual({ error: "oauth_connection_required", authorizeUrl: "<slack-pair-link>", message: "Connect your personal google account at <slack-pair-link>, then try again." });
+      expect(provider).toHaveBeenCalledWith(context, { kind: "oauth", provider: "google", scopes: ["scope-a"] });
+    } finally { unregister(); }
   });
 
   it("passes the declared requirement to resolveOAuth and injects the result", async () => {

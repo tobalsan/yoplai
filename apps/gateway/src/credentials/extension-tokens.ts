@@ -19,6 +19,30 @@ export function extensionSecretFields(extension: { requiredSecrets?: string[]; c
   return [...fields];
 }
 
+/** Apply the regular configuration API's validation to the personal-only form. */
+export function savePersonalExtensionTokens(
+  extension: Extension,
+  agent: AgentConfig,
+  config: GatewayConfig,
+  userId: string,
+  secrets: Record<string, string>,
+  store = new CredentialStore()
+): void {
+  const fields = extensionSecretFields(extension);
+  if (!userId || Object.entries(secrets).some(([field, value]) => !fields.includes(field) || typeof value !== "string" || !value || value === "********" || value.startsWith("$env:"))) {
+    throw new Error("Invalid personal credential fields");
+  }
+  const key = { agentId: agent.id, integration: extensionTokenIntegration(extension.id), scope: { type: "personal" as const, userId } };
+  const tokens = { ...store.get<Record<string, string>>(key), ...secrets };
+  const prospective = { ...agent, extensions: { ...agent.extensions, [extension.id]: { ...agent.extensions?.[extension.id], enabled: true, ...tokens } } };
+  const scoped = resolveExtensionTokenConfig(extension, prospective, config);
+  const validation = extension.validateAgentConfig?.(scoped.agent, scoped.config, resolveAgentEnv(agent, config));
+  if (scoped.missing.length || validation?.valid === false) {
+    throw new Error("Extension configuration is invalid");
+  }
+  store.save(key, tokens);
+}
+
 /** Overlay only this requester's token fields; shared non-secret settings stay intact. */
 export function resolveExtensionTokenConfig(
   extension: Extension,

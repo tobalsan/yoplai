@@ -33,6 +33,7 @@ interface PendingAuth {
   scopes: string[];
   scope: CredentialScope;
   createdAt: number;
+  onComplete?: () => Promise<void>;
 }
 
 const PENDING_TTL_MS = 10 * 60 * 1000;
@@ -132,6 +133,7 @@ export class OAuthService {
     scopes?: string[];
     scope?: "team" | "personal";
     userId?: string;
+    onComplete?: () => Promise<void>;
   }): Promise<StartAuthResult> {
     let scope: CredentialScope = { type: "team" };
     if (input.scope === "personal") {
@@ -166,6 +168,7 @@ export class OAuthService {
       scopes,
       scope,
       createdAt: Date.now(),
+      onComplete: input.onComplete,
     });
 
     const authorizeUrl = buildAuthorizeUrl({
@@ -236,7 +239,22 @@ export class OAuthService {
       connectedAt: now,
       updatedAt: now,
     };
-    return this.#store.save(connection);
+    const saved = this.#store.save(connection);
+    if (pending.onComplete) {
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      try {
+        await Promise.race([
+          pending.onComplete(),
+          new Promise<void>((resolve) => { timer = setTimeout(resolve, 5000); }),
+        ]);
+      } catch {
+        // A failed notification must not undo a successfully saved connection.
+        console.warn("OAuth connected, but completion notification failed");
+      } finally {
+        if (timer) clearTimeout(timer);
+      }
+    }
+    return saved;
   }
 
   /** Current connection status for a (agent, provider) pair. */
