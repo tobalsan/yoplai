@@ -6,7 +6,7 @@ tracker:
     - repo:yoplai
     - repo:yoplai-extensions
   active_states: [Todo, In Progress]
-  terminal_states: [In Review, Done, Cancelled]
+  terminal_states: [In Review, Ready to Merge, Done, Cancelled]
   needs_human: "Needs Human"
 
 polling:
@@ -42,11 +42,11 @@ Do this FIRST, before any task work — it is mandatory and unconditional. The c
 4. Add one concise tracker comment saying you are working on it (the claim comment).
 5. Continue only after those tracker updates succeed.
 
-Keep that same tracker comment updated with progress, validation results, blockers, and the final handoff. Do not create a noisy comment stream.
+Keep that same tracker comment updated with progress, validation results, blockers, and the final handoff, **but only while it is still the newest comment on the issue**. Before every update, re-read the issue's comments. If anyone (a human, Pom, a reviewer or another agent) has commented after yours, do NOT edit your earlier comment: post a new comment instead, and keep updating that new one under the same rule. Editing an older comment makes your update appear above the comments it answers, so readers lose the chronology. Otherwise, do not create a noisy comment stream.
 
 ## Dependencies
 
-Before coding, inspect the current issue's dependencies in the configured tracker. Fetch each blocker and confirm it is in a terminal/completed state such as `In Review` (PR open), `Done`, `Closed`, `Cancelled`, `Canceled`, or `Duplicate`. If any blocker is incomplete, update the tracker comment with the blocker and stop without coding. A blocker in `In Review` is satisfied: build on its open PR (see **Stacked PRs** below for issues in a project).
+Before coding, inspect the current issue's dependencies in the configured tracker. Fetch each blocker and confirm it is in a terminal/completed state such as `In Review` or `Ready to Merge` (PR open), `Done`, `Closed`, `Cancelled`, `Canceled`, or `Duplicate`. If any blocker is incomplete, update the tracker comment with the blocker and stop without coding. A blocker in `In Review` or `Ready to Merge` is satisfied: build on its open PR (see **Stacked PRs** below for issues in a project).
 
 For completed blockers, read their comments for prior workspace, branch, commit, and PR notes. If a completed dependency has an available workspace or branch, base your work on it so changes stack instead of diverging.
 
@@ -65,7 +65,7 @@ What matters about stacks:
 - A stack needs a linear history to merge. When a lower branch changes or `main` moves, the upper branches need a cascading rebase.
 
 Rules:
-1. **One stack per (project, repo).** The tracker's blocker graph can be a tree, but a stack is a line, so PRs are appended in the order issues are worked. Your blockers are `In Review` or `Done` before you are dispatched, so the current top of the stack always contains your unmerged blockers.
+1. **One stack per (project, repo).** The tracker's blocker graph can be a tree, but a stack is a line, so PRs are appended in the order issues are worked. Your blockers are `In Review`, `Ready to Merge` or `Done` before you are dispatched, so the current top of the stack always contains your unmerged blockers.
 2. **Find the stack.** Read the handoff comments / PR links of the project's other issues to find open PRs in your repo. In your workspace clone, run `gh stack checkout <one-of-those-pr-numbers>` then `gh stack view --json` to get the stack number and the top branch. If there is one open project PR but no stack yet, that PR's branch is the top. If no project PR is open in this repo (first issue, or everything already merged), you start from `origin/main`.
 3. **Branch from the top.** Create your `<issue-id>-<short-slug>` branch from the top branch (or `origin/main` when starting). This replaces the "base on `origin/main` if it advanced" rule in Workspace: to pick up newer `main`, run `gh stack sync` rather than leaving the stack.
 4. **Open the PR yourself, then link it.** Always `gh pr create --base <top-branch>` (or `--base main` when starting) with your own title (including the issue ID) and body, so `gh stack` never auto-generates a PR. Then:
