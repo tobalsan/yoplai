@@ -498,7 +498,7 @@ export function slackAgentTools(): ExtensionAgentTool[] {
     {
       name: "slack.send_message",
       description:
-        "Proactively send a Slack message to a channel or user. Provide `channel` as a channel ID (e.g. C0123456789) or a user ID (e.g. U0123456789) for a direct message. Use slack.list_channels / slack.list_users to look up IDs.",
+        "Proactively send a Slack message to a channel or user. Use only when the user, your instructions, or a scheduled job explicitly tell you to post somewhere. Never use it to answer an incoming Slack message: your final text answer is delivered there automatically. Provide `channel` as a channel ID (e.g. C0123456789) or a user ID (e.g. U0123456789) for a direct message. Use slack.list_channels / slack.list_users to look up IDs.",
       parameters: {
         type: "object",
         properties: {

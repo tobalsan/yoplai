@@ -76,3 +76,13 @@ describe("renderAgentContext slack sender identity", () => {
     expect(renderAgentContext(buildSlackContext({ metadata }))).not.toContain("sender_identity");
   });
 });
+
+describe("renderAgentContext slack reply delivery", () => {
+  const metadata = { channel: "slack" as const, place: "#ops", conversationType: "channel_message" as const, sender: "Thinh" };
+
+  it("tells the model its reply is delivered automatically", () => {
+    const rendered = renderAgentContext(buildSlackContext({ metadata }));
+    expect(rendered).toContain("[REPLY]");
+    expect(rendered).toContain("Do not call slack.send_message to reply here");
+  });
+});
