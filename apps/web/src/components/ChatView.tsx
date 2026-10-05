@@ -72,14 +72,6 @@ function isEmoji(str: string): boolean {
   return /^\p{Emoji}/u.test(str) && str.length <= 4;
 }
 
-function neverRow(value: never): never {
-  throw new Error(`Unexpected display row: ${String(value)}`);
-}
-
-function neverSegment(value: never): never {
-  throw new Error(`Unexpected activity segment: ${String(value)}`);
-}
-
 function activityItems<T>(segment: ActivitySegment<T>): T[] {
   return segment.kind === "activity" ? segment.items : [];
 }
