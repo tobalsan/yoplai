@@ -54,6 +54,8 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Changed
 
+- Agent **My connections** tab redesigned: each service shows its extension icon, a **Just me** and a **Whole team** column with a green/red status pill, and **Disconnect** sits in the Just me column so it is clear only your personal connection is removed.
+
 - Extension pages (settings forms, OAuth and MCP) all open on the same credential tab: **Just me** if it is set up, otherwise **Whole team** if that is set up, otherwise **Just me**.
 
 - Clicking an extension card now opens one page with the extension details and its settings form; the separate **Configure** step is gone. Old `/agents/<id>/extensions/<ext>/config` links open the same page.

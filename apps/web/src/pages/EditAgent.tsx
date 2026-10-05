@@ -312,7 +312,7 @@ export function EditAgent() {
         </Show>
 
         <Show when={agent() && tab() === "connections"}>
-          <AgentConnectionsPanel agentId={params.agentId} includeMcp={isExtensionEnabled("mcp")} />
+          <AgentConnectionsPanel agentId={params.agentId} includeMcp={isExtensionEnabled("mcp")} extensions={extensions()} />
         </Show>
 
         <Show when={agent() && tab() === "schedules" && dashboardAgentId() && isExtensionEnabled("scheduler")}>

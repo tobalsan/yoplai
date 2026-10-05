@@ -19,9 +19,10 @@ const TABS: { scope: CredentialScope; label: string; caption: string }[] = [
   { scope: "team", label: "Whole team", caption: "Fallback for everyone" },
 ];
 
-function ScopeIcon(props: { scope: CredentialScope }) {
+/** Person (Just me) or group (Whole team) glyph. */
+export function ScopeIcon(props: { scope: CredentialScope; class?: string }) {
   return (
-    <svg class="cred-tab-icon" viewBox="0 0 20 20" aria-hidden="true">
+    <svg class={props.class ?? "cred-tab-icon"} viewBox="0 0 20 20" aria-hidden="true">
       <Show
         when={props.scope === "team"}
         fallback={
@@ -40,7 +41,7 @@ function ScopeIcon(props: { scope: CredentialScope }) {
   );
 }
 
-/** Status pill; its styles ship with CredentialScopeTabs, so render it inside the tabs. */
+/** Status pill; include STATUS_PILL_STYLES when rendering it outside CredentialScopeTabs. */
 export function StatusPill(props: { status: ScopeStatus; class?: string }) {
   return (
     <span class={`cred-status-pill ${props.class ?? ""}`} data-tone={props.status.tone}>
@@ -132,6 +133,18 @@ export function CredentialScopeTabs(props: {
   );
 }
 
+export const STATUS_PILL_STYLES = `
+.cred-status-pill {
+  --tone: var(--text-secondary);
+  flex: 0 0 auto; display: inline-flex; align-items: center; gap: 5px; padding: 2px 8px 2px 7px;
+  border-radius: 999px; font-size: 11px; font-weight: 600; line-height: 1.2; white-space: nowrap;
+  color: var(--tone); background: color-mix(in srgb, var(--tone) 12%, transparent);
+}
+.cred-status-pill::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+.cred-status-pill[data-tone="ok"] { --tone: #16a34a; }
+.cred-status-pill[data-tone="error"] { --tone: #dc2626; }
+`;
+
 export const CREDENTIAL_SCOPE_TABS_STYLES = `
 .cred-tabs { --cred-accent: var(--accent, #1a73e8); --cred-radius: 14px; }
 .cred-tabs-list { display: flex; gap: 4px; position: relative; z-index: 1; }
@@ -170,16 +183,7 @@ export const CREDENTIAL_SCOPE_TABS_STYLES = `
 .cred-tab-admin { display: inline-flex; color: var(--text-secondary); }
 .cred-tab-lock { width: 12px; height: 12px; fill: none; stroke: currentColor; stroke-width: 1.6; }
 .cred-tab-status { margin-left: auto; }
-.cred-status-pill {
-  --tone: var(--text-secondary);
-  flex: 0 0 auto; display: inline-flex; align-items: center; gap: 5px; padding: 2px 8px 2px 7px;
-  border-radius: 999px; font-size: 11px; font-weight: 600; line-height: 1.2; white-space: nowrap;
-  color: var(--tone); background: color-mix(in srgb, var(--tone) 12%, transparent);
-}
-.cred-status-pill::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
-.cred-status-pill[data-tone="ok"] { --tone: #16a34a; }
-.cred-status-pill[data-tone="error"] { --tone: #dc2626; }
-.cred-tab:disabled .cred-tab-status { opacity: .8; }
+${STATUS_PILL_STYLES}.cred-tab:disabled .cred-tab-status { opacity: .8; }
 .cred-tabs-panel {
   border: 1px solid var(--border-default); border-radius: var(--cred-radius); background: var(--bg-surface); padding: 20px;
 }
