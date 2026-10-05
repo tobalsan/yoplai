@@ -54,6 +54,8 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Changed
 
+- Credential **Just me** / **Whole team** tabs now show a status pill for each scope: green when connected or configured, red when a connection needs reconnecting or is missing access, gray when not set up. The OAuth card's separate status badge is gone, MCP server badges use the same pill style, and the "Admin only" tag is now a lock icon.
+
 - The **Just me** tab of extension configuration forms now lets you set every field, not only the token — e.g. your own Jira email, subdomain or project keys. Fields left at the team value keep following it. Usernames and emails show in clear (Cloudi‑Fi Admin's username is no longer masked), and Slack connect links also ask for required settings the team has not set.
 
 - Extension, Google OAuth, and MCP connection pages now show credentials in a tabbed box — **Just me** and **Whole team** tabs, each explaining who it serves, with an "Admin only" mark when the team tab is admin-managed — instead of a "Connection for" / "Credentials for" dropdown.

@@ -3,7 +3,7 @@ import type { Component } from "solid-js";
 import { A, useParams } from "@solidjs/router";
 import { useSession } from "../../auth/client";
 import { LeftNavShell } from "../../components/LeftNavShell";
-import { CredentialScopeTabs } from "../../components/CredentialScopeTabs";
+import { CredentialScopeTabs, StatusPill, type CredentialScope, type ScopeStatus } from "../../components/CredentialScopeTabs";
 
 type ServerAuth = "oauth" | "static";
 type ServerState = "connected" | "disconnected" | "needs_reconnect" | "static";
@@ -31,18 +31,18 @@ async function fetchStatus(agentId: string, scope: "team" | "personal"): Promise
   return (await res.json()) as McpStatus;
 }
 
-function badgeLabel(state: ServerState): string {
+function serverStatus(state: ServerState): ScopeStatus {
   switch (state) {
-    case "connected": return "Connected";
-    case "needs_reconnect": return "Needs reconnect";
-    case "static": return "Configured";
-    default: return "Not connected";
+    case "connected": return { tone: "ok", label: "Connected" };
+    case "needs_reconnect": return { tone: "error", label: "Needs reconnect" };
+    case "static": return { tone: "ok", label: "Configured" };
+    default: return { tone: "off", label: "Not connected" };
   }
 }
 
 export function McpConfigPage(): ReturnType<Component> {
   const params = useParams<{ agentId: string }>();
-  const [servers, setServers] = createSignal<McpServer[]>();
+  const [serversByScope, setServersByScope] = createSignal<Partial<Record<CredentialScope, McpServer[]>>>({});
   const [error, setError] = createSignal<string>();
   const [loading, setLoading] = createSignal(false);
   const session = useSession();
@@ -60,18 +60,18 @@ export function McpConfigPage(): ReturnType<Component> {
     const request = ++statusRequest;
     setLoading(true);
     try {
-      const status = await fetchStatus(agentId, scope());
+      // Both scopes are loaded so each tab can show its own state.
+      const [team, personal] = await Promise.all([
+        fetchStatus(agentId, "team"),
+        session().data?.user ? fetchStatus(agentId, "personal") : undefined,
+      ]);
       if (request !== statusRequest) return;
-      if (status.canConfigureTeam === false) {
+      if (team.canConfigureTeam === false) {
         setCanConfigureTeam(false);
-        if (scope() === "team" && !scopePicked) {
-          // Non-admins start on the connections they can manage.
-          setScope("personal");
-          void refreshStatus();
-          return;
-        }
+        // Non-admins start on the connections they can manage.
+        if (scope() === "team" && !scopePicked) setScope("personal");
       }
-      setServers(status.servers);
+      setServersByScope({ team: team.servers, personal: personal?.servers });
       setError(undefined);
     } catch (cause) {
       if (request === statusRequest) setError(cause instanceof Error ? cause.message : "Failed to load MCP server status.");
@@ -103,6 +103,19 @@ export function McpConfigPage(): ReturnType<Component> {
       window.removeEventListener("focus", onFocus);
     });
   });
+
+  const servers = () => serversByScope()[scope()];
+
+  // Pill summarizing a tab's OAuth servers; static servers need no connection.
+  const tabStatus = (target: CredentialScope): ScopeStatus | undefined => {
+    const oauth = serversByScope()[target]?.filter((server) => server.auth === "oauth");
+    if (!oauth?.length) return undefined;
+    const connected = oauth.filter((server) => server.state === "connected").length;
+    if (oauth.some((server) => server.state === "needs_reconnect")) return { tone: "error", label: "Reconnect" };
+    if (connected === oauth.length) return { tone: "ok", label: "Connected" };
+    if (connected) return { tone: "ok", label: `${connected}/${oauth.length} connected` };
+    return { tone: "off", label: "Not set up" };
+  };
 
   // Non-admins can see, but not change, admin-managed team connections.
   const teamReadOnly = () => scope() === "team" && !canConfigureTeam();
@@ -138,8 +151,8 @@ export function McpConfigPage(): ReturnType<Component> {
           value={scope()}
           personalDisabled={!session().data?.user}
           teamLocked={!canConfigureTeam()}
+          status={{ personal: tabStatus("personal"), team: tabStatus("team") }}
           onChange={(next) => {
-            setServers(undefined);
             setError(undefined);
             scopePicked = true;
             setScope(next);
@@ -164,7 +177,7 @@ export function McpConfigPage(): ReturnType<Component> {
                   <div class="mcp-config-name">{server.name}</div>
                   <div class="mcp-config-url">{server.url}</div>
                 </div>
-                <span class={`mcp-config-badge mcp-config-badge-${server.state}`}>{badgeLabel(server.state)}</span>
+                <StatusPill status={serverStatus(server.state)} />
               </div>
               <Show when={server.auth === "oauth" && !teamReadOnly()}>
                 <div class="mcp-config-actions">
@@ -201,10 +214,6 @@ const MCP_STYLES = `
 .mcp-config-server { display: flex; gap: 16px; align-items: center; justify-content: space-between; }
 .mcp-config-name { font-size: 16px; font-weight: 600; color: var(--text-primary); }
 .mcp-config-url { margin-top: 4px; color: var(--text-secondary); font-size: 13px; overflow-wrap: anywhere; }
-.mcp-config-badge { flex: 0 0 auto; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .04em; padding: 3px 8px; border-radius: 999px; }
-.mcp-config-badge-connected { color: #137333; background: color-mix(in srgb, #137333 12%, transparent); }
-.mcp-config-badge-disconnected, .mcp-config-badge-static { color: var(--text-secondary); background: color-mix(in srgb, var(--text-secondary) 12%, transparent); }
-.mcp-config-badge-needs_reconnect { color: #b26a00; background: color-mix(in srgb, #f9ab00 18%, transparent); }
 .mcp-config-actions { display: flex; justify-content: flex-end; margin-top: 16px; }
 .mcp-config-btn { padding: 8px 14px; border-radius: 8px; border: 1px solid var(--border-default); background: var(--bg-base); color: var(--text-primary); font-size: 13px; cursor: pointer; }
 .mcp-config-btn-primary { background: #1a73e8; border-color: #1a73e8; color: #fff; }

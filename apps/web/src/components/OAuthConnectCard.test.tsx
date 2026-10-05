@@ -18,22 +18,21 @@ afterEach(() => {
 });
 
 describe("OAuthConnectCard scope", () => {
-  it("keeps the newest scope status when the team response arrives last", async () => {
-    let resolveTeam!: (value: Response) => void;
-    const team = new Promise<Response>((resolve) => { resolveTeam = resolve; });
-    const status = (account: string) => new Response(JSON.stringify({ connected: true, provider: "google", account, scopes: [] }));
-    const fetchMock = vi.fn((input: string) => input.includes("scope=personal")
-      ? Promise.resolve(status("alice@example.test"))
-      : team);
+  it("shows each scope's own connection and both states on the tab pills", async () => {
+    const fetchMock = vi.fn(async (input: string) => new Response(JSON.stringify(input.includes("scope=personal")
+      ? { connected: true, provider: "google", account: "alice@example.test", scopes: [] }
+      : { state: "needs_reconnect", connected: false, provider: "google" })));
     vi.stubGlobal("fetch", fetchMock);
     dispose = render(() => <OAuthConnectCard agentId="probe" provider="google" label="Google" />, document.body);
+    await flush();
     selectScope(document, "personal");
     await flush();
-    expect(document.body.textContent).toContain("alice@example.test");
-    resolveTeam(status("team@example.test"));
+    expect(document.querySelector(".cred-tabs-panel")?.textContent).toContain("alice@example.test");
+    const pills = Array.from(document.querySelectorAll<HTMLElement>(".cred-tab-status")).map((pill) => [pill.textContent, pill.dataset.tone]);
+    expect(pills).toEqual([["Connected", "ok"], ["Reconnect", "error"]]);
+    selectScope(document, "team");
     await flush();
-    expect(document.body.textContent).toContain("alice@example.test");
-    expect(document.body.textContent).not.toContain("team@example.test");
+    expect(document.querySelector(".cred-tabs-panel")?.textContent).not.toContain("alice@example.test");
   });
 
   it("starts and disconnects the selected personal scope", async () => {

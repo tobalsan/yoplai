@@ -320,6 +320,8 @@ describe("ExtensionConfigForm", () => {
     await mount("scribe", "exa");
     expect(activeScope(container)).toBe("personal");
     expect(scopeTabLabels(container)).toEqual(["Just me", "Whole team"]);
+    const pills = () => Array.from(container.querySelectorAll<HTMLElement>(".cred-tab-status")).map((pill) => [pill.textContent, pill.dataset.tone]);
+    expect(pills()).toEqual([["Not set up", "off"], ["Configured", "ok"]]);
     const baseUrl = container.querySelector<HTMLInputElement>("#ext-field-baseUrl")!;
     expect(baseUrl.disabled).toBe(false);
     expect(baseUrl.value).toBe("https://shared.test");
@@ -333,6 +335,7 @@ describe("ExtensionConfigForm", () => {
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(patchAgentExtensionMock).toHaveBeenCalledWith("scribe", "exa", { credentialScope: "personal", config: { baseUrl: "https://alice.test" }, secrets: { apiKey: "alice-personal" } });
     expect(container.querySelector<HTMLInputElement>("#ext-field-apiKey")?.value).toBe("********");
+    expect(pills()[0]).toEqual(["Configured", "ok"]);
     expect(container.textContent).not.toContain("alice-personal");
   });
 

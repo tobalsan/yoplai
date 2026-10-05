@@ -77,20 +77,21 @@ describe("McpConfigPage", () => {
   });
 
   it("renders every configured server and an empty state", async () => {
-    fetchMock.mockResolvedValueOnce(status([server("connected"), { ...server("static"), name: "Internal", url: "https://mcp.example" }]));
+    fetchMock.mockResolvedValue(status([server("connected"), { ...server("static"), name: "Internal", url: "https://mcp.example" }]));
     await mount();
     expect(container.querySelectorAll(".mcp-config-card")).toHaveLength(2);
     expect(container.textContent).toContain("Internal");
 
     dispose();
-    fetchMock.mockResolvedValueOnce(status([]));
+    fetchMock.mockResolvedValue(status([]));
     await mount();
     expect(container.textContent).toContain("No remote MCP servers are configured");
   });
 
   it("opens authorize popup and refreshes after a successful result", async () => {
-    fetchMock.mockResolvedValueOnce(status([server("disconnected")])).mockResolvedValueOnce(status([server("connected")]));
+    fetchMock.mockResolvedValue(status([server("disconnected")]));
     await mount();
+    fetchMock.mockResolvedValue(status([server("connected")]));
     container.querySelector<HTMLButtonElement>(".mcp-config-card button")!.click();
     expect(window.open).toHaveBeenCalledWith(
       "/api/mcp/oauth/authorize?agent=casey&server=Claap&scope=team",
@@ -100,34 +101,37 @@ describe("McpConfigPage", () => {
 
     window.dispatchEvent(new MessageEvent("message", { data: { type: "yoplai-oauth", extension: "mcp", server: "Claap", success: true } }));
     await new Promise((resolve) => setTimeout(resolve, 0));
-    expect(fetchMock).toHaveBeenCalledTimes(2);
+    // One status request per scope, per refresh.
+    expect(fetchMock).toHaveBeenCalledTimes(4);
     expect(container.textContent).toContain("Connected");
   });
 
   it.each(["yoplai-oauth", "aihub-oauth"] as const)(
     "refreshes exactly once per %s popup message",
     async (type) => {
-      fetchMock.mockResolvedValueOnce(status([server("disconnected")])).mockResolvedValueOnce(status([server("connected")]));
+      fetchMock.mockResolvedValue(status([server("disconnected")]));
       await mount();
+      fetchMock.mockResolvedValue(status([server("connected")]));
 
       window.dispatchEvent(new MessageEvent("message", { data: { type, extension: "mcp", server: "Claap", success: true } }));
       await new Promise((resolve) => setTimeout(resolve, 0));
-      expect(fetchMock).toHaveBeenCalledTimes(2);
+      expect(fetchMock).toHaveBeenCalledTimes(4);
       expect(container.textContent).toContain("Connected");
     }
   );
 
   it("disconnects and refreshes the server state", async () => {
-    fetchMock
-      .mockResolvedValueOnce(status([server("connected")]))
-      .mockResolvedValueOnce({ ok: true, json: vi.fn().mockResolvedValue({ ok: true }) })
-      .mockResolvedValueOnce(status([server("disconnected")]));
+    let state: "connected" | "disconnected" = "connected";
+    fetchMock.mockImplementation(async (input: string) => {
+      if (!input.includes("/disconnect")) return status([server(state)]);
+      state = "disconnected";
+      return { ok: true, json: vi.fn().mockResolvedValue({ ok: true }) };
+    });
     await mount();
     container.querySelector<HTMLButtonElement>(".mcp-config-card button")!.click();
     await new Promise((resolve) => setTimeout(resolve, 0));
 
-    expect(fetchMock).toHaveBeenNthCalledWith(
-      2,
+    expect(fetchMock).toHaveBeenCalledWith(
       "/api/mcp/oauth/disconnect?agent=casey&server=Claap&scope=team",
       { method: "POST" }
     );
@@ -166,18 +170,15 @@ describe("McpConfigPage", () => {
     );
   });
 
-  it("ignores a stale team response after switching to personal", async () => {
-    let finishTeam: (value: ReturnType<typeof status>) => void = () => {};
-    fetchMock.mockImplementation((input: string) => input.includes("scope=personal")
-      ? Promise.resolve(status([server("connected")]))
-      : new Promise<ReturnType<typeof status>>((resolve) => { finishTeam = resolve; }));
+  it("shows each scope's own servers and summarizes both on the tab pills", async () => {
+    fetchMock.mockImplementation(async (input: string) => status([server(input.includes("scope=personal") ? "connected" : "needs_reconnect")]));
     await mount();
     selectScope(container, "personal");
     await new Promise((resolve) => setTimeout(resolve, 0));
-    finishTeam(status([server("disconnected")]));
-    await new Promise((resolve) => setTimeout(resolve, 0));
-    expect(container.textContent).toContain("Connected");
-    expect(container.textContent).not.toContain("Not connected");
+    expect(container.querySelector(".cred-tabs-panel")?.textContent).toContain("Connected");
+    expect(container.querySelector(".cred-tabs-panel")?.textContent).not.toContain("Needs reconnect");
+    const pills = Array.from(container.querySelectorAll<HTMLElement>(".cred-tab-status")).map((pill) => [pill.textContent, pill.dataset.tone]);
+    expect(pills).toEqual([["Connected", "ok"], ["Reconnect", "error"]]);
   });
 
   it("opens the requester personal connection from a reconnect link", async () => {

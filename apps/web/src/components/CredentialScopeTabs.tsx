@@ -2,6 +2,9 @@ import { For, Show, type JSX } from "solid-js";
 
 export type CredentialScope = "personal" | "team";
 
+/** State of one tab's credentials: ok = connected/configured, error = broken connection, off = not set up. */
+export type ScopeStatus = { tone: "ok" | "error" | "off"; label: string };
+
 const TABS: { scope: CredentialScope; label: string; caption: string }[] = [
   { scope: "personal", label: "Just me", caption: "Only your requests" },
   { scope: "team", label: "Whole team", caption: "Fallback for everyone" },
@@ -28,6 +31,15 @@ function ScopeIcon(props: { scope: CredentialScope }) {
   );
 }
 
+/** Status pill; its styles ship with CredentialScopeTabs, so render it inside the tabs. */
+export function StatusPill(props: { status: ScopeStatus; class?: string }) {
+  return (
+    <span class={`cred-status-pill ${props.class ?? ""}`} data-tone={props.status.tone}>
+      {props.status.label}
+    </span>
+  );
+}
+
 function LockIcon() {
   return (
     <svg class="cred-tab-lock" viewBox="0 0 16 16" aria-hidden="true">
@@ -45,6 +57,8 @@ export function CredentialScopeTabs(props: {
   personalDisabled?: boolean;
   /** Team credentials are visible but managed by an admin. */
   teamLocked?: boolean;
+  /** Pill shown at the right of each tab; omit a scope while it is unknown. */
+  status?: Partial<Record<CredentialScope, ScopeStatus>>;
   disabled?: boolean;
   children: JSX.Element;
 }) {
@@ -88,10 +102,12 @@ export function CredentialScopeTabs(props: {
                 <span class="cred-tab-label">
                   {tab.label}
                   <Show when={tab.scope === "team" && props.teamLocked}>
-                    <span class="cred-tab-admin" title="Managed by an admin">
+                    <span class="cred-tab-admin" title="Admin only: managed by an admin" aria-label="Admin only">
                       <LockIcon />
-                      Admin only
                     </span>
+                  </Show>
+                  <Show when={props.status?.[tab.scope]}>
+                    {(status) => <StatusPill status={status()} class="cred-tab-status" />}
                   </Show>
                 </span>
                 <span class="cred-tab-caption">{tab.caption}</span>
@@ -109,10 +125,10 @@ export function CredentialScopeTabs(props: {
 
 export const CREDENTIAL_SCOPE_TABS_STYLES = `
 .cred-tabs { --cred-accent: var(--accent, #1a73e8); --cred-radius: 14px; }
-.cred-tabs-list { display: flex; gap: 6px; position: relative; z-index: 1; }
+.cred-tabs-list { display: flex; gap: 4px; position: relative; z-index: 1; }
 .cred-tab {
-  position: relative; display: flex; align-items: center; gap: 10px; min-width: 0;
-  margin-bottom: -1px; padding: 10px 16px 11px 13px;
+  position: relative; display: flex; align-items: center; gap: 9px; flex: 0 1 auto; min-width: 0;
+  margin-bottom: -1px; padding: 10px 12px 11px 11px;
   border: 1px solid transparent; border-bottom: 0; border-radius: 11px 11px 0 0;
   background: transparent; color: var(--text-secondary); font: inherit; text-align: left; cursor: pointer;
   transition: background-color .16s ease, color .16s ease, border-color .16s ease;
@@ -139,15 +155,22 @@ export const CREDENTIAL_SCOPE_TABS_STYLES = `
 .cred-tab[aria-selected="true"] .cred-tab-icon {
   color: var(--cred-accent); background: color-mix(in srgb, var(--cred-accent) 12%, transparent);
 }
-.cred-tab-text { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
-.cred-tab-label { display: flex; align-items: center; gap: 8px; font-size: 14px; font-weight: 600; line-height: 1.25; }
-.cred-tab-caption { font-size: 12px; line-height: 1.3; color: var(--text-secondary); white-space: nowrap; }
-.cred-tab-admin {
-  display: inline-flex; align-items: center; gap: 3px; padding: 1px 6px 1px 4px; border-radius: 999px;
-  font-size: 10px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase;
-  color: var(--text-secondary); background: color-mix(in srgb, var(--text-secondary) 12%, transparent);
+.cred-tab-text { display: flex; flex-direction: column; gap: 1px; min-width: 0; flex: 1; }
+.cred-tab-label { display: flex; align-items: center; gap: 6px; white-space: nowrap; font-size: 14px; font-weight: 600; line-height: 1.25; }
+.cred-tab-caption { font-size: 12px; line-height: 1.3; color: var(--text-secondary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cred-tab-admin { display: inline-flex; color: var(--text-secondary); }
+.cred-tab-lock { width: 12px; height: 12px; fill: none; stroke: currentColor; stroke-width: 1.6; }
+.cred-tab-status { margin-left: auto; }
+.cred-status-pill {
+  --tone: var(--text-secondary);
+  flex: 0 0 auto; display: inline-flex; align-items: center; gap: 5px; padding: 2px 8px 2px 7px;
+  border-radius: 999px; font-size: 11px; font-weight: 600; line-height: 1.2; white-space: nowrap;
+  color: var(--tone); background: color-mix(in srgb, var(--tone) 12%, transparent);
 }
-.cred-tab-lock { width: 11px; height: 11px; fill: none; stroke: currentColor; stroke-width: 1.6; }
+.cred-status-pill::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+.cred-status-pill[data-tone="ok"] { --tone: #16a34a; }
+.cred-status-pill[data-tone="error"] { --tone: #dc2626; }
+.cred-tab:disabled .cred-tab-status { opacity: .8; }
 .cred-tabs-panel {
   border: 1px solid var(--border-default); border-radius: var(--cred-radius); background: var(--bg-surface); padding: 20px;
 }

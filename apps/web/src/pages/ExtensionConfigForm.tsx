@@ -18,7 +18,10 @@ import {
   type AutoFormField,
   type AutoFormValues,
 } from "../lib/auto-form-schema";
-import { CredentialScopeTabs } from "../components/CredentialScopeTabs";
+import { CredentialScopeTabs, type ScopeStatus } from "../components/CredentialScopeTabs";
+
+const CONFIGURED: ScopeStatus = { tone: "ok", label: "Configured" };
+const NOT_SET_UP: ScopeStatus = { tone: "off", label: "Not set up" };
 
 /**
  * Schema-driven auto-form renderer (ALG-355). Builds a per-agent config form
@@ -325,6 +328,10 @@ export function ExtensionConfigForm() {
                     <CredentialScopeTabs
                       value={credentialScope()}
                       teamLocked={!ext().canConfigureTeam}
+                      status={{
+                        personal: ext().personalSecretFields?.length ? CONFIGURED : NOT_SET_UP,
+                        team: teamConfigured() ? CONFIGURED : NOT_SET_UP,
+                      }}
                       disabled={saving()}
                       onChange={(next) => { setCredentialScope(next); setSaved(false); setError(null); }}
                     >

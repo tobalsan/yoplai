@@ -7,7 +7,7 @@ import {
   Switch,
 } from "solid-js";
 import { useSession } from "../auth/client";
-import { CredentialScopeTabs } from "./CredentialScopeTabs";
+import { CredentialScopeTabs, type CredentialScope, type ScopeStatus } from "./CredentialScopeTabs";
 
 type ConnectionState = "connected" | "needs_reconnect" | "disconnected";
 
@@ -39,7 +39,7 @@ export function OAuthConnectCard(props: {
   scopes?: string[];
   label: string;
 }) {
-  const [status, setStatus] = createSignal<OAuthStatus>();
+  const [statuses, setStatuses] = createSignal<Partial<Record<CredentialScope, OAuthStatus>>>({});
   const [loading, setLoading] = createSignal(false);
   const [error, setError] = createSignal<string>();
   const session = useSession();
@@ -53,23 +53,26 @@ export function OAuthConnectCard(props: {
     const request = ++statusRequest;
     setLoading(true);
     try {
-      const response = await fetch(
-        `/api/oauth/${encodeURIComponent(props.provider)}/status?agent=${encodeURIComponent(props.agentId)}&scope=${scope()}`
-      );
-      const nextStatus = response.ok
-        ? ((await response.json()) as OAuthStatus)
-        : { connected: false, provider: props.provider };
+      // Both scopes are loaded so each tab can show its own state.
+      const load = async (target: CredentialScope): Promise<OAuthStatus> => {
+        const response = await fetch(
+          `/api/oauth/${encodeURIComponent(props.provider)}/status?agent=${encodeURIComponent(props.agentId)}&scope=${target}`
+        );
+        return response.ok
+          ? ((await response.json()) as OAuthStatus)
+          : { connected: false, provider: props.provider };
+      };
+      const [team, personal] = await Promise.all([
+        load("team"),
+        session().data?.user ? load("personal") : undefined,
+      ]);
       if (request !== statusRequest) return;
-      if (nextStatus.canConfigureTeam === false) {
+      if (team.canConfigureTeam === false) {
         setCanConfigureTeam(false);
-        if (scope() === "team" && !scopePicked) {
-          // Non-admins start on the connection they can manage.
-          setScope("personal");
-          void refreshStatus();
-          return;
-        }
+        // Non-admins start on the connection they can manage.
+        if (scope() === "team" && !scopePicked) setScope("personal");
       }
-      setStatus(nextStatus);
+      setStatuses({ team, personal });
       setError(undefined);
     } catch (cause) {
       if (request === statusRequest) setError(cause instanceof Error ? cause.message : String(cause));
@@ -101,11 +104,23 @@ export function OAuthConnectCard(props: {
     });
   });
 
+  const status = () => statuses()[scope()];
   const lifecycle = () => stateOf(status());
   const hasRequiredScopes = () =>
     (props.scopes ?? []).every((scope) => status()?.scopes?.includes(scope));
   const connected = () => lifecycle() === "connected" && hasRequiredScopes();
   const needsGrant = () => lifecycle() === "connected" && !hasRequiredScopes();
+
+  const tabStatus = (target: CredentialScope): ScopeStatus | undefined => {
+    const current = statuses()[target];
+    if (!current) return undefined;
+    const state = stateOf(current);
+    if (state === "needs_reconnect") return { tone: "error", label: "Reconnect" };
+    if (state !== "connected") return { tone: "off", label: "Not set up" };
+    return (props.scopes ?? []).every((scope) => current.scopes?.includes(scope))
+      ? { tone: "ok", label: "Connected" }
+      : { tone: "error", label: "Not granted" };
+  };
 
   // Non-admins can see, but not change, the admin-managed team connection.
   const teamReadOnly = () => scope() === "team" && !canConfigureTeam();
@@ -140,8 +155,8 @@ export function OAuthConnectCard(props: {
         value={scope()}
         personalDisabled={!session().data?.user}
         teamLocked={!canConfigureTeam()}
+        status={{ personal: tabStatus("personal"), team: tabStatus("team") }}
         onChange={(next) => {
-          setStatus(undefined);
           scopePicked = true;
           setScope(next);
         }}
@@ -149,23 +164,6 @@ export function OAuthConnectCard(props: {
         <div class="oauth-card-head">
           <div class="oauth-provider">
             <span class="oauth-provider-name">{props.label}</span>
-            <Switch
-              fallback={
-                <span class="oauth-badge oauth-badge-off">Not connected</span>
-              }
-            >
-              <Match when={connected()}>
-                <span class="oauth-badge oauth-badge-on">Connected</span>
-              </Match>
-              <Match when={needsGrant()}>
-                <span class="oauth-badge oauth-badge-warn">Not granted</span>
-              </Match>
-              <Match when={lifecycle() === "needs_reconnect"}>
-                <span class="oauth-badge oauth-badge-warn">
-                  Needs reconnect
-                </span>
-              </Match>
-            </Switch>
           </div>
           <Show when={!teamReadOnly()}>
           <Switch
@@ -266,10 +264,6 @@ export const OAUTH_CONNECT_CARD_STYLES = `
 .oauth-card-head { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
 .oauth-provider, .oauth-actions { display: flex; align-items: center; gap: 8px; }
 .oauth-provider-name { font-size: 16px; font-weight: 600; color: var(--text-primary); }
-.oauth-badge { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .04em; padding: 3px 8px; border-radius: 999px; }
-.oauth-badge-on { color: #137333; background: color-mix(in srgb, #137333 12%, transparent); }
-.oauth-badge-off { color: var(--text-secondary); background: color-mix(in srgb, var(--text-secondary) 12%, transparent); }
-.oauth-badge-warn { color: #b26a00; background: color-mix(in srgb, #f9ab00 18%, transparent); }
 .oauth-btn { padding: 8px 14px; border-radius: 8px; border: 1px solid var(--border-default); background: var(--bg-base); color: var(--text-primary); font-size: 13px; cursor: pointer; }
 .oauth-btn-primary { background: #1a73e8; border-color: #1a73e8; color: #fff; }
 .oauth-btn-primary:disabled { opacity: .5; cursor: not-allowed; }

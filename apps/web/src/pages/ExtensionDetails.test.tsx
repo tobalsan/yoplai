@@ -185,7 +185,7 @@ describe("ExtensionDetails", () => {
     ]);
     await mount("scribe", "exa");
 
-    expect(container.querySelector(".oauth-badge")?.textContent).toBe(
+    expect(container.querySelector('.cred-tab[data-scope="team"] .cred-tab-status')?.textContent).toBe(
       "Connected"
     );
     vi.unstubAllGlobals();
