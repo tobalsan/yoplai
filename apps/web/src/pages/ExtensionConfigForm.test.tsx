@@ -310,13 +310,16 @@ describe("ExtensionConfigForm", () => {
     expect(container.querySelector(".ext-config-form")).not.toBeNull();
   });
 
-  it("defaults signed-in users to Just me and saves only personal credentials", async () => {
+  it("opens on the configured team tab and saves only personal credentials from Just me", async () => {
     fetchAgentExtensionMock.mockResolvedValue(exaEntry({ personalSecretFields: [], canConfigureTeam: false,
       configJsonSchema: { properties: { apiKey: { type: "string" }, baseUrl: { type: "string" } }, required: ["apiKey"] },
       configValues: { apiKey: "********", baseUrl: "https://shared.test" },
     }));
     patchAgentExtensionMock.mockResolvedValue([exaEntry({ personalSecretFields: ["apiKey"], canConfigureTeam: false })]);
     await mount("scribe", "exa");
+    expect(activeScope(container)).toBe("team");
+    selectScope(container, "personal");
+    await new Promise((resolve) => setTimeout(resolve, 0));
     expect(activeScope(container)).toBe("personal");
     expect(scopeTabLabels(container)).toEqual(["Just me", "Whole team"]);
     const pills = () => Array.from(container.querySelectorAll<HTMLElement>(".cred-tab-status")).map((pill) => [pill.textContent, pill.dataset.tone]);

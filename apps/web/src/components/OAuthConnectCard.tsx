@@ -7,7 +7,7 @@ import {
   Switch,
 } from "solid-js";
 import { useSession } from "../auth/client";
-import { CredentialScopeTabs, type CredentialScope, type ScopeStatus } from "./CredentialScopeTabs";
+import { CredentialScopeTabs, preferredScope, type CredentialScope, type ScopeStatus } from "./CredentialScopeTabs";
 
 type ConnectionState = "connected" | "needs_reconnect" | "disconnected";
 
@@ -43,7 +43,7 @@ export function OAuthConnectCard(props: {
   const [loading, setLoading] = createSignal(false);
   const [error, setError] = createSignal<string>();
   const session = useSession();
-  const [scope, setScope] = createSignal<"team" | "personal">("team");
+  const [scope, setScope] = createSignal<"team" | "personal">("personal");
   const [canConfigureTeam, setCanConfigureTeam] = createSignal(true);
   let scopePicked = false;
   let statusRequest = 0;
@@ -67,12 +67,12 @@ export function OAuthConnectCard(props: {
         session().data?.user ? load("personal") : undefined,
       ]);
       if (request !== statusRequest) return;
-      if (team.canConfigureTeam === false) {
-        setCanConfigureTeam(false);
-        // Non-admins start on the connection they can manage.
-        if (scope() === "team" && !scopePicked) setScope("personal");
-      }
+      if (team.canConfigureTeam === false) setCanConfigureTeam(false);
       setStatuses({ team, personal });
+      if (!scopePicked) {
+        scopePicked = true;
+        setScope(preferredScope({ personal: tabStatus("personal"), team: tabStatus("team") }, !!personal));
+      }
       setError(undefined);
     } catch (cause) {
       if (request === statusRequest) setError(cause instanceof Error ? cause.message : String(cause));

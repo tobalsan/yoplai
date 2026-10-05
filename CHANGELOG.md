@@ -54,6 +54,8 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Changed
 
+- Extension pages (settings forms, OAuth and MCP) all open on the same credential tab: **Just me** if it is set up, otherwise **Whole team** if that is set up, otherwise **Just me**.
+
 - Clicking an extension card now opens one page with the extension details and its settings form; the separate **Configure** step is gone. Old `/agents/<id>/extensions/<ext>/config` links open the same page.
 
 - Credential **Just me** / **Whole team** tabs now show a status pill for each scope: green when connected or configured, red when a connection needs reconnecting or is missing access, gray when not set up. The OAuth card's separate status badge is gone, MCP server badges use the same pill style, and the "Admin only" tag is now a lock icon.

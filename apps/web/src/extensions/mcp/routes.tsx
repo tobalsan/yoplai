@@ -3,7 +3,7 @@ import type { Component } from "solid-js";
 import { A, useParams } from "@solidjs/router";
 import { useSession } from "../../auth/client";
 import { LeftNavShell } from "../../components/LeftNavShell";
-import { CredentialScopeTabs, StatusPill, type CredentialScope, type ScopeStatus } from "../../components/CredentialScopeTabs";
+import { CredentialScopeTabs, StatusPill, preferredScope, type CredentialScope, type ScopeStatus } from "../../components/CredentialScopeTabs";
 
 type ServerAuth = "oauth" | "static";
 type ServerState = "connected" | "disconnected" | "needs_reconnect" | "static";
@@ -48,10 +48,10 @@ export function McpConfigPage(): ReturnType<Component> {
   const session = useSession();
   const requestedScope = new URLSearchParams(window.location.search).get("scope");
   const [scope, setScope] = createSignal<"team" | "personal">(
-    requestedScope === "personal" ? "personal" : "team"
+    requestedScope === "team" ? "team" : "personal"
   );
   const [canConfigureTeam, setCanConfigureTeam] = createSignal(true);
-  let scopePicked = requestedScope === "team";
+  let scopePicked = requestedScope === "team" || requestedScope === "personal";
   let statusRequest = 0;
 
   const refreshStatus = async () => {
@@ -66,12 +66,12 @@ export function McpConfigPage(): ReturnType<Component> {
         session().data?.user ? fetchStatus(agentId, "personal") : undefined,
       ]);
       if (request !== statusRequest) return;
-      if (team.canConfigureTeam === false) {
-        setCanConfigureTeam(false);
-        // Non-admins start on the connections they can manage.
-        if (scope() === "team" && !scopePicked) setScope("personal");
-      }
+      if (team.canConfigureTeam === false) setCanConfigureTeam(false);
       setServersByScope({ team: team.servers, personal: personal?.servers });
+      if (!scopePicked) {
+        scopePicked = true;
+        setScope(preferredScope({ personal: tabStatus("personal"), team: tabStatus("team") }, !!personal));
+      }
       setError(undefined);
     } catch (cause) {
       if (request === statusRequest) setError(cause instanceof Error ? cause.message : "Failed to load MCP server status.");

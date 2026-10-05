@@ -17,7 +17,7 @@ import {
   type AutoFormField,
   type AutoFormValues,
 } from "../lib/auto-form-schema";
-import { CredentialScopeTabs, type ScopeStatus } from "../components/CredentialScopeTabs";
+import { CredentialScopeTabs, preferredScope, type ScopeStatus } from "../components/CredentialScopeTabs";
 
 const CONFIGURED: ScopeStatus = { tone: "ok", label: "Configured" };
 const NOT_SET_UP: ScopeStatus = { tone: "off", label: "Not set up" };
@@ -65,7 +65,7 @@ export function ExtensionConfigForm(props: { entry: ExtensionCatalogEntry }) {
     const current = entry();
     if (!current || scopeInitialized) return;
     scopeInitialized = true;
-    if (current.personalSecretFields !== undefined) setCredentialScope("personal");
+    if (current.personalSecretFields !== undefined) setCredentialScope(preferredScope(scopeStatus()));
   });
 
   // Non-admins may view, but not change, the admin-managed team credentials.
@@ -77,6 +77,10 @@ export function ExtensionConfigForm(props: { entry: ExtensionCatalogEntry }) {
     const current = entry();
     return !!current && fields().some((field) => field.secret && current.configValues[field.name] != null);
   };
+  const scopeStatus = () => ({
+    personal: entry()?.personalSecretFields?.length ? CONFIGURED : NOT_SET_UP,
+    team: teamConfigured() ? CONFIGURED : NOT_SET_UP,
+  });
 
   const setValue = (name: string, value: string | number | boolean) => {
     setValues((prev) => ({ ...prev, [name]: value }));
@@ -295,10 +299,7 @@ export function ExtensionConfigForm(props: { entry: ExtensionCatalogEntry }) {
                     <CredentialScopeTabs
                       value={credentialScope()}
                       teamLocked={!ext().canConfigureTeam}
-                      status={{
-                        personal: ext().personalSecretFields?.length ? CONFIGURED : NOT_SET_UP,
-                        team: teamConfigured() ? CONFIGURED : NOT_SET_UP,
-                      }}
+                      status={scopeStatus()}
                       disabled={saving()}
                       onChange={(next) => { setCredentialScope(next); setSaved(false); setError(null); }}
                     >

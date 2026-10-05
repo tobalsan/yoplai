@@ -94,7 +94,7 @@ describe("McpConfigPage", () => {
     fetchMock.mockResolvedValue(status([server("connected")]));
     container.querySelector<HTMLButtonElement>(".mcp-config-card button")!.click();
     expect(window.open).toHaveBeenCalledWith(
-      "/api/mcp/oauth/authorize?agent=casey&server=Claap&scope=team",
+      "/api/mcp/oauth/authorize?agent=casey&server=Claap&scope=personal",
       "yoplai-oauth",
       "width=520,height=640"
     );
@@ -132,7 +132,7 @@ describe("McpConfigPage", () => {
     await new Promise((resolve) => setTimeout(resolve, 0));
 
     expect(fetchMock).toHaveBeenCalledWith(
-      "/api/mcp/oauth/disconnect?agent=casey&server=Claap&scope=team",
+      "/api/mcp/oauth/disconnect?agent=casey&server=Claap&scope=personal",
       { method: "POST" }
     );
     expect(container.textContent).toContain("Not connected");
@@ -195,21 +195,21 @@ describe("McpConfigPage", () => {
   });
 
 describe("McpConfigPage team access", () => {
-  it("defaults non-admins to Just me and shows team connections read-only", async () => {
+  it("opens on the connected team tab, read-only for non-admins, when Just me is not set up", async () => {
     fetchMock.mockImplementation(async (input: string) => ({ ok: true, json: vi.fn().mockResolvedValue({
       servers: [server(input.includes("scope=team") ? "connected" : "disconnected")], canConfigureTeam: false,
     }) }));
     await mount();
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(scopeTabLabels(container)).toEqual(["Just me", "Whole team"]);
-    expect(activeScope(container)).toBe("personal");
-    expect(container.querySelector(".mcp-config-card button")).not.toBeNull();
-
-    selectScope(container, "team");
-    await new Promise((resolve) => setTimeout(resolve, 0));
     expect(activeScope(container)).toBe("team");
     expect(container.textContent).toContain("Connected");
     expect(container.textContent).toContain("managed by an admin");
     expect(container.querySelector(".mcp-config-card button")).toBeNull();
+
+    selectScope(container, "personal");
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(activeScope(container)).toBe("personal");
+    expect(container.querySelector(".mcp-config-card button")).not.toBeNull();
   });
 });

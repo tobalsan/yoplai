@@ -5,6 +5,15 @@ export type CredentialScope = "personal" | "team";
 /** State of one tab's credentials: ok = connected/configured, error = broken connection, off = not set up. */
 export type ScopeStatus = { tone: "ok" | "error" | "off"; label: string };
 
+/** Default tab: Just me if connected, else Whole team if connected, else Just me. */
+export function preferredScope(
+  status: Partial<Record<CredentialScope, ScopeStatus>>,
+  personalAvailable = true
+): CredentialScope {
+  if (!personalAvailable) return "team";
+  return status.personal?.tone !== "ok" && status.team?.tone === "ok" ? "team" : "personal";
+}
+
 const TABS: { scope: CredentialScope; label: string; caption: string }[] = [
   { scope: "personal", label: "Just me", caption: "Only your requests" },
   { scope: "team", label: "Whole team", caption: "Fallback for everyone" },
