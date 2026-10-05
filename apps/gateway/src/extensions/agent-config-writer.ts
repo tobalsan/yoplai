@@ -30,6 +30,11 @@ export type ExtensionConfigPatch = {
    * name is derived from the extension id and field name.
    */
   secrets?: Record<string, string>;
+  /**
+   * Secret fields to unset: removed from `extensions.<id>`, along with the
+   * `.env` value when it is the one this writer manages for that field.
+   */
+  removeSecrets?: string[];
 };
 
 export class ExtensionConfigValidationError extends Error {
@@ -133,6 +138,19 @@ async function upsertEnvVars(
   await writeLocked(envPath, `${next.join("\n")}\n`);
 }
 
+/** Remove `KEY=value` lines from an env file, preserving every other line. */
+async function removeEnvVars(envPath: string, keys: string[]): Promise<void> {
+  let existing: string;
+  try {
+    existing = await fs.readFile(envPath, "utf8");
+  } catch {
+    return;
+  }
+  const lines = existing.split("\n");
+  const next = lines.filter((line) => !keys.includes(/^([A-Za-z_][A-Za-z0-9_]*)=/.exec(line)?.[1] ?? ""));
+  if (next.length !== lines.length) await writeLocked(envPath, next.join("\n"));
+}
+
 /**
  * Apply an extension config change to an agent's `agent.yaml`.
  *
@@ -183,6 +201,13 @@ export async function updateAgentExtensionConfig(
     }
   }
 
+  const staleEnv: string[] = [];
+  for (const field of patch.removeSecrets ?? []) {
+    const envName = secretEnvName(extensionId, field);
+    if (current[field] === `$env:${envName}`) staleEnv.push(envName);
+    delete current[field];
+  }
+
   extensions[extensionId] = current;
   const nextConfig = { ...parsed, extensions };
 
@@ -208,6 +233,8 @@ export async function updateAgentExtensionConfig(
   // Mutate the parsed document in place so comments and blank lines survive.
   doc.setIn(["extensions", extensionId], current);
   await writeLocked(agentPath, doc.toString());
+  // Drop unset secret values only once agent.yaml no longer references them.
+  if (staleEnv.length > 0) await removeEnvVars(path.join(workspaceDir, ".env"), staleEnv);
 
   return nextConfig;
 }

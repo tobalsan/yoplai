@@ -1249,6 +1249,19 @@ describe("api core session resolution", () => {
         return api.request(new Request("http://localhost/agents/alpha/extensions/acme", { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify(body) }));
       }
 
+      it("lets only admins unset whole-team credentials, keeping settings", async () => {
+        const { api } = await import("./api.core.js");
+        const remove = () => api.request(new Request("http://localhost/agents/alpha/extensions/acme/credentials", { method: "DELETE" }));
+        expect((await remove()).status).toBe(403);
+        expect(updateAgentExtensionConfig).not.toHaveBeenCalled();
+
+        multiUserState.authContext = { user: { id: "admin", role: "admin" }, session: { id: "s3", userId: "admin" } };
+        updateAgentExtensionConfig.mockResolvedValue({});
+        expect((await remove()).status).toBe(200);
+        expect(updateAgentExtensionConfig).toHaveBeenCalledWith("/ws/alpha", "acme", { removeSecrets: ["apiKey"] });
+        expect(reloadConfig).toHaveBeenCalled();
+      });
+
       it("stores only requester-owned tokens, returns field presence, and never writes shared configuration", async () => {
         const response = await patch({ credentialScope: "personal", secrets: { apiKey: "alice-private" } });
         expect(response.status).toBe(200);

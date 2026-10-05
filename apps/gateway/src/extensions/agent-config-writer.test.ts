@@ -102,6 +102,18 @@ describe("updateAgentExtensionConfig", () => {
     });
   });
 
+  it("unsets secrets and their managed .env values, keeping settings and unrelated env", async () => {
+    await writeFile(path.join(workspaceDir, ".env"), "OTHER=keep\n");
+    await updateAgentExtensionConfig(workspaceDir, "acme-crm", {
+      enabled: true,
+      config: { region: "eu", shared: "$env:SHARED_TOKEN" },
+      secrets: { apiKey: "fixture-key" },
+    });
+    await updateAgentExtensionConfig(workspaceDir, "acme-crm", { removeSecrets: ["apiKey", "shared"] });
+    expect(await readAgentExtensions()).toEqual({ "acme-crm": { enabled: true, region: "eu" } });
+    expect(await readFile(path.join(workspaceDir, ".env"), "utf8")).toBe("OTHER=keep\n");
+  });
+
   it("re-validates the written yaml against the agent schema", async () => {
     await updateAgentExtensionConfig(workspaceDir, "acme-crm", {
       enabled: true,

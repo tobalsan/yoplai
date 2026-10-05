@@ -880,6 +880,48 @@ api.patch("/agents/:id/extensions/:extensionId", async (c) => {
     );
   }
 
+  const extensions = await reloadAfterExtensionWrite(c, agentId);
+  return c.json({ agentId, extensionId, extensions });
+});
+
+// DELETE /api/agents/:id/extensions/:extensionId/credentials - unset the
+// whole-team credentials (secret fields) of an extension. Non-secret settings
+// and the enabled flag stay; personal credentials are removed through
+// DELETE /api/agents/:id/connections/extension/:extensionId.
+api.delete("/agents/:id/extensions/:extensionId/credentials", async (c) => {
+  const agentId = c.req.param("id");
+  if (!(await canConfigureAgentExtensions(c, agentId))) {
+    return c.json({ error: "forbidden" }, 403);
+  }
+  const auth = await getRequestAuthContext(c);
+  if (isExtensionLoaded("multiUser") && !hasAdminRole(auth?.user.role)) {
+    return c.json({ error: "Only admins may configure the whole team" }, 403);
+  }
+  const extensionId = c.req.param("extensionId");
+  const config = loadConfig();
+  const agent = findWritableExtensionAgent(config, agentId);
+  if (!agent) return c.json({ error: "Agent not found" }, 404);
+  const entry = (await buildExtensionCatalog(config, agent)).find((item) => item.id === extensionId);
+  if (entry?.managedAtRoot) {
+    return c.json({ error: `${extensionId} is configured at the agent.yaml root; edit agent.yaml to change it` }, 409);
+  }
+  const targetExtension = await resolveExtensionDefinition(config, extensionId);
+  const secretFields = targetExtension ? extensionSecretFields(targetExtension) : entry?.requiredSecrets ?? [];
+  if (!entry || secretFields.length === 0) return c.json({ error: "Extension has no credentials" }, 404);
+
+  try {
+    await updateAgentExtensionConfig(resolveWorkspaceDir(agent.workspaceDir ?? agent.workspace), extensionId, {
+      removeSecrets: secretFields,
+    });
+  } catch (error) {
+    return c.json({ error: (error as Error).message || "Failed to remove credentials" }, 400);
+  }
+  const extensions = await reloadAfterExtensionWrite(c, agentId);
+  return c.json({ agentId, extensionId, extensions });
+});
+
+/** Reload config after an agent.yaml write and return the requester's catalog for the agent. */
+async function reloadAfterExtensionWrite(c: Context, agentId: string) {
   // Invalidate the config cache so the next run (and the next catalog read)
   // observes the change rather than the stale in-memory config.
   const rawReloaded = reloadConfig();
@@ -898,11 +940,10 @@ api.patch("/agents/:id/extensions/:extensionId", async (c) => {
   }
 
   const updatedAgent = findWritableExtensionAgent(reloaded, agentId);
-  const extensions = updatedAgent
+  return updatedAgent
     ? await requesterExtensionCatalog(c, reloaded, updatedAgent)
     : [];
-  return c.json({ agentId, extensionId, extensions });
-});
+}
 
 // GET /api/agents/:id/avatar - serve avatar image from workspace
 api.get("/agents/:id/avatar", async (c) => {

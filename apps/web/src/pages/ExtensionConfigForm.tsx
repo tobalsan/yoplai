@@ -7,9 +7,12 @@ import {
 } from "solid-js";
 import { useParams } from "@solidjs/router";
 import {
+  fetchAgentExtensions,
   patchAgentExtension,
+  removeTeamExtensionCredentials,
   type ExtensionCatalogEntry,
 } from "../api/extensions";
+import { disconnectAgentConnection } from "../api/connections";
 import {
   buildAutoFormFields,
   REDACTED_SECRET_VALUE,
@@ -32,6 +35,15 @@ const NOT_SET_UP: ScopeStatus = { tone: "off", label: "Not set up" };
  * legacy `.../config` path), which owns the back link and heading and passes
  * the catalog entry it already loaded.
  */
+function WarningIcon() {
+  return (
+    <svg class="ext-config-warning-icon" viewBox="0 0 20 20" aria-hidden="true">
+      <path d="M8.6 3.3a1.6 1.6 0 0 1 2.8 0l6.2 11.1a1.6 1.6 0 0 1-1.4 2.4H3.8a1.6 1.6 0 0 1-1.4-2.4Z" />
+      <path d="M10 8v3.5M10 14.2v.1" />
+    </svg>
+  );
+}
+
 export function ExtensionConfigForm(props: { entry: ExtensionCatalogEntry }) {
   const params = useParams<{ agentId: string; extensionId: string }>();
 
@@ -81,6 +93,37 @@ export function ExtensionConfigForm(props: { entry: ExtensionCatalogEntry }) {
     personal: entry()?.personalSecretFields?.length ? CONFIGURED : NOT_SET_UP,
     team: teamConfigured() ? CONFIGURED : NOT_SET_UP,
   });
+
+  const personalTab = () => credentialScope() === "personal" && entry()?.personalSecretFields !== undefined;
+  const hasCredentials = () => {
+    const current = entry();
+    if (!personalTab()) return teamConfigured();
+    return !!current?.personalSecretFields?.length || Object.keys(current?.personalConfigValues ?? {}).length > 0;
+  };
+
+  const [confirmingRemove, setConfirmingRemove] = createSignal(false);
+  const removeQuestion = () => personalTab()
+    ? "Remove your personal credentials? Your requests will use the team credentials, if any."
+    : "Remove the team credentials? Everyone without personal credentials loses access until they are set up again.";
+
+  const removeCredentials = async () => {
+    const personal = personalTab();
+    setConfirmingRemove(false);
+    setSaving(true);
+    setError(null);
+    setSaved(false);
+    try {
+      const updated = personal
+        ? (await disconnectAgentConnection(params.agentId, "extension", params.extensionId), await fetchAgentExtensions(params.agentId))
+        : await removeTeamExtensionCredentials(params.agentId, params.extensionId);
+      const refreshed = updated.find((extension) => extension.id === params.extensionId);
+      if (refreshed) setEntry(refreshed);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Failed to remove credentials.");
+    } finally {
+      setSaving(false);
+    }
+  };
 
   const setValue = (name: string, value: string | number | boolean) => {
     setValues((prev) => ({ ...prev, [name]: value }));
@@ -266,7 +309,35 @@ export function ExtensionConfigForm(props: { entry: ExtensionCatalogEntry }) {
 
     </Show>
     <Show when={!teamReadOnly()}>
+    <Show when={confirmingRemove() && hasCredentials()}>
+      <div class="ext-config-remove-confirm" role="alertdialog" aria-label="Confirm removing credentials">
+        <WarningIcon />
+        <p>{removeQuestion()}</p>
+        <div class="ext-config-remove-confirm-actions">
+          <button type="button" class="ext-config-remove-cancel" onClick={() => setConfirmingRemove(false)}>
+            Cancel
+          </button>
+          <button type="button" class="ext-config-remove-confirm-button" disabled={saving()} onClick={() => void removeCredentials()}>
+            Remove
+          </button>
+        </div>
+      </div>
+    </Show>
     <div class="ext-config-actions">
+      <Show when={hasCredentials() && !confirmingRemove()}>
+        <button
+          type="button"
+          class="ext-config-remove"
+          disabled={saving()}
+          onClick={() => setConfirmingRemove(true)}
+        >
+          <WarningIcon />
+          {personalTab() ? "Remove my credentials" : "Remove team credentials"}
+        </button>
+      </Show>
+      <Show when={saved()}>
+        <span class="ext-config-saved">Saved ✓</span>
+      </Show>
       <button
         type="submit"
         class="ext-config-save"
@@ -274,9 +345,6 @@ export function ExtensionConfigForm(props: { entry: ExtensionCatalogEntry }) {
       >
         {saving() ? "Saving…" : "Save configuration"}
       </button>
-      <Show when={saved()}>
-        <span class="ext-config-saved">Saved ✓</span>
-      </Show>
     </div>
     </Show>
     <Show when={error()}>
@@ -301,7 +369,7 @@ export function ExtensionConfigForm(props: { entry: ExtensionCatalogEntry }) {
                       teamLocked={!ext().canConfigureTeam}
                       status={scopeStatus()}
                       disabled={saving()}
-                      onChange={(next) => { setCredentialScope(next); setSaved(false); setError(null); }}
+                      onChange={(next) => { setCredentialScope(next); setSaved(false); setError(null); setConfirmingRemove(false); }}
                     >
                       <p class="ext-config-scope-note">
                         {credentialScope() === "personal"
@@ -404,6 +472,7 @@ export function ExtensionConfigForm(props: { entry: ExtensionCatalogEntry }) {
           margin-top: 4px;
         }
         .ext-config-save {
+          margin-left: auto;
           padding: 8px 16px;
           border-radius: 6px;
           border: none;
@@ -417,11 +486,50 @@ export function ExtensionConfigForm(props: { entry: ExtensionCatalogEntry }) {
           opacity: 0.5;
           cursor: not-allowed;
         }
+        .ext-config-remove {
+          display: inline-flex;
+          align-items: center;
+          gap: 6px;
+          padding: 0;
+          border: 0;
+          background: none;
+          color: #dc2626;
+          font: inherit;
+          font-size: 13px;
+          font-weight: 500;
+          cursor: pointer;
+        }
+        .ext-config-remove:hover:not(:disabled) { text-decoration: underline; text-underline-offset: 3px; }
+        .ext-config-remove:focus-visible { outline: 2px solid color-mix(in srgb, #dc2626 50%, transparent); outline-offset: 3px; border-radius: 3px; }
+        .ext-config-remove:disabled { opacity: 0.5; cursor: not-allowed; }
+        .ext-config-warning-icon { width: 15px; height: 15px; flex: 0 0 auto; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+        .ext-config-remove-confirm {
+          display: flex;
+          align-items: center;
+          flex-wrap: wrap;
+          gap: 10px 12px;
+          margin-top: 4px;
+          padding: 12px 14px;
+          border: 1px solid color-mix(in srgb, #dc2626 35%, transparent);
+          border-radius: 10px;
+          background: color-mix(in srgb, #dc2626 6%, transparent);
+          color: #dc2626;
+        }
+        .ext-config-remove-confirm p { flex: 1 1 260px; margin: 0; color: var(--text-primary); font-size: 13px; line-height: 1.45; }
+        .ext-config-remove-confirm-actions { display: flex; gap: 8px; margin-left: auto; }
+        .ext-config-remove-cancel, .ext-config-remove-confirm-button {
+          padding: 6px 12px; border-radius: 6px; font: inherit; font-size: 13px; font-weight: 500; cursor: pointer;
+        }
+        .ext-config-remove-cancel { border: 1px solid var(--border-default); background: var(--bg-surface); color: var(--text-primary); }
+        .ext-config-remove-confirm-button { border: 1px solid #dc2626; background: #dc2626; color: #fff; }
+        .ext-config-remove-confirm-button:disabled { opacity: 0.5; cursor: not-allowed; }
         .ext-config-saved {
+          margin-left: auto;
           font-size: 13px;
           color: #16a34a;
           font-weight: 600;
         }
+        .ext-config-saved + .ext-config-save { margin-left: 0; }
         .ext-config-form-error {
           font-size: 13px;
           color: #e55;

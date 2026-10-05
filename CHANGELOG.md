@@ -11,6 +11,8 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Added
 
+- Extension settings forms can unset credentials: **Remove my credentials** on Just me, and **Remove team credentials** on Whole team for admins (`DELETE /api/agents/:id/extensions/:extensionId/credentials`). Non-secret settings are kept.
+
 - Agent **My connections** lists your personal OAuth, MCP and extension token connections alongside team availability; disconnect removes your credentials immediately. Account settings list your Slack pairings and let you unpair.
 
 - Scheduled jobs record their creator and let chat and web users choose owner or team credentials; existing jobs continue using team credentials, and unusable personal connections produce a delivered reconnect error.

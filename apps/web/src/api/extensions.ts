@@ -65,6 +65,20 @@ export type ExtensionConfigPatch = {
 
 // Staff and same-team members may update an agent's per-extension config
 // (enable/disable, config fields, secrets). Returns the refreshed catalog.
+// Unset an extension's whole-team credentials (admin); settings stay. Returns the refreshed catalog.
+export async function removeTeamExtensionCredentials(
+  agentId: string,
+  extensionId: string
+): Promise<ExtensionCatalogEntry[]> {
+  const res = await fetch(
+    `${API_BASE}/agents/${encodeURIComponent(agentId)}/extensions/${encodeURIComponent(extensionId)}/credentials`,
+    { method: "DELETE" }
+  );
+  if (!res.ok) throw new Error("Failed to remove team credentials");
+  const data = (await res.json()) as { extensions: ExtensionCatalogEntry[] };
+  return data.extensions;
+}
+
 export async function patchAgentExtension(
   agentId: string,
   extensionId: string,

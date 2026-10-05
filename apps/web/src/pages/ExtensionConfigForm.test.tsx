@@ -9,7 +9,13 @@ const {
   useSessionMock,
   useParamsMock,
   navigateMock,
+  fetchAgentExtensionsMock,
+  removeTeamCredentialsMock,
+  disconnectConnectionMock,
 } = vi.hoisted(() => ({
+  fetchAgentExtensionsMock: vi.fn(),
+  removeTeamCredentialsMock: vi.fn(),
+  disconnectConnectionMock: vi.fn(),
   fetchAgentExtensionMock: vi.fn(),
   patchAgentExtensionMock: vi.fn(),
   useSessionMock: vi.fn(),
@@ -25,8 +31,11 @@ vi.mock("../api/extensions", async () => {
     ...actual,
     fetchAgentExtension: fetchAgentExtensionMock,
     patchAgentExtension: patchAgentExtensionMock,
+    fetchAgentExtensions: fetchAgentExtensionsMock,
+    removeTeamExtensionCredentials: removeTeamCredentialsMock,
   };
 });
+vi.mock("../api/connections", () => ({ disconnectAgentConnection: disconnectConnectionMock }));
 
 vi.mock("../auth/client", () => ({ useSession: useSessionMock }));
 
@@ -308,6 +317,41 @@ describe("ExtensionConfigForm", () => {
 
     expect(navigateMock).not.toHaveBeenCalledWith("/", { replace: true });
     expect(container.querySelector(".ext-config-form")).not.toBeNull();
+  });
+
+  it("removes personal or team credentials for the selected tab after confirming", async () => {
+    const configured = exaEntry({ personalSecretFields: ["apiKey"], canConfigureTeam: true, configValues: { apiKey: "********" } });
+    fetchAgentExtensionMock.mockResolvedValue(configured);
+    fetchAgentExtensionsMock.mockResolvedValue([exaEntry({ personalSecretFields: [], canConfigureTeam: true, configValues: { apiKey: "********" } })]);
+    disconnectConnectionMock.mockResolvedValue(undefined);
+    removeTeamCredentialsMock.mockResolvedValue([exaEntry({ personalSecretFields: [], canConfigureTeam: true, configValues: {} })]);
+    await mount("scribe", "exa");
+    const removeButton = () => container.querySelector<HTMLButtonElement>(".ext-config-remove");
+    const confirm = async () => {
+      removeButton()!.click();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      container.querySelector<HTMLButtonElement>(".ext-config-remove-confirm-button")!.click();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    };
+
+    expect(activeScope(container)).toBe("personal");
+    expect(removeButton()!.textContent).toBe("Remove my credentials");
+    removeButton()!.click();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(disconnectConnectionMock).not.toHaveBeenCalled();
+    container.querySelector<HTMLButtonElement>(".ext-config-remove-cancel")!.click();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(container.querySelector(".ext-config-remove-confirm")).toBeNull();
+    await confirm();
+    expect(disconnectConnectionMock).toHaveBeenCalledWith("scribe", "extension", "exa");
+    expect(removeButton()).toBeNull();
+
+    selectScope(container, "team");
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(removeButton()!.textContent).toBe("Remove team credentials");
+    await confirm();
+    expect(removeTeamCredentialsMock).toHaveBeenCalledWith("scribe", "exa");
+    expect(removeButton()).toBeNull();
   });
 
   it("opens on the configured team tab and saves only personal credentials from Just me", async () => {
