@@ -316,7 +316,7 @@ export function EditAgent() {
         </Show>
 
         <Show when={agent() && tab() === "schedules" && dashboardAgentId() && isExtensionEnabled("scheduler")}>
-          <SchedulesPanel agentId={dashboardAgentId()!} defaultMode={session().data?.user?.id ? "owner" : "team"} />
+          <SchedulesPanel agentId={dashboardAgentId()!} agentName={agent()!.name} />
         </Show>
 
         <Show when={agent() && tab() === "dashboards" && dashboardAgentId()}>
@@ -478,45 +478,6 @@ export function EditAgent() {
         .edit-agent-dashboards {
           max-width: 800px;
           color: var(--text-secondary);
-        }
-
-        .edit-agent-schedules {
-          margin-top: 28px;
-          max-width: 800px;
-          color: var(--text-secondary);
-        }
-
-        .edit-agent-schedule-list {
-          display: grid;
-          gap: 10px;
-          list-style: none;
-          padding: 0;
-        }
-
-        .edit-agent-schedule-item,
-        .edit-agent-schedule-form {
-          display: flex;
-          justify-content: space-between;
-          gap: 16px;
-          padding: 14px;
-          border: 1px solid var(--border-default);
-          border-radius: 8px;
-        }
-
-        .edit-agent-schedule-item > div,
-        .edit-agent-schedule-form label {
-          display: grid;
-          gap: 6px;
-        }
-
-        .edit-agent-schedule-fields {
-          display: flex;
-          gap: 12px;
-          flex-wrap: wrap;
-        }
-
-        .edit-agent-schedule-error {
-          color: #e55;
         }
 
         .edit-agent-dashboard-list {

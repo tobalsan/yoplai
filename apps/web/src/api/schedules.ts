@@ -1,4 +1,4 @@
-import type { CreateScheduleRequest, ScheduleJob } from "@yoplai/shared/types";
+import type { ScheduleJob } from "@yoplai/shared/types";
 import { API_BASE, apiFetch } from "./core";
 
 export type { ScheduleJob };
@@ -6,16 +6,6 @@ export type { ScheduleJob };
 export async function fetchSchedules(agentId: string): Promise<ScheduleJob[]> {
   const res = await apiFetch(`${API_BASE}/schedules?agent=${encodeURIComponent(agentId)}`);
   if (!res.ok) throw new Error("Failed to fetch scheduled jobs");
-  return res.json();
-}
-
-export async function createSchedule(input: Pick<CreateScheduleRequest, "agentId" | "name" | "schedule" | "payload" | "credentialMode">): Promise<ScheduleJob> {
-  const res = await apiFetch(`${API_BASE}/schedules`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(input),
-  });
-  if (!res.ok) throw new Error("Failed to create scheduled job");
   return res.json();
 }
 

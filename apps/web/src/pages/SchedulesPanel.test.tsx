@@ -2,19 +2,17 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { render } from "solid-js/web";
 
-const { createScheduleMock, fetchSchedulesMock, updateScheduleMock } = vi.hoisted(() => ({
-  createScheduleMock: vi.fn(),
+const { fetchSchedulesMock, updateScheduleMock } = vi.hoisted(() => ({
   fetchSchedulesMock: vi.fn(),
   updateScheduleMock: vi.fn(),
 }));
 
 vi.mock("../api/schedules", () => ({
-  createSchedule: createScheduleMock,
   fetchSchedules: fetchSchedulesMock,
   updateSchedule: updateScheduleMock,
 }));
 
-import { SchedulesPanel } from "./SchedulesPanel";
+import { describeSchedule, SchedulesPanel } from "./SchedulesPanel";
 
 let container: HTMLElement;
 let dispose: () => void;
@@ -30,7 +28,6 @@ beforeEach(() => {
     id: "job-1", agentId: "scribe", name: "Digest", credentialMode: "team",
     ownerUserId: "alice", schedule: { cron: "0 8 * * *", tz: "UTC" }, payload: { message: "Send digest" },
   }]);
-  createScheduleMock.mockReset().mockResolvedValue({});
   updateScheduleMock.mockReset().mockResolvedValue({});
 });
 
@@ -39,31 +36,36 @@ afterEach(() => {
   container.remove();
 });
 
-describe("SchedulesPanel", () => {
-  it("shows the owner, updates credential mode, and creates owner-mode jobs by default", async () => {
-    dispose = render(() => <SchedulesPanel agentId="scribe" defaultMode="owner" />, container);
-    await settle();
-    expect(container.textContent).toContain("Owner: Your account");
+describe("describeSchedule", () => {
+  it("reads cron recurrences in plain language", () => {
+    expect(describeSchedule({ cron: "45 5 * * *", tz: "UTC" })).toMatch(/^Every day at /);
+    expect(describeSchedule({ cron: "30 7 * * 1,4", tz: "UTC" })).toMatch(/^Monday and Thursday at /);
+    expect(describeSchedule({ cron: "0 9 * * 1-5", tz: "UTC" })).toMatch(/^Monday through Friday at /);
+    expect(describeSchedule({ cron: "*/15 * * * *", tz: "UTC" })).toBe("Every 15 minutes");
+  });
 
-    const jobMode = container.querySelector<HTMLSelectElement>('select[aria-label="Credentials for Digest"]')!;
-    jobMode.value = "owner";
-    jobMode.dispatchEvent(new Event("change", { bubbles: true }));
+  it("describes one-off runs and falls back to the raw expression", () => {
+    expect(describeSchedule({ runAt: "2026-10-05T14:00:00Z" })).toMatch(/^Once, /);
+    expect(describeSchedule({ cron: "not a cron", tz: "UTC" })).toBe("not a cron");
+  });
+});
+
+describe("SchedulesPanel", () => {
+  it("lists jobs in plain language and switches their credentials", async () => {
+    dispose = render(() => <SchedulesPanel agentId="scribe" agentName="Scribe" />, container);
+    await settle();
+    expect(container.textContent).toContain("Digest");
+    expect(container.textContent).toMatch(/Every day at /);
+    expect(container.textContent).not.toContain("0 8 * * *");
+    expect(container.textContent).toContain("Send digest");
+    expect(container.querySelector("form")).toBeNull();
+    expect(container.textContent).toContain("If you want to add a new job, just ask Scribe!");
+
+    const group = container.querySelector('[aria-label="Credentials for Digest"]')!;
+    const [mine, team] = group.querySelectorAll<HTMLButtonElement>('[role="radio"]');
+    expect(team!.getAttribute("aria-checked")).toBe("true");
+    mine!.click();
     await settle();
     expect(updateScheduleMock).toHaveBeenCalledWith("scribe", "job-1", "owner");
-
-    const [name, prompt] = container.querySelectorAll<HTMLInputElement | HTMLTextAreaElement>(".edit-agent-schedule-form input, .edit-agent-schedule-form textarea");
-    name!.value = "Morning recap";
-    name!.dispatchEvent(new Event("input", { bubbles: true }));
-    prompt!.value = "Email my recap";
-    prompt!.dispatchEvent(new Event("input", { bubbles: true }));
-    container.querySelector(".edit-agent-schedule-form")!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
-    await settle();
-
-    expect(createScheduleMock).toHaveBeenCalledWith(expect.objectContaining({
-      agentId: "scribe",
-      name: "Morning recap",
-      payload: { message: "Email my recap" },
-      credentialMode: "owner",
-    }));
   });
 });

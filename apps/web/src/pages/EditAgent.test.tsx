@@ -51,7 +51,6 @@ vi.mock("../api/extensions", () => ({
 
 vi.mock("../api/schedules", () => ({
   fetchSchedules: fetchSchedulesMock,
-  createSchedule: vi.fn(),
   updateSchedule: vi.fn(),
 }));
 
