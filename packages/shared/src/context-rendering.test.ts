@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  buildSlackContext,
   buildTelegramContext,
   buildUserContext,
   renderAgentContext,
@@ -59,5 +60,15 @@ describe("renderAgentContext telegram context", () => {
 
   it("returns empty string without metadata", () => {
     expect(renderAgentContext(buildTelegramContext({}))).toBe("");
+  });
+});
+
+describe("renderAgentContext slack reply delivery", () => {
+  const metadata = { channel: "slack" as const, place: "#ops", conversationType: "channel_message" as const, sender: "Thinh" };
+
+  it("tells the model its reply is delivered automatically", () => {
+    const rendered = renderAgentContext(buildSlackContext({ metadata }));
+    expect(rendered).toContain("[REPLY]");
+    expect(rendered).toContain("Do not call slack.send_message to reply here");
   });
 });

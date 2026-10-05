@@ -23,6 +23,12 @@ export const SLACK_FORMATTING = [
   "[END FORMATTING]",
 ].join("\n");
 
+export const SLACK_REPLY_DELIVERY = [
+  "[REPLY]",
+  "Your final text answer is posted to this Slack conversation automatically. Do not call slack.send_message to reply here; use it only when the user or your instructions explicitly tell you to post somewhere else.",
+  "[END REPLY]",
+].join("\n");
+
 function renderThreadStarter(
   starter: { author: string; content: string; timestamp: number } | undefined,
   fallback: string
@@ -114,7 +120,7 @@ function renderChannelContext(
   ];
 
   if (options?.includeSlackFormatting) {
-    parts.push("", SLACK_FORMATTING);
+    parts.push("", SLACK_FORMATTING, "", SLACK_REPLY_DELIVERY);
   }
 
   return parts.join("\n");
