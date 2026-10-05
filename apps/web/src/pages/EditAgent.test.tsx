@@ -133,6 +133,12 @@ async function mountEdit(agentId: string) {
   await new Promise((resolve) => setTimeout(resolve, 0));
 }
 
+function openTab(label: string) {
+  Array.from(container.querySelectorAll<HTMLButtonElement>('[role="tab"]'))
+    .find((button) => button.textContent?.trim() === label)!
+    .click();
+}
+
 beforeEach(() => {
   setCapabilitiesForTests({ forkedAgents: true });
   fetchPoolMock.mockReset();
@@ -210,7 +216,7 @@ describe("EditAgent", () => {
     const writeText = vi.fn().mockResolvedValue(undefined);
     Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText } });
     await mountEdit("scribe");
-    container.querySelectorAll<HTMLButtonElement>('[role="tab"]')[1]!.click();
+    openTab("Dashboards");
     await new Promise((resolve) => setTimeout(resolve, 0));
 
     expect(fetchAgentDashboardsMock).toHaveBeenCalledWith("scribe-fork", expect.any(Object));
@@ -245,7 +251,7 @@ describe("EditAgent", () => {
     setSession("user");
     fetchAgentsMock.mockResolvedValue([agent({ id: "scribe" })]);
     await mountEdit("scribe");
-    container.querySelectorAll<HTMLButtonElement>('[role="tab"]')[1]!.click();
+    openTab("Dashboards");
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(fetchAgentDashboardsMock).toHaveBeenCalledWith("scribe", expect.any(Object));
     expect(container.textContent).toContain("No dashboards yet.");
@@ -257,7 +263,7 @@ describe("EditAgent", () => {
     fetchAgentsMock.mockResolvedValue([agent({ id: "scribe" })]);
     fetchAgentDashboardsMock.mockRejectedValue(new Error("network"));
     await mountEdit("scribe");
-    container.querySelectorAll<HTMLButtonElement>('[role="tab"]')[1]!.click();
+    openTab("Dashboards");
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(container.textContent).toContain("Failed to load dashboards.");
   });
