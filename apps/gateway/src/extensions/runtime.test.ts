@@ -2,10 +2,12 @@ import { describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 import {
   GatewayConfigSchema,
+  registerCredentialConnectLinkProvider,
   type AgentConfig,
   type Extension,
 } from "@yoplai/shared";
 import { ExtensionRuntime } from "./runtime.js";
+import { getOAuthService } from "../oauth/service.js";
 
 function extension(overrides: Partial<Extension> & { id: string }): Extension {
   const { id, ...rest } = overrides;
@@ -42,6 +44,37 @@ const config = GatewayConfigSchema.parse({
 });
 
 describe("ExtensionRuntime", () => {
+  it("refuses a missing token with the trusted Slack flow link without executing the extension", async () => {
+    const execute = vi.fn();
+    const provider = vi.fn(async () => "<slack-pair-link>");
+    const unregister = registerCredentialConnectLinkProvider(provider);
+    const runtime = new ExtensionRuntime();
+    runtime.load([extension({ id: "sample", requiredSecrets: ["token"], getAgentTools: async () => [{ name: "sample_send", description: "Send", parameters: {}, execute }] })]);
+    const requester = { ...agent, extensions: { sample: { enabled: true } } };
+    try {
+      const result = await runtime.executeTool(requester, "sample_send", {}, config, "session");
+      expect(result.result).toMatchObject({ error: "extension_credentials_required", connectUrl: "<slack-pair-link>" });
+      expect(provider).toHaveBeenCalledWith(expect.objectContaining({ agent: requester, sessionId: "session" }), { kind: "token", extensionId: "sample" });
+      expect(execute).not.toHaveBeenCalled();
+    } finally { unregister(); }
+  });
+
+  it("refuses a disconnected external OAuth extension with the trusted Slack flow link", async () => {
+    const execute = vi.fn();
+    const provider = vi.fn(async () => "<slack-pair-link>");
+    const unregister = registerCredentialConnectLinkProvider(provider);
+    const resolveToken = vi.spyOn(getOAuthService(), "resolveToken").mockResolvedValue({ connected: false, provider: "google", reason: "not_connected", message: "not connected" });
+    const oauth = { provider: "google", scopes: ["gmail"] };
+    const runtime = new ExtensionRuntime();
+    runtime.load([extension({ id: "sample", oauth, getAgentTools: async () => [{ name: "sample_send", description: "Send", parameters: {}, execute }] })]);
+    try {
+      const result = await runtime.executeTool(agent, "sample_send", {}, config, "session");
+      expect(result.result).toMatchObject({ error: "oauth_connection_required", authorizeUrl: "<slack-pair-link>" });
+      expect(provider).toHaveBeenCalledWith(expect.objectContaining({ sessionId: "session" }), { kind: "oauth", ...oauth });
+      expect(execute).not.toHaveBeenCalled();
+    } finally { unregister(); resolveToken.mockRestore(); }
+  });
+
   it("owns loaded extension state and capabilities", () => {
     const runtime = new ExtensionRuntime();
     runtime.load(
@@ -160,6 +193,38 @@ describe("ExtensionRuntime", () => {
         env: expect.objectContaining(process.env),
       })
     );
+  });
+
+  it("passes requester identity into extension hooks and tool execution", async () => {
+    let promptUserId: string | undefined;
+    let toolUserId: string | undefined;
+    const runtime = new ExtensionRuntime();
+    runtime.load([
+      extension({
+        id: "identity",
+        getSystemPromptContributions: (_agent, context) => {
+          promptUserId = context?.userId;
+          return "identity prompt";
+        },
+        getAgentTools: (_agent, context) => {
+          expect(context?.userId).toBe("user-1");
+          return [{
+            name: "identity_run",
+            description: "Run identity",
+            parameters: {},
+            execute: async (_args, toolContext) => {
+              toolUserId = toolContext.userId;
+            },
+          }];
+        },
+      }),
+    ]);
+
+    await runtime.getPromptContributions(agent, config, "user-1");
+    await runtime.executeTool(agent, "identity_run", {}, config, undefined, "user-1");
+
+    expect(promptUserId).toBe("user-1");
+    expect(toolUserId).toBe("user-1");
   });
 
   it("rejects duplicate tool names", async () => {

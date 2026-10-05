@@ -222,7 +222,8 @@ export function forwardAuthContextToRequest(
   return request;
 }
 
-function shouldSkipAuth(path: string): boolean {
+function shouldSkipAuth(path: string, method: string): boolean {
+  if (method === "GET" && /^\/api\/slack\/(?:pair|connect)\/[A-Za-z0-9_-]{43}$/.test(path)) return true;
   if (path === "/api/auth" || path.startsWith("/api/auth/")) return true;
   if (path === "/api/capabilities") return true;
   if (path === "/api/branding/logo") return true;
@@ -351,7 +352,7 @@ export const createAuthMiddleware = (): MiddlewareHandler => {
 
     if (bearer) {
       const result = await verifyBearer(bearer);
-      const skip = shouldSkipAuth(c.req.path);
+      const skip = shouldSkipAuth(c.req.path, c.req.method);
 
       if (!result || result.kind === "invalid") {
         if (skip) {
@@ -378,7 +379,7 @@ export const createAuthMiddleware = (): MiddlewareHandler => {
       headers: c.req.raw.headers,
     });
 
-    if (shouldSkipAuth(c.req.path)) {
+    if (shouldSkipAuth(c.req.path, c.req.method)) {
       // Public path — attach session if present but never reject
       if (session) {
         const authContext = normalizeAuthContext(session);

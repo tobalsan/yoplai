@@ -31,7 +31,7 @@ import {
 export function ExtensionConfigForm() {
   const params = useParams<{ agentId: string; extensionId: string }>();
 
-  const [entry] = createResource(() =>
+  const [entry, { mutate }] = createResource(() =>
     fetchAgentExtension(params.agentId, params.extensionId)
   );
 
@@ -56,6 +56,24 @@ export function ExtensionConfigForm() {
   const [saving, setSaving] = createSignal(false);
   const [error, setError] = createSignal<string | null>(null);
   const [saved, setSaved] = createSignal(false);
+  const [credentialScope, setCredentialScope] = createSignal<"personal" | "team">("team");
+  let scopeInitialized = false;
+  createEffect(() => {
+    const current = entry();
+    if (!current || scopeInitialized) return;
+    scopeInitialized = true;
+    if (current.personalSecretFields !== undefined) setCredentialScope("personal");
+  });
+
+  // Non-admins may view, but not change, the admin-managed team credentials.
+  const teamReadOnly = () => {
+    const current = entry();
+    return credentialScope() === "team" && current?.personalSecretFields !== undefined && !current.canConfigureTeam;
+  };
+  const teamConfigured = () => {
+    const current = entry();
+    return !!current && fields().some((field) => field.secret && current.configValues[field.name] != null);
+  };
 
   const setValue = (name: string, value: string | number | boolean) => {
     setValues((prev) => ({ ...prev, [name]: value }));
@@ -69,7 +87,7 @@ export function ExtensionConfigForm() {
     for (const field of fields()) {
       const value = current.configValues[field.name];
       if (field.secret) {
-        if (value !== undefined && value !== null) {
+        if (credentialScope() === "personal" ? current.personalSecretFields?.includes(field.name) : value !== undefined && value !== null) {
           next[field.name] = REDACTED_SECRET_VALUE;
         }
         continue;
@@ -103,7 +121,8 @@ export function ExtensionConfigForm() {
         <label class="ext-config-checkbox-label">
           <input
             id={`ext-field-${field.name}`}
-            type="checkbox"
+          type="checkbox"
+          disabled={saving() || credentialScope() === "personal" || teamReadOnly()}
             checked={Boolean(values()[field.name])}
             onChange={(e) => setValue(field.name, e.currentTarget.checked)}
           />
@@ -115,6 +134,7 @@ export function ExtensionConfigForm() {
           id={`ext-field-${field.name}`}
           class="ext-config-input"
           type="password"
+          disabled={saving() || teamReadOnly()}
           autocomplete="off"
           value={String(values()[field.name] ?? "")}
           onInput={(e) => setValue(field.name, e.currentTarget.value)}
@@ -125,6 +145,7 @@ export function ExtensionConfigForm() {
           id={`ext-field-${field.name}`}
           class="ext-config-input"
           type="number"
+          disabled={saving() || credentialScope() === "personal" || teamReadOnly()}
           value={String(values()[field.name] ?? "")}
           onInput={(e) => setValue(field.name, e.currentTarget.value)}
         />
@@ -134,13 +155,14 @@ export function ExtensionConfigForm() {
           id={`ext-field-${field.name}`}
           class="ext-config-input"
           type="text"
+          disabled={saving() || credentialScope() === "personal" || teamReadOnly()}
           value={String(values()[field.name] ?? "")}
           onInput={(e) => setValue(field.name, e.currentTarget.value)}
         />
       </Show>
       <Show when={field.secret}>
         <span class="ext-config-hint">
-          Stored as a secret in the agent's env file.
+          {credentialScope() === "personal" ? "Stored encrypted for your use only." : "Shared with the whole team."}
         </span>
       </Show>
       <Show when={field.description}>
@@ -159,6 +181,8 @@ export function ExtensionConfigForm() {
     // Guard required fields client-side so a blank required secret doesn't
     // silently submit an empty patch. (The server also re-validates.)
     const missing = formFields.filter((field) => {
+      if (credentialScope() === "personal" && !field.secret) return false;
+      if (credentialScope() === "team" && current.personalSecretFields !== undefined && field.secret) return false;
       if (!field.required) return false;
       const value = values()[field.name];
       if (field.type === "boolean") return false;
@@ -174,11 +198,14 @@ export function ExtensionConfigForm() {
     setSaved(false);
     try {
       const { config, secrets } = splitAutoFormValues(formFields, values());
-      await patchAgentExtension(params.agentId, params.extensionId, {
-        enabled: true,
-        config,
+      const updated = await patchAgentExtension(params.agentId, params.extensionId, {
+        ...(current.personalSecretFields !== undefined ? { credentialScope: credentialScope() } : {}),
+        ...(credentialScope() === "team" ? { enabled: true, config } : {}),
         secrets,
       });
+      const refreshed = updated.find((extension) => extension.id === params.extensionId);
+      if (refreshed && current.personalSecretFields !== undefined) mutate(refreshed);
+      setValues((previous) => Object.fromEntries(Object.entries(previous).map(([name, value]) => [name, value !== "" && formFields.some((field) => field.name === name && field.secret) ? REDACTED_SECRET_VALUE : value])));
       setSaved(true);
     } catch (cause) {
       setError(
@@ -225,6 +252,26 @@ export function ExtensionConfigForm() {
                 }
               >
                 <form class="ext-config-form" onSubmit={handleSubmit}>
+                  <Show when={ext().personalSecretFields !== undefined}>
+                    <label class="ext-config-label">
+                      Credentials for
+                      <select aria-label="Credentials for" class="ext-config-input" disabled={saving()} value={credentialScope()} onChange={(event) => { setCredentialScope(event.currentTarget.value as "personal" | "team"); setSaved(false); }}>
+                        <option value="personal">Just me</option>
+                        <option value="team">Whole team</option>
+                      </select>
+                    </label>
+                    <Show when={credentialScope() === "personal"}>
+                      <p class="ext-config-hint">Shared settings below are managed by an admin. Your credentials take precedence over team credentials.</p>
+                    </Show>
+                    <Show when={teamReadOnly()}>
+                      <p class="ext-config-hint">
+                        {teamConfigured()
+                          ? "Whole team credentials are managed by an admin. They are used when you have no credentials of your own."
+                          : "Whole team credentials are not set up. An admin must configure them."}
+                      </p>
+                    </Show>
+                  </Show>
+                  <Show when={!teamReadOnly() || teamConfigured()}>
                   <For each={baseFields()}>{renderField}</For>
 
                   <Show when={advancedFields().length > 0}>
@@ -250,6 +297,8 @@ export function ExtensionConfigForm() {
                     </div>
                   </Show>
 
+                  </Show>
+                  <Show when={!teamReadOnly()}>
                   <div class="ext-config-actions">
                     <button
                       type="submit"
@@ -262,6 +311,7 @@ export function ExtensionConfigForm() {
                       <span class="ext-config-saved">Saved ✓</span>
                     </Show>
                   </div>
+                  </Show>
                   <Show when={error()}>
                     {(message) => (
                       <p class="ext-config-form-error">{message()}</p>

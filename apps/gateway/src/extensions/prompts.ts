@@ -6,7 +6,8 @@ import type { ExtensionRuntime } from "./runtime.js";
 export async function getExtensionSystemPromptContributions(
   agent: AgentConfig,
   config: GatewayConfig = loadConfig(),
-  runtime: ExtensionRuntime = getExtensionRuntime()
+  runtime: ExtensionRuntime = getExtensionRuntime(),
+  userId?: string
 ): Promise<string[]> {
-  return runtime.getPromptContributions(agent, config);
+  return runtime.getPromptContributions(agent, config, userId);
 }

@@ -8,6 +8,8 @@ const startServer = vi.fn();
 const loadExtensions = vi.fn();
 const getExtensionRuntime = vi.fn(() => ({ runtime: true }));
 const createExtensionContext = vi.fn();
+const bindExtensionContext = vi.fn((context: Record<string, unknown>, extensionId: string) => ({ ...context, extensionId }));
+const setExtensionActivator = vi.fn();
 const prepareStartupConfig = vi.fn();
 const logComponentSummary = vi.fn();
 const resolveStartupConfig = vi.fn();
@@ -31,11 +33,12 @@ vi.mock("../server/api.core.js", () => ({
 vi.mock("../extensions/registry.js", () => ({
   loadExtensions,
   getExtensionRuntime,
-  setExtensionActivator: vi.fn(),
+  setExtensionActivator,
 }));
 
 vi.mock("../extensions/context.js", () => ({
   createExtensionContext,
+  bindExtensionContext,
 }));
 
 vi.mock("../config/validate.js", () => ({
@@ -116,6 +119,11 @@ describe("startGatewayCommand", () => {
     expect(setLoadedConfig).toHaveBeenCalledWith(config);
     expect(result.actualPort).toBe(4003);
     expect(result.uiPort).toBe(3003);
+    expect(extensions[0].start).toHaveBeenCalledWith({ ctx: true, extensionId: "multiUser" });
+    expect(extensions[1].start).toHaveBeenCalledWith({ ctx: true, extensionId: "scheduler" });
+    const activated = { id: "external", registerRoutes: vi.fn(), start: vi.fn(async () => {}) };
+    await setExtensionActivator.mock.calls[0][0](activated);
+    expect(activated.start).toHaveBeenCalledWith({ ctx: true, extensionId: "external" });
   });
 
   it("sets single-agent mode before starting extensions", async () => {

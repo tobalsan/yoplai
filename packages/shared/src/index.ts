@@ -22,3 +22,4 @@ export * from "./oauth/index.js";
 export * from "./sanitize.js";
 export * from "./pi-system-prompt.js";
 export * from "./no-reply.js";
+export * from "./credential-connect.js";

@@ -14,6 +14,8 @@ Scheduler extension owns cron jobs, scripts/gates, run outputs, and delivery. He
 
 Jobs live in `<agent-workspace>/cron/jobs.json`; output lives under `cron/output/<job-id>/`.
 
+Jobs created by a signed-in user through chat or the web UI record that user as `ownerUserId` and default to `credentialMode: "owner"`. Owner mode uses the owner's personal connection when present, otherwise the team connection; a personal connection needing reconnection stops the run and reports which integration to reconnect. Team mode uses only team credentials. Existing jobs and jobs created from config or without a signed-in user default to team mode. The mode can be changed through scheduler tools or the web UI.
+
 ## CLI
 
 ```bash

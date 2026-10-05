@@ -4,6 +4,7 @@ import type {
   LeadSessionChangedEvent,
 } from "./lead-sessions/types.js";
 import type { Hono } from "hono";
+import type { CredentialScope } from "./oauth/types.js";
 
 export type { LeadSession, LeadSessionChangedEvent };
 
@@ -423,6 +424,8 @@ export type DeliverTarget = z.infer<typeof DeliverTargetSchema>;
 export const ScheduleJobFileSchema = z.object({
   id: z.string(),
   name: z.string(),
+  ownerUserId: z.string().min(1).optional(),
+  credentialMode: z.enum(["owner", "team"]).optional(),
   enabled: z.boolean().optional().default(true),
   schedule: ScheduleSchema,
   model: RequiredModelConfigSchema.optional(),
@@ -1183,6 +1186,8 @@ export type AgentTraceContext = {
 
 export type RunAgentParams = {
   agentId: string;
+  /** Trusted requester resolved by the host or messaging transport; absent when unpaired. */
+  userId?: string;
   message: string;
   attachments?: FileAttachment[];
   sessionId?: string;
@@ -1249,7 +1254,32 @@ export type DeliverySink = (input: {
   text: string;
 }) => Promise<void>;
 
+export interface CredentialKey {
+  agentId: string;
+  integration: string;
+  scope: CredentialScope;
+}
+
+export type ResolvedCredential<T> =
+  | { connected: true; payload: T; scope: CredentialScope }
+  | { connected: false; reason: "not_connected"; connectUrl: string };
+
+export interface ExtensionCredentials {
+  get<T>(key: CredentialKey): T | undefined;
+  save<T>(key: CredentialKey, payload: T): T;
+  delete(key: CredentialKey): void;
+  resolve<T>(input: {
+    agentId: string;
+    integration: string;
+    requesterUserId?: string;
+    connectUrl: string;
+  }): ResolvedCredential<T>;
+}
+
 export interface ExtensionContext {
+  credentialConnect?: import("./credential-connect.js").CredentialConnectHost;
+  // Host-owned encrypted credentials, available to external extensions.
+  credentials?: ExtensionCredentials;
   // Config
   getConfig(): GatewayConfig;
   getDataDir(): string;
@@ -1272,7 +1302,8 @@ export interface ExtensionContext {
   // Session management
   resolveSessionId(
     agentId: string,
-    sessionKey: string
+    sessionKey: string,
+    userId?: string
   ): Promise<SessionEntry | undefined>;
   getSessionEntry(
     agentId: string,
@@ -1356,12 +1387,14 @@ export type ExtensionAgentTool = {
  */
 export type OAuthTokenResolver = (
   agent: AgentConfig,
-  requirement: import("./oauth/types.js").OAuthRequirement
+  requirement: import("./oauth/types.js").OAuthRequirement,
+  userId?: string
 ) => Promise<import("./oauth/types.js").ResolvedOAuth>;
 
 export type ExtensionHookContext = {
   config: GatewayConfig;
   env?: Record<string, string>;
+  userId?: string;
   resolveOAuth?: OAuthTokenResolver;
 };
 
@@ -1723,6 +1756,7 @@ export type SubagentLogEvent = {
 export const CreateScheduleRequestSchema = z.object({
   name: z.string(),
   agentId: z.string().optional(),
+  credentialMode: z.enum(["owner", "team"]).optional(),
   schedule: ScheduleSchema,
   model: RequiredModelConfigSchema.optional(),
   payload: SchedulePayloadSchema,
@@ -1733,6 +1767,7 @@ export type CreateScheduleRequest = z.infer<typeof CreateScheduleRequestSchema>;
 
 export const UpdateScheduleRequestSchema = z.object({
   name: z.string().optional(),
+  credentialMode: z.enum(["owner", "team"]).optional(),
   enabled: z.boolean().optional(),
   schedule: ScheduleSchema.optional(),
   model: RequiredModelConfigSchema.optional(),
@@ -2098,6 +2133,7 @@ export type SlackContextBlock =
       timestamp: number;
     }
   | { type: "proactive_dm_notes"; notes: string[] }
+  | { type: "sender_identity"; unpaired: true }
   | {
       type: "history";
       messages: Array<{ author: string; content: string; timestamp: number }>;
@@ -2201,6 +2237,7 @@ const RichContextBlockSchema = z.union([
     type: z.literal("proactive_dm_notes"),
     notes: z.array(z.string()),
   }),
+  z.object({ type: z.literal("sender_identity"), unpaired: z.literal(true) }),
   z.object({
     type: z.literal("reaction"),
     emoji: z.string(),

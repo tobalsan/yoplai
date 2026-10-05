@@ -10,6 +10,7 @@ const {
   fetchPoolMock,
   fetchAgentsMock,
   fetchAgentDashboardsMock,
+  fetchSchedulesMock,
   fetchPoolActionsMock,
   fetchTeamsMock,
   fetchForksMock,
@@ -23,6 +24,7 @@ const {
   fetchPoolMock: vi.fn(),
   fetchAgentsMock: vi.fn(),
   fetchAgentDashboardsMock: vi.fn(),
+  fetchSchedulesMock: vi.fn(),
   fetchPoolActionsMock: vi.fn(),
   fetchTeamsMock: vi.fn(),
   fetchForksMock: vi.fn(),
@@ -47,6 +49,12 @@ vi.mock("../api/extensions", () => ({
     `/agents/${agentId}/extensions/${extensionId}/config`,
   detailsPath: (agentId: string, extensionId: string) =>
     `/agents/${agentId}/extensions/${extensionId}`,
+}));
+
+vi.mock("../api/schedules", () => ({
+  fetchSchedules: fetchSchedulesMock,
+  createSchedule: vi.fn(),
+  updateSchedule: vi.fn(),
 }));
 
 vi.mock("../api/teams", () => ({
@@ -130,6 +138,7 @@ beforeEach(() => {
   fetchPoolMock.mockReset();
   fetchAgentsMock.mockReset().mockResolvedValue([]);
   fetchAgentDashboardsMock.mockReset().mockResolvedValue([]);
+  fetchSchedulesMock.mockReset().mockResolvedValue([]);
   fetchPoolActionsMock.mockReset().mockResolvedValue([]);
   fetchTeamsMock.mockReset().mockResolvedValue([] as Team[]);
   fetchForksMock.mockReset().mockResolvedValue([] as AgentFork[]);
@@ -212,6 +221,23 @@ describe("EditAgent", () => {
     container.querySelector<HTMLButtonElement>(".edit-agent-dashboard button")!.click();
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(writeText).toHaveBeenCalledWith("https://yoplai.test/d/stable-link");
+  });
+
+  it("loads scheduled jobs for the accessible fork agent", async () => {
+    setCapabilitiesForTests({ forkedAgents: true, extensions: { scheduler: true } });
+    setSession("user");
+    fetchPoolMock.mockResolvedValue([agent({ id: "scribe" })]);
+    fetchPoolActionsMock.mockResolvedValue([{
+      poolId: "scribe", action: "chat", chatAgentId: "scribe-fork",
+      forked: true, reason: null, teamName: "Writers",
+    }]);
+    await mountEdit("scribe");
+    const schedulesTab = Array.from(container.querySelectorAll<HTMLButtonElement>('[role="tab"]'))
+      .find((button) => button.textContent?.trim() === "Scheduled jobs");
+    schedulesTab!.click();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(fetchSchedulesMock.mock.calls[0]?.[0]).toBe("scribe-fork");
   });
 
   it("shows an empty dashboard state for an accessible agent", async () => {

@@ -573,6 +573,9 @@ importers:
       '@slack/web-api':
         specifier: ^7.15.1
         version: 7.15.1(debug@4.4.3(supports-color@7.2.0))
+      '@yoplai/extension-multi-user':
+        specifier: workspace:*
+        version: link:../multi-user
       '@yoplai/shared':
         specifier: workspace:*
         version: link:../../shared

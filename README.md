@@ -11,6 +11,8 @@ Yoplai keeps configuration, conversations, and project data on your machine. Sta
 - Web chat with streaming, tool calls, files, and session history
 - Multiple configurable agents and external CLI subagents
 - Optional Discord, Slack, Telegram, IRC, and webhook entry points
+- Slack credential refusals offer [one personal connection link](docs/slack-credential-connect.md) for pairing plus Google OAuth, extension tokens, or extension-owned OAuth, with a confirmation in the original thread.
+- Slack `!pair` links an existing web account for personal credentials; [setup and email requirements](packages/extensions/slack/README.md#account-pairing).
 - Scheduled jobs, project boards, slices, and orchestration
 - File-based runtime data by default; SQLite only for optional features such as multi-user auth
 
@@ -147,6 +149,10 @@ Enable optional features in root `extensions`:
 
 Agent-specific tool extensions also require an entry in `agent.yaml`. See [Configuration](docs/configuration.md) and [Extensions](docs/extensions.md).
 
+In multi-user mode, paste extension API tokens using **Just me** in the extension configuration form. Admins can choose **Whole team** and edit shared settings; existing team tokens remain the fallback. Personal tokens require `oauth.encryptionKey` and stay encrypted on the gateway. See [personal extension tokens](docs/extensions.md#personal-extension-api-tokens).
+
+Use an agent's **My connections** tab to inspect and disconnect your personal connections and see team availability. **Account settings** lets you remove Slack pairings; the next Slack request uses the unpaired flow. Disconnecting affects only your credentials and the next request uses team credentials when available.
+
 ## Troubleshooting
 
 ### `yoplai.json` not found
@@ -186,6 +192,7 @@ Start with the [documentation index](docs/README.md).
 - [CLI](docs/cli.md) and [API](docs/api.md)
 - [Projects](docs/projects.md), [Scheduling](docs/scheduling.md), and [Channels](docs/channels.md)
 - [OAuth](docs/oauth.md) and [OpenClaw](docs/openclaw.md)
+- Google tool connections support **Just me** (your signed-in web requests) or **Whole team** (shared fallback); existing connections remain shared. See [connection scopes](docs/oauth.md#extension-oauth-connections).
 - [Models and skills](docs/models-and-skills.md)
 - [Development](docs/development.md) and [data layout](docs/data-layout.md)
 

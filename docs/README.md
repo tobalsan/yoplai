@@ -16,6 +16,7 @@
 - [Webhooks](webhooks.md) — external HTTP triggers
 - [Scheduling](scheduling.md) — cron jobs, heartbeat, and nightly dreams
 - [OAuth](oauth.md) — Pi provider authentication and extension OAuth
+- [Personal credentials from Slack](slack-credential-connect.md) — one-link pairing/connect flow and extension OAuth hook
 - [OpenClaw](openclaw.md) — connect an OpenClaw gateway
 
 ## Use and extend

@@ -177,19 +177,20 @@ Notes:
 
 1. Start (or restart) the gateway so it picks up the config and `.env`.
 2. Open **`/connections`** in the web UI.
-3. Click **Connect** next to Google. You are redirected to Google's consent
+3. Choose **Just me** (signed-in Yoplai users only) or **Whole team**, then click **Connect** next to Google. You are redirected to Google's consent
    screen requesting Drive read-only access.
 4. Approve. Google redirects back to your callback URL; Yoplai exchanges the code,
    stores the (encrypted) tokens, and shows **Connected as `<your-account>`**.
 
-To verify tokens are encrypted at rest, inspect a stored row:
+To verify encryption at rest without displaying credentials, count records:
 
 ```bash
-cat "$YOPLAI_HOME/oauth/main__google.json"
+find "$YOPLAI_HOME/oauth" -name 'credential-*.json' | wc -l
 ```
 
-The `accessToken` and `refreshToken` fields are `enc:v2:...` envelopes, not
-readable tokens.
+Each new scoped record contains an `enc:v2:...` envelope encrypting the entire
+connection payload. Legacy agent-only records remain team connections and migrate
+on their next save.
 
 ---
 

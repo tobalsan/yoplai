@@ -8,6 +8,7 @@ import type {
   ProjectFileChangedEvent,
   ProjectAgentChangedEvent,
   GatewayConfig,
+  ExtensionCredentials,
 } from "@yoplai/shared";
 import {
   CONFIG_DIR,
@@ -36,6 +37,26 @@ import {
   resolveMediaFilePath,
 } from "../media/metadata.js";
 
+import { CredentialStore } from "../credentials/store.js";
+import { resolveCredential } from "../credentials/resolver.js";
+import { credentialConnectHost } from "../credentials/connect.js";
+
+/** Bind extension-owned connector registration to the extension being started. */
+export function bindExtensionContext(context: ExtensionContext, extensionId: string): ExtensionContext {
+  const credentialConnect = context.credentialConnect;
+  if (!credentialConnect) return context;
+  return {
+    ...context,
+    credentialConnect: {
+      ...credentialConnect,
+      registerOAuthConnector(id, start) {
+        if (id !== extensionId) throw new Error("An extension can only register its own OAuth connector.");
+        return credentialConnect.registerOAuthConnector(id, start);
+      },
+    },
+  };
+}
+
 export function createExtensionContext(
   _resolvedConfig: GatewayConfig
 ): Parameters<Extension["start"]>[0] {
@@ -43,8 +64,18 @@ export function createExtensionContext(
   // their entry in `stop` via the returned unregister, so a restart re-registers
   // cleanly instead of leaving a stale sink behind.
   const deliverySinks = new Map<string, DeliverySink>();
+  let credentialStore: CredentialStore | undefined;
+  const getCredentialStore = () => credentialStore ??= new CredentialStore();
 
   return {
+    credentialConnect: credentialConnectHost,
+    credentials: {
+      get: (key) => getCredentialStore().get(key),
+      save: (key, payload) => getCredentialStore().save(key, payload),
+      delete: (key) => getCredentialStore().delete(key),
+      resolve: <T>(input: Parameters<ExtensionCredentials["resolve"]>[0]) =>
+        resolveCredential<T>({ ...input, store: getCredentialStore() }),
+    },
     getConfig: () => loadConfig(),
     getDataDir: () => CONFIG_DIR,
     reloadConfig: () => reloadConfig(),
@@ -61,8 +92,8 @@ export function createExtensionContext(
     resolveWorkspaceDir: (agent) => resolveWorkspaceDir(agent.workspace),
     runAgent,
     getSubagentTemplates,
-    resolveSessionId: async (agentId: string, sessionKey: string) =>
-      getSessionEntry(agentId, sessionKey),
+    resolveSessionId: async (agentId: string, sessionKey: string, userId?: string) =>
+      getSessionEntry(agentId, sessionKey, userId),
     getSessionEntry,
     clearSessionEntry,
     restoreSessionUpdatedAt: (

@@ -11,6 +11,21 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Added
 
+- Agent **My connections** lists your personal OAuth, MCP and extension token connections alongside team availability; disconnect removes your credentials immediately. Account settings list your Slack pairings and let you unpair.
+
+- Scheduled jobs record their creator and let chat and web users choose owner or team credentials; existing jobs continue using team credentials, and unusable personal connections produce a delivered reconnect error.
+
+- External extensions can request Slack connection links and register OAuth completion hooks through the host context; connector registration is restricted to the extension's own ID.
+
+- Slack credential refusals now provide one personal connection link that pairs an unpaired sender and connects Google OAuth, an extension token, or extension-owned OAuth for a specific resource, with reconnect links and a confirmation in the original thread.
+
+- Slack users can link existing Yoplai accounts with private, single-use, ten-minute `!pair` links; each sender's requests use their own personal credentials, with team-only credentials for unpaired users. Agents are told when a Slack sender is unpaired, and can call the new `slack.pair` tool to get a pairing link for that sender and share it in their reply, so users never need to type `!pair`. The pairing page uses the platform theme (`theme.css`, Inter) and `branding.name`/logo, defaulting to Yoplai.
+
+- Extension API tokens support **Just me** credentials encrypted per requester, with existing team credentials as fallback and a configuration link when missing. Admins can select **Whole team**; existing configs remain shared.
+
+- Remote MCP OAuth connections support personal ("Just me") and shared ("Whole team") credentials, with requester-specific reconnect links and existing grants retained as team.
+
+- Google OAuth connections can be personal ("Just me") or shared ("Whole team"); web tool calls use the requester's personal account, then the team account, otherwise a connect link. Existing connections remain shared.
 - Slack agents can find Slack Lists and read, create, update, and delete their items with dedicated agent tools.
 - Slack agents can list, create, read, find sections in, edit, share, and delete Slack Canvases with dedicated agent tools.
 - `dashboard_link` now lints each dashboard page without running its code and returns a `problems` list: script syntax errors, top-level names that collide with browser globals (`top`, `window`, `document`, `location`) or other scripts, echarts.js/kit.js load order, `/d-assets/v1/` use, undeclared `YOPLAI.data` names, inline `on*=` handlers next to module scripts, and queries returning 0 rows. Dashboard Kit also shows a banner when a page throws at runtime, and the dashboard skill and templates now put page code in `<script type="module">`. Dashboard assets are now cached for a week instead of a year.
@@ -38,6 +53,7 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Changed
 
+- In multi-user mode, only admins can connect or disconnect **Whole team** Google OAuth and MCP server connections; other users can still view the team connection or credentials read-only (or see that an admin must set them up), matching extension API credentials.
 - Langfuse tracing now uses the Langfuse JS SDK v5 (OpenTelemetry) instead of the legacy v3 SDK, so traces keep flowing once the server moves to `events_only` ingestion. Session IDs, environment, metadata, and the trace → `llm-turn` generation → tool tree are unchanged; session/user/tags are now stamped on every observation. Config is unchanged, and missing keys now disable tracing instead of failing.
 - Multi-user mode no longer requires `oauth.google`; any configured sign-in method is enough. `/api/capabilities` now reports `authMethods`.
 

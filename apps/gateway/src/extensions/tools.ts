@@ -7,9 +7,10 @@ import type { ExtensionRuntime, LoadedExtensionAgentTool } from "./runtime.js";
 export async function getExtensionAgentTools(
   agent: AgentConfig,
   config: GatewayConfig = loadConfig(),
-  runtime: ExtensionRuntime = getExtensionRuntime()
+  runtime: ExtensionRuntime = getExtensionRuntime(),
+  userId?: string
 ): Promise<LoadedExtensionAgentTool[]> {
-  const tools = await runtime.getTools(agent, config);
+  const tools = await runtime.getTools(agent, config, userId);
   return tools.map((tool) => ({
     ...tool,
     parameters: stripSchemaPatterns(tool.parameters) as Record<string, unknown>,

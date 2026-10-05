@@ -6,6 +6,7 @@ import type {
 import { resolveAgentEnv } from "./index.js";
 import { resolveConfigSecrets } from "./secrets.js";
 import { logError } from "../logging.js";
+import { extensionSecretFields, resolveExtensionTokenConfig } from "../credentials/extension-tokens.js";
 
 function uniqueAgentIdValidation(config: GatewayConfig): ValidationResult {
   const seen = new Set<string>();
@@ -84,7 +85,13 @@ function validateComponentConfigs(
     }
     // Bad per-agent config must not take the gateway down: the runtime skips
     // the extension for that agent, so log loudly and keep starting.
-    const agentResult = extension.validateAgentConfigs?.(config);
+    // Scoped tokens may be absent until a requester configures them. Validate
+    // shared settings here; the host guards missing credentials at call time.
+    const validationConfig = extensionSecretFields(extension).length ? {
+      ...config,
+      agents: config.agents.map((agent) => resolveExtensionTokenConfig(extension, agent, config).agent),
+    } : config;
+    const agentResult = extension.validateAgentConfigs?.(validationConfig);
     for (const error of agentResult?.valid === false ? agentResult.errors : []) {
       logError("Extension config invalid; disabled for agent", error, {
         extensionId: extension.id,

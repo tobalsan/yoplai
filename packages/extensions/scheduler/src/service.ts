@@ -5,6 +5,7 @@ import type {
   CreateScheduleRequest,
   UpdateScheduleRequest,
   ExtensionContext,
+  StreamEvent,
 } from "@yoplai/shared";
 import { deliverRunResult, type DeliveryOutcome } from "./deliver.js";
 import { PerAgentScheduleStore, type ScheduleStore } from "./store.js";
@@ -22,6 +23,21 @@ import {
 } from "./script.js";
 
 const DEFAULT_JOB_TIMEOUT_MS = 30 * 60 * 1000; // 30 minutes
+
+function credentialError(event: StreamEvent): string | undefined {
+  if (event.type !== "tool_result") return undefined;
+  try {
+    const result = JSON.parse(event.content) as { error?: string; connected?: boolean; reason?: string; provider?: string; message?: string };
+    const refused = result.error === "oauth_connection_required" || result.error === "extension_credentials_required" ||
+      (result.connected === false && ["needs_reconnect", "not_connected", "expired", "revoked", "wrong_account", "insufficient_scope", "provider_not_configured"].includes(result.reason ?? ""));
+    if (!refused) return undefined;
+    const integration = result.provider ?? result.message?.match(/\[Configure ([^\]]+)\]/)?.[1] ??
+      result.message?.match(/personal ([\w-]+) account/)?.[1] ?? event.name.split(/[._]/)[0] ?? "integration";
+    return `Reconnect ${integration} credentials before this scheduled job can run.`;
+  } catch {
+    return undefined;
+  }
+}
 
 export type SchedulerRunKind = "script_only" | "silent_tick" | "woke_agent";
 
@@ -212,15 +228,20 @@ export class SchedulerService {
 
   async add(
     agentId: string,
-    input: Omit<CreateScheduleRequest, "agentId">
+    input: Omit<CreateScheduleRequest, "agentId">,
+    ownerUserId?: string
   ): Promise<ScheduleJob> {
     await this.load();
     const ctx = getSchedulerContext();
     if (!ctx.getAgent(agentId)) throw new Error(`Agent not found: ${agentId}`);
+    const credentialMode = input.credentialMode ?? (ownerUserId ? "owner" : "team");
+    if (credentialMode === "owner" && !ownerUserId) throw new Error("Owner credentials require an authenticated user");
     const id = crypto.randomUUID();
     const job: JobWithState = {
       id,
       name: input.name,
+      ownerUserId,
+      credentialMode,
       agentId,
       enabled: true,
       schedule: input.schedule,
@@ -243,13 +264,17 @@ export class SchedulerService {
   async update(
     agentId: string,
     id: string,
-    patch: UpdateScheduleRequest
+    patch: UpdateScheduleRequest,
+    ownerUserId?: string
   ): Promise<ScheduleJob> {
     await this.load();
     const job = this.findJob(agentId, id);
     if (!job) throw new Error(`Schedule not found: ${agentId}/${id}`);
 
+    if (patch.credentialMode === "owner" && !job.ownerUserId && !ownerUserId) throw new Error("Owner credentials require an authenticated user");
     if (patch.name !== undefined) job.name = patch.name;
+    if (patch.credentialMode !== undefined) job.credentialMode = patch.credentialMode;
+    if (job.credentialMode === "owner" && !job.ownerUserId) job.ownerUserId = ownerUserId;
     if (patch.enabled !== undefined) job.enabled = patch.enabled;
     if (patch.schedule) job.schedule = patch.schedule;
     if (patch.model) job.model = patch.model;
@@ -631,8 +656,12 @@ export class SchedulerService {
     // Start the underlying run. executingJobs stays populated until runPromise
     // actually settles — even if executeJob returns early due to timeout —
     // so the next scheduled fire cannot overlap with a still-aborting run.
-    const runPromise = ctx.runAgent({
+    let missingCredentialError: string | undefined;
+    const runPromise = job.credentialMode === "owner" && !job.ownerUserId
+      ? Promise.reject(new Error("Scheduled job owner is missing; reconnect the owner's credentials after assigning an owner."))
+      : ctx.runAgent({
       agentId: job.agentId,
+      userId: job.credentialMode === "owner" ? job.ownerUserId : undefined,
       message: prompt,
       sessionId,
       model: job.model,
@@ -645,7 +674,10 @@ export class SchedulerService {
         metadata: { jobId: job.id, jobName: job.name },
       },
       signal: controller.signal,
-    });
+      onEvent: (event) => {
+        missingCredentialError ??= credentialError(event);
+      },
+      });
 
     const runSettled = runPromise
       .catch(() => {})
@@ -670,6 +702,7 @@ export class SchedulerService {
 
     try {
       const result = await Promise.race([runPromise, timeoutPromise]);
+      if (missingCredentialError) throw new Error(missingCredentialError);
 
       runSessionId = result.meta.sessionId;
       response = latestAssistantText(result.payloads);

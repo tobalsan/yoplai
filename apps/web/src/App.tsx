@@ -22,6 +22,7 @@ import { EditAgent } from "./pages/EditAgent";
 import { ExtensionConfigForm } from "./pages/ExtensionConfigForm";
 import { ExtensionDetails } from "./pages/ExtensionDetails";
 import { Teams } from "./pages/Teams";
+import { AccountConnections } from "./pages/AccountConnections";
 import {
   ImpersonationBanner,
   impersonationStatus,
@@ -449,6 +450,14 @@ export default function App() {
         component={() => (
           <GuardedRoute>
             <AdminUsersRouteShell />
+          </GuardedRoute>
+        )}
+      />
+      <Route
+        path="/account/connections"
+        component={() => (
+          <GuardedRoute>
+            <AccountConnections />
           </GuardedRoute>
         )}
       />

@@ -10,6 +10,7 @@ import {
   refreshAccessToken,
   revokeToken,
   type ConnectionState,
+  type CredentialScope,
   type GatewayConfig,
   type OAuthClientCredentials,
   type OAuthConnection,
@@ -20,7 +21,8 @@ import {
   type ResolvedOAuth,
 } from "@yoplai/shared";
 import { loadConfig } from "../config/index.js";
-import { OAuthConnectionStore, getOAuthConnectionStore } from "./store.js";
+import { resolveCredential } from "../credentials/resolver.js";
+import { OAuthConnectionStore, connectionScope, getOAuthConnectionStore } from "./store.js";
 
 /** A short-lived pending authorization awaiting the provider callback. */
 interface PendingAuth {
@@ -29,7 +31,9 @@ interface PendingAuth {
   codeVerifier: string;
   redirectUri: string;
   scopes: string[];
+  scope: CredentialScope;
   createdAt: number;
+  onComplete?: () => Promise<void>;
 }
 
 const PENDING_TTL_MS = 10 * 60 * 1000;
@@ -79,7 +83,7 @@ export interface StartAuthResult {
 /**
  * Orchestrates the provider-agnostic OAuth flow: builds authorize URLs with
  * state + PKCE, exchanges callback codes for tokens, persists a single
- * agent/provider-scoped connection, and resolves fresh tokens for extensions.
+ * agent/provider/scope connection, and resolves fresh tokens for extensions.
  */
 export class OAuthService {
   #store: OAuthConnectionStore;
@@ -127,7 +131,15 @@ export class OAuthService {
     agentId: string;
     provider: string;
     scopes?: string[];
+    scope?: "team" | "personal";
+    userId?: string;
+    onComplete?: () => Promise<void>;
   }): Promise<StartAuthResult> {
+    let scope: CredentialScope = { type: "team" };
+    if (input.scope === "personal") {
+      if (!input.userId) throw new Error("Personal credentials require a userId");
+      scope = { type: "personal", userId: input.userId };
+    }
     const config = this.#loadConfig();
     const provider = this.#resolveProvider(input.provider);
     const credentials = await this.#credentialSource(config).getClientCredentials(
@@ -154,7 +166,9 @@ export class OAuthService {
       codeVerifier: pkce.verifier,
       redirectUri,
       scopes,
+      scope,
       createdAt: Date.now(),
+      onComplete: input.onComplete,
     });
 
     const authorizeUrl = buildAuthorizeUrl({
@@ -174,6 +188,7 @@ export class OAuthService {
     code: string;
     state: string;
   }): Promise<OAuthConnection> {
+    this.#cleanupPending();
     const pending = this.#pending.get(input.state);
     if (!pending) {
       throw new Error("Invalid or expired OAuth state");
@@ -213,6 +228,8 @@ export class OAuthService {
     const connection: OAuthConnection = {
       agentId: pending.agentId,
       provider: provider.id,
+      scope: pending.scope.type,
+      userId: pending.scope.type === "personal" ? pending.scope.userId : undefined,
       accessToken: tokens.accessToken,
       refreshToken: tokens.refreshToken,
       expiresAt: tokens.expiresAt,
@@ -222,31 +239,58 @@ export class OAuthService {
       connectedAt: now,
       updatedAt: now,
     };
-    return this.#store.save(connection);
+    const saved = this.#store.save(connection);
+    if (pending.onComplete) {
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      try {
+        await Promise.race([
+          pending.onComplete(),
+          new Promise<void>((resolve) => { timer = setTimeout(resolve, 5000); }),
+        ]);
+      } catch {
+        // A failed notification must not undo a successfully saved connection.
+        console.warn("OAuth connected, but completion notification failed");
+      } finally {
+        if (timer) clearTimeout(timer);
+      }
+    }
+    return saved;
   }
 
   /** Current connection status for a (agent, provider) pair. */
-  getConnection(agentId: string, provider: string): OAuthConnection | undefined {
-    return this.#store.get(agentId, provider);
+  getConnection(agentId: string, provider: string, requesterUserId?: string): OAuthConnection | undefined {
+    const resolved = resolveCredential<OAuthConnection>({
+      store: { get: (key) => this.#store.get(key.agentId, key.integration, key.scope) },
+      agentId,
+      integration: provider,
+      requesterUserId,
+      connectUrl: "",
+    });
+    return resolved.connected ? resolved.payload : undefined;
+  }
+
+  getScopedConnection(agentId: string, provider: string, scope: CredentialScope): OAuthConnection | undefined {
+    return this.#store.get(agentId, provider, scope);
   }
 
   /**
    * Disconnect a (agent, provider) pair: best-effort revoke the grant at the
-   * provider so the agent's access is actually withdrawn upstream, then clear
-   * the local record. The resulting state is `disconnected` (no stored record).
+   * provider after clearing the local record immediately. Upstream outages
+   * cannot delay removal or the next request's fallback to team credentials.
    */
-  async disconnect(agentId: string, provider: string): Promise<void> {
-    const connection = this.#store.get(agentId, provider);
+  async disconnect(agentId: string, provider: string, scope: CredentialScope = { type: "team" }): Promise<void> {
+    const connection = this.#store.get(agentId, provider, scope);
+    // Stop resolving this grant before any potentially slow upstream revocation.
+    this.#store.delete(agentId, provider, scope);
     if (connection) {
       const descriptor = getOAuthProvider(provider);
       if (descriptor) {
         // Revoke the refresh token when present (revoking it invalidates the
         // whole grant on Google), else the access token. Best-effort.
         const token = connection.refreshToken ?? connection.accessToken;
-        await revokeToken(descriptor, token, this.#fetch);
+        void revokeToken(descriptor, token, this.#fetch);
       }
     }
-    this.#store.delete(agentId, provider);
   }
 
   /**
@@ -254,8 +298,8 @@ export class OAuthService {
    * / UI: `disconnected` when nothing is stored, `needs_reconnect` when the
    * stored grant is unrecoverable, else `connected`.
    */
-  getConnectionState(agentId: string, provider: string): ConnectionState {
-    const connection = this.#store.get(agentId, provider);
+  getConnectionState(agentId: string, provider: string, requesterUserId?: string): ConnectionState {
+    const connection = this.getConnection(agentId, provider, requesterUserId);
     if (!connection) return "disconnected";
     return connection.status === "needs_reconnect"
       ? "needs_reconnect"
@@ -298,7 +342,7 @@ export class OAuthService {
         scopes: tokens.scopes.length > 0 ? tokens.scopes : connection.scopes,
         tokenType: tokens.tokenType ?? connection.tokenType,
         status: "connected",
-      });
+      }, connectionScope(connection));
     } catch (error) {
       if (error instanceof OAuthRefreshError && !error.unrecoverable) {
         // Transient failure (network / 5xx): keep the grant untouched. If the
@@ -321,7 +365,7 @@ export class OAuthService {
     if (connection.status !== "needs_reconnect") {
       this.#store.update(connection.agentId, connection.provider, {
         status: "needs_reconnect",
-      });
+      }, connectionScope(connection));
     }
     return undefined;
   }
@@ -337,7 +381,8 @@ export class OAuthService {
    */
   async resolveToken(
     agentId: string,
-    requirement: OAuthRequirement
+    requirement: OAuthRequirement,
+    requesterUserId?: string
   ): Promise<ResolvedOAuth> {
     const config = this.#loadConfig();
     const provider = getOAuthProvider(requirement.provider);
@@ -368,7 +413,7 @@ export class OAuthService {
       };
     }
 
-    const stored = this.#store.get(agentId, provider.id);
+    const stored = this.getConnection(agentId, provider.id, requesterUserId);
     if (!stored) {
       return {
         connected: false,
@@ -384,7 +429,7 @@ export class OAuthService {
       provider: provider.id,
       reason: "needs_reconnect" as const,
       message: `${provider.displayName} needs to be reconnected for agent "${agentId}".`,
-      authorizeUrl,
+      authorizeUrl: `${authorizeUrl}&scope=${stored.scope ?? "team"}`,
     };
 
     // Already flagged unrecoverable: don't retry, surface the clean signal.

@@ -61,6 +61,7 @@ describe("slack agent tools", () => {
   it("exposes the Slack agent tools", () => {
     expect(slackAgentTools().map((t) => t.name)).toEqual([
       "slack.create_thread",
+      "slack.pair",
       "slack.send_message",
       "slack.list_channels",
       "slack.list_users",

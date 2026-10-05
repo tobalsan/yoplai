@@ -2,27 +2,49 @@ import type {
   AgentConfig,
   Extension,
   ExtensionAgentTool,
+  ExtensionAgentToolContext,
   ExtensionHookContext,
   GatewayConfig,
   OAuthRequirement,
   ResolvedOAuth,
 } from "@yoplai/shared";
-import { extensionConfigFieldNames } from "@yoplai/shared";
+import { requestCredentialConnectLink, extensionConfigFieldNames } from "@yoplai/shared";
 import { resolveAgentEnv } from "../config/index.js";
 import { getOAuthService } from "../oauth/service.js";
+import { extensionSecretFields, resolveExtensionTokenConfig } from "../credentials/extension-tokens.js";
 
 function buildHookContext(
   agent: AgentConfig,
-  config: GatewayConfig
+  config: GatewayConfig,
+  userId?: string
 ): ExtensionHookContext {
   return {
     config,
     env: resolveAgentEnv(agent, config),
+    userId,
     resolveOAuth: (
       agent: AgentConfig,
-      requirement: OAuthRequirement
+      requirement: OAuthRequirement,
+      requesterUserId?: string
     ): Promise<ResolvedOAuth> =>
-      getOAuthService().resolveToken(agent.id, requirement),
+      getOAuthService().resolveToken(agent.id, requirement, requesterUserId),
+  };
+}
+
+/** External OAuth extensions return their own refusal; give Slack requesters the single-pass connect link instead. */
+function withOAuthConnectLink(
+  extension: Extension,
+  execute: ExtensionAgentTool["execute"]
+): ExtensionAgentTool["execute"] {
+  const requirement = extension.oauth;
+  if (!requirement) return execute;
+  return async (args, context) => {
+    const oauth = await getOAuthService().resolveToken(context.agent.id, requirement, context.userId);
+    if (!oauth.connected && oauth.reason !== "provider_not_configured") {
+      const link = await requestCredentialConnectLink(context, { kind: "oauth", ...requirement });
+      if (link) return { error: "oauth_connection_required", authorizeUrl: link, message: `Connect your personal ${oauth.provider} account at ${link}, then try again.` };
+    }
+    return execute(args, context);
   };
 }
 
@@ -162,15 +184,35 @@ export class ExtensionRuntime {
 
   async getTools(
     agent: AgentConfig,
-    config: GatewayConfig
+    config: GatewayConfig,
+    userId?: string
   ): Promise<LoadedExtensionAgentTool[]> {
-    const hookContext = buildHookContext(agent, config);
     const groups = await Promise.all(
       this.#extensions.map(async (extension) => {
         try {
+          const scoped = resolveExtensionTokenConfig(extension, agent, config, userId);
+          const hookContext = buildHookContext(scoped.agent, scoped.config, userId);
           const tools =
-            (await extension.getAgentTools?.(agent, hookContext)) ?? [];
-          return tools.map((tool) => ({ ...tool, extensionId: extension.id }));
+            (await extension.getAgentTools?.(scoped.agent, hookContext)) ?? [];
+          return tools.map((tool) => ({
+            ...tool,
+            extensionId: extension.id,
+            execute: withOAuthConnectLink(extension, extensionSecretFields(extension).length === 0 ? tool.execute : async (args: unknown, context: ExtensionAgentToolContext) => {
+              const current = resolveExtensionTokenConfig(extension, context.agent, context.config, context.userId);
+              if (current.missing.length) {
+                const connectUrl = await requestCredentialConnectLink(context, { kind: "token", extensionId: extension.id }) ?? current.connectUrl;
+                return {
+                  error: "extension_credentials_required",
+                  message: `Add your own token using Just me at [Configure ${extension.displayName}](${connectUrl}) before using this tool. An admin can also configure Whole team credentials.`,
+                  connectUrl,
+                };
+              }
+              const callTools = await extension.getAgentTools?.(current.agent, buildHookContext(current.agent, current.config, context.userId));
+              const callTool = callTools?.find((candidate) => candidate.name === tool.name);
+              if (!callTool) return { error: "extension_tool_unavailable", connectUrl: current.connectUrl };
+              return callTool.execute(args, { ...context, agent: current.agent, config: current.config });
+            }),
+          }));
         } catch (error) {
           console.warn("Skipping extension tools", {
             extensionId: extension.id,
@@ -195,9 +237,10 @@ export class ExtensionRuntime {
   async getTool(
     agent: AgentConfig,
     toolName: string,
-    config: GatewayConfig
+    config: GatewayConfig,
+    userId?: string
   ): Promise<LoadedExtensionAgentTool | undefined> {
-    return (await this.getTools(agent, config)).find(
+    return (await this.getTools(agent, config, userId)).find(
       (tool) => tool.name === toolName
     );
   }
@@ -211,7 +254,7 @@ export class ExtensionRuntime {
     userId?: string,
     emitProgress?: import("@yoplai/shared").ExtensionAgentToolContext["emitProgress"]
   ): Promise<{ found: boolean; result?: unknown }> {
-    const tool = await this.getTool(agent, toolName, config);
+    const tool = await this.getTool(agent, toolName, config, userId);
     if (!tool) return { found: false };
     const env = resolveAgentEnv(agent, config);
     return {
@@ -229,14 +272,19 @@ export class ExtensionRuntime {
 
   async getPromptContributions(
     agent: AgentConfig,
-    config: GatewayConfig
+    config: GatewayConfig,
+    userId?: string
   ): Promise<string[]> {
-    const hookContext = buildHookContext(agent, config);
     const contributions = await Promise.all(
       this.#extensions.map(async (extension) => {
         try {
+          const scoped = resolveExtensionTokenConfig(extension, agent, config, userId);
+          if (scoped.missing.length) return [
+            `${extension.displayName} requires credentials. Ask the user to add their own token using Just me at [Configure ${extension.displayName}](${scoped.connectUrl}) before using its tools. For Slack requests, call the requested tool to receive a single personal connection link; do not send this web configuration link.`,
+          ];
+          const hookContext = buildHookContext(scoped.agent, scoped.config, userId);
           const contribution = await extension.getSystemPromptContributions?.(
-            agent,
+            scoped.agent,
             hookContext
           );
           if (!contribution) return [];
@@ -257,9 +305,10 @@ export class ExtensionRuntime {
 
   async getPrompts(
     agent: AgentConfig,
-    config: GatewayConfig
+    config: GatewayConfig,
+    userId?: string
   ): Promise<string[]> {
-    return this.getPromptContributions(agent, config);
+    return this.getPromptContributions(agent, config, userId);
   }
 
   getCapabilities(): ExtensionCapabilities {

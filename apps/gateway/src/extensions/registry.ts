@@ -149,7 +149,7 @@ const EXTENSION_REGISTRY: Record<string, ExtensionRegistration> = {
       }
       return hasPerAgent ? { _perAgent: true } : undefined;
     },
-    routePrefixes: [],
+    routePrefixes: ["/api/slack"],
   },
   telegram: {
     packageName: "@yoplai/extension-telegram",

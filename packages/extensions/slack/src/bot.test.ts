@@ -70,6 +70,17 @@ const receivers: Array<Record<string, unknown>> = [];
 const streamHandlers = vi.hoisted(
   () => [] as Array<(event: MockStreamEvent) => void | Promise<void>>
 );
+const pairing = vi.hoisted(() => ({
+  resolve: vi.fn(),
+  issue: vi.fn(),
+  registerClient: vi.fn(),
+  enabled: false,
+  baseUrl: "https://yoplai.test",
+}));
+vi.mock("./pairing.js", () => ({
+  SlackPairingError: class extends Error {},
+  getSlackPairingService: () => pairing.enabled ? pairing : undefined,
+}));
 
 vi.mock("@slack/bolt", () => ({
   SocketModeReceiver: vi.fn((config: Record<string, unknown>) => {
@@ -125,6 +136,8 @@ let dataDir = "";
 vi.mock("./context.js", () => ({
   getSlackContext: vi.fn(() => ({
     runAgent: mockRunAgent,
+    resolveSessionId: mockGetSessionEntry,
+    credentialConnect: {},
     saveMediaFile: mockSaveMediaFile,
     readMediaFile: mockReadMediaFile,
     getDataDir: () => dataDir,
@@ -143,6 +156,7 @@ vi.mock("./context.js", () => ({
   })),
   getSlackContextIfInitialized: vi.fn(() => ({
     getDataDir: () => dataDir,
+    getSessionEntry: mockGetSessionEntry,
   })),
 }));
 
@@ -196,6 +210,7 @@ describe("createSlackBot", () => {
     receivers.length = 0;
     streamHandlers.length = 0;
     vi.clearAllMocks();
+    pairing.enabled = false;
     clearAllHistory();
     mockGetSessionEntry.mockResolvedValue(undefined);
     mockClearSessionEntry.mockResolvedValue({
@@ -382,6 +397,102 @@ describe("createSlackBot", () => {
     await expect(bot?.start()).rejects.toThrow("connection failed");
 
     expect(streamHandlers).toHaveLength(0);
+  });
+
+  it("resolves each sender independently in one shared thread, including unpaired senders", async () => {
+    const { createSlackBot } = await import("./bot.js");
+    pairing.enabled = true;
+    pairing.resolve.mockImplementation((_workspace: string, user: string) =>
+      user === "UA" ? "alice" : user === "UB" ? "bob" : undefined
+    );
+    const bot = createSlackBot([agent], { ...config, channels: { C1: { agent: "main" } } });
+    apps[0].client.auth.test.mockResolvedValue({ user_id: "Ubot", team_id: "T1" });
+    await bot?.start();
+    const handler = getMessageHandler(apps[0]);
+    for (const [index, user] of ["UA", "UB", "UC", "UA"].entries()) {
+      await handler({
+        message: { ts: `${index + 2}.1`, thread_ts: "1.1", channel: "C1", channel_type: "channel", user, text: "<@Ubot> do work" },
+        client: apps[0].client,
+      });
+    }
+    expect(mockRunAgent.mock.calls.map(([request]) => request.userId)).toEqual(["alice", "bob", undefined, "alice"]);
+    expect(mockRunAgent.mock.calls.map(([request]) =>
+      request.context.blocks.some((block: { type: string }) => block.type === "sender_identity")
+    )).toEqual([false, false, true, false]);
+    expect(pairing.resolve.mock.calls.map((call) => call.slice(0, 2))).toEqual([
+      ["T1", "UA"], ["T1", "UB"], ["T1", "UC"], ["T1", "UA"],
+    ]);
+    await bot?.stop();
+  });
+
+  it("issues !pair privately for the requesting Slack identity without running the agent", async () => {
+    const { createSlackBot } = await import("./bot.js");
+    pairing.enabled = true;
+    pairing.issue.mockResolvedValue("https://yoplai.test/api/slack/pair/test-link");
+    const bot = createSlackBot([agent], config);
+    apps[0].client.auth.test.mockResolvedValue({ user_id: "Ubot", team_id: "T1" });
+    await bot?.start();
+    await getMessageHandler(apps[0])({
+      message: { ts: "1.1", channel: "C1", user: "UA", text: "!pair", channel_type: "channel" },
+      client: apps[0].client,
+    });
+    expect(pairing.issue).toHaveBeenCalledWith("T1", "UA", apps[0].client);
+    expect(apps[0].client.chat.postEphemeral).toHaveBeenCalledWith(expect.objectContaining({ user: "UA", text: expect.stringContaining("https://yoplai.test/api/slack/pair/test-link") }));
+    expect(mockRunAgent).not.toHaveBeenCalled();
+    await bot?.stop();
+  });
+
+  it("lets slack.pair link the run's trusted sender via a reply placeholder and ignores invented args", async () => {
+    const { createSlackBot } = await import("./bot.js");
+    const { slackAgentTools } = await import("./agent-tools.js");
+    const pairTool = slackAgentTools().find((t) => t.name === "slack.pair")!;
+    pairing.enabled = true;
+    pairing.resolve.mockReturnValue(undefined);
+    pairing.issue.mockResolvedValue("https://yoplai.test/api/slack/pair/agent-link");
+    mockGetSessionEntry.mockResolvedValue({ sessionId: "s1" });
+    let toolResult: unknown;
+    mockRunAgent.mockImplementationOnce(async () => {
+      toolResult = await pairTool.execute({ channel: "UOTHER" }, { agent, config: {} as never, sessionId: "s1" });
+      return { payloads: [{ text: "Open <slack-pair-link> to link." }], meta: { durationMs: 1, sessionId: "s1" } };
+    });
+    const bot = createSlackBot([agent], { ...config, channels: { C1: { agent: "main" } } });
+    apps[0].client.auth.test.mockResolvedValue({ user_id: "Ubot", team_id: "T1" });
+    await bot?.start();
+    await getMessageHandler(apps[0])({
+      message: { ts: "1.1", channel: "C1", user: "UC", text: "<@Ubot> check my email", channel_type: "channel" },
+      client: apps[0].client,
+    });
+    expect(pairing.issue).toHaveBeenCalledWith("T1", "UC", apps[0].client);
+    expect(toolResult).toMatchObject({ ok: true, link: "<slack-pair-link>" });
+    expect(JSON.stringify(toolResult)).not.toContain("agent-link");
+    expect(apps[0].client.chat.postMessage).toHaveBeenCalledWith(expect.objectContaining({
+      text: expect.stringContaining("Open https://yoplai.test/api/slack/pair/agent-link to link."),
+    }));
+    expect(apps[0].client.chat.postEphemeral).not.toHaveBeenCalled();
+    expect(await pairTool.execute({}, { agent, config: {} as never, sessionId: "s1" })).toMatchObject({ ok: false });
+    await bot?.stop();
+  });
+
+  it.each([true, false])("substitutes or appends a credential tool link in the originating Slack reply (placeholder %s)", async (includePlaceholder) => {
+    const { createSlackBot } = await import("./bot.js");
+    const { createCredentialConnectLink, clearCredentialConnectRequests } = await import("./credential-connect.js");
+    pairing.enabled = true;
+    pairing.resolve.mockReturnValue(undefined);
+    pairing.issue.mockResolvedValue("https://yoplai.test/api/slack/pair/agent-link");
+    mockGetSessionEntry.mockResolvedValue({ sessionId: "s1" });
+    mockRunAgent.mockImplementationOnce(async () => {
+      const result = await createCredentialConnectLink({ agent, config: {} as never, sessionId: "s1" }, { kind: "oauth", provider: "google" });
+      expect(result).toBe("<slack-pair-link>");
+      return { payloads: [{ text: includePlaceholder ? "Connect <slack-pair-link>" : "Please connect your account." }], meta: { durationMs: 1, sessionId: "s1" } };
+    });
+    const bot = createSlackBot([agent], config);
+    apps[0].client.auth.test.mockResolvedValue({ user_id: "Ubot", team_id: "T1" });
+    await bot?.start();
+    await getMessageHandler(apps[0])({ message: { ts: "1.1", channel: "C1", user: "UC", text: "send email", channel_type: "channel" }, client: apps[0].client });
+    expect(apps[0].client.chat.postMessage).toHaveBeenCalledWith(expect.objectContaining({ text: expect.stringMatching(/https:\/\/yoplai.test\/api\/slack\/connect\/[A-Za-z0-9_-]{43}/) }));
+    expect(pairing.issue).toHaveBeenCalledWith("T1", "UC", apps[0].client);
+    clearCredentialConnectRequests();
+    await bot?.stop();
   });
 
   it("records history only after messages pass gating", async () => {
@@ -1703,11 +1814,11 @@ describe("createSlackBot", () => {
         client: apps[0].client,
       });
 
-      expect(mockClearSessionEntry).toHaveBeenCalledWith("main", "slack:C1");
+      expect(mockClearSessionEntry).toHaveBeenCalledWith("main", "slack:C1", undefined);
       expect(mockDeleteSession).toHaveBeenCalledWith("main", "session");
       expect(mockInvalidateHistoryCache).toHaveBeenCalledWith(
         "main",
-        "session"
+        "session", undefined
       );
       expect(mockRunAgent).not.toHaveBeenCalled();
       expect(apps[0].client.chat.postEphemeral).toHaveBeenCalledWith(
@@ -1736,7 +1847,7 @@ describe("createSlackBot", () => {
         client: apps[0].client,
       });
 
-      expect(mockClearSessionEntry).toHaveBeenCalledWith("main", "my-session");
+      expect(mockClearSessionEntry).toHaveBeenCalledWith("main", "my-session", undefined);
     });
 
     it("handles !stop by running /stop control command", async () => {
@@ -1838,7 +1949,7 @@ describe("createSlackBot", () => {
         client: apps[0].client,
       });
 
-      expect(mockClearSessionEntry).toHaveBeenCalledWith("main", "slack:C1");
+      expect(mockClearSessionEntry).toHaveBeenCalledWith("main", "slack:C1", undefined);
       expect(mockRunAgent).not.toHaveBeenCalled();
     });
 
@@ -1884,7 +1995,7 @@ describe("createSlackBot", () => {
         client: apps[0].client,
       });
 
-      expect(mockClearSessionEntry).toHaveBeenCalledWith("main", "main");
+      expect(mockClearSessionEntry).toHaveBeenCalledWith("main", "main", undefined);
       expect(mockRunAgent).not.toHaveBeenCalled();
       expect(apps[0].client.chat.postEphemeral).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -1915,7 +2026,7 @@ describe("createSlackBot", () => {
         client: apps[0].client,
       });
 
-      expect(mockClearSessionEntry).toHaveBeenCalledWith("main", "slack:C1");
+      expect(mockClearSessionEntry).toHaveBeenCalledWith("main", "slack:C1", undefined);
       expect(mockRunAgent).not.toHaveBeenCalled();
       expect(apps[0].client.chat.postEphemeral).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -2004,7 +2115,7 @@ describe("createSlackBot", () => {
 
       expect(mockClearSessionEntry).toHaveBeenCalledWith(
         "main",
-        "slack:C1:1.1"
+        "slack:C1:1.1", undefined
       );
     });
 
@@ -2025,7 +2136,7 @@ describe("createSlackBot", () => {
         client: apps[0].client,
       });
 
-      expect(mockClearSessionEntry).toHaveBeenCalledWith("main", "slack:C1");
+      expect(mockClearSessionEntry).toHaveBeenCalledWith("main", "slack:C1", undefined);
     });
 
     it("isolates thread history from channel history", async () => {

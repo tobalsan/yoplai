@@ -62,7 +62,7 @@ describe("oauth routes", () => {
     });
     const app = createOAuthRoutes(service);
 
-    const authorizeRes = await app.request("/oauth/google/authorize?agent=a1");
+    const authorizeRes = await app.request("/oauth/google/authorize?agent=a1&scope=team");
     expect(authorizeRes.status).toBe(302);
     const location = authorizeRes.headers.get("location")!;
     const state = new URL(location).searchParams.get("state")!;
@@ -85,6 +85,52 @@ describe("oauth routes", () => {
     );
     const res = await app.request("/oauth/google/authorize");
     expect(res.status).toBe(400);
+  });
+
+  it("offers Just me and Whole team when a connect link has no scope", async () => {
+    const app = createOAuthRoutes(new OAuthService({ store, loadConfig: makeConfig }), undefined, async () => "alice");
+    const response = await app.request("/oauth/google/authorize?agent=a1");
+    expect(response.status).toBe(200);
+    expect(await response.text()).toContain("Just me");
+  });
+
+  it("restricts team connections to callers allowed to configure the team", async () => {
+    const app = createOAuthRoutes(new OAuthService({ store, loadConfig: makeConfig }), undefined, async () => "alice", async () => false);
+    const page = await (await app.request("/oauth/google/authorize?agent=a1")).text();
+    expect(page).toContain("Just me");
+    expect(page).not.toContain("Whole team");
+    expect((await app.request("/oauth/google/authorize?agent=a1&scope=team")).status).toBe(403);
+    expect((await app.request("/oauth/google/disconnect?agent=a1&scope=team", { method: "POST" })).status).toBe(403);
+    expect(await (await app.request("/oauth/google/status?agent=a1&scope=personal")).json()).toMatchObject({ canConfigureTeam: false });
+  });
+
+  it("binds personal callback ownership to the authenticated initiator, never query userId", async () => {
+    const fetchImpl = vi.fn(async (input: RequestInfo | URL) => new Response(JSON.stringify(
+      String(input).includes("token") ? { access_token: "alice-token", expires_in: 3600 } : { email: "alice@example.com" }
+    ), { headers: { "Content-Type": "application/json" } }));
+    const service = new OAuthService({ store, fetchImpl, loadConfig: makeConfig });
+    const app = createOAuthRoutes(service, undefined, async (c) => c.req.header("test-user"));
+    const authorization = await app.request("/oauth/google/authorize?agent=a1&scope=personal&userId=bob", {
+      headers: { "test-user": "alice" },
+    });
+    const state = new URL(authorization.headers.get("location")!).searchParams.get("state");
+    expect((await app.request(`/oauth/google/callback?code=dummy&state=${state}&userId=bob`)).status).toBe(200);
+    expect(service.getConnection("a1", "google", "alice")?.account).toBe("alice@example.com");
+    expect(service.getConnection("a1", "google", "bob")).toBeUndefined();
+    const bob = await app.request("/oauth/google/status?agent=a1", { headers: { "test-user": "bob" } });
+    expect(await bob.json()).toMatchObject({ connected: false });
+    const alice = await app.request("/oauth/google/status?agent=a1&scope=personal", { headers: { "test-user": "alice" } });
+    expect(await alice.json()).toMatchObject({ connected: true, scope: "personal", account: "alice@example.com" });
+    await app.request("/oauth/google/disconnect?agent=a1&scope=personal&userId=alice", { method: "POST", headers: { "test-user": "bob" } });
+    expect(service.getConnection("a1", "google", "alice")).toBeDefined();
+  });
+
+  it("requires a user account for personal operations and rejects invalid scopes", async () => {
+    const app = createOAuthRoutes(new OAuthService({ store, loadConfig: makeConfig }));
+    for (const [operation, method] of [["authorize", "GET"], ["status", "GET"], ["disconnect", "POST"]] as const) {
+      expect((await app.request(`/oauth/google/${operation}?agent=a1&scope=personal`, { method })).status).toBe(401);
+      expect((await app.request(`/oauth/google/${operation}?agent=a1&scope=other`, { method })).status).toBe(400);
+    }
   });
 
   it("status reports connected after a saved connection", async () => {

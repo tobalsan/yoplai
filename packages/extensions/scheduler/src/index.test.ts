@@ -1,7 +1,7 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { Hono } from "hono";
+import { Hono, type Context } from "hono";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AgentConfig, ExtensionContext, GatewayConfig } from "@yoplai/shared";
 import { schedulerExtension } from "./index.js";
@@ -59,6 +59,28 @@ describe("scheduler routes", () => {
     clearSchedulerContext();
     vi.restoreAllMocks();
     if (tmpDir) await fs.rm(tmpDir, { recursive: true, force: true });
+  });
+
+  it("assigns the authenticated owner and prevents another user from changing or running the job", async () => {
+    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-scheduler-owner-routes-"));
+    const alpha = agent("alpha", path.join(tmpDir, "alpha"));
+    const config: GatewayConfig = { version: 3, agents: [alpha], extensions: { scheduler: { enabled: true } }, sessions: { idleMinutes: 360 }, agentFab: false };
+    setSchedulerContext(context(config));
+    const app = new Hono().basePath("/api");
+    let userId = "alice";
+    app.use("*", async (c, next) => {
+      (c as unknown as Context<{ Variables: { multiUserAuthContext: { session: { userId: string } } } }>).set("multiUserAuthContext", { session: { userId } });
+      await next();
+    });
+    schedulerExtension.registerRoutes!(app);
+    const created = await app.request("/api/schedules", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ agentId: "alpha", name: "Digest", ownerUserId: "bob", schedule: { cron: "0 8 * * *", tz: "UTC" }, payload: { message: "Run" } }) });
+    const job = (await created.json()) as { id: string; ownerUserId: string; credentialMode: string };
+    expect(job).toMatchObject({ ownerUserId: "alice", credentialMode: "owner" });
+    userId = "bob";
+    const changed = await app.request(`/api/schedules/alpha/${job.id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ credentialMode: "team" }) });
+    expect(changed.status).toBe(403);
+    const run = await app.request(`/api/schedules/alpha/${job.id}/run`, { method: "POST" });
+    expect(run.status).toBe(403);
   });
 
   it("POST /schedules/:agentId/:id/run starts one immediate run", async () => {
