@@ -17,6 +17,7 @@ import { TokenCipher } from "./crypto.js";
  */
 
 let warned = false;
+let cached: { secret: string; cipher: TokenCipher } | undefined;
 
 function resolveEnvRef(value: string): string {
   if (!value.startsWith("$env:")) return value;
@@ -54,5 +55,8 @@ export function resolveTokenCipher(
     return undefined;
   }
 
-  return new TokenCipher(resolveEnvRef(secretRef));
+  const secret = resolveEnvRef(secretRef);
+  // Key derivation (scrypt) is deliberately slow; derive once per secret, not per store.
+  if (cached?.secret !== secret) cached = { secret, cipher: new TokenCipher(secret) };
+  return cached.cipher;
 }

@@ -69,6 +69,8 @@ Breaking changes are marked **⚠ BREAKING**.
 
 - Generic "Progress updated." status lines no longer appear: web chat stops rendering them, and the Slack progress bubble ignores milestones that have no meaningful, safe label instead of posting the placeholder.
 - Thinking and activity durations in web chat now survive page reloads and stopped runs: gateway history stores start and end times on thinking blocks.
+- Extension pages open almost instantly: the encryption key for stored credentials is derived once instead of once per extension (~600 ms → ~20 ms per catalog request, also faster credential lookups on tool calls).
+
 - A Canvas chart no longer blanks the rest of the dashboard when ECharts is missing or its option is invalid; the chart area shows a short message instead, and re-rendering a chart on the same element replaces it cleanly.
 - Messages sent mid-turn now appear after the agent's already-streamed thinking, text, and tool calls (including still-running ones) instead of jumping above them.
 - Pi agent history now keeps each assistant message together with its own tool calls, so reloaded chats show messages sent mid-turn in the order they were sent instead of splitting thinking from tool calls.
