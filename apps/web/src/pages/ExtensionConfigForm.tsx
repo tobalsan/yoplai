@@ -1,15 +1,14 @@
 import {
   createEffect,
   createMemo,
-  createResource,
   createSignal,
   For,
   Show,
 } from "solid-js";
-import { A, useParams } from "@solidjs/router";
+import { useParams } from "@solidjs/router";
 import {
-  fetchAgentExtension,
   patchAgentExtension,
+  type ExtensionCatalogEntry,
 } from "../api/extensions";
 import {
   buildAutoFormFields,
@@ -28,16 +27,16 @@ const NOT_SET_UP: ScopeStatus = { tone: "off", label: "Not set up" };
  * from an extension's config JSON-schema and `requiredSecrets`, then submits
  * through the extension write path: secrets become `$env:` refs in agent.yaml
  * with the value stored in the agent's `.env`, non-secrets are written verbatim
- * into agent.yaml, and the extension is enabled. Reached from the Edit-Agent
- * hub for `auto-form` tier extensions at
- * `/agents/:agentId/extensions/:extensionId/config`.
+ * into agent.yaml, and the extension is enabled. Rendered inside the extension
+ * details page (`/agents/:agentId/extensions/:extensionId`, also served at the
+ * legacy `.../config` path), which owns the back link and heading and passes
+ * the catalog entry it already loaded.
  */
-export function ExtensionConfigForm() {
+export function ExtensionConfigForm(props: { entry: ExtensionCatalogEntry }) {
   const params = useParams<{ agentId: string; extensionId: string }>();
 
-  const [entry, { mutate }] = createResource(() =>
-    fetchAgentExtension(params.agentId, params.extensionId)
-  );
+  // Updated in place after saving, from the PATCH response.
+  const [entry, setEntry] = createSignal<ExtensionCatalogEntry>(props.entry);
 
   const fields = createMemo(() => {
     const current = entry();
@@ -121,10 +120,6 @@ export function ExtensionConfigForm() {
     }
     setValues(next);
   });
-
-  const backHref = createMemo(
-    () => `/agents/${encodeURIComponent(params.agentId)}/edit`
-  );
 
   const renderField = (field: AutoFormField) => (
     <div class="ext-config-field">
@@ -225,7 +220,7 @@ export function ExtensionConfigForm() {
         secrets,
       });
       const refreshed = updated.find((extension) => extension.id === params.extensionId);
-      if (refreshed && current.personalSecretFields !== undefined) mutate(refreshed);
+      if (refreshed && current.personalSecretFields !== undefined) setEntry(refreshed);
       setValues((previous) => Object.fromEntries(Object.entries(previous).map(([name, value]) => [name, value !== "" && formFields.some((field) => field.name === name && field.secret) ? REDACTED_SECRET_VALUE : value])));
       setSaved(true);
     } catch (cause) {
@@ -291,38 +286,10 @@ export function ExtensionConfigForm() {
   return (
     <>
       <div class="ext-config">
-        <A href={backHref()} class="ext-config-back">
-          ← Back to agent
-        </A>
-
-        <Show when={entry.loading}>
-          <div class="ext-config-status">Loading configuration…</div>
-        </Show>
-        <Show when={entry.error}>
-          <div class="ext-config-status ext-config-error">
-            Failed to load extension.
-          </div>
-        </Show>
-        <Show when={!entry.loading && !entry.error && !entry()}>
-          <div class="ext-config-status ext-config-error">
-            Extension not found.
-          </div>
-        </Show>
-
         <Show when={entry()}>
           {(ext) => (
             <>
-              <h1 class="ext-config-title">Configure {ext().displayName}</h1>
-              <p class="ext-config-desc">{ext().description}</p>
-
-              <Show
-                when={fields().length > 0}
-                fallback={
-                  <div class="ext-config-status">
-                    This extension has no configurable fields.
-                  </div>
-                }
-              >
+              <Show when={fields().length > 0}>
                 <form class="ext-config-form" onSubmit={handleSubmit}>
                   <Show when={ext().personalSecretFields !== undefined} fallback={formBody()}>
                     <CredentialScopeTabs
@@ -355,39 +322,6 @@ export function ExtensionConfigForm() {
       </div>
 
       <style>{`
-        .ext-config {
-          padding: 24px;
-          max-width: 520px;
-        }
-        .ext-config-back {
-          display: inline-block;
-          margin-bottom: 20px;
-          font-size: 14px;
-          color: var(--text-secondary);
-          text-decoration: none;
-        }
-        .ext-config-back:hover {
-          color: var(--text-primary);
-        }
-        .ext-config-title {
-          margin: 0;
-          font-size: 22px;
-          font-weight: 700;
-          color: var(--text-primary);
-        }
-        .ext-config-desc {
-          margin: 6px 0 20px;
-          font-size: 14px;
-          color: var(--text-tertiary);
-        }
-        .ext-config-status {
-          padding: 12px 0;
-          font-size: 14px;
-          color: var(--text-tertiary);
-        }
-        .ext-config-error {
-          color: #e55;
-        }
         .ext-config-form {
           display: flex;
           flex-direction: column;

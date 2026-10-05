@@ -9,7 +9,6 @@ import {
 import { A, useNavigate, useParams } from "@solidjs/router";
 import { fetchAgentDashboards, fetchAgents, fetchPool } from "../api";
 import {
-  autoFormPath,
   detailsPath,
   fetchAgentExtensions,
   patchAgentExtension,
@@ -229,10 +228,8 @@ export function EditAgent() {
       mutateExtensions(next);
       if (enabling && ext.tier === "bespoke-route" && ext.configRoutePath) {
         void navigate(ext.configRoutePath);
-      } else if (enabling && ext.oauth) {
+      } else if (enabling && (ext.oauth || ext.tier === "auto-form")) {
         void navigate(detailsPath(params.agentId, ext.id));
-      } else if (enabling && ext.tier === "auto-form") {
-        void navigate(autoFormPath(params.agentId, ext.id));
       }
     } catch (cause) {
       setExtError(
@@ -243,13 +240,12 @@ export function EditAgent() {
     }
   };
 
-  const extensionPath = (ext: ExtensionCatalogEntry) => {
-    if (ext.enabled && ext.configured === false) {
-      if (ext.tier === "bespoke-route" && ext.configRoutePath) return ext.configRoutePath;
-      if (ext.tier === "auto-form") return autoFormPath(params.agentId, ext.id);
-    }
-    return detailsPath(params.agentId, ext.id);
-  };
+  // One click reaches the settings: bespoke pages directly, everything else
+  // on the details page, which renders OAuth and auto-form settings inline.
+  const extensionPath = (ext: ExtensionCatalogEntry) =>
+    ext.tier === "bespoke-route" && ext.configRoutePath
+      ? ext.configRoutePath
+      : detailsPath(params.agentId, ext.id);
 
   return (
     <Show when={!session().isPending}>

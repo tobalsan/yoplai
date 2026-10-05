@@ -1,13 +1,14 @@
 import { createMemo, createResource, Show } from "solid-js";
 import { A, useParams } from "@solidjs/router";
-import { autoFormPath, fetchAgentExtensions } from "../api/extensions";
+import { fetchAgentExtensions } from "../api/extensions";
 import { OAuthConnectCard } from "../components/OAuthConnectCard";
+import { ExtensionConfigForm } from "./ExtensionConfigForm";
 
 /**
- * Read-only details page for one extension on one agent, reached by clicking
- * an extension card on the Edit-Agent hub (`/agents/:agentId/extensions/:extensionId`,
- * distinct from the auto-form's `.../config` route). Settings are placeholder
- * only until an extension adopts the configuration contract.
+ * Details page for one extension on one agent, reached by clicking an
+ * extension card on the Edit-Agent hub (`/agents/:agentId/extensions/:extensionId`;
+ * the legacy `.../config` path renders the same page). Shows the extension's
+ * OAuth connection or schema-driven settings inline, so one click reaches them.
  */
 export function ExtensionDetails() {
   const params = useParams<{ agentId: string; extensionId: string }>();
@@ -82,16 +83,18 @@ export function ExtensionDetails() {
                 )}
               </Show>
 
+              <Show when={ext().tier === "auto-form"}>
+                <ExtensionConfigForm entry={ext()} />
+              </Show>
+
               <Show
                 when={
-                  ext().tier === "auto-form"
-                    ? autoFormPath(params.agentId, ext().id)
-                    : ext().tier === "bespoke-route" && ext().configRoutePath
-                      ? ext().configRoutePath
-                      : null
+                  ext().tier === "bespoke-route" && ext().configRoutePath
+                    ? ext().configRoutePath
+                    : null
                 }
                 fallback={
-                  <Show when={!ext().oauth}>
+                  <Show when={!ext().oauth && ext().tier !== "auto-form"}>
                     <div class="ext-details-settings">
                       Settings for this extension aren't available yet — this
                       extension hasn't adopted the configuration contract.

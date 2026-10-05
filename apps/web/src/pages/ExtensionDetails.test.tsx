@@ -129,17 +129,19 @@ describe("ExtensionDetails", () => {
     expect(container.querySelector(".ext-details")).not.toBeNull();
   });
 
-  it("renders a Configure link to the auto-form route for auto-form tier", async () => {
+  it("renders auto-form settings inline, with no extra Configure step", async () => {
     setSession("admin");
-    fetchAgentExtensionsMock.mockResolvedValue([entry({ tier: "auto-form" })]);
+    fetchAgentExtensionsMock.mockResolvedValue([entry({
+      tier: "auto-form",
+      configJsonSchema: { type: "object", properties: { apiKey: { type: "string" } } },
+      requiredSecrets: ["apiKey"],
+    })]);
     await mount("scribe", "exa");
+    await new Promise((resolve) => setTimeout(resolve, 0));
 
-    const link = container.querySelector<HTMLAnchorElement>(
-      "a.ext-details-configure"
-    );
-    expect(link?.getAttribute("href")).toBe(
-      "/agents/scribe/extensions/exa/config"
-    );
+    expect(container.querySelector(".ext-details-name")?.textContent).toBe("Exa");
+    expect(container.querySelector("#ext-field-apiKey")).not.toBeNull();
+    expect(container.querySelector("a.ext-details-configure")).toBeNull();
     expect(container.querySelector(".ext-details-settings")).toBeNull();
   });
 

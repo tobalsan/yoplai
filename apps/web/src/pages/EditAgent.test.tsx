@@ -45,8 +45,6 @@ vi.mock("../api", () => ({
 vi.mock("../api/extensions", () => ({
   fetchAgentExtensions: fetchAgentExtensionsMock,
   patchAgentExtension: patchAgentExtensionMock,
-  autoFormPath: (agentId: string, extensionId: string) =>
-    `/agents/${agentId}/extensions/${extensionId}/config`,
   detailsPath: (agentId: string, extensionId: string) =>
     `/agents/${agentId}/extensions/${extensionId}`,
 }));
@@ -699,7 +697,7 @@ describe("EditAgent", () => {
       enabled: true,
     });
     expect(navigateMock).toHaveBeenCalledWith(
-      "/agents/scribe/extensions/exa/config"
+      "/agents/scribe/extensions/exa"
     );
   });
 
@@ -723,7 +721,7 @@ describe("EditAgent", () => {
     await mountEdit("scribe");
 
     const link = container.querySelector<HTMLAnchorElement>(".edit-agent-ext-open")!;
-    expect(link.getAttribute("href")).toBe("/agents/scribe/extensions/exa/config");
+    expect(link.getAttribute("href")).toBe("/agents/scribe/extensions/exa");
     expect(link.textContent).toContain("Needs configuration");
   });
 

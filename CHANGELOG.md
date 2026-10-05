@@ -54,6 +54,8 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Changed
 
+- Clicking an extension card now opens one page with the extension details and its settings form; the separate **Configure** step is gone. Old `/agents/<id>/extensions/<ext>/config` links open the same page.
+
 - Credential **Just me** / **Whole team** tabs now show a status pill for each scope: green when connected or configured, red when a connection needs reconnecting or is missing access, gray when not set up. The OAuth card's separate status badge is gone, MCP server badges use the same pill style, and the "Admin only" tag is now a lock icon.
 
 - The **Just me** tab of extension configuration forms now lets you set every field, not only the token — e.g. your own Jira email, subdomain or project keys. Fields left at the team value keep following it. Usernames and emails show in clear (Cloudi‑Fi Admin's username is no longer masked), and Slack connect links also ask for required settings the team has not set.
@@ -67,10 +69,10 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Fixed
 
-- Generic "Progress updated." status lines no longer appear: web chat stops rendering them, and the Slack progress bubble ignores milestones that have no meaningful, safe label instead of posting the placeholder.
-- Thinking and activity durations in web chat now survive page reloads and stopped runs: gateway history stores start and end times on thinking blocks.
 - Extension pages open almost instantly: the encryption key for stored credentials is derived once instead of once per extension (~600 ms → ~20 ms per catalog request, also faster credential lookups on tool calls).
 
+- Generic "Progress updated." status lines no longer appear: web chat stops rendering them, and the Slack progress bubble ignores milestones that have no meaningful, safe label instead of posting the placeholder.
+- Thinking and activity durations in web chat now survive page reloads and stopped runs: gateway history stores start and end times on thinking blocks.
 - A Canvas chart no longer blanks the rest of the dashboard when ECharts is missing or its option is invalid; the chart area shows a short message instead, and re-rendering a chart on the same element replaces it cleanly.
 - Messages sent mid-turn now appear after the agent's already-streamed thinking, text, and tool calls (including still-running ones) instead of jumping above them.
 - Pi agent history now keeps each assistant message together with its own tool calls, so reloaded chats show messages sent mid-turn in the order they were sent instead of splitting thinking from tool calls.

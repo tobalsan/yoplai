@@ -34,20 +34,8 @@ export type ExtensionCatalogEntry = {
 };
 
 /**
- * Client route to the schema-driven auto-form for one extension on one agent.
- * The renderer itself lands in ALG-355; the hub links here so enabling an
- * auto-form extension surfaces its config form path today.
- */
-export function autoFormPath(agentId: string, extensionId: string): string {
-  return `/agents/${encodeURIComponent(agentId)}/extensions/${encodeURIComponent(
-    extensionId
-  )}/config`;
-}
-
-/**
- * Client route to an extension's read-only details page for one agent.
- * Distinct from `autoFormPath` (no `/config` suffix) — this is where clicking
- * an extension card on the Edit-Agent hub navigates.
+ * Client route to an extension's details page for one agent, where clicking an
+ * extension card on the Edit-Agent hub navigates; it shows settings inline.
  */
 export function detailsPath(agentId: string, extensionId: string): string {
   return `/agents/${encodeURIComponent(agentId)}/extensions/${encodeURIComponent(
@@ -66,17 +54,6 @@ export async function fetchAgentExtensions(
   if (!res.ok) throw new Error("Failed to fetch extension catalog");
   const data = (await res.json()) as { extensions: ExtensionCatalogEntry[] };
   return data.extensions;
-}
-
-// Fetch one accessible extension's catalog entry for an agent (the schema +
-// requiredSecrets the auto-form renderer draws from). Returns null when the
-// extension id is not present in the agent's catalog.
-export async function fetchAgentExtension(
-  agentId: string,
-  extensionId: string
-): Promise<ExtensionCatalogEntry | null> {
-  const all = await fetchAgentExtensions(agentId);
-  return all.find((entry) => entry.id === extensionId) ?? null;
 }
 
 export type ExtensionConfigPatch = {

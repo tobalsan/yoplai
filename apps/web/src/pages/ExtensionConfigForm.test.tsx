@@ -85,7 +85,9 @@ let dispose: () => void;
 
 async function mount(agentId: string, extensionId: string) {
   useParamsMock.mockReturnValue({ agentId, extensionId });
-  dispose = render(() => <ExtensionConfigForm />, container);
+  // The details page loads the entry and hands it to the form.
+  const entry = await fetchAgentExtensionMock(agentId, extensionId);
+  dispose = render(() => (entry ? <ExtensionConfigForm entry={entry} /> : null), container);
   await new Promise((resolve) => setTimeout(resolve, 0));
   await new Promise((resolve) => setTimeout(resolve, 0));
 }
@@ -112,9 +114,6 @@ describe("ExtensionConfigForm", () => {
     await mount("scribe", "exa");
 
     expect(fetchAgentExtensionMock).toHaveBeenCalledWith("scribe", "exa");
-    expect(container.querySelector(".ext-config-title")?.textContent).toBe(
-      "Configure Exa"
-    );
     const input = container.querySelector<HTMLInputElement>(
       "#ext-field-apiKey"
     )!;
@@ -294,12 +293,12 @@ describe("ExtensionConfigForm", () => {
     );
   });
 
-  it("shows not-found when the extension is absent from the catalog", async () => {
+  it("renders nothing when the extension is absent (the details page reports it)", async () => {
     setSession("admin");
     fetchAgentExtensionMock.mockResolvedValue(null);
     await mount("scribe", "ghost");
 
-    expect(container.textContent).toContain("Extension not found");
+    expect(container.querySelector("form")).toBeNull();
   });
 
   it("allows a non-admin to configure an accessible team agent", async () => {

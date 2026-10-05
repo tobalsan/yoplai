@@ -19,7 +19,6 @@ import { QuickChatOverlay } from "./components/QuickChatOverlay";
 import { LeftNavShell } from "./components/LeftNavShell";
 import { AgentCatalog } from "./pages/AgentCatalog";
 import { EditAgent } from "./pages/EditAgent";
-import { ExtensionConfigForm } from "./pages/ExtensionConfigForm";
 import { ExtensionDetails } from "./pages/ExtensionDetails";
 import { Teams } from "./pages/Teams";
 import { AccountConnections } from "./pages/AccountConnections";
@@ -338,14 +337,6 @@ function EditAgentRouteShell() {
   );
 }
 
-function ExtensionConfigRouteShell() {
-  return (
-    <LeftNavShell>
-      <ExtensionConfigForm />
-    </LeftNavShell>
-  );
-}
-
 function ExtensionDetailsRouteShell() {
   return (
     <LeftNavShell>
@@ -417,15 +408,7 @@ export default function App() {
         )}
       />
       <Route
-        path="/agents/:agentId/extensions/:extensionId/config"
-        component={() => (
-          <GuardedRoute>
-            <ExtensionConfigRouteShell />
-          </GuardedRoute>
-        )}
-      />
-      <Route
-        path="/agents/:agentId/extensions/:extensionId"
+        path={["/agents/:agentId/extensions/:extensionId", "/agents/:agentId/extensions/:extensionId/config"]}
         component={() => (
           <GuardedRoute>
             <ExtensionDetailsRouteShell />
