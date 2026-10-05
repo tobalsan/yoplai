@@ -2398,7 +2398,7 @@ export function ChatView() {
             </svg>
           </A>
         </Show>
-        <Show when={isOAuth()}>
+        <Show when={isOAuth() && canUseFullView()}>
           <select
             class="think-dropdown"
             value={pendingThinkLevel() ?? thinkingLevel() ?? ""}
