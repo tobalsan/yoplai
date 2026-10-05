@@ -102,6 +102,23 @@ describe("requester extension API tokens", () => {
     }
   });
 
+  it("lets a requester override shared settings such as the account email", async () => {
+    const request = vi.fn(async () => ({ records: [] }));
+    const extension = tokenExtension("zendesk", request);
+    extension.configJsonSchema = { properties: { apiKey: { type: "string" }, email: { type: "string" }, subdomain: { type: "string" } } };
+    // The web form replaces setting overrides wholesale; secrets are kept.
+    savePersonalExtensionTokens(extension, agent, config, "alice", { apiKey: "alice-token", email: "old@example.test" }, store);
+    savePersonalExtensionTokens(extension, agent, config, "alice", { email: "alice@example.test" }, store, true);
+    expect(() => savePersonalExtensionTokens(extension, agent, config, "alice", { email: "$env:HOST_EMAIL" }, store)).toThrow("Invalid personal credential fields");
+    const runtime = new ExtensionRuntime();
+    runtime.load([extension]);
+    const [tool] = await runtime.getTools(agent, config, "alice");
+    await tool.execute({}, { agent, config, env: state.env, userId: "alice" });
+    expect(request).toHaveBeenLastCalledWith(`Basic ${Buffer.from("alice@example.test/token:alice-token").toString("base64")}`);
+    await tool.execute({}, { agent, config, env: state.env, userId: "bob" });
+    expect(request).toHaveBeenLastCalledWith(`Basic ${Buffer.from("shared@example.test/token:team-zendesk").toString("base64")}`);
+  });
+
   it("refuses missing credentials with the exact form link and keeps unrelated tools working", async () => {
     state.env = {};
     const request = vi.fn(async () => ({ records: [] }));

@@ -178,9 +178,10 @@ describe("ExtensionConfigForm", () => {
     container.querySelector("form")!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
     await new Promise((resolve) => setTimeout(resolve, 0));
 
+    // Unchanged settings are not resent, so `$env:` refs in agent.yaml survive.
     expect(patchAgentExtensionMock).toHaveBeenCalledWith("scribe", "exa", {
       enabled: true,
-      config: { baseUrl: "https://api.exa.ai" },
+      config: {},
       secrets: {},
     });
   });
@@ -319,14 +320,18 @@ describe("ExtensionConfigForm", () => {
     await mount("scribe", "exa");
     expect(activeScope(container)).toBe("personal");
     expect(scopeTabLabels(container)).toEqual(["Just me", "Whole team"]);
-    expect(container.querySelector<HTMLInputElement>("#ext-field-baseUrl")?.disabled).toBe(true);
+    const baseUrl = container.querySelector<HTMLInputElement>("#ext-field-baseUrl")!;
+    expect(baseUrl.disabled).toBe(false);
+    expect(baseUrl.value).toBe("https://shared.test");
+    baseUrl.value = "https://alice.test";
+    baseUrl.dispatchEvent(new InputEvent("input", { bubbles: true }));
     const input = container.querySelector<HTMLInputElement>("#ext-field-apiKey")!;
     expect(input.value).toBe("");
     input.value = "alice-personal";
     input.dispatchEvent(new InputEvent("input", { bubbles: true }));
     container.querySelector("form")!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
     await new Promise((resolve) => setTimeout(resolve, 0));
-    expect(patchAgentExtensionMock).toHaveBeenCalledWith("scribe", "exa", { credentialScope: "personal", secrets: { apiKey: "alice-personal" } });
+    expect(patchAgentExtensionMock).toHaveBeenCalledWith("scribe", "exa", { credentialScope: "personal", config: { baseUrl: "https://alice.test" }, secrets: { apiKey: "alice-personal" } });
     expect(container.querySelector<HTMLInputElement>("#ext-field-apiKey")?.value).toBe("********");
     expect(container.textContent).not.toContain("alice-personal");
   });

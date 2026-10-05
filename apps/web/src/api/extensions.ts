@@ -16,6 +16,8 @@ export type ExtensionCatalogEntry = {
   requiredSecrets: string[];
   /** Present in multi-user mode; contains field names only. */
   personalSecretFields?: string[];
+  /** Requester's own setting overrides (non-secret fields only). */
+  personalConfigValues?: Record<string, unknown>;
   canConfigureTeam?: boolean;
   advancedConfigFields: string[];
   configValues: Record<string, unknown>;

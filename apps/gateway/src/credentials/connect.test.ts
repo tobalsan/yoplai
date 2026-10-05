@@ -14,7 +14,7 @@ const state = vi.hoisted(() => ({
 vi.mock("../config/index.js", () => ({ getAgent: (id: string) => id === "sales" ? state.agent : undefined, loadConfig: () => ({ extensions: {} }) }));
 vi.mock("../extensions/registry.js", () => ({ getLoadedExtensions: () => [state.extension] }));
 vi.mock("../oauth/service.js", () => ({ getOAuthService: () => ({ startAuthorization: state.start }) }));
-vi.mock("./extension-tokens.js", () => ({ extensionSecretFields: () => ["apiToken", "optional"], savePersonalExtensionTokens: state.save }));
+vi.mock("./extension-tokens.js", () => ({ extensionSecretFields: () => ["apiToken", "optional"], resolveExtensionTokenConfig: () => ({ missing: ["apiToken", "username"] }), savePersonalExtensionTokens: state.save }));
 afterEach(() => vi.clearAllMocks());
 
 describe("host single-pass credential connector", () => {
@@ -24,7 +24,11 @@ describe("host single-pass credential connector", () => {
     expect(state.start).toHaveBeenCalledWith({ ...options, provider: "google", scopes: ["gmail"], scope: "personal" });
   });
   it("uses declared form fields and the validated personal writer", async () => {
-    expect(await credentialConnectHost.fields("sales", "fixture")).toEqual([{ name: "apiToken", label: "API token", required: true }, { name: "optional", label: "optional", required: false }]);
+    expect(await credentialConnectHost.fields("sales", "fixture")).toEqual([
+      { name: "username", label: "username", required: false, secret: false },
+      { name: "apiToken", label: "API token", required: true, secret: true },
+      { name: "optional", label: "optional", required: false, secret: true },
+    ]);
     await credentialConnectHost.save("sales", "fixture", "alice", { apiToken: "fixture-value" });
     expect(state.save).toHaveBeenCalledWith(state.extension, state.agent, { extensions: {} }, "alice", { apiToken: "fixture-value" });
     await expect(credentialConnectHost.save("sales", "unavailable", "alice", {})).rejects.toThrow("unavailable");

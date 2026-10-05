@@ -63,7 +63,7 @@ import { compactAgentSession } from "../agents/compact.js";
 import { CONFIG_DIR } from "../config/index.js";
 import { CredentialStore } from "../credentials/store.js";
 import { createConnectionRoutes } from "../credentials/routes.js";
-import { extensionSecretFields, extensionTokenIntegration, resolveExtensionTokenConfig } from "../credentials/extension-tokens.js";
+import { extensionSecretFields, extensionTokenIntegration, isValidPersonalValue, resolveExtensionTokenConfig, savePersonalExtensionTokens, type PersonalExtensionValues } from "../credentials/extension-tokens.js";
 import { getUserHistoryDir } from "@yoplai/extension-multi-user/isolation";
 import {
   appendSessionMeta,
@@ -169,12 +169,13 @@ async function requesterExtensionCatalog(c: Context, config: GatewayConfig, agen
   return catalog.map((entry) => {
     const fields = extensionSecretFields(entry);
     if (!fields.length) return entry;
-    const personal = new CredentialStore().get<Record<string, string>>({
+    const personal = new CredentialStore().get<PersonalExtensionValues>({
       agentId: agent.id,
       integration: extensionTokenIntegration(entry.id),
       scope: { type: "personal", userId: auth.user.id },
     });
-    return { ...entry, canConfigureTeam: hasAdminRole(auth.user.role), personalSecretFields: fields.filter((field) => !!personal?.[field]) };
+    const personalConfigValues = Object.fromEntries(Object.entries(personal ?? {}).filter(([field]) => !fields.includes(field)));
+    return { ...entry, canConfigureTeam: hasAdminRole(auth.user.role), personalSecretFields: fields.filter((field) => !!personal?.[field]), personalConfigValues };
   });
 }
 
@@ -825,27 +826,20 @@ api.patch("/agents/:id/extensions/:extensionId", async (c) => {
   }
   if (personalScope) {
     if (!auth) return c.json({ error: "Personal credentials require login" }, 401);
-    if (!targetExtension || Object.keys(patch.config ?? {}).length || (enabled !== undefined && enabled !== true)) {
-      return c.json({ error: "Personal scope accepts only credential fields" }, 400);
+    if (!targetExtension || (enabled !== undefined && enabled !== true)) {
+      return c.json({ error: "Personal scope accepts only configuration fields" }, 400);
     }
-    if (Object.entries(patch.secrets ?? {}).some(([field, value]) => !secretFields.includes(field) || !value || value === "********" || value.startsWith("$env:"))) {
+    const values = { ...(patch.config ?? {}), ...patch.secrets };
+    if (Object.entries(values).some(([field, value]) => !isValidPersonalValue(targetExtension, field, value))) {
       return c.json({ error: "Invalid personal credential fields" }, 400);
     }
-    const store = new CredentialStore();
-    const key = { agentId, integration: extensionTokenIntegration(extensionId), scope: { type: "personal" as const, userId: auth.user.id } };
     try {
-      const tokens = { ...store.get<Record<string, string>>(key), ...patch.secrets };
-      // Validate without persisting or mutating shared config; validators report field names only.
-      const prospective = { ...agent, extensions: { ...agent.extensions, [extensionId]: { ...agent.extensions?.[extensionId], enabled: true, ...tokens } } };
-      const scoped = resolveExtensionTokenConfig(targetExtension, prospective, config);
-      const validation = targetExtension.validateAgentConfig?.(scoped.agent, scoped.config, resolveAgentEnv(agent, config));
-      if (scoped.missing.length || validation?.valid === false) {
-        const knownFields = Object.keys(targetExtension.configJsonSchema?.properties ?? {});
-        const invalidFields = validation?.errors.map((field) => knownFields.includes(field) ? field : "config");
-        return c.json({ error: "Extension configuration is invalid", fields: scoped.missing.length ? scoped.missing : invalidFields }, 422);
+      // The form sends every setting override, so ones reset to the team value are dropped.
+      savePersonalExtensionTokens(targetExtension, agent, config, auth.user.id, values as PersonalExtensionValues, undefined, true);
+    } catch (error) {
+      if (error instanceof Error && "fields" in error) {
+        return c.json({ error: "Extension configuration is invalid", fields: (error as Error & { fields: string[] }).fields }, 422);
       }
-      store.save(key, tokens);
-    } catch {
       return c.json({ error: "Unable to store personal credentials; check oauth.encryptionKey" }, 400);
     }
     const extensions = await requesterExtensionCatalog(c, config, agent);

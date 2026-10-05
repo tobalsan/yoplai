@@ -2,7 +2,7 @@ import { registerCredentialOAuthConnector, requestCredentialConnectLink, startEx
 import { getAgent, loadConfig } from "../config/index.js";
 import { getLoadedExtensions } from "../extensions/registry.js";
 import { getOAuthService } from "../oauth/service.js";
-import { extensionSecretFields, savePersonalExtensionTokens } from "./extension-tokens.js";
+import { extensionSecretFields, resolveExtensionTokenConfig, savePersonalExtensionTokens } from "./extension-tokens.js";
 
 function tokenTarget(agentId: string, extensionId: string) {
   const agent = getAgent(agentId);
@@ -34,17 +34,21 @@ export const credentialConnectHost: CredentialConnectHost = {
     return result.authorizeUrl;
   },
   async fields(agentId, extensionId) {
-    const { extension } = tokenTarget(agentId, extensionId);
+    const { agent, extension } = tokenTarget(agentId, extensionId);
     const required = new Set(extension.requiredSecrets ?? []);
     const schemaRequired = extension.configJsonSchema?.required;
     if (Array.isArray(schemaRequired)) for (const field of schemaRequired) {
       if (typeof field === "string") required.add(field);
     }
     const properties = extension.configJsonSchema?.properties as Record<string, { title?: string }> | undefined;
-    return extensionSecretFields(extension).map((name) => ({
+    const secrets = extensionSecretFields(extension);
+    // Required settings without a team value (e.g. a username) are asked for too.
+    const unsetSettings = resolveExtensionTokenConfig(extension, agent, loadConfig()).missing.filter((name) => !secrets.includes(name));
+    return [...unsetSettings, ...secrets].map((name) => ({
       name,
       label: properties?.[name]?.title ?? name,
       required: required.has(name),
+      secret: secrets.includes(name),
     }));
   },
   async save(agentId, extensionId, userId, secrets) {

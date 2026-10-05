@@ -19,37 +19,79 @@ export function extensionSecretFields(extension: { requiredSecrets?: string[]; c
   return [...fields];
 }
 
+export type PersonalExtensionValues = Record<string, string | number | boolean>;
+
+/** Every config field a requester may set for themselves (secrets plus shared settings). */
+export function extensionPersonalFields(extension: { requiredSecrets?: string[]; configJsonSchema?: Record<string, unknown> | null }): string[] {
+  const properties = extension.configJsonSchema?.properties;
+  const names = properties && typeof properties === "object" ? Object.keys(properties) : [];
+  return [...new Set([...extensionSecretFields(extension), ...names])].filter((name) => name !== "enabled");
+}
+
+/** True when a submitted personal value is acceptable for this field. */
+export function isValidPersonalValue(extension: Extension, field: string, value: unknown): boolean {
+  if (!extensionPersonalFields(extension).includes(field)) return false;
+  if (extensionSecretFields(extension).includes(field)) {
+    return typeof value === "string" && !!value && value !== "********" && !value.startsWith("$env:");
+  }
+  if (typeof value === "string") return !value.startsWith("$env:");
+  return typeof value === "number" || typeof value === "boolean";
+}
+
 /** Apply the regular configuration API's validation to the personal-only form. */
 export function savePersonalExtensionTokens(
   extension: Extension,
   agent: AgentConfig,
   config: GatewayConfig,
   userId: string,
-  secrets: Record<string, string>,
-  store = new CredentialStore()
+  values: PersonalExtensionValues,
+  store = new CredentialStore(),
+  replaceSettings = false
 ): void {
-  const fields = extensionSecretFields(extension);
-  if (!userId || Object.entries(secrets).some(([field, value]) => !fields.includes(field) || typeof value !== "string" || !value || value === "********" || value.startsWith("$env:"))) {
+  if (!userId || Object.entries(values).some(([field, value]) => !isValidPersonalValue(extension, field, value))) {
     throw new Error("Invalid personal credential fields");
   }
   const key = { agentId: agent.id, integration: extensionTokenIntegration(extension.id), scope: { type: "personal" as const, userId } };
-  const tokens = { ...store.get<Record<string, string>>(key), ...secrets };
-  const prospective = { ...agent, extensions: { ...agent.extensions, [extension.id]: { ...agent.extensions?.[extension.id], enabled: true, ...tokens } } };
-  const scoped = resolveExtensionTokenConfig(extension, prospective, config);
+  const secretFields = extensionSecretFields(extension);
+  const existing = store.get<PersonalExtensionValues>(key) ?? {};
+  // The web form sends the full set of setting overrides, so stale ones are dropped.
+  const kept = replaceSettings ? Object.fromEntries(Object.entries(existing).filter(([field]) => secretFields.includes(field))) : existing;
+  const tokens = { ...kept, ...values };
+  const prospective = { ...agent, extensions: { ...agent.extensions, [extension.id]: { ...agent.extensions?.[extension.id], enabled: true } } };
+  const scoped = overlayExtensionValues(extension, prospective, config, tokens);
   const validation = extension.validateAgentConfig?.(scoped.agent, scoped.config, resolveAgentEnv(agent, config));
   if (scoped.missing.length || validation?.valid === false) {
-    throw new Error("Extension configuration is invalid");
+    const knownFields = extensionPersonalFields(extension);
+    const error = new Error("Extension configuration is invalid") as Error & { fields: string[] };
+    error.fields = scoped.missing.length ? scoped.missing : (validation?.valid === false ? validation.errors : []).map((field) => knownFields.includes(field) ? field : "config");
+    throw error;
   }
   store.save(key, tokens);
 }
 
-/** Overlay only this requester's token fields; shared non-secret settings stay intact. */
+/** Overlay this requester's personal values; fields they did not set keep the shared value. */
 export function resolveExtensionTokenConfig(
   extension: Extension,
   agent: AgentConfig,
   config: GatewayConfig,
   userId?: string,
   store?: CredentialStore,
+  env = resolveAgentEnv(agent, config)
+): { agent: AgentConfig; config: GatewayConfig; missing: string[]; connectUrl: string } {
+  const personal = userId ? (store ?? new CredentialStore()).get<PersonalExtensionValues>({
+    agentId: agent.id,
+    integration: extensionTokenIntegration(extension.id),
+    scope: { type: "personal", userId },
+  }) : undefined;
+  return overlayExtensionValues(extension, agent, config, personal, env);
+}
+
+/** Overlay a requester's values on shared config: secrets resolve `$env:` refs, settings keep them. */
+function overlayExtensionValues(
+  extension: Extension,
+  agent: AgentConfig,
+  config: GatewayConfig,
+  personal: PersonalExtensionValues | undefined,
   env = resolveAgentEnv(agent, config)
 ): { agent: AgentConfig; config: GatewayConfig; missing: string[]; connectUrl: string } {
   const connectUrl = `${resolveWebBaseUrl(config)}/agents/${encodeURIComponent(agent.id)}/extensions/${encodeURIComponent(extension.id)}/config`;
@@ -59,35 +101,31 @@ export function resolveExtensionTokenConfig(
     return { agent, config, missing: [], connectUrl };
   }
   const root = config.extensions?.[extension.id] as Record<string, unknown> | undefined;
-  const personal = userId ? (store ?? new CredentialStore()).get<Record<string, string>>({
-    agentId: agent.id,
-    integration: extensionTokenIntegration(extension.id),
-    scope: { type: "personal", userId },
-  }) : undefined;
-  const tokens: Record<string, string> = {};
+  const tokens: Record<string, unknown> = {};
   const missing: string[] = [];
   const required = new Set(extension.requiredSecrets ?? []);
   const schemaRequired = extension.configJsonSchema?.required;
   if (Array.isArray(schemaRequired)) for (const field of schemaRequired) {
-    if (typeof field === "string" && fields.includes(field)) required.add(field);
+    if (typeof field === "string") required.add(field);
   }
   const agentConfig = { ...rawAgent };
   const rootConfig = { ...root };
-  for (const field of fields) {
+  for (const field of extensionPersonalFields(extension)) {
+    const secret = fields.includes(field);
     const personalValue = personal?.[field];
     let value: unknown = personalValue ?? rawAgent[field] ?? root?.[field];
-    if (typeof value === "string" && value.startsWith("$env:")) {
+    if (secret && typeof value === "string" && value.startsWith("$env:")) {
       // Personal tokens are literal credentials, never references to host secrets.
       value = personalValue !== undefined ? undefined : env[value.slice(5)];
     }
-    if (typeof value !== "string" || value.length === 0) {
+    if (value === undefined || value === null || value === "") {
       delete agentConfig[field];
       delete rootConfig[field];
       if (!required.has(field)) continue;
       missing.push(field);
       // Build metadata even when unconnected; execution is guarded below the host boundary.
       tokens[field] = "__YOPLAI_MISSING_CREDENTIAL__";
-    } else tokens[field] = value;
+    } else if (secret || personalValue !== undefined) tokens[field] = value;
   }
   return {
     agent: { ...agent, extensions: { ...agent.extensions, [extension.id]: { ...agentConfig, ...tokens } } },

@@ -351,7 +351,7 @@ describe("buildExtensionCatalog", () => {
     expect(entry?.tier).toBe("auto-form");
   });
 
-  it("surfaces current config values with secrets redacted", async () => {
+  it("surfaces current config values with secrets redacted and setting env refs resolved", async () => {
     await writeExternalExtension(root, "configured", {
       configJsonSchema:
         '{ type: "object", properties: { apiKey: { type: "string" }, region: { type: "string" } } }',
@@ -361,12 +361,16 @@ describe("buildExtensionCatalog", () => {
       configured: {
         enabled: true,
         apiKey: "$env:CONFIGURED_API_KEY",
-        region: "eu",
+        region: "$env:CONFIGURED_REGION",
       },
     });
+    vi.stubEnv("CONFIGURED_API_KEY", "secret-value");
+    vi.stubEnv("CONFIGURED_REGION", "eu");
     const catalog = await buildExtensionCatalog(configWith(agent, root), agent);
     const entry = catalog.find((e) => e.id === "configured");
+    vi.unstubAllEnvs();
 
+    // Non-secret settings show their value; secrets never do.
     expect(entry?.configValues).toEqual({
       apiKey: "********",
       region: "eu",

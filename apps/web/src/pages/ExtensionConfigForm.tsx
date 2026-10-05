@@ -81,12 +81,27 @@ export function ExtensionConfigForm() {
     setSaved(false);
   };
 
+  // Team setting values: the baseline personal overrides are compared against.
+  const teamValues = createMemo(() => {
+    const current = entry();
+    const team: AutoFormValues = {};
+    for (const field of fields()) {
+      const value = current?.configValues[field.name];
+      if (!field.secret && (typeof value === "string" || typeof value === "number" || typeof value === "boolean")) {
+        team[field.name] = value;
+      }
+    }
+    return team;
+  });
+
   createEffect(() => {
     const current = entry();
     if (!current) return;
     const next: AutoFormValues = {};
     for (const field of fields()) {
-      const value = current.configValues[field.name];
+      const value = credentialScope() === "personal"
+        ? current.personalConfigValues?.[field.name] ?? current.configValues[field.name]
+        : current.configValues[field.name];
       if (field.secret) {
         if (credentialScope() === "personal" ? current.personalSecretFields?.includes(field.name) : value !== undefined && value !== null) {
           next[field.name] = REDACTED_SECRET_VALUE;
@@ -123,7 +138,7 @@ export function ExtensionConfigForm() {
           <input
             id={`ext-field-${field.name}`}
           type="checkbox"
-          disabled={saving() || credentialScope() === "personal" || teamReadOnly()}
+          disabled={saving() || teamReadOnly()}
             checked={Boolean(values()[field.name])}
             onChange={(e) => setValue(field.name, e.currentTarget.checked)}
           />
@@ -146,7 +161,7 @@ export function ExtensionConfigForm() {
           id={`ext-field-${field.name}`}
           class="ext-config-input"
           type="number"
-          disabled={saving() || credentialScope() === "personal" || teamReadOnly()}
+          disabled={saving() || teamReadOnly()}
           value={String(values()[field.name] ?? "")}
           onInput={(e) => setValue(field.name, e.currentTarget.value)}
         />
@@ -156,7 +171,7 @@ export function ExtensionConfigForm() {
           id={`ext-field-${field.name}`}
           class="ext-config-input"
           type="text"
-          disabled={saving() || credentialScope() === "personal" || teamReadOnly()}
+          disabled={saving() || teamReadOnly()}
           value={String(values()[field.name] ?? "")}
           onInput={(e) => setValue(field.name, e.currentTarget.value)}
         />
@@ -180,7 +195,6 @@ export function ExtensionConfigForm() {
     // Guard required fields client-side so a blank required secret doesn't
     // silently submit an empty patch. (The server also re-validates.)
     const missing = formFields.filter((field) => {
-      if (credentialScope() === "personal" && !field.secret) return false;
       if (credentialScope() === "team" && current.personalSecretFields !== undefined && field.secret) return false;
       if (!field.required) return false;
       const value = values()[field.name];
@@ -196,10 +210,15 @@ export function ExtensionConfigForm() {
     setError(null);
     setSaved(false);
     try {
-      const { config, secrets } = splitAutoFormValues(formFields, values());
+      const { config: submitted, secrets } = splitAutoFormValues(formFields, values());
+      // Send only settings that differ from the team: keeps `$env:` refs intact, and
+      // personal fields left at the team value keep following it.
+      const team = splitAutoFormValues(formFields, teamValues()).config;
+      const config = Object.fromEntries(Object.entries(submitted).filter(([name, value]) => team[name] !== value));
       const updated = await patchAgentExtension(params.agentId, params.extensionId, {
         ...(current.personalSecretFields !== undefined ? { credentialScope: credentialScope() } : {}),
-        ...(credentialScope() === "team" ? { enabled: true, config } : {}),
+        ...(credentialScope() === "team" ? { enabled: true } : {}),
+        config,
         secrets,
       });
       const refreshed = updated.find((extension) => extension.id === params.extensionId);
@@ -311,7 +330,7 @@ export function ExtensionConfigForm() {
                     >
                       <p class="ext-config-scope-note">
                         {credentialScope() === "personal"
-                          ? "Stored encrypted for your use only, and used before team credentials. Shared settings are managed by an admin."
+                          ? "Your own credentials and settings, stored encrypted and used only for your requests. Fields left at the team value keep following it."
                           : teamReadOnly()
                             ? teamConfigured()
                               ? "Whole team credentials are managed by an admin. They are used when you have no credentials of your own."

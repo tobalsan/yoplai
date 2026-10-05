@@ -54,6 +54,8 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Changed
 
+- The **Just me** tab of extension configuration forms now lets you set every field, not only the token — e.g. your own Jira email, subdomain or project keys. Fields left at the team value keep following it. Usernames and emails show in clear (Cloudi‑Fi Admin's username is no longer masked), and Slack connect links also ask for required settings the team has not set.
+
 - Extension, Google OAuth, and MCP connection pages now show credentials in a tabbed box — **Just me** and **Whole team** tabs, each explaining who it serves, with an "Admin only" mark when the team tab is admin-managed — instead of a "Connection for" / "Credentials for" dropdown.
 
 - In multi-user mode, only admins can connect or disconnect **Whole team** Google OAuth and MCP server connections; other users can still view the team connection or credentials read-only (or see that an admin must set them up), matching extension API credentials.

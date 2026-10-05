@@ -115,7 +115,7 @@ export type ExtensionCatalogEntry = {
   requiredSecrets: string[];
   /** Field names a UI should collapse under advanced settings. */
   advancedConfigFields: string[];
-  /** Existing per-agent config values, with secret fields redacted. */
+  /** Existing per-agent config values, with secret fields redacted and setting env refs resolved. */
   configValues: Record<string, unknown>;
   /**
    * Agent-resolved bespoke config route (`:agentId` substituted) when the
@@ -190,8 +190,12 @@ function configValuesForAgent(
   const root = gatewayConfig.extensions?.[extension.id];
   const config = { ...(typeof root === "object" && root !== null ? root : {}), ...(value as Record<string, unknown>) };
   delete config.enabled;
-  for (const field of extensionSecretFields(extension)) {
-    if (field in config) config[field] = "********";
+  const secretFields = extensionSecretFields(extension);
+  const env = resolveAgentEnv(agent, gatewayConfig);
+  for (const [field, fieldValue] of Object.entries(config)) {
+    if (secretFields.includes(field)) config[field] = "********";
+    // Settings such as usernames are not secret: show the value, not the env ref.
+    else if (typeof fieldValue === "string" && fieldValue.startsWith("$env:")) config[field] = env[fieldValue.slice(5)];
   }
   return config;
 }

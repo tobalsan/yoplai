@@ -46,9 +46,9 @@ export function registerCredentialConnectRoutes(app: Hono): void {
         locked = undefined;
         return c.redirect(url, 302);
       }
-      let fields: Array<{ name: string; label: string; required: boolean }> = [];
+      let fields: Array<{ name: string; label: string; required: boolean; secret?: boolean }> = [];
       if (request.target.kind === "token") fields = await ctx.credentialConnect.fields(request.sender.agentId, request.target.extensionId);
-      const form = fields.map((field) => `<p><label>${escapeHtml(field.label)}<input style="width:100%;padding:8px" type="password" autocomplete="off" name="${escapeHtml(field.name)}" ${field.required ? "required" : ""}></label></p>`).join("");
+      const form = fields.map((field) => `<p><label>${escapeHtml(field.label)}<input style="width:100%;padding:8px" type="${field.secret === false ? "text" : "password"}" autocomplete="off" name="${escapeHtml(field.name)}" ${field.required ? "required" : ""}></label></p>`).join("");
       if (c.req.method === "GET") {
         const identity = request.pairingToken ? pairing.inspect(request.pairingToken).identity : `${request.sender.user} · workspace ${request.workspace}`;
         const target = request.target.kind === "oauth" ? request.target.provider : request.target.extensionId;
