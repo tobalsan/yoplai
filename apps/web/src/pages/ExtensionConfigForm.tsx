@@ -18,6 +18,7 @@ import {
   type AutoFormField,
   type AutoFormValues,
 } from "../lib/auto-form-schema";
+import { CredentialScopeTabs } from "../components/CredentialScopeTabs";
 
 /**
  * Schema-driven auto-form renderer (ALG-355). Builds a per-agent config form
@@ -160,10 +161,8 @@ export function ExtensionConfigForm() {
           onInput={(e) => setValue(field.name, e.currentTarget.value)}
         />
       </Show>
-      <Show when={field.secret}>
-        <span class="ext-config-hint">
-          {credentialScope() === "personal" ? "Stored encrypted for your use only." : "Shared with the whole team."}
-        </span>
+      <Show when={field.secret && entry()?.personalSecretFields === undefined}>
+        <span class="ext-config-hint">Shared with the whole team.</span>
       </Show>
       <Show when={field.description}>
         {(text) => <span class="ext-config-hint">{text()}</span>}
@@ -216,6 +215,57 @@ export function ExtensionConfigForm() {
     }
   };
 
+  const formBody = () => (
+    <>
+    <Show when={!teamReadOnly() || teamConfigured()}>
+    <For each={baseFields()}>{renderField}</For>
+
+    <Show when={advancedFields().length > 0}>
+      <div class="ext-config-advanced">
+        <button
+          type="button"
+          class="ext-config-advanced-toggle"
+          onClick={() => setAdvancedOpen((open) => !open)}
+        >
+          {advancedOpen()
+            ? "Hide advanced settings"
+            : "See advanced settings"}
+        </button>
+        <Show when={advancedOpen()}>
+          <div class="ext-config-advanced-fields">
+            <p class="ext-config-advanced-note">
+              These are advanced settings and should only be
+              edited if you know exactly what you're doing.
+            </p>
+            <For each={advancedFields()}>{renderField}</For>
+          </div>
+        </Show>
+      </div>
+    </Show>
+
+    </Show>
+    <Show when={!teamReadOnly()}>
+    <div class="ext-config-actions">
+      <button
+        type="submit"
+        class="ext-config-save"
+        disabled={saving()}
+      >
+        {saving() ? "Saving…" : "Save configuration"}
+      </button>
+      <Show when={saved()}>
+        <span class="ext-config-saved">Saved ✓</span>
+      </Show>
+    </div>
+    </Show>
+    <Show when={error()}>
+      {(message) => (
+        <p class="ext-config-form-error">{message()}</p>
+      )}
+    </Show>
+    </>
+  );
+
   return (
     <>
       <div class="ext-config">
@@ -252,70 +302,24 @@ export function ExtensionConfigForm() {
                 }
               >
                 <form class="ext-config-form" onSubmit={handleSubmit}>
-                  <Show when={ext().personalSecretFields !== undefined}>
-                    <label class="ext-config-label">
-                      Credentials for
-                      <select aria-label="Credentials for" class="ext-config-input" disabled={saving()} value={credentialScope()} onChange={(event) => { setCredentialScope(event.currentTarget.value as "personal" | "team"); setSaved(false); }}>
-                        <option value="personal">Just me</option>
-                        <option value="team">Whole team</option>
-                      </select>
-                    </label>
-                    <Show when={credentialScope() === "personal"}>
-                      <p class="ext-config-hint">Shared settings below are managed by an admin. Your credentials take precedence over team credentials.</p>
-                    </Show>
-                    <Show when={teamReadOnly()}>
-                      <p class="ext-config-hint">
-                        {teamConfigured()
-                          ? "Whole team credentials are managed by an admin. They are used when you have no credentials of your own."
-                          : "Whole team credentials are not set up. An admin must configure them."}
-                      </p>
-                    </Show>
-                  </Show>
-                  <Show when={!teamReadOnly() || teamConfigured()}>
-                  <For each={baseFields()}>{renderField}</For>
-
-                  <Show when={advancedFields().length > 0}>
-                    <div class="ext-config-advanced">
-                      <button
-                        type="button"
-                        class="ext-config-advanced-toggle"
-                        onClick={() => setAdvancedOpen((open) => !open)}
-                      >
-                        {advancedOpen()
-                          ? "Hide advanced settings"
-                          : "See advanced settings"}
-                      </button>
-                      <Show when={advancedOpen()}>
-                        <div class="ext-config-advanced-fields">
-                          <p class="ext-config-advanced-note">
-                            These are advanced settings and should only be
-                            edited if you know exactly what you're doing.
-                          </p>
-                          <For each={advancedFields()}>{renderField}</For>
-                        </div>
-                      </Show>
-                    </div>
-                  </Show>
-
-                  </Show>
-                  <Show when={!teamReadOnly()}>
-                  <div class="ext-config-actions">
-                    <button
-                      type="submit"
-                      class="ext-config-save"
+                  <Show when={ext().personalSecretFields !== undefined} fallback={formBody()}>
+                    <CredentialScopeTabs
+                      value={credentialScope()}
+                      teamLocked={!ext().canConfigureTeam}
                       disabled={saving()}
+                      onChange={(next) => { setCredentialScope(next); setSaved(false); setError(null); }}
                     >
-                      {saving() ? "Saving…" : "Save configuration"}
-                    </button>
-                    <Show when={saved()}>
-                      <span class="ext-config-saved">Saved ✓</span>
-                    </Show>
-                  </div>
-                  </Show>
-                  <Show when={error()}>
-                    {(message) => (
-                      <p class="ext-config-form-error">{message()}</p>
-                    )}
+                      <p class="ext-config-scope-note">
+                        {credentialScope() === "personal"
+                          ? "Stored encrypted for your use only, and used before team credentials. Shared settings are managed by an admin."
+                          : teamReadOnly()
+                            ? teamConfigured()
+                              ? "Whole team credentials are managed by an admin. They are used when you have no credentials of your own."
+                              : "Whole team credentials are not set up. An admin must configure them."
+                            : "Shared with everyone on this agent who has no credentials of their own."}
+                      </p>
+                      {formBody()}
+                    </CredentialScopeTabs>
                   </Show>
                 </form>
               </Show>
@@ -362,6 +366,17 @@ export function ExtensionConfigForm() {
           display: flex;
           flex-direction: column;
           gap: 16px;
+        }
+        .ext-config-form .cred-tabs-panel {
+          display: flex;
+          flex-direction: column;
+          gap: 16px;
+        }
+        .ext-config-scope-note {
+          margin: 0;
+          font-size: 13px;
+          line-height: 1.5;
+          color: var(--text-secondary);
         }
         .ext-config-field {
           display: flex;

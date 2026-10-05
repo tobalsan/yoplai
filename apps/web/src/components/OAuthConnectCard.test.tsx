@@ -2,6 +2,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { render } from "solid-js/web";
 import { OAuthConnectCard } from "./OAuthConnectCard";
+import { activeScope, scopeTabLabels, selectScope } from "./CredentialScopeTabs.testing";
 
 vi.mock("../auth/client", () => ({
   useSession: () => () => ({ data: { user: { id: "alice" } } }),
@@ -26,9 +27,7 @@ describe("OAuthConnectCard scope", () => {
       : team);
     vi.stubGlobal("fetch", fetchMock);
     dispose = render(() => <OAuthConnectCard agentId="probe" provider="google" label="Google" />, document.body);
-    const selector = document.querySelector("select")!;
-    selector.value = "personal";
-    selector.dispatchEvent(new Event("change", { bubbles: true }));
+    selectScope(document, "personal");
     await flush();
     expect(document.body.textContent).toContain("alice@example.test");
     resolveTeam(status("team@example.test"));
@@ -43,9 +42,7 @@ describe("OAuthConnectCard scope", () => {
     const open = vi.spyOn(window, "open").mockReturnValue(null);
     dispose = render(() => <OAuthConnectCard agentId="probe" provider="google" label="Google" />, document.body);
     await flush();
-    const selector = document.querySelector("select")!;
-    selector.value = "personal";
-    selector.dispatchEvent(new Event("change", { bubbles: true }));
+    selectScope(document, "personal");
     await flush();
     document.querySelector<HTMLButtonElement>(".oauth-btn-primary")!.click();
     expect(open).toHaveBeenCalledWith("/api/oauth/google/authorize?agent=probe&scope=personal", "yoplai-oauth", "width=520,height=640");
@@ -65,15 +62,13 @@ describe("OAuthConnectCard scope", () => {
     dispose = render(() => <OAuthConnectCard agentId="probe" provider="google" label="Google" />, document.body);
     await flush();
     await flush();
-    const selector = document.querySelector("select")!;
-    expect(Array.from(selector.options).map((option) => option.text)).toEqual(["Just me", "Whole team"]);
-    expect(selector.value).toBe("personal");
+    expect(scopeTabLabels(document)).toEqual(["Just me", "Whole team"]);
+    expect(activeScope(document)).toBe("personal");
     expect(document.querySelector(".oauth-btn-primary")).not.toBeNull();
 
-    selector.value = "team";
-    selector.dispatchEvent(new Event("change", { bubbles: true }));
+    selectScope(document, "team");
     await flush();
-    expect(selector.value).toBe("team");
+    expect(activeScope(document)).toBe("team");
     expect(document.body.textContent).toContain("team@example.test");
     expect(document.body.textContent).toContain("managed by an admin");
     expect(document.querySelector(".oauth-btn")).toBeNull();
@@ -84,9 +79,7 @@ describe("OAuthConnectCard scope", () => {
     dispose = render(() => <OAuthConnectCard agentId="probe" provider="google" label="Google" />, document.body);
     await flush();
     await flush();
-    const selector = document.querySelector("select")!;
-    selector.value = "team";
-    selector.dispatchEvent(new Event("change", { bubbles: true }));
+    selectScope(document, "team");
     await flush();
     expect(document.body.textContent).toContain("An admin must connect it");
     expect(document.querySelector(".oauth-btn")).toBeNull();

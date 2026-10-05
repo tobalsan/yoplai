@@ -7,6 +7,7 @@ import {
   Switch,
 } from "solid-js";
 import { useSession } from "../auth/client";
+import { CredentialScopeTabs } from "./CredentialScopeTabs";
 
 type ConnectionState = "connected" | "needs_reconnect" | "disconnected";
 
@@ -135,18 +136,16 @@ export function OAuthConnectCard(props: {
       <Show when={error()}>
         {(message) => <div class="oauth-error">{message()}</div>}
       </Show>
-      <section class="oauth-card">
-        <label class="oauth-scope">
-          Connection for
-          <select value={scope()} onChange={(event) => {
-            setStatus(undefined);
-            scopePicked = true;
-            setScope(event.currentTarget.value as "team" | "personal");
-          }}>
-            <option value="personal" disabled={!session().data?.user}>Just me</option>
-            <option value="team">Whole team</option>
-          </select>
-        </label>
+      <CredentialScopeTabs
+        value={scope()}
+        personalDisabled={!session().data?.user}
+        teamLocked={!canConfigureTeam()}
+        onChange={(next) => {
+          setStatus(undefined);
+          scopePicked = true;
+          setScope(next);
+        }}
+      >
         <div class="oauth-card-head">
           <div class="oauth-provider">
             <span class="oauth-provider-name">{props.label}</span>
@@ -257,16 +256,13 @@ export function OAuthConnectCard(props: {
         <Show when={loading() && !status()}>
           <div class="oauth-quiet">Checking connection…</div>
         </Show>
-      </section>
+      </CredentialScopeTabs>
     </>
   );
 }
 
 export const OAUTH_CONNECT_CARD_STYLES = `
 .oauth-error { margin-bottom: 16px; padding: 10px 14px; border-radius: 10px; background: color-mix(in srgb, #ef4444 10%, transparent); border: 1px solid color-mix(in srgb, #ef4444 40%, transparent); color: var(--text-primary); font-size: 13px; }
-.oauth-card { border: 1px solid var(--border-default); border-radius: 14px; background: var(--bg-surface); padding: 20px; }
-.oauth-scope { display: flex; align-items: center; gap: 12px; margin-bottom: 16px; color: var(--text-secondary); font-size: 13px; }
-.oauth-scope select { padding: 8px; border: 1px solid var(--border-default); border-radius: 8px; background: var(--bg-base); color: var(--text-primary); }
 .oauth-card-head { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
 .oauth-provider, .oauth-actions { display: flex; align-items: center; gap: 8px; }
 .oauth-provider-name { font-size: 16px; font-weight: 600; color: var(--text-primary); }

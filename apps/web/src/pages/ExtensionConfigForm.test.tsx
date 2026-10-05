@@ -43,6 +43,7 @@ vi.mock("@solidjs/router", () => ({
 }));
 
 import { ExtensionConfigForm } from "./ExtensionConfigForm";
+import { activeScope, scopeTabLabels, scopeTabsDisabled, selectScope } from "../components/CredentialScopeTabs.testing";
 
 function exaEntry(
   partial: Partial<ExtensionCatalogEntry> = {}
@@ -316,9 +317,8 @@ describe("ExtensionConfigForm", () => {
     }));
     patchAgentExtensionMock.mockResolvedValue([exaEntry({ personalSecretFields: ["apiKey"], canConfigureTeam: false })]);
     await mount("scribe", "exa");
-    const scope = container.querySelector<HTMLSelectElement>("select")!;
-    expect(scope.value).toBe("personal");
-    expect(Array.from(scope.options).map((option) => option.text)).toEqual(["Just me", "Whole team"]);
+    expect(activeScope(container)).toBe("personal");
+    expect(scopeTabLabels(container)).toEqual(["Just me", "Whole team"]);
     expect(container.querySelector<HTMLInputElement>("#ext-field-baseUrl")?.disabled).toBe(true);
     const input = container.querySelector<HTMLInputElement>("#ext-field-apiKey")!;
     expect(input.value).toBe("");
@@ -336,11 +336,7 @@ describe("ExtensionConfigForm", () => {
       configJsonSchema: { properties: { apiKey: { type: "string" }, baseUrl: { type: "string" } }, required: ["apiKey"] },
       configValues,
     });
-    const selectTeam = () => {
-      const scope = container.querySelector<HTMLSelectElement>("select")!;
-      scope.value = "team";
-      scope.dispatchEvent(new Event("change", { bubbles: true }));
-    };
+    const selectTeam = () => selectScope(container, "team");
 
     fetchAgentExtensionMock.mockResolvedValue(teamEntry({ apiKey: "********", baseUrl: "https://shared.test" }));
     await mount("scribe", "exa");
@@ -365,25 +361,21 @@ describe("ExtensionConfigForm", () => {
     fetchAgentExtensionMock.mockResolvedValue(exaEntry({ personalSecretFields: ["apiKey"], canConfigureTeam: true }));
     patchAgentExtensionMock.mockResolvedValue([exaEntry({ personalSecretFields: ["apiKey"], canConfigureTeam: true, configValues: { apiKey: "********" } })]);
     await mount("scribe", "exa");
-    const scope = container.querySelector<HTMLSelectElement>("select")!;
-    expect(Array.from(scope.options).map((option) => option.text)).toEqual(["Just me", "Whole team"]);
+    expect(scopeTabLabels(container)).toEqual(["Just me", "Whole team"]);
     const input = container.querySelector<HTMLInputElement>("#ext-field-apiKey")!;
     expect(input.value).toBe("********");
-    scope.value = "team";
-    scope.dispatchEvent(new Event("change", { bubbles: true }));
+    selectScope(container, "team");
     expect(input.value).toBe("");
     input.value = "team-token";
     input.dispatchEvent(new InputEvent("input", { bubbles: true }));
     container.querySelector("form")!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(patchAgentExtensionMock).toHaveBeenCalledWith("scribe", "exa", { credentialScope: "team", enabled: true, config: {}, secrets: { apiKey: "team-token" } });
-    expect(scope.value).toBe("team");
+    expect(activeScope(container)).toBe("team");
     expect(container.querySelector<HTMLInputElement>("#ext-field-apiKey")?.value).toBe("********");
-    scope.value = "personal";
-    scope.dispatchEvent(new Event("change", { bubbles: true }));
+    selectScope(container, "personal");
     expect(container.querySelector<HTMLInputElement>("#ext-field-apiKey")?.value).toBe("********");
-    scope.value = "team";
-    scope.dispatchEvent(new Event("change", { bubbles: true }));
+    selectScope(container, "team");
     expect(container.querySelector<HTMLInputElement>("#ext-field-apiKey")?.value).toBe("********");
   });
 
@@ -396,11 +388,11 @@ describe("ExtensionConfigForm", () => {
     input.value = "private-token";
     input.dispatchEvent(new InputEvent("input", { bubbles: true }));
     container.querySelector("form")!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
-    expect(container.querySelector<HTMLSelectElement>("select")?.disabled).toBe(true);
+    expect(scopeTabsDisabled(container)).toBe(true);
     expect(input.disabled).toBe(true);
     finish([exaEntry({ personalSecretFields: ["apiKey"], canConfigureTeam: true })]);
     await new Promise((resolve) => setTimeout(resolve, 0));
-    expect(container.querySelector<HTMLSelectElement>("select")?.disabled).toBe(false);
+    expect(scopeTabsDisabled(container)).toBe(false);
     expect(container.querySelector<HTMLInputElement>("#ext-field-apiKey")?.value).toBe("********");
   });
 
@@ -408,9 +400,7 @@ describe("ExtensionConfigForm", () => {
     fetchAgentExtensionMock.mockResolvedValue(exaEntry({ personalSecretFields: [], canConfigureTeam: true }));
     patchAgentExtensionMock.mockResolvedValue([exaEntry({ personalSecretFields: [], canConfigureTeam: true, enabled: true })]);
     await mount("scribe", "exa");
-    const scope = container.querySelector<HTMLSelectElement>("select")!;
-    scope.value = "team";
-    scope.dispatchEvent(new Event("change", { bubbles: true }));
+    selectScope(container, "team");
     container.querySelector("form")!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(patchAgentExtensionMock).toHaveBeenCalledWith("scribe", "exa", { credentialScope: "team", enabled: true, config: {}, secrets: {} });

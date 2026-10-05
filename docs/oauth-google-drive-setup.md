@@ -177,7 +177,7 @@ Notes:
 
 1. Start (or restart) the gateway so it picks up the config and `.env`.
 2. Open **`/connections`** in the web UI.
-3. Choose **Just me** (signed-in Yoplai users only) or **Whole team**, then click **Connect** next to Google. You are redirected to Google's consent
+3. Pick the **Just me** tab (signed-in Yoplai users only) or the **Whole team** tab, then click **Connect** next to Google. You are redirected to Google's consent
    screen requesting Drive read-only access.
 4. Approve. Google redirects back to your callback URL; Yoplai exchanges the code,
    stores the (encrypted) tokens, and shows **Connected as `<your-account>`**.

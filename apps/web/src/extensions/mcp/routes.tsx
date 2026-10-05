@@ -3,6 +3,7 @@ import type { Component } from "solid-js";
 import { A, useParams } from "@solidjs/router";
 import { useSession } from "../../auth/client";
 import { LeftNavShell } from "../../components/LeftNavShell";
+import { CredentialScopeTabs } from "../../components/CredentialScopeTabs";
 
 type ServerAuth = "oauth" | "static";
 type ServerState = "connected" | "disconnected" | "needs_reconnect" | "static";
@@ -131,20 +132,24 @@ export function McpConfigPage(): ReturnType<Component> {
         <A href={`/agents/${encodeURIComponent(params.agentId)}/edit`} class="mcp-config-back">← Back to agent</A>
         <header class="mcp-config-header">
           <h1>MCP servers</h1>
-          <p>Connect OAuth-protected remote MCP servers for this agent.</p>
+          <p>Connect OAuth-protected remote MCP servers for yourself or for the whole team.</p>
         </header>
-        <label class="mcp-config-scope">
-          Connection for
-          <select value={scope()} onChange={(event) => {
+        <CredentialScopeTabs
+          value={scope()}
+          personalDisabled={!session().data?.user}
+          teamLocked={!canConfigureTeam()}
+          onChange={(next) => {
             setServers(undefined);
             setError(undefined);
             scopePicked = true;
-            setScope(event.currentTarget.value as "team" | "personal");
-          }}>
-            <option value="personal" disabled={!session().data?.user}>Just me</option>
-            <option value="team">Whole team</option>
-          </select>
-        </label>
+            setScope(next);
+          }}
+        >
+        <p class="mcp-config-quiet mcp-config-scope-note">
+          {scope() === "personal"
+            ? "Your connections are used only for your requests. Without one, your requests use the team connection when available."
+            : "Team connections are used by everyone on this agent who has no personal connection."}
+        </p>
         <Show when={teamReadOnly()}>
           <p class="mcp-config-quiet">Whole team connections are managed by an admin. Servers not connected here must be connected by an admin.</p>
         </Show>
@@ -175,6 +180,7 @@ export function McpConfigPage(): ReturnType<Component> {
             </section>
           )}</For>
         </div>
+        </CredentialScopeTabs>
       </div>
     </LeftNavShell>
   );
@@ -185,14 +191,13 @@ const MCP_STYLES = `
 .mcp-config-back { display: inline-block; margin-bottom: 20px; font-size: 14px; color: var(--text-secondary); text-decoration: none; }
 .mcp-config-header h1 { margin: 0 0 6px; font-size: 22px; color: var(--text-primary); }
 .mcp-config-header p { margin: 0 0 24px; color: var(--text-secondary); font-size: 14px; }
-.mcp-config-scope { display: flex; align-items: center; gap: 12px; margin-bottom: 16px; color: var(--text-secondary); font-size: 13px; }
-.mcp-config-scope select { padding: 8px; border: 1px solid var(--border-default); border-radius: 8px; background: var(--bg-base); color: var(--text-primary); }
+.mcp-config-scope-note { margin: 0 0 16px; line-height: 1.5; }
 .mcp-config-error, .mcp-config-empty { margin-bottom: 16px; padding: 10px 14px; border-radius: 10px; color: var(--text-primary); font-size: 13px; }
 .mcp-config-error { background: color-mix(in srgb, #ef4444 10%, transparent); border: 1px solid color-mix(in srgb, #ef4444 40%, transparent); }
 .mcp-config-empty { border: 1px solid var(--border-default); background: var(--bg-surface); color: var(--text-secondary); }
 .mcp-config-quiet { color: var(--text-secondary); font-size: 13px; }
 .mcp-config-list { display: grid; gap: 12px; }
-.mcp-config-card { border: 1px solid var(--border-default); border-radius: 14px; background: var(--bg-surface); padding: 16px; }
+.mcp-config-card { border: 1px solid var(--border-default); border-radius: 12px; background: var(--bg-base); padding: 16px; }
 .mcp-config-server { display: flex; gap: 16px; align-items: center; justify-content: space-between; }
 .mcp-config-name { font-size: 16px; font-weight: 600; color: var(--text-primary); }
 .mcp-config-url { margin-top: 4px; color: var(--text-secondary); font-size: 13px; overflow-wrap: anywhere; }

@@ -54,6 +54,8 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Changed
 
+- Extension, Google OAuth, and MCP connection pages now show credentials in a tabbed box — **Just me** and **Whole team** tabs, each explaining who it serves, with an "Admin only" mark when the team tab is admin-managed — instead of a "Connection for" / "Credentials for" dropdown.
+
 - In multi-user mode, only admins can connect or disconnect **Whole team** Google OAuth and MCP server connections; other users can still view the team connection or credentials read-only (or see that an admin must set them up), matching extension API credentials.
 - Web chat now folds consecutive thinking and tool calls into one muted, collapsible "Working / Worked for Ns" group (expanded while streaming, collapsed once done) in both simple and detailed views. Thinking lines show a live excerpt of the last few words, then "Thought for Ns"; bubbles and timestamps on thinking and tool lines are gone.
 - Langfuse tracing now uses the Langfuse JS SDK v5 (OpenTelemetry) instead of the legacy v3 SDK, so traces keep flowing once the server moves to `events_only` ingestion. Session IDs, environment, metadata, and the trace → `llm-turn` generation → tool tree are unchanged; session/user/tags are now stamped on every observation. Config is unchanged, and missing keys now disable tracing instead of failing.

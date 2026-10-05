@@ -22,6 +22,7 @@ vi.mock("../../components/LeftNavShell", () => ({
 vi.mock("../../auth/client", () => ({ useSession: () => () => ({ data: { user: { id: "alice" } } }) }));
 
 import { McpConfigPage } from "./routes";
+import { activeScope, scopeTabLabels, selectScope } from "../../components/CredentialScopeTabs.testing";
 
 const server = (state: "connected" | "disconnected" | "needs_reconnect" | "static", auth = state === "static" ? "static" : "oauth") => ({
   name: "Claap",
@@ -72,7 +73,7 @@ describe("McpConfigPage", () => {
     expect(container.textContent).toContain("Claap");
     expect(container.textContent).toContain(label);
     expect(container.textContent).toContain(action ?? "Configured");
-    if (!action) expect(container.querySelector("button")).toBeNull();
+    if (!action) expect(container.querySelector(".mcp-config-card button")).toBeNull();
   });
 
   it("renders every configured server and an empty state", async () => {
@@ -90,7 +91,7 @@ describe("McpConfigPage", () => {
   it("opens authorize popup and refreshes after a successful result", async () => {
     fetchMock.mockResolvedValueOnce(status([server("disconnected")])).mockResolvedValueOnce(status([server("connected")]));
     await mount();
-    container.querySelector<HTMLButtonElement>("button")!.click();
+    container.querySelector<HTMLButtonElement>(".mcp-config-card button")!.click();
     expect(window.open).toHaveBeenCalledWith(
       "/api/mcp/oauth/authorize?agent=casey&server=Claap&scope=team",
       "yoplai-oauth",
@@ -122,7 +123,7 @@ describe("McpConfigPage", () => {
       .mockResolvedValueOnce({ ok: true, json: vi.fn().mockResolvedValue({ ok: true }) })
       .mockResolvedValueOnce(status([server("disconnected")]));
     await mount();
-    container.querySelector<HTMLButtonElement>("button")!.click();
+    container.querySelector<HTMLButtonElement>(".mcp-config-card button")!.click();
     await new Promise((resolve) => setTimeout(resolve, 0));
 
     expect(fetchMock).toHaveBeenNthCalledWith(
@@ -148,11 +149,9 @@ describe("McpConfigPage", () => {
   it("uses personal scope for authorization and disconnect", async () => {
     fetchMock.mockResolvedValue(status([server("disconnected")]));
     await mount();
-    const select = container.querySelector<HTMLSelectElement>("select")!;
-    select.value = "personal";
-    select.dispatchEvent(new Event("change", { bubbles: true }));
+    selectScope(container, "personal");
     await new Promise((resolve) => setTimeout(resolve, 0));
-    container.querySelector<HTMLButtonElement>("button")!.click();
+    container.querySelector<HTMLButtonElement>(".mcp-config-card button")!.click();
     expect(window.open).toHaveBeenCalledWith(
       "/api/mcp/oauth/authorize?agent=casey&server=Claap&scope=personal",
       "yoplai-oauth", "width=520,height=640"
@@ -160,7 +159,7 @@ describe("McpConfigPage", () => {
     fetchMock.mockResolvedValue(status([server("connected")]));
     window.dispatchEvent(new Event("focus"));
     await new Promise((resolve) => setTimeout(resolve, 0));
-    container.querySelector<HTMLButtonElement>("button")!.click();
+    container.querySelector<HTMLButtonElement>(".mcp-config-card button")!.click();
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(fetchMock).toHaveBeenCalledWith(
       "/api/mcp/oauth/disconnect?agent=casey&server=Claap&scope=personal", { method: "POST" }
@@ -173,9 +172,7 @@ describe("McpConfigPage", () => {
       ? Promise.resolve(status([server("connected")]))
       : new Promise<ReturnType<typeof status>>((resolve) => { finishTeam = resolve; }));
     await mount();
-    const select = container.querySelector<HTMLSelectElement>("select")!;
-    select.value = "personal";
-    select.dispatchEvent(new Event("change", { bubbles: true }));
+    selectScope(container, "personal");
     await new Promise((resolve) => setTimeout(resolve, 0));
     finishTeam(status([server("disconnected")]));
     await new Promise((resolve) => setTimeout(resolve, 0));
@@ -187,9 +184,9 @@ describe("McpConfigPage", () => {
     window.history.replaceState({}, "", "/agents/casey/extensions/mcp?scope=personal");
     fetchMock.mockResolvedValue(status([server("needs_reconnect")]));
     await mount();
-    expect(container.querySelector<HTMLSelectElement>("select")!.value).toBe("personal");
+    expect(activeScope(container)).toBe("personal");
     expect(fetchMock).toHaveBeenCalledWith("/api/mcp/oauth/status?agent=casey&scope=personal");
-    container.querySelector<HTMLButtonElement>("button")!.click();
+    container.querySelector<HTMLButtonElement>(".mcp-config-card button")!.click();
     expect(window.open).toHaveBeenCalledWith(
       "/api/mcp/oauth/authorize?agent=casey&server=Claap&scope=personal",
       "yoplai-oauth", "width=520,height=640"
@@ -203,17 +200,15 @@ describe("McpConfigPage team access", () => {
     }) }));
     await mount();
     await new Promise((resolve) => setTimeout(resolve, 0));
-    const selector = container.querySelector("select")!;
-    expect(Array.from(selector.options).map((option) => option.text)).toEqual(["Just me", "Whole team"]);
-    expect(selector.value).toBe("personal");
-    expect(container.querySelector("button")).not.toBeNull();
+    expect(scopeTabLabels(container)).toEqual(["Just me", "Whole team"]);
+    expect(activeScope(container)).toBe("personal");
+    expect(container.querySelector(".mcp-config-card button")).not.toBeNull();
 
-    selector.value = "team";
-    selector.dispatchEvent(new Event("change", { bubbles: true }));
+    selectScope(container, "team");
     await new Promise((resolve) => setTimeout(resolve, 0));
-    expect(selector.value).toBe("team");
+    expect(activeScope(container)).toBe("team");
     expect(container.textContent).toContain("Connected");
     expect(container.textContent).toContain("managed by an admin");
-    expect(container.querySelector("button")).toBeNull();
+    expect(container.querySelector(".mcp-config-card button")).toBeNull();
   });
 });
