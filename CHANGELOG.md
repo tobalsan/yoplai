@@ -11,6 +11,8 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Added
 
+- Slack channel option `threadUnlock` (default `false`). Set `threadUnlock: true` alongside `requireMention: true` to let one mention unlock a thread so later replies there need no mention.
+
 - Extension settings forms can unset credentials: **Remove my credentials** on Just me, and **Remove team credentials** on Whole team for admins (`DELETE /api/agents/:id/extensions/:extensionId/credentials`). Non-secret settings are kept.
 
 - Agent **My connections** lists your personal OAuth, MCP and extension token connections alongside team availability; disconnect removes your credentials immediately. Account settings list your Slack pairings and let you unpair.
@@ -55,6 +57,8 @@ Breaking changes are marked **⚠ BREAKING**.
 - Agents can trigger a manual run of their own scheduler jobs with the `scheduler.run_job` tool.
 
 ### Changed
+
+- **⚠ BREAKING** Slack channels with `requireMention` no longer auto-unlock threads after a mention; every thread message needs a mention unless the channel sets `threadUnlock: true`.
 
 - Agent **My connections** tab redesigned: each service shows its extension icon, a **Just me** and a **Whole team** column with a green/red status pill, and **Disconnect** sits in the Just me column so it is clear only your personal connection is removed.
 

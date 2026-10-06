@@ -1481,14 +1481,15 @@ export function createSlackBot(
     if (!data) return;
     const target = resolveMessageTarget(data);
     if (!target) return;
+    const threadUnlock = target.channelConfig?.threadUnlock === true;
     const mentioned = mentionsSlackBot(data, botUserId);
     const unlockKey = slackThreadUnlockKey(data, mentioned);
-    if (unlockKey && mentioned) {
+    if (threadUnlock && unlockKey && mentioned) {
       unlockedThreadKeys.add(unlockKey);
     }
     const threadKey = slackThreadUnlockKey(data);
     const effectiveTarget =
-      threadKey && unlockedThreadKeys.has(threadKey)
+      threadUnlock && threadKey && unlockedThreadKeys.has(threadKey)
         ? withoutSlackMentionRequirement(target, data.channel)
         : target;
     await handleSlackMessage(
@@ -1506,13 +1507,14 @@ export function createSlackBot(
     if (!data) return;
     const target = resolveMessageTarget(data);
     if (!target) return;
+    const threadUnlock = target.channelConfig?.threadUnlock === true;
     const unlockKey = slackThreadUnlockKey(data, true);
-    if (unlockKey) {
+    if (threadUnlock && unlockKey) {
       unlockedThreadKeys.add(unlockKey);
     }
     const threadKey = slackThreadUnlockKey(data);
     const effectiveTarget =
-      threadKey && unlockedThreadKeys.has(threadKey)
+      threadUnlock && threadKey && unlockedThreadKeys.has(threadKey)
         ? withoutSlackMentionRequirement(target, data.channel)
         : target;
     await handleSlackMessage(
@@ -1787,14 +1789,15 @@ export function createSlackAgentBot(agent: AgentConfig): SlackBot | null {
     if (!data) return;
     const target = resolveMessageTarget(data);
     if (!target) return;
+    const threadUnlock = target.channelConfig?.threadUnlock === true;
     const mentioned = mentionsSlackBot(data, botUserId);
     const unlockKey = slackThreadUnlockKey(data, mentioned);
-    if (unlockKey && mentioned) {
+    if (threadUnlock && unlockKey && mentioned) {
       unlockedThreadKeys.add(unlockKey);
     }
     const threadKey = slackThreadUnlockKey(data);
     const effectiveTarget =
-      threadKey && unlockedThreadKeys.has(threadKey)
+      threadUnlock && threadKey && unlockedThreadKeys.has(threadKey)
         ? withoutSlackMentionRequirement(target, data.channel)
         : target;
     await handleSlackMessage(
@@ -1812,13 +1815,14 @@ export function createSlackAgentBot(agent: AgentConfig): SlackBot | null {
     if (!data) return;
     const target = resolveMessageTarget(data);
     if (!target) return;
+    const threadUnlock = target.channelConfig?.threadUnlock === true;
     const unlockKey = slackThreadUnlockKey(data, true);
-    if (unlockKey) {
+    if (threadUnlock && unlockKey) {
       unlockedThreadKeys.add(unlockKey);
     }
     const threadKey = slackThreadUnlockKey(data);
     const effectiveTarget =
-      threadKey && unlockedThreadKeys.has(threadKey)
+      threadUnlock && threadKey && unlockedThreadKeys.has(threadKey)
         ? withoutSlackMentionRequirement(target, data.channel)
         : target;
     await handleSlackMessage(

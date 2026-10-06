@@ -56,13 +56,39 @@ slack:
 ## Routing
 
 - **Channels** — keys under `channels` are Slack channel IDs (`C...`), with
-  optional `requireMention`, `threadPolicy` (`always` | `never` | `follow`),
-  and a `users` allowlist. In the component bot each channel also takes an
-  `agent` to route to; in a per-agent bot the agent is implied.
+  optional `requireMention`, `threadUnlock`, `threadPolicy` (`always` |
+  `never` | `follow`), and a `users` allowlist. In the component bot each
+  channel also takes an `agent` to route to; in a per-agent bot the agent is
+  implied.
+- **Thread unlock** — `threadUnlock` (default `false`). With `requireMention`
+  on and `threadUnlock: true`, one mention in a thread lets the bot answer later
+  messages in that thread without a mention (in-memory; resets on gateway
+  restart). With the default, every message needs a mention, threads included.
 - **Direct messages** — the component bot routes DMs via `dm.agent`; a per-agent
   bot just needs `dm.enabled`. Restrict senders with `dm.allowFrom`.
 - **Mentions / reactions** — `app_mention`, `reaction_added`, and
   `reaction_removed` events are routed to the resolved agent.
+
+### Reply rules (defaults)
+
+`requireMention` and `threadUnlock` exist **per channel only**; there is no
+top-level setting (a top-level key is silently dropped).
+
+| Situation | Bot replies to |
+| --- | --- |
+| Channel listed, no flags | Mentions only (`requireMention` defaults `true`, `threadUnlock` `false`) |
+| `requireMention: false` | Every message |
+| `requireMention: true` + `threadUnlock: true` | Mentions; after a mention in a thread, all later messages in that thread until gateway restart |
+| `channels` map set, channel not listed | Nothing |
+| Component bot, `channels` omitted | Any channel, routed to first agent; mentions only |
+| Component bot, `channels: {}` | Nothing |
+| Per-agent bot, `channels` omitted or `{}` | Any channel; mentions only |
+| Thread bound to a session (e.g. scheduled job thread) | Every message, no mention; binding is stored on disk and survives restart |
+| DM (`dm` enabled) | Every message; no mention |
+
+Gateway restart clears unlocked threads only; session-bound threads persist.
+A mention means `<@bot>`, an `app_mention` event, or a `mentionPatterns` match
+(thread unlock triggers on `<@bot>`/`app_mention` only).
 
 Other options: `historyLimit`, `clearHistoryAfterReply`, `mentionPatterns`,
 `broadcastToChannel`, `showThinking`, `deleteThinkingOnComplete`.

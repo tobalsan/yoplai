@@ -535,6 +535,32 @@ describe("createSlackBot", () => {
     expect(mockRunAgent).toHaveBeenCalledOnce();
   });
 
+  it.each([
+    [undefined, 1],
+    [true, 2],
+  ])("thread unlock follows threadUnlock=%s", async (threadUnlock, runs) => {
+    const { createSlackBot } = await import("./bot.js");
+    const bot = createSlackBot([agent], {
+      ...config,
+      channels: { C1: { agent: "main", threadUnlock } },
+    });
+    await bot?.start();
+
+    const messageHandler = getMessageHandler(apps[0]);
+    for (const [ts, text] of [
+      ["1.0", "<@Ubot> start"],
+      ["1.1", "follow-up without mention"],
+    ]) {
+      await messageHandler({
+        message: { ts, thread_ts: "1.0", text, channel: "C1", user: "U1", channel_type: "channel" },
+        client: apps[0].client,
+      });
+    }
+
+    expect(mockRunAgent).toHaveBeenCalledTimes(runs);
+    await bot?.stop();
+  });
+
   it("converts direct replies to Slack mrkdwn", async () => {
     const { createSlackBot } = await import("./bot.js");
     const bot = createSlackBot([agent], config);

@@ -717,6 +717,7 @@ export type IrcAgentConfig = z.infer<typeof IrcAgentConfigSchema>;
 export const SlackExtensionChannelConfigSchema = z.object({
   agent: z.string(),
   requireMention: z.boolean().optional(),
+  threadUnlock: z.boolean().optional(),
   threadPolicy: z.enum(["always", "never", "follow"]).optional(),
   users: z.array(z.union([z.string(), z.number()])).optional(),
   reactionNotifications: z
