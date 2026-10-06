@@ -136,7 +136,8 @@ export type ResolvedOAuth =
 export type OAuthNotConnectedReason =
   | "not_connected"
   | "provider_not_configured"
-  | "needs_reconnect";
+  | "needs_reconnect"
+  | "insufficient_scope";
 
 /**
  * Declared by a tool extension: "I need a token for this provider/scopes".

@@ -5,6 +5,7 @@ import type { AgentConfig, Extension, GatewayConfig } from "@yoplai/shared";
 import {
   discoverExternalExtensions,
   resolveAgentConfigRoute,
+  resolveExtensionOAuth,
 } from "@yoplai/shared";
 import {
   getBuiltInExtensionRegistrations,
@@ -218,6 +219,7 @@ function toCatalogEntry(
     scoped.config,
     resolveAgentEnv(agent, config)
   );
+  const oauth = resolveExtensionOAuth(extension, scoped.config, scoped.agent, resolveAgentEnv(scoped.agent, scoped.config));
   const knownFields = new Set([...extensionSecretFields(extension), ...Object.keys(configJsonSchema?.properties ?? {})]);
   const validationFields = validation?.valid === false ? validation.errors.map((field) => knownFields.has(field) ? field : "config") : [];
   const extensions = agent.extensions as Record<string, unknown> | undefined;
@@ -237,10 +239,10 @@ function toCatalogEntry(
     advancedConfigFields: extension.advancedConfigFields ?? [],
     configValues: configValuesForAgent(agent, extension, config),
     configRoutePath,
-    oauth: extension.oauth
+    oauth: oauth
       ? {
-          provider: extension.oauth.provider,
-          scopes: [...(extension.oauth.scopes ?? [])],
+          provider: oauth.provider,
+          scopes: [...(oauth.scopes ?? [])],
         }
       : null,
     tier: resolveTier(configRoutePath, configJsonSchema),

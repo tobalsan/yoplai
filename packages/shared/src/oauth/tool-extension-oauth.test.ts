@@ -47,6 +47,26 @@ describe("defineToolExtension oauth injection", () => {
     } finally { unregister(); }
   });
 
+  it("resolves config-dependent scopes with agent overrides at mount and execution", async () => {
+    const dynamic = defineToolExtension({
+      id: "demo", displayName: "Demo", description: "demo",
+      configSchema: z.object({ allowWrite: z.boolean().default(false) }), requiredSecrets: [],
+      oauth: (config) => ({ provider: "google", scopes: config.merged.allowWrite ? ["read", "write"] : ["read"] }),
+      createTools: (config) => [{ name: "check", description: "check", parameters: z.object({}), execute: async () => config.oauth }],
+    });
+    const resolveOAuth = vi.fn(async () => ({ connected: true as const, provider: "google", accessToken: "test", scopes: ["read", "write"] }));
+    const config = { ...makeConfig(), extensions: { demo: { allowWrite: true } } } as unknown as GatewayConfig;
+    const agent = { ...makeAgent(), extensions: { demo: { allowWrite: false } } } as unknown as AgentConfig;
+    const tools = await dynamic.getAgentTools!(agent, { config, resolveOAuth });
+    await tools[0].execute({}, { agent, config, userId: "alice" });
+    expect(resolveOAuth).toHaveBeenLastCalledWith(agent, { provider: "google", scopes: ["read"] }, "alice");
+    const writeAgent = makeAgent();
+    await dynamic.getAgentTools!(writeAgent, { config, resolveOAuth });
+    expect(resolveOAuth).toHaveBeenLastCalledWith(writeAgent, { provider: "google", scopes: ["read", "write"] }, undefined);
+    const noHost = await dynamic.getAgentTools!(agent, { config });
+    expect(await noHost[0].execute({}, { agent, config })).toMatchObject({ reason: "provider_not_configured", provider: "google" });
+  });
+
   it("passes the declared requirement to resolveOAuth and injects the result", async () => {
     const resolved: ResolvedOAuth = {
       connected: true,

@@ -6,7 +6,7 @@ import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { GatewayConfigSchema, type AgentConfig } from "@yoplai/shared";
+import { discoverExternalExtensions, GatewayConfigSchema, type AgentConfig } from "@yoplai/shared";
 import {
   buildExtensionCatalog,
   resolveExtensionDefinition,
@@ -113,6 +113,22 @@ describe("buildExtensionCatalog", () => {
 
   afterEach(async () => {
     await rm(root, { recursive: true, force: true });
+  });
+
+  it("shows scopes from merged root settings and agent overrides", async () => {
+    await writeExternalExtension(root, "dynamic-oauth", {
+      oauth: '(config) => ({ provider: "google", scopes: config.merged.allowWrite ? ["read", "write"] : ["read"] })',
+    });
+    const discovered = await discoverExternalExtensions(root);
+    expect(discovered.map((entry) => entry.id)).toContain("dynamic-oauth");
+    expect(typeof discovered.find((entry) => entry.id === "dynamic-oauth")?.extension.oauth).toBe("function");
+    const agent = makeAgent({ "dynamic-oauth": { allowWrite: false } });
+    const config = { ...configWith(agent, root), extensions: { "dynamic-oauth": { allowWrite: true } } };
+    const catalog = await buildExtensionCatalog(config, agent);
+    expect(catalog.find((entry) => entry.id === "dynamic-oauth")?.oauth?.scopes).toEqual(["read"]);
+    const rootAgent = makeAgent();
+    const rootCatalog = await buildExtensionCatalog(config, rootAgent);
+    expect(rootCatalog.find((entry) => entry.id === "dynamic-oauth")?.oauth?.scopes).toEqual(["read", "write"]);
   });
 
   it("lists the full built-in registry with no ghosts and no missing ids", async () => {

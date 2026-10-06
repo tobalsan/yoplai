@@ -221,6 +221,23 @@ describe("OAuthService", () => {
     ).rejects.toThrow(/Invalid or expired OAuth state/);
   });
 
+  it.each([undefined, "alice"])("requires all declared scopes without changing the selected %s grant", async (userId) => {
+    store.save({ ...scopedConnection(userId), scopes: ["read"] });
+    const fetchImpl = vi.fn();
+    const service = new OAuthService({ store, loadConfig: () => makeConfig(), fetchImpl });
+    const result = await service.resolveToken("a1", { provider: "google", scopes: ["read", "write"] }, userId);
+    expect(result).toMatchObject({ connected: false, reason: "insufficient_scope" });
+    if (!result.connected) {
+      const url = new URL(result.authorizeUrl!);
+      expect(url.searchParams.get("scopes")).toBe("read write");
+      expect(url.searchParams.get("scope")).toBe(userId ? "personal" : "team");
+    }
+    expect(fetchImpl).not.toHaveBeenCalled();
+    store.save({ ...scopedConnection(userId), scopes: ["read", "write", "gmail"] });
+    expect(await service.resolveToken("a1", { provider: "google", scopes: ["read", "write"] }, userId)).toMatchObject({ connected: true });
+    expect(await service.resolveToken("a1", { provider: "google", scopes: ["gmail"] }, userId)).toMatchObject({ connected: true });
+  });
+
   it("resolveToken returns a fresh access token when connected", async () => {
     store.save({
       agentId: "a1",
