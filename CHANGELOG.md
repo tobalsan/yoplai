@@ -9,9 +9,14 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ## [Unreleased]
 
+### Changed
+
+- Credential tab captions clarified: Just me "Only used by you", Whole team "Can be used by the whole team".
+
 ### Added
 
 - Append-only settings audit in gateway-owned `audit.db`, with redacted secret changes and an admin-only `/api/audit/settings` API.
+- First-run onboarding tour (driver.js) for multi-user logins: walks through the agent grid, agent settings, extensions, connections, dashboards and a first chat. Skippable at every step (Esc/overlay too); status is saved per user in `auth.db` via `GET/PUT/DELETE /api/me/onboarding`, and existing users see it once on next login. A discreet "Restart tour" link sits in the sidebar footer. The welcome title uses `branding.name` when set.
 - Multi-user `autoApprove` setting (default `true`) controls whether new sign-ups are approved immediately or wait for admin approval. **⚠ BREAKING**: new users are now auto-approved unless `autoApprove: false` is set.
 
 - Slack agent tools `slack.join_channel` and `slack.leave_channel` let an agent join a public channel on demand and leave channels (require `channels:join`, `channels:manage`/`groups:write` scopes and app reinstall).

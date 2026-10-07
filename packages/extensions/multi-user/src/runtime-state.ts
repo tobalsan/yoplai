@@ -6,6 +6,7 @@ import type { MultiUserAuth } from "./auth.js";
 import type { PoolCatalogResolver } from "./catalog.js";
 import type { ForkStore } from "./forks.js";
 import type { MembershipStore } from "./membership.js";
+import type { OnboardingStore } from "./onboarding.js";
 import type { TeamStore } from "./teams.js";
 
 export type MultiUserRuntime = {
@@ -15,6 +16,7 @@ export type MultiUserRuntime = {
   teams: TeamStore;
   membership: MembershipStore;
   forks: ForkStore;
+  onboarding: OnboardingStore;
   access: AccessResolver;
   catalog: PoolCatalogResolver;
   /** Current pool agent ids (the catalog card keys), in config order. */

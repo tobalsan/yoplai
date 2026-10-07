@@ -118,6 +118,17 @@ export function ensureTeamMembersTable(db: Database.Database): void {
   `);
 }
 
+export function ensureUserOnboardingTable(db: Database.Database): void {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS user_onboarding (
+      userId TEXT PRIMARY KEY,
+      status TEXT NOT NULL CHECK (status IN ('done', 'skipped')),
+      at TEXT NOT NULL,
+      FOREIGN KEY (userId) REFERENCES user(id) ON DELETE CASCADE
+    );
+  `);
+}
+
 export function ensureAgentForksTable(db: Database.Database): void {
   // One row per forked pool agent. The uniqueness constraints encode the
   // domain invariants directly:
@@ -317,6 +328,7 @@ export function initializeMultiUserDatabase(
   ensureAgentAssignmentsTable(db);
   ensureTeamsTable(db);
   ensureTeamMembersTable(db);
+  ensureUserOnboardingTable(db);
   ensureAgentForksTable(db);
   ensureMigrationsTable(db);
   // Convert legacy allowlist rows into the team model once, at bootstrap, so

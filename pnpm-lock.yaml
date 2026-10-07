@@ -324,6 +324,9 @@ importers:
       dompurify:
         specifier: ^3.3.1
         version: 3.3.1
+      driver.js:
+        specifier: ^1.9.0
+        version: 1.9.0
       marked:
         specifier: ^17.0.1
         version: 17.0.1
@@ -3101,6 +3104,9 @@ packages:
 
   dompurify@3.3.1:
     resolution: {integrity: sha512-qkdCKzLNtrgPFP1Vo+98FRzJnBRGe4ffyCea9IwHB1fyxPOeNTHpLKYGd4Uk9xvNoH0ZoOjwZxNptyMwqrId1Q==}
+
+  driver.js@1.9.0:
+    resolution: {integrity: sha512-+YWVdNVUrY1/2spszQshohWYY4soIjNBnMFS6lfmousT8igos2lmswhlqyuuNMhr+qbV0EjJ+L6i2FECPr6Ygg==}
 
   duck@0.1.12:
     resolution: {integrity: sha512-wkctla1O6VfP89gQ+J/yDesM0S7B7XLXjKGzXxMDVFg7uEn706niAtyYovKbyq1oT9YwDcly721/iUWoc8MVRg==}
@@ -7140,6 +7146,8 @@ snapshots:
   dompurify@3.3.1:
     optionalDependencies:
       '@types/trusted-types': 2.0.7
+
+  driver.js@1.9.0: {}
 
   duck@0.1.12:
     dependencies:

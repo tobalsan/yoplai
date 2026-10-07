@@ -11,6 +11,7 @@ import {
 import { A, useLocation, useNavigate } from "@solidjs/router";
 import { theme, toggleTheme } from "../theme";
 import { capabilities, isExtensionEnabled } from "../lib/capabilities";
+import { restartTour } from "../onboarding/state";
 import { stripBase } from "../lib/path";
 import {
   deleteAgentSession,
@@ -413,6 +414,19 @@ export function AgentSidebar(props: AgentSidebarProps) {
               {theme() === "dark" ? "Light" : "Dark"}
             </span>
           </button>
+          <Show when={capabilities.multiUser && capabilities.user}>
+            <button
+              type="button"
+              class="tour-restart"
+              onClick={() => {
+                void restartTour()
+                  .then(() => navigate("/"))
+                  .catch(() => undefined);
+              }}
+            >
+              Restart tour
+            </button>
+          </Show>
         </div>
       </div>
 
@@ -733,6 +747,23 @@ export function AgentSidebar(props: AgentSidebarProps) {
         .theme-toggle:hover {
           background: var(--bg-raised);
           color: var(--text-primary);
+        }
+
+        .tour-restart {
+          display: block;
+          margin: 2px 0 0 10px;
+          padding: 0;
+          border: none;
+          background: none;
+          color: var(--text-muted, var(--text-secondary));
+          opacity: 0.6;
+          font-size: 11px;
+          cursor: pointer;
+        }
+
+        .tour-restart:hover {
+          opacity: 1;
+          text-decoration: underline;
         }
 
         .theme-icon {

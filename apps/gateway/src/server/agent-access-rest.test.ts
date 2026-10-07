@@ -65,6 +65,8 @@ async function hasAgentAccessImpl(
   return ACCESS[agentId]?.has(authContext.user.id) ?? false;
 }
 
+const onboardingRows = new Map<string, { status: string; at: string }>();
+
 describe("REST per-agent access gating (multi-user)", () => {
   let tmpDir: string;
   let prevHomeDir: string | undefined;
@@ -156,6 +158,20 @@ describe("REST per-agent access gating (multi-user)", () => {
             await next();
           },
         validateWebSocketRequest: async () => null,
+        getMultiUserRuntime: () => ({
+          onboarding: {
+            get: (id: string) => onboardingRows.get(id) ?? { status: null, at: null },
+            set: (id: string, status: string) => {
+              const row = { status, at: "2026-01-01T00:00:00.000Z" };
+              onboardingRows.set(id, row);
+              return row;
+            },
+            clear: (id: string) => {
+              onboardingRows.delete(id);
+              return { status: null, at: null };
+            },
+          },
+        }),
       };
     });
 
@@ -314,5 +330,22 @@ describe("REST per-agent access gating (multi-user)", () => {
 
   it("does not treat aggregate /agents/status as a per-agent address", async () => {
     expect(await get("/api/agents/status", authHeader("mallory"))).toBe(200);
+  });
+
+  it("stores onboarding status per authenticated user", async () => {
+    const url = `http://127.0.0.1:${port}/api/me/onboarding`;
+    const json = (h: Record<string, string>) => ({ ...h, "content-type": "application/json" });
+    expect(await (await fetch(url, { headers: authHeader("alice") })).json()).toEqual({
+      supported: true, status: null, at: null,
+    });
+    expect((await fetch(url, { headers: {} })).status).toBe(200);
+    const bad = await fetch(url, { method: "PUT", headers: json(authHeader("alice")), body: JSON.stringify({ status: "x" }) });
+    expect(bad.status).toBe(400);
+    const put = await fetch(url, { method: "PUT", headers: json(authHeader("alice")), body: JSON.stringify({ status: "skipped" }) });
+    expect(await put.json()).toMatchObject({ status: "skipped" });
+    expect(await (await fetch(url, { headers: authHeader("bob") })).json()).toMatchObject({ status: null });
+    expect(await (await fetch(url, { headers: authHeader("alice") })).json()).toMatchObject({ status: "skipped" });
+    const del = await fetch(url, { method: "DELETE", headers: authHeader("alice") });
+    expect(await del.json()).toMatchObject({ status: null });
   });
 });

@@ -52,7 +52,7 @@ export function ExtensionDetails() {
   return (
     <>
       <div class="ext-details">
-        <A href={backHref()} class="ext-details-back">
+        <A href={backHref()} class="ext-details-back" data-tour="back-to-agent">
           ← Back to agent
         </A>
 

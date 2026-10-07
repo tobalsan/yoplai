@@ -139,6 +139,39 @@ async function getRequestUserId(c: Context): Promise<string | undefined> {
   return (await getRequestAuthContext(c))?.session.userId;
 }
 
+// Per-user first-run onboarding flag (auth.db). Multi-user only: single-user
+// mode has no user identity, so the tour is reported unsupported.
+async function resolveOnboardingStore(c: Context) {
+  const userId = await getRequestUserId(c);
+  if (!userId) return null;
+  const { getMultiUserRuntime } = await import("@yoplai/extension-multi-user");
+  const store = getMultiUserRuntime()?.onboarding;
+  return store ? { userId, store } : null;
+}
+
+api.get("/me/onboarding", async (c) => {
+  const ctx = await resolveOnboardingStore(c);
+  if (!ctx) return c.json({ supported: false, status: null, at: null });
+  return c.json({ supported: true, ...ctx.store.get(ctx.userId) });
+});
+
+api.put("/me/onboarding", async (c) => {
+  const ctx = await resolveOnboardingStore(c);
+  if (!ctx) return c.json({ error: "onboarding unavailable" }, 404);
+  const body = await c.req.json().catch(() => null);
+  const status = (body as { status?: unknown } | null)?.status;
+  if (status !== "done" && status !== "skipped") {
+    return c.json({ error: "status must be 'done' or 'skipped'" }, 400);
+  }
+  return c.json({ supported: true, ...ctx.store.set(ctx.userId, status) });
+});
+
+api.delete("/me/onboarding", async (c) => {
+  const ctx = await resolveOnboardingStore(c);
+  if (!ctx) return c.json({ error: "onboarding unavailable" }, 404);
+  return c.json({ supported: true, ...ctx.store.clear(ctx.userId) });
+});
+
 const STAFF_ROLES = ["admin", "superadmin"];
 
 function hasAdminRole(role: unknown): boolean {

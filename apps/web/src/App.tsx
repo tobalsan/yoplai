@@ -16,6 +16,7 @@ import type { Agent } from "./api/types";
 import { ChatView } from "./components/ChatView";
 import { QuickChatFAB } from "./components/QuickChatFAB";
 import { QuickChatOverlay } from "./components/QuickChatOverlay";
+import { OnboardingTour } from "./onboarding/OnboardingTour";
 import { LeftNavShell } from "./components/LeftNavShell";
 import { AgentCatalog } from "./pages/AgentCatalog";
 import { EditAgent } from "./pages/EditAgent";
@@ -233,6 +234,7 @@ function Layout(props: { children?: JSX.Element }) {
         <div class="app" classList={{ "zen-mode": zenMode() }}>
           <ImpersonationBanner />
           {props.children}
+          <OnboardingTour />
         </div>
       </Show>
       <Show

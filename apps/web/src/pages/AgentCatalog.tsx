@@ -83,14 +83,15 @@ export function AgentCatalog() {
       </Show>
 
       <Show when={agents()}>
-        <div class="catalog-grid">
+        <div class="catalog-grid" data-tour="agent-grid">
           <For each={agents()}>
-            {(agent) => (
-              <div class="catalog-card">
+            {(agent, index) => (
+              <div class="catalog-card" data-tour={index() === 0 ? "agent-card" : undefined}>
                 <Show when={canEditAgent(actionByPool().get(agent.id))}>
                   <A
                     href={`/agents/${agent.id}/edit`}
                     class="catalog-edit"
+                    data-tour={index() === 0 ? "agent-edit" : undefined}
                     aria-label={`Edit ${agent.name}`}
                     title="Edit agent"
                   >
@@ -135,6 +136,7 @@ export function AgentCatalog() {
                       <A
                         href={`/chat/${agent.id}`}
                         class="catalog-chat-link"
+                        data-tour={index() === 0 ? "agent-chat" : undefined}
                         onClick={() => startNewChat(agent.id)}
                       >
                         Chat
@@ -163,6 +165,7 @@ export function AgentCatalog() {
                       <A
                         href={`/chat/${entry?.chatAgentId ?? agent.id}`}
                         class="catalog-chat-link"
+                        data-tour={index() === 0 ? "agent-chat" : undefined}
                         onClick={() => startNewChat(entry?.chatAgentId ?? agent.id)}
                       >
                         Chat

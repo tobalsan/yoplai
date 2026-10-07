@@ -173,6 +173,7 @@ export function OAuthConnectCard(props: {
             fallback={
               <button
                 class="oauth-btn oauth-btn-primary"
+                data-tour="oauth-connect"
                 disabled={!props.agentId}
                 onClick={connect}
               >

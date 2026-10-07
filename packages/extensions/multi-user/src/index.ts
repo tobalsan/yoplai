@@ -11,6 +11,7 @@ import { registerMultiUserRoutes } from "./routes.js";
 import { createAgentAssignmentStore } from "./assignments.js";
 import { createTeamStore } from "./teams.js";
 import { createMembershipStore } from "./membership.js";
+import { createOnboardingStore } from "./onboarding.js";
 import { createForkStore } from "./forks.js";
 import { createAccessResolver } from "./access.js";
 import { createPoolCatalogResolver } from "./catalog.js";
@@ -70,6 +71,7 @@ export {
   getUserHistoryDir,
   getUserSessionsPath,
 } from "./isolation.js";
+export type { OnboardingState, OnboardingStatus } from "./onboarding.js";
 export { initializeMultiUserDatabase, getAuthDbPath } from "./db.js";
 export { createMultiUserAuth } from "./auth.js";
 export type { MultiUserAuth } from "./auth.js";
@@ -182,6 +184,7 @@ export const multiUserExtension: Extension = {
       teams,
       membership,
       forks,
+      onboarding: createOnboardingStore(db),
       access,
       catalog,
       getPoolAgentIds: () =>
