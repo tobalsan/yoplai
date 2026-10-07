@@ -5,6 +5,7 @@ export type Team = {
   color: string;
   icon: string;
   allUsers: boolean;
+  private: boolean;
   memberCount: number;
   createdBy: string;
   createdAt: string;
@@ -15,6 +16,7 @@ export type TeamInput = {
   description?: string | null;
   color?: string | null;
   icon?: string | null;
+  private?: boolean;
 };
 
 export type TeamMemberProfile = { id: string; name: string | null; email: string | null };
@@ -103,7 +105,7 @@ export async function createTeam(input: TeamInput): Promise<Team> {
 
 export async function updateTeam(
   id: string,
-  input: TeamInput
+  input: Partial<TeamInput>
 ): Promise<Team> {
   const data = await request<{ team: Team }>(
     `/api/admin/teams/${encodeURIComponent(id)}`,

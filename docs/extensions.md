@@ -74,6 +74,7 @@ Enable under `extensions.multiUser`:
         }
       },
       "allowedDomains": ["example.com"],
+      "autoJoinPublicTeams": true,
       "sessionSecret": "$env:BETTER_AUTH_SECRET"
     }
   }
@@ -83,6 +84,8 @@ Enable under `extensions.multiUser`:
 At least one sign-in method is required: `oauth.google` and/or `"emailAndPassword": { "enabled": true }` (Better Auth email/password; the login page shows whichever are configured).
 
 Gateway creates `$YOPLAI_HOME/auth.db`. First registered user becomes an approved superadmin. Later users are approved automatically unless `"autoApprove": false`, which leaves them pending admin approval. Admins manage teams. Sessions and history become user-scoped. Enabling multi-user mode does not migrate existing single-user history.
+
+New users, including pending users, join public teams at sign-up by default; set `"autoJoinPublicTeams": false` for manual membership. New teams default to public, while existing teams are migrated to private once on upgrade. Private only stops future auto-join: teams stay visible, current members stay unchanged, and All users keeps its locked live rule. Admins can choose Private during creation or toggle Private/Public in team detail; auto-added members remain individually removable. Pending users still cannot access agents until approved.
 
 Roles are user/admin/superadmin. Headless clients can use `yoplai user token create|list|revoke` and bearer authentication. Full setup and pool/team behavior: [multi-user README](../packages/extensions/multi-user/README.md).
 

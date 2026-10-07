@@ -33,6 +33,30 @@ afterEach(() => {
 });
 
 describe("team store", () => {
+  it("defaults public and round-trips privacy independently of All users", () => {
+    ensureTeamMembersTable(db);
+    const membership = createMembershipStore(db);
+    const publicTeam = store.createTeam({
+      name: "Public",
+      createdBy: "admin-1",
+    });
+    expect(publicTeam.private).toBe(false);
+    const team = store.createTeam({
+      name: "Private",
+      private: true,
+      createdBy: "admin-1",
+    });
+    expect(store.getTeam(team.id)?.private).toBe(true);
+    membership.setMembers(team.id, { mode: "all" }, "admin-1");
+    expect(store.updateTeam(team.id, { private: false })).toMatchObject({
+      private: false,
+      allUsers: true,
+    });
+    expect(
+      store.listTeams().find((entry) => entry.id === team.id)?.private
+    ).toBe(false);
+  });
+
   it("creates a team and lists it", () => {
     const team = store.createTeam({
       name: "Platform",

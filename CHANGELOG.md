@@ -15,6 +15,8 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Added
 
+- Private teams with creation controls, list badges, and a one-click Private/Public toggle. New users join public teams as removable members at sign-up by default; set `extensions.multiUser.autoJoinPublicTeams: false` for manual membership. Existing teams become private once on upgrade; new teams default to public, so mark sensitive new teams private. Privacy changes keep current members and catalog visibility unchanged; All users rules and pending-user approval gates remain intact.
+
 - Append-only settings audit in gateway-owned `audit.db`, with redacted secret changes and an admin-only `/api/audit/settings` API.
 - First-run onboarding tour (driver.js) for multi-user logins: walks through the agent grid, agent settings, extensions, connections, dashboards and a first chat. Skippable at every step (Esc/overlay too); status is saved per user in `auth.db` via `GET/PUT/DELETE /api/me/onboarding`, and existing users see it once on next login. A discreet "Restart tour" link sits in the sidebar footer. The welcome title uses `branding.name` when set.
 - Multi-user `autoApprove` setting (default `true`) controls whether new sign-ups are approved immediately or wait for admin approval. **⚠ BREAKING**: new users are now auto-approved unless `autoApprove: false` is set.

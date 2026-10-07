@@ -7,6 +7,8 @@ import { apiKey } from "@better-auth/api-key";
 import type Database from "better-sqlite3";
 import type { GatewayConfig, MultiUserConfig } from "@yoplai/shared";
 
+import { autoJoinPublicTeams } from "./auto-join.js";
+
 function normalizeOrigin(url: string): string {
   return new URL(url).origin;
 }
@@ -205,6 +207,11 @@ function buildMultiUserAuth(
     databaseHooks: {
       user: {
         create: {
+          after: async (user) => {
+            if (multiUserConfig.autoJoinPublicTeams !== false) {
+              autoJoinPublicTeams(db, user.id);
+            }
+          },
           before: async (user) => {
             if (!isAllowedDomain(user.email, multiUserConfig.allowedDomains)) {
               throw new APIError("FORBIDDEN", {

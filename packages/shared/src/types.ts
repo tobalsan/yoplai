@@ -545,6 +545,7 @@ export const MultiUserOAuthConfigSchema = z.object({
 export type MultiUserOAuthConfig = z.infer<typeof MultiUserOAuthConfigSchema>;
 
 const MultiUserConfigBaseSchema = z.object({
+  autoJoinPublicTeams: z.boolean().optional(),
   allowedDomains: z.array(z.string().min(1)).optional(),
   /** Approve new users on sign-up. Default true; false = pending admin approval. */
   autoApprove: z.boolean().optional(),
