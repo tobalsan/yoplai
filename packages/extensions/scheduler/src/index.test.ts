@@ -65,7 +65,10 @@ describe("scheduler routes", () => {
     tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-scheduler-owner-routes-"));
     const alpha = agent("alpha", path.join(tmpDir, "alpha"));
     const config: GatewayConfig = { version: 3, agents: [alpha], extensions: { scheduler: { enabled: true } }, sessions: { idleMinutes: 360 }, agentFab: false };
-    setSchedulerContext(context(config));
+    const ctx = context(config);
+    const record = vi.fn();
+    ctx.audit = { record };
+    setSchedulerContext(ctx);
     const app = new Hono().basePath("/api");
     let userId = "alice";
     app.use("*", async (c, next) => {
@@ -76,6 +79,13 @@ describe("scheduler routes", () => {
     const created = await app.request("/api/schedules", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ agentId: "alpha", name: "Digest", ownerUserId: "bob", schedule: { cron: "0 8 * * *", tz: "UTC" }, payload: { message: "Run" } }) });
     const job = (await created.json()) as { id: string; ownerUserId: string; credentialMode: string };
     expect(job).toMatchObject({ ownerUserId: "alice", credentialMode: "owner" });
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const changed = await app.request(`/api/schedules/alpha/${job.id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ credentialMode: "team" }) });
+      expect(changed.status).toBe(200);
+    }
+    expect(record).toHaveBeenCalledTimes(1);
+    expect(record).toHaveBeenCalledWith(expect.objectContaining({ actorUserId: "alice", action: "schedule.credential_mode", agentId: "alpha", targetType: "schedule", targetId: job.id,
+      changes: [{ field: "credentialMode", before: "owner", after: "team" }] }));
     userId = "bob";
     const changed = await app.request(`/api/schedules/alpha/${job.id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ credentialMode: "team" }) });
     expect(changed.status).toBe(403);

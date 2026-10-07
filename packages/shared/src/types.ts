@@ -1279,7 +1279,27 @@ export interface ExtensionCredentials {
   }): ResolvedCredential<T>;
 }
 
+export interface SettingsAuditChange {
+  field: string;
+  before?: unknown;
+  after?: unknown;
+  secret?: "set" | "removed";
+}
+
+export interface SettingsAuditEntry {
+  actorUserId?: string;
+  actorEmail?: string;
+  impersonatorUserId?: string;
+  action: string;
+  agentId?: string;
+  targetType: string;
+  targetId?: string;
+  scope?: "team" | "personal";
+  changes: SettingsAuditChange[];
+}
+
 export interface ExtensionContext {
+  audit?: { record(entry: SettingsAuditEntry): void };
   credentialConnect?: import("./credential-connect.js").CredentialConnectHost;
   // Host-owned encrypted credentials, available to external extensions.
   credentials?: ExtensionCredentials;

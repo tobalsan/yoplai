@@ -22,6 +22,7 @@ import { createMembershipStore } from "./membership.js";
 import { createForkStore } from "./forks.js";
 
 const getMultiUserRuntime = vi.fn();
+const recordAudit = vi.fn();
 
 vi.mock("./runtime-state.js", () => ({
   getMultiUserRuntime,
@@ -98,6 +99,7 @@ function buildRuntime() {
       poolId === "scribe" ? { id: "scribe", workspaceDir: poolDir } : null,
   });
   return {
+    audit: { record: recordAudit },
     auth: { api: { getSession } },
     db,
     teams,
@@ -186,6 +188,13 @@ describe("admin fork/assignment routes", () => {
     expect(body.fork.forkAgentId).toBe("scribe");
     expect(body.fork.assignment).toEqual({ mode: "list", teamIds: [teamId] });
     expect(fs.existsSync(path.join(homeDir, "agents", "scribe"))).toBe(true);
+    expect((await app.request(req("/admin/forks/scribe/teams", { mode: "list", teamIds: [teamId, teamId] }, "PUT"))).status).toBe(200);
+    expect(recordAudit).toHaveBeenCalledTimes(1);
+    expect(recordAudit).toHaveBeenLastCalledWith(expect.objectContaining({ action: "admin.fork_teams", agentId: "scribe", targetId: "scribe", actorUserId: "admin-1" }));
+    expect((await app.request(req(`/admin/teams/${teamId}/agents/scribe`, undefined, "DELETE"))).status).toBe(200);
+    expect((await app.request(req(`/admin/teams/${teamId}/agents/scribe`, undefined, "DELETE"))).status).toBe(200);
+    expect(recordAudit).toHaveBeenCalledTimes(2);
+    expect(recordAudit).toHaveBeenLastCalledWith(expect.objectContaining({ action: "admin.team_agent_remove", changes: [{ field: "assignment", before: { mode: "list", teamIds: [teamId] }, after: { mode: "list", teamIds: [] } }] }));
   });
 
   it("is guarded to admins/superadmins", async () => {

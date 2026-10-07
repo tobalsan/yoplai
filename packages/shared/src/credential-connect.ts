@@ -8,6 +8,8 @@ export type CredentialConnectTarget =
 export type CredentialConnectOptions = {
   agentId: string;
   userId: string;
+  actorEmail?: string;
+  impersonatorUserId?: string;
   /** Invoke only after persisting the verified personal credential. */
   onComplete: () => Promise<void>;
 };

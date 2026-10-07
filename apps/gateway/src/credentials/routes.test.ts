@@ -8,6 +8,8 @@ import { createConnectionRoutes } from "./routes.js";
 import { OAuthService } from "../oauth/service.js";
 import { OAuthConnectionStore } from "../oauth/store.js";
 import { TokenCipher } from "../oauth/crypto.js";
+const audit = vi.hoisted(() => vi.fn());
+vi.mock("../audit/store.js", () => ({ recordSettingsChange: audit, getAuditActor: async () => ({ actorUserId: "alice", actorEmail: "alice@example.com" }) }));
 
 let dir: string;
 let store: CredentialStore;
@@ -18,6 +20,7 @@ const config = { agents: [{ id: "agent", extensions: { token: { enabled: true, a
 const entry = { id: "token", displayName: "Token", requiredSecrets: ["apiToken"], configValues: { apiToken: "********" } };
 const grant = (owner?: string): OAuthConnection => ({ agentId: "agent", provider: "google", scope: owner ? "personal" : "team", userId: owner, accessToken: owner ?? "team-secret", scopes: [], connectedAt: 1, updatedAt: 1 });
 beforeEach(() => {
+  audit.mockClear();
   dir = fs.mkdtempSync(path.join(os.tmpdir(), "connections-"));
   store = new CredentialStore(path.join(dir, "tokens"), new TokenCipher("test"));
   oauthStore = new OAuthConnectionStore(path.join(dir, "oauth"), new TokenCipher("test"));
@@ -53,6 +56,10 @@ it("deletes caller tokens only and immediately falls back while OAuth revocation
   expect((await router.request("/agents/agent/connections/extension/token", { method: "DELETE" })).status).toBe(200);
   expect(store.get({ agentId: "agent", integration: "extension-config:token", scope: { type: "personal", userId: "alice" } })).toBeUndefined();
   expect(store.get({ agentId: "agent", integration: "extension-config:token", scope: { type: "personal", userId: "bob" } })).toEqual({ apiToken: "bob" });
+  expect(audit).toHaveBeenCalledTimes(2);
+  expect(audit).toHaveBeenLastCalledWith(expect.objectContaining({ actorUserId: "alice", action: "connection.personal_remove", targetType: "extension", targetId: "token", scope: "personal", changes: [{ field: "apiToken", secret: "removed" }] }));
+  await router.request("/agents/agent/connections/extension/token", { method: "DELETE" });
+  expect(audit).toHaveBeenCalledTimes(2);
 });
 it("requires login and agent access for listing and deletion", async () => {
   const { router } = app();

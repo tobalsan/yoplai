@@ -22,6 +22,7 @@ export type MultiUserRuntime = {
   getAgent: ExtensionContext["getAgent"];
   notifyAgentListChanged: ExtensionContext["notifyAgentListChanged"];
   logger: ExtensionLogger;
+  audit?: ExtensionContext["audit"];
 };
 
 let runtime: MultiUserRuntime | null = null;

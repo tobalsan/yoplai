@@ -21,6 +21,7 @@
 | `oauth/`                     | Encrypted per-agent extension OAuth connections |
 | `webhook-secrets.json`       | Webhook URL secrets                             |
 | `auth.db`                    | Multi-user Better Auth SQLite database          |
+| `audit.db`                   | Gateway settings audit, created on first change; secret values redacted |
 | `projects.json`              | Project numeric ID counter                      |
 
 ## Canonical history vs runtime sessions

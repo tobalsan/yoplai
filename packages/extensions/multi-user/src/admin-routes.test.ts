@@ -263,6 +263,7 @@ function createRuntime(options?: {
   const { teams, membership } = createInMemoryTeamStore([...users.keys()]);
 
   const runtime = {
+    audit: { record: vi.fn() },
     auth: {
       api: {
         getSession,
@@ -345,6 +346,51 @@ afterEach(() => {
 });
 
 describe("multi-user admin routes", () => {
+  it("audits effective admin changes once with before/after and actor", async () => {
+    const runtime = createRuntime();
+    getMultiUserRuntime.mockReturnValue(runtime.runtime);
+    const { registerMultiUserRoutes } = await importAdminRoutes();
+    const { createAuthMiddleware } = await importAuthMiddleware();
+    const app = createAdminApp();
+    app.use("*", createAuthMiddleware());
+    registerMultiUserRoutes(app);
+    const mutate = (path: string, method: string, body?: unknown) => app.request(new Request(`http://localhost${path}`, {
+      method,
+      headers: { cookie: "session=1", "content-type": "application/json" },
+      body: body === undefined ? undefined : JSON.stringify(body),
+    }));
+    expect((await mutate("/admin/users/user-1", "PATCH", { approved: true })).status).toBe(200);
+    expect((await mutate("/admin/users/user-1", "PATCH", { approved: true })).status).toBe(200);
+    expect(runtime.runtime.audit.record).toHaveBeenCalledTimes(1);
+    expect(runtime.runtime.audit.record).toHaveBeenLastCalledWith(expect.objectContaining({
+      action: "admin.user_update", actorUserId: "admin-1", actorEmail: "admin@example.com",
+      targetType: "user", targetId: "user-1", scope: undefined,
+      changes: [{ field: "approved", before: false, after: true }],
+    }));
+    const created = await mutate("/admin/teams", "POST", { name: "Audit team" });
+    expect(created.status).toBe(201);
+    const { team } = await created.json() as { team: { id: string } };
+    expect((await mutate(`/admin/teams/${team.id}`, "PATCH", { name: "Audit team" })).status).toBe(200);
+    expect(runtime.runtime.audit.record).toHaveBeenCalledTimes(2);
+    expect((await mutate(`/admin/teams/${team.id}`, "PATCH", { name: "Renamed" })).status).toBe(200);
+    const members = { mode: "list", userIds: ["user-1", "user-2"] };
+    expect((await mutate(`/admin/teams/${team.id}/members`, "PUT", members)).status).toBe(200);
+    expect((await mutate(`/admin/teams/${team.id}/members`, "PUT", { ...members, userIds: ["user-2", "user-1", "user-1"] })).status).toBe(200);
+    expect(runtime.runtime.audit.record).toHaveBeenCalledTimes(4);
+    expect((await mutate(`/admin/teams/${team.id}/members/user-1`, "DELETE")).status).toBe(200);
+    expect((await mutate(`/admin/teams/${team.id}/members/user-1`, "DELETE")).status).toBe(200);
+    expect(runtime.runtime.audit.record).toHaveBeenCalledTimes(5);
+    expect((await mutate("/admin/agents/agent-a/assignments", "PUT", { userIds: ["user-1"] })).status).toBe(200);
+    expect((await mutate("/admin/agents/agent-a/assignments", "PUT", { userIds: ["user-1", "user-1"] })).status).toBe(200);
+    expect(runtime.runtime.audit.record).toHaveBeenCalledTimes(6);
+    expect((await mutate(`/admin/teams/${team.id}`, "DELETE")).status).toBe(200);
+    expect(runtime.runtime.audit.record.mock.calls.map(([entry]) => entry.action)).toEqual([
+      "admin.user_update", "admin.team_create", "admin.team_update", "admin.team_members",
+      "admin.team_member_remove", "admin.agent_assignments", "admin.team_delete",
+    ]);
+  });
+
+
   it("admin can list users", async () => {
     const runtime = createRuntime();
     getMultiUserRuntime.mockReturnValue(runtime.runtime);

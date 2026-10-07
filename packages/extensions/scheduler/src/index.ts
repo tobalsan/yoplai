@@ -565,7 +565,19 @@ const schedulerExtension: Extension = {
       const scheduler = getScheduler();
       if (!(await canAccessJob(agentId, id, requestUserId(c)))) return c.json({ error: "Schedule owner access required" }, 403);
       try {
+        const previous = (await scheduler.list(agentId)).find((candidate) => candidate.id === id);
+        const previousMode = previous?.credentialMode ?? "team";
         const job = await scheduler.update(agentId, id, parsed.data, requestUserId(c));
+        if (previous && previousMode !== (job.credentialMode ?? "team")) {
+          const auth = (c as unknown as Context<{ Variables: { multiUserAuthContext?: {
+            session: { userId: string }; user?: { email?: string }; impersonator?: { id: string };
+          } } }>).get("multiUserAuthContext");
+          getSchedulerContext().audit?.record({
+            actorUserId: auth?.session.userId, actorEmail: auth?.user?.email, impersonatorUserId: auth?.impersonator?.id,
+            action: "schedule.credential_mode", agentId, targetType: "schedule", targetId: id,
+            changes: [{ field: "credentialMode", before: previousMode, after: job.credentialMode ?? "team" }],
+          });
+        }
         return c.json(job);
       } catch {
         return c.json({ error: "Schedule not found" }, 404);

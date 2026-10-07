@@ -145,6 +145,7 @@ Unless noted, paths are under `$YOPLAI_HOME`:
 | `oauth/`                           | Per-agent OAuth connection records                         |
 | `canvas/registry.json`             | Stable dashboard link ids and their owning agent/file      |
 | `auth.db`                          | Better Auth SQLite DB when multi-user extension is enabled |
+| `audit.db`                         | Gateway-owned append-only settings audit; secret values are never stored |
 | `projects.json`                    | Project numeric ID counter                                 |
 | `tool-labels.json`                 | Maintenance-model-generated friendly tool-call label templates (`GET /api/tool-labels`) |
 

@@ -76,6 +76,8 @@ import { readToolLabels } from "../maintenance/tool-labels.js";
 import { loadSuggestions } from "../suggestions/loader.js";
 import { listAgentDashboards } from "../canvas/list.js";
 import { getDashboardRegistry } from "../canvas/store.js";
+import { getAuditActor, listSettingsChanges, recordSettingsChange } from "../audit/store.js";
+import { diffSettings } from "../audit/diff.js";
 
 const api = new Hono();
 // Hono fetch creates a fresh context. Carry only the outer host’s authenticated
@@ -284,6 +286,28 @@ api.get("/branding/logo", async (c) => {
 });
 
 api.get("/tool-labels", async (c) => c.json(await readToolLabels()));
+
+api.get("/audit/settings", async (c) => {
+  if (isExtensionLoaded("multiUser") && !hasAdminRole((await getRequestAuthContext(c))?.user.role)) {
+    return c.json({ error: "forbidden" }, 403);
+  }
+  const query = c.req.query();
+  const limit = query.limit === undefined ? 100 : Number(query.limit);
+  if (!Number.isInteger(limit) || limit < 1 || [query.since, query.until].some((value) => value !== undefined && !Number.isFinite(Date.parse(value)))) {
+    return c.json({ error: "Invalid audit filters" }, 400);
+  }
+  try {
+    return c.json(listSettingsChanges({
+      agentId: query.agentId, actorUserId: query.actorUserId, action: query.action,
+      since: query.since ? new Date(query.since).toISOString() : undefined,
+      until: query.until ? new Date(query.until).toISOString() : undefined,
+      limit: Math.min(limit, 500), cursor: query.cursor,
+    }));
+  } catch (error) {
+    if (error instanceof Error && error.message === "Invalid audit cursor") return c.json({ error: error.message }, 400);
+    return c.json({ error: "Unable to read settings audit" }, 500);
+  }
+});
 
 api.get("/capabilities", async (c) => {
   const extensions = Object.fromEntries(
@@ -842,15 +866,26 @@ api.patch("/agents/:id/extensions/:extensionId", async (c) => {
     if (Object.entries(values).some(([field, value]) => !isValidPersonalValue(targetExtension, field, value))) {
       return c.json({ error: "Invalid personal credential fields" }, 400);
     }
+    let before: PersonalExtensionValues;
+    let after: PersonalExtensionValues;
     try {
+      const store = new CredentialStore();
+      const key = { agentId, integration: extensionTokenIntegration(extensionId), scope: { type: "personal" as const, userId: auth.user.id } };
+      before = store.get<PersonalExtensionValues>(key) ?? {};
       // The form sends every setting override, so ones reset to the team value are dropped.
-      savePersonalExtensionTokens(targetExtension, agent, config, auth.user.id, values as PersonalExtensionValues, undefined, true);
+      savePersonalExtensionTokens(targetExtension, agent, config, auth.user.id, values as PersonalExtensionValues, store, true);
+      after = store.get<PersonalExtensionValues>(key) ?? {};
     } catch (error) {
       if (error instanceof Error && "fields" in error) {
         return c.json({ error: "Extension configuration is invalid", fields: (error as Error & { fields: string[] }).fields }, 422);
       }
       return c.json({ error: "Unable to store personal credentials; check oauth.encryptionKey" }, 400);
     }
+    const changes = diffSettings(before, after, secretFields);
+    const recordPersonalChange = async () => recordSettingsChange({
+      ...await getAuditActor(c), action: "extension.personal_update", agentId,
+      targetType: "extension", targetId: extensionId, scope: "personal", changes,
+    });
     // Personal credentials alone make the extension usable for this agent.
     if (targetEntry && !targetEntry.enabled) {
       try {
@@ -858,9 +893,12 @@ api.patch("/agents/:id/extensions/:extensionId", async (c) => {
       } catch (error) {
         return c.json({ error: (error as Error).message || "Failed to enable extension" }, 400);
       }
+      changes.push({ field: "enabled", before: false, after: true });
+      await recordPersonalChange();
       const extensions = await reloadAfterExtensionWrite(c, agentId);
       return c.json({ agentId, extensionId, extensions });
     }
+    await recordPersonalChange();
     const extensions = await requesterExtensionCatalog(c, config, agent);
     return c.json({ agentId, extensionId, extensions });
   }
@@ -868,6 +906,20 @@ api.patch("/agents/:id/extensions/:extensionId", async (c) => {
   const workspaceDir = resolveWorkspaceDir(
     agent.workspaceDir ?? agent.workspace
   );
+  const env = resolveAgentEnv(agent, config);
+  const rootExtensionConfig = config.extensions?.[extensionId];
+  const auditSecrets = [...secretFields, ...Object.keys(patch.secrets ?? {})];
+  const before: Record<string, unknown> = {
+    ...(typeof rootExtensionConfig === "object" && rootExtensionConfig !== null ? rootExtensionConfig : {}),
+    ...agent.extensions?.[extensionId], enabled: targetEntry?.enabled ?? false,
+  };
+  for (const [field, value] of Object.entries(before)) {
+    if (auditSecrets.includes(field) && typeof value === "string" && value.startsWith("$env:")) before[field] = env[value.slice(5)];
+  }
+  const after: Record<string, unknown> = { ...before, ...(patch.enabled !== undefined ? { enabled: patch.enabled } : {}), ...patch.config, ...patch.secrets };
+  for (const [field, value] of Object.entries(after)) {
+    if (auditSecrets.includes(field) && typeof value === "string" && value.startsWith("$env:")) after[field] = env[value.slice(5)];
+  }
   try {
     await updateAgentExtensionConfig(workspaceDir, extensionId, patch, (nextConfig, pendingEnv) => {
       const nextExtensions = nextConfig.extensions as AgentConfig["extensions"];
@@ -899,6 +951,10 @@ api.patch("/agents/:id/extensions/:extensionId", async (c) => {
     );
   }
 
+  recordSettingsChange({ ...await getAuditActor(c), action: "extension.update", agentId,
+    targetType: "extension", targetId: extensionId, scope: "team",
+    changes: diffSettings(before, after, auditSecrets),
+  });
   const extensions = await reloadAfterExtensionWrite(c, agentId);
   return c.json({ agentId, extensionId, extensions });
 });
@@ -924,6 +980,9 @@ api.delete("/agents/:id/extensions/:extensionId/credentials", async (c) => {
   const secretFields = targetExtension ? extensionSecretFields(targetExtension) : entry?.requiredSecrets ?? [];
   if (!entry || secretFields.length === 0) return c.json({ error: "Extension has no credentials" }, 404);
 
+  const existing = agent.extensions?.[extensionId] as Record<string, unknown> | undefined;
+  const removed = secretFields.filter((field) => existing?.[field] !== undefined);
+
   try {
     await updateAgentExtensionConfig(resolveWorkspaceDir(agent.workspaceDir ?? agent.workspace), extensionId, {
       removeSecrets: secretFields,
@@ -931,6 +990,10 @@ api.delete("/agents/:id/extensions/:extensionId/credentials", async (c) => {
   } catch (error) {
     return c.json({ error: (error as Error).message || "Failed to remove credentials" }, 400);
   }
+  recordSettingsChange({ ...await getAuditActor(c), action: "extension.credentials_remove", agentId,
+    targetType: "extension", targetId: extensionId, scope: "team",
+    changes: removed.map((field) => ({ field, secret: "removed" })),
+  });
   const extensions = await reloadAfterExtensionWrite(c, agentId);
   return c.json({ agentId, extensionId, extensions });
 });
