@@ -335,11 +335,6 @@ describe("EditAgent", () => {
     );
     await mountEdit("scribe");
 
-    const toggle = container.querySelector<HTMLButtonElement>(
-      ".edit-agent-ext-item button.edit-agent-ext-state"
-    )!;
-    expect(toggle.disabled).toBe(true);
-
     container.querySelectorAll<HTMLButtonElement>(".edit-agent-team-pill")[1]!.click();
     await new Promise((resolve) => setTimeout(resolve, 0));
     container.querySelector<HTMLButtonElement>(".edit-agent-team-button")!.click();
@@ -347,11 +342,6 @@ describe("EditAgent", () => {
     await new Promise((resolve) => setTimeout(resolve, 0));
 
     expect(fetchAgentExtensionsMock).toHaveBeenCalledTimes(2);
-    expect(
-      container.querySelector<HTMLButtonElement>(
-        ".edit-agent-ext-item button.edit-agent-ext-state"
-      )?.disabled
-    ).toBe(false);
   });
 
   it("replaces an already-forked agent's explicit team list", async () => {
@@ -394,52 +384,41 @@ describe("EditAgent", () => {
     expect(container.querySelector(".edit-agent-team")).toBeNull();
   });
 
-  it("lists extensions with on/off toggle state for an admin", async () => {
+  it("shows a checkmark for set-up extensions and a + link otherwise", async () => {
     setSession("admin");
     fetchPoolMock.mockResolvedValue([agent({ id: "scribe" })]);
+    const base = {
+      builtIn: false,
+      configured: true,
+      configJsonSchema: null,
+      requiredSecrets: [],
+      advancedConfigFields: [],
+      configRoutePath: null,
+    };
     fetchAgentExtensionsMock.mockResolvedValue([
-      {
-        id: "crm",
-        displayName: "CRM",
-        description: "CRM tools",
-        builtIn: false,
-        enabled: true,
-        configJsonSchema: null,
-        requiredSecrets: [],
-        tier: "toggle-only",
-      },
-      {
-        id: "mailer",
-        displayName: "Mailer",
-        description: "Email tools",
-        builtIn: true,
-        enabled: false,
-        configJsonSchema: null,
-        requiredSecrets: [],
-        tier: "toggle-only",
-      },
+      { ...base, id: "crm", displayName: "CRM", description: "", enabled: true, tier: "toggle-only" },
+      { ...base, id: "mailer", displayName: "Mailer", description: "", enabled: false, tier: "toggle-only" },
+      { ...base, id: "exa", displayName: "Exa", description: "", enabled: true, tier: "auto-form", requiredSecrets: ["apiKey"], configValues: { apiKey: "********" } },
+      { ...base, id: "jira", displayName: "Jira", description: "", enabled: true, tier: "auto-form", requiredSecrets: ["token"], configValues: {} },
+      { ...base, id: "notion", displayName: "Notion", description: "", enabled: false, tier: "auto-form", requiredSecrets: ["token"], configValues: {}, personalSecretFields: ["token"] },
+      { ...base, id: "gmail", displayName: "Gmail", description: "", enabled: false, tier: "toggle-only", oauth: { provider: "google", scopes: [] }, oauthConnected: true },
+      { ...base, id: "drive", displayName: "Drive", description: "", enabled: true, tier: "toggle-only", oauth: { provider: "google", scopes: [] }, oauthConnected: false },
     ]);
     await mountEdit("scribe");
 
-    expect(fetchAgentExtensionsMock).toHaveBeenCalledWith("scribe");
-    const items = container.querySelectorAll(".edit-agent-ext-item");
-    expect(items.length).toBe(2);
-
-    const names = Array.from(
-      container.querySelectorAll(".edit-agent-ext-name")
-    ).map((el) => el.textContent);
-    expect(names).toEqual(["CRM", "Mailer"]);
-
-    // The state is a clickable switch reflecting enabled via aria-checked.
-    const toggles = container.querySelectorAll<HTMLButtonElement>(
-      ".edit-agent-ext-item button.edit-agent-ext-state"
+    expect(container.querySelector(".edit-agent-ext-list [role=switch]")).toBeNull();
+    const checked = Array.from(container.querySelectorAll(".edit-agent-ext-check")).map(
+      (el) => el.getAttribute("aria-label")
     );
-    expect(toggles.length).toBe(2);
-    expect(toggles[0].getAttribute("role")).toBe("switch");
-    expect(toggles[0].getAttribute("aria-checked")).toBe("true");
-    expect(toggles[0].getAttribute("aria-label")).toBe("Enable CRM");
-    expect(toggles[1].getAttribute("aria-checked")).toBe("false");
-    expect(toggles[1].getAttribute("aria-label")).toBe("Enable Mailer");
+    expect(checked).toEqual(["CRM configured", "Exa configured", "Notion configured", "Gmail configured"]);
+    const adds = Array.from(
+      container.querySelectorAll<HTMLAnchorElement>("a.edit-agent-ext-add")
+    ).map((el) => el.getAttribute("href"));
+    expect(adds).toEqual([
+      "/agents/scribe/extensions/mailer",
+      "/agents/scribe/extensions/jira",
+      "/agents/scribe/extensions/drive",
+    ]);
   });
 
   it("links the card body to the extension details page", async () => {
@@ -462,242 +441,8 @@ describe("EditAgent", () => {
     const link = container.querySelector<HTMLAnchorElement>(
       ".edit-agent-ext-open"
     )!;
-    expect(link).not.toBeNull();
     expect(link.getAttribute("href")).toBe("/agents/scribe/extensions/crm");
-    // The name/desc still render inside the link, and the toggle stays a
-    // separate sibling so clicking it never navigates.
-    expect(link.querySelector(".edit-agent-ext-name")?.textContent).toBe(
-      "CRM"
-    );
-    expect(link.contains(container.querySelector(".edit-agent-ext-state"))).toBe(
-      false
-    );
-  });
-
-  it("toggles an extension and persists via patchAgentExtension", async () => {
-    setSession("admin");
-    fetchPoolMock.mockResolvedValue([agent({ id: "scribe" })]);
-    fetchAgentExtensionsMock.mockResolvedValue([
-      {
-        id: "crm",
-        displayName: "CRM",
-        description: "CRM tools",
-        builtIn: false,
-        enabled: false,
-        configJsonSchema: null,
-        requiredSecrets: [],
-        tier: "toggle-only",
-      },
-    ]);
-    // Server returns the refreshed catalog with the flipped state.
-    patchAgentExtensionMock.mockResolvedValue([
-      {
-        id: "crm",
-        displayName: "CRM",
-        description: "CRM tools",
-        builtIn: false,
-        enabled: true,
-        configJsonSchema: null,
-        requiredSecrets: [],
-        tier: "toggle-only",
-      },
-    ]);
-    await mountEdit("scribe");
-
-    const toggle = container.querySelector<HTMLButtonElement>(
-      ".edit-agent-ext-item button.edit-agent-ext-state"
-    )!;
-    expect(toggle.getAttribute("aria-checked")).toBe("false");
-    toggle.click();
-    await new Promise((resolve) => setTimeout(resolve, 0));
-
-    expect(patchAgentExtensionMock).toHaveBeenCalledWith("scribe", "crm", {
-      enabled: true,
-    });
-    // UI reflects the server-confirmed state.
-    const after = container.querySelector<HTMLButtonElement>(
-      ".edit-agent-ext-item button.edit-agent-ext-state"
-    )!;
-    expect(after.getAttribute("aria-checked")).toBe("true");
-  });
-
-  it("locks root-managed extensions without sending a patch", async () => {
-    setSession("admin");
-    fetchPoolMock.mockResolvedValue([agent({ id: "scribe" })]);
-    fetchAgentExtensionsMock.mockResolvedValue([
-      {
-        id: "slack",
-        displayName: "Slack",
-        description: "Slack channel",
-        builtIn: true,
-        enabled: true,
-        configurable: true,
-        managedAtRoot: true,
-        configJsonSchema: null,
-        requiredSecrets: [],
-        advancedConfigFields: [],
-        configValues: {},
-        configRoutePath: null,
-        tier: "toggle-only",
-      },
-    ]);
-    await mountEdit("scribe");
-
-    const toggle = container.querySelector<HTMLButtonElement>(
-      ".edit-agent-ext-item button.edit-agent-ext-state"
-    )!;
-    expect(toggle.getAttribute("aria-checked")).toBe("true");
-    expect(toggle.disabled).toBe(true);
-    toggle.click();
-    await new Promise((resolve) => setTimeout(resolve, 0));
-    expect(patchAgentExtensionMock).not.toHaveBeenCalled();
-  });
-
-  it("disables extension enable toggles until a fork exists", async () => {
-    setSession("admin");
-    fetchPoolMock.mockResolvedValue([agent({ id: "scribe" })]);
-    fetchAgentExtensionsMock.mockResolvedValue([
-      {
-        id: "crm",
-        displayName: "CRM",
-        description: "CRM tools",
-        builtIn: false,
-        enabled: false,
-        configurable: false,
-        configJsonSchema: null,
-        requiredSecrets: [],
-        advancedConfigFields: [],
-        configValues: {},
-        configRoutePath: null,
-        tier: "toggle-only",
-      },
-    ]);
-    await mountEdit("scribe");
-
-    const toggle = container.querySelector<HTMLButtonElement>(
-      ".edit-agent-ext-item button.edit-agent-ext-state"
-    )!;
-    expect(toggle.disabled).toBe(true);
-    expect(toggle.title).toBe(
-      "The agent must be assigned to a team to enable this extension"
-    );
-
-    toggle.click();
-    await new Promise((resolve) => setTimeout(resolve, 0));
-    expect(patchAgentExtensionMock).not.toHaveBeenCalled();
-  });
-
-  it("shows a missing-folder tooltip when a fork row exists without an agent", async () => {
-    setSession("admin");
-    fetchPoolMock.mockResolvedValue([agent({ id: "scribe" })]);
-    fetchForksMock.mockResolvedValue([
-      fork({ sourcePoolId: "scribe", teamId: "t1" }),
-    ]);
-    fetchAgentExtensionsMock.mockResolvedValue([
-      {
-        id: "crm",
-        displayName: "CRM",
-        description: "CRM tools",
-        builtIn: false,
-        enabled: false,
-        configurable: false,
-        configJsonSchema: null,
-        requiredSecrets: [],
-        advancedConfigFields: [],
-        configValues: {},
-        configRoutePath: null,
-        tier: "toggle-only",
-      },
-    ]);
-    await mountEdit("scribe");
-
-    const toggle = container.querySelector<HTMLButtonElement>(
-      ".edit-agent-ext-item button.edit-agent-ext-state"
-    )!;
-    expect(toggle.disabled).toBe(true);
-    expect(toggle.title).toBe("Agent folder missing");
-  });
-
-  it("redirects to the bespoke config route when enabling a bespoke-route extension", async () => {
-    setSession("admin");
-    fetchPoolMock.mockResolvedValue([agent({ id: "scribe" })]);
-    fetchAgentExtensionsMock.mockResolvedValue([
-      {
-        id: "mcp",
-        displayName: "MCP",
-        description: "File-based MCP config",
-        builtIn: false,
-        enabled: false,
-        configJsonSchema: null,
-        requiredSecrets: [],
-        advancedConfigFields: [],
-        configRoutePath: "/agents/scribe/extensions/mcp",
-        tier: "bespoke-route",
-      },
-    ]);
-    patchAgentExtensionMock.mockResolvedValue([
-      {
-        id: "mcp",
-        displayName: "MCP",
-        description: "File-based MCP config",
-        builtIn: false,
-        enabled: true,
-        configJsonSchema: null,
-        requiredSecrets: [],
-        advancedConfigFields: [],
-        configRoutePath: "/agents/scribe/extensions/mcp",
-        tier: "bespoke-route",
-      },
-    ]);
-    await mountEdit("scribe");
-
-    container
-      .querySelector<HTMLButtonElement>(
-        ".edit-agent-ext-item button.edit-agent-ext-state"
-      )!
-      .click();
-    await new Promise((resolve) => setTimeout(resolve, 0));
-
-    expect(patchAgentExtensionMock).toHaveBeenCalledWith("scribe", "mcp", {
-      enabled: true,
-    });
-    expect(navigateMock).toHaveBeenCalledWith("/agents/scribe/extensions/mcp");
-  });
-
-  it("redirects to the auto-form path when enabling an auto-form extension", async () => {
-    setSession("admin");
-    fetchPoolMock.mockResolvedValue([agent({ id: "scribe" })]);
-    const entry = {
-      id: "exa",
-      displayName: "Exa",
-      description: "Search",
-      builtIn: true,
-      configJsonSchema: {
-        type: "object",
-        properties: { apiKey: { type: "string" } },
-      },
-      requiredSecrets: ["apiKey"],
-      advancedConfigFields: [],
-      configRoutePath: null,
-      tier: "auto-form" as const,
-    };
-    fetchAgentExtensionsMock.mockResolvedValue([{ ...entry, enabled: false }]);
-    patchAgentExtensionMock.mockResolvedValue([{ ...entry, enabled: true }]);
-    await mountEdit("scribe");
-
-    container
-      .querySelector<HTMLButtonElement>(
-        ".edit-agent-ext-item button.edit-agent-ext-state"
-      )!
-      .click();
-    await new Promise((resolve) => setTimeout(resolve, 0));
-
-    expect(patchAgentExtensionMock).toHaveBeenCalledWith("scribe", "exa", {
-      enabled: true,
-    });
-    expect(navigateMock).toHaveBeenCalledWith(
-      "/agents/scribe/extensions/exa"
-    );
+    expect(link.querySelector(".edit-agent-ext-name")?.textContent).toBe("CRM");
   });
 
   it("routes a needs-configuration auto-form extension to its config surface", async () => {
@@ -745,136 +490,6 @@ describe("EditAgent", () => {
 
     expect(container.querySelector<HTMLAnchorElement>(".edit-agent-ext-open")?.getAttribute("href"))
       .toBe("/agents/scribe/extensions/mcp/configure");
-  });
-
-  it("disables a needs-configuration extension inline", async () => {
-    setSession("admin");
-    fetchPoolMock.mockResolvedValue([agent({ id: "scribe" })]);
-    const entry = {
-      id: "exa",
-      displayName: "Exa",
-      description: "Search",
-      builtIn: true,
-      enabled: true,
-      configured: false,
-      missingConfig: ["apiKey"],
-      configJsonSchema: { type: "object" },
-      requiredSecrets: ["apiKey"],
-      advancedConfigFields: [],
-      configRoutePath: null,
-      tier: "auto-form" as const,
-    };
-    fetchAgentExtensionsMock.mockResolvedValue([entry]);
-    patchAgentExtensionMock.mockResolvedValue([{ ...entry, enabled: false }]);
-    await mountEdit("scribe");
-
-    container.querySelector<HTMLButtonElement>(".edit-agent-ext-state")!.click();
-    await new Promise((resolve) => setTimeout(resolve, 0));
-
-    expect(patchAgentExtensionMock).toHaveBeenCalledWith("scribe", "exa", {
-      enabled: false,
-    });
-    expect(navigateMock).not.toHaveBeenCalled();
-  });
-
-  it("flips a toggle-only extension inline with no redirect", async () => {
-    setSession("admin");
-    fetchPoolMock.mockResolvedValue([agent({ id: "scribe" })]);
-    const entry = {
-      id: "crm",
-      displayName: "CRM",
-      description: "CRM tools",
-      builtIn: false,
-      configJsonSchema: null,
-      requiredSecrets: [],
-      advancedConfigFields: [],
-      configRoutePath: null,
-      tier: "toggle-only" as const,
-    };
-    fetchAgentExtensionsMock.mockResolvedValue([{ ...entry, enabled: false }]);
-    patchAgentExtensionMock.mockResolvedValue([{ ...entry, enabled: true }]);
-    await mountEdit("scribe");
-
-    container
-      .querySelector<HTMLButtonElement>(
-        ".edit-agent-ext-item button.edit-agent-ext-state"
-      )!
-      .click();
-    await new Promise((resolve) => setTimeout(resolve, 0));
-
-    expect(patchAgentExtensionMock).toHaveBeenCalledWith("scribe", "crm", {
-      enabled: true,
-    });
-    // Toggle-only never redirects into a config surface.
-    expect(navigateMock).not.toHaveBeenCalled();
-  });
-
-  it("does not redirect when disabling a bespoke-route extension", async () => {
-    setSession("admin");
-    fetchPoolMock.mockResolvedValue([agent({ id: "scribe" })]);
-    const entry = {
-      id: "mcp",
-      displayName: "MCP",
-      description: "File-based MCP config",
-      builtIn: false,
-      configJsonSchema: null,
-      requiredSecrets: [],
-      advancedConfigFields: [],
-      configRoutePath: "/agents/scribe/extensions/mcp",
-      tier: "bespoke-route" as const,
-    };
-    fetchAgentExtensionsMock.mockResolvedValue([{ ...entry, enabled: true }]);
-    patchAgentExtensionMock.mockResolvedValue([{ ...entry, enabled: false }]);
-    await mountEdit("scribe");
-
-    container
-      .querySelector<HTMLButtonElement>(
-        ".edit-agent-ext-item button.edit-agent-ext-state"
-      )!
-      .click();
-    await new Promise((resolve) => setTimeout(resolve, 0));
-
-    expect(patchAgentExtensionMock).toHaveBeenCalledWith("scribe", "mcp", {
-      enabled: false,
-    });
-    // Turning a config surface off must not redirect into it.
-    expect(navigateMock).not.toHaveBeenCalled();
-  });
-
-  it("shows an error when a toggle fails to persist", async () => {
-    setSession("admin");
-    fetchPoolMock.mockResolvedValue([agent({ id: "scribe" })]);
-    fetchAgentExtensionsMock.mockResolvedValue([
-      {
-        id: "crm",
-        displayName: "CRM",
-        description: "CRM tools",
-        builtIn: false,
-        enabled: false,
-        configJsonSchema: null,
-        requiredSecrets: [],
-        tier: "toggle-only",
-      },
-    ]);
-    patchAgentExtensionMock.mockRejectedValue(new Error("nope"));
-    await mountEdit("scribe");
-
-    container
-      .querySelector<HTMLButtonElement>(
-        ".edit-agent-ext-item button.edit-agent-ext-state"
-      )!
-      .click();
-    await new Promise((resolve) => setTimeout(resolve, 0));
-
-    expect(container.querySelector(".edit-agent-ext-error")?.textContent).toBe(
-      "nope"
-    );
-    // State stays off since the write failed.
-    expect(
-      container
-        .querySelector(".edit-agent-ext-item button.edit-agent-ext-state")
-        ?.getAttribute("aria-checked")
-    ).toBe("false");
   });
 
   it("does not render team controls for a non-admin", async () => {

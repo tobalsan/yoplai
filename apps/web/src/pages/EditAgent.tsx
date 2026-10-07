@@ -6,12 +6,11 @@ import {
   For,
   Show,
 } from "solid-js";
-import { A, useNavigate, useParams } from "@solidjs/router";
+import { A, useParams } from "@solidjs/router";
 import { fetchAgentDashboards, fetchAgents, fetchPool } from "../api";
 import {
   detailsPath,
   fetchAgentExtensions,
-  patchAgentExtension,
   type ExtensionCatalogEntry,
 } from "../api/extensions";
 import {
@@ -32,9 +31,6 @@ function isEmoji(str: string): boolean {
 }
 
 const STAFF_ROLES = ["admin", "superadmin"];
-const ASSIGN_TO_ENABLE_MESSAGE =
-  "The agent must be assigned to a team to enable this extension";
-const AGENT_FOLDER_MISSING_MESSAGE = "Agent folder missing";
 
 function hasAdminRole(role: string | string[] | null | undefined): boolean {
   if (Array.isArray(role)) return role.some((r) => STAFF_ROLES.includes(r));
@@ -139,7 +135,6 @@ function TeamAssignment(props: {
 
 export function EditAgent() {
   const params = useParams<{ agentId: string }>();
-  const navigate = useNavigate();
   const session = useSession();
   const isAdmin = createMemo(() =>
     hasAdminRole(
@@ -193,51 +188,19 @@ export function EditAgent() {
     }
   };
 
-  const [extensions, { mutate: mutateExtensions, refetch: refetchExtensions }] =
+  const [extensions, { refetch: refetchExtensions }] =
     createResource(() => fetchAgentExtensions(params.agentId));
-  const [pending, setPending] = createSignal<string | null>(null);
-  const [extError, setExtError] = createSignal<string | null>(null);
-  const disabledEnableMessage = createMemo(() =>
-    capabilities.forkedAgents
-      ? fork()
-        ? AGENT_FOLDER_MISSING_MESSAGE
-        : ASSIGN_TO_ENABLE_MESSAGE
-      : AGENT_FOLDER_MISSING_MESSAGE
-  );
 
-  // Route an extension enable to its config surface per the 3-tier contract
-  // (catalog `tier`):
-  //  - toggle-only: flip inline, instant, no redirect.
-  //  - bespoke-route: the extension self-registered an agent-keyed config route;
-  //    persist the enable, then redirect there so it owns its custom config UI.
-  //  - auto-form: the extension exposes a config schema; persist the enable,
-  //    then surface its schema-driven form path (renderer lands in ALG-355).
-  // Disabling is always an inline flip regardless of tier — turning a config
-  // surface off never redirects into it.
-  const toggleExtension = async (ext: ExtensionCatalogEntry) => {
-    if (pending()) return;
-    if (ext.managedAtRoot) return;
-    if (!ext.enabled && ext.configurable === false) return;
-    setPending(ext.id);
-    setExtError(null);
-    try {
-      const enabling = !ext.enabled;
-      const next = await patchAgentExtension(params.agentId, ext.id, {
-        enabled: enabling,
-      });
-      mutateExtensions(next);
-      if (enabling && ext.tier === "bespoke-route" && ext.configRoutePath) {
-        void navigate(ext.configRoutePath);
-      } else if (enabling && (ext.oauth || ext.tier === "auto-form")) {
-        void navigate(detailsPath(params.agentId, ext.id));
-      }
-    } catch (cause) {
-      setExtError(
-        cause instanceof Error ? cause.message : "Failed to update extension."
-      );
-    } finally {
-      setPending(null);
-    }
+  // Set up = credentials exist for Just me or Whole team (OAuth connection or
+  // secrets). Extensions without settings are a plain on/off, flipped on their
+  // details page.
+  const isExtensionSetUp = (ext: ExtensionCatalogEntry) => {
+    if (ext.oauth) return !!ext.oauthConnected;
+    if (ext.tier === "toggle-only") return ext.enabled;
+    const secretFields = ext.requiredSecrets ?? [];
+    if (secretFields.length === 0) return ext.enabled && ext.configured;
+    const team = secretFields.some((field) => ext.configValues?.[field] != null);
+    return team || (ext.personalSecretFields?.length ?? 0) > 0;
   };
 
   // One click reaches the settings: bespoke pages directly, everything else
@@ -410,41 +373,34 @@ export function EditAgent() {
                         </div>
                       </div>
                     </A>
-                    <button
-                      type="button"
-                      role="switch"
-                      class="edit-agent-ext-state"
-                      classList={{ "is-on": ext.enabled }}
-                      disabled={
-                        pending() !== null ||
-                        ext.managedAtRoot ||
-                        (!ext.enabled && ext.configurable === false)
+                    <Show
+                      when={isExtensionSetUp(ext)}
+                      fallback={
+                        <A
+                          href={extensionPath(ext)}
+                          class="edit-agent-ext-add"
+                          aria-label={`Set up ${ext.displayName}`}
+                          title={`Set up ${ext.displayName}`}
+                        >
+                          +
+                        </A>
                       }
-                      title={
-                        ext.managedAtRoot
-                          ? "Configured in agent.yaml — edit the file to change."
-                          : !ext.enabled && ext.configurable === false
-                          ? disabledEnableMessage()
-                          : undefined
-                      }
-                      aria-checked={ext.enabled}
-                      aria-label={`Enable ${ext.displayName}`}
-                      onClick={() => void toggleExtension(ext)}
                     >
                       <span
-                        class="edit-agent-ext-state-knob"
-                        aria-hidden="true"
-                      />
-                    </button>
+                        class="edit-agent-ext-check"
+                        role="img"
+                        aria-label={`${ext.displayName} configured`}
+                        title="Configured"
+                      >
+                        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                          <path d="M3.5 8.5l3 3 6-7" stroke-linecap="round" stroke-linejoin="round" />
+                        </svg>
+                      </span>
+                    </Show>
                   </li>
                 )}
               </For>
             </ul>
-            <Show when={extError()}>
-              {(message) => (
-                <p class="edit-agent-ext-error">{message()}</p>
-              )}
-            </Show>
           </section>
         </Show>
       </div>
@@ -709,7 +665,7 @@ export function EditAgent() {
           margin: 0;
           padding: 0;
           display: grid;
-          grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+          grid-template-columns: repeat(2, minmax(0, 1fr));
           gap: 12px;
         }
 
@@ -799,50 +755,42 @@ export function EditAgent() {
           -webkit-box-orient: vertical;
         }
 
-        .edit-agent-ext-state {
+        .edit-agent-ext-add,
+        .edit-agent-ext-check {
           align-self: center;
           flex-shrink: 0;
-          position: relative;
-          width: 40px;
-          height: 22px;
-          padding: 0;
-          border-radius: 999px;
-          border: none;
-          cursor: pointer;
-          background: var(--bg-sunken, rgba(120, 120, 120, 0.12));
-          transition: background-color 0.2s ease;
-        }
-
-        .edit-agent-ext-state:disabled {
-          opacity: 0.6;
-          cursor: not-allowed;
-        }
-
-        .edit-agent-ext-state.is-on {
-          background: #16a34a;
-        }
-
-        .edit-agent-ext-state-knob {
-          position: absolute;
-          top: 2px;
-          left: 2px;
-          width: 18px;
-          height: 18px;
+          width: 32px;
+          height: 32px;
           border-radius: 50%;
-          background: #fff;
-          box-shadow: 0 1px 2px rgba(0, 0, 0, 0.25);
-          transition: transform 0.2s ease;
+          display: flex;
+          align-items: center;
+          justify-content: center;
         }
 
-        .edit-agent-ext-state.is-on .edit-agent-ext-state-knob {
-          transform: translateX(18px);
+        .edit-agent-ext-add {
+          border: 1px solid var(--border-default);
+          color: var(--text-secondary);
+          font-size: 20px;
+          line-height: 1;
+          text-decoration: none;
+          transition: background-color 0.15s ease, color 0.15s ease;
         }
 
-        .edit-agent-ext-error {
-          font-size: 13px;
-          color: #e55;
-          margin: 4px 0 0;
+        .edit-agent-ext-add:hover {
+          background: var(--bg-hover, rgba(120, 120, 120, 0.08));
+          color: var(--text-primary);
         }
+
+        .edit-agent-ext-check {
+          background: rgba(22, 163, 74, 0.12);
+          color: #16a34a;
+        }
+
+        .edit-agent-ext-check svg {
+          width: 16px;
+          height: 16px;
+        }
+
       `}</style>
     </Show>
   );

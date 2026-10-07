@@ -1,6 +1,10 @@
-import { createMemo, createResource, Show } from "solid-js";
+import { createMemo, createResource, createSignal, Show } from "solid-js";
 import { A, useParams } from "@solidjs/router";
-import { fetchAgentExtensions } from "../api/extensions";
+import {
+  fetchAgentExtensions,
+  patchAgentExtension,
+  type ExtensionCatalogEntry,
+} from "../api/extensions";
 import { OAuthConnectCard } from "../components/OAuthConnectCard";
 import { ExtensionConfigForm } from "./ExtensionConfigForm";
 
@@ -13,7 +17,30 @@ import { ExtensionConfigForm } from "./ExtensionConfigForm";
 export function ExtensionDetails() {
   const params = useParams<{ agentId: string; extensionId: string }>();
 
-  const [extensions] = createResource(() => fetchAgentExtensions(params.agentId));
+  const [extensions, { mutate }] = createResource(() =>
+    fetchAgentExtensions(params.agentId)
+  );
+  const [busy, setBusy] = createSignal(false);
+  const [toggleError, setToggleError] = createSignal<string | null>(null);
+
+  // Extensions without settings are a plain on/off, flipped here.
+  const toggle = async (ext: ExtensionCatalogEntry) => {
+    setBusy(true);
+    setToggleError(null);
+    try {
+      mutate(
+        await patchAgentExtension(params.agentId, ext.id, {
+          enabled: !ext.enabled,
+        })
+      );
+    } catch (cause) {
+      setToggleError(
+        cause instanceof Error ? cause.message : "Failed to update extension."
+      );
+    } finally {
+      setBusy(false);
+    }
+  };
   const entry = createMemo(() =>
     (extensions() ?? []).find((candidate) => candidate.id === params.extensionId)
   );
@@ -79,6 +106,10 @@ export function ExtensionDetails() {
                     provider={oauth().provider}
                     scopes={oauth().scopes}
                     label={ext().displayName}
+                    onStatus={(connected) => {
+                      // A connection in either scope turns the extension on.
+                      if (connected && !ext().enabled && !busy() && !ext().managedAtRoot && ext().configurable !== false) void toggle(ext());
+                    }}
                   />
                 )}
               </Show>
@@ -95,10 +126,30 @@ export function ExtensionDetails() {
                 }
                 fallback={
                   <Show when={!ext().oauth && ext().tier !== "auto-form"}>
-                    <div class="ext-details-settings">
-                      Settings for this extension aren't available yet — this
-                      extension hasn't adopted the configuration contract.
-                    </div>
+                    <button
+                      type="button"
+                      class="ext-details-configure"
+                      disabled={
+                        busy() ||
+                        ext().managedAtRoot ||
+                        (!ext().enabled && ext().configurable === false)
+                      }
+                      title={
+                        ext().managedAtRoot
+                          ? "Configured in agent.yaml — edit the file to change."
+                          : !ext().enabled && ext().configurable === false
+                          ? "The agent must be assigned to a team to enable this extension"
+                          : undefined
+                      }
+                      onClick={() => void toggle(ext())}
+                    >
+                      {ext().enabled ? "Disable" : "Enable"}
+                    </button>
+                    <Show when={toggleError()}>
+                      {(message) => (
+                        <p class="ext-details-error">{message()}</p>
+                      )}
+                    </Show>
                   </Show>
                 }
               >
@@ -199,6 +250,16 @@ export function ExtensionDetails() {
           font-size: 14px;
           font-weight: 500;
           transition: background 0.2s ease;
+        }
+
+        button.ext-details-configure {
+          border: none;
+          cursor: pointer;
+        }
+
+        button.ext-details-configure:disabled {
+          opacity: 0.6;
+          cursor: not-allowed;
         }
 
         .ext-details-configure:hover {

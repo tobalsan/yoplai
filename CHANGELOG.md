@@ -59,6 +59,7 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Changed
 
+- Agent edit page: extension cards use two columns, and the on/off toggle is gone. A card shows a checkmark once credentials exist for Just me or Whole team (secrets or an OAuth connection), otherwise a "+" linking to its config page. Saving personal credentials or connecting OAuth now turns the extension on for the agent; extensions without settings are enabled/disabled from their details page. Same-team members (not only admins) can now edit Whole team settings and credentials, connect/disconnect team OAuth, and enable/disable extensions. Removing credentials is how a credentialed extension is turned off.
 - **⚠ BREAKING** Slack channels with `requireMention` no longer auto-unlock threads after a mention; every thread message needs a mention unless the channel sets `threadUnlock: true`.
 
 - Agent **My connections** tab redesigned: each service shows its extension icon, a **Just me** and a **Whole team** column with a green/red status pill, and **Disconnect** sits in the Just me column so it is clear only your personal connection is removed.

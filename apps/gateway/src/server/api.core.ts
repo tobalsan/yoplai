@@ -71,6 +71,7 @@ import {
 } from "../history/store.js";
 import { resolveSessionDataFile } from "../sessions/files.js";
 import { createOAuthRoutes } from "../oauth/routes.js";
+import { getOAuthService } from "../oauth/service.js";
 import { readToolLabels } from "../maintenance/tool-labels.js";
 import { loadSuggestions } from "../suggestions/loader.js";
 import { listAgentDashboards } from "../canvas/list.js";
@@ -162,11 +163,23 @@ async function canConfigureAgentExtensions(
   return hasAgentAccess(authContext, agentId);
 }
 
+/** Whether the requester (personal) or the team has a stored connection for the provider. */
+function hasOAuthConnection(agentId: string, provider: string, userId?: string): boolean {
+  try {
+    return !!getOAuthService().getConnection(agentId, provider, userId);
+  } catch {
+    return false;
+  }
+}
+
 async function requesterExtensionCatalog(c: Context, config: GatewayConfig, agent: AgentConfig, configurable = true) {
   const auth = await getRequestAuthContext(c);
   const catalog = await buildExtensionCatalog(config, agent, { configurable, ...(auth ? { requesterUserId: auth.user.id } : {}) });
-  if (!auth) return catalog;
-  return catalog.map((entry) => {
+  const withOAuth = catalog.map((entry) => entry.oauth
+    ? { ...entry, oauthConnected: hasOAuthConnection(agent.id, entry.oauth.provider, auth?.user.id) }
+    : entry);
+  if (!auth) return withOAuth;
+  return withOAuth.map((entry) => {
     const fields = extensionSecretFields(entry);
     if (!fields.length) return entry;
     const personal = new CredentialStore().get<PersonalExtensionValues>({
@@ -175,7 +188,7 @@ async function requesterExtensionCatalog(c: Context, config: GatewayConfig, agen
       scope: { type: "personal", userId: auth.user.id },
     });
     const personalConfigValues = Object.fromEntries(Object.entries(personal ?? {}).filter(([field]) => !fields.includes(field)));
-    return { ...entry, canConfigureTeam: hasAdminRole(auth.user.role), personalSecretFields: fields.filter((field) => !!personal?.[field]), personalConfigValues };
+    return { ...entry, canConfigureTeam: true, personalSecretFields: fields.filter((field) => !!personal?.[field]), personalConfigValues };
   });
 }
 
@@ -225,9 +238,8 @@ api.route("/", createConnectionRoutes({ canAccessAgent: callerHasAgentAccess, ge
 api.route("/", createOAuthRoutes(
   undefined,
   callerHasAgentAccess,
-  getRequestUserId,
-  // Team grants act for everyone, so only staff may set or remove them.
-  canViewAgentPrivateMeta
+  getRequestUserId
+  // Team grants: anyone with agent access (staff or same-team member) may set or remove them.
 ));
 
 api.get("/theme.css", async (c) => {
@@ -784,9 +796,6 @@ api.patch("/agents/:id/extensions/:extensionId", async (c) => {
   const auth = await getRequestAuthContext(c);
   const personalScope = credentialScope === "personal";
   if (personalScope && !auth) return c.json({ error: "Personal credentials require login" }, 401);
-  if (!personalScope && isExtensionLoaded("multiUser") && !hasAdminRole(auth?.user.role)) {
-    return c.json({ error: "Only admins may configure the whole team" }, 403);
-  }
 
   const patch: ExtensionConfigPatch = {};
   if (enabled !== undefined) {
@@ -842,6 +851,16 @@ api.patch("/agents/:id/extensions/:extensionId", async (c) => {
       }
       return c.json({ error: "Unable to store personal credentials; check oauth.encryptionKey" }, 400);
     }
+    // Personal credentials alone make the extension usable for this agent.
+    if (targetEntry && !targetEntry.enabled) {
+      try {
+        await updateAgentExtensionConfig(resolveWorkspaceDir(agent.workspaceDir ?? agent.workspace), extensionId, { enabled: true });
+      } catch (error) {
+        return c.json({ error: (error as Error).message || "Failed to enable extension" }, 400);
+      }
+      const extensions = await reloadAfterExtensionWrite(c, agentId);
+      return c.json({ agentId, extensionId, extensions });
+    }
     const extensions = await requesterExtensionCatalog(c, config, agent);
     return c.json({ agentId, extensionId, extensions });
   }
@@ -892,10 +911,6 @@ api.delete("/agents/:id/extensions/:extensionId/credentials", async (c) => {
   const agentId = c.req.param("id");
   if (!(await canConfigureAgentExtensions(c, agentId))) {
     return c.json({ error: "forbidden" }, 403);
-  }
-  const auth = await getRequestAuthContext(c);
-  if (isExtensionLoaded("multiUser") && !hasAdminRole(auth?.user.role)) {
-    return c.json({ error: "Only admins may configure the whole team" }, 403);
   }
   const extensionId = c.req.param("extensionId");
   const config = loadConfig();
