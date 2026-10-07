@@ -44,6 +44,8 @@ export type AgentDashboard = {
   slug: string;
   updatedAt: string;
   link: string;
+  params: string[];
+  linksTo: string[];
 };
 
 export async function fetchAgentDashboards(agentId: string): Promise<AgentDashboard[]> {

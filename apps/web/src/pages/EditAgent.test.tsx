@@ -2,6 +2,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { render } from "solid-js/web";
 import type { Agent } from "../api/types";
+import type { AgentDashboard } from "../api/agents";
 import type { AgentFork, Team } from "../api/teams";
 
 // ── Mocks ─────────────────────────────────────────────────────────────────────
@@ -209,6 +210,7 @@ describe("EditAgent", () => {
     fetchAgentDashboardsMock.mockResolvedValue([{
       title: "Writing Report", slug: "report.html",
       updatedAt: "2026-09-25T10:00:00.000Z", link: "https://yoplai.test/d/stable-link",
+      params: [], linksTo: [],
     }]);
     const writeText = vi.fn().mockResolvedValue(undefined);
     Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText } });
@@ -224,6 +226,70 @@ describe("EditAgent", () => {
     container.querySelector<HTMLButtonElement>(".edit-agent-dashboard button")!.click();
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(writeText).toHaveBeenCalledWith("https://yoplai.test/d/stable-link");
+  });
+
+  it("nests parameter dashboards under every parent, stops cycles, and lists unreachable dashboards", async () => {
+    setCapabilitiesForTests({ forkedAgents: false });
+    setSession("user");
+    fetchAgentsMock.mockResolvedValue([agent({ id: "scribe" })]);
+    const dashboard = (slug: string, params: string[], linksTo: string[]) => ({
+      title: slug, slug: `${slug}.html`, params, linksTo: linksTo.map((link) => `${link}.html`),
+      updatedAt: "2026-09-25T10:00:00.000Z", link: `/d/${slug}`,
+    });
+    fetchAgentDashboardsMock.mockResolvedValue([
+      dashboard("clients", [], ["client", "csm", "missing"]),
+      dashboard("csm", [], ["client"]),
+      dashboard("client", ["id"], ["qbr", "clients", "client"]),
+      dashboard("qbr", ["id"], ["client"]),
+      dashboard("orphan", ["name"], ["orphan-child"]),
+      dashboard("orphan-child", ["id"], ["orphan"]),
+    ]);
+    await mountEdit("scribe");
+    openTab("Dashboards");
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const panel = container.querySelector(".edit-agent-dashboards")!;
+    const roots = panel.querySelectorAll(":scope > ul:first-of-type > li");
+    expect(roots).toHaveLength(2);
+    for (const root of roots) {
+      expect(root.querySelector(":scope > .edit-agent-dashboard-row strong")?.textContent)
+        .toMatch(/^(clients|csm)$/);
+      const child = root.querySelector(":scope > ul > li")!;
+      expect(child.querySelector(":scope > .edit-agent-dashboard-row strong")?.textContent).toBe("client");
+      expect(child.querySelectorAll("li")).toHaveLength(1);
+      expect(child.querySelector(":scope > ul > li > .edit-agent-dashboard-row strong")?.textContent).toBe("qbr");
+      expect(child.querySelector("a, button")).toBeNull();
+      expect(child.textContent).toContain("Opened from within the parent dashboard.");
+      expect(child.textContent).toContain("client.html");
+      expect(child.textContent).not.toContain("Updated");
+    }
+    expect(panel.querySelectorAll("a")).toHaveLength(2);
+    expect(panel.querySelectorAll("button")).toHaveLength(2);
+    expect(panel.querySelector("h2")?.textContent).toBe("Needs parameters");
+    const orphans = panel.querySelectorAll(":scope > ul:last-of-type > li");
+    expect(orphans).toHaveLength(2);
+    for (const orphan of orphans) {
+      expect(orphan.textContent).toContain("Opened from another dashboard with parameters.");
+      expect(orphan.querySelector("a, button")).toBeNull();
+    }
+  });
+
+  it("shows Needs parameters when no dashboard can be opened without arguments", async () => {
+    setCapabilitiesForTests({ forkedAgents: false });
+    setSession("user");
+    fetchAgentsMock.mockResolvedValue([agent({ id: "scribe" })]);
+    fetchAgentDashboardsMock.mockResolvedValue([{
+      title: "Client", slug: "client.html", params: ["id"], linksTo: [],
+      updatedAt: "2026-09-25T10:00:00.000Z", link: "/d/client",
+    }]);
+    await mountEdit("scribe");
+    openTab("Dashboards");
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const panel = container.querySelector(".edit-agent-dashboards")!;
+    expect(panel.textContent).toContain("Needs parameters");
+    expect(panel.textContent).toContain("Client");
+    expect(panel.querySelector("a, button")).toBeNull();
+    expect(panel.textContent).not.toContain("No dashboards yet.");
   });
 
   it("loads scheduled jobs for the accessible fork agent", async () => {
@@ -252,6 +318,38 @@ describe("EditAgent", () => {
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(fetchAgentDashboardsMock).toHaveBeenCalledWith("scribe", expect.any(Object));
     expect(container.textContent).toContain("No dashboards yet.");
+  });
+
+  it("keeps tabs usable during a pending dashboard request and renders the tree when it resolves", async () => {
+    setCapabilitiesForTests({ forkedAgents: false });
+    setSession("user");
+    fetchAgentsMock.mockResolvedValue([agent({ id: "scribe" })]);
+    let resolveDashboards!: (dashboards: AgentDashboard[]) => void;
+    fetchAgentDashboardsMock.mockReturnValue(new Promise<AgentDashboard[]>((resolve) => {
+      resolveDashboards = resolve;
+    }));
+    await mountEdit("scribe");
+    openTab("Dashboards");
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(container.textContent).toContain("Loading dashboards…");
+
+    openTab("Extensions");
+    expect(container.querySelector(".edit-agent-extensions")).not.toBeNull();
+    expect(container.querySelector('[role="tab"][aria-selected="true"]')?.textContent).toBe("Extensions");
+    openTab("Dashboards");
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(container.textContent).toContain("Loading dashboards…");
+
+    resolveDashboards([
+      { title: "Clients", slug: "clients.html", params: [], linksTo: ["client.html"], updatedAt: "2026-09-25T10:00:00.000Z", link: "/d/clients" },
+      { title: "Client", slug: "client.html", params: ["id"], linksTo: [], updatedAt: "2026-09-25T10:00:00.000Z", link: "/d/client" },
+    ]);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(container.textContent).not.toContain("Loading dashboards…");
+    const child = container.querySelector(".edit-agent-dashboard-children > li")!;
+    expect(child.textContent).toContain("Client");
+    expect(child.querySelector("a, button")).toBeNull();
+    expect(container.querySelector(".edit-agent-dashboard-actions a")?.getAttribute("href")).toBe("/d/clients");
   });
 
   it("shows a dashboard load error", async () => {
