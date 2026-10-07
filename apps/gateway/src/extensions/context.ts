@@ -40,6 +40,7 @@ import {
 import { CredentialStore } from "../credentials/store.js";
 import { resolveCredential } from "../credentials/resolver.js";
 import { credentialConnectHost } from "../credentials/connect.js";
+import { recordSettingsChange } from "../audit/store.js";
 
 /** Bind extension-owned connector registration to the extension being started. */
 export function bindExtensionContext(context: ExtensionContext, extensionId: string): ExtensionContext {
@@ -68,6 +69,7 @@ export function createExtensionContext(
   const getCredentialStore = () => credentialStore ??= new CredentialStore();
 
   return {
+    audit: { record: recordSettingsChange },
     credentialConnect: credentialConnectHost,
     credentials: {
       get: (key) => getCredentialStore().get(key),

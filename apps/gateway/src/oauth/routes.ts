@@ -1,6 +1,7 @@
 import { Hono, type Context } from "hono";
 import { getOAuthProvider, type CredentialScope } from "@yoplai/shared";
 import { getOAuthService, type OAuthService } from "./service.js";
+import { getAuditActor, recordSettingsChange } from "../audit/store.js";
 
 /**
  * Host OAuth routes (provider-agnostic):
@@ -68,12 +69,17 @@ export function createOAuthRoutes(
           .filter(Boolean)
       : undefined;
     try {
+      const actor = await getAuditActor(c);
       const { authorizeUrl } = await service.startAuthorization({
         agentId,
         provider,
         scopes,
         scope,
         userId: scope === "personal" ? userId : undefined,
+        onComplete: async () => {
+          recordSettingsChange({ ...actor, action: "oauth.connect", agentId, targetType: "oauth", targetId: provider, scope,
+            changes: [{ field: "credentials", secret: "set" }] });
+        },
       });
       return c.redirect(authorizeUrl, 302);
     } catch (error) {
@@ -187,7 +193,10 @@ export function createOAuthRoutes(
     const scope: CredentialScope = requestedScope === "personal"
       ? { type: "personal", userId: userId! }
       : { type: "team" };
+    const existing = service.getScopedConnection(agentId, provider, scope);
     await service.disconnect(agentId, provider, scope);
+    if (existing) recordSettingsChange({ ...await getAuditActor(c), action: "oauth.disconnect", agentId, targetType: "oauth", targetId: provider, scope: requestedScope,
+      changes: [{ field: "credentials", secret: "removed" }] });
     return c.json({ state: "disconnected", connected: false, provider });
   });
 

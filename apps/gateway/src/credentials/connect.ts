@@ -1,8 +1,19 @@
 import { registerCredentialOAuthConnector, requestCredentialConnectLink, startExtensionCredentialOAuth, type CredentialConnectHost } from "@yoplai/shared";
 import { getAgent, loadConfig } from "../config/index.js";
-import { getLoadedExtensions } from "../extensions/registry.js";
+import { getLoadedExtensions, isExtensionLoaded } from "../extensions/registry.js";
 import { getOAuthService } from "../oauth/service.js";
-import { extensionSecretFields, resolveExtensionTokenConfig, savePersonalExtensionTokens } from "./extension-tokens.js";
+import { extensionSecretFields, extensionTokenIntegration, resolveExtensionTokenConfig, savePersonalExtensionTokens, type PersonalExtensionValues } from "./extension-tokens.js";
+import { recordSettingsChange } from "../audit/store.js";
+import { diffSettings } from "../audit/diff.js";
+import { CredentialStore } from "./store.js";
+
+async function actorEmail(userId: string): Promise<string | undefined> {
+  if (!isExtensionLoaded("multiUser")) return undefined;
+  try {
+    const { getMultiUserRuntime } = await import("@yoplai/extension-multi-user");
+    return (getMultiUserRuntime()?.db.prepare("SELECT email FROM user WHERE id = ?").get(userId) as { email: string } | undefined)?.email;
+  } catch { return undefined; }
+}
 
 function tokenTarget(agentId: string, extensionId: string) {
   const agent = getAgent(agentId);
@@ -19,8 +30,9 @@ export const credentialConnectHost: CredentialConnectHost = {
   requestLink: requestCredentialConnectLink,
   async start(target, options) {
     if (!options.userId || !getAgent(options.agentId)) throw new Error("Personal credentials require an existing user and agent.");
+    const email = options.actorEmail ?? await actorEmail(options.userId);
     if (target.kind === "extension-oauth") {
-      return startExtensionCredentialOAuth(target.extensionId, target.targetId, options);
+      return startExtensionCredentialOAuth(target.extensionId, target.targetId, { ...options, actorEmail: email });
     }
     if (target.kind !== "oauth") throw new Error("This target requires a token form.");
     const result = await getOAuthService().startAuthorization({
@@ -29,7 +41,11 @@ export const credentialConnectHost: CredentialConnectHost = {
       scopes: target.scopes,
       scope: "personal",
       userId: options.userId,
-      onComplete: options.onComplete,
+      onComplete: async () => {
+        recordSettingsChange({ actorUserId: options.userId, actorEmail: email, impersonatorUserId: options.impersonatorUserId, action: "oauth.connect", agentId: options.agentId,
+          targetType: "oauth", targetId: target.provider, scope: "personal", changes: [{ field: "credentials", secret: "set" }] });
+        await options.onComplete();
+      },
     });
     return result.authorizeUrl;
   },
@@ -53,6 +69,12 @@ export const credentialConnectHost: CredentialConnectHost = {
   },
   async save(agentId, extensionId, userId, secrets) {
     const { agent, extension } = tokenTarget(agentId, extensionId);
-    savePersonalExtensionTokens(extension, agent, loadConfig(), userId, secrets);
+    const store = new CredentialStore();
+    const key = { agentId, integration: extensionTokenIntegration(extensionId), scope: { type: "personal" as const, userId } };
+    const before = store.get<PersonalExtensionValues>(key) ?? {};
+    savePersonalExtensionTokens(extension, agent, loadConfig(), userId, secrets, store);
+    const changes = diffSettings(before, { ...before, ...secrets }, extensionSecretFields(extension));
+    if (changes.length) recordSettingsChange({ actorUserId: userId, actorEmail: await actorEmail(userId), action: "extension.personal_update", agentId,
+      targetType: "extension", targetId: extensionId, scope: "personal", changes });
   },
 };

@@ -7,6 +7,8 @@ import { createOAuthRoutes } from "./routes.js";
 import { OAuthService } from "./service.js";
 import { OAuthConnectionStore } from "./store.js";
 import { TokenCipher } from "./crypto.js";
+const audit = vi.hoisted(() => vi.fn());
+vi.mock("../audit/store.js", () => ({ recordSettingsChange: audit, getAuditActor: async () => ({ actorUserId: "alice", actorEmail: "alice@example.com", impersonatorUserId: "admin" }) }));
 
 function makeConfig(): GatewayConfig {
   return {
@@ -24,6 +26,7 @@ describe("oauth routes", () => {
   let store: OAuthConnectionStore;
 
   beforeEach(() => {
+    audit.mockClear();
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "oauth-routes-"));
     store = new OAuthConnectionStore(
       tmpDir,
@@ -77,6 +80,8 @@ describe("oauth routes", () => {
     expect(html).toContain("alice@example.com");
 
     expect(store.get("a1", "google")?.accessToken).toBe("A1");
+    expect(audit).toHaveBeenCalledTimes(1);
+    expect(audit).toHaveBeenCalledWith({ actorUserId: "alice", actorEmail: "alice@example.com", impersonatorUserId: "admin", action: "oauth.connect", agentId: "a1", targetType: "oauth", targetId: "google", scope: "team", changes: [{ field: "credentials", secret: "set" }] });
   });
 
   it("authorize requires an agent query param", async () => {
@@ -214,6 +219,10 @@ describe("oauth routes", () => {
     const body = (await res.json()) as { state: string; connected: boolean };
     expect(body.state).toBe("disconnected");
     expect(store.get("a1", "google")).toBeUndefined();
+    expect(audit).toHaveBeenCalledTimes(1);
+    expect(audit).toHaveBeenCalledWith({ actorUserId: "alice", actorEmail: "alice@example.com", impersonatorUserId: "admin", action: "oauth.disconnect", agentId: "a1", targetType: "oauth", targetId: "google", scope: "team", changes: [{ field: "credentials", secret: "removed" }] });
+    await app.request("/oauth/google/disconnect?agent=a1", { method: "POST" });
+    expect(audit).toHaveBeenCalledTimes(1);
   });
 
   it("gates agent-scoped OAuth operations through the host access policy", async () => {

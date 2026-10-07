@@ -42,7 +42,7 @@ export function registerCredentialConnectRoutes(app: Hono): void {
         request.busy = true;
         locked = request;
         await bindCredentialConnect(request, user);
-        const url = await ctx.credentialConnect.start(request.target, { agentId: request.sender.agentId, userId: user.id, onComplete: () => confirmCredentialConnect(request) });
+        const url = await ctx.credentialConnect.start(request.target, { agentId: request.sender.agentId, userId: user.id, actorEmail: user.email, onComplete: () => confirmCredentialConnect(request) });
         locked = undefined;
         return c.redirect(url, 302);
       }
@@ -73,7 +73,7 @@ export function registerCredentialConnectRoutes(app: Hono): void {
         return c.html(page("<p>You're connected, try again in Slack.</p>"));
       }
       const url = await ctx.credentialConnect.start(request.target, {
-        agentId: request.sender.agentId, userId: user.id,
+        agentId: request.sender.agentId, userId: user.id, actorEmail: user.email,
         onComplete: () => confirmCredentialConnect(request),
       });
       locked = undefined;

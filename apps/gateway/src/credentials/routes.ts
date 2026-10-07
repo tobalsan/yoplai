@@ -5,6 +5,8 @@ import { buildExtensionCatalog } from "../extensions/catalog.js";
 import { getOAuthService } from "../oauth/service.js";
 import { CredentialStore } from "./store.js";
 import { extensionSecretFields, extensionTokenIntegration } from "./extension-tokens.js";
+import { getAuditActor, recordSettingsChange } from "../audit/store.js";
+import type { SettingsAuditChange } from "@yoplai/shared";
 
 export function createConnectionRoutes(options: {
   canAccessAgent: (c: Context, agentId: string) => Promise<boolean>;
@@ -65,13 +67,21 @@ export function createConnectionRoutes(options: {
     if (!agent) return c.json({ error: "agent_not_found" }, 404);
     const userId = (await options.getUserId(c))!;
     const integration = c.req.param("integration");
+    let changes: SettingsAuditChange[] = [];
     if (c.req.param("kind") === "oauth" && listOAuthProviders().some((provider) => provider.id === integration)) {
+      if (oauth.getScopedConnection(agent.id, integration, { type: "personal", userId })) changes = [{ field: "credentials", secret: "removed" }];
       await oauth.disconnect(agent.id, integration, { type: "personal", userId });
     } else if (c.req.param("kind") === "extension") {
       const entry = (await catalog(config(), agent)).find((item) => item.id === integration);
       if (!entry || !extensionSecretFields(entry).length) return c.json({ error: "unknown_connection" }, 404);
-      store.delete({ agentId: agent.id, integration: extensionTokenIntegration(integration), scope: { type: "personal", userId } });
+      const key = { agentId: agent.id, integration: extensionTokenIntegration(integration), scope: { type: "personal" as const, userId } };
+      const existing = store.get<Record<string, unknown>>(key);
+      const secrets = new Set(extensionSecretFields(entry));
+      changes = Object.entries(existing ?? {}).map(([field, before]) => secrets.has(field) ? { field, secret: "removed" as const } : { field, before });
+      store.delete(key);
     } else return c.json({ error: "unknown_connection" }, 404);
+    if (changes.length) recordSettingsChange({ ...await getAuditActor(c), actorUserId: userId, action: "connection.personal_remove", agentId: agent.id,
+      targetType: c.req.param("kind") === "oauth" ? "oauth" : "extension", targetId: integration, scope: "personal", changes });
     return c.json({ ok: true });
   });
   return router;

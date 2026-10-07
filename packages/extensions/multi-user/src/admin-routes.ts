@@ -1,4 +1,5 @@
-import type { Hono } from "hono";
+import type { SettingsAuditEntry } from "@yoplai/shared";
+import type { Context, Hono } from "hono";
 import { z } from "zod";
 import {
   getRequestAuthContext,
@@ -72,6 +73,27 @@ function getRuntimeOrThrow() {
   return runtime;
 }
 
+function recordAdminChange(
+  c: Context,
+  target: Pick<SettingsAuditEntry, "action" | "targetType" | "targetId" | "agentId">,
+  before: Record<string, unknown>,
+  after: Record<string, unknown>
+): void {
+  const changes = [...new Set([...Object.keys(before), ...Object.keys(after)])]
+    .filter((field) => JSON.stringify(before[field]) !== JSON.stringify(after[field]))
+    .map((field) => ({ field, before: before[field], after: after[field] }));
+  if (!changes.length) return;
+  const auth = getRequestAuthContext(c);
+  getRuntimeOrThrow().audit?.record({
+    ...target,
+    actorUserId: auth?.user.id,
+    actorEmail: auth?.user.email,
+    impersonatorUserId: auth?.impersonator?.id,
+    scope: target.targetType === "user" ? undefined : "team",
+    changes,
+  });
+}
+
 export function registerMultiUserAdminRoutes(app: Hono): void {
   app.get("/admin/users", requireAdmin(), async (c) => {
     const { auth } = getRuntimeOrThrow();
@@ -138,6 +160,7 @@ export function registerMultiUserAdminRoutes(app: Hono): void {
       return c.json({ error: "User not found" }, 404);
     }
 
+    const before = { approved: existing.approved, role: existing.role };
     if (parsed.data.role !== undefined) {
       await auth.api.setRole({
         headers: c.req.raw.headers,
@@ -158,6 +181,9 @@ export function registerMultiUserAdminRoutes(app: Hono): void {
     const updated = await auth.api.getUser({
       headers: c.req.raw.headers,
       query: { id: userId },
+    });
+    recordAdminChange(c, { action: "admin.user_update", targetType: "user", targetId: userId }, before, {
+      approved: updated?.approved, role: updated?.role,
     });
     return c.json({ user: updated });
   });
@@ -184,7 +210,11 @@ export function registerMultiUserAdminRoutes(app: Hono): void {
       return c.json({ error: "Team not found" }, 404);
     }
     try {
-      const fork = forks.setTeams(c.req.param("poolId"), parsed.data, authContext.user.id);
+      const poolId = c.req.param("poolId");
+      const existing = forks.getForkByPool(poolId);
+      const before = existing ? { assignment: existing.assignment } : {};
+      const fork = forks.setTeams(poolId, parsed.data, authContext.user.id);
+      recordAdminChange(c, { action: "admin.fork_teams", targetType: "fork", targetId: poolId, agentId: fork.forkAgentId }, before, { assignment: fork.assignment });
       return c.json({ fork });
     } catch (error) {
       if (isPoolAgentNotFoundError(error) || isForkNotFoundError(error)) return c.json({ error: (error as Error).message }, 404);
@@ -195,7 +225,10 @@ export function registerMultiUserAdminRoutes(app: Hono): void {
   app.delete("/admin/teams/:teamId/agents/:poolId", requireAdmin(), (c) => {
     const { forks } = getRuntimeOrThrow();
     try {
-      const fork = forks.removeTeam(c.req.param("poolId"), c.req.param("teamId"));
+      const poolId = c.req.param("poolId");
+      const before = forks.getForkByPool(poolId)?.assignment;
+      const fork = forks.removeTeam(poolId, c.req.param("teamId"));
+      recordAdminChange(c, { action: "admin.team_agent_remove", targetType: "fork", targetId: poolId, agentId: fork.forkAgentId }, { assignment: before }, { assignment: fork.assignment });
       return c.json({ fork });
     } catch (error) {
       if (isForkNotFoundError(error)) return c.json({ error: (error as Error).message }, 404);
@@ -222,6 +255,7 @@ export function registerMultiUserAdminRoutes(app: Hono): void {
         icon: parsed.data.icon ?? null,
         createdBy: authContext.user.id,
       });
+      recordAdminChange(c, { action: "admin.team_create", targetType: "team", targetId: team.id }, {}, { name: team.name, description: team.description, color: team.color, icon: team.icon });
       return c.json({ team }, 201);
     } catch (error) {
       if (isDuplicateTeamNameError(error)) {
@@ -239,7 +273,10 @@ export function registerMultiUserAdminRoutes(app: Hono): void {
 
     const { teams } = getRuntimeOrThrow();
     try {
+      const existing = teams.getTeam(c.req.param("id"));
+      const before = existing ? { name: existing.name, description: existing.description, color: existing.color, icon: existing.icon } : {};
       const team = teams.updateTeam(c.req.param("id"), parsed.data);
+      recordAdminChange(c, { action: "admin.team_update", targetType: "team", targetId: team.id }, before, { name: team.name, description: team.description, color: team.color, icon: team.icon });
       return c.json({ team });
     } catch (error) {
       if (isTeamNotFoundError(error)) {
@@ -264,7 +301,10 @@ export function registerMultiUserAdminRoutes(app: Hono): void {
   app.delete("/admin/teams/:id", requireAdmin(), (c) => {
     const { teams, notifyAgentListChanged } = getRuntimeOrThrow();
     try {
-      const result = teams.deleteTeam(c.req.param("id"));
+      const teamId = c.req.param("id");
+      const existing = teams.getTeam(teamId);
+      const result = teams.deleteTeam(teamId);
+      recordAdminChange(c, { action: "admin.team_delete", targetType: "team", targetId: teamId }, existing ? { name: existing.name, description: existing.description, color: existing.color, icon: existing.icon } : {}, {});
       notifyAgentListChanged?.();
       return c.json(result);
     } catch (error) {
@@ -295,9 +335,11 @@ export function registerMultiUserAdminRoutes(app: Hono): void {
       const rows = db.prepare(`SELECT id FROM user WHERE id IN (${userIds.map(() => "?").join(",")})`).all(...userIds) as Array<{ id: string }>;
       if (rows.length !== userIds.length) return c.json({ error: "User not found" }, 404);
     }
+    const before = { allUsers: teams.getTeam(teamId)?.allUsers ?? false, userIds: membership.listSavedMemberProfilesForTeam(teamId).map((member) => member.id).sort() };
     membership.setMembers(teamId, parsed.data.mode === "all" ? { mode: "all" } : { mode: "list", userIds }, authContext.user.id);
     notifyAgentListChanged?.();
     const allUsers = teams.getTeam(teamId)?.allUsers ?? false;
+    recordAdminChange(c, { action: "admin.team_members", targetType: "team", targetId: teamId }, before, { allUsers, userIds: membership.listSavedMemberProfilesForTeam(teamId).map((member) => member.id).sort() });
     return c.json({
       teamId,
       allUsers,
@@ -316,10 +358,12 @@ export function registerMultiUserAdminRoutes(app: Hono): void {
       return c.json({ error: "Team not found" }, 404);
     }
 
+    const before = membership.listUsersForTeam(teamId).sort();
     try { membership.removeMember(teamId, userId); } catch (error) {
       if (isAllUsersTeamError(error)) return c.json({ error: (error as Error).message }, 409);
       throw error;
     }
+    recordAdminChange(c, { action: "admin.team_member_remove", targetType: "team", targetId: teamId }, { userIds: before }, { userIds: membership.listUsersForTeam(teamId).sort() });
     notifyAgentListChanged?.();
     return c.json({
       teamId,
@@ -369,6 +413,7 @@ export function registerMultiUserAdminRoutes(app: Hono): void {
       }
     }
 
+    const before = assignments.getAssignmentsForAgent(agentId).sort();
     try {
       assignments.setAssignmentsForAgent(agentId, userIds, authContext.user.id);
     } catch (error) {
@@ -381,6 +426,7 @@ export function registerMultiUserAdminRoutes(app: Hono): void {
       throw error;
     }
 
+    recordAdminChange(c, { action: "admin.agent_assignments", targetType: "assignment", targetId: agentId, agentId }, { userIds: before }, { userIds: assignments.getAssignmentsForAgent(agentId).sort() });
     return c.json({
       agentId,
       userIds: assignments.getAssignmentsForAgent(agentId),
