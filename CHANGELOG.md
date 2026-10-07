@@ -13,6 +13,7 @@ Breaking changes are marked **⚠ BREAKING**.
 
 - Slack agent tools `slack.join_channel` and `slack.leave_channel` let an agent join a public channel on demand and leave channels (require `channels:join`, `channels:manage`/`groups:write` scopes and app reinstall).
 - Extensions can choose OAuth scopes from merged root/agent settings; missing grants return a reconnect link requesting those scopes.
+- Extension settings without Just me/Whole team tabs render in a bordered panel; checkbox settings align their description under the label.
 
 - Slack channel option `threadUnlock` (default `false`). Set `threadUnlock: true` alongside `requireMention: true` to let one mention unlock a thread so later replies there need no mention.
 
