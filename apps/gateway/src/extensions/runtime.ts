@@ -167,7 +167,7 @@ export class ExtensionRuntime {
   }
 
   isEnabled(extensionId: string, config?: GatewayConfig): boolean {
-    if (config && isExplicitlyDisabled(config, extensionId)) return false;
+    if (extensionId !== "mcp" && config && isExplicitlyDisabled(config, extensionId)) return false;
     if (this.#extensionIds.has(extensionId)) return true;
     return config ? hasEnabledConfig(config, extensionId) : false;
   }

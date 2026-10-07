@@ -220,6 +220,17 @@ describe("REST per-agent access gating (multi-user)", () => {
     return res.status;
   }
 
+  async function post(
+    urlPath: string,
+    headers: Record<string, string>
+  ): Promise<number> {
+    const res = await fetch(`http://127.0.0.1:${port}${urlPath}`, {
+      method: "POST",
+      headers,
+    });
+    return res.status;
+  }
+
   it("carries the authenticated requester into extension contexts and ignores spoofed headers", async () => {
     const spoofed = encodeAuth({ user: { id: "mallory" }, session: { id: "spoof", userId: "mallory" } });
     const response = await fetch(`http://127.0.0.1:${port}/api/mcp/oauth/identity?agent=allowed-agent`, {
@@ -239,6 +250,19 @@ describe("REST per-agent access gating (multi-user)", () => {
     }
     expect(await get("/api/mcp/oauth/status", authHeader("alice"))).toBe(400);
     expect(await get("/api/mcp/oauth/callback", authHeader("mallory"))).toBe(404);
+  });
+
+  it("guards MCP server list, add, and remove routes by agent access", async () => {
+    expect(await get("/api/mcp/servers?agent=allowed-agent", authHeader("mallory"))).toBe(403);
+    expect(await get("/api/mcp/servers?agent=allowed-agent", authHeader("alice"))).toBe(404);
+    expect(await get("/api/mcp/servers", authHeader("alice"))).toBe(400);
+
+    expect(await post("/api/mcp/servers?agent=allowed-agent", authHeader("mallory"))).toBe(403);
+    expect(await post("/api/mcp/servers?agent=allowed-agent", authHeader("alice"))).toBe(404);
+    expect(await post("/api/mcp/servers/remove?agent=allowed-agent&server=custom", authHeader("mallory"))).toBe(403);
+    expect(await post("/api/mcp/servers/remove?agent=allowed-agent&server=custom", authHeader("alice"))).toBe(404);
+
+    expect(await post("/api/mcp/servers/callback?agent=blocked-agent", authHeader("mallory"))).toBe(403);
   });
 
   it("rejects reading a single agent without access", async () => {

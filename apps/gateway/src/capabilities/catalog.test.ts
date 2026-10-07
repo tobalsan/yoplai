@@ -58,6 +58,7 @@ describe("buildCapabilityCatalog", () => {
           ],
         }),
         extension({ id: "internal", factory: true }),
+        extension({ id: "mcp" }),
         extension({
           id: "broken",
           getDiscoveryTools: () => {
@@ -169,8 +170,8 @@ describe("buildCapabilityCatalog", () => {
         expect.objectContaining({
           id: "mcp:oauth-server",
           auth: "oauth",
-          connectPath: "/agents/support/extensions/mcp",
-          connectUrl: "https://cloudi-fi.example/agents/support/extensions/mcp",
+          connectPath: "/agents/support/edit",
+          connectUrl: "https://cloudi-fi.example/agents/support/edit",
         }),
         expect.objectContaining({
           id: "mcp:headers-server",

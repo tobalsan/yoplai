@@ -15,6 +15,7 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Added
 
+- Remote MCP servers appear as individual extension cards; agent members can add HTTP servers with immediate personal/team OAuth, disconnect credentials, and remove shared servers with confirmation.
 - Append-only settings audit in gateway-owned `audit.db`, with redacted secret changes and an admin-only `/api/audit/settings` API.
 - First-run onboarding tour (driver.js) for multi-user logins: walks through the agent grid, agent settings, extensions, connections, dashboards and a first chat. Skippable at every step (Esc/overlay too); status is saved per user in `auth.db` via `GET/PUT/DELETE /api/me/onboarding`, and existing users see it once on next login. A discreet "Restart tour" link sits in the sidebar footer. The welcome title uses `branding.name` when set.
 - Multi-user `autoApprove` setting (default `true`) controls whether new sign-ups are approved immediately or wait for admin approval. **⚠ BREAKING**: new users are now auto-approved unless `autoApprove: false` is set.

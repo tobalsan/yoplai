@@ -50,7 +50,7 @@ export interface ToolExtensionDefinition {
   /**
    * Optional self-registered, agent-keyed config route. Declare this to own a
    * bespoke config UI instead of the schema-driven auto-form. The path must
-   * include the `:agentId` param (e.g. `"/agents/:agentId/extensions/mcp"`).
+   * include the `:agentId` param (e.g. `"/agents/:agentId/extensions/example"`).
    */
   configRoute?: AgentConfigRoute;
   /**

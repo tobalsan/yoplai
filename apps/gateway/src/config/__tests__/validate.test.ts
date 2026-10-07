@@ -37,6 +37,7 @@ describe("startup validation", () => {
     try {
       const config = GatewayConfigSchema.parse({
         version: 2,
+        extensionsPath: await mkdtemp(path.join(tmpdir(), "yoplai-empty-extensions-")),
         agents: [
           {
             id: "main",
@@ -127,6 +128,7 @@ describe("startup validation", () => {
   it("returns loaded and skipped component summary", async () => {
     const config = GatewayConfigSchema.parse({
       version: 2,
+      extensionsPath: await mkdtemp(path.join(tmpdir(), "yoplai-empty-extensions-")),
       agents: [
         {
           id: "main",

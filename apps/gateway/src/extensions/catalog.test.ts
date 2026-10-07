@@ -140,14 +140,13 @@ describe("buildExtensionCatalog", () => {
       .map((entry) => entry.id)
       .sort();
 
-    // Every built-in that loads in this deployment must appear exactly once,
-    // except factory extensions, which the catalog builder deliberately hides.
+    // Every user-facing built-in that loads in this deployment must appear exactly once.
     const registrations = getBuiltInExtensionRegistrations();
     const loadable: string[] = [];
     for (const registration of registrations) {
       try {
         const ext = await registration.load();
-        if (!ext.factory) loadable.push(ext.id);
+        if (!ext.factory && ext.id !== "mcp") loadable.push(ext.id);
       } catch {
         // package not installed here — must NOT be in the catalog
       }
@@ -480,6 +479,17 @@ describe("buildExtensionCatalog", () => {
 
     const missing = await resolveExtensionDefinition(config, "nope");
     expect(missing).toBeUndefined();
+  });
+
+  it("hides external MCP from the catalog while resolving its definition", async () => {
+    await writeExternalExtension(root, "mcp");
+    const config = configWith(makeAgent(), root);
+
+    const catalog = await buildExtensionCatalog(config, makeAgent());
+    const resolved = await resolveExtensionDefinition(config, "mcp");
+
+    expect(catalog.find((entry) => entry.id === "mcp")).toBeUndefined();
+    expect(resolved?.id).toBe("mcp");
   });
 
   it("inlines an external extension's icon.svg as a data URI", async () => {

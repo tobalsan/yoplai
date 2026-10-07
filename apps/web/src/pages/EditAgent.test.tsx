@@ -17,6 +17,10 @@ const {
   fetchForksMock,
   setForkTeamsMock,
   fetchAgentExtensionsMock,
+  fetchMcpServersMock,
+  addMcpServerMock,
+  removeMcpServerMock,
+  disconnectMcpServerMock,
   patchAgentExtensionMock,
   useSessionMock,
   useParamsMock,
@@ -31,6 +35,10 @@ const {
   fetchForksMock: vi.fn(),
   setForkTeamsMock: vi.fn(),
   fetchAgentExtensionsMock: vi.fn(),
+  fetchMcpServersMock: vi.fn(),
+  addMcpServerMock: vi.fn(),
+  removeMcpServerMock: vi.fn(),
+  disconnectMcpServerMock: vi.fn(),
   patchAgentExtensionMock: vi.fn(),
   useSessionMock: vi.fn(),
   useParamsMock: vi.fn(),
@@ -48,6 +56,13 @@ vi.mock("../api/extensions", () => ({
   patchAgentExtension: patchAgentExtensionMock,
   detailsPath: (agentId: string, extensionId: string) =>
     `/agents/${agentId}/extensions/${extensionId}`,
+}));
+
+vi.mock("../api/mcp-servers", () => ({
+  fetchMcpServers: fetchMcpServersMock,
+  addMcpServer: addMcpServerMock,
+  removeMcpServer: removeMcpServerMock,
+  disconnectMcpServer: disconnectMcpServerMock,
 }));
 
 vi.mock("../api/schedules", () => ({
@@ -147,6 +162,10 @@ beforeEach(() => {
   fetchTeamsMock.mockReset().mockResolvedValue([] as Team[]);
   fetchForksMock.mockReset().mockResolvedValue([] as AgentFork[]);
   fetchAgentExtensionsMock.mockReset().mockResolvedValue([]);
+  fetchMcpServersMock.mockReset().mockResolvedValue({ servers: [], canConfigureTeam: true });
+  addMcpServerMock.mockReset();
+  removeMcpServerMock.mockReset();
+  disconnectMcpServerMock.mockReset();
   patchAgentExtensionMock.mockReset();
   setForkTeamsMock.mockReset();
   useSessionMock.mockReset();
@@ -157,6 +176,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  vi.restoreAllMocks();
   dispose?.();
   container.remove();
   resetCapabilitiesForTests();
@@ -192,12 +212,16 @@ describe("EditAgent", () => {
   it("allows a non-admin to open a team agent edit page", async () => {
     setSession("user");
     fetchPoolMock.mockResolvedValue([agent({ id: "scribe" })]);
+    fetchPoolActionsMock.mockResolvedValue([{
+      poolId: "scribe", action: "chat", chatAgentId: "scribe-fork",
+      forked: true, reason: null, teamName: "Writers",
+    }]);
     fetchAgentExtensionsMock.mockResolvedValue([]);
     await mountEdit("scribe");
 
     expect(navigateMock).not.toHaveBeenCalledWith("/", { replace: true });
     expect(container.querySelector(".edit-agent")).not.toBeNull();
-    expect(fetchAgentExtensionsMock).toHaveBeenCalledWith("scribe");
+    expect(fetchAgentExtensionsMock).toHaveBeenCalledWith("scribe-fork", expect.any(Object));
   });
 
   it("shows dashboards for the accessible fork with working open and copy links", async () => {
@@ -571,9 +595,9 @@ describe("EditAgent", () => {
     setSession("admin");
     fetchPoolMock.mockResolvedValue([agent({ id: "scribe" })]);
     fetchAgentExtensionsMock.mockResolvedValue([{
-      id: "mcp",
-      displayName: "MCP",
-      description: "File-based MCP config",
+      id: "slack",
+      displayName: "Slack",
+      description: "Slack config",
       builtIn: false,
       enabled: true,
       configured: false,
@@ -581,13 +605,13 @@ describe("EditAgent", () => {
       configJsonSchema: null,
       requiredSecrets: [],
       advancedConfigFields: [],
-      configRoutePath: "/agents/scribe/extensions/mcp/configure",
+      configRoutePath: "/agents/scribe/extensions/slack/configure",
       tier: "bespoke-route",
     }]);
     await mountEdit("scribe");
 
     expect(container.querySelector<HTMLAnchorElement>(".edit-agent-ext-open")?.getAttribute("href"))
-      .toBe("/agents/scribe/extensions/mcp/configure");
+      .toBe("/agents/scribe/extensions/slack/configure");
   });
 
   it("does not render team controls for a non-admin", async () => {
@@ -597,5 +621,187 @@ describe("EditAgent", () => {
     await mountEdit("scribe");
 
     expect(container.querySelector(".edit-agent-team")).toBeNull();
+  });
+
+  it("shows one card per existing MCP server beside regular extensions, with an icon fallback", async () => {
+    setCapabilitiesForTests({ forkedAgents: false });
+    setSession("user");
+    fetchAgentsMock.mockResolvedValue([agent({ id: "scribe" })]);
+    fetchAgentExtensionsMock.mockResolvedValue([
+      { id: "mcp", displayName: "MCP", description: "Old hub" },
+      { id: "notion", displayName: "Notion", description: "Notes", enabled: false, tier: "auto-form", requiredSecrets: [] },
+    ]);
+    fetchMcpServersMock.mockResolvedValue({ canConfigureTeam: true, servers: [
+      { name: "docs", type: "http", url: "https://docs.test/mcp", auth: "oauth", state: "disconnected", personalState: "disconnected", teamState: "disconnected", readOnly: true },
+      { name: "local", type: "stdio", auth: "stdio", state: "connected", readOnly: true },
+    ] });
+    await mountEdit("scribe");
+
+    expect(Array.from(container.querySelectorAll(".edit-agent-ext-name")).map((node) => node.textContent)).toEqual(["Notion", "docs", "local"]);
+    expect(container.querySelector('[aria-label="docs not connected"]')).not.toBeNull();
+    expect(container.querySelector('[aria-label="local connected"]')).not.toBeNull();
+    expect(container.querySelector(".mcp-ext-card .edit-agent-ext-icon svg")).not.toBeNull();
+    expect(container.querySelector(".mcp-ext-card .edit-agent-ext-icon img")).toBeNull();
+  });
+
+  it("keeps regular extensions visible when MCP loading fails and can retry", async () => {
+    setCapabilitiesForTests({ forkedAgents: false });
+    setSession("user");
+    fetchAgentsMock.mockResolvedValue([agent({ id: "scribe" })]);
+    fetchAgentExtensionsMock.mockResolvedValue([
+      { id: "notion", displayName: "Notion", description: "Notes", enabled: false, tier: "auto-form", requiredSecrets: [] },
+    ]);
+    fetchMcpServersMock.mockRejectedValueOnce(new Error("gateway unavailable"));
+    await mountEdit("scribe");
+
+    expect(container.querySelector(".edit-agent-ext-name")?.textContent).toBe("Notion");
+    expect(container.querySelector('[role="alert"]')?.textContent).toContain("Failed to load MCP servers");
+    fetchMcpServersMock.mockResolvedValue({ canConfigureTeam: true, servers: [
+      { name: "docs", type: "http", auth: "none", state: "connected", readOnly: false },
+    ] });
+    Array.from(container.querySelectorAll<HTMLButtonElement>("button")).find((button) => button.textContent === "Retry")!.click();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(Array.from(container.querySelectorAll(".edit-agent-ext-name")).map((node) => node.textContent)).toEqual(["Notion", "docs"]);
+  });
+
+  it("falls back to the MCP icon when a server icon fails to load", async () => {
+    setCapabilitiesForTests({ forkedAgents: false });
+    setSession("user");
+    fetchAgentsMock.mockResolvedValue([agent({ id: "scribe" })]);
+    fetchMcpServersMock.mockResolvedValue({ canConfigureTeam: true, servers: [
+      { name: "docs", type: "http", iconUrl: "https://docs.test/favicon.ico", auth: "none", state: "connected", readOnly: true },
+    ] });
+    await mountEdit("scribe");
+    const icon = container.querySelector<HTMLImageElement>(".mcp-ext-card .edit-agent-ext-icon img")!;
+    expect(icon).not.toBeNull();
+    icon.dispatchEvent(new Event("error"));
+    expect(container.querySelector(".mcp-ext-card .edit-agent-ext-icon img")).toBeNull();
+    expect(container.querySelector(".mcp-ext-card .edit-agent-ext-icon svg")).not.toBeNull();
+  });
+
+  it("reserves an OAuth popup before the add request completes and keeps a canceled server disconnected", async () => {
+    setCapabilitiesForTests({ forkedAgents: false });
+    setSession("user");
+    fetchAgentsMock.mockResolvedValue([agent({ id: "scribe" })]);
+    const pending = Promise.withResolvers<{ server: unknown; authorizationUrl: string }>();
+    addMcpServerMock.mockReturnValue(pending.promise);
+    const popup = { closed: false, location: { replace: vi.fn() }, close: vi.fn() };
+    const open = vi.spyOn(window, "open").mockReturnValue(popup as unknown as Window);
+    fetchMcpServersMock.mockResolvedValue({ canConfigureTeam: true, servers: [] });
+    await mountEdit("scribe");
+
+    Array.from(container.querySelectorAll<HTMLButtonElement>("button")).find((button) => button.textContent === "Add custom extension")!.click();
+    const input = container.querySelector<HTMLInputElement>('.mcp-ext-dialog input[type="url"]')!;
+    input.value = "https://docs.test/mcp";
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    container.querySelector<HTMLFormElement>(".mcp-ext-dialog form")!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+    expect(open).toHaveBeenCalledTimes(1);
+    expect(addMcpServerMock).toHaveBeenCalledWith("scribe", "https://docs.test/mcp", "personal");
+
+    fetchMcpServersMock.mockResolvedValue({ canConfigureTeam: true, servers: [
+      { name: "docs", type: "http", url: "https://docs.test/mcp", auth: "oauth", state: "disconnected", personalState: "disconnected", readOnly: false },
+    ] });
+    pending.resolve({ server: {}, authorizationUrl: "https://provider.test/authorize" });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(popup.location.replace).toHaveBeenCalledWith("https://provider.test/authorize");
+    popup.closed = true;
+    window.dispatchEvent(new Event("focus"));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(container.querySelector('[aria-label="docs not connected"]')).not.toBeNull();
+  });
+
+  it("confirms shared removal and disconnects only the selected OAuth scope", async () => {
+    setCapabilitiesForTests({ forkedAgents: false });
+    setSession("user");
+    fetchAgentsMock.mockResolvedValue([agent({ id: "scribe" })]);
+    fetchMcpServersMock.mockResolvedValue({ canConfigureTeam: true, servers: [
+      { name: "docs", type: "http", auth: "oauth", state: "connected", personalState: "connected", teamState: "connected", readOnly: false },
+    ] });
+    disconnectMcpServerMock.mockResolvedValue(undefined);
+    removeMcpServerMock.mockResolvedValue(undefined);
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+    await mountEdit("scribe");
+
+    Array.from(container.querySelectorAll<HTMLButtonElement>(".mcp-ext-card button")).find((button) => button.textContent === "Remove")!.click();
+    expect(confirm).toHaveBeenCalledWith(expect.stringContaining("affects all users"));
+    expect(removeMcpServerMock).not.toHaveBeenCalled();
+    Array.from(container.querySelectorAll<HTMLButtonElement>(".mcp-ext-card button")).find((button) => button.textContent === "Disconnect")!.click();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(disconnectMcpServerMock).toHaveBeenCalledWith("scribe", "docs", "personal");
+    confirm.mockReturnValue(true);
+    Array.from(container.querySelectorAll<HTMLButtonElement>(".mcp-ext-card button")).find((button) => button.textContent === "Remove")!.click();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(removeMcpServerMock).toHaveBeenCalledWith("scribe", "docs");
+  });
+
+  it("uses the assigned fork for MCP status and add from a pool agent page", async () => {
+    setSession("admin");
+    fetchPoolMock.mockResolvedValue([agent({ id: "scribe" })]);
+    fetchForksMock.mockResolvedValue([fork({ sourcePoolId: "scribe", forkAgentId: "scribe-fork" })]);
+    fetchMcpServersMock.mockResolvedValue({ canConfigureTeam: true, servers: [] });
+    addMcpServerMock.mockResolvedValue({ server: { name: "docs" } });
+    const popup = { close: vi.fn() };
+    vi.spyOn(window, "open").mockReturnValue(popup as unknown as Window);
+    await mountEdit("scribe");
+    expect(fetchMcpServersMock).toHaveBeenCalledWith("scribe-fork", expect.any(Object));
+
+    Array.from(container.querySelectorAll<HTMLButtonElement>("button")).find((button) => button.textContent === "Add custom extension")!.click();
+    const input = container.querySelector<HTMLInputElement>('.mcp-ext-dialog input[type="url"]')!;
+    input.value = "https://docs.test/mcp";
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    container.querySelector<HTMLFormElement>(".mcp-ext-dialog form")!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(addMcpServerMock).toHaveBeenCalledWith("scribe-fork", "https://docs.test/mcp", "personal");
+  });
+
+  it("loads a member's extension catalog from the runnable fork and links to it", async () => {
+    setSession("user");
+    fetchPoolMock.mockResolvedValue([agent({ id: "scribe" })]);
+    fetchPoolActionsMock.mockResolvedValue([{
+      poolId: "scribe", action: "chat", chatAgentId: "scribe-fork",
+      forked: true, reason: null, teamName: "Writers",
+    }]);
+    fetchAgentExtensionsMock.mockResolvedValue([{
+      id: "notion", displayName: "Notion", description: "Notes", enabled: false, tier: "auto-form", requiredSecrets: [],
+    }]);
+    await mountEdit("scribe");
+    expect(fetchAgentExtensionsMock).toHaveBeenCalledWith("scribe-fork", expect.any(Object));
+    expect(container.querySelector<HTMLAnchorElement>(".edit-agent-ext-open")?.getAttribute("href")).toBe("/agents/scribe-fork/extensions/notion");
+  });
+
+  it("keeps MCP cards and Add visible when the extension catalog fails", async () => {
+    setSession("user");
+    fetchPoolMock.mockResolvedValue([agent({ id: "scribe" })]);
+    fetchPoolActionsMock.mockResolvedValue([{
+      poolId: "scribe", action: "chat", chatAgentId: "scribe-fork",
+      forked: true, reason: null, teamName: "Writers",
+    }]);
+    fetchAgentExtensionsMock.mockRejectedValue(new Error("forbidden"));
+    fetchMcpServersMock.mockResolvedValue({ canConfigureTeam: true, servers: [
+      { name: "docs", type: "http", auth: "none", state: "connected", readOnly: true },
+    ] });
+    await mountEdit("scribe");
+    expect(container.querySelector(".edit-agent-ext-name")?.textContent).toBe("docs");
+    expect(container.textContent).toContain("Failed to load extensions");
+    expect(container.querySelector<HTMLButtonElement>(".mcp-ext-add-button")?.disabled).toBe(false);
+  });
+
+  it("opens the running fork directly from an MCP connect link", async () => {
+    setSession("user");
+    fetchPoolMock.mockResolvedValue([agent({ id: "scribe" })]);
+    fetchAgentsMock.mockResolvedValue([agent({ id: "scribe-fork", name: "Scribe" })]);
+    await mountEdit("scribe-fork");
+    expect(container.textContent).not.toContain("Agent not found");
+    expect(container.querySelector(".edit-agent-name")?.textContent).toBe("Scribe");
+    expect(fetchMcpServersMock).toHaveBeenCalledWith("scribe-fork", expect.any(Object));
+    expect(container.querySelector<HTMLButtonElement>(".mcp-ext-add-button")?.disabled).toBe(false);
+  });
+
+  it("does not offer MCP mutation for an unforked pool agent", async () => {
+    setSession("user");
+    fetchPoolMock.mockResolvedValue([agent({ id: "scribe" })]);
+    await mountEdit("scribe");
+    expect(container.querySelector<HTMLButtonElement>(".mcp-ext-add-button")?.disabled).toBe(true);
+    expect(fetchMcpServersMock).not.toHaveBeenCalled();
   });
 });
