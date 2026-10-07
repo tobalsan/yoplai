@@ -14,6 +14,7 @@ Yoplai keeps configuration, conversations, and project data on your machine. Sta
 - Slack credential refusals offer [one personal connection link](docs/slack-credential-connect.md) for pairing plus Google OAuth, extension tokens, or extension-owned OAuth, with a confirmation in the original thread.
 - Slack `!pair` links an existing web account for personal credentials; [setup and email requirements](packages/extensions/slack/README.md#account-pairing).
 - Scheduled jobs, project boards, slices, and orchestration
+- OAuth extension scopes follow root settings and agent overrides; a connection missing required permissions prompts reconnection with those scopes.
 - File-based runtime data by default; SQLite only for optional features such as multi-user auth
 
 ## Quick start

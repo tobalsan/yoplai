@@ -1467,7 +1467,7 @@ export interface Extension {
    */
   factory?: boolean;
   /** OAuth requirement exposed for discovery and the post-enable connect link. */
-  oauth?: import("./oauth/types.js").OAuthRequirement;
+  oauth?: import("./oauth/types.js").OAuthRequirement | ((config: import("./tool-extension.js").ResolvedToolExtensionConfig) => import("./oauth/types.js").OAuthRequirement);
   validateConfig(raw: unknown): ValidationResult;
   registerRoutes(app: Hono): void;
   start(ctx: ExtensionContext): Promise<void>;
@@ -1523,9 +1523,10 @@ export const ExtensionDefinitionSchema = z.object({
     })
     .optional(),
   factory: z.boolean().optional(),
-  oauth: z
-    .object({ provider: z.string(), scopes: z.array(z.string()).optional() })
-    .optional(),
+  oauth: z.union([
+    z.object({ provider: z.string(), scopes: z.array(z.string()).optional() }),
+    z.function(),
+  ]).optional(),
   validateConfig: z
     .function()
     .args(z.unknown())

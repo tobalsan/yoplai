@@ -59,7 +59,7 @@ export interface ToolExtensionDefinition {
    * signal) from the host. The host refreshes this value when building tools
    * and resolves it again for each call using that call's requester identity.
    */
-  oauth?: OAuthRequirement;
+  oauth?: OAuthRequirement | ((config: ResolvedToolExtensionConfig) => OAuthRequirement);
   createTools(config: ResolvedToolExtensionConfig): ToolExtensionTool[];
 }
 
@@ -165,21 +165,36 @@ function resolveToolExtensionConfig(
   return resolved;
 }
 
+/** Resolve an extension's OAuth scopes from its root and agent settings. */
+export function resolveExtensionOAuth(
+  extension: Pick<Extension, "id" | "oauth">,
+  config: GatewayConfig,
+  agent: AgentConfig,
+  env?: Record<string, string>
+): OAuthRequirement | undefined {
+  if (typeof extension.oauth !== "function") return extension.oauth;
+  const root = resolveEnvRefs(stripEnabled(getRootConfig(config, extension.id)), env) as Record<string, unknown>;
+  const agentConfig = resolveEnvRefs(stripEnabled(getAgentConfig(agent, extension.id) ?? {}), env) as Record<string, unknown>;
+  return extension.oauth({ global: root, root, agent: agentConfig, merged: { ...root, ...agentConfig } });
+}
+
 async function resolveOAuthForDefinition(
   definition: ToolExtensionDefinition,
   agent: AgentConfig,
-  context: ExtensionHookContext
+  context: ExtensionHookContext,
+  config: ResolvedToolExtensionConfig
 ): Promise<ResolvedOAuth | undefined> {
-  if (!definition.oauth) return undefined;
+  const requirement = typeof definition.oauth === "function" ? definition.oauth(config) : definition.oauth;
+  if (!requirement) return undefined;
   if (!context.resolveOAuth) {
     return {
       connected: false,
-      provider: definition.oauth.provider,
+      provider: requirement.provider,
       reason: "provider_not_configured",
-      message: `OAuth provider "${definition.oauth.provider}" is not configured on this host.`,
+      message: `OAuth provider "${requirement.provider}" is not configured on this host.`,
     };
   }
-  return context.resolveOAuth(agent, definition.oauth, context.userId);
+  return context.resolveOAuth(agent, requirement, context.userId);
 }
 
 function validateToolExtensionAgentConfigs(
@@ -306,7 +321,8 @@ export function defineToolExtension(
       resolved.oauth = await resolveOAuthForDefinition(
         definition,
         agent,
-        context
+        context,
+        resolved
       );
       return [
         definition.systemPrompt?.trim() || undefined,
@@ -325,7 +341,8 @@ export function defineToolExtension(
       resolved.oauth = await resolveOAuthForDefinition(
         definition,
         agent,
-        context
+        context,
+        resolved
       );
       const tools = definition.createTools(resolved);
       return tools.map((tool) => ({
@@ -338,14 +355,15 @@ export function defineToolExtension(
           if (!definition.oauth || !context.resolveOAuth) {
             return tool.execute(params, toolContext);
           }
+          const requirement = typeof definition.oauth === "function" ? definition.oauth(resolved) : definition.oauth;
           const oauth = await context.resolveOAuth(
             agent,
-            definition.oauth,
+            requirement,
             toolContext.userId
           );
           if (!oauth.connected && oauth.reason !== "provider_not_configured") {
-            const link = await requestCredentialConnectLink(toolContext, { kind: "oauth", ...definition.oauth });
-            if (link) return { error: "oauth_connection_required", authorizeUrl: link, message: `Connect your personal ${oauth.provider} account at ${link}, then try again.` };
+            const link = await requestCredentialConnectLink(toolContext, { kind: "oauth", ...requirement });
+            if (link) return { error: "oauth_connection_required", ...(oauth.reason === "insufficient_scope" ? { connected: false, reason: oauth.reason } : {}), authorizeUrl: link, message: `Connect your personal ${oauth.provider} account at ${link}, then try again.` };
           }
           const callTimeTool = definition
             .createTools({ ...resolved, oauth })

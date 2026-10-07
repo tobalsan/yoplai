@@ -398,10 +398,14 @@ export class OAuthService {
     const credentials = await this.#credentialSource(config).getClientCredentials(
       provider.id
     );
-    const authorizeUrl = `${this.#redirectUri(config, provider.id).replace(
+    const authorizeBaseUrl = `${this.#redirectUri(config, provider.id).replace(
       /\/callback$/,
       "/authorize"
     )}?agent=${encodeURIComponent(agentId)}`;
+
+    const authorizeUrl = requirement.scopes?.length
+      ? `${authorizeBaseUrl}&scopes=${encodeURIComponent(requirement.scopes.join(" "))}`
+      : authorizeBaseUrl;
 
     if (!credentials) {
       return {
@@ -440,6 +444,16 @@ export class OAuthService {
     const connection = await this.#ensureFreshToken(stored, provider, credentials);
     if (!connection) {
       return needsReconnect;
+    }
+
+    if (requirement.scopes?.some((scope) => !connection.scopes.includes(scope))) {
+      return {
+        connected: false,
+        provider: provider.id,
+        reason: "insufficient_scope",
+        message: `${provider.displayName} needs additional permissions for agent "${agentId}". Reconnect to grant the requested scopes.`,
+        authorizeUrl: `${authorizeUrl}&scope=${stored.scope ?? "team"}`,
+      };
     }
 
     return {
