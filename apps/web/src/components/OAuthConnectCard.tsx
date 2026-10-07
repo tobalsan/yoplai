@@ -38,6 +38,8 @@ export function OAuthConnectCard(props: {
   provider: string;
   scopes?: string[];
   label: string;
+  /** Called after each status load with whether any scope is connected. */
+  onStatus?: (connected: boolean) => void;
 }) {
   const [statuses, setStatuses] = createSignal<Partial<Record<CredentialScope, OAuthStatus>>>({});
   const [loading, setLoading] = createSignal(false);
@@ -69,6 +71,7 @@ export function OAuthConnectCard(props: {
       if (request !== statusRequest) return;
       if (team.canConfigureTeam === false) setCanConfigureTeam(false);
       setStatuses({ team, personal });
+      props.onStatus?.(stateOf(team) === "connected" || stateOf(personal) === "connected");
       if (!scopePicked) {
         scopePicked = true;
         setScope(preferredScope({ personal: tabStatus("personal"), team: tabStatus("team") }, !!personal));

@@ -2,7 +2,7 @@ import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 import type { GatewayConfig } from "@yoplai/shared";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { spawnSubagent } from "./runner.js";
 
 describe("subagent runner repo resolution", () => {
@@ -119,6 +119,11 @@ describe("subagent runner repo resolution", () => {
       )
     ) as { worktree_path?: string };
     expect(state.worktree_path).toBe(sliceRepo);
+    // Let the spawned worker finish persisting before teardown removes its files.
+    await vi.waitFor(async () => {
+      const finished = JSON.parse(await fs.readFile(path.join(projectDir, "sessions", "worker", "state.json"), "utf8")) as { outcome?: string };
+      expect(finished.outcome).toBe("done");
+    });
   });
 
   it("falls back to project repo when slice repo is absent", async () => {
@@ -142,6 +147,11 @@ describe("subagent runner repo resolution", () => {
       )
     ) as { worktree_path?: string };
     expect(state.worktree_path).toBe(projectRepo);
+    // Let the spawned worker finish persisting before teardown removes its files.
+    await vi.waitFor(async () => {
+      const finished = JSON.parse(await fs.readFile(path.join(projectDir, "sessions", "worker", "state.json"), "utf8")) as { outcome?: string };
+      expect(finished.outcome).toBe("done");
+    });
   });
 
   it("removes a new run record when workspace preparation fails", async () => {

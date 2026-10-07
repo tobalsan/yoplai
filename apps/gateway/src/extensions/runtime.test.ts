@@ -75,6 +75,26 @@ describe("ExtensionRuntime", () => {
     } finally { unregister(); resolveToken.mockRestore(); }
   });
 
+  it("passes config-dependent scopes to the external OAuth connect flow", async () => {
+    const execute = vi.fn();
+    const provider = vi.fn(async () => "<slack-pair-link>");
+    const unregister = registerCredentialConnectLinkProvider(provider);
+    const resolveToken = vi.spyOn(getOAuthService(), "resolveToken").mockResolvedValue({ connected: false, provider: "google", reason: "insufficient_scope", message: "Reconnect" });
+    const runtime = new ExtensionRuntime();
+    runtime.load([extension({ id: "sample", oauth: (resolved) => ({ provider: "google", scopes: resolved.merged.allowWrite ? ["read", "write"] : ["read"] }), getAgentTools: async () => [{ name: "sample_send", description: "Send", parameters: {}, execute }] })]);
+    const writeConfig = { ...config, extensions: { sample: { allowWrite: true } } };
+    const requester = { ...agent, extensions: { sample: { enabled: true, allowWrite: false } } };
+    try {
+      const result = await runtime.executeTool(requester, "sample_send", {}, writeConfig, "session");
+      expect(result.result).toMatchObject({ connected: false, reason: "insufficient_scope", authorizeUrl: "<slack-pair-link>" });
+      expect(resolveToken).toHaveBeenLastCalledWith("main", { provider: "google", scopes: ["read"] }, undefined);
+      expect(provider).toHaveBeenLastCalledWith(expect.anything(), { kind: "oauth", provider: "google", scopes: ["read"] });
+      await runtime.executeTool(agent, "sample_send", {}, writeConfig, "session");
+      expect(provider).toHaveBeenLastCalledWith(expect.anything(), { kind: "oauth", provider: "google", scopes: ["read", "write"] });
+      expect(execute).not.toHaveBeenCalled();
+    } finally { unregister(); resolveToken.mockRestore(); }
+  });
+
   it("owns loaded extension state and capabilities", () => {
     const runtime = new ExtensionRuntime();
     runtime.load(

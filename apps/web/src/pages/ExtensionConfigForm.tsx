@@ -169,7 +169,7 @@ export function ExtensionConfigForm(props: { entry: ExtensionCatalogEntry }) {
   });
 
   const renderField = (field: AutoFormField) => (
-    <div class="ext-config-field">
+    <div class="ext-config-field" classList={{ "ext-config-field-boolean": field.type === "boolean" }}>
       <Show when={field.type !== "boolean"}>
         <label class="ext-config-label" for={`ext-field-${field.name}`}>
           {field.label}
@@ -362,7 +362,7 @@ export function ExtensionConfigForm(props: { entry: ExtensionCatalogEntry }) {
           {(ext) => (
             <>
               <Show when={fields().length > 0}>
-                <form class="ext-config-form" onSubmit={handleSubmit}>
+                <form class="ext-config-form" classList={{ "ext-config-panel": ext().personalSecretFields === undefined }} onSubmit={handleSubmit}>
                   <Show when={ext().personalSecretFields !== undefined} fallback={formBody()}>
                     <CredentialScopeTabs
                       value={credentialScope()}
@@ -395,6 +395,13 @@ export function ExtensionConfigForm(props: { entry: ExtensionCatalogEntry }) {
           display: flex;
           flex-direction: column;
           gap: 16px;
+        }
+        .ext-config-panel {
+          margin-top: 16px;
+          padding: 20px;
+          border: 1px solid var(--border-default);
+          border-radius: 14px;
+          background: var(--bg-surface);
         }
         .ext-config-form .cred-tabs-panel {
           display: flex;
@@ -431,14 +438,25 @@ export function ExtensionConfigForm(props: { entry: ExtensionCatalogEntry }) {
         .ext-config-checkbox-label {
           display: flex;
           align-items: center;
-          gap: 8px;
+          gap: 10px;
+          cursor: pointer;
           font-size: 14px;
           font-weight: 600;
           color: var(--text-primary);
         }
+        .ext-config-checkbox-label input {
+          width: 16px;
+          height: 16px;
+          margin: 0;
+          accent-color: var(--accent, #3b82f6);
+        }
         .ext-config-hint {
           font-size: 12px;
           color: var(--text-tertiary);
+        }
+        .ext-config-field-boolean .ext-config-hint {
+          padding-left: 26px;
+          line-height: 1.5;
         }
         .ext-config-advanced {
           display: flex;

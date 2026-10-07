@@ -1079,7 +1079,7 @@ describe("api core session resolution", () => {
       );
     });
 
-    it("rejects legacy team config writes by same-team members", async () => {
+    it("lets same-team members write team config", async () => {
       loadConfigValue = {
         agents: [{ id: "alpha", name: "Alpha", workspace: "/ws/alpha" }],
         pool: [],
@@ -1098,12 +1098,12 @@ describe("api core session resolution", () => {
         new Request("http://localhost/agents/alpha/extensions/acme", {
           method: "PATCH",
           headers: { "content-type": "application/json" },
-          body: JSON.stringify({ enabled: true }),
+          body: JSON.stringify({ enabled: false }),
         })
       );
 
-      expect(response.status).toBe(403);
-      expect(updateAgentExtensionConfig).not.toHaveBeenCalled();
+      expect(response.status).toBe(200);
+      expect(updateAgentExtensionConfig).toHaveBeenCalled();
     });
 
     it("403s when a non-member writes extension config", async () => {
@@ -1241,7 +1241,7 @@ describe("api core session resolution", () => {
         multiUserState.loaded = true;
         multiUserState.authContext = { user: { id: "alice", role: "user" }, session: { id: "s1", userId: "alice" } };
         resolveExtensionDefinition.mockResolvedValue({ id: "acme", requiredSecrets: ["apiKey"], configJsonSchema: { properties: { apiKey: { type: "string" } } } });
-        buildExtensionCatalog.mockResolvedValue([{ ...catalog[0], requiredSecrets: ["apiKey"] }]);
+        buildExtensionCatalog.mockResolvedValue([{ ...catalog[0], enabled: true, requiredSecrets: ["apiKey"] }]);
       });
 
       async function patch(body: unknown) {
@@ -1249,13 +1249,14 @@ describe("api core session resolution", () => {
         return api.request(new Request("http://localhost/agents/alpha/extensions/acme", { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify(body) }));
       }
 
-      it("lets only admins unset whole-team credentials, keeping settings", async () => {
+      it("lets agent members unset whole-team credentials, keeping settings", async () => {
         const { api } = await import("./api.core.js");
         const remove = () => api.request(new Request("http://localhost/agents/alpha/extensions/acme/credentials", { method: "DELETE" }));
+        multiUserState.agentAccess = false;
         expect((await remove()).status).toBe(403);
         expect(updateAgentExtensionConfig).not.toHaveBeenCalled();
 
-        multiUserState.authContext = { user: { id: "admin", role: "admin" }, session: { id: "s3", userId: "admin" } };
+        multiUserState.agentAccess = true;
         updateAgentExtensionConfig.mockResolvedValue({});
         expect((await remove()).status).toBe(200);
         expect(updateAgentExtensionConfig).toHaveBeenCalledWith("/ws/alpha", "acme", { removeSecrets: ["apiKey"] });
@@ -1266,7 +1267,7 @@ describe("api core session resolution", () => {
         const response = await patch({ credentialScope: "personal", secrets: { apiKey: "alice-private" } });
         expect(response.status).toBe(200);
         const body = await response.json();
-        expect(body.extensions[0]).toMatchObject({ personalSecretFields: ["apiKey"], canConfigureTeam: false });
+        expect(body.extensions[0]).toMatchObject({ personalSecretFields: ["apiKey"], canConfigureTeam: true });
         expect(JSON.stringify(body)).not.toContain("alice-private");
         expect([...credentialState.records.entries()]).toEqual([[JSON.stringify({ agentId: "alpha", integration: "extension-config:acme", scope: { type: "personal", userId: "alice" } }), { apiKey: "alice-private" }]]);
         expect(updateAgentExtensionConfig).not.toHaveBeenCalled();
@@ -1314,6 +1315,23 @@ describe("api core session resolution", () => {
         expect(response.status).toBe(422);
         expect(await response.json()).toEqual({ error: "Extension configuration is invalid", fields: ["config"] });
         expect(credentialState.records.size).toBe(0);
+      });
+
+      it("enables a disabled extension when personal credentials are saved", async () => {
+        buildExtensionCatalog.mockResolvedValue([{ ...catalog[0], enabled: false, requiredSecrets: ["apiKey"] }]);
+        updateAgentExtensionConfig.mockResolvedValue({});
+        expect((await patch({ credentialScope: "personal", secrets: { apiKey: "alice-private" } })).status).toBe(200);
+        expect(updateAgentExtensionConfig).toHaveBeenCalledWith("/ws/alpha", "acme", { enabled: true });
+        expect(reloadConfig).toHaveBeenCalled();
+      });
+
+      it("lets agent members enable and disable an extension", async () => {
+        updateAgentExtensionConfig.mockResolvedValue({});
+        expect((await patch({ enabled: true })).status).toBe(200);
+        expect((await patch({ enabled: false })).status).toBe(200);
+        expect(updateAgentExtensionConfig).toHaveBeenCalledWith("/ws/alpha", "acme", { enabled: false }, expect.any(Function));
+        multiUserState.agentAccess = false;
+        expect((await patch({ enabled: true })).status).toBe(403);
       });
 
       it("allows admin activation without a team token while still validating shared settings", async () => {

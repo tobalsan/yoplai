@@ -8,7 +8,9 @@ const {
   useSessionMock,
   useParamsMock,
   navigateMock,
+  patchAgentExtensionMock,
 } = vi.hoisted(() => ({
+  patchAgentExtensionMock: vi.fn(),
   fetchAgentExtensionsMock: vi.fn(),
   useSessionMock: vi.fn(),
   useParamsMock: vi.fn(),
@@ -23,6 +25,7 @@ vi.mock("../api/extensions", async () => {
   return {
     ...actual,
     fetchAgentExtensions: fetchAgentExtensionsMock,
+    patchAgentExtension: patchAgentExtensionMock,
   };
 });
 
@@ -85,6 +88,7 @@ async function mount(agentId: string, extensionId: string) {
 
 beforeEach(() => {
   fetchAgentExtensionsMock.mockReset();
+  patchAgentExtensionMock.mockReset();
   useSessionMock.mockReset();
   useParamsMock.mockReset();
   navigateMock.mockReset();
@@ -234,16 +238,41 @@ describe("ExtensionDetails", () => {
     vi.unstubAllGlobals();
   });
 
-  it("renders the placeholder for toggle-only tier", async () => {
+  it("enables a toggle-only extension from its details page", async () => {
     setSession("admin");
     fetchAgentExtensionsMock.mockResolvedValue([
-      entry({ tier: "toggle-only" }),
+      entry({ tier: "toggle-only", enabled: false }),
+    ]);
+    patchAgentExtensionMock.mockResolvedValue([
+      entry({ tier: "toggle-only", enabled: true }),
+    ]);
+    await mount("scribe", "exa");
+
+    const button = container.querySelector<HTMLButtonElement>(
+      "button.ext-details-configure"
+    )!;
+    expect(button.textContent).toBe("Enable");
+    button.click();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(patchAgentExtensionMock).toHaveBeenCalledWith("scribe", "exa", {
+      enabled: true,
+    });
+    expect(
+      container.querySelector("button.ext-details-configure")?.textContent
+    ).toBe("Disable");
+  });
+
+  it("locks the toggle for root-managed extensions", async () => {
+    setSession("admin");
+    fetchAgentExtensionsMock.mockResolvedValue([
+      entry({ tier: "toggle-only", managedAtRoot: true }),
     ]);
     await mount("scribe", "exa");
 
     expect(
-      container.querySelector(".ext-details-settings")?.textContent
-    ).toContain("hasn't adopted the configuration contract");
-    expect(container.querySelector(".ext-details-configure")).toBeNull();
+      container.querySelector<HTMLButtonElement>("button.ext-details-configure")
+        ?.disabled
+    ).toBe(true);
   });
 });

@@ -12,6 +12,9 @@ Breaking changes are marked **⚠ BREAKING**.
 ### Added
 
 - Slack agent tools `slack.join_channel` and `slack.leave_channel` let an agent join a public channel on demand and leave channels (require `channels:join`, `channels:manage`/`groups:write` scopes and app reinstall).
+- Extensions can choose OAuth scopes from merged root/agent settings; missing grants return a reconnect link requesting those scopes.
+- Extension settings without Just me/Whole team tabs render in a bordered panel; checkbox settings align their description under the label.
+
 - Slack channel option `threadUnlock` (default `false`). Set `threadUnlock: true` alongside `requireMention: true` to let one mention unlock a thread so later replies there need no mention.
 
 - Extension settings forms can unset credentials: **Remove my credentials** on Just me, and **Remove team credentials** on Whole team for admins (`DELETE /api/agents/:id/extensions/:extensionId/credentials`). Non-secret settings are kept.
@@ -60,6 +63,8 @@ Breaking changes are marked **⚠ BREAKING**.
 ### Changed
 
 - The agent Dashboards tab nests dashboards declaring required URL arguments (`yoplai:params`) beneath their linking parents without Open/Copy actions; unlinked ones appear under **Needs parameters**.
+
+- Agent edit page: extension cards use two columns, and the on/off toggle is gone. A card shows a checkmark once credentials exist for Just me or Whole team (secrets or an OAuth connection), otherwise a "+" linking to its config page. Saving personal credentials or connecting OAuth now turns the extension on for the agent; extensions without settings are enabled/disabled from their details page. Same-team members (not only admins) can now edit Whole team settings and credentials, connect/disconnect team OAuth, and enable/disable extensions. Removing credentials is how a credentialed extension is turned off.
 
 - **⚠ BREAKING** Slack channels with `requireMention` no longer auto-unlock threads after a mention; every thread message needs a mention unless the channel sets `threadUnlock: true`.
 

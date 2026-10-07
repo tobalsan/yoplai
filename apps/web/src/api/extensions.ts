@@ -28,6 +28,8 @@ export type ExtensionCatalogEntry = {
    */
   configRoutePath: string | null;
   oauth: { provider: string; scopes: string[] } | null;
+  /** OAuth extensions: requester's personal or the team connection exists. */
+  oauthConnected?: boolean;
   tier: ExtensionConfigTier;
   /** Optional data: URI for the extension's icon, when the catalog provides one. */
   iconDataUri?: string;
