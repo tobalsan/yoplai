@@ -336,6 +336,60 @@ describe("slack agent tools", () => {
     });
   });
 
+  it("get_channel_history includes block and attachment text from bot posts", async () => {
+    const history = vi.fn().mockResolvedValue({
+      messages: [
+        {
+          ts: "2.0",
+          bot_id: "B1",
+          text: "",
+          blocks: [
+            {
+              type: "section",
+              text: { type: "mrkdwn", text: "*Ticket #27973*" },
+              accessory: { type: "button", text: { type: "plain_text", text: "Open" } },
+            },
+            {
+              type: "rich_text",
+              elements: [
+                {
+                  type: "rich_text_section",
+                  elements: [
+                    { type: "text", text: "Printer " },
+                    { type: "text", text: "is broken" },
+                  ],
+                },
+              ],
+            },
+          ],
+        },
+        {
+          ts: "1.0",
+          bot_id: "B1",
+          text: "New ticket",
+          attachments: [
+            {
+              title: "#27970 Login fails",
+              text: "User cannot log in",
+              fields: [{ title: "Priority", value: "High" }],
+            },
+          ],
+        },
+      ],
+    });
+    registerMockBot("alpha", { conversations: { history } as never });
+
+    const result = (await tool("slack.get_channel_history").execute(
+      { channel: "C123" },
+      { agent: agent("alpha"), config: config() }
+    )) as { messages: Array<{ text?: string }> };
+
+    expect(result.messages.map((m) => m.text)).toEqual([
+      "*Ticket #27973*\nPrinter is broken",
+      "New ticket\n\n#27970 Login fails\nUser cannot log in\nPriority: High",
+    ]);
+  });
+
   it("get_channel_history paginates to the default limit", async () => {
     const firstPage = Array.from({ length: 20 }, (_, index) => ({
       ts: `${100 - index}.0`,

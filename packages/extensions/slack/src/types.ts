@@ -1,3 +1,12 @@
+export type SlackMessageAttachment = {
+  fallback?: string;
+  pretext?: string;
+  title?: string;
+  text?: string;
+  fields?: Array<{ title?: string; value?: string }>;
+  blocks?: unknown[];
+};
+
 export type SlackWebClient = {
   auth?: {
     test(params?: Record<string, unknown>): Promise<{
@@ -225,6 +234,8 @@ export type SlackWebClient = {
         thread_ts?: string;
         reply_count?: number;
         bot_id?: string;
+        blocks?: unknown[];
+        attachments?: SlackMessageAttachment[];
       }>;
       has_more?: boolean;
       response_metadata?: { next_cursor?: string };
@@ -246,6 +257,8 @@ export type SlackWebClient = {
         thread_ts?: string;
         reply_count?: number;
         bot_id?: string;
+        blocks?: unknown[];
+        attachments?: SlackMessageAttachment[];
       }>;
       has_more?: boolean;
       response_metadata?: { next_cursor?: string };

@@ -82,6 +82,7 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Fixed
 
+- Slack `get_channel_history`/`get_thread_replies` now include text from message blocks and attachments, so bot posts (e.g. Zendesk) no longer appear empty.
 - Extension pages open almost instantly: the encryption key for stored credentials is derived once instead of once per extension (~600 ms → ~20 ms per catalog request, also faster credential lookups on tool calls).
 
 - Generic "Progress updated." status lines no longer appear: web chat stops rendering them, and the Slack progress bubble ignores milestones that have no meaningful, safe label instead of posting the placeholder.

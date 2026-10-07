@@ -254,9 +254,60 @@ type SlackHistoryMessage = NonNullable<
   Awaited<ReturnType<SlackWebClient["conversations"]["history"]>>["messages"]
 >[number];
 
+/** Collect visible strings from Block Kit blocks (section, rich_text, context, ...). */
+function blockText(blocks: unknown[] | undefined): string {
+  const lines: string[] = [];
+  const collect = (node: unknown, out: string[]) => {
+    if (Array.isArray(node)) {
+      for (const item of node) collect(item, out);
+    } else if (node && typeof node === "object") {
+      for (const [key, value] of Object.entries(node)) {
+        if (key === "text" && typeof value === "string") out.push(value);
+        else if (key !== "accessory") collect(value, out);
+      }
+    }
+  };
+  for (const block of blocks ?? []) {
+    const parts: string[] = [];
+    collect(block, parts);
+    const line = parts.join("").trim();
+    if (line) lines.push(line);
+  }
+  return lines.join("\n");
+}
+
+function attachmentText(message: SlackHistoryMessage): string {
+  return (message.attachments ?? [])
+    .map((attachment) => {
+      const parts = [
+        attachment.pretext,
+        attachment.title,
+        attachment.text,
+        ...(attachment.fields ?? []).map((field) =>
+          [field.title, field.value].filter(Boolean).join(": ")
+        ),
+        blockText(attachment.blocks),
+      ].filter((part): part is string => Boolean(part?.trim()));
+      if (parts.length === 0 && attachment.fallback) {
+        parts.push(attachment.fallback);
+      }
+      return parts.join("\n");
+    })
+    .filter(Boolean)
+    .join("\n\n");
+}
+
+/** Slack bots often leave `text` empty and put content in blocks/attachments. */
+function messageText(message: SlackHistoryMessage): string | undefined {
+  const text = message.text?.trim() ? message.text : blockText(message.blocks);
+  const combined = [text, attachmentText(message)].filter(Boolean).join("\n\n");
+  return combined || message.text;
+}
+
 function compactMessages(messages: SlackHistoryMessage[]) {
   return messages.flatMap((message) => {
     if (!message.ts) return [];
+    const text = messageText(message);
     return [
       {
         ts: message.ts,
@@ -265,7 +316,7 @@ function compactMessages(messages: SlackHistoryMessage[]) {
           ? { username: message.username }
           : {}),
         ...(message.bot_id !== undefined ? { botId: message.bot_id } : {}),
-        ...(message.text !== undefined ? { text: message.text } : {}),
+        ...(text !== undefined ? { text } : {}),
         ...(message.thread_ts !== undefined
           ? { threadTs: message.thread_ts }
           : {}),
