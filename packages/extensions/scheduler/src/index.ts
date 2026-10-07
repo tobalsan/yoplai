@@ -254,13 +254,13 @@ function schedulerAgentTools(): ExtensionAgentTool[] {
             },
           },
           message: {
-            type: ["string", "null"],
+            anyOf: [{ type: "string" }, { type: "null" }],
             description:
               "Prompt for an agent job, or the wake prompt for a gated job. Pass null to drop it, e.g. when switching the job to script-only (noAgent: true).",
           },
-          sessionId: { type: ["string", "null"] },
+          sessionId: { anyOf: [{ type: "string" }, { type: "null" }] },
           script: {
-            type: ["string", "null"],
+            anyOf: [{ type: "string" }, { type: "null" }],
             description:
               "Relative path (from the agent workspace root) to a script to run. Required for script-only and gated jobs; pass null to drop it and go back to a plain agent job.",
           },
