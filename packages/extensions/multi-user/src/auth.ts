@@ -42,18 +42,22 @@ function getTrustedOrigins(config: GatewayConfig): string[] {
 /**
  * Bootstrap fields applied to a new user in the `before` create hook.
  * The very first user of a fresh instance becomes `superadmin` and is
- * auto-approved; everyone else keeps the default role and is unapproved.
+ * approved; everyone else keeps the default role and is approved unless
+ * `autoApprove` is false (default true).
  *
  * Setting these in `before` ensures the initial session reflects them
  * immediately (an `after`-hook update would be masked by the session cache).
  */
-export function resolveBootstrapUserFields(userCount: number): {
+export function resolveBootstrapUserFields(
+  userCount: number,
+  autoApprove = true
+): {
   approved: boolean;
   role?: string;
 } {
   const isFirstUser = userCount === 0;
   return {
-    approved: isFirstUser,
+    approved: isFirstUser || autoApprove,
     ...(isFirstUser ? { role: "superadmin" } : {}),
   };
 }
@@ -215,7 +219,10 @@ function buildMultiUserAuth(
             return {
               data: {
                 ...user,
-                ...resolveBootstrapUserFields(userCount.count),
+                ...resolveBootstrapUserFields(
+                  userCount.count,
+                  multiUserConfig.autoApprove ?? true
+                ),
               },
             };
           },

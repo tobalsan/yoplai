@@ -98,8 +98,9 @@ references so plaintext secrets stay outside tracked configuration.
 ### Approval flow
 
 The very first user to sign in is auto-approved and granted the `superadmin` role.
-Every subsequent user lands with `approved: false` and the default `user`
-role. Until an admin promotes / approves them via `PATCH /api/admin/users/:id`,
+Every subsequent user gets the default `user` role and is auto-approved
+unless `autoApprove: false` is set, in which case they land with
+`approved: false`. Until an admin promotes / approves them via `PATCH /api/admin/users/:id`,
 their requests are rejected with `403 forbidden` (but the session is created
 so the UI can render an "awaiting approval" state).
 

@@ -23,9 +23,17 @@ describe("bootstrap user fields", () => {
     });
   });
 
-  it("leaves later users unapproved with the default role", () => {
-    expect(resolveBootstrapUserFields(1)).toEqual({ approved: false });
-    expect(resolveBootstrapUserFields(5)).toEqual({ approved: false });
+  it("auto-approves later users by default with the default role", () => {
+    expect(resolveBootstrapUserFields(1)).toEqual({ approved: true });
+    expect(resolveBootstrapUserFields(5, true)).toEqual({ approved: true });
+  });
+
+  it("leaves later users pending when autoApprove is false", () => {
+    expect(resolveBootstrapUserFields(1, false)).toEqual({ approved: false });
+    expect(resolveBootstrapUserFields(0, false)).toEqual({
+      approved: true,
+      role: "superadmin",
+    });
   });
 });
 
@@ -268,7 +276,7 @@ describe("email/password auth", () => {
       role: "superadmin",
       approved: 1,
     });
-    expect(userRow("alice@e2e.test")).toEqual({ role: "user", approved: 0 });
+    expect(userRow("alice@e2e.test")).toEqual({ role: "user", approved: 1 });
     db.close();
   });
 

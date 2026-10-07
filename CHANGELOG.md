@@ -11,6 +11,8 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Added
 
+- Multi-user `autoApprove` setting (default `true`) controls whether new sign-ups are approved immediately or wait for admin approval. **⚠ BREAKING**: new users are now auto-approved unless `autoApprove: false` is set.
+
 - Slack agent tools `slack.join_channel` and `slack.leave_channel` let an agent join a public channel on demand and leave channels (require `channels:join`, `channels:manage`/`groups:write` scopes and app reinstall).
 - Extensions can choose OAuth scopes from merged root/agent settings; missing grants return a reconnect link requesting those scopes.
 - Extension settings without Just me/Whole team tabs render in a bordered panel; checkbox settings align their description under the label.
