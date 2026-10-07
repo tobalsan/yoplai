@@ -80,6 +80,8 @@ describe("dashboard registry and tool", () => {
       {
         title: "Sales Overview",
         slug: "sales.html",
+        params: [],
+        linksTo: [],
         updatedAt: expect.any(String),
         link: expect.stringMatching(
           /^https:\/\/yoplai\.test\/d\/[A-Za-z0-9_-]{32}$/
@@ -88,6 +90,32 @@ describe("dashboard registry and tool", () => {
     ]);
     expect(second).toEqual(first);
     expect(await registry.list("agent-1")).toHaveLength(1);
+  });
+
+  it("lists required parameters and unique valid links, excluding self-links", async () => {
+    await fs.writeFile(
+      path.join(workspace, "data", "dashboards", "client.html"),
+      `<head><meta content=' id, quarter, , ' name='yoplai:params'></head>
+       <script>
+         YOPLAI.link("qbr.html", { id: 1 });
+         YOPLAI.link( 'qbr.html');
+         YOPLAI.link("client.html");
+         YOPLAI.link("../other.html");
+         YOPLAI.link("invalid");
+         YOPLAI.link(".html");
+       </script>`
+    );
+    await fs.writeFile(
+      path.join(workspace, "data", "dashboards", "empty.html"),
+      '<meta name="yoplai:params" content=" , ">'
+    );
+    const dashboards = await listAgentDashboards(agent(), registry, config);
+    expect(dashboards[0]).toMatchObject({
+      slug: "client.html",
+      params: ["id", "quarter"],
+      linksTo: ["qbr.html"],
+    });
+    expect(dashboards[1]).toMatchObject({ params: [], linksTo: [] });
   });
 
   it("keeps a stable unguessable link across edits and lists updated files", async () => {

@@ -36,8 +36,32 @@ export async function listAgentDashboards(
         const title = html.match(/<title(?:\s[^>]*)?>([\s\S]*?)<\/title\s*>/i)?.[1]
           ?.replace(/<[^>]*>/g, "")
           .trim() || slug;
+        let params: string[] = [];
+        for (const meta of html.matchAll(/<meta\b([^>]*)>/gi)) {
+          const attributes = new Map(
+            [...meta[1].matchAll(/([\w-]+)\s*=\s*(["'])(.*?)\2/gs)].map((match) => [
+              match[1].toLowerCase(),
+              match[3],
+            ])
+          );
+          if (attributes.get("name") !== "yoplai:params") continue;
+          params = (attributes.get("content") || "")
+            .split(",")
+            .map((param) => param.trim())
+            .filter(Boolean);
+          break;
+        }
+        const linksTo = new Set<string>();
+        for (const match of html.matchAll(/YOPLAI\.link\(\s*["']([^"']+)["']/g)) {
+          try {
+            const target = normalizeDashboardSlug(match[1]);
+            if (target !== slug) linksTo.add(target);
+          } catch {
+            // Invalid links cannot identify a child dashboard.
+          }
+        }
         const entry = await registry.link(agent.id, slug);
-        dashboards.push({ title, slug, updatedAt: stat.mtime.toISOString(), link: `${dashboardBaseUrl(config)}/d/${entry.id}` });
+        dashboards.push({ title, slug, params, linksTo: [...linksTo], updatedAt: stat.mtime.toISOString(), link: `${dashboardBaseUrl(config)}/d/${entry.id}` });
       } finally {
         await file.close();
       }

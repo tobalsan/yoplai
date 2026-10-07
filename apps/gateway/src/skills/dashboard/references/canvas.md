@@ -14,6 +14,7 @@
 - Query results are injected before page scripts as `YOPLAI.data.items`.
 - `YOPLAI.viewer` contains `email` and `name`; `YOPLAI.params` contains URL query parameters.
 - `YOPLAI.link("client.html", { id: row.id })` makes a safe same-agent drill-down URL.
+- Any dashboard that is meaningless without URL arguments must declare them in its head: `<meta name="yoplai:params" content="id">` (comma-separated for multiple required arguments, e.g. `content="id,quarter"`). The agent's Dashboards tab shows these pages as non-clickable children of every dashboard linking to them via `YOPLAI.link`; unreachable pages appear under "Needs parameters". Do not declare optional arguments, such as OKR owner/period filters with defaults.
 - Call `dashboard_link({ slug: "client.html" })` to register or refresh the stable public URL. Its result includes the absolute `link`, SQL diagnostics (`queryErrors`), and static checks of the page (`problems`: script syntax errors, global-name collisions, echarts/kit load order, undeclared `YOPLAI.data` names, inline handlers, 0-row queries).
 - A page may have 20 queries. Each has a two-second, 5,000-row, 5MB result limit. Keep queries read-only and bounded.
 

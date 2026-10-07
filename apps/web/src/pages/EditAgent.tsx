@@ -8,6 +8,7 @@ import {
 } from "solid-js";
 import { A, useNavigate, useParams } from "@solidjs/router";
 import { fetchAgentDashboards, fetchAgents, fetchPool } from "../api";
+import type { AgentDashboard } from "../api/agents";
 import {
   detailsPath,
   fetchAgentExtensions,
@@ -29,6 +30,26 @@ import { AgentConnectionsPanel } from "../components/AgentConnectionsPanel";
 
 function isEmoji(str: string): boolean {
   return /^\p{Emoji}/u.test(str) && str.length <= 4;
+}
+
+type DashboardNode = { dashboard: AgentDashboard; children: DashboardNode[] };
+
+function dashboardTree(dashboards: AgentDashboard[]) {
+  const bySlug = new Map(dashboards.map((dashboard) => [dashboard.slug, dashboard]));
+  const reached = new Set<string>();
+  const build = (dashboard: AgentDashboard, ancestors: string[]): DashboardNode => {
+    reached.add(dashboard.slug);
+    const chain = [...ancestors, dashboard.slug];
+    const children = dashboard.linksTo.flatMap((slug) => {
+      const child = bySlug.get(slug);
+      return child?.params.length && !chain.includes(slug) ? [build(child, chain)] : [];
+    });
+    return { dashboard, children };
+  };
+  const roots = dashboards.filter((dashboard) => dashboard.params.length === 0)
+    .map((dashboard) => build(dashboard, []));
+  const orphans = dashboards.filter((dashboard) => !reached.has(dashboard.slug));
+  return { roots, orphans };
 }
 
 const STAFF_ROLES = ["admin", "superadmin"];
@@ -184,6 +205,7 @@ export function EditAgent() {
     fetchAgentDashboards
   );
   const [copiedSlug, setCopiedSlug] = createSignal<string | null>(null);
+  const tree = createMemo(() => dashboardTree(dashboards.loading || dashboards.error ? [] : dashboards() ?? []));
   const copyDashboardLink = async (slug: string, link: string) => {
     try {
       await navigator.clipboard.writeText(new URL(link, window.location.origin).href);
@@ -192,6 +214,33 @@ export function EditAgent() {
       setCopiedSlug(null);
     }
   };
+  const DashboardRow = (props: { dashboard: AgentDashboard; message?: string }) => (
+    <div class="edit-agent-dashboard-row">
+      <div>
+        <strong>{props.dashboard.title}</strong>
+        <span>{props.dashboard.slug}<Show when={!props.message}> · Updated {new Date(props.dashboard.updatedAt).toLocaleString()}</Show></span>
+        <Show when={props.message}><span>{props.message}</span></Show>
+      </div>
+      <Show when={!props.message}>
+        <div class="edit-agent-dashboard-actions">
+          <a href={props.dashboard.link} target="_blank" rel="noopener noreferrer">Open</a>
+          <button type="button" onClick={() => void copyDashboardLink(props.dashboard.slug, props.dashboard.link)}>
+            {copiedSlug() === props.dashboard.slug ? "Copied" : "Copy link"}
+          </button>
+        </div>
+      </Show>
+    </div>
+  );
+  const DashboardBranch = (props: { node: DashboardNode }) => (
+    <li class="edit-agent-dashboard">
+      <DashboardRow dashboard={props.node.dashboard} message={props.node.dashboard.params.length ? "Opened from within the parent dashboard." : undefined} />
+      <Show when={props.node.children.length}>
+        <ul class="edit-agent-dashboard-list edit-agent-dashboard-children">
+          <For each={props.node.children}>{(node) => <DashboardBranch node={node} />}</For>
+        </ul>
+      </Show>
+    </li>
+  );
 
   const [extensions, { mutate: mutateExtensions, refetch: refetchExtensions }] =
     createResource(() => fetchAgentExtensions(params.agentId));
@@ -328,21 +377,18 @@ export function EditAgent() {
             </Show>
             <Show when={!dashboards.error}>
               <ul class="edit-agent-dashboard-list">
-                <For each={dashboards() ?? []}>{(dashboard) => (
-                  <li class="edit-agent-dashboard">
-                    <div>
-                      <strong>{dashboard.title}</strong>
-                      <span>{dashboard.slug} · Updated {new Date(dashboard.updatedAt).toLocaleString()}</span>
-                    </div>
-                    <div class="edit-agent-dashboard-actions">
-                      <a href={dashboard.link} target="_blank" rel="noopener noreferrer">Open</a>
-                      <button type="button" onClick={() => void copyDashboardLink(dashboard.slug, dashboard.link)}>
-                        {copiedSlug() === dashboard.slug ? "Copied" : "Copy link"}
-                      </button>
-                    </div>
-                  </li>
-                )}</For>
+                <For each={tree().roots}>{(node) => <DashboardBranch node={node} />}</For>
               </ul>
+              <Show when={tree().orphans.length}>
+                <h2 class="edit-agent-section-title">Needs parameters</h2>
+                <ul class="edit-agent-dashboard-list">
+                  <For each={tree().orphans}>{(dashboard) => (
+                    <li class="edit-agent-dashboard">
+                      <DashboardRow dashboard={dashboard} message="Opened from another dashboard with parameters." />
+                    </li>
+                  )}</For>
+                </ul>
+              </Show>
             </Show>
           </section>
         </Show>
@@ -485,7 +531,7 @@ export function EditAgent() {
           padding: 0;
         }
 
-        .edit-agent-dashboard {
+        .edit-agent-dashboard-row {
           display: flex;
           align-items: center;
           justify-content: space-between;
@@ -493,6 +539,8 @@ export function EditAgent() {
           padding: 14px 0;
           border-bottom: 1px solid var(--border-default);
         }
+
+        .edit-agent-dashboard-children { margin: 0 0 0 24px; }
 
         .edit-agent-dashboard strong, .edit-agent-dashboard span { display: block; }
         .edit-agent-dashboard strong { color: var(--text-primary); }
