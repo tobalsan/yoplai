@@ -64,6 +64,8 @@ describe("slack agent tools", () => {
       "slack.pair",
       "slack.send_message",
       "slack.list_channels",
+      "slack.join_channel",
+      "slack.leave_channel",
       "slack.list_users",
       "slack.get_channel_history",
       "slack.get_thread_replies",
@@ -222,6 +224,50 @@ describe("slack agent tools", () => {
       { id: "C1", name: "general" },
       { id: "C3", name: "general-news" },
     ]);
+  });
+
+  it("join_channel joins a public channel by id", async () => {
+    const join = vi
+      .fn()
+      .mockResolvedValue({ channel: { id: "C1", name: "general" } });
+    registerMockBot("alpha", { conversations: { join } as never });
+
+    const result = await tool("slack.join_channel").execute(
+      { channel: "C1" },
+      { agent: agent("alpha"), config: config() }
+    );
+
+    expect(join).toHaveBeenCalledWith({ channel: "C1" });
+    expect(result).toEqual({
+      ok: true,
+      channel: { id: "C1", name: "general" },
+    });
+  });
+
+  it("join_channel rejects non-public channel ids", async () => {
+    const join = vi.fn();
+    registerMockBot("alpha", { conversations: { join } as never });
+
+    const result = await tool("slack.join_channel").execute(
+      { channel: "G1" },
+      { agent: agent("alpha"), config: config() }
+    );
+
+    expect(result).toMatchObject({ ok: false });
+    expect(join).not.toHaveBeenCalled();
+  });
+
+  it("leave_channel leaves a channel by id", async () => {
+    const leave = vi.fn().mockResolvedValue({ ok: true });
+    registerMockBot("alpha", { conversations: { leave } as never });
+
+    const result = await tool("slack.leave_channel").execute(
+      { channel: "C1" },
+      { agent: agent("alpha"), config: config() }
+    );
+
+    expect(leave).toHaveBeenCalledWith({ channel: "C1" });
+    expect(result).toEqual({ ok: true, channel: "C1" });
   });
 
   it("list_users skips bots/deleted and resolves display names", async () => {

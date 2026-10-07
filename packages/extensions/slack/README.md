@@ -104,6 +104,8 @@ This is the path used by scheduled jobs.
 | `slack.create_thread` | Post a thread parent to a channel ID (`C...`) or user ID (`U...`, delivered as a DM), bind it to the active agent session, and return the resolved channel + parent timestamp for follow-up replies. |
 | `slack.send_message` | Post to a channel ID (`C...`) or user ID (`U...`, delivered as a DM). DM sends leave a one-time visibility note for the main session when that user replies. Supports an optional `threadTs` to reply in a thread. Markdown is converted to Slack mrkdwn and long messages are chunked. |
 | `slack.list_channels` | List channel IDs + names (filterable by name substring) so agents can resolve/remember IDs. Backed by the `conversations.list` Web API. |
+| `slack.join_channel` | Join a public channel by ID (`C...`) so the bot can read history and receive messages without a manual invite. Private channels still need an invite. Backed by the `conversations.join` Web API. |
+| `slack.leave_channel` | Leave a channel by ID (`C...` or `G...`). Backed by the `conversations.leave` Web API. |
 | `slack.list_users` | List user IDs + display names (filterable) for DM targeting. Backed by the `users.list` Web API. |
 | `slack.get_channel_history` | Retrieve channel history by conversation ID (`C...`, `D...`, or `G...`) in newest-first order. Page backward by passing the previous result's oldest `ts` as `latest`. Thread metadata identifies threads; use `slack.get_thread_replies` to read them. Backed by the `conversations.history` Web API. |
 | `slack.get_thread_replies` | Read a thread by conversation ID and parent `threadTs`, including the parent, in oldest-first order. Supports `limit`, `oldest`, `latest`, and `inclusive`; pass `nextCursor` as `cursor` until `hasMore` is false. Backed by the `conversations.replies` Web API. |
@@ -205,6 +207,8 @@ The bot token needs scopes matching the features you use:
 | --- | --- |
 | `slack.create_thread`, `slack.send_message` | `chat:write` (and `chat:write.public` to post to channels the bot has not joined) |
 | `slack.list_channels` | `channels:read` (public), `groups:read` (private) |
+| `slack.join_channel` | `channels:join` |
+| `slack.leave_channel` | `channels:manage` (public), `groups:write` (private) |
 | `slack.list_users` | `users:read` |
 | `!pair` account pairing | `users:read`, `users:read.email` |
 | `slack.get_channel_history`, `slack.get_thread_replies` | `channels:history` (public), `groups:history` (private), `im:history` (DM), `mpim:history` (group DM) |
@@ -214,7 +218,7 @@ The bot token needs scopes matching the features you use:
 
 `conversations.list` only returns private channels the bot is a member of.
 Missing scopes surface as a `missing_scope` error in the tool result.
-After adding Canvas or Lists scopes, reinstall the Slack app so the bot token receives them.
+After adding Canvas, Lists, `channels:join`, or leave scopes, reinstall the Slack app so the bot token receives them.
 
 History and thread retrieval also require the bot to be a member of private channels and
 DMs; scopes alone do not grant access. Both tools accept

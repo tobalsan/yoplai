@@ -30,6 +30,14 @@ const createThreadSchema = z.object({
   text: z.string().min(1),
 });
 
+const joinChannelSchema = z.object({
+  channel: z.string().regex(/^C[A-Z0-9]+$/),
+});
+
+const leaveChannelSchema = z.object({
+  channel: z.string().regex(/^[CG][A-Z0-9]+$/),
+});
+
 const listChannelsSchema = z.object({
   query: z.string().min(1).optional(),
   limit: z.number().int().positive().max(200).optional(),
@@ -579,6 +587,78 @@ export function slackAgentTools(): ExtensionAgentTool[] {
             cursor = page.response_metadata?.next_cursor || undefined;
           } while (cursor && channels.length < limit);
           return { ok: true, channels };
+        } catch (error) {
+          return toolError(error);
+        }
+      },
+    },
+    {
+      name: "slack.join_channel",
+      description:
+        "Join a public Slack channel so the bot can read its history and receive its messages. Provide a public channel ID (C...); use slack.list_channels to resolve IDs. Private channels still require a manual invite.",
+      parameters: {
+        type: "object",
+        properties: {
+          channel: {
+            type: "string",
+            description: "Public channel ID (e.g. C0123456789).",
+          },
+        },
+        required: ["channel"],
+        additionalProperties: false,
+      },
+      async execute(args, { agent, config, env }) {
+        try {
+          const input = joinChannelSchema.parse(args);
+          const client = resolveSlackClient(agent, config, env);
+          if (!client?.conversations?.join) {
+            return {
+              ok: false,
+              error: "Slack channel joining is not available for this agent.",
+            };
+          }
+          const result = await client.conversations.join({
+            channel: input.channel,
+          });
+          return {
+            ok: true,
+            channel: {
+              id: result.channel?.id ?? input.channel,
+              name: result.channel?.name,
+            },
+          };
+        } catch (error) {
+          return toolError(error);
+        }
+      },
+    },
+    {
+      name: "slack.leave_channel",
+      description:
+        "Leave a Slack channel the bot is a member of. Provide a channel ID (C... or G...). Use only when the user or your instructions explicitly ask you to leave.",
+      parameters: {
+        type: "object",
+        properties: {
+          channel: {
+            type: "string",
+            description: "Channel ID (e.g. C0123456789).",
+          },
+        },
+        required: ["channel"],
+        additionalProperties: false,
+      },
+      async execute(args, { agent, config, env }) {
+        try {
+          const input = leaveChannelSchema.parse(args);
+          const client = resolveSlackClient(agent, config, env);
+          if (!client?.conversations?.leave) {
+            return {
+              ok: false,
+              error: "Slack channel leaving is not available for this agent.",
+            };
+          }
+          await client.conversations.leave({ channel: input.channel });
+          return { ok: true, channel: input.channel };
         } catch (error) {
           return toolError(error);
         }

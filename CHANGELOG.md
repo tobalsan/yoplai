@@ -11,6 +11,7 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Added
 
+- Slack agent tools `slack.join_channel` and `slack.leave_channel` let an agent join a public channel on demand and leave channels (require `channels:join`, `channels:manage`/`groups:write` scopes and app reinstall).
 - Slack channel option `threadUnlock` (default `false`). Set `threadUnlock: true` alongside `requireMention: true` to let one mention unlock a thread so later replies there need no mention.
 
 - Extension settings forms can unset credentials: **Remove my credentials** on Just me, and **Remove team credentials** on Whole team for admins (`DELETE /api/agents/:id/extensions/:extensionId/credentials`). Non-secret settings are kept.

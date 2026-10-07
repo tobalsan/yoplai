@@ -193,6 +193,10 @@ export type SlackWebClient = {
     };
   };
   conversations: {
+    join(params: { channel: string }): Promise<{
+      channel?: { id?: string; name?: string };
+    }>;
+    leave(params: { channel: string }): Promise<unknown>;
     info(params: { channel: string }): Promise<{
       channel?: { name?: string; topic?: { value?: string } };
     }>;
