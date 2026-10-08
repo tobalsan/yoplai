@@ -27,11 +27,13 @@ import {
 } from "../api/teams";
 import { useSession } from "../auth/client";
 import { capabilities, isExtensionEnabled } from "../lib/capabilities";
-import { ToastNotification } from "../components/ui/Toast";
+import { ToastNotification, type ToastVariant } from "../components/ui/Toast";
 import { SchedulesPanel } from "./SchedulesPanel";
 import { AgentConnectionsPanel } from "../components/AgentConnectionsPanel";
 import { McpExtensionCard, MCP_EXTENSION_STYLES } from "../components/McpExtensionCard";
 import { addMcpServer, cachedMcpServers, fetchMcpPersonalStatus, mcpDisplayName, fetchMcpServers, type McpScope, type McpServer } from "../api/mcp-servers";
+
+const DUPLICATE_MCP_MESSAGE = "This MCP server has already been added.";
 
 function isEmoji(str: string): boolean {
   return /^\p{Emoji}/u.test(str) && str.length <= 4;
@@ -278,7 +280,7 @@ export function EditAgent() {
   const [mcpUrl, setMcpUrl] = createSignal("");
   const [mcpScope, setMcpScope] = createSignal<McpScope>("personal");
   const [mcpError, setMcpError] = createSignal<string>();
-  const [mcpAddedToast, setMcpAddedToast] = createSignal<string>();
+  const [mcpAddedToast, setMcpAddedToast] = createSignal<{ message: string; variant: ToastVariant }>();
   const [mcpBusy, setMcpBusy] = createSignal(false);
   createEffect(() => {
     if (!session().isPending && !session().data?.user) setMcpScope("team");
@@ -332,6 +334,11 @@ export function EditAgent() {
       setMcpError("Enter an HTTP or HTTPS server URL.");
       return;
     }
+    const sameUrl = (candidate: string) => candidate.replace(/\/+$/, "") === url.href.replace(/\/+$/, "");
+    if (mcpStatus()?.servers.some((server) => server.url && sameUrl(new URL(server.url).href))) {
+      setMcpAddedToast({ message: DUPLICATE_MCP_MESSAGE, variant: "warning" });
+      return;
+    }
     // Reserve the popup in the click event; browsers block windows opened after fetch.
     // Skipped when a shared personal grant already covers this URL.
     const alreadyConnected = mcpScope() === "personal" && connectedMcpHref() === url.href;
@@ -342,7 +349,7 @@ export function EditAgent() {
       const result = await addMcpServer(targetId, url.href, mcpScope());
       setAddOpen(false);
       setMcpUrl("");
-      setMcpAddedToast(`Added ${mcpDisplayName(result.server.name, result.server.title)}.`);
+      setMcpAddedToast({ message: `Added ${mcpDisplayName(result.server.name, result.server.title)}.`, variant: "success" });
       if (result.authorizationUrl) {
         if (popup && !popup.closed) popup.location.replace(result.authorizationUrl);
         else if (!popup) window.location.assign(result.authorizationUrl);
@@ -350,7 +357,9 @@ export function EditAgent() {
       void refetchMcpServers();
     } catch (cause) {
       popup?.close();
-      setMcpError(cause instanceof Error ? cause.message : "Failed to add MCP server.");
+      const message = cause instanceof Error ? cause.message : "Failed to add MCP server.";
+      if (message === DUPLICATE_MCP_MESSAGE) setMcpAddedToast({ message, variant: "warning" });
+      else setMcpError(message);
       void refetchMcpServers();
     } finally {
       setMcpBusy(false);
@@ -506,7 +515,7 @@ export function EditAgent() {
               <p role="alert" class="mcp-ext-error">Failed to load MCP servers. <button type="button" onClick={() => void refetchMcpServers()}>Retry</button></p>
             </Show>
             <Show when={mcpAddedToast()}>
-              {(message) => <ToastNotification message={message()} variant="success" onClose={() => setMcpAddedToast(undefined)} />}
+              {(toast) => <ToastNotification message={toast().message} variant={toast().variant} onClose={() => setMcpAddedToast(undefined)} />}
             </Show>
             <Show when={addOpen()}>
               <div class="mcp-ext-dialog-backdrop" onClick={(event) => { if (event.target === event.currentTarget && !mcpBusy()) setAddOpen(false); }}>

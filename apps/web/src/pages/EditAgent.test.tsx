@@ -871,6 +871,16 @@ describe("EditAgent", () => {
       expect(container.querySelector(".mcp-ext-error")?.textContent).toContain("nope");
     });
 
+    it("warns instead of adding a server whose URL is already configured", async () => {
+      const open = vi.spyOn(window, "open").mockReturnValue({ close: vi.fn() } as unknown as Window);
+      await submitAdd("https://docs.test/mcp/", undefined, () => fetchMcpServersMock.mockResolvedValue({ canConfigureTeam: true, servers: [
+        { name: "docs", type: "http", url: "https://docs.test/mcp", auth: "none", state: "connected", readOnly: false },
+      ] }));
+      expect(addMcpServerMock).not.toHaveBeenCalled();
+      expect(open).not.toHaveBeenCalled();
+      expect(container.querySelector('[data-testid="toast-warning"]')?.textContent).toContain("This MCP server has already been added.");
+    });
+
     it("always opens the OAuth popup for team scope", async () => {
       const open = vi.spyOn(window, "open").mockReturnValue({ close: vi.fn() } as unknown as Window);
       fetchMcpPersonalStatusMock.mockResolvedValue({ connected: true });

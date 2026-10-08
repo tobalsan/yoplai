@@ -1,6 +1,6 @@
 import { onCleanup, onMount } from "solid-js";
 
-export type ToastVariant = "error" | "info" | "success";
+export type ToastVariant = "error" | "info" | "success" | "warning";
 
 export function ToastNotification(props: {
   message: string;
@@ -14,6 +14,8 @@ export function ToastNotification(props: {
         return "var(--color-danger, #b94040)";
       case "success":
         return "var(--color-success, #1f8f57)";
+      case "warning":
+        return "var(--color-warning, #b7791f)";
       case "info":
       default:
         return "var(--color-info, #3b5ba8)";
