@@ -93,6 +93,8 @@ Connections expose connected, needs-reconnect, or disconnected state. Refresh fa
 
 Remote MCP servers (such as Claap) use the same personal/team choice from the agent’s **MCP servers** page, with **Whole team** likewise admin-only in multi-user mode. URL-only OAuth connections are encrypted in the host scoped credential store; existing MCP connections migrate as team. Each tool call and refresh uses the requester’s selected credential, and reconnect links let that requester connect their own account.
 
+Remote MCP servers whose authorization server lacks dynamic client registration (e.g. Google Calendar MCP) reuse `oauth.providers.<name>` above: the MCP extension matches the issuer (`accounts.google.com` → `google`) when `mcp.json` has no per-server `oauth` client. Register `<BASE_URL>/api/mcp/oauth/callback` as a redirect URI on that client. See the MCP extension README.
+
 For Google Drive, follow [Google Drive OAuth setup](oauth-google-drive-setup.md).
 
 ## Multi-user Google login
