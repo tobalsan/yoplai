@@ -19,6 +19,7 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Fixed
 
+- Non-admins no longer see the "Remove server" button on MCP server pages; a rejected removal now says only admins can remove the server.
 - Returning to the agent extensions tab, or navigating between the extension list and MCP server pages, no longer blanks the page while MCP server status loads.
 
 ### Changed

@@ -117,4 +117,25 @@ describe("McpServerDetails", () => {
     expect(container.querySelector<HTMLTextAreaElement>("textarea")!.readOnly).toBe(true);
     expect(button("Save")).toBeUndefined();
   });
+
+  it("hides Remove server from non-admins", async () => {
+    fetchMcpServersMock.mockResolvedValue({ canConfigureTeam: false, servers: [
+      { name: "docs", type: "http", url: "https://docs.test/mcp", auth: "oauth", state: "connected", personalState: "connected", teamState: "connected", readOnly: false },
+    ] });
+    await mount();
+    expect(button("Remove server")).toBeUndefined();
+  });
+
+  it("shows Remove server to admins and surfaces a remove failure", async () => {
+    fetchMcpServersMock.mockResolvedValue({ canConfigureTeam: true, servers: [
+      { name: "docs", type: "http", url: "https://docs.test/mcp", auth: "oauth", state: "connected", personalState: "connected", teamState: "connected", readOnly: false },
+    ] });
+    removeMcpServerMock.mockRejectedValue(new Error("Only admins can remove this MCP server."));
+    await mount();
+    button("Remove server")!.click();
+    await tick();
+    button("Confirm remove")!.click();
+    await tick();
+    expect(container.textContent).toContain("Only admins can remove this MCP server.");
+  });
 });

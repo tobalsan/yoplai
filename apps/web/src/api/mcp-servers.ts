@@ -60,6 +60,7 @@ export async function fetchMcpPersonalStatus(agentId: string, url: string): Prom
 
 export async function removeMcpServer(agentId: string, name: string): Promise<void> {
   const response = await fetch(`/api/mcp/servers/remove?agent=${encodeURIComponent(agentId)}&server=${encodeURIComponent(name)}`, { method: "POST" });
+  if (response.status === 403) throw new Error("Only admins can remove this MCP server.");
   if (!response.ok) throw new Error("Failed to remove MCP server.");
 }
 

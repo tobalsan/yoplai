@@ -124,6 +124,7 @@ export function McpServerDetails() {
                   <p class="ext-details-desc">{current().url ?? "Local MCP server"}</p>
                 </div>
                 <div class="mcp-details-remove">
+                  <Show when={canConfigureTeam()}>
                   <Show when={confirmRemove()} fallback={
                     <button type="button" class="oauth-btn oauth-btn-danger" disabled={busy()} onClick={() => setConfirmRemove(true)}>Remove server</button>
                   }>
@@ -132,6 +133,7 @@ export function McpServerDetails() {
                       <button type="button" class="oauth-btn" disabled={busy()} onClick={() => setConfirmRemove(false)}>Cancel</button>
                       <button type="button" class="oauth-btn oauth-btn-danger" disabled={busy()} onClick={() => void remove()}>{busy() ? "Removing…" : "Confirm remove"}</button>
                     </div>
+                  </Show>
                   </Show>
                 </div>
               </div>
