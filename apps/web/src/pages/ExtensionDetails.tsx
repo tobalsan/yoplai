@@ -8,6 +8,7 @@ import {
 import { OAuthConnectCard } from "../components/OAuthConnectCard";
 import type { CredentialScope } from "../components/CredentialScopeTabs";
 import { ExtensionConfigForm, type ConnectSettingsActions } from "./ExtensionConfigForm";
+import { capabilities } from "../lib/capabilities";
 
 /**
  * Details page for one extension on one agent, reached by clicking an
@@ -41,6 +42,28 @@ export function ExtensionDetails() {
       setToggleError(
         cause instanceof Error ? cause.message : "Failed to update extension."
       );
+    } finally {
+      setBusy(false);
+    }
+  };
+  // Whoever connects turns the extension on for the agent. Signed-in users go
+  // through their own scope, which any agent member may write (a team-scope
+  // enable is admin-only); resending their overrides keeps them.
+  const enableAfterConnect = async (ext: ExtensionCatalogEntry) => {
+    setBusy(true);
+    setToggleError(null);
+    try {
+      mutate(
+        await patchAgentExtension(
+          params.agentId,
+          ext.id,
+          capabilities.multiUser && capabilities.user
+            ? { credentialScope: "personal", config: ext.personalConfigValues ?? {} }
+            : { enabled: true }
+        )
+      );
+    } catch (cause) {
+      setToggleError(cause instanceof Error ? cause.message : "Failed to enable extension.");
     } finally {
       setBusy(false);
     }
@@ -117,7 +140,7 @@ export function ExtensionDetails() {
                     label={ext().displayName}
                     onStatus={(connected) => {
                       // A connection in either scope turns the extension on.
-                      if (connected && !ext().enabled && !busy() && !ext().managedAtRoot && ext().configurable !== false) void toggle(ext());
+                      if (connected && !ext().enabled && !busy() && !ext().managedAtRoot && ext().configurable !== false) void enableAfterConnect(ext());
                     }}
                   >
                     <Show when={ext().tier === "auto-form"}>

@@ -25,6 +25,7 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Fixed
 
+- Connecting an account (e.g. Gmail) on an extension's page now turns the extension on for the agent for anyone who connects, not only admins; regular members previously connected successfully but the extension stayed off.
 - Non-admins no longer see the "Remove server" button on MCP server pages; a rejected removal now says only admins can remove the server.
 - Returning to the agent extensions tab, or navigating between the extension list and MCP server pages, no longer blanks the page while MCP server status loads.
 

@@ -44,6 +44,7 @@ vi.mock("@solidjs/router", () => ({
 }));
 
 import { ExtensionDetails } from "./ExtensionDetails";
+import { resetCapabilitiesForTests, setCapabilitiesForTests } from "../lib/capabilities";
 
 function entry(
   partial: Partial<ExtensionCatalogEntry> = {}
@@ -196,6 +197,52 @@ describe("ExtensionDetails", () => {
       "Connected"
     );
     vi.unstubAllGlobals();
+  });
+
+  describe("connecting turns the extension on", () => {
+    const connectedFetch = () =>
+      vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({ state: "connected", connected: true, provider: "google", scopes: ["gmail.modify"] }),
+      });
+    const gmail = () =>
+      entry({
+        id: "gmail",
+        displayName: "Gmail",
+        enabled: false,
+        tier: "auto-form",
+        personalConfigValues: { label: "work" },
+        oauth: { provider: "google", scopes: ["gmail.modify"] },
+      });
+    afterEach(() => {
+      resetCapabilitiesForTests();
+      vi.unstubAllGlobals();
+    });
+
+    it("enables through personal scope so any member can, keeping their overrides", async () => {
+      setSession("user");
+      setCapabilitiesForTests({ multiUser: true, user: { id: "u1", role: "user" } } as never);
+      vi.stubGlobal("fetch", connectedFetch());
+      fetchAgentExtensionsMock.mockResolvedValue([gmail()]);
+      patchAgentExtensionMock.mockResolvedValue([{ ...gmail(), enabled: true }]);
+      await mount("scribe", "gmail");
+      await vi.waitFor(() =>
+        expect(patchAgentExtensionMock).toHaveBeenCalledWith("scribe", "gmail", {
+          credentialScope: "personal",
+          config: { label: "work" },
+        })
+      );
+    });
+
+    it("enables directly in single-user mode", async () => {
+      setSession(null);
+      setCapabilitiesForTests({ multiUser: false, user: undefined });
+      vi.stubGlobal("fetch", connectedFetch());
+      fetchAgentExtensionsMock.mockResolvedValue([gmail()]);
+      patchAgentExtensionMock.mockResolvedValue([{ ...gmail(), enabled: true }]);
+      await mount("scribe", "gmail");
+      await vi.waitFor(() => expect(patchAgentExtensionMock).toHaveBeenCalledWith("scribe", "gmail", { enabled: true }));
+    });
   });
 
   it("renders OAuth grant state and includes required scopes in authorize URL", async () => {
