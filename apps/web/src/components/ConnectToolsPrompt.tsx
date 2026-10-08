@@ -6,7 +6,6 @@ import { clearConnectPromptRequest, connectPromptRequest, tourStep } from "../on
 import { TOUR_STEPS } from "../onboarding/steps";
 import { fetchConnectPrompt, markConnectPromptSeen } from "../api/connect-prompt";
 import {
-  detailsPath,
   fetchAgentExtensions,
   fetchOAuthScopeState,
   patchAgentExtension,
@@ -17,6 +16,7 @@ import { fetchMcpServers, mcpDisplayName, type McpServer } from "../api/mcp-serv
 import { fetchTopExtensions, type TopExtensions } from "../api/top-extensions";
 import { capabilities, capabilitiesReady } from "../lib/capabilities";
 import { stripBase } from "../lib/path";
+import { ExtensionConfigForm } from "../pages/ExtensionConfigForm";
 
 export type ConnectRowState = "connected" | "team" | "enable" | "connect" | "setup";
 
@@ -33,6 +33,8 @@ export type ConnectRow = {
   oauth?: { provider: string; scopes: string[] };
   /** The requester's own setting overrides, resent on a personal enable so they survive. */
   personalConfig?: Record<string, unknown>;
+  /** Catalog entry, for setting up personal credentials inside the prompt. */
+  entry?: ExtensionCatalogEntry;
 };
 
 export type OAuthStates = Record<string, { personal: OAuthScopeState; team: OAuthScopeState }>;
@@ -90,6 +92,7 @@ export function buildConnectRows(input: {
       state,
       oauth: ext.oauth ? { provider: ext.oauth.provider, scopes: ext.oauth.personalScopes ?? ext.oauth.scopes } : undefined,
       personalConfig: ext.personalConfigValues,
+      entry: ext,
     });
   }
   for (const server of input.servers) {
@@ -150,6 +153,8 @@ export function ConnectToolsPrompt() {
   const [rows, setRows] = createSignal<ConnectRow[]>([]);
   const [busyKey, setBusyKey] = createSignal<string | null>(null);
   const [loading, setLoading] = createSignal(false);
+  // Row whose personal credentials form replaces the list.
+  const [configuring, setConfiguring] = createSignal<ConnectRow | null>(null);
   const [error, setError] = createSignal<string>();
   const routeAgentId = createMemo(() => chatAgentId(location.pathname));
   // The tour can be pending on another page (e.g. a new user landing straight in
@@ -230,6 +235,7 @@ export function ConnectToolsPrompt() {
     setRows([]);
     setError(undefined);
     setLoading(true);
+    setConfiguring(null);
     setShownFor(request.agentId);
     void refresh(request.agentId);
   });
@@ -237,6 +243,7 @@ export function ConnectToolsPrompt() {
   const close = () => {
     const agentId = shownFor();
     setShownFor(null);
+    setConfiguring(null);
     if (agentId) void markConnectPromptSeen(agentId).catch(() => undefined);
   };
 
@@ -312,6 +319,32 @@ export function ConnectToolsPrompt() {
                 Connect the ones you use so the agent can work with them.
               </p>
               <Show when={error()}>{(message) => <p class="connect-prompt-error">{message()}</p>}</Show>
+              <Show when={configuring()?.entry ? configuring() : null} keyed>
+                {(row) => (
+                  <div class="connect-prompt-setup">
+                    <button type="button" class="connect-prompt-back" onClick={() => setConfiguring(null)}>
+                      ← Back
+                    </button>
+                    <h3>Set up {row.name}</h3>
+                    <ExtensionConfigForm
+                      entry={row.entry!}
+                      agentId={agentId}
+                      personalOnly
+                      onSaved={(updated) => {
+                        // Back to the list right away, marked from the save response;
+                        // the full reload (MCP status is slow) corrects it in the background.
+                        const saved = updated.find((extension) => extension.id === row.id);
+                        if (saved?.enabled && saved.configured) {
+                          setRows((current) => current.map((r) => (r.key === row.key ? { ...r, state: "connected", entry: saved } : r)));
+                        }
+                        setConfiguring(null);
+                        void refresh(agentId);
+                      }}
+                    />
+                  </div>
+                )}
+              </Show>
+              <Show when={!configuring()}>
               <Show when={loading()}>
                 <div class="connect-prompt-loading" role="status">
                   <span class="connect-prompt-spinner" aria-hidden="true" />
@@ -355,9 +388,9 @@ export function ConnectToolsPrompt() {
                           </button>
                         </Show>
                         <Show when={row.state === "setup"}>
-                          <A class="connect-prompt-action" href={detailsPath(agentId, row.id)} onClick={close}>
-                            Set up →
-                          </A>
+                          <button type="button" class="connect-prompt-action" onClick={() => setConfiguring(row)}>
+                            Set up
+                          </button>
                         </Show>
                       </Show>
                     </li>
@@ -375,6 +408,7 @@ export function ConnectToolsPrompt() {
                   Continue
                 </button>
               </div>
+              </Show>
             </div>
           </div>
           <style>{CONNECT_PROMPT_STYLES}</style>
@@ -439,6 +473,17 @@ const CONNECT_PROMPT_STYLES = `
     animation: connect-prompt-spin 0.8s linear infinite;
   }
   @keyframes connect-prompt-spin { to { transform: rotate(360deg); } }
+  .connect-prompt-setup h3 { margin: 6px 0 12px; font-size: 1.05rem; }
+  .connect-prompt-back {
+    padding: 0;
+    border: 0;
+    background: none;
+    color: var(--text-secondary);
+    font: inherit;
+    font-size: 0.88rem;
+    cursor: pointer;
+  }
+  .connect-prompt-back:hover { color: var(--text-primary); }
   .connect-prompt-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
   .connect-prompt-row {
     display: flex;

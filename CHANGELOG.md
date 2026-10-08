@@ -11,7 +11,7 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Added
 
-- "Connect <agent> to your tools" prompt: the first time you open each agent's chat, a dialog lists the extensions and MCP servers your admin recommends, showing which are already connected and letting you connect, enable, or set up the rest. It never overlaps the onboarding tour: it waits while a tour step is shown in the chat. Reopen it anytime with **Connect tools** next to **Restart tour** (shown once a superadmin has starred something).
+- "Connect <agent> to your tools" prompt: the first time you open each agent's chat, a dialog lists the extensions and MCP servers your admin recommends, showing which are already connected and letting you connect, enable, or set up the rest — API-key extensions (Notion, Jira, …) are set up right inside the dialog with your own credentials, so you stay in the chat. It never overlaps the onboarding tour: it waits while a tour step is shown in the chat. Reopen it anytime with **Connect tools** next to **Restart tour** (shown once a superadmin has starred something).
 - Superadmins can star "top" extensions and MCP servers on the new **Top extensions** tab of the Admin page (next to **User management**, with extension and MCP icons); starred items sort first in every agent's extension list and feed the connect prompt.
 - Google Drive's write setting is now separate for Just me and Whole team, the setting sits inside the connect card and saves as soon as you toggle it, and Connect requests the matching scopes.
 - Adding a custom extension now shows a confirmation toast with the server name.

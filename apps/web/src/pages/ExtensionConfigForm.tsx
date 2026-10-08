@@ -58,8 +58,16 @@ export function ExtensionConfigForm(props: {
   /** Called with the catalog returned by each successful save. */
   onSaved?: (extensions: ExtensionCatalogEntry[]) => void;
   registerConnectActions?: (actions: ConnectSettingsActions) => void;
+  /** Agent id when not rendered under an extension route (e.g. the connect prompt). */
+  agentId?: string;
+  /** Only the requester's own credentials: no scope tabs and no remove action. */
+  personalOnly?: boolean;
 }) {
-  const params = useParams<{ agentId: string; extensionId: string }>();
+  const routeParams = useParams<{ agentId: string; extensionId: string }>();
+  const params = {
+    get agentId() { return props.agentId ?? routeParams.agentId; },
+    get extensionId() { return props.agentId ? props.entry.id : routeParams.extensionId; },
+  };
 
   // Updated in place after saving, from the PATCH response.
   const [entry, setEntry] = createSignal<ExtensionCatalogEntry>(props.entry);
@@ -88,7 +96,7 @@ export function ExtensionConfigForm(props: {
   const [error, setError] = createSignal<string | null>(null);
   const [saved, setSaved] = createSignal(false);
   const [tabScope, setCredentialScope] = createSignal<"personal" | "team">("team");
-  const credentialScope = () => props.scope ?? tabScope();
+  const credentialScope = () => (props.personalOnly ? "personal" : props.scope ?? tabScope());
   // OAuth extensions without credential fields have no tabs of their own; the OAuth card owns them.
   const oauthScoped = () => !!entry().oauth && entry().personalSecretFields === undefined;
   let scopeInitialized = false;
@@ -377,7 +385,7 @@ export function ExtensionConfigForm(props: {
       </div>
     </Show>
     <div class="ext-config-actions">
-      <Show when={hasCredentials() && !confirmingRemove()}>
+      <Show when={!props.personalOnly && hasCredentials() && !confirmingRemove()}>
         <button
           type="button"
           class="ext-config-remove"
@@ -421,7 +429,11 @@ export function ExtensionConfigForm(props: {
             <>
               <Show when={fields().length > 0}>
                 <form class="ext-config-form" classList={{ "ext-config-panel": ext().personalSecretFields === undefined && !ext().oauth }} onSubmit={handleSubmit}>
-                  <Show when={ext().personalSecretFields !== undefined} fallback={formBody()}>
+                  <Show when={props.personalOnly}>
+                    <p class="ext-config-scope-note">Your own credentials, stored encrypted and used only for your requests.</p>
+                    {formBody()}
+                  </Show>
+                  <Show when={!props.personalOnly && ext().personalSecretFields !== undefined} fallback={props.personalOnly ? null : formBody()}>
                     <CredentialScopeTabs
                       value={credentialScope()}
                       teamLocked={!ext().canConfigureTeam}

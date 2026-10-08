@@ -20,6 +20,7 @@ const [pathname, setPathname] = createSignal("/chat/scribe");
 
 vi.mock("@solidjs/router", () => ({
   A: (props: Record<string, unknown>) => <a {...props} />,
+  useParams: () => ({}),
   useLocation: () => ({
     get pathname() {
       return pathname();
@@ -172,9 +173,7 @@ describe("ConnectToolsPrompt", () => {
     expect(container.textContent).toContain("These are the recommended extensions for Scribe.");
     const state = (key: string) => container.querySelector(`[data-row="${key}"]`)?.getAttribute("data-state");
     expect([state("ext:exa"), state("ext:notion"), state("ext:gmail")]).toEqual(["setup", "enable", "connect"]);
-    expect(container.querySelector<HTMLAnchorElement>('[data-row="ext:exa"] a')?.getAttribute("href")).toBe(
-      "/agents/scribe/extensions/exa"
-    );
+    expect(container.querySelector('[data-row="ext:exa"] button')?.textContent?.trim()).toBe("Set up");
     expect(container.querySelector<HTMLAnchorElement>('a[href="/agents/scribe/edit"]')?.textContent?.trim()).toBe(
       "Browse all connectors or add a custom one"
     );
@@ -297,6 +296,38 @@ describe("ConnectToolsPrompt", () => {
     await flush();
     expect(container.querySelector(".connect-prompt")).toBeNull();
     expect(m.markConnectPromptSeen).toHaveBeenCalledWith("scribe");
+  });
+
+  it("sets up personal credentials inside the prompt, then shows the row connected", async () => {
+    const schema = { type: "object", properties: { apiKey: { type: "string" } }, required: ["apiKey"] };
+    const exa = ext({ id: "exa", displayName: "Exa", configured: false, configJsonSchema: schema, requiredSecrets: ["apiKey"], personalSecretFields: [], canConfigureTeam: false });
+    m.fetchAgentExtensions.mockResolvedValue([exa]);
+    await mount();
+    container.querySelector<HTMLButtonElement>('[data-row="ext:exa"] button')!.click();
+    await flush();
+    expect(container.querySelector(".connect-prompt-list")).toBeNull();
+    expect(container.textContent).toContain("Set up Exa");
+    expect(container.textContent).toContain("Your own credentials");
+    expect(container.querySelector(".connect-prompt-continue")).toBeNull();
+    expect(container.querySelector('[role="tablist"], .credential-scope-tabs')).toBeNull();
+
+    const connected = { ...exa, configured: true, personalSecretFields: ["apiKey"] };
+    m.patchAgentExtension.mockResolvedValue([connected]);
+    // Background reload stays pending: the list must not wait for it.
+    m.fetchAgentExtensions.mockReturnValue(new Promise(() => undefined));
+    const input = container.querySelector<HTMLInputElement>("#ext-field-apiKey")!;
+    input.value = "secret-key";
+    input.dispatchEvent(new InputEvent("input", { bubbles: true }));
+    container.querySelector<HTMLFormElement>(".ext-config-form")!.requestSubmit();
+    await flush();
+    expect(m.patchAgentExtension).toHaveBeenCalledWith("scribe", "exa", {
+      credentialScope: "personal",
+      config: {},
+      secrets: { apiKey: "secret-key" },
+    });
+    expect(container.querySelector(".connect-prompt-setup")).toBeNull();
+    expect(container.querySelector('[data-row="ext:exa"]')?.textContent).toContain("Connected");
+    expect(container.querySelector(".connect-prompt")).not.toBeNull();
   });
 
   it("labels team-provided credentials as already connected for the team", async () => {
