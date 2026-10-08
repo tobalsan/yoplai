@@ -73,6 +73,7 @@ type TeamDraft = {
   description: string;
   color: string | null;
   icon: string | null;
+  private: boolean;
 };
 
 function focusableElements(panel: HTMLElement): HTMLElement[] {
@@ -96,6 +97,7 @@ function TeamModal(props: {
     props.team?.color ?? null
   );
   const [icon, setIcon] = createSignal<string | null>(props.team?.icon ?? null);
+  const [isPrivate, setIsPrivate] = createSignal(props.team?.private ?? false);
   const [saving, setSaving] = createSignal(false);
   const [error, setError] = createSignal<string | null>(null);
   let panelRef: HTMLElement | undefined;
@@ -140,6 +142,7 @@ function TeamModal(props: {
       description: description().trim(),
       color: color(),
       icon: icon(),
+      private: isPrivate(),
     };
     try {
       if (props.team) {
@@ -239,6 +242,10 @@ function TeamModal(props: {
               </For>
             </div>
           </div>
+          <label class="team-field">
+            <span><input type="checkbox" checked={isPrivate()} disabled={saving()} onChange={(event) => setIsPrivate(event.currentTarget.checked)} /> Private team</span>
+            <span class="team-detail__hint">Stops new users from joining automatically. The team stays visible to everyone.</span>
+          </label>
           <Show when={error()}>
             {(message) => <p class="team-modal__error">⚠ {message()}</p>}
           </Show>
@@ -415,6 +422,23 @@ function TeamDetail(props: {
   const [selectedUser, setSelectedUser] = createSignal("");
   const [busy, setBusy] = createSignal(false);
   const [error, setError] = createSignal<string | null>(null);
+  const [isPrivate, setIsPrivate] = createSignal(props.team.private);
+  const [privacyBusy, setPrivacyBusy] = createSignal(false);
+
+  const handleTogglePrivate = async () => {
+    if (privacyBusy()) return;
+    setPrivacyBusy(true);
+    setError(null);
+    try {
+      const team = await updateTeam(props.team.id, { private: !isPrivate() });
+      setIsPrivate(team.private);
+      props.onMembersChanged();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Failed to update team privacy.");
+    } finally {
+      setPrivacyBusy(false);
+    }
+  };
 
   // Membership edits are staged here and only sent to the server on Save;
   // this keeps a stray "All users" click or Remove from instantly wiping a
@@ -561,6 +585,12 @@ function TeamDetail(props: {
         </header>
         <div class="team-modal__body">
           <Show when={props.isAdmin}>
+            <div class="team-field">
+              <button type="button" class="team-button" aria-label="Private team" aria-pressed={isPrivate()} disabled={privacyBusy()} onClick={() => void handleTogglePrivate()}>
+                {privacyBusy() ? "Saving…" : isPrivate() ? "Private" : "Public"}
+              </button>
+              <p class="team-detail__hint">Private stops auto-join for future sign-ups. Current members stay unchanged, and the team stays visible to everyone.</p>
+            </div>
             <div class="team-detail__all-users-row">
               <label class="team-detail__all-users"><input type="checkbox" checked={draftAll()} disabled={busy()} onChange={(event) => setDraftAll(event.currentTarget.checked)} /> All users</label>
               <Show when={dirty()}>
@@ -746,6 +776,9 @@ export function Teams() {
                   </div>
                   <div class="team-card__body">
                     <h2 class="team-card__name">{team.name}</h2>
+                    <Show when={team.private}>
+                      <span class="team-card__private"><i class="fa-solid fa-lock" aria-hidden="true" /> Private</span>
+                    </Show>
                     <Show when={team.allUsers}>
                       <p class="team-card__description">All users</p>
                     </Show>
@@ -880,6 +913,18 @@ export function Teams() {
         .team-card__description {
           margin: 0;
           font-size: 13px;
+          color: var(--text-secondary);
+        }
+
+        .team-card__private {
+          display: inline-flex;
+          align-items: center;
+          gap: 5px;
+          margin-bottom: 4px;
+          padding: 3px 7px;
+          border: 1px solid var(--border-default);
+          border-radius: 6px;
+          font-size: 12px;
           color: var(--text-secondary);
         }
 

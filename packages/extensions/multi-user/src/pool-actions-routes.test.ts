@@ -223,7 +223,7 @@ describe("GET /pool-actions", () => {
       action: "none",
       chatAgentId: null,
       reason: "other_team",
-      teamName: "Green",
+      teamName: null,
     });
     // orphan is teamless → none.
     expect(map.get("orphan")).toMatchObject({

@@ -74,6 +74,7 @@ Custom tables:
         },
       },
       "emailAndPassword": { "enabled": true },
+      "autoJoinPublicTeams": true,
       "allowedDomains": ["example.com"],
     },
   },
@@ -91,6 +92,8 @@ Custom tables:
   `authMethods: { google, emailAndPassword }`.
 - `allowedDomains` — optional email-domain allowlist. Sign-in is rejected for
   any other domain. Omit to allow all.
+- `autoJoinPublicTeams` — optional boolean, defaults to `true`. Adds each new
+  user to public teams at sign-up; set `false` for fully manual membership.
 
 `sessionSecret` and OAuth credentials are strings. Prefer `$env:NAME`
 references so plaintext secrets stay outside tracked configuration.
@@ -103,6 +106,25 @@ unless `autoApprove: false` is set, in which case they land with
 `approved: false`. Until an admin promotes / approves them via `PATCH /api/admin/users/:id`,
 their requests are rejected with `403 forbidden` (but the session is created
 so the UI can render an "awaiting approval" state).
+
+### Public and private teams
+
+New teams are public by default (`private: false`). At sign-up, including the
+first superadmin and pending users, new users join every public team unless
+`autoJoinPublicTeams: false` is configured. These are ordinary, removable
+memberships: removing a user is permanent unless an admin adds them again.
+Pending users still receive `403` on agents until approved.
+
+Private teams stop automatic enrollment of future users; they remain visible
+in the team catalog. Changing Private/Public or creating a team never adds or
+removes existing users. Teams already present when upgrading are marked
+private once; teams created afterward default to public, so choose Private
+when creating sensitive teams. The Teams page provides a private badge, a
+creation checkbox, and an immediate Private/Public toggle in team detail.
+
+The independent **All users** flag remains a locked, live membership rule for
+all current and future users, even on private teams. Public-team auto-join is
+a snapshot at sign-up and does not add explicit memberships to All users teams.
 
 ## HTTP API
 
@@ -134,6 +156,9 @@ Non-admin callers get `403` from any `/api/admin/*` route. `/api/me`, team
 reads, pool actions, and `DELETE /api/user/token/:id` require any authenticated
 user. Agent chat/read/write authorization derives from team membership, not the
 legacy assignment endpoints.
+
+Team create and PATCH bodies accept a boolean `private`; all team reads and
+listings return it. Creating a team without the flag defaults to public.
 
 ## Bearer-Token API Auth
 

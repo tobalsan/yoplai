@@ -4,6 +4,8 @@ import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { GatewayConfigSchema } from "@yoplai/shared";
 import { initializeMultiUserDatabase } from "./db.js";
+import { createTeamStore } from "./teams.js";
+import { createMembershipStore } from "./membership.js";
 import { createMultiUserAuth, resolveBootstrapUserFields } from "./auth.js";
 
 const tempDirs: string[] = [];
@@ -263,6 +265,66 @@ describe("email/password auth", () => {
         .get(email) as { role: string | null; approved: number } | undefined;
     return { db, signUp, userRow };
   }
+
+  it.each([undefined, true, false])(
+    "auto-joins only public teams at sign-up with switch %s",
+    async (autoJoinPublicTeams) => {
+      const { db, signUp } = await setup({
+        emailAndPassword: { enabled: true },
+        autoJoinPublicTeams,
+      });
+      expect((await signUp("admin@e2e.test")).status).toBe(200);
+      const admin = db
+        .prepare("SELECT id FROM user WHERE email = ?")
+        .get("admin@e2e.test") as { id: string };
+      const teams = createTeamStore(db);
+      const membership = createMembershipStore(db);
+      const publicTeam = teams.createTeam({
+        name: "Public",
+        createdBy: admin.id,
+      });
+      const privateTeam = teams.createTeam({
+        name: "Private",
+        private: true,
+        createdBy: admin.id,
+      });
+      expect((await signUp("alice@e2e.test")).status).toBe(200);
+      const user = db
+        .prepare("SELECT id FROM user WHERE email = ?")
+        .get("alice@e2e.test") as { id: string };
+      expect(membership.isMember(publicTeam.id, user.id)).toBe(
+        autoJoinPublicTeams !== false
+      );
+      expect(membership.isMember(privateTeam.id, user.id)).toBe(false);
+      if (autoJoinPublicTeams !== false)
+        membership.removeMember(publicTeam.id, user.id);
+      expect((await signUp("bob@e2e.test")).status).toBe(200);
+      expect(membership.isMember(publicTeam.id, user.id)).toBe(false);
+      db.close();
+    }
+  );
+
+  it("joins pending sign-ups to public teams while preserving pending approval", async () => {
+    const { db, signUp, userRow } = await setup({
+      emailAndPassword: { enabled: true },
+      autoApprove: false,
+    });
+    await signUp("admin@e2e.test");
+    const admin = db
+      .prepare("SELECT id FROM user WHERE email = ?")
+      .get("admin@e2e.test") as { id: string };
+    const team = createTeamStore(db).createTeam({
+      name: "Public",
+      createdBy: admin.id,
+    });
+    expect((await signUp("pending@e2e.test")).status).toBe(200);
+    const user = db
+      .prepare("SELECT id FROM user WHERE email = ?")
+      .get("pending@e2e.test") as { id: string };
+    expect(createMembershipStore(db).isMember(team.id, user.id)).toBe(true);
+    expect(userRow("pending@e2e.test")?.approved).toBe(0);
+    db.close();
+  });
 
   it("bootstraps the first password sign-up as approved superadmin", async () => {
     const { db, signUp, userRow } = await setup({

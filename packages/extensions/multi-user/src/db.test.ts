@@ -9,7 +9,9 @@ import {
   ensureTeamsTable,
   initializeMultiUserDatabase,
   migrateAssignmentsToTeams,
+  migrateExistingTeamsToPrivate,
 } from "./db.js";
+import { createTeamStore } from "./teams.js";
 import { createForkStore } from "./forks.js";
 import { createMembershipStore } from "./membership.js";
 import { createAccessResolver } from "./access.js";
@@ -402,6 +404,48 @@ describe("assignments → teams migration", () => {
       .prepare("SELECT COUNT(*) AS n FROM teams")
       .get() as { n: number };
     expect(teamCount.n).toBe(0);
+    db.close();
+  });
+});
+
+describe("existing team privacy migration", () => {
+  it("bootstraps old databases once and keeps new teams public across restarts", () => {
+    const dir = fs.mkdtempSync(
+      path.join(os.tmpdir(), "yoplai-private-migration-")
+    );
+    tempDirs.push(dir);
+    const dbPath = path.join(dir, "auth.db");
+    const legacy = new Database(dbPath);
+    legacy.exec(`CREATE TABLE user (id TEXT PRIMARY KEY);
+      INSERT INTO user VALUES ('admin');
+      CREATE TABLE teams (id TEXT PRIMARY KEY, name TEXT NOT NULL, description TEXT, color TEXT, icon TEXT,
+        createdBy TEXT NOT NULL, createdAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);
+      INSERT INTO teams (id, name, createdBy) VALUES ('old', 'Existing', 'admin');`);
+    legacy.close();
+    let db = initializeMultiUserDatabase(dbPath);
+    let teams = createTeamStore(db);
+    expect(teams.getTeam("old")?.private).toBe(true);
+    const later = teams.createTeam({ name: "Later", createdBy: "admin" });
+    db.close();
+    db = initializeMultiUserDatabase(dbPath);
+    teams = createTeamStore(db);
+    expect(teams.getTeam(later.id)?.private).toBe(false);
+    db.close();
+  });
+
+  it("marks existing teams private once while later teams remain public", () => {
+    const db = new Database(":memory:");
+    db.exec(
+      "CREATE TABLE user (id TEXT PRIMARY KEY); INSERT INTO user VALUES ('admin')"
+    );
+    ensureTeamsTable(db);
+    const teams = createTeamStore(db);
+    const old = teams.createTeam({ name: "Existing", createdBy: "admin" });
+    migrateExistingTeamsToPrivate(db);
+    expect(teams.getTeam(old.id)?.private).toBe(true);
+    const later = teams.createTeam({ name: "Later", createdBy: "admin" });
+    migrateExistingTeamsToPrivate(db);
+    expect(teams.getTeam(later.id)?.private).toBe(false);
     db.close();
   });
 });
