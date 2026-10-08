@@ -28,7 +28,7 @@ import { capabilities, isExtensionEnabled } from "../lib/capabilities";
 import { SchedulesPanel } from "./SchedulesPanel";
 import { AgentConnectionsPanel } from "../components/AgentConnectionsPanel";
 import { McpExtensionCard, MCP_EXTENSION_STYLES } from "../components/McpExtensionCard";
-import { addMcpServer, disconnectMcpServer, fetchMcpServers, removeMcpServer, type McpScope, type McpServer } from "../api/mcp-servers";
+import { addMcpServer, cachedMcpServers, mcpDisplayName, fetchMcpServers, type McpScope, type McpServer } from "../api/mcp-servers";
 
 function isEmoji(str: string): boolean {
   return /^\p{Emoji}/u.test(str) && str.length <= 4;
@@ -255,7 +255,12 @@ export function EditAgent() {
     createResource(() => dashboardAgentId() ?? (isAdmin() ? params.agentId : null), fetchAgentExtensions);
   const extensionCatalog = () => extensions.error ? [] : extensions() ?? [];
   const [mcpServers, { refetch: refetchMcpServers }] = createResource(() => dashboardAgentId() ?? null, fetchMcpServers);
-  const mcpStatus = () => mcpServers.error ? undefined : mcpServers();
+  // `.latest` keeps background refetches (e.g. on window focus) from suspending the whole page.
+  // Memoized so loading-state flips don't rebuild the list when the data is unchanged.
+  const mcpStatus = createMemo(() => {
+    const id = dashboardAgentId();
+    return mcpServers.error ? undefined : (["ready", "refreshing"].includes(mcpServers.state) ? mcpServers.latest : undefined) ?? (id ? cachedMcpServers(id) : undefined);
+  });
   const [addOpen, setAddOpen] = createSignal(false);
   const [mcpUrl, setMcpUrl] = createSignal("");
   const [mcpScope, setMcpScope] = createSignal<McpScope>("personal");
@@ -312,37 +317,14 @@ export function EditAgent() {
     }
   };
 
-  const connectMcp = (server: McpServer, scope: McpScope) => {
-    const targetId = dashboardAgentId();
-    if (targetId) window.open(`/api/mcp/oauth/authorize?agent=${encodeURIComponent(targetId)}&server=${encodeURIComponent(server.name)}&scope=${scope}`, "yoplai-oauth", "width=520,height=640");
-  };
-
-  const disconnectMcp = async (server: McpServer, scope: McpScope) => {
-    const targetId = dashboardAgentId();
-    if (!targetId) return;
-    setMcpBusy(true);
-    setMcpError(undefined);
-    try {
-      await disconnectMcpServer(targetId, server.name, scope);
-      await refetchMcpServers();
-    } catch (cause) {
-      setMcpError(cause instanceof Error ? cause.message : "Failed to disconnect MCP server.");
-    } finally { setMcpBusy(false); }
-  };
-
-  const removeMcp = async (server: McpServer) => {
-    const targetId = dashboardAgentId();
-    if (!targetId) return;
-    if (!window.confirm(`Remove ${server.name} from this agent? This affects all users.`)) return;
-    setMcpBusy(true);
-    setMcpError(undefined);
-    try {
-      await removeMcpServer(targetId, server.name);
-      await refetchMcpServers();
-    } catch (cause) {
-      setMcpError(cause instanceof Error ? cause.message : "Failed to remove MCP server.");
-    } finally { setMcpBusy(false); }
-  };
+  // Normal extensions and MCP servers share one list, ordered by display name.
+  const extensionListItems = createMemo(() => {
+    const items: { name: string; ext?: ExtensionCatalogEntry; server?: McpServer }[] = [
+      ...extensionCatalog().filter((ext) => ext.id !== "mcp").map((ext) => ({ name: ext.displayName, ext })),
+      ...(mcpStatus()?.servers ?? []).map((server) => ({ name: mcpDisplayName(server.name, server.title), server })),
+    ];
+    return items.sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: "base" }));
+  });
 
   // Set up = credentials exist for Just me or Whole team (OAuth connection or
   // secrets). Extensions without settings are a plain on/off, flipped on their
@@ -510,8 +492,10 @@ export function EditAgent() {
               <div class="edit-agent-ext-empty">No extensions available.</div>
             </Show>
             <ul class="edit-agent-ext-list">
-              <For each={extensionCatalog().filter((ext) => ext.id !== "mcp")}>
-                {(ext) => (
+              <For each={extensionListItems()}>
+                {(item) => (
+                  <Show when={item.ext} keyed fallback={<McpExtensionCard server={item.server!} agentId={dashboardAgentId() ?? params.agentId} />}>
+                    {(ext) => (
                   <li class="edit-agent-ext-item" data-tour="ext-card" data-tour-ext={ext.id}>
                     <A
                       href={extensionPath(ext)}
@@ -581,11 +565,10 @@ export function EditAgent() {
                       </span>
                     </Show>
                   </li>
+                    )}
+                  </Show>
                 )}
               </For>
-              <For each={mcpStatus()?.servers ?? []}>{(server) => (
-                <McpExtensionCard server={server} canConfigureTeam={mcpStatus()?.canConfigureTeam !== false} personalAvailable={!!session().data?.user} busy={mcpBusy()} onConnect={connectMcp} onDisconnect={(item, scope) => void disconnectMcp(item, scope)} onRemove={(item) => void removeMcp(item)} />
-              )}</For>
             </ul>
           </section>
         </Show>

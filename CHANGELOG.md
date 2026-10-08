@@ -9,8 +9,15 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ## [Unreleased]
 
+### Fixed
+
+- Returning to the agent extensions tab, or navigating between the extension list and MCP server pages, no longer blanks the page while MCP server status loads.
+
 ### Changed
 
+- Servers added from the UI get a readable key from their site (`mcp.linear.app` → `linear`, then `linear_2`), and cards show the server-reported name and description (`serverInfo.title`/`description`; sentence-like titles are split at the first colon or dash) once connected, saved as `displayName`/`description` on UI-added `mcp.json` entries. Any server entry, stdio included, may set optional `displayName` and `description` to override the card label (yoplai-only keys; other MCP clients ignore them). Servers without an icon show the official MCP logo.
+- MCP servers on the Edit Agent extensions list now look and behave like normal extensions: sorted alphabetically with them, whole card links to a config page (`/agents/:agentId/mcp-servers/:serverName`) with Just me / Whole team connect for OAuth servers, a JSON config editor (secrets masked) for non-OAuth HTTP servers, and Remove.
+- HTTP MCP extension cards show the server's website icon (host, then root domain), cached in `$YOPLAI_HOME/mcp/icons.json`.
 - Credential tab captions clarified: Just me "Only used by you", Whole team "Can be used by the whole team".
 
 ### Added

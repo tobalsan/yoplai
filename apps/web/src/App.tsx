@@ -21,6 +21,7 @@ import { LeftNavShell } from "./components/LeftNavShell";
 import { AgentCatalog } from "./pages/AgentCatalog";
 import { EditAgent } from "./pages/EditAgent";
 import { ExtensionDetails } from "./pages/ExtensionDetails";
+import { McpServerDetails } from "./pages/McpServerDetails";
 import { Teams } from "./pages/Teams";
 import { AccountConnections } from "./pages/AccountConnections";
 import {
@@ -346,6 +347,13 @@ function ExtensionDetailsRouteShell() {
     </LeftNavShell>
   );
 }
+function McpServerDetailsRouteShell() {
+  return (
+    <LeftNavShell>
+      <McpServerDetails />
+    </LeftNavShell>
+  );
+}
 function ChatRouteShell() {
   return (
     <LeftNavShell>
@@ -406,6 +414,14 @@ export default function App() {
         component={() => (
           <GuardedRoute>
             <EditAgentRouteShell />
+          </GuardedRoute>
+        )}
+      />
+      <Route
+        path="/agents/:agentId/mcp-servers/:serverName"
+        component={() => (
+          <GuardedRoute>
+            <McpServerDetailsRouteShell />
           </GuardedRoute>
         )}
       />
