@@ -141,7 +141,7 @@ function chatAgentId(pathname: string): string | null {
 
 const STATE_LABEL: Partial<Record<ConnectRowState, string>> = {
   connected: "Connected",
-  team: "Shared by team",
+  team: "Already connected for the team",
 };
 
 export function ConnectToolsPrompt() {

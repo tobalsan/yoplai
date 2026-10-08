@@ -299,6 +299,15 @@ describe("ConnectToolsPrompt", () => {
     expect(m.markConnectPromptSeen).toHaveBeenCalledWith("scribe");
   });
 
+  it("labels team-provided credentials as already connected for the team", async () => {
+    m.fetchAgentExtensions.mockResolvedValue([
+      ext({ id: "exa", displayName: "Exa", requiredSecrets: ["k"], personalSecretFields: [], configValues: { k: "***" } }),
+      ext({ id: "gmail", displayName: "Gmail", oauth: { provider: "google", scopes: ["a"] }, oauthConnected: false }),
+    ]);
+    await mount();
+    expect(container.querySelector('[data-row="ext:exa"]')?.textContent).toContain("Already connected for the team");
+  });
+
   it("shows a loader while a manually opened prompt loads its rows", async () => {
     let releaseMcp: (value: { servers: never[]; canConfigureTeam: boolean }) => void = () => undefined;
     await mount();
