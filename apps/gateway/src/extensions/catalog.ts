@@ -283,7 +283,7 @@ export async function buildExtensionCatalog(
     seen.add(extension.id);
     // Factory extensions are internal/non-user-facing: hidden from the
     // agent-edit UI, still enable-able manually in agent.yaml.
-    if (extension.factory === true) continue;
+    if (extension.factory === true || extension.id === "mcp") continue;
     const dir = resolveBuiltInExtensionDir(registration.packageName);
     entries.push(toCatalogEntry(extension, true, config, agent, dir, configurable, options.requesterUserId));
   }
@@ -294,7 +294,7 @@ export async function buildExtensionCatalog(
   for (const { extension, path: extensionDir } of external) {
     if (seen.has(extension.id)) continue;
     seen.add(extension.id);
-    if (extension.factory === true) continue;
+    if (extension.factory === true || extension.id === "mcp") continue;
     entries.push(
       toCatalogEntry(extension, false, config, agent, extensionDir, configurable, options.requesterUserId)
     );

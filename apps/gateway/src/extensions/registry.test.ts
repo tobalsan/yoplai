@@ -48,7 +48,7 @@ describe("extension registry", () => {
       },
     ] as Extension[]);
 
-    expect(result.map((extension) => extension.id)).toEqual([
+    expect(result.filter((extension) => extension.id !== "mcp").map((extension) => extension.id)).toEqual([
       "scheduler",
       "heartbeat",
     ]);
@@ -73,14 +73,14 @@ describe("extension registry", () => {
 
     const result = await loadExtensions(config);
 
-    expect(result.map((extension) => extension.id)).toEqual([
+    expect(result.filter((extension) => extension.id !== "mcp").map((extension) => extension.id)).toEqual([
       "taskLifecycle",
       "capabilityDiscovery",
       "canvas",
       "scheduler",
       "heartbeat",
     ]);
-    expect(getLoadedExtensions().map((extension) => extension.id)).toEqual([
+    expect(getLoadedExtensions().filter((extension) => extension.id !== "mcp").map((extension) => extension.id)).toEqual([
       "taskLifecycle",
       "capabilityDiscovery",
       "canvas",
@@ -110,7 +110,7 @@ describe("extension registry", () => {
       ],
     });
     const result = await loadExtensions(config);
-    expect(result.map((extension) => extension.id)).toContain("irc");
+    expect(result.filter((extension) => extension.id !== "mcp").map((extension) => extension.id)).toContain("irc");
   });
 
   it("loads per-agent IRC when shared IRC is disabled", async () => {
@@ -130,7 +130,7 @@ describe("extension registry", () => {
       },
     });
     const result = await loadExtensions(config);
-    expect(result.map((extension) => extension.id)).toContain("irc");
+    expect(result.filter((extension) => extension.id !== "mcp").map((extension) => extension.id)).toContain("irc");
   });
 
   it("loads multiUser extension when enabled", async () => {
@@ -161,7 +161,7 @@ describe("extension registry", () => {
     const result = await loadExtensions(config);
 
     // scheduler and heartbeat must be opted in via config — only multiUser loads here
-    expect(result.map((extension) => extension.id)).toEqual([
+    expect(result.filter((extension) => extension.id !== "mcp").map((extension) => extension.id)).toEqual([
       "taskLifecycle",
       "capabilityDiscovery",
       "canvas",
@@ -189,7 +189,7 @@ describe("extension registry", () => {
 
     const result = await loadExtensions(config);
 
-    expect(result.map((extension) => extension.id)).toEqual([
+    expect(result.filter((extension) => extension.id !== "mcp").map((extension) => extension.id)).toEqual([
       "taskLifecycle",
       "capabilityDiscovery",
       "canvas",
@@ -219,7 +219,7 @@ describe("extension registry", () => {
 
     const result = await loadExtensions(config);
 
-    expect(result.map((extension) => extension.id)).toContain("webhooks");
+    expect(result.filter((extension) => extension.id !== "mcp").map((extension) => extension.id)).toContain("webhooks");
     expect(isExtensionLoaded("webhooks")).toBe(true);
   });
 
@@ -247,7 +247,7 @@ describe("extension registry", () => {
     });
 
     const result = await loadExtensions(config);
-    const ids = result.map((extension) => extension.id);
+    const ids = result.filter((extension) => extension.id !== "mcp").map((extension) => extension.id);
 
     expect(ids.indexOf("webhooks")).toBeGreaterThanOrEqual(0);
     expect(ids.indexOf("slack")).toBeGreaterThanOrEqual(0);
@@ -293,7 +293,7 @@ describe("extension registry", () => {
 
     const result = await loadExtensions(config);
 
-    expect(result.map((extension) => extension.id)).toEqual([
+    expect(result.filter((extension) => extension.id !== "mcp").map((extension) => extension.id)).toEqual([
       "taskLifecycle",
       "capabilityDiscovery",
       "canvas",
@@ -321,7 +321,7 @@ describe("extension registry", () => {
 
     const result = await loadExtensions(config);
 
-    expect(result.map((extension) => extension.id)).toEqual([
+    expect(result.filter((extension) => extension.id !== "mcp").map((extension) => extension.id)).toEqual([
       "taskLifecycle",
       "capabilityDiscovery",
       "canvas",
@@ -348,7 +348,7 @@ describe("extension registry", () => {
 
     const result = await loadExtensions(config);
 
-    expect(result.map((extension) => extension.id)).toEqual([
+    expect(result.filter((extension) => extension.id !== "mcp").map((extension) => extension.id)).toEqual([
       "taskLifecycle",
       "capabilityDiscovery",
       "canvas",
@@ -445,7 +445,7 @@ describe("extension registry", () => {
 
       const result = await loadExtensions(config);
 
-      expect(result.map((extension) => extension.id)).toContain("sample");
+      expect(result.filter((extension) => extension.id !== "mcp").map((extension) => extension.id)).toContain("sample");
       const runtime = new ExtensionRuntime();
       runtime.load(result);
       expect(
@@ -456,6 +456,50 @@ describe("extension registry", () => {
     } finally {
       await rm(root, { recursive: true, force: true });
       await rm(target, { recursive: true, force: true });
+    }
+  });
+
+  it("always loads the external MCP extension without agent config, even when disabled at root", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "yoplai-mcp-extension-"));
+    const zodUrl = pathToFileURL(require.resolve("zod")).href;
+
+    try {
+      await mkdir(path.join(root, "mcp"), { recursive: true });
+      await writeFile(path.join(root, "mcp", "package.json"), JSON.stringify({ type: "module" }));
+      await writeFile(path.join(root, "mcp", "index.js"), [
+        `import { z } from ${JSON.stringify(zodUrl)};`,
+        "export default {",
+        '  id: "mcp",',
+        '  displayName: "MCP",',
+        '  description: "MCP extension",',
+        "  dependencies: [],",
+        "  configSchema: z.object({}),",
+        '  routePrefixes: ["/api/mcp"],',
+        "  validateConfig: () => ({ valid: true, errors: [] }),",
+        "  registerRoutes: () => undefined,",
+        "  start: async () => undefined,",
+        "  stop: async () => undefined,",
+        "  capabilities: () => [],",
+        "};",
+      ].join("\n"));
+
+      const config = GatewayConfigSchema.parse({
+        version: 2,
+        extensionsPath: root,
+        agents: [{
+          id: "main",
+          name: "Main",
+          workspace: "~/agents/main",
+          model: { provider: "anthropic", model: "claude" },
+        }],
+        extensions: { mcp: { enabled: false } },
+      });
+
+      const result = await loadExtensions(config);
+
+      expect(result.map((extension) => extension.id)).toContain("mcp");
+    } finally {
+      await rm(root, { recursive: true, force: true });
     }
   });
 });

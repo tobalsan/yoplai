@@ -4,6 +4,7 @@ import {
   createEffect,
   createSignal,
   For,
+  onCleanup,
   Show,
 } from "solid-js";
 import { A, useParams } from "@solidjs/router";
@@ -26,6 +27,8 @@ import { useSession } from "../auth/client";
 import { capabilities, isExtensionEnabled } from "../lib/capabilities";
 import { SchedulesPanel } from "./SchedulesPanel";
 import { AgentConnectionsPanel } from "../components/AgentConnectionsPanel";
+import { McpExtensionCard, MCP_EXTENSION_STYLES } from "../components/McpExtensionCard";
+import { addMcpServer, cachedMcpServers, mcpDisplayName, fetchMcpServers, type McpScope, type McpServer } from "../api/mcp-servers";
 
 function isEmoji(str: string): boolean {
   return /^\p{Emoji}/u.test(str) && str.length <= 4;
@@ -166,8 +169,17 @@ export function EditAgent() {
   const [agents] = createResource(() =>
     capabilities.forkedAgents ? fetchPool() : fetchAgents()
   );
-  const agent = createMemo(() =>
+  const [activeAgents] = createResource(() =>
+    capabilities.forkedAgents ? fetchAgents() : Promise.resolve([])
+  );
+  const poolAgent = createMemo(() =>
     (agents() ?? []).find((candidate) => candidate.id === params.agentId)
+  );
+  const activeAgent = createMemo(() =>
+    (activeAgents.error ? [] : activeAgents() ?? []).find((candidate) => candidate.id === params.agentId)
+  );
+  const agent = createMemo(() =>
+    poolAgent() ?? (!agents.loading ? activeAgent() : undefined)
   );
 
   const [teams] = createResource(() =>
@@ -189,9 +201,11 @@ export function EditAgent() {
   );
   const dashboardAgentId = createMemo(() =>
     capabilities.forkedAgents
-      ? fork()?.forkAgentId ?? (poolActions.error ? undefined : poolActions())?.find((entry) =>
-          entry.poolId === params.agentId && entry.action === "chat"
-        )?.chatAgentId
+      ? poolAgent()
+        ? fork()?.forkAgentId ?? (poolActions.error ? undefined : poolActions())?.find((entry) =>
+            entry.poolId === params.agentId && entry.action === "chat"
+          )?.chatAgentId
+        : !agents.loading ? activeAgent()?.id : undefined
       : params.agentId
   );
   const [tab, setTab] = createSignal<"extensions" | "connections" | "dashboards" | "schedules">("extensions");
@@ -238,7 +252,79 @@ export function EditAgent() {
   );
 
   const [extensions, { refetch: refetchExtensions }] =
-    createResource(() => fetchAgentExtensions(params.agentId));
+    createResource(() => dashboardAgentId() ?? (isAdmin() ? params.agentId : null), fetchAgentExtensions);
+  const extensionCatalog = () => extensions.error ? [] : extensions() ?? [];
+  const [mcpServers, { refetch: refetchMcpServers }] = createResource(() => dashboardAgentId() ?? null, fetchMcpServers);
+  // `.latest` keeps background refetches (e.g. on window focus) from suspending the whole page.
+  // Memoized so loading-state flips don't rebuild the list when the data is unchanged.
+  const mcpStatus = createMemo(() => {
+    const id = dashboardAgentId();
+    return mcpServers.error ? undefined : (["ready", "refreshing"].includes(mcpServers.state) ? mcpServers.latest : undefined) ?? (id ? cachedMcpServers(id) : undefined);
+  });
+  const [addOpen, setAddOpen] = createSignal(false);
+  const [mcpUrl, setMcpUrl] = createSignal("");
+  const [mcpScope, setMcpScope] = createSignal<McpScope>("personal");
+  const [mcpError, setMcpError] = createSignal<string>();
+  const [mcpBusy, setMcpBusy] = createSignal(false);
+  createEffect(() => {
+    if (!session().isPending && !session().data?.user) setMcpScope("team");
+  });
+
+  createEffect(() => {
+    const onReturn = () => { void refetchMcpServers(); };
+    const onMessage = (event: MessageEvent) => {
+      if (event.data?.extension === "mcp" && ["yoplai-oauth", "aihub-oauth"].includes(event.data.type)) onReturn();
+    };
+    window.addEventListener("focus", onReturn);
+    window.addEventListener("message", onMessage);
+    onCleanup(() => {
+      window.removeEventListener("focus", onReturn);
+      window.removeEventListener("message", onMessage);
+    });
+  });
+
+  const addCustomExtension = async (event: SubmitEvent) => {
+    event.preventDefault();
+    const targetId = dashboardAgentId();
+    if (mcpBusy() || !targetId) return;
+    let url: URL;
+    try {
+      url = new URL(mcpUrl().trim());
+      if (url.protocol !== "http:" && url.protocol !== "https:") throw new Error();
+    } catch {
+      setMcpError("Enter an HTTP or HTTPS server URL.");
+      return;
+    }
+    // Reserve the popup in the click event; browsers block windows opened after fetch.
+    const popup = window.open("", "yoplai-oauth", "width=520,height=640");
+    setMcpBusy(true);
+    setMcpError(undefined);
+    try {
+      const result = await addMcpServer(targetId, url.href, mcpScope());
+      setAddOpen(false);
+      setMcpUrl("");
+      if (result.authorizationUrl) {
+        if (popup && !popup.closed) popup.location.replace(result.authorizationUrl);
+        else if (!popup) window.location.assign(result.authorizationUrl);
+      } else popup?.close();
+      void refetchMcpServers();
+    } catch (cause) {
+      popup?.close();
+      setMcpError(cause instanceof Error ? cause.message : "Failed to add MCP server.");
+      void refetchMcpServers();
+    } finally {
+      setMcpBusy(false);
+    }
+  };
+
+  // Normal extensions and MCP servers share one list, ordered by display name.
+  const extensionListItems = createMemo(() => {
+    const items: { name: string; ext?: ExtensionCatalogEntry; server?: McpServer }[] = [
+      ...extensionCatalog().filter((ext) => ext.id !== "mcp").map((ext) => ({ name: ext.displayName, ext })),
+      ...(mcpStatus()?.servers ?? []).map((server) => ({ name: mcpDisplayName(server.name, server.title), server })),
+    ];
+    return items.sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: "base" }));
+  });
 
   // Set up = credentials exist for Just me or Whole team (OAuth connection or
   // secrets). Extensions without settings are a plain on/off, flipped on their
@@ -257,7 +343,7 @@ export function EditAgent() {
   const extensionPath = (ext: ExtensionCatalogEntry) =>
     ext.tier === "bespoke-route" && ext.configRoutePath
       ? ext.configRoutePath
-      : detailsPath(params.agentId, ext.id);
+      : detailsPath(dashboardAgentId() ?? params.agentId, ext.id);
 
   return (
     <Show when={!session().isPending}>
@@ -270,7 +356,7 @@ export function EditAgent() {
           <div class="loading">Loading agent…</div>
         </Show>
 
-        <Show when={!agents.loading && !agent()}>
+        <Show when={!agents.loading && !activeAgents.loading && !agent()}>
           <div class="error">Agent not found.</div>
         </Show>
 
@@ -302,7 +388,7 @@ export function EditAgent() {
           )}
         </Show>
 
-        <Show when={isAdmin() && capabilities.forkedAgents && agent()}>
+        <Show when={isAdmin() && capabilities.forkedAgents && poolAgent()}>
           <TeamAssignment
             poolId={params.agentId}
             teams={teams() ?? []}
@@ -325,7 +411,9 @@ export function EditAgent() {
 
         <Show when={agent() && tab() === "connections"}>
           <div data-tour="panel-connections">
-            <AgentConnectionsPanel agentId={params.agentId} includeMcp={isExtensionEnabled("mcp")} extensions={extensions()} />
+            <Show when={dashboardAgentId()} fallback={<p>No runnable agent is available for connections yet.</p>}>
+              {(id) => <AgentConnectionsPanel agentId={id()} includeMcp extensions={extensionCatalog()} />}
+            </Show>
           </div>
         </Show>
 
@@ -360,7 +448,34 @@ export function EditAgent() {
 
         <Show when={agent() && tab() === "extensions"}>
           <section class="edit-agent-extensions">
-            <h2 class="edit-agent-section-title">Extensions</h2>
+            <div class="edit-agent-ext-head">
+              <h2 class="edit-agent-section-title">Extensions</h2>
+              <button type="button" class="mcp-ext-add-button" disabled={!dashboardAgentId()} title={!dashboardAgentId() ? "An agent fork is required first" : undefined} onClick={() => { setMcpError(undefined); setAddOpen(true); }}>Add custom extension</button>
+            </div>
+            <Show when={!addOpen() ? mcpError() : undefined}>{(message) => <p role="alert" class="mcp-ext-error">{message()}</p>}</Show>
+            <Show when={mcpServers.error}>
+              <p role="alert" class="mcp-ext-error">Failed to load MCP servers. <button type="button" onClick={() => void refetchMcpServers()}>Retry</button></p>
+            </Show>
+            <Show when={addOpen()}>
+              <div class="mcp-ext-dialog-backdrop" onClick={(event) => { if (event.target === event.currentTarget && !mcpBusy()) setAddOpen(false); }}>
+                <div role="dialog" aria-modal="true" aria-labelledby="mcp-add-title" class="mcp-ext-dialog">
+                  <form onSubmit={(event) => void addCustomExtension(event)}>
+                    <h2 id="mcp-add-title">Add custom extension</h2>
+                    <label>MCP server URL<input type="url" required placeholder="https://example.com/mcp" value={mcpUrl()} onInput={(event) => setMcpUrl(event.currentTarget.value)} /></label>
+                    <fieldset>
+                      <legend>Connection</legend>
+                      <label><input type="radio" name="mcp-scope" checked={mcpScope() === "personal"} disabled={!session().data?.user} onChange={() => setMcpScope("personal")} /> Just me</label>
+                      <label><input type="radio" name="mcp-scope" checked={mcpScope() === "team"} disabled={mcpStatus()?.canConfigureTeam === false} onChange={() => setMcpScope("team")} /> Whole team</label>
+                    </fieldset>
+                    <Show when={mcpError()}>{(message) => <p role="alert" class="mcp-ext-error">{message()}</p>}</Show>
+                    <div class="mcp-ext-dialog-actions">
+                      <button type="button" disabled={mcpBusy()} onClick={() => setAddOpen(false)}>Cancel</button>
+                      <button type="submit" disabled={mcpBusy()}>{mcpBusy() ? "Adding…" : "Add and connect"}</button>
+                    </div>
+                  </form>
+                </div>
+              </div>
+            </Show>
             <Show when={extensions.loading}>
               <div class="edit-agent-ext-empty">Loading extensions…</div>
             </Show>
@@ -371,14 +486,16 @@ export function EditAgent() {
             </Show>
             <Show
               when={
-                !extensions.loading && (extensions() ?? []).length === 0
+                !extensions.loading && !extensions.error && !mcpServers.loading && !mcpServers.error && extensionCatalog().filter((ext) => ext.id !== "mcp").length === 0 && (mcpStatus()?.servers.length ?? 0) === 0
               }
             >
               <div class="edit-agent-ext-empty">No extensions available.</div>
             </Show>
             <ul class="edit-agent-ext-list">
-              <For each={extensions() ?? []}>
-                {(ext) => (
+              <For each={extensionListItems()}>
+                {(item) => (
+                  <Show when={item.ext} keyed fallback={<McpExtensionCard server={item.server!} agentId={dashboardAgentId() ?? params.agentId} />}>
+                    {(ext) => (
                   <li class="edit-agent-ext-item" data-tour="ext-card" data-tour-ext={ext.id}>
                     <A
                       href={extensionPath(ext)}
@@ -448,6 +565,8 @@ export function EditAgent() {
                       </span>
                     </Show>
                   </li>
+                    )}
+                  </Show>
                 )}
               </For>
             </ul>
@@ -455,7 +574,7 @@ export function EditAgent() {
         </Show>
       </div>
 
-      <style>{`
+      <style>{MCP_EXTENSION_STYLES + `
         .edit-agent {
           padding: 24px;
         }

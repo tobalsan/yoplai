@@ -164,7 +164,12 @@ export function ExtensionDetails() {
         </Show>
       </div>
 
-      <style>{`
+      <style>{EXTENSION_DETAILS_STYLES}</style>
+    </>
+  );
+}
+
+export const EXTENSION_DETAILS_STYLES = `
         .ext-details {
           padding: 24px;
           max-width: 520px;
@@ -265,7 +270,4 @@ export function ExtensionDetails() {
         .ext-details-configure:hover {
           background: var(--border-default);
         }
-      `}</style>
-    </>
-  );
-}
+      `;

@@ -187,9 +187,9 @@ app.use("/api/*", async (c, next) => {
   await next();
 });
 
-// External MCP OAuth routes carry the agent in a query parameter.
-app.use("/api/mcp/oauth/*", async (c, next) => {
-  if (!currentExtensionRuntime().isEnabled("multiUser") || c.req.path.endsWith("/callback")) {
+// External MCP server and OAuth routes carry the agent in a query parameter.
+app.use("/api/mcp/*", async (c, next) => {
+  if (!currentExtensionRuntime().isEnabled("multiUser") || c.req.path === "/api/mcp/oauth/callback") {
     await next();
     return;
   }

@@ -151,7 +151,7 @@ export async function buildCapabilityCatalog(
   const entries: CapabilityEntry[] = [];
   const seen = new Set<string>();
   for (const extension of input.extensions) {
-    if (extension.factory || seen.has(extension.id)) continue;
+    if (extension.factory || extension.id === "mcp" || seen.has(extension.id)) continue;
     seen.add(extension.id);
     const tools = await discoveryTools(extension);
     const configRoutePath = resolveAgentConfigRoute(
@@ -208,7 +208,7 @@ export async function buildCapabilityCatalog(
     const enabledOnAgents = [
       ...new Set(sources.map((source) => source.agentId)),
     ].sort();
-    const settingsPath = `/agents/${encodeURIComponent(caller.id)}/extensions/mcp`;
+    const settingsPath = `/agents/${encodeURIComponent(caller.id)}/edit`;
     const auth = mcpAuth(sources[0].config);
     entries.push({
       id: `mcp:${name}`,

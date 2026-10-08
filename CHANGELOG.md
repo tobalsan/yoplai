@@ -9,13 +9,21 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ## [Unreleased]
 
+### Fixed
+
+- Returning to the agent extensions tab, or navigating between the extension list and MCP server pages, no longer blanks the page while MCP server status loads.
+
 ### Changed
 
+- Servers added from the UI get a readable key from their site (`mcp.linear.app` → `linear`, then `linear_2`), and cards show the server-reported name and description (`serverInfo.title`/`description`; sentence-like titles are split at the first colon or dash) once connected, saved as `displayName`/`description` on UI-added `mcp.json` entries. Any server entry, stdio included, may set optional `displayName` and `description` to override the card label (yoplai-only keys; other MCP clients ignore them). Servers without an icon show the official MCP logo.
+- MCP servers on the Edit Agent extensions list now look and behave like normal extensions: sorted alphabetically with them, whole card links to a config page (`/agents/:agentId/mcp-servers/:serverName`) with Just me / Whole team connect for OAuth servers, a JSON config editor (secrets masked) for non-OAuth HTTP servers, and Remove.
+- HTTP MCP extension cards show the server's website icon (host, then root domain), cached in `$YOPLAI_HOME/mcp/icons.json`.
 - Agent catalog hides agents a non-admin can't chat (e.g. private-team agents) instead of showing an inert card with the team name. Admins still see every agent, and `/pool-actions` no longer returns team names for agents the user can't access.
 - Credential tab captions clarified: Just me "Only used by you", Whole team "Can be used by the whole team".
 
 ### Added
 
+- Remote MCP servers appear as individual extension cards; agent members can add HTTP servers with immediate personal/team OAuth, disconnect credentials, and remove shared servers with confirmation.
 - Private teams with creation controls, list badges, and a one-click Private/Public toggle. New users join public teams as removable members at sign-up by default; set `extensions.multiUser.autoJoinPublicTeams: false` for manual membership. Existing teams become private once on upgrade; new teams default to public, so mark sensitive new teams private. Privacy changes keep current members and catalog visibility unchanged; All users rules and pending-user approval gates remain intact.
 
 - Append-only settings audit in gateway-owned `audit.db`, with redacted secret changes and an admin-only `/api/audit/settings` API.

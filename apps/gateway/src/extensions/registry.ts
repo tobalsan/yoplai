@@ -457,8 +457,9 @@ async function deriveExtensionsToLoad(
 
     const extensionConfig = getRootExtensionConfig(config, id);
     const hasAgentConfig = hasEnabledAgentExtensionConfig(config, id);
-    if (extensionConfig?.enabled === false) continue;
-    if (!extensionConfig && !hasAgentConfig) {
+    if (id !== "mcp" && extensionConfig?.enabled === false) continue;
+    // MCP owns the self-serve server routes even before an agent has mcp.json.
+    if (id !== "mcp" && !extensionConfig && !hasAgentConfig) {
       continue;
     }
 
