@@ -165,29 +165,19 @@ describe("AgentCatalog action states", () => {
     expect(chat?.getAttribute("href")).toBe("/chat/local");
   });
 
-  it("shows the unassigned message and no Chat link when action is none", async () => {
+  it("hides agents a non-admin cannot chat", async () => {
     setSession("user");
-    fetchPoolMock.mockResolvedValue([agent("scout")]);
-    fetchPoolActionsMock.mockResolvedValue([entry("scout", "none")]);
-    await mountCatalog();
-
-    expect(container.querySelector(".catalog-chat-link")).toBeNull();
-    expect(container.querySelector(".catalog-unavailable")).not.toBeNull();
-    expect(container.textContent).toContain(
-      "This agent has not been assigned to a team."
-    );
-  });
-
-  it("shows '<team name> Team' for a non-admin viewing another team's agent", async () => {
-    setSession("user");
-    fetchPoolMock.mockResolvedValue([agent("scout")]);
+    fetchPoolMock.mockResolvedValue([agent("scout"), agent("scribe"), agent("helper")]);
     fetchPoolActionsMock.mockResolvedValue([
-      entry("scout", "none", null, { reason: "other_team", teamName: "Green" }),
+      entry("scout", "none"),
+      entry("scribe", "none", null, { reason: "other_team", teamName: "Green" }),
+      entry("helper", "chat"),
     ]);
     await mountCatalog();
 
-    expect(container.querySelector(".catalog-chat-link")).toBeNull();
-    expect(container.textContent).toContain("Green Team");
+    expect(container.querySelectorAll(".catalog-card")).toHaveLength(1);
+    expect(container.textContent).not.toContain("Green");
+    expect(container.querySelector(".catalog-unavailable")).toBeNull();
   });
 
   it("shows the no-workspace message for an admin on a broken fork", async () => {
@@ -245,17 +235,6 @@ describe("AgentCatalog action states", () => {
     const edit = container.querySelector<HTMLAnchorElement>(".catalog-edit");
     expect(edit).not.toBeNull();
     expect(edit?.getAttribute("href")).toBe("/agents/scribe/edit");
-  });
-
-  it("does not show the edit icon to a non-member", async () => {
-    setSession("user");
-    fetchPoolMock.mockResolvedValue([agent("scribe")]);
-    fetchPoolActionsMock.mockResolvedValue([
-      entry("scribe", "none", null, { reason: "other_team" }),
-    ]);
-    await mountCatalog();
-
-    expect(container.querySelector(".catalog-edit")).toBeNull();
   });
 
   it("refreshes access actions when membership changes in realtime", async () => {

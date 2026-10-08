@@ -30,8 +30,7 @@ import type { ForkStore } from "./forks.js";
  * "Not available": `no_workspace` (the fork's agent folder isn't discoverable
  * on disk), `unassigned` (no fork, or a teamless fork), or `other_team` (a
  * non-member viewing a fork assigned to a different team). `teamName` carries
- * the fork's team display name for the `other_team` (and, for an admin
- * viewer, `no_workspace`) cases.
+ * the fork's team display name for an admin viewer's `no_workspace` case.
  */
 export type PoolCatalogAction = "chat" | "assign_to_team" | "none";
 
@@ -166,7 +165,8 @@ export function createPoolCatalogResolver(
       chatAgentId: null,
       action: "none",
       reason: "other_team",
-      teamName,
+      // Only non-staff reach here; withhold the (possibly private) team name.
+      teamName: null,
     };
   }
 

@@ -372,7 +372,12 @@ describe("multi-user admin routes", () => {
     const { team } = await created.json() as { team: { id: string } };
     expect((await mutate(`/admin/teams/${team.id}`, "PATCH", { name: "Audit team" })).status).toBe(200);
     expect(runtime.runtime.audit.record).toHaveBeenCalledTimes(2);
-    expect((await mutate(`/admin/teams/${team.id}`, "PATCH", { name: "Renamed" })).status).toBe(200);
+    expect((await mutate(`/admin/teams/${team.id}`, "PATCH", { private: true })).status).toBe(200);
+    expect(runtime.runtime.audit.record).toHaveBeenLastCalledWith(expect.objectContaining({
+      action: "admin.team_update", changes: [{ field: "private", before: false, after: true }],
+    }));
+    expect((await mutate(`/admin/teams/${team.id}`, "PATCH", { private: true })).status).toBe(200);
+    expect(runtime.runtime.audit.record).toHaveBeenCalledTimes(3);
     const members = { mode: "list", userIds: ["user-1", "user-2"] };
     expect((await mutate(`/admin/teams/${team.id}/members`, "PUT", members)).status).toBe(200);
     expect((await mutate(`/admin/teams/${team.id}/members`, "PUT", { ...members, userIds: ["user-2", "user-1", "user-1"] })).status).toBe(200);
@@ -389,7 +394,6 @@ describe("multi-user admin routes", () => {
       "admin.team_member_remove", "admin.agent_assignments", "admin.team_delete",
     ]);
   });
-
 
   it("admin can list users", async () => {
     const runtime = createRuntime();
@@ -758,7 +762,11 @@ describe("multi-user admin routes", () => {
       new Request("http://localhost/admin/teams", {
         method: "POST",
         headers: { cookie: "session=1", "content-type": "application/json" },
-        body: JSON.stringify({ name: "Platform", description: "Core" }),
+        body: JSON.stringify({
+          name: "Platform",
+          description: "Core",
+          private: true,
+        }),
       })
     );
     expect(createResponse.status).toBe(201);
@@ -773,6 +781,7 @@ describe("multi-user admin routes", () => {
     };
     expect(created.team).toMatchObject({
       name: "Platform",
+      private: true,
       createdBy: "admin-1",
     });
     // Defaults applied server-side when color/icon omitted.
@@ -783,12 +792,12 @@ describe("multi-user admin routes", () => {
       new Request(`http://localhost/admin/teams/${created.team.id}`, {
         method: "PATCH",
         headers: { cookie: "session=1", "content-type": "application/json" },
-        body: JSON.stringify({ name: "Platform Team", color: "#123456" }),
+        body: JSON.stringify({ name: "Platform Team", color: "#123456", private: false }),
       })
     );
     expect(editResponse.status).toBe(200);
     await expect(editResponse.json()).resolves.toMatchObject({
-      team: { id: created.team.id, name: "Platform Team", color: "#123456" },
+      team: { id: created.team.id, name: "Platform Team", color: "#123456", private: false },
     });
 
     const deleteResponse = await app.request(
@@ -803,6 +812,31 @@ describe("multi-user admin routes", () => {
       teamlessUsers: [],
       teamlessAgents: [],
     });
+  });
+
+  it("rejects nonboolean privacy on create and PATCH", async () => {
+    const runtime = createRuntime();
+    const team = runtime.teams.createTeam({ name: "Platform", createdBy: "admin-1" });
+    getMultiUserRuntime.mockReturnValue(runtime.runtime);
+    const { registerMultiUserRoutes } = await importAdminRoutes();
+    const { createAuthMiddleware } = await importAuthMiddleware();
+    const app = createAdminApp();
+    app.use("*", createAuthMiddleware());
+    registerMultiUserRoutes(app);
+    for (const [url, method] of [
+      ["/admin/teams", "POST"],
+      [`/admin/teams/${team.id}`, "PATCH"],
+    ]) {
+      const response = await app.request(
+        new Request(`http://localhost${url}`, {
+          method,
+          headers: { cookie: "session=1", "content-type": "application/json" },
+          body: JSON.stringify({ name: "Invalid", private: "true" }),
+        })
+      );
+      expect(response.status).toBe(400);
+    }
+    expect(runtime.teams.getTeam(team.id)?.private).toBe(false);
   });
 
   it("rejects a duplicate team name with 409", async () => {
@@ -878,7 +912,11 @@ describe("multi-user admin routes", () => {
 
   it("any authenticated user can list teams", async () => {
     const runtime = createRuntime({ session: createSession("user") });
-    runtime.teams.createTeam({ name: "Visible", createdBy: "admin-1" });
+    runtime.teams.createTeam({
+      name: "Visible",
+      private: true,
+      createdBy: "admin-1",
+    });
     getMultiUserRuntime.mockReturnValue(runtime.runtime);
 
     const { registerMultiUserRoutes } = await importAdminRoutes();
@@ -890,7 +928,9 @@ describe("multi-user admin routes", () => {
     const response = await app.request(makeAuthRequest("/teams"));
     expect(response.status).toBe(200);
     const body = (await response.json()) as { teams: Array<{ name: string }> };
-    expect(body.teams.map((team) => team.name)).toContain("Visible");
+    expect(body.teams).toContainEqual(
+      expect.objectContaining({ name: "Visible", private: true })
+    );
   });
 
   it("non-admin cannot mutate teams (403)", async () => {
@@ -916,10 +956,7 @@ describe("multi-user admin routes", () => {
 
   it("admin sets and removes team members", async () => {
     const runtime = createRuntime();
-    const team = runtime.teams.createTeam({
-      name: "Platform",
-      createdBy: "admin-1",
-    });
+    const team = runtime.teams.createTeam({ name: "Platform", createdBy: "admin-1" });
     getMultiUserRuntime.mockReturnValue(runtime.runtime);
 
     const { registerMultiUserRoutes } = await importAdminRoutes();
@@ -996,7 +1033,10 @@ describe("multi-user admin routes", () => {
 
   it("returns the pre-switch roster as savedMembers once a team goes All users", async () => {
     const runtime = createRuntime();
-    const team = runtime.teams.createTeam({ name: "Platform", createdBy: "admin-1" });
+    const team = runtime.teams.createTeam({
+      name: "Platform",
+      createdBy: "admin-1",
+    });
     runtime.membership.setMembers(team.id, { mode: "list", userIds: ["user-1"] }, "admin-1");
     getMultiUserRuntime.mockReturnValue(runtime.runtime);
 

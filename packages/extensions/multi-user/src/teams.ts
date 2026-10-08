@@ -13,6 +13,7 @@ export type Team = {
   color: string;
   icon: string;
   allUsers: boolean;
+  private: boolean;
   createdBy: string;
   createdAt: string;
 };
@@ -22,6 +23,7 @@ export type CreateTeamInput = {
   description?: string | null;
   color?: string | null;
   icon?: string | null;
+  private?: boolean;
   createdBy: string;
 };
 
@@ -30,6 +32,7 @@ export type UpdateTeamInput = {
   description?: string | null;
   color?: string | null;
   icon?: string | null;
+  private?: boolean;
 };
 
 /**
@@ -87,6 +90,7 @@ type TeamRow = {
   color: string | null;
   icon: string | null;
   allUsers: number;
+  private: number;
   createdBy: string;
   createdAt: string;
 };
@@ -103,6 +107,7 @@ function rowToTeam(row: TeamRow): Team {
     color: row.color ?? DEFAULT_TEAM_COLOR,
     icon: row.icon ?? DEFAULT_TEAM_ICON,
     allUsers: Boolean(row.allUsers),
+    private: Boolean(row.private),
     createdBy: row.createdBy,
     createdAt: row.createdAt,
   };
@@ -122,14 +127,14 @@ export function createTeamStore(
   forks?: () => ForkStore | undefined
 ): TeamStore {
   const listStatement = db.prepare(
-    "SELECT id, name, description, color, icon, allUsers, createdBy, createdAt FROM teams ORDER BY name COLLATE NOCASE"
+    "SELECT id, name, description, color, icon, allUsers, private, createdBy, createdAt FROM teams ORDER BY name COLLATE NOCASE"
   );
   const getStatement = db.prepare(
-    "SELECT id, name, description, color, icon, allUsers, createdBy, createdAt FROM teams WHERE id = ?"
+    "SELECT id, name, description, color, icon, allUsers, private, createdBy, createdAt FROM teams WHERE id = ?"
   );
   const insertStatement = db.prepare(`
-    INSERT INTO teams (id, name, description, color, icon, createdBy)
-    VALUES (@id, @name, @description, @color, @icon, @createdBy)
+    INSERT INTO teams (id, name, description, color, icon, private, createdBy)
+    VALUES (@id, @name, @description, @color, @icon, @private, @createdBy)
   `);
   const deleteStatement = db.prepare("DELETE FROM teams WHERE id = ?");
 
@@ -159,6 +164,7 @@ export function createTeamStore(
           // literal grey/icon into every row.
           color: input.color?.trim() || null,
           icon: input.icon?.trim() || null,
+          private: Number(input.private ?? false),
           createdBy: input.createdBy,
         });
       } catch (error) {
@@ -189,10 +195,19 @@ export function createTeamStore(
         next.icon = input.icon?.trim() || null;
       }
 
+      if (input.private !== undefined) next.private = Number(input.private);
+
       try {
         db.prepare(
-          "UPDATE teams SET name = ?, description = ?, color = ?, icon = ? WHERE id = ?"
-        ).run(next.name, next.description, next.color, next.icon, id);
+          "UPDATE teams SET name = ?, description = ?, color = ?, icon = ?, private = ? WHERE id = ?"
+        ).run(
+          next.name,
+          next.description,
+          next.color,
+          next.icon,
+          next.private,
+          id
+        );
       } catch (error) {
         if (isUniqueViolation(error)) {
           throw new DuplicateTeamNameError(next.name);

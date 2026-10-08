@@ -47,6 +47,7 @@ const CreateTeamBodySchema = z.object({
   description: optionalNullableString,
   color: optionalNullableString,
   icon: optionalNullableString,
+  private: z.boolean().optional(),
 });
 
 const UpdateTeamBodySchema = z
@@ -55,13 +56,15 @@ const UpdateTeamBodySchema = z
     description: optionalNullableString,
     color: optionalNullableString,
     icon: optionalNullableString,
+    private: z.boolean().optional(),
   })
   .refine(
     (data) =>
       data.name !== undefined ||
       data.description !== undefined ||
       data.color !== undefined ||
-      data.icon !== undefined,
+      data.icon !== undefined ||
+      data.private !== undefined,
     { message: "at least one field is required" }
   );
 
@@ -253,9 +256,10 @@ export function registerMultiUserAdminRoutes(app: Hono): void {
         description: parsed.data.description ?? null,
         color: parsed.data.color ?? null,
         icon: parsed.data.icon ?? null,
+        private: parsed.data.private,
         createdBy: authContext.user.id,
       });
-      recordAdminChange(c, { action: "admin.team_create", targetType: "team", targetId: team.id }, {}, { name: team.name, description: team.description, color: team.color, icon: team.icon });
+      recordAdminChange(c, { action: "admin.team_create", targetType: "team", targetId: team.id }, {}, { name: team.name, description: team.description, color: team.color, icon: team.icon, private: team.private });
       return c.json({ team }, 201);
     } catch (error) {
       if (isDuplicateTeamNameError(error)) {
@@ -274,9 +278,9 @@ export function registerMultiUserAdminRoutes(app: Hono): void {
     const { teams } = getRuntimeOrThrow();
     try {
       const existing = teams.getTeam(c.req.param("id"));
-      const before = existing ? { name: existing.name, description: existing.description, color: existing.color, icon: existing.icon } : {};
+      const before = existing ? { name: existing.name, description: existing.description, color: existing.color, icon: existing.icon, private: existing.private } : {};
       const team = teams.updateTeam(c.req.param("id"), parsed.data);
-      recordAdminChange(c, { action: "admin.team_update", targetType: "team", targetId: team.id }, before, { name: team.name, description: team.description, color: team.color, icon: team.icon });
+      recordAdminChange(c, { action: "admin.team_update", targetType: "team", targetId: team.id }, before, { name: team.name, description: team.description, color: team.color, icon: team.icon, private: team.private });
       return c.json({ team });
     } catch (error) {
       if (isTeamNotFoundError(error)) {
@@ -304,7 +308,7 @@ export function registerMultiUserAdminRoutes(app: Hono): void {
       const teamId = c.req.param("id");
       const existing = teams.getTeam(teamId);
       const result = teams.deleteTeam(teamId);
-      recordAdminChange(c, { action: "admin.team_delete", targetType: "team", targetId: teamId }, existing ? { name: existing.name, description: existing.description, color: existing.color, icon: existing.icon } : {}, {});
+      recordAdminChange(c, { action: "admin.team_delete", targetType: "team", targetId: teamId }, existing ? { name: existing.name, description: existing.description, color: existing.color, icon: existing.icon, private: existing.private } : {}, {});
       notifyAgentListChanged?.();
       return c.json(result);
     } catch (error) {

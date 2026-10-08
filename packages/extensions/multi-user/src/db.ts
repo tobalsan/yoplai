@@ -88,6 +88,7 @@ export function ensureTeamsTable(db: Database.Database): void {
       color TEXT,
       icon TEXT,
       allUsers INTEGER NOT NULL DEFAULT 0,
+      private INTEGER NOT NULL DEFAULT 0,
       createdBy TEXT NOT NULL,
       createdAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
       FOREIGN KEY (createdBy) REFERENCES user(id) ON DELETE CASCADE
@@ -99,6 +100,26 @@ export function ensureTeamsTable(db: Database.Database): void {
   if (!columns.some((column) => column.name === "allUsers")) {
     db.exec("ALTER TABLE teams ADD COLUMN allUsers INTEGER NOT NULL DEFAULT 0");
   }
+  if (!columns.some((column) => column.name === "private")) {
+    db.exec("ALTER TABLE teams ADD COLUMN private INTEGER NOT NULL DEFAULT 0");
+  }
+}
+
+/** Preserve existing team exposure once, including teams migrated from assignments. */
+export function migrateExistingTeamsToPrivate(db: Database.Database): void {
+  ensureMigrationsTable(db);
+  if (
+    db
+      .prepare("SELECT 1 FROM schema_migrations WHERE name = ?")
+      .get("existing_teams_private")
+  )
+    return;
+  db.transaction(() => {
+    db.exec("UPDATE teams SET private = 1");
+    db.prepare("INSERT INTO schema_migrations (name) VALUES (?)").run(
+      "existing_teams_private"
+    );
+  })();
 }
 
 export function ensureTeamMembersTable(db: Database.Database): void {
@@ -335,6 +356,7 @@ export function initializeMultiUserDatabase(
   // pre-teams installs keep working after the resolver stops reading the
   // allowlist. Safe no-op on fresh installs (no assignment rows).
   migrateAssignmentsToTeams(db);
+  migrateExistingTeamsToPrivate(db);
   ensureAgentForksTable(db);
   return db;
 }
