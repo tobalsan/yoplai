@@ -18,6 +18,7 @@ Breaking changes are marked **⚠ BREAKING**.
 - Adding a custom extension "Just me" no longer flashes an OAuth popup when you are already connected to that server from another agent.
 - A personal Google connection now works on every agent where the extension is enabled, with no reconnecting per agent. Team connections stay per agent, and reconnecting keeps scopes already granted.
 - Personal extension tokens and settings (e.g. Zendesk, Notion, Pipedrive) now follow you across agents: set them once and they apply on every agent where the extension is enabled. Team values stay per agent.
+- "Mine" scheduled jobs now also use personal connections made on another agent, and these take priority over the team connection.
 - **⚠ BREAKING** Admins are now scoped to their teams: they only see, chat with, and configure agents of teams they belong to, and only add/remove members of those teams. Only superadmins see everything and create or delete teams.
 - Whole-team extension setup (shared credentials, team OAuth connections, shared MCP server config) is admin-only again; other users see it read-only and can still set up their own connection (adding a custom extension no longer offers them a team choice).
 
