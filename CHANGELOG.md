@@ -18,6 +18,7 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Changed
 
+- `dashboard_link` now flags `YOPLAI.link` targets that do not exist in `data/dashboards/`, which otherwise break the page when it renders.
 - Slack: when a long run completes, the progress bubble is deleted instead of being left as a "Completed." message above the reply; failed and interrupted runs still keep their status line.
 - Adding a custom extension "Just me" no longer flashes an OAuth popup when you are already connected to that server from another agent.
 - A personal Google connection now works on every agent where the extension is enabled, with no reconnecting per agent. Team connections stay per agent, and reconnecting keeps scopes already granted.

@@ -295,9 +295,26 @@ async function dashboardDiagnostics(agent: AgentConfig, html: string) {
       ([name]) =>
         `Query "${name}" returned 0 rows — charts/tables using it will be empty.`
     );
+  const existing = new Set(
+    await fs.readdir(dashboardDirectory(agent)).catch(() => [] as string[])
+  );
+  const missingLinks = [
+    ...new Set(
+      [...html.matchAll(/YOPLAI\.link\(\s*["']([^"']+)["']/g)].map((m) => m[1])
+    ),
+  ]
+    .filter((slug) => !existing.has(slug))
+    .map(
+      (slug) =>
+        `YOPLAI.link("${slug}") points to a dashboard that does not exist; create data/dashboards/${slug} or remove the link (the page throws when it renders the link).`
+    );
   return {
     queryErrors: errors,
-    problems: [...lintDashboardHtml(html), ...emptyQueryWarnings],
+    problems: [
+      ...lintDashboardHtml(html),
+      ...missingLinks,
+      ...emptyQueryWarnings,
+    ],
   };
 }
 

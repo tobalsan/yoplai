@@ -326,6 +326,26 @@ describe("dashboard registry and tool", () => {
     ]);
   });
 
+  it("flags YOPLAI.link targets that do not exist", async () => {
+    const dashboards = path.join(workspace, "data", "dashboards");
+    await fs.writeFile(path.join(dashboards, "exists.html"), "ok");
+    await fs.writeFile(
+      path.join(dashboards, "links.html"),
+      `<script type="module">YOPLAI.link("exists.html"); YOPLAI.link("client.html", { id: 1 });</script>`
+    );
+    await canvasExtension.start({ getDataDir: () => root } as never);
+    const [tool] = await canvasExtension.getAgentTools!(agent(), { config });
+    const result = (await tool.execute(
+      { slug: "links.html" },
+      {} as never
+    )) as {
+      problems: string[];
+    };
+    expect(result.problems).toEqual([
+      'YOPLAI.link("client.html") points to a dashboard that does not exist; create data/dashboards/client.html or remove the link (the page throws when it renders the link).',
+    ]);
+  });
+
   it("continues listing when one dashboard becomes unavailable", async () => {
     const dashboards = path.join(workspace, "data", "dashboards");
     await fs.writeFile(path.join(dashboards, "gone.html"), "gone");
