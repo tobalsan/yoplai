@@ -11,6 +11,7 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Changed
 
+- Agent catalog hides agents a non-admin can't chat (e.g. private-team agents) instead of showing an inert card with the team name. Admins still see every agent.
 - Credential tab captions clarified: Just me "Only used by you", Whole team "Can be used by the whole team".
 
 ### Added

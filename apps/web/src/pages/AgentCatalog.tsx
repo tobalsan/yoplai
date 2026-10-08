@@ -18,22 +18,11 @@ const STAFF_ROLES = ["admin", "superadmin"];
 
 const UNASSIGNED_MESSAGE = "This agent has not been assigned to a team.";
 
-// Reason-specific copy for a "none" action card. Never mentions forking.
-function unavailableMessage(entry: PoolCatalogEntry | undefined, isAdmin: boolean): string {
-  switch (entry?.reason) {
-    case "unassigned":
-      return UNASSIGNED_MESSAGE;
-    case "no_workspace":
-      return isAdmin
-        ? "This agent has no workspace."
-        : entry.teamName
-          ? `${entry.teamName} Team`
-          : UNASSIGNED_MESSAGE;
-    case "other_team":
-      return entry.teamName ? `${entry.teamName} Team` : UNASSIGNED_MESSAGE;
-    default:
-      return UNASSIGNED_MESSAGE;
-  }
+// Copy for an admin's inert card (non-admins never see inaccessible cards).
+function unavailableMessage(entry: PoolCatalogEntry | undefined): string {
+  return entry?.reason === "no_workspace"
+    ? "This agent has no workspace."
+    : UNASSIGNED_MESSAGE;
 }
 
 function hasAdminRole(role: string | string[] | null | undefined): boolean {
@@ -67,6 +56,14 @@ export function AgentCatalog() {
     for (const entry of actions() ?? []) map.set(entry.poolId, entry);
     return map;
   });
+  // Non-admins only see agents they can chat; inaccessible ones are hidden
+  // (held back until actions resolve so they don't flash in).
+  const visibleAgents = createMemo(() => {
+    const list = agents() ?? [];
+    if (!capabilities.forkedAgents || isAdmin()) return list;
+    if (!actions()) return [];
+    return list.filter((agent) => actionByPool().get(agent.id)?.action === "chat");
+  });
   const canEditAgent = (entry: PoolCatalogEntry | undefined) =>
     !capabilities.forkedAgents || isAdmin() || entry?.action === "chat";
 
@@ -84,7 +81,7 @@ export function AgentCatalog() {
 
       <Show when={agents()}>
         <div class="catalog-grid" data-tour="agent-grid">
-          <For each={agents()}>
+          <For each={visibleAgents()}>
             {(agent, index) => (
               <div class="catalog-card" data-tour={index() === 0 ? "agent-card" : undefined}>
                 <Show when={canEditAgent(actionByPool().get(agent.id))}>
@@ -157,7 +154,7 @@ export function AgentCatalog() {
                           fallback={null}
                         >
                           <span class="catalog-unavailable">
-                            {unavailableMessage(entry, isAdmin())}
+                            {unavailableMessage(entry)}
                           </span>
                         </Show>
                       }
