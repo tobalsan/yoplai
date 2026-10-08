@@ -262,4 +262,32 @@ describe("oauth routes", () => {
     expect(res.status).toBe(400);
     expect(await res.text()).toContain("access_denied");
   });
+
+  it("reports a personal grant connected on sally as connected on cira", async () => {
+    const service = new OAuthService({ store, loadConfig: makeConfig });
+    store.save({
+      agentId: "sally", provider: "google", scope: "personal", userId: "alice", accessToken: "t",
+      scopes: [], account: "alice@example.com", connectedAt: 1, updatedAt: 1,
+    });
+    const app = createOAuthRoutes(service, undefined, async (c) => c.req.header("test-user"));
+    const status = await app.request("/oauth/google/status?agent=cira&scope=personal", { headers: { "test-user": "alice" } });
+    expect(await status.json()).toMatchObject({ connected: true, scope: "personal", account: "alice@example.com" });
+    const bob = await app.request("/oauth/google/status?agent=cira&scope=personal", { headers: { "test-user": "bob" } });
+    expect(await bob.json()).toMatchObject({ connected: false });
+  });
+
+  it("reports disconnected on every agent after a personal disconnect", async () => {
+    const service = new OAuthService({ store, fetchImpl: vi.fn(async () => new Response(null, { status: 200 })), loadConfig: makeConfig });
+    store.save({
+      agentId: "sally", provider: "google", scope: "personal", userId: "alice", accessToken: "t",
+      scopes: [], connectedAt: 1, updatedAt: 1,
+    });
+    const app = createOAuthRoutes(service, undefined, async (c) => c.req.header("test-user"));
+    const headers = { "test-user": "alice" };
+    await app.request("/oauth/google/disconnect?agent=cira&scope=personal", { method: "POST", headers });
+    for (const agent of ["sally", "cira"]) {
+      const status = await app.request(`/oauth/google/status?agent=${agent}&scope=personal`, { headers });
+      expect(await status.json()).toMatchObject({ connected: false });
+    }
+  });
 });

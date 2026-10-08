@@ -5,6 +5,7 @@ import { randomBytes, scryptSync, createCipheriv } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { OAuthConnection } from "@yoplai/shared";
 import { TokenCipher, isEncrypted } from "./crypto.js";
+import { CredentialStore } from "../credentials/store.js";
 import { OAuthConnectionStore } from "./store.js";
 
 function makeConnection(overrides: Partial<OAuthConnection> = {}): OAuthConnection {
@@ -200,5 +201,59 @@ describe("OAuthConnectionStore encryption at rest", () => {
     expect(store.get("a_b", "google")).toBeUndefined();
     store.delete("a_b", "google");
     expect(store.get("a/b", "google")?.agentId).toBe("a/b");
+  });
+
+  it("promotes a legacy per-agent personal grant to the shared key and removes the legacy copy", () => {
+    const alice = { type: "personal", userId: "alice" } as const;
+    const credentials = new CredentialStore(tmpDir, cipher);
+    credentials.save(
+      { agentId: "sally", integration: "google", scope: alice },
+      makeConnection({ agentId: "sally", scope: "personal", userId: "alice", accessToken: "legacy" })
+    );
+    const store = new OAuthConnectionStore(tmpDir, cipher);
+    expect(store.get("sally", "google", alice)?.accessToken).toBe("legacy");
+    expect(credentials.get({ agentId: "sally", integration: "google", scope: alice })).toBeUndefined();
+    expect(store.get("cira", "google", alice)?.accessToken).toBe("legacy");
+  });
+
+  it("personal delete removes the shared grant and the legacy copy for that agent", () => {
+    const alice = { type: "personal", userId: "alice" } as const;
+    const credentials = new CredentialStore(tmpDir, cipher);
+    credentials.save(
+      { agentId: "sally", integration: "google", scope: alice },
+      makeConnection({ agentId: "sally", scope: "personal", userId: "alice" })
+    );
+    const store = new OAuthConnectionStore(tmpDir, cipher);
+    store.delete("sally", "google", alice);
+    expect(credentials.get({ agentId: "sally", integration: "google", scope: alice })).toBeUndefined();
+    expect(store.get("sally", "google", alice)).toBeUndefined();
+  });
+
+  it("personal disconnect is not undone by other agents' legacy personal grants", () => {
+    const alice = { type: "personal", userId: "alice" } as const;
+    const credentials = new CredentialStore(tmpDir, cipher);
+    for (const agentId of ["sally", "cira"]) {
+      credentials.save(
+        { agentId, integration: "google", scope: alice },
+        makeConnection({ agentId, scope: "personal", userId: "alice", accessToken: `legacy-${agentId}` })
+      );
+    }
+    const store = new OAuthConnectionStore(tmpDir, cipher);
+    expect(store.get("sally", "google", alice)?.accessToken).toBe("legacy-sally");
+    store.delete("sally", "google", alice);
+    expect(store.get("cira", "google", alice)).toBeUndefined();
+    expect(store.get("sally", "google", alice)).toBeUndefined();
+    store.save(makeConnection({ agentId: "sally", scope: "personal", userId: "alice", accessToken: "fresh" }));
+    expect(store.get("cira", "google", alice)?.accessToken).toBe("fresh");
+    expect(store.get("sally", "google", alice)?.accessToken).toBe("fresh");
+  });
+
+  it("a personal tombstone for alice does not affect bob", () => {
+    const alice = { type: "personal", userId: "alice" } as const;
+    const bob = { type: "personal", userId: "bob" } as const;
+    const store = new OAuthConnectionStore(tmpDir, cipher);
+    store.save(makeConnection({ scope: "personal", userId: "bob", accessToken: "bob-token" }));
+    store.delete("main", "google", alice);
+    expect(store.get("main", "google", bob)?.accessToken).toBe("bob-token");
   });
 });

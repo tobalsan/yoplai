@@ -595,4 +595,89 @@ describe("OAuthService", () => {
     expect(service.getConnection("a1", "google", "bob")?.accessToken).toBe("bob");
     expect(await service.resolveToken("a1", { provider: "google" })).toMatchObject({ connected: true, accessToken: "team" });
   });
+
+  describe("shared personal grants", () => {
+    const alice = { type: "personal", userId: "alice" } as const;
+    const savePersonal = (agentId: string, userId: string, overrides: Partial<OAuthConnection> = {}) =>
+      store.save({ ...scopedConnection(userId), agentId, ...overrides });
+
+    it("resolves a personal grant connected via sally on cira", () => {
+      savePersonal("sally", "alice", { accessToken: "shared" });
+      const service = new OAuthService({ store, loadConfig: () => makeConfig() });
+      expect(service.getConnection("cira", "google", "alice")?.accessToken).toBe("shared");
+      expect(service.getConnectionState("cira", "google", "alice")).toBe("connected");
+      expect(service.getScopedConnection("cira", "google", alice)?.accessToken).toBe("shared");
+    });
+
+    it("keeps team grants per agent", () => {
+      store.save({ ...scopedConnection(), agentId: "sally" });
+      const service = new OAuthService({ store, loadConfig: () => makeConfig() });
+      expect(service.getConnection("sally", "google", "alice")).toBeDefined();
+      expect(service.getConnection("cira", "google", "alice")).toBeUndefined();
+    });
+
+    it("never resolves another user's personal grant", () => {
+      savePersonal("sally", "alice");
+      const service = new OAuthService({ store, loadConfig: () => makeConfig() });
+      expect(service.getConnection("cira", "google", "bob")).toBeUndefined();
+      expect(service.getScopedConnection("sally", "google", { type: "personal", userId: "bob" })).toBeUndefined();
+    });
+
+    it("ignores personal grants for unattended resolution", async () => {
+      savePersonal("sally", "alice");
+      const service = new OAuthService({ store, loadConfig: () => makeConfig() });
+      expect(service.getConnection("sally", "google")).toBeUndefined();
+      expect(await service.resolveToken("sally", { provider: "google" })).toMatchObject({ connected: false, reason: "not_connected" });
+    });
+
+    it("disconnect from cira disconnects sally", async () => {
+      savePersonal("sally", "alice");
+      const service = new OAuthService({ store, fetchImpl: vi.fn(async () => new Response(null, { status: 200 })), loadConfig: () => makeConfig() });
+      await service.disconnect("cira", "google", alice);
+      expect(service.getConnection("sally", "google", "alice")).toBeUndefined();
+    });
+
+    it("refresh triggered via cira updates the record seen by sally", async () => {
+      savePersonal("sally", "alice", { expiresAt: Date.now() - 1000 });
+      const fetchImpl = vi.fn(async () => Response.json({ access_token: "refreshed", expires_in: 3600 }));
+      const service = new OAuthService({ store, fetchImpl, loadConfig: () => makeConfig() });
+      expect(await service.resolveToken("cira", { provider: "google" }, "alice")).toMatchObject({ connected: true, accessToken: "refreshed" });
+      expect(service.getConnection("sally", "google", "alice")?.accessToken).toBe("refreshed");
+    });
+
+    it("needs_reconnect triggered via cira is seen on sally", async () => {
+      savePersonal("sally", "alice", { expiresAt: Date.now() - 1000 });
+      const fetchImpl = vi.fn(async () => Response.json({ error: "invalid_grant" }, { status: 400 }));
+      const service = new OAuthService({ store, fetchImpl, loadConfig: () => makeConfig() });
+      await service.resolveToken("cira", { provider: "google" }, "alice");
+      expect(service.getConnectionState("sally", "google", "alice")).toBe("needs_reconnect");
+    });
+
+    it.each(["personal", "team"] as const)("reauthorizing %s requests the union of existing and requested scopes", async (scope) => {
+      const gmail = "https://www.googleapis.com/auth/gmail.readonly";
+      const drive = "https://www.googleapis.com/auth/drive";
+      const existing = scope === "personal" ? scopedConnection("alice") : scopedConnection();
+      store.save({ ...existing, agentId: "sally", scopes: [gmail] });
+      const service = new OAuthService({ store, loadConfig: () => makeConfig() });
+      const { authorizeUrl } = await service.startAuthorization({
+        agentId: "sally", provider: "google", scopes: [drive], scope, userId: scope === "personal" ? "alice" : undefined,
+      });
+      const url = new URL(authorizeUrl);
+      expect(url.searchParams.get("scope")?.split(" ").sort()).toEqual([drive, gmail].sort());
+      expect(url.searchParams.get("include_granted_scopes")).toBe("true");
+    });
+
+    it("stores the union of scopes when the token response omits scopes", async () => {
+      const gmail = "https://www.googleapis.com/auth/gmail.readonly";
+      const drive = "https://www.googleapis.com/auth/drive";
+      savePersonal("sally", "alice", { scopes: [gmail] });
+      const fetchImpl = vi.fn(async (input: RequestInfo | URL) => Response.json(
+        String(input).includes("token") ? { access_token: "t", expires_in: 3600 } : { email: "a@example.com" }
+      ));
+      const service = new OAuthService({ store, fetchImpl, loadConfig: () => makeConfig() });
+      const { state } = await service.startAuthorization({ agentId: "cira", provider: "google", scopes: [drive], scope: "personal", userId: "alice" });
+      await service.handleCallback({ provider: "google", code: "c", state });
+      expect([...(service.getConnection("sally", "google", "alice")?.scopes ?? [])].sort()).toEqual([drive, gmail].sort());
+    });
+  });
 });

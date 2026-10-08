@@ -11,6 +11,7 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Changed
 
+- A personal Google connection now works on every agent where the extension is enabled, with no reconnecting per agent. Team connections stay per agent, and reconnecting keeps scopes already granted.
 - **⚠ BREAKING** Admins are now scoped to their teams: they only see, chat with, and configure agents of teams they belong to, and only add/remove members of those teams. Only superadmins see everything and create or delete teams.
 - Whole-team extension setup (shared credentials, team OAuth connections, shared MCP server config) is admin-only again; other users see it read-only and can still set up their own connection (adding a custom extension no longer offers them a team choice).
 

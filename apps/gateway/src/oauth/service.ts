@@ -154,10 +154,13 @@ export class OAuthService {
     const pkce = generatePkce();
     const state = generateState();
     const redirectUri = this.#redirectUri(config, provider.id);
-    const scopes =
+    // Widen, never narrow: other agents may depend on scopes already granted.
+    const existing = this.#store.get(input.agentId, provider.id, scope);
+    const requested =
       input.scopes && input.scopes.length > 0
         ? input.scopes
         : provider.defaultScopes;
+    const scopes = [...new Set([...(existing?.scopes ?? []), ...requested])];
 
     this.#cleanupPending();
     this.#pending.set(state, {
