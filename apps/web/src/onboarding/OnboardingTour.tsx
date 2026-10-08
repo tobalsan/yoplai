@@ -141,73 +141,90 @@ export function OnboardingTour() {
           stagePadding: 6,
           onDestroyStarted: () => void finish("skipped"),
         });
-        if (clickOnly) {
-          const onClick = () => advance();
-          const onKey = (e: KeyboardEvent) => {
-            const t = e.target as Element | null;
-            if (e.key === "Enter" && !e.shiftKey && t?.closest('[data-tour="composer"]')) advance();
-          };
-          el.addEventListener("click", onClick, { once: true, capture: true });
-          if (step.advanceOnEnter) document.addEventListener("keydown", onKey, true);
-          detachClick = () => {
-            el.removeEventListener("click", onClick, true);
-            document.removeEventListener("keydown", onKey, true);
-          };
-        }
-        active.highlight({
-          element: el ?? undefined,
-          popover: {
-            side: step.side,
-            align: step.side ? "start" : undefined,
-            title: lost
-              ? "That's the tour"
-              : step.title.replace("{brand}", capabilities.branding?.name || "Yoplai"),
-            description: lost
-              ? "This part isn't available for you. Explore at your own pace; restart the tour anytime from the sidebar."
-              : step.description,
-            showButtons: clickOnly ? [] : ["next"],
-            nextBtnText: lost ? "Finish" : (step.nextLabel ?? "Next"),
-            onNextClick: () =>
-              lost || step.advance === "done" ? void finish(lost ? "skipped" : "done") : advance(),
-            onCloseClick: () => void finish("skipped"),
-            onPopoverRender: (popover) => {
-              // driver.js hides the footer when no buttons; keep Skip visible.
-              popover.footer.style.display = "flex";
-              if (clickOnly) popover.footerButtons.style.display = "none";
-              if (step.suggestion && !lost) {
-                const use = document.createElement("button");
-                use.type = "button";
-                use.textContent = "Use this";
-                use.onclick = () => {
-                  fillComposer(step.suggestion!);
-                  advance();
-                };
-                popover.footerButtons.prepend(use);
-              }
-              if (step.advance !== "done" && !lost) {
-                const skip = document.createElement("button");
-                skip.type = "button";
-                skip.className = "tour-skip";
-                skip.textContent = step.skipLabel ?? "Skip tour";
-                skip.onclick = () => void finish("skipped");
-                popover.footer.prepend(skip);
-              }
+        const show = (target: Element | null) => {
+          detachClick?.();
+          if (clickOnly && target) {
+            const onClick = () => advance();
+            const onKey = (e: KeyboardEvent) => {
+              const t = e.target as Element | null;
+              if (e.key === "Enter" && !e.shiftKey && t?.closest('[data-tour="composer"]')) advance();
+            };
+            target.addEventListener("click", onClick, { once: true, capture: true });
+            if (step.advanceOnEnter) document.addEventListener("keydown", onKey, true);
+            detachClick = () => {
+              target.removeEventListener("click", onClick, true);
+              document.removeEventListener("keydown", onKey, true);
+            };
+          }
+          active?.highlight({
+            element: target ?? undefined,
+            popover: {
+              side: step.side,
+              align: step.side ? "start" : undefined,
+              title: lost
+                ? "That's the tour"
+                : step.title.replace("{brand}", capabilities.branding?.name || "Yoplai"),
+              description: lost
+                ? "This part isn't available for you. Explore at your own pace; restart the tour anytime from the sidebar."
+                : typeof step.description === "function"
+                  ? target
+                    ? step.description(target)
+                    : ""
+                  : step.description,
+              showButtons: clickOnly ? [] : ["next"],
+              nextBtnText: lost ? "Finish" : (step.nextLabel ?? "Next"),
+              onNextClick: () =>
+                lost || step.advance === "done" ? void finish(lost ? "skipped" : "done") : advance(),
+              onCloseClick: () => void finish("skipped"),
+              onPopoverRender: (popover) => {
+                // driver.js hides the footer when no buttons; keep Skip visible.
+                popover.footer.style.display = "flex";
+                if (clickOnly) popover.footerButtons.style.display = "none";
+                if (step.suggestion && !lost) {
+                  const use = document.createElement("button");
+                  use.type = "button";
+                  use.textContent = "Use this";
+                  use.onclick = () => {
+                    fillComposer(step.suggestion!);
+                    advance();
+                  };
+                  popover.footerButtons.prepend(use);
+                }
+                if (step.advance !== "done" && !lost) {
+                  const skip = document.createElement("button");
+                  skip.type = "button";
+                  skip.className = "tour-skip";
+                  skip.textContent = step.skipLabel ?? "Skip tour";
+                  skip.onclick = () => void finish("skipped");
+                  popover.footer.prepend(skip);
+                }
+              },
             },
-          },
-        });
-        // Targets can shift after first paint (e.g. chat empty state
-        // re-centers the composer); re-position while the layout settles.
+          });
+        };
+        show(el);
+        // Layout can change while a step is shown (e.g. MCP extension cards
+        // load late and re-render or re-order the list, or the chat composer
+        // re-centers). Follow moves, and move the highlight in place when the
+        // target is replaced, without tearing down the popover (no flash).
         if (el) {
-          let last = JSON.stringify(el.getBoundingClientRect());
-          let ticks = 0;
+          let current = el;
+          let last = JSON.stringify(current.getBoundingClientRect());
           settle = window.setInterval(() => {
-            const now = JSON.stringify(el.getBoundingClientRect());
+            const found = step.target!(document);
+            if (found && found !== current) {
+              current = found;
+              last = JSON.stringify(current.getBoundingClientRect());
+              show(current);
+              return;
+            }
+            if (!current.isConnected) return;
+            const now = JSON.stringify(current.getBoundingClientRect());
             if (now !== last) {
               last = now;
               active?.refresh();
             }
-            if (++ticks >= 30) window.clearInterval(settle);
-          }, 100);
+          }, 250);
         }
       }
     );

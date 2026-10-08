@@ -6,7 +6,8 @@ export type TourStep = {
   /** Resolves the highlighted element; null target is a centered popover. */
   target: ((root: ParentNode) => Element | null) | null;
   title: string;
-  description: string;
+  /** Text, or a function of the found target for state-dependent copy. */
+  description: string | ((el: Element) => string);
   advance: TourAdvance;
   nextLabel?: string;
   skipLabel?: string;
@@ -68,7 +69,10 @@ export const TOUR_STEPS: TourStep[] = [
     route: AGENT_EDIT,
     target: extensionTarget,
     title: "Extensions",
-    description: "Extensions give the agent tools. Click + to connect your Gmail.",
+    description: (el) =>
+      el.matches('[data-tour="ext-add"]')
+        ? "Extensions give the agent tools. Click + to connect your Gmail."
+        : "Extensions give the agent tools. Gmail is already connected: click the card to see how its credentials are set up.",
     advance: "click",
   },
   {
@@ -80,9 +84,14 @@ export const TOUR_STEPS: TourStep[] = [
   },
   {
     route: EXTENSION_DETAILS,
-    target: (r) => byTour(r, "oauth-connect"),
-    title: "Connect your account",
-    description: "Connect your own account here. This is optional; you can do it later.",
+    target: (r) => byTour(r, "oauth-connect") ?? byTour(r, "oauth-grant") ?? byTour(r, "oauth-connected"),
+    title: "Your account",
+    description: (el) =>
+      el.matches('[data-tour="oauth-connected"]')
+        ? "You're connected. You can disconnect or switch accounts here."
+        : el.matches('[data-tour="oauth-grant"]')
+          ? "Your Google account is linked, but Gmail access isn't granted yet. Grant it here. This is optional; you can do it later."
+          : "Connect your own account here. This is optional; you can do it later.",
     advance: "next",
   },
   {

@@ -218,7 +218,7 @@ export function OAuthConnectCard(props: {
             }
           >
             <Match when={connected()}>
-              <div class="oauth-actions">
+              <div class="oauth-actions" data-tour="oauth-connected">
                 <button class="oauth-btn" onClick={() => void refreshStatus()}>
                   Refresh
                 </button>
@@ -232,7 +232,7 @@ export function OAuthConnectCard(props: {
             </Match>
             <Match when={needsGrant()}>
               <div class="oauth-actions">
-                <button class="oauth-btn oauth-btn-primary" onClick={() => void connect()}>
+                <button class="oauth-btn oauth-btn-primary" data-tour="oauth-grant" onClick={() => void connect()}>
                   Grant {props.label} access
                 </button>
                 <button
