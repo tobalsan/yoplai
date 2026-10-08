@@ -4,10 +4,11 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 import type { AgentConfig, Extension, GatewayConfig } from "@yoplai/shared";
-import { GatewayConfigSchema } from "@yoplai/shared";
+import { GatewayConfigSchema, resolveExtensionOAuth } from "@yoplai/shared";
 import { CredentialStore } from "./store.js";
 import { deletePersonalExtensionTokens, extensionTokenIntegration, getPersonalExtensionTokens, resolveExtensionTokenConfig, savePersonalExtensionTokens, storePersonalExtensionTokens } from "./extension-tokens.js";
 import { ExtensionRuntime } from "../extensions/runtime.js";
+import { getOAuthService } from "../oauth/service.js";
 
 const state = vi.hoisted(() => ({ dir: "", env: {} as Record<string, string> }));
 vi.mock("../config/index.js", () => ({
@@ -218,5 +219,76 @@ describe("shared personal extension tokens", () => {
     legacy("sally", "bob", { apiKey: "bob-token" });
     deletePersonalExtensionTokens(store, "sally", "alice", "zendesk");
     expect(getPersonalExtensionTokens(store, "sally", "bob", "zendesk")).toEqual({ apiKey: "bob-token" });
+  });
+});
+
+describe("personal settings for OAuth extensions", () => {
+  function driveExtension(): Extension {
+    const merged = (agentConfig: AgentConfig, config: GatewayConfig) => ({ ...config.extensions?.drive as Record<string, unknown>, ...agentConfig.extensions?.drive as Record<string, unknown> });
+    return {
+      id: "drive", displayName: "Drive", description: "Drive", dependencies: [], routePrefixes: [],
+      configSchema: z.object({}), configJsonSchema: { properties: { allowWrite: { type: "boolean" } } },
+      oauth: (resolved) => ({ provider: "google", scopes: resolved.merged.allowWrite === true ? ["drive.readonly", "drive.file"] : ["drive.readonly"] }),
+      validateConfig: () => ({ valid: true, errors: [] }),
+      registerRoutes: () => undefined, start: async () => undefined, stop: async () => undefined, capabilities: () => [],
+      getAgentTools: (forAgent, context) => merged(forAgent, context?.config ?? config).allowWrite === true
+        ? [{ name: "drive_write", description: "Write", parameters: {}, execute: async () => "written" }]
+        : [],
+    };
+  }
+  const grant = (userId: string | undefined) => vi.spyOn(getOAuthService(), "getScopedConnection").mockImplementation((_agent, provider, scope) =>
+    userId !== undefined && provider === "google" && scope.type === "personal" && scope.userId === userId
+      ? { agentId: "support", provider, accessToken: "token", scopes: [], scope: "personal", userId } as never
+      : undefined);
+  const toolNames = async (userId?: string) => (await new ExtensionRuntimeWith(driveExtension()).getTools(agent, config, userId)).map((tool) => tool.name);
+  class ExtensionRuntimeWith extends ExtensionRuntime {
+    constructor(extension: Extension) { super(); this.load([extension]); }
+  }
+  const scopesFor = (userId?: string) => {
+    const resolved = resolveExtensionTokenConfig(driveExtension(), agent, config, userId, store);
+    return resolveExtensionOAuth(driveExtension(), resolved.config, resolved.agent)?.scopes;
+  };
+  beforeEach(() => {
+    agent = { ...agent, extensions: { drive: { enabled: true } } };
+    config = { ...config, extensions: { drive: {} } };
+  });
+  afterEach(() => vi.restoreAllMocks());
+
+  it("uses personal allowWrite only when the requester has a personal grant", async () => {
+    storePersonalExtensionTokens(store, "alice", "drive", { allowWrite: true });
+    grant("alice");
+    expect(await toolNames("alice")).toEqual(["drive_write"]);
+    expect(scopesFor("alice")).toEqual(["drive.readonly", "drive.file"]);
+    expect(await toolNames("bob")).toEqual([]);
+    expect(await toolNames()).toEqual([]);
+  });
+
+  it("uses the team value for a requester without a personal grant", async () => {
+    storePersonalExtensionTokens(store, "alice", "drive", { allowWrite: true });
+    grant(undefined);
+    expect(await toolNames("alice")).toEqual([]);
+    expect(scopesFor("alice")).toEqual(["drive.readonly"]);
+  });
+
+  it("does not fall back to the team value when personal is unset", async () => {
+    config = { ...config, extensions: { drive: { allowWrite: true } } };
+    grant("alice");
+    expect(await toolNames("alice")).toEqual([]);
+    storePersonalExtensionTokens(store, "alice", "drive", { allowWrite: false });
+    expect(await toolNames("alice")).toEqual([]);
+    storePersonalExtensionTokens(store, "alice", "drive", { allowWrite: true });
+    expect(await toolNames("alice")).toEqual(["drive_write"]);
+    expect(await toolNames("bob")).toEqual(["drive_write"]);
+  });
+
+  it("refuses a captured personal write tool once the personal grant is gone", async () => {
+    storePersonalExtensionTokens(store, "alice", "drive", { allowWrite: true });
+    grant("alice");
+    const [tool] = await new ExtensionRuntimeWith(driveExtension()).getTools(agent, config, "alice");
+    expect(tool?.name).toBe("drive_write");
+    vi.restoreAllMocks();
+    grant(undefined);
+    vi.spyOn(getOAuthService(), "resolveToken").mockResolvedValue({ connected: true, provider: "google", accessToken: "team-token", scopes: ["drive.readonly", "drive.file"] } as never);
+    await expect(tool!.execute({}, { agent, config, env: state.env, userId: "alice" })).resolves.toMatchObject({ error: "extension_tool_unavailable" });
   });
 });

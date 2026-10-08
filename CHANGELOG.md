@@ -11,6 +11,7 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Added
 
+- Google Drive's write setting is now separate for Just me and Whole team, and Connect saves the ticked setting and requests the matching scopes.
 - Adding a custom extension now shows a confirmation toast with the server name.
 
 ### Changed

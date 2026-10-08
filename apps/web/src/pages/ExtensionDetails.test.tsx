@@ -275,4 +275,156 @@ describe("ExtensionDetails", () => {
         ?.disabled
     ).toBe(true);
   });
+
+  describe("OAuth extension write setting per scope", () => {
+    const driveEntry = (partial: Partial<ExtensionCatalogEntry> = {}) => entry({
+      id: "drive", displayName: "Google Drive", tier: "auto-form",
+      configJsonSchema: { type: "object", properties: { allowWrite: { type: "boolean", title: "Enable creating and writing files" } } },
+      configValues: { allowWrite: false }, personalConfigValues: {}, canConfigureTeam: false,
+      oauth: { provider: "google", scopes: ["drive.readonly"], personalScopes: ["drive.readonly"] },
+      ...partial,
+    });
+    const writeEntry = (scope: "personal" | "team", canConfigureTeam: boolean) => driveEntry({
+      canConfigureTeam,
+      ...(scope === "personal"
+        ? { personalConfigValues: { allowWrite: true }, oauth: { provider: "google", scopes: ["drive.readonly"], personalScopes: ["drive.readonly", "drive.file", "spreadsheets"] } }
+        : { configValues: { allowWrite: true }, oauth: { provider: "google", scopes: ["drive.readonly", "drive.file", "spreadsheets"], personalScopes: ["drive.readonly"] } }),
+    });
+    const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
+    const checkbox = () => container.querySelector<HTMLInputElement>("#ext-field-allowWrite")!;
+    const tab = (scope: string) => container.querySelector<HTMLButtonElement>(`.cred-tab[data-scope="${scope}"]`)!;
+    const connectButton = () => container.querySelector<HTMLButtonElement>(".oauth-btn-primary")!;
+    const popup = () => ({ closed: false, close: vi.fn(), location: { replace: vi.fn() } });
+    beforeEach(() => {
+      vi.stubGlobal("fetch", vi.fn(async () => ({ ok: true, json: async () => ({ connected: false, provider: "google" }) })));
+    });
+    afterEach(() => {
+      vi.restoreAllMocks();
+      vi.unstubAllGlobals();
+    });
+
+    it("lets a non-admin edit and save the Just me setting, then connect with its scopes without reload", async () => {
+      setSession("user");
+      fetchAgentExtensionsMock.mockResolvedValue([driveEntry()]);
+      patchAgentExtensionMock.mockResolvedValue([writeEntry("personal", false)]);
+      const open = vi.spyOn(window, "open").mockReturnValue(null);
+      await mount("scribe", "drive");
+      await flush();
+      expect(checkbox().disabled).toBe(false);
+      checkbox().click();
+      container.querySelector<HTMLFormElement>("form")!.requestSubmit();
+      await flush();
+      expect(patchAgentExtensionMock).toHaveBeenCalledWith("scribe", "drive", expect.objectContaining({ credentialScope: "personal", config: { allowWrite: true } }));
+      connectButton().click();
+      const url = String(open.mock.calls.at(-1)?.[0]);
+      expect(url).toContain("drive.file");
+      expect(url).toContain("spreadsheets");
+      expect(url).toContain("scope=personal");
+    });
+
+    it("keeps Whole team read-only for a non-admin and uses team scopes there", async () => {
+      setSession("user");
+      fetchAgentExtensionsMock.mockResolvedValue([driveEntry({ configValues: { allowWrite: true }, oauth: { provider: "google", scopes: ["drive.readonly", "drive.file"], personalScopes: ["drive.readonly"] } })]);
+      const open = vi.spyOn(window, "open").mockReturnValue(null);
+      await mount("scribe", "drive");
+      await flush();
+      tab("team").click();
+      await flush();
+      expect(checkbox().disabled).toBe(true);
+      expect(checkbox().checked).toBe(true);
+      expect(container.textContent).toContain("These settings are managed by an admin.");
+      expect(container.querySelector(".ext-config-save")).toBeNull();
+      tab("personal").click();
+      await flush();
+      expect(checkbox().checked).toBe(false);
+      expect(checkbox().disabled).toBe(false);
+      connectButton().click();
+      expect(String(open.mock.calls.at(-1)?.[0])).not.toContain("drive.file");
+    });
+
+    it("saves the ticked Just me setting when Connect is clicked, then opens the reserved popup with the new scopes", async () => {
+      setSession("user");
+      fetchAgentExtensionsMock.mockResolvedValue([driveEntry()]);
+      patchAgentExtensionMock.mockResolvedValue([writeEntry("personal", false)]);
+      const reserved = popup();
+      const open = vi.spyOn(window, "open").mockReturnValue(reserved as unknown as Window);
+      await mount("scribe", "drive");
+      await flush();
+      checkbox().click();
+      connectButton().click();
+      expect(open).toHaveBeenCalledWith("", "yoplai-oauth", "width=520,height=640");
+      await flush();
+      expect(patchAgentExtensionMock).toHaveBeenCalledWith("scribe", "drive", expect.objectContaining({ credentialScope: "personal", config: { allowWrite: true } }));
+      const url = String(reserved.location.replace.mock.calls[0]?.[0]);
+      expect(url).toContain("drive.file");
+      expect(url).toContain("spreadsheets");
+      expect(url).toContain("scope=personal");
+    });
+
+    it("saves the ticked Whole team setting for an admin on Connect and uses the team scopes", async () => {
+      setSession("admin");
+      fetchAgentExtensionsMock.mockResolvedValue([driveEntry({ canConfigureTeam: true })]);
+      patchAgentExtensionMock.mockResolvedValue([writeEntry("team", true)]);
+      const reserved = popup();
+      vi.spyOn(window, "open").mockReturnValue(reserved as unknown as Window);
+      await mount("scribe", "drive");
+      await flush();
+      tab("team").click();
+      await flush();
+      checkbox().click();
+      connectButton().click();
+      await flush();
+      expect(patchAgentExtensionMock).toHaveBeenCalledWith("scribe", "drive", expect.objectContaining({ credentialScope: "team", config: { allowWrite: true } }));
+      const url = String(reserved.location.replace.mock.calls[0]?.[0]);
+      expect(url).toContain("drive.file");
+      expect(url).toContain("scope=team");
+    });
+
+    it("closes the reserved popup and shows the error when saving on Connect fails", async () => {
+      setSession("user");
+      fetchAgentExtensionsMock.mockResolvedValue([driveEntry()]);
+      patchAgentExtensionMock.mockRejectedValue(new Error("Failed to update extension"));
+      const reserved = popup();
+      vi.spyOn(window, "open").mockReturnValue(reserved as unknown as Window);
+      await mount("scribe", "drive");
+      await flush();
+      checkbox().click();
+      connectButton().click();
+      await flush();
+      expect(reserved.close).toHaveBeenCalled();
+      expect(reserved.location.replace).not.toHaveBeenCalled();
+      expect(container.textContent).toContain("Failed to update extension");
+    });
+
+    it("keeps the clicked tab's scopes when the tab changes while saving on Connect", async () => {
+      setSession("admin");
+      fetchAgentExtensionsMock.mockResolvedValue([driveEntry({ canConfigureTeam: true })]);
+      let resolvePatch!: (value: ExtensionCatalogEntry[]) => void;
+      patchAgentExtensionMock.mockReturnValue(new Promise((resolve) => { resolvePatch = resolve; }));
+      const reserved = popup();
+      vi.spyOn(window, "open").mockReturnValue(reserved as unknown as Window);
+      await mount("scribe", "drive");
+      await flush();
+      checkbox().click();
+      connectButton().click();
+      tab("team").click();
+      resolvePatch([writeEntry("personal", true)]);
+      await flush();
+      const url = String(reserved.location.replace.mock.calls[0]?.[0]);
+      expect(url).toContain("scope=personal");
+      expect(url).toContain("drive.file");
+    });
+
+    it("does not save on Connect when the checkbox is unchanged", async () => {
+      setSession("user");
+      fetchAgentExtensionsMock.mockResolvedValue([driveEntry()]);
+      const open = vi.spyOn(window, "open").mockReturnValue(null);
+      await mount("scribe", "drive");
+      await flush();
+      connectButton().click();
+      await flush();
+      expect(patchAgentExtensionMock).not.toHaveBeenCalled();
+      expect(open).toHaveBeenCalledWith("/api/oauth/google/authorize?agent=scribe&scopes=drive.readonly&scope=personal", "yoplai-oauth", "width=520,height=640");
+    });
+  });
 });

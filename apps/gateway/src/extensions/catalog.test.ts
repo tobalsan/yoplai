@@ -13,6 +13,7 @@ import {
 } from "./catalog.js";
 import { getBuiltInExtensionRegistrations } from "./registry.js";
 import { CredentialStore } from "../credentials/store.js";
+import { getOAuthService } from "../oauth/service.js";
 
 const require = createRequire(import.meta.url);
 const zodUrl = pathToFileURL(require.resolve("zod")).href;
@@ -129,6 +130,25 @@ describe("buildExtensionCatalog", () => {
     const rootAgent = makeAgent();
     const rootCatalog = await buildExtensionCatalog(config, rootAgent);
     expect(rootCatalog.find((entry) => entry.id === "dynamic-oauth")?.oauth?.scopes).toEqual(["read", "write"]);
+  });
+
+  it("shows team scopes in oauth.scopes and the requester's own in oauth.personalScopes", async () => {
+    await writeExternalExtension(root, "dynamic-oauth", {
+      configJsonSchema: '{ properties: { allowWrite: { type: "boolean" } } }',
+      oauth: '(config) => ({ provider: "google", scopes: config.merged.allowWrite ? ["read", "write"] : ["read"] })',
+    });
+    const agent = makeAgent({ "dynamic-oauth": { enabled: true } });
+    const config = { ...configWith(agent, root), extensions: { "dynamic-oauth": { allowWrite: false } } };
+    const personal = vi.spyOn(CredentialStore.prototype, "get").mockImplementation((key) => key.integration === "extension-config:dynamic-oauth" && key.scope.type === "personal" && key.scope.userId === "alice" ? { allowWrite: true } : undefined);
+    const grant = vi.spyOn(getOAuthService(), "getScopedConnection").mockReturnValue({ agentId: "main", provider: "google", accessToken: "token", scopes: [], scope: "personal", userId: "alice" } as never);
+    try {
+      const alice = (await buildExtensionCatalog(config, agent, { requesterUserId: "alice" })).find((entry) => entry.id === "dynamic-oauth");
+      expect(alice?.oauth).toEqual({ provider: "google", scopes: ["read"], personalScopes: ["read", "write"] });
+      const bob = (await buildExtensionCatalog(config, agent, { requesterUserId: "bob" })).find((entry) => entry.id === "dynamic-oauth");
+      expect(bob?.oauth).toEqual({ provider: "google", scopes: ["read"], personalScopes: ["read"] });
+      const anonymous = (await buildExtensionCatalog(config, agent)).find((entry) => entry.id === "dynamic-oauth");
+      expect(anonymous?.oauth).toEqual({ provider: "google", scopes: ["read"] });
+    } finally { personal.mockRestore(); grant.mockRestore(); }
   });
 
   it("lists the full built-in registry with no ghosts and no missing ids", async () => {

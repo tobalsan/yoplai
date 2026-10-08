@@ -46,6 +46,10 @@ Extensions can contribute routes, services, lifecycle hooks, capabilities, CLI c
 
 Secrets resolve before extension validation. Missing IDs and invalid config fail or warn at startup according to extension contract. Missing tool-extension tokens remain configurable at runtime: affected calls return a configuration link while unrelated tools keep working. Agent-local `.env` lets two agents reuse names such as `SLACK_TOKEN` without sharing values.
 
+## Per-scope settings for OAuth extensions
+
+For OAuth extensions without credential fields (for example Google Drive's **Enable creating and writing files**), the extension form follows the connect card's **Just me** / **Whole team** tab. Each tab keeps its own value and its own OAuth scopes: **Just me** is stored per user and applies only when you have your own connection (unset means off, never the team value); **Whole team** is the admin-managed agent setting. Clicking **Connect** or **Reconnect** saves the tab's pending checkbox first, so no separate Save is needed. `PATCH` with `credentialScope: "personal"` works for any member; the catalog adds `oauth.personalScopes` for the Just me tab.
+
 ## Personal extension API tokens
 
 Open an agent's extension configuration form and fill in the **Just me** tab: your token plus any setting you need to differ, such as your own Jira email or subdomain. Fields left at the team value keep following it. This is available to signed-in users with access to that agent. Admins can select **Whole team** and change shared non-secret settings; single-user installations keep the existing shared configuration behavior.

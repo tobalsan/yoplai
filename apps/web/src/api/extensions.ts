@@ -27,7 +27,13 @@ export type ExtensionCatalogEntry = {
    * for `bespoke-route` extensions.
    */
   configRoutePath: string | null;
-  oauth: { provider: string; scopes: string[] } | null;
+  oauth: {
+    provider: string;
+    /** Scopes for the whole team connection. */
+    scopes: string[];
+    /** Scopes for the requester's own connection, with their personal settings applied. */
+    personalScopes?: string[];
+  } | null;
   /** OAuth extensions: requester's personal or the team connection exists. */
   oauthConnected?: boolean;
   tier: ExtensionConfigTier;

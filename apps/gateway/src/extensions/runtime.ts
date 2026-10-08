@@ -199,7 +199,8 @@ export class ExtensionRuntime {
           return tools.map((tool) => ({
             ...tool,
             extensionId: extension.id,
-            execute: withOAuthConnectLink(extension, extensionSecretFields(extension).length === 0 ? tool.execute : async (args: unknown, context: ExtensionAgentToolContext) => {
+            // Rebuild at call time: credentials, and for OAuth the grant deciding personal vs team settings, may have changed.
+            execute: withOAuthConnectLink(extension, extensionSecretFields(extension).length === 0 && !extension.oauth ? tool.execute : async (args: unknown, context: ExtensionAgentToolContext) => {
               const current = resolveExtensionTokenConfig(extension, context.agent, context.config, context.userId);
               if (current.missing.length) {
                 const connectUrl = await requestCredentialConnectLink(context, { kind: "token", extensionId: extension.id }) ?? current.connectUrl;

@@ -36,8 +36,18 @@ function providerLabel(provider: string): string {
 export function OAuthConnectCard(props: {
   agentId: string;
   provider: string;
+  /** Scopes required for the Whole team tab. */
   scopes?: string[];
+  /** Scopes required for the Just me tab; defaults to `scopes`. */
+  personalScopes?: string[];
   label: string;
+  /** Selected tab, when the parent shares it with other controls. */
+  scope?: CredentialScope;
+  onScopeChange?: (scope: CredentialScope) => void;
+  /** True when the selected tab has settings that change the required scopes but are not saved yet. */
+  hasUnsavedSettings?: () => boolean;
+  /** Saves those settings and returns the selected tab's scopes afterwards. */
+  saveSettings?: () => Promise<string[] | undefined>;
   /** Called after each status load with whether any scope is connected. */
   onStatus?: (connected: boolean) => void;
 }) {
@@ -45,7 +55,13 @@ export function OAuthConnectCard(props: {
   const [loading, setLoading] = createSignal(false);
   const [error, setError] = createSignal<string>();
   const session = useSession();
-  const [scope, setScope] = createSignal<"team" | "personal">("personal");
+  const [ownScope, setOwnScope] = createSignal<CredentialScope>("personal");
+  const scope = () => props.scope ?? ownScope();
+  const setScope = (next: CredentialScope) => {
+    setOwnScope(next);
+    props.onScopeChange?.(next);
+  };
+  const scopesFor = (target: CredentialScope) => (target === "personal" ? props.personalScopes ?? props.scopes : props.scopes) ?? [];
   const [canConfigureTeam, setCanConfigureTeam] = createSignal(true);
   let scopePicked = false;
   let statusRequest = 0;
@@ -110,7 +126,7 @@ export function OAuthConnectCard(props: {
   const status = () => statuses()[scope()];
   const lifecycle = () => stateOf(status());
   const hasRequiredScopes = () =>
-    (props.scopes ?? []).every((scope) => status()?.scopes?.includes(scope));
+    scopesFor(scope()).every((required) => status()?.scopes?.includes(required));
   const connected = () => lifecycle() === "connected" && hasRequiredScopes();
   const needsGrant = () => lifecycle() === "connected" && !hasRequiredScopes();
 
@@ -120,7 +136,7 @@ export function OAuthConnectCard(props: {
     const state = stateOf(current);
     if (state === "needs_reconnect") return { tone: "error", label: "Reconnect" };
     if (state !== "connected") return { tone: "off", label: "Not set up" };
-    return (props.scopes ?? []).every((scope) => current.scopes?.includes(scope))
+    return scopesFor(target).every((required) => current.scopes?.includes(required))
       ? { tone: "ok", label: "Connected" }
       : { tone: "error", label: "Not granted" };
   };
@@ -128,16 +144,31 @@ export function OAuthConnectCard(props: {
   // Non-admins can see, but not change, the admin-managed team connection.
   const teamReadOnly = () => scope() === "team" && !canConfigureTeam();
 
-  const connect = () => {
-    if (!props.agentId) return;
+  const authorizeUrl = (target: CredentialScope, scopes: string[]) => {
     const query = new URLSearchParams({ agent: props.agentId });
-    if (props.scopes?.length) query.set("scopes", props.scopes.join(","));
-    query.set("scope", scope());
-    window.open(
-      `/api/oauth/${encodeURIComponent(props.provider)}/authorize?${query.toString()}`,
-      "yoplai-oauth",
-      "width=520,height=640"
-    );
+    if (scopes.length) query.set("scopes", scopes.join(","));
+    query.set("scope", target);
+    return `/api/oauth/${encodeURIComponent(props.provider)}/authorize?${query.toString()}`;
+  };
+
+  const connect = async () => {
+    if (!props.agentId) return;
+    const target = scope();
+    if (!props.hasUnsavedSettings?.()) {
+      window.open(authorizeUrl(target, scopesFor(target)), "yoplai-oauth", "width=520,height=640");
+      return;
+    }
+    // Reserve the popup in the click event; browsers block windows opened after fetch.
+    const popup = window.open("", "yoplai-oauth", "width=520,height=640");
+    try {
+      const url = authorizeUrl(target, (await props.saveSettings?.()) ?? scopesFor(target));
+      if (popup && !popup.closed) popup.location.replace(url);
+      else window.location.assign(url);
+      setError(undefined);
+    } catch (cause) {
+      popup?.close();
+      setError(cause instanceof Error ? cause.message : String(cause));
+    }
   };
 
   const disconnect = async () => {
@@ -175,7 +206,7 @@ export function OAuthConnectCard(props: {
                 class="oauth-btn oauth-btn-primary"
                 data-tour="oauth-connect"
                 disabled={!props.agentId}
-                onClick={connect}
+                onClick={() => void connect()}
               >
                 Connect {props.label}
               </button>
@@ -196,7 +227,7 @@ export function OAuthConnectCard(props: {
             </Match>
             <Match when={needsGrant()}>
               <div class="oauth-actions">
-                <button class="oauth-btn oauth-btn-primary" onClick={connect}>
+                <button class="oauth-btn oauth-btn-primary" onClick={() => void connect()}>
                   Grant {props.label} access
                 </button>
                 <button
@@ -209,7 +240,7 @@ export function OAuthConnectCard(props: {
             </Match>
             <Match when={lifecycle() === "needs_reconnect"}>
               <div class="oauth-actions">
-                <button class="oauth-btn oauth-btn-primary" onClick={connect}>
+                <button class="oauth-btn oauth-btn-primary" onClick={() => void connect()}>
                   Reconnect
                 </button>
                 <button

@@ -1344,6 +1344,21 @@ describe("api core session resolution", () => {
         expect((await patch({ enabled: false })).status).toBe(200);
       });
 
+      it("lets members save a personal OAuth setting while team scope stays admin-only", async () => {
+        const oauthExtension = { id: "acme", configJsonSchema: { properties: { allowWrite: { type: "boolean" } } }, oauth: { provider: "google", scopes: ["read"] } };
+        resolveExtensionDefinition.mockResolvedValue(oauthExtension);
+        buildExtensionCatalog.mockResolvedValue([{ ...catalog[0], enabled: true, requiredSecrets: [], oauth: { provider: "google", scopes: ["read"] } }]);
+        updateAgentExtensionConfig.mockResolvedValue({});
+        const personal = await patch({ credentialScope: "personal", config: { allowWrite: true } });
+        expect(personal.status).toBe(200);
+        expect((await personal.json()).extensions[0]).toMatchObject({ personalConfigValues: { allowWrite: true }, canConfigureTeam: false });
+        expect([...credentialState.records.values()]).toEqual([{ allowWrite: true }]);
+        expect(updateAgentExtensionConfig).not.toHaveBeenCalled();
+        expect((await patch({ credentialScope: "team", config: { allowWrite: true } })).status).toBe(403);
+        expect((await patch({ config: { allowWrite: true } })).status).toBe(403);
+        expect(updateAgentExtensionConfig).not.toHaveBeenCalled();
+      });
+
       it("keeps whole-team setup of credential extensions admin-only", async () => {
         updateAgentExtensionConfig.mockResolvedValue({});
         expect((await patch({ enabled: true })).status).toBe(403);

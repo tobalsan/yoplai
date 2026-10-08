@@ -225,8 +225,9 @@ async function requesterExtensionCatalog(c: Context, config: GatewayConfig, agen
   if (!auth) return withOAuth;
   return withOAuth.map((entry) => {
     const fields = extensionSecretFields(entry);
-    if (!fields.length) return entry;
     const personal = getPersonalExtensionTokens(new CredentialStore(), agent.id, auth.user.id, entry.id);
+    // OAuth extensions without credential fields still keep personal settings (e.g. Drive allowWrite).
+    if (!fields.length) return entry.oauth ? { ...entry, personalConfigValues: personal ?? {} } : entry;
     const personalConfigValues = Object.fromEntries(Object.entries(personal ?? {}).filter(([field]) => !fields.includes(field)));
     return { ...entry, canConfigureTeam, personalSecretFields: fields.filter((field) => !!personal?.[field]), personalConfigValues };
   });

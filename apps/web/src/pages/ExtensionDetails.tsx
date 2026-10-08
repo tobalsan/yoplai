@@ -6,7 +6,8 @@ import {
   type ExtensionCatalogEntry,
 } from "../api/extensions";
 import { OAuthConnectCard } from "../components/OAuthConnectCard";
-import { ExtensionConfigForm } from "./ExtensionConfigForm";
+import type { CredentialScope } from "../components/CredentialScopeTabs";
+import { ExtensionConfigForm, type ConnectSettingsActions } from "./ExtensionConfigForm";
 
 /**
  * Details page for one extension on one agent, reached by clicking an
@@ -21,6 +22,9 @@ export function ExtensionDetails() {
     fetchAgentExtensions(params.agentId)
   );
   const [busy, setBusy] = createSignal(false);
+  // The OAuth card's selected tab also selects which settings the form edits.
+  const [scope, setScope] = createSignal<CredentialScope>("personal");
+  let settingsActions: ConnectSettingsActions | undefined;
   const [toggleError, setToggleError] = createSignal<string | null>(null);
 
   // Extensions without settings are a plain on/off, flipped here.
@@ -105,6 +109,11 @@ export function ExtensionDetails() {
                     agentId={params.agentId}
                     provider={oauth().provider}
                     scopes={oauth().scopes}
+                    personalScopes={oauth().personalScopes}
+                    scope={scope()}
+                    onScopeChange={setScope}
+                    hasUnsavedSettings={() => settingsActions?.hasUnsaved() ?? false}
+                    saveSettings={async () => settingsActions?.save()}
                     label={ext().displayName}
                     onStatus={(connected) => {
                       // A connection in either scope turns the extension on.
@@ -115,7 +124,12 @@ export function ExtensionDetails() {
               </Show>
 
               <Show when={ext().tier === "auto-form"}>
-                <ExtensionConfigForm entry={ext()} />
+                <ExtensionConfigForm
+                  entry={ext()}
+                  scope={ext().oauth ? scope() : undefined}
+                  onSaved={mutate}
+                  registerConnectActions={(actions) => { settingsActions = actions; }}
+                />
               </Show>
 
               <Show

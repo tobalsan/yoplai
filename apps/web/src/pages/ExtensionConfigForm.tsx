@@ -44,7 +44,21 @@ function WarningIcon() {
   );
 }
 
-export function ExtensionConfigForm(props: { entry: ExtensionCatalogEntry }) {
+/** Lets the OAuth card save pending settings itself when Connect is clicked before Save. */
+export type ConnectSettingsActions = {
+  hasUnsaved: () => boolean;
+  /** Saves the pending settings and returns the OAuth scopes the selected tab now needs. */
+  save: () => Promise<string[]>;
+};
+
+export function ExtensionConfigForm(props: {
+  entry: ExtensionCatalogEntry;
+  /** Selected tab for OAuth extensions, which share the OAuth card's Just me / Whole team tabs. */
+  scope?: "personal" | "team";
+  /** Called with the catalog returned by each successful save. */
+  onSaved?: (extensions: ExtensionCatalogEntry[]) => void;
+  registerConnectActions?: (actions: ConnectSettingsActions) => void;
+}) {
   const params = useParams<{ agentId: string; extensionId: string }>();
 
   // Updated in place after saving, from the PATCH response.
@@ -67,11 +81,16 @@ export function ExtensionConfigForm(props: { entry: ExtensionCatalogEntry }) {
   );
 
   const [values, setValues] = createSignal<AutoFormValues>({});
+  // What the selected tab currently has saved, to tell unsaved edits apart.
+  const [savedValues, setSavedValues] = createSignal<AutoFormValues>({});
   const [advancedOpen, setAdvancedOpen] = createSignal(false);
   const [saving, setSaving] = createSignal(false);
   const [error, setError] = createSignal<string | null>(null);
   const [saved, setSaved] = createSignal(false);
-  const [credentialScope, setCredentialScope] = createSignal<"personal" | "team">("team");
+  const [tabScope, setCredentialScope] = createSignal<"personal" | "team">("team");
+  const credentialScope = () => props.scope ?? tabScope();
+  // OAuth extensions without credential fields have no tabs of their own; the OAuth card owns them.
+  const oauthScoped = () => !!entry().oauth && entry().personalSecretFields === undefined;
   let scopeInitialized = false;
   createEffect(() => {
     const current = entry();
@@ -148,7 +167,9 @@ export function ExtensionConfigForm(props: { entry: ExtensionCatalogEntry }) {
     if (!current) return;
     const next: AutoFormValues = {};
     for (const field of fields()) {
-      const value = credentialScope() === "personal"
+      const value = oauthScoped() && credentialScope() === "personal" && field.type === "boolean"
+        ? current.personalConfigValues?.[field.name] === true
+        : credentialScope() === "personal"
         ? current.personalConfigValues?.[field.name] ?? current.configValues[field.name]
         : current.configValues[field.name];
       if (field.secret) {
@@ -166,6 +187,7 @@ export function ExtensionConfigForm(props: { entry: ExtensionCatalogEntry }) {
       }
     }
     setValues(next);
+    setSavedValues(next);
   });
 
   const renderField = (field: AutoFormField) => (
@@ -230,11 +252,10 @@ export function ExtensionConfigForm(props: { entry: ExtensionCatalogEntry }) {
     </div>
   );
 
-  const handleSubmit = async (event: Event) => {
-    event.preventDefault();
-    if (saving()) return;
+  /** Validates and saves the form; returns the refreshed catalog entry. Throws with a user-facing message. */
+  const submit = async (): Promise<ExtensionCatalogEntry | undefined> => {
     const current = entry();
-    if (!current) return;
+    if (!current) return undefined;
 
     const formFields = fields();
     // Guard required fields client-side so a blank required secret doesn't
@@ -247,8 +268,7 @@ export function ExtensionConfigForm(props: { entry: ExtensionCatalogEntry }) {
       return value === undefined || value === "" || value === null;
     });
     if (missing.length > 0) {
-      setError(`Fill in required field: ${missing.map((f) => f.label).join(", ")}`);
-      return;
+      throw new Error(`Fill in required field: ${missing.map((f) => f.label).join(", ")}`);
     }
 
     setSaving(true);
@@ -257,27 +277,56 @@ export function ExtensionConfigForm(props: { entry: ExtensionCatalogEntry }) {
     try {
       const { config: submitted, secrets } = splitAutoFormValues(formFields, values());
       // Send only settings that differ from the team: keeps `$env:` refs intact, and
-      // personal fields left at the team value keep following it.
+      // personal fields left at the team value keep following it. Personal OAuth
+      // settings never follow the team value, so they are sent in full.
       const team = splitAutoFormValues(formFields, teamValues()).config;
-      const config = Object.fromEntries(Object.entries(submitted).filter(([name, value]) => team[name] !== value));
+      const personalOAuth = oauthScoped() && credentialScope() === "personal";
+      const config = personalOAuth ? submitted : Object.fromEntries(Object.entries(submitted).filter(([name, value]) => team[name] !== value));
       const updated = await patchAgentExtension(params.agentId, params.extensionId, {
-        ...(current.personalSecretFields !== undefined ? { credentialScope: credentialScope() } : {}),
+        ...(current.personalSecretFields !== undefined || oauthScoped() ? { credentialScope: credentialScope() } : {}),
         ...(credentialScope() === "team" ? { enabled: true } : {}),
         config,
         secrets,
       });
       const refreshed = updated.find((extension) => extension.id === params.extensionId);
-      if (refreshed && current.personalSecretFields !== undefined) setEntry(refreshed);
+      if (refreshed && (current.personalSecretFields !== undefined || oauthScoped())) setEntry(refreshed);
+      props.onSaved?.(updated);
       setValues((previous) => Object.fromEntries(Object.entries(previous).map(([name, value]) => [name, value !== "" && formFields.some((field) => field.name === name && field.secret) ? REDACTED_SECRET_VALUE : value])));
+      setSavedValues(values());
       setSaved(true);
-    } catch (cause) {
-      setError(
-        cause instanceof Error ? cause.message : "Failed to save configuration."
-      );
+      return refreshed;
     } finally {
       setSaving(false);
     }
   };
+
+  const handleSubmit = async (event: Event) => {
+    event.preventDefault();
+    if (saving()) return;
+    try {
+      await submit();
+    } catch (cause) {
+      setError(
+        cause instanceof Error ? cause.message : "Failed to save configuration."
+      );
+    }
+  };
+
+  // Editable settings the selected tab has not saved yet.
+  const hasUnsaved = () => !teamReadOnly() && fields().some((field) =>
+    !field.secret && (field.type === "boolean"
+      ? Boolean(values()[field.name]) !== Boolean(savedValues()[field.name])
+      : values()[field.name] !== savedValues()[field.name]));
+  props.registerConnectActions?.({
+    hasUnsaved,
+    save: async () => {
+      // Capture the tab before awaiting: the user may switch tabs while saving.
+      const scope = credentialScope();
+      const refreshed = await submit();
+      const oauth = refreshed?.oauth;
+      return (scope === "personal" ? oauth?.personalScopes ?? oauth?.scopes : oauth?.scopes) ?? [];
+    },
+  });
 
   const formBody = () => (
     <>

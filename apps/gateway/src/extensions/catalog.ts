@@ -13,7 +13,8 @@ import {
   hasAgentRootConfig,
 } from "./registry.js";
 import { resolveAgentEnv } from "../config/index.js";
-import { extensionSecretFields, resolveExtensionTokenConfig } from "../credentials/extension-tokens.js";
+import { extensionSecretFields, getPersonalExtensionTokens, overlayOAuthPersonalSettings, resolveExtensionTokenConfig } from "../credentials/extension-tokens.js";
+import { CredentialStore } from "../credentials/store.js";
 
 /** Icon files above this size are skipped rather than inlined as a data URI. */
 const MAX_ICON_BYTES = 256 * 1024;
@@ -125,7 +126,7 @@ export type ExtensionCatalogEntry = {
    */
   configRoutePath: string | null;
   /** OAuth grant required by this extension, when applicable. */
-  oauth: { provider: string; scopes: string[] } | null;
+  oauth: { provider: string; scopes: string[]; personalScopes?: string[] } | null;
   tier: ExtensionConfigTier;
   /**
    * Auto-detected `icon.svg`/`icon.png` from the extension's root directory,
@@ -201,6 +202,13 @@ function configValuesForAgent(
   return config;
 }
 
+/** Config as it resolves for the requester's own grant, whether or not they have connected yet. */
+function personalOAuthInputs(extension: Extension, agent: AgentConfig, config: GatewayConfig, userId: string): [GatewayConfig, AgentConfig, Record<string, string>] {
+  const personal = getPersonalExtensionTokens(new CredentialStore(), agent.id, userId, extension.id);
+  const overlaid = overlayOAuthPersonalSettings(extension, agent, config, personal);
+  return [overlaid.config, overlaid.agent, resolveAgentEnv(overlaid.agent, overlaid.config)];
+}
+
 function toCatalogEntry(
   extension: Extension,
   builtIn: boolean,
@@ -219,7 +227,12 @@ function toCatalogEntry(
     scoped.config,
     resolveAgentEnv(agent, config)
   );
-  const oauth = resolveExtensionOAuth(extension, scoped.config, scoped.agent, resolveAgentEnv(scoped.agent, scoped.config));
+  // Without credential fields the team scopes ignore the requester's personal settings.
+  const teamScoped = extensionSecretFields(extension).length ? scoped : { agent, config };
+  const oauth = resolveExtensionOAuth(extension, teamScoped.config, teamScoped.agent, resolveAgentEnv(teamScoped.agent, teamScoped.config));
+  const personalOAuth = oauth && requesterUserId && !extensionSecretFields(extension).length
+    ? resolveExtensionOAuth(extension, ...personalOAuthInputs(extension, agent, config, requesterUserId))
+    : undefined;
   const knownFields = new Set([...extensionSecretFields(extension), ...Object.keys(configJsonSchema?.properties ?? {})]);
   const validationFields = validation?.valid === false ? validation.errors.map((field) => knownFields.has(field) ? field : "config") : [];
   const extensions = agent.extensions as Record<string, unknown> | undefined;
@@ -243,6 +256,7 @@ function toCatalogEntry(
       ? {
           provider: oauth.provider,
           scopes: [...(oauth.scopes ?? [])],
+          ...(personalOAuth ? { personalScopes: [...(personalOAuth.scopes ?? [])] } : {}),
         }
       : null,
     tier: resolveTier(configRoutePath, configJsonSchema),

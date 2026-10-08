@@ -1,5 +1,6 @@
-import type { AgentConfig, Extension, GatewayConfig } from "@yoplai/shared";
+import { resolveExtensionOAuth, type AgentConfig, type Extension, type GatewayConfig } from "@yoplai/shared";
 import { resolveAgentEnv } from "../config/index.js";
+import { getOAuthService } from "../oauth/service.js";
 import { CredentialStore, type CredentialKey } from "./store.js";
 import { resolveWebBaseUrl } from "../util/web-url.js";
 
@@ -146,7 +147,44 @@ export function resolveExtensionTokenConfig(
   env = resolveAgentEnv(agent, config)
 ): { agent: AgentConfig; config: GatewayConfig; missing: string[]; connectUrl: string } {
   const personal = userId ? getPersonalExtensionTokens(store ?? new CredentialStore(), agent.id, userId, extension.id) : undefined;
-  return overlayExtensionValues(extension, agent, config, personal, env);
+  const scoped = overlayExtensionValues(extension, agent, config, personal, env);
+  if (!extension.oauth || extensionSecretFields(extension).length || !userId) return scoped;
+  const entry = agent.extensions?.[extension.id] as Record<string, unknown> | undefined;
+  if (!entry || entry.enabled === false || !hasPersonalOAuthGrant(extension, agent, config, userId, env)) return scoped;
+  return { ...scoped, ...overlayOAuthPersonalSettings(extension, agent, config, personal) };
+}
+
+/** True when the requester has their own grant for the extension's provider, so it is used instead of the team's. */
+function hasPersonalOAuthGrant(extension: Extension, agent: AgentConfig, config: GatewayConfig, userId: string, env: Record<string, string>): boolean {
+  const requirement = resolveExtensionOAuth(extension, config, agent, env);
+  if (!requirement) return false;
+  try {
+    return !!getOAuthService().getScopedConnection(agent.id, requirement.provider, { type: "personal", userId });
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Apply the requester's personal settings of an OAuth extension over the team config.
+ * A boolean setting they never set is off; it does not inherit the team value.
+ */
+export function overlayOAuthPersonalSettings(
+  extension: Extension,
+  agent: AgentConfig,
+  config: GatewayConfig,
+  personal: PersonalExtensionValues | undefined
+): { agent: AgentConfig; config: GatewayConfig } {
+  const properties = (extension.configJsonSchema?.properties ?? {}) as Record<string, { type?: unknown } | undefined>;
+  const values: Record<string, string | number | boolean> = {};
+  for (const field of extensionPersonalFields(extension)) {
+    const value = personal?.[field] ?? (properties[field]?.type === "boolean" ? false : undefined);
+    if (value !== undefined) values[field] = value;
+  }
+  return {
+    agent: { ...agent, extensions: { ...agent.extensions, [extension.id]: { ...agent.extensions?.[extension.id], ...values } } },
+    config: { ...config, extensions: { ...config.extensions, [extension.id]: { ...(config.extensions?.[extension.id] as Record<string, unknown> | undefined), ...values } } },
+  };
 }
 
 /** Overlay a requester's values on shared config: secrets resolve `$env:` refs, settings keep them. */
