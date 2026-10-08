@@ -18,6 +18,7 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Changed
 
+- Dashboard skill now separates a strict technical contract from design guidance and offers layout archetypes (monitor, brief, worklist, profile, compare, guide), so dashboards vary in shape instead of repeating one skeleton.
 - `dashboard_link` now flags `YOPLAI.link` targets that do not exist in `data/dashboards/`, which otherwise break the page when it renders.
 - Slack: when a long run completes, the progress bubble is deleted instead of being left as a "Completed." message above the reply; failed and interrupted runs still keep their status line.
 - Adding a custom extension "Just me" no longer flashes an OAuth popup when you are already connected to that server from another agent.

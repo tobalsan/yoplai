@@ -16,52 +16,23 @@ Put all page code in one `<script type="module">` after the markup (never a clas
 
 The theme follows the viewer's light/dark mode (`data-theme="light|dark"` overrides it) and inherits deployment colors from `$YOPLAI_HOME/theme.css`. Print styles are A4 and hide filters, search, and buttons. Use DOM APIs or Kit helpers for dynamic content; use `textContent`, never interpolate untrusted values into `innerHTML`. The CSP permits platform `/d-assets/`, inline page script/style, data/blob images, and no network connections.
 
-## Design rules
+## Design guidance
 
-Follow these on every page. They are what makes a dashboard read as calm and finished.
+**Always on** (visual consistency; this is what makes pages feel finished):
 
-1. **Page skeleton:** `header.dk-header` (h1, one-line `.dk-subtitle`, `.dk-meta` with the data date) → `callout` "Needs attention" → optional `segmented` filter → one `kpis` strip → sections.
-2. **Summary before detail.** Open with a `callout` of 1–4 short lines, each with a tone and a count. Link lines to the section that explains them (`href: "#section-id"`). If nothing needs attention, pass `empty: "Nothing needs attention"`.
-3. **KPIs:** one `kpis` strip of 3–6 items, never loose `kpi` cards. Mark exactly one `emphasis: true` (the headline number). Add `delta`, `note`, or `trend` only when you have the data.
-4. **One question per section.** `section.dk-section` > `h2` phrased as the question the block answers ("Which accounts are at risk?"), optional `p.dk-note` with scope, then one chart or table.
-5. **Format every number** with a `format` (`number`, `currency:EUR`, `compact:EUR`, `percent`, `date`). Never show raw `1234567` or ISO dates. `percent` expects a ratio (0.12 → 12.0%).
-6. **States are pills, never raw text.** Map each status value to a tone: `critical` (bad, act now), `warn` (needs attention), `good` (healthy), `info` (neutral fact), `neutral` (inactive/other). Use the same mapping everywhere on the page.
-7. **Color means state.** Charts use the default palette. Only use tone colors (`"var(--dk-negative)"`, `"var(--dk-warning)"`, `"var(--dk-positive)"`) when the series _is_ a state. No custom hex colors, gradients, or emoji.
-8. **Tables:** `limit: 10` for anything longer (users click "Show all"), `search: false` for tables under ~15 rows, and link the name column to the drill-down page with `href`.
-9. **Charts:** ranked or compared values → horizontal bar (sort descending, top 10). Trends → line. Share of a whole with ≤5 parts → donut. Use a heatmap only when both dimensions matter; otherwise use bars. Keep an `h2` above the chart; no ECharts `title`.
-10. **Less is more.** 3–5 sections per page. Drop a block if it doesn't answer a question someone will act on. No decorative text, no instructions to the reader.
+- **Format every number** with a `format` (`number`, `currency:EUR`, `compact:EUR`, `percent`, `date`); raw `1234567` or ISO dates look broken. `percent` expects a ratio (0.12 → 12.0%).
+- **States are pills.** Map each status to a tone: `critical` (bad, act now), `warn` (needs attention), `good` (healthy), `info` (neutral fact), `neutral` (inactive/other). Keep one mapping across the page so colors keep their meaning.
+- **Color means state.** Charts use the default palette; use tone colors (`"var(--dk-negative)"` etc.) only when the series _is_ a state. Use theme tokens only: no custom hex, gradients, or emoji, so dark mode and deployment themes keep working.
+- **Cap long tables** with `limit: 10` ("Show all" expands), `search: false` under ~15 rows, and link the name column to its drill-down with `href`.
+- **No ECharts `title`**; put an `h2` above the chart.
+- **Safe DOM:** `textContent` or Kit helpers for dynamic text, never untrusted `innerHTML`.
 
-## Page skeleton
+**Defaults** (good starting points; drop or swap them when the page has a different job). Page shapes, including when to use a `callout` or `kpis` strip, are in [layouts.md](layouts.md).
 
-```html
-<main>
-  <header class="dk-header">
-    <h1>Customer health</h1>
-    <p class="dk-subtitle">
-      Renewals, risk, and support load for your accounts.
-    </p>
-    <p class="dk-meta"><span id="as-of"></span><span id="count"></span></p>
-  </header>
-  <div id="attention"></div>
-  <div id="kpis"></div>
-  <section class="dk-section" id="at-risk">
-    <h2>Which accounts are at risk?</h2>
-    <p class="dk-note">Health below 60, largest ARR first.</p>
-    <div id="risk-table"></div>
-  </section>
-  <div class="dk-cols">
-    <!-- optional: two sections side by side -->
-    <section class="dk-section">
-      <h2>…</h2>
-      <div id="a" class="dk-chart"></div>
-    </section>
-    <section class="dk-section">
-      <h2>…</h2>
-      <div id="b" class="dk-chart"></div>
-    </section>
-  </div>
-</main>
-```
+- **Sections that answer a question.** `section.dk-section` > `h2` phrased as the question ("Which accounts are at risk?"), optional `p.dk-note` with scope, then one chart or table. About 3–5 sections keeps a page scannable; drop blocks nobody will act on.
+- **Chart choice:** ranked or compared values → horizontal bar (sorted, top 10); trends → line; share of a whole with ≤5 parts → donut; heatmap only when both dimensions matter.
+
+## Layout helpers
 
 Use `.dk-card` for a free-form bordered box and add `.dk-emphasis` to highlight one.
 

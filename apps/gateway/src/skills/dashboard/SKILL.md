@@ -12,20 +12,33 @@ description: >-
 
 Create a dashboard when the answer is recurring, data-heavy, or will be revisited. Answer small one-off questions inline.
 
-## Required workflow
+## Contract
 
-1. Inspect existing `data/dashboards/`, `data/`, and `data/migrations/`. Update existing files in place; do not rewrite a dashboard that only needs a refinement.
-2. For a starter, copy the matching files from this skill's `templates/` directory. Available HR templates: `pto-me`, `pto-team`, `ats`, `candidate`. Available OKR templates: `okr-teams`, `okr-me`, `okr-reports` (see [okr.md](references/okr.md) — OKRs live in their own `data/okr.db`, never in `data/hr.db`, because they get shared more widely than confidential HR data). Available CS templates: `clients`, `client`, `qbr`.
-3. Keep derived SQLite databases under `data/`. Keep their schema in `data/migrations/`; every mutable table has an `updated_at` column. If markdown or another source is authoritative, keep the database rebuildable from it. See [data.md](references/data.md).
-4. Put each page at `data/dashboards/<slug>.html`; `data-db` paths are relative to the workspace root (for example `data/hr.db`). Use live SQL blocks and the Canvas runtime exactly as described in [canvas.md](references/canvas.md). Link only to pages that exist in `data/dashboards/`: `YOPLAI.link` throws on an unknown slug and breaks the page, so create the drill-down page (e.g. copy the template's `client.html`) or leave the link out. Use the Dashboard Kit and ECharts patterns in [kit.md](references/kit.md), and follow its **Design rules** on every page (callout summary first, one KPI strip, formatted numbers, states as pills, capped tables, one question per section).
-5. Aggregate in SQL. For large sources, precompute rollups with scheduled jobs instead of sending raw rows to the browser.
-6. Personalize with `:viewer_email`; use URL parameters for drill-downs. Never put credentials, tokens, private keys, or other secrets in HTML, SQL, URLs, or browser data.
-7. Validate every query before sharing. `dashboard_link` checks without a viewer or URL parameters, so personalized and drill-down queries may appear empty. Substitute a real email/id and run each query with `sqlite3`; confirm expected rows.
-8. Put all page code in one `<script type="module">`, never a classic `<script>` (top-level `const top` or `location` breaks the page). Never use inline `on*=` handlers; use `addEventListener`. Do not build your own browser or JS test harness: `dashboard_link` is the check. After every write or edit, call `dashboard_link` and fix every entry in `problems` and `queryErrors` before sharing the link.
-9. Call `dashboard_link` after every create or update, and every time you share a dashboard link, even one published earlier. Reply on the current channel—web, Slack, Discord, or elsewhere—with the `link` it returns, copied exactly; never rewrite its host or path from memory or other docs. Never say only “it is in your dashboards tab.” For drill-down pages that need URL parameters, share the entry page, or append the real query string to the link itself (for example `<link>?id=acme`); never put parameters only in surrounding text. When summarizing the dashboard in that reply, quote numbers only from the query results you actually ran with `sqlite3`; never compute or estimate figures in prose.
-10. When asked to remove a dashboard, call `dashboard_delete` with its slug. This removes the HTML, stable link, and saved versions while preserving shared `.db` files.
+These hold on every page; the platform, sharing, and data safety depend on them.
 
-## Start from a template
+1. Inspect `data/dashboards/`, `data/`, and `data/migrations/` first. Update existing files in place instead of rewriting.
+2. Pages live at `data/dashboards/<slug>.html`. Load only platform assets (`/d-assets/v2/…`); Canvas CSP blocks everything else. Follow [canvas.md](references/canvas.md) for SQL blocks and the runtime. Link only to pages that exist in `data/dashboards/`: `YOPLAI.link` throws on an unknown slug and breaks the page, so create the drill-down page (e.g. copy the template's `client.html`) or leave the link out.
+3. Put all page code in one `<script type="module">`; a classic script breaks on names like `top` or `location`. Use `addEventListener`, not inline `on*=` handlers. Do not build your own browser test harness; `dashboard_link` is the check.
+4. Keep derived SQLite databases under `data/`, schema in `data/migrations/`, every mutable table with `updated_at`. If markdown or another source is authoritative, keep the database rebuildable from it. See [data.md](references/data.md).
+5. Aggregate in SQL; precompute rollups with scheduled jobs for large sources.
+6. Personalize with `:viewer_email`; use URL parameters for drill-downs. Put no credentials, tokens, keys, or other secrets in HTML, SQL, URLs, or browser data.
+7. Validate every query before sharing. `dashboard_link` runs without a viewer or URL parameters, so personalized queries may look empty. Substitute real values, run each query with `sqlite3`, and confirm it returns the expected rows and scope.
+8. Call `dashboard_link` after every create or update, and every time you share a link. Fix every `problems` and `queryErrors` entry. Reply with the returned `link` copied exactly; do not rebuild host or path from memory. For pages needing URL parameters, share the entry page or append the real query string to the link.
+9. When summarizing in chat, quote only numbers from query results you ran; do not compute or estimate figures in prose.
+10. To remove a dashboard, call `dashboard_delete` with its slug (keeps shared `.db` files).
+11. Maintenance is surgical: update rows and `updated_at` for data corrections, make the smallest edit to existing HTML for presentation changes, re-run affected SQL with real bindings, call `dashboard_link` again.
+
+## Design
+
+Start from what the reader will do with the page: monitor, read, work through a list, look up one thing, compare, or find a starting point. Pick the shape that fits, using [layouts.md](references/layouts.md); mixing shapes is fine. Then use the components and visual conventions in [kit.md](references/kit.md).
+
+Templates are starters for their data workflows (schema, migrations, drill-down links). Their layout is one example, not the house style. For a new kind of page, take the data pieces and choose the layout fresh; a page that opens with a "Needs attention" callout and KPI strip only when it has something to flag reads better than one that always does.
+
+## Starters
+
+Available HR templates: `pto-me`, `pto-team`, `ats`, `candidate`. OKR templates: `okr-teams`, `okr-me`, `okr-reports` (see [okr.md](references/okr.md); OKRs live in their own `data/okr.db`, never `data/hr.db`, because they are shared more widely than confidential HR data). CS templates: `clients`, `client`, `qbr`.
+
+### Copying a template
 
 Copy only the requested dashboard family and its migration/seed files. Run the SQL with `sqlite3`, then validate and publish:
 
@@ -40,7 +53,3 @@ sqlite3 -header data/hr.db "SELECT * FROM pto WHERE lower(employee_email)=lower(
 ```
 
 For the CS wiki workflow, read [cs-wiki.md](references/cs-wiki.md). It rebuilds `data/cs.db` from markdown, then supports `clients` → `client?id=…` → `qbr?id=…&quarter=…`.
-
-## Maintain
-
-When chat supplies a correction, update the relevant SQLite rows and their `updated_at`, then reload the existing link. When layout or presentation changes, make the smallest edit to the existing HTML. Re-run affected SQL with concrete bindings and call `dashboard_link` again.
