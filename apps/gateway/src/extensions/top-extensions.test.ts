@@ -44,6 +44,15 @@ describe("top-extensions store", () => {
     ).toEqual({ extensions: ["gmail"], mcp: ["https://a.test/mcp"] });
   });
 
+  it("labels MCP candidates with their configured displayName", () => {
+    expect(
+      aggregateMcpCandidates([
+        { agentId: "a", name: "googleapis", config: { url: "https://calendarmcp.googleapis.com/mcp/v1", displayName: "Google Calendar" } },
+        { agentId: "b", name: "zeta", config: { url: "https://z.test/mcp", displayName: "  " } },
+      ]).map((candidate) => candidate.displayName)
+    ).toEqual(["Google Calendar", "zeta"]);
+  });
+
   it("aggregates MCP servers across agents by normalized URL, http only", () => {
     expect(
       aggregateMcpCandidates([

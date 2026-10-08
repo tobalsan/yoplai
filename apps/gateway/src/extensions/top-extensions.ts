@@ -67,7 +67,7 @@ function mcpIconFor(url: string, icons: Record<string, string>): string | undefi
 
 /** Group HTTP MCP servers across agents by normalized URL; stdio servers are ignored. */
 export function aggregateMcpCandidates(
-  sources: Array<{ agentId: string; name: string; config: { url?: unknown; command?: unknown } }>,
+  sources: Array<{ agentId: string; name: string; config: { url?: unknown; command?: unknown; displayName?: unknown } }>,
   icons: Record<string, string> = {}
 ): McpCandidate[] {
   const byUrl = new Map<string, { names: Set<string>; agents: Set<string> }>();
@@ -75,7 +75,8 @@ export function aggregateMcpCandidates(
     const url = typeof source.config.url === "string" ? normalizeMcpServerUrl(source.config.url) : null;
     if (!url) continue;
     const group = byUrl.get(url) ?? { names: new Set<string>(), agents: new Set<string>() };
-    group.names.add(source.name);
+    const label = typeof source.config.displayName === "string" && source.config.displayName.trim() ? source.config.displayName.trim() : source.name;
+    group.names.add(label);
     group.agents.add(source.agentId);
     byUrl.set(url, group);
   }
