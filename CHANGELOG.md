@@ -9,6 +9,10 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ## [Unreleased]
 
+### Added
+
+- Adding a custom extension now shows a confirmation toast with the server name.
+
 ### Changed
 
 - Adding a custom extension "Just me" no longer flashes an OAuth popup when you are already connected to that server from another agent.

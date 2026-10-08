@@ -767,7 +767,7 @@ describe("EditAgent", () => {
     fetchMcpServersMock.mockResolvedValue({ canConfigureTeam: true, servers: [
       { name: "docs", type: "http", url: "https://docs.test/mcp", auth: "oauth", state: "disconnected", personalState: "disconnected", readOnly: false },
     ] });
-    pending.resolve({ server: {}, authorizationUrl: "https://provider.test/authorize" });
+    pending.resolve({ server: { name: "docs" }, authorizationUrl: "https://provider.test/authorize" });
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(popup.location.replace).toHaveBeenCalledWith("https://provider.test/authorize");
     popup.closed = true;
@@ -777,11 +777,12 @@ describe("EditAgent", () => {
   });
 
   describe("adding a custom extension when already connected", () => {
-    async function submitAdd(url: string, scope?: "team") {
+    async function submitAdd(url: string, scope?: "team", arrange?: () => void) {
       setCapabilitiesForTests({ forkedAgents: false });
       setSession("user");
       fetchAgentsMock.mockResolvedValue([agent({ id: "scribe" })]);
       addMcpServerMock.mockResolvedValue({ server: { name: "docs" } });
+      arrange?.();
       await mountEdit("scribe");
       Array.from(container.querySelectorAll<HTMLButtonElement>("button")).find((button) => button.textContent === "Add custom extension")!.click();
       if (scope) {
@@ -808,6 +809,19 @@ describe("EditAgent", () => {
       const open = vi.spyOn(window, "open").mockReturnValue({ close: vi.fn() } as unknown as Window);
       await submitAdd("https://docs.test/mcp");
       expect(open).toHaveBeenCalledTimes(1);
+    });
+
+    it("shows a success toast naming the added server", async () => {
+      vi.spyOn(window, "open").mockReturnValue({ close: vi.fn() } as unknown as Window);
+      await submitAdd("https://docs.test/mcp");
+      expect(container.querySelector('[data-testid="toast-success"]')?.textContent).toContain("Added Docs.");
+    });
+
+    it("shows no success toast when the add fails", async () => {
+      vi.spyOn(window, "open").mockReturnValue({ close: vi.fn() } as unknown as Window);
+      await submitAdd("https://docs.test/mcp", undefined, () => addMcpServerMock.mockRejectedValue(new Error("nope")));
+      expect(container.querySelector('[data-testid="toast-success"]')).toBeNull();
+      expect(container.querySelector(".mcp-ext-error")?.textContent).toContain("nope");
     });
 
     it("always opens the OAuth popup for team scope", async () => {

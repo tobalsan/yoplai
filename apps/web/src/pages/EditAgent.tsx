@@ -25,6 +25,7 @@ import {
 } from "../api/teams";
 import { useSession } from "../auth/client";
 import { capabilities, isExtensionEnabled } from "../lib/capabilities";
+import { ToastNotification } from "../components/ui/Toast";
 import { SchedulesPanel } from "./SchedulesPanel";
 import { AgentConnectionsPanel } from "../components/AgentConnectionsPanel";
 import { McpExtensionCard, MCP_EXTENSION_STYLES } from "../components/McpExtensionCard";
@@ -275,6 +276,7 @@ export function EditAgent() {
   const [mcpUrl, setMcpUrl] = createSignal("");
   const [mcpScope, setMcpScope] = createSignal<McpScope>("personal");
   const [mcpError, setMcpError] = createSignal<string>();
+  const [mcpAddedToast, setMcpAddedToast] = createSignal<string>();
   const [mcpBusy, setMcpBusy] = createSignal(false);
   createEffect(() => {
     if (!session().isPending && !session().data?.user) setMcpScope("team");
@@ -338,6 +340,7 @@ export function EditAgent() {
       const result = await addMcpServer(targetId, url.href, mcpScope());
       setAddOpen(false);
       setMcpUrl("");
+      setMcpAddedToast(`Added ${mcpDisplayName(result.server.name, result.server.title)}.`);
       if (result.authorizationUrl) {
         if (popup && !popup.closed) popup.location.replace(result.authorizationUrl);
         else if (!popup) window.location.assign(result.authorizationUrl);
@@ -491,6 +494,9 @@ export function EditAgent() {
             <Show when={!addOpen() ? mcpError() : undefined}>{(message) => <p role="alert" class="mcp-ext-error">{message()}</p>}</Show>
             <Show when={mcpServers.error}>
               <p role="alert" class="mcp-ext-error">Failed to load MCP servers. <button type="button" onClick={() => void refetchMcpServers()}>Retry</button></p>
+            </Show>
+            <Show when={mcpAddedToast()}>
+              {(message) => <ToastNotification message={message()} variant="success" onClose={() => setMcpAddedToast(undefined)} />}
             </Show>
             <Show when={addOpen()}>
               <div class="mcp-ext-dialog-backdrop" onClick={(event) => { if (event.target === event.currentTarget && !mcpBusy()) setAddOpen(false); }}>
