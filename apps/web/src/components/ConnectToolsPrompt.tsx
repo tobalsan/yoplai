@@ -362,7 +362,9 @@ export function ConnectToolsPrompt() {
                       </div>
                       <div class="connect-prompt-info">
                         <span class="connect-prompt-name">{row.name}</span>
-                        <span class="connect-prompt-hint">Recommended by your admin</span>
+                        <Show when={row.description}>
+                          {(text) => <span class="connect-prompt-hint" title={text()}>{text()}</span>}
+                        </Show>
                       </div>
                       <Show
                         when={isActionable(row.state)}
@@ -508,7 +510,14 @@ const CONNECT_PROMPT_STYLES = `
   .connect-prompt-icon img { width: 20px; height: 20px; object-fit: contain; }
   .connect-prompt-info { flex: 1; min-width: 0; display: flex; flex-direction: column; }
   .connect-prompt-name { font-weight: 600; }
-  .connect-prompt-hint { color: var(--text-secondary); font-size: 0.75rem; }
+  .connect-prompt-hint {
+    color: var(--text-secondary);
+    font-size: 0.75rem;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
   .connect-prompt-status { color: var(--success, #22c55e); font-size: 0.85rem; font-weight: 600; white-space: nowrap; }
   .connect-prompt-action {
     padding: 6px 14px;

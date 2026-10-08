@@ -155,7 +155,7 @@ describe("ConnectToolsPrompt", () => {
     m.fetchAgentExtensions.mockReset().mockResolvedValue([
       ext({ id: "exa", displayName: "Exa", configured: false, requiredSecrets: ["k"] }),
       ext({ id: "notion", displayName: "Notion", enabled: false, requiredSecrets: ["k"], personalSecretFields: ["k"], personalConfigValues: { region: "eu" } }),
-      ext({ id: "gmail", displayName: "Gmail", oauth: { provider: "google", scopes: ["a"], personalScopes: ["p"] }, oauthConnected: false }),
+      ext({ id: "gmail", displayName: "Gmail", description: "Read your mail", oauth: { provider: "google", scopes: ["a"], personalScopes: ["p"] }, oauthConnected: false }),
     ]);
     container = document.createElement("div");
     document.body.appendChild(container);
@@ -178,6 +178,9 @@ describe("ConnectToolsPrompt", () => {
       "Browse all connectors or add a custom one"
     );
     expect(container.textContent).toContain("Want to see more?");
+    expect(container.querySelector('[data-row="ext:gmail"] .connect-prompt-hint')?.textContent).toBe("Read your mail");
+    expect(container.querySelector('[data-row="ext:exa"] .connect-prompt-hint')).toBeNull();
+    expect(container.textContent).not.toContain("Recommended by your admin");
     const continueButton = Array.from(container.querySelectorAll("button")).find((b) => b.textContent === "Continue")!;
     continueButton.click();
     await flush();
