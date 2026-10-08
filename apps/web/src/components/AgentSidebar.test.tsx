@@ -10,6 +10,7 @@ const [pathname, setPathname] = createSignal("/projects");
 const fetchProjectsMock = vi.fn<() => Promise<unknown[]>>();
 const fetchAgentSessionsMock = vi.fn(async () => ({ items: [] as unknown[] }));
 const navigateMock = vi.fn();
+const fetchTopExtensionsMock = vi.fn(async () => ({ extensions: ["exa"], mcp: [] as string[] }));
 
 class UnauthenticatedError extends Error {
   constructor() {
@@ -26,6 +27,11 @@ vi.mock("../api", () => ({
   UnauthenticatedError,
 }));
 
+vi.mock("../api/top-extensions", () => ({
+  EMPTY_TOP_EXTENSIONS: { extensions: [], mcp: [] },
+  fetchTopExtensions: fetchTopExtensionsMock,
+}));
+
 vi.mock("@solidjs/router", () => ({
   A: (props: Record<string, unknown>) => <a {...props} />,
   useLocation: () => ({
@@ -38,6 +44,7 @@ vi.mock("@solidjs/router", () => ({
 }));
 
 const { AgentSidebar } = await import("./AgentSidebar");
+const { connectPromptRequest, clearConnectPromptRequest } = await import("../onboarding/state");
 const { resetCapabilitiesForTests, setCapabilitiesForTests } = await import(
   "../lib/capabilities"
 );
@@ -320,5 +327,72 @@ describe("AgentSidebar", () => {
 
     dispose();
     vi.useRealTimers();
+  });
+
+  it("shows Connect tools after Restart tour on agent chat routes and opens the prompt", async () => {
+    setCapabilitiesForTests({
+      multiUser: true,
+      user: { id: "u1", role: "user" },
+      extensions: { projects: true },
+    } as never);
+    setPathname("/chat/scribe");
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const [collapsed] = createSignal(false);
+    const dispose = render(
+      () => <AgentSidebar collapsed={collapsed} onToggleCollapse={() => {}} />,
+      container
+    );
+    await vi.waitFor(() => expect(container.textContent).toContain("Connect tools"));
+    // Both links share one row.
+    const labels = Array.from(container.querySelectorAll<HTMLButtonElement>(".tour-links > button.tour-restart")).map(
+      (b) => b.textContent?.trim()
+    );
+    expect(labels).toEqual(["Restart tour", "Connect tools"]);
+    container.querySelectorAll<HTMLButtonElement>("button.tour-restart")[1].click();
+    expect(connectPromptRequest()?.agentId).toBe("scribe");
+    clearConnectPromptRequest();
+    dispose();
+  });
+
+  it("hides Connect tools when no extension is starred as top", async () => {
+    fetchTopExtensionsMock.mockResolvedValueOnce({ extensions: [], mcp: [] });
+    setCapabilitiesForTests({
+      multiUser: true,
+      user: { id: "u1", role: "user" },
+      extensions: { projects: true },
+    } as never);
+    setPathname("/chat/scribe");
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const [collapsed] = createSignal(false);
+    const dispose = render(
+      () => <AgentSidebar collapsed={collapsed} onToggleCollapse={() => {}} />,
+      container
+    );
+    await vi.waitFor(() => expect(fetchTopExtensionsMock).toHaveBeenCalled());
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(container.textContent).toContain("Restart tour");
+    expect(container.textContent).not.toContain("Connect tools");
+    dispose();
+  });
+
+  it("hides Connect tools outside agent chat routes", () => {
+    setCapabilitiesForTests({
+      multiUser: true,
+      user: { id: "u1", role: "user" },
+      extensions: { projects: true },
+    } as never);
+    setPathname("/projects");
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const [collapsed] = createSignal(false);
+    const dispose = render(
+      () => <AgentSidebar collapsed={collapsed} onToggleCollapse={() => {}} />,
+      container
+    );
+    expect(container.textContent).toContain("Restart tour");
+    expect(container.textContent).not.toContain("Connect tools");
+    dispose();
   });
 });

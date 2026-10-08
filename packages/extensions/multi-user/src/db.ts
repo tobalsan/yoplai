@@ -150,6 +150,18 @@ export function ensureUserOnboardingTable(db: Database.Database): void {
   `);
 }
 
+export function ensureUserAgentConnectPromptTable(db: Database.Database): void {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS user_agent_connect_prompt (
+      userId TEXT NOT NULL,
+      agentId TEXT NOT NULL,
+      at TEXT NOT NULL,
+      PRIMARY KEY (userId, agentId),
+      FOREIGN KEY (userId) REFERENCES user(id) ON DELETE CASCADE
+    );
+  `);
+}
+
 export function ensureAgentForksTable(db: Database.Database): void {
   // One row per forked pool agent. The uniqueness constraints encode the
   // domain invariants directly:
@@ -350,6 +362,7 @@ export function initializeMultiUserDatabase(
   ensureTeamsTable(db);
   ensureTeamMembersTable(db);
   ensureUserOnboardingTable(db);
+  ensureUserAgentConnectPromptTable(db);
   ensureAgentForksTable(db);
   ensureMigrationsTable(db);
   // Convert legacy allowlist rows into the team model once, at bootstrap, so

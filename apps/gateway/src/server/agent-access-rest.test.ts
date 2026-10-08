@@ -65,6 +65,7 @@ async function hasAgentAccessImpl(
   return ACCESS[agentId]?.has(authContext.user.id) ?? false;
 }
 
+const connectPromptRows = new Map<string, string>();
 const onboardingRows = new Map<string, { status: string; at: string }>();
 
 describe("REST per-agent access gating (multi-user)", () => {
@@ -159,6 +160,21 @@ describe("REST per-agent access gating (multi-user)", () => {
           },
         validateWebSocketRequest: async () => null,
         getMultiUserRuntime: () => ({
+          connectPrompt: {
+            get: (u: string, a: string) => {
+              const at = connectPromptRows.get(`${u}:${a}`);
+              return at ? { seen: true, at } : { seen: false, at: null };
+            },
+            markSeen: (u: string, a: string) => {
+              const at = "2026-01-01T00:00:00.000Z";
+              connectPromptRows.set(`${u}:${a}`, at);
+              return { seen: true, at };
+            },
+            clear: (u: string, a: string) => {
+              connectPromptRows.delete(`${u}:${a}`);
+              return { seen: false, at: null };
+            },
+          },
           onboarding: {
             get: (id: string) => onboardingRows.get(id) ?? { status: null, at: null },
             set: (id: string, status: string) => {
@@ -371,5 +387,40 @@ describe("REST per-agent access gating (multi-user)", () => {
     expect(await (await fetch(url, { headers: authHeader("alice") })).json()).toMatchObject({ status: "skipped" });
     const del = await fetch(url, { method: "DELETE", headers: authHeader("alice") });
     expect(await del.json()).toMatchObject({ status: null });
+  });
+
+  it("stores connect-prompt seen state per user and agent", async () => {
+    const url = (agent: string) => `http://127.0.0.1:${port}/api/me/connect-prompt/${agent}`;
+    const read = async (agent: string, user: string, method = "GET") =>
+      (await fetch(url(agent), { method, headers: authHeader(user) })).json();
+    expect(await read("allowed-agent", "alice")).toEqual({ supported: true, seen: false, at: null });
+    expect(await read("allowed-agent", "alice", "PUT")).toMatchObject({ supported: true, seen: true });
+    expect(await read("allowed-agent", "alice")).toMatchObject({ seen: true });
+    expect(await read("blocked-agent", "alice")).toMatchObject({ seen: false });
+    expect(await read("allowed-agent", "bob")).toMatchObject({ seen: false });
+    expect(await read("allowed-agent", "alice", "DELETE")).toEqual({ supported: true, seen: false, at: null });
+  });
+
+  it("gates admin top-extensions to superadmin and serves the public list", async () => {
+    const base = `http://127.0.0.1:${port}/api`;
+    const json = (h: Record<string, string>) => ({ ...h, "content-type": "application/json" });
+    expect(await (await fetch(`${base}/top-extensions`, { headers: authHeader("alice") })).json()).toEqual({ extensions: [], mcp: [] });
+    for (const role of ["user", "admin"]) {
+      expect((await fetch(`${base}/admin/top-extensions`, { headers: authHeader("u", role) })).status).toBe(403);
+      const put = await fetch(`${base}/admin/top-extensions`, { method: "PUT", headers: json(authHeader("u", role)), body: JSON.stringify({ extensions: [], mcp: [] }) });
+      expect(put.status).toBe(403);
+    }
+    const listed = await (await fetch(`${base}/admin/top-extensions`, { headers: authHeader("root", "superadmin") })).json() as { candidates: { extensions: { id: string }[]; mcp: unknown[] } };
+    expect(listed.candidates.extensions.length).toBeGreaterThan(0);
+    expect(listed.candidates.extensions.some((e) => e.id === "mcp")).toBe(false);
+    const known = listed.candidates.extensions[0].id;
+    const bad = await fetch(`${base}/admin/top-extensions`, { method: "PUT", headers: json(authHeader("root", "superadmin")), body: "{}" });
+    expect(bad.status).toBe(400);
+    const put = await fetch(`${base}/admin/top-extensions`, {
+      method: "PUT", headers: json(authHeader("root", "superadmin")),
+      body: JSON.stringify({ extensions: [known, known, "ghost"], mcp: ["HTTPS://A.test/mcp/", "npx x"] }),
+    });
+    expect(await put.json()).toEqual({ extensions: [known], mcp: ["https://a.test/mcp"] });
+    expect(await (await fetch(`${base}/top-extensions`, { headers: authHeader("alice") })).json()).toEqual({ extensions: [known], mcp: ["https://a.test/mcp"] });
   });
 });

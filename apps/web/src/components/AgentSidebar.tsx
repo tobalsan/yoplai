@@ -4,6 +4,7 @@ import {
   Suspense,
   Show,
   createEffect,
+  createResource,
   createSignal,
   onCleanup,
   lazy,
@@ -11,7 +12,8 @@ import {
 import { A, useLocation, useNavigate } from "@solidjs/router";
 import { theme, toggleTheme } from "../theme";
 import { capabilities, isExtensionEnabled } from "../lib/capabilities";
-import { restartTour } from "../onboarding/state";
+import { openConnectPrompt, restartTour } from "../onboarding/state";
+import { EMPTY_TOP_EXTENSIONS, fetchTopExtensions } from "../api/top-extensions";
 import { stripBase } from "../lib/path";
 import {
   deleteAgentSession,
@@ -99,6 +101,16 @@ function resetTitle(wrap: HTMLElement): void {
 export function AgentSidebar(props: AgentSidebarProps) {
   const location = useLocation();
   const navigate = useNavigate();
+  // "Connect tools" only makes sense once a superadmin starred something;
+  // re-read on each agent chat so new stars show without a reload.
+  const [topExtensions] = createResource(
+    () => (capabilities.multiUser && capabilities.user ? chatRouteSession(location.pathname, location.search).agentId : null),
+    () => fetchTopExtensions().catch(() => EMPTY_TOP_EXTENSIONS)
+  );
+  const hasTopExtensions = () => {
+    const top = topExtensions();
+    return !!top && top.extensions.length + top.mcp.length > 0;
+  };
   const [sessions, setSessions] = createSignal<SessionSummary[]>([]);
   const [search, setSearch] = createSignal("");
   const [searchOpen, setSearchOpen] = createSignal(false);
@@ -254,11 +266,11 @@ export function AgentSidebar(props: AgentSidebarProps) {
             </Show>
             <Show
               when={
-                capabilities.multiUser && hasAdminRole(capabilities.user?.role)
+                !capabilities.multiUser || hasAdminRole(capabilities.user?.role)
               }
             >
               <A
-                href="/admin/users"
+                href={capabilities.multiUser ? "/admin/users" : "/admin/extensions"}
                 class="nav-link"
                 classList={{
                   active: stripBase(location.pathname).startsWith("/admin/"),
@@ -415,17 +427,30 @@ export function AgentSidebar(props: AgentSidebarProps) {
             </span>
           </button>
           <Show when={capabilities.multiUser && capabilities.user}>
-            <button
-              type="button"
-              class="tour-restart"
-              onClick={() => {
-                void restartTour()
-                  .then(() => navigate("/"))
-                  .catch(() => undefined);
-              }}
-            >
-              Restart tour
-            </button>
+            <div class="tour-links">
+              <button
+                type="button"
+                class="tour-restart"
+                onClick={() => {
+                  void restartTour()
+                    .then(() => navigate("/"))
+                    .catch(() => undefined);
+                }}
+              >
+                Restart tour
+              </button>
+              <Show when={hasTopExtensions() && chatRouteSession(location.pathname, location.search).agentId}>
+                {(agentId) => (
+                  <button
+                    type="button"
+                    class="tour-restart"
+                    onClick={() => openConnectPrompt(agentId())}
+                  >
+                    Connect tools
+                  </button>
+                )}
+              </Show>
+            </div>
           </Show>
         </div>
       </div>
@@ -749,9 +774,15 @@ export function AgentSidebar(props: AgentSidebarProps) {
           color: var(--text-primary);
         }
 
+        .tour-links {
+          display: flex;
+          gap: 10px;
+          margin: 2px 0 0 10px;
+        }
+
         .tour-restart {
           display: block;
-          margin: 2px 0 0 10px;
+          margin: 0;
           padding: 0;
           border: none;
           background: none;

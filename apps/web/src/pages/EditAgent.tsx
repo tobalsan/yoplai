@@ -8,6 +8,8 @@ import {
   Show,
 } from "solid-js";
 import { A, useParams } from "@solidjs/router";
+import { normalizeMcpServerUrl } from "@yoplai/shared/mcp-url";
+import { EMPTY_TOP_EXTENSIONS, fetchTopExtensions } from "../api/top-extensions";
 import { fetchAgentDashboards, fetchAgents, fetchPool } from "../api";
 import type { AgentDashboard } from "../api/agents";
 import {
@@ -355,13 +357,21 @@ export function EditAgent() {
     }
   };
 
-  // Normal extensions and MCP servers share one list, ordered by display name.
+  const [topExtensions] = createResource(() => fetchTopExtensions().catch(() => EMPTY_TOP_EXTENSIONS));
+
+  // Normal extensions and MCP servers share one list: admin-flagged Top first, then by display name.
   const extensionListItems = createMemo(() => {
-    const items: { name: string; ext?: ExtensionCatalogEntry; server?: McpServer }[] = [
-      ...extensionCatalog().filter((ext) => ext.id !== "mcp").map((ext) => ({ name: ext.displayName, ext })),
-      ...(mcpStatus()?.servers ?? []).map((server) => ({ name: mcpDisplayName(server.name, server.title), server })),
+    const top = topExtensions() ?? EMPTY_TOP_EXTENSIONS;
+    const topIds = new Set(top.extensions);
+    const topUrls = new Set(top.mcp);
+    const items: { name: string; top: boolean; ext?: ExtensionCatalogEntry; server?: McpServer }[] = [
+      ...extensionCatalog().filter((ext) => ext.id !== "mcp").map((ext) => ({ name: ext.displayName, top: topIds.has(ext.id), ext })),
+      ...(mcpStatus()?.servers ?? []).map((server) => {
+        const url = server.url ? normalizeMcpServerUrl(server.url) : null;
+        return { name: mcpDisplayName(server.name, server.title), top: url !== null && topUrls.has(url), server };
+      }),
     ];
-    return items.sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: "base" }));
+    return items.sort((a, b) => Number(b.top) - Number(a.top) || a.name.localeCompare(b.name, undefined, { sensitivity: "base" }));
   });
 
   // Set up = credentials exist for Just me or Whole team (OAuth connection or

@@ -9,6 +9,7 @@ Gateway starts Solid.js UI by default. UI discovers enabled features from `/api/
 - `/chat/:agentId` — direct agent chat
 - `/projects` — project lifecycle when projects/board enabled
 - `/teams` and `/admin/users` — multi-user administration when enabled
+- `/admin/extensions` — the Admin page's superadmin **Top extensions** tab (beside **User management**): starred extensions/MCP servers sort first and are suggested in the chat **Connect <agent> to your tools** prompt (shown once per agent, never over a tour step; reopen via **Connect tools** in the sidebar)
 
 Persistent left navigation adapts to capabilities and role. Branding comes from capability config when set.
 

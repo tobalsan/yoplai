@@ -4,6 +4,8 @@ import path from "node:path";
 import { Readable } from "node:stream";
 import { Hono, type Context } from "hono";
 import { resolveDefaultProjectManager, resolveHomeDir } from "@yoplai/shared";
+import { readMcpServerSources } from "../capabilities/catalog.js";
+import { aggregateMcpCandidates, readMcpIconCache, readTopExtensions, sanitizeTopExtensions, writeTopExtensions } from "../extensions/top-extensions.js";
 import {
   getActiveAgents,
   getAgent,
@@ -172,6 +174,33 @@ api.delete("/me/onboarding", async (c) => {
   return c.json({ supported: true, ...ctx.store.clear(ctx.userId) });
 });
 
+// Per-user, per-agent "Connect your tools" prompt seen flag (auth.db). Multi-user only.
+async function resolveConnectPromptStore(c: Context) {
+  const userId = await getRequestUserId(c);
+  if (!userId) return null;
+  const { getMultiUserRuntime } = await import("@yoplai/extension-multi-user");
+  const store = getMultiUserRuntime()?.connectPrompt;
+  return store ? { userId, store } : null;
+}
+
+api.get("/me/connect-prompt/:agentId", async (c) => {
+  const ctx = await resolveConnectPromptStore(c);
+  if (!ctx) return c.json({ supported: false, seen: true, at: null });
+  return c.json({ supported: true, ...ctx.store.get(ctx.userId, c.req.param("agentId")) });
+});
+
+api.put("/me/connect-prompt/:agentId", async (c) => {
+  const ctx = await resolveConnectPromptStore(c);
+  if (!ctx) return c.json({ supported: false, seen: true, at: null });
+  return c.json({ supported: true, ...ctx.store.markSeen(ctx.userId, c.req.param("agentId")) });
+});
+
+api.delete("/me/connect-prompt/:agentId", async (c) => {
+  const ctx = await resolveConnectPromptStore(c);
+  if (!ctx) return c.json({ supported: false, seen: true, at: null });
+  return c.json({ supported: true, ...ctx.store.clear(ctx.userId, c.req.param("agentId")) });
+});
+
 const STAFF_ROLES = ["admin", "superadmin"];
 
 function hasAdminRole(role: unknown): boolean {
@@ -179,6 +208,49 @@ function hasAdminRole(role: unknown): boolean {
     return role.some((r) => typeof r === "string" && STAFF_ROLES.includes(r));
   return typeof role === "string" && STAFF_ROLES.includes(role);
 }
+
+async function isSuperadminRequest(c: Context): Promise<boolean> {
+  if (!isExtensionLoaded("multiUser")) return true;
+  const role = (await getRequestAuthContext(c))?.user.role;
+  return Array.isArray(role) ? role.includes("superadmin") : role === "superadmin";
+}
+
+api.get("/top-extensions", (c) => c.json(readTopExtensions()));
+
+async function listTopExtensionCandidates() {
+  const config = loadConfig();
+  const sampleAgent = config.agents[0] ?? config.pool?.[0] ?? ({ id: "_", name: "_" } as AgentConfig);
+  const catalog = await buildExtensionCatalog(config, sampleAgent, { configurable: false });
+  const extensions = catalog.map((entry) => ({
+    id: entry.id,
+    displayName: entry.displayName,
+    description: entry.description,
+    ...(entry.iconDataUri ? { iconDataUri: entry.iconDataUri } : {}),
+  }));
+  const mcp = aggregateMcpCandidates(await readMcpServerSources(config.agents), readMcpIconCache());
+  return { extensions, mcp };
+}
+
+api.get("/admin/top-extensions", async (c) => {
+  if (!(await isSuperadminRequest(c))) return c.json({ error: "forbidden" }, 403);
+  return c.json({ ...readTopExtensions(), candidates: await listTopExtensionCandidates() });
+});
+
+api.put("/admin/top-extensions", async (c) => {
+  if (!(await isSuperadminRequest(c))) return c.json({ error: "forbidden" }, 403);
+  const body = await c.req.json().catch(() => null);
+  if (!body || typeof body !== "object" || !Array.isArray((body as { extensions?: unknown }).extensions) || !Array.isArray((body as { mcp?: unknown }).mcp)) {
+    return c.json({ error: "extensions and mcp must be arrays" }, 400);
+  }
+  const { extensions: candidates } = await listTopExtensionCandidates();
+  const before = readTopExtensions();
+  const next = sanitizeTopExtensions(body as { extensions: unknown; mcp: unknown }, new Set(candidates.map((entry) => entry.id)));
+  writeTopExtensions(next);
+  recordSettingsChange({ ...await getAuditActor(c), action: "top_extensions.update", targetType: "top-extensions",
+    changes: diffSettings(before, next, []),
+  });
+  return c.json(next);
+});
 
 async function canViewAgentPrivateMeta(c: Context): Promise<boolean> {
   if (!isExtensionLoaded("multiUser")) return true;

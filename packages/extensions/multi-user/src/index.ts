@@ -12,6 +12,7 @@ import { createAgentAssignmentStore } from "./assignments.js";
 import { createTeamStore } from "./teams.js";
 import { createMembershipStore } from "./membership.js";
 import { createOnboardingStore } from "./onboarding.js";
+import { createConnectPromptStore } from "./connect-prompt.js";
 import { createForkStore } from "./forks.js";
 import { createAccessResolver } from "./access.js";
 import { createPoolCatalogResolver } from "./catalog.js";
@@ -69,6 +70,7 @@ export {
   getUserSessionsPath,
 } from "./isolation.js";
 export type { OnboardingState, OnboardingStatus } from "./onboarding.js";
+export type { ConnectPromptState, ConnectPromptStore } from "./connect-prompt.js";
 export { initializeMultiUserDatabase, getAuthDbPath } from "./db.js";
 export { createMultiUserAuth } from "./auth.js";
 export type { MultiUserAuth } from "./auth.js";
@@ -182,6 +184,7 @@ export const multiUserExtension: Extension = {
       membership,
       forks,
       onboarding: createOnboardingStore(db),
+      connectPrompt: createConnectPromptStore(db),
       access,
       catalog,
       getPoolAgentIds: () =>

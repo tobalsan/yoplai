@@ -20,6 +20,11 @@
       "import": "./dist/tool-labels.js",
       "types": "./dist/tool-labels.d.ts"
     },
+    "./mcp-url": {
+      "development": "./src/mcp-url.ts",
+      "import": "./dist/mcp-url.js",
+      "types": "./dist/mcp-url.d.ts"
+    },
     "./no-reply": {
       "development": "./src/no-reply.ts",
       "import": "./dist/no-reply.js",

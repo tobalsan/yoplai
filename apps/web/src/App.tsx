@@ -17,6 +17,7 @@ import { ChatView } from "./components/ChatView";
 import { QuickChatFAB } from "./components/QuickChatFAB";
 import { QuickChatOverlay } from "./components/QuickChatOverlay";
 import { OnboardingTour } from "./onboarding/OnboardingTour";
+import { ConnectToolsPrompt } from "./components/ConnectToolsPrompt";
 import { LeftNavShell } from "./components/LeftNavShell";
 import { AgentCatalog } from "./pages/AgentCatalog";
 import { EditAgent } from "./pages/EditAgent";
@@ -49,6 +50,7 @@ import { stripBase } from "./lib/path";
 const LazyAuthGuard = lazy(() => import("./auth/AuthGuard"));
 const LazyLoginPage = lazy(() => import("./pages/Login"));
 const LazyAdminUsersPage = lazy(() => import("./pages/admin/Users"));
+const LazyAdminExtensionsPage = lazy(() => import("./pages/admin/Extensions"));
 
 const QUICK_CHAT_LAST_AGENT_KEY = "yoplai:quick-chat-last-agent";
 const LEGACY_QUICK_CHAT_LAST_AGENT_KEY = "aihub:quick-chat-last-agent";
@@ -236,6 +238,7 @@ function Layout(props: { children?: JSX.Element }) {
           <ImpersonationBanner />
           {props.children}
           <OnboardingTour />
+          <ConnectToolsPrompt />
         </div>
       </Show>
       <Show
@@ -380,6 +383,16 @@ function AdminUsersRouteShell() {
   );
 }
 
+function AdminExtensionsRouteShell() {
+  return (
+    <LeftNavShell>
+      <Suspense>
+        <LazyAdminExtensionsPage />
+      </Suspense>
+    </LeftNavShell>
+  );
+}
+
 export default function App() {
   const base = import.meta.env.BASE_URL;
   return (
@@ -451,6 +464,14 @@ export default function App() {
         component={() => (
           <GuardedRoute>
             <AdminUsersRouteShell />
+          </GuardedRoute>
+        )}
+      />
+      <Route
+        path="/admin/extensions"
+        component={() => (
+          <GuardedRoute>
+            <AdminExtensionsRouteShell />
           </GuardedRoute>
         )}
       />

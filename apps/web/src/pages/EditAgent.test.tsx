@@ -27,6 +27,7 @@ const {
   useSessionMock,
   useParamsMock,
   navigateMock,
+  fetchTopExtensionsMock,
 } = vi.hoisted(() => ({
   fetchPoolMock: vi.fn(),
   fetchAgentsMock: vi.fn(),
@@ -46,6 +47,12 @@ const {
   useSessionMock: vi.fn(),
   useParamsMock: vi.fn(),
   navigateMock: vi.fn(),
+  fetchTopExtensionsMock: vi.fn(),
+}));
+
+vi.mock("../api/top-extensions", () => ({
+  EMPTY_TOP_EXTENSIONS: { extensions: [], mcp: [] },
+  fetchTopExtensions: fetchTopExtensionsMock,
 }));
 
 vi.mock("../api", () => ({
@@ -179,6 +186,7 @@ beforeEach(() => {
   useSessionMock.mockReset();
   useParamsMock.mockReset();
   navigateMock.mockReset();
+  fetchTopExtensionsMock.mockReset().mockResolvedValue({ extensions: [], mcp: [] });
   container = document.createElement("div");
   document.body.appendChild(container);
 });
@@ -565,6 +573,45 @@ describe("EditAgent", () => {
       "/agents/scribe/extensions/drive",
       "/agents/scribe/extensions/jira",
       "/agents/scribe/extensions/mailer",
+    ]);
+  });
+
+  it("sorts Top extensions and Top MCP servers first, then by name", async () => {
+    setCapabilitiesForTests({ forkedAgents: false });
+    setSession("user");
+    fetchAgentsMock.mockResolvedValue([agent({ id: "scribe" })]);
+    const base = {
+      builtIn: false,
+      configured: true,
+      configJsonSchema: null,
+      requiredSecrets: [],
+      advancedConfigFields: [],
+      configRoutePath: null,
+      description: "",
+      enabled: true,
+      tier: "toggle-only",
+    };
+    fetchAgentExtensionsMock.mockResolvedValue([
+      { ...base, id: "alpha", displayName: "Alpha" },
+      { ...base, id: "beta", displayName: "Beta" },
+      { ...base, id: "zeta", displayName: "Zeta" },
+    ]);
+    fetchMcpServersMock.mockResolvedValue({
+      canConfigureTeam: true,
+      servers: [
+        { name: "linear", type: "http", url: "https://mcp.linear.app/mcp/?x=1", auth: "oauth", state: "connected", readOnly: false },
+        { name: "aaa", type: "http", url: "https://aaa.example/mcp", auth: "oauth", state: "connected", readOnly: false },
+      ],
+    });
+    fetchTopExtensionsMock.mockResolvedValue({ extensions: ["zeta"], mcp: ["https://mcp.linear.app/mcp"] });
+    await mountEdit("scribe");
+
+    expect(Array.from(container.querySelectorAll(".edit-agent-ext-name")).map((n) => n.textContent)).toEqual([
+      "Linear",
+      "Zeta",
+      "Aaa",
+      "Alpha",
+      "Beta",
     ]);
   });
 

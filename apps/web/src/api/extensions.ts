@@ -106,3 +106,19 @@ export async function patchAgentExtension(
   const data = (await res.json()) as { extensions: ExtensionCatalogEntry[] };
   return data.extensions;
 }
+
+export type OAuthScopeState = "connected" | "needs_reconnect" | "disconnected";
+
+/** OAuth connection state for one scope (the signed-in user's own grant, or the team's). */
+export async function fetchOAuthScopeState(
+  agentId: string,
+  provider: string,
+  scope: "personal" | "team"
+): Promise<OAuthScopeState> {
+  const res = await fetch(
+    `/api/oauth/${encodeURIComponent(provider)}/status?agent=${encodeURIComponent(agentId)}&scope=${scope}`
+  );
+  if (!res.ok) return "disconnected";
+  const data = (await res.json()) as { connected?: boolean; state?: OAuthScopeState };
+  return data.state ?? (data.connected ? "connected" : "disconnected");
+}
