@@ -9,6 +9,10 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ## [Unreleased]
 
+### Fixed
+
+- OAuth extensions sharing one provider account (e.g. Gmail and Google Drive on Google) no longer show as set up on the agent page until their own scopes are granted.
+
 ### Added
 
 - "Connect <agent> to your tools" prompt: the first time you open each agent's chat, a dialog lists the extensions and MCP servers your admin recommends, showing which are already connected and letting you connect, enable, or set up the rest — API-key extensions (Notion, Jira, …) are set up right inside the dialog with your own credentials, so you stay in the chat. It never overlaps the onboarding tour: it waits while a tour step is shown in the chat. Reopen it anytime with **Connect tools** next to **Restart tour** (shown once a superadmin has starred something).

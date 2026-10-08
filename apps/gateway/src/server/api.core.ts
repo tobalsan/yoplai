@@ -278,10 +278,22 @@ async function canConfigureTeamExtensions(c: Context): Promise<boolean> {
   return hasAdminRole((await getRequestAuthContext(c))?.user.role);
 }
 
-/** Whether the requester (personal) or the team has a stored connection for the provider. */
-function hasOAuthConnection(agentId: string, provider: string, userId?: string): boolean {
+/**
+ * Whether the requester (personal) or the team connection for the provider
+ * grants every scope this extension needs. Extensions sharing one provider
+ * account (e.g. Gmail + Drive on Google) are not "connected" until their own
+ * scopes are granted.
+ */
+function hasOAuthConnection(
+  agentId: string,
+  oauth: { provider: string; scopes: string[]; personalScopes?: string[] },
+  userId?: string
+): boolean {
   try {
-    return !!getOAuthService().getConnection(agentId, provider, userId);
+    const connection = getOAuthService().getConnection(agentId, oauth.provider, userId);
+    if (!connection) return false;
+    const required = connection.scope === "personal" ? oauth.personalScopes ?? oauth.scopes : oauth.scopes;
+    return required.every((scope) => connection.scopes?.includes(scope));
   } catch {
     return false;
   }
@@ -292,7 +304,7 @@ async function requesterExtensionCatalog(c: Context, config: GatewayConfig, agen
   const canConfigureTeam = await canConfigureTeamExtensions(c);
   const catalog = await buildExtensionCatalog(config, agent, { configurable, ...(auth ? { requesterUserId: auth.user.id } : {}) });
   const withOAuth = catalog.map((entry) => entry.oauth
-    ? { ...entry, canConfigureTeam, oauthConnected: hasOAuthConnection(agent.id, entry.oauth.provider, auth?.user.id) }
+    ? { ...entry, canConfigureTeam, oauthConnected: hasOAuthConnection(agent.id, entry.oauth, auth?.user.id) }
     : entry);
   if (!auth) return withOAuth;
   return withOAuth.map((entry) => {
