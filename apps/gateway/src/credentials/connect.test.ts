@@ -16,7 +16,7 @@ const state = vi.hoisted(() => ({
 vi.mock("../config/index.js", () => ({ getAgent: (id: string) => id === "sales" ? state.agent : undefined, loadConfig: () => ({ extensions: {} }) }));
 vi.mock("../extensions/registry.js", () => ({ getLoadedExtensions: () => [state.extension], isExtensionLoaded: () => false }));
 vi.mock("../oauth/service.js", () => ({ getOAuthService: () => ({ startAuthorization: state.start }) }));
-vi.mock("./extension-tokens.js", () => ({ extensionSecretFields: () => ["apiToken", "optional"], extensionTokenIntegration: (id: string) => `extension-config:${id}`, resolveExtensionTokenConfig: () => ({ missing: ["apiToken", "username"] }), savePersonalExtensionTokens: state.save }));
+vi.mock("./extension-tokens.js", () => ({ extensionSecretFields: () => ["apiToken", "optional"], getPersonalExtensionTokens: () => state.before, resolveExtensionTokenConfig: () => ({ missing: ["apiToken", "username"] }), savePersonalExtensionTokens: state.save }));
 vi.mock("./store.js", () => ({ CredentialStore: class { get() { return state.before; } } }));
 vi.mock("../audit/store.js", () => ({ recordSettingsChange: state.audit }));
 afterEach(() => { vi.clearAllMocks(); state.before = {}; });

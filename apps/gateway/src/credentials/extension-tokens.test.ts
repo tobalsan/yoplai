@@ -6,7 +6,7 @@ import { z } from "zod";
 import type { AgentConfig, Extension, GatewayConfig } from "@yoplai/shared";
 import { GatewayConfigSchema } from "@yoplai/shared";
 import { CredentialStore } from "./store.js";
-import { extensionTokenIntegration, resolveExtensionTokenConfig, savePersonalExtensionTokens } from "./extension-tokens.js";
+import { deletePersonalExtensionTokens, extensionTokenIntegration, getPersonalExtensionTokens, resolveExtensionTokenConfig, savePersonalExtensionTokens, storePersonalExtensionTokens } from "./extension-tokens.js";
 import { ExtensionRuntime } from "../extensions/runtime.js";
 
 const state = vi.hoisted(() => ({ dir: "", env: {} as Record<string, string> }));
@@ -57,7 +57,7 @@ beforeEach(() => {
 afterEach(() => fs.rmSync(state.dir, { recursive: true, force: true }));
 
 function save(id: string, userId: string, fields: Record<string, string>) {
-  store.save({ agentId: agent.id, integration: extensionTokenIntegration(id), scope: { type: "personal", userId } }, fields);
+  storePersonalExtensionTokens(store, userId, id, fields);
 }
 
 describe("requester extension API tokens", () => {
@@ -65,8 +65,8 @@ describe("requester extension API tokens", () => {
     const extension = tokenExtension("pennylane", async () => undefined);
     const before = JSON.stringify({ agent, config });
     savePersonalExtensionTokens(extension, agent, config, "alice", { apiToken: "alice-new" }, store);
-    expect(store.get({ agentId: agent.id, integration: extensionTokenIntegration("pennylane"), scope: { type: "personal", userId: "alice" } })).toEqual({ apiToken: "alice-new" });
-    expect(store.get({ agentId: agent.id, integration: extensionTokenIntegration("pennylane"), scope: { type: "personal", userId: "bob" } })).toBeUndefined();
+    expect(getPersonalExtensionTokens(store, agent.id, "alice", "pennylane")).toEqual({ apiToken: "alice-new" });
+    expect(getPersonalExtensionTokens(store, agent.id, "bob", "pennylane")).toBeUndefined();
     expect(JSON.stringify({ agent, config })).toBe(before);
     const invalid: Record<string, string>[] = [{ apiToken: "$env:HOST_SECRET" }, { apiToken: "********" }, { unexpected: "value" }, { apiToken: "" }];
     for (const secrets of invalid) {
@@ -74,7 +74,7 @@ describe("requester extension API tokens", () => {
     }
     extension.validateAgentConfig = () => ({ valid: false, errors: ["apiToken"] });
     expect(() => savePersonalExtensionTokens(extension, agent, config, "alice", { apiToken: "rejected" }, store)).toThrow("Extension configuration is invalid");
-    expect(store.get({ agentId: agent.id, integration: extensionTokenIntegration("pennylane"), scope: { type: "personal", userId: "alice" } })).toEqual({ apiToken: "alice-new" });
+    expect(getPersonalExtensionTokens(store, agent.id, "alice", "pennylane")).toEqual({ apiToken: "alice-new" });
   });
   it.each(["zendesk", "pennylane"] as const)("uses personal → existing team credentials for %s, including captured tools", async (id) => {
     const request = vi.fn(async () => ({ records: [] }));
@@ -166,5 +166,57 @@ describe("requester extension API tokens", () => {
     }]);
     await expect(runtime.executeTool(agent, "pennylane_list", {}, config, undefined, "alice")).rejects.toThrow("request timed out");
     expect(await runtime.executeTool(agent, "plain_ping", {}, config)).toEqual({ found: true, result: "pong" });
+  });
+});
+
+describe("shared personal extension tokens", () => {
+  const withAgent = (id: string, extensions: AgentConfig["extensions"]): AgentConfig => ({ ...agent, id, name: id, extensions });
+  const legacy = (agentId: string, userId: string, fields: Record<string, string>) =>
+    store.save({ agentId, integration: extensionTokenIntegration("zendesk"), scope: { type: "personal", userId } }, fields);
+  const resolvedKey = (forAgent: AgentConfig, userId?: string) =>
+    (resolveExtensionTokenConfig(tokenExtension("zendesk", async () => undefined), forAgent, config, userId, store).agent.extensions?.zendesk as Record<string, unknown>)?.apiKey;
+  const sally = () => withAgent("sally", { zendesk: { enabled: true } });
+  const cira = () => withAgent("cira", { zendesk: { enabled: true } });
+
+  it("resolves a token saved via sally on cira, and never for others or unattended runs", () => {
+    const extension = tokenExtension("zendesk", async () => undefined);
+    savePersonalExtensionTokens(extension, sally(), config, "alice", { apiKey: "alice-token" }, store);
+    expect(resolvedKey(cira(), "alice")).toBe("alice-token");
+    expect(resolvedKey(cira(), "bob")).toBe("team-zendesk");
+    expect(resolvedKey(cira())).toBe("team-zendesk");
+  });
+
+  it("does not enable the extension where it is off", () => {
+    savePersonalExtensionTokens(tokenExtension("zendesk", async () => undefined), sally(), config, "alice", { apiKey: "alice-token" }, store);
+    const off = withAgent("cira", {});
+    const resolved = resolveExtensionTokenConfig(tokenExtension("zendesk", async () => undefined), off, config, "alice", store);
+    expect(resolved.agent.extensions?.zendesk).toBeUndefined();
+  });
+
+  it("promotes a legacy per-agent record and deletes the legacy copy", () => {
+    legacy("sally", "alice", { apiKey: "legacy-token" });
+    expect(getPersonalExtensionTokens(store, "sally", "alice", "zendesk")).toEqual({ apiKey: "legacy-token" });
+    expect(store.get({ agentId: "sally", integration: extensionTokenIntegration("zendesk"), scope: { type: "personal", userId: "alice" } })).toBeUndefined();
+    expect(getPersonalExtensionTokens(store, "cira", "alice", "zendesk")).toEqual({ apiKey: "legacy-token" });
+  });
+
+  it("remove is not undone by legacy rows on other agents and a re-save works everywhere", () => {
+    const extension = tokenExtension("zendesk", async () => undefined);
+    legacy("sally", "alice", { apiKey: "legacy-sally" });
+    legacy("third", "alice", { apiKey: "legacy-third" });
+    expect(getPersonalExtensionTokens(store, "sally", "alice", "zendesk")).toBeDefined();
+    deletePersonalExtensionTokens(store, "cira", "alice", "zendesk");
+    expect(getPersonalExtensionTokens(store, "sally", "alice", "zendesk")).toBeUndefined();
+    expect(getPersonalExtensionTokens(store, "third", "alice", "zendesk")).toBeUndefined();
+    expect(resolvedKey(sally(), "alice")).toBe("team-zendesk");
+    savePersonalExtensionTokens(extension, cira(), config, "alice", { apiKey: "fresh" }, store);
+    expect(resolvedKey(sally(), "alice")).toBe("fresh");
+    expect(resolvedKey(cira(), "alice")).toBe("fresh");
+  });
+
+  it("a tombstone for alice does not affect bob", () => {
+    legacy("sally", "bob", { apiKey: "bob-token" });
+    deletePersonalExtensionTokens(store, "sally", "alice", "zendesk");
+    expect(getPersonalExtensionTokens(store, "sally", "bob", "zendesk")).toEqual({ apiKey: "bob-token" });
   });
 });

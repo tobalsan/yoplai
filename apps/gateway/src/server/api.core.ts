@@ -63,7 +63,7 @@ import { compactAgentSession } from "../agents/compact.js";
 import { CONFIG_DIR } from "../config/index.js";
 import { CredentialStore } from "../credentials/store.js";
 import { createConnectionRoutes } from "../credentials/routes.js";
-import { extensionSecretFields, extensionTokenIntegration, isValidPersonalValue, resolveExtensionTokenConfig, savePersonalExtensionTokens, type PersonalExtensionValues } from "../credentials/extension-tokens.js";
+import { extensionSecretFields, getPersonalExtensionTokens, isValidPersonalValue, resolveExtensionTokenConfig, savePersonalExtensionTokens, type PersonalExtensionValues } from "../credentials/extension-tokens.js";
 import { getUserHistoryDir } from "@yoplai/extension-multi-user/isolation";
 import {
   appendSessionMeta,
@@ -226,11 +226,7 @@ async function requesterExtensionCatalog(c: Context, config: GatewayConfig, agen
   return withOAuth.map((entry) => {
     const fields = extensionSecretFields(entry);
     if (!fields.length) return entry;
-    const personal = new CredentialStore().get<PersonalExtensionValues>({
-      agentId: agent.id,
-      integration: extensionTokenIntegration(entry.id),
-      scope: { type: "personal", userId: auth.user.id },
-    });
+    const personal = getPersonalExtensionTokens(new CredentialStore(), agent.id, auth.user.id, entry.id);
     const personalConfigValues = Object.fromEntries(Object.entries(personal ?? {}).filter(([field]) => !fields.includes(field)));
     return { ...entry, canConfigureTeam, personalSecretFields: fields.filter((field) => !!personal?.[field]), personalConfigValues };
   });
@@ -916,11 +912,10 @@ api.patch("/agents/:id/extensions/:extensionId", async (c) => {
     let after: PersonalExtensionValues;
     try {
       const store = new CredentialStore();
-      const key = { agentId, integration: extensionTokenIntegration(extensionId), scope: { type: "personal" as const, userId: auth.user.id } };
-      before = store.get<PersonalExtensionValues>(key) ?? {};
+      before = getPersonalExtensionTokens(store, agentId, auth.user.id, extensionId) ?? {};
       // The form sends every setting override, so ones reset to the team value are dropped.
       savePersonalExtensionTokens(targetExtension, agent, config, auth.user.id, values as PersonalExtensionValues, store, true);
-      after = store.get<PersonalExtensionValues>(key) ?? {};
+      after = getPersonalExtensionTokens(store, agentId, auth.user.id, extensionId) ?? {};
     } catch (error) {
       if (error instanceof Error && "fields" in error) {
         return c.json({ error: "Extension configuration is invalid", fields: (error as Error & { fields: string[] }).fields }, 422);

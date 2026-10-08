@@ -2,7 +2,7 @@ import { registerCredentialOAuthConnector, requestCredentialConnectLink, startEx
 import { getAgent, loadConfig } from "../config/index.js";
 import { getLoadedExtensions, isExtensionLoaded } from "../extensions/registry.js";
 import { getOAuthService } from "../oauth/service.js";
-import { extensionSecretFields, extensionTokenIntegration, resolveExtensionTokenConfig, savePersonalExtensionTokens, type PersonalExtensionValues } from "./extension-tokens.js";
+import { extensionSecretFields, getPersonalExtensionTokens, resolveExtensionTokenConfig, savePersonalExtensionTokens } from "./extension-tokens.js";
 import { recordSettingsChange } from "../audit/store.js";
 import { diffSettings } from "../audit/diff.js";
 import { CredentialStore } from "./store.js";
@@ -70,8 +70,7 @@ export const credentialConnectHost: CredentialConnectHost = {
   async save(agentId, extensionId, userId, secrets) {
     const { agent, extension } = tokenTarget(agentId, extensionId);
     const store = new CredentialStore();
-    const key = { agentId, integration: extensionTokenIntegration(extensionId), scope: { type: "personal" as const, userId } };
-    const before = store.get<PersonalExtensionValues>(key) ?? {};
+    const before = getPersonalExtensionTokens(store, agentId, userId, extensionId) ?? {};
     savePersonalExtensionTokens(extension, agent, loadConfig(), userId, secrets, store);
     const changes = diffSettings(before, { ...before, ...secrets }, extensionSecretFields(extension));
     if (changes.length) recordSettingsChange({ actorUserId: userId, actorEmail: await actorEmail(userId), action: "extension.personal_update", agentId,

@@ -4,7 +4,7 @@ import { loadConfig, resolveAgentEnv } from "../config/index.js";
 import { buildExtensionCatalog } from "../extensions/catalog.js";
 import { getOAuthService } from "../oauth/service.js";
 import { CredentialStore } from "./store.js";
-import { extensionSecretFields, extensionTokenIntegration } from "./extension-tokens.js";
+import { deletePersonalExtensionTokens, extensionSecretFields, getPersonalExtensionTokens } from "./extension-tokens.js";
 import { getAuditActor, recordSettingsChange } from "../audit/store.js";
 import type { SettingsAuditChange } from "@yoplai/shared";
 
@@ -43,7 +43,7 @@ export function createConnectionRoutes(options: {
     for (const entry of await catalog(value, agent)) {
       const fields = extensionSecretFields(entry);
       if (!fields.length) continue;
-      const tokens = store.get<Record<string, string>>({ agentId: agent.id, integration: extensionTokenIntegration(entry.id), scope: { type: "personal", userId } });
+      const tokens = getPersonalExtensionTokens(store, agent.id, userId, entry.id);
       const root = value.extensions?.[entry.id];
       const scoped = agent.extensions?.[entry.id];
       const shared: Record<string, unknown> = {
@@ -74,11 +74,10 @@ export function createConnectionRoutes(options: {
     } else if (c.req.param("kind") === "extension") {
       const entry = (await catalog(config(), agent)).find((item) => item.id === integration);
       if (!entry || !extensionSecretFields(entry).length) return c.json({ error: "unknown_connection" }, 404);
-      const key = { agentId: agent.id, integration: extensionTokenIntegration(integration), scope: { type: "personal" as const, userId } };
-      const existing = store.get<Record<string, unknown>>(key);
+      const existing = getPersonalExtensionTokens(store, agent.id, userId, integration);
       const secrets = new Set(extensionSecretFields(entry));
       changes = Object.entries(existing ?? {}).map(([field, before]) => secrets.has(field) ? { field, secret: "removed" as const } : { field, before });
-      store.delete(key);
+      deletePersonalExtensionTokens(store, agent.id, userId, integration);
     } else return c.json({ error: "unknown_connection" }, 404);
     if (changes.length) recordSettingsChange({ ...await getAuditActor(c), actorUserId: userId, action: "connection.personal_remove", agentId: agent.id,
       targetType: c.req.param("kind") === "oauth" ? "oauth" : "extension", targetId: integration, scope: "personal", changes });

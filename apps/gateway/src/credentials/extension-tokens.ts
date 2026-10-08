@@ -1,10 +1,78 @@
 import type { AgentConfig, Extension, GatewayConfig } from "@yoplai/shared";
 import { resolveAgentEnv } from "../config/index.js";
-import { CredentialStore } from "./store.js";
+import { CredentialStore, type CredentialKey } from "./store.js";
 import { resolveWebBaseUrl } from "../util/web-url.js";
 
 export function extensionTokenIntegration(extensionId: string): string {
   return `extension-config:${extensionId}`;
+}
+
+/**
+ * Personal values follow the user across agents, so they live under one
+ * credential-store agentId. It starts with NUL, which no agent folder name can contain.
+ */
+const PERSONAL_EXTENSION_AGENT_ID = "\0personal-extension-shared";
+
+/** Marks a personal disconnect so stale legacy per-agent rows are not promoted again. */
+interface PersonalTombstone {
+  __tombstone: true;
+  deletedAt: number;
+}
+
+function isTombstone(payload: unknown): payload is PersonalTombstone {
+  return typeof payload === "object" && payload !== null &&
+    (payload as { __tombstone?: unknown }).__tombstone === true;
+}
+
+function personalExtensionTokenKey(userId: string, extensionId: string): CredentialKey {
+  return {
+    agentId: PERSONAL_EXTENSION_AGENT_ID,
+    integration: extensionTokenIntegration(extensionId),
+    scope: { type: "personal", userId },
+  };
+}
+
+/**
+ * The requester's personal values for an extension, shared by every agent.
+ * On a shared miss, the legacy per-agent record is promoted (saved, then deleted).
+ */
+export function getPersonalExtensionTokens(
+  store: CredentialStore,
+  agentId: string,
+  userId: string,
+  extensionId: string
+): PersonalExtensionValues | undefined {
+  const shared = store.get<PersonalExtensionValues | PersonalTombstone>(personalExtensionTokenKey(userId, extensionId));
+  if (isTombstone(shared)) return undefined;
+  if (shared !== undefined) return shared;
+  const legacyKey: CredentialKey = { agentId, integration: extensionTokenIntegration(extensionId), scope: { type: "personal", userId } };
+  const legacy = store.get<PersonalExtensionValues>(legacyKey);
+  if (legacy === undefined) return undefined;
+  store.save(personalExtensionTokenKey(userId, extensionId), legacy);
+  store.delete(legacyKey);
+  return legacy;
+}
+
+/** Persist the requester's personal values for an extension, overwriting any tombstone. */
+export function storePersonalExtensionTokens(
+  store: CredentialStore,
+  userId: string,
+  extensionId: string,
+  values: PersonalExtensionValues
+): void {
+  store.save(personalExtensionTokenKey(userId, extensionId), values);
+}
+
+/** Remove the requester's personal values everywhere; later reads do not resurrect legacy rows. */
+export function deletePersonalExtensionTokens(
+  store: CredentialStore,
+  agentId: string,
+  userId: string,
+  extensionId: string
+): void {
+  const tombstone: PersonalTombstone = { __tombstone: true, deletedAt: Date.now() };
+  store.save(personalExtensionTokenKey(userId, extensionId), tombstone);
+  store.delete({ agentId, integration: extensionTokenIntegration(extensionId), scope: { type: "personal", userId } });
 }
 
 export function extensionSecretFields(extension: { requiredSecrets?: string[]; configJsonSchema?: Record<string, unknown> | null }): string[] {
@@ -51,9 +119,8 @@ export function savePersonalExtensionTokens(
   if (!userId || Object.entries(values).some(([field, value]) => !isValidPersonalValue(extension, field, value))) {
     throw new Error("Invalid personal credential fields");
   }
-  const key = { agentId: agent.id, integration: extensionTokenIntegration(extension.id), scope: { type: "personal" as const, userId } };
   const secretFields = extensionSecretFields(extension);
-  const existing = store.get<PersonalExtensionValues>(key) ?? {};
+  const existing = getPersonalExtensionTokens(store, agent.id, userId, extension.id) ?? {};
   // The web form sends the full set of setting overrides, so stale ones are dropped.
   const kept = replaceSettings ? Object.fromEntries(Object.entries(existing).filter(([field]) => secretFields.includes(field))) : existing;
   const tokens = { ...kept, ...values };
@@ -66,7 +133,7 @@ export function savePersonalExtensionTokens(
     error.fields = scoped.missing.length ? scoped.missing : (validation?.valid === false ? validation.errors : []).map((field) => knownFields.includes(field) ? field : "config");
     throw error;
   }
-  store.save(key, tokens);
+  storePersonalExtensionTokens(store, userId, extension.id, tokens);
 }
 
 /** Overlay this requester's personal values; fields they did not set keep the shared value. */
@@ -78,11 +145,7 @@ export function resolveExtensionTokenConfig(
   store?: CredentialStore,
   env = resolveAgentEnv(agent, config)
 ): { agent: AgentConfig; config: GatewayConfig; missing: string[]; connectUrl: string } {
-  const personal = userId ? (store ?? new CredentialStore()).get<PersonalExtensionValues>({
-    agentId: agent.id,
-    integration: extensionTokenIntegration(extension.id),
-    scope: { type: "personal", userId },
-  }) : undefined;
+  const personal = userId ? getPersonalExtensionTokens(store ?? new CredentialStore(), agent.id, userId, extension.id) : undefined;
   return overlayExtensionValues(extension, agent, config, personal, env);
 }
 

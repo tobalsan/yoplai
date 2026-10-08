@@ -1281,7 +1281,7 @@ describe("api core session resolution", () => {
         const body = await response.json();
         expect(body.extensions[0]).toMatchObject({ personalSecretFields: ["apiKey"], canConfigureTeam: false });
         expect(JSON.stringify(body)).not.toContain("alice-private");
-        expect([...credentialState.records.entries()]).toEqual([[JSON.stringify({ agentId: "alpha", integration: "extension-config:acme", scope: { type: "personal", userId: "alice" } }), { apiKey: "alice-private" }]]);
+        expect([...credentialState.records.entries()]).toEqual([[JSON.stringify({ agentId: "\0personal-extension-shared", integration: "extension-config:acme", scope: { type: "personal", userId: "alice" } }), { apiKey: "alice-private" }]]);
         expect(updateAgentExtensionConfig).not.toHaveBeenCalled();
         expect(reloadConfig).not.toHaveBeenCalled();
         multiUserState.authContext = { user: { id: "bob", role: "user" }, session: { id: "s2", userId: "bob" } };
