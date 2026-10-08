@@ -1384,7 +1384,8 @@ describe("createSlackBot", () => {
     });
     await getMessageHandler(apps[0])({ message: { ts: "1.2", text: "work", channel: "C1", user: "U1", channel_type: "channel" }, client: apps[0].client });
     expect(apps[0].client.chat.postMessage).toHaveBeenCalledWith(expect.objectContaining({ thread_ts: "1.2", text: "Checking files…" }));
-    expect(apps[0].client.chat.update).toHaveBeenLastCalledWith(expect.objectContaining({ text: "Completed." }));
+    expect(apps[0].client.chat.delete).toHaveBeenCalledWith({ channel: "C1", ts: expect.any(String) });
+    expect(apps[0].client.chat.update).not.toHaveBeenCalledWith(expect.objectContaining({ text: "Completed." }));
   });
 
   it("derives a progress milestone from a tool_call event", async () => {

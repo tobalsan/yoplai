@@ -2,13 +2,14 @@ import { describe, expect, it, vi } from "vitest";
 import { createSlackProgressDisplay } from "./progress.js";
 
 describe("Slack progress display", () => {
-  it("posts once, heartbeats, and leaves one terminal update", async () => {
+  it("posts once, heartbeats, and deletes the bubble on completion", async () => {
     vi.useFakeTimers();
     try {
       const client = {
         chat: {
           postMessage: vi.fn().mockResolvedValue({ ts: "progress-ts" }),
           update: vi.fn().mockResolvedValue({}),
+          delete: vi.fn().mockResolvedValue({}),
         },
       };
       const display = createSlackProgressDisplay({
@@ -29,7 +30,8 @@ describe("Slack progress display", () => {
         1,
         expect.objectContaining({ text: "Still working…" })
       );
-      expect(client.chat.update).toHaveBeenLastCalledWith(
+      expect(client.chat.delete).toHaveBeenCalledWith({ channel: "C1", ts: "progress-ts" });
+      expect(client.chat.update).not.toHaveBeenCalledWith(
         expect.objectContaining({ text: "Completed." })
       );
     } finally {
@@ -44,6 +46,7 @@ describe("Slack progress display", () => {
         chat: {
           postMessage: vi.fn().mockResolvedValue({ ts: "progress-ts" }),
           update: vi.fn().mockResolvedValue({}),
+          delete: vi.fn().mockResolvedValue({}),
         },
       };
       const display = createSlackProgressDisplay({
@@ -89,6 +92,7 @@ describe("Slack progress display", () => {
       chat: {
         postMessage: vi.fn().mockResolvedValue({ ts: "progress-ts" }),
         update: vi.fn().mockResolvedValue({}),
+        delete: vi.fn().mockResolvedValue({}),
       },
     };
     const display = createSlackProgressDisplay({
@@ -112,6 +116,7 @@ describe("Slack progress display", () => {
         chat: {
           postMessage: vi.fn().mockResolvedValue({ ts: "progress-ts" }),
           update: vi.fn().mockResolvedValue({}),
+          delete: vi.fn().mockResolvedValue({}),
         },
       };
       const display = createSlackProgressDisplay({
@@ -171,6 +176,7 @@ describe("Slack progress display", () => {
         chat: {
           postMessage: vi.fn().mockRejectedValueOnce(new Error("rate_limited")).mockResolvedValue({ ts: "progress-ts" }),
           update: vi.fn().mockResolvedValue({}),
+          delete: vi.fn().mockResolvedValue({}),
         },
       };
       const display = createSlackProgressDisplay({ client: client as never, channel: "C1", threadTs: "1.0", logPrefix: "[test]" });
@@ -178,14 +184,14 @@ describe("Slack progress display", () => {
       await vi.advanceTimersByTimeAsync(1_000);
       await display.finish("completed");
       expect(client.chat.postMessage).toHaveBeenCalledTimes(2);
-      expect(client.chat.update).toHaveBeenLastCalledWith(expect.objectContaining({ text: "Completed." }));
+      expect(client.chat.delete).toHaveBeenCalledWith({ channel: "C1", ts: "progress-ts" });
     } finally { vi.useRealTimers(); }
   });
 
   it("cancels a pending publish retry and posts nothing when finished before an initial post succeeds", async () => {
     vi.useFakeTimers();
     try {
-      const client = { chat: { postMessage: vi.fn().mockRejectedValueOnce(new Error("temporary")).mockResolvedValue({ ts: "progress-ts" }), update: vi.fn().mockResolvedValue({}) } };
+      const client = { chat: { postMessage: vi.fn().mockRejectedValueOnce(new Error("temporary")).mockResolvedValue({ ts: "progress-ts" }), update: vi.fn().mockResolvedValue({}), delete: vi.fn().mockResolvedValue({}) } };
       const display = createSlackProgressDisplay({ client: client as never, channel: "C1", threadTs: "1.0", logPrefix: "[test]" });
       await display.publish();
       await display.finish("interrupted");
@@ -202,6 +208,7 @@ describe("Slack progress display", () => {
         chat: {
           postMessage: vi.fn().mockResolvedValue({ ts: "progress-ts" }),
           update: vi.fn().mockResolvedValue({}),
+          delete: vi.fn().mockResolvedValue({}),
         },
       };
       const store = { add: vi.fn(), remove: vi.fn(), touch: vi.fn() };
@@ -231,6 +238,7 @@ describe("Slack progress display", () => {
         chat: {
           postMessage: vi.fn().mockResolvedValue({ ts: "progress-ts" }),
           update: vi.fn().mockResolvedValue({}),
+          delete: vi.fn().mockResolvedValue({}),
         },
       };
       const display = createSlackProgressDisplay({
@@ -253,7 +261,8 @@ describe("Slack progress display", () => {
         expect.objectContaining({ text: "Still working…" })
       );
       await display.finish("completed");
-      expect(client.chat.update).toHaveBeenLastCalledWith(
+      expect(client.chat.delete).toHaveBeenCalledWith({ channel: "C1", ts: "progress-ts" });
+      expect(client.chat.update).not.toHaveBeenCalledWith(
         expect.objectContaining({ text: "Completed." })
       );
     } finally {
@@ -268,6 +277,7 @@ describe("Slack progress display", () => {
         chat: {
           postMessage: vi.fn().mockResolvedValue({ ts: "progress-ts" }),
           update: vi.fn().mockResolvedValue({}),
+          delete: vi.fn().mockResolvedValue({}),
         },
       };
       const display = createSlackProgressDisplay({
@@ -302,6 +312,7 @@ describe("Slack progress display", () => {
       chat: {
         postMessage: vi.fn().mockResolvedValue({ ts: "progress-ts" }),
         update: vi.fn().mockResolvedValue({}),
+        delete: vi.fn().mockResolvedValue({}),
       },
     };
     const display = createSlackProgressDisplay({
@@ -326,6 +337,7 @@ describe("Slack progress display", () => {
       chat: {
         postMessage: vi.fn().mockResolvedValue({ ts: "progress-ts" }),
         update: vi.fn().mockResolvedValue({}),
+        delete: vi.fn().mockResolvedValue({}),
       },
     };
     const display = createSlackProgressDisplay({
@@ -349,6 +361,7 @@ describe("Slack progress display", () => {
       chat: {
         postMessage: vi.fn().mockResolvedValue({ ts: "progress-ts" }),
         update: vi.fn().mockResolvedValue({}),
+        delete: vi.fn().mockResolvedValue({}),
       },
     };
     const display = createSlackProgressDisplay({
@@ -368,6 +381,7 @@ describe("Slack progress display", () => {
       chat: {
         postMessage: vi.fn().mockResolvedValue({ ts: "progress-ts" }),
         update: vi.fn().mockResolvedValue({}),
+        delete: vi.fn().mockResolvedValue({}),
       },
     };
     const display = createSlackProgressDisplay({
@@ -402,6 +416,7 @@ describe("Slack progress display", () => {
             () => new Promise<{ ts: string }>((resolve) => { resolvePost = resolve; })
           ),
         update: vi.fn().mockResolvedValue({}),
+        delete: vi.fn().mockResolvedValue({}),
       },
     };
     const display = createSlackProgressDisplay({
@@ -418,9 +433,7 @@ describe("Slack progress display", () => {
 
     expect(shown).toBe(true);
     expect(client.chat.postMessage).toHaveBeenCalledOnce();
-    expect(client.chat.update).toHaveBeenCalledWith(
-      expect.objectContaining({ ts: "progress-ts", text: "Completed." })
-    );
+    expect(client.chat.delete).toHaveBeenCalledWith({ channel: "C1", ts: "progress-ts" });
     // Never edited with a non-terminal "Working on it…" bubble left dangling.
     expect(client.chat.update).not.toHaveBeenCalledWith(
       expect.objectContaining({ text: "Working on it…" })
@@ -436,6 +449,7 @@ describe("Slack progress display", () => {
         chat: {
           postMessage: vi.fn().mockResolvedValue({ ts: "progress-ts" }),
           update: vi.fn().mockResolvedValue({}),
+          delete: vi.fn().mockResolvedValue({}),
         },
       };
       const display = createSlackProgressDisplay({
@@ -465,6 +479,7 @@ describe("Slack progress display", () => {
       chat: {
         postMessage: vi.fn().mockResolvedValue({ ts: "progress-ts" }),
         update: vi.fn().mockResolvedValue({}),
+        delete: vi.fn().mockResolvedValue({}),
       },
     };
     const neverPublished = createSlackProgressDisplay({
@@ -506,13 +521,13 @@ describe("Slack progress display", () => {
     });
     await display.publish();
     display.milestone("Checking files");
-    const terminal = display.finish("completed");
+    const terminal = display.finish("failed");
     resolveUpdate?.();
     await terminal;
     await Promise.resolve();
 
     expect(client.chat.update).toHaveBeenLastCalledWith(
-      expect.objectContaining({ text: "Completed." })
+      expect.objectContaining({ text: "Failed." })
     );
   });
 });

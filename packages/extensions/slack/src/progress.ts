@@ -251,10 +251,27 @@ export function createSlackProgressDisplay(options: {
       // whether there's anything left to terminal-edit.
       if (publishPromise) await publishPromise;
       if (!ts) return false;
+      if (state === "completed") {
+        // The reply itself signals completion; drop the bubble entirely.
+        // Clearing ts first makes any pending update/retry a no-op.
+        const bubbleTs = ts;
+        ts = undefined;
+        if (retry) {
+          clearTimeoutFn(retry);
+          retry = undefined;
+        }
+        try {
+          await options.client.chat.delete({ channel: options.channel, ts: bubbleTs });
+        } catch (error) {
+          console.debug(`${options.logPrefix} Progress delete failed:`, error);
+        }
+        await options.store?.remove(bubbleTs).catch((error) =>
+          console.debug(`${options.logPrefix} Progress removal failed:`, error)
+        );
+        return true;
+      }
       const text =
-        state === "completed"
-          ? "Completed."
-          : state === "interrupted"
+        state === "interrupted"
             ? "Interrupted."
             : state === "waiting"
               ? "Waiting for current work."
