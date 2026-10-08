@@ -11,7 +11,7 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Changed
 
-- Agent catalog hides agents a non-admin can't chat (e.g. private-team agents) instead of showing an inert card with the team name. Admins still see every agent.
+- Agent catalog hides agents a non-admin can't chat (e.g. private-team agents) instead of showing an inert card with the team name. Admins still see every agent, and `/pool-actions` no longer returns team names for agents the user can't access.
 - Credential tab captions clarified: Just me "Only used by you", Whole team "Can be used by the whole team".
 
 ### Added

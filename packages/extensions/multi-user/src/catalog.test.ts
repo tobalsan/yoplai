@@ -169,7 +169,7 @@ describe("resolvePoolAction — none (visible but not chattable)", () => {
       chatAgentId: null,
       action: "none",
       reason: "other_team",
-      teamName: "Green",
+      teamName: null,
     });
   });
 
@@ -189,11 +189,11 @@ describe("resolvePoolAction — none (visible but not chattable)", () => {
         "none"
       );
     }
-    // Teamless (loner) sees other_team + the fork's team name for a
+    // Teamless (loner) sees other_team (team name withheld) for a
     // team-linked fork they don't belong to...
     const scribeEntry = catalog.resolvePoolAction("scribe", member("loner"));
     expect(scribeEntry.reason).toBe("other_team");
-    expect(scribeEntry.teamName).toBe("Red");
+    expect(scribeEntry.teamName).toBeNull();
     // ...but unassigned for the teamless fork.
     expect(
       catalog.resolvePoolAction("orphan", member("loner")).reason
