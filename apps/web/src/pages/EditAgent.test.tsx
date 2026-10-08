@@ -20,6 +20,7 @@ const {
   fetchAgentExtensionsMock,
   fetchMcpServersMock,
   addMcpServerMock,
+  fetchMcpPersonalStatusMock,
   removeMcpServerMock,
   disconnectMcpServerMock,
   patchAgentExtensionMock,
@@ -38,6 +39,7 @@ const {
   fetchAgentExtensionsMock: vi.fn(),
   fetchMcpServersMock: vi.fn(),
   addMcpServerMock: vi.fn(),
+  fetchMcpPersonalStatusMock: vi.fn(),
   removeMcpServerMock: vi.fn(),
   disconnectMcpServerMock: vi.fn(),
   patchAgentExtensionMock: vi.fn(),
@@ -64,6 +66,7 @@ vi.mock("../api/mcp-servers", () => ({
   mcpDisplayName: (name: string, title?: string) => title || name.charAt(0).toUpperCase() + name.slice(1),
   fetchMcpServers: fetchMcpServersMock,
   addMcpServer: addMcpServerMock,
+  fetchMcpPersonalStatus: fetchMcpPersonalStatusMock,
   removeMcpServer: removeMcpServerMock,
   disconnectMcpServer: disconnectMcpServerMock,
 }));
@@ -168,6 +171,7 @@ beforeEach(() => {
   fetchAgentExtensionsMock.mockReset().mockResolvedValue([]);
   fetchMcpServersMock.mockReset().mockResolvedValue({ servers: [], canConfigureTeam: true });
   addMcpServerMock.mockReset();
+  fetchMcpPersonalStatusMock.mockReset().mockResolvedValue({ connected: false });
   removeMcpServerMock.mockReset();
   disconnectMcpServerMock.mockReset();
   patchAgentExtensionMock.mockReset();
@@ -770,6 +774,49 @@ describe("EditAgent", () => {
     window.dispatchEvent(new Event("focus"));
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(container.querySelector('[aria-label="Set up docs"]')).not.toBeNull();
+  });
+
+  describe("adding a custom extension when already connected", () => {
+    async function submitAdd(url: string, scope?: "team") {
+      setCapabilitiesForTests({ forkedAgents: false });
+      setSession("user");
+      fetchAgentsMock.mockResolvedValue([agent({ id: "scribe" })]);
+      addMcpServerMock.mockResolvedValue({ server: { name: "docs" } });
+      await mountEdit("scribe");
+      Array.from(container.querySelectorAll<HTMLButtonElement>("button")).find((button) => button.textContent === "Add custom extension")!.click();
+      if (scope) {
+        container.querySelectorAll<HTMLInputElement>('.mcp-ext-dialog input[name="mcp-scope"]')[1].click();
+      }
+      const input = container.querySelector<HTMLInputElement>('.mcp-ext-dialog input[type="url"]')!;
+      input.value = url;
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+      await new Promise((resolve) => setTimeout(resolve, 450));
+      container.querySelector<HTMLFormElement>(".mcp-ext-dialog form")!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+
+    it("does not open the OAuth popup when personal-status reports connected", async () => {
+      const open = vi.spyOn(window, "open").mockReturnValue({ close: vi.fn() } as unknown as Window);
+      fetchMcpPersonalStatusMock.mockResolvedValue({ connected: true });
+      await submitAdd("https://docs.test/mcp");
+      expect(fetchMcpPersonalStatusMock).toHaveBeenCalledWith("scribe", "https://docs.test/mcp");
+      expect(open).not.toHaveBeenCalled();
+      expect(addMcpServerMock).toHaveBeenCalledWith("scribe", "https://docs.test/mcp", "personal");
+    });
+
+    it("opens the OAuth popup when personal-status reports not connected", async () => {
+      const open = vi.spyOn(window, "open").mockReturnValue({ close: vi.fn() } as unknown as Window);
+      await submitAdd("https://docs.test/mcp");
+      expect(open).toHaveBeenCalledTimes(1);
+    });
+
+    it("always opens the OAuth popup for team scope", async () => {
+      const open = vi.spyOn(window, "open").mockReturnValue({ close: vi.fn() } as unknown as Window);
+      fetchMcpPersonalStatusMock.mockResolvedValue({ connected: true });
+      await submitAdd("https://docs.test/mcp", "team");
+      expect(addMcpServerMock).toHaveBeenCalledWith("scribe", "https://docs.test/mcp", "team");
+      expect(open).toHaveBeenCalledTimes(1);
+    });
   });
 
   it("marks an OAuth MCP server set up when only the team connection exists", async () => {

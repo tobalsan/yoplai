@@ -51,6 +51,13 @@ export async function addMcpServer(agentId: string, url: string, credentialScope
   return response.json();
 }
 
+/** True when the signed-in user already has a usable personal grant for this URL (shared from another agent). */
+export async function fetchMcpPersonalStatus(agentId: string, url: string): Promise<{ connected: boolean }> {
+  const response = await fetch(`/api/mcp/servers/personal-status?agent=${encodeURIComponent(agentId)}&url=${encodeURIComponent(url)}`, { signal: AbortSignal.timeout(10_000) });
+  if (!response.ok) throw new Error("Failed to check MCP connection.");
+  return response.json();
+}
+
 export async function removeMcpServer(agentId: string, name: string): Promise<void> {
   const response = await fetch(`/api/mcp/servers/remove?agent=${encodeURIComponent(agentId)}&server=${encodeURIComponent(name)}`, { method: "POST" });
   if (!response.ok) throw new Error("Failed to remove MCP server.");

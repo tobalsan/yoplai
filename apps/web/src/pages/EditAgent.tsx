@@ -28,7 +28,7 @@ import { capabilities, isExtensionEnabled } from "../lib/capabilities";
 import { SchedulesPanel } from "./SchedulesPanel";
 import { AgentConnectionsPanel } from "../components/AgentConnectionsPanel";
 import { McpExtensionCard, MCP_EXTENSION_STYLES } from "../components/McpExtensionCard";
-import { addMcpServer, cachedMcpServers, mcpDisplayName, fetchMcpServers, type McpScope, type McpServer } from "../api/mcp-servers";
+import { addMcpServer, cachedMcpServers, fetchMcpPersonalStatus, mcpDisplayName, fetchMcpServers, type McpScope, type McpServer } from "../api/mcp-servers";
 
 function isEmoji(str: string): boolean {
   return /^\p{Emoji}/u.test(str) && str.length <= 4;
@@ -279,6 +279,29 @@ export function EditAgent() {
   createEffect(() => {
     if (!session().isPending && !session().data?.user) setMcpScope("team");
   });
+  // Href of the typed URL when the user already has a usable personal grant for it, so adding it needs no OAuth popup.
+  const [connectedMcpHref, setConnectedMcpHref] = createSignal<string>();
+  createEffect(() => {
+    const targetId = dashboardAgentId();
+    const raw = mcpUrl().trim();
+    const scope = mcpScope();
+    setConnectedMcpHref(undefined);
+    let url: URL;
+    try {
+      url = new URL(raw);
+    } catch {
+      return;
+    }
+    if (!targetId || scope !== "personal" || (url.protocol !== "http:" && url.protocol !== "https:")) return;
+    let stale = false;
+    const timer = setTimeout(() => {
+      void fetchMcpPersonalStatus(targetId, url.href).then(
+        (status) => { if (!stale && status.connected) setConnectedMcpHref(url.href); },
+        () => {},
+      );
+    }, 300);
+    onCleanup(() => { stale = true; clearTimeout(timer); });
+  });
 
   createEffect(() => {
     const onReturn = () => { void refetchMcpServers(); };
@@ -306,7 +329,9 @@ export function EditAgent() {
       return;
     }
     // Reserve the popup in the click event; browsers block windows opened after fetch.
-    const popup = window.open("", "yoplai-oauth", "width=520,height=640");
+    // Skipped when a shared personal grant already covers this URL.
+    const alreadyConnected = mcpScope() === "personal" && connectedMcpHref() === url.href;
+    const popup = alreadyConnected ? null : window.open("", "yoplai-oauth", "width=520,height=640");
     setMcpBusy(true);
     setMcpError(undefined);
     try {
