@@ -23,6 +23,10 @@ vi.mock("../extensions/registry.js", () => ({
   getExtensionRuntime,
 }));
 vi.mock("../agents/index.js", () => ({ runAgent }));
+vi.mock("../extensions/context.js", () => ({
+  createExtensionContext: () => ({ ctx: true }),
+  bindExtensionContext: (context: object, id: string) => ({ ...context, id }),
+}));
 
 describe("runEval", () => {
   beforeEach(() => {
@@ -79,5 +83,17 @@ describe("runEval", () => {
       expect.objectContaining({ model: undefined })
     );
     expect(outcome.result.model).toBe("anthropic/configured-model");
+  });
+
+  it("starts Canvas so dashboard tools work, but no other extension", async () => {
+    const canvas = { id: "canvas", start: vi.fn() };
+    const slack = { id: "slack", start: vi.fn() };
+    loadExtensions.mockResolvedValue([canvas, slack]);
+    const { runEval } = await import("./runtime.js");
+
+    await runEval({ agentId: "alpha", instruction: "Solve this" });
+
+    expect(canvas.start).toHaveBeenCalledWith({ ctx: true, id: "canvas" });
+    expect(slack.start).not.toHaveBeenCalled();
   });
 });

@@ -8,7 +8,9 @@
  *
  * Skipped (vs `yoplai gateway`):
  *   - HTTP server / WebSocket
- *   - HTTP routes and long-running extension services
+ *   - HTTP routes and long-running extension services (only Canvas is
+ *     started: its start just opens the dashboard registry, and the
+ *     dashboard_link/dashboard_delete tools need it)
  *   - multi-user auth
  *   - web UI
  *   - tailscale serve
@@ -23,6 +25,10 @@ import {
   prepareStartupConfig,
 } from "../config/validate.js";
 import { getExtensionRuntime, loadExtensions } from "../extensions/registry.js";
+import {
+  bindExtensionContext,
+  createExtensionContext,
+} from "../extensions/context.js";
 import { runAgent } from "../agents/index.js";
 import type { StreamEvent } from "@yoplai/shared";
 import { TrajectoryBuilder, type AtifTrajectory } from "./trajectory.js";
@@ -161,6 +167,13 @@ export async function runEval(opts: RunEvalOptions): Promise<RunEvalOutcome> {
     { resolvedConfig: resolvedStartupConfig }
   );
   setLoadedConfig(config);
+
+  const canvas = extensions.find((extension) => extension.id === "canvas");
+  if (canvas) {
+    await canvas.start(
+      bindExtensionContext(createExtensionContext(config), canvas.id)
+    );
+  }
 
   // 2. Resolve agent (infra error if not found)
   const agent = getAgent(opts.agentId);
