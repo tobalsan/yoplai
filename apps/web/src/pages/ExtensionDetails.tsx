@@ -119,14 +119,22 @@ export function ExtensionDetails() {
                       // A connection in either scope turns the extension on.
                       if (connected && !ext().enabled && !busy() && !ext().managedAtRoot && ext().configurable !== false) void toggle(ext());
                     }}
-                  />
+                  >
+                    <Show when={ext().tier === "auto-form"}>
+                      <ExtensionConfigForm
+                        entry={ext()}
+                        scope={scope()}
+                        onSaved={mutate}
+                        registerConnectActions={(actions) => { settingsActions = actions; }}
+                      />
+                    </Show>
+                  </OAuthConnectCard>
                 )}
               </Show>
 
-              <Show when={ext().tier === "auto-form"}>
+              <Show when={ext().tier === "auto-form" && !ext().oauth}>
                 <ExtensionConfigForm
                   entry={ext()}
-                  scope={ext().oauth ? scope() : undefined}
                   onSaved={mutate}
                   registerConnectActions={(actions) => { settingsActions = actions; }}
                 />

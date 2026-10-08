@@ -144,9 +144,13 @@ export function ExtensionConfigForm(props: {
     }
   };
 
+  // OAuth settings that are all checkboxes save as soon as they are toggled, in the OAuth card.
+  const autoSave = () => oauthScoped() && fields().every((field) => field.type === "boolean");
+
   const setValue = (name: string, value: string | number | boolean) => {
     setValues((prev) => ({ ...prev, [name]: value }));
     setSaved(false);
+    if (autoSave()) void submit().catch((cause) => setError(cause instanceof Error ? cause.message : "Failed to save configuration."));
   };
 
   // Team setting values: the baseline personal overrides are compared against.
@@ -387,13 +391,15 @@ export function ExtensionConfigForm(props: {
       <Show when={saved()}>
         <span class="ext-config-saved">Saved ✓</span>
       </Show>
-      <button
-        type="submit"
-        class="ext-config-save"
-        disabled={saving()}
-      >
-        {saving() ? "Saving…" : "Save configuration"}
-      </button>
+      <Show when={!autoSave()}>
+        <button
+          type="submit"
+          class="ext-config-save"
+          disabled={saving()}
+        >
+          {saving() ? "Saving…" : "Save configuration"}
+        </button>
+      </Show>
     </div>
     </Show>
     <Show when={teamReadOnly() && entry().oauth}>
@@ -414,7 +420,7 @@ export function ExtensionConfigForm(props: {
           {(ext) => (
             <>
               <Show when={fields().length > 0}>
-                <form class="ext-config-form" classList={{ "ext-config-panel": ext().personalSecretFields === undefined }} onSubmit={handleSubmit}>
+                <form class="ext-config-form" classList={{ "ext-config-panel": ext().personalSecretFields === undefined && !ext().oauth }} onSubmit={handleSubmit}>
                   <Show when={ext().personalSecretFields !== undefined} fallback={formBody()}>
                     <CredentialScopeTabs
                       value={credentialScope()}

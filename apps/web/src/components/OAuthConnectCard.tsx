@@ -1,10 +1,12 @@
 import {
   createEffect,
+  children,
   createSignal,
   Match,
   onCleanup,
   Show,
   Switch,
+  type JSX,
 } from "solid-js";
 import { useSession } from "../auth/client";
 import { CredentialScopeTabs, preferredScope, type CredentialScope, type ScopeStatus } from "./CredentialScopeTabs";
@@ -50,7 +52,10 @@ export function OAuthConnectCard(props: {
   saveSettings?: () => Promise<string[] | undefined>;
   /** Called after each status load with whether any scope is connected. */
   onStatus?: (connected: boolean) => void;
+  /** Settings shown in the selected tab's panel, below the connect row. */
+  children?: JSX.Element;
 }) {
+  const settings = children(() => props.children);
   const [statuses, setStatuses] = createSignal<Partial<Record<CredentialScope, OAuthStatus>>>({});
   const [loading, setLoading] = createSignal(false);
   const [error, setError] = createSignal<string>();
@@ -289,6 +294,9 @@ export function OAuthConnectCard(props: {
         <Show when={loading() && !status()}>
           <div class="oauth-quiet">Checking connection…</div>
         </Show>
+        <Show when={settings()}>
+          <div class="oauth-card-settings">{settings()}</div>
+        </Show>
       </CredentialScopeTabs>
     </>
   );
@@ -304,6 +312,7 @@ export const OAUTH_CONNECT_CARD_STYLES = `
 .oauth-btn-primary:disabled { opacity: .5; cursor: not-allowed; }
 .oauth-btn-danger { color: #c5221f; }
 .oauth-connected-detail { margin-top: 16px; padding-top: 16px; border-top: 1px solid var(--border-default); }
+.oauth-card-settings { margin-top: 16px; padding-top: 16px; border-top: 1px solid var(--border-default); }
 .oauth-account { display: flex; flex-direction: column; gap: 2px; }
 .oauth-account-label { font-size: 11px; text-transform: uppercase; letter-spacing: .04em; color: var(--text-secondary); }
 .oauth-account-value { font-size: 15px; color: var(--text-primary); font-weight: 500; }

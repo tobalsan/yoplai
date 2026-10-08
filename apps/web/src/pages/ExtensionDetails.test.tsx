@@ -147,6 +147,7 @@ describe("ExtensionDetails", () => {
     expect(container.querySelector("#ext-field-apiKey")).not.toBeNull();
     expect(container.querySelector("a.ext-details-configure")).toBeNull();
     expect(container.querySelector(".ext-details-settings")).toBeNull();
+    expect(container.querySelector(".ext-config-panel .ext-config-save")).not.toBeNull();
   });
 
   it("renders a Configure link to the bespoke route when present", async () => {
@@ -303,6 +304,40 @@ describe("ExtensionDetails", () => {
       vi.unstubAllGlobals();
     });
 
+    it("renders the write setting inside the connect card with no separate panel or Save button", async () => {
+      setSession("user");
+      fetchAgentExtensionsMock.mockResolvedValue([driveEntry()]);
+      await mount("scribe", "drive");
+      await flush();
+      expect(checkbox().closest(".cred-tabs-panel")).not.toBeNull();
+      expect(container.querySelector(".ext-config-panel")).toBeNull();
+      expect(container.querySelector(".ext-config-save")).toBeNull();
+    });
+
+    it("saves the Whole team setting immediately for an admin", async () => {
+      setSession("admin");
+      fetchAgentExtensionsMock.mockResolvedValue([driveEntry({ canConfigureTeam: true })]);
+      patchAgentExtensionMock.mockResolvedValue([writeEntry("team", true)]);
+      await mount("scribe", "drive");
+      await flush();
+      tab("team").click();
+      await flush();
+      checkbox().click();
+      await flush();
+      expect(patchAgentExtensionMock).toHaveBeenCalledWith("scribe", "drive", expect.objectContaining({ credentialScope: "team", config: { allowWrite: true } }));
+    });
+
+    it("shows an inline error when the immediate save fails", async () => {
+      setSession("user");
+      fetchAgentExtensionsMock.mockResolvedValue([driveEntry()]);
+      patchAgentExtensionMock.mockRejectedValue(new Error("Failed to update extension"));
+      await mount("scribe", "drive");
+      await flush();
+      checkbox().click();
+      await flush();
+      expect(container.textContent).toContain("Failed to update extension");
+    });
+
     it("lets a non-admin edit and save the Just me setting, then connect with its scopes without reload", async () => {
       setSession("user");
       fetchAgentExtensionsMock.mockResolvedValue([driveEntry()]);
@@ -312,9 +347,9 @@ describe("ExtensionDetails", () => {
       await flush();
       expect(checkbox().disabled).toBe(false);
       checkbox().click();
-      container.querySelector<HTMLFormElement>("form")!.requestSubmit();
       await flush();
       expect(patchAgentExtensionMock).toHaveBeenCalledWith("scribe", "drive", expect.objectContaining({ credentialScope: "personal", config: { allowWrite: true } }));
+      expect(container.textContent).toContain("Saved ✓");
       connectButton().click();
       const url = String(open.mock.calls.at(-1)?.[0]);
       expect(url).toContain("drive.file");
