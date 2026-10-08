@@ -14,7 +14,7 @@ import type { ForkStore } from "./forks.js";
  *   - teamless user  → belongs to no team → shares nothing → chats no one.
  *   - teamless fork  → `teamId` is null   → shares nothing → chattable by none.
  *
- * Staff (admin / superadmin) bypass the rule entirely and may chat any agent;
+ * Superadmins bypass the rule entirely and may chat any agent (admins do not);
  * the bypass is applied by the callers that hold the role (`hasAgentAccess`,
  * `getAgentFilter`), so this module stays a pure membership resolver and is
  * unit-testable without an auth context.

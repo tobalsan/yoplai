@@ -21,11 +21,9 @@ import path from "node:path";
 export { getMultiUserRuntime } from "./runtime-state.js";
 export type { MultiUserRuntime } from "./runtime-state.js";
 
-const STAFF_ROLES = ["admin", "superadmin"];
-
-function hasAdminRole(role: string | string[] | null | undefined): boolean {
-  if (Array.isArray(role)) return role.some((r) => STAFF_ROLES.includes(r));
-  return typeof role === "string" && STAFF_ROLES.includes(role);
+function hasSuperadminRole(role: string | string[] | null | undefined): boolean {
+  if (Array.isArray(role)) return role.includes("superadmin");
+  return role === "superadmin";
 }
 
 export function getAgentFilter(
@@ -34,12 +32,11 @@ export function getAgentFilter(
 ): <T extends Pick<AgentConfig, "id">>(agents: T[]) => T[] {
   return (agents) => {
     const activeRuntime = getMultiUserRuntime();
-    // Staff bypass and single-user (no runtime) both see everything. Otherwise
-    // visibility resolves from team membership via the access resolver — the
-    // `agent_assignments` allowlist is no longer consulted.
+    // Superadmins and single-user (no runtime) see everything. Everyone else,
+    // admins included, resolves visibility from team membership.
     if (
       !activeRuntime ||
-      hasAdminRole(role) ||
+      hasSuperadminRole(role) ||
       activeRuntime.getPoolAgentIds().length === 0
     ) {
       return agents;

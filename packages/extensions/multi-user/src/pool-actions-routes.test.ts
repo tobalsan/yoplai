@@ -244,10 +244,10 @@ describe("GET /pool-actions", () => {
     expect(map.get("fresh")?.reason).toBe("unassigned");
   });
 
-  it("gives an admin chat for every fork and assign_to_team for unforked", async () => {
+  it("scopes an admin's chat to their teams but lets them assign unforked agents", async () => {
     const { map } = await actionsFor("admin-1", "admin");
     for (const id of ["scribe", "sage", "scout", "orphan"]) {
-      expect(map.get(id)?.action).toBe("chat");
+      expect(map.get(id)?.action).toBe("none");
     }
     expect(map.get("fresh")?.action).toBe("assign_to_team");
   });

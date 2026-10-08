@@ -9,6 +9,11 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ## [Unreleased]
 
+### Changed
+
+- **⚠ BREAKING** Admins are now scoped to their teams: they only see, chat with, and configure agents of teams they belong to, and only add/remove members of those teams. Only superadmins see everything and create or delete teams.
+- Whole-team extension setup (shared credentials, team OAuth connections, shared MCP server config) is admin-only again; other users see it read-only and can still set up their own connection (adding a custom extension no longer offers them a team choice).
+
 ### Fixed
 
 - Returning to the agent extensions tab, or navigating between the extension list and MCP server pages, no longer blanks the page while MCP server status loads.

@@ -5,6 +5,7 @@ import {
   getForwardedAuthContext,
   getRequestAuthContext,
   hasAdminRole,
+  hasSuperadminRole,
 } from "./middleware.js";
 import { endImpersonation, logImpersonationEvent } from "./impersonation.js";
 
@@ -107,6 +108,7 @@ export function registerMultiUserRoutes(app: Hono): void {
     const actions = catalog.resolvePoolActions(getPoolAgentIds(), {
       id: authContext.user.id,
       isStaff: hasAdminRole(authContext),
+      isSuperadmin: hasSuperadminRole(authContext),
     });
     return c.json({ actions });
   });
@@ -121,6 +123,10 @@ export function registerMultiUserRoutes(app: Hono): void {
       teams: teams.listTeams().map((team) => ({
         ...team,
         memberCount: membership.listUsersForTeam(team.id).length,
+        // Superadmins manage every team; admins only teams they belong to.
+        canManage:
+          hasSuperadminRole(authContext) ||
+          (hasAdminRole(authContext) && membership.isMember(team.id, authContext.user.id)),
       })),
     });
   });

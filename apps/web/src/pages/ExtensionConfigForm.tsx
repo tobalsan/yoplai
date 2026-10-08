@@ -83,7 +83,7 @@ export function ExtensionConfigForm(props: { entry: ExtensionCatalogEntry }) {
   // Non-admins may view, but not change, the admin-managed team credentials.
   const teamReadOnly = () => {
     const current = entry();
-    return credentialScope() === "team" && current?.personalSecretFields !== undefined && !current.canConfigureTeam;
+    return credentialScope() === "team" && (current?.personalSecretFields !== undefined || !!current?.oauth) && current?.canConfigureTeam === false;
   };
   const teamConfigured = () => {
     const current = entry();
@@ -281,7 +281,7 @@ export function ExtensionConfigForm(props: { entry: ExtensionCatalogEntry }) {
 
   const formBody = () => (
     <>
-    <Show when={!teamReadOnly() || teamConfigured()}>
+    <Show when={!teamReadOnly() || teamConfigured() || !!entry().oauth}>
     <For each={baseFields()}>{renderField}</For>
 
     <Show when={advancedFields().length > 0}>
@@ -346,6 +346,9 @@ export function ExtensionConfigForm(props: { entry: ExtensionCatalogEntry }) {
         {saving() ? "Saving…" : "Save configuration"}
       </button>
     </div>
+    </Show>
+    <Show when={teamReadOnly() && entry().oauth}>
+      <p class="ext-config-scope-note">These settings are managed by an admin.</p>
     </Show>
     <Show when={error()}>
       {(message) => (

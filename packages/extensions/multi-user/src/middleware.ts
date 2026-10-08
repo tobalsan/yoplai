@@ -484,10 +484,21 @@ export async function hasAgentAccess(
   agentId: string
 ): Promise<boolean> {
   if (!authContext) return true;
-  if (hasAdminRole(authContext)) return true;
+  // Only superadmins see every agent; admins are scoped to their teams.
+  if (hasSuperadminRole(authContext)) return true;
 
   const runtime = getMultiUserRuntime();
   if (!runtime) return true;
+
+  // Admins may inspect unforked pool templates so they can assign them to
+  // their own teams; forks stay team-scoped.
+  if (
+    hasAdminRole(authContext) &&
+    runtime.getPoolAgentIds().includes(agentId) &&
+    !runtime.forks.getForkByAgentId(agentId)
+  ) {
+    return true;
+  }
 
   // Chat access resolves from team membership, not the legacy allowlist: a
   // non-staff user may chat a fork iff they share a team with it.

@@ -97,6 +97,17 @@ function recordAdminChange(
   });
 }
 
+/**
+ * Admins are scoped to the teams they belong to; superadmins manage every
+ * team. Returns false when the caller may not manage `teamId`.
+ */
+function canManageTeam(c: Context, teamId: string): boolean {
+  const authContext = getRequestAuthContext(c);
+  if (!authContext) return false;
+  if (hasSuperadminRole(authContext)) return true;
+  return getRuntimeOrThrow().membership.isMember(teamId, authContext.user.id);
+}
+
 export function registerMultiUserAdminRoutes(app: Hono): void {
   app.get("/admin/users", requireAdmin(), async (c) => {
     const { auth } = getRuntimeOrThrow();
@@ -191,7 +202,7 @@ export function registerMultiUserAdminRoutes(app: Hono): void {
     return c.json({ user: updated });
   });
 
-  app.get("/admin/agents/assignments", requireAdmin(), (c) => {
+  app.get("/admin/agents/assignments", requireSuperadmin(), (c) => {
     const { assignments } = getRuntimeOrThrow();
     return c.json({ assignments: assignments.getAllAssignments() });
   });
@@ -208,15 +219,25 @@ export function registerMultiUserAdminRoutes(app: Hono): void {
     if (!parsed.success) return c.json({ error: parsed.error.message }, 400);
     const authContext = getRequestAuthContext(c);
     if (!authContext) return c.json({ error: "unauthorized" }, 401);
-    const { forks, teams } = getRuntimeOrThrow();
+    const { forks, teams, membership, access } = getRuntimeOrThrow();
     if (parsed.data.mode === "list" && parsed.data.teamIds.some((teamId) => !teams.getTeam(teamId))) {
       return c.json({ error: "Team not found" }, 404);
     }
+    const poolId = c.req.param("poolId");
+    const existing = forks.getForkByPool(poolId);
+    let assignment = parsed.data;
+    if (!hasSuperadminRole(authContext)) {
+      // Admins only (un)assign their own teams; links to other teams are kept.
+      if (assignment.mode === "all" || existing?.assignment.mode === "all") return c.json({ error: "forbidden" }, 403);
+      if (existing && !access.canUserChatAgent(authContext.user.id, existing.forkAgentId)) return c.json({ error: "forbidden" }, 403);
+      const ownTeams = new Set(membership.listTeamsForUser(authContext.user.id));
+      if (assignment.teamIds.some((teamId) => !ownTeams.has(teamId))) return c.json({ error: "forbidden" }, 403);
+      const otherTeams = existing?.assignment.mode === "list" ? existing.assignment.teamIds.filter((teamId) => !ownTeams.has(teamId)) : [];
+      assignment = { mode: "list", teamIds: [...new Set([...otherTeams, ...assignment.teamIds])] };
+    }
     try {
-      const poolId = c.req.param("poolId");
-      const existing = forks.getForkByPool(poolId);
       const before = existing ? { assignment: existing.assignment } : {};
-      const fork = forks.setTeams(poolId, parsed.data, authContext.user.id);
+      const fork = forks.setTeams(poolId, assignment, authContext.user.id);
       recordAdminChange(c, { action: "admin.fork_teams", targetType: "fork", targetId: poolId, agentId: fork.forkAgentId }, before, { assignment: fork.assignment });
       return c.json({ fork });
     } catch (error) {
@@ -226,6 +247,7 @@ export function registerMultiUserAdminRoutes(app: Hono): void {
   });
 
   app.delete("/admin/teams/:teamId/agents/:poolId", requireAdmin(), (c) => {
+    if (!canManageTeam(c, c.req.param("teamId"))) return c.json({ error: "forbidden" }, 403);
     const { forks } = getRuntimeOrThrow();
     try {
       const poolId = c.req.param("poolId");
@@ -240,7 +262,7 @@ export function registerMultiUserAdminRoutes(app: Hono): void {
     }
   });
 
-  app.post("/admin/teams", requireAdmin(), async (c) => {
+  app.post("/admin/teams", requireSuperadmin(), async (c) => {
     const parsed = CreateTeamBodySchema.safeParse(await c.req.json());
     if (!parsed.success) {
       return c.json({ error: parsed.error.message }, 400);
@@ -270,6 +292,7 @@ export function registerMultiUserAdminRoutes(app: Hono): void {
   });
 
   app.patch("/admin/teams/:id", requireAdmin(), async (c) => {
+    if (!canManageTeam(c, c.req.param("id"))) return c.json({ error: "forbidden" }, 403);
     const parsed = UpdateTeamBodySchema.safeParse(await c.req.json());
     if (!parsed.success) {
       return c.json({ error: parsed.error.message }, 400);
@@ -293,7 +316,7 @@ export function registerMultiUserAdminRoutes(app: Hono): void {
     }
   });
 
-  app.get("/admin/teams/:id/delete-preview", requireAdmin(), (c) => {
+  app.get("/admin/teams/:id/delete-preview", requireSuperadmin(), (c) => {
     const { teams, membership } = getRuntimeOrThrow();
     const teamId = c.req.param("id");
     if (!teams.getTeam(teamId)) {
@@ -302,7 +325,7 @@ export function registerMultiUserAdminRoutes(app: Hono): void {
     return c.json({ teamlessUsers: membership.usersOnlyInTeam(teamId) });
   });
 
-  app.delete("/admin/teams/:id", requireAdmin(), (c) => {
+  app.delete("/admin/teams/:id", requireSuperadmin(), (c) => {
     const { teams, notifyAgentListChanged } = getRuntimeOrThrow();
     try {
       const teamId = c.req.param("id");
@@ -320,6 +343,7 @@ export function registerMultiUserAdminRoutes(app: Hono): void {
   });
 
   app.put("/admin/teams/:teamId/members", requireAdmin(), async (c) => {
+    if (!canManageTeam(c, c.req.param("teamId"))) return c.json({ error: "forbidden" }, 403);
     const parsed = SetTeamMembersBodySchema.safeParse(await c.req.json());
     if (!parsed.success) {
       return c.json({ error: parsed.error.message }, 400);
@@ -355,6 +379,7 @@ export function registerMultiUserAdminRoutes(app: Hono): void {
   });
 
   app.delete("/admin/teams/:teamId/members/:userId", requireAdmin(), (c) => {
+    if (!canManageTeam(c, c.req.param("teamId"))) return c.json({ error: "forbidden" }, 403);
     const teamId = c.req.param("teamId");
     const userId = c.req.param("userId");
     const { teams, membership, notifyAgentListChanged } = getRuntimeOrThrow();
@@ -376,7 +401,7 @@ export function registerMultiUserAdminRoutes(app: Hono): void {
     });
   });
 
-  app.put("/admin/agents/:agentId/assignments", requireAdmin(), async (c) => {
+  app.put("/admin/agents/:agentId/assignments", requireSuperadmin(), async (c) => {
     const parsed = SetAgentAssignmentsBodySchema.safeParse(await c.req.json());
     if (!parsed.success) {
       return c.json({ error: parsed.error.message }, 400);

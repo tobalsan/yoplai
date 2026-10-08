@@ -21,8 +21,8 @@ import type { ForkStore } from "./forks.js";
  *                        discoverable on disk (e.g. its folder was renamed or
  *                        removed). Renders no action.
  *
- * Staff (admin / superadmin) always get a usable `chat` for any existing fork
- * regardless of team membership; the staff bypass is layered here because this
+ * Superadmins always get a usable `chat` for any existing fork regardless of
+ * team membership (admins are team-scoped like users); the staff bypass is layered here because this
  * module (unlike the pure `AccessResolver`) is handed the caller's role.
  *
  * Every entry also carries a `reason` (non-null only when `action === "none"`)
@@ -68,8 +68,10 @@ export type PoolCatalogResolver = {
 /** The minimal current-user shape the resolver needs. */
 export type CatalogUser = {
   id: string;
-  /** True for admin/superadmin — grants the staff bypass. */
+  /** True for admin/superadmin — may fork+assign unforked pool agents. */
   isStaff: boolean;
+  /** True for superadmin only — may chat any fork regardless of team. */
+  isSuperadmin?: boolean;
 };
 
 export type PoolCatalogResolverDeps = {
@@ -130,12 +132,12 @@ export function createPoolCatalogResolver(
       };
     }
 
-    // A fork exists. Staff always chat it; other users chat it only when they
+    // A fork exists. Superadmins always chat it; other users chat it only when they
     // share the fork's (non-null) team. A teamless fork is chattable by nobody
-    // but staff. Reuse the pure access resolver so the membership rule stays in
+    // but superadmins. Reuse the pure access resolver so the membership rule stays in
     // one place.
     const chattable =
-      user.isStaff || access.canUserChatAgent(user.id, fork.forkAgentId);
+      user.isSuperadmin || access.canUserChatAgent(user.id, fork.forkAgentId);
 
     if (chattable) {
       return {

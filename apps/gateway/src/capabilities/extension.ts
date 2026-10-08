@@ -169,8 +169,7 @@ async function canConfigureAgent(
     .prepare("SELECT role FROM user WHERE id = ?")
     .get(userId) as { role?: unknown } | undefined;
   const roles = Array.isArray(user?.role) ? user.role : [user?.role];
-  if (roles.some((role) => role === "admin" || role === "superadmin"))
-    return true;
+  if (roles.includes("superadmin")) return true;
   return runtime.access.canUserChatAgent(userId, agentId);
 }
 

@@ -7,6 +7,8 @@ export type Team = {
   allUsers: boolean;
   private: boolean;
   memberCount: number;
+  /** True when the caller may edit this team and its members/agents. */
+  canManage?: boolean;
   createdBy: string;
   createdAt: string;
 };

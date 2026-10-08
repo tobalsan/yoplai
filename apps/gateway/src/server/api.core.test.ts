@@ -1258,9 +1258,12 @@ describe("api core session resolution", () => {
         return api.request(new Request("http://localhost/agents/alpha/extensions/acme", { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify(body) }));
       }
 
-      it("lets agent members unset whole-team credentials, keeping settings", async () => {
+      it("lets only admins unset whole-team credentials, keeping settings", async () => {
         const { api } = await import("./api.core.js");
         const remove = () => api.request(new Request("http://localhost/agents/alpha/extensions/acme/credentials", { method: "DELETE" }));
+        multiUserState.agentAccess = true;
+        expect((await remove()).status).toBe(403);
+        multiUserState.authContext = { user: { id: "admin", role: "admin" }, session: { id: "s0", userId: "admin" } };
         multiUserState.agentAccess = false;
         expect((await remove()).status).toBe(403);
         expect(updateAgentExtensionConfig).not.toHaveBeenCalled();
@@ -1276,7 +1279,7 @@ describe("api core session resolution", () => {
         const response = await patch({ credentialScope: "personal", secrets: { apiKey: "alice-private" } });
         expect(response.status).toBe(200);
         const body = await response.json();
-        expect(body.extensions[0]).toMatchObject({ personalSecretFields: ["apiKey"], canConfigureTeam: true });
+        expect(body.extensions[0]).toMatchObject({ personalSecretFields: ["apiKey"], canConfigureTeam: false });
         expect(JSON.stringify(body)).not.toContain("alice-private");
         expect([...credentialState.records.entries()]).toEqual([[JSON.stringify({ agentId: "alpha", integration: "extension-config:acme", scope: { type: "personal", userId: "alice" } }), { apiKey: "alice-private" }]]);
         expect(updateAgentExtensionConfig).not.toHaveBeenCalled();
@@ -1334,8 +1337,19 @@ describe("api core session resolution", () => {
         expect(reloadConfig).toHaveBeenCalled();
       });
 
-      it("lets agent members enable and disable an extension", async () => {
+      it("lets members change settings of extensions without credentials", async () => {
+        resolveExtensionDefinition.mockResolvedValue({ id: "acme", configJsonSchema: { properties: { region: { type: "string" } } } });
+        buildExtensionCatalog.mockResolvedValue([{ ...catalog[0], enabled: true, requiredSecrets: [], oauth: null }]);
         updateAgentExtensionConfig.mockResolvedValue({});
+        expect((await patch({ enabled: false })).status).toBe(200);
+      });
+
+      it("keeps whole-team setup of credential extensions admin-only", async () => {
+        updateAgentExtensionConfig.mockResolvedValue({});
+        expect((await patch({ enabled: true })).status).toBe(403);
+        expect((await patch({ credentialScope: "team", secrets: { apiKey: "team" } })).status).toBe(403);
+        expect(updateAgentExtensionConfig).not.toHaveBeenCalled();
+        multiUserState.authContext = { user: { id: "admin", role: "admin" }, session: { id: "s0", userId: "admin" } };
         expect((await patch({ enabled: true })).status).toBe(200);
         expect((await patch({ enabled: false })).status).toBe(200);
         expect(updateAgentExtensionConfig).toHaveBeenCalledWith("/ws/alpha", "acme", { enabled: false }, expect.any(Function));
@@ -1375,6 +1389,7 @@ describe("settings audit API and extension mutations", () => {
     return api.request("/agents/alpha/extensions/acme", { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
   }
   it("records one team change with actor and redacted secret, and an empty diff for a no-op", async () => {
+    multiUserState.authContext!.user.role = "admin";
     expect((await patch({ config: { region: "us" }, secrets: { apiKey: "submitted-secret" } })).status).toBe(200);
     expect(audit.record).toHaveBeenCalledTimes(1);
     expect(audit.record).toHaveBeenCalledWith({ actorUserId: "alice", action: "extension.update", agentId: "alpha", targetType: "extension", targetId: "acme", scope: "team", changes: [{ field: "region", before: "eu", after: "us" }, { field: "apiKey", secret: "set" }] });
@@ -1384,6 +1399,7 @@ describe("settings audit API and extension mutations", () => {
     expect(audit.record.mock.calls[0][0].changes).toEqual([]);
   });
   it("records team credential removal and no-op deletion", async () => {
+    multiUserState.authContext!.user.role = "admin";
     const { api } = await import("./api.core.js");
     expect((await api.request("/agents/alpha/extensions/acme/credentials", { method: "DELETE" })).status).toBe(200);
     expect(audit.record).toHaveBeenCalledWith(expect.objectContaining({ action: "extension.credentials_remove", changes: [{ field: "apiKey", secret: "removed" }] }));
@@ -1393,6 +1409,7 @@ describe("settings audit API and extension mutations", () => {
     expect(audit.record.mock.calls[0][0].changes).toEqual([]);
   });
   it("keeps non-secret environment references literal and matches writer precedence", async () => {
+    multiUserState.authContext!.user.role = "admin";
     (loadConfigValue.agents as { extensions: { acme: Record<string, unknown> } }[])[0].extensions.acme.region = "$env:PRIVATE_TOKEN";
     expect((await patch({ enabled: false, config: { enabled: true, region: "eu" } })).status).toBe(200);
     expect(audit.record.mock.calls[0][0].changes).toEqual([{ field: "region", before: "$env:PRIVATE_TOKEN", after: "eu" }]);

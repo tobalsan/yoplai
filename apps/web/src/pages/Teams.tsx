@@ -25,11 +25,9 @@ import {
 import { fetchUsers, type AdminUser } from "../api/admin";
 import { useSession } from "../auth/client";
 
-const STAFF_ROLES = ["admin", "superadmin"];
-
-function hasAdminRole(role: string | string[] | null | undefined): boolean {
-  if (Array.isArray(role)) return role.some((r) => STAFF_ROLES.includes(r));
-  return typeof role === "string" && STAFF_ROLES.includes(role);
+function hasSuperadminRole(role: string | string[] | null | undefined): boolean {
+  if (Array.isArray(role)) return role.includes("superadmin");
+  return role === "superadmin";
 }
 
 // Curated palette + Font Awesome icons for the pickers. Both are optional; the
@@ -720,8 +718,9 @@ export function Teams() {
   const [deleteTarget, setDeleteTarget] = createSignal<Team | null>(null);
   const [detailTeam, setDetailTeam] = createSignal<Team | null>(null);
 
-  const isAdmin = createMemo(() =>
-    hasAdminRole((session().data?.user as { role?: string } | undefined)?.role)
+  // Only superadmins create/delete teams; admins manage teams they belong to.
+  const isSuperadmin = createMemo(() =>
+    hasSuperadminRole((session().data?.user as { role?: string } | undefined)?.role)
   );
 
   const sortedTeams = createMemo(() =>
@@ -745,7 +744,7 @@ export function Teams() {
             Organize agents and users into teams.
           </p>
         </div>
-        <Show when={isAdmin()}>
+        <Show when={isSuperadmin()}>
           <button
             type="button"
             class="team-button team-button--primary"
@@ -795,7 +794,7 @@ export function Teams() {
                     >
                       Members
                     </button>
-                    <Show when={isAdmin()}>
+                    <Show when={team.canManage}>
                       <button
                         type="button"
                         class="team-button"
@@ -803,6 +802,8 @@ export function Teams() {
                       >
                         Edit
                       </button>
+                    </Show>
+                    <Show when={isSuperadmin()}>
                       <button
                         type="button"
                         class="team-button team-button--danger-text"
@@ -844,7 +845,7 @@ export function Teams() {
         {(team) => (
           <TeamDetail
             team={team()}
-            isAdmin={isAdmin()}
+            isAdmin={team().canManage === true}
             onClose={() => setDetailTeam(null)}
             onMembersChanged={() => void refetch()}
           />

@@ -30,6 +30,11 @@ function hasAdminRole(role: string | string[] | null | undefined): boolean {
   return typeof role === "string" && STAFF_ROLES.includes(role);
 }
 
+function hasSuperadminRole(role: string | string[] | null | undefined): boolean {
+  if (Array.isArray(role)) return role.includes("superadmin");
+  return role === "superadmin";
+}
+
 export function AgentCatalog() {
   const [agents] = createResource(() =>
     capabilities.forkedAgents ? fetchPool() : fetchAgents()
@@ -37,6 +42,11 @@ export function AgentCatalog() {
   const session = useSession();
   const isAdmin = createMemo(() =>
     hasAdminRole(
+      (session().data?.user as { role?: string | string[] } | undefined)?.role
+    )
+  );
+  const isSuperadmin = createMemo(() =>
+    hasSuperadminRole(
       (session().data?.user as { role?: string | string[] } | undefined)?.role
     )
   );
@@ -65,7 +75,7 @@ export function AgentCatalog() {
     return list.filter((agent) => actionByPool().get(agent.id)?.action === "chat");
   });
   const canEditAgent = (entry: PoolCatalogEntry | undefined) =>
-    !capabilities.forkedAgents || isAdmin() || entry?.action === "chat";
+    !capabilities.forkedAgents || isSuperadmin() || entry?.action === "chat" || entry?.action === "assign_to_team";
 
   return (
     <div class="agent-catalog">

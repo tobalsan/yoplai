@@ -20,6 +20,7 @@ import {
 import { createTeamStore } from "./teams.js";
 import { createMembershipStore } from "./membership.js";
 import { createForkStore } from "./forks.js";
+import { createAccessResolver } from "./access.js";
 
 const getMultiUserRuntime = vi.fn();
 const recordAudit = vi.fn();
@@ -105,6 +106,7 @@ function buildRuntime() {
     teams,
     membership,
     forks,
+    access: createAccessResolver({ membership, forks }),
   };
 }
 
@@ -177,7 +179,7 @@ afterEach(() => {
 
 describe("admin fork/assignment routes", () => {
   it("sets explicit teams, forks once, and is idempotent", async () => {
-    const app = await makeApp("admin");
+    const app = await makeApp("superadmin");
     const res = await app.request(
       req("/admin/forks/scribe/teams", { mode: "list", teamIds: [teamId] }, "PUT")
     );
@@ -190,11 +192,29 @@ describe("admin fork/assignment routes", () => {
     expect(fs.existsSync(path.join(homeDir, "agents", "scribe"))).toBe(true);
     expect((await app.request(req("/admin/forks/scribe/teams", { mode: "list", teamIds: [teamId, teamId] }, "PUT"))).status).toBe(200);
     expect(recordAudit).toHaveBeenCalledTimes(1);
-    expect(recordAudit).toHaveBeenLastCalledWith(expect.objectContaining({ action: "admin.fork_teams", agentId: "scribe", targetId: "scribe", actorUserId: "admin-1" }));
+    expect(recordAudit).toHaveBeenLastCalledWith(expect.objectContaining({ action: "admin.fork_teams", agentId: "scribe", targetId: "scribe", actorUserId: "superadmin-1" }));
     expect((await app.request(req(`/admin/teams/${teamId}/agents/scribe`, undefined, "DELETE"))).status).toBe(200);
     expect((await app.request(req(`/admin/teams/${teamId}/agents/scribe`, undefined, "DELETE"))).status).toBe(200);
     expect(recordAudit).toHaveBeenCalledTimes(2);
     expect(recordAudit).toHaveBeenLastCalledWith(expect.objectContaining({ action: "admin.team_agent_remove", changes: [{ field: "assignment", before: { mode: "list", teamIds: [teamId] }, after: { mode: "list", teamIds: [] } }] }));
+  });
+
+  it("scopes admins to their own teams", async () => {
+    createMembershipStore(db).setMembers(teamId, { mode: "list", userIds: ["admin-1"] }, "superadmin-1");
+    const app = await makeApp("admin");
+    const put = (body: unknown) => app.request(req("/admin/forks/scribe/teams", body, "PUT"));
+    expect((await put({ mode: "all" })).status).toBe(403);
+    expect((await put({ mode: "list", teamIds: ["team-b"] })).status).toBe(403);
+    expect((await put({ mode: "list", teamIds: [teamId] })).status).toBe(200);
+    // Another team's link survives the admin's own-team edits.
+    const superApp = await makeApp("superadmin");
+    await superApp.request(req("/admin/forks/scribe/teams", { mode: "list", teamIds: [teamId, "team-b"] }, "PUT"));
+    const adminApp = await makeApp("admin");
+    const res = await adminApp.request(req("/admin/forks/scribe/teams", { mode: "list", teamIds: [] }, "PUT"));
+    expect(((await res.json()) as { fork: { assignment: unknown } }).fork.assignment).toEqual({ mode: "list", teamIds: ["team-b"] });
+    expect((await adminApp.request(req("/admin/teams/team-b/agents/scribe", undefined, "DELETE"))).status).toBe(403);
+    // No longer sharing a team, the admin cannot re-claim the fork.
+    expect((await adminApp.request(req("/admin/forks/scribe/teams", { mode: "list", teamIds: [teamId] }, "PUT"))).status).toBe(403);
   });
 
   it("is guarded to admins/superadmins", async () => {
@@ -206,7 +226,7 @@ describe("admin fork/assignment routes", () => {
   });
 
   it("replaces explicit teams without duplicating the fork", async () => {
-    const app = await makeApp("admin");
+    const app = await makeApp("superadmin");
     await app.request(req("/admin/forks/scribe/teams", { mode: "list", teamIds: [teamId] }, "PUT"));
     const res = await app.request(
       req("/admin/forks/scribe/teams", { mode: "list", teamIds: ["team-b"] }, "PUT")
@@ -222,7 +242,7 @@ describe("admin fork/assignment routes", () => {
   });
 
   it("accepts an empty explicit list", async () => {
-    const app = await makeApp("admin");
+    const app = await makeApp("superadmin");
     await app.request(req("/admin/forks/scribe/teams", { mode: "list", teamIds: [teamId] }, "PUT"));
     const res = await app.request(req("/admin/forks/scribe/teams", { mode: "list", teamIds: [] }, "PUT"));
     expect(res.status).toBe(200);
@@ -231,7 +251,7 @@ describe("admin fork/assignment routes", () => {
   });
 
   it("returns 404 assigning an unknown pool id", async () => {
-    const app = await makeApp("admin");
+    const app = await makeApp("superadmin");
     const res = await app.request(
       req("/admin/forks/ghost/teams", { mode: "list", teamIds: [teamId] }, "PUT")
     );
@@ -239,7 +259,7 @@ describe("admin fork/assignment routes", () => {
   });
 
   it("lists a team's agents via GET /teams/:id/agents", async () => {
-    const app = await makeApp("admin");
+    const app = await makeApp("superadmin");
     await app.request(req("/admin/forks/scribe/teams", { mode: "all" }, "PUT"));
     const res = await app.request(
       new Request(`http://localhost/teams/${teamId}/agents`, {

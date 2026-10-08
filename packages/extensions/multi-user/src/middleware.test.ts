@@ -443,7 +443,7 @@ describe("multi-user middleware", () => {
     expect(canUserChatAgent).toHaveBeenCalledWith("user-1", "agent-1");
   });
 
-  it("allows bearer auth for staff regardless of team membership", async () => {
+  it("allows bearer auth for superadmins regardless of team membership", async () => {
     const canUserChatAgent = vi.fn(() => false);
     getMultiUserRuntime.mockReturnValue({
       auth: {
@@ -462,7 +462,7 @@ describe("multi-user middleware", () => {
             email: "admin@example.com",
             name: "Admin",
             image: null,
-            role: "admin",
+            role: "superadmin",
             approved: 1,
           })),
         })),

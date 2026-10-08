@@ -257,7 +257,7 @@ function createRuntime(options?: {
     }
   );
   const getSession = vi.fn(
-    async () => options?.session ?? createSession("admin")
+    async () => options?.session ?? createSession("superadmin")
   );
 
   const { teams, membership } = createInMemoryTeamStore([...users.keys()]);
@@ -363,7 +363,7 @@ describe("multi-user admin routes", () => {
     expect((await mutate("/admin/users/user-1", "PATCH", { approved: true })).status).toBe(200);
     expect(runtime.runtime.audit.record).toHaveBeenCalledTimes(1);
     expect(runtime.runtime.audit.record).toHaveBeenLastCalledWith(expect.objectContaining({
-      action: "admin.user_update", actorUserId: "admin-1", actorEmail: "admin@example.com",
+      action: "admin.user_update", actorUserId: "superadmin-1", actorEmail: "superadmin@example.com",
       targetType: "user", targetId: "user-1", scope: undefined,
       changes: [{ field: "approved", before: false, after: true }],
     }));
@@ -782,7 +782,7 @@ describe("multi-user admin routes", () => {
     expect(created.team).toMatchObject({
       name: "Platform",
       private: true,
-      createdBy: "admin-1",
+      createdBy: "superadmin-1",
     });
     // Defaults applied server-side when color/icon omitted.
     expect(created.team.color).toBeTruthy();
@@ -952,6 +952,33 @@ describe("multi-user admin routes", () => {
     );
     expect(response.status).toBe(403);
     expect(runtime.teams.listTeams()).toHaveLength(0);
+  });
+
+  it("scopes admins to teams they belong to; only superadmins create/delete teams", async () => {
+    const runtime = createRuntime({ session: createSession("admin") });
+    const own = runtime.teams.createTeam({ name: "Own", createdBy: "superadmin-1" });
+    const other = runtime.teams.createTeam({ name: "Other", createdBy: "superadmin-1" });
+    runtime.runtime.membership.setMembers(own.id, { mode: "list", userIds: ["admin-1"] }, "superadmin-1");
+    getMultiUserRuntime.mockReturnValue(runtime.runtime);
+
+    const { registerMultiUserRoutes } = await importAdminRoutes();
+    const { createAuthMiddleware } = await importAuthMiddleware();
+    const app = createAdminApp();
+    app.use("*", createAuthMiddleware());
+    registerMultiUserRoutes(app);
+    const call = (path: string, method: string, body?: unknown) => app.request(new Request(`http://localhost${path}`, {
+      method,
+      headers: { cookie: "session=1", "content-type": "application/json" },
+      body: body === undefined ? undefined : JSON.stringify(body),
+    }));
+
+    expect((await call("/admin/teams", "POST", { name: "New" })).status).toBe(403);
+    expect((await call(`/admin/teams/${own.id}`, "DELETE")).status).toBe(403);
+    expect((await call(`/admin/teams/${other.id}/members`, "PUT", { mode: "list", userIds: ["user-1"] })).status).toBe(403);
+    expect((await call(`/admin/teams/${other.id}/members/user-1`, "DELETE")).status).toBe(403);
+    expect((await call(`/admin/teams/${other.id}`, "PATCH", { name: "Renamed" })).status).toBe(403);
+    expect((await call(`/admin/teams/${own.id}/members`, "PUT", { mode: "list", userIds: ["admin-1", "user-1"] })).status).toBe(200);
+    expect((await call(`/admin/teams/${own.id}/members/user-1`, "DELETE")).status).toBe(200);
   });
 
   it("admin sets and removes team members", async () => {

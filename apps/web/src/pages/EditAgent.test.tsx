@@ -392,10 +392,10 @@ describe("EditAgent", () => {
   });
 
   it("sets explicit teams for a never-forked agent", async () => {
-    setSession("admin");
+    setSession("superadmin");
     fetchPoolMock.mockResolvedValue([agent({ id: "scribe" })]);
     fetchForksMock.mockResolvedValue([]);
-    fetchTeamsMock.mockResolvedValue([{ id: "t1", name: "Red" } as Team]);
+    fetchTeamsMock.mockResolvedValue([{ id: "t1", name: "Red", canManage: true } as Team]);
     setForkTeamsMock.mockResolvedValue(fork({ sourcePoolId: "scribe", teamId: "t1" }));
     await mountEdit("scribe");
 
@@ -417,12 +417,12 @@ describe("EditAgent", () => {
   });
 
   it("refetches extensions after assigning an agent to a team", async () => {
-    setSession("admin");
+    setSession("superadmin");
     fetchPoolMock.mockResolvedValue([agent({ id: "scribe" })]);
     fetchForksMock
       .mockResolvedValueOnce([])
       .mockResolvedValueOnce([fork({ sourcePoolId: "scribe", teamId: "t1" })]);
-    fetchTeamsMock.mockResolvedValue([{ id: "t1", name: "Red" } as Team]);
+    fetchTeamsMock.mockResolvedValue([{ id: "t1", name: "Red", canManage: true } as Team]);
     fetchAgentExtensionsMock
       .mockResolvedValueOnce([
         {
@@ -471,14 +471,14 @@ describe("EditAgent", () => {
   });
 
   it("replaces an already-forked agent's explicit team list", async () => {
-    setSession("admin");
+    setSession("superadmin");
     fetchPoolMock.mockResolvedValue([agent({ id: "scribe" })]);
     fetchForksMock.mockResolvedValue([
       fork({ sourcePoolId: "scribe", teamId: "t1" }),
     ]);
     fetchTeamsMock.mockResolvedValue([
-      { id: "t1", name: "Red" } as Team,
-      { id: "t2", name: "Blue" } as Team,
+      { id: "t1", name: "Red", canManage: true } as Team,
+      { id: "t2", name: "Blue", canManage: true } as Team,
     ]);
     setForkTeamsMock.mockResolvedValue(fork({ sourcePoolId: "scribe", teamId: "t2" }));
     await mountEdit("scribe");
@@ -500,6 +500,23 @@ describe("EditAgent", () => {
     await new Promise((resolve) => setTimeout(resolve, 0));
 
     expect(setForkTeamsMock).toHaveBeenCalledWith("scribe", { mode: "list", teamIds: ["t2"] });
+  });
+
+  it("limits an admin to their own teams and keeps other teams' links", async () => {
+    setSession("admin");
+    fetchPoolMock.mockResolvedValue([agent({ id: "scribe" })]);
+    fetchForksMock.mockResolvedValue([]);
+    fetchTeamsMock.mockResolvedValue([
+      { id: "t1", name: "Red", canManage: true } as Team,
+      { id: "t2", name: "Blue", canManage: false } as Team,
+    ]);
+    setForkTeamsMock.mockResolvedValue(fork({ sourcePoolId: "scribe", teamId: "t1" }));
+    await mountEdit("scribe");
+
+    const pills = container.querySelectorAll<HTMLButtonElement>(".edit-agent-team-pill");
+    expect(pills).toHaveLength(2);
+    expect(pills[0]!.disabled).toBe(true); // All teams is superadmin-only
+    expect(container.querySelector(".edit-agent-team")?.textContent).not.toContain("Blue");
   });
 
   it("does not render the team controls for a non-admin", async () => {
@@ -767,7 +784,7 @@ describe("EditAgent", () => {
   });
 
   it("uses the assigned fork for MCP status and add from a pool agent page", async () => {
-    setSession("admin");
+    setSession("superadmin");
     fetchPoolMock.mockResolvedValue([agent({ id: "scribe" })]);
     fetchForksMock.mockResolvedValue([fork({ sourcePoolId: "scribe", forkAgentId: "scribe-fork" })]);
     fetchMcpServersMock.mockResolvedValue({ canConfigureTeam: true, servers: [] });

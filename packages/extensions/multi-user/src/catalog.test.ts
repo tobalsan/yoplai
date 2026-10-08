@@ -41,7 +41,8 @@ function writePoolAgent(id: string): PoolAgentRef {
 // The full pool the catalog resolves over (mirrors config order).
 const POOL_IDS = ["scribe", "sage", "scout", "orphan", "fresh"];
 
-const staff = (id: string): CatalogUser => ({ id, isStaff: true });
+const staff = (id: string): CatalogUser => ({ id, isStaff: true, isSuperadmin: true });
+const admin = (id: string): CatalogUser => ({ id, isStaff: true });
 const member = (id: string): CatalogUser => ({ id, isStaff: false });
 
 beforeEach(() => {
@@ -135,6 +136,13 @@ describe("resolvePoolAction — chat", () => {
       expect(entry.action).toBe("chat");
       expect(entry.chatAgentId).toBe(forkId(id));
     }
+  });
+
+  it("scopes a non-superadmin admin to their teams", () => {
+    for (const id of ["scribe", "sage", "scout"]) {
+      expect(catalog.resolvePoolAction(id, admin("admin-1")).action).toBe("none");
+    }
+    expect(catalog.resolvePoolAction("fresh", admin("admin-1")).action).toBe("assign_to_team");
   });
 });
 

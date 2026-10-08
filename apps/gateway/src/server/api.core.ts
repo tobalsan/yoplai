@@ -193,9 +193,17 @@ async function canConfigureAgentExtensions(
   if (!isExtensionLoaded("multiUser")) return true;
   const authContext = await getRequestAuthContext(c);
   if (!authContext) return false;
-  if (hasAdminRole(authContext.user.role)) return true;
   const { hasAgentAccess } = await loadMultiUserApiDeps();
   return hasAgentAccess(authContext, agentId);
+}
+
+/**
+ * Whole-team extension setup (shared credentials, team OAuth grants, shared
+ * MCP config) is admin-only; other users may only manage their own connection.
+ */
+async function canConfigureTeamExtensions(c: Context): Promise<boolean> {
+  if (!isExtensionLoaded("multiUser")) return true;
+  return hasAdminRole((await getRequestAuthContext(c))?.user.role);
 }
 
 /** Whether the requester (personal) or the team has a stored connection for the provider. */
@@ -209,9 +217,10 @@ function hasOAuthConnection(agentId: string, provider: string, userId?: string):
 
 async function requesterExtensionCatalog(c: Context, config: GatewayConfig, agent: AgentConfig, configurable = true) {
   const auth = await getRequestAuthContext(c);
+  const canConfigureTeam = await canConfigureTeamExtensions(c);
   const catalog = await buildExtensionCatalog(config, agent, { configurable, ...(auth ? { requesterUserId: auth.user.id } : {}) });
   const withOAuth = catalog.map((entry) => entry.oauth
-    ? { ...entry, oauthConnected: hasOAuthConnection(agent.id, entry.oauth.provider, auth?.user.id) }
+    ? { ...entry, canConfigureTeam, oauthConnected: hasOAuthConnection(agent.id, entry.oauth.provider, auth?.user.id) }
     : entry);
   if (!auth) return withOAuth;
   return withOAuth.map((entry) => {
@@ -223,7 +232,7 @@ async function requesterExtensionCatalog(c: Context, config: GatewayConfig, agen
       scope: { type: "personal", userId: auth.user.id },
     });
     const personalConfigValues = Object.fromEntries(Object.entries(personal ?? {}).filter(([field]) => !fields.includes(field)));
-    return { ...entry, canConfigureTeam: true, personalSecretFields: fields.filter((field) => !!personal?.[field]), personalConfigValues };
+    return { ...entry, canConfigureTeam, personalSecretFields: fields.filter((field) => !!personal?.[field]), personalConfigValues };
   });
 }
 
@@ -273,8 +282,8 @@ api.route("/", createConnectionRoutes({ canAccessAgent: callerHasAgentAccess, ge
 api.route("/", createOAuthRoutes(
   undefined,
   callerHasAgentAccess,
-  getRequestUserId
-  // Team grants: anyone with agent access (staff or same-team member) may set or remove them.
+  getRequestUserId,
+  canConfigureTeamExtensions
 ));
 
 api.get("/theme.css", async (c) => {
@@ -887,6 +896,10 @@ api.patch("/agents/:id/extensions/:extensionId", async (c) => {
   }
 
   const secretFields = targetExtension ? extensionSecretFields(targetExtension) : targetEntry?.requiredSecrets ?? [];
+  // Whole-team setup of credential/OAuth extensions is admin-only.
+  if (!personalScope && (secretFields.length > 0 || targetEntry?.oauth) && !(await canConfigureTeamExtensions(c))) {
+    return c.json({ error: "team_requires_admin" }, 403);
+  }
   if (Object.keys(patch.config ?? {}).some((field) => secretFields.includes(field))) {
     return c.json({ error: "Credential fields must be submitted as secrets" }, 400);
   }
@@ -998,7 +1011,7 @@ api.patch("/agents/:id/extensions/:extensionId", async (c) => {
 // DELETE /api/agents/:id/connections/extension/:extensionId.
 api.delete("/agents/:id/extensions/:extensionId/credentials", async (c) => {
   const agentId = c.req.param("id");
-  if (!(await canConfigureAgentExtensions(c, agentId))) {
+  if (!(await canConfigureAgentExtensions(c, agentId)) || !(await canConfigureTeamExtensions(c))) {
     return c.json({ error: "forbidden" }, 403);
   }
   const extensionId = c.req.param("extensionId");

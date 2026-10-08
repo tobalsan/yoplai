@@ -28,7 +28,7 @@ import { Teams } from "./Teams";
 
 const team: Team = {
   id: "team-1", name: "Research", description: null, color: "#6b7280",
-  icon: "fa-solid fa-users", allUsers: false, private: true, memberCount: 1,
+  icon: "fa-solid fa-users", allUsers: false, private: true, memberCount: 1, canManage: true,
   createdBy: "admin", createdAt: "2026-10-07",
 };
 
@@ -42,7 +42,7 @@ describe("team privacy controls", () => {
     mocks.fetchTeamMembers.mockResolvedValue({ teamId: team.id, allUsers: false, members: [{ id: "user-1", name: "Member", email: null }] });
     mocks.fetchTeamAgents.mockResolvedValue([]);
     mocks.fetchUsers.mockResolvedValue([]);
-    mocks.useSession.mockReturnValue(() => ({ data: { user: { role: "admin" } } }));
+    mocks.useSession.mockReturnValue(() => ({ data: { user: { role: "superadmin" } } }));
     container = document.createElement("div");
     document.body.append(container);
     dispose = render(() => <Teams />, container);
@@ -111,5 +111,26 @@ describe("team privacy controls", () => {
     await click("Close");
     expect(container.querySelector('[role="dialog"]')).toBeNull();
     expect(container.querySelector(".team-card__name")?.textContent).toBe(team.name);
+  });
+});
+
+describe("admin team scoping", () => {
+  it("hides create/delete from admins and edit on teams they don't belong to", async () => {
+    vi.resetAllMocks();
+    mocks.fetchTeams.mockResolvedValue([
+      { ...team, id: "own", name: "Own", canManage: true },
+      { ...team, id: "other", name: "Other", canManage: false },
+    ]);
+    mocks.useSession.mockReturnValue(() => ({ data: { user: { role: "admin" } } }));
+    const container = document.createElement("div");
+    document.body.append(container);
+    const dispose = render(() => <Teams />, container);
+    await vi.waitFor(() => expect(container.textContent).toContain("Other"));
+    const labels = [...container.querySelectorAll("button")].map((button) => button.textContent?.trim());
+    expect(labels).not.toContain("New team");
+    expect(labels).not.toContain("Delete");
+    expect(labels.filter((label) => label === "Edit")).toHaveLength(1);
+    dispose();
+    container.remove();
   });
 });

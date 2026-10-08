@@ -18,9 +18,10 @@ email/password), and a session secret.
 - Google OAuth and/or email/password sign-in via Better Auth.
 - A superadmin role (auto-assigned to the first registered user) plus an
   `approved` flag gating non-admin access.
-- Team membership, pool-agent forks, and team-based agent access. Non-staff
-  users only see and run forked agents assigned to one of their teams; staff
-  bypass that membership check.
+- Team membership, pool-agent forks, and team-based agent access. Users and
+  admins only see and run forked agents assigned to one of their teams; only
+  superadmins bypass that check. Admins manage only teams they belong to;
+  only superadmins create or delete teams.
 - The `createAuthMiddleware` mounted on `/api/*`, plus `requireAdmin` and
   `requireAgentAccess` middleware used by other extensions.
 - Bearer-token API auth via the `@better-auth/api-key` plugin (see below).

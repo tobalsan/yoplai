@@ -68,6 +68,8 @@ function TeamAssignment(props: {
   poolId: string;
   teams: Team[];
   fork: AgentFork | undefined;
+  /** Admins may only (un)assign their own teams and never "All teams". */
+  superadmin: boolean;
   onChanged: () => void;
 }) {
   const [selected, setSelected] = createSignal<string[]>(props.fork?.assignment?.mode === "list" ? props.fork.assignment.teamIds : []);
@@ -86,7 +88,10 @@ function TeamAssignment(props: {
     setBusy(true);
     setError(null);
     try {
-      await setForkTeams(props.poolId, allTeams() ? { mode: "all" } : { mode: "list", teamIds: selected() });
+      // Admins send only their own teams; the server keeps other teams' links.
+      const own = new Set(props.teams.map((team) => team.id));
+      const teamIds = props.superadmin ? selected() : selected().filter((id) => own.has(id));
+      await setForkTeams(props.poolId, allTeams() ? { mode: "all" } : { mode: "list", teamIds });
       props.onChanged();
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Failed to assign.");
@@ -132,7 +137,7 @@ function TeamAssignment(props: {
           class="edit-agent-team-pill"
           classList={{ selected: allTeams() }}
           aria-pressed={allTeams()}
-          disabled={busy()}
+          disabled={busy() || !props.superadmin}
           onClick={() => { const next = !allTeams(); setAllTeams(next); if (next) setSelected([]); }}
         >
           All teams
@@ -165,6 +170,11 @@ export function EditAgent() {
       (session().data?.user as { role?: string | string[] } | undefined)?.role
     )
   );
+  // Superadmins see every agent; admins are scoped to their teams.
+  const isSuperadmin = createMemo(() => {
+    const role = (session().data?.user as { role?: string | string[] } | undefined)?.role;
+    return Array.isArray(role) ? role.includes("superadmin") : role === "superadmin";
+  });
 
   const [agents] = createResource(() =>
     capabilities.forkedAgents ? fetchPool() : fetchAgents()
@@ -196,13 +206,13 @@ export function EditAgent() {
     (forks() ?? []).find((entry) => entry.sourcePoolId === params.agentId)
   );
   const [poolActions] = createResource(
-    () => capabilities.forkedAgents && !isAdmin(),
+    () => capabilities.forkedAgents && !isSuperadmin(),
     (enabled) => enabled ? fetchPoolActions() : Promise.resolve([])
   );
   const dashboardAgentId = createMemo(() =>
     capabilities.forkedAgents
       ? poolAgent()
-        ? fork()?.forkAgentId ?? (poolActions.error ? undefined : poolActions())?.find((entry) =>
+        ? (isSuperadmin() ? fork()?.forkAgentId : undefined) ?? (poolActions.error ? undefined : poolActions())?.find((entry) =>
             entry.poolId === params.agentId && entry.action === "chat"
           )?.chatAgentId
         : !agents.loading ? activeAgent()?.id : undefined
@@ -388,10 +398,11 @@ export function EditAgent() {
           )}
         </Show>
 
-        <Show when={isAdmin() && capabilities.forkedAgents && poolAgent()}>
+        <Show when={isAdmin() && capabilities.forkedAgents && poolAgent() && (isSuperadmin() || !fork() || dashboardAgentId())}>
           <TeamAssignment
             poolId={params.agentId}
-            teams={teams() ?? []}
+            teams={(teams() ?? []).filter((team) => team.canManage)}
+            superadmin={isSuperadmin()}
             fork={fork()}
             onChanged={() => {
               void refetchForks();
@@ -462,11 +473,14 @@ export function EditAgent() {
                   <form onSubmit={(event) => void addCustomExtension(event)}>
                     <h2 id="mcp-add-title">Add custom extension</h2>
                     <label>MCP server URL<input type="url" required placeholder="https://example.com/mcp" value={mcpUrl()} onInput={(event) => setMcpUrl(event.currentTarget.value)} /></label>
-                    <fieldset>
-                      <legend>Connection</legend>
-                      <label><input type="radio" name="mcp-scope" checked={mcpScope() === "personal"} disabled={!session().data?.user} onChange={() => setMcpScope("personal")} /> Just me</label>
-                      <label><input type="radio" name="mcp-scope" checked={mcpScope() === "team"} disabled={mcpStatus()?.canConfigureTeam === false} onChange={() => setMcpScope("team")} /> Whole team</label>
-                    </fieldset>
+                    {/* Non-admins can only connect for themselves, so no choice is shown. */}
+                    <Show when={mcpStatus()?.canConfigureTeam !== false}>
+                      <fieldset>
+                        <legend>Connection</legend>
+                        <label><input type="radio" name="mcp-scope" checked={mcpScope() === "personal"} disabled={!session().data?.user} onChange={() => setMcpScope("personal")} /> Just me</label>
+                        <label><input type="radio" name="mcp-scope" checked={mcpScope() === "team"} onChange={() => setMcpScope("team")} /> Whole team</label>
+                      </fieldset>
+                    </Show>
                     <Show when={mcpError()}>{(message) => <p role="alert" class="mcp-ext-error">{message()}</p>}</Show>
                     <div class="mcp-ext-dialog-actions">
                       <button type="button" disabled={mcpBusy()} onClick={() => setAddOpen(false)}>Cancel</button>
