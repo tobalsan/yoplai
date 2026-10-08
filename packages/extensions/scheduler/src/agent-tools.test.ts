@@ -112,6 +112,28 @@ describe("scheduler agent tools", () => {
     expect(deleted.ok).toBe(true);
   });
 
+  it("shares authenticated Team chat jobs and keeps default Mine jobs private", async () => {
+    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-scheduler-sharing-tools-"));
+    const alpha = agent("alpha", path.join(tmpDir, "alpha"));
+    const config: GatewayConfig = { version: 3, agents: [alpha], extensions: { scheduler: { enabled: true } }, sessions: { idleMinutes: 360 }, agentFab: false };
+    setSchedulerContext(context(config));
+    const tools = await schedulerExtension.getAgentTools!(alpha, { config });
+    const byName = new Map(tools.map((tool) => [tool.name, tool]));
+    const alice = { agent: alpha, config, userId: "alice" };
+    const bob = { agent: alpha, config, userId: "bob" };
+    const input = { name: "Digest", cron: "0 8 * * *", tz: "UTC", message: "Run" };
+    const team = await byName.get("scheduler.create_job")!.execute({ ...input, credentialMode: "team" }, alice) as { ok: boolean; job: { id: string; ownerUserId?: string } };
+    expect(team).toMatchObject({ ok: true, job: { credentialMode: "team", createdByUserId: "alice" } });
+    expect(team.job.ownerUserId).toBeUndefined();
+    const mine = await byName.get("scheduler.create_job")!.execute(input, alice) as { ok: boolean; job: { id: string } };
+    expect(mine).toMatchObject({ ok: true, job: { credentialMode: "owner", ownerUserId: "alice", createdByUserId: "alice" } });
+    const listed = await byName.get("scheduler.list_jobs")!.execute({}, bob) as { ok: boolean; jobs: Array<{ id: string }> };
+    expect(listed).toMatchObject({ ok: true, jobs: [{ id: team.job.id }] });
+    expect(listed.jobs).toHaveLength(1);
+    expect(await byName.get("scheduler.update_job")!.execute({ jobId: team.job.id, name: "Team digest" }, bob)).toMatchObject({ ok: true, job: { name: "Team digest", createdByUserId: "alice" } });
+    expect(await byName.get("scheduler.update_job")!.execute({ jobId: mine.job.id, name: "Hidden" }, bob)).toMatchObject({ ok: false, error: "Schedule owner access required" });
+  });
+
   it("returns structured validation errors", async () => {
     tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-scheduler-tools-"));
     const alpha = agent("alpha", path.join(tmpDir, "alpha"));
@@ -308,5 +330,19 @@ describe("scheduler agent tools", () => {
 
     expect(result.ok).toBe(false);
     expect(result.error).toContain("exactly one of channel or user");
+  });
+});
+
+describe("scheduler sharing guidance", () => {
+  it("explains privacy in create/update tools and the scheduler prompt", async () => {
+    const alpha = agent("alpha", "/unused");
+    const tools = await schedulerExtension.getAgentTools!(alpha);
+    for (const name of ["scheduler.create_job", "scheduler.update_job"]) {
+      const tool = tools.find((candidate) => candidate.name === name)!;
+      expect(tool.description).toContain("Private to you, or shared with the team?");
+      expect(tool.description).toContain("Created as a private job");
+      expect(tool.description).toContain("Shared with the team");
+    }
+    expect(await schedulerExtension.getSystemPromptContributions!(alpha)).toContain("personal data");
   });
 });

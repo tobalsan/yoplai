@@ -240,7 +240,8 @@ export class SchedulerService {
     const job: JobWithState = {
       id,
       name: input.name,
-      ownerUserId,
+      ownerUserId: credentialMode === "owner" ? ownerUserId : undefined,
+      createdByUserId: ownerUserId,
       credentialMode,
       agentId,
       enabled: true,
@@ -274,6 +275,7 @@ export class SchedulerService {
     if (patch.credentialMode === "owner" && !job.ownerUserId && !ownerUserId) throw new Error("Owner credentials require an authenticated user");
     if (patch.name !== undefined) job.name = patch.name;
     if (patch.credentialMode !== undefined) job.credentialMode = patch.credentialMode;
+    if (patch.credentialMode === "team") delete job.ownerUserId;
     if (job.credentialMode === "owner" && !job.ownerUserId) job.ownerUserId = ownerUserId;
     if (patch.enabled !== undefined) job.enabled = patch.enabled;
     if (patch.schedule) job.schedule = patch.schedule;

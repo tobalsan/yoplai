@@ -7,6 +7,10 @@ const { fetchSchedulesMock, updateScheduleMock } = vi.hoisted(() => ({
   updateScheduleMock: vi.fn(),
 }));
 
+vi.mock("../auth/client", () => ({
+  useSession: () => () => ({ data: { user: { id: "alice" } } }),
+}));
+
 vi.mock("../api/schedules", () => ({
   fetchSchedules: fetchSchedulesMock,
   updateSchedule: updateScheduleMock,
@@ -51,6 +55,39 @@ describe("describeSchedule", () => {
 });
 
 describe("SchedulesPanel", () => {
+  it("recovers from a failed mode change and keeps jobs usable", async () => {
+    updateScheduleMock.mockRejectedValueOnce(new Error("Connection lost"));
+    dispose = render(() => <SchedulesPanel agentId="scribe" agentName="Scribe" />, container);
+    await settle();
+    const mine = container.querySelector<HTMLButtonElement>('[role="radio"]')!;
+    mine.click();
+    await settle();
+    expect(container.querySelector('[role="alert"]')?.textContent).toBe("Connection lost");
+    expect(mine.disabled).toBe(false);
+    expect(fetchSchedulesMock).toHaveBeenCalledTimes(2);
+    mine.click();
+    await settle();
+    expect(updateScheduleMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("shows creator attribution only on shared jobs with a creator", async () => {
+    const job = { id: "job", agentId: "scribe", schedule: { cron: "0 8 * * *" }, payload: {} };
+    fetchSchedulesMock.mockResolvedValue([
+      { ...job, id: "mine", name: "Own shared", credentialMode: "team", createdByUserId: "alice", createdByDisplayName: "Alice" },
+      { ...job, id: "other", name: "Other shared", credentialMode: "team", createdByUserId: "bob", createdByDisplayName: "Bob" },
+      { ...job, id: "legacy", name: "Legacy", credentialMode: "team" },
+      { ...job, id: "private", name: "Private", credentialMode: "owner", createdByUserId: "alice", createdByDisplayName: "Alice" },
+    ]);
+    dispose = render(() => <SchedulesPanel agentId="scribe" agentName="Scribe" />, container);
+    await settle();
+    const cards = container.querySelectorAll("li.schedule");
+    expect(cards[0]!.textContent).toContain("Created by you");
+    expect(cards[1]!.textContent).toContain("Created by Bob");
+    expect(cards[2]!.textContent).not.toContain("Created by");
+    expect(cards[3]!.textContent).not.toContain("Created by");
+    expect(container.querySelector('button[title*="visible to everyone on the agent"]')).not.toBeNull();
+  });
+
   it("lists jobs in plain language and switches their credentials", async () => {
     dispose = render(() => <SchedulesPanel agentId="scribe" agentName="Scribe" />, container);
     await settle();

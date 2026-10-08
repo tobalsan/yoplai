@@ -59,7 +59,11 @@ Disk shape omits `agentId`; it is implied by the workspace:
 
 `timeoutMs` is an optional top-level job field: the per-run timeout in milliseconds for that job. Falls back to `extensions.scheduler.jobTimeoutMs`, then the 30-minute built-in default.
 
-`credentialMode` is `"owner"` or `"team"`. Jobs created by an authenticated chat or web user record `ownerUserId` and default to owner mode; jobs loaded from old files or created without a user default to team mode. Owner mode uses the owner's personal credential when present and the team credential when absent. An expired or revoked personal credential fails the job with a reconnect error rather than switching to the team account. Team mode uses only team credentials. Set `credentialMode` on create or update through the API or scheduler tools.
+`credentialMode` is `"owner"` (Mine) or `"team"` (Team). Mine jobs are private to their `ownerUserId` and use the owner's personal credentials, falling back to team credentials when absent. An expired or revoked personal credential fails with a reconnect error. Team jobs have no owner, are visible and editable by everyone with agent access, and use only team credentials. Authenticated creation defaults to Mine; legacy ownerless and userless jobs remain Team. Switching to Team clears the owner; switching to Mine claims the job for the requester.
+
+`createdByUserId` records the authenticated creator and never changes when ownership changes. `GET /schedules` resolves `createdByDisplayName` server-side for Team jobs; their cards show "Created by <name>" or "Created by you". Legacy and hand-written jobs without a creator show no label.
+
+Choose Team for channel delivery, "for the team"/"everyone", or shared routines; choose Mine for DM delivery, personal data ("my inbox", "my Drive"), or reminders. When unclear, ask "Private to you, or shared with the team?" After creation, say "Created as a private job" or "Shared with the team". Set `credentialMode` on create or update through the API or scheduler tools.
 
 ## One-shot schedules
 

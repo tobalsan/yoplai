@@ -425,6 +425,7 @@ export const ScheduleJobFileSchema = z.object({
   id: z.string(),
   name: z.string(),
   ownerUserId: z.string().min(1).optional(),
+  createdByUserId: z.string().min(1).optional(),
   credentialMode: z.enum(["owner", "team"]).optional(),
   enabled: z.boolean().optional().default(true),
   schedule: ScheduleSchema,
