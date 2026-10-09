@@ -6,6 +6,7 @@ import {
   generatePkce,
   generateState,
   getOAuthProvider,
+  materializeOAuthProvider,
   OAuthRefreshError,
   refreshAccessToken,
   revokeToken,
@@ -46,7 +47,7 @@ const PENDING_TTL_MS = 10 * 60 * 1000;
  */
 function resolveProviderEnvRefs(
   providers: NonNullable<GatewayConfig["oauth"]>["providers"]
-): Record<string, { clientId: string; clientSecret: string }> {
+): Record<string, { clientId: string; clientSecret: string; subdomain?: string }> {
   const resolveRef = (value: string): string => {
     if (!value.startsWith("$env:")) return value;
     const envName = value.slice("$env:".length);
@@ -58,12 +59,13 @@ function resolveProviderEnvRefs(
     }
     return envValue;
   };
-  const resolved: Record<string, { clientId: string; clientSecret: string }> = {};
+  const resolved: Record<string, { clientId: string; clientSecret: string; subdomain?: string }> = {};
   for (const [id, creds] of Object.entries(providers ?? {})) {
     if (!creds) continue;
     resolved[id] = {
       clientId: resolveRef(creds.clientId),
       clientSecret: resolveRef(creds.clientSecret),
+      ...(creds.subdomain ? { subdomain: resolveRef(creds.subdomain) } : {}),
     };
   }
   return resolved;
@@ -90,6 +92,8 @@ export class OAuthService {
   #fetch: OAuthFetch;
   #loadConfig: () => GatewayConfig;
   #pending = new Map<string, PendingAuth>();
+  /** In-flight refreshes by refresh token: rotating providers (Zendesk) reject a reused one. */
+  #refreshing = new Map<string, Promise<OAuthConnection | undefined>>();
 
   constructor(deps: OAuthServiceDeps = {}) {
     this.#store = deps.store ?? getOAuthConnectionStore();
@@ -101,6 +105,16 @@ export class OAuthService {
     return new ByoCredentialSource(
       resolveProviderEnvRefs(config.oauth?.providers ?? {})
     );
+  }
+
+  /** Descriptor with `{subdomain}` filled from the provider's configured subdomain. */
+  #materializeProvider(
+    config: GatewayConfig,
+    provider: OAuthProviderDescriptor
+  ): OAuthProviderDescriptor {
+    const subdomain = resolveProviderEnvRefs(config.oauth?.providers ?? {})[provider.id]
+      ?.subdomain;
+    return materializeOAuthProvider(provider, subdomain);
   }
 
   #redirectUri(config: GatewayConfig, provider: string): string {
@@ -141,7 +155,10 @@ export class OAuthService {
       scope = { type: "personal", userId: input.userId };
     }
     const config = this.#loadConfig();
-    const provider = this.#resolveProvider(input.provider);
+    const provider = this.#materializeProvider(
+      config,
+      this.#resolveProvider(input.provider)
+    );
     const credentials = await this.#credentialSource(config).getClientCredentials(
       provider.id
     );
@@ -202,7 +219,10 @@ export class OAuthService {
     this.#pending.delete(input.state);
 
     const config = this.#loadConfig();
-    const provider = this.#resolveProvider(input.provider);
+    const provider = this.#materializeProvider(
+      config,
+      this.#resolveProvider(input.provider)
+    );
     const credentials = await this.#credentialSource(config).getClientCredentials(
       provider.id
     );
@@ -329,18 +349,33 @@ export class OAuthService {
     if (!expiringSoon) return connection;
 
     // Expiring/expired but no refresh token: the grant is unrecoverable.
-    if (!connection.refreshToken) {
+    const refreshToken = connection.refreshToken;
+    if (!refreshToken) {
       return this.#markNeedsReconnect(connection);
     }
 
+    const inFlight = this.#refreshing.get(refreshToken);
+    if (inFlight) return inFlight;
+    const refresh = this.#refresh(connection, provider, credentials, refreshToken)
+      .finally(() => this.#refreshing.delete(refreshToken));
+    this.#refreshing.set(refreshToken, refresh);
+    return refresh;
+  }
+
+  async #refresh(
+    connection: OAuthConnection,
+    provider: OAuthProviderDescriptor,
+    credentials: OAuthClientCredentials,
+    refreshToken: string
+  ): Promise<OAuthConnection | undefined> {
     try {
       const tokens = await refreshAccessToken(
-        { provider, credentials, refreshToken: connection.refreshToken },
+        { provider, credentials, refreshToken },
         this.#fetch
       );
       return this.#store.update(connection.agentId, provider.id, {
         accessToken: tokens.accessToken,
-        refreshToken: tokens.refreshToken ?? connection.refreshToken,
+        refreshToken: tokens.refreshToken ?? refreshToken,
         expiresAt: tokens.expiresAt,
         scopes: tokens.scopes.length > 0 ? tokens.scopes : connection.scopes,
         tokenType: tokens.tokenType ?? connection.tokenType,
@@ -388,13 +423,24 @@ export class OAuthService {
     requesterUserId?: string
   ): Promise<ResolvedOAuth> {
     const config = this.#loadConfig();
-    const provider = getOAuthProvider(requirement.provider);
-    if (!provider) {
+    const baseProvider = getOAuthProvider(requirement.provider);
+    if (!baseProvider) {
       return {
         connected: false,
         provider: requirement.provider,
         reason: "provider_not_configured",
         message: `Unknown OAuth provider "${requirement.provider}".`,
+      };
+    }
+    let provider: OAuthProviderDescriptor;
+    try {
+      provider = this.#materializeProvider(config, baseProvider);
+    } catch (error) {
+      return {
+        connected: false,
+        provider: baseProvider.id,
+        reason: "provider_not_configured",
+        message: error instanceof Error ? error.message : String(error),
       };
     }
 
@@ -466,6 +512,7 @@ export class OAuthService {
       account: connection.account,
       scopes: connection.scopes,
       expiresAt: connection.expiresAt,
+      ...(provider.apiBaseUrl ? { apiBaseUrl: provider.apiBaseUrl } : {}),
     };
   }
 }

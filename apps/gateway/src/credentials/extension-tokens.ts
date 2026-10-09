@@ -204,7 +204,8 @@ function overlayExtensionValues(
   const root = config.extensions?.[extension.id] as Record<string, unknown> | undefined;
   const tokens: Record<string, unknown> = {};
   const missing: string[] = [];
-  const required = new Set(extension.requiredSecrets ?? []);
+  // An OAuth-mode agent authenticates with a token, so its secrets are optional.
+  const required = new Set(resolveExtensionOAuth(extension, config, agent, env) ? [] : extension.requiredSecrets ?? []);
   const schemaRequired = extension.configJsonSchema?.required;
   if (Array.isArray(schemaRequired)) for (const field of schemaRequired) {
     if (typeof field === "string") required.add(field);

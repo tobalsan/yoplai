@@ -149,3 +149,37 @@ describe("defineToolExtension oauth injection", () => {
     );
   });
 });
+
+describe("defineToolExtension oauth mode skips requiredSecrets", () => {
+  const extension = defineToolExtension({
+    id: "demo",
+    displayName: "Demo",
+    description: "demo",
+    configSchema: z.object({ mode: z.enum(["api_key", "oauth"]).default("api_key") }).passthrough(),
+    requiredSecrets: ["apiKey"],
+    oauth: (config) => (config.merged.mode === "oauth" ? { provider: "zendesk", scopes: ["read"] } : undefined),
+    createTools: () => [{ name: "check", description: "check", parameters: z.object({}), execute: async () => "ok" }],
+  });
+  const configFor = (demo: Record<string, unknown>) => ({
+    config: { agents: [], extensions: {} } as unknown as GatewayConfig,
+    agent: { id: "a1", extensions: { demo } } as unknown as AgentConfig,
+  });
+
+  it("requires secrets in api_key mode", () => {
+    const { config, agent } = configFor({ enabled: true });
+    expect(extension.validateAgentConfig?.(agent, config, {})).toEqual({ valid: false, errors: ["apiKey"] });
+  });
+
+  it("does not require secrets in oauth mode", () => {
+    const { config, agent } = configFor({ enabled: true, mode: "oauth" });
+    expect(extension.validateAgentConfig?.(agent, config, {})).toEqual({ valid: true, errors: [] });
+  });
+
+  it("runs tools directly when the oauth function yields no requirement", async () => {
+    const { config, agent } = configFor({ enabled: true, apiKey: "k" });
+    const resolveOAuth = vi.fn();
+    const tools = await extension.getAgentTools!(agent, { config, resolveOAuth });
+    expect(await tools[0].execute({}, { agent, config })).toBe("ok");
+    expect(resolveOAuth).not.toHaveBeenCalled();
+  });
+});

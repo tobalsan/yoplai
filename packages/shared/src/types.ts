@@ -481,6 +481,8 @@ export type GatewayServerConfig = z.infer<typeof GatewayServerConfigSchema>;
 export const OAuthProviderClientConfigSchema = z.object({
   clientId: z.string(),
   clientSecret: z.string(),
+  /** Account subdomain for providers with per-tenant URLs (e.g. Zendesk "acme"). */
+  subdomain: z.string().optional(),
 });
 export type OAuthProviderClientConfig = z.infer<
   typeof OAuthProviderClientConfigSchema
@@ -1478,6 +1480,8 @@ export interface Extension {
   configJsonSchema?: Record<string, unknown>;
   requiredSecrets?: string[];
   advancedConfigFields?: string[];
+  /** Fields hidden from the config form when the agent uses OAuth. */
+  oauthHiddenFields?: string[];
   /**
    * Optional self-registered, agent-keyed config route. When present, the hub
    * treats this extension as the `bespoke-route` tier: enabling it redirects to
@@ -1491,7 +1495,7 @@ export interface Extension {
    */
   factory?: boolean;
   /** OAuth requirement exposed for discovery and the post-enable connect link. */
-  oauth?: import("./oauth/types.js").OAuthRequirement | ((config: import("./tool-extension.js").ResolvedToolExtensionConfig) => import("./oauth/types.js").OAuthRequirement);
+  oauth?: import("./oauth/types.js").OAuthRequirement | ((config: import("./tool-extension.js").ResolvedToolExtensionConfig) => import("./oauth/types.js").OAuthRequirement | undefined);
   validateConfig(raw: unknown): ValidationResult;
   registerRoutes(app: Hono): void;
   start(ctx: ExtensionContext): Promise<void>;
@@ -1539,6 +1543,7 @@ export const ExtensionDefinitionSchema = z.object({
   configJsonSchema: z.record(z.string(), z.unknown()).optional(),
   requiredSecrets: z.array(z.string()).optional(),
   advancedConfigFields: z.array(z.string()).optional(),
+  oauthHiddenFields: z.array(z.string()).optional(),
   configRoute: z
     .object({
       path: z.string().refine((value) => value.includes(":agentId"), {

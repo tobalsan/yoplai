@@ -28,6 +28,7 @@ async function writeExternalExtension(
     configJsonSchema?: string;
     requiredSecrets?: string;
     advancedConfigFields?: string;
+    oauthHiddenFields?: string;
     configRoute?: string;
     oauth?: string;
     factory?: boolean;
@@ -57,6 +58,7 @@ async function writeExternalExtension(
       body.advancedConfigFields
         ? `  advancedConfigFields: ${body.advancedConfigFields},`
         : "",
+      body.oauthHiddenFields ? `  oauthHiddenFields: ${body.oauthHiddenFields},` : "",
       body.configRoute ? `  configRoute: ${body.configRoute},` : "",
       body.oauth ? `  oauth: ${body.oauth},` : "",
       body.validateAgentConfig
@@ -149,6 +151,30 @@ describe("buildExtensionCatalog", () => {
       const anonymous = (await buildExtensionCatalog(config, agent)).find((entry) => entry.id === "dynamic-oauth");
       expect(anonymous?.oauth).toEqual({ provider: "google", scopes: ["read"] });
     } finally { personal.mockRestore(); grant.mockRestore(); }
+  });
+
+  it("exposes OAuth (not the secret form) only for agents in oauth mode, and only requires secrets in api_key mode", async () => {
+    await writeExternalExtension(root, "dual-mode", {
+      configSchema: 'z.object({ mode: z.enum(["api_key", "oauth"]).default("api_key"), apiKey: z.string().optional(), subdomain: z.string().optional() })',
+      configJsonSchema: '{ type: "object", properties: { mode: { type: "string" }, apiKey: { type: "string" }, subdomain: { type: "string" } } }',
+      oauthHiddenFields: '["mode", "subdomain"]',
+      requiredSecrets: '["apiKey"]',
+      oauth: '(config) => config.merged.mode === "oauth" ? { provider: "zendesk", scopes: ["read"] } : undefined',
+    });
+    const oauthAgent = makeAgent({ "dual-mode": { enabled: true, mode: "oauth" } });
+    const keyAgent = makeAgent({ "dual-mode": { enabled: true, mode: "api_key" } });
+    const store = vi.spyOn(CredentialStore.prototype, "get").mockReturnValue(undefined);
+    try {
+    const oauthEntry = (await buildExtensionCatalog(configWith(oauthAgent, root), oauthAgent, { requesterUserId: "alice" })).find((entry) => entry.id === "dual-mode");
+    expect(oauthEntry).toMatchObject({ oauth: { provider: "zendesk", scopes: ["read"] }, requiredSecrets: [], configured: true });
+    // Every field hidden: no form, just the connect button.
+    expect(oauthEntry).toMatchObject({ tier: "toggle-only" });
+    expect(Object.keys((oauthEntry?.configJsonSchema?.properties ?? {}) as object)).toEqual([]);
+    const keyEntry = (await buildExtensionCatalog(configWith(keyAgent, root), keyAgent, { requesterUserId: "alice" })).find((entry) => entry.id === "dual-mode");
+    expect(keyEntry).toMatchObject({ oauth: null, requiredSecrets: ["apiKey"], configured: false });
+    expect(Object.keys((keyEntry?.configJsonSchema?.properties ?? {}) as object)).toEqual(["mode", "apiKey", "subdomain"]);
+    expect(keyEntry).toMatchObject({ tier: "auto-form" });
+    } finally { store.mockRestore(); }
   });
 
   it("lists the full built-in registry with no ghosts and no missing ids", async () => {

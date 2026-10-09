@@ -47,6 +47,8 @@ export interface ToolExtensionDefinition {
   requiredSecrets: string[];
   /** Config field names the generic UI should collapse under advanced settings. */
   advancedConfigFields?: string[];
+  /** Fields hidden from the config form when the agent uses OAuth (e.g. API-key credentials). */
+  oauthHiddenFields?: string[];
   /**
    * Optional self-registered, agent-keyed config route. Declare this to own a
    * bespoke config UI instead of the schema-driven auto-form. The path must
@@ -59,7 +61,7 @@ export interface ToolExtensionDefinition {
    * signal) from the host. The host refreshes this value when building tools
    * and resolves it again for each call using that call's requester identity.
    */
-  oauth?: OAuthRequirement | ((config: ResolvedToolExtensionConfig) => OAuthRequirement);
+  oauth?: OAuthRequirement | ((config: ResolvedToolExtensionConfig) => OAuthRequirement | undefined);
   createTools(config: ResolvedToolExtensionConfig): ToolExtensionTool[];
 }
 
@@ -154,7 +156,11 @@ function resolveToolExtensionConfig(
   };
 
   definition.configSchema.parse(resolved.merged);
-  for (const secretName of definition.requiredSecrets) {
+  // An OAuth-mode agent authenticates with a token, not with secrets.
+  const usesOAuth = typeof definition.oauth === "function"
+    ? definition.oauth(resolved) !== undefined
+    : definition.oauth !== undefined;
+  for (const secretName of usesOAuth ? [] : definition.requiredSecrets) {
     const value = resolved.merged[secretName];
     if (typeof value !== "string" || value.length === 0) {
       throw new Error(
@@ -258,6 +264,7 @@ export function defineToolExtension(
     }) as Record<string, unknown>,
     requiredSecrets: definition.requiredSecrets,
     advancedConfigFields: definition.advancedConfigFields,
+    oauthHiddenFields: definition.oauthHiddenFields,
     configRoute: definition.configRoute,
     oauth: definition.oauth,
     routePrefixes: [],
@@ -356,6 +363,7 @@ export function defineToolExtension(
             return tool.execute(params, toolContext);
           }
           const requirement = typeof definition.oauth === "function" ? definition.oauth(resolved) : definition.oauth;
+          if (!requirement) return tool.execute(params, toolContext);
           const oauth = await context.resolveOAuth(
             agent,
             requirement,

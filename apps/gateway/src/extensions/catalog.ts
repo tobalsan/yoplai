@@ -209,6 +209,18 @@ function personalOAuthInputs(extension: Extension, agent: AgentConfig, config: G
   return [overlaid.config, overlaid.agent, resolveAgentEnv(overlaid.agent, overlaid.config)];
 }
 
+/** Drop fields from a JSON schema's properties, e.g. API-key secrets in OAuth mode. */
+function withoutProperties(schema: Record<string, unknown> | null, fields: string[]): Record<string, unknown> | null {
+  const properties = schema?.properties as Record<string, unknown> | undefined;
+  if (!schema || !properties || fields.length === 0) return schema;
+  const required = Array.isArray(schema.required) ? schema.required.filter((field) => !fields.includes(field as string)) : schema.required;
+  return {
+    ...schema,
+    properties: Object.fromEntries(Object.entries(properties).filter(([field]) => !fields.includes(field))),
+    ...(required === undefined ? {} : { required }),
+  };
+}
+
 function toCatalogEntry(
   extension: Extension,
   builtIn: boolean,
@@ -218,7 +230,7 @@ function toCatalogEntry(
   configurable: boolean,
   requesterUserId?: string
 ): ExtensionCatalogEntry {
-  const configJsonSchema = extension.configJsonSchema ?? null;
+  const fullConfigJsonSchema = extension.configJsonSchema ?? null;
   const configRoutePath =
     resolveAgentConfigRoute(extension.configRoute, agent.id) ?? null;
   const scoped = requesterUserId ? resolveExtensionTokenConfig(extension, agent, config, requesterUserId) : { agent, config, missing: [] };
@@ -233,7 +245,9 @@ function toCatalogEntry(
   const personalOAuth = oauth && requesterUserId && !extensionSecretFields(extension).length
     ? resolveExtensionOAuth(extension, ...personalOAuthInputs(extension, agent, config, requesterUserId))
     : undefined;
-  const knownFields = new Set([...extensionSecretFields(extension), ...Object.keys(configJsonSchema?.properties ?? {})]);
+  // OAuth-mode agents show the connect card, not the API-key form.
+  const configJsonSchema = oauth ? withoutProperties(fullConfigJsonSchema, [...extension.requiredSecrets ?? [], ...extension.oauthHiddenFields ?? []]) : fullConfigJsonSchema;
+  const knownFields = new Set([...extensionSecretFields(extension), ...Object.keys(fullConfigJsonSchema?.properties ?? {})]);
   const validationFields = validation?.valid === false ? validation.errors.map((field) => knownFields.has(field) ? field : "config") : [];
   const extensions = agent.extensions as Record<string, unknown> | undefined;
   const hasExplicitConfig = extensions && extension.id in extensions;
@@ -248,7 +262,7 @@ function toCatalogEntry(
     configurable,
     managedAtRoot: !hasExplicitConfig && hasAgentRootConfig(agent, extension.id),
     configJsonSchema,
-    requiredSecrets: extension.requiredSecrets ?? [],
+    requiredSecrets: oauth ? [] : extension.requiredSecrets ?? [],
     advancedConfigFields: extension.advancedConfigFields ?? [],
     configValues: configValuesForAgent(agent, extension, config),
     configRoutePath,

@@ -97,6 +97,16 @@ Remote MCP servers whose authorization server lacks dynamic client registration 
 
 For Google Drive, follow [Google Drive OAuth setup](oauth-google-drive-setup.md).
 
+### Zendesk
+
+Zendesk OAuth URLs are per account, so the provider also takes the account `subdomain`:
+
+```json
+{ "oauth": { "providers": { "zendesk": { "clientId": "$env:ZENDESK_CLIENT_ID", "clientSecret": "$env:ZENDESK_CLIENT_SECRET", "subdomain": "acme" } } } }
+```
+
+In Zendesk Admin Center (Apps and integrations > APIs > OAuth Clients) create a **Confidential** client and add the redirect URI `<redirectBaseUrl>/api/oauth/zendesk/callback`. The extension requests only the `read` scope. OAuth is the default mode: `extensions.zendesk: { enabled: true }` needs no `subdomain`, `email` or `apiKey`, and the agent page shows only the connect button. The legacy API-token setup needs `mode: api_key` plus `subdomain`, `email` and `apiKey`. Zendesk access tokens last about 30 minutes and the refresh token rotates on each refresh; both are stored. Zendesk has no revoke endpoint, so Disconnect only removes the local connection.
+
 ## Multi-user Google login
 
 Multi-user authentication uses separate `extensions.multiUser.oauth.google` settings. See [multi-user extension README](../packages/extensions/multi-user/README.md). Do not confuse login OAuth with per-agent extension connections or Pi provider auth.

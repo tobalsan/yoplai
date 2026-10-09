@@ -11,6 +11,10 @@ export interface OAuthProviderDescriptor {
   id: string;
   /** Human-facing name, e.g. "Google". */
   displayName: string;
+  /**
+   * URLs below may contain a `{subdomain}` placeholder, filled from
+   * `oauth.providers.<id>.subdomain` (see `materializeOAuthProvider`).
+   */
   /** OAuth 2.0 authorization endpoint. */
   authorizeUrl: string;
   /** OAuth 2.0 token endpoint. */
@@ -28,6 +32,8 @@ export interface OAuthProviderDescriptor {
   userInfoUrl?: string;
   /** Default scopes requested when a consumer does not override them. */
   defaultScopes: string[];
+  /** Base URL of the provider's API, handed to extensions that need it. */
+  apiBaseUrl?: string;
   /**
    * Extra query params appended to the authorize URL. For Google we need
    * access_type=offline + prompt=consent to be handed a refresh token, even
@@ -123,6 +129,7 @@ export type ResolvedOAuth =
       account?: string;
       scopes: string[];
       expiresAt?: number;
+      apiBaseUrl?: string;
     }
   | {
       connected: false;

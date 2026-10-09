@@ -458,6 +458,130 @@ describe("OAuthService", () => {
     expect(service.getConnectionState("a1", "google")).toBe("disconnected");
   });
 
+  describe("zendesk (templated subdomain)", () => {
+    const zendeskConfig = (subdomain?: string) =>
+      makeConfig({
+        providers: {
+          zendesk: { clientId: "zid", clientSecret: "zsecret", ...(subdomain ? { subdomain } : {}) },
+        },
+      });
+
+    it("templates authorize URL, token exchange, account label and apiBaseUrl from the subdomain", async () => {
+      const fetchImpl = vi.fn(async (input: RequestInfo | URL, _init?: RequestInit) => {
+        void _init;
+        const urlStr = String(input);
+        if (urlStr === "https://acme.zendesk.com/oauth/tokens") {
+          return new Response(
+            JSON.stringify({ access_token: "ZA", refresh_token: "ZR", expires_in: 1800, scope: "read", token_type: "bearer" }),
+            { status: 200, headers: { "Content-Type": "application/json" } }
+          );
+        }
+        if (urlStr === "https://acme.zendesk.com/api/v2/users/me.json") {
+          return new Response(JSON.stringify({ user: { email: "agent@acme.com" } }), {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          });
+        }
+        throw new Error(`unexpected fetch to ${urlStr}`);
+      });
+      const service = new OAuthService({
+        store,
+        fetchImpl: fetchImpl as unknown as typeof fetch,
+        loadConfig: () => zendeskConfig("acme"),
+      });
+
+      const { authorizeUrl, state } = await service.startAuthorization({ agentId: "a1", provider: "zendesk" });
+      const url = new URL(authorizeUrl);
+      expect(`${url.origin}${url.pathname}`).toBe("https://acme.zendesk.com/oauth/authorizations/new");
+      expect(url.searchParams.get("scope")).toBe("read");
+
+      const connection = await service.handleCallback({ provider: "zendesk", code: "c", state });
+      expect(connection.account).toBe("agent@acme.com");
+
+      const resolved = await service.resolveToken("a1", { provider: "zendesk", scopes: ["read"] });
+      expect(resolved).toMatchObject({
+        connected: true,
+        accessToken: "ZA",
+        apiBaseUrl: "https://acme.zendesk.com",
+      });
+    });
+
+    it("keeps the rotated refresh token when refreshing", async () => {
+      store.save({
+        agentId: "a1",
+        provider: "zendesk",
+        accessToken: "OLD",
+        refreshToken: "R1",
+        scopes: ["read"],
+        expiresAt: Date.now() - 1000,
+        connectedAt: Date.now(),
+        updatedAt: Date.now(),
+      });
+      const fetchImpl = vi.fn(async (input: RequestInfo | URL) => {
+        expect(String(input)).toBe("https://acme.zendesk.com/oauth/tokens");
+        return new Response(
+          JSON.stringify({ access_token: "NEW", refresh_token: "R2", expires_in: 1800, token_type: "bearer" }),
+          { status: 200, headers: { "Content-Type": "application/json" } }
+        );
+      });
+      const service = new OAuthService({
+        store,
+        fetchImpl: fetchImpl as unknown as typeof fetch,
+        loadConfig: () => zendeskConfig("acme"),
+      });
+      const resolved = await service.resolveToken("a1", { provider: "zendesk" });
+      expect(resolved.connected).toBe(true);
+      expect(store.get("a1", "zendesk")?.refreshToken).toBe("R2");
+    });
+
+    it("refreshes a rotating token once for concurrent requests", async () => {
+      store.save({
+        agentId: "a1",
+        provider: "zendesk",
+        accessToken: "OLD",
+        refreshToken: "R1",
+        scopes: ["read"],
+        expiresAt: Date.now() - 1000,
+        connectedAt: Date.now(),
+        updatedAt: Date.now(),
+      });
+      let calls = 0;
+      const fetchImpl = vi.fn(async () => {
+        calls += 1;
+        // Zendesk rejects a refresh token that was already rotated.
+        const body = calls === 1
+          ? { access_token: "NEW", refresh_token: "R2", expires_in: 1800 }
+          : { error: "invalid_grant" };
+        return new Response(JSON.stringify(body), {
+          status: calls === 1 ? 200 : 400,
+          headers: { "Content-Type": "application/json" },
+        });
+      });
+      const service = new OAuthService({
+        store,
+        fetchImpl: fetchImpl as unknown as typeof fetch,
+        loadConfig: () => zendeskConfig("acme"),
+      });
+      const results = await Promise.all([
+        service.resolveToken("a1", { provider: "zendesk" }),
+        service.resolveToken("a1", { provider: "zendesk" }),
+      ]);
+      expect(results.map((result) => result.connected)).toEqual([true, true]);
+      expect(fetchImpl).toHaveBeenCalledTimes(1);
+      expect(store.get("a1", "zendesk")).toMatchObject({ refreshToken: "R2", status: "connected" });
+    });
+
+    it("treats a missing subdomain as provider not configured", async () => {
+      const service = new OAuthService({ store, loadConfig: () => zendeskConfig() });
+      const resolved = await service.resolveToken("a1", { provider: "zendesk" });
+      expect(resolved).toMatchObject({ connected: false, reason: "provider_not_configured" });
+      if (!resolved.connected) expect(resolved.message).toContain("oauth.providers.zendesk.subdomain");
+      await expect(
+        service.startAuthorization({ agentId: "a1", provider: "zendesk" })
+      ).rejects.toThrow("oauth.providers.zendesk.subdomain");
+    });
+  });
+
   it("resolveToken reports provider_not_configured when no client credentials", async () => {
     const service = new OAuthService({
       store,
