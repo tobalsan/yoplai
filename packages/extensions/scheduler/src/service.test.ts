@@ -90,6 +90,51 @@ describe("SchedulerService.runNow", () => {
     if (tmpDir) await fs.rm(tmpDir, { recursive: true, force: true });
   });
 
+  it("separates team ownership from the immutable creator across mode changes and reload", async () => {
+    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-scheduler-sharing-"));
+    const alpha = agent("alpha", path.join(tmpDir, "alpha"));
+    const config: GatewayConfig = { version: 3, agents: [alpha], extensions: { scheduler: { enabled: true } }, sessions: { idleMinutes: 360 }, agentFab: false };
+    setSchedulerContext(context(config));
+    const scheduler = new SchedulerService();
+    const input = { name: "Shared", schedule: { cron: "0 8 * * *", tz: "UTC" }, payload: jobPayload({ message: "Summary" }) };
+    const team = await scheduler.add("alpha", { ...input, credentialMode: "team" }, "alice");
+    expect(team).toMatchObject({ credentialMode: "team", createdByUserId: "alice" });
+    expect(team.ownerUserId).toBeUndefined();
+    await scheduler.update("alpha", team.id, { credentialMode: "owner" }, "bob");
+    expect(team).toMatchObject({ credentialMode: "owner", ownerUserId: "bob", createdByUserId: "alice" });
+    await scheduler.update("alpha", team.id, { credentialMode: "team" }, "bob");
+    expect(team.ownerUserId).toBeUndefined();
+    expect(team.createdByUserId).toBe("alice");
+    const mine = await scheduler.add("alpha", input, "alice");
+    expect(mine).toMatchObject({ credentialMode: "owner", ownerUserId: "alice", createdByUserId: "alice" });
+    await scheduler.update("alpha", mine.id, { credentialMode: "team" }, "alice");
+    expect(mine.ownerUserId).toBeUndefined();
+    await scheduler.refreshFromDisk();
+    const reloaded = await scheduler.list("alpha");
+    expect(reloaded.find((job) => job.id === team.id)).toMatchObject({ credentialMode: "team", createdByUserId: "alice" });
+    expect(reloaded.find((job) => job.id === mine.id)).toMatchObject({ credentialMode: "team", createdByUserId: "alice" });
+    expect(reloaded.every((job) => job.ownerUserId === undefined)).toBe(true);
+    await scheduler.stop();
+  });
+
+  it("leaves legacy ownerless jobs shared without inventing a creator", async () => {
+    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-scheduler-legacy-"));
+    const alpha = agent("alpha", path.join(tmpDir, "alpha"));
+    await fs.mkdir(path.join(alpha.workspace, "cron"), { recursive: true });
+    await fs.writeFile(path.join(alpha.workspace, "cron/jobs.json"), JSON.stringify({ version: 1, jobs: [{ id: "legacy", name: "Legacy", schedule: { cron: "0 8 * * *", tz: "UTC" }, payload: { message: "Summary" } }] }));
+    const config: GatewayConfig = { version: 3, agents: [alpha], extensions: { scheduler: { enabled: true } }, sessions: { idleMinutes: 360 }, agentFab: false };
+    setSchedulerContext(context(config));
+    const scheduler = new SchedulerService();
+    const [legacy] = await scheduler.list("alpha");
+    expect(legacy?.credentialMode).toBe("team");
+    expect(legacy?.ownerUserId).toBeUndefined();
+    expect(legacy?.createdByUserId).toBeUndefined();
+    await scheduler.update("alpha", "legacy", { name: "Renamed" }, "alice");
+    expect(legacy?.ownerUserId).toBeUndefined();
+    expect(legacy?.createdByUserId).toBeUndefined();
+    await scheduler.stop();
+  });
+
   it.each([
     { error: "oauth_connection_required" },
     { connected: false, provider: "gmail", reason: "expired" },

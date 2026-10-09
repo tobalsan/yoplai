@@ -2,12 +2,13 @@ import cronstrue from "cronstrue";
 import { createResource, createSignal, For, Show } from "solid-js";
 import { fetchSchedules, updateSchedule, type ScheduleJob } from "../api/schedules";
 import { ScopeIcon } from "../components/CredentialScopeTabs";
+import { useSession } from "../auth/client";
 
 type CredentialMode = "owner" | "team";
 
 const MODES: { mode: CredentialMode; label: string; title: string }[] = [
   { mode: "owner", label: "Mine", title: "Run with your own connections" },
-  { mode: "team", label: "Team", title: "Run with the team connections" },
+  { mode: "team", label: "Team", title: "Run with team connections; visible to everyone on the agent" },
 ];
 
 const use24Hour = new Intl.DateTimeFormat(undefined, { hour: "numeric" }).resolvedOptions().hour12 === false;
@@ -41,6 +42,7 @@ function jobSummary(job: ScheduleJob): string | undefined {
 }
 
 export function SchedulesPanel(props: { agentId: string; agentName: string }) {
+  const session = useSession();
   const [jobs, { refetch }] = createResource(() => props.agentId, fetchSchedules);
   const [error, setError] = createSignal<string | null>(null);
   const [busy, setBusy] = createSignal<string>();
@@ -92,6 +94,9 @@ export function SchedulesPanel(props: { agentId: string; agentName: string }) {
                   </div>
                   <Show when={jobSummary(job)}>
                     {(summary) => <p class="schedule-prompt" title={summary()}>{summary()}</p>}
+                  </Show>
+                  <Show when={mode() === "team" && job.createdByUserId && (job.createdByUserId === session().data?.user.id || job.createdByDisplayName)}>
+                    <p class="schedule-prompt">Created by {job.createdByUserId === session().data?.user.id ? "you" : job.createdByDisplayName}</p>
                   </Show>
                 </div>
                 <div class="schedule-mode">

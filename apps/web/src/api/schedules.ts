@@ -1,7 +1,7 @@
-import type { ScheduleJob } from "@yoplai/shared/types";
+import type { ScheduleJob as StoredScheduleJob } from "@yoplai/shared/types";
 import { API_BASE, apiFetch } from "./core";
 
-export type { ScheduleJob };
+export type ScheduleJob = StoredScheduleJob & { createdByDisplayName?: string };
 
 export async function fetchSchedules(agentId: string): Promise<ScheduleJob[]> {
   const res = await apiFetch(`${API_BASE}/schedules?agent=${encodeURIComponent(agentId)}`);

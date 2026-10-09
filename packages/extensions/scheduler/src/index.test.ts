@@ -7,6 +7,11 @@ import type { AgentConfig, ExtensionContext, GatewayConfig } from "@yoplai/share
 import { schedulerExtension } from "./index.js";
 import { clearSchedulerContext, setSchedulerContext, stopScheduler } from "./service.js";
 
+const creatorLookup = vi.hoisted(() => vi.fn());
+vi.mock("@yoplai/extension-multi-user", () => ({
+  getMultiUserRuntime: () => ({ db: { prepare: () => ({ get: creatorLookup }) } }),
+}));
+
 function agent(id: string, workspace: string): AgentConfig {
   return {
     id,
@@ -61,10 +66,11 @@ describe("scheduler routes", () => {
     if (tmpDir) await fs.rm(tmpDir, { recursive: true, force: true });
   });
 
-  it("assigns the authenticated owner and prevents another user from changing or running the job", async () => {
+  it("shares a private job on Mine → Team and makes it private to the Team → Mine switcher", async () => {
     tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-scheduler-owner-routes-"));
     const alpha = agent("alpha", path.join(tmpDir, "alpha"));
     const config: GatewayConfig = { version: 3, agents: [alpha], extensions: { scheduler: { enabled: true } }, sessions: { idleMinutes: 360 }, agentFab: false };
+    creatorLookup.mockReturnValue({ name: "Alice Example" });
     const ctx = context(config);
     const record = vi.fn();
     ctx.audit = { record };
@@ -79,18 +85,72 @@ describe("scheduler routes", () => {
     const created = await app.request("/api/schedules", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ agentId: "alpha", name: "Digest", ownerUserId: "bob", schedule: { cron: "0 8 * * *", tz: "UTC" }, payload: { message: "Run" } }) });
     const job = (await created.json()) as { id: string; ownerUserId: string; credentialMode: string };
     expect(job).toMatchObject({ ownerUserId: "alice", credentialMode: "owner" });
+    userId = "bob";
+    expect((await app.request("/api/schedules?agent=alpha")).status).toBe(200);
+    expect(await (await app.request("/api/schedules?agent=alpha")).json()).toEqual([]);
+    expect((await app.request(`/api/schedules/alpha/${job.id}/run`, { method: "POST" })).status).toBe(403);
+    userId = "alice";
     for (let attempt = 0; attempt < 2; attempt++) {
       const changed = await app.request(`/api/schedules/alpha/${job.id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ credentialMode: "team" }) });
       expect(changed.status).toBe(200);
     }
     expect(record).toHaveBeenCalledTimes(1);
     expect(record).toHaveBeenCalledWith(expect.objectContaining({ actorUserId: "alice", action: "schedule.credential_mode", agentId: "alpha", targetType: "schedule", targetId: job.id,
-      changes: [{ field: "credentialMode", before: "owner", after: "team" }] }));
+      changes: [{ field: "credentialMode", before: "owner", after: "team" }, { field: "ownerUserId", before: "alice", after: undefined }] }));
     userId = "bob";
-    const changed = await app.request(`/api/schedules/alpha/${job.id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ credentialMode: "team" }) });
-    expect(changed.status).toBe(403);
+    expect(await (await app.request("/api/schedules?agent=alpha")).json()).toEqual([expect.objectContaining({ createdByUserId: "alice", createdByDisplayName: "Alice Example" })]);
+    const changed = await app.request(`/api/schedules/alpha/${job.id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ credentialMode: "owner" }) });
+    expect(changed.status).toBe(200);
+    expect(await changed.json()).toMatchObject({ ownerUserId: "bob", createdByUserId: "alice" });
+    userId = "alice";
     const run = await app.request(`/api/schedules/alpha/${job.id}/run`, { method: "POST" });
     expect(run.status).toBe(403);
+  });
+
+  it("lists signed-in Team creations for another member with the server-resolved creator name", async () => {
+    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-scheduler-team-routes-"));
+    const alpha = agent("alpha", path.join(tmpDir, "alpha"));
+    const config: GatewayConfig = { version: 3, agents: [alpha], extensions: { scheduler: { enabled: true } }, sessions: { idleMinutes: 360 }, agentFab: false };
+    setSchedulerContext(context(config));
+    creatorLookup.mockReturnValue({ name: "Alice Example" });
+    const app = new Hono().basePath("/api");
+    let userId = "alice";
+    app.use("*", async (c, next) => {
+      (c as unknown as Context<{ Variables: { multiUserAuthContext: { session: { userId: string } } } }>).set("multiUserAuthContext", { session: { userId } });
+      await next();
+    });
+    schedulerExtension.registerRoutes!(app);
+    const response = await app.request("/api/schedules", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ agentId: "alpha", name: "Team digest", credentialMode: "team", createdByUserId: "spoofed", schedule: { cron: "0 8 * * *", tz: "UTC" }, payload: { message: "Run" } }) });
+    expect(response.status).toBe(201);
+    const job = await response.json();
+    expect(job).toMatchObject({ credentialMode: "team", createdByUserId: "alice" });
+    expect(job).not.toHaveProperty("ownerUserId");
+    userId = "bob";
+    const jobs = await (await app.request("/api/schedules?agent=alpha")).json();
+    expect(jobs).toEqual([expect.objectContaining({ id: job.id, createdByUserId: "alice", createdByDisplayName: "Alice Example" })]);
+    expect(creatorLookup).toHaveBeenCalledWith("alice");
+    creatorLookup.mockImplementation(() => { throw new Error("Unavailable"); });
+    const unavailable = await (await app.request("/api/schedules?agent=alpha")).json();
+    expect(unavailable[0]).toMatchObject({ id: job.id, createdByUserId: "alice" });
+    expect(unavailable[0]).not.toHaveProperty("createdByDisplayName");
+    creatorLookup.mockReset();
+    expect((await app.request(`/api/schedules/alpha/${job.id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: "Updated by Bob" }) })).status).toBe(200);
+  });
+
+  it("keeps legacy creator-less Team jobs unlabeled when multi-user lookup is unavailable", async () => {
+    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-scheduler-legacy-routes-"));
+    const alpha = agent("alpha", path.join(tmpDir, "alpha"));
+    const config: GatewayConfig = { version: 3, agents: [alpha], extensions: { scheduler: { enabled: true } }, sessions: { idleMinutes: 360 }, agentFab: false };
+    setSchedulerContext(context(config));
+    creatorLookup.mockImplementation(() => { throw new Error("Unavailable"); });
+    const app = new Hono().basePath("/api");
+    schedulerExtension.registerRoutes!(app);
+    await app.request("/api/schedules", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ agentId: "alpha", name: "Legacy", schedule: { cron: "0 8 * * *", tz: "UTC" }, payload: { message: "Run" } }) });
+    const jobs = await (await app.request("/api/schedules?agent=alpha")).json();
+    expect(jobs).toHaveLength(1);
+    expect(jobs[0]).not.toHaveProperty("createdByUserId");
+    expect(jobs[0]).not.toHaveProperty("createdByDisplayName");
+    creatorLookup.mockReset();
   });
 
   it("POST /schedules/:agentId/:id/run starts one immediate run", async () => {

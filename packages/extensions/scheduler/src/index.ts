@@ -97,6 +97,20 @@ async function canAccessJob(agentId: string, id: string, userId?: string): Promi
   return !!job && (!job.ownerUserId || job.ownerUserId === userId);
 }
 
+const credentialModeGuidance =
+  'Mine (owner) is private to its owner and uses personal credentials with team fallback; Team (team) is visible and editable by everyone with agent access and uses team credentials only. ' +
+  'Choose team for channel delivery, "for the team"/"everyone", or shared routines; choose owner for DM delivery, personal data ("my inbox", "my Drive"), or reminders. ' +
+  'When unclear, ask: "Private to you, or shared with the team?" After creation say "Created as a private job" or "Shared with the team". Defaults to owner when signed in; never share by accident.';
+
+async function creatorDisplayName(userId: string): Promise<string | undefined> {
+  try {
+    const { getMultiUserRuntime } = await import("@yoplai/extension-multi-user");
+    return (getMultiUserRuntime()?.db.prepare("SELECT name FROM user WHERE id = ?").get(userId) as { name: string } | undefined)?.name;
+  } catch {
+    return undefined;
+  }
+}
+
 function schedulerAgentTools(): ExtensionAgentTool[] {
   return [
     {
@@ -134,7 +148,7 @@ function schedulerAgentTools(): ExtensionAgentTool[] {
         "Optional deliver pushes each run's result to comm-channel targets: this happens at the RUNTIME " +
         "level after the run resolves, not as an LLM action — do NOT call a *.send_message tool yourself " +
         "to report cron results, that would duplicate delivery and the agent is not trusted to self-report " +
-        "success/failure. Optional timeoutMs overrides the per-run timeout (default 30 minutes).",
+        "success/failure. Optional timeoutMs overrides the per-run timeout (default 30 minutes). " + credentialModeGuidance,
       parameters: {
         type: "object",
         properties: {
@@ -142,7 +156,7 @@ function schedulerAgentTools(): ExtensionAgentTool[] {
           credentialMode: {
             type: "string",
             enum: ["owner", "team"],
-            description: "Use the job owner's credentials (falling back to team if absent), or team credentials only. Defaults to owner when you are signed in.",
+            description: credentialModeGuidance,
           },
           cron: { type: "string" },
           tz: { type: "string" },
@@ -236,12 +250,12 @@ function schedulerAgentTools(): ExtensionAgentTool[] {
         "quietOutput: true skips the output file for uneventful script ticks. deliver replaces the job's " +
         "whole delivery list when provided (pass [] to clear it, omit to leave it unchanged); results are " +
         "pushed by the RUNTIME after each run, so do NOT call a *.send_message tool yourself to report " +
-        "cron results. Set timeoutMs to override the per-run timeout in milliseconds (default 30 minutes).",
+        "cron results. Set timeoutMs to override the per-run timeout in milliseconds (default 30 minutes). " + credentialModeGuidance,
       parameters: {
         type: "object",
         properties: {
           jobId: { type: "string" },
-          credentialMode: { type: "string", enum: ["owner", "team"] },
+          credentialMode: { type: "string", enum: ["owner", "team"], description: credentialModeGuidance },
           name: { type: "string" },
           enabled: { type: "boolean" },
           schedule: {
@@ -487,13 +501,20 @@ const schedulerExtension: Extension = {
     if (context?.config.extensions?.scheduler?.enabled === false) return [];
     return schedulerAgentTools();
   },
+  getSystemPromptContributions(_agent, context) {
+    if (context?.config.extensions?.scheduler?.enabled === false) return undefined;
+    return "Scheduled jobs: " + credentialModeGuidance;
+  },
   registerRoutes(app: Hono) {
     app.get("/schedules", async (c) => {
       const scheduler = getScheduler();
       const agentId = c.req.query("agent") ?? undefined;
       const userId = requestUserId(c);
       const jobs = (await scheduler.list(agentId)).filter((job) => !job.ownerUserId || job.ownerUserId === userId);
-      return c.json(jobs);
+      return c.json(await Promise.all(jobs.map(async (job) => {
+        if (job.ownerUserId || !job.createdByUserId) return job;
+        return { ...job, createdByDisplayName: await creatorDisplayName(job.createdByUserId) };
+      })));
     });
 
     app.post("/schedules", async (c) => {
@@ -567,6 +588,7 @@ const schedulerExtension: Extension = {
       try {
         const previous = (await scheduler.list(agentId)).find((candidate) => candidate.id === id);
         const previousMode = previous?.credentialMode ?? "team";
+        const previousOwnerUserId = previous?.ownerUserId;
         const job = await scheduler.update(agentId, id, parsed.data, requestUserId(c));
         if (previous && previousMode !== (job.credentialMode ?? "team")) {
           const auth = (c as unknown as Context<{ Variables: { multiUserAuthContext?: {
@@ -575,7 +597,10 @@ const schedulerExtension: Extension = {
           getSchedulerContext().audit?.record({
             actorUserId: auth?.session.userId, actorEmail: auth?.user?.email, impersonatorUserId: auth?.impersonator?.id,
             action: "schedule.credential_mode", agentId, targetType: "schedule", targetId: id,
-            changes: [{ field: "credentialMode", before: previousMode, after: job.credentialMode ?? "team" }],
+            changes: [
+              { field: "credentialMode", before: previousMode, after: job.credentialMode ?? "team" },
+              { field: "ownerUserId", before: previousOwnerUserId, after: job.ownerUserId },
+            ],
           });
         }
         return c.json(job);
