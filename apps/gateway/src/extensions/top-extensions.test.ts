@@ -10,7 +10,7 @@ vi.mock("../config/index.js", () => ({
   },
 }));
 
-const { aggregateMcpCandidates, readMcpIconCache, readTopExtensions, sanitizeTopExtensions, writeTopExtensions } = await import("./top-extensions.js");
+const { aggregateMcpCandidates, readMcpIconCache, readSharedMcpServerSources, readTopExtensions, sanitizeTopExtensions, writeTopExtensions } = await import("./top-extensions.js");
 
 describe("top-extensions store", () => {
   beforeEach(() => {
@@ -90,6 +90,40 @@ describe("top-extensions store", () => {
       ["linear", "https://linear.app/icon.png"],
       ["other", undefined],
     ]);
+  });
+
+  it("reads shared catalog servers, counting agents that enabled them", () => {
+    fs.writeFileSync(
+      path.join(dir, "mcp.json"),
+      JSON.stringify({ mcpServers: {
+        atlassian: { url: "https://mcp.atlassian.com/v1/mcp/", serverTitle: "Atlassian MCP" },
+        pipedrive: { url: "https://mcp.pipedrive.ai/mcp", serverTitle: "Pipedrive", displayName: "Pipedrive CRM" },
+        unused: { url: "https://unused.test/mcp" },
+        bad: "nope",
+      } })
+    );
+    const agentDir = (id: string, sharedServers: string[]) => {
+      const workspace = path.join(dir, id);
+      fs.mkdirSync(workspace);
+      fs.writeFileSync(path.join(workspace, "mcp.json"), JSON.stringify({ mcpServers: {}, sharedServers }));
+      return { id, workspace };
+    };
+    const shared = readSharedMcpServerSources([agentDir("a", ["atlassian", "pipedrive"]), agentDir("b", ["atlassian"]), { id: "c" }]);
+    expect(
+      aggregateMcpCandidates([{ agentId: "a", name: "atl", config: { url: "https://mcp.atlassian.com/v1/mcp" } }, ...shared])
+        .map((candidate) => [candidate.displayName, candidate.agentCount])
+    ).toEqual([
+      // Reported name beats config keys; local "atl" on agent a counts once.
+      ["Atlassian MCP", 2],
+      // Admin override beats the reported name.
+      ["Pipedrive CRM", 1],
+      // Enabled by nobody: still star-able.
+      ["unused", 0],
+    ]);
+  });
+
+  it("treats a missing shared catalog as empty", () => {
+    expect(readSharedMcpServerSources()).toEqual([]);
   });
 
   it("treats a missing MCP icon cache as empty", () => {

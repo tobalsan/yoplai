@@ -5,7 +5,7 @@ import { Readable } from "node:stream";
 import { Hono, type Context } from "hono";
 import { resolveDefaultProjectManager, resolveHomeDir } from "@yoplai/shared";
 import { readMcpServerSources } from "../capabilities/catalog.js";
-import { aggregateMcpCandidates, readMcpIconCache, readTopExtensions, sanitizeTopExtensions, writeTopExtensions } from "../extensions/top-extensions.js";
+import { aggregateMcpCandidates, readMcpIconCache, readSharedMcpServerSources, readTopExtensions, sanitizeTopExtensions, writeTopExtensions } from "../extensions/top-extensions.js";
 import {
   getActiveAgents,
   getAgent,
@@ -227,7 +227,7 @@ async function listTopExtensionCandidates() {
     description: entry.description,
     ...(entry.iconDataUri ? { iconDataUri: entry.iconDataUri } : {}),
   }));
-  const mcp = aggregateMcpCandidates(await readMcpServerSources(config.agents), readMcpIconCache());
+  const mcp = aggregateMcpCandidates([...(await readMcpServerSources(config.agents)), ...readSharedMcpServerSources(config.agents)], readMcpIconCache());
   return { extensions, mcp };
 }
 
