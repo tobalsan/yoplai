@@ -345,6 +345,11 @@ describe("createSlackBot", () => {
       expect.objectContaining({
         context: expect.objectContaining({
           blocks: expect.arrayContaining([
+            expect.objectContaining({
+              type: "metadata",
+              conversationType: "direct_message",
+              conversationId: "D1",
+            }),
             {
               type: "proactive_dm_notes",
               notes: [
@@ -2726,5 +2731,71 @@ describe("createSlackAgentBot", () => {
         source: "slack",
       })
     );
+  });
+
+  it("admits non-allowlisted DM replies to proactive messages up to maxReplies", async () => {
+    dataDir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-slack-replies-"));
+    const { createSlackAgentBot } = await import("./bot.js");
+    const { createProactiveDmNoteStore } = await import("./proactive-dm-notes.js");
+    const store = createProactiveDmNoteStore(dataDir);
+    store.trackMessage("a1", "D1", "1.0");
+    store.close();
+    const localAgent = {
+      id: "a1",
+      name: "Agent",
+      workspace: "~/ws",
+      model: { provider: "anthropic", model: "claude" },
+      thinkLevel: "off" as const,
+      queueMode: "queue" as const,
+      slack: {
+        token: "xoxb-test",
+        appToken: "xapp-test",
+        dm: {
+          enabled: true,
+          allowFrom: ["Uhr"],
+          proactiveReplies: { enabled: true, maxReplies: 1 },
+          reactionNotifications: "all" as const,
+        },
+      },
+    } as AgentConfig;
+    const bot = createSlackAgentBot(localAgent);
+    await bot?.start();
+    const send = (ts: string, threadTs?: string) =>
+      getMessageHandler(apps[0])({
+        message: { ts, thread_ts: threadTs, text: "hi", channel: "D1", user: "U9", channel_type: "im" },
+        client: apps[0].client,
+      });
+    const react = (ts: string) =>
+      getEventHandler(apps[0], "reaction_added")({
+        event: { reaction: "thumbsup", user: "U9", item: { type: "message", channel: "D1", ts } },
+        client: apps[0].client,
+      });
+
+    await send("2.0"); // top-level: ignored
+    await send("2.1", "9.9"); // untracked thread: ignored
+    expect(mockRunAgent).not.toHaveBeenCalled();
+
+    apps[0].client.conversations.history.mockResolvedValueOnce({
+      messages: [{ ts: "1.0", user: "Ubot", text: "Please confirm your start date." }],
+    });
+    await react("1.0"); // reaction on proactive message: runs, not counted
+    expect(mockRunAgent).toHaveBeenCalledTimes(1);
+    expect(mockRunAgent).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        sessionKey: "main",
+        message: expect.stringContaining("> Please confirm your start date."),
+      })
+    );
+    expect(apps[0].client.chat.postMessage).toHaveBeenLastCalledWith(
+      expect.objectContaining({ channel: "D1", text: "ok", thread_ts: "1.0" })
+    );
+    await react("5.0"); // reaction elsewhere: ignored
+    expect(mockRunAgent).toHaveBeenCalledTimes(1);
+
+    await send("2.2", "1.0"); // first reply: runs
+    expect(mockRunAgent).toHaveBeenCalledTimes(2);
+    await send("2.3", "1.0"); // over maxReplies: ignored
+    expect(mockRunAgent).toHaveBeenCalledTimes(2);
+    await fs.rm(dataDir, { recursive: true, force: true });
   });
 });

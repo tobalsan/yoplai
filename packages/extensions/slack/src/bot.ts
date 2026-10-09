@@ -1,6 +1,7 @@
 import { App, SocketModeReceiver } from "@slack/bolt";
 import type {
   AgentConfig,
+  ChannelConversationType,
   FileAttachment,
   FileOutputEvent,
   SlackAgentConfig,
@@ -94,12 +95,15 @@ type SlackMessageTarget = {
   dmConfig?: SlackComponentDmConfig;
   isMainSession: boolean;
   logPrefix: string;
+  // Non-allowlisted DM reply under a proactive message; counted before running.
+  proactiveReply?: boolean;
 };
 
 type SlackReactionTarget = {
   agent: AgentConfig;
   config: SlackComponentConfig;
   logPrefix: string;
+  dmConfig?: SlackComponentDmConfig;
 };
 
 type ThinkingStreamDisplay = {
@@ -292,6 +296,104 @@ function withoutSlackMentionRequirement(
   };
 }
 
+function isDmUserAllowed(
+  dm: SlackComponentDmConfig | undefined,
+  user: string | undefined
+): boolean {
+  const allowFrom = dm?.allowFrom;
+  return !allowFrom?.length || (!!user && matchesUserAllowlist(user, allowFrom));
+}
+
+/**
+ * A DM thread reply from a user outside allowFrom may still be admitted when
+ * proactiveReplies is on; whether the thread is a tracked proactive message
+ * (and under maxReplies) is checked once the event is claimed.
+ */
+function asProactiveReplyTarget(
+  data: MessageData,
+  target: SlackMessageTarget
+): SlackMessageTarget | null {
+  const dm = target.dmConfig;
+  if (!dm?.proactiveReplies?.enabled) return null;
+  if (!data.thread_ts || data.thread_ts === data.ts) return null;
+  const dmConfig = { ...dm, allowFrom: undefined };
+  return {
+    ...target,
+    dmConfig,
+    config: { ...target.config, dm: dmConfig },
+    proactiveReply: true,
+  };
+}
+
+function claimProactiveReply(
+  target: SlackMessageTarget,
+  data: MessageData
+): boolean {
+  if (!data.thread_ts) return false;
+  try {
+    const store = createProactiveDmNoteStore(getSlackContext().getDataDir());
+    try {
+      return store.claimReply(
+        target.agent.id,
+        data.channel,
+        data.thread_ts,
+        target.dmConfig?.proactiveReplies?.maxReplies
+      );
+    } finally {
+      store.close();
+    }
+  } catch (err) {
+    console.debug(`${target.logPrefix} Proactive reply check failed:`, err);
+    return false;
+  }
+}
+
+function isTrackedProactiveMessage(
+  agentId: string,
+  channel: string,
+  ts: string
+): boolean {
+  try {
+    const store = createProactiveDmNoteStore(getSlackContext().getDataDir());
+    try {
+      return store.isTracked(agentId, channel, ts);
+    } finally {
+      store.close();
+    }
+  } catch {
+    return false;
+  }
+}
+
+/** DM reactions reuse the channel reaction pipeline via a synthesized route. */
+function dmReactionTarget(
+  channel: string,
+  agent: AgentConfig,
+  config: SlackComponentConfig,
+  dm: SlackComponentDmConfig | undefined,
+  logPrefix: string
+): SlackReactionTarget | null {
+  if (!channel.startsWith("D") || !dm || dm.enabled === false) return null;
+  const mode = dm.reactionNotifications ?? "off";
+  if (mode === "off") return null;
+  return {
+    agent,
+    logPrefix,
+    dmConfig: dm,
+    config: {
+      ...config,
+      channels: {
+        ...config.channels,
+        [channel]: {
+          agent: agent.id,
+          reactionNotifications: mode,
+          reactionAllowlist: dm.reactionAllowlist,
+        },
+      },
+    },
+  };
+}
+
 function toReactionData(raw: unknown): ReactionData | null {
   const event = asRecord(raw);
   const item = asRecord(event.item);
@@ -343,8 +445,9 @@ async function getSlackUserDisplayName(
 
 function resolveSlackConversationType(
   data: MessageData
-): "direct_message" | "channel_message" | "thread_reply" {
+): ChannelConversationType {
   if (data.channel_type === "im") return "direct_message";
+  if (data.channel_type === "mpim") return "group_direct_message";
   if (data.thread_ts && data.thread_ts !== data.ts) return "thread_reply";
   return "channel_message";
 }
@@ -844,7 +947,9 @@ async function handleSlackMessage(
 ): Promise<void> {
   // Detect bang commands on raw text before any normalization/mention gating.
   // Bang commands bypass mention requirements — they're slash-command alternatives.
-  const rawBang = detectBangCommand(data.text?.trim() ?? "");
+  const rawBang = target.proactiveReply
+    ? undefined
+    : detectBangCommand(data.text?.trim() ?? "");
   if (rawBang && (data.bot_id || (botUserId && data.user === botUserId))) {
     return; // never process bot's own messages
   }
@@ -910,6 +1015,10 @@ async function handleSlackMessage(
   }
 
   if (!claimOnce()) return;
+  if (target.proactiveReply && !claimProactiveReply(target, data)) {
+    console.debug(`${target.logPrefix} Ignored: proactive_reply_not_allowed`);
+    return;
+  }
 
   const sessionKey = target.isMainSession
     ? DEFAULT_MAIN_KEY
@@ -937,7 +1046,8 @@ async function handleSlackMessage(
 
     // Also detect bang commands on normalized content (after mention stripping).
     // This handles "@bot !new" where the raw text starts with a mention, not !.
-    const normalizedBang = rawBang ? undefined : detectBangCommand(content);
+    const normalizedBang =
+      rawBang || target.proactiveReply ? undefined : detectBangCommand(content);
     if (normalizedBang && attachments.length === 0) {
       const handled = await handleBangCommand(
         data,
@@ -1010,7 +1120,9 @@ async function handleSlackMessage(
     const place =
       conversationType === "direct_message"
         ? `direct message / ${sender}`
-        : conversationType === "thread_reply"
+        : conversationType === "group_direct_message"
+          ? `group direct message / ${sender}`
+          : conversationType === "thread_reply"
           ? `${placeChannel} / ${threadName}`
           : placeChannel;
     const requesterUserId = await resolveSlackRequester(client, data.user);
@@ -1020,6 +1132,7 @@ async function handleSlackMessage(
         place,
         conversationType,
         sender,
+        conversationId: data.channel,
       },
       channelName,
       channelTopic: channelMeta.topic,
@@ -1199,6 +1312,19 @@ async function handleSlackReaction(
     return;
   }
   const channel = data.item.channel;
+  if (
+    target.dmConfig &&
+    !isDmUserAllowed(target.dmConfig, data.user) &&
+    !(
+      target.dmConfig.proactiveReplies?.enabled &&
+      channel &&
+      data.item.ts &&
+      isTrackedProactiveMessage(target.agent.id, channel, data.item.ts)
+    )
+  ) {
+    console.debug(`${target.logPrefix} Reaction ignored: dm_user_not_allowed`);
+    return;
+  }
   const route = channel ? target.config.channels?.[channel] : undefined;
   const mode = route?.reactionNotifications ?? "off";
   let result = processReaction(data, target.config, undefined, botUserId);
@@ -1242,11 +1368,13 @@ async function handleSlackReaction(
       );
     }
     const reactionThreadTs = data.item.thread_ts ?? messageInfo?.threadTs;
-    await getSlackContext().runAgent({
+    const agentResult = await getSlackContext().runAgent({
       agentId: target.agent.id,
       userId: await resolveSlackRequester(client, data.user),
-      message: formatReactionMessage(data, action),
-      sessionKey: buildSlackSessionKey(result.channel, reactionThreadTs),
+      message: formatReactionMessage(data, action, messageInfo?.text),
+      sessionKey: target.dmConfig
+        ? DEFAULT_MAIN_KEY
+        : buildSlackSessionKey(result.channel, reactionThreadTs),
       source: "slack",
       slackDelivery: {
         channel: result.channel,
@@ -1255,6 +1383,14 @@ async function handleSlackReaction(
       },
       context,
     });
+    if (!agentResult.meta.queued) {
+      await sendSlackReply(
+        client,
+        result.channel,
+        agentResult.payloads,
+        reactionThreadTs ?? result.messageTs
+      );
+    }
   } catch (err) {
     console.error(`${target.logPrefix} Reaction error:`, err);
   }
@@ -1429,13 +1565,16 @@ export function createSlackBot(
       if (!componentConfig.dm.agent) return null;
       const dmAgent = agentsById.get(componentConfig.dm.agent);
       if (!dmAgent) return null;
-      return {
+      const target: SlackMessageTarget = {
         agent: dmAgent,
         config: componentConfig,
         dmConfig: componentConfig.dm,
         isMainSession: true,
         logPrefix: `[slack:${dmAgent.id}]`,
       };
+      return isDmUserAllowed(componentConfig.dm, data.user)
+        ? target
+        : (asProactiveReplyTarget(data, target) ?? target);
     }
 
     const route = componentConfig.channels?.[data.channel];
@@ -1468,6 +1607,20 @@ export function createSlackBot(
   ): SlackReactionTarget | null => {
     const channel = data.item.channel;
     if (!channel) return null;
+    const dmAgent = componentConfig.dm?.agent
+      ? agentsById.get(componentConfig.dm.agent)
+      : undefined;
+    if (channel.startsWith("D")) {
+      return dmAgent
+        ? dmReactionTarget(
+            channel,
+            dmAgent,
+            componentConfig,
+            componentConfig.dm,
+            `[slack:${dmAgent.id}]`
+          )
+        : null;
+    }
     const route = componentConfig.channels?.[channel];
     if (!route) return null;
     const agent = agentsById.get(route.agent);
@@ -1673,21 +1826,16 @@ export function createSlackAgentBot(agent: AgentConfig): SlackBot | null {
       if (!agentSlackConfig.dm || agentSlackConfig.dm.enabled === false) {
         return null;
       }
-      if (
-        agentSlackConfig.dm.allowFrom &&
-        agentSlackConfig.dm.allowFrom.length > 0 &&
-        (!data.user ||
-          !matchesUserAllowlist(data.user, agentSlackConfig.dm.allowFrom))
-      ) {
-        return null;
-      }
-      return {
+      const target: SlackMessageTarget = {
         agent,
         config: slackConfig,
         dmConfig: agentSlackConfig.dm,
         isMainSession: true,
         logPrefix,
       };
+      return isDmUserAllowed(agentSlackConfig.dm, data.user)
+        ? target
+        : asProactiveReplyTarget(data, target);
     }
 
     const channels = agentSlackConfig.channels;
@@ -1710,6 +1858,15 @@ export function createSlackAgentBot(agent: AgentConfig): SlackBot | null {
   ): SlackReactionTarget | null => {
     const channel = data.item.channel;
     if (!channel) return null;
+    if (channel.startsWith("D")) {
+      return dmReactionTarget(
+        channel,
+        agent,
+        slackConfig,
+        agentSlackConfig.dm,
+        logPrefix
+      );
+    }
 
     const channels = agentSlackConfig.channels;
     if (channels && Object.keys(channels).length > 0 && !channels[channel]) {

@@ -66,6 +66,16 @@ describe("renderAgentContext telegram context", () => {
 describe("renderAgentContext slack sender identity", () => {
   const metadata = { channel: "slack" as const, place: "#ops", conversationType: "channel_message" as const, sender: "Thinh" };
 
+  it("renders the conversation id when provided", () => {
+    const rendered = renderAgentContext(
+      buildSlackContext({
+        metadata: { ...metadata, conversationType: "group_direct_message", conversationId: "G1" },
+      })
+    );
+    expect(rendered).toContain("conversation_type: group_direct_message");
+    expect(rendered).toContain("conversation_id: G1");
+  });
+
   it("tells the model to pair an unpaired sender", () => {
     const rendered = renderAgentContext(buildSlackContext({ metadata, unpairedSender: true }));
     expect(rendered).toContain("sender_identity: unpaired");

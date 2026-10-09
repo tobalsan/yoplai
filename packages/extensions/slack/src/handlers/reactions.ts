@@ -80,10 +80,12 @@ export function processReaction(
 
 export function formatReactionMessage(
   data: ReactionData,
-  action: "add" | "remove"
+  action: "add" | "remove",
+  messageText?: string
 ): string {
   const verb = action === "add" ? "reacted with" : "removed reaction";
-  return `[SYSTEM] User ${data.user} ${verb} ${data.reaction} on message ${
+  const base = `[SYSTEM] User ${data.user} ${verb} ${data.reaction} on message ${
     data.item.ts ?? "unknown"
   }`;
+  return messageText ? `${base}:\n> ${messageText.replace(/\n/g, "\n> ")}` : base;
 }

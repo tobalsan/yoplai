@@ -742,6 +742,16 @@ export const SlackExtensionDmConfigSchema = z.object({
   agent: z.string().optional(),
   allowFrom: z.array(z.string()).optional(),
   threadPolicy: z.enum(["always", "never", "follow"]).optional(),
+  // Lets users outside allowFrom reply in the thread of a proactive DM the
+  // agent sent (and react to it), up to maxReplies replies per message.
+  proactiveReplies: z
+    .object({
+      enabled: z.boolean().optional(),
+      maxReplies: z.number().int().min(1).optional(),
+    })
+    .optional(),
+  reactionNotifications: z.enum(["off", "own", "all", "allowlist"]).optional(),
+  reactionAllowlist: z.array(z.union([z.string(), z.number()])).optional(),
 });
 export type SlackExtensionDmConfig = z.infer<
   typeof SlackExtensionDmConfigSchema
@@ -2106,6 +2116,7 @@ export type HistoryViewMode = "simple" | "full";
 // Discord context types for runAgent()
 export type ChannelConversationType =
   | "direct_message"
+  | "group_direct_message"
   | "channel_message"
   | "thread_reply";
 
@@ -2114,6 +2125,7 @@ export type ChannelContextMetadata = {
   place: string;
   conversationType: ChannelConversationType;
   sender: string;
+  conversationId?: string;
 };
 
 export type DiscordContextBlock =
@@ -2157,6 +2169,7 @@ export type SlackContextBlock =
       place: string;
       conversationType: ChannelConversationType;
       sender: string;
+      conversationId?: string;
     }
   | { type: "channel_topic"; topic: string }
   | { type: "channel_name"; name: string }
@@ -2250,10 +2263,12 @@ const ContextMetadataBlockSchema = z.object({
   place: z.string(),
   conversationType: z.enum([
     "direct_message",
+    "group_direct_message",
     "channel_message",
     "thread_reply",
   ]),
   sender: z.string(),
+  conversationId: z.string().optional(),
 });
 
 const RichContextBlockSchema = z.union([

@@ -86,6 +86,7 @@ export function buildSlackHistoryKey(
 export type ReactionMessageInfo = {
   threadTs?: string;
   author?: string;
+  text?: string;
 };
 
 export async function lookupReactionMessage(
@@ -103,11 +104,13 @@ export async function lookupReactionMessage(
     const msg = result.messages?.[0];
     if (!msg) return undefined;
     const author = msg.user ?? msg.bot_id;
+    // history can return an earlier message when messageTs is a thread reply.
+    const text = msg.ts === messageTs ? msg.text : undefined;
     if (msg.thread_ts && msg.thread_ts !== msg.ts) {
-      return { threadTs: msg.thread_ts, author };
+      return { threadTs: msg.thread_ts, author, text };
     }
-    if ((msg.reply_count ?? 0) > 0) return { threadTs: msg.ts, author };
-    return { author };
+    if ((msg.reply_count ?? 0) > 0) return { threadTs: msg.ts, author, text };
+    return { author, text };
   } catch {
     return undefined;
   }

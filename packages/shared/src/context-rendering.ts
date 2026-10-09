@@ -63,6 +63,9 @@ function getMetadata(
     place: block.place,
     conversationType: block.conversationType,
     sender: block.sender,
+    ...("conversationId" in block && block.conversationId
+      ? { conversationId: block.conversationId }
+      : {}),
   };
 }
 
@@ -83,6 +86,7 @@ function renderChannelContext(
   const channelName =
     renderBlockOrFallback(getBlock(blocks, "channel_name"), {
       direct_message: "direct message",
+      group_direct_message: "group direct message",
       channel_message: "unknown channel",
       thread_reply: "unknown channel",
     }[metadata.conversationType]) ?? "unknown channel";
@@ -108,6 +112,9 @@ function renderChannelContext(
     `channel: ${metadata.channel}`,
     `place: ${metadata.place}`,
     `conversation_type: ${metadata.conversationType}`,
+    ...(metadata.conversationId
+      ? [`conversation_id: ${metadata.conversationId}`]
+      : []),
     `sender: ${metadata.sender}`,
     ...(unpaired ? [UNPAIRED_SENDER_NOTE] : []),
     "proactive_dm_notes:",
@@ -280,6 +287,9 @@ export function buildSlackContext(opts: {
       place: opts.metadata.place,
       conversationType: opts.metadata.conversationType,
       sender: opts.metadata.sender,
+      ...(opts.metadata.conversationId
+        ? { conversationId: opts.metadata.conversationId }
+        : {}),
     });
   }
   if (opts.channelName) {

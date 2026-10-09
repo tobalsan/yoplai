@@ -403,6 +403,8 @@ async function sendSlackMessage(
   }
   const chunks = splitMessage(markdownToMrkdwn(input.text));
   let firstTs: string | undefined;
+  let postedChannel: string | undefined;
+  const postedTs: string[] = [];
   for (const chunk of chunks) {
     const result = await client.chat.postMessage({
       channel: input.channel,
@@ -413,6 +415,8 @@ async function sendSlackMessage(
       unfurl_media: false,
     });
     firstTs ??= result.ts;
+    postedChannel ??= result.channel;
+    if (result.ts) postedTs.push(result.ts);
   }
   const recipientType = input.channel.startsWith("U")
     ? "user"
@@ -425,6 +429,11 @@ async function sendSlackMessage(
       const store = createProactiveDmNoteStore(context.getDataDir());
       try {
         store.addNote(agent.id, recipientType, input.channel, input.text);
+        // Top-level sends only: replies are threaded under these messages.
+        const dmChannel = postedChannel ?? input.channel;
+        if (!input.threadTs && dmChannel.startsWith("D")) {
+          for (const ts of postedTs) store.trackMessage(agent.id, dmChannel, ts);
+        }
       } catch (error) {
         // The message is already in Slack; a bookkeeping failure must not be
         // reported back as a failed send (a scheduler delivery would record a

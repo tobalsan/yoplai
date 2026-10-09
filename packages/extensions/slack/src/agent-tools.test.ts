@@ -1,3 +1,4 @@
+import { createProactiveDmNoteStore } from "./proactive-dm-notes.js";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -176,6 +177,23 @@ describe("slack agent tools", () => {
 
     const store = createSlackThreadSessionBindingStore(dataDir);
     expect(store.getBinding("C123", "1.2", "alpha")).toBeUndefined();
+    store.close();
+    await fs.rm(dataDir, { recursive: true, force: true });
+  });
+
+  it("send_message tracks top-level DM sends under the resolved DM channel", async () => {
+    const dataDir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-slack-tools-"));
+    const postMessage = vi.fn().mockResolvedValue({ ts: "3.3", channel: "D777" });
+    registerMockBot("alpha", { chat: { postMessage } as never });
+    setSlackContext({ getDataDir: () => dataDir, logger: { warn: vi.fn() } } as never);
+
+    await tool("slack.send_message").execute(
+      { channel: "U777", text: "Please confirm." },
+      { agent: agent("alpha"), config: config() }
+    );
+
+    const store = createProactiveDmNoteStore(dataDir);
+    expect(store.isTracked("alpha", "D777", "3.3")).toBe(true);
     store.close();
     await fs.rm(dataDir, { recursive: true, force: true });
   });

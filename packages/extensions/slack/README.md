@@ -67,7 +67,12 @@ slack:
 - **Direct messages** — the component bot routes DMs via `dm.agent`; a per-agent
   bot just needs `dm.enabled`. Restrict senders with `dm.allowFrom`.
 - **Mentions / reactions** — `app_mention`, `reaction_added`, and
-  `reaction_removed` events are routed to the resolved agent.
+  `reaction_removed` events are routed to the resolved agent. Reaction turns
+  depend on `reactionNotifications` (`off` by default) per channel, or on `dm`
+  for DMs; the reacted message's text is included and any reply is posted in
+  its thread.
+- **Proactive-DM replies** — see
+  [Replies to proactive DMs](#replies-to-proactive-dms-private-agents-that-reach-out).
 
 ### Reply rules (defaults)
 
@@ -92,6 +97,72 @@ A mention means `<@bot>`, an `app_mention` event, or a `mentionPatterns` match
 
 Other options: `historyLimit`, `clearHistoryAfterReply`, `mentionPatterns`,
 `broadcastToChannel`, `showThinking`, `deleteThinkingOnComplete`.
+
+Every inbound message's channel context includes `conversation_id` (the Slack
+`D...`/`G...`/`C...` ID), so the agent can pass it straight to
+`slack.get_channel_history`. Group DMs are labelled
+`conversation_type: group_direct_message`.
+
+## Replies to proactive DMs (private agents that reach out)
+
+**Use case.** An HR agent holds private data, so only the HR team may chat with
+it freely (`dm.allowFrom`). But HR also wants the agent to message employees
+("Please confirm your start date", "Your leave request needs a document") and
+let them answer — *without* opening the agent to everyone. `proactiveReplies`
+does exactly that: anyone outside `allowFrom` can reply **only in the thread of a
+DM the agent sent them**, and only a limited number of times.
+
+```yaml
+# agents/henry/agent.yaml
+slack:
+  token: $env:SLACK_BOT_TOKEN
+  appToken: $env:SLACK_APP_TOKEN
+  dm:
+    enabled: true
+    allowFrom:            # HR team: full, unrestricted DM access
+      - U0HRLEAD01
+      - U0HRPARTNER
+    proactiveReplies:
+      enabled: true
+      maxReplies: 1       # each employee may answer each proactive DM once
+    reactionNotifications: own   # a reaction on the agent's DM also reaches it
+```
+
+Flow:
+
+1. The agent (or a scheduled job) calls `slack.send_message` with an employee's
+   user ID (`U...`). The top-level message is recorded as a *proactive DM*.
+2. The employee replies **in that message's thread** → the agent receives it
+   (with the original message as `thread_starter`) and answers in the thread.
+3. After `maxReplies` accepted replies, further replies in that thread are
+   silently ignored. Omit `maxReplies` for unlimited replies.
+4. Anything else from a non-allowlisted user is ignored as before: top-level
+   DMs, replies under non-proactive messages, and `!` commands.
+
+| Option | Meaning |
+| --- | --- |
+| `dm.proactiveReplies.enabled` | Allow non-allowlisted users to reply in the thread of a proactive DM. |
+| `dm.proactiveReplies.maxReplies` | Accepted replies per proactive message (≥ 1; omitted = unlimited). Counts only accepted replies; allowlisted users are never counted. |
+| `dm.reactionNotifications` | `off` (default) \| `own` \| `all` \| `allowlist` — same semantics as the channel option (see below). |
+| `dm.reactionAllowlist` | Users whose reactions count when `reactionNotifications: allowlist`. |
+
+**Reactions** in DMs trigger a turn according to `reactionNotifications`:
+`own` = reactions on the agent's messages, `all` = any message, `allowlist` =
+only users in `reactionAllowlist`. A non-allowlisted user's reaction counts only
+on a proactive DM. Reactions never consume `maxReplies`. The turn receives the
+reacted message's text; a reply (if the agent gives one rather than `NO_REPLY`)
+is posted in that message's thread. Tell the agent in its instructions what
+reactions mean (e.g. ✅ = confirmed), otherwise it usually stays silent.
+
+Notes:
+
+- Only messages sent **after** enabling the feature are tracked
+  (`$YOPLAI_HOME/slack-proactive-dm-notes.db`, table `proactive_dm_messages`).
+  Only top-level sends are tracked; `slack.send_message` with `threadTs` is not.
+- Replies must be in the thread; use `dm.threadPolicy` as usual for how the
+  agent's own answers are threaded.
+- Needs `im:history` and `reactions:read` scopes plus the `message.im`,
+  `reaction_added`, and `reaction_removed` bot events.
 
 ## Agent tools
 

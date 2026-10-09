@@ -27,7 +27,51 @@ export class ProactiveDmNoteStore {
   created_at INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS proactive_dm_notes_recipient
-  ON proactive_dm_notes (agent_id, recipient_type, recipient_id, id);`);
+  ON proactive_dm_notes (agent_id, recipient_type, recipient_id, id);
+CREATE TABLE IF NOT EXISTS proactive_dm_messages (
+  agent_id TEXT NOT NULL,
+  channel_id TEXT NOT NULL,
+  ts TEXT NOT NULL,
+  replies INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (agent_id, channel_id, ts)
+);`);
+  }
+
+  trackMessage(agentId: string, channelId: string, ts: string): void {
+    this.db
+      .prepare(
+        `INSERT OR IGNORE INTO proactive_dm_messages (agent_id, channel_id, ts)
+         VALUES (?, ?, ?)`
+      )
+      .run(agentId, channelId, ts);
+  }
+
+  isTracked(agentId: string, channelId: string, ts: string): boolean {
+    return Boolean(
+      this.db
+        .prepare(
+          `SELECT 1 FROM proactive_dm_messages
+           WHERE agent_id = ? AND channel_id = ? AND ts = ?`
+        )
+        .get(agentId, channelId, ts)
+    );
+  }
+
+  /** Atomically count one reply; false when untracked or the limit is reached. */
+  claimReply(
+    agentId: string,
+    channelId: string,
+    ts: string,
+    maxReplies: number | undefined
+  ): boolean {
+    const result = this.db
+      .prepare(
+        `UPDATE proactive_dm_messages SET replies = replies + 1
+         WHERE agent_id = ? AND channel_id = ? AND ts = ?
+           AND (? IS NULL OR replies < ?)`
+      )
+      .run(agentId, channelId, ts, maxReplies ?? null, maxReplies ?? null);
+    return result.changes > 0;
   }
 
   addNote(
