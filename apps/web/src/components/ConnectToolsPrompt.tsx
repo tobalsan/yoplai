@@ -18,7 +18,7 @@ import { capabilities, capabilitiesReady } from "../lib/capabilities";
 import { stripBase } from "../lib/path";
 import { ExtensionConfigForm } from "../pages/ExtensionConfigForm";
 
-export type ConnectRowState = "connected" | "team" | "enable" | "connect" | "setup";
+export type ConnectRowState = "connected" | "team" | "enable" | "grant" | "connect" | "setup";
 
 export type ConnectRow = {
   key: string;
@@ -81,6 +81,9 @@ export function buildConnectRows(input: {
     let state: ConnectRowState;
     if (!source) state = ext.oauth ? "connect" : "setup";
     else if (!ext.enabled) state = "enable";
+    // Account linked for the provider (e.g. via Gmail) but not with this
+    // extension's own scopes (e.g. Calendar): needs an extra grant.
+    else if (ext.oauth && !ext.oauthConnected) state = "grant";
     else state = source === "personal" ? "connected" : "team";
     rows.push({
       key: `ext:${ext.id}`,
@@ -284,6 +287,7 @@ export function ConnectToolsPrompt() {
   };
 
   const enable = async (agentId: string, row: ConnectRow) => {
+    if (busyKey()) return;
     setBusyKey(row.key);
     setError(undefined);
     try {
@@ -384,9 +388,22 @@ export function ConnectToolsPrompt() {
                             type="button"
                             class="connect-prompt-action"
                             disabled={busyKey() === row.key}
+                            aria-busy={busyKey() === row.key}
                             onClick={() => void enable(agentId, row)}
                           >
-                            Enable
+                            <Show when={busyKey() === row.key} fallback="Enable">
+                              <span class="connect-prompt-spinner" aria-hidden="true" /> Enabling…
+                            </Show>
+                          </button>
+                        </Show>
+                        <Show when={row.state === "grant"}>
+                          <button
+                            type="button"
+                            class="connect-prompt-action"
+                            title="Your account is linked, but this tool needs extra permissions."
+                            onClick={() => connect(agentId, row)}
+                          >
+                            Grant permissions
                           </button>
                         </Show>
                         <Show when={row.state === "setup"}>
@@ -531,6 +548,20 @@ const CONNECT_PROMPT_STYLES = `
     white-space: nowrap;
   }
   .connect-prompt-action:hover { border-color: var(--accent, #60a5fa); }
+  .connect-prompt-action:disabled { cursor: progress; opacity: 0.7; }
+  .connect-prompt-action:disabled:hover { border-color: var(--border-default); }
+  .connect-prompt-spinner {
+    display: inline-block;
+    width: 10px;
+    height: 10px;
+    margin-right: 4px;
+    border: 2px solid currentColor;
+    border-right-color: transparent;
+    border-radius: 50%;
+    vertical-align: -1px;
+    animation: connect-prompt-spin 0.7s linear infinite;
+  }
+  @keyframes connect-prompt-spin { to { transform: rotate(360deg); } }
   .connect-prompt-browse { margin: 16px 0 0; color: var(--text-secondary); font-size: 0.85rem; }
   .connect-prompt-browse a { color: var(--accent, #60a5fa); }
   .connect-prompt-footer { display: flex; justify-content: flex-end; margin-top: 18px; }

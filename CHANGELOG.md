@@ -11,6 +11,7 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Fixed
 
+- Connect prompt: "Enable" shows a spinner while enabling, and extensions whose provider account is linked without their own scopes (e.g. Calendar after Gmail) show "Grant permissions" instead of "Connected".
 - Team scheduled jobs are now shared with everyone on the agent; Mine jobs stay private. Switching modes updates ownership, Team cards show the original creator, and scheduler guidance explains when to choose each mode.
 
 - OAuth extensions sharing one provider account (e.g. Gmail and Google Drive on Google) no longer show as set up on the agent page until their own scopes are granted.

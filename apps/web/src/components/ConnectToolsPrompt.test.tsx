@@ -71,7 +71,7 @@ const server = (partial: Partial<McpServer>): McpServer =>
   ({ name: "linear", type: "http", url: "https://mcp.linear.app/mcp", auth: "oauth", state: "disconnected", readOnly: false, ...partial }) as McpServer;
 
 describe("buildConnectRows", () => {
-  const top = { extensions: ["a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l"], mcp: ["https://mcp.linear.app/mcp"] };
+  const top = { extensions: ["a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m"], mcp: ["https://mcp.linear.app/mcp"] };
   it("derives every row state", () => {
     const rows = buildConnectRows({
       top,
@@ -96,6 +96,8 @@ describe("buildConnectRows", () => {
         ext({ id: "j", displayName: "J", oauth: { provider: "github", scopes: [] }, oauthConnected: true }),
         ext({ id: "f", displayName: "F", oauth: { provider: "google", scopes: [] }, oauthConnected: true }),
         ext({ id: "g", displayName: "G" }),
+        // Provider account linked (via F) but without this extension's scopes.
+        ext({ id: "m", displayName: "M", oauth: { provider: "google", scopes: ["cal"] }, oauthConnected: false }),
         ext({ id: "mcp", displayName: "MCP", requiredSecrets: ["k"] }),
         ext({ id: "z", displayName: "Z", requiredSecrets: ["k"] }),
       ],
@@ -120,6 +122,7 @@ describe("buildConnectRows", () => {
       "ext:j": "team",
       "ext:k": "setup",
       "ext:l": "setup",
+      "ext:m": "grant",
       "mcp:linear": "connect",
       "mcp:linear_2": "connected",
       "mcp:linear_3": "connect",
