@@ -138,4 +138,16 @@ describe("McpServerDetails", () => {
     await tick();
     expect(container.textContent).toContain("Only admins can remove this MCP server.");
   });
+
+  it("shows the connected account for the selected scope", async () => {
+    fetchMcpServersMock.mockResolvedValue({ canConfigureTeam: true, servers: [
+      { name: "docs", type: "http", url: "https://docs.test/mcp", auth: "oauth", state: "connected", personalState: "connected", teamState: "connected", personalAccount: "me@example.test", teamAccount: "team@example.test", readOnly: false },
+    ] });
+    await mount();
+    expect(container.querySelector(".oauth-account")?.textContent).toContain("Connected as");
+    expect(container.querySelector(".oauth-account-value")?.textContent).toBe("me@example.test");
+    container.querySelector<HTMLButtonElement>('[data-scope="team"]')!.click();
+    await tick();
+    expect(container.querySelector(".oauth-account-value")?.textContent).toBe("team@example.test");
+  });
 });

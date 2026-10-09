@@ -14,6 +14,9 @@ export type McpServer = {
   state: "connected" | "disconnected" | "needs_reconnect";
   personalState?: McpServer["state"];
   teamState?: McpServer["state"];
+  /** Email or name of the connected account per scope, when the provider reveals it. */
+  personalAccount?: string;
+  teamAccount?: string;
   readOnly: boolean;
 };
 

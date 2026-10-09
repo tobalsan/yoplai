@@ -171,6 +171,14 @@ export function McpServerDetails() {
                     <div class="oauth-connected-detail"><p class="oauth-warn-text">This connection can no longer refresh. Reconnect to restore access.</p></div>
                   </Show>
                   <Show when={scopedState() === "connected"}>
+                    <Show when={scope() === "personal" ? server()?.personalAccount : server()?.teamAccount}>
+                      {(account) => (
+                        <div class="oauth-account">
+                          <span class="oauth-account-label">Connected as</span>
+                          <span class="oauth-account-value">{account()}</span>
+                        </div>
+                      )}
+                    </Show>
                     <p class="oauth-shared-note">
                       {scope() === "personal"
                         ? "Used only for your requests. Without it, your requests use the team connection when available."
