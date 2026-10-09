@@ -4124,22 +4124,6 @@ export function ChatView() {
           text-decoration: none;
         }
 
-        .message.streaming .content::after,
-        .message.streaming .block-text:last-child::after {
-          content: "";
-          display: inline-block;
-          width: 2px;
-          height: 1em;
-          background: var(--accent);
-          margin-left: 3px;
-          vertical-align: -0.12em;
-          animation: cursor-blink 1s step-end infinite;
-        }
-
-        @keyframes cursor-blink {
-          50% { opacity: 0; }
-        }
-
         .thinking-dots {
           display: flex;
           gap: 6px;
