@@ -366,7 +366,15 @@ export function EditAgent() {
     }
   };
 
+  // Initial load only: hold the list until extensions and MCP servers both settle (errors included) so it never reorders.
+  // A fetch still unresolved once agent resolution is done was never started (no chat agent / not admin): nothing to wait for.
   const [topExtensions] = createResource(() => fetchTopExtensions().catch(() => EMPTY_TOP_EXTENSIONS));
+  const [extensionListLoaded, setExtensionListLoaded] = createSignal(false);
+  createEffect(() => {
+    const agentResolved = !agents.loading && !forks.loading && !poolActions.loading;
+    const settled = (state: string) => state === "ready" || state === "errored" || (agentResolved && state === "unresolved");
+    if (settled(extensions.state) && settled(mcpServers.state) && settled(topExtensions.state)) setExtensionListLoaded(true);
+  });
 
   // Normal extensions and MCP servers share one list: admin-flagged Top first, then by display name.
   const extensionListItems = createMemo(() => {
@@ -540,23 +548,23 @@ export function EditAgent() {
                 </div>
               </div>
             </Show>
-            <Show when={extensions.loading}>
-              <div class="edit-agent-ext-empty">Loading extensions…</div>
+            <Show when={!extensionListLoaded()}>
+              <div class="edit-agent-ext-loading" role="status"><span class="edit-agent-ext-spinner" aria-hidden="true" />Loading agent extensions</div>
             </Show>
-            <Show when={extensions.error}>
+            <Show when={extensionListLoaded() && extensions.error}>
               <div class="edit-agent-ext-empty">
                 Failed to load extensions.
               </div>
             </Show>
             <Show
               when={
-                !extensions.loading && !extensions.error && !mcpServers.loading && !mcpServers.error && extensionCatalog().filter((ext) => ext.id !== "mcp").length === 0 && (mcpStatus()?.servers.length ?? 0) === 0
+                extensionListLoaded() && !extensions.error && !mcpServers.error && extensionCatalog().filter((ext) => ext.id !== "mcp").length === 0 && (mcpStatus()?.servers.length ?? 0) === 0
               }
             >
               <div class="edit-agent-ext-empty">No extensions available.</div>
             </Show>
             <ul class="edit-agent-ext-list">
-              <For each={extensionListItems()}>
+              <For each={extensionListLoaded() ? extensionListItems() : []}>
                 {(item) => (
                   <Show when={item.ext} keyed fallback={<McpExtensionCard server={item.server!} agentId={dashboardAgentId() ?? params.agentId} />}>
                     {(ext) => (
@@ -894,6 +902,27 @@ export function EditAgent() {
           font-size: 13px;
           color: var(--text-tertiary);
         }
+
+        .edit-agent-ext-loading {
+          display: flex;
+          align-items: center;
+          gap: 10px;
+          min-height: 120px;
+          justify-content: center;
+          font-size: 13px;
+          color: var(--text-secondary);
+        }
+
+        .edit-agent-ext-spinner {
+          width: 18px;
+          height: 18px;
+          border: 2px solid var(--border-default);
+          border-top-color: var(--text-secondary);
+          border-radius: 50%;
+          animation: edit-agent-ext-spin 0.8s linear infinite;
+        }
+
+        @keyframes edit-agent-ext-spin { to { transform: rotate(360deg); } }
 
         .edit-agent-ext-list {
           list-style: none;

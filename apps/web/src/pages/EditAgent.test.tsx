@@ -719,20 +719,43 @@ describe("EditAgent", () => {
     expect(container.querySelector('[data-tour-ext^="mcp:"] .edit-agent-ext-icon img')).toBeNull();
   });
 
-  it("renders extensions while the first MCP status load is still pending", async () => {
+  it("shows a loading state until both extensions and MCP servers load, then the ordered list", async () => {
     setCapabilitiesForTests({ forkedAgents: false });
     setSession("user");
     fetchAgentsMock.mockResolvedValue([agent({ id: "scribe" })]);
     fetchAgentExtensionsMock.mockResolvedValue([
       { id: "notion", displayName: "Notion", description: "Notes", enabled: false, tier: "auto-form", requiredSecrets: [] },
     ]);
-    fetchMcpServersMock.mockReturnValue(new Promise(() => {}));
+    let resolveMcp: (value: unknown) => void = () => {};
+    fetchMcpServersMock.mockReturnValue(new Promise((resolve) => { resolveMcp = resolve; }));
+    fetchTopExtensionsMock.mockResolvedValue({ extensions: [], mcp: ["https://docs.test/mcp"] });
     useParamsMock.mockReturnValue({ agentId: "scribe" });
     dispose = render(() => <Suspense fallback={<p class="suspended">Loading</p>}><EditAgent /></Suspense>, container);
     await new Promise((resolve) => setTimeout(resolve, 0));
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(container.querySelector(".suspended")).toBeNull();
-    expect(container.querySelector(".edit-agent-ext-name")?.textContent).toBe("Notion");
+    expect(container.textContent).toContain("Loading agent extensions");
+    expect(container.querySelector(".edit-agent-ext-name")).toBeNull();
+
+    resolveMcp({ canConfigureTeam: true, servers: [{ name: "docs", type: "http", url: "https://docs.test/mcp", auth: "oauth", state: "connected", readOnly: false }] });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(container.textContent).not.toContain("Loading agent extensions");
+    expect(Array.from(container.querySelectorAll(".edit-agent-ext-name")).map((node) => node.textContent)).toEqual(["Docs", "Notion"]);
+  });
+
+  it("shows extensions without MCP cards when the MCP fetch fails", async () => {
+    setCapabilitiesForTests({ forkedAgents: false });
+    setSession("user");
+    fetchAgentsMock.mockResolvedValue([agent({ id: "scribe" })]);
+    fetchAgentExtensionsMock.mockResolvedValue([
+      { id: "notion", displayName: "Notion", description: "Notes", enabled: false, tier: "auto-form", requiredSecrets: [] },
+    ]);
+    fetchMcpServersMock.mockRejectedValue(new Error("boom"));
+    await mountEdit("scribe");
+    expect(container.textContent).not.toContain("Loading agent extensions");
+    expect(Array.from(container.querySelectorAll(".edit-agent-ext-name")).map((node) => node.textContent)).toEqual(["Notion"]);
+    expect(container.textContent).toContain("Failed to load MCP servers.");
   });
 
   it("refreshes MCP servers on focus without suspending the page", async () => {
@@ -970,5 +993,8 @@ describe("EditAgent", () => {
     await mountEdit("scribe");
     expect(container.querySelector<HTMLButtonElement>(".mcp-ext-add-button")?.disabled).toBe(true);
     expect(fetchMcpServersMock).not.toHaveBeenCalled();
+    // Neither extension fetch starts here, so the initial spinner must still end.
+    expect(fetchAgentExtensionsMock).not.toHaveBeenCalled();
+    expect(container.textContent).not.toContain("Loading agent extensions");
   });
 });
