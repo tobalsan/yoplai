@@ -32,6 +32,12 @@ describe("AdminMcpServersPage", () => {
     expect(container.textContent).toContain("Linear");
     expect(container.textContent).toContain("https://mcp.linear.app/mcp");
     expect(container.textContent).toContain("Issues");
+    expect(container.querySelector('.mcps-grid [data-server="linear"]')).not.toBeNull();
+    expect(Array.from(container.querySelectorAll<HTMLInputElement>(".mcps-add input")).map((input) => input.placeholder)).toEqual([
+      "https://mcp.example.com/mcp",
+      "Display name, e.g. Atlassian",
+      "What this server gives agents access to",
+    ]);
 
     m.addMcpCatalogServer.mockResolvedValue({});
     type(container.querySelector<HTMLInputElement>('[aria-label="Server URL"]')!, "https://x.test/mcp");

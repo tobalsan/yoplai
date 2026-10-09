@@ -63,16 +63,17 @@ export default function AdminMcpServersPage() {
     >
       <form class="mcps-add" onSubmit={add}>
         <input type="url" required aria-label="Server URL" placeholder="https://mcp.example.com/mcp" value={url()} onInput={(event) => setUrl(event.currentTarget.value)} />
-        <input type="text" maxLength={100} aria-label="Name (optional)" placeholder="Name (optional)" value={name()} onInput={(event) => setName(event.currentTarget.value)} />
-        <input type="text" maxLength={500} aria-label="Description (optional)" placeholder="Description (optional)" value={description()} onInput={(event) => setDescription(event.currentTarget.value)} />
+        <input type="text" maxLength={100} aria-label="Name (optional)" placeholder="Display name, e.g. Atlassian" value={name()} onInput={(event) => setName(event.currentTarget.value)} />
+        <input type="text" maxLength={500} aria-label="Description (optional)" placeholder="What this server gives agents access to" value={description()} onInput={(event) => setDescription(event.currentTarget.value)} />
         <button type="submit" disabled={busy()}>Add server</button>
       </form>
       <Show when={error()}>{(text) => <p class="mcps-error" role="alert">{text()}</p>}</Show>
       <Show when={servers.error}><p class="mcps-error" role="alert">{message(servers.error, "Failed to load MCP servers.")}</p></Show>
-      <div class="mcps-panel">
+      <div>
         <Show when={!servers.error && servers()} fallback={<Show when={servers.loading}><div class="mcps-empty">Loading…</div></Show>}>
           {(list) => (
             <Show when={list().length > 0} fallback={<div class="mcps-empty">No shared MCP servers yet.</div>}>
+              <div class="mcps-grid">
               <For each={list()}>
                 {(server) => (
                   <div class="mcps-row" data-server={server.name}>
@@ -85,8 +86,8 @@ export default function AdminMcpServersPage() {
                           <Show when={server.description}>{(text) => <span class="mcps-sub">{text()}</span>}</Show>
                         </>
                       }>
-                        <input type="text" maxLength={100} aria-label={`Name for ${server.name}`} value={editName()} onInput={(event) => setEditName(event.currentTarget.value)} />
-                        <input type="text" maxLength={500} aria-label={`Description for ${server.name}`} value={editDescription()} onInput={(event) => setEditDescription(event.currentTarget.value)} />
+                        <input type="text" maxLength={100} aria-label={`Name for ${server.name}`} placeholder="Display name, e.g. Atlassian" value={editName()} onInput={(event) => setEditName(event.currentTarget.value)} />
+                        <input type="text" maxLength={500} aria-label={`Description for ${server.name}`} placeholder="What this server gives agents access to" value={editDescription()} onInput={(event) => setEditDescription(event.currentTarget.value)} />
                       </Show>
                     </div>
                     <div class="mcps-actions">
@@ -109,6 +110,7 @@ export default function AdminMcpServersPage() {
                   </div>
                 )}
               </For>
+              </div>
             </Show>
           )}
         </Show>
@@ -118,15 +120,17 @@ export default function AdminMcpServersPage() {
         .mcps-add input, .mcps-info input { flex: 1; min-width: 160px; padding: 8px; border: 1px solid var(--border-default); border-radius: 8px; background: var(--bg-base); color: var(--text-primary); }
         .mcps-add button, .mcps-actions button { border: 1px solid var(--border-default); border-radius: 7px; padding: 6px 10px; color: var(--text-primary); background: var(--bg-raised); cursor: pointer; font: inherit; font-size: 13px; }
         .mcps-add button:disabled, .mcps-actions button:disabled { opacity: .5; cursor: default; }
-        .mcps-panel { border: 1px solid var(--border-default); border-radius: 18px; background: color-mix(in srgb, var(--bg-surface) 92%, transparent); overflow: hidden; }
-        .mcps-row { display: flex; align-items: center; gap: 14px; padding: 12px 18px; border-bottom: 1px solid var(--border-default); }
-        .mcps-row:last-child { border-bottom: none; }
+        .mcps-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+        .mcps-row { display: flex; flex-direction: column; align-items: flex-start; gap: 10px; padding: 14px; border: 1px solid var(--border-default); border-radius: 10px; background: var(--bg-raised); }
+        .mcps-row > .edit-agent-ext-icon { align-self: flex-start; }
+        .mcps-actions { flex-wrap: wrap; }
+        @media (max-width: 720px) { .mcps-grid { grid-template-columns: minmax(0, 1fr); } }
         .mcps-row .edit-agent-ext-icon { flex-shrink: 0; width: 36px; height: 36px; border-radius: 8px; background: #fff; padding: 5px; border: 1px solid var(--border-subtle, rgba(0, 0, 0, 0.06)); color: var(--text-tertiary); display: flex; align-items: center; justify-content: center; overflow: hidden; }
         .mcps-row .edit-agent-ext-icon svg { width: 20px; height: 20px; }
         .mcps-row .edit-agent-ext-icon-img { width: 100%; height: 100%; object-fit: contain; }
         .mcps-row .mcp-ext-icon-filled { padding: 0; }
         .mcps-row .mcp-ext-icon-filled .edit-agent-ext-icon-img { object-fit: cover; }
-        .mcps-info { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+        .mcps-info { width: 100%; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
         .mcps-name { color: var(--text-primary); font-weight: 600; }
         .mcps-sub { color: var(--text-secondary); font-size: 0.82rem; overflow-wrap: anywhere; }
         .mcps-actions { display: flex; align-items: center; gap: 8px; }
