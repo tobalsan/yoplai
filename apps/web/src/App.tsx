@@ -51,6 +51,7 @@ const LazyAuthGuard = lazy(() => import("./auth/AuthGuard"));
 const LazyLoginPage = lazy(() => import("./pages/Login"));
 const LazyAdminUsersPage = lazy(() => import("./pages/admin/Users"));
 const LazyAdminExtensionsPage = lazy(() => import("./pages/admin/Extensions"));
+const LazyAdminMcpServersPage = lazy(() => import("./pages/admin/McpServers"));
 
 const QUICK_CHAT_LAST_AGENT_KEY = "yoplai:quick-chat-last-agent";
 const LEGACY_QUICK_CHAT_LAST_AGENT_KEY = "aihub:quick-chat-last-agent";
@@ -383,6 +384,16 @@ function AdminUsersRouteShell() {
   );
 }
 
+function AdminMcpServersRouteShell() {
+  return (
+    <LeftNavShell>
+      <Suspense>
+        <LazyAdminMcpServersPage />
+      </Suspense>
+    </LeftNavShell>
+  );
+}
+
 function AdminExtensionsRouteShell() {
   return (
     <LeftNavShell>
@@ -472,6 +483,14 @@ export default function App() {
         component={() => (
           <GuardedRoute>
             <AdminExtensionsRouteShell />
+          </GuardedRoute>
+        )}
+      />
+      <Route
+        path="/admin/mcp-servers"
+        component={() => (
+          <GuardedRoute>
+            <AdminMcpServersRouteShell />
           </GuardedRoute>
         )}
       />

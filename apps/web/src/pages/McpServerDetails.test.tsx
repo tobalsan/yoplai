@@ -2,7 +2,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { render } from "solid-js/web";
 
-const { fetchMcpServersMock, fetchMcpServerConfigMock, saveMcpServerConfigMock, removeMcpServerMock, disconnectMcpServerMock, useSessionMock, navigateMock } = vi.hoisted(() => ({
+const { saveMcpServerLabelMock, setSharedMcpServerMock, fetchMcpServersMock, fetchMcpServerConfigMock, saveMcpServerConfigMock, removeMcpServerMock, disconnectMcpServerMock, useSessionMock, navigateMock } = vi.hoisted(() => ({
+  saveMcpServerLabelMock: vi.fn(),
+  setSharedMcpServerMock: vi.fn(),
   fetchMcpServersMock: vi.fn(),
   fetchMcpServerConfigMock: vi.fn(),
   saveMcpServerConfigMock: vi.fn(),
@@ -19,6 +21,8 @@ vi.mock("../api/mcp-servers", () => ({
   fetchMcpServerConfig: fetchMcpServerConfigMock,
   saveMcpServerConfig: saveMcpServerConfigMock,
   removeMcpServer: removeMcpServerMock,
+  saveMcpServerLabel: saveMcpServerLabelMock,
+  setSharedMcpServer: setSharedMcpServerMock,
   disconnectMcpServer: disconnectMcpServerMock,
 }));
 vi.mock("../auth/client", () => ({ useSession: useSessionMock }));
@@ -149,5 +153,47 @@ describe("McpServerDetails", () => {
     container.querySelector<HTMLButtonElement>('[data-scope="team"]')!.click();
     await tick();
     expect(container.querySelector(".oauth-account-value")?.textContent).toBe("team@example.test");
+  });
+
+  it("saves and clears the manual name and description for superadmins, collapsed by default", async () => {
+    fetchMcpServersMock.mockResolvedValue({ canConfigureTeam: true, canEditLabels: true, servers: [
+      { name: "docs", type: "http", url: "https://docs.test/mcp", auth: "none", state: "connected", readOnly: false, manualLabel: { displayName: "Docs", description: "Mine" } },
+    ] });
+    fetchMcpServerConfigMock.mockResolvedValue({ name: "docs", type: "http", editable: true, config: {} });
+    saveMcpServerLabelMock.mockResolvedValue(undefined);
+    await mount();
+    const details = container.querySelector<HTMLDetailsElement>("details.mcp-edit-details")!;
+    expect(details.open).toBe(false);
+    expect(details.querySelector("summary")?.textContent).toBe("Edit MCP details");
+    const inputs = container.querySelectorAll<HTMLInputElement>(".mcp-label-form input");
+    expect(inputs[0]!.value).toBe("Docs");
+    inputs[1]!.value = "";
+    inputs[1]!.dispatchEvent(new Event("input", { bubbles: true }));
+    button("Update name")!.click();
+    await tick();
+    expect(saveMcpServerLabelMock).toHaveBeenCalledWith("scribe", "docs", { displayName: "Docs", description: "" });
+  });
+
+  it("hides the label form from non-superadmins, including admins", async () => {
+    fetchMcpServersMock.mockResolvedValue({ canConfigureTeam: true, canEditLabels: false, servers: [
+      { name: "docs", type: "http", url: "https://docs.test/mcp", auth: "none", state: "connected", readOnly: false },
+    ] });
+    await mount();
+    expect(container.querySelector(".mcp-edit-details")).toBeNull();
+    expect(container.querySelector(".mcp-label-form")).toBeNull();
+  });
+
+  it("offers Enable for a shared server, hides Remove and the config editor", async () => {
+    fetchMcpServersMock.mockResolvedValue({ canConfigureTeam: true, servers: [
+      { name: "docs", type: "http", url: "https://docs.test/mcp", auth: "none", state: "disconnected", readOnly: true, shared: true, enabled: false },
+    ] });
+    setSharedMcpServerMock.mockResolvedValue({});
+    await mount();
+    expect(button("Remove server")).toBeFalsy();
+    expect(container.querySelector(".mcp-label-form")).toBeNull();
+    expect(fetchMcpServerConfigMock).not.toHaveBeenCalled();
+    button("Enable")!.click();
+    await tick();
+    expect(setSharedMcpServerMock).toHaveBeenCalledWith("scribe", "docs", true);
   });
 });

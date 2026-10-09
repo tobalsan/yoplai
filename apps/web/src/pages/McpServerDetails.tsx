@@ -9,6 +9,8 @@ import {
   mcpDisplayName,
   removeMcpServer,
   saveMcpServerConfig,
+  saveMcpServerLabel,
+  setSharedMcpServer,
   type McpScope,
   type McpServer,
 } from "../api/mcp-servers";
@@ -38,6 +40,7 @@ export function McpServerDetails() {
   const status = () => (servers.error ? undefined : (["ready", "refreshing"].includes(servers.state) ? servers.latest : undefined) ?? cachedMcpServers(params.agentId));
   const server = createMemo<McpServer | undefined>(() => status()?.servers.find((item) => item.name === params.serverName));
   const canConfigureTeam = () => status()?.canConfigureTeam !== false;
+  const canEditLabels = () => status()?.canEditLabels === true;
   const [error, setError] = createSignal<string>();
   const [busy, setBusy] = createSignal(false);
   const [scope, setScope] = createSignal<McpScope>("personal");
@@ -91,6 +94,17 @@ export function McpServerDetails() {
     } finally { setBusy(false); }
   };
 
+  const setEnabled = async (enabled: boolean) => {
+    setBusy(true);
+    setError(undefined);
+    try {
+      await setSharedMcpServer(params.agentId, params.serverName, enabled);
+      await refetch();
+    } catch (cause) {
+      setError(errorMessage(cause, "Failed to update MCP server."));
+    } finally { setBusy(false); }
+  };
+
   const [confirmRemove, setConfirmRemove] = createSignal(false);
   const remove = async () => {
     setBusy(true);
@@ -124,7 +138,10 @@ export function McpServerDetails() {
                   <p class="ext-details-desc">{current().url ?? "Local MCP server"}</p>
                 </div>
                 <div class="mcp-details-remove">
-                  <Show when={canConfigureTeam()}>
+                  <Show when={current().shared}>
+                    <button type="button" class="oauth-btn" classList={{ "oauth-btn-primary": !current().enabled }} disabled={busy()} onClick={() => void setEnabled(!current().enabled)}>{current().enabled ? "Disable" : "Enable"}</button>
+                  </Show>
+                  <Show when={canConfigureTeam() && !current().shared}>
                   <Show when={confirmRemove()} fallback={
                     <button type="button" class="oauth-btn oauth-btn-danger" disabled={busy()} onClick={() => setConfirmRemove(true)}>Remove server</button>
                   }>
@@ -138,7 +155,13 @@ export function McpServerDetails() {
                 </div>
               </div>
               <Show when={error()}>{(message) => <div class="oauth-error" role="alert">{message()}</div>}</Show>
-              <Show when={current().auth === "oauth"} fallback={<McpConfigEditor agentId={params.agentId} name={params.serverName} onSaved={() => void refetch()} />}>
+              <Show when={current().shared && !current().enabled}>
+                <p class="oauth-shared-note">Shared by your admins. Enable it to use its tools in this agent.</p>
+              </Show>
+              <Show when={!current().shared || current().enabled}>
+              <Show when={current().auth === "oauth"} fallback={current().shared
+                ? <p class="oauth-shared-note">This shared server has no sign-in or configuration here; a superadmin manages it.</p>
+                : <McpConfigEditor agentId={params.agentId} name={params.serverName} onSaved={() => void refetch()} />}>
                 <CredentialScopeTabs
                   value={scope()}
                   personalDisabled={!session().data?.user}
@@ -187,6 +210,13 @@ export function McpServerDetails() {
                   </Show>
                 </CredentialScopeTabs>
               </Show>
+              </Show>
+              <Show when={canEditLabels() && !current().shared}>
+                <details class="mcp-edit-details">
+                  <summary>Edit MCP details</summary>
+                  <McpLabelForm agentId={params.agentId} name={params.serverName} label={current().manualLabel} onSaved={() => void refetch()} />
+                </details>
+              </Show>
             </>
           )}
         </Show>
@@ -201,10 +231,48 @@ export function McpServerDetails() {
         .mcp-details-remove { margin-left: auto; align-self: flex-start; flex: none; max-width: 260px; text-align: right; }
         .mcp-details-remove p { color: var(--text-secondary); font-size: 13px; margin: 0 0 8px; }
         .mcp-details-remove-actions { display: flex; gap: 8px; justify-content: flex-end; }
+        .mcp-edit-details { margin-top: 28px; font-size: 13px; color: var(--text-tertiary, var(--text-secondary)); }
+        .mcp-edit-details summary { cursor: pointer; width: fit-content; user-select: none; }
+        .mcp-edit-details summary:hover { color: var(--text-secondary); }
+        .mcp-edit-details[open] summary { margin-bottom: 10px; }
+        .mcp-label-form { display: grid; gap: 8px; margin-bottom: 16px; }
+        .mcp-label-form label { display: grid; gap: 4px; font-size: 13px; color: var(--text-secondary); }
+        .mcp-label-form input { padding: 8px; border: 1px solid var(--border-default); border-radius: 8px; background: var(--bg-base); color: var(--text-primary); }
+        .mcp-label-form button { justify-self: start; }
         .mcp-config-editor textarea { width: 100%; min-height: 240px; box-sizing: border-box; padding: 10px; border: 1px solid var(--border-default); border-radius: 8px; background: var(--bg-base); color: var(--text-primary); font: 12px/1.5 ui-monospace, monospace; }
         .mcp-config-editor p { color: var(--text-secondary); font-size: 13px; margin: 8px 0; }
       `}</style>
     </>
+  );
+}
+
+function McpLabelForm(props: { agentId: string; name: string; label?: { displayName?: string; description?: string }; onSaved: () => void }) {
+  const [displayName, setDisplayName] = createSignal(props.label?.displayName ?? "");
+  const [description, setDescription] = createSignal(props.label?.description ?? "");
+  const [error, setError] = createSignal<string>();
+  const [saved, setSaved] = createSignal(false);
+  const [saving, setSaving] = createSignal(false);
+  const save = async (event: Event) => {
+    event.preventDefault();
+    setSaving(true);
+    setError(undefined);
+    setSaved(false);
+    try {
+      await saveMcpServerLabel(props.agentId, props.name, { displayName: displayName(), description: description() });
+      setSaved(true);
+      props.onSaved();
+    } catch (cause) {
+      setError(errorMessage(cause, "Failed to save name and description."));
+    } finally { setSaving(false); }
+  };
+  return (
+    <form class="mcp-label-form" onSubmit={(event) => void save(event)}>
+      <label>Name <input type="text" maxLength={100} placeholder="Shown instead of the server-reported name" value={displayName()} onInput={(event) => { setDisplayName(event.currentTarget.value); setSaved(false); }} /></label>
+      <label>Description <input type="text" maxLength={500} placeholder="Shown instead of the server-reported description" value={description()} onInput={(event) => { setDescription(event.currentTarget.value); setSaved(false); }} /></label>
+      <Show when={error()}>{(message) => <div class="oauth-error" role="alert">{message()}</div>}</Show>
+      <Show when={saved()}><p role="status">Saved.</p></Show>
+      <button type="submit" class="oauth-btn" disabled={saving()}>{saving() ? "Saving…" : "Update name and description"}</button>
+    </form>
   );
 }
 

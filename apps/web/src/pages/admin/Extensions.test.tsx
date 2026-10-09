@@ -63,13 +63,14 @@ describe("AdminExtensionsPage", () => {
     expect(tabs).toEqual([
       ["User management", "/admin/users"],
       ["Top extensions", "/admin/extensions"],
+      ["MCP servers", "/admin/mcp-servers"],
     ]);
     expect(container.querySelector(".admin-tab.active")?.textContent).toBe("Top extensions");
   });
 
-  it("hides the tab bar when only one section applies (single-user mode)", async () => {
+  it("hides User management in single-user mode", async () => {
     const container = await mountWith({ multiUser: false });
-    expect(container.querySelector(".admin-tabs")).toBeNull();
+    expect(Array.from(container.querySelectorAll(".admin-tab")).map((t) => t.textContent)).toEqual(["Top extensions", "MCP servers"]);
   });
 
   it("lists candidates and toggles stars via PUT", async () => {

@@ -187,9 +187,9 @@ app.use("/api/*", async (c, next) => {
   await next();
 });
 
-// External MCP server and OAuth routes carry the agent in a query parameter.
+// External MCP server and OAuth routes carry the agent in a query parameter; the shared catalog is host-wide (superadmin checked by the extension).
 app.use("/api/mcp/*", async (c, next) => {
-  if (!currentExtensionRuntime().isEnabled("multiUser") || c.req.path === "/api/mcp/oauth/callback") {
+  if (!currentExtensionRuntime().isEnabled("multiUser") || c.req.path === "/api/mcp/oauth/callback" || c.req.path.startsWith("/api/mcp/catalog")) {
     await next();
     return;
   }

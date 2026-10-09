@@ -6,13 +6,18 @@ import { stripBase } from "../../lib/path";
 const isSuperadmin = (role: string | string[] | null | undefined) =>
   Array.isArray(role) ? role.includes("superadmin") : role === "superadmin";
 
-/** Admin sections, one tab each; users exist only in multi-user mode, Top extensions is superadmin-only. */
+/** Admin sections, one tab each; users exist only in multi-user mode, Top extensions and MCP servers are superadmin-only. */
 function adminTabs() {
   return [
     { href: "/admin/users", label: "User management", visible: !!capabilities.multiUser },
     {
       href: "/admin/extensions",
       label: "Top extensions",
+      visible: !capabilities.multiUser || isSuperadmin(capabilities.user?.role),
+    },
+    {
+      href: "/admin/mcp-servers",
+      label: "MCP servers",
       visible: !capabilities.multiUser || isSuperadmin(capabilities.user?.role),
     },
   ].filter((tab) => tab.visible);

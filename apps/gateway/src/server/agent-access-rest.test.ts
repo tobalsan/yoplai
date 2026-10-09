@@ -266,6 +266,7 @@ describe("REST per-agent access gating (multi-user)", () => {
     }
     expect(await get("/api/mcp/oauth/status", authHeader("alice"))).toBe(400);
     expect(await get("/api/mcp/oauth/callback", authHeader("mallory"))).toBe(404);
+    expect(await get("/api/mcp/catalog", authHeader("alice"))).toBe(404);
   });
 
   it("guards MCP server list, add, and remove routes by agent access", async () => {

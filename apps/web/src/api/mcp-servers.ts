@@ -18,6 +18,11 @@ export type McpServer = {
   personalAccount?: string;
   teamAccount?: string;
   readOnly: boolean;
+  /** Catalog server (managed by a superadmin); `enabled` is this agent's opt-in. */
+  shared?: boolean;
+  enabled?: boolean;
+  /** Manually set label on an agent-local server (wins over server-reported). */
+  manualLabel?: { displayName?: string; description?: string };
 };
 
 /** Display label: server-reported title, else the capitalized key (e.g. "claap" → "Claap"). The key stays the identifier. */
@@ -27,7 +32,7 @@ export function mcpDisplayName(name: string, title?: string): string {
 
 const endpoint = (agentId: string) => `/api/mcp/servers?agent=${encodeURIComponent(agentId)}`;
 
-export type McpServerList = { servers: McpServer[]; canConfigureTeam: boolean };
+export type McpServerList = { servers: McpServer[]; canConfigureTeam: boolean; canEditLabels?: boolean };
 const lastLists = new Map<string, McpServerList>();
 
 /** Last list fetched for an agent; lets pages render instantly while live status refreshes. */
@@ -98,3 +103,38 @@ export async function saveMcpServerConfig(agentId: string, name: string, config:
   if (!response.ok) throw new Error((await response.text()) || "Failed to save MCP server config.");
   return response.json();
 }
+
+export async function setSharedMcpServer(agentId: string, name: string, enabled: boolean): Promise<McpServer> {
+  const response = await fetch(`/api/mcp/servers/shared?agent=${encodeURIComponent(agentId)}&server=${encodeURIComponent(name)}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ enabled }),
+    signal: AbortSignal.timeout(45_000),
+  });
+  if (!response.ok) throw new Error((await response.text()) || "Failed to update MCP server.");
+  return (await response.json()).server;
+}
+
+/** Sets the manual name/description of an agent-local server; an empty value clears it. */
+export async function saveMcpServerLabel(agentId: string, name: string, label: { displayName: string; description: string }): Promise<void> {
+  const response = await fetch(`/api/mcp/servers/label?agent=${encodeURIComponent(agentId)}&server=${encodeURIComponent(name)}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(label),
+  });
+  if (!response.ok) throw new Error((await response.text()) || "Failed to save name and description.");
+}
+
+export type McpCatalogServer = { name: string; url: string; displayName?: string; description?: string; iconUrl?: string };
+
+async function catalogRequest<T>(path: string, init: RequestInit | undefined, failure: string): Promise<T> {
+  const response = await fetch(`/api/mcp/catalog${path}`, init);
+  if (!response.ok) throw new Error((await response.text()) || failure);
+  return response.json();
+}
+const jsonPost = (body: unknown): RequestInit => ({ method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+
+export const fetchMcpCatalog = async (): Promise<McpCatalogServer[]> => (await catalogRequest<{ servers: McpCatalogServer[] }>("", undefined, "Failed to load MCP servers.")).servers;
+export const addMcpCatalogServer = (input: { url: string; displayName?: string; description?: string }) => catalogRequest<{ server: McpCatalogServer }>("", jsonPost(input), "Failed to add MCP server.").then((result) => result.server);
+export const updateMcpCatalogServer = (name: string, label: { displayName: string; description: string }) => catalogRequest<{ server: McpCatalogServer }>(`/update?server=${encodeURIComponent(name)}`, jsonPost(label), "Failed to save MCP server.").then((result) => result.server);
+export const removeMcpCatalogServer = async (name: string): Promise<void> => { await catalogRequest(`/remove?server=${encodeURIComponent(name)}`, { method: "POST" }, "Failed to remove MCP server."); };
