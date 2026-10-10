@@ -113,8 +113,8 @@ async function creatorDisplayName(userId: string): Promise<string | undefined> {
 
 const STAFF_ROLES = ["admin", "superadmin"];
 
-/** Pausing/resuming a Team job is admin-only; private jobs stay with their owner. Userless/single-user callers are trusted. */
-async function canToggleJob(job: { ownerUserId?: string }, userId?: string): Promise<boolean> {
+/** Pausing/resuming/deleting a Team job is admin-only; private jobs stay with their owner. Userless/single-user callers are trusted. */
+async function canManageJob(job: { ownerUserId?: string }, userId?: string): Promise<boolean> {
   if (job.ownerUserId || !userId) return true;
   try {
     const { getMultiUserRuntime } = await import("@yoplai/extension-multi-user");
@@ -336,7 +336,7 @@ function schedulerAgentTools(): ExtensionAgentTool[] {
           );
           if (!existing) return { ok: false, error: "Schedule not found" };
           if (!(await canAccessJob(agent.id, input.jobId, userId))) return { ok: false, error: "Schedule owner access required" };
-          if (input.enabled !== undefined && input.enabled !== existing.enabled && !(await canToggleJob(existing, userId))) {
+          if (input.enabled !== undefined && input.enabled !== existing.enabled && !(await canManageJob(existing, userId))) {
             return { ok: false, error: "Only admins can pause or resume Team jobs" };
           }
           const payload =
@@ -398,6 +398,8 @@ function schedulerAgentTools(): ExtensionAgentTool[] {
         try {
           const input = jobIdToolSchema.parse(args);
           if (!(await canAccessJob(agent.id, input.jobId, userId))) return { ok: false, error: "Schedule owner access required" };
+          const job = (await getScheduler().list(agent.id)).find((candidate) => candidate.id === input.jobId);
+          if (job && !(await canManageJob(job, userId))) return { ok: false, error: "Only admins can delete Team jobs" };
           const result = await getScheduler().remove(agent.id, input.jobId);
           return result.removed
             ? { ok: true }
@@ -608,7 +610,7 @@ const schedulerExtension: Extension = {
         const previous = (await scheduler.list(agentId)).find((candidate) => candidate.id === id);
         const previousMode = previous?.credentialMode ?? "team";
         const previousOwnerUserId = previous?.ownerUserId;
-        if (previous && parsed.data.enabled !== undefined && parsed.data.enabled !== previous.enabled && !(await canToggleJob(previous, requestUserId(c)))) {
+        if (previous && parsed.data.enabled !== undefined && parsed.data.enabled !== previous.enabled && !(await canManageJob(previous, requestUserId(c)))) {
           return c.json({ error: "team_requires_admin" }, 403);
         }
         const job = await scheduler.update(agentId, id, parsed.data, requestUserId(c));
@@ -636,6 +638,8 @@ const schedulerExtension: Extension = {
       const id = c.req.param("id");
       const scheduler = getScheduler();
       if (!(await canAccessJob(agentId, id, requestUserId(c)))) return c.json({ error: "Schedule owner access required" }, 403);
+      const job = (await scheduler.list(agentId)).find((candidate) => candidate.id === id);
+      if (job && !(await canManageJob(job, requestUserId(c)))) return c.json({ error: "team_requires_admin" }, 403);
       const result = await scheduler.remove(agentId, id);
       if (!result.removed) {
         return c.json({ error: "Schedule not found" }, 404);

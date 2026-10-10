@@ -1,6 +1,6 @@
 import cronstrue from "cronstrue";
-import { createResource, createSignal, For, Show } from "solid-js";
-import { fetchSchedules, updateSchedule, type ScheduleJob } from "../api/schedules";
+import { createEffect, createResource, createSignal, For, onCleanup, Show } from "solid-js";
+import { deleteSchedule, fetchSchedules, updateSchedule, type ScheduleJob } from "../api/schedules";
 import { ScopeIcon } from "../components/CredentialScopeTabs";
 import { useSession } from "../auth/client";
 
@@ -86,6 +86,43 @@ export function SchedulesPanel(props: { agentId: string; agentName: string }) {
     }
   };
 
+  const [confirming, setConfirming] = createSignal<ScheduleJob>();
+  const [deleting, setDeleting] = createSignal(false);
+  const [deleteError, setDeleteError] = createSignal<string | null>(null);
+  let deleteTrigger: HTMLButtonElement | undefined;
+
+  const openDelete = (job: ScheduleJob, trigger: HTMLButtonElement) => {
+    deleteTrigger = trigger;
+    setDeleteError(null);
+    setConfirming(job);
+  };
+  const closeDelete = () => {
+    if (deleting()) return;
+    setConfirming(undefined);
+    deleteTrigger?.focus();
+  };
+  const confirmDelete = async () => {
+    const job = confirming();
+    if (!job || deleting()) return;
+    setDeleting(true);
+    setDeleteError(null);
+    try {
+      await deleteSchedule(props.agentId, job.id);
+      setConfirming(undefined);
+      await refetch();
+    } catch (cause) {
+      setDeleteError(cause instanceof Error ? cause.message : "Failed to delete scheduled job.");
+    } finally {
+      setDeleting(false);
+    }
+  };
+  createEffect(() => {
+    if (!confirming()) return;
+    const onKey = (event: KeyboardEvent) => { if (event.key === "Escape") closeDelete(); };
+    document.addEventListener("keydown", onKey);
+    onCleanup(() => document.removeEventListener("keydown", onKey));
+  });
+
   return (
     <section class="schedules" role="tabpanel">
       <style>{SCHEDULES_STYLES}</style>
@@ -105,6 +142,7 @@ export function SchedulesPanel(props: { agentId: string; agentName: string }) {
             const mode = () => job.credentialMode ?? "team";
             const enabled = () => pending()[job.id] ?? job.enabled !== false;
             const canToggle = () => mode() === "owner" || isAdmin();
+            const deleteTitle = () => canToggle() ? `Delete ${job.name}` : "Only admins can delete Team jobs";
             const toggleTitle = () => canToggle()
               ? (enabled() ? "Pause this job" : "Resume this job")
               : "Only admins can pause or resume Team jobs";
@@ -167,11 +205,40 @@ export function SchedulesPanel(props: { agentId: string; agentName: string }) {
                     </span>
                   </button>
                 </div>
+                <button
+                  type="button"
+                  class="schedule-delete"
+                  aria-label={`Delete ${job.name}`}
+                  title={deleteTitle()}
+                  disabled={!canToggle()}
+                  onClick={(event) => openDelete(job, event.currentTarget)}
+                >
+                  <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M4 6h12M8 6V4.5h4V6M6 6l.7 9.5h6.6L14 6M8.75 9v4M11.25 9v4" /></svg>
+                </button>
               </li>
             );
           }}</For>
         </ul>
       </Show>
+      <Show when={confirming()}>{(job) => (
+        <div class="schedule-dialog-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) closeDelete(); }}>
+          <div class="schedule-dialog" role="alertdialog" aria-modal="true" aria-labelledby="schedule-delete-title" aria-describedby="schedule-delete-desc">
+            <h3 id="schedule-delete-title">Delete “{job().name}”?</h3>
+            <p id="schedule-delete-desc">
+              {props.agentName} will stop running it {describeSchedule(job().schedule).replace(/^./, (c) => c.toLowerCase())}.
+              {(job().credentialMode ?? "team") === "team" ? " It's a Team job, so this removes it for everyone." : ""}
+              {" "}This can't be undone. To stop it temporarily, switch it off instead.
+            </p>
+            <Show when={deleteError()}>{(text) => <p class="schedules-error" role="alert">{text()}</p>}</Show>
+            <div class="schedule-dialog-actions">
+              <button type="button" class="schedule-dialog-cancel" ref={(el) => queueMicrotask(() => el.focus())} disabled={deleting()} onClick={closeDelete}>Cancel</button>
+              <button type="button" class="schedule-dialog-danger" disabled={deleting()} onClick={() => void confirmDelete()}>
+                {deleting() ? "Deleting…" : "Delete job"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}</Show>
       <Show when={!jobs.loading && !jobs.error}>
         <p class="schedules-hint">If you want to add a new job, just ask {props.agentName}!</p>
       </Show>
@@ -260,12 +327,47 @@ const SCHEDULES_STYLES = `
 .schedule-switch:focus-visible { outline: 2px solid color-mix(in srgb, var(--accent, #1a73e8) 55%, transparent); outline-offset: 2px; }
 .schedule-switch[aria-busy="true"] { cursor: progress; }
 .schedule-switch:disabled { cursor: not-allowed; opacity: .55; }
+.schedule-delete {
+  flex: 0 0 auto; display: grid; place-items: center; width: 30px; height: 30px; margin-left: -4px; padding: 0;
+  border: 0; border-radius: 8px; background: transparent; color: var(--text-secondary); cursor: pointer;
+  transition: background-color .15s ease, color .15s ease;
+}
+.schedule-delete svg { width: 17px; height: 17px; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
+.schedule-delete:hover:not(:disabled) { color: var(--tone-error, #dc2626); background: color-mix(in srgb, var(--tone-error, #dc2626) 10%, transparent); }
+.schedule-delete:focus-visible { outline: 2px solid color-mix(in srgb, var(--accent, #1a73e8) 55%, transparent); outline-offset: 1px; }
+.schedule-delete:disabled { cursor: not-allowed; opacity: .35; }
+.schedule-dialog-backdrop {
+  position: fixed; inset: 0; z-index: 1000; display: grid; place-items: center; padding: 20px;
+  background: color-mix(in srgb, #000 40%, transparent); animation: schedule-fade .15s ease;
+}
+.schedule-dialog {
+  width: min(420px, 100%); padding: 22px 22px 18px; border-radius: 14px;
+  background: var(--bg-surface); border: 1px solid var(--border-default);
+  box-shadow: 0 18px 48px color-mix(in srgb, #000 28%, transparent); animation: schedule-pop .18s cubic-bezier(.3, .7, .4, 1);
+}
+.schedule-dialog h3 { margin: 0 0 8px; color: var(--text-primary); font-size: 16px; font-weight: 650; overflow-wrap: anywhere; }
+.schedule-dialog p { margin: 0 0 14px; color: var(--text-secondary); font-size: 13px; line-height: 1.55; }
+.schedule-dialog-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 6px; }
+.schedule-dialog-actions button {
+  padding: 7px 14px; border-radius: 8px; font: inherit; font-size: 13px; font-weight: 600; cursor: pointer;
+  transition: background-color .15s ease, filter .15s ease;
+}
+.schedule-dialog-actions button:focus-visible { outline: 2px solid color-mix(in srgb, var(--accent, #1a73e8) 55%, transparent); outline-offset: 2px; }
+.schedule-dialog-actions button:disabled { cursor: progress; opacity: .7; }
+.schedule-dialog-cancel { border: 1px solid var(--border-default); background: transparent; color: var(--text-primary); }
+.schedule-dialog-cancel:hover:not(:disabled) { background: color-mix(in srgb, var(--text-primary) 5%, transparent); }
+.schedule-dialog-danger { border: 1px solid transparent; background: var(--tone-error, #dc2626); color: #fff; }
+.schedule-dialog-danger:hover:not(:disabled) { filter: brightness(.92); }
+@keyframes schedule-fade { from { opacity: 0; } }
+@keyframes schedule-pop { from { opacity: 0; transform: translateY(6px) scale(.98); } }
 @media (max-width: 640px) {
   .schedule { flex-wrap: wrap; }
   .schedule-mode { flex-direction: row; align-items: center; margin-left: 48px; }
   .schedule-toggle { flex-direction: row; padding-left: 0; border-left: 0; margin-left: auto; }
+  .schedule-delete { margin-left: 0; }
 }
 @media (prefers-reduced-motion: reduce) {
-  .schedule, .schedule-mode-switch button, .schedule-switch, .schedule-switch-thumb { transition: none; }
+  .schedule, .schedule-mode-switch button, .schedule-switch, .schedule-switch-thumb, .schedule-delete { transition: none; }
+  .schedule-dialog-backdrop, .schedule-dialog { animation: none; }
 }
 `;

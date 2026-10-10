@@ -107,7 +107,7 @@ describe("scheduler routes", () => {
     expect(run.status).toBe(403);
   });
 
-  it("lets only admins pause or resume Team jobs while owners toggle their own", async () => {
+  it("lets only admins pause, resume, or delete Team jobs while owners manage their own", async () => {
     tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-scheduler-toggle-routes-"));
     const alpha = agent("alpha", path.join(tmpDir, "alpha"));
     const config: GatewayConfig = { version: 3, agents: [alpha], extensions: { scheduler: { enabled: true } }, sessions: { idleMinutes: 360 }, agentFab: false };
@@ -129,6 +129,12 @@ describe("scheduler routes", () => {
     const paused = await pause(team.id);
     expect(paused.status).toBe(200);
     expect(await paused.json()).toMatchObject({ enabled: false });
+    creatorLookup.mockReturnValue({ role: "user" });
+    const remove = (id: string) => app.request(`/api/schedules/alpha/${id}`, { method: "DELETE" });
+    expect((await remove(team.id)).status).toBe(403);
+    expect((await remove(mine.id)).status).toBe(200);
+    creatorLookup.mockReturnValue({ role: "superadmin" });
+    expect((await remove(team.id)).status).toBe(200);
   });
 
   it("lists signed-in Team creations for another member with the server-resolved creator name", async () => {

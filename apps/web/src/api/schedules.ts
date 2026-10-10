@@ -25,3 +25,13 @@ export async function updateSchedule(
   if (!res.ok) throw new Error("Failed to update scheduled job");
   return res.json();
 }
+
+export async function deleteSchedule(agentId: string, jobId: string): Promise<void> {
+  const res = await apiFetch(`${API_BASE}/schedules/${encodeURIComponent(agentId)}/${encodeURIComponent(jobId)}`, {
+    method: "DELETE",
+  });
+  if (res.status === 403 && (await res.json().catch(() => ({}))).error === "team_requires_admin") {
+    throw new Error("Only admins can delete Team jobs.");
+  }
+  if (!res.ok) throw new Error("Failed to delete scheduled job");
+}

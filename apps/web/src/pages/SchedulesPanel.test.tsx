@@ -2,8 +2,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { render } from "solid-js/web";
 
-const { fetchSchedulesMock, updateScheduleMock, sessionUser } = vi.hoisted(() => ({
+const { fetchSchedulesMock, updateScheduleMock, deleteScheduleMock, sessionUser } = vi.hoisted(() => ({
   fetchSchedulesMock: vi.fn(),
+  deleteScheduleMock: vi.fn(),
   updateScheduleMock: vi.fn(),
   sessionUser: { id: "alice", role: "user" as string | undefined },
 }));
@@ -15,6 +16,7 @@ vi.mock("../auth/client", () => ({
 vi.mock("../api/schedules", () => ({
   fetchSchedules: fetchSchedulesMock,
   updateSchedule: updateScheduleMock,
+  deleteSchedule: deleteScheduleMock,
 }));
 
 import { describeSchedule, SchedulesPanel } from "./SchedulesPanel";
@@ -35,6 +37,7 @@ beforeEach(() => {
   }]);
   updateScheduleMock.mockReset().mockResolvedValue({});
   sessionUser.role = "user";
+  deleteScheduleMock.mockReset().mockResolvedValue(undefined);
 });
 
 afterEach(() => {
@@ -138,5 +141,41 @@ describe("SchedulesPanel", () => {
     toggle.click();
     await settle();
     expect(updateScheduleMock).toHaveBeenCalledWith("scribe", "team", { enabled: true });
+  });
+
+  it("deletes only after confirmation and locks Team deletes for non-admins", async () => {
+    const job = { agentId: "scribe", schedule: { cron: "0 8 * * *" }, payload: {} };
+    fetchSchedulesMock.mockResolvedValue([
+      { ...job, id: "mine", name: "Mine", credentialMode: "owner", ownerUserId: "alice" },
+      { ...job, id: "team", name: "Shared", credentialMode: "team" },
+    ]);
+    dispose = render(() => <SchedulesPanel agentId="scribe" agentName="Scribe" />, container);
+    await settle();
+    const [mine, team] = container.querySelectorAll<HTMLButtonElement>(".schedule-delete");
+    expect(team!.disabled).toBe(true);
+    mine!.click();
+    const dialog = () => container.querySelector('[role="alertdialog"]');
+    expect(dialog()!.textContent).toContain("Delete “Mine”?");
+    dialog()!.querySelector<HTMLButtonElement>(".schedule-dialog-cancel")!.click();
+    expect(dialog()).toBeNull();
+    expect(deleteScheduleMock).not.toHaveBeenCalled();
+    mine!.click();
+    dialog()!.querySelector<HTMLButtonElement>(".schedule-dialog-danger")!.click();
+    await settle();
+    expect(deleteScheduleMock).toHaveBeenCalledWith("scribe", "mine");
+    expect(dialog()).toBeNull();
+  });
+
+  it("keeps the dialog open with an error when delete fails", async () => {
+    sessionUser.role = "admin";
+    deleteScheduleMock.mockRejectedValueOnce(new Error("Only admins can delete Team jobs."));
+    dispose = render(() => <SchedulesPanel agentId="scribe" agentName="Scribe" />, container);
+    await settle();
+    container.querySelector<HTMLButtonElement>(".schedule-delete")!.click();
+    const dialog = container.querySelector('[role="alertdialog"]')!;
+    expect(dialog.textContent).toContain("removes it for everyone");
+    dialog.querySelector<HTMLButtonElement>(".schedule-dialog-danger")!.click();
+    await settle();
+    expect(container.querySelector('[role="alertdialog"] [role="alert"]')?.textContent).toContain("Only admins");
   });
 });
