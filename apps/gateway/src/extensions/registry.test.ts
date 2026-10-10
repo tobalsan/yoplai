@@ -3,14 +3,16 @@ import { createRequire } from "node:module";
 import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
-import { describe, expect, it } from "vitest";
-import { GatewayConfigSchema, type Extension } from "@yoplai/shared";
+import { afterEach, describe, expect, it } from "vitest";
+import { GatewayConfigSchema, getOAuthProvider, registerOAuthProvider, resetOAuthProviders, type Extension } from "@yoplai/shared";
 import {
   getBuiltInExtensionRegistrations,
   getLoadedExtensions,
   getKnownExtensionRouteMetadata,
   isExtensionLoaded,
   loadExtensions,
+  reloadExtensions,
+  setExtensionActivator,
   topoSort,
 } from "./registry.js";
 import { ExtensionRuntime } from "./runtime.js";
@@ -501,5 +503,100 @@ describe("extension registry", () => {
     } finally {
       await rm(root, { recursive: true, force: true });
     }
+  });
+
+  describe("reloadExtensions OAuth providers", () => {
+    afterEach(async () => {
+      resetOAuthProviders();
+      await loadExtensions(GatewayConfigSchema.parse({ version: 2, agents: [], extensions: {} }));
+    });
+
+    async function withOAuthExtension(
+      tokenUrl: string,
+      run: (config: ReturnType<typeof GatewayConfigSchema.parse>) => Promise<void>
+    ) {
+      const root = await mkdtemp(path.join(os.tmpdir(), "yoplai-extensions-"));
+      const target = await mkdtemp(path.join(os.tmpdir(), "yoplai-extension-target-"));
+      const zodUrl = pathToFileURL(require.resolve("zod")).href;
+      try {
+        await writeFile(path.join(target, "package.json"), JSON.stringify({ type: "module" }));
+        await writeFile(
+          path.join(target, "index.js"),
+          [
+            `import { z } from ${JSON.stringify(zodUrl)};`,
+            "export default {",
+            '  id: "oauthsample",',
+            '  displayName: "OAuth Sample",',
+            '  description: "Sample extension",',
+            "  dependencies: [],",
+            "  configSchema: z.object({ apiKey: z.string() }),",
+            '  routePrefixes: ["/api/oauthsample"],',
+            "  oauthProviders: [{",
+            '    id: "reload-test-provider", displayName: "Reload Test",',
+            '    authorizeUrl: "https://reload.test/authorize",',
+            `    tokenUrl: ${JSON.stringify(tokenUrl)},`,
+            "    defaultScopes: [],",
+            "  }],",
+            "  validateConfig: () => ({ valid: true, errors: [] }),",
+            "  registerRoutes: () => undefined,",
+            "  start: async () => undefined,",
+            "  stop: async () => undefined,",
+            "  capabilities: () => [],",
+            "};",
+          ].join("\n")
+        );
+        await mkdir(root, { recursive: true });
+        await symlink(target, path.join(root, "oauthsample"));
+        await run(
+          GatewayConfigSchema.parse({
+            version: 2,
+            extensionsPath: root,
+            agents: [
+              {
+                id: "main",
+                name: "Main",
+                workspace: "~/agents/main",
+                model: { provider: "anthropic", model: "claude" },
+                extensions: { oauthsample: { apiKey: "test" } },
+              },
+            ],
+            extensions: {},
+          })
+        );
+      } finally {
+        await rm(root, { recursive: true, force: true });
+        await rm(target, { recursive: true, force: true });
+      }
+    }
+
+    it("registers provider descriptors before the extension starts", async () => {
+      await withOAuthExtension("https://reload.test/token", async (config) => {
+        let providerDuringActivation: unknown;
+        setExtensionActivator(async () => {
+          providerDuringActivation = getOAuthProvider("reload-test-provider");
+        });
+        await reloadExtensions(config);
+        expect(providerDuringActivation).toMatchObject({ id: "reload-test-provider" });
+      });
+    });
+
+    it("rejects a conflicting descriptor without activating", async () => {
+      await withOAuthExtension("https://reload.test/token", async (config) => {
+        registerOAuthProvider({
+          id: "reload-test-provider",
+          displayName: "Reload Test",
+          authorizeUrl: "https://reload.test/authorize",
+          tokenUrl: "https://elsewhere.test/token",
+          defaultScopes: [],
+        });
+        let activated = false;
+        setExtensionActivator(async () => {
+          activated = true;
+        });
+        await expect(reloadExtensions(config)).rejects.toThrow(/conflicting descriptor/);
+        expect(activated).toBe(false);
+        expect(isExtensionLoaded("oauthsample")).toBe(false);
+      });
+    });
   });
 });

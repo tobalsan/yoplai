@@ -50,6 +50,21 @@ function applyClientAuth(
   body.set("client_secret", credentials.clientSecret);
 }
 
+function tokenRequestContentType(provider: OAuthProviderDescriptor): string {
+  return provider.tokenRequestFormat === "json"
+    ? "application/json"
+    : "application/x-www-form-urlencoded";
+}
+
+function encodeTokenRequestBody(
+  provider: OAuthProviderDescriptor,
+  body: URLSearchParams
+): string {
+  return provider.tokenRequestFormat === "json"
+    ? JSON.stringify(Object.fromEntries(body))
+    : body.toString();
+}
+
 /**
  * Exchange an authorization code for tokens at the provider's token endpoint.
  * Provider-agnostic: everything provider-specific comes from the descriptor.
@@ -65,7 +80,7 @@ export async function exchangeCodeForTokens(
     code_verifier: input.codeVerifier,
   });
   const headers: Record<string, string> = {
-    "Content-Type": "application/x-www-form-urlencoded",
+    "Content-Type": tokenRequestContentType(input.provider),
     Accept: "application/json",
   };
   applyClientAuth(input.provider, input.credentials, body, headers);
@@ -73,7 +88,7 @@ export async function exchangeCodeForTokens(
   const response = await fetchImpl(input.provider.tokenUrl, {
     method: "POST",
     headers,
-    body: body.toString(),
+    body: encodeTokenRequestBody(input.provider, body),
   });
 
   const raw = (await response.json().catch(() => ({}))) as RawTokenResponse;
@@ -143,7 +158,7 @@ export async function refreshAccessToken(
     refresh_token: input.refreshToken,
   });
   const headers: Record<string, string> = {
-    "Content-Type": "application/x-www-form-urlencoded",
+    "Content-Type": tokenRequestContentType(input.provider),
     Accept: "application/json",
   };
   applyClientAuth(input.provider, input.credentials, body, headers);
@@ -153,7 +168,7 @@ export async function refreshAccessToken(
     response = await fetchImpl(input.provider.tokenUrl, {
       method: "POST",
       headers,
-      body: body.toString(),
+      body: encodeTokenRequestBody(input.provider, body),
     });
   } catch (error) {
     // Network-level failure: transient, keep the grant.
@@ -232,14 +247,14 @@ export async function revokeToken(
   try {
     const body = new URLSearchParams({ token });
     const headers: Record<string, string> = {
-      "Content-Type": "application/x-www-form-urlencoded",
+      "Content-Type": tokenRequestContentType(provider),
       Accept: "application/json",
     };
     if (credentials) applyClientAuth(provider, credentials, body, headers);
     const response = await fetchImpl(provider.revokeUrl, {
       method: "POST",
       headers,
-      body: body.toString(),
+      body: encodeTokenRequestBody(provider, body),
     });
     return response.ok;
   } catch {

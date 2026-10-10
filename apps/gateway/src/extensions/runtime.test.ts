@@ -323,7 +323,7 @@ describe("ExtensionRuntime OAuth provider registration", () => {
         }),
       ])
     ).toThrow(
-      'Extension "two" cannot register OAuth provider "runtime-test-provider": OAuth provider "runtime-test-provider" is already registered with a conflicting descriptor'
+      'Extension "two" cannot register OAuth provider: OAuth provider "runtime-test-provider" is already registered with a conflicting descriptor'
     );
   });
 });

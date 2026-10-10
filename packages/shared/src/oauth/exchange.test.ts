@@ -126,10 +126,13 @@ describe("tokenAuth basic", () => {
     const fetchImpl = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
       const headers = init?.headers as Record<string, string>;
       expect(headers.Authorization).toBe(basic);
-      const body = new URLSearchParams(init?.body as string);
-      expect(body.has("client_id")).toBe(false);
-      expect(body.has("client_secret")).toBe(false);
-      expect(body.get("code")).toBe("CODE");
+      expect((init?.headers as Record<string, string>)["Content-Type"]).toBe("application/json");
+      const body = JSON.parse(init?.body as string) as Record<string, string>;
+      expect(body.client_id).toBeUndefined();
+      expect(body.client_secret).toBeUndefined();
+      expect(body.grant_type).toBe("authorization_code");
+      expect(body.code).toBe("CODE");
+      expect(body.redirect_uri).toBe("https://x/cb");
       return Response.json(tokenJson);
     });
     const result = await exchangeCodeForTokens(
@@ -152,8 +155,8 @@ describe("tokenAuth basic", () => {
   it("sends refresh credentials as a Basic header", async () => {
     const fetchImpl = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
       expect((init?.headers as Record<string, string>).Authorization).toBe(basic);
-      const body = new URLSearchParams(init?.body as string);
-      expect(body.has("client_secret")).toBe(false);
+      expect((init?.headers as Record<string, string>)["Content-Type"]).toBe("application/json");
+      expect(JSON.parse(init?.body as string)).toEqual({ grant_type: "refresh_token", refresh_token: "R" });
       return Response.json(tokenJson);
     });
     await refreshAccessToken(
@@ -166,6 +169,8 @@ describe("tokenAuth basic", () => {
   it("sends revoke credentials as a Basic header", async () => {
     const fetchImpl = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
       expect((init?.headers as Record<string, string>).Authorization).toBe(basic);
+      expect((init?.headers as Record<string, string>)["Content-Type"]).toBe("application/json");
+      expect(JSON.parse(init?.body as string)).toEqual({ token: "TOK" });
       return new Response(null, { status: 200 });
     });
     const ok = await revokeToken(notionProvider, "TOK", fetchImpl as unknown as typeof fetch, credentials);
@@ -175,6 +180,7 @@ describe("tokenAuth basic", () => {
   it("keeps credentials in the body for the default body auth", async () => {
     const fetchImpl = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
       expect((init?.headers as Record<string, string>).Authorization).toBeUndefined();
+      expect((init?.headers as Record<string, string>)["Content-Type"]).toBe("application/x-www-form-urlencoded");
       expect(new URLSearchParams(init?.body as string).get("client_secret")).toBe("csecret");
       return Response.json(tokenJson);
     });

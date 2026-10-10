@@ -47,6 +47,7 @@ function describeProviderIdentity(provider: OAuthProviderDescriptor): string {
     provider.userInfoUrl,
     provider.apiBaseUrl,
     provider.tokenAuth ?? "body",
+    provider.tokenRequestFormat ?? "form",
     provider.defaultScopes,
     Object.entries(provider.authorizeParams ?? {}).sort(([a], [b]) => a.localeCompare(b)),
   ]);
@@ -71,6 +72,28 @@ export function registerOAuthProvider(provider: OAuthProviderDescriptor): void {
       `OAuth provider "${provider.id}" is already registered with a conflicting descriptor`
     );
   }
+}
+
+/**
+ * Register several descriptors atomically: every descriptor is checked against
+ * the registry (and each other) first, so a conflict registers nothing.
+ */
+export function registerOAuthProviders(providers: OAuthProviderDescriptor[]): void {
+  const pending = new Map<string, OAuthProviderDescriptor>();
+  for (const provider of providers) {
+    const existing = PROVIDER_REGISTRY.get(provider.id) ?? pending.get(provider.id);
+    if (
+      existing &&
+      existing !== provider &&
+      describeProviderIdentity(existing) !== describeProviderIdentity(provider)
+    ) {
+      throw new Error(
+        `OAuth provider "${provider.id}" is already registered with a conflicting descriptor`
+      );
+    }
+    pending.set(provider.id, existing ?? provider);
+  }
+  for (const provider of pending.values()) registerOAuthProvider(provider);
 }
 
 /** Clear all registered descriptors (tests only). */

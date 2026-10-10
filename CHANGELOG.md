@@ -16,6 +16,7 @@ Breaking changes are marked **⚠ BREAKING**.
 ### Added
 
 - OAuth descriptors support `tokenAuth: "basic"` (HTTP Basic client credentials at token/refresh/revoke) and `accountFromTokenResponse` (account label taken from the token response).
+- OAuth descriptors support `tokenRequestFormat: "json"` (JSON token, refresh and revoke request bodies, e.g. Notion); default stays form-encoded.
 
 ### Fixed
 

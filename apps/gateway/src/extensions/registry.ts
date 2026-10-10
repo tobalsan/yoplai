@@ -2,7 +2,7 @@ import path from "node:path";
 import type { AgentConfig, Extension, GatewayConfig } from "@yoplai/shared";
 import { discoverExternalExtensions, readEnv } from "@yoplai/shared";
 import { CONFIG_DIR } from "../config/index.js";
-import { ExtensionRuntime } from "./runtime.js";
+import { ExtensionRuntime, registerExtensionOAuthProviders } from "./runtime.js";
 import { taskLifecycleExtension } from "../tasks/extension.js";
 import { capabilityDiscoveryExtension } from "../capabilities/extension.js";
 import { canvasExtension } from "../canvas/index.js";
@@ -563,6 +563,10 @@ export async function reloadExtensions(
   // union so newly added dependencies are ordered ahead of their dependents.
   const merged = topoSort([...current, ...newlyNeeded]);
   const newlyNeededIds = new Set(newlyNeeded.map((extension) => extension.id));
+
+  // Register OAuth descriptors first so a conflict aborts before any
+  // activation side effect and new providers are usable during start().
+  registerExtensionOAuthProviders(newlyNeeded);
 
   // Activate (register routes + start) only the new extensions, in topo order.
   for (const extension of merged) {

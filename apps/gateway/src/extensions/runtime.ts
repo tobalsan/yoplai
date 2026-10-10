@@ -8,7 +8,7 @@ import type {
   OAuthRequirement,
   ResolvedOAuth,
 } from "@yoplai/shared";
-import { requestCredentialConnectLink, resolveExtensionOAuth, extensionConfigFieldNames, registerOAuthProvider } from "@yoplai/shared";
+import { requestCredentialConnectLink, resolveExtensionOAuth, extensionConfigFieldNames, registerOAuthProviders } from "@yoplai/shared";
 import { resolveAgentEnv } from "../config/index.js";
 import { getOAuthService } from "../oauth/service.js";
 import { extensionSecretFields, resolveExtensionTokenConfig } from "../credentials/extension-tokens.js";
@@ -122,6 +122,21 @@ function hasEnabledConfig(config: GatewayConfig, extensionId: string): boolean {
   return !!extensionConfig && extensionConfig.enabled !== false;
 }
 
+/** Register extension-shipped OAuth descriptors; a conflict names the extension. */
+export function registerExtensionOAuthProviders(extensions: Extension[]): void {
+  for (const extension of extensions) {
+    try {
+      registerOAuthProviders(extension.oauthProviders ?? []);
+    } catch (error) {
+      throw new Error(
+        `Extension "${extension.id}" cannot register OAuth provider: ${
+          error instanceof Error ? error.message : String(error)
+        }`
+      );
+    }
+  }
+}
+
 export class ExtensionRuntime {
   #extensions: Extension[] = [];
   #extensionIds = new Set<string>();
@@ -133,19 +148,7 @@ export class ExtensionRuntime {
   }
 
   load(extensions: Extension[], homeExtensionId?: string): Extension[] {
-    for (const extension of extensions) {
-      for (const provider of extension.oauthProviders ?? []) {
-        try {
-          registerOAuthProvider(provider);
-        } catch (error) {
-          throw new Error(
-            `Extension "${extension.id}" cannot register OAuth provider "${provider.id}": ${
-              error instanceof Error ? error.message : String(error)
-            }`
-          );
-        }
-      }
-    }
+    registerExtensionOAuthProviders(extensions);
     this.#mergeRouteMetadata(
       extensions.map((extension) => ({
         id: extension.id,

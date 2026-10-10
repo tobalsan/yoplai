@@ -58,6 +58,7 @@ export const notionProvider: OAuthProviderDescriptor = {
   tokenUrl: "https://api.notion.com/v1/oauth/token",
   revokeUrl: "https://api.notion.com/v1/oauth/revoke",
   tokenAuth: "basic",
+  tokenRequestFormat: "json",
   defaultScopes: [],
   apiBaseUrl: "https://api.notion.com",
   accountFromTokenResponse(token) {

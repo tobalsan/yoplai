@@ -36,6 +36,11 @@ export interface OAuthProviderDescriptor {
    * sends an HTTP Basic `Authorization` header instead.
    */
   tokenAuth?: "body" | "basic";
+  /**
+   * Encoding of token, refresh and revoke request bodies: `form` (default)
+   * sends application/x-www-form-urlencoded; `json` sends application/json.
+   */
+  tokenRequestFormat?: "form" | "json";
   /** Default scopes requested when a consumer does not override them. */
   defaultScopes: string[];
   /** Base URL of the provider's API, handed to extensions that need it. */

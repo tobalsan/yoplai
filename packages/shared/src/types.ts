@@ -1578,6 +1578,7 @@ export const ExtensionDefinitionSchema = z.object({
           tokenUrl: z.string(),
           defaultScopes: z.array(z.string()),
           tokenAuth: z.enum(["body", "basic"]).optional(),
+          tokenRequestFormat: z.enum(["form", "json"]).optional(),
         })
         .passthrough()
     )
