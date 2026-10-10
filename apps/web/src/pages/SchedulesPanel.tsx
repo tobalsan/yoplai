@@ -11,6 +11,8 @@ const MODES: { mode: CredentialMode; label: string; title: string }[] = [
   { mode: "team", label: "Team", title: "Run with team connections; visible to everyone on the agent" },
 ];
 
+const STAFF_ROLES = ["admin", "superadmin"];
+
 const use24Hour = new Intl.DateTimeFormat(undefined, { hour: "numeric" }).resolvedOptions().hour12 === false;
 
 /** Plain-language recurrence, e.g. "Every day at 05:45" or "Monday and Thursday at 07:30". */
@@ -46,18 +48,41 @@ export function SchedulesPanel(props: { agentId: string; agentName: string }) {
   const [jobs, { refetch }] = createResource(() => props.agentId, fetchSchedules);
   const [error, setError] = createSignal<string | null>(null);
   const [busy, setBusy] = createSignal<string>();
+  // Optimistic on/off state while a toggle request is in flight.
+  const [pending, setPending] = createSignal<Record<string, boolean>>({});
+  // Single-user mode has no session: everyone manages every job (server enforces the same).
+  const isAdmin = () => {
+    const user = session().data?.user as { role?: string | string[] | null } | undefined;
+    if (!user) return true;
+    const roles = Array.isArray(user.role) ? user.role : (user.role ?? "").split(",");
+    return roles.some((role) => STAFF_ROLES.includes(role.trim()));
+  };
 
   const changeMode = async (job: ScheduleJob, credentialMode: CredentialMode) => {
     if (busy() || (job.credentialMode ?? "team") === credentialMode) return;
     setBusy(job.id);
     setError(null);
     try {
-      await updateSchedule(props.agentId, job.id, credentialMode);
+      await updateSchedule(props.agentId, job.id, { credentialMode });
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Failed to update scheduled job.");
     } finally {
       await refetch();
       setBusy(undefined);
+    }
+  };
+
+  const toggleEnabled = async (job: ScheduleJob, enabled: boolean) => {
+    if (job.id in pending()) return;
+    setPending((current) => ({ ...current, [job.id]: enabled }));
+    setError(null);
+    try {
+      await updateSchedule(props.agentId, job.id, { enabled });
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Failed to update scheduled job.");
+    } finally {
+      await refetch();
+      setPending(({ [job.id]: _done, ...rest }) => rest);
     }
   };
 
@@ -78,15 +103,20 @@ export function SchedulesPanel(props: { agentId: string; agentName: string }) {
         <ul class="schedule-list">
           <For each={jobs() ?? []}>{(job) => {
             const mode = () => job.credentialMode ?? "team";
+            const enabled = () => pending()[job.id] ?? job.enabled !== false;
+            const canToggle = () => mode() === "owner" || isAdmin();
+            const toggleTitle = () => canToggle()
+              ? (enabled() ? "Pause this job" : "Resume this job")
+              : "Only admins can pause or resume Team jobs";
             return (
-              <li class="schedule" data-paused={job.enabled === false ? "" : undefined}>
+              <li class="schedule" data-paused={enabled() ? undefined : ""}>
                 <span class="schedule-mark" aria-hidden="true">
                   <svg viewBox="0 0 20 20"><circle cx="10" cy="10" r="7" /><path d="M10 6v4l2.5 1.75" /></svg>
                 </span>
                 <div class="schedule-main">
                   <div class="schedule-title">
                     <strong>{job.name}</strong>
-                    <Show when={job.enabled === false}><span class="schedule-paused">Paused</span></Show>
+                    <Show when={!enabled()}><span class="schedule-paused">Paused</span></Show>
                   </div>
                   <div class="schedule-when">
                     <span>{describeSchedule(job.schedule)}</span>
@@ -116,6 +146,26 @@ export function SchedulesPanel(props: { agentId: string; agentName: string }) {
                       </button>
                     )}</For>
                   </div>
+                </div>
+                <div class="schedule-toggle">
+                  <span class="schedule-mode-label" aria-hidden="true">{enabled() ? "On" : "Off"}</span>
+                  <button
+                    type="button"
+                    role="switch"
+                    class="schedule-switch"
+                    aria-checked={enabled()}
+                    aria-label={`Run ${job.name} on schedule`}
+                    title={toggleTitle()}
+                    disabled={!canToggle()}
+                    aria-busy={job.id in pending()}
+                    onClick={() => void toggleEnabled(job, !enabled())}
+                  >
+                    <span class="schedule-switch-thumb" aria-hidden="true">
+                      <Show when={!canToggle()}>
+                        <svg viewBox="0 0 12 12"><rect x="3" y="5.5" width="6" height="4.5" rx="1" /><path d="M4.25 5.5V4a1.75 1.75 0 0 1 3.5 0v1.5" /></svg>
+                      </Show>
+                    </span>
+                  </button>
                 </div>
               </li>
             );
@@ -187,11 +237,35 @@ const SCHEDULES_STYLES = `
 .schedule-mode-switch button:disabled { cursor: progress; }
 .schedule-mode-icon { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; }
 .schedule-mode-switch button[aria-checked="true"] .schedule-mode-icon { color: var(--accent, #1a73e8); }
+.schedule[data-paused] .schedule-when, .schedule[data-paused] .schedule-prompt { opacity: .6; }
+.schedule-toggle {
+  flex: 0 0 auto; display: flex; flex-direction: column; align-items: center; gap: 5px;
+  padding-left: 14px; border-left: 1px solid var(--border-subtle, var(--border-default));
+}
+.schedule-toggle .schedule-mode-label { min-width: 3ch; text-align: center; }
+.schedule-switch {
+  position: relative; width: 36px; height: 22px; padding: 0; border: 0; border-radius: 999px; cursor: pointer;
+  background: color-mix(in srgb, var(--text-secondary) 28%, transparent);
+  transition: background-color .2s ease;
+}
+.schedule-switch[aria-checked="true"] { background: var(--accent, #1a73e8); }
+.schedule-switch-thumb {
+  position: absolute; top: 3px; left: 3px; width: 16px; height: 16px; border-radius: 50%;
+  display: grid; place-items: center; background: #fff; color: var(--text-secondary);
+  box-shadow: 0 1px 2px color-mix(in srgb, #000 22%, transparent);
+  transition: transform .2s cubic-bezier(.3, .7, .4, 1);
+}
+.schedule-switch[aria-checked="true"] .schedule-switch-thumb { transform: translateX(14px); }
+.schedule-switch-thumb svg { width: 10px; height: 10px; fill: none; stroke: currentColor; stroke-width: 1.3; stroke-linecap: round; }
+.schedule-switch:focus-visible { outline: 2px solid color-mix(in srgb, var(--accent, #1a73e8) 55%, transparent); outline-offset: 2px; }
+.schedule-switch[aria-busy="true"] { cursor: progress; }
+.schedule-switch:disabled { cursor: not-allowed; opacity: .55; }
 @media (max-width: 640px) {
   .schedule { flex-wrap: wrap; }
   .schedule-mode { flex-direction: row; align-items: center; margin-left: 48px; }
+  .schedule-toggle { flex-direction: row; padding-left: 0; border-left: 0; margin-left: auto; }
 }
 @media (prefers-reduced-motion: reduce) {
-  .schedule, .schedule-mode-switch button { transition: none; }
+  .schedule, .schedule-mode-switch button, .schedule-switch, .schedule-switch-thumb { transition: none; }
 }
 `;

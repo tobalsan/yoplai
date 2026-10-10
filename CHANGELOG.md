@@ -15,6 +15,7 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Added
 
+- Scheduled jobs tab: on/off switch to pause or resume a job. Team jobs can only be paused/resumed by admins and superadmins (also enforced for the API and chat tool).
 - OAuth descriptors support `tokenAuth: "basic"` (HTTP Basic client credentials at token/refresh/revoke) and `accountFromTokenResponse` (account label taken from the token response).
 - OAuth descriptors support `tokenRequestFormat: "json"` (JSON token, refresh and revoke request bodies, e.g. Notion); default stays form-encoded.
 

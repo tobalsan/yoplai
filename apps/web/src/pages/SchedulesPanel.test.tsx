@@ -2,13 +2,14 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { render } from "solid-js/web";
 
-const { fetchSchedulesMock, updateScheduleMock } = vi.hoisted(() => ({
+const { fetchSchedulesMock, updateScheduleMock, sessionUser } = vi.hoisted(() => ({
   fetchSchedulesMock: vi.fn(),
   updateScheduleMock: vi.fn(),
+  sessionUser: { id: "alice", role: "user" as string | undefined },
 }));
 
 vi.mock("../auth/client", () => ({
-  useSession: () => () => ({ data: { user: { id: "alice" } } }),
+  useSession: () => () => ({ data: { user: sessionUser } }),
 }));
 
 vi.mock("../api/schedules", () => ({
@@ -33,6 +34,7 @@ beforeEach(() => {
     ownerUserId: "alice", schedule: { cron: "0 8 * * *", tz: "UTC" }, payload: { message: "Send digest" },
   }]);
   updateScheduleMock.mockReset().mockResolvedValue({});
+  sessionUser.role = "user";
 });
 
 afterEach(() => {
@@ -103,6 +105,38 @@ describe("SchedulesPanel", () => {
     expect(team!.getAttribute("aria-checked")).toBe("true");
     mine!.click();
     await settle();
-    expect(updateScheduleMock).toHaveBeenCalledWith("scribe", "job-1", "owner");
+    expect(updateScheduleMock).toHaveBeenCalledWith("scribe", "job-1", { credentialMode: "owner" });
+  });
+
+  it("pauses own jobs but locks Team job toggles for non-admins", async () => {
+    const job = { agentId: "scribe", schedule: { cron: "0 8 * * *" }, payload: {} };
+    fetchSchedulesMock.mockResolvedValue([
+      { ...job, id: "mine", name: "Mine", credentialMode: "owner", ownerUserId: "alice", enabled: true },
+      { ...job, id: "team", name: "Shared", credentialMode: "team", enabled: true },
+    ]);
+    dispose = render(() => <SchedulesPanel agentId="scribe" agentName="Scribe" />, container);
+    await settle();
+    const [mine, team] = container.querySelectorAll<HTMLButtonElement>('[role="switch"]');
+    expect(team!.disabled).toBe(true);
+    expect(team!.title).toContain("Only admins");
+    mine!.click();
+    expect(mine!.getAttribute("aria-checked")).toBe("false");
+    expect(container.querySelector("li.schedule")!.textContent).toContain("Paused");
+    await settle();
+    expect(updateScheduleMock).toHaveBeenCalledWith("scribe", "mine", { enabled: false });
+  });
+
+  it("lets admins resume Team jobs", async () => {
+    sessionUser.role = "admin";
+    fetchSchedulesMock.mockResolvedValue([
+      { id: "team", agentId: "scribe", name: "Shared", credentialMode: "team", enabled: false, schedule: { cron: "0 8 * * *" }, payload: {} },
+    ]);
+    dispose = render(() => <SchedulesPanel agentId="scribe" agentName="Scribe" />, container);
+    await settle();
+    const toggle = container.querySelector<HTMLButtonElement>('[role="switch"]')!;
+    expect(toggle.disabled).toBe(false);
+    toggle.click();
+    await settle();
+    expect(updateScheduleMock).toHaveBeenCalledWith("scribe", "team", { enabled: true });
   });
 });

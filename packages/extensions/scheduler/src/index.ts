@@ -111,6 +111,22 @@ async function creatorDisplayName(userId: string): Promise<string | undefined> {
   }
 }
 
+const STAFF_ROLES = ["admin", "superadmin"];
+
+/** Pausing/resuming a Team job is admin-only; private jobs stay with their owner. Userless/single-user callers are trusted. */
+async function canToggleJob(job: { ownerUserId?: string }, userId?: string): Promise<boolean> {
+  if (job.ownerUserId || !userId) return true;
+  try {
+    const { getMultiUserRuntime } = await import("@yoplai/extension-multi-user");
+    const runtime = getMultiUserRuntime();
+    if (!runtime) return true;
+    const role = (runtime.db.prepare("SELECT role FROM user WHERE id = ?").get(userId) as { role?: string | null } | undefined)?.role;
+    return !!role && role.split(",").some((r) => STAFF_ROLES.includes(r.trim()));
+  } catch {
+    return false;
+  }
+}
+
 function schedulerAgentTools(): ExtensionAgentTool[] {
   return [
     {
@@ -320,6 +336,9 @@ function schedulerAgentTools(): ExtensionAgentTool[] {
           );
           if (!existing) return { ok: false, error: "Schedule not found" };
           if (!(await canAccessJob(agent.id, input.jobId, userId))) return { ok: false, error: "Schedule owner access required" };
+          if (input.enabled !== undefined && input.enabled !== existing.enabled && !(await canToggleJob(existing, userId))) {
+            return { ok: false, error: "Only admins can pause or resume Team jobs" };
+          }
           const payload =
             input.message !== undefined ||
             input.sessionId !== undefined ||
@@ -589,6 +608,9 @@ const schedulerExtension: Extension = {
         const previous = (await scheduler.list(agentId)).find((candidate) => candidate.id === id);
         const previousMode = previous?.credentialMode ?? "team";
         const previousOwnerUserId = previous?.ownerUserId;
+        if (previous && parsed.data.enabled !== undefined && parsed.data.enabled !== previous.enabled && !(await canToggleJob(previous, requestUserId(c)))) {
+          return c.json({ error: "team_requires_admin" }, 403);
+        }
         const job = await scheduler.update(agentId, id, parsed.data, requestUserId(c));
         if (previous && previousMode !== (job.credentialMode ?? "team")) {
           const auth = (c as unknown as Context<{ Variables: { multiUserAuthContext?: {

@@ -12,13 +12,16 @@ export async function fetchSchedules(agentId: string): Promise<ScheduleJob[]> {
 export async function updateSchedule(
   agentId: string,
   jobId: string,
-  credentialMode: "owner" | "team"
+  patch: { credentialMode?: "owner" | "team"; enabled?: boolean }
 ): Promise<ScheduleJob> {
   const res = await apiFetch(`${API_BASE}/schedules/${encodeURIComponent(agentId)}/${encodeURIComponent(jobId)}`, {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ credentialMode }),
+    body: JSON.stringify(patch),
   });
+  if (res.status === 403 && (await res.json().catch(() => ({}))).error === "team_requires_admin") {
+    throw new Error("Only admins can pause or resume Team jobs.");
+  }
   if (!res.ok) throw new Error("Failed to update scheduled job");
   return res.json();
 }
