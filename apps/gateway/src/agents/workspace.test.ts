@@ -54,4 +54,13 @@ describe("agent workspace files", () => {
 
     await expect(ensureWorkspaceFiles(tmpDir)).resolves.toBe(false);
   });
+
+  it("does not recreate removed core files in an existing workspace", async () => {
+    tmpDir = await makeTempDir();
+    await fs.writeFile(path.join(tmpDir, "AGENTS.md"), "existing");
+
+    await ensureWorkspaceFiles(tmpDir);
+
+    expect(await fs.readdir(tmpDir)).toEqual(["AGENTS.md"]);
+  });
 });

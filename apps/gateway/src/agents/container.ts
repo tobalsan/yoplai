@@ -214,6 +214,17 @@ export function buildVolumeMounts(
 
   addMount(mounts, workspace, "/workspace", !sandbox?.workspaceWritable);
 
+  // A writable workspace must not let the agent rewrite its own operator
+  // instructions or sandbox/tool config (agent.yaml is hot-reloaded).
+  if (sandbox?.workspaceWritable) {
+    for (const name of ["AGENTS.md", "agent.yaml"]) {
+      const filePath = path.join(workspace, name);
+      if (fs.existsSync(filePath)) {
+        addMount(mounts, filePath, `/workspace/${name}`, true);
+      }
+    }
+  }
+
   const dataDir = getAgentDataDir(homeDir, agent.id);
   fs.mkdirSync(dataDir, { recursive: true });
   addMount(mounts, dataDir, CONTAINER_DATA_DIR, false);

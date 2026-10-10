@@ -252,6 +252,46 @@ describe("buildVolumeMounts", () => {
     });
   });
 
+  it("keeps AGENTS.md and agent.yaml read-only in a writable workspace", () => {
+    const root = tmpDir();
+    const workspace = path.join(root, "workspace");
+    fs.mkdirSync(workspace, { recursive: true });
+    fs.writeFileSync(path.join(workspace, "AGENTS.md"), "rules");
+    fs.writeFileSync(path.join(workspace, "agent.yaml"), "id: agent");
+
+    const build = (workspaceWritable: boolean) =>
+      buildVolumeMounts(
+        AgentConfigSchema.parse({
+          id: "agent",
+          name: "Agent",
+          workspace,
+          model: { provider: "anthropic", model: "claude" },
+          sandbox: { workspaceWritable },
+        }),
+        {},
+        path.join(root, "yoplai"),
+        path.join(root, "yoplai", "ipc", "agent", "session-1-run-1")
+      );
+
+    expect(build(true)).toEqual(
+      expect.arrayContaining([
+        {
+          source: path.join(workspace, "AGENTS.md"),
+          target: "/workspace/AGENTS.md",
+          readonly: true,
+        },
+        {
+          source: path.join(workspace, "agent.yaml"),
+          target: "/workspace/agent.yaml",
+          readonly: true,
+        },
+      ])
+    );
+    expect(
+      build(false).some((mount) => mount.target === "/workspace/AGENTS.md")
+    ).toBe(false);
+  });
+
   it("mounts models.json and models-store.json read-only when present", () => {
     const root = tmpDir();
     const workspace = path.join(root, "workspace");

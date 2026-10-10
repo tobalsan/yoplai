@@ -142,6 +142,9 @@ export async function ensureWorkspaceFiles(
     CORE_FILENAMES.map((name) => fileExists(path.join(workspaceDir, name)))
   );
   const isFirstRun = !coreFileChecks.some(Boolean);
+  // Seed templates only for brand-new workspaces; an operator may remove
+  // SOUL.md/USER.md on purpose and they must not reappear.
+  if (!isFirstRun) return false;
 
   const templates = await Promise.all(
     CORE_FILENAMES.map(async (name) => ({
