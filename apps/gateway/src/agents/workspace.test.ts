@@ -63,4 +63,12 @@ describe("agent workspace files", () => {
 
     expect(await fs.readdir(tmpDir)).toEqual(["AGENTS.md"]);
   });
+
+  it("restores a missing AGENTS.md in an existing workspace", async () => {
+    tmpDir = await makeTempDir();
+    await fs.writeFile(path.join(tmpDir, "SOUL.md"), "existing");
+
+    await expect(ensureWorkspaceFiles(tmpDir)).resolves.toBe(false);
+    expect((await fs.readdir(tmpDir)).sort()).toEqual(["AGENTS.md", "SOUL.md"]);
+  });
 });

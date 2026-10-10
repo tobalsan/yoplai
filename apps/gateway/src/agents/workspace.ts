@@ -142,12 +142,13 @@ export async function ensureWorkspaceFiles(
     CORE_FILENAMES.map((name) => fileExists(path.join(workspaceDir, name)))
   );
   const isFirstRun = !coreFileChecks.some(Boolean);
-  // Seed templates only for brand-new workspaces; an operator may remove
-  // SOUL.md/USER.md on purpose and they must not reappear.
-  if (!isFirstRun) return false;
+  // Existing workspaces only get AGENTS.md back (it is mounted read-only in
+  // writable sandboxes, so a missing one must not become agent-created).
+  // SOUL.md/USER.md may be removed on purpose and must not reappear.
+  const names = isFirstRun ? CORE_FILENAMES : (["AGENTS.md"] as const);
 
   const templates = await Promise.all(
-    CORE_FILENAMES.map(async (name) => ({
+    names.map(async (name) => ({
       name,
       content: await loadTemplate(name),
     }))

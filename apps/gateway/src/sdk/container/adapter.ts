@@ -277,6 +277,8 @@ export function getContainerAdapter(): SdkAdapter {
     },
     async run(params: SdkRunParams) {
       const config = loadConfig();
+      // Before the launch spec: read-only mounts only cover files that exist.
+      const isFirstRun = await ensureWorkspaceFiles(params.workspaceDir);
       const launchSpec = buildContainerLaunchSpec(params, config);
       const { args, containerName, ipcDir, runId, hostDataDir } = launchSpec;
       prepareLaunchFilesystem(params, launchSpec);
@@ -295,8 +297,6 @@ export function getContainerAdapter(): SdkAdapter {
       let input: ContainerInput;
       let invisibleToolNames = new Set<string>();
       try {
-        const isFirstRun = await ensureWorkspaceFiles(params.workspaceDir);
-
         agentToken = randomUUID();
         const attachmentContext = hasReadableDocumentAttachment(params)
           ? await buildDocumentAttachmentContext(params.attachments)
