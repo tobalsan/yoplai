@@ -1506,6 +1506,8 @@ export interface Extension {
   factory?: boolean;
   /** OAuth requirement exposed for discovery and the post-enable connect link. */
   oauth?: import("./oauth/types.js").OAuthRequirement | ((config: import("./tool-extension.js").ResolvedToolExtensionConfig) => import("./oauth/types.js").OAuthRequirement | undefined);
+  /** OAuth provider descriptors this extension ships; registered by the gateway at load. */
+  oauthProviders?: import("./oauth/types.js").OAuthProviderDescriptor[];
   validateConfig(raw: unknown): ValidationResult;
   registerRoutes(app: Hono): void;
   start(ctx: ExtensionContext): Promise<void>;
@@ -1566,6 +1568,20 @@ export const ExtensionDefinitionSchema = z.object({
     z.object({ provider: z.string(), scopes: z.array(z.string()).optional() }),
     z.function(),
   ]).optional(),
+  oauthProviders: z
+    .array(
+      z
+        .object({
+          id: z.string(),
+          displayName: z.string(),
+          authorizeUrl: z.string(),
+          tokenUrl: z.string(),
+          defaultScopes: z.array(z.string()),
+          tokenAuth: z.enum(["body", "basic"]).optional(),
+        })
+        .passthrough()
+    )
+    .optional(),
   validateConfig: z
     .function()
     .args(z.unknown())

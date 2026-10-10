@@ -4,6 +4,7 @@ import {
   GatewayConfigSchema,
   registerCredentialConnectLinkProvider,
   type AgentConfig,
+  getOAuthProvider,
   type Extension,
 } from "@yoplai/shared";
 import { ExtensionRuntime } from "./runtime.js";
@@ -292,5 +293,37 @@ describe("ExtensionRuntime", () => {
     expect(warn).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({ extensionId: "broken", agentId: "main", fields: ["token"] }));
     expect(JSON.stringify(warn.mock.calls)).not.toContain("super-secret");
     warn.mockRestore();
+  });
+});
+
+describe("ExtensionRuntime OAuth provider registration", () => {
+  const descriptor = {
+    id: "runtime-test-provider",
+    displayName: "Runtime Test",
+    authorizeUrl: "https://example.test/authorize",
+    tokenUrl: "https://example.test/token",
+    defaultScopes: ["read"],
+  };
+
+  it("registers descriptors shipped by loaded extensions, tolerating equivalent duplicates", () => {
+    new ExtensionRuntime().load([
+      extension({ id: "one", oauthProviders: [descriptor] }),
+      extension({ id: "two", oauthProviders: [{ ...descriptor }] }),
+    ]);
+    expect(getOAuthProvider("runtime-test-provider")).toBe(descriptor);
+  });
+
+  it("fails load with a clear error on a conflicting descriptor", () => {
+    expect(() =>
+      new ExtensionRuntime().load([
+        extension({ id: "one", oauthProviders: [descriptor] }),
+        extension({
+          id: "two",
+          oauthProviders: [{ ...descriptor, tokenUrl: "https://other.test/token" }],
+        }),
+      ])
+    ).toThrow(
+      'Extension "two" cannot register OAuth provider "runtime-test-provider": OAuth provider "runtime-test-provider" is already registered with a conflicting descriptor'
+    );
   });
 });

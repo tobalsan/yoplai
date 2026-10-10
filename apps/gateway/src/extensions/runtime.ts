@@ -8,7 +8,7 @@ import type {
   OAuthRequirement,
   ResolvedOAuth,
 } from "@yoplai/shared";
-import { requestCredentialConnectLink, resolveExtensionOAuth, extensionConfigFieldNames } from "@yoplai/shared";
+import { requestCredentialConnectLink, resolveExtensionOAuth, extensionConfigFieldNames, registerOAuthProvider } from "@yoplai/shared";
 import { resolveAgentEnv } from "../config/index.js";
 import { getOAuthService } from "../oauth/service.js";
 import { extensionSecretFields, resolveExtensionTokenConfig } from "../credentials/extension-tokens.js";
@@ -133,6 +133,19 @@ export class ExtensionRuntime {
   }
 
   load(extensions: Extension[], homeExtensionId?: string): Extension[] {
+    for (const extension of extensions) {
+      for (const provider of extension.oauthProviders ?? []) {
+        try {
+          registerOAuthProvider(provider);
+        } catch (error) {
+          throw new Error(
+            `Extension "${extension.id}" cannot register OAuth provider "${provider.id}": ${
+              error instanceof Error ? error.message : String(error)
+            }`
+          );
+        }
+      }
+    }
     this.#mergeRouteMetadata(
       extensions.map((extension) => ({
         id: extension.id,

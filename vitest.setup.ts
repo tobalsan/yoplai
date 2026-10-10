@@ -1,3 +1,10 @@
+import { registerOAuthProvider } from "./packages/shared/src/oauth/providers.js";
+import { googleProvider, zendeskProvider } from "./packages/shared/src/oauth/test-providers.js";
+
+// Providers now ship with extensions; tests exercising the OAuth flow use fixtures.
+registerOAuthProvider(googleProvider);
+registerOAuthProvider(zendeskProvider);
+
 const hasUsableLocalStorage =
   typeof globalThis.localStorage !== "undefined" &&
   typeof globalThis.localStorage.getItem === "function" &&

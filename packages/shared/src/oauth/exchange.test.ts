@@ -1,7 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
-import { googleProvider } from "./providers.js";
+import { googleProvider, notionProvider } from "./test-providers.js";
 import {
   OAuthRefreshError,
+  exchangeCodeForTokens,
   refreshAccessToken,
   revokeToken,
 } from "./exchange.js";
@@ -109,5 +110,78 @@ describe("revokeToken", () => {
       fetchImpl as unknown as typeof fetch
     );
     expect(ok).toBe(false);
+  });
+});
+
+describe("tokenAuth basic", () => {
+  const basic = `Basic ${Buffer.from("cid:csecret").toString("base64")}`;
+  const tokenJson = {
+    access_token: "A",
+    refresh_token: "R",
+    workspace_name: "Acme",
+    owner: { user: { person: { email: "a@b.co" } } },
+  };
+
+  it("sends the code exchange client credentials as a Basic header, not in the body", async () => {
+    const fetchImpl = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      const headers = init?.headers as Record<string, string>;
+      expect(headers.Authorization).toBe(basic);
+      const body = new URLSearchParams(init?.body as string);
+      expect(body.has("client_id")).toBe(false);
+      expect(body.has("client_secret")).toBe(false);
+      expect(body.get("code")).toBe("CODE");
+      return Response.json(tokenJson);
+    });
+    const result = await exchangeCodeForTokens(
+      { provider: notionProvider, credentials, code: "CODE", redirectUri: "https://x/cb", codeVerifier: "v" },
+      fetchImpl as unknown as typeof fetch
+    );
+    expect(result.accessToken).toBe("A");
+    expect(result.account).toBe("a@b.co");
+  });
+
+  it("falls back to workspace_name when the token response has no owner email", async () => {
+    const fetchImpl = vi.fn(async () => Response.json({ access_token: "A", workspace_name: "Acme" }));
+    const result = await exchangeCodeForTokens(
+      { provider: notionProvider, credentials, code: "CODE", redirectUri: "https://x/cb", codeVerifier: "v" },
+      fetchImpl as unknown as typeof fetch
+    );
+    expect(result.account).toBe("Acme");
+  });
+
+  it("sends refresh credentials as a Basic header", async () => {
+    const fetchImpl = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      expect((init?.headers as Record<string, string>).Authorization).toBe(basic);
+      const body = new URLSearchParams(init?.body as string);
+      expect(body.has("client_secret")).toBe(false);
+      return Response.json(tokenJson);
+    });
+    await refreshAccessToken(
+      { provider: notionProvider, credentials, refreshToken: "R" },
+      fetchImpl as unknown as typeof fetch
+    );
+    expect(fetchImpl).toHaveBeenCalledOnce();
+  });
+
+  it("sends revoke credentials as a Basic header", async () => {
+    const fetchImpl = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      expect((init?.headers as Record<string, string>).Authorization).toBe(basic);
+      return new Response(null, { status: 200 });
+    });
+    const ok = await revokeToken(notionProvider, "TOK", fetchImpl as unknown as typeof fetch, credentials);
+    expect(ok).toBe(true);
+  });
+
+  it("keeps credentials in the body for the default body auth", async () => {
+    const fetchImpl = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      expect((init?.headers as Record<string, string>).Authorization).toBeUndefined();
+      expect(new URLSearchParams(init?.body as string).get("client_secret")).toBe("csecret");
+      return Response.json(tokenJson);
+    });
+    await refreshAccessToken(
+      { provider: googleProvider, credentials, refreshToken: "R" },
+      fetchImpl as unknown as typeof fetch
+    );
+    expect(fetchImpl).toHaveBeenCalledOnce();
   });
 });

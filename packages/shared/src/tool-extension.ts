@@ -12,7 +12,7 @@ import {
   type GatewayConfig,
   type ValidationResult,
 } from "./types.js";
-import type { OAuthRequirement, ResolvedOAuth } from "./oauth/types.js";
+import type { OAuthProviderDescriptor, OAuthRequirement, ResolvedOAuth } from "./oauth/types.js";
 
 export interface ResolvedToolExtensionConfig {
   global: Record<string, unknown>;
@@ -62,6 +62,8 @@ export interface ToolExtensionDefinition {
    * and resolves it again for each call using that call's requester identity.
    */
   oauth?: OAuthRequirement | ((config: ResolvedToolExtensionConfig) => OAuthRequirement | undefined);
+  /** OAuth provider descriptors this extension ships; the gateway registers them at load. */
+  oauthProviders?: OAuthProviderDescriptor[];
   createTools(config: ResolvedToolExtensionConfig): ToolExtensionTool[];
 }
 
@@ -267,6 +269,7 @@ export function defineToolExtension(
     oauthHiddenFields: definition.oauthHiddenFields,
     configRoute: definition.configRoute,
     oauth: definition.oauth,
+    oauthProviders: definition.oauthProviders,
     routePrefixes: [],
     validateConfig(raw) {
       const result = ExtensionBaseConfigSchema.safeParse(raw ?? {});

@@ -9,6 +9,14 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ## [Unreleased]
 
+### Changed
+
+- OAuth providers now ship with extensions: extensions declare `oauthProviders` descriptors and the gateway registers them at load (equivalent duplicates are fine, conflicting ones fail the load). Google and Zendesk descriptors are no longer built into the platform.
+
+### Added
+
+- OAuth descriptors support `tokenAuth: "basic"` (HTTP Basic client credentials at token/refresh/revoke) and `accountFromTokenResponse` (account label taken from the token response).
+
 ### Fixed
 
 - Chat: removed the blinking text cursor on streaming messages. It sometimes showed up in the middle of a turn, before later thinking or tool traces, and the spinner already shows that a turn is running.

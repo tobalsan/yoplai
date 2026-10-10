@@ -30,6 +30,12 @@ export interface OAuthProviderDescriptor {
    * exchange (so the UI can show "Connected as alice@example.com").
    */
   userInfoUrl?: string;
+  /**
+   * How client credentials are sent to the token (and revoke) endpoint:
+   * `body` (default) puts client_id/client_secret in the form body; `basic`
+   * sends an HTTP Basic `Authorization` header instead.
+   */
+  tokenAuth?: "body" | "basic";
   /** Default scopes requested when a consumer does not override them. */
   defaultScopes: string[];
   /** Base URL of the provider's API, handed to extensions that need it. */
@@ -45,6 +51,11 @@ export interface OAuthProviderDescriptor {
    * label (usually the email). Returns undefined when it cannot be determined.
    */
   extractAccount?(userInfo: unknown): string | undefined;
+  /**
+   * Extract the account label straight from the token response. Preferred over
+   * `userInfoUrl` when present.
+   */
+  accountFromTokenResponse?(token: unknown): string | undefined;
 }
 
 /**

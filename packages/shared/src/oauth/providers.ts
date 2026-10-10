@@ -1,54 +1,5 @@
 import type { OAuthProviderDescriptor } from "./types.js";
 
-/**
- * Google descriptor. This is the whole "how to talk to Google" definition —
- * adding Gmail read-only later is just a new descriptor + a client id/secret,
- * with no changes to the authorize/callback/token-store machinery.
- */
-export const googleProvider: OAuthProviderDescriptor = {
-  id: "google",
-  displayName: "Google",
-  authorizeUrl: "https://accounts.google.com/o/oauth2/v2/auth",
-  tokenUrl: "https://oauth2.googleapis.com/token",
-  revokeUrl: "https://oauth2.googleapis.com/revoke",
-  userInfoUrl: "https://www.googleapis.com/oauth2/v2/userinfo",
-  defaultScopes: [
-    "https://www.googleapis.com/auth/drive.readonly",
-    "https://www.googleapis.com/auth/userinfo.email",
-  ],
-  authorizeParams: {
-    access_type: "offline",
-    prompt: "consent",
-    include_granted_scopes: "true",
-  },
-  extractAccount(userInfo) {
-    if (
-      userInfo &&
-      typeof userInfo === "object" &&
-      "email" in userInfo &&
-      typeof (userInfo as { email?: unknown }).email === "string"
-    ) {
-      return (userInfo as { email: string }).email;
-    }
-    return undefined;
-  },
-};
-
-/** Zendesk descriptor. URLs are per-tenant: `{subdomain}` comes from oauth.providers.zendesk.subdomain. */
-export const zendeskProvider: OAuthProviderDescriptor = {
-  id: "zendesk",
-  displayName: "Zendesk",
-  authorizeUrl: "https://{subdomain}.zendesk.com/oauth/authorizations/new",
-  tokenUrl: "https://{subdomain}.zendesk.com/oauth/tokens",
-  userInfoUrl: "https://{subdomain}.zendesk.com/api/v2/users/me.json",
-  apiBaseUrl: "https://{subdomain}.zendesk.com",
-  defaultScopes: ["read"],
-  extractAccount(userInfo) {
-    const email = (userInfo as { user?: { email?: unknown } } | null)?.user?.email;
-    return typeof email === "string" ? email : undefined;
-  },
-};
-
 const SUBDOMAIN_PLACEHOLDER = "{subdomain}";
 
 /** True when any descriptor URL needs a subdomain. */
@@ -85,11 +36,47 @@ export function materializeOAuthProvider(
   };
 }
 
-const PROVIDER_LIST: OAuthProviderDescriptor[] = [googleProvider, zendeskProvider];
+const PROVIDER_REGISTRY = new Map<string, OAuthProviderDescriptor>();
 
-const PROVIDER_REGISTRY = new Map<string, OAuthProviderDescriptor>(
-  PROVIDER_LIST.map((provider) => [provider.id, provider])
-);
+function describeProviderIdentity(provider: OAuthProviderDescriptor): string {
+  return JSON.stringify([
+    provider.displayName,
+    provider.authorizeUrl,
+    provider.tokenUrl,
+    provider.revokeUrl,
+    provider.userInfoUrl,
+    provider.apiBaseUrl,
+    provider.tokenAuth ?? "body",
+    provider.defaultScopes,
+    Object.entries(provider.authorizeParams ?? {}).sort(([a], [b]) => a.localeCompare(b)),
+  ]);
+}
+
+/**
+ * Register a descriptor shipped by an extension. Re-registering an equivalent
+ * descriptor (same object, or same URLs/scopes) is a no-op; a different
+ * descriptor under an already-registered id throws.
+ */
+export function registerOAuthProvider(provider: OAuthProviderDescriptor): void {
+  const existing = PROVIDER_REGISTRY.get(provider.id);
+  if (!existing) {
+    PROVIDER_REGISTRY.set(provider.id, provider);
+    return;
+  }
+  if (
+    existing !== provider &&
+    describeProviderIdentity(existing) !== describeProviderIdentity(provider)
+  ) {
+    throw new Error(
+      `OAuth provider "${provider.id}" is already registered with a conflicting descriptor`
+    );
+  }
+}
+
+/** Clear all registered descriptors (tests only). */
+export function resetOAuthProviders(): void {
+  PROVIDER_REGISTRY.clear();
+}
 
 export function getOAuthProvider(
   id: string

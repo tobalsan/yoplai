@@ -18,6 +18,8 @@ export interface TokenExchangeResult {
   expiresAt?: number;
   scopes: string[];
   tokenType?: string;
+  /** Account label from the provider's `accountFromTokenResponse` hook, if any. */
+  account?: string;
 }
 
 interface RawTokenResponse {
@@ -28,6 +30,24 @@ interface RawTokenResponse {
   token_type?: string;
   error?: string;
   error_description?: string;
+}
+
+/** Token-endpoint client auth: Basic header or credentials in the form body. */
+function applyClientAuth(
+  provider: OAuthProviderDescriptor,
+  credentials: OAuthClientCredentials,
+  body: URLSearchParams,
+  headers: Record<string, string>
+): void {
+  if (provider.tokenAuth === "basic") {
+    const encoded = Buffer.from(
+      `${credentials.clientId}:${credentials.clientSecret}`
+    ).toString("base64");
+    headers.Authorization = `Basic ${encoded}`;
+    return;
+  }
+  body.set("client_id", credentials.clientId);
+  body.set("client_secret", credentials.clientSecret);
 }
 
 /**
@@ -42,17 +62,17 @@ export async function exchangeCodeForTokens(
     grant_type: "authorization_code",
     code: input.code,
     redirect_uri: input.redirectUri,
-    client_id: input.credentials.clientId,
-    client_secret: input.credentials.clientSecret,
     code_verifier: input.codeVerifier,
   });
+  const headers: Record<string, string> = {
+    "Content-Type": "application/x-www-form-urlencoded",
+    Accept: "application/json",
+  };
+  applyClientAuth(input.provider, input.credentials, body, headers);
 
   const response = await fetchImpl(input.provider.tokenUrl, {
     method: "POST",
-    headers: {
-      "Content-Type": "application/x-www-form-urlencoded",
-      Accept: "application/json",
-    },
+    headers,
     body: body.toString(),
   });
 
@@ -71,6 +91,7 @@ export async function exchangeCodeForTokens(
         : undefined,
     scopes: raw.scope ? raw.scope.split(/\s+/).filter(Boolean) : [],
     tokenType: raw.token_type,
+    account: input.provider.accountFromTokenResponse?.(raw),
   };
 }
 
@@ -120,18 +141,18 @@ export async function refreshAccessToken(
   const body = new URLSearchParams({
     grant_type: "refresh_token",
     refresh_token: input.refreshToken,
-    client_id: input.credentials.clientId,
-    client_secret: input.credentials.clientSecret,
   });
+  const headers: Record<string, string> = {
+    "Content-Type": "application/x-www-form-urlencoded",
+    Accept: "application/json",
+  };
+  applyClientAuth(input.provider, input.credentials, body, headers);
 
   let response: Response;
   try {
     response = await fetchImpl(input.provider.tokenUrl, {
       method: "POST",
-      headers: {
-        "Content-Type": "application/x-www-form-urlencoded",
-        Accept: "application/json",
-      },
+      headers,
       body: body.toString(),
     });
   } catch (error) {
@@ -204,17 +225,21 @@ export async function fetchAccountLabel(
 export async function revokeToken(
   provider: OAuthProviderDescriptor,
   token: string,
-  fetchImpl: OAuthFetch = fetch
+  fetchImpl: OAuthFetch = fetch,
+  credentials?: OAuthClientCredentials
 ): Promise<boolean> {
   if (!provider.revokeUrl) return false;
   try {
+    const body = new URLSearchParams({ token });
+    const headers: Record<string, string> = {
+      "Content-Type": "application/x-www-form-urlencoded",
+      Accept: "application/json",
+    };
+    if (credentials) applyClientAuth(provider, credentials, body, headers);
     const response = await fetchImpl(provider.revokeUrl, {
       method: "POST",
-      headers: {
-        "Content-Type": "application/x-www-form-urlencoded",
-        Accept: "application/json",
-      },
-      body: new URLSearchParams({ token }).toString(),
+      headers,
+      body: body.toString(),
     });
     return response.ok;
   } catch {

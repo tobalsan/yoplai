@@ -241,11 +241,9 @@ export class OAuthService {
       this.#fetch
     );
 
-    const account = await fetchAccountLabel(
-      provider,
-      tokens.accessToken,
-      this.#fetch
-    );
+    const account =
+      tokens.account ??
+      (await fetchAccountLabel(provider, tokens.accessToken, this.#fetch));
 
     const now = Date.now();
     const connection: OAuthConnection = {
@@ -296,6 +294,17 @@ export class OAuthService {
     return this.#store.get(agentId, provider, scope);
   }
 
+  async #revokeUpstream(descriptor: OAuthProviderDescriptor, token: string): Promise<void> {
+    try {
+      const credentials = await this.#credentialSource(this.#loadConfig()).getClientCredentials(
+        descriptor.id
+      );
+      await revokeToken(descriptor, token, this.#fetch, credentials);
+    } catch {
+      // Best-effort: a failed revoke must not surface after local removal.
+    }
+  }
+
   /**
    * Disconnect a (agent, provider) pair: best-effort revoke the grant at the
    * provider after clearing the local record immediately. Upstream outages
@@ -311,7 +320,7 @@ export class OAuthService {
         // Revoke the refresh token when present (revoking it invalidates the
         // whole grant on Google), else the access token. Best-effort.
         const token = connection.refreshToken ?? connection.accessToken;
-        void revokeToken(descriptor, token, this.#fetch);
+        void this.#revokeUpstream(descriptor, token);
       }
     }
   }
