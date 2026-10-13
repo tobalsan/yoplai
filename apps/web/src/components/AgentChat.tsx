@@ -1826,6 +1826,11 @@ export function AgentChat(props: AgentChatProps) {
     if (!props.agentId) return;
     const res = await fetchFullHistory(props.agentId, sessionKey());
     const rawMessages = res.messages ?? [];
+    const lastMessage = rawMessages.at(-1);
+    if (lastMessage?.role === "assistant" && lastMessage.meta?.failure &&
+        lastMessage.content.some((block) => block.type === "text" && block.text === error())) {
+      setError("");
+    }
     const nextMessages = (() => {
       if (!leadStreaming()) return rawMessages;
       const lastUserIndex = rawMessages.findLastIndex(
@@ -1890,6 +1895,13 @@ export function AgentChat(props: AgentChatProps) {
       onDone: () => {
         setLeadStreaming(false);
         setLeadPending(false);
+        maybeLoadDeferredLeadHistory();
+      },
+      onError: () => {
+        setLeadStreaming(false);
+        setLeadPending(false);
+        streamingToolCalls.clear();
+        skipNextLeadHistoryRefresh = false;
         maybeLoadDeferredLeadHistory();
       },
       onHistoryUpdated: () => {

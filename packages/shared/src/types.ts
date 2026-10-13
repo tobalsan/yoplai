@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { RunFailureKindSchema, type RunFailureKind } from "./run-failure.js";
 import type {
   LeadSession,
   LeadSessionChangedEvent,
@@ -244,6 +245,7 @@ const AgentConfigBaseSchema = z.object({
   id: z.string(),
   name: z.string(),
   description: z.string().optional(),
+  language: z.enum(["en", "fr"]).default("en"),
   avatar: z.string().optional(), // emoji or image URL
   role: z.string().optional(), // short job title, e.g. "Sales Admin"
   workspace: z.string(),
@@ -285,7 +287,10 @@ export const AgentConfigSchema = AgentConfigBaseSchema.superRefine(
     }
   }
 ).transform(
-  (value): Omit<typeof value, "model"> & { model: AgentModelConfig } => {
+  (value): Omit<typeof value, "model" | "language"> & {
+    model: AgentModelConfig;
+    language?: "en" | "fr";
+  } => {
     if (value.sdk === "openclaw" && !value.model) {
       return { ...value, model: { provider: "openclaw", model: "unknown" } };
     }
@@ -835,6 +840,7 @@ export type NotificationChannelConfig = z.infer<
 
 export const NotificationsConfigSchema = z.object({
   channels: z.record(z.string(), NotificationChannelConfigSchema).optional(),
+  adminChannel: z.string().min(1).optional(),
 });
 export type NotificationsConfig = z.infer<typeof NotificationsConfigSchema>;
 
@@ -1866,6 +1872,8 @@ export const StreamEventSchema = z.discriminatedUnion("type", [
     type: z.literal("error"),
     message: z.string(),
     code: z.string().optional(),
+    kind: RunFailureKindSchema.optional(),
+    userMessage: z.string().optional(),
   }),
 ]);
 export type StreamEvent = z.infer<typeof StreamEventSchema>;
@@ -1984,6 +1992,7 @@ export type SimpleHistoryMessage = {
   content: string;
   files?: FileBlock[];
   timestamp: number;
+  meta?: ModelMeta;
 };
 
 /** Content block types for full history */
@@ -2056,6 +2065,7 @@ export type ModelMeta = {
   model?: string;
   usage?: ModelUsage;
   stopReason?: string;
+  failure?: { kind: RunFailureKind };
 };
 
 /** Full history message with all content blocks */
@@ -2355,6 +2365,7 @@ export const HistoryEventSchema = z.discriminatedUnion("type", [
     api: z.string().optional(),
     usage: ModelUsageSchema.optional(),
     stopReason: z.string().optional(),
+    failure: z.object({ kind: RunFailureKindSchema }).optional(),
     timestamp: z.number(),
   }),
   z.object({

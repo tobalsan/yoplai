@@ -104,6 +104,23 @@ type CapturedHandlers = {
   onReady?: (data: unknown, client: unknown) => void;
 };
 
+const failureCases = [
+    ["rate_limit", "en", "The AI service is temporarily rate-limited. Please try again in a few minutes."],
+    ["quota", "en", "The AI service quota for this workspace is exhausted. Your administrator has been notified."],
+    ["overloaded", "en", "The AI service is temporarily rate-limited. Please try again in a few minutes."],
+    ["tool_deadline", "en", "Sorry, this request took too long and was stopped. Partial changes may exist. Please try again or ask me to continue."],
+    ["max_run_time", "en", "Sorry, this request took too long and was stopped. Partial changes may exist. Please try again or ask me to continue."],
+    ["idle_timeout", "en", "Sorry, this request took too long and was stopped. Partial changes may exist. Please try again or ask me to continue."],
+    ["generic", "en", "Something went wrong, please try again."],
+    ["rate_limit", "fr", "Le service IA est temporairement saturé. Merci de réessayer dans quelques minutes."],
+    ["quota", "fr", "Le quota du service IA pour cet espace est épuisé. Votre administrateur a été prévenu."],
+    ["overloaded", "fr", "Le service IA est temporairement saturé. Merci de réessayer dans quelques minutes."],
+    ["tool_deadline", "fr", "Désolé, cette demande a pris trop de temps et a été interrompue. Des modifications partielles peuvent exister. Réessayez ou demandez-moi de continuer."],
+    ["max_run_time", "fr", "Désolé, cette demande a pris trop de temps et a été interrompue. Des modifications partielles peuvent exister. Réessayez ou demandez-moi de continuer."],
+    ["idle_timeout", "fr", "Désolé, cette demande a pris trop de temps et a été interrompue. Des modifications partielles peuvent exister. Réessayez ou demandez-moi de continuer."],
+    ["generic", "fr", "Une erreur est survenue, merci de réessayer."],
+] as const;
+
 function createMockClient() {
   return {
     rest: {
@@ -1246,6 +1263,53 @@ describe("Discord bot integration", () => {
   });
 
   describe("error handling", () => {
+    it.each(failureCases)("posts one %s notice in %s for an event followed by rejection", async (kind, language, text) => {
+      const agent = createTestAgent({ guilds: { "guild-1": { requireMention: false, reactionNotifications: "off" } } });
+      agent.language = language;
+      mockRunAgent.mockImplementation(async (params: { onEvent?: (event: unknown) => void }) => {
+        params.onEvent?.({ type: "error", kind, message: "provider secret request-id" });
+        throw new Error("provider secret request-id");
+      });
+      await createDiscordBot(agent);
+      capturedHandlers.onReady?.({ user: { id: "bot-123", username: "TestBot" } }, mockClient);
+      await capturedHandlers.onMessage?.({
+        id: "msg-1", content: "Hello", channel_id: "channel-1", guild_id: "guild-1",
+        author: { id: "user-1", username: "testuser", bot: false }, mentions: [],
+      }, mockClient);
+      expect(mockClient.rest.post).toHaveBeenCalledTimes(1);
+      expect(mockClient.rest.post).toHaveBeenCalledWith("/channels/channel-1/messages", {
+        body: { content: text },
+      });
+    });
+
+    it("does not post a notice for an interrupted run", async () => {
+      const agent = createTestAgent({ guilds: { "guild-1": { requireMention: false, reactionNotifications: "off" } } });
+      mockRunAgent.mockRejectedValue(Object.assign(new Error("stopped"), { name: "AbortError" }));
+      await createDiscordBot(agent);
+      capturedHandlers.onReady?.({ user: { id: "bot-123", username: "TestBot" } }, mockClient);
+      await capturedHandlers.onMessage?.({
+        id: "msg-1", content: "Hello", channel_id: "channel-1", guild_id: "guild-1",
+        author: { id: "user-1", username: "testuser", bot: false }, mentions: [],
+      }, mockClient);
+      expect(mockClient.rest.post).not.toHaveBeenCalled();
+    });
+
+    it.each(["resolved", "rejected"])("does not post after an aborted done event (%s)", async (outcome) => {
+      const agent = createTestAgent({ guilds: { "guild-1": { requireMention: false, reactionNotifications: "off" } } });
+      mockRunAgent.mockImplementation(async (params: { onEvent?: (event: unknown) => void }) => {
+        params.onEvent?.({ type: "done", meta: { aborted: true } });
+        if (outcome === "rejected") throw new Error("provider request interrupted");
+        return { payloads: [], meta: { sessionId: "test-session", aborted: true } };
+      });
+      await createDiscordBot(agent);
+      capturedHandlers.onReady?.({ user: { id: "bot-123", username: "TestBot" } }, mockClient);
+      await capturedHandlers.onMessage?.({
+        id: "msg-1", content: "Hello", channel_id: "channel-1", guild_id: "guild-1",
+        author: { id: "user-1", username: "testuser", bot: false }, mentions: [],
+      }, mockClient);
+      expect(mockClient.rest.post).not.toHaveBeenCalled();
+    });
+
     it("sends error message when runAgent throws", async () => {
       const agent = createTestAgent({
         guilds: {
@@ -1278,7 +1342,7 @@ describe("Discord bot integration", () => {
         "/channels/channel-1/messages",
         expect.objectContaining({
           body: expect.objectContaining({
-            content: "Sorry, I encountered an error processing your message.",
+            content: "Something went wrong, please try again.",
           }),
         })
       );

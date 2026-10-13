@@ -1,5 +1,6 @@
 import fs from "node:fs/promises";
 import path from "node:path";
+import { classifyRunFailure, runFailureMessage } from "@yoplai/shared";
 import type {
   RunAgentParams as SharedRunAgentParams,
   RunAgentResult as SharedRunAgentResult,
@@ -51,6 +52,7 @@ import {
 } from "../history/store.js";
 import { maybeAutoTitleSession } from "../maintenance/session-auto-title.js";
 import { maybeGenerateToolLabel } from "../maintenance/tool-labels.js";
+import { notifyProviderQuota } from "./quota-notification.js";
 
 export type InternalRunAgentParams = SharedRunAgentParams & {
   userId?: string;
@@ -411,6 +413,9 @@ export async function runAgent(
       context: params.context,
       extensionRuntime,
       onEvent: (event: StreamEvent) => {
+        // Adapters may emit an error and then reject. Only the runner emits
+        // the terminal error, after its user-visible notice is persisted.
+        if (event.type === "error") return;
         if (event.type === "text" || event.type === "thinking") {
           hasEmittedContent = true;
         }
@@ -508,7 +513,20 @@ export async function runAgent(
     const errMessage = err instanceof Error ? err.message : String(err);
     logError("[agent] run failed", err, { agentId: params.agentId, sessionId });
     holdback.finishSegment();
-    emit({ type: "error", message: errMessage });
+    if (!aborted && !abortController.signal.aborted && !(err instanceof Error && err.name === "AbortError")) {
+      const kind = classifyRunFailure(err, errMessage);
+      const text = runFailureMessage(kind, agent.language ?? "en");
+      await lifecycle.writeFailureNotice({ kind, text });
+      emit({ type: "error", message: errMessage, kind, userMessage: text });
+      if (kind === "quota") {
+        void notifyProviderQuota(agent, params.model).catch((error) => {
+          logError("[agent] quota notification failed", error, { agentId: params.agentId });
+        });
+      }
+    } else {
+      await lifecycle.flushTurns();
+      emit({ type: "done", meta: { durationMs: Date.now() - started, aborted: true } });
+    }
     throw err;
   } finally {
     lifecycle.finishRun();

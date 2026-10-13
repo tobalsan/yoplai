@@ -49,6 +49,11 @@
       "development": "./src/node/sanitize-session.ts",
       "import": "./dist/node/sanitize-session.js",
       "types": "./dist/node/sanitize-session.d.ts"
+    },
+    "./run-failure": {
+      "development": "./src/run-failure.ts",
+      "import": "./dist/run-failure.js",
+      "types": "./dist/run-failure.d.ts"
     }
   },
   "scripts": {

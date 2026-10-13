@@ -195,6 +195,7 @@ export function streamMessage(
   };
 
   ws.onmessage = (e) => {
+    if (terminated) return;
     const event = JSON.parse(e.data) as WsStreamEvent;
     if (event.type === "done" || event.type === "error") terminated = true;
     dispatchWsEvent(event, {

@@ -11,6 +11,7 @@ import {
   DEFAULT_RETRY_MAX_ATTEMPTS,
   PI_SYSTEM_PROMPT,
   claimAgentToolName,
+  classifyRunFailure,
   findFailedTurn,
   formatImageDescriptionBlocks,
   getProviderErrorCategory,
@@ -51,6 +52,12 @@ import { describeImage } from "../../media/describe.js";
 import { getFullHistory } from "../../history/store.js";
 import { getMediaFileMetadata } from "../../media/metadata.js";
 import { getBuiltInSkillsDir } from "./skills.js";
+
+function runFailureError(message: string): Error {
+  return Object.assign(new Error(message), {
+    kind: classifyRunFailure(undefined, message),
+  });
+}
 
 const SESSIONS_DIR = path.join(CONFIG_DIR, "sessions");
 let piEnvLock: Promise<void> = Promise.resolve();
@@ -764,7 +771,7 @@ export const piAdapter: SdkAdapter = {
         );
         if (!fallback) {
           logFallback("failure", "model not found");
-          throw new Error(
+          throw runFailureError(
             `Primary ${effectiveModel.provider}/${effectiveModel.model} failed: ${primaryFailure.message}; fallback ${params.agent.fallback_model.provider}/${params.agent.fallback_model.model} failed: model not found`
           );
         }
@@ -778,14 +785,14 @@ export const piAdapter: SdkAdapter = {
           const fallbackMessage =
             error instanceof Error ? error.message : String(error);
           logFallback("failure", fallbackMessage);
-          throw new Error(
+          throw runFailureError(
             `Primary ${effectiveModel.provider}/${effectiveModel.model} failed: ${primaryFailure.message}; fallback ${params.agent.fallback_model.provider}/${params.agent.fallback_model.model} failed: ${fallbackMessage}`
           );
         }
         const fallbackFailure = findFailedTurn(agentSession.messages);
         if (fallbackFailure) {
           logFallback("failure", fallbackFailure.message);
-          throw new Error(
+          throw runFailureError(
             `Primary ${effectiveModel.provider}/${effectiveModel.model} failed: ${primaryFailure.message}; fallback ${params.agent.fallback_model.provider}/${params.agent.fallback_model.model} failed: ${fallbackFailure.message}`
           );
         }
@@ -819,7 +826,7 @@ export const piAdapter: SdkAdapter = {
           agentId: params.agent.id,
         });
         agentSession.dispose();
-        throw new Error(errorStr);
+        throw runFailureError(errorStr);
       }
 
       const finalText = lastAssistant

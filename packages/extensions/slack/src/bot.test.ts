@@ -7,6 +7,23 @@ import { clearAllHistory, getHistory, recordMessage } from "./utils/history.js";
 import { clearActiveBots, registerActiveBot } from "./bot-registry.js";
 import { createSlackThreadSessionBindingStore } from "./thread-session-bindings.js";
 
+const failureCases = [
+    ["rate_limit", "en", "The AI service is temporarily rate-limited. Please try again in a few minutes."],
+    ["quota", "en", "The AI service quota for this workspace is exhausted. Your administrator has been notified."],
+    ["overloaded", "en", "The AI service is temporarily rate-limited. Please try again in a few minutes."],
+    ["tool_deadline", "en", "Sorry, this request took too long and was stopped. Partial changes may exist. Please try again or ask me to continue."],
+    ["max_run_time", "en", "Sorry, this request took too long and was stopped. Partial changes may exist. Please try again or ask me to continue."],
+    ["idle_timeout", "en", "Sorry, this request took too long and was stopped. Partial changes may exist. Please try again or ask me to continue."],
+    ["generic", "en", "Something went wrong, please try again."],
+    ["rate_limit", "fr", "Le service IA est temporairement saturé. Merci de réessayer dans quelques minutes."],
+    ["quota", "fr", "Le quota du service IA pour cet espace est épuisé. Votre administrateur a été prévenu."],
+    ["overloaded", "fr", "Le service IA est temporairement saturé. Merci de réessayer dans quelques minutes."],
+    ["tool_deadline", "fr", "Désolé, cette demande a pris trop de temps et a été interrompue. Des modifications partielles peuvent exister. Réessayez ou demandez-moi de continuer."],
+    ["max_run_time", "fr", "Désolé, cette demande a pris trop de temps et a été interrompue. Des modifications partielles peuvent exister. Réessayez ou demandez-moi de continuer."],
+    ["idle_timeout", "fr", "Désolé, cette demande a pris trop de temps et a été interrompue. Des modifications partielles peuvent exister. Réessayez ou demandez-moi de continuer."],
+    ["generic", "fr", "Une erreur est survenue, merci de réessayer."],
+] as const;
+
 type MockStreamEvent = {
   type: "thinking" | "done" | "error" | "file_output";
   data?: string;
@@ -890,7 +907,7 @@ describe("createSlackBot", () => {
 
     expect(apps[0].client.chat.postMessage).toHaveBeenCalledWith(
       expect.objectContaining({
-        text: "Request timed out while I was still working. Please retry, or narrow the request if it is broad.",
+        text: "Sorry, this request took too long and was stopped. Partial changes may exist. Please try again or ask me to continue.",
       })
     );
   });
@@ -917,7 +934,7 @@ describe("createSlackBot", () => {
 
     expect(apps[0].client.chat.postMessage).toHaveBeenCalledWith(
       expect.objectContaining({
-        text: "Request ran too long and was stopped. Please retry with a narrower request.",
+        text: "Sorry, this request took too long and was stopped. Partial changes may exist. Please try again or ask me to continue.",
       })
     );
   });
@@ -942,9 +959,57 @@ describe("createSlackBot", () => {
 
     expect(apps[0].client.chat.postMessage).toHaveBeenCalledWith(
       expect.objectContaining({
-        text: "Sorry, I encountered an error processing your message.",
+        text: "Something went wrong, please try again.",
       })
     );
+  });
+
+  it.each(failureCases)("posts one %s failure in %s when an event is followed by rejection", async (kind, language, text) => {
+    const { createSlackBot } = await import("./bot.js");
+    const bot = createSlackBot([{ ...agent, language }], config);
+    await bot?.start();
+    mockRunAgent.mockImplementationOnce(async (params: { onEvent?: (event: unknown) => void }) => {
+      params.onEvent?.({ type: "error", kind, message: "secret provider request-id" });
+      throw new Error("secret provider request-id");
+    });
+    await getMessageHandler(apps[0])({
+      message: { ts: "1.1", text: "hello", channel: "C1", user: "U1", channel_type: "channel" },
+      client: apps[0].client,
+    });
+    const failures = apps[0].client.chat.postMessage.mock.calls.filter(([message]) =>
+      message.text === text
+    );
+    expect(failures).toHaveLength(1);
+    expect(JSON.stringify(apps[0].client.chat.postMessage.mock.calls)).not.toContain("secret provider");
+  });
+
+  it("does not post a failure for an interrupted run", async () => {
+    const { createSlackBot } = await import("./bot.js");
+    const bot = createSlackBot([agent], config);
+    await bot?.start();
+    mockRunAgent.mockRejectedValueOnce(Object.assign(new Error("stopped"), { name: "AbortError" }));
+    await getMessageHandler(apps[0])({
+      message: { ts: "1.1", text: "hello", channel: "C1", user: "U1", channel_type: "channel" },
+      client: apps[0].client,
+    });
+    expect(apps[0].client.chat.postMessage).not.toHaveBeenCalled();
+  });
+
+  it.each(["resolved", "rejected"])("does not post after an aborted done event (%s)", async (outcome) => {
+    const { createSlackBot } = await import("./bot.js");
+    const bot = createSlackBot([agent], config);
+    await bot?.start();
+    mockRunAgent.mockImplementationOnce(async (params: { onEvent?: (event: unknown) => void }) => {
+      params.onEvent?.({ type: "done", meta: { aborted: true } });
+      if (outcome === "rejected") throw new Error("provider request interrupted");
+      return { payloads: [], meta: { sessionId: "test-session", aborted: true } };
+    });
+    await getMessageHandler(apps[0])({
+      message: { ts: "1.1", text: "hello", channel: "C1", user: "U1", channel_type: "channel" },
+      client: apps[0].client,
+    });
+    expect(mockRunAgent).toHaveBeenCalledTimes(1);
+    expect(apps[0].client.chat.postMessage).not.toHaveBeenCalled();
   });
 
   it("passes Slack file_share image files as agent attachments", async () => {

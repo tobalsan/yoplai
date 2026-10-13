@@ -977,6 +977,7 @@ describe("container adapter", () => {
     await expect(run).rejects.toThrow(
       "Container exceeded max runtime after 1s"
     );
+    await expect(run).rejects.toMatchObject({ kind: "max_run_time" });
   });
 
   it("stops then kills on idle timeout", async () => {
@@ -1011,6 +1012,7 @@ describe("container adapter", () => {
     await expect(run).rejects.toThrow(
       "Container idle timed out after 1s without activity"
     );
+    await expect(run).rejects.toMatchObject({ kind: "idle_timeout" });
   });
 
   it("resets idle timeout on protocol activity", async () => {
@@ -1101,6 +1103,7 @@ describe("container adapter", () => {
     const run = getContainerAdapter().run(params);
     const rejection = expect(run).rejects.toMatchObject({
       code: "tool_deadline",
+      kind: "tool_deadline",
       message: expect.stringContaining("bash exceeded its deadline after 315s"),
     });
     await vi.advanceTimersByTimeAsync(0);

@@ -170,6 +170,56 @@ describe("ChatView abort handling", () => {
     vi.clearAllMocks();
   });
 
+  it("resets a subscribed failed turn and renders its persisted notice once", async () => {
+    let subscription: { onText?: (text: string) => void; onError?: (text: string) => void; onHistoryUpdated?: () => void } = {};
+    subscribeToSessionMock.mockImplementation((_agentId, _key, callbacks) => {
+      subscription = callbacks;
+      return () => {};
+    });
+    const { container, dispose } = renderView();
+    await tick();
+    subscription.onText?.("partial output");
+    await tick();
+    const text = "Le service IA est temporairement saturé. Merci de réessayer dans quelques minutes.";
+    fetchFullHistoryMock.mockResolvedValue({
+      messages: [{ role: "assistant", content: [{ type: "text", text }], timestamp: Date.now(), meta: { failure: { kind: "rate_limit" } } }],
+      sessionId: "session-main", isStreaming: false, activeTurn: null,
+    });
+    subscription.onError?.("provider secret request-id");
+    subscription.onHistoryUpdated?.();
+    await waitFor(() => expect(container.textContent).toContain(text));
+    expect(container.querySelectorAll(".system-message")).toHaveLength(1);
+    expect(container.textContent).not.toContain("provider secret");
+    expect(container.querySelector(".message.streaming")).toBeNull();
+    dispose();
+  });
+
+  it("reconciles a direct stream notice with persisted history without duplicates", async () => {
+    let onError: ((text: string) => void) | undefined;
+    streamMessageMock.mockImplementation((_agentId, _message, _key, _onText, _onDone, callback) => {
+      onError = callback;
+      return () => {};
+    });
+    const { container, dispose } = renderView();
+    await tick();
+    const textarea = container.querySelector("textarea") as HTMLTextAreaElement;
+    textarea.value = "hello";
+    textarea.dispatchEvent(new Event("input", { bubbles: true }));
+    await tick();
+    (container.querySelector(".send-btn") as HTMLButtonElement).click();
+    await tick();
+    const text = "The AI service is temporarily rate-limited. Please try again in a few minutes.";
+    fetchFullHistoryMock.mockResolvedValue({
+      messages: [{ role: "assistant", content: [{ type: "text", text }], timestamp: Date.now(), meta: { failure: { kind: "rate_limit" } } }],
+      sessionId: "session-main", isStreaming: false, activeTurn: null,
+    });
+    onError?.(text);
+    await waitFor(() => expect(container.querySelector(".system-message")).not.toBeNull());
+    expect(container.textContent?.split(text)).toHaveLength(2);
+    expect(container.textContent).not.toContain("Error:");
+    dispose();
+  });
+
   it("prefills the composer when a starting suggestion is clicked", async () => {
     fetchAgentSuggestionsMock.mockResolvedValue([
       { title: "Plan work", prompt: "Plan this work" },

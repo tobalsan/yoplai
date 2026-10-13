@@ -7,7 +7,7 @@ import type {
   DiscordConfig,
   HeartbeatEventPayload,
 } from "@yoplai/shared";
-import { DEFAULT_MAIN_KEY } from "@yoplai/shared";
+import { classifyRunFailure, runFailureMessage, DEFAULT_MAIN_KEY } from "@yoplai/shared";
 import {
   createCarbonClient,
   getGatewayPlugin,
@@ -193,10 +193,11 @@ async function sendDiscordError(
   client: CarbonClient,
   channelId: string,
   replyToMode: DiscordConfig["replyToMode"],
-  messageId: string
+  messageId: string,
+  text = runFailureMessage("generic", "en")
 ): Promise<void> {
   const errorBody: { content: string; message_reference?: { message_id: string } } = {
-    content: "Sorry, I encountered an error processing your message.",
+    content: text,
   };
   if (replyToMode !== "off") {
     errorBody.message_reference = { message_id: messageId };
@@ -308,7 +309,7 @@ async function handleDiscordMessage(
   } catch (err) {
     console.error(`${target.logPrefix} Error:`, err);
     await ack?.remove();
-    await sendDiscordError(client, data.channel_id, replyToMode, data.id);
+    await sendDiscordError(client, data.channel_id, replyToMode, data.id, runFailureMessage(classifyRunFailure(err), target.agent.language ?? "en"));
     return;
   }
 
@@ -422,7 +423,7 @@ async function handleDiscordMessage(
           replyHandled = true;
           void ack?.remove();
           void display?.abort().catch((err) => console.error(`${target.logPrefix} Reply abort error:`, err));
-          sendDiscordError(client, data.channel_id, replyToMode, data.id).catch((err) => {
+          sendDiscordError(client, data.channel_id, replyToMode, data.id, runFailureMessage(event.kind ?? classifyRunFailure(event.message), target.agent.language ?? "en")).catch((err) => {
             console.error(`${target.logPrefix} Error reply failed:`, err);
           });
           return;
@@ -435,12 +436,12 @@ async function handleDiscordMessage(
       },
     })
     .catch((err) => {
-      if (replyHandled) return;
+      if (replyHandled || (err instanceof Error && err.name === "AbortError")) return;
       replyHandled = true;
       void ack?.remove();
       void display?.abort().catch((err) => console.error(`${target.logPrefix} Reply abort error:`, err));
       console.error(`${target.logPrefix} Error:`, err);
-      sendDiscordError(client, data.channel_id, replyToMode, data.id).catch(() => {});
+      sendDiscordError(client, data.channel_id, replyToMode, data.id, runFailureMessage(classifyRunFailure(err), target.agent.language ?? "en")).catch(() => {});
     });
 }
 
@@ -618,7 +619,7 @@ async function handleForumThreadOpening(
   } catch (err) {
     console.error(`${target.logPrefix} Forum thread context error:`, err);
     await ack?.remove();
-    await sendDiscordError(client, threadId, target.config.replyToMode ?? "off", data.id);
+    await sendDiscordError(client, threadId, target.config.replyToMode ?? "off", data.id, runFailureMessage(classifyRunFailure(err), target.agent.language ?? "en"));
     onSettled?.();
     return;
   }
@@ -703,7 +704,8 @@ async function handleForumThreadOpening(
             client,
             threadId,
             target.config.replyToMode ?? "off",
-            data.id
+            data.id,
+            runFailureMessage(event.kind ?? classifyRunFailure(event.message), target.agent.language ?? "en")
           ).catch((err) => {
             console.error(`${target.logPrefix} Forum thread error reply failed:`, err);
           });
@@ -730,12 +732,12 @@ async function handleForumThreadOpening(
       }
     })
     .catch((err) => {
-      if (replyHandled) return;
+      if (replyHandled || (err instanceof Error && err.name === "AbortError")) return;
       replyHandled = true;
       void ack?.remove();
       void display?.abort().catch((err) => console.error(`${target.logPrefix} Forum thread reply abort error:`, err));
       console.error(`${target.logPrefix} Forum thread error:`, err);
-      sendDiscordError(client, threadId, target.config.replyToMode ?? "off", data.id).catch(
+      sendDiscordError(client, threadId, target.config.replyToMode ?? "off", data.id, runFailureMessage(classifyRunFailure(err), target.agent.language ?? "en")).catch(
         () => {}
       );
     })
@@ -799,7 +801,7 @@ async function handleForumThreadReply(
   } catch (err) {
     console.error(`${target.logPrefix} Forum thread context error:`, err);
     await ack?.remove();
-    await sendDiscordError(client, threadId, target.config.replyToMode ?? "off", data.id);
+    await sendDiscordError(client, threadId, target.config.replyToMode ?? "off", data.id, runFailureMessage(classifyRunFailure(err), target.agent.language ?? "en"));
     return;
   }
 
@@ -890,7 +892,8 @@ async function handleForumThreadReply(
             client,
             threadId,
             target.config.replyToMode ?? "off",
-            data.id
+            data.id,
+            runFailureMessage(event.kind ?? classifyRunFailure(event.message), target.agent.language ?? "en")
           ).catch((err) => {
             console.error(`${target.logPrefix} Forum thread error reply failed:`, err);
           });
@@ -904,12 +907,12 @@ async function handleForumThreadReply(
       },
     })
     .catch((err) => {
-      if (replyHandled) return;
+      if (replyHandled || (err instanceof Error && err.name === "AbortError")) return;
       replyHandled = true;
       void ack?.remove();
       void display?.abort().catch((err) => console.error(`${target.logPrefix} Forum thread reply abort error:`, err));
       console.error(`${target.logPrefix} Forum thread error:`, err);
-      sendDiscordError(client, threadId, target.config.replyToMode ?? "off", data.id).catch(
+      sendDiscordError(client, threadId, target.config.replyToMode ?? "off", data.id, runFailureMessage(classifyRunFailure(err), target.agent.language ?? "en")).catch(
         () => {}
       );
     });

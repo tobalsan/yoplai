@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { AgentConfig } from "@yoplai/shared";
+import { runFailureMessage, type AgentConfig, type RunFailureKind } from "@yoplai/shared";
 import type { SdkAdapter, SdkRunParams } from "../sdk/types.js";
 
 // Real canonical history store + real lifecycle against an isolated temp
@@ -105,11 +105,11 @@ describe("failed-run user message persistence (real store)", () => {
     ).rejects.toThrow("Model not found");
 
     const simple = await getSimpleHistory("alpha", SID);
-    expect(simple).toHaveLength(1);
+    expect(simple).toHaveLength(2);
     expect(simple[0]).toMatchObject({ role: "user", content: "repro-msg" });
 
     const full = await getFullHistory("alpha", SID);
-    expect(full).toHaveLength(1);
+    expect(full).toHaveLength(2);
     expect(full[0]).toMatchObject({ role: "user" });
 
     // Sidebar eligibility: the canonical history file exists on disk.
@@ -198,6 +198,7 @@ describe("failed-run user message persistence (real store)", () => {
     const simple = await getSimpleHistory("alpha", SID);
     expect(simple.map((m) => `${m.role}:${m.content}`)).toEqual([
       "user:first try",
+      "assistant:Something went wrong, please try again.",
       "user:second try",
       "assistant:ok now",
     ]);
@@ -327,6 +328,53 @@ describe("failed-run user message persistence (real store)", () => {
       "user:legacy question",
       "assistant:legacy answer",
       "user:new after legacy",
+      "assistant:Something went wrong, please try again.",
     ]);
+  });
+  it.each<RunFailureKind>([
+    "rate_limit", "quota", "overloaded", "tool_deadline", "max_run_time", "idle_timeout", "generic",
+  ])("persists one localized %s notice after partial output despite adapter error events", async (kind) => {
+    const sessionId = `failure-${kind}`;
+    getAgent.mockReturnValue(createAgent({ language: "fr" }));
+    getSdkAdapter.mockReturnValue(createAdapter(async (params) => {
+      params.onHistoryEvent({ type: "user", text: "request", timestamp: Date.now() });
+      params.onHistoryEvent({ type: "assistant_text", text: "partial", timestamp: Date.now() });
+      params.onEvent({ type: "error", message: "unsafe provider request-id" });
+      throw Object.assign(new Error("unsafe provider request-id"), { kind });
+    }));
+    const onEvent = vi.fn();
+    await expect(runAgent({ agentId: "alpha", message: "request", sessionId, onEvent })).rejects.toThrow("unsafe");
+    const full = await getFullHistory("alpha", sessionId);
+    expect(full.map((entry) => entry.role)).toEqual(["user", "assistant", "assistant"]);
+    expect(full[1]).toMatchObject({ content: [{ type: "text", text: "partial" }] });
+    expect(full[2]).toMatchObject({
+      content: [{ type: "text", text: runFailureMessage(kind, "fr") }],
+      meta: { stopReason: "error", failure: { kind } },
+    });
+    const simple = await getSimpleHistory("alpha", sessionId);
+    expect(simple[2]).toMatchObject({ meta: { failure: { kind } } });
+    expect(onEvent.mock.calls.map(([event]) => event)).toEqual([
+      { type: "error", message: "unsafe provider request-id", kind, userMessage: runFailureMessage(kind, "fr") },
+    ]);
+  });
+
+  it.each(["resolved", "rejected", "signal"])("manual abort (%s) persists partial output without a failure notice", async (mode) => {
+    const sessionId = `abort-${mode}`;
+    getAgent.mockReturnValue(createAgent());
+    const controller = new AbortController();
+    getSdkAdapter.mockReturnValue(createAdapter(async (params) => {
+      params.onHistoryEvent({ type: "assistant_text", text: "partial", timestamp: Date.now() });
+      if (mode === "resolved") return { text: "partial", aborted: true };
+      if (mode === "signal") controller.abort();
+      throw Object.assign(new Error("stopped"), { name: mode === "rejected" ? "AbortError" : "Error" });
+    }));
+    const onEvent = vi.fn();
+    const run = runAgent({ agentId: "alpha", message: "request", sessionId, onEvent, signal: controller.signal });
+    if (mode === "resolved") await run;
+    else await expect(run).rejects.toThrow("stopped");
+    const full = await getFullHistory("alpha", sessionId);
+    expect(full).toHaveLength(2);
+    expect(full.some((entry) => entry.role === "assistant" && entry.meta?.failure)).toBe(false);
+    expect(onEvent.mock.calls.some(([event]) => event.type === "error")).toBe(false);
   });
 });

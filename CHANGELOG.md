@@ -11,6 +11,7 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Added
 
+- Show a safe, localized, persisted assistant notice when a run fails; optionally notify a configured admin channel for provider quota exhaustion, throttled per provider/model to once per hour.
 - Add a core `session_history` agent tool to list, search, and read the agent's own past sessions as condensed text (tool calls merged, thinking dropped, long text truncated with drill-down). Enabled by default; disable with `sessionHistory.enabled: false`.
 
 ### Fixed

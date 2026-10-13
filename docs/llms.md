@@ -106,6 +106,7 @@ name: Assistant
 model:
   provider: anthropic
   model: claude-sonnet-4-5
+language: en
 extensions:
   scheduler:
     enabled: true
@@ -113,6 +114,9 @@ extensions:
 
 Key rules:
 
+- `agent.yaml` may set `language: en | fr` for fixed run-failure notices; it defaults to `en`.
+- Optional root `notifications.adminChannel` names an entry in `notifications.channels`. Only provider quota failures notify it, at most once per provider/model per hour; rate limits and overloads do not.
+- A terminal run failure is persisted as a safe assistant history entry with `meta.stopReason: "error"` and `meta.failure.kind`. Its fixed user-facing text is localized by the agent language; raw provider errors remain diagnostic data and must not be shown as the notice.
 - Root `extensions.<id>` configures/loads an extension; agent `extensions.<id>` opts an agent into tool-style extensions unless `enabled: false`.
 - Agent folders may contain `.env`. `$env:NAME` resolves from agent-local env layered over `$YOPLAI_HOME/.env`, `yoplai.json` `env`, and `process.env`.
 - Agent-local resolved values are passed to extension hooks as `ctx.env`; do not assume they enter global `process.env` or sandbox env.
