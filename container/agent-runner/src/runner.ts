@@ -18,6 +18,7 @@ import {
   type ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
 import { getBuiltInSkillsDir } from "./skills.js";
+import { createDeadlineBashTool } from "./bash-deadline.js";
 import {
   ContainerDeliveryEnvelopeSchema,
   ContainerFileOutputRequestSchema,
@@ -424,6 +425,9 @@ export async function runAgent(
     const builtInTools = ["read", "bash", "edit", "write"];
     const usedToolNames = new Set<string>();
     const customTools = [
+      ...(input.turnDeadlineAt !== undefined
+        ? [createDeadlineBashTool(input.workspaceDir, input.turnDeadlineAt)]
+        : []),
       ...createExtensionTools(input, usedToolNames),
       createSendFileTool(onStreamEvent, usedToolNames),
     ];

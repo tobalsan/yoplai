@@ -73,6 +73,10 @@ Browser code should use browser-safe subpaths, not the package root, which also 
 
 Standalone Node 22 process for sandboxed agents. It reads `ContainerInput` JSON from stdin, runs Pi or Claude, streams framed events on stdout, and writes framed `ContainerOutput`. It may import `@yoplai/shared` and SDK packages, but never gateway source.
 
+Container tool deadlines and verified shutdown live in gateway `sdk/container/`;
+the runner's `bash-deadline.ts` wraps native Pi Bash to respect the gateway's
+non-renewable `ContainerInput.turnDeadlineAt` and report timeout reductions.
+
 ## Configuration invariants
 
 Yoplai uses v3 configuration. Default config is `$YOPLAI_HOME/yoplai.json`, where `YOPLAI_HOME` defaults to `~/.yoplai`. `yoplai.json` is required; runtime does not create it automatically.

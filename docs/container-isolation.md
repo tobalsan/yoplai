@@ -50,6 +50,21 @@ Defaults:
 
 `timeout` remains legacy fallback for `maxRunTime`.
 
+The idle watchdog defaults to 300 seconds. Each observed tool call suspends idle
+expiry and gets its own deadline: a positive finite Bash `timeout` in seconds,
+or 300 seconds for missing/invalid Bash timeouts and other tools, plus 15 seconds
+of grace. There is no policy cap on an explicit Bash timeout. Tool results re-arm
+a full idle interval when no calls remain; text and queued messages never extend
+a tool deadline. Overdue calls fail the run with `tool_deadline`.
+
+`maxRunTime` is independent and never renewed. Pi Bash timeouts are reduced when
+they exceed the remaining turn time, leaving one second for the native timeout
+error to be delivered; the tool result includes `timeout reduced to Ns: turn time limit`.
+The turn watchdog still wins if the agent cannot finish within the turn budget.
+Shutdown coalesces stop requests, falls back to kill after stop failure, and
+verifies stopped/absent state within a 15-second enforcement budget. Late output
+cannot turn a timeout into success.
+
 Transient provider errors are retried the same way inside and outside the sandbox; see the agent-level `retryMaxAttempts`/`retryBaseDelay` keys in [configuration.md](configuration.md).
 
 ## Global sandbox policy

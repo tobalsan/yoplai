@@ -251,9 +251,12 @@ function mockSpawn(): {
 function mockExecFile(complete = true): MockInstance {
   return vi
     .mocked(childProcess.execFile)
-    .mockImplementation((_file, _args, _options, callback) => {
-      if (complete && typeof callback === "function") {
-        callback(null, "", "");
+    .mockImplementation((_file, args, _options, callback) => {
+      if (
+        (complete || args?.[0] !== "stop") &&
+        typeof callback === "function"
+      ) {
+        callback(null, args?.[0] === "inspect" ? "false" : "", "");
       }
       return new EventEmitter() as never;
     });
@@ -350,7 +353,10 @@ describe("container adapter", () => {
           description: "Read scratchpad",
           parameters: { type: "object", properties: {} },
         },
-        expect.objectContaining({ extensionId: "gateway", name: "extract_document" }),
+        expect.objectContaining({
+          extensionId: "gateway",
+          name: "extract_document",
+        }),
       ],
       sdkConfig: {
         sdk: "pi",
@@ -949,6 +955,7 @@ describe("container adapter", () => {
     const execSpy = mockExecFile(false);
 
     const run = getContainerAdapter().run(createParams(agent));
+    void run.catch(() => {});
     await vi.advanceTimersByTimeAsync(0);
     vi.advanceTimersByTime(1_000);
     expect(execSpy).toHaveBeenCalledWith(
@@ -958,11 +965,11 @@ describe("container adapter", () => {
       expect.any(Function)
     );
 
-    vi.advanceTimersByTime(10_000);
+    await vi.advanceTimersByTimeAsync(10_000);
     expect(execSpy).toHaveBeenCalledWith(
       "docker",
       ["kill", expect.stringMatching(/^yoplai-agent-cloud-/)],
-      { timeout: 5_000 },
+      { timeout: 2_000 },
       expect.any(Function)
     );
 
@@ -982,6 +989,7 @@ describe("container adapter", () => {
     const execSpy = mockExecFile(false);
 
     const run = getContainerAdapter().run(createParams(agent));
+    void run.catch(() => {});
     await vi.advanceTimersByTimeAsync(0);
     vi.advanceTimersByTime(1_000);
     expect(execSpy).toHaveBeenCalledWith(
@@ -991,11 +999,11 @@ describe("container adapter", () => {
       expect.any(Function)
     );
 
-    vi.advanceTimersByTime(10_000);
+    await vi.advanceTimersByTimeAsync(10_000);
     expect(execSpy).toHaveBeenCalledWith(
       "docker",
       ["kill", expect.stringMatching(/^yoplai-agent-cloud-/)],
-      { timeout: 5_000 },
+      { timeout: 2_000 },
       expect.any(Function)
     );
 
@@ -1015,6 +1023,7 @@ describe("container adapter", () => {
     const execSpy = mockExecFile(false);
 
     const run = getContainerAdapter().run(createParams(agent));
+    void run.catch(() => {});
     await vi.advanceTimersByTimeAsync(0);
     vi.advanceTimersByTime(800);
     processes[0].emitStreamEvent({
@@ -1034,8 +1043,107 @@ describe("container adapter", () => {
     );
 
     processes[0].finish(137);
+    await vi.advanceTimersByTimeAsync(10_000);
     await expect(run).rejects.toThrow(
       "last activity was history_assistant_text 1s ago"
+    );
+  });
+
+  it.each([
+    { timeout: 400, completeAt: 350 },
+    { timeout: 900, completeAt: 900 },
+  ])(
+    "suspends idle for a silent $timeout second bash and rearms on completion",
+    async ({ timeout, completeAt }) => {
+      vi.useFakeTimers();
+      const root = tempDir();
+      process.env.YOPLAI_HOME = path.join(root, "yoplai");
+      const agent = createAgent(root, { idleTimeout: 300, maxRunTime: 1800 });
+      setConfig(agent, root);
+      const { processes } = mockSpawn();
+      const execSpy = mockExecFile();
+      const run = getContainerAdapter().run(createParams(agent));
+      await vi.advanceTimersByTimeAsync(0);
+      processes[0].emitStreamEvent({
+        type: "tool_call",
+        id: "bash-1",
+        name: "bash",
+        args: { timeout },
+        timestamp: 0,
+      });
+      await vi.advanceTimersByTimeAsync(completeAt * 1000);
+      expect(execSpy).not.toHaveBeenCalled();
+      processes[0].emitStreamEvent({
+        type: "tool_result",
+        id: "bash-1",
+        name: "bash",
+        content: "done",
+        isError: false,
+        timestamp: 0,
+      });
+      await vi.advanceTimersByTimeAsync(299_000);
+      expect(execSpy).not.toHaveBeenCalled();
+      processes[0].emitOutput({ text: "done" });
+      processes[0].finish(0);
+      await expect(run).resolves.toEqual({ text: "done", aborted: undefined });
+    }
+  );
+
+  it("kills an overdue call despite queued messages, overlapping completion, and late success output", async () => {
+    vi.useFakeTimers();
+    const root = tempDir();
+    process.env.YOPLAI_HOME = path.join(root, "yoplai");
+    const agent = createAgent(root, { idleTimeout: 300, maxRunTime: 1800 });
+    setConfig(agent, root);
+    const { processes } = mockSpawn();
+    const execSpy = mockExecFile();
+    const params = createParams(agent);
+    const run = getContainerAdapter().run(params);
+    const rejection = expect(run).rejects.toMatchObject({
+      code: "tool_deadline",
+      message: expect.stringContaining("bash exceeded its deadline after 315s"),
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    const handle = vi.mocked(params.onSessionHandle!).mock.calls[0][0];
+    processes[0].emitStreamEvent({
+      type: "tool_call",
+      id: "long",
+      name: "bash",
+      args: {},
+      timestamp: 0,
+    });
+    processes[0].emitStreamEvent({
+      type: "tool_call",
+      id: "other",
+      name: "bash",
+      args: { timeout: 900 },
+      timestamp: 0,
+    });
+    await vi.advanceTimersByTimeAsync(300_000);
+    await getContainerAdapter().queueMessage!(handle, "keep working");
+    processes[0].emitStreamEvent({
+      type: "assistant_text",
+      text: "working",
+      timestamp: 0,
+    });
+    processes[0].emitStreamEvent({
+      type: "tool_result",
+      id: "other",
+      name: "bash",
+      content: "done",
+      isError: false,
+      timestamp: 0,
+    });
+    expect(execSpy).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(15_000);
+    processes[0].emitOutput({ text: "late success" });
+    processes[0].finish(0);
+    await rejection;
+    expect(execSpy).toHaveBeenCalledWith(
+      "docker",
+      ["stop", expect.any(String)],
+      { timeout: 10_000 },
+      expect.any(Function)
     );
   });
 

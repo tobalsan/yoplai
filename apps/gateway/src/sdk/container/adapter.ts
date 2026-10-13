@@ -15,7 +15,7 @@ import {
   renderAgentContext,
 } from "@yoplai/shared";
 import { loadConfig } from "../../config/index.js";
-import { logInfo, logWarn } from "../../logging.js";
+import { logError, logInfo, logWarn } from "../../logging.js";
 import { RunSettledError } from "../run-settled.js";
 import {
   FIRST_RUN_BOOTSTRAP_PROMPT,
@@ -52,9 +52,11 @@ import { formatImageDescriptionBlocks } from "@yoplai/shared";
 import { ContainerFileOutputAdapter } from "./file-output.js";
 import { ContainerProtocolDecoder, getMeaningfulStderr } from "./protocol.js";
 
+import { stopThenKill } from "./shutdown.js";
+import { ToolDeadlines } from "./tool-deadlines.js";
+
 const DEFAULT_IDLE_TIMEOUT_SECONDS = 300;
 const DEFAULT_MAX_RUNTIME_SECONDS = 1800;
-const STOP_GRACE_MS = 10_000;
 
 type ContainerSessionHandle = {
   containerName: string;
@@ -65,6 +67,7 @@ type ContainerSessionHandle = {
   /** True once the run's IPC namespace has been removed. */
   isSettled?: () => boolean;
   recordQueuedMessageActivity?: () => void;
+  requestStop?: () => void;
 };
 
 function hasReadableDocumentAttachment(params: SdkRunParams): boolean {
@@ -102,27 +105,6 @@ function writeCloseSentinel(ipcDir: string): void {
   const inputDir = path.join(ipcDir, "input");
   fs.mkdirSync(inputDir, { recursive: true });
   fs.writeFileSync(path.join(inputDir, "_close"), "");
-}
-
-function execDocker(args: string[], timeoutMs: number): Promise<void> {
-  return new Promise((resolve) => {
-    childProcess.execFile("docker", args, { timeout: timeoutMs }, () => {
-      resolve();
-    });
-  });
-}
-
-function stopThenKill(containerName: string): void {
-  let stopped = false;
-  void execDocker(["stop", containerName], STOP_GRACE_MS).finally(() => {
-    stopped = true;
-  });
-  const killTimer = setTimeout(() => {
-    if (!stopped) {
-      void execDocker(["kill", containerName], 5_000);
-    }
-  }, STOP_GRACE_MS);
-  killTimer.unref?.();
 }
 
 const isHistoryEvent = (event: unknown): event is HistoryEvent =>
@@ -337,7 +319,10 @@ export function getContainerAdapter(): SdkAdapter {
               )
             )
           : "";
-        const oauthTokens = await resolveOAuthTokens(params.agent, params.model);
+        const oauthTokens = await resolveOAuthTokens(
+          params.agent,
+          params.model
+        );
         registerContainerToken(agentToken, {
           agentId: params.agentId,
           sessionId: params.sessionId,
@@ -400,7 +385,11 @@ export function getContainerAdapter(): SdkAdapter {
         throw error;
       }
       const runAgentToken = agentToken;
-      let timeoutKind: "idle" | "max" | undefined;
+      let timeoutKind: "idle" | "max" | "tool_deadline" | undefined;
+      let timeoutMessage: string | undefined;
+      let shutdown: Promise<void> | undefined;
+      let enforcementError: string | undefined;
+      const toolDeadlines = new ToolDeadlines();
       let aborted = false;
       let settled = false;
       const protocol = new ContainerProtocolDecoder();
@@ -416,6 +405,7 @@ export function getContainerAdapter(): SdkAdapter {
       let lastActivityAt = Date.now();
       let lastActivityType = "container_start";
       let idleTimer: ReturnType<typeof setTimeout> | undefined;
+      let toolTimer: ReturnType<typeof setTimeout> | undefined;
       let maxRunTimeTimer: ReturnType<typeof setTimeout> | undefined;
       const renderedContext = params.context
         ? renderAgentContext(params.context)
@@ -425,6 +415,7 @@ export function getContainerAdapter(): SdkAdapter {
       return new Promise<SdkRunResult>((resolve, reject) => {
         const cleanup = () => {
           if (idleTimer) clearTimeout(idleTimer);
+          if (toolTimer) clearTimeout(toolTimer);
           if (maxRunTimeTimer) clearTimeout(maxRunTimeTimer);
           params.abortSignal.removeEventListener("abort", onAbort);
           removeContainerToken(runAgentToken);
@@ -443,18 +434,61 @@ export function getContainerAdapter(): SdkAdapter {
           return `last activity was ${lastActivityType} ${ageSeconds}s ago`;
         };
 
-        const stopForTimeout = (kind: "idle" | "max"): void => {
+        const enforceStop = (): Promise<void> => {
+          shutdown ??= stopThenKill(containerName).catch((error: unknown) => {
+            enforcementError =
+              error instanceof Error ? error.message : String(error);
+            logError("[container] shutdown enforcement failed", {
+              containerName,
+              error: enforcementError,
+            });
+          });
+          return shutdown;
+        };
+
+        const stopForTimeout = (
+          kind: "idle" | "max" | "tool_deadline",
+          message?: string
+        ): void => {
           if (timeoutKind || settled) return;
           timeoutKind = kind;
-          stopThenKill(containerName);
+          timeoutMessage =
+            message ??
+            (kind === "idle"
+              ? `Container idle timed out after ${idleTimeoutSeconds}s without activity; ${describeLastActivity()}`
+              : `Container exceeded max runtime after ${maxRunTimeSeconds}s; ${describeLastActivity()}`);
+          void enforceStop().then(() => finish(null));
         };
 
         const resetIdleTimer = (): void => {
           if (idleTimer) clearTimeout(idleTimer);
+          if (toolDeadlines.earliest()) return;
           idleTimer = setTimeout(() => {
             stopForTimeout("idle");
           }, idleTimeoutSeconds * 1000);
           idleTimer.unref?.();
+        };
+
+        const updateToolTimer = (): void => {
+          if (toolTimer) clearTimeout(toolTimer);
+          const call = toolDeadlines.earliest();
+          resetIdleTimer();
+          if (!call) return;
+          toolTimer = setTimeout(
+            () => {
+              if (Date.now() < call.deadline) {
+                updateToolTimer();
+                return;
+              }
+              const elapsed = (Date.now() - call.startedAt) / 1000;
+              stopForTimeout(
+                "tool_deadline",
+                `Container tool_deadline: ${call.name} exceeded its deadline after ${elapsed}s`
+              );
+            },
+            Math.min(2_147_483_647, Math.max(0, call.deadline - Date.now()))
+          );
+          toolTimer.unref?.();
         };
 
         const recordActivity = (type: string): void => {
@@ -473,6 +507,10 @@ export function getContainerAdapter(): SdkAdapter {
           isSettled: () => handleSettled,
           recordQueuedMessageActivity: () =>
             recordActivity("queued_user_message"),
+          requestStop: () => {
+            aborted = true;
+            void enforceStop().then(() => finish(null));
+          },
         };
         params.onSessionHandle?.(handle);
 
@@ -508,6 +546,14 @@ export function getContainerAdapter(): SdkAdapter {
               return;
             }
             if (event.type !== "file_output") {
+              if (
+                !settled &&
+                !timeoutKind &&
+                (event.type === "tool_call" || event.type === "tool_result")
+              ) {
+                toolDeadlines.observe(event);
+                updateToolTimer();
+              }
               recordActivity(`history_${event.type}`);
               sawStreamingHistory = true;
               const isInvisibleToolEvent =
@@ -540,6 +586,20 @@ export function getContainerAdapter(): SdkAdapter {
 
           for (const frame of protocol.flush()) {
             handleProtocolEvent(frame.payload);
+          }
+
+          await shutdown;
+          if (timeoutMessage || enforcementError) {
+            const message = [timeoutMessage, enforcementError]
+              .filter(Boolean)
+              .join("; ");
+            params.onEvent({ type: "error", message });
+            reject(
+              Object.assign(new Error(message), {
+                code: timeoutKind ?? "shutdown_enforcement",
+              })
+            );
+            return;
           }
 
           await Promise.all(pendingFileOutputs);
@@ -587,9 +647,11 @@ export function getContainerAdapter(): SdkAdapter {
         const onAbort = () => {
           aborted = true;
           writeCloseSentinel(ipcDir);
-          stopThenKill(containerName);
+          void enforceStop().then(() => finish(null));
         };
 
+        const turnStartedAt = Date.now();
+        input.turnDeadlineAt = turnStartedAt + maxRunTimeSeconds * 1000;
         resetIdleTimer();
         maxRunTimeTimer = setTimeout(() => {
           stopForTimeout("max");
@@ -603,6 +665,10 @@ export function getContainerAdapter(): SdkAdapter {
         });
         child.once("error", (error) => {
           if (settled) return;
+          if (shutdown) {
+            void finish(null);
+            return;
+          }
           settled = true;
           cleanup();
           reject(error);
@@ -663,8 +729,15 @@ export function getContainerAdapter(): SdkAdapter {
       recordQueuedMessageActivity?.();
     },
     abort(handle: unknown) {
-      const { containerName, ipcDir, agentId, sessionId, runId, isSettled } =
-        assertContainerHandle(handle);
+      const {
+        containerName,
+        ipcDir,
+        agentId,
+        sessionId,
+        runId,
+        isSettled,
+        requestStop,
+      } = assertContainerHandle(handle);
       // Nothing left to interrupt, and the sentinel would resurrect the
       // already-removed namespace.
       if (isSettled?.()) return;
@@ -675,7 +748,16 @@ export function getContainerAdapter(): SdkAdapter {
         runId,
         containerName,
       });
-      stopThenKill(containerName);
+      if (requestStop) {
+        requestStop();
+        return;
+      }
+      void stopThenKill(containerName).catch((error: unknown) => {
+        logError("[container] shutdown enforcement failed", {
+          containerName,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      });
     },
   };
 }

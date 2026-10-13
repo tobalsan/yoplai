@@ -2422,6 +2422,8 @@ export const ContainerInputSchema = z.object({
   ipcDir: z.string(),
   gatewayUrl: z.string(),
   agentToken: z.string(),
+  // Gateway-clock deadline, shared by retries and queued follow-ups.
+  turnDeadlineAt: z.number().finite().optional(),
   thinkLevel: ThinkLevelSchema.optional(),
   context: AgentContextSchema.optional(),
   systemFiles: z.array(ContainerSystemFileSchema).optional(),
