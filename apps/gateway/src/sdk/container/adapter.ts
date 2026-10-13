@@ -22,7 +22,7 @@ import {
   ensureWorkspaceFiles,
 } from "../../agents/workspace.js";
 import { getDefaultSdkId, getSdkAdapter } from "../registry.js";
-import { registerContainerToken, removeContainerToken } from "./tokens.js";
+import { abortContainerRun, registerContainerToken, removeContainerToken } from "./tokens.js";
 import { resolveOAuthTokens } from "./oauth-tokens.js";
 import {
   appendAttachmentContext,
@@ -451,6 +451,7 @@ export function getContainerAdapter(): SdkAdapter {
           message?: string
         ): void => {
           if (timeoutKind || settled) return;
+          abortContainerRun(runAgentToken);
           timeoutKind = kind;
           timeoutMessage =
             message ??
@@ -508,6 +509,7 @@ export function getContainerAdapter(): SdkAdapter {
           recordQueuedMessageActivity: () =>
             recordActivity("queued_user_message"),
           requestStop: () => {
+            abortContainerRun(runAgentToken);
             aborted = true;
             void enforceStop().then(() => finish(null));
           },
@@ -645,6 +647,7 @@ export function getContainerAdapter(): SdkAdapter {
         };
 
         const onAbort = () => {
+          abortContainerRun(runAgentToken);
           aborted = true;
           writeCloseSentinel(ipcDir);
           void enforceStop().then(() => finish(null));

@@ -37,7 +37,8 @@ export async function executeExtensionAgentTool(
   runtime: ExtensionRuntime = getExtensionRuntime(),
   sessionId?: string,
   userId?: string,
-  emitProgress?: ExtensionAgentToolContext["emitProgress"]
+  emitProgress?: ExtensionAgentToolContext["emitProgress"],
+  signal?: AbortSignal
 ): Promise<{ found: boolean; result?: unknown }> {
   return runtime.executeTool(
     agent,
@@ -46,6 +47,7 @@ export async function executeExtensionAgentTool(
     config,
     sessionId,
     userId,
-    emitProgress
+    emitProgress,
+    signal
   );
 }

@@ -248,6 +248,11 @@ function mockSpawn(): {
   return { processes, spy };
 }
 
+function gatewayRunSignal(process: FakeDockerProcess): AbortSignal {
+  const input = JSON.parse(process.stdinChunks.join(""));
+  return getContainerTokenContext(input.agentToken)!.abortController.signal;
+}
+
 function mockExecFile(complete = true): MockInstance {
   return vi
     .mocked(childProcess.execFile)
@@ -852,7 +857,11 @@ describe("container adapter", () => {
     ]);
     expect(readQueuedMessages(handleTwo.ipcDir)).toEqual([]);
 
+    const signalOne = gatewayRunSignal(processes[0]);
+    const signalTwo = gatewayRunSignal(processes[1]);
     getContainerAdapter().abort?.(handleOne);
+    expect(signalOne.aborted).toBe(true);
+    expect(signalTwo.aborted).toBe(false);
     expect(fs.existsSync(path.join(handleOne.ipcDir, "input", "_close"))).toBe(
       true
     );
@@ -957,7 +966,10 @@ describe("container adapter", () => {
     const run = getContainerAdapter().run(createParams(agent));
     void run.catch(() => {});
     await vi.advanceTimersByTimeAsync(0);
+    const signal = gatewayRunSignal(processes[0]);
+    expect(signal.aborted).toBe(false);
     vi.advanceTimersByTime(1_000);
+    expect(signal.aborted).toBe(true);
     expect(execSpy).toHaveBeenCalledWith(
       "docker",
       ["stop", expect.stringMatching(/^yoplai-agent-cloud-/)],
@@ -991,7 +1003,10 @@ describe("container adapter", () => {
     const run = getContainerAdapter().run(createParams(agent));
     void run.catch(() => {});
     await vi.advanceTimersByTimeAsync(0);
+    const signal = gatewayRunSignal(processes[0]);
+    expect(signal.aborted).toBe(false);
     vi.advanceTimersByTime(1_000);
+    expect(signal.aborted).toBe(true);
     expect(execSpy).toHaveBeenCalledWith(
       "docker",
       ["stop", expect.stringMatching(/^yoplai-agent-cloud-/)],
@@ -1135,7 +1150,10 @@ describe("container adapter", () => {
       timestamp: 0,
     });
     expect(execSpy).not.toHaveBeenCalled();
+    const signal = gatewayRunSignal(processes[0]);
+    expect(signal.aborted).toBe(false);
     vi.advanceTimersByTime(15_000);
+    expect(signal.aborted).toBe(true);
     processes[0].emitOutput({ text: "late success" });
     processes[0].finish(0);
     await rejection;

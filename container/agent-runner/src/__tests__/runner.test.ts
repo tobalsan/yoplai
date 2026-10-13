@@ -1045,6 +1045,9 @@ describe("Pi runner", () => {
           agentId: "agent-1",
           agentToken: "token-1",
           sessionId: "session-1",
+          toolCallId: "tool-2",
+          timeoutSeconds: 300,
+          modelToolName: "scratchpad_read",
         }),
       })
     );

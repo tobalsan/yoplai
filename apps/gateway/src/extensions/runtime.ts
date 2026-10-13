@@ -277,10 +277,12 @@ export class ExtensionRuntime {
     config: GatewayConfig,
     sessionId?: string,
     userId?: string,
-    emitProgress?: import("@yoplai/shared").ExtensionAgentToolContext["emitProgress"]
+    emitProgress?: import("@yoplai/shared").ExtensionAgentToolContext["emitProgress"],
+    signal?: AbortSignal
   ): Promise<{ found: boolean; result?: unknown }> {
     const tool = await this.getTool(agent, toolName, config, userId);
     if (!tool) return { found: false };
+    signal?.throwIfAborted();
     const env = resolveAgentEnv(agent, config);
     return {
       found: true,
@@ -291,6 +293,7 @@ export class ExtensionRuntime {
         sessionId,
         userId,
         emitProgress,
+        signal,
       }),
     };
   }

@@ -18,13 +18,18 @@ export type ContainerTokenContext = {
     taskId?: string;
   }) => void;
   createdAt: number;
+  abortController: AbortController;
 };
 
 export function registerContainerToken(
   token: string,
-  context: Omit<ContainerTokenContext, "createdAt">
+  context: Omit<ContainerTokenContext, "createdAt" | "abortController">
 ): void {
-  activeTokens.set(token, { ...context, createdAt: Date.now() });
+  activeTokens.set(token, {
+    ...context,
+    createdAt: Date.now(),
+    abortController: new AbortController(),
+  });
 }
 
 export function validateContainerToken(token: string, agentId: string): boolean {
@@ -43,5 +48,17 @@ export function getContainerTokenContext(
 }
 
 export function removeContainerToken(token: string): void {
+  abortContainerRun(token);
   activeTokens.delete(token);
+}
+
+export function abortContainerRun(tokenOrRunId: string): void {
+  const context = activeTokens.get(tokenOrRunId);
+  if (context) {
+    context.abortController.abort();
+    return;
+  }
+  for (const entry of activeTokens.values()) {
+    if (entry.runId === tokenOrRunId) entry.abortController.abort();
+  }
 }

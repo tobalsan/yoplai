@@ -19,6 +19,7 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import { getBuiltInSkillsDir } from "./skills.js";
 import { createDeadlineBashTool } from "./bash-deadline.js";
+import { gatewayTool } from "./gateway-tool.js";
 import {
   ContainerDeliveryEnvelopeSchema,
   ContainerFileOutputRequestSchema,
@@ -40,11 +41,7 @@ import {
   type HistoryEvent,
 } from "@yoplai/shared";
 import { createRuntimeSessionFile } from "@yoplai/shared/node/sanitize-session";
-import {
-  callGatewayTool,
-  fetchOAuthToken,
-  type OAuthTokenInput,
-} from "./gateway-client.js";
+import { fetchOAuthToken, type OAuthTokenInput } from "./gateway-client.js";
 
 // The Pi SDK itself tries `oauth.refresh()` once a stored credential has
 // under 5 minutes of validity left, and throws because our credentials carry
@@ -701,7 +698,9 @@ function createExtensionTools(
       tool.description,
       tool.description,
       tool.parameters,
-      usedToolNames
+      usedToolNames,
+      (result, toolCallId) =>
+        formatGatewayToolResult(input, toolCallId, tool.name, result)
     )
   );
 }
@@ -748,44 +747,6 @@ function createSendFileTool(
       return {
         content: [{ type: "text", text: `File sent to user: ${filePath}` }],
         details: undefined,
-      };
-    },
-  };
-}
-
-function gatewayTool(
-  input: ContainerInput,
-  name: string,
-  label: string,
-  description: string,
-  parameters: unknown,
-  usedToolNames: Set<string>
-): ToolDefinition {
-  return {
-    name: claimAgentToolName(name, usedToolNames),
-    label,
-    description,
-    promptSnippet: description,
-    parameters: parameters as ToolDefinition["parameters"],
-    execute: async (toolCallId, params) => {
-      const result = await callGatewayTool(
-        input.gatewayUrl,
-        input.agentToken,
-        name,
-        params,
-        input.agentId,
-        input.sessionId,
-        input.runId
-      );
-      const text = await formatGatewayToolResult(
-        input,
-        toolCallId,
-        name,
-        result
-      );
-      return {
-        content: [{ type: "text", text }],
-        details: result,
       };
     },
   };

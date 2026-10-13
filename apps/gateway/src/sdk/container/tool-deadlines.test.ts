@@ -39,11 +39,19 @@ describe("per-call deadlines", () => {
       expect(calls.earliest()?.deadline).toBe(315_000);
     }
   );
-  it("defaults other tools even when args contain timeout", () => {
+  it("honors other tools' requested timeout", () => {
     const calls = new ToolDeadlines();
     calls.observe(start("a", "read", { timeout: 900 }));
-    expect(calls.earliest()?.deadline).toBe(315_000);
+    expect(calls.earliest()?.deadline).toBe(915_000);
   });
+  it.each([undefined, "900", 0, -1, NaN, Infinity])(
+    "defaults non-bash invalid timeout %s to 300 seconds",
+    (timeout) => {
+      const calls = new ToolDeadlines();
+      calls.observe(start("a", "mcp__server__tool", { timeout }));
+      expect(calls.earliest()?.deadline).toBe(315_000);
+    }
+  );
   it("keeps overlapping deadlines independent and remembers completed IDs", () => {
     const calls = new ToolDeadlines();
     calls.observe(start("long", "bash", { timeout: 400 }));

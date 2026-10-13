@@ -19,6 +19,9 @@ import { resolveOAuthToken, type OAuthTokenLookup } from "../sdk/container/oauth
 
 const InternalToolRequestSchema = z.object({
   tool: z.string(),
+  toolCallId: z.string().optional(),
+  timeoutSeconds: z.number().optional(),
+  modelToolName: z.string().optional(),
   args: z.unknown(),
   agentId: z.string().optional(),
   agentToken: z.string(),
@@ -40,6 +43,8 @@ type InternalToolsDeps = {
   getRuntime: () => ExtensionRuntime;
   getTokenContext: (token: string) => ContainerTokenContext | undefined;
   executeExtensionTool: typeof executeExtensionAgentTool;
+  extractText: typeof extractText;
+  describeImage: typeof describeImage;
   resolveOAuthToken: (
     provider: string,
     allowedProviders: readonly string[]
@@ -51,6 +56,8 @@ const defaultDeps: InternalToolsDeps = {
   getRuntime: getExtensionRuntime,
   getTokenContext: getContainerTokenContext,
   executeExtensionTool: executeExtensionAgentTool,
+  extractText,
+  describeImage,
   resolveOAuthToken,
 };
 
@@ -94,8 +101,10 @@ function resolveDocumentPath(
 }
 
 async function extractDocument(
+  deps: InternalToolsDeps,
   args: unknown,
-  context: ContainerTokenContext
+  context: ContainerTokenContext,
+  signal: AbortSignal
 ): Promise<{ text: string }> {
   const parsed = z.object({ path: z.string().min(1) }).safeParse(args);
   if (!parsed.success) throw new Error("extract_document requires a path");
@@ -124,10 +133,11 @@ async function extractDocument(
     return !relative.startsWith("..") && !path.isAbsolute(relative);
   });
   if (!approved) throw new Error("Document path is outside approved container roots");
-  return { text: (await extractText(realPath, "application/pdf")) ?? "" };
+  signal.throwIfAborted();
+  return { text: (await deps.extractText(realPath, "application/pdf", signal)) ?? "" };
 }
 
-async function describeContainerImage(args: unknown, context: ContainerTokenContext, config: GatewayConfig): Promise<{ description: string }> {
+async function describeContainerImage(deps: InternalToolsDeps, args: unknown, context: ContainerTokenContext, config: GatewayConfig, signal: AbortSignal): Promise<{ description: string }> {
   const parsed = z.object({ path: z.string().min(1), question: z.string().optional() }).safeParse(args);
   if (!parsed.success) throw new Error("describe_image requires a path");
   const filePath = resolveDocumentPath(parsed.data.path, context.roots);
@@ -136,7 +146,8 @@ async function describeContainerImage(args: unknown, context: ContainerTokenCont
   const realPath = await fs.realpath(filePath).catch(() => { throw new Error("Image was not found under an approved container root"); });
   const roots = await Promise.all(Object.values(context.roots).map((root) => fs.realpath(root).catch(() => undefined)));
   if (!roots.some((root) => root && !path.relative(root, realPath).startsWith("..") && !path.isAbsolute(path.relative(root, realPath)))) throw new Error("Image path is outside approved container roots");
-  return { description: await describeImage(await fs.readFile(realPath), mimeType, config, parsed.data.question) };
+  signal.throwIfAborted();
+  return { description: await deps.describeImage(await fs.readFile(realPath, { signal }), mimeType, config, parsed.data.question, signal) };
 }
 
 async function dispatchInternalTool(
@@ -146,40 +157,25 @@ async function dispatchInternalTool(
   agentId: string,
   sessionId?: string,
   userId?: string,
-  emitProgress?: ContainerTokenContext["emitProgress"]
+  emitProgress?: ContainerTokenContext["emitProgress"],
+  signal?: AbortSignal
 ): Promise<unknown> {
+  signal?.throwIfAborted();
   const config = deps.getConfig();
   const agent = config.agents.find((candidate) => candidate.id === agentId);
   if (!agent) throw new Error(`Unknown agent: ${agentId}`);
-  const extensionResult = emitProgress
-    ? await deps.executeExtensionTool(
-        agent,
-        tool,
-        args,
-        config,
-        deps.getRuntime(),
-        sessionId,
-        userId,
-        emitProgress
-      )
-    : userId === undefined
-      ? await deps.executeExtensionTool(
-          agent,
-          tool,
-          args,
-          config,
-          deps.getRuntime(),
-          sessionId
-        )
-      : await deps.executeExtensionTool(
-          agent,
-          tool,
-          args,
-          config,
-          deps.getRuntime(),
-          sessionId,
-          userId
-        );
+  const extensionResult = await deps.executeExtensionTool(
+    agent,
+    tool,
+    args,
+    config,
+    deps.getRuntime(),
+    sessionId,
+    userId,
+    emitProgress ? (event) => { if (!signal?.aborted) emitProgress(event); } : undefined,
+    signal
+  );
+  signal?.throwIfAborted();
   if (extensionResult.found) return extensionResult.result;
   throw new Error(`Unknown tool: ${tool}`);
 }
@@ -220,22 +216,59 @@ export function createInternalTools(
       );
     }
 
+    const timeoutSeconds = typeof parsed.data.timeoutSeconds === "number" &&
+      Number.isFinite(parsed.data.timeoutSeconds) && parsed.data.timeoutSeconds > 0
+      ? parsed.data.timeoutSeconds : 300;
+    const toolName = parsed.data.modelToolName ?? parsed.data.tool;
+    const startedAt = Date.now();
+    const timeoutController = new AbortController();
+    let timeout: ReturnType<typeof setTimeout> | undefined;
+    const deadlineAt = startedAt + timeoutSeconds * 1000;
+    const armTimeout = () => {
+      const remaining = deadlineAt - Date.now();
+      if (remaining <= 0) timeoutController.abort();
+      else timeout = setTimeout(armTimeout, Math.min(remaining, 2_147_483_647));
+    };
+    armTimeout();
+    const runSignal = context.abortController.signal;
+    const signal = AbortSignal.any([runSignal, timeoutController.signal]);
+    let onAbort: () => void = () => {};
     try {
-      const result = parsed.data.tool === "extract_document"
-        ? await extractDocument(parsed.data.args, context)
+      signal.throwIfAborted();
+      const aborted = new Promise<never>((_resolve, reject) => {
+        onAbort = () => reject(signal.reason);
+        signal.addEventListener("abort", onAbort, { once: true });
+      });
+      const work = parsed.data.tool === "extract_document"
+        ? extractDocument(deps, parsed.data.args, context, signal)
         : parsed.data.tool === "describe_image"
-          ? await describeContainerImage(parsed.data.args, context, deps.getConfig())
-        : await dispatchInternalTool(
+          ? describeContainerImage(deps, parsed.data.args, context, deps.getConfig(), signal)
+        : dispatchInternalTool(
           deps,
           parsed.data.tool,
           parsed.data.args,
           context.agentId,
           context.sessionId,
           context.userId,
-          context.emitProgress
+          context.emitProgress,
+          signal
         );
+      const result = await Promise.race([work, aborted]);
+      signal.throwIfAborted();
       return c.json(result);
     } catch (error) {
+      if (runSignal.aborted) return c.json({ error: "run cancelled" }, 409);
+      if (timeoutController.signal.aborted) {
+        const message = `tool ${toolName} timed out after ${timeoutSeconds}s`;
+        logWarn("[internal-tools] tool timed out", {
+          agentId: context.agentId,
+          runId: context.runId,
+          toolCallId: parsed.data.toolCallId,
+          tool: toolName,
+          elapsed: Date.now() - startedAt,
+        });
+        return c.json({ error: message }, 504);
+      }
       const message =
         error instanceof Error ? error.message : "Tool execution failed";
       if (message.startsWith("Unknown tool: ")) {
@@ -252,6 +285,9 @@ export function createInternalTools(
           ? (status as ContentfulStatusCode)
           : 500;
       return c.json({ error: message }, httpStatus);
+    } finally {
+      clearTimeout(timeout);
+      signal.removeEventListener("abort", onAbort);
     }
   });
 

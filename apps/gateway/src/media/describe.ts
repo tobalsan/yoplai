@@ -11,8 +11,10 @@ export async function describeImage(
   bytes: Buffer,
   mimeType: string,
   config: GatewayConfig,
-  question?: string
+  question?: string,
+  signal?: AbortSignal
 ): Promise<string> {
+  signal?.throwIfAborted();
   const configured = config.imageDescription;
   if (!configured?.enabled) throw new Error("Image description is not configured");
   const runtime = await createModelRuntime();
@@ -23,7 +25,8 @@ export async function describeImage(
     { type: "text", text: question ? `${SYSTEM_PROMPT}\n\nQuestion: ${question}` : SYSTEM_PROMPT },
     { type: "image", data: bytes.toString("base64"), mimeType },
   ] }] };
-  const response = await completeSimple(model, context, { maxTokens: 8_000, temperature: 0 });
+  const response = await completeSimple(model, context, { maxTokens: 8_000, temperature: 0, signal });
+  signal?.throwIfAborted();
   if (response.stopReason === "error") throw new Error(response.errorMessage ?? "Image description failed");
   const description = response.content.filter((part): part is { type: "text"; text: string } => part.type === "text").map((part) => part.text).join("\n").trim();
   // An empty description reads as a successful "nothing there"; fail instead so callers emit the failure notice.

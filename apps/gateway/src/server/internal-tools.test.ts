@@ -6,6 +6,7 @@ import type { GatewayConfig } from "@yoplai/shared";
 import {
   registerContainerToken,
   removeContainerToken,
+  abortContainerRun,
 } from "../sdk/container/tokens.js";
 import { createInternalTools } from "./internal-tools.js";
 
@@ -105,6 +106,7 @@ afterEach(() => {
     removeContainerToken(token);
   }
   vi.clearAllMocks();
+  vi.useRealTimers();
 });
 
 describe("internal tools", () => {
@@ -132,6 +134,128 @@ describe("internal tools", () => {
     });
   });
 
+  it("times out noncooperative work and ignores its late progress and success", async () => {
+    vi.useFakeTimers();
+    const { app, executeExtensionTool } = createDeps();
+    const emitProgress = vi.fn();
+    registerToken("token-timeout", "agent-1", undefined, emitProgress);
+    let finish: (result: unknown) => void = () => {};
+    executeExtensionTool.mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
+    const pending = postTool(app, {
+      tool: "extension.slow", modelToolName: "extension_slow", toolCallId: "call-1",
+      args: {}, sessionId: "session-1", agentId: "agent-1", agentToken: "token-timeout", timeoutSeconds: 1,
+    });
+    await vi.waitFor(() => expect(executeExtensionTool).toHaveBeenCalled());
+    const signal = executeExtensionTool.mock.calls[0][8] as AbortSignal;
+    await vi.advanceTimersByTimeAsync(1000);
+    const response = await pending;
+    expect(response.status).toBe(504);
+    expect(await response.json()).toEqual({ error: "tool extension_slow timed out after 1s" });
+    expect(signal.aborted).toBe(true);
+    executeExtensionTool.mock.calls[0][7]({ label: "Late checkpoint" });
+    finish({ found: true, result: { success: true } });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(emitProgress).not.toHaveBeenCalled();
+  });
+
+  it("aborts running gateway tools when their run stops", async () => {
+    const { app, executeExtensionTool } = createDeps();
+    registerToken("token-abort");
+    executeExtensionTool.mockImplementationOnce(() => new Promise(() => {}));
+    const pending = postTool(app, {
+      tool: "extension.slow", args: {}, sessionId: "session-1", agentId: "agent-1", agentToken: "token-abort",
+    });
+    await vi.waitFor(() => expect(executeExtensionTool).toHaveBeenCalled());
+    const signal = executeExtensionTool.mock.calls[0][8] as AbortSignal;
+    abortContainerRun("token-abort");
+    expect((await pending).status).toBe(409);
+    expect(signal.aborted).toBe(true);
+  });
+
+  it("keeps concurrent gateway call deadlines independent", async () => {
+    vi.useFakeTimers();
+    const { app, executeExtensionTool } = createDeps();
+    registerToken("token-concurrent");
+    executeExtensionTool.mockImplementation(() => new Promise(() => {}));
+    const short = postTool(app, {
+      tool: "extension.slow", args: {}, sessionId: "session-1", agentId: "agent-1", agentToken: "token-concurrent", timeoutSeconds: 1,
+    });
+    const long = postTool(app, {
+      tool: "extension.slow", args: {}, sessionId: "session-1", agentId: "agent-1", agentToken: "token-concurrent", timeoutSeconds: 2,
+    });
+    await vi.waitFor(() => expect(executeExtensionTool).toHaveBeenCalledTimes(2));
+    const shortSignal = executeExtensionTool.mock.calls[0][8] as AbortSignal;
+    const longSignal = executeExtensionTool.mock.calls[1][8] as AbortSignal;
+    await vi.advanceTimersByTimeAsync(1000);
+    expect((await short).status).toBe(504);
+    expect(shortSignal.aborted).toBe(true);
+    expect(longSignal.aborted).toBe(false);
+    await vi.advanceTimersByTimeAsync(1000);
+    expect((await long).status).toBe(504);
+    expect(longSignal.aborted).toBe(true);
+  });
+
+  it.each([undefined, 0, -1])("defaults a %s timeout to 300 seconds", async (timeoutSeconds) => {
+    vi.useFakeTimers();
+    const { app, executeExtensionTool } = createDeps();
+    registerToken("token-default");
+    executeExtensionTool.mockImplementationOnce(() => new Promise(() => {}));
+    const pending = postTool(app, {
+      tool: "extension.slow", args: {}, sessionId: "session-1", agentId: "agent-1", agentToken: "token-default", timeoutSeconds,
+    });
+    await vi.waitFor(() => expect(executeExtensionTool).toHaveBeenCalled());
+    const signal = executeExtensionTool.mock.calls[0][8] as AbortSignal;
+    await vi.advanceTimersByTimeAsync(299_000);
+    expect(signal.aborted).toBe(false);
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(await (await pending).json()).toEqual({ error: "tool extension.slow timed out after 300s" });
+  });
+
+  it("does not truncate budgets above the native timer range", async () => {
+    vi.useFakeTimers();
+    const { app, executeExtensionTool } = createDeps();
+    registerToken("token-long");
+    executeExtensionTool.mockImplementationOnce(() => new Promise(() => {}));
+    const pending = postTool(app, {
+      tool: "extension.slow", args: {}, sessionId: "session-1", agentId: "agent-1", agentToken: "token-long", timeoutSeconds: 3_000_000,
+    });
+    await vi.waitFor(() => expect(executeExtensionTool).toHaveBeenCalled());
+    const signal = executeExtensionTool.mock.calls[0][8] as AbortSignal;
+    await vi.advanceTimersByTimeAsync(2_147_483_647);
+    expect(signal.aborted).toBe(false);
+    abortContainerRun("token-long");
+    expect((await pending).status).toBe(409);
+  });
+
+  it.each(["extract_document", "describe_image"])("passes cancellation into hung %s work", async (tool) => {
+    const workspace = await fs.mkdtemp(path.join(os.tmpdir(), "gateway-tool-cancel-"));
+    const extension = tool === "extract_document" ? "pdf" : "png";
+    await fs.writeFile(path.join(workspace, `input.${extension}`), Buffer.from("test"));
+    const mediaCall = vi.fn().mockImplementation(() => new Promise(() => {}));
+    const app = createInternalTools({
+      getConfig: () => ({ agents: [] }) as unknown as GatewayConfig,
+      extractText: mediaCall,
+      describeImage: mediaCall,
+    });
+    registerToken("token-media", "agent-1", { workspace, data: workspace, uploads: workspace });
+    try {
+      vi.useFakeTimers();
+      const pending = postTool(app, {
+        tool, args: { path: `/workspace/input.${extension}` }, sessionId: "session-1",
+        agentId: "agent-1", agentToken: "token-media", timeoutSeconds: 0.1,
+      });
+      await vi.waitFor(() => expect(mediaCall).toHaveBeenCalled(), { interval: 1 });
+      const signal = mediaCall.mock.calls[0][tool === "extract_document" ? 2 : 4] as AbortSignal;
+      expect(signal).toBeInstanceOf(AbortSignal);
+      await vi.advanceTimersByTimeAsync(100);
+      expect((await pending).status).toBe(504);
+      expect(signal.aborted).toBe(true);
+    } finally {
+      vi.useRealTimers();
+      await fs.rm(workspace, { recursive: true, force: true });
+    }
+  });
+
   it("accepts a valid container token", async () => {
     const { app, executeExtensionTool, runtime } = createDeps();
     const consoleWarn = vi.spyOn(console, "warn").mockImplementation(() => {});
@@ -155,7 +279,10 @@ describe("internal tools", () => {
       { projectId: "PRO-1" },
       expect.objectContaining({ agents: expect.any(Array), extensions: {} }),
       runtime,
-      "session-1"
+      "session-1",
+      undefined,
+      undefined,
+      expect.any(AbortSignal)
     );
     expect(consoleWarn).toHaveBeenCalledWith(
       expect.stringContaining("sandbox image is likely stale")
@@ -356,7 +483,10 @@ describe("internal tools", () => {
       { projectId: "PRO-1" },
       expect.objectContaining({ agents: expect.any(Array), extensions: {} }),
       runtime,
-      "session-1"
+      "session-1",
+      undefined,
+      undefined,
+      expect.any(AbortSignal)
     );
   });
 
@@ -383,7 +513,10 @@ describe("internal tools", () => {
       {},
       expect.objectContaining({ agents: expect.any(Array), extensions: {} }),
       runtime,
-      "session-1"
+      "session-1",
+      undefined,
+      undefined,
+      expect.any(AbortSignal)
     );
   });
 
@@ -407,7 +540,10 @@ describe("internal tools", () => {
       { channel_id: "forum-1", title: "Title", body: "Body" },
       expect.objectContaining({ agents: expect.any(Array), extensions: {} }),
       runtime,
-      "session-1"
+      "session-1",
+      undefined,
+      undefined,
+      expect.any(AbortSignal)
     );
     expect(consoleWarn).not.toHaveBeenCalled();
   });

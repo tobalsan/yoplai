@@ -21,6 +21,17 @@ describe("describeImage", () => {
     expect(completeSimple).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ messages: [expect.objectContaining({ content: expect.arrayContaining([expect.objectContaining({ text: expect.stringContaining("Read row 4") })]) })] }), expect.anything());
   });
 
+  it("forwards cancellation to the model and rejects a late success", async () => {
+    find.mockReturnValue({ input: ["text", "image"] });
+    const controller = new AbortController();
+    completeSimple.mockImplementationOnce(async () => {
+      controller.abort();
+      return { content: [{ type: "text", text: "Late result" }] };
+    });
+    await expect(describeImage(Buffer.from("image"), "image/png", config, undefined, controller.signal)).rejects.toThrow();
+    expect(completeSimple).toHaveBeenLastCalledWith(expect.anything(), expect.anything(), expect.objectContaining({ signal: controller.signal }));
+  });
+
   it("fails loudly when the describer errors or returns nothing", async () => {
     find.mockReturnValue({ input: ["text", "image"] });
     completeSimple.mockResolvedValue({ stopReason: "error", errorMessage: "No API key for provider: openrouter", content: [] });

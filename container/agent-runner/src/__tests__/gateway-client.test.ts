@@ -1,5 +1,37 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { fetchOAuthToken } from "../gateway-client.js";
+import { callGatewayTool, fetchOAuthToken } from "../gateway-client.js";
+
+describe("callGatewayTool", () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  it.each([
+    [500, "<html>Error</html>"],
+    [204, null],
+    [200, "not JSON"],
+    [502, ""],
+  ])(
+    "reports status %s cleanly for invalid/empty bodies",
+    async (status, body) => {
+      vi.spyOn(global, "fetch").mockResolvedValue(
+        new Response(body, { status })
+      );
+      await expect(
+        callGatewayTool("http://gateway", "test-token", "test", {})
+      ).rejects.toThrow(`Gateway tool test failed with ${status}`);
+    }
+  );
+
+  it("retains gateway JSON error details", async () => {
+    vi.spyOn(global, "fetch").mockResolvedValue(
+      Response.json({ error: "tool test timed out after 60s" }, { status: 504 })
+    );
+    await expect(
+      callGatewayTool("http://gateway", "test-token", "test", {})
+    ).rejects.toThrow(
+      "Gateway tool test failed with 504: tool test timed out after 60s"
+    );
+  });
+});
 
 describe("fetchOAuthToken", () => {
   afterEach(() => {

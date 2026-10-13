@@ -51,15 +51,28 @@ Defaults:
 `timeout` remains legacy fallback for `maxRunTime`.
 
 The idle watchdog defaults to 300 seconds. Each observed tool call suspends idle
-expiry and gets its own deadline: a positive finite Bash `timeout` in seconds,
-or 300 seconds for missing/invalid Bash timeouts and other tools, plus 15 seconds
-of grace. There is no policy cap on an explicit Bash timeout. Tool results re-arm
+expiry and gets its own deadline: a positive finite tool `timeout` in seconds,
+or 300 seconds for missing/invalid timeouts, plus 15 seconds
+of grace. There is no policy cap on an explicit timeout. Tool results re-arm
 a full idle interval when no calls remain; text and queued messages never extend
 a tool deadline. Overdue calls fail the run with `tool_deadline`.
 
 `maxRunTime` is independent and never renewed. Pi Bash timeouts are reduced when
 they exceed the remaining turn time, leaving one second for the native timeout
 error to be delivered; the tool result includes `timeout reduced to Ns: turn time limit`.
+
+Gateway tools, including extension/MCP tools, `dashboard_link`,
+`extract_document`, and `describe_image`, also accept optional `timeout` seconds
+and reserve one second when trimming to the remaining turn time. Their deadline
+returns `tool <name> timed out after <N>s` so the agent can continue before the
+watchdog fires. The gateway strips `timeout` from forwarded extension arguments.
+Each call has an independent abort signal, combined with run cancellation;
+manual abort, max runtime, idle shutdown, and tool-deadline shutdown cancel
+in-flight gateway work. Late results and progress are discarded. Extension
+authors must cooperate by forwarding `context.signal` to external requests and
+checking it before side effects: timeout does not prove a remote write did not
+happen. MCP transport cancellation requires the external extension to forward
+this signal.
 The turn watchdog still wins if the agent cannot finish within the turn budget.
 Shutdown coalesces stop requests, falls back to kill after stop failure, and
 verifies stopped/absent state within a 15-second enforcement budget. Late output

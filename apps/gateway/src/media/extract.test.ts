@@ -110,6 +110,79 @@ describe("extractText", () => {
     await expect(extraction).rejects.toThrow("40 second CPU limit");
   });
 
+  it("rejects pre-aborted OCR work before admitting bytes or spawning a child", async () => {
+    const controller = new AbortController();
+    controller.abort(new Error("run cancelled"));
+    expect(() => runPdfOcr(Buffer.alloc(25 * 1024 * 1024), [1], controller.signal)).toThrow("run cancelled");
+    expect(children).toHaveLength(0);
+    const input = Buffer.alloc(25 * 1024 * 1024);
+    const first = runPdfOcr(input, [1]);
+    const second = runPdfOcr(input, [1]);
+    const firstFailure = expect(first).rejects.toThrow("exited before completing");
+    const secondFailure = expect(second).rejects.toThrow("exited before completing");
+    await vi.waitFor(() => expect(children).toHaveLength(2));
+    children[0].emit("exit", 0);
+    children[1].emit("exit", 0);
+    await Promise.all([firstFailure, secondFailure]);
+  });
+
+  it("kills an aborted OCR child and ignores its late successful output", async () => {
+    const controller = new AbortController();
+    const pending = runPdfOcr(Buffer.from("fixture"), [1], controller.signal);
+    const rejected = expect(pending).rejects.toThrow("run cancelled");
+    await vi.waitFor(() => expect(children).toHaveLength(1));
+    controller.abort(new Error("run cancelled"));
+    expect(children[0].kill).toHaveBeenCalledTimes(1);
+    children[0].emit("message", { pages: [{ number: 1, text: "late success" }] });
+    children[0].emit("exit", 0);
+    await rejected;
+  });
+
+  it("removes cancelled queued work and frees its byte admission for another job", async () => {
+    const first = runPdfOcr(Buffer.alloc(1), [1]);
+    const second = runPdfOcr(Buffer.alloc(1), [1]);
+    const firstFailure = expect(first).rejects.toThrow("exited before completing");
+    const secondFailure = expect(second).rejects.toThrow("exited before completing");
+    const controller = new AbortController();
+    const queued = runPdfOcr(Buffer.alloc(25 * 1024 * 1024), [1], controller.signal);
+    const queuedFailure = expect(queued).rejects.toThrow("queued call cancelled");
+    controller.abort(new Error("queued call cancelled"));
+    await queuedFailure;
+    const replacement = runPdfOcr(Buffer.alloc(25 * 1024 * 1024), [1]);
+    const replacementTwo = runPdfOcr(Buffer.alloc(25 * 1024 * 1024 - 2), [1]);
+    const replacementFailure = expect(replacement).rejects.toThrow("exited before completing");
+    const replacementTwoFailure = expect(replacementTwo).rejects.toThrow("exited before completing");
+    await vi.waitFor(() => expect(children).toHaveLength(2));
+    children[0].emit("exit", 0);
+    children[1].emit("exit", 0);
+    await vi.waitFor(() => expect(children).toHaveLength(4));
+    children[2].emit("exit", 0);
+    children[3].emit("exit", 0);
+    await Promise.all([firstFailure, secondFailure, replacementFailure, replacementTwoFailure]);
+  });
+
+  it("does not spawn queued work aborted between slot release and its continuation", async () => {
+    const first = runPdfOcr(Buffer.alloc(1), [1]);
+    const second = runPdfOcr(Buffer.alloc(1), [1]);
+    const firstFailure = expect(first).rejects.toThrow("exited before completing");
+    const secondFailure = expect(second).rejects.toThrow("exited before completing");
+    const controller = new AbortController();
+    const queued = runPdfOcr(Buffer.alloc(1), [1], controller.signal);
+    const queuedFailure = expect(queued).rejects.toThrow("run cancelled");
+    await vi.waitFor(() => expect(children).toHaveLength(2));
+    children[0].emit("exit", 0);
+    controller.abort(new Error("run cancelled"));
+    await queuedFailure;
+    expect(children).toHaveLength(2);
+    children[1].emit("exit", 0);
+    await Promise.all([firstFailure, secondFailure]);
+    const next = runPdfOcr(Buffer.alloc(1), [1]);
+    const nextFailure = expect(next).rejects.toThrow("exited before completing");
+    await vi.waitFor(() => expect(children).toHaveLength(3));
+    children[2].emit("exit", 0);
+    await nextFailure;
+  });
+
   it("rejects OCR work beyond the 50MiB aggregate admission limit", async () => {
     const input = Buffer.alloc(25 * 1024 * 1024);
     const first = runPdfOcr(input, [1]);

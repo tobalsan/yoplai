@@ -25,7 +25,6 @@ export class ToolDeadlines {
           ? event.args.timeout
           : undefined;
       const budget =
-        event.name === "bash" &&
         typeof timeout === "number" &&
         Number.isFinite(timeout) &&
         timeout > 0

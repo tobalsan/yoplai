@@ -261,6 +261,23 @@ describe("ExtensionRuntime", () => {
     );
   });
 
+  it("passes the call abort signal into executing extension tools", async () => {
+    const execute = vi.fn(async () => ({ ok: true }));
+    const runtime = new ExtensionRuntime();
+    runtime.load([extension({
+      id: "sample",
+      getAgentTools: () => [{
+        name: "sample_run", description: "Run sample", parameters: { type: "object" }, execute,
+      }],
+    })]);
+    const controller = new AbortController();
+    await runtime.executeTool(agent, "sample_run", {}, config, undefined, undefined, undefined, controller.signal);
+    expect(execute).toHaveBeenCalledWith({}, expect.objectContaining({ signal: controller.signal }));
+    controller.abort();
+    await expect(runtime.executeTool(agent, "sample_run", {}, config, undefined, undefined, undefined, controller.signal)).rejects.toThrow();
+    expect(execute).toHaveBeenCalledTimes(1);
+  });
+
   it("passes requester identity into extension hooks and tool execution", async () => {
     let promptUserId: string | undefined;
     let toolUserId: string | undefined;

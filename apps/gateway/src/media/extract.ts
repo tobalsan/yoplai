@@ -34,14 +34,16 @@ const ocrWaiters: Array<{ bytes: number; resolve: () => void; reject: (error: Er
 
 export async function extractText(
   filePath: string,
-  mimeType: string
+  mimeType: string,
+  signal?: AbortSignal
 ): Promise<string | null> {
+  signal?.throwIfAborted();
   if (RAW_TEXT_MIME_TYPES.has(mimeType)) {
-    return fs.readFile(filePath, "utf8");
+    return fs.readFile(filePath, { encoding: "utf8", signal });
   }
 
   if (mimeType === "application/pdf") {
-    return extractPdfText(filePath);
+    return extractPdfText(filePath, signal);
   }
 
   if (
@@ -59,17 +61,19 @@ export async function extractText(
   return null;
 }
 
-async function extractPdfText(filePath: string): Promise<string> {
-  const buffer = await fs.readFile(filePath);
-  return extractPdfBuffer(buffer);
+async function extractPdfText(filePath: string, signal?: AbortSignal): Promise<string> {
+  const buffer = await fs.readFile(filePath, { signal });
+  return extractPdfBuffer(buffer, signal);
 }
 
-export async function extractPdfBuffer(buffer: Buffer): Promise<string> {
+export async function extractPdfBuffer(buffer: Buffer, signal?: AbortSignal): Promise<string> {
+  signal?.throwIfAborted();
   if (buffer.length > MAX_PDF_BYTES) throw new Error("PDF exceeds the 25MB extraction limit");
   const parser = new PDFParse({ data: new Uint8Array(buffer) });
 
   try {
     const result = await parser.getText();
+    signal?.throwIfAborted();
     if (result.total > MAX_PDF_PAGES) {
       throw new Error(`PDF has ${result.total} pages; limit is ${MAX_PDF_PAGES}`);
     }
@@ -81,7 +85,7 @@ export async function extractPdfBuffer(buffer: Buffer): Promise<string> {
       if (text.length > MAX_PDF_OUTPUT) throw new Error("PDF text exceeds output limit");
       return text;
     }
-    const ocrPages = await runPdfOcr(buffer, sparsePages);
+    const ocrPages = await runPdfOcr(buffer, sparsePages, signal);
     const text = result.pages
       .map((page) => ocrPages.get(page.num) || page.text.trim())
       .filter(Boolean)
@@ -98,16 +102,23 @@ export async function extractPdfBuffer(buffer: Buffer): Promise<string> {
   }
 }
 
-export function runPdfOcr(data: Buffer, pages: number[]): Promise<Map<number, string>> {
-  return acquireOcrSlot(data.length).then(() => new Promise((resolve, reject) => {
+export function runPdfOcr(data: Buffer, pages: number[], signal?: AbortSignal): Promise<Map<number, string>> {
+  return acquireOcrSlot(data.length, signal).then(() => new Promise((resolve, reject) => {
     let released = false;
+    const onAbort = () => finish(signal?.reason instanceof Error ? signal.reason : new Error("PDF OCR cancelled"));
     const release = () => {
       if (released) return;
       released = true;
+      signal?.removeEventListener("abort", onAbort);
       activeOcrWorkers -= 1;
       admittedOcrBytes -= data.length;
       ocrWaiters.shift()?.resolve();
     };
+    if (signal?.aborted) {
+      release();
+      reject(signal.reason);
+      return;
+    }
     let child: ReturnType<typeof fork>;
     let settled = false;
     let result: Array<{ number: number; text: string }> | undefined;
@@ -146,6 +157,7 @@ export function runPdfOcr(data: Buffer, pages: number[]): Promise<Map<number, st
       reject(error);
       return;
     }
+    signal?.addEventListener("abort", onAbort, { once: true });
     const timer = setTimeout(() => finish(new Error("PDF OCR timed out after 45 seconds")), OCR_TIMEOUT_MS);
     child.on("message", (message: { pages?: Array<{ number: number; text: string }>; error?: string; rss?: number; cpuMs?: number }) => {
       if (message.rss && message.rss > PDF_OCR_LIMITS.childRssMb * 1024 * 1024) finish(new Error("PDF OCR exceeded the 512MB memory limit"));
@@ -162,6 +174,10 @@ export function runPdfOcr(data: Buffer, pages: number[]): Promise<Map<number, st
       else if (failure) reject(failure);
       else resolve(new Map(result?.map((page) => [page.number, page.text])));
     });
+    if (signal?.aborted) {
+      onAbort();
+      return;
+    }
     try {
       child.send({ data, pages, maxPages: MAX_PDF_PAGES, maxOutput: MAX_PDF_OUTPUT }, (error) => { if (error) finish(error); });
     } catch (error) {
@@ -170,7 +186,8 @@ export function runPdfOcr(data: Buffer, pages: number[]): Promise<Map<number, st
   }));
 }
 
-function acquireOcrSlot(bytes: number): Promise<void> {
+function acquireOcrSlot(bytes: number, signal?: AbortSignal): Promise<void> {
+  signal?.throwIfAborted();
   if (admittedOcrBytes + bytes > PDF_OCR_LIMITS.aggregateInputBytes) return Promise.reject(new Error("PDF OCR input admission limit reached; try again shortly"));
   admittedOcrBytes += bytes;
   if (activeOcrWorkers < MAX_OCR_CONCURRENCY) {
@@ -179,7 +196,31 @@ function acquireOcrSlot(bytes: number): Promise<void> {
   }
   if (ocrWaiters.length >= PDF_OCR_LIMITS.queue) { admittedOcrBytes -= bytes; return Promise.reject(new Error("PDF OCR queue is full; try again shortly")); }
   return new Promise((resolve, reject) => {
-    const waiter = { bytes, resolve: () => { clearTimeout(waiter.timer); activeOcrWorkers += 1; resolve(); }, reject, timer: setTimeout(() => { const index = ocrWaiters.indexOf(waiter); if (index >= 0) ocrWaiters.splice(index, 1); admittedOcrBytes -= bytes; reject(new Error("PDF OCR queue timed out after 10 seconds")); }, PDF_OCR_LIMITS.queueWaitMs) };
+    const cleanup = () => {
+      clearTimeout(waiter.timer);
+      signal?.removeEventListener("abort", onAbort);
+    };
+    const onAbort = () => {
+      const index = ocrWaiters.indexOf(waiter);
+      if (index < 0) return;
+      ocrWaiters.splice(index, 1);
+      admittedOcrBytes -= bytes;
+      cleanup();
+      reject(signal?.reason);
+    };
+    const waiter = {
+      bytes,
+      resolve: () => { cleanup(); activeOcrWorkers += 1; resolve(); },
+      reject,
+      timer: setTimeout(() => {
+        const index = ocrWaiters.indexOf(waiter);
+        if (index >= 0) ocrWaiters.splice(index, 1);
+        admittedOcrBytes -= bytes;
+        cleanup();
+        reject(new Error("PDF OCR queue timed out after 10 seconds"));
+      }, PDF_OCR_LIMITS.queueWaitMs),
+    };
+    signal?.addEventListener("abort", onAbort, { once: true });
     ocrWaiters.push(waiter);
   });
 }

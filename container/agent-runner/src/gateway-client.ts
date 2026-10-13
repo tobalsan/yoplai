@@ -5,10 +5,17 @@ export async function callGatewayTool(
   args: unknown,
   agentId = "",
   sessionId?: string,
-  runId?: string
+  runId?: string,
+  options: {
+    toolCallId?: string;
+    timeoutSeconds?: number;
+    modelToolName?: string;
+    signal?: AbortSignal;
+  } = {}
 ): Promise<unknown> {
   const response = await fetch(new URL("/internal/tools", gatewayUrl), {
     method: "POST",
+    signal: options.signal,
     headers: {
       "content-type": "application/json",
       "X-Agent-Id": agentId,
@@ -21,11 +28,14 @@ export async function callGatewayTool(
       agentToken,
       sessionId,
       runId,
+      toolCallId: options.toolCallId,
+      timeoutSeconds: options.timeoutSeconds,
+      modelToolName: options.modelToolName,
     }),
   });
 
-  const result = (await response.json()) as unknown;
   if (!response.ok) {
+    const result = await readJsonBody(response);
     const detail =
       result && typeof result === "object" && "error" in result
         ? (result as { error: unknown }).error
@@ -33,6 +43,11 @@ export async function callGatewayTool(
     throw new Error(
       `Gateway tool ${tool} failed with ${response.status}${detail ? `: ${detail}` : ""}`
     );
+  }
+
+  const result = await readJsonBody(response);
+  if (result === undefined) {
+    throw new Error(`Gateway tool ${tool} failed with ${response.status}`);
   }
 
   return result;

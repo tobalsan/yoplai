@@ -77,6 +77,20 @@ Container tool deadlines and verified shutdown live in gateway `sdk/container/`;
 the runner's `bash-deadline.ts` wraps native Pi Bash to respect the gateway's
 non-renewable `ContainerInput.turnDeadlineAt` and report timeout reductions.
 
+Gateway tools (extensions, MCP, `dashboard_link`, `extract_document`, and
+`describe_image`) expose an optional `timeout` in seconds in the container.
+Positive finite values are honored without a policy cap; missing or invalid
+values default to 300 seconds. The runner strips this metadata from extension
+arguments and trims the budget to the remaining turn time minus one second,
+reporting `timeout reduced to Ns: turn time limit`. A per-call timeout returns
+a tool error and lets the agent continue; the watchdog allows 15 seconds of grace.
+Extension tool authors receive `context.signal?: AbortSignal`: forward it to
+network calls and check it before progress or side effects. Cancellation is
+cooperative; a timeout does not prove a remote side effect did not happen.
+Run cancellation and container shutdown abort in-flight gateway calls, and
+late results/progress are discarded. External MCP clients must forward the
+signal themselves; the platform cannot cancel their remote transport alone.
+
 ## Configuration invariants
 
 Yoplai uses v3 configuration. Default config is `$YOPLAI_HOME/yoplai.json`, where `YOPLAI_HOME` defaults to `~/.yoplai`. `yoplai.json` is required; runtime does not create it automatically.
