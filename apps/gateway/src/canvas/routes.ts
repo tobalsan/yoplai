@@ -75,8 +75,11 @@ export type DashboardRouteDependencies = {
   hasAgentAccess(auth: unknown, agentId: string): Promise<boolean>;
 };
 
-export function dashboardCsp(config: GatewayConfig): string {
-  const assets = `${dashboardBaseUrl(config)}/d-assets/`;
+export function dashboardCsp(
+  config: GatewayConfig,
+  assetOrigin?: string
+): string {
+  const assets = `${assetOrigin ?? dashboardBaseUrl(config)}/d-assets/`;
   return `sandbox allow-scripts allow-downloads allow-modals; default-src 'none'; script-src 'unsafe-inline' ${assets}; style-src 'unsafe-inline' ${assets}; img-src data: blob:; font-src data: ${assets}; connect-src 'none'`;
 }
 
@@ -161,13 +164,6 @@ export function createDashboardRoutes(deps: DashboardRouteDependencies): Hono {
           : {};
       const url = new URL(c.req.url);
       const params = Object.fromEntries(url.searchParams.entries());
-      const bindings: Record<string, string | null> = {
-        ...params,
-        viewer_email: viewer.email ?? null,
-        viewer_name: viewer.name ?? null,
-        today: new Date().toISOString().slice(0, 10),
-      };
-      const result = await executeDashboardQueries(agent, html, bindings);
       const dashboards = await Promise.all(
         (await listDashboardSlugs(agent)).map((slug) =>
           deps.registry.link(agent.id, slug)
@@ -176,15 +172,12 @@ export function createDashboardRoutes(deps: DashboardRouteDependencies): Hono {
       const links = Object.fromEntries(
         dashboards.map((dashboard) => [dashboard.slug, `/d/${dashboard.id}`])
       );
-      html = injectDashboardRuntime(
+      html = await renderDashboardHtml(
+        agent,
         html,
-        {
-          data: result.data,
-          viewer: { email: viewer.email ?? null, name: viewer.name ?? null },
-          params,
-          links,
-          errors: result.errors,
-        },
+        viewer,
+        params,
+        links,
         parseThemeCookie(c.req.header("Cookie"))
       );
       c.header("Content-Security-Policy", dashboardCsp(config));
@@ -197,6 +190,36 @@ export function createDashboardRoutes(deps: DashboardRouteDependencies): Hono {
     }
   });
   return routes;
+}
+
+export async function renderDashboardHtml(
+  agent: AgentConfig,
+  html: string,
+  viewer: Viewer,
+  params: Record<string, string>,
+  links: Record<string, string>,
+  theme?: "light" | "dark" | null,
+  protectedLinkParams?: Record<string, string>
+): Promise<string> {
+  const bindings: Record<string, string | null> = {
+    ...params,
+    viewer_email: viewer.email ?? null,
+    viewer_name: viewer.name ?? null,
+    today: new Date().toISOString().slice(0, 10),
+  };
+  const result = await executeDashboardQueries(agent, html, bindings);
+  return injectDashboardRuntime(
+    html,
+    {
+      data: result.data,
+      viewer: { email: viewer.email ?? null, name: viewer.name ?? null },
+      params,
+      links,
+      errors: result.errors,
+      protectedLinkParams,
+    },
+    theme
+  );
 }
 
 function safeJson(value: unknown): string {
@@ -224,6 +247,7 @@ export function injectDashboardRuntime(
     params: Record<string, string>;
     links: Record<string, string>;
     errors: Array<{ name: string; error: string }>;
+    protectedLinkParams?: Record<string, string>;
   },
   themeCookie?: "light" | "dark" | null
 ): string {
@@ -243,7 +267,7 @@ export function injectDashboardRuntime(
   const theme = '<link rel="stylesheet" href="/d-assets/theme.css">';
   const hasClosingHead = /<\/head\s*>/i.test(html);
   if (hasClosingHead) html = html.replace(/<\/head\s*>/i, `${theme}</head>`);
-  const bootstrap = `<script>(function(r){const build=(base,p)=>{const u=new URL(base,location.origin);for(const [k,v] of Object.entries(p||{}))u.searchParams.set(k,String(v));return u.pathname+u.search};window.YOPLAI={data:r.data,viewer:r.viewer,params:r.params,link:(slug,p)=>{const base=r.links[slug];if(!base)throw new Error("Unknown dashboard: "+slug);return build(base,p)}}})(${safeJson(runtime)});</script>`;
+  const bootstrap = `<script>(function(r){const build=(base,p)=>{const u=new URL(base,location.origin);for(const [k,v] of Object.entries(p||{}))u.searchParams.set(k,String(v));return u.pathname+u.search};window.YOPLAI={data:r.data,viewer:r.viewer,params:r.params,link:(slug,p)=>{const base=r.links[slug];if(!base)throw new Error("Unknown dashboard: "+slug);return build(base,{...p,...r.protectedLinkParams})}};for(const e of r.errors)console.error("Dashboard query error ("+e.name+"): "+e.error)})(${safeJson(runtime)});</script>`;
   const errors = runtime.errors.length
     ? `<section role="alert" style="font:14px sans-serif;background:#fee;color:#900;border:1px solid #d88;padding:12px;margin:12px"><strong>Dashboard query error</strong>${runtime.errors.map((error) => `<div><code>${escapeHtml(error.name)}</code>: ${escapeHtml(error.error)}</div>`).join("")}</section>`
     : "";

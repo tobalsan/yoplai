@@ -1,0 +1,13 @@
+{
+  "browser": {
+    "browserName": "chromium",
+    "isolated": true,
+    "launchOptions": {
+      "channel": "chromium",
+      "headless": true,
+      "args": ["--no-sandbox", "--disable-dev-shm-usage"]
+    }
+  },
+  "outputDir": "/tmp/playwright",
+  "timeouts": { "navigation": 10000 }
+}

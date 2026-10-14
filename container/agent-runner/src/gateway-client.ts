@@ -1,3 +1,25 @@
+import { Agent } from "undici";
+
+const socketDispatchers = new Map<string, Agent>();
+
+/**
+ * Routes a gateway request through a Unix socket when one is configured, so
+ * the container needs no network path to the host. The URL still supplies the
+ * request path; its host is ignored by the socket connection.
+ */
+function withGatewayTransport(
+  init: RequestInit,
+  socketPath: string | undefined
+): RequestInit {
+  if (!socketPath) return init;
+  let dispatcher = socketDispatchers.get(socketPath);
+  if (!dispatcher) {
+    dispatcher = new Agent({ connect: { socketPath } });
+    socketDispatchers.set(socketPath, dispatcher);
+  }
+  return { ...init, dispatcher } as RequestInit;
+}
+
 export async function callGatewayTool(
   gatewayUrl: string,
   agentToken: string,
@@ -5,9 +27,10 @@ export async function callGatewayTool(
   args: unknown,
   agentId = "",
   sessionId?: string,
-  runId?: string
+  runId?: string,
+  socketPath?: string
 ): Promise<unknown> {
-  const response = await fetch(new URL("/internal/tools", gatewayUrl), {
+  const response = await fetch(new URL("/internal/tools", gatewayUrl), withGatewayTransport({
     method: "POST",
     headers: {
       "content-type": "application/json",
@@ -22,7 +45,7 @@ export async function callGatewayTool(
       sessionId,
       runId,
     }),
-  });
+  }, socketPath));
 
   const result = (await response.json()) as unknown;
   if (!response.ok) {
@@ -40,6 +63,7 @@ export async function callGatewayTool(
 
 export interface OAuthTokenInput {
   gatewayUrl: string;
+  gatewaySocketPath?: string;
   agentToken: string;
   agentId: string;
   sessionId?: string;
@@ -52,7 +76,7 @@ export async function fetchOAuthToken(
 ): Promise<{ accessToken: string; expiresAt: number }> {
   const response = await fetch(
     new URL("/internal/oauth-token", input.gatewayUrl),
-    {
+    withGatewayTransport({
       method: "POST",
       headers: {
         "content-type": "application/json",
@@ -66,7 +90,7 @@ export async function fetchOAuthToken(
         sessionId: input.sessionId,
         runId: input.runId,
       }),
-    }
+    }, input.gatewaySocketPath)
   );
 
   const result = await readJsonBody(response);

@@ -16,6 +16,12 @@ import { getExtensionRuntime } from "../extensions/registry.js";
 import type { ExtensionRuntime } from "../extensions/runtime.js";
 import { logError, logWarn } from "../logging.js";
 import { resolveOAuthToken, type OAuthTokenLookup } from "../sdk/container/oauth-tokens.js";
+import {
+  listDashboardSlugs,
+  normalizeDashboardSlug,
+  openDashboardFile,
+} from "../canvas/dashboard-files.js";
+import { dashboardCsp, renderDashboardHtml } from "../canvas/routes.js";
 
 const InternalToolRequestSchema = z.object({
   tool: z.string(),
@@ -189,6 +195,63 @@ export function createInternalTools(
 ): Hono {
   const deps = { ...defaultDeps, ...overrides };
   const app = new Hono();
+
+  app.get("/dashboards/:slug/html", async (c) => {
+    const token = c.req.header("X-Agent-Token") ?? c.req.query("token");
+    const context = token ? deps.getTokenContext(token) : undefined;
+    if (!context) return c.json({ error: "Invalid agent token" }, 401);
+    const config = deps.getConfig();
+    const agent = config.agents.find(
+      (candidate) => candidate.id === context.agentId
+    );
+    if (!agent || config.canvas?.enabled === false) return c.notFound();
+    let slug: string;
+    try {
+      slug = normalizeDashboardSlug(c.req.param("slug"));
+    } catch {
+      return c.notFound();
+    }
+    try {
+      const file = await openDashboardFile(agent, slug);
+      let html: string;
+      try {
+        html = await file.readFile("utf8");
+      } finally {
+        await file.close();
+      }
+      const search = new URL(c.req.url).searchParams;
+      const themeValue = search.get("theme");
+      const theme =
+        themeValue === "light" || themeValue === "dark" ? themeValue : null;
+      search.delete("theme");
+      search.delete("token");
+      const params = Object.fromEntries(search.entries());
+      const links = Object.fromEntries(
+        (await listDashboardSlugs(agent)).map((target) => {
+          const query = new URLSearchParams({ token: token! });
+          if (theme) query.set("theme", theme);
+          return [
+            target,
+            `/internal/dashboards/${encodeURIComponent(target)}/html?${query}`,
+          ];
+        })
+      );
+      html = await renderDashboardHtml(agent, html, {}, params, links, theme, {
+        token: token!,
+        ...(theme ? { theme } : {}),
+      });
+      c.header(
+        "Content-Security-Policy",
+        dashboardCsp(config, new URL(c.req.url).origin)
+      );
+      c.header("Cache-Control", "no-store");
+      return c.html(html);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT")
+        return c.notFound();
+      throw error;
+    }
+  });
 
   app.post("/tools", async (c) => {
     const body = await c.req.json();

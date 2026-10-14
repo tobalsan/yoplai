@@ -12,6 +12,8 @@ Breaking changes are marked **⚠ BREAKING**.
 ### Added
 
 - Show a safe, localized, persisted assistant notice when a run fails; optionally notify a configured admin channel for provider quota exhaustion, throttled per provider/model to once per hour.
+- Add preinstalled Chromium and `playwright-cli` to sandbox agents, with authenticated dashboard previews and a visual-check recipe for themes, mobile layouts, and drill-downs.
+- `sandbox.gatewayTransport: "socket"` lets sandboxed runs reach the gateway through a read-only mounted Unix socket that serves only `/internal`, instead of `host.docker.internal`. Fixes every gateway tool (`dashboard_link`, scheduler tools, `extract_document`, extension and MCP tools) and OAuth renewal failing with `fetch failed` whenever containers have no route to the host, as under rootless Docker.
 - Add a core `session_history` agent tool to list, search, and read the agent's own past sessions as condensed text (tool calls merged, thinking dropped, long text truncated with drill-down). Enabled by default; disable with `sessionHistory.enabled: false`.
 
 ### Fixed
@@ -20,6 +22,7 @@ Breaking changes are marked **⚠ BREAKING**.
 - Keep sessions usable after `/compact` when retained messages include attachments: the reseeded Pi session now references files as text instead of dataless images that made Anthropic reject every later turn (`image.source.base64.data: Field required`).
 - Preserve assistant text replay signatures in persisted Pi sessions so subsequent OpenAI Responses turns do not fail with an invalid message ID, while continuing to redact credentials.
 - Preserve Pi OAuth credentials during initial authentication, per-run model overrides, and fallback model selection instead of converting access tokens into API-key overrides that break OAuth-only providers such as `openai-codex`.
+- Canvas dashboards no longer show "This dashboard hit an error" for errors thrown by browser extensions injected into the page (e.g. an extension reading `sessionStorage`, which the sandboxed dashboard document forbids). Errors whose source is a `chrome-extension://`, `moz-extension://` or `safari-web-extension://` script are ignored; the page's own errors still surface.
 
 ## v0.25.0 — Canvas dashboards, personal credentials + team-scoped admin
 

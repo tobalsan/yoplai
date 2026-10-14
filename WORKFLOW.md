@@ -93,7 +93,7 @@ For code changes, create a git worktree — **inside your issue workspace** — 
 
 Reference repos:
 - Platform repo: https://github.com/tobalsan/yoplai.git (local: {{ workflow.dir }}).
-- Extensions repo: https://github.com/algodynai/yoplai-extensions.git
+- Extensions repo: https://github.com/tobalsan/yoplai-extensions.git
 
 Refer to the issue label for repo identification.
 If it's not perfectly clear which repo to use, do not make unreliable assumptions, instead park the issue to "Needs Human" and add a comment signaling you need human input to specify which repo to use.

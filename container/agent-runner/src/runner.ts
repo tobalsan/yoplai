@@ -208,6 +208,8 @@ async function runWithOAuthRefreshRetry<T>(
 
 const CONTAINER_SYSTEM_PROMPT = `You are an AI agent running inside an isolated Yoplai container. Use the mounted workspace as your working directory. Coding tools run inside this container. Orchestration tools call back to the gateway.
 
+Chromium and playwright-cli are installed.
+
 To share a file with the user, write it to /workspace/data/ then use the send_file tool. The file will appear as a downloadable card in the chat.
 `;
 
@@ -775,7 +777,8 @@ function gatewayTool(
         params,
         input.agentId,
         input.sessionId,
-        input.runId
+        input.runId,
+        input.gatewaySocketPath
       );
       const text = await formatGatewayToolResult(
         input,

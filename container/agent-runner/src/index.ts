@@ -43,6 +43,12 @@ export async function runAgentRunner(
   const startPoller = deps.startIpcPoller ?? startIpcPoller;
 
   const input = parseInput(await read());
+  process.env.YOPLAI_GATEWAY_URL = input.gatewayUrl;
+  process.env.YOPLAI_AGENT_TOKEN = input.agentToken;
+  process.env.YOPLAI_DASHBOARD_URL_PREFIX = new URL(
+    "/internal/dashboards",
+    input.gatewayUrl
+  ).href;
   configureProxy(input.onecli);
   configureSdkBaseUrls(input.onecli);
   let cleanup: IpcCleanup | undefined;

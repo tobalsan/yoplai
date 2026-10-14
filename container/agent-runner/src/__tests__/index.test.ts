@@ -1,6 +1,7 @@
 import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { createBashTool } from "@earendil-works/pi-coding-agent";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ContainerInput } from "@yoplai/shared";
 import { callGatewayTool } from "../gateway-client.js";
@@ -39,6 +40,23 @@ afterEach(() => {
 });
 
 describe("agent runner entry point", () => {
+  it("exports dashboard connection variables to bash tool subprocesses", async () => {
+    await runAgentRunner({
+      readStdin: async () => JSON.stringify(input),
+      writeStdout: () => undefined,
+      runAgent: async () => {
+        const bash = createBashTool(process.cwd());
+        const result = await bash.execute("env-check", {
+          command: 'test "$YOPLAI_GATEWAY_URL" = "http://gateway:3000" && test "$YOPLAI_AGENT_TOKEN" = "token-1" && test "$YOPLAI_DASHBOARD_URL_PREFIX" = "http://gateway:3000/internal/dashboards" && printf verified',
+          timeout: 5,
+        });
+        expect(result.content).toContainEqual({ type: "text", text: "verified" });
+        return { text: "done" };
+      },
+      startIpcPoller: () => () => undefined,
+    });
+  });
+
   it("parses stdin, streams events, and writes final output", async () => {
     const chunks: string[] = [];
     const runAgent = vi.fn(async (_input, onStreamEvent) => {

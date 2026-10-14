@@ -69,4 +69,21 @@ describe("accessLogger", () => {
       "--> GET /hooks/test 200 5ms"
     );
   });
+
+  it("redacts dashboard preview tokens in both request log lines", async () => {
+    const app = new Hono();
+    const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    app.use("*", accessLogger());
+    app.get("/internal/dashboards/:slug/html", (c) => c.html("preview"));
+
+    await app.request(
+      "/internal/dashboards/clients.html/html?%74oken=secret-value&token=second-secret&theme=dark&id=7"
+    );
+
+    expect(log).toHaveBeenCalledTimes(2);
+    for (const [message] of log.mock.calls) {
+      expect(message).not.toContain("secret");
+      expect(message).toContain("token=%5Bredacted%5D&theme=dark&id=7");
+    }
+  });
 });

@@ -7,6 +7,7 @@ import { JSDOM } from "jsdom";
 import type { AgentConfig, GatewayConfig } from "@yoplai/shared";
 import { resolveHomeDir } from "@yoplai/shared";
 import { getAgentDataDir } from "../agents/container.js";
+import { createInternalTools } from "../server/internal-tools.js";
 import { canvasExtension } from "./index.js";
 import {
   dashboardDirectory,
@@ -610,6 +611,168 @@ describe("dashboard registry and tool", () => {
   );
 });
 
+describe("internal dashboard rendering", () => {
+  function app() {
+    return createInternalTools({
+      getConfig: () => ({
+        ...config,
+        agents: [
+          agent(),
+          {
+            ...agent(),
+            id: "agent-2",
+            workspace: path.join(root, "other-agent"),
+          },
+        ],
+      }),
+      getTokenContext: (token) =>
+        token === "test-agent-token"
+          ? {
+              agentId: "agent-1",
+              sessionId: "session",
+              runId: "run",
+              containerName: "container",
+              createdAt: Date.now(),
+              roots: {
+                workspace,
+                data: path.join(workspace, "data"),
+                uploads: workspace,
+              },
+              userId: "viewer-with-personal-credentials",
+            }
+          : undefined,
+    });
+  }
+
+  it("requires a valid token and confines slugs to the token's agent", async () => {
+    const otherWorkspace = path.join(root, "other-agent", "data", "dashboards");
+    await fs.mkdir(otherWorkspace, { recursive: true });
+    await fs.writeFile(path.join(otherWorkspace, "private.html"), "private");
+    const routes = app();
+    expect((await routes.request("/dashboards/private.html/html")).status).toBe(
+      401
+    );
+    expect(
+      (await routes.request("/dashboards/private.html/html?token=invalid"))
+        .status
+    ).toBe(401);
+    expect(
+      (
+        await routes.request(
+          "/dashboards/private.html/html?token=test-agent-token"
+        )
+      ).status
+    ).toBe(404);
+    expect(
+      (
+        await routes.request(
+          "/dashboards/missing.html/html?token=test-agent-token"
+        )
+      ).status
+    ).toBe(404);
+    await fs.writeFile(
+      path.join(workspace, "data", "dashboards", "hello.html"),
+      "<html></html>"
+    );
+    expect(
+      (
+        await routes.request("/dashboards/hello.html/html", {
+          headers: { "X-Agent-Token": "test-agent-token" },
+        })
+      ).status
+    ).toBe(200);
+  });
+
+  it("shares SQL/runtime rendering with null viewer, params, internal links, and no versions", async () => {
+    const db = new Database(path.join(workspace, "data", "live.db"));
+    db.exec("create table items(id integer); insert into items values (7)");
+    db.close();
+    await fs.writeFile(
+      path.join(workspace, "data", "dashboards", "hello.html"),
+      '<!doctype html><html><head></head><body><script type="application/sql" data-name="items" data-db="data/live.db">select id, :viewer_email as email, :viewer_name as name from items where id = :id</script></body></html>'
+    );
+    await fs.writeFile(
+      path.join(workspace, "data", "dashboards", "detail.html"),
+      "<html></html>"
+    );
+    const entry = await registry.link("agent-1", "hello.html");
+    const response = await app().request(
+      "/dashboards/hello.html/html?token=test-agent-token&theme=dark&id=7",
+      { headers: { Cookie: "yoplai-theme=light" } }
+    );
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-security-policy")).toBe(
+      dashboardCsp(config, "http://localhost")
+    );
+    expect(response.headers.get("cache-control")).toBe("no-store");
+    const html = await response.text();
+    expect(html).toContain('data-theme="dark"');
+    expect(html).toContain('"items":[{"id":7,"email":null,"name":null}]');
+    expect(html).toContain('"viewer":{"email":null,"name":null}');
+    expect(html).toContain('"params":{"id":"7"}');
+    const dom = new JSDOM(html, {
+      url: "http://gateway/internal/dashboards/hello.html/html",
+      runScripts: "dangerously",
+    });
+    const runtime = dom.window as unknown as {
+      YOPLAI: {
+        link(slug: string, params: Record<string, string | number>): string;
+      };
+    };
+    const link = runtime.YOPLAI.link("detail.html", { id: 7 });
+    expect(link).toBe(
+      "/internal/dashboards/detail.html/html?token=test-agent-token&theme=dark&id=7"
+    );
+    expect(
+      runtime.YOPLAI.link("detail.html", { token: "wrong", theme: "light" })
+    ).toBe(
+      "/internal/dashboards/detail.html/html?token=test-agent-token&theme=dark"
+    );
+    dom.window.close();
+    expect(await registry.listVersions(entry.id)).toEqual([]);
+  });
+
+  it("reports SQL failures to the browser console", async () => {
+    const db = new Database(path.join(workspace, "data", "live.db"));
+    db.close();
+    await fs.writeFile(
+      path.join(workspace, "data", "dashboards", "hello.html"),
+      '<html><script type="application/sql" data-name="broken" data-db="data/live.db">select * from missing_table</script></html>'
+    );
+    const html = await (
+      await app().request("/dashboards/hello.html/html?token=test-agent-token")
+    ).text();
+    const errors = vi.fn();
+    const dom = new JSDOM(html, {
+      runScripts: "dangerously",
+      beforeParse(window) {
+        window.console.error = errors;
+      },
+    });
+    expect(errors).toHaveBeenCalledWith(
+      expect.stringContaining("Dashboard query error (broken):")
+    );
+    expect(errors).toHaveBeenCalledWith(
+      expect.stringContaining("missing_table")
+    );
+    dom.window.close();
+  });
+
+  it("preserves an explicit dashboard theme", async () => {
+    await fs.writeFile(
+      path.join(workspace, "data", "dashboards", "hello.html"),
+      '<html data-theme="light"></html>'
+    );
+    const html = await (
+      await app().request(
+        "/dashboards/hello.html/html?token=test-agent-token&theme=dark"
+      )
+    ).text();
+    expect(html).toContain('<html data-theme="light">');
+    expect(html).not.toContain('data-theme="dark"');
+  });
+});
+
 describe("dashboard viewer", () => {
   async function app(auth: unknown | null, allowed: boolean) {
     const entry = await registry.link("agent-1", "hello.html");
@@ -874,6 +1037,112 @@ describe("dashboard kit assets", () => {
       "This dashboard hit an error: two (line 7)",
       "This dashboard hit an error: three (line 7)",
     ]);
+  });
+
+  it("ignores errors thrown by browser extensions injected into the page", async () => {
+    const routes = createDashboardAssetRoutes(() => config);
+    const dom = new JSDOM("<main></main>", {
+      runScripts: "outside-only",
+      url: "https://yoplai.test",
+    });
+    dom.window.eval(await (await routes.request("/v2/kit.js")).text());
+    // Seen in Chrome with the Jimo extension: its main-world script reads
+    // sessionStorage, which the sandboxed dashboard document forbids.
+    const storageError =
+      "Uncaught SecurityError: Failed to read the 'sessionStorage' property from 'Window': The document is sandboxed and lacks the 'allow-same-origin' flag.";
+    for (const filename of [
+      "chrome-extension://fchhipkldmfpfiocdoehmnnkcclmhbpg/jimo-extension.js",
+      "moz-extension://1b2c3d/content.js",
+      "safari-web-extension://ABC/inject.js",
+    ]) {
+      dom.window.dispatchEvent(
+        new dom.window.ErrorEvent("error", {
+          message: storageError,
+          filename,
+          lineno: 1,
+        })
+      );
+    }
+    const extensionRejection = new dom.window.Event(
+      "unhandledrejection"
+    ) as Event & { reason?: unknown };
+    extensionRejection.reason = Object.assign(new Error("ext failed"), {
+      stack: "Error: ext failed\n    at chrome-extension://abc/inject.js:1:10",
+    });
+    dom.window.dispatchEvent(extensionRejection);
+    expect(dom.window.document.querySelector(".dk-error-banner")).toBeNull();
+
+    // The page's own errors still surface.
+    dom.window.dispatchEvent(
+      new dom.window.ErrorEvent("error", {
+        message: "boom",
+        filename: "https://yoplai.test/d/abc",
+        lineno: 3,
+      })
+    );
+    expect(
+      dom.window.document.querySelector(".dk-error-banner div")?.textContent
+    ).toBe("This dashboard hit an error: boom (line 3)");
+  });
+
+  it("keeps dashboard errors that only mention an extension URL", async () => {
+    const routes = createDashboardAssetRoutes(() => config);
+    const load = async () => {
+      const dom = new JSDOM("<main></main>", {
+        runScripts: "outside-only",
+        url: "https://yoplai.test",
+      });
+      dom.window.eval(await (await routes.request("/v2/kit.js")).text());
+      return dom;
+    };
+    const banner = (dom: JSDOM) =>
+      dom.window.document.querySelector(".dk-error-banner div")?.textContent;
+    const rejectWith = (dom: JSDOM, stack: string) => {
+      const event = new dom.window.Event("unhandledrejection") as Event & {
+        reason?: unknown;
+      };
+      event.reason = Object.assign(new Error("ext failed"), { stack });
+      dom.window.dispatchEvent(event);
+    };
+
+    // The page's own error, whose message names an extension URL.
+    let dom = await load();
+    dom.window.dispatchEvent(
+      new dom.window.ErrorEvent("error", {
+        message: "Cannot load chrome-extension://abc/data.json",
+        filename: "https://yoplai.test/d/abc",
+        lineno: 7,
+        error: Object.assign(new Error("x"), {
+          stack:
+            "Error: x\n    at render (https://yoplai.test/d/abc:7:1)\n    at chrome-extension://abc/hook.js:1:1",
+        }),
+      })
+    );
+    expect(banner(dom)).toBe(
+      "This dashboard hit an error: Cannot load chrome-extension://abc/data.json (line 7)"
+    );
+
+    // A rejection raised by the page; an extension frame further down the
+    // stack (e.g. a wrapped fetch) does not make it the extension's.
+    dom = await load();
+    rejectWith(
+      dom,
+      "Error: ext failed\n    at load (https://yoplai.test/d/abc:3:5)\n    at chrome-extension://abc/inject.js:1:10"
+    );
+    expect(banner(dom)).toBe("This dashboard hit an error: ext failed");
+
+    // A V8 message mentioning an extension is not a frame either.
+    dom = await load();
+    rejectWith(dom, "Error: see chrome-extension://abc/x.js");
+    expect(banner(dom)).toBe("This dashboard hit an error: ext failed");
+
+    // A Firefox-style stack whose first frame is the extension is ignored.
+    dom = await load();
+    rejectWith(
+      dom,
+      "inject@moz-extension://1b2c3d/content.js:1:10\nrender@https://yoplai.test/d/abc:3:5"
+    );
+    expect(dom.window.document.querySelector(".dk-error-banner")).toBeNull();
   });
 
   it("formats values, caps tables, and degrades charts without ECharts", async () => {

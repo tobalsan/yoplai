@@ -21,6 +21,7 @@ import {
   getAgentDataDir,
   getRunIpcDir,
   getSessionUploadsDir,
+  getGatewaySocketDir,
   validateMount,
   type ContainerVolumeMount,
 } from "./container.js";
@@ -51,6 +52,7 @@ function imageBuildContext(): string {
   const root = tmpDir();
   for (const file of [
     "container/agent-runner/Dockerfile",
+    "container/agent-runner/playwright-cli.json",
     "container/agent-runner/dist/index.js",
     "packages/shared/dist/index.js",
     "package.json",
@@ -75,6 +77,17 @@ describe("ensureAgentImage", () => {
     fs.writeFileSync(
       path.join(root, "container/agent-runner/dist/index.js"),
       "changed"
+    );
+    expect(getAgentImageHash(root)).not.toBe(first);
+  });
+
+  it("changes the image hash when browser launch defaults change", () => {
+    const root = imageBuildContext();
+    const first = getAgentImageHash(root);
+    expect(first).not.toBeNull();
+    fs.writeFileSync(
+      path.join(root, "container/agent-runner/playwright-cli.json"),
+      JSON.stringify({ timeouts: { navigation: 5000 } })
     );
     expect(getAgentImageHash(root)).not.toBe(first);
   });
@@ -774,5 +787,55 @@ describe("cleanupOrphanIpcNamespaces", () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "yoplai-ipc-sweep-"));
     expect(() => cleanupOrphanIpcNamespaces(home)).not.toThrow();
     fs.rmSync(home, { recursive: true, force: true });
+  });
+});
+
+describe("gateway socket transport", () => {
+  function socketAgent(workspace: string) {
+    return AgentConfigSchema.parse({
+      id: "agent",
+      name: "Agent",
+      workspace,
+      model: { provider: "anthropic", model: "claude" },
+      sandbox: { enabled: true },
+    });
+  }
+
+  it("mounts the socket directory read-only when the transport is socket", () => {
+    const root = tmpDir();
+    const workspace = path.join(root, "workspace");
+    const homeDir = path.join(root, "yoplai");
+    fs.mkdirSync(workspace, { recursive: true });
+
+    const mounts = buildVolumeMounts(
+      socketAgent(workspace),
+      GlobalSandboxConfigSchema.parse({ gatewayTransport: "socket" }),
+      homeDir,
+      getRunIpcDir(homeDir, "agent", "session-1", "run-1")
+    );
+
+    const socketDir = getGatewaySocketDir(homeDir);
+    expect(mounts).toContainEqual({
+      source: socketDir,
+      target: "/run/yoplai",
+      readonly: true,
+    });
+    expect(fs.statSync(socketDir).isDirectory()).toBe(true);
+  });
+
+  it("adds no socket mount with the default http transport", () => {
+    const root = tmpDir();
+    const workspace = path.join(root, "workspace");
+    const homeDir = path.join(root, "yoplai");
+    fs.mkdirSync(workspace, { recursive: true });
+
+    const mounts = buildVolumeMounts(
+      socketAgent(workspace),
+      {},
+      homeDir,
+      getRunIpcDir(homeDir, "agent", "session-1", "run-1")
+    );
+
+    expect(mounts.map((mount) => mount.target)).not.toContain("/run/yoplai");
   });
 });

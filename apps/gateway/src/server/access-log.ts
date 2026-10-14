@@ -21,7 +21,18 @@ function isPollingOrHealthPath(path: string): boolean {
 }
 
 export function accessLogger(): MiddlewareHandler {
-  const normalLogger = logger((message) => console.log(stripAnsi(message)));
+  const normalLogger = logger((message) => {
+    const safeMessage = stripAnsi(message).replace(
+      /\/internal\/dashboards\/[^/?\s]+\/html\?[^\s]*/g,
+      (target) => {
+        const url = new URL(target, "http://gateway");
+        if (!url.searchParams.has("token")) return target;
+        url.searchParams.set("token", "[redacted]");
+        return url.pathname + url.search;
+      }
+    );
+    console.log(safeMessage);
+  });
 
   return async (c, next) => {
     if (c.req.method !== "GET" || !isPollingOrHealthPath(c.req.path)) {
