@@ -9,7 +9,8 @@ export function gatewayTool(
   description: string,
   parameters: unknown,
   usedToolNames: Set<string>,
-  formatResult: (result: unknown, toolCallId: string) => Promise<string>
+  formatResult: (result: unknown, toolCallId: string) => Promise<string>,
+  gatewayName = name
 ): ToolDefinition {
   const modelToolName = claimAgentToolName(name, usedToolNames);
   const schema = parameters as {
@@ -79,7 +80,7 @@ export function gatewayTool(
         const result = await callGatewayTool(
           input.gatewayUrl,
           input.agentToken,
-          name,
+          gatewayName,
           args,
           input.agentId,
           input.sessionId,

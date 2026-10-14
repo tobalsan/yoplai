@@ -1,4 +1,6 @@
 import fs from "node:fs";
+import fsPromises from "node:fs/promises";
+import * as metadata from "../../media/metadata.js";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -17,6 +19,7 @@ function tempDir(): string {
 }
 
 afterEach(() => {
+  vi.restoreAllMocks();
   delete process.env.YOPLAI_HOME;
   for (const dir of tempDirs.splice(0)) {
     fs.rmSync(dir, { recursive: true, force: true });
@@ -74,4 +77,75 @@ describe("container file output adapter", () => {
       })
     );
   });
+  it.each(["missing", "directory", "symlink", "outside"])(
+    "rejects %s sources without emitting a card",
+    async (kind) => {
+      const root = tempDir();
+      const data = path.join(root, "data");
+      fs.mkdirSync(data);
+      fs.mkdirSync(path.join(data, "directory"));
+      fs.writeFileSync(path.join(root, "outside"), "private");
+      fs.symlinkSync(path.join(root, "outside"), path.join(data, "symlink"));
+      const params = {
+        agentId: "cloud",
+        sessionId: "session-1",
+        onHistoryEvent: vi.fn(),
+        onEvent: vi.fn(),
+      } as unknown as SdkRunParams;
+      await expect(
+        new ContainerFileOutputAdapter().handle(
+          params,
+          {
+            type: "file_output",
+            path:
+              kind === "outside"
+                ? "/workspace/data/../outside"
+                : `/workspace/data/${kind}`,
+          },
+          data
+        )
+      ).rejects.toThrow();
+      expect(params.onHistoryEvent).not.toHaveBeenCalled();
+      expect(params.onEvent).not.toHaveBeenCalled();
+    }
+  );
+
+  it.each(["copy", "registration", "history", "card"])(
+    "propagates %s failures",
+    async (kind) => {
+      const root = tempDir();
+      process.env.YOPLAI_HOME = root;
+      const data = path.join(root, "data");
+      fs.mkdirSync(data);
+      fs.writeFileSync(path.join(data, "report.csv"), "a,b\n");
+      const failure = new Error(`${kind} failed`);
+      const params = {
+        agentId: "cloud",
+        sessionId: "session-1",
+        onHistoryEvent: vi.fn(),
+        onEvent: vi.fn(),
+      } as unknown as SdkRunParams;
+      if (kind === "copy")
+        vi.spyOn(fsPromises, "copyFile").mockRejectedValueOnce(failure);
+      if (kind === "registration")
+        vi.spyOn(metadata, "registerMediaFile").mockRejectedValueOnce(failure);
+      if (kind === "history")
+        vi.mocked(params.onHistoryEvent).mockImplementationOnce(() => {
+          throw failure;
+        });
+      if (kind === "card")
+        vi.mocked(params.onEvent).mockImplementationOnce(() => {
+          throw failure;
+        });
+      await expect(
+        new ContainerFileOutputAdapter().handle(
+          params,
+          { type: "file_output", path: "/workspace/data/report.csv" },
+          data
+        )
+      ).rejects.toThrow(`${kind} failed`);
+      if (kind !== "card") expect(params.onEvent).not.toHaveBeenCalled();
+    }
+  );
+
 });

@@ -1,3 +1,5 @@
+import type { ContainerFileOutputRequest } from "@yoplai/shared";
+
 const activeTokens = new Map<
   string,
   ContainerTokenContext
@@ -17,6 +19,10 @@ export type ContainerTokenContext = {
     total?: number;
     taskId?: string;
   }) => void;
+  registerFileOutput?: (
+    event: ContainerFileOutputRequest,
+    signal: AbortSignal
+  ) => Promise<void>;
   createdAt: number;
   abortController: AbortController;
 };

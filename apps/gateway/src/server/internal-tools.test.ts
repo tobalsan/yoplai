@@ -7,6 +7,7 @@ import {
   registerContainerToken,
   removeContainerToken,
   abortContainerRun,
+  getContainerTokenContext,
 } from "../sdk/container/tokens.js";
 import { createInternalTools } from "./internal-tools.js";
 
@@ -102,6 +103,7 @@ function postTool(
 }
 
 afterEach(() => {
+  vi.restoreAllMocks();
   for (const token of registeredTokens.splice(0)) {
     removeContainerToken(token);
   }
@@ -780,5 +782,117 @@ describe("internal oauth-token renewal endpoint", () => {
 
     expect(response.status).toBe(502);
     expect(await response.json()).toEqual({ error: "IdP unreachable" });
+  });
+});
+
+describe("container file registration", () => {
+  const request = {
+    tool: "__register_file_output",
+    agentId: "agent-1",
+    agentToken: "file-token",
+    sessionId: "session-1",
+    runId: "run-1",
+    args: { path: "/workspace/data/report.csv" },
+  };
+
+  it("awaits the run-bound callback before confirming registration", async () => {
+    registerToken("file-token");
+    const context = getContainerTokenContext("file-token")!;
+    let finish: () => void = () => {};
+    context.registerFileOutput = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          finish = resolve;
+        })
+    );
+    const { app, executeExtensionTool } = createDeps();
+    let completed = false;
+    const pending = postTool(app, request).then((response) => {
+      completed = true;
+      return response;
+    });
+    await vi.waitFor(() =>
+      expect(context.registerFileOutput).toHaveBeenCalled()
+    );
+    expect(completed).toBe(false);
+    expect(context.registerFileOutput).toHaveBeenCalledWith(
+      { type: "file_output", path: "/workspace/data/report.csv" },
+      expect.any(AbortSignal)
+    );
+    finish();
+    const response = await pending;
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ registered: true });
+    expect(executeExtensionTool).not.toHaveBeenCalled();
+  });
+
+  it.each(["unavailable", "failure", "malformed", "cancelled"])(
+    "fails and logs once for %s registration",
+    async (kind) => {
+      registerToken("file-token");
+      const context = getContainerTokenContext("file-token")!;
+      if (kind !== "unavailable")
+        context.registerFileOutput = vi
+          .fn()
+          .mockRejectedValue(new Error("registration failed"));
+      if (kind === "cancelled") abortContainerRun("file-token");
+      const log = vi.spyOn(console, "error").mockImplementation(() => {});
+      const { app } = createDeps();
+      const response = await postTool(app, {
+        ...request,
+        args: kind === "malformed" ? {} : request.args,
+      });
+      expect(response.ok).toBe(false);
+      expect(await response.json()).toHaveProperty("error");
+      expect(log).toHaveBeenCalledTimes(1);
+      expect(JSON.parse(String(log.mock.calls[0][0]))).toMatchObject({
+        msg: "[container] file_output failed",
+        agentId: "agent-1",
+        sessionId: "session-1",
+        runId: "run-1",
+        ...(kind === "malformed" ? {} : { path: "/workspace/data/report.csv" }),
+      });
+    }
+  );
+
+  it("returns a timeout while registration is pending", async () => {
+    registerToken("file-token");
+    const context = getContainerTokenContext("file-token")!;
+    let complete: () => void = () => {};
+    context.registerFileOutput = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          complete = resolve;
+        })
+    );
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    const { app } = createDeps();
+    const pending = postTool(app, { ...request, timeoutSeconds: 0.02 });
+    await vi.waitFor(() =>
+      expect(context.registerFileOutput).toHaveBeenCalled()
+    );
+    const response = await pending;
+    expect(response.status).toBe(504);
+    expect(await response.json()).toEqual({
+      error: "tool __register_file_output timed out after 0.02s",
+    });
+    expect(log).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(context.registerFileOutput).mock.calls[0][1].aborted).toBe(
+      true
+    );
+    complete();
+  });
+
+  it("rejects expired and mismatched run identity", async () => {
+    const { app } = createDeps();
+    expect((await postTool(app, request)).status).toBe(403);
+    registerToken("file-token");
+    const context = getContainerTokenContext("file-token")!;
+    context.registerFileOutput = vi.fn();
+    expect(
+      (await postTool(app, { ...request, runId: "other-run" })).status
+    ).toBe(403);
+    expect(context.registerFileOutput).not.toHaveBeenCalled();
   });
 });

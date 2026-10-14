@@ -121,9 +121,30 @@ Custom mounts must resolve beneath allowed roots and avoid blocked patterns. Con
 - workspace `.env` is shadowed with `/dev/null`
 - extension prompts/tools serialize in `ContainerInput`
 - tool calls return through authenticated `/internal/tools`
-- outbound file requests are validated, copied, and registered in managed media
+- container `send_file` awaits authenticated gateway validation, media copy,
+  registration, and history/file-card event emission before reporting success;
+  registration or transport failures return a tool error to the model
+- the gateway resolves file paths under the active run's writable data bind mount
+  and rejects non-regular files and symlinks escaping that root
+- legacy framed `file_output` requests remain supported; each failed handling
+  attempt is logged with agent, session, run, path, and error
 
 Pi extension tools work in and out of containers. Sandbox Claude rejects configured extension tools rather than silently dropping them.
+
+### Outbound file protocol
+
+New container runners call `/internal/tools` with `tool: "__register_file_output"`
+and `args: { path, filename?, mimeType? }`. The authenticated active token binds
+the request to its agent, session, run, and data root; callers cannot choose a
+host path or another run's registration callback. The response is awaited using
+the normal tool timeout/cancellation budget. Missing callbacks, invalid sources,
+copy/registration failures, and failed history/card event emission fail the tool.
+The runner emits no legacy file request for the same call.
+
+Older runners may still emit a framed `file_output` request containing a
+container data path. The gateway accepts it and logs handling failures, but that
+legacy protocol has no tool-result acknowledgement. Rebuild the sandbox image
+when deploying this runner change; no browser receipt guarantee is implied.
 
 Each run gets unique container name, authentication token, and IPC directory. Follow-ups and aborts are addressed by agent/session/run so concurrent containers cannot consume each other's messages.
 

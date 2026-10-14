@@ -15,8 +15,10 @@ export class ContainerFileOutputAdapter {
   async handle(
     params: SdkRunParams,
     event: ContainerFileOutputRequest,
-    hostDataDir: string
+    hostDataDir: string,
+    signal?: AbortSignal
   ): Promise<void> {
+    signal?.throwIfAborted();
     const source = resolveContainerDataFile(hostDataDir, event.path);
     const realDataDir = await fsPromises.realpath(hostDataDir);
     const realSource = await fsPromises.realpath(source);
@@ -37,8 +39,10 @@ export class ContainerFileOutputAdapter {
     const target = path.join(getMediaOutboundDir(), storedFilename);
     const mimeType = event.mimeType || "application/octet-stream";
 
+    signal?.throwIfAborted();
     await ensureMediaDirectories();
     await fsPromises.copyFile(realSource, target);
+    signal?.throwIfAborted();
     const metadata = await registerMediaFile({
       direction: "outbound",
       fileId,
@@ -51,6 +55,7 @@ export class ContainerFileOutputAdapter {
       sessionId: params.sessionId,
     });
 
+    signal?.throwIfAborted();
     const timestamp = Date.now();
     params.onHistoryEvent({
       type: "assistant_file",

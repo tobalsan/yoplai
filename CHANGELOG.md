@@ -18,6 +18,7 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Fixed
 
+- Container `send_file` now waits for gateway media registration and file-card emission before reporting success, returns registration failures to the agent, and logs failed outbound file requests.
 - Give gateway tools per-call timeouts and cooperative cancellation so a hung tool returns an error without losing the turn.
 - Preserve gateway tool deadlines and cancellation over Unix-socket transport, including dashboard tools.
 - Honor each sandbox tool call's timeout without false idle kills, clamp Bash to the remaining turn budget, and verify stop-to-kill shutdown enforcement.

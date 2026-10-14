@@ -264,6 +264,7 @@ export function getContainerAdapter(): SdkAdapter {
       const isFirstRun = await ensureWorkspaceFiles(params.workspaceDir);
       const launchSpec = buildContainerLaunchSpec(params, config);
       const { args, containerName, ipcDir, runId, hostDataDir } = launchSpec;
+      const fileOutputAdapter = new ContainerFileOutputAdapter();
       prepareLaunchFilesystem(params, launchSpec);
       logInfo("[container] ipc namespace claimed", {
         agentId: params.agentId,
@@ -336,6 +337,8 @@ export function getContainerAdapter(): SdkAdapter {
           },
           oauthProviders: Object.keys(oauthTokens ?? {}),
           userId: params.userId,
+          registerFileOutput: (event, signal) =>
+            fileOutputAdapter.handle(params, event, hostDataDir, signal),
           emitProgress: (event) =>
             params.onEvent({ type: "progress", ...event }),
         });
@@ -394,7 +397,6 @@ export function getContainerAdapter(): SdkAdapter {
       let aborted = false;
       let settled = false;
       const protocol = new ContainerProtocolDecoder();
-      const fileOutputAdapter = new ContainerFileOutputAdapter();
       let sawStreamingHistory = false;
       const pendingFileOutputs: Promise<void>[] = [];
       const idleTimeoutSeconds =
@@ -572,6 +574,12 @@ export function getContainerAdapter(): SdkAdapter {
             const task = fileOutputAdapter
               .handle(params, event, hostDataDir)
               .catch((error) => {
+                logError("[container] file_output failed", error, {
+                  agentId: params.agentId,
+                  sessionId: params.sessionId,
+                  runId,
+                  path: event.path,
+                });
                 const message =
                   error instanceof Error ? error.message : String(error);
                 params.onEvent({ type: "error", message });

@@ -236,6 +236,7 @@ The image includes pinned `playwright-cli` and Chromium. Pi Bash inherits `YOPLA
 - Container-to-gateway calls (`/internal/tools`, `/internal/oauth-token`) use `host.docker.internal` by default, or a read-only mounted Unix socket serving only `/internal` when root `sandbox.gatewayTransport` is `socket` (`apps/gateway/src/server/internal-socket.ts`, `ContainerInput.gatewaySocketPath`).
 - Custom mounts must pass configured allowlist/blocklist checks.
 - Extension prompt/tool metadata is serialized into `ContainerInput`; tools call back through authenticated `/internal/tools`.
+- Container `send_file` uses an internal, run-bound gateway registration operation over the same authenticated transport. Success follows source validation, managed-media copy/registration, and history/card event emission; gateway or transport failures reach the model as tool errors. Legacy framed `file_output` ingestion remains compatible, with structured failure logging. `/workspace/data` is a writable host bind mount; finish writing before sending because registration does not wait for concurrent writers or confirm browser receipt.
 - Outbound file requests must resolve inside allowed data paths; gateway copies/registers them in managed media storage.
 - Container event/output framing constants and schemas live in `packages/shared`.
 - Default `yoplai-agent:latest` rebuilds when build-context content changes; custom images are not rebuilt.

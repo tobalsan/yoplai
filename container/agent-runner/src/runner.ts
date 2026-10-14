@@ -22,11 +22,9 @@ import { createDeadlineBashTool } from "./bash-deadline.js";
 import { gatewayTool } from "./gateway-tool.js";
 import {
   ContainerDeliveryEnvelopeSchema,
-  ContainerFileOutputRequestSchema,
   DEFAULT_RETRY_BASE_DELAY_SECONDS,
   DEFAULT_RETRY_MAX_ATTEMPTS,
   PI_SYSTEM_PROMPT,
-  claimAgentToolName,
   findFailedTurn,
   getProviderErrorCategory,
   isReplayableFailedTurn,
@@ -428,7 +426,7 @@ export async function runAgent(
         ? [createDeadlineBashTool(input.workspaceDir, input.turnDeadlineAt)]
         : []),
       ...createExtensionTools(input, usedToolNames),
-      createSendFileTool(onStreamEvent, usedToolNames),
+      createSendFileTool(input, usedToolNames),
     ];
     // Pi treats `tools` as an allowlist when provided, so custom tool names must be included.
     const tools = [...builtInTools, ...customTools.map((tool) => tool.name)];
@@ -708,50 +706,38 @@ function createExtensionTools(
 }
 
 function createSendFileTool(
-  onStreamEvent: ((event: ContainerRunnerProtocolEvent) => void) | undefined,
+  input: ContainerInput,
   usedToolNames: Set<string>
 ): ToolDefinition {
-  return {
-    name: claimAgentToolName("send_file", usedToolNames),
-    label: "Send file to user",
-    description:
-      "Send a file from /workspace/data/ to the user. The file appears as a downloadable card in chat. Write the file first, then call this tool with its path.",
-    parameters: {
+  return gatewayTool(
+    input,
+    "send_file",
+    "Send file to user",
+    "Send a file from /workspace/data/ to the user. The file appears as a downloadable card in chat. Write the file first, then call this tool with its path.",
+    {
       type: "object",
       properties: {
         path: {
           type: "string",
-          description:
-            "Absolute path to the file, e.g. /workspace/data/report.csv",
+          description: "Absolute path to the file, e.g. /workspace/data/report.csv",
         },
       },
       required: ["path"],
-    } as unknown as ToolDefinition["parameters"],
-    execute: async (_toolCallId, params) => {
-      const filePath = (params as { path: string }).path;
-      if (!filePath.startsWith("/workspace/data/")) {
-        return {
-          content: [
-            {
-              type: "text",
-              text: "Error: path must be inside /workspace/data/",
-            },
-          ],
-          details: undefined,
-        };
-      }
-      onStreamEvent?.(
-        ContainerFileOutputRequestSchema.parse({
-          type: "file_output",
-          path: filePath,
-        })
-      );
-      return {
-        content: [{ type: "text", text: `File sent to user: ${filePath}` }],
-        details: undefined,
-      };
     },
-  };
+    usedToolNames,
+    async (result) => {
+      if (
+        !result ||
+        typeof result !== "object" ||
+        !("registered" in result) ||
+        result.registered !== true
+      ) {
+        throw new Error("Gateway did not confirm file registration");
+      }
+      return "File sent to user";
+    },
+    "__register_file_output"
+  );
 }
 
 async function loadPromptOptions(

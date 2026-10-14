@@ -671,6 +671,41 @@ describe("container adapter", () => {
     });
   });
 
+  it("logs legacy file_output failure with run identity and path", async () => {
+    const root = tempDir();
+    process.env.YOPLAI_HOME = path.join(root, "yoplai");
+    const agent = createAgent(root);
+    setConfig(agent, root);
+    const { processes } = mockSpawn();
+    mockExecFile();
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    const params = createParams(agent);
+    const run = getContainerAdapter().run(params);
+    await tick();
+    processes[0].emitStreamEvent({
+      type: "file_output",
+      path: "/workspace/data/missing.csv",
+    });
+    processes[0].emitOutput({ text: "done" });
+    processes[0].finish(0);
+    await expect(run).resolves.toEqual({ text: "done", aborted: undefined });
+    expect(log).toHaveBeenCalledTimes(1);
+    expect(JSON.parse(String(log.mock.calls[0][0]))).toMatchObject({
+      msg: "[container] file_output failed",
+      agentId: params.agentId,
+      sessionId: params.sessionId,
+      runId: expect.any(String),
+      path: "/workspace/data/missing.csv",
+    });
+    expect(params.onEvent).toHaveBeenCalledWith({
+      type: "error",
+      message: expect.any(String),
+    });
+    expect(params.onHistoryEvent).not.toHaveBeenCalledWith(
+      expect.objectContaining({ type: "assistant_file" })
+    );
+  });
+
   it("copies file_output events to outbound media", async () => {
     const root = tempDir();
     const homeDir = path.join(root, "yoplai");

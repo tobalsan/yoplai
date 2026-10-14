@@ -3,7 +3,7 @@ import type { ContentfulStatusCode } from "hono/utils/http-status";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { z } from "zod";
-import { type GatewayConfig } from "@yoplai/shared";
+import { ContainerFileOutputRequestSchema, type GatewayConfig } from "@yoplai/shared";
 import { loadConfig } from "../config/index.js";
 import {
   getContainerTokenContext,
@@ -302,7 +302,21 @@ export function createInternalTools(
         onAbort = () => reject(signal.reason);
         signal.addEventListener("abort", onAbort, { once: true });
       });
-      const work = parsed.data.tool === "extract_document"
+      const work = parsed.data.tool === "__register_file_output"
+        ? (async () => {
+            const event = ContainerFileOutputRequestSchema.parse({
+              ...(parsed.data.args && typeof parsed.data.args === "object"
+                ? parsed.data.args
+                : {}),
+              type: "file_output",
+            });
+            if (!context.registerFileOutput) {
+              throw new Error("File registration is unavailable for this run");
+            }
+            await context.registerFileOutput(event, signal);
+            return { registered: true };
+          })()
+        : parsed.data.tool === "extract_document"
         ? extractDocument(deps, parsed.data.args, context, signal)
         : parsed.data.tool === "describe_image"
           ? describeContainerImage(deps, parsed.data.args, context, deps.getConfig(), signal)
@@ -320,6 +334,15 @@ export function createInternalTools(
       signal.throwIfAborted();
       return c.json(result);
     } catch (error) {
+      if (parsed.data.tool === "__register_file_output") {
+        const args = parsed.data.args as { path?: unknown } | null;
+        logError("[container] file_output failed", error, {
+          agentId: context.agentId,
+          sessionId: context.sessionId,
+          runId: context.runId,
+          path: args?.path,
+        });
+      }
       if (runSignal.aborted) return c.json({ error: "run cancelled" }, 409);
       if (timeoutController.signal.aborted) {
         const message = `tool ${toolName} timed out after ${timeoutSeconds}s`;
@@ -337,10 +360,12 @@ export function createInternalTools(
       if (message.startsWith("Unknown tool: ")) {
         return c.json({ error: message }, 400);
       }
-      logError("[internal-tools] tool execution failed", error, {
-        tool: parsed.data.tool,
-        agentId: context.agentId,
-      });
+      if (parsed.data.tool !== "__register_file_output") {
+        logError("[internal-tools] tool execution failed", error, {
+          tool: parsed.data.tool,
+          agentId: context.agentId,
+        });
+      }
       // Pass through upstream HTTP errors (e.g. Google 404) instead of masking them as 500.
       const status = (error as { status?: unknown } | null)?.status;
       const httpStatus =

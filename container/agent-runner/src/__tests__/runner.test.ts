@@ -1137,7 +1137,7 @@ describe("Pi runner", () => {
     await fs.rm(tempDir, { recursive: true, force: true });
   });
 
-  it("emits raw container file output requests from send_file", async () => {
+  it("awaits gateway registration from send_file and propagates failures", async () => {
     const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-runner-"));
     const workspaceDir = path.join(tempDir, "workspace");
     const sessionDir = path.join(tempDir, "sessions");
@@ -1168,14 +1168,50 @@ describe("Pi runner", () => {
     const sendFile = createAgentSessionArgs?.customTools.find(
       (tool) => tool.name === "send_file"
     );
-    await sendFile?.execute("tool-3", {
-      path: "/workspace/data/report.csv",
+    let confirm: (response: Response) => void = () => {};
+    const fetchMock = vi.spyOn(global, "fetch").mockImplementationOnce(
+      () =>
+        new Promise<Response>((resolve) => {
+          confirm = resolve;
+        })
+    );
+    let completed = false;
+    const pending = sendFile
+      ?.execute("tool-3", { path: "/workspace/data/report.csv" })
+      .then((result) => {
+        completed = true;
+        return result;
+      });
+    await Promise.resolve();
+    expect(completed).toBe(false);
+    expect(streamedEvents).not.toContainEqual(
+      expect.objectContaining({ type: "file_output" })
+    );
+    expect(fetchMock).toHaveBeenCalledWith(
+      expect.objectContaining({ pathname: "/internal/tools" }),
+      expect.objectContaining({
+        body: expect.stringContaining('"tool":"__register_file_output"'),
+      })
+    );
+    confirm(Response.json({ registered: true }));
+    await expect(pending).resolves.toMatchObject({
+      content: [{ text: "File sent to user" }],
     });
 
-    expect(streamedEvents).toContainEqual({
-      type: "file_output",
-      path: "/workspace/data/report.csv",
-    });
+    fetchMock.mockResolvedValueOnce(
+      Response.json({ error: "source missing" }, { status: 500 })
+    );
+    await expect(
+      sendFile?.execute("tool-4", { path: "/workspace/data/missing.csv" })
+    ).rejects.toThrow("source missing");
+    fetchMock.mockRejectedValueOnce(new Error("transport failed"));
+    await expect(
+      sendFile?.execute("tool-5", { path: "/workspace/data/report.csv" })
+    ).rejects.toThrow("transport failed");
+    fetchMock.mockResolvedValueOnce(Response.json({}));
+    await expect(
+      sendFile?.execute("tool-6", { path: "/workspace/data/report.csv" })
+    ).rejects.toThrow("did not confirm");
 
     await fs.rm(tempDir, { recursive: true, force: true });
   });
