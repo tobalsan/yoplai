@@ -16,6 +16,7 @@ import {
   resolveWorkspaceDir,
   CONFIG_DIR,
 } from "../config/index.js";
+import { waitForCompactionActivation } from "./compaction-activation.js";
 import { SessionRunLifecycle } from "./run-lifecycle.js";
 import {
   resolveSessionId,
@@ -369,7 +370,7 @@ export async function runAgent(
   await ensureSessionsDir();
   const workspaceDir = resolveWorkspaceDir(agent.workspace);
 
-  const abortController = lifecycle.beginRun();
+  const abortController = await waitForCompactionActivation(params.agentId, sessionId, params.userId, () => lifecycle.beginRun());
 
   // Wire external abort signal (e.g. scheduler timeout) into the session abort path.
   if (params.signal?.aborted) {

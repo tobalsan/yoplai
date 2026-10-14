@@ -73,12 +73,13 @@ async function ensureSessionsDir() {
  */
 async function resolveSessionFile(
   agentId: string,
-  sessionId: string
+  sessionId: string,
+  userId?: string
 ): Promise<string> {
   await ensureSessionsDir();
-  const createdAt = await getSessionCreatedAt(sessionId);
+  const createdAt = await getSessionCreatedAt(sessionId, userId);
   return (await resolveSessionDataFile({
-    dir: SESSIONS_DIR,
+    dir: userId ? path.join(CONFIG_DIR, "sessions", "users", userId, "sessions") : SESSIONS_DIR,
     agentId,
     sessionId,
     createdAt,
@@ -277,7 +278,8 @@ export const piAdapter: SdkAdapter = {
     return withPiOnecliEnv(params.agentId, async () => {
       const persistentSessionFile = await resolveSessionFile(
         params.agentId,
-        params.sessionId
+        params.sessionId,
+        params.userId
       );
       const runtimeSession = await createRuntimeSessionFile(
         persistentSessionFile

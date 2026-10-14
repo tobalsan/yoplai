@@ -309,6 +309,40 @@ describe("scheduler agent tools", () => {
     expect(cleared.job.deliver).toEqual([]);
   });
 
+  it("sets a per-job model override on create and update", async () => {
+    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-scheduler-tools-"));
+    const alpha = agent("alpha", path.join(tmpDir, "alpha"));
+    const config: GatewayConfig = { version: 3, agents: [alpha], extensions: { scheduler: { enabled: true } }, sessions: { idleMinutes: 360 }, agentFab: false };
+    setSchedulerContext(context(config));
+    const tools = await schedulerExtension.getAgentTools?.(alpha, { config });
+    const byName = new Map(tools?.map((tool) => [tool.name, tool]));
+
+    const created = await byName.get("scheduler.create_job")!.execute(
+      { name: "Check", cron: "0 8 * * *", tz: "UTC", message: "Run", model: { provider: "anthropic", model: "m1" } },
+      { agent: alpha, config }
+    ) as { ok: boolean; job: { id: string; model?: unknown } };
+    expect(created.ok).toBe(true);
+    expect(created.job.model).toEqual({ provider: "anthropic", model: "m1" });
+
+    const unchanged = await byName.get("scheduler.update_job")!.execute(
+      { jobId: created.job.id, name: "Check v2" },
+      { agent: alpha, config }
+    ) as { ok: boolean; job: { model?: unknown } };
+    expect(unchanged.job.model).toEqual({ provider: "anthropic", model: "m1" });
+
+    const updated = await byName.get("scheduler.update_job")!.execute(
+      { jobId: created.job.id, model: { provider: "openai", model: "m2" } },
+      { agent: alpha, config }
+    ) as { ok: boolean; job: { model?: unknown } };
+    expect(updated.job.model).toEqual({ provider: "openai", model: "m2" });
+
+    const partial = await byName.get("scheduler.update_job")!.execute(
+      { jobId: created.job.id, model: { provider: "openai" } },
+      { agent: alpha, config }
+    ) as { ok: boolean };
+    expect(partial.ok).toBe(false);
+  });
+
   it("rejects a deliver entry with both channel and user", async () => {
     tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-scheduler-tools-"));
     const alpha = agent("alpha", path.join(tmpDir, "alpha"));

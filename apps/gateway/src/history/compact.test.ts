@@ -1,173 +1,55 @@
-import { mkdtemp, readdir, readFile, rm } from "node:fs/promises";
+import { mkdtemp, mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { FullHistoryMessage } from "@yoplai/shared";
-
 let tmpDir = "";
-
-vi.mock("../config/index.js", () => ({
-  get CONFIG_DIR() {
-    return tmpDir;
-  },
-}));
-
+vi.mock("../config/index.js", () => ({ get CONFIG_DIR() { return tmpDir; } }));
 vi.mock("@yoplai/extension-multi-user/isolation", () => ({
-  getUserHistoryDir: (userId: string | undefined, configDir: string) =>
-    userId
-      ? path.join(configDir, "users", userId, "history")
-      : path.join(configDir, "history"),
+  getUserHistoryDir: (userId: string | undefined, configDir: string) => userId ? path.join(configDir, "users", userId, "history") : path.join(configDir, "history"),
 }));
+vi.mock("../sessions/store.js", () => ({ getSessionCreatedAt: vi.fn(() => 1) }));
 
-vi.mock("../sessions/store.js", () => ({
-  getSessionCreatedAt: vi.fn(() => 1),
-}));
+async function seed(messages: FullHistoryMessage[]) {
+  const dir = path.join(tmpDir, "history");
+  await mkdir(dir, { recursive: true });
+  const content = messages.map((message) => JSON.stringify({ type: "history", agentId: "alpha", sessionId: "s1", ...message })).join("\n") + "\n";
+  await writeFile(path.join(dir, "alpha-s1.jsonl"), content);
+  return content;
+}
 
-describe("compact history rewrite", () => {
-  beforeEach(async () => {
-    tmpDir = await mkdtemp(path.join(os.tmpdir(), "yoplai-compact-"));
+describe("durable compaction history", () => {
+  beforeEach(async () => { tmpDir = await mkdtemp(path.join(os.tmpdir(), "yoplai-compact-")); });
+  afterEach(async () => { await rm(tmpDir, { recursive: true, force: true }); vi.resetModules(); });
+
+  it("preserves original records byte-for-byte including tools, thinking, attachments and usage", async () => {
+    const { appendCanonicalCompaction, getFullHistory } = await import("./store.js");
+    const messages: FullHistoryMessage[] = Array.from({ length: 24 }, (_, i) => ({ role: "user", content: [{ type: "text", text: `message ${i}` }], timestamp: i }));
+    messages.push({ role: "assistant", timestamp: 24, content: [{ type: "thinking", thinking: "reasoning" }, { type: "toolCall", id: "tc", name: "read", arguments: {} }], meta: { model: "test", usage: { input: 120000, output: 2, totalTokens: 120002 } } });
+    messages.push({ role: "toolResult", toolCallId: "tc", toolName: "read", content: [{ type: "text", text: "result" }], timestamp: 25, isError: false });
+    messages[0]!.content.push({ type: "file", fileId: "attachment-1", filename: "notes.txt", mimeType: "text/plain", size: 4, direction: "inbound" });
+    const original = await seed(messages);
+    for (const id of ["first", "second"]) await appendCanonicalCompaction({ agentId: "alpha", sessionId: "s1", summary: `summary ${id}`, recentMessages: messages.slice(-16), coveredThrough: 25, id });
+    const stored = await readFile(path.join(tmpDir, "history", "alpha-s1.jsonl"), "utf-8");
+    expect(stored.startsWith(original)).toBe(true);
+    const history = await getFullHistory("alpha", "s1");
+    expect(history).toHaveLength(messages.length + 2);
+    expect(history.slice(0, messages.length)).toEqual(messages);
+    expect(history.slice(-2).map((message) => message.role === "system" ? message.compaction?.id : undefined)).toEqual(["first", "second"]);
   });
 
-  afterEach(async () => {
-    await rm(tmpDir, { recursive: true, force: true });
-    vi.resetModules();
+  it("keeps legacy prefix summaries readable", async () => {
+    const { getFullHistory } = await import("./store.js");
+    await seed([{ role: "system", content: [{ type: "text", text: "[COMPACTED CONTEXT SUMMARY]\nlegacy" }], timestamp: 1 }]);
+    expect(await getFullHistory("alpha", "s1")).toMatchObject([{ role: "system", content: [{ text: "[COMPACTED CONTEXT SUMMARY]\nlegacy" }] }]);
   });
 
-  it("rewrites canonical history to summary plus recent user and assistant messages", async () => {
-    const { replaceCanonicalHistoryWithCompaction, getFullHistory } =
-      await import("./store.js");
-    const messages: FullHistoryMessage[] = [];
-    for (let i = 1; i <= 10; i += 1) {
-      messages.push({
-        role: "user",
-        content: [{ type: "text", text: `user ${i}` }],
-        timestamp: i * 10,
-      });
-      messages.push({
-        role: "assistant",
-        content: [{ type: "text", text: `assistant ${i}` }],
-        timestamp: i * 10 + 1,
-      });
-    }
-
-    await replaceCanonicalHistoryWithCompaction({
-      agentId: "alpha",
-      sessionId: "session-1",
-      summary: "Older context summary",
-      recentMessages: messages.slice(-16),
-    });
-
-    const rewritten = await getFullHistory("alpha", "session-1");
-    expect(rewritten).toHaveLength(17);
-    expect(rewritten[0]).toEqual({
-      role: "system",
-      content: [
-        {
-          type: "text",
-          text: "[COMPACTED CONTEXT SUMMARY]\nOlder context summary",
-        },
-      ],
-      timestamp: expect.any(Number),
-    });
-    expect(rewritten[1]).toMatchObject({
-      role: "user",
-      content: [{ type: "text", text: "user 3" }],
-    });
-    expect(rewritten.at(-1)).toMatchObject({
-      role: "assistant",
-      content: [{ type: "text", text: "assistant 10" }],
-    });
-  });
-
-  it("reads full history in chronological order when file append order is inverted", async () => {
-    const { replaceCanonicalHistoryWithCompaction, getFullHistory } =
-      await import("./store.js");
-
-    await replaceCanonicalHistoryWithCompaction({
-      agentId: "alpha",
-      sessionId: "session-1",
-      summary: "summary",
-      recentMessages: [
-        {
-          role: "assistant",
-          content: [{ type: "text", text: "assistant reply" }],
-          timestamp: 200,
-        },
-        {
-          role: "user",
-          content: [{ type: "text", text: "user asks" }],
-          timestamp: 100,
-        },
-      ],
-    });
-
-    const rewritten = await getFullHistory("alpha", "session-1");
-    expect(rewritten.map((message) => message.role)).toEqual([
-      "system",
-      "user",
-      "assistant",
-    ]);
-  });
-
-  it("drops old assistant usage metadata from compacted recent messages", async () => {
-    const { replaceCanonicalHistoryWithCompaction, getFullHistory } =
-      await import("./store.js");
-
-    await replaceCanonicalHistoryWithCompaction({
-      agentId: "alpha",
-      sessionId: "session-1",
-      summary: "summary",
-      recentMessages: [
-        {
-          role: "assistant",
-          content: [{ type: "text", text: "assistant reply" }],
-          timestamp: 100,
-          meta: {
-            model: "gpt-5.2",
-            usage: { input: 120000, output: 10, totalTokens: 120010 },
-          },
-        },
-      ],
-    });
-
-    const assistant = (await getFullHistory("alpha", "session-1")).find(
-      (message) => message.role === "assistant"
-    );
-    expect(assistant).toMatchObject({
-      role: "assistant",
-      meta: { model: "gpt-5.2" },
-    });
-    expect(assistant).not.toMatchObject({
-      meta: { usage: expect.anything() },
-    });
-  });
-
-  it("redacts sensitive values before rewriting compacted history", async () => {
-    const { replaceCanonicalHistoryWithCompaction } = await import("./store.js");
-    const canary = "compact-history-canary";
-
-    await replaceCanonicalHistoryWithCompaction({
-      agentId: "alpha",
-      sessionId: "session-1",
-      summary: `Authorization: Bearer ${canary}`,
-      recentMessages: [
-        {
-          role: "user",
-          content: [
-            {
-              type: "text",
-              text: `https://files.example.test/archive?X-Amz-Signature=${canary}`,
-            },
-          ],
-          timestamp: 100,
-        },
-      ],
-    });
-
-    const historyDir = path.join(tmpDir, "history");
-    const [historyFile] = await readdir(historyDir);
-    const stored = await readFile(path.join(historyDir, historyFile!), "utf-8");
-    expect(stored).not.toContain(canary);
-    expect(stored).toContain("https://files.example.test/archive?");
+  it("isolates users and sanitizes newly appended summaries", async () => {
+    const { appendCanonicalCompaction, getFullHistory } = await import("./store.js");
+    await appendCanonicalCompaction({ agentId: "alpha", sessionId: "s1", userId: "u1", summary: "Authorization: Bearer compact-history-canary", recentMessages: [], coveredThrough: 0, id: "c1" });
+    expect(await getFullHistory("alpha", "s1", "u2")).toEqual([]);
+    const dir = path.join(tmpDir, "users", "u1", "history");
+    const [file] = await readdir(dir);
+    expect(await readFile(path.join(dir, file!), "utf-8")).not.toContain("compact-history-canary");
   });
 });

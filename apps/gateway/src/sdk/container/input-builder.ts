@@ -88,7 +88,7 @@ export class ContainerInputBuilder {
           params.agent.retryBaseDelay ?? DEFAULT_RETRY_BASE_DELAY_SECONDS,
       },
       workspaceDir: "/workspace",
-      sessionDir: "/sessions",
+      sessionDir: params.userId ? `/users/${params.userId}/sessions/${params.agentId}` : "/sessions",
       ipcDir: "/workspace/ipc",
       gatewayUrl: resolveContainerGatewayUrl(config),
       gatewaySocketPath: usesGatewaySocket(config.sandbox ?? {})

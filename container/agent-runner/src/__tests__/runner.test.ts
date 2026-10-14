@@ -1,6 +1,7 @@
 import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { ModelRuntime } from "@earendil-works/pi-coding-agent";
 import { ModelsError } from "@earendil-works/pi-ai";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ContainerInput } from "@yoplai/shared";
@@ -136,6 +137,26 @@ function startAgentRun(): void {
 }
 
 describe("Pi runner", () => {
+  it("loads global custom model definitions while keeping user runtime state scoped", async () => {
+    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-runner-scoped-"));
+    try {
+      const workspaceDir = path.join(tempDir, "workspace");
+      const sessionDir = path.join(tempDir, "users", "user-1", "sessions", "agent-1");
+      await fs.mkdir(workspaceDir, { recursive: true });
+      const input = createInput({ workspaceDir, sessionDir });
+      input.userId = "user-1";
+      input.sdkConfig.model = { provider: "custom-provider", model: "custom-model" };
+      await runAgent(input);
+      expect(ModelRuntime.create).toHaveBeenLastCalledWith(expect.objectContaining({ modelsPath: "/sessions/models.json" }));
+      const runtime = await vi.mocked(ModelRuntime.create).mock.results.at(-1)!.value;
+      expect(runtime.getModel).toHaveBeenCalledWith("custom-provider", "custom-model");
+      expect(piMock.sessionManagerOpen).toHaveBeenCalledWith(expect.stringContaining("session-1.jsonl"), sessionDir);
+      await expect(fs.readFile(path.join(sessionDir, "session-1.jsonl"), "utf-8")).resolves.toBe("");
+    } finally {
+      await fs.rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
   it("retries a zero-output retryable provider failure in the active session", async () => {
     const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-runner-"));
     const workspaceDir = path.join(tempDir, "workspace");

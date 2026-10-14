@@ -163,7 +163,39 @@ type SimpleThinkingMessage = {
   endedAt?: number;
 };
 
-type SimpleViewMessage = Message | SimpleToolMessage | SimpleThinkingMessage;
+type SimpleSummaryMessage = {
+  id: string;
+  role: "compaction";
+  content: string;
+  timestamp: number;
+};
+
+type SimpleViewMessage = Message | SimpleToolMessage | SimpleThinkingMessage | SimpleSummaryMessage;
+
+const COMPACT_SUMMARY_PREFIX = "[COMPACTED CONTEXT SUMMARY]";
+
+function compactSummary(message: FullHistoryMessage): string | undefined {
+  if (message.role !== "system") return undefined;
+  const text = message.content
+    .filter((block) => block.type === "text")
+    .map((block) => extractBlockText(block.text))
+    .join("\n");
+  return text.startsWith(COMPACT_SUMMARY_PREFIX)
+    ? text.slice(COMPACT_SUMMARY_PREFIX.length).trim()
+    : undefined;
+}
+
+function CompactionSummary(props: { text: string; timestamp: number }) {
+  return (
+    <div class="message compaction-summary">
+      <details>
+        <summary>Compaction summary</summary>
+        <div class="content compaction-summary-text">{props.text}</div>
+      </details>
+      <div class="message-time">{formatTimestamp(props.timestamp)}</div>
+    </div>
+  );
+}
 
 type StreamingBlock =
   | {
@@ -583,9 +615,10 @@ function ActivityGroup(props: {
 }
 
 type FullDisplayRow =
-  | { kind: "activity"; item: ActivityItem }
+  | { kind: "activity"; item: ActivityItem; historyIndex: number }
   | {
       kind: "assistant-content";
+      historyIndex: number;
       block: Extract<ContentBlock, { type: "text" | "file" }>;
       timestamp: number;
       meta?: ModelMeta;
@@ -613,6 +646,7 @@ function fullHistoryDisplayRows(
       if (block.type === "thinking") {
         rows.push({
           kind: "activity",
+          historyIndex,
           item: {
             type: "thinking",
             content: block.thinking,
@@ -623,6 +657,7 @@ function fullHistoryDisplayRows(
       } else if (block.type === "toolCall") {
         rows.push({
           kind: "activity",
+          historyIndex,
           item: {
             type: "tool",
             name: block.name,
@@ -635,6 +670,7 @@ function fullHistoryDisplayRows(
         visibleIndex += 1;
         rows.push({
           kind: "assistant-content",
+          historyIndex,
           block,
           timestamp: message.timestamp,
           meta: message.meta,
@@ -651,6 +687,11 @@ function fullMessagesToSimpleView(
 ): SimpleViewMessage[] {
   const simple: SimpleViewMessage[] = [];
   for (const message of messages) {
+    const summary = compactSummary(message);
+    if (summary !== undefined) {
+      simple.push({ id: crypto.randomUUID(), role: "compaction", content: summary, timestamp: message.timestamp });
+      continue;
+    }
     if (message.role === "toolResult" || message.role === "system") continue;
     if (message.role === "user") {
       const text = message.content
@@ -938,6 +979,15 @@ export function ChatView() {
     new Map<string, CompactStatus>()
   );
   const compactRequests = new Map<string, Promise<void>>();
+  const [historyCursor, setHistoryCursor] = createSignal<string | undefined>();
+  const [loadingEarlier, setLoadingEarlier] = createSignal(false);
+  const [historyError, setHistoryError] = createSignal("");
+  const [activeContextUsage, setActiveContextUsage] = createSignal<
+    { inputTokens: number; model?: string } | undefined
+  >();
+  let loadedHistory: FullHistoryMessage[] = [];
+  let loadedHistorySession: string | null = null;
+  let loadedHistoryOffset = 0;
 
   // Empty-chat hero state. `heroEmpty` is true when the chat has no content;
   // `heroPhase` tracks hero -> exiting -> off so the composer can slide from
@@ -1034,6 +1084,11 @@ export function ChatView() {
   });
 
   const estimatedContextUsagePct = createMemo(() => {
+    const active = activeContextUsage();
+    if (active) {
+      const pct = (active.inputTokens / getMaxContextTokens(active.model)) * 100;
+      return pct > 0 && pct < 1 ? 1 : Math.max(0, Math.min(100, Math.round(pct)));
+    }
     let highestInputTokens = 0;
     let modelName: string | undefined;
     const messages = contextFullMessages();
@@ -1078,17 +1133,7 @@ export function ChatView() {
     return null;
   });
 
-  const isCompactSummaryMessage = (message: FullHistoryMessage) =>
-    message.role === "system" &&
-    message.content.some(
-      (block) =>
-        block.type === "text" &&
-        block.text.startsWith("[COMPACTED CONTEXT SUMMARY]")
-    );
-
-  const visibleFullMessages = createMemo(() =>
-    fullMessages().filter((message) => !isCompactSummaryMessage(message))
-  );
+  const visibleFullMessages = fullMessages;
   const fullDisplaySegments = createMemo(() =>
     groupActivityItems(
       fullHistoryDisplayRows(visibleFullMessages(), toolResultsMap()),
@@ -1203,10 +1248,25 @@ export function ChatView() {
     const key = sessionKey();
     const sessionId = explicitSessionId();
     setLoading(true);
+    const res = await fetchFullHistory(agentId, key, sessionId, { limit: 100 });
+    if (requestedSession !== currentSession()) return;
+    const offset = res.historyOffset ?? 0;
+    const prefixLength = loadedHistorySession === requestedSession
+      ? offset - loadedHistoryOffset
+      : -1;
+    const older = prefixLength > 0 && prefixLength <= loadedHistory.length
+      ? loadedHistory.slice(0, prefixLength)
+      : [];
+    loadedHistory = [...older, ...res.messages];
+    loadedHistorySession = requestedSession;
+    if (!older.length) {
+      loadedHistoryOffset = offset;
+      setHistoryCursor(res.nextCursor);
+    }
+    setHistoryError("");
+    setActiveContextUsage(res.activeContextUsage);
     if (mode === "full") {
-      const res = await fetchFullHistory(agentId, key, sessionId);
-      if (requestedSession !== currentSession()) return;
-      const baseMessages = [...res.messages];
+      const baseMessages = [...loadedHistory];
       if (res.activeTurn?.userText) {
         baseMessages.push({
           role: "user",
@@ -1234,10 +1294,8 @@ export function ChatView() {
       if (res.sessionId) setResolvedSessionId(res.sessionId);
       applyActiveTurn(res.isStreaming ?? false, res.activeTurn ?? null);
     } else {
-      const res = await fetchFullHistory(agentId, key, sessionId);
-      if (requestedSession !== currentSession()) return;
       setContextFullMessages(res.messages);
-      const base = fullMessagesToSimpleView(res.messages);
+      const base = fullMessagesToSimpleView(loadedHistory);
       if (res.activeTurn?.userText) {
         base.push({
           id: crypto.randomUUID(),
@@ -1268,14 +1326,46 @@ export function ChatView() {
     setLoading(false);
   };
 
+  const loadEarlierHistory = async () => {
+    const before = historyCursor();
+    if (!before || loadingEarlier()) return;
+    const requestedSession = currentSession();
+    setLoadingEarlier(true);
+    setHistoryError("");
+    try {
+      const res = await fetchFullHistory(params.agentId, sessionKey(), explicitSessionId(), { limit: 100, before });
+      if (requestedSession !== currentSession() || before !== historyCursor()) return;
+      const container = messagesContainerRef;
+      const previousHeight = container?.scrollHeight ?? 0;
+      const previousTop = container?.scrollTop ?? 0;
+      setAutoScrollPinned(false);
+      loadedHistory = [...res.messages, ...loadedHistory];
+      loadedHistoryOffset = res.historyOffset ?? Math.max(0, loadedHistoryOffset - res.messages.length);
+      if (viewMode() === "full") setFullMessages((messages) => [...res.messages, ...messages]);
+      else setSimpleMessages((messages) => [...fullMessagesToSimpleView(res.messages), ...messages]);
+      setHistoryCursor(res.nextCursor);
+      requestAnimationFrame(() => {
+        if (container && requestedSession === currentSession()) {
+          container.scrollTop = previousTop + container.scrollHeight - previousHeight;
+        }
+      });
+    } catch {
+      if (requestedSession === currentSession()) setHistoryError("Could not load earlier messages. Please retry.");
+    } finally {
+      setLoadingEarlier(false);
+    }
+  };
+
   const refreshContextUsage = async () => {
     const requestedSession = currentSession();
     const res = await fetchFullHistory(
       params.agentId,
       sessionKey(),
-      explicitSessionId()
+      explicitSessionId(),
+      { limit: 1 }
     );
     if (requestedSession !== currentSession()) return;
+    setActiveContextUsage(res.activeContextUsage);
     setContextFullMessages(res.messages);
   };
 
@@ -1294,7 +1384,11 @@ export function ChatView() {
     const at = compactStatusForCurrentSession()?.at;
     if (at === undefined) return null;
     const list: { role: string; timestamp: number }[] =
-      viewMode() === "simple" ? simpleMessages() : visibleFullMessages();
+      viewMode() === "simple"
+        ? simpleMessages()
+        : fullHistoryDisplayRows(visibleFullMessages(), toolResultsMap()).map(
+            (row) => visibleFullMessages()[row.historyIndex]
+          );
     for (let i = list.length - 1; i >= 0; i--) {
       if (list[i].role !== "toolResult" && list[i].timestamp <= at) return i;
     }
@@ -2850,6 +2944,12 @@ export function ChatView() {
             "drop-target": isFileDragActive() && activeDropZone() === "history",
           }}
         >
+          <Show when={historyCursor()}>
+            <button class="load-earlier" disabled={loadingEarlier()} onClick={() => void loadEarlierHistory()}>
+              {loadingEarlier() ? "Loading earlier messages…" : "Load earlier messages"}
+            </button>
+          </Show>
+          <Show when={historyError()}><div role="alert">{historyError()}</div></Show>
           <Show when={compactStatusAnchorIndex() === -1}>
             <CompactStatusView status={compactStatusForCurrentSession()} />
           </Show>
@@ -2898,12 +2998,15 @@ export function ChatView() {
                     const visible = () => {
                       const message = row();
                       return message.role === "tool" ||
-                        message.role === "thinking"
+                        message.role === "thinking" || message.role === "compaction"
                         ? undefined
                         : message;
                     };
                     return (
                       <>
+                        <Show when={row().role === "compaction"}>
+                          <CompactionSummary text={(row() as SimpleSummaryMessage).content} timestamp={row().timestamp} />
+                        </Show>
                         <Show when={visible()}>
                           {(item) => (
                             <div
@@ -2954,6 +3057,7 @@ export function ChatView() {
           <Show when={viewMode() === "full"}>
             <Index each={fullDisplaySegments()}>
               {(segment) => (
+                <>
                 <SegmentView
                   segment={segment()}
                   activity={(items) => (
@@ -3036,7 +3140,10 @@ export function ChatView() {
                                   </div>
                                 </div>
                               </Show>
-                              <Show when={msg().role === "system"}>
+                              <Show when={compactSummary(msg()) !== undefined}>
+                                <CompactionSummary text={compactSummary(msg())!} timestamp={msg().timestamp} />
+                              </Show>
+                              <Show when={msg().role === "system" && compactSummary(msg()) === undefined}>
                                 <div class="message assistant full-message system-message">
                                   <ContentBlocks
                                     blocks={msg().content}
@@ -3055,6 +3162,10 @@ export function ChatView() {
                     </Switch>
                   )}
                 />
+                <Show when={segment().endIndex === compactStatusAnchorIndex()}>
+                  <CompactStatusView status={compactStatusForCurrentSession()} />
+                </Show>
+                </>
               )}
             </Index>
           </Show>
@@ -4692,6 +4803,14 @@ export function ChatView() {
           font-style: italic;
         }
 
+        .compaction-summary details {
+          border: 1px solid var(--border-default);
+          border-radius: 8px;
+          padding: 12px;
+        }
+        .compaction-summary summary { cursor: pointer; }
+        .compaction-summary-text { white-space: pre-wrap; margin-top: 12px; }
+        .load-earlier { align-self: center; margin: 12px; }
         .message.compact-status {
           text-align: center;
           padding: 8px 20px;

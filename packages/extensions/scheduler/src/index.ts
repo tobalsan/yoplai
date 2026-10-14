@@ -51,6 +51,7 @@ const createJobToolSchema = z.object({
   noAgent: z.boolean().optional(),
   quietOutput: z.boolean().optional(),
   deliver: z.array(DeliverTargetSchema).optional(),
+  model: z.object({ provider: z.string().min(1), model: z.string().min(1) }).optional(),
   timeoutMs: z.number().positive().optional(),
 });
 
@@ -66,6 +67,7 @@ const updateJobToolSchema = z.object({
   noAgent: z.boolean().optional(),
   quietOutput: z.boolean().optional(),
   deliver: z.array(DeliverTargetSchema).optional(),
+  model: z.object({ provider: z.string().min(1), model: z.string().min(1) }).optional(),
   timeoutMs: z.number().positive().optional(),
 });
 
@@ -220,6 +222,14 @@ function schedulerAgentTools(): ExtensionAgentTool[] {
               "a silent tick delivers nothing, and any error always delivers an alert. Each entry needs " +
               "target and exactly one of channel or user.",
           },
+          model: {
+            type: "object",
+            properties: { provider: { type: "string" }, model: { type: "string" } },
+            required: ["provider", "model"],
+            description:
+              "Per-job model override, e.g. {provider: \"anthropic\", model: \"claude-opus-5-5\"}. " +
+              "Omit to use the agent's default model.",
+          },
           timeoutMs: { type: "number" },
         },
         required: ["name"],
@@ -245,6 +255,7 @@ function schedulerAgentTools(): ExtensionAgentTool[] {
               quietOutput: input.quietOutput,
             },
             deliver: input.deliver,
+            model: input.model,
             timeoutMs: input.timeoutMs,
           });
           const { agentId, ...body } = parsed;
@@ -324,6 +335,14 @@ function schedulerAgentTools(): ExtensionAgentTool[] {
               "omit this field to leave the current list unchanged. Each entry needs target and exactly " +
               "one of channel or user.",
           },
+          model: {
+            type: "object",
+            properties: { provider: { type: "string" }, model: { type: "string" } },
+            required: ["provider", "model"],
+            description:
+              "Per-job model override, e.g. {provider: \"anthropic\", model: \"claude-opus-5-5\"}. " +
+              "Omit to use the agent's default model.",
+          },
           timeoutMs: { type: "number" },
         },
         required: ["jobId"],
@@ -375,6 +394,7 @@ function schedulerAgentTools(): ExtensionAgentTool[] {
               : undefined,
             payload,
             deliver: input.deliver,
+            model: input.model,
             timeoutMs: input.timeoutMs,
           });
           return {

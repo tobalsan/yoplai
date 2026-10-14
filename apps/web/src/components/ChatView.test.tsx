@@ -812,7 +812,102 @@ describe("ChatView abort handling", () => {
     dispose();
   });
 
-  it("runs manual compaction without sending a chat message", async () => {
+  it.each([undefined, "full"])("shows every summary collapsed in %s mode after reopen", async (mode) => {
+    routeState.view = mode;
+    fetchFullHistoryMock.mockResolvedValue({
+      messages: [
+        { role: "user", content: [{ type: "text", text: "original conversation" }], timestamp: 1 },
+        { role: "system", content: [{ type: "text", text: "[COMPACTED CONTEXT SUMMARY]\nFirst complete summary\nSecond line" }], timestamp: 2 },
+        { role: "system", content: [{ type: "text", text: "[COMPACTED CONTEXT SUMMARY]\nLater summary" }], timestamp: 3 },
+      ],
+      activeContextUsage: { inputTokens: 0 },
+    });
+    let view = renderView();
+    await waitFor(() => expect(view.container.querySelectorAll("details summary").length).toBe(2));
+    expect(view.container.textContent).toContain("original conversation");
+    const disclosures = view.container.querySelectorAll(".compaction-summary details");
+    expect([...disclosures].every((element) => !element.hasAttribute("open"))).toBe(true);
+    expect(disclosures[0].querySelector("summary")?.tagName).toBe("SUMMARY");
+    disclosures[0].setAttribute("open", "");
+    expect(disclosures[0].textContent).toContain("First complete summary\nSecond line");
+    view.dispose();
+    view.container.remove();
+    view = renderView();
+    await waitFor(() => expect(view.container.querySelectorAll(".compaction-summary details").length).toBe(2));
+    expect(view.container.querySelector(".compaction-summary details")?.hasAttribute("open")).toBe(false);
+    view.dispose();
+  });
+
+  it("loads earlier history in bounded pages and keeps chronological duplicates", async () => {
+    fetchFullHistoryMock.mockResolvedValueOnce({
+      messages: [{ role: "assistant", content: [{ type: "text", text: "recent message" }], timestamp: 5 }],
+      nextCursor: "before-recent",
+      activeContextUsage: { inputTokens: 0 },
+    }).mockResolvedValueOnce({
+      messages: [
+        { role: "user", content: [{ type: "text", text: "earliest message" }], timestamp: 1 },
+        { role: "user", content: [{ type: "text", text: "earliest message" }], timestamp: 1 },
+      ],
+    });
+    const { container, dispose } = renderView();
+    await waitFor(() => expect(container.querySelector(".load-earlier")).not.toBeNull());
+    (container.querySelector(".load-earlier") as HTMLButtonElement).click();
+    await waitFor(() => expect(container.querySelectorAll(".message.user").length).toBe(2));
+    expect(fetchFullHistoryMock).toHaveBeenCalledWith("agent-1", "main", undefined, { limit: 100, before: "before-recent" });
+    expect(container.querySelector(".load-earlier")).toBeNull();
+    expect(container.textContent?.indexOf("earliest message")).toBeLessThan(container.textContent?.indexOf("recent message") ?? 0);
+    dispose();
+  });
+
+  it("retries failed earlier-page loads without losing the visible tail", async () => {
+    const recent = { role: "user", content: [{ type: "text", text: "visible tail" }], timestamp: 5 };
+    fetchFullHistoryMock.mockResolvedValueOnce({ messages: [recent], nextCursor: "older", historyOffset: 1 })
+      .mockRejectedValueOnce(new Error("offline"))
+      .mockResolvedValueOnce({ messages: [{ role: "user", content: [{ type: "text", text: "oldest" }], timestamp: 1 }], historyOffset: 0 });
+    const { container, dispose } = renderView();
+    await waitFor(() => expect(container.querySelector(".load-earlier")).not.toBeNull());
+    (container.querySelector(".load-earlier") as HTMLButtonElement).click();
+    await waitFor(() => expect(container.querySelector('[role="alert"]')?.textContent).toContain("Please retry"));
+    expect(container.textContent).toContain("visible tail");
+    (container.querySelector(".load-earlier") as HTMLButtonElement).click();
+    await waitFor(() => expect(container.textContent).toContain("oldest"));
+    expect(container.querySelector('[role="alert"]')).toBeNull();
+    dispose();
+  });
+
+  it("ignores archived high usage when active context has been compacted", async () => {
+    fetchFullHistoryMock.mockResolvedValue({
+      messages: [{ role: "assistant", content: [{ type: "text", text: "archived response" }], timestamp: 1, meta: { model: "gpt-5", usage: { input: 390000 } } }],
+      activeContextUsage: { inputTokens: 0, model: "gpt-5" },
+    });
+    const { container, dispose } = renderView();
+    await waitFor(() => expect(container.textContent).toContain("0% context used"));
+    const textarea = container.querySelector("textarea") as HTMLTextAreaElement;
+    textarea.value = "new turn";
+    textarea.dispatchEvent(new Event("input", { bubbles: true }));
+    textarea.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+    await tick();
+    expect(postCompactMock).not.toHaveBeenCalled();
+    dispose();
+  });
+
+  it.each([undefined, "full"])("runs manual compaction with a persisted summary in %s view", async (view) => {
+    routeState.view = view;
+    fetchFullHistoryMock.mockResolvedValue({
+      messages: [
+        { role: "assistant", content: [
+          { type: "thinking", thinking: "archived reasoning" },
+          { type: "text", text: "archived answer" },
+          { type: "text", text: "another archived block" },
+        ], timestamp: 1 },
+        { role: "system", content: [{ type: "text", text: "[COMPACTED CONTEXT SUMMARY]\nEarlier summary" }], timestamp: 2 },
+        { role: "system", content: [{ type: "text", text: "[COMPACTED CONTEXT SUMMARY]\nLatest summary" }], timestamp: 3 },
+        { role: "assistant", content: [{ type: "thinking", thinking: "retained reasoning" }], timestamp: 4 },
+      ],
+      sessionId: "session-main",
+      isStreaming: false,
+      activeTurn: null,
+    });
     const { container, dispose } = renderView();
     await tick();
     await tick();
@@ -837,6 +932,13 @@ describe("ChatView abort handling", () => {
     expect(postCompactMock).toHaveBeenCalledWith("agent-1", "main", undefined);
     expect(streamMessageMock).not.toHaveBeenCalled();
     expect(container.textContent).toContain("Context compacted.");
+    expect(container.querySelectorAll(".compact-status")).toHaveLength(1);
+    const latestSummary = container.querySelectorAll(".compaction-summary")[1];
+    expect(latestSummary.textContent).toContain("Latest summary");
+    expect(
+      latestSummary.compareDocumentPosition(container.querySelector(".compact-status")!) &
+        Node.DOCUMENT_POSITION_FOLLOWING
+    ).toBeTruthy();
 
     // Later messages flow below the status instead of above it.
     await new Promise((resolve) => setTimeout(resolve, 2));
@@ -848,6 +950,7 @@ describe("ChatView abort handling", () => {
     await tick();
 
     const status = container.querySelector(".compact-status");
+    expect(container.querySelectorAll(".compact-status")).toHaveLength(1);
     const userMessages = container.querySelectorAll(".message.user");
     const lastUser = userMessages[userMessages.length - 1];
     expect(lastUser?.textContent).toContain("after compact");

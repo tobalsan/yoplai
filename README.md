@@ -8,7 +8,7 @@ Yoplai keeps configuration, conversations, and project data on your machine. Sta
 
 ## What you get
 
-- Web chat with streaming, tool calls, files, and session history
+- Web chat with streaming, tool calls, files, and session history. Pi compaction preserves the transcript and adds collapsed summaries in Simple and Full views; use **Load earlier messages** to reach older messages.
 - Multiple configurable agents and external CLI subagents
 - Optional Discord, Slack, Telegram, IRC, and webhook entry points
 - Slack credential refusals offer [one personal connection link](docs/slack-credential-connect.md) for pairing plus Google OAuth, extension tokens, or extension-owned OAuth, with a confirmation in the original thread.

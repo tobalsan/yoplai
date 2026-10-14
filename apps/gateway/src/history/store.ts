@@ -87,6 +87,7 @@ type SystemHistoryEntry = {
   role: "system";
   content: ContentBlock[];
   context?: AgentContext;
+  compaction?: { id: string; coveredThrough: number; retainedFrom?: number };
 };
 
 type AssistantHistoryEntry = {
@@ -732,6 +733,7 @@ export async function getFullHistory(
             content: entry.content,
             timestamp: entry.timestamp,
             context: entry.context,
+            ...(entry.compaction ? { compaction: entry.compaction } : {}),
           });
         } else if (entry.role === "user") {
           messages.push({
@@ -778,71 +780,31 @@ export async function getFullHistory(
   return orderMessagesByTimestamp(messages);
 }
 
-export async function replaceCanonicalHistoryWithCompaction(params: {
+export async function appendCanonicalCompaction(params: {
   agentId: string;
   sessionId: string;
   summary: string;
   recentMessages: FullHistoryMessage[];
+  coveredThrough: number;
+  id: string;
   userId?: string;
 }): Promise<void> {
-  const file = await resolveHistoryFile(
-    params.agentId,
-    params.sessionId,
-    params.userId
-  );
+  const file = await resolveHistoryFile(params.agentId, params.sessionId, params.userId);
   await fs.mkdir(path.dirname(file), { recursive: true });
-  const firstRecentTimestamp = params.recentMessages.reduce(
-    (min, message) => Math.min(min, message.timestamp),
-    Date.now()
-  );
-  const entries: HistoryEntry[] = [
-    {
-      type: "history",
-      agentId: params.agentId,
-      sessionId: params.sessionId,
-      role: "system",
-      content: [
-        {
-          type: "text",
-          text: `[COMPACTED CONTEXT SUMMARY]\n${params.summary.trim()}`,
-        },
-      ],
-      timestamp: Math.max(0, firstRecentTimestamp - 1),
+  const entry: SystemHistoryEntry = {
+    type: "history",
+    agentId: params.agentId,
+    sessionId: params.sessionId,
+    role: "system",
+    content: [{ type: "text", text: `[COMPACTED CONTEXT SUMMARY]\n${params.summary.trim()}` }],
+    timestamp: Date.now(),
+    compaction: {
+      id: params.id,
+      coveredThrough: params.coveredThrough,
+      retainedFrom: params.recentMessages[0]?.timestamp,
     },
-  ];
-
-  for (const message of params.recentMessages) {
-    if (message.role === "toolResult") continue;
-    const entry =
-      message.role === "assistant" && message.meta
-        ? {
-            ...message,
-            meta: {
-              provider: message.meta.provider,
-              model: message.meta.model,
-              api: message.meta.api,
-              stopReason: message.meta.stopReason,
-              failure: message.meta.failure,
-            },
-          }
-        : message;
-    entries.push({
-      type: "history",
-      agentId: params.agentId,
-      sessionId: params.sessionId,
-      ...entry,
-    } as HistoryEntry);
-  }
-
-  const tmp = `${file}.${process.pid}.${Date.now()}.tmp`;
-  await fs.writeFile(
-    tmp,
-    entries
-      .map((entry) => JSON.stringify(sanitizeForStorage(entry)))
-      .join("\n") + "\n",
-    "utf-8"
-  );
-  await fs.rename(tmp, file);
+  };
+  await fs.appendFile(file, JSON.stringify(sanitizeForStorage(entry)) + "\n", "utf-8");
 }
 
 /**
@@ -875,7 +837,7 @@ async function resolvePiSessionFile(
 ): Promise<string | null> {
   const createdAt = await getSessionCreatedAt(sessionId, userId);
   return resolveSessionDataFile({
-    dir: PI_SESSIONS_DIR,
+    dir: userId ? path.join(CONFIG_DIR, "sessions", "users", userId, "sessions") : PI_SESSIONS_DIR,
     agentId,
     sessionId,
     createdAt,

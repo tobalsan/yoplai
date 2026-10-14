@@ -115,6 +115,8 @@ vi.mock("../agents/index.js", () => ({
   getAgentStatuses,
   getSessionHistory,
   getFullSessionHistory,
+  isStreaming: () => false,
+  getSessionCurrentTurn: () => null,
 }));
 
 vi.mock("../agents/compact.js", () => ({
@@ -180,6 +182,28 @@ describe("api core session resolution", () => {
       isNew: true,
       createdAt: 1,
     });
+  });
+
+  it("pages full history without dropping timestamp ties and reports active usage outside the archive", async () => {
+    getAgent.mockReturnValue({ id: "alpha", name: "Alpha", workspace: "/tmp" });
+    const originals = Array.from({ length: 250 }, (_, i) => ({ role: "user", timestamp: Math.floor(i / 3), content: [{ type: "text", text: `message ${i}` }] }));
+    const summary = { role: "system", timestamp: 100, content: [{ type: "text", text: "[COMPACTED CONTEXT SUMMARY]\nsummary" }], compaction: { id: "c1", coveredThrough: 83 } };
+    getFullSessionHistory.mockResolvedValue([...originals, summary]);
+    const { api } = await import("./api.core.js");
+    let cursor: string | undefined;
+    const loaded: unknown[] = [];
+    do {
+      const response = await api.request(`/agents/alpha/history?sessionId=s1&view=full&limit=100${cursor ? `&before=${cursor}` : ""}`);
+      expect(response.status).toBe(200);
+      const body = await response.json() as { messages: unknown[]; nextCursor?: string; activeContextUsage: { inputTokens: number } };
+      expect(body.messages.length).toBeLessThanOrEqual(100);
+      expect(body.activeContextUsage.inputTokens).toBe(0);
+      loaded.unshift(...body.messages);
+      cursor = body.nextCursor;
+    } while (cursor);
+    expect(loaded).toEqual([...originals, summary]);
+    expect((await api.request("/agents/alpha/history?sessionId=s1&view=full&limit=201")).status).toBe(400);
+    expect((await api.request("/agents/alpha/history?sessionId=s1&view=full&limit=100&before=bad")).status).toBe(400);
   });
 
   it("returns an empty agent list without default resolution errors", async () => {

@@ -11,9 +11,12 @@ import { sanitizeForStorage } from "@yoplai/shared";
 import { CONFIG_DIR, getAgent } from "../config/index.js";
 import type { ExtensionRuntime } from "../extensions/runtime.js";
 import { getFullSessionHistory, runAgent } from "./runner.js";
-import { replaceCanonicalHistoryWithCompaction } from "../history/store.js";
+import { appendCanonicalCompaction } from "../history/store.js";
 import { getSessionCreatedAt } from "../sessions/store.js";
 import { resolveSessionDataFile } from "../sessions/files.js";
+import { isStreaming } from "./sessions.js";
+import { activateCompaction } from "./compaction-activation.js";
+import { getDefaultSdkId } from "../sdk/registry.js";
 
 const RECENT_COMPACT_MESSAGES = 16;
 const COMPACT_SUMMARY_PREFIX = "[COMPACTED CONTEXT SUMMARY]";
@@ -64,6 +67,13 @@ function recentConversationMessages(
     .slice(-RECENT_COMPACT_MESSAGES);
 }
 
+function activeCompactionContext(messages: FullHistoryMessage[]): FullHistoryMessage[] {
+  const previous = [...messages].reverse().find((message) => message.role === "system" && message.compaction);
+  if (previous?.role !== "system" || !previous.compaction) return messages;
+  const retainedFrom = previous.compaction.retainedFrom ?? previous.timestamp;
+  return [previous, ...messages.filter((message) => message.role !== "system" && message.timestamp >= retainedFrom)];
+}
+
 function buildSummaryPrompt(messages: FullHistoryMessage[]): string {
   return `Summarize the conversation below so another run of the same agent can continue without the older raw context.
 
@@ -93,11 +103,19 @@ export function compactAssistantMeta(
 
 async function resolvePiSessionFile(
   agentId: string,
-  sessionId: string
+  sessionId: string,
+  userId?: string
 ): Promise<string> {
-  const createdAt = await getSessionCreatedAt(sessionId);
+  const agent = getAgent(agentId);
+  const dir = userId
+    ? path.join(CONFIG_DIR, "sessions", "users", userId, "sessions")
+    : path.join(CONFIG_DIR, "sessions");
+  if (agent?.sandbox?.enabled) {
+    return path.join(dir, agentId, `${sessionId}.jsonl`);
+  }
+  const createdAt = await getSessionCreatedAt(sessionId, userId);
   return (await resolveSessionDataFile({
-    dir: path.join(CONFIG_DIR, "sessions"),
+    dir,
     agentId,
     sessionId,
     createdAt,
@@ -118,16 +136,38 @@ function toPiContent(content: ContentBlock[]): ContentBlock[] {
   );
 }
 
+async function writeRuntimeFile(file: string, content: string): Promise<void> {
+  const temporary = `${file}.${crypto.randomUUID()}.tmp`;
+  try {
+    await fs.writeFile(temporary, content, "utf-8");
+    await fs.rename(temporary, file);
+  } catch (error) {
+    try {
+      await fs.unlink(temporary);
+    } catch (cleanupError) {
+      if ((cleanupError as NodeJS.ErrnoException).code !== "ENOENT") throw cleanupError;
+    }
+    throw error;
+  }
+}
+
 async function seedPiSession(params: {
   agentId: string;
   sessionId: string;
   summary: string;
   recentMessages: FullHistoryMessage[];
-}): Promise<void> {
+  userId?: string;
+}): Promise<() => Promise<void>> {
   const agent = getAgent(params.agentId);
-  if (!agent) return;
-  const file = await resolvePiSessionFile(params.agentId, params.sessionId);
+  if (!agent) throw new Error("Agent not found");
+  const file = await resolvePiSessionFile(params.agentId, params.sessionId, params.userId);
   await fs.mkdir(path.dirname(file), { recursive: true });
+  let original: string | undefined;
+  try {
+    original = await fs.readFile(file, "utf-8");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+  }
   const now = new Date().toISOString();
   let parentId: string | null = null;
   const lines: string[] = [];
@@ -182,14 +222,21 @@ async function seedPiSession(params: {
     });
   }
 
-  await fs.writeFile(file, lines.join("\n") + "\n", "utf-8");
+  await writeRuntimeFile(file, lines.join("\n") + "\n");
+  return async () => {
+    if (original === undefined) {
+      await fs.unlink(file);
+    } else {
+      await writeRuntimeFile(file, original);
+    }
+  };
 }
 
 type CompactResult = { sessionId: string; summary: string; keptMessages: number };
 
 // Single-flight in-flight compactions, keyed by (userId, agentId, sessionId). Concurrent
 // callers for the same identity share one promise so the history read, summarization,
-// canonical rewrite, and runtime seed run exactly once instead of racing two rewrites.
+// durable summary append, and runtime activation run once instead of racing.
 const inFlightCompactions = new Map<string, Promise<CompactResult>>();
 
 function compactionKey(params: {
@@ -235,6 +282,13 @@ async function runCompactAgentSession(params: {
   extensionRuntime?: ExtensionRuntime;
   context?: AgentContext;
 }): Promise<CompactResult> {
+  const agent = getAgent(params.agentId);
+  if (!agent || (agent.sdk ?? getDefaultSdkId()) !== "pi") {
+    throw new Error("Web compaction is supported only for Pi sessions");
+  }
+  if (isStreaming(params.agentId, params.sessionId)) {
+    throw new Error("Cannot compact a session while a turn is running");
+  }
   const messages = await getFullSessionHistory(
     params.agentId,
     params.sessionId,
@@ -244,15 +298,32 @@ async function runCompactAgentSession(params: {
     return { sessionId: params.sessionId, summary: "", keptMessages: 0 };
   }
 
-  const summaryResult = await runAgent({
-    agentId: params.agentId,
-    sessionId: `compact:${params.sessionId}:${crypto.randomUUID()}`,
-    message: buildSummaryPrompt(messages),
-    userId: params.userId,
-    extensionRuntime: params.extensionRuntime,
-    context: params.context,
-    source: "web",
+  const latest = messages.at(-1);
+  if (latest?.role === "system" && latest.compaction) {
+    return { sessionId: params.sessionId, summary: textFromBlocks(latest).replace(COMPACT_SUMMARY_PREFIX, "").trim(), keptMessages: recentConversationMessages(messages).length };
+  }
+
+  const controller = new AbortController();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      controller.abort();
+      reject(new Error("Compaction summary timed out"));
+    }, 120_000);
   });
+  const summaryResult = await Promise.race([
+    runAgent({
+      agentId: params.agentId,
+      sessionId: `compact:${params.sessionId}:${crypto.randomUUID()}`,
+      message: buildSummaryPrompt(activeCompactionContext(messages)),
+      userId: params.userId,
+      extensionRuntime: params.extensionRuntime,
+      context: params.context,
+      source: "web",
+      signal: controller.signal,
+    }),
+    timeout,
+  ]).finally(() => clearTimeout(timer));
   const summary = summaryResult.payloads
     .map((payload) => payload.text)
     .filter((text): text is string => Boolean(text?.trim()))
@@ -263,18 +334,27 @@ async function runCompactAgentSession(params: {
   }
 
   const recentMessages = recentConversationMessages(messages);
-  await replaceCanonicalHistoryWithCompaction({
-    agentId: params.agentId,
-    sessionId: params.sessionId,
-    userId: params.userId,
-    summary,
-    recentMessages,
-  });
-  await seedPiSession({
-    agentId: params.agentId,
-    sessionId: params.sessionId,
-    summary,
-    recentMessages,
+  await activateCompaction(params.agentId, params.sessionId, params.userId, async () => {
+    if (isStreaming(params.agentId, params.sessionId)) {
+      throw new Error("Session changed during compaction; retry when the turn finishes");
+    }
+    const current = await getFullSessionHistory(params.agentId, params.sessionId, params.userId);
+    if (JSON.stringify(current) !== JSON.stringify(messages)) {
+      throw new Error("Session changed during compaction; retry with the new history");
+    }
+    const rollback = await seedPiSession({ ...params, summary, recentMessages });
+    try {
+      await appendCanonicalCompaction({
+        ...params,
+        summary,
+        recentMessages,
+        id: crypto.randomUUID(),
+        coveredThrough: messages.reduce((max, message) => Math.max(max, message.timestamp), 0),
+      });
+    } catch (error) {
+      await rollback();
+      throw error;
+    }
   });
 
   return {

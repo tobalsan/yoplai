@@ -343,7 +343,7 @@ describe("container adapter", () => {
       userId: "user-1",
       message: "hello",
       workspaceDir: "/workspace",
-      sessionDir: "/sessions",
+      sessionDir: "/users/user-1/sessions/cloud",
       ipcDir: "/workspace/ipc",
       gatewayUrl: expect.any(String),
       onecli: {

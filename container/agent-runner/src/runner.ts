@@ -381,7 +381,8 @@ export async function runAgent(
     };
     const modelRuntime = await ModelRuntime.create({
       credentials: credentialStore,
-      modelsPath: path.join(input.sessionDir, "models.json"),
+      // Global model definitions stay at the shared read-only mount.
+      modelsPath: "/sessions/models.json",
     });
     // A runtime api-key override shadows any stored credential, so providers
     // seeded from input.oauthTokens must skip it.

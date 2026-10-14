@@ -41,7 +41,7 @@ import {
   getSessionCurrentTurn,
   isStreaming,
 } from "../agents/index.js";
-import type { HistoryViewMode } from "@yoplai/shared";
+import type { FullHistoryMessage, SimpleHistoryMessage, HistoryViewMode } from "@yoplai/shared";
 import type { AgentConfig, GatewayConfig } from "@yoplai/shared";
 import {
   clearSessionEntry,
@@ -61,6 +61,7 @@ import {
   resolveMediaFilePath,
 } from "../media/metadata.js";
 import { normalizeRunRequest } from "./run-request.js";
+import { historyPage, activeContextUsage } from "../history/page.js";
 import { compactAgentSession } from "../agents/compact.js";
 import {
   isSafeSessionId,
@@ -1230,6 +1231,19 @@ api.get("/agents/:id/history", async (c) => {
       ? await getFullSessionHistory(agentId, sessionId, userId)
       : await getSessionHistory(agentId, sessionId, userId);
 
+  const limitQuery = c.req.query("limit");
+  const limit = limitQuery ? Number(limitQuery) : undefined;
+  if (limit !== undefined && (!Number.isSafeInteger(limit) || limit < 1 || limit > 200)) {
+    return c.json({ error: "History limit must be between 1 and 200" }, 400);
+  }
+  let page;
+  try {
+    page = limit === undefined ? { messages, historyOffset: 0 } : historyPage<SimpleHistoryMessage | FullHistoryMessage>(messages, limit, c.req.query("before"));
+  } catch {
+    return c.json({ error: "Invalid history cursor" }, 400);
+  }
+  const fullMessages = view === "full" ? messages : await getFullSessionHistory(agentId, sessionId, userId);
+
   // Only include thinkingLevel for OAuth agents
   const thinkingLevel =
     agent.auth?.mode === "oauth"
@@ -1257,7 +1271,8 @@ api.get("/agents/:id/history", async (c) => {
     : null;
 
   return c.json({
-    messages,
+    ...page,
+    activeContextUsage: activeContextUsage(fullMessages as FullHistoryMessage[]),
     sessionId,
     view,
     thinkingLevel,

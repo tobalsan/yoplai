@@ -91,6 +91,9 @@ export type HistoryResponse<T> = {
   thinkingLevel?: ThinkLevel;
   isStreaming?: boolean;
   activeTurn?: ActiveTurn | null;
+  nextCursor?: string;
+  historyOffset?: number;
+  activeContextUsage?: { inputTokens: number; model?: string };
 };
 
 function historyQuery(
@@ -107,12 +110,21 @@ function historyQuery(
 export async function fetchFullHistory(
   agentId: string,
   sessionKey: string,
-  sessionId?: string
+  sessionId?: string,
+  page?: { limit: number; before?: string }
 ): Promise<HistoryResponse<FullHistoryMessage>> {
+  const query = new URLSearchParams(historyQuery("full", sessionKey, sessionId));
+  if (page) {
+    query.set("limit", String(page.limit));
+    if (page.before) query.set("before", page.before);
+  }
   const res = await fetch(
-    `${API_BASE}/agents/${agentId}/history?${historyQuery("full", sessionKey, sessionId)}`
+    `${API_BASE}/agents/${agentId}/history?${query}`
   );
-  if (!res.ok) return { messages: [] };
+  if (!res.ok) {
+    if (page?.before) throw new Error("Failed to fetch history");
+    return { messages: [] };
+  }
   const data = await res.json();
   return {
     messages: data.messages ?? [],
@@ -120,6 +132,9 @@ export async function fetchFullHistory(
     thinkingLevel: data.thinkingLevel,
     isStreaming: data.isStreaming,
     activeTurn: data.activeTurn ?? null,
+    nextCursor: data.nextCursor,
+    historyOffset: data.historyOffset,
+    activeContextUsage: data.activeContextUsage,
   };
 }
 
