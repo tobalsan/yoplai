@@ -1,6 +1,10 @@
 import { registerOAuthProvider } from "./packages/shared/src/oauth/providers.js";
 import { googleProvider, zendeskProvider } from "./packages/shared/src/oauth/__tests__/providers.fixture.js";
 
+// Tests isolate config via HOME; a YOPLAI_HOME inherited from the shell (e.g. when
+// run from inside a Yoplai agent) would point them at the real user config.
+delete process.env.YOPLAI_HOME;
+
 // Providers now ship with extensions; tests exercising the OAuth flow use fixtures.
 registerOAuthProvider(googleProvider);
 registerOAuthProvider(zendeskProvider);
