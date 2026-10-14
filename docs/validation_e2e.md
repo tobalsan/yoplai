@@ -286,3 +286,11 @@ Leave `validation/` with:
 
 If a validation step cannot be run, say why in `validation/notes.md` and in the
 issue handoff. Do not claim E2E coverage for a path that was not exercised.
+
+## Dashboard browser checks (ALG-483)
+
+Build the agent image and record its size and increase over the prior image. In the isolated home above, create a sandboxed Pi agent using that image and seed the dashboard skill's CS templates, migrations, and sample data. Use the normal gateway run path to ask the agent to follow "Check it visually" (no installation or render harness), save a screenshot under `/tmp`, and read it. Record time from browser open to PNG: a fresh container must finish within 15 seconds. Capture the read tool's image content block and the model's next response describing something visible only in the screenshot.
+
+Exercise light and dark rendering, `resize 420 800`, a kit tab via `snapshot` then `click eN`, and `clients` → `client?id=…` drill-down. Capture PNGs and DOM snapshots under `validation/`; check `console` for page/query errors, including an intentionally broken query/page. Confirm the owning token gets its page, another agent's slug returns 404, and missing/invalid tokens return 401. Keep live tokens out of saved transcripts.
+
+Run a hung-page navigation with a finite Playwright navigation timeout and an explicit Bash tool timeout. Verify the CLI times out and the agent still responds without a container kill. Confirm browser commands write no state into the read-only workspace and `close` releases the browser. Restart the gateway with the default image and confirm the changed Dockerfile hash triggers its automatic rebuild. Report PASS/FAIL per behavior and document any harness gap explicitly.

@@ -477,9 +477,11 @@ describe("pi adapter transient provider retry", () => {
     mockCreateAgentSession.mockResolvedValue({ session });
 
     const { piAdapter } = await import("../adapter.js");
-    await expect(piAdapter.run(makeRunParams(agent))).rejects.toThrow(
+    const run = piAdapter.run(makeRunParams(agent));
+    await expect(run).rejects.toThrow(
       "Primary anthropic/claude-3-5-sonnet-20241022 failed: HTTP 503 Service Unavailable; fallback openai/gpt-5 failed: fallback timed out"
     );
+    await expect(run).rejects.toMatchObject({ kind: "generic" });
   });
 
   it("does not use the fallback after the failed turn streamed text", async () => {

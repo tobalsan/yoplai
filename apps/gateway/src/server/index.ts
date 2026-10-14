@@ -3,10 +3,11 @@ import path from "node:path";
 import { Hono } from "hono";
 import { logError } from "../logging.js";
 import { cors } from "hono/cors";
-import { readEnv, resolveBindHost } from "@yoplai/shared";
+import { readEnv, resolveBindHost, resolveHomeDir } from "@yoplai/shared";
 import type { GatewayBindMode, GatewayConfig } from "@yoplai/shared";
 import { api } from "./api.core.js";
 import { internalTools } from "./internal-tools.js";
+import { startConfiguredInternalSocket } from "./internal-socket.js";
 import {
   cleanupOrphanContainers,
   ensureAgentImage,
@@ -377,6 +378,8 @@ export function startServer(
   new WsBroker().attach(server as import("http").Server, wsAuthAdapter);
 
   setupGracefulShutdown(server);
+
+  void startConfiguredInternalSocket(config, resolveHomeDir());
 
   return server;
 }

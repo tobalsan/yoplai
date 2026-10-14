@@ -4,6 +4,7 @@ import {
   type FileAttachment,
   type RunAgentParams,
   type StreamEvent,
+  type RunFailureKind,
 } from "@yoplai/shared";
 import {
   abortSession,
@@ -33,6 +34,7 @@ import type {
 import { isRunSettledError } from "../sdk/run-settled.js";
 import {
   backfillFromPiSession,
+  appendRunFailureNotice,
   bufferHistoryEvent,
   createTurnBuffer,
   flushTurnBuffer,
@@ -79,6 +81,7 @@ export class SessionRunLifecycle {
   // Armed before each adapter.run() invocation; consumed by the adapter's
   // initial user-echo event so the pre-accepted message is not duplicated.
   private initialEchoArmed = false;
+  private noticeWritten = false;
 
   constructor(private readonly context: LifecycleContext) {}
 
@@ -326,6 +329,18 @@ export class SessionRunLifecycle {
         this.context.userId
       );
     }
+  }
+
+  async writeFailureNotice(notice: { kind: RunFailureKind; text: string }): Promise<void> {
+    if (this.noticeWritten) return;
+    await this.flushTurns();
+    await appendRunFailureNotice(
+      this.context.agentId,
+      this.context.sessionId,
+      notice,
+      this.context.userId
+    );
+    this.noticeWritten = true;
   }
 
   finishRun() {

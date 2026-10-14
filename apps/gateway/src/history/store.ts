@@ -8,6 +8,7 @@ import type {
   ModelUsage,
   FileAttachment,
   FileBlock,
+  RunFailureKind,
 } from "@yoplai/shared";
 import { sanitizeForStorage } from "@yoplai/shared";
 import type { HistoryEvent } from "../sdk/types.js";
@@ -101,6 +102,7 @@ type AssistantHistoryEntry = {
     api?: string;
     usage?: ModelUsage;
     stopReason?: string;
+    failure?: { kind: RunFailureKind };
   };
 };
 
@@ -158,6 +160,20 @@ async function appendRawEntry(
       sanitizeForStorage({ type: "history", agentId, sessionId, ...entry })
     ) + "\n";
   await fs.appendFile(file, line, "utf-8");
+}
+
+export async function appendRunFailureNotice(
+  agentId: string,
+  sessionId: string,
+  notice: { kind: RunFailureKind; text: string },
+  userId?: string
+): Promise<void> {
+  await appendRawEntry(agentId, sessionId, {
+    role: "assistant",
+    content: [{ type: "text", text: notice.text }],
+    meta: { stopReason: "error", failure: { kind: notice.kind } },
+    timestamp: Date.now(),
+  }, userId);
 }
 
 /**
@@ -661,6 +677,9 @@ export async function getSimpleHistory(
               role: entry.role,
               content: text,
               files: files.length > 0 ? files : undefined,
+              ...(entry.role === "assistant" && entry.meta?.failure
+                ? { meta: entry.meta }
+                : {}),
               timestamp: entry.timestamp,
             });
           }
@@ -803,6 +822,7 @@ export async function replaceCanonicalHistoryWithCompaction(params: {
               model: message.meta.model,
               api: message.meta.api,
               stopReason: message.meta.stopReason,
+              failure: message.meta.failure,
             },
           }
         : message;

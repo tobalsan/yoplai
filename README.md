@@ -58,6 +58,10 @@ cat > "$YOPLAI_HOME/yoplai.json" <<'JSON'
   "version": 3,
   "agents": ["agents/*"],
   "extensions": {},
+  "notifications": {
+    "adminChannel": "ops",
+    "channels": { "ops": { "slack": "C0123456789" } }
+  },
   "gateway": { "bind": "loopback", "port": 4000 },
   "ui": { "bind": "loopback", "port": 3000 }
 }
@@ -74,6 +78,7 @@ Agent folder name and `id` must match:
 cat > "$YOPLAI_HOME/agents/my-agent/agent.yaml" <<'YAML'
 id: my-agent
 name: My Agent
+language: en
 auth:
   mode: oauth
 model:
@@ -81,6 +86,8 @@ model:
   model: claude-sonnet-4-5
 YAML
 ```
+
+Set `language` to `en` (the default) or `fr` to localize fixed messages shown when a run fails. The optional `notifications.adminChannel` points to a named entry under `notifications.channels`; quota failures notify that channel at most once per provider/model per hour. For example, the config above sends to the Slack channel configured as `ops`.
 
 Yoplai creates missing workspace prompt files (`AGENTS.md`, `SOUL.md`, and `USER.md`) on first run. You can edit them later to customize agent behavior.
 

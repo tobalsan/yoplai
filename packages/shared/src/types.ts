@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { RunFailureKindSchema, type RunFailureKind } from "./run-failure.js";
 import type {
   LeadSession,
   LeadSessionChangedEvent,
@@ -244,6 +245,7 @@ const AgentConfigBaseSchema = z.object({
   id: z.string(),
   name: z.string(),
   description: z.string().optional(),
+  language: z.enum(["en", "fr"]).default("en"),
   avatar: z.string().optional(), // emoji or image URL
   role: z.string().optional(), // short job title, e.g. "Sales Admin"
   workspace: z.string(),
@@ -285,7 +287,10 @@ export const AgentConfigSchema = AgentConfigBaseSchema.superRefine(
     }
   }
 ).transform(
-  (value): Omit<typeof value, "model"> & { model: AgentModelConfig } => {
+  (value): Omit<typeof value, "model" | "language"> & {
+    model: AgentModelConfig;
+    language?: "en" | "fr";
+  } => {
     if (value.sdk === "openclaw" && !value.model) {
       return { ...value, model: { provider: "openclaw", model: "unknown" } };
     }
@@ -835,6 +840,7 @@ export type NotificationChannelConfig = z.infer<
 
 export const NotificationsConfigSchema = z.object({
   channels: z.record(z.string(), NotificationChannelConfigSchema).optional(),
+  adminChannel: z.string().min(1).optional(),
 });
 export type NotificationsConfig = z.infer<typeof NotificationsConfigSchema>;
 
@@ -1071,6 +1077,11 @@ export const GlobalSandboxConfigSchema = z.object({
   sharedDir: z.string().optional(),
   network: SandboxNetworkSchema.optional(),
   mountAllowlist: MountAllowlistSchema.optional(),
+  // How sandboxed runs reach the gateway's /internal routes (tool bridge,
+  // OAuth renewal). "http" dials host.docker.internal; "socket" bind-mounts a
+  // Unix socket serving only /internal, for daemons whose containers cannot
+  // reach the host (rootless Docker blocks the host loopback).
+  gatewayTransport: z.enum(["http", "socket"]).optional(),
 });
 export type GlobalSandboxConfig = z.infer<typeof GlobalSandboxConfigSchema>;
 
@@ -1867,6 +1878,8 @@ export const StreamEventSchema = z.discriminatedUnion("type", [
     type: z.literal("error"),
     message: z.string(),
     code: z.string().optional(),
+    kind: RunFailureKindSchema.optional(),
+    userMessage: z.string().optional(),
   }),
 ]);
 export type StreamEvent = z.infer<typeof StreamEventSchema>;
@@ -1985,6 +1998,7 @@ export type SimpleHistoryMessage = {
   content: string;
   files?: FileBlock[];
   timestamp: number;
+  meta?: ModelMeta;
 };
 
 /** Content block types for full history */
@@ -2057,6 +2071,7 @@ export type ModelMeta = {
   model?: string;
   usage?: ModelUsage;
   stopReason?: string;
+  failure?: { kind: RunFailureKind };
 };
 
 /** Full history message with all content blocks */
@@ -2356,6 +2371,7 @@ export const HistoryEventSchema = z.discriminatedUnion("type", [
     api: z.string().optional(),
     usage: ModelUsageSchema.optional(),
     stopReason: z.string().optional(),
+    failure: z.object({ kind: RunFailureKindSchema }).optional(),
     timestamp: z.number(),
   }),
   z.object({
@@ -2422,6 +2438,9 @@ export const ContainerInputSchema = z.object({
   sessionDir: z.string(),
   ipcDir: z.string(),
   gatewayUrl: z.string(),
+  // When set, gateway calls go through this Unix socket instead of the
+  // network; gatewayUrl then only supplies the path.
+  gatewaySocketPath: z.string().optional(),
   agentToken: z.string(),
   // Gateway-clock deadline, shared by retries and queued follow-ups.
   turnDeadlineAt: z.number().finite().optional(),

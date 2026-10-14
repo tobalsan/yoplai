@@ -84,7 +84,13 @@ export function gatewayTool(
           input.agentId,
           input.sessionId,
           input.runId,
-          { toolCallId, timeoutSeconds: budget, modelToolName, signal }
+          {
+            socketPath: input.gatewaySocketPath,
+            toolCallId,
+            timeoutSeconds: budget,
+            modelToolName,
+            signal,
+          }
         );
         signal.throwIfAborted();
         const text = await formatResult(result, toolCallId);

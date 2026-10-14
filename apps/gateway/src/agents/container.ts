@@ -29,6 +29,9 @@ const DEFAULT_NETWORK = "yoplai-agents";
 const DEFAULT_GATEWAY_URL = "http://gateway:4000";
 const CONTAINER_ONECLI_CA_PATH =
   "/usr/local/share/ca-certificates/onecli-ca.pem";
+export const CONTAINER_GATEWAY_SOCKET_DIR = "/run/yoplai";
+export const GATEWAY_SOCKET_NAME = "gateway.sock";
+export const CONTAINER_GATEWAY_SOCKET_PATH = `${CONTAINER_GATEWAY_SOCKET_DIR}/${GATEWAY_SOCKET_NAME}`;
 export const CONTAINER_DATA_DIR = "/workspace/data";
 export const CONTAINER_UPLOADS_DIR = "/workspace/uploads";
 
@@ -198,6 +201,19 @@ export function validateMount(
   }
 }
 
+/**
+ * Host directory holding the gateway's internal Unix socket. The directory,
+ * not the socket file, is mounted so a gateway restart (which recreates the
+ * socket) is visible to containers already running.
+ */
+export function getGatewaySocketDir(homeDir: string): string {
+  return path.join(resolveHostPath(homeDir), "run", "sandbox-gateway");
+}
+
+export function usesGatewaySocket(globalSandbox: GlobalSandboxConfig): boolean {
+  return globalSandbox.gatewayTransport === "socket";
+}
+
 export function buildVolumeMounts(
   agent: AgentConfig,
   globalSandbox: GlobalSandboxConfig,
@@ -255,6 +271,14 @@ export function buildVolumeMounts(
 
   addMount(mounts, path.join(home, "sessions", agent.id), "/sessions", false);
   addMount(mounts, ipcDir, "/workspace/ipc", false);
+
+  if (usesGatewaySocket(globalSandbox)) {
+    const socketDir = getGatewaySocketDir(homeDir);
+    fs.mkdirSync(socketDir, { recursive: true, mode: 0o700 });
+    // Read-only still allows connect(): the flag only restricts writes to
+    // regular files, directories and symlinks.
+    addMount(mounts, socketDir, CONTAINER_GATEWAY_SOCKET_DIR, true);
+  }
 
   const modelsPath = path.join(home, "models.json");
   if (fs.existsSync(modelsPath)) {
@@ -469,6 +493,7 @@ function sortedFiles(root: string): string[] {
 export function getAgentImageHash(repoRoot: string): string | null {
   const inputs = [
     "container/agent-runner/Dockerfile",
+    "container/agent-runner/playwright-cli.json",
     "package.json",
     "pnpm-lock.yaml",
     "pnpm-workspace.yaml",

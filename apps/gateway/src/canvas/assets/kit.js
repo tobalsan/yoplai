@@ -24,11 +24,36 @@
     if (document.body) render();
     else document.addEventListener("DOMContentLoaded", render, { once: true });
   }
-  global.addEventListener("error", (event) =>
-    showError(event.message, event.lineno)
-  );
+  // Browser extensions can inject scripts into the page; in this sandboxed
+  // document they often throw (e.g. reading sessionStorage). Those errors are
+  // not the dashboard's, so they must not raise the banner. Only the error's
+  // origin counts: a dashboard error whose message or deeper frames mention an
+  // extension URL is still the dashboard's.
+  const EXTENSION_URL =
+    /^(?:chrome|moz|safari-web|safari|ms-browser)-extension:\/\//;
+  const EXTENSION_FRAME =
+    /(?:^|[\s(@])(?:chrome|moz|safari-web|safari|ms-browser)-extension:\/\//;
+  // V8 stacks start with the message, then "    at ..." frames; Firefox and
+  // Safari stacks hold frames only ("fn@url:line:col").
+  const originFrame = (stack) => {
+    if (typeof stack !== "string") return "";
+    const lines = stack.split("\n");
+    const v8 = lines.find((line) => /^\s*at\s/.test(line));
+    if (v8 !== undefined) return v8.trim();
+    if (/^[A-Za-z]*Error\b/.test(lines[0])) return "";
+    return (lines.find((line) => line.trim() !== "") || "").trim();
+  };
+  const fromExtension = (error, filename) =>
+    filename
+      ? EXTENSION_URL.test(filename)
+      : EXTENSION_FRAME.test(originFrame(error && error.stack));
+  global.addEventListener("error", (event) => {
+    if (fromExtension(event.error, event.filename)) return;
+    showError(event.message, event.lineno);
+  });
   global.addEventListener("unhandledrejection", (event) => {
     const reason = event.reason;
+    if (fromExtension(reason)) return;
     showError(reason && reason.message ? reason.message : String(reason));
   });
   const SVG_NS = "http://www.w3.org/2000/svg";

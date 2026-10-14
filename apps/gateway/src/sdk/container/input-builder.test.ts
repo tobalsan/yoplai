@@ -276,4 +276,32 @@ describe("container input builder", () => {
       { path: sharedFile, content: "house rules" },
     ]);
   });
+  it("points the container at the gateway socket when the transport is socket", async () => {
+    const workspaceDir = await fs.mkdtemp(
+      path.join(os.tmpdir(), "yoplai-container-input-")
+    );
+    await fs.writeFile(path.join(workspaceDir, "SOUL.md"), "soul");
+    const builder = new ContainerInputBuilder({
+      buildSystemPrompts: async () => [],
+      buildTools: async () => [],
+    });
+    const params = {
+      agentId: "cloud",
+      sessionId: "session-1",
+      message: "hello",
+      workspaceDir,
+      agent: { id: "cloud", model: { provider: "anthropic", model: "claude" } },
+    } as SdkRunParams;
+    const base = { agents: [params.agent], extensions: {} } as GatewayConfig;
+
+    const viaSocket = await builder.build(
+      params,
+      { ...base, sandbox: { gatewayTransport: "socket" } } as GatewayConfig,
+      "token-1"
+    );
+    const viaHttp = await builder.build(params, base, "token-1");
+
+    expect(viaSocket.gatewaySocketPath).toBe("/run/yoplai/gateway.sock");
+    expect(viaHttp.gatewaySocketPath).toBeUndefined();
+  });
 });

@@ -229,6 +229,7 @@ export class WsBroker {
       return;
     }
 
+    let terminalEventSent = false;
     try {
       const normalized = await normalizeRunRequest({
         agent,
@@ -236,7 +237,10 @@ export class WsBroker {
         authContext,
         extensionRuntime: authAdapter.getExtensionRuntime(),
         source: "web",
-        onEvent: (event) => this.send(ws, event),
+        onEvent: (event) => {
+          if (event.type === "error" || event.type === "done") terminalEventSent = true;
+          this.send(ws, event);
+        },
         defaultSessionId: "default",
       });
       if (normalized.type === "validation_error") {
@@ -250,6 +254,7 @@ export class WsBroker {
 
       await runAgent(normalized.params);
     } catch (err) {
+      if (terminalEventSent) return;
       this.send(ws, {
         type: "error",
         message: err instanceof Error ? err.message : String(err),

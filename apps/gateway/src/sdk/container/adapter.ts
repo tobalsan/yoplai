@@ -12,6 +12,7 @@ import type {
 import {
   ContainerRunnerProtocolEventSchema,
   HistoryEventSchema,
+  classifyRunFailure,
   renderAgentContext,
 } from "@yoplai/shared";
 import { loadConfig } from "../../config/index.js";
@@ -599,6 +600,7 @@ export function getContainerAdapter(): SdkAdapter {
             reject(
               Object.assign(new Error(message), {
                 code: timeoutKind ?? "shutdown_enforcement",
+                kind: classifyRunFailure({ code: timeoutKind }, message),
               })
             );
             return;
@@ -627,13 +629,17 @@ export function getContainerAdapter(): SdkAdapter {
               : meaningfulStderr ||
                 `Container exited without protocol output (code ${code ?? "unknown"})`;
             params.onEvent({ type: "error", message });
-            reject(new Error(message));
+            reject(Object.assign(new Error(message), {
+              kind: classifyRunFailure(undefined, message),
+            }));
             return;
           }
 
           if (output.error) {
             params.onEvent({ type: "error", message: output.error });
-            reject(new Error(output.error));
+            reject(Object.assign(new Error(output.error), {
+              kind: classifyRunFailure(undefined, output.error),
+            }));
             return;
           }
 

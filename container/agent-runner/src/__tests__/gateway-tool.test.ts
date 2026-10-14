@@ -1,5 +1,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createServer } from "node:http";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { ContainerInput } from "@yoplai/shared";
 import { gatewayTool } from "../gateway-tool.js";
@@ -130,26 +133,40 @@ describe("gateway tool deadlines", () => {
     });
   });
 
-  it("cancels a hung HTTP request and completes a subsequent gateway call", async () => {
+  it.each(["HTTP", "socket"])("cancels a hung %s request and completes a subsequent gateway call", async (transport) => {
+    const dir = transport === "socket"
+      ? fs.mkdtempSync(path.join(os.tmpdir(), "ygt-"))
+      : undefined;
+    const socketPath = dir ? path.join(dir, "gateway.sock") : undefined;
+    const requests: unknown[] = [];
     const server = createServer((request, response) => {
       let body = "";
       request.on("data", (chunk: Buffer) => {
         body += chunk.toString();
       });
       request.on("end", () => {
-        if (JSON.parse(body).toolCallId === "hung") return;
+        const call = JSON.parse(body);
+        requests.push(call);
+        if (call.toolCallId === "hung") return;
         response.setHeader("content-type", "application/json");
         response.end(JSON.stringify({ ok: true }));
       });
     });
-    await new Promise<void>((resolve) =>
-      server.listen(0, "127.0.0.1", resolve)
-    );
+    await new Promise<void>((resolve) => {
+      if (socketPath) server.listen(socketPath, resolve);
+      else server.listen(0, "127.0.0.1", resolve);
+    });
     const address = server.address();
-    if (!address || typeof address === "string")
+    if (!address)
       throw new Error("Missing HTTP port");
     const tool = gatewayTool(
-      { ...input, gatewayUrl: `http://127.0.0.1:${address.port}` },
+      {
+        ...input,
+        gatewayUrl: typeof address === "string"
+          ? "http://host.docker.internal:4000"
+          : `http://127.0.0.1:${address.port}`,
+        gatewaySocketPath: socketPath,
+      },
       "test.tool",
       "Test",
       "Test",
@@ -170,9 +187,24 @@ describe("gateway tool deadlines", () => {
       await expect(
         tool.execute("next", {}, undefined, undefined, {} as ExtensionContext)
       ).resolves.toMatchObject({ details: { ok: true } });
+      expect(requests).toEqual([
+        {
+          tool: "test.tool",
+          args: {},
+          agentId: "agent",
+          agentToken: "test-token",
+          sessionId: "session",
+          runId: "run",
+          toolCallId: "hung",
+          timeoutSeconds: 0.05,
+          modelToolName: "test_tool",
+        },
+        expect.objectContaining({ toolCallId: "next", timeoutSeconds: 300 }),
+      ]);
     } finally {
       server.closeAllConnections();
       await new Promise<void>((resolve) => server.close(() => resolve()));
+      if (dir) fs.rmSync(dir, { recursive: true, force: true });
     }
   });
 

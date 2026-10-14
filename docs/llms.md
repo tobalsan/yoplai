@@ -90,6 +90,9 @@ cooperative; a timeout does not prove a remote side effect did not happen.
 Run cancellation and container shutdown abort in-flight gateway calls, and
 late results/progress are discarded. External MCP clients must forward the
 signal themselves; the platform cannot cancel their remote transport alone.
+The same call deadlines, correlation IDs, and cancellation apply over HTTP
+and Unix-socket gateway transport. Browser CLI commands use the Bash deadline
+wrapper; terminal watchdog timeouts retain their localized failure notices.
 
 ## Configuration invariants
 
@@ -120,6 +123,7 @@ name: Assistant
 model:
   provider: anthropic
   model: claude-sonnet-4-5
+language: en
 extensions:
   scheduler:
     enabled: true
@@ -127,6 +131,9 @@ extensions:
 
 Key rules:
 
+- `agent.yaml` may set `language: en | fr` for fixed run-failure notices; it defaults to `en`.
+- Optional root `notifications.adminChannel` names an entry in `notifications.channels`. Only provider quota failures notify it, at most once per provider/model per hour; rate limits and overloads do not.
+- A terminal run failure is persisted as a safe assistant history entry with `meta.stopReason: "error"` and `meta.failure.kind`. Its fixed user-facing text is localized by the agent language; raw provider errors remain diagnostic data and must not be shown as the notice.
 - Root `extensions.<id>` configures/loads an extension; agent `extensions.<id>` opts an agent into tool-style extensions unless `enabled: false`.
 - Agent folders may contain `.env`. `$env:NAME` resolves from agent-local env layered over `$YOPLAI_HOME/.env`, `yoplai.json` `env`, and `process.env`.
 - Agent-local resolved values are passed to extension hooks as `ctx.env`; do not assume they enter global `process.env` or sandbox env.
@@ -220,10 +227,13 @@ Use schemas in `packages/shared` and broker code in `apps/gateway/src/server/ws-
 
 ### Sandbox/container flow
 
+The image includes pinned `playwright-cli` and Chromium. Pi Bash inherits `YOPLAI_GATEWAY_URL`, `YOPLAI_AGENT_TOKEN`, and `YOPLAI_DASHBOARD_URL_PREFIX`; browser state/output defaults to `/tmp/playwright`. Use the dashboard skill recipe, then `read` the PNG for an image content block.
+
 - Gateway builds Docker args/mounts in `src/agents/container.ts` and `src/sdk/container/`.
 - Each run gets a unique container name, token, and IPC namespace.
 - Agent data mounts writable at `/workspace/data`; uploads mount read-only at `/workspace/uploads`.
 - Workspace `.env` is shadowed; only explicitly forwarded safe env and sandbox env reach container.
+- Container-to-gateway calls (`/internal/tools`, `/internal/oauth-token`) use `host.docker.internal` by default, or a read-only mounted Unix socket serving only `/internal` when root `sandbox.gatewayTransport` is `socket` (`apps/gateway/src/server/internal-socket.ts`, `ContainerInput.gatewaySocketPath`).
 - Custom mounts must pass configured allowlist/blocklist checks.
 - Extension prompt/tool metadata is serialized into `ContainerInput`; tools call back through authenticated `/internal/tools`.
 - Outbound file requests must resolve inside allowed data paths; gateway copies/registers them in managed media storage.
@@ -257,6 +267,8 @@ Extensions load through `extensions.<id>` unless documented auto-load compatibil
 Tool-style extensions use `packages/shared/src/tool-extension.ts`. Their `oauth` declaration accepts a static requirement or `(config: ResolvedToolExtensionConfig) => OAuthRequirement`, with agent settings overriding root defaults in `config.merged`. Catalog/connect links and tool execution resolve the matching scopes; missing granted scopes produce `insufficient_scope` with a scoped reconnect URL. Extensions may contribute routes, CLI commands, capabilities, services, system-prompt text, tools, delivery sinks, OAuth requirements, and web routes. Keep behavior with its owning package; core should depend only on extension contracts and optional imports.
 
 Canvas is a core gateway feature. Agents use `dashboard_link` to publish a single `.html` file from `data/dashboards/<slug>.html` in their workspace (for sandboxed agents this is the always-writable `/workspace/data` mount, i.e. the host agent data dir). SQL `data-db` paths are relative to the workspace root, e.g. `data/app.db`; host agents are confined to their workspace and sandboxed agents to `data/`. Configure it with root `canvas.enabled` and optional `canvas.baseUrl`; links default to the platform public URL. Viewer requests require the normal login flow and agent team access when multi-user mode is enabled, and every page is served under a restrictive sandbox CSP.
+
+Sandbox visual previews use `GET /internal/dashboards/:slug/html?token=…&theme=light|dark`, scoped to the token owner. They run the viewer rendering pipeline with null viewer bindings, pass other query params to SQL, and preserve authentication/theme in drill-down links. They use the viewer CSP and no-store caching and do not record versions. Always check light, dark, and 420 px width before sharing; close the browser after checking.
 
 Canvas records the latest 20 distinct dashboard contents observed by `dashboard_link`, `dashboard_versions`, or a viewer request. Agents can use `dashboard_versions` to list or restore those copies without changing the dashboard link. Managed versions are skipped when the agent workspace has its own `.git` entry because Git already provides history.
 

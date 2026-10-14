@@ -96,6 +96,8 @@ export type WsStreamEvent =
   | {
       type: "error";
       message: string;
+      kind?: import("@yoplai/shared").RunFailureKind;
+      userMessage?: string;
     };
 
 export function dispatchWsEvent(
@@ -163,7 +165,7 @@ export function dispatchWsEvent(
       });
       break;
     case "error":
-      callbacks.onError?.(event.message);
+      callbacks.onError?.(event.userMessage ?? "Something went wrong, please try again.");
       break;
   }
 }

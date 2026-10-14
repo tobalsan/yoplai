@@ -9,7 +9,7 @@ import type {
   SlackComponentConfig,
   SlackComponentDmConfig,
 } from "@yoplai/shared";
-import { DEFAULT_MAIN_KEY } from "@yoplai/shared";
+import { classifyRunFailure, runFailureMessage, DEFAULT_MAIN_KEY } from "@yoplai/shared";
 import { getSlackContext } from "./context.js";
 import {
   detectBangCommand,
@@ -505,26 +505,15 @@ async function sendSlackReply(
   }
 }
 
-function getSlackErrorText(err: unknown): string {
-  const message = err instanceof Error ? err.message : String(err);
-  if (message.includes("Container idle timed out")) {
-    return "Request timed out while I was still working. Please retry, or narrow the request if it is broad.";
-  }
-  if (message.includes("Container exceeded max runtime")) {
-    return "Request ran too long and was stopped. Please retry with a narrower request.";
-  }
-  return "Sorry, I encountered an error processing your message.";
-}
-
 async function sendSlackError(
   client: SlackWebClient,
   channel: string,
   threadTs: string | undefined,
-  err: unknown
+  text: string
 ): Promise<void> {
   await client.chat.postMessage({
     channel,
-    text: getSlackErrorText(err),
+    text,
     mrkdwn: true,
     thread_ts: threadTs,
   });
@@ -1021,6 +1010,8 @@ async function handleSlackMessage(
 
   let thinkingDisplay: ThinkingStreamDisplay | null = null;
   let progressDisplay: SlackProgressDisplay | null = null;
+  let failureKind: import("@yoplai/shared").RunFailureKind | undefined;
+  let runAborted = false;
   try {
     const { contentSuffix, attachments } = await collectSlackAttachments({
       data,
@@ -1163,6 +1154,8 @@ async function handleSlackMessage(
         background: Boolean(sessionId),
         context,
         onEvent: (event) => {
+          if (event.type === "error") failureKind = event.kind ?? "generic";
+          if (event.type === "done" && event.meta?.aborted) runAborted = true;
           if (event.type === "progress")
             progressDisplay?.milestone(event.label);
           if (event.type === "tool_call") {
@@ -1197,7 +1190,7 @@ async function handleSlackMessage(
     try {
       agentResult = await runAgent(boundSessionId);
     } catch (err) {
-      if (!boundSessionId) throw err;
+      if (!boundSessionId || failureKind || runAborted) throw err;
       console.debug(
         `${target.logPrefix} Bound session unavailable; falling back:`,
         err
@@ -1258,8 +1251,11 @@ async function handleSlackMessage(
   } catch (err) {
     console.error(`${target.logPrefix} Error:`, err);
     try {
-      await progressDisplay?.finish("failed");
-      await sendSlackError(client, data.channel, replyThreadTs, err);
+      const aborted = runAborted || (err instanceof Error && err.name === "AbortError");
+      await progressDisplay?.finish(aborted ? "interrupted" : "failed");
+      if (!aborted) {
+        await sendSlackError(client, data.channel, replyThreadTs, runFailureMessage(failureKind ?? classifyRunFailure(err), target.agent.language ?? "en"));
+      }
       await thinkingDisplay?.cleanup();
       await stopThinkingReaction(client, data.channel, data.ts);
     } catch (reportErr) {

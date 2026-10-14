@@ -108,7 +108,7 @@ Core `yoplai.json` fields:
 | `agentLoop`                          | Agent-to-agent loop limits (`maxAgentTurns`, `maxHops`)             |
 | `extensions`                         | Built-in/external extension configuration                           |
 | `extensionsPath`                     | External extension directory; defaults to `$YOPLAI_HOME/extensions` |
-| `sandbox`, `onecli`, `oauth`         | Isolation, proxy, and host OAuth settings                           |
+| `sandbox`, `onecli`, `oauth`         | Isolation (incl. `sandbox.gatewayTransport`: `http`/`socket`), proxy, and host OAuth settings |
 | `maintenance`                        | Model for gateway-owned background LLM tasks                        |
 | `branding`                           | Optional organization name/logo                                     |
 | `agentFab`                           | Enable global quick-chat control                                    |

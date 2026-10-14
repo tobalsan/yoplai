@@ -255,7 +255,7 @@ export async function runTurnWithProviderRetry(
   }
 }
 
-function getErrorStatus(error: unknown): number | undefined {
+export function getErrorStatus(error: unknown): number | undefined {
   if (!error || typeof error !== "object") return undefined;
   const record = error as Record<string, unknown>;
   for (const value of [

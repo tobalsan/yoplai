@@ -9,6 +9,8 @@ const getDefaultSdkId = vi.fn(() => "pi");
 const getSessionThinkLevel = vi.fn();
 const setSessionThinkLevel = vi.fn();
 const appendSessionMeta = vi.fn();
+const appendRunFailureNotice = vi.fn();
+const notifyProviderQuota = vi.fn(async () => {});
 const isAbortTrigger = vi.fn(() => false);
 const pauseTaskForControlCommand = vi.fn();
 const getTask = vi.fn();
@@ -21,6 +23,7 @@ vi.mock("../config/index.js", () => ({
   loadConfig,
   resolveWorkspaceDir,
 }));
+vi.mock("./quota-notification.js", () => ({ notifyProviderQuota }));
 
 vi.mock("../sdk/registry.js", () => ({
   getSdkAdapter,
@@ -47,6 +50,7 @@ vi.mock("../sessions/store.js", () => ({
 
 vi.mock("../history/store.js", () => ({
   appendSessionMeta,
+  appendRunFailureNotice,
   backfillFromPiSession: vi.fn(async () => false),
   bufferHistoryEvent: vi.fn(
     (
@@ -157,6 +161,23 @@ describe("runAgent think level resolution", () => {
     expect(adapter.run).toHaveBeenCalledWith(
       expect.objectContaining({ thinkLevel: "medium" })
     );
+  });
+});
+
+describe("runAgent quota notifications", () => {
+  it.each(["quota", "rate_limit", "overloaded"] as const)("notifies only for quota without delaying %s failure delivery", async (kind) => {
+    vi.clearAllMocks();
+    getAgent.mockReturnValue(createAgent({}));
+    const adapter = createAdapter();
+    adapter.run.mockRejectedValue(Object.assign(new Error("provider failure"), { kind }));
+    getSdkAdapter.mockReturnValue(adapter);
+    notifyProviderQuota.mockImplementationOnce(() => new Promise<void>(() => {}));
+    const onEvent = vi.fn();
+    const { runAgent } = await import("./runner.js");
+    await expect(runAgent({ agentId: "alpha", sessionId: `notification-${kind}`, message: "request", onEvent })).rejects.toThrow("provider failure");
+    expect(onEvent).toHaveBeenCalledWith(expect.objectContaining({ type: "error", kind }));
+    expect(notifyProviderQuota).toHaveBeenCalledTimes(kind === "quota" ? 1 : 0);
+    notifyProviderQuota.mockReset();
   });
 });
 
@@ -503,7 +524,7 @@ describe("runAgent silent response", () => {
     })).rejects.toThrow("failed");
     expect(onEvent.mock.calls.map(([event]) => event)).toEqual([
       { type: "text", data: "NO" },
-      { type: "error", message: "failed" },
+      { type: "error", message: "failed", kind: "generic", userMessage: "Something went wrong, please try again." },
     ]);
   });
 

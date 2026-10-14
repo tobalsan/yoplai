@@ -678,6 +678,7 @@ function fullMessagesToSimpleView(
           id: crypto.randomUUID(),
           role: "assistant",
           content: block.text,
+          meta: message.meta,
           timestamp: message.timestamp,
         });
       } else if (block.type === "thinking" && block.thinking.trim()) {
@@ -1688,6 +1689,11 @@ export function ChatView() {
           if (streamingFinished()) return;
           resetStreamingState();
         },
+        onError: () => {
+          if (!isCurrentSubscription()) return;
+          if (ownsDisplayedDirectStream()) return;
+          resetStreamingState();
+        },
         onActiveTurn: (turn) => {
           if (!isCurrentSubscription()) return;
           if (ownsDisplayedDirectStream()) return;
@@ -2314,7 +2320,7 @@ export function ChatView() {
             if (queueCleanup) queueCleanup();
             return;
           }
-          const content = `Error: ${error}`;
+          const content = error;
           setSimpleMessages((prev) => [
             ...prev,
             {
@@ -2324,6 +2330,8 @@ export function ChatView() {
               timestamp: Date.now(),
             },
           ]);
+          resetStreamingState();
+          void loadHistory(viewMode());
           if (queueCleanup) queueCleanup();
         },
         {
@@ -2508,7 +2516,7 @@ export function ChatView() {
       },
       (error) => {
         if (!isCurrentDirectStream()) return;
-        const content = `Error: ${error}`;
+        const content = error;
         setSimpleMessages((prev) => [
           ...prev,
           {
@@ -2527,6 +2535,7 @@ export function ChatView() {
           },
         ]);
         resetStreamingState();
+        void loadHistory(viewMode());
         cleanup = null;
       },
       {
@@ -2899,6 +2908,7 @@ export function ChatView() {
                           {(item) => (
                             <div
                               class={`message ${item().role}${skipAnim ? " no-anim" : ""}`}
+                              classList={{ "system-message": !!item().meta?.failure }}
                             >
                               {item().role === "assistant" ? (
                                 <>
@@ -2965,7 +2975,7 @@ export function ChatView() {
                               { kind: "assistant-content" }
                             >;
                           return (
-                            <div class="message assistant full-message">
+                            <div class="message assistant full-message" classList={{ "system-message": !!assistantRow().meta?.failure }}>
                               <Show
                                 when={assistantRow().block.type === "text"}
                                 fallback={

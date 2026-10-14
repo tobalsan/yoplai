@@ -320,6 +320,54 @@ describe("AgentChat stop/send behavior", () => {
     dispose();
   });
 
+  it("ends subscribed failure streaming and loads the persisted notice once", async () => {
+    let callbacks: { onText?: (text: string) => void; onError?: (text: string) => void; onHistoryUpdated?: () => void } = {};
+    subscribeToSessionMock.mockImplementation((_agentId, _sessionKey, nextCallbacks) => {
+      callbacks = nextCallbacks;
+      return () => {};
+    });
+    const { container, dispose } = renderLead({ sessionNonce: Date.now() });
+    await tick();
+    callbacks.onText?.("Partial output");
+    await tick();
+    const text = "Something went wrong, please try again.";
+    fetchFullHistoryMock.mockResolvedValue({ messages: [{
+      role: "assistant", content: [{ type: "text", text }], timestamp: Date.now(), meta: { failure: { kind: "generic" } },
+    }] });
+    callbacks.onError?.("provider secret request-id");
+    callbacks.onHistoryUpdated?.();
+    await tick();
+    await tick();
+    expect(container.textContent?.split(text)).toHaveLength(2);
+    expect(container.textContent).not.toContain("provider secret");
+    expect(container.querySelector(".log-line.pending")).toBeNull();
+    dispose();
+  });
+
+  it("replaces the direct failure banner with its persisted notice", async () => {
+    let onError: ((text: string) => void) | undefined;
+    streamMessageMock.mockImplementation((_agentId, _message, _sessionKey, _onText, _onDone, callback) => {
+      onError = callback;
+      return () => {};
+    });
+    const { container, dispose } = renderLead();
+    await tick();
+    const input = container.querySelector("textarea") as HTMLTextAreaElement;
+    input.value = "hello";
+    input.dispatchEvent(new InputEvent("input", { bubbles: true }));
+    (container.querySelector(".send-btn") as HTMLButtonElement).dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    await tick();
+    const text = "Something went wrong, please try again.";
+    fetchFullHistoryMock.mockResolvedValue({ messages: [{
+      role: "assistant", content: [{ type: "text", text }], timestamp: Date.now(), meta: { failure: { kind: "generic" } },
+    }] });
+    onError?.(text);
+    await tick();
+    await tick();
+    expect(container.textContent?.split(text)).toHaveLength(2);
+    dispose();
+  });
+
   it("does not duplicate streamed lead text when mid-run history already has assistant output", async () => {
     let historyCallCount = 0;
     fetchFullHistoryMock.mockImplementation(async () => {

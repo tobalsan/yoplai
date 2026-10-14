@@ -8,7 +8,11 @@ import {
 import { resolveSystemFiles } from "@yoplai/shared/node/system-files";
 import { getDefaultSdkId } from "../registry.js";
 import type { SdkRunParams } from "../types.js";
-import { getMountedOnecliCaPath } from "../../agents/container.js";
+import {
+  CONTAINER_GATEWAY_SOCKET_PATH,
+  getMountedOnecliCaPath,
+  usesGatewaySocket,
+} from "../../agents/container.js";
 import { remapAttachmentsToContainer } from "./launch-spec.js";
 import { ContainerToolBridge } from "./tool-bridge.js";
 import { logWarn } from "../../logging.js";
@@ -87,6 +91,9 @@ export class ContainerInputBuilder {
       sessionDir: "/sessions",
       ipcDir: "/workspace/ipc",
       gatewayUrl: resolveContainerGatewayUrl(config),
+      gatewaySocketPath: usesGatewaySocket(config.sandbox ?? {})
+        ? CONTAINER_GATEWAY_SOCKET_PATH
+        : undefined,
       agentToken,
       oauthTokens,
       onecli:

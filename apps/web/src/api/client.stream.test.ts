@@ -119,7 +119,7 @@ describe("streamMessage", () => {
     expect(onSessionReset).toHaveBeenCalledWith("s1");
     expect(onProgress).toHaveBeenCalledWith({ label: "Progress updated.", current: 1, total: 2, taskId: "task-1" });
     expect(onDone).toHaveBeenCalledWith({ durationMs: 12 });
-    expect(onError).toHaveBeenCalledWith("nope");
+    expect(onError).not.toHaveBeenCalled();
 
     cleanup();
     expect(ws.readyState).toBe(MockWebSocket.CLOSED);
@@ -176,11 +176,12 @@ describe("streamMessage", () => {
 
     const ws = MockWebSocket.instances[0];
     ws.open();
-    ws.receive({ type: "error", message: "backend failure" });
+    ws.receive({ type: "error", message: "backend failure", userMessage: "Safe failure notice" });
+    ws.receive({ type: "error", message: "second raw failure" });
     ws.close();
 
     expect(onError).toHaveBeenCalledTimes(1);
-    expect(onError).toHaveBeenCalledWith("backend failure");
+    expect(onError).toHaveBeenCalledWith("Safe failure notice");
   });
 
   it("does not call onError on close after explicit cleanup", () => {
