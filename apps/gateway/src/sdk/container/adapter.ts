@@ -337,6 +337,8 @@ export function getContainerAdapter(): SdkAdapter {
           },
           oauthProviders: Object.keys(oauthTokens ?? {}),
           userId: params.userId,
+          sessionOwnerId: params.sessionOwnerId === undefined ? params.userId ?? null : params.sessionOwnerId,
+          requesterId: params.requesterId,
           registerFileOutput: (event, signal) =>
             fileOutputAdapter.handle(params, event, hostDataDir, signal),
           emitProgress: (event) =>

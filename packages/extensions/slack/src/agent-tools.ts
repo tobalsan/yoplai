@@ -487,7 +487,7 @@ export function slackAgentTools(): ExtensionAgentTool[] {
         required: ["channel", "text"],
         additionalProperties: false,
       },
-      async execute(args, { agent, config, env, sessionId }) {
+      async execute(args, { agent, config, env, sessionId, sessionOwnerId, userId }) {
         try {
           const input = createThreadSchema.parse(args);
           if (!sessionId) {
@@ -519,6 +519,8 @@ export function slackAgentTools(): ExtensionAgentTool[] {
               threadTs,
               sessionId,
               agentId: agent.id,
+              owner: sessionOwnerId === undefined ? userId ?? null : sessionOwnerId,
+              source: "agent",
             })
           );
           return { ok: true, channel, ts: result.ts };
@@ -532,12 +534,14 @@ export function slackAgentTools(): ExtensionAgentTool[] {
       description:
         "Create a single-use link (valid 10 minutes) that pairs the current Slack sender with their Yoplai account. Call it when the sender is unpaired and needs their own data or connections (e.g. \"check my email\"), then write the returned placeholder in your reply. Takes no arguments.",
       parameters: { type: "object", properties: {} },
-      async execute(_args, { agent, sessionId }) {
+      async execute(_args, { agent, sessionId, sessionOwnerId, userId, requesterId }) {
         const pairing = getSlackPairingService();
         const context = getSlackContextIfInitialized();
         const sender = context
           ? await findSlackSender(agent.id, sessionId, async (agentId, key) =>
-              (await context.getSessionEntry(agentId, key))?.sessionId
+              (await context.getSessionEntry(agentId, key, sessionOwnerId === undefined ? userId : sessionOwnerId ?? undefined))?.sessionId,
+              true,
+              requesterId
             )
           : undefined;
         if (!pairing || !sender) {

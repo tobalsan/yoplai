@@ -71,6 +71,25 @@ afterEach(() => {
 });
 
 describe("container launch spec", () => {
+  it.each(["opener", null])("mounts only the current session when owner %s differs from requester", (sessionOwnerId) => {
+    const root = tempDir();
+    process.env.YOPLAI_HOME = root;
+    const agent = createAgent(root);
+    const params = { ...createParams(agent, "thread"), userId: "requester", sessionOwnerId };
+    const spec = buildContainerLaunchSpec(params, { agents: [agent], extensions: {} } as GatewayConfig);
+    const expectedFile = sessionOwnerId
+      ? path.join(root, "sessions", "users", sessionOwnerId, "sessions", agent.id, "thread.jsonl")
+      : path.join(root, "sessions", agent.id, "thread.jsonl");
+    const target = sessionOwnerId ? `/users/${sessionOwnerId}/sessions/${agent.id}/thread.jsonl` : "/sessions/thread.jsonl";
+    expect(mountSource(spec.args, target)).toBe(expectedFile);
+    expect(fs.existsSync(expectedFile)).toBe(true);
+    const mountArgs = spec.args.filter((arg) => arg.startsWith("type=bind,"));
+    expect(mountArgs).not.toContainEqual(expect.stringContaining(`source=${path.join(root, "sessions", "users", "opener")},`));
+    expect(mountArgs).not.toContainEqual(expect.stringContaining(`source=${path.join(root, "sessions", agent.id)},`));
+    expect(mountSource(spec.args, "/sessions")).toBe(path.join(spec.ipcDir, "sessions"));
+    cleanupLaunchFilesystem(spec);
+  });
+
   it("sanitizes names and remaps attachments to container upload paths", () => {
     expect(sanitizeFilename("../bad\rname.txt", "fallback")).toBe(
       "bad_name.txt"

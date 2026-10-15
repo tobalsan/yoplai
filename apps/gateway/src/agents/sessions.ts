@@ -5,6 +5,7 @@ import type { TurnBuffer } from "../history/store.js";
 export type PendingMessage = {
   message: string;
   sender?: RunAgentParams["sender"];
+  params?: RunAgentParams;
 };
 
 export type AgentSession = {
@@ -18,6 +19,10 @@ export type AgentSession = {
   pendingMessages: PendingMessage[];
   pendingUserMessages: Array<{ text: string; timestamp: number }>;
   currentTurn?: TurnBuffer | null;
+  requesterId?: string;
+  settled?: Promise<void>;
+  resolveSettled?: () => void;
+  resetting?: boolean;
 };
 
 export function setSessionCurrentTurn(
@@ -66,10 +71,11 @@ export function bufferPendingMessage(
   agentId: string,
   sessionId: string,
   message: string,
-  sender?: RunAgentParams["sender"]
+  sender?: RunAgentParams["sender"],
+  params?: RunAgentParams
 ) {
   const session = getOrCreateSession(agentId, sessionId);
-  session.pendingMessages.push({ message, sender });
+  session.pendingMessages.push({ message, sender, params });
 }
 
 /** Get and clear pending messages */

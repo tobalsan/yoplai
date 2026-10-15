@@ -1177,6 +1177,10 @@ export type RunAgentParams = {
   agentId: string;
   /** Trusted requester resolved by the host or messaging transport; absent when unpaired. */
   userId?: string;
+  /** Session store owner; undefined follows requester, null selects shared storage. */
+  sessionOwnerId?: string | null;
+  /** Trusted transport identity, including senders without a paired user. */
+  requesterId?: string;
   message: string;
   attachments?: FileAttachment[];
   sessionId?: string;
@@ -1191,6 +1195,8 @@ export type RunAgentParams = {
   background?: boolean;
   trace?: AgentTraceContext;
   onEvent?: (event: StreamEvent) => void;
+  /** Delivery callback for a turn deferred behind an active requester. */
+  onDeferredResult?: (outcome: { result: RunAgentResult } | { error: unknown }) => void | Promise<void>;
   signal?: AbortSignal;
   sender?: { kind: "agent"; agentId: string; hops?: number };
 };
@@ -1316,7 +1322,8 @@ export interface ExtensionContext {
   ): Promise<SessionEntry | undefined>;
   getSessionEntry(
     agentId: string,
-    sessionKey: string
+    sessionKey: string,
+    userId?: string
   ): Promise<SessionEntry | undefined>;
   clearSessionEntry(
     agentId: string,
@@ -1329,6 +1336,9 @@ export interface ExtensionContext {
     timestamp: number
   ): void;
   deleteSession(agentId: string, sessionId: string): void;
+  hasSession(agentId: string, sessionId: string, userId?: string): Promise<boolean>;
+  resetSession(agentId: string, sessionId: string, userId?: string): Promise<void>;
+  ensureSession(agentId: string, sessionKey: string, userId?: string): Promise<SessionEntry>;
   invalidateHistoryCache(
     agentId: string,
     sessionId: string,
@@ -1371,6 +1381,8 @@ export type ExtensionAgentToolContext = {
   env?: Record<string, string>;
   sessionId?: string;
   userId?: string;
+  sessionOwnerId?: string | null;
+  requesterId?: string;
   signal?: AbortSignal;
   emitProgress?: (event: {
     label: string;
@@ -1405,6 +1417,8 @@ export type ExtensionHookContext = {
   config: GatewayConfig;
   env?: Record<string, string>;
   userId?: string;
+  sessionOwnerId?: string | null;
+  requesterId?: string;
   resolveOAuth?: OAuthTokenResolver;
 };
 

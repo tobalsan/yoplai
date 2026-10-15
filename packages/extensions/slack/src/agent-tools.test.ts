@@ -85,7 +85,7 @@ describe("slack agent tools", () => {
     ]);
   });
 
-  it("create_thread posts a parent and binds it to the current session", async () => {
+  it.each([undefined, null, "opener"])("create_thread records effective session owner %s rather than the caller", async (sessionOwnerId) => {
     const dataDir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-slack-tools-"));
     const postMessage = vi.fn().mockResolvedValue({ channel: "D123", ts: "1.2" });
     registerMockBot("alpha", { chat: { postMessage } as never });
@@ -93,7 +93,7 @@ describe("slack agent tools", () => {
 
     const result = await tool("slack.create_thread").execute(
       { channel: "U123", text: "hello **world**" },
-      { agent: agent("alpha"), config: config(), sessionId: "session-1" }
+      { agent: agent("alpha"), config: config(), sessionId: "session-1", userId: "caller", sessionOwnerId }
     );
 
     expect(result).toEqual({ ok: true, channel: "D123", ts: "1.2" });
@@ -104,6 +104,8 @@ describe("slack agent tools", () => {
     expect(store.getBinding("D123", "1.2", "alpha")).toMatchObject({
       sessionId: "session-1",
       agentId: "alpha",
+      owner: sessionOwnerId === undefined ? "caller" : sessionOwnerId,
+      source: "agent",
     });
     store.close();
     await fs.rm(dataDir, { recursive: true, force: true });

@@ -202,6 +202,7 @@ describe("SessionRunLifecycle", () => {
       result: {
         text: "Message queued into current run",
         queued: true,
+        deferred: false,
       },
     });
     expect(queueMessage).toHaveBeenCalledWith(handle, "follow-up", {
@@ -299,6 +300,7 @@ describe("SessionRunLifecycle", () => {
       result: {
         text: "Message queued for next run",
         queued: true,
+        deferred: true,
       },
     });
     expect(lifecycle.drainPendingMessages()).toEqual([

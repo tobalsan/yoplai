@@ -284,7 +284,8 @@ describe("internal tools", () => {
       "session-1",
       undefined,
       undefined,
-      expect.any(AbortSignal)
+      expect.any(AbortSignal),
+      expect.objectContaining({ agentId: expect.any(String), sessionId: "session-1" })
     );
     expect(consoleWarn).toHaveBeenCalledWith(
       expect.stringContaining("sandbox image is likely stale")
@@ -488,7 +489,8 @@ describe("internal tools", () => {
       "session-1",
       undefined,
       undefined,
-      expect.any(AbortSignal)
+      expect.any(AbortSignal),
+      expect.objectContaining({ agentId: expect.any(String), sessionId: "session-1" })
     );
   });
 
@@ -518,7 +520,8 @@ describe("internal tools", () => {
       "session-1",
       undefined,
       undefined,
-      expect.any(AbortSignal)
+      expect.any(AbortSignal),
+      expect.objectContaining({ agentId: expect.any(String), sessionId: "session-1" })
     );
   });
 
@@ -545,7 +548,8 @@ describe("internal tools", () => {
       "session-1",
       undefined,
       undefined,
-      expect.any(AbortSignal)
+      expect.any(AbortSignal),
+      expect.objectContaining({ agentId: expect.any(String), sessionId: "session-1" })
     );
     expect(consoleWarn).not.toHaveBeenCalled();
   });

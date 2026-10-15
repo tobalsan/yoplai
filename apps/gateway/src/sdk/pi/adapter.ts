@@ -119,7 +119,8 @@ async function createPiExtensionTools(
     agent,
     config,
     params.extensionRuntime,
-    params.userId
+    params.userId,
+    params
   );
   const invisibleToolNames = new Set<string>();
   const piTools: AgentTool[] = tools.map((tool): AgentTool => {
@@ -137,6 +138,8 @@ async function createPiExtensionTools(
           env,
           sessionId: params.sessionId,
           userId: params.userId,
+          sessionOwnerId: params.sessionOwnerId === undefined ? params.userId ?? null : params.sessionOwnerId,
+          requesterId: params.requesterId,
           emitProgress: (event) =>
             params.onEvent({ type: "progress", ...event }),
         });
@@ -166,7 +169,7 @@ async function createPiExtensionTools(
         const attachment = await findSessionImageAttachment(
           agent.id,
           params.sessionId,
-          params.userId,
+          params.sessionOwnerId === undefined ? params.userId : params.sessionOwnerId ?? undefined,
           args.path
         );
         if (!attachment)
@@ -279,7 +282,7 @@ export const piAdapter: SdkAdapter = {
       const persistentSessionFile = await resolveSessionFile(
         params.agentId,
         params.sessionId,
-        params.userId
+        params.sessionOwnerId === undefined ? params.userId : params.sessionOwnerId ?? undefined
       );
       const runtimeSession = await createRuntimeSessionFile(
         persistentSessionFile
@@ -416,7 +419,8 @@ export const piAdapter: SdkAdapter = {
         agent,
         loadConfig(),
         params.extensionRuntime,
-        params.userId
+        params.userId,
+        params
       );
       const renderedContext = params.context
         ? renderAgentContext(params.context)

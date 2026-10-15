@@ -242,6 +242,21 @@ export async function clearSessionEntry(
   return entry;
 }
 
+export async function clearSessionEntriesById(
+  agentId: string,
+  sessionId: string,
+  userId?: string
+): Promise<void> {
+  await ensureLoaded(userId);
+  const state = getStoreState(userId);
+  for (const [key, entry] of Object.entries(state.store)) {
+    if (key.startsWith(`${agentId}:`) && entry.sessionId === sessionId) {
+      delete state.store[key];
+    }
+  }
+  await save(userId);
+}
+
 /**
  * Look up createdAt timestamp for a sessionId (searches all entries)
  * Returns undefined if not found

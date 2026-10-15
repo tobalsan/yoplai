@@ -42,6 +42,7 @@ Important seams:
 
 - `runAgent()` resolves agent/session, handles commands, selects adapter, and runs turns.
 - `SessionRunLifecycle` owns active state, aborts, queue/interrupt joins, buffered follow-ups, history events, and final flushing.
+- `RunAgentParams.userId` remains the requester for credentials and identity; `sessionOwnerId` selects persisted history/session storage (`undefined` defaults to requester, `null` means shared). Trusted `requesterId` distinguishes unpaired transport senders; different requesters queue separate turns with their own context, attachments, callbacks, and delivery target.
 - `normalizeRunRequest()` is the shared REST/WebSocket input normalization path.
 - `ExtensionRuntime` is the source of loaded routes, tools, prompt contributions, capabilities, and lifecycle state.
 

@@ -33,21 +33,46 @@ export function buildContainerLaunchSpec(
   const homeDir = resolveHomeDir();
   const runId = randomUUID();
   const ipcDir = getRunIpcDir(homeDir, params.agentId, params.sessionId, runId);
+  const sessionOwnerId = params.sessionOwnerId === undefined ? params.userId : params.sessionOwnerId ?? undefined;
   const mounts = buildVolumeMounts(
     params.agent,
     globalSandbox,
     homeDir,
     ipcDir,
-    params.userId,
+    sessionOwnerId,
     config.onecli,
     params.sessionId
   );
+  if (sessionOwnerId !== params.userId) {
+    // A shared turn may read its thread, never the owner's other sessions.
+    const isolatedSessionsDir = path.join(ipcDir, "sessions");
+    fs.mkdirSync(isolatedSessionsDir, { recursive: true });
+    for (let index = mounts.length - 1; index >= 0; index--) {
+      if (mounts[index].target === "/sessions" || mounts[index].target === `/users/${sessionOwnerId}`) {
+        mounts.splice(index, 1);
+      }
+    }
+    mounts.unshift({ source: isolatedSessionsDir, target: "/sessions", readonly: false });
+    const sessionDir = sessionOwnerId
+      ? path.join(homeDir, "sessions", "users", sessionOwnerId, "sessions", params.agentId)
+      : path.join(homeDir, "sessions", params.agentId);
+    fs.mkdirSync(sessionDir, { recursive: true });
+    const sessionFile = path.join(sessionDir, `${params.sessionId}.jsonl`);
+    fs.closeSync(fs.openSync(sessionFile, "a"));
+    mounts.push({
+      source: sessionFile,
+      target: sessionOwnerId
+        ? `/users/${sessionOwnerId}/sessions/${params.agentId}/${params.sessionId}.jsonl`
+        : `/sessions/${params.sessionId}.jsonl`,
+      readonly: false,
+    });
+  }
   const args = buildContainerArgs(
     params.agent,
     globalSandbox,
     mounts,
     homeDir,
-    params.userId,
+    sessionOwnerId,
     config.onecli,
     config.env
   );
@@ -77,8 +102,9 @@ export function prepareLaunchFilesystem(
   fs.mkdirSync(path.join(spec.homeDir, "sessions", params.agentId), {
     recursive: true,
   });
-  if (params.userId) {
-    fs.mkdirSync(path.join(spec.homeDir, "users", params.userId), {
+  const sessionOwnerId = params.sessionOwnerId === undefined ? params.userId : params.sessionOwnerId ?? undefined;
+  if (sessionOwnerId) {
+    fs.mkdirSync(path.join(spec.homeDir, "users", sessionOwnerId), {
       recursive: true,
     });
   }

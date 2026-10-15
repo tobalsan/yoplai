@@ -37,6 +37,7 @@ export type ActiveSlackSender = {
   agentId: string;
   sessionKey: string;
   sessionId?: string;
+  requesterId?: string;
   client: SlackWebClient;
   user: string;
   /** Shared-thread overlapping runs cannot safely identify a tool caller. */
@@ -53,7 +54,7 @@ const activeSenders = new Set<ActiveSlackSender>();
 
 export function trackSlackSender(sender: ActiveSlackSender): () => void {
   for (const active of activeSenders) {
-    if (active.agentId === sender.agentId && (active.sessionKey === sender.sessionKey || (active.sessionId && active.sessionId === sender.sessionId))) {
+    if ((!active.requesterId || !sender.requesterId) && active.agentId === sender.agentId && (active.sessionKey === sender.sessionKey || (active.sessionId && active.sessionId === sender.sessionId))) {
       active.credentialConnectAmbiguous = true;
       sender.credentialConnectAmbiguous = true;
     }
@@ -66,14 +67,17 @@ export async function findSlackSender(
   agentId: string,
   sessionId: string | undefined,
   resolveSessionId: (agentId: string, sessionKey: string) => Promise<string | undefined>,
-  requireUnique = false
+  requireUnique = false,
+  requesterId?: string
 ): Promise<ActiveSlackSender | undefined> {
   if (!sessionId) return undefined;
   let matched: ActiveSlackSender | undefined;
   for (const sender of activeSenders) {
     if (sender.agentId !== agentId) continue;
+    if (requesterId && sender.requesterId !== requesterId) continue;
     const id = sender.sessionId ?? (await resolveSessionId(agentId, sender.sessionKey));
     if (id === sessionId) {
+      if (requesterId) return sender;
       if (!requireUnique) return sender;
       if (matched) return undefined;
       matched = sender;

@@ -52,6 +52,7 @@ import {
 import { clearHistory, getHistory, recordMessage } from "./utils/history.js";
 import { markdownToMrkdwn } from "./utils/mrkdwn.js";
 import { withProactiveDmNotes, withThreadBindings } from "./store-scope.js";
+import type { SlackThreadSessionBinding } from "./thread-session-bindings.js";
 import {
   buildSlackHistoryKey,
   buildSlackSessionKey,
@@ -848,12 +849,22 @@ async function handleBangCommand(
     ? DEFAULT_MAIN_KEY
     : buildSlackSessionKey(data.channel, data.thread_ts);
   const effectiveSessionKey = bang.arg || sessionKey;
+  const binding = data.thread_ts && data.thread_ts !== data.ts
+    ? withThreadBindings(getSlackContext().getDataDir(), (store) =>
+        store.getBinding(data.channel, data.thread_ts!, target.agent.id))
+    : undefined;
+  const requesterUserId = await resolveSlackRequester(client, data.user);
+  const sessionOwnerId = binding?.owner === undefined ? requesterUserId : binding.owner ?? undefined;
 
   if (bang.command === "new") {
     try {
       const ctx = getSlackContext();
-      const requesterUserId = await resolveSlackRequester(client, data.user);
-      const cleared = await ctx.clearSessionEntry(
+      if (binding) {
+        await ctx.resetSession(target.agent.id, binding.sessionId, sessionOwnerId);
+        withThreadBindings(ctx.getDataDir(), (store) =>
+          store.deleteBinding(data.channel, data.thread_ts!, target.agent.id));
+      }
+      const cleared = binding ? undefined : await ctx.clearSessionEntry(
         target.agent.id,
         effectiveSessionKey,
         requesterUserId
@@ -884,7 +895,8 @@ async function handleBangCommand(
     try {
       const agentResult = await getSlackContext().runAgent({
         agentId: target.agent.id,
-        userId: await resolveSlackRequester(client, data.user),
+        userId: requesterUserId,
+        ...(binding ? { sessionId: binding.sessionId, sessionOwnerId: sessionOwnerId ?? null } : {}),
         message: "/stop",
         sessionKey: effectiveSessionKey,
         source: "slack",
@@ -960,14 +972,13 @@ async function handleSlackMessage(
     }
   }
 
-  let boundSessionId: string | undefined;
+  let binding: SlackThreadSessionBinding | undefined;
   if (data.thread_ts && data.thread_ts !== data.ts) {
     try {
-      boundSessionId = withThreadBindings(
+      binding = withThreadBindings(
         getSlackContext().getDataDir(),
         (store) =>
           store.getBinding(data.channel, data.thread_ts!, target.agent.id)
-            ?.sessionId
       );
     } catch (err) {
       console.debug(`${target.logPrefix} Thread binding lookup failed:`, err);
@@ -976,7 +987,7 @@ async function handleSlackMessage(
 
   const result = processMessage(
     data,
-    boundSessionId
+    binding?.source === "agent"
       ? withoutSlackMentionRequirement(target, data.channel).config
       : target.config,
     botUserId
@@ -996,16 +1007,17 @@ async function handleSlackMessage(
     return;
   }
 
+  const threadPolicy = target.channelConfig?.threadPolicy ?? target.dmConfig?.threadPolicy;
   const sessionKey = target.isMainSession
     ? DEFAULT_MAIN_KEY
-    : buildSlackSessionKey(data.channel, data.thread_ts);
+    : buildSlackSessionKey(data.channel, data.thread_ts, result.isDm ? undefined : data.ts, threadPolicy);
   const historyKey = buildSlackHistoryKey(data.channel, data.thread_ts);
   const defaultReplyThreadTs = resolveReplyThreadTs(
     target.channelConfig?.threadPolicy ?? target.dmConfig?.threadPolicy,
     data.ts,
     data.thread_ts
   );
-  let replyThreadTs = boundSessionId ? data.thread_ts : defaultReplyThreadTs;
+  const replyThreadTs = binding ? data.thread_ts : defaultReplyThreadTs;
   const fileThreadTs = data.thread_ts ?? data.ts;
 
   let thinkingDisplay: ThinkingStreamDisplay | null = null;
@@ -1104,6 +1116,27 @@ async function handleSlackMessage(
           ? `${placeChannel} / ${threadName}`
           : placeChannel;
     const requesterUserId = await resolveSlackRequester(client, data.user);
+    const sessionOwnerId = binding?.owner === undefined ? requesterUserId : binding.owner ?? undefined;
+    const ctx = getSlackContext();
+    // Resolve persisted availability explicitly: an indexed ID alone can outlive its history.
+    if (binding && !(await ctx.hasSession(target.agent.id, binding.sessionId, sessionOwnerId))) {
+      await ctx.resetSession(target.agent.id, binding.sessionId, sessionOwnerId);
+      const entry = await ctx.ensureSession(target.agent.id, sessionKey, sessionOwnerId);
+      binding = withThreadBindings(ctx.getDataDir(), (store) => store.setBinding({
+        ...binding!, sessionId: entry.sessionId,
+      }));
+    } else if (!binding && !result.isDm && !target.isMainSession && (threadPolicy ?? "always") === "always") {
+      const entry = await ctx.ensureSession(target.agent.id, sessionKey, sessionOwnerId);
+      binding = withThreadBindings(ctx.getDataDir(), (store) => store.setBinding({
+        channelId: data.channel,
+        threadTs: data.thread_ts ?? data.ts,
+        agentId: target.agent.id,
+        sessionId: entry.sessionId,
+        owner: sessionOwnerId ?? null,
+        source: "inbound",
+      }));
+    }
+    const requesterId = `slack:${await getSlackWorkspace(client) ?? "unknown"}:${data.user ?? "unknown"}`;
     const context = buildSlackContext({
       metadata: {
         channel: "slack",
@@ -1125,22 +1158,28 @@ async function handleSlackMessage(
     let slackToolPostedToThread = false;
     const slackToolCallsToThread = new Set<string>();
     const activeSender: ActiveSlackSender | undefined = data.user
-      ? { agentId: target.agent.id, sessionKey, client, user: data.user, channel: data.channel, threadTs: replyThreadTs }
+      ? { agentId: target.agent.id, sessionKey, requesterId, client, user: data.user, channel: data.channel, threadTs: replyThreadTs }
       : undefined;
+    let untrack: (() => void) | undefined;
     const runAgent = async (sessionId?: string) => {
-      const untrack = activeSender
+      untrack = activeSender
         ? trackSlackSender(Object.assign(activeSender, { sessionId, threadTs: replyThreadTs }))
         : undefined;
       try {
-        return await runAgentFor(sessionId);
-      } finally {
+        const response = await runAgentFor(sessionId);
+        if (!response.meta.queued) untrack?.();
+        return response;
+      } catch (error) {
         untrack?.();
+        throw error;
       }
     };
     const runAgentFor = (sessionId?: string) =>
       getSlackContext().runAgent({
         agentId: target.agent.id,
         userId: requesterUserId,
+        sessionOwnerId: sessionOwnerId ?? null,
+        requesterId,
         message: content,
         attachments,
         ...(sessionId ? { sessionId } : {}),
@@ -1148,14 +1187,31 @@ async function handleSlackMessage(
         source: "slack",
         slackDelivery: {
           channel: data.channel,
-          threadTs: data.thread_ts,
+          threadTs: replyThreadTs,
           eventId: data.ts,
         },
         background: Boolean(sessionId),
         context,
+        onDeferredResult: async (outcome) => {
+          try {
+            if ("error" in outcome) {
+              if (!runAborted) await sendSlackError(client, data.channel, replyThreadTs, runFailureMessage(failureKind ?? classifyRunFailure(outcome.error), target.agent.language ?? "en"));
+            } else if (!outcome.result.meta.queued && !slackToolPostedToThread) {
+              await sendSlackReply(client, data.channel, withPairingLink(outcome.result.payloads, activeSender?.pairingLink), replyThreadTs);
+            }
+            await Promise.all(fileUploads);
+          } finally {
+            untrack?.();
+            await stopThinkingReaction(client, data.channel, data.ts);
+          }
+        },
         onEvent: (event) => {
           if (event.type === "error") failureKind = event.kind ?? "generic";
           if (event.type === "done" && event.meta?.aborted) runAborted = true;
+          if (event.type === "done") {
+            untrack?.();
+            if (event.meta?.aborted) void stopThinkingReaction(client, data.channel, data.ts);
+          }
           if (event.type === "progress")
             progressDisplay?.milestone(event.label);
           if (event.type === "tool_call") {
@@ -1186,33 +1242,7 @@ async function handleSlackMessage(
           );
         },
       });
-    let agentResult;
-    try {
-      agentResult = await runAgent(boundSessionId);
-    } catch (err) {
-      if (!boundSessionId || failureKind || runAborted) throw err;
-      console.debug(
-        `${target.logPrefix} Bound session unavailable; falling back:`,
-        err
-      );
-      // The progress display was created against the bound thread's
-      // threadTs; retarget it to the fallback thread before rerunning so any
-      // bubble it posts lands where the reply will actually go. onEvent
-      // reads `progressDisplay` from this closure, so reassigning it here is
-      // enough for the in-flight run to pick up the new display.
-      await progressDisplay.finish("interrupted");
-      replyThreadTs = defaultReplyThreadTs;
-      progressDisplay = createSlackProgressDisplay({
-        client,
-        channel: data.channel,
-        threadTs: replyThreadTs,
-        logPrefix: target.logPrefix,
-        store: getSlackProgressStore(),
-        owner: target.logPrefix,
-      });
-      progressDisplay.start();
-      agentResult = await runAgent();
-    }
+    const agentResult = await runAgent(binding?.sessionId);
     thinkingDisplay?.setSessionId(agentResult.meta.sessionId);
 
     if (agentResult.meta.queued) {

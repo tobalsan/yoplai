@@ -12,7 +12,8 @@ export class ContainerToolBridge {
       params.agent,
       config,
       params.extensionRuntime,
-      params.userId
+      params.userId,
+      params
     );
   }
 
@@ -25,7 +26,8 @@ export class ContainerToolBridge {
       params.agent,
       config,
       params.extensionRuntime,
-      params.userId
+      params.userId,
+      params
     );
     const gatewayTools: ContainerExtensionTool[] = [{
       extensionId: "gateway",

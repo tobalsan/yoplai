@@ -9,6 +9,23 @@ afterEach(async () => {
 });
 
 describe("task lifecycle tools", () => {
+  it.each(["opener", null])("keeps shared-thread tasks in owner store %s across requesters", async (sessionOwnerId) => {
+    const { taskLifecycleExtension } = await import("./extension.js");
+    const { getTasks } = await import("./store.js");
+    const tools = await taskLifecycleExtension.getAgentTools!({ id: "agent" } as never);
+    const sessionId = `slack:C1:${randomUUID()}`;
+    await tools.find((candidate) => candidate.name === "task.adopt")!.execute({ title: "Thread task" }, {
+      sessionId, sessionOwnerId, userId: "requester",
+    } as never);
+    expect(await getTasks("agent", sessionId, sessionOwnerId ?? undefined)).toEqual([
+      expect.objectContaining({ title: "Thread task" }),
+    ]);
+    expect(await getTasks("agent", sessionId, "requester")).toEqual([]);
+    expect(await tools.find((candidate) => candidate.name === "task.get")!.execute({}, {
+      sessionId, sessionOwnerId, userId: "other-requester",
+    } as never)).toEqual([expect.objectContaining({ title: "Thread task" })]);
+  });
+
   it("pauses task A before adopting task B, then resumes A", async () => {
     const { taskLifecycleExtension } = await import("./extension.js");
     const tools = await taskLifecycleExtension.getAgentTools!({ id: "agent" } as never);

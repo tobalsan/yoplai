@@ -8,9 +8,10 @@ export async function getExtensionAgentTools(
   agent: AgentConfig,
   config: GatewayConfig = loadConfig(),
   runtime: ExtensionRuntime = getExtensionRuntime(),
-  userId?: string
+  userId?: string,
+  identity?: Pick<ExtensionAgentToolContext, "sessionOwnerId" | "requesterId">
 ): Promise<LoadedExtensionAgentTool[]> {
-  const tools = await runtime.getTools(agent, config, userId);
+  const tools = await runtime.getTools(agent, config, userId, identity);
   return tools.map((tool) => ({
     ...tool,
     parameters: stripSchemaPatterns(tool.parameters) as Record<string, unknown>,
@@ -38,7 +39,8 @@ export async function executeExtensionAgentTool(
   sessionId?: string,
   userId?: string,
   emitProgress?: ExtensionAgentToolContext["emitProgress"],
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  identity?: Pick<ExtensionAgentToolContext, "sessionOwnerId" | "requesterId">
 ): Promise<{ found: boolean; result?: unknown }> {
   return runtime.executeTool(
     agent,
@@ -48,6 +50,7 @@ export async function executeExtensionAgentTool(
     sessionId,
     userId,
     emitProgress,
-    signal
+    signal,
+    identity
   );
 }

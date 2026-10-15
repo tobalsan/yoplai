@@ -71,9 +71,12 @@ const SESSION_PREFIX = "slack";
 
 export function buildSlackSessionKey(
   channel: string,
-  threadTs?: string
+  threadTs?: string,
+  messageTs?: string,
+  policy?: SlackThreadPolicy
 ): string {
-  return threadTs ? `${SESSION_PREFIX}:${channel}:${threadTs}` : `${SESSION_PREFIX}:${channel}`;
+  const rootTs = threadTs ?? ((policy ?? "always") === "always" ? messageTs : undefined);
+  return rootTs ? `${SESSION_PREFIX}:${channel}:${rootTs}` : `${SESSION_PREFIX}:${channel}`;
 }
 
 export function buildSlackHistoryKey(

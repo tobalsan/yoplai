@@ -164,7 +164,8 @@ async function dispatchInternalTool(
   sessionId?: string,
   userId?: string,
   emitProgress?: ContainerTokenContext["emitProgress"],
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  identity?: Pick<ContainerTokenContext, "sessionOwnerId" | "requesterId">
 ): Promise<unknown> {
   signal?.throwIfAborted();
   const config = deps.getConfig();
@@ -179,7 +180,8 @@ async function dispatchInternalTool(
     sessionId,
     userId,
     emitProgress ? (event) => { if (!signal?.aborted) emitProgress(event); } : undefined,
-    signal
+    signal,
+    identity
   );
   signal?.throwIfAborted();
   if (extensionResult.found) return extensionResult.result;
@@ -328,7 +330,8 @@ export function createInternalTools(
           context.sessionId,
           context.userId,
           context.emitProgress,
-          signal
+          signal,
+          context
         );
       const result = await Promise.race([work, aborted]);
       signal.throwIfAborted();

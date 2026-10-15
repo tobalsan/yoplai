@@ -30,6 +30,7 @@ import {
 import { deleteSession } from "../agents/sessions.js";
 import { invalidateResolvedHistoryFile } from "../history/store.js";
 import { getSessionHistory } from "../agents/runner.js";
+import { ensureSession, hasSession, resetSession } from "../sessions/persistence.js";
 import { logError, logInfo, logWarn } from "../logging.js";
 import { saveUploadedFile } from "../media/upload.js";
 import {
@@ -97,6 +98,9 @@ export function createExtensionContext(
     resolveSessionId: async (agentId: string, sessionKey: string, userId?: string) =>
       getSessionEntry(agentId, sessionKey, userId),
     getSessionEntry,
+    ensureSession,
+    hasSession,
+    resetSession,
     clearSessionEntry,
     restoreSessionUpdatedAt: (
       agentId: string,

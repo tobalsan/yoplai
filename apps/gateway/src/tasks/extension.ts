@@ -30,7 +30,7 @@ function tool(
       const result = await execute(
         parser.parse(raw) as TaskArgs,
         context.sessionId,
-        context.userId,
+        context.sessionOwnerId === undefined ? context.userId : context.sessionOwnerId ?? undefined,
         context.emitProgress
       );
       return result;

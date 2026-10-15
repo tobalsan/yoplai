@@ -91,10 +91,25 @@ level as the default for all channels.
 | Component bot, `channels` omitted | Any channel, routed to first agent; mentions only |
 | Component bot, `channels: {}` | Nothing |
 | Per-agent bot, `channels` omitted or `{}` | Any channel; mentions only |
-| Thread bound to a session (e.g. scheduled job thread) | Every message, no mention; binding is stored on disk and survives restart |
+| Thread created with `slack.create_thread` (e.g. scheduled job thread) | Every message, no mention; binding is stored on disk and survives restart |
 | DM (`dm` enabled) | Every message; no mention |
 
 Gateway restart clears unlocked threads only; session-bound threads persist.
+
+With `threadPolicy: always` (the default), each top-level channel message and
+its thread replies share one session in the opener's store (personal if paired,
+shared otherwise). Bindings survive restart and retain ingested attachments;
+each turn still uses its sender's identity and credentials. Different senders
+wait for separate turns when the thread is busy. These inbound bindings do not
+bypass mention requirements or `threadUnlock`. `follow` and `never` retain
+channel keys for top-level messages and thread keys for existing threads;
+DM/main-session keys are unchanged.
+
+`!new` in a bound thread clears its session and binding; the next admitted
+message binds a new session to that sender. `!stop` targets the bound session.
+If its history is unavailable, the next reply creates and binds a replacement
+in the recorded owner's store. Legacy bindings without an owner continue to
+use the requester's store.
 A mention means `<@bot>`, an `app_mention` event, or a `mentionPatterns` match
 (thread unlock triggers on `<@bot>`/`app_mention` only).
 

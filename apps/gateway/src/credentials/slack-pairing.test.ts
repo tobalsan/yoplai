@@ -33,6 +33,9 @@ vi.mock("../../../../packages/extensions/slack/src/context.js", () => ({
     getDataDir: () => state.dataDir,
     getAgent: () => undefined,
     getAgents: () => [],
+    ensureSession: async () => ({ sessionId: "session", updatedAt: 1 }),
+    hasSession: async () => true,
+    resetSession: async () => {},
     subscribe: () => () => {},
   }),
 }));

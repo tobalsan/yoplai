@@ -85,6 +85,22 @@ describe("container input builder", () => {
     expect(input.sdkConfig.model.auth_token).toBeUndefined();
   });
 
+  it.each(["opener", null, undefined])("uses owner %s for session storage while preserving requester identity", async (sessionOwnerId) => {
+    const workspaceDir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-container-owner-"));
+    await fs.writeFile(path.join(workspaceDir, "SOUL.md"), "soul");
+    const builder = new ContainerInputBuilder({ buildSystemPrompts: async () => [], buildTools: async () => [] });
+    const params = {
+      agentId: "cloud", sessionId: "thread", userId: "requester", sessionOwnerId,
+      message: "reply", workspaceDir,
+      agent: { id: "cloud", model: { provider: "anthropic", model: "test" } },
+    } as SdkRunParams;
+    const input = await builder.build(params, { agents: [params.agent], extensions: {} } as GatewayConfig, "token");
+    const owner = sessionOwnerId === undefined ? "requester" : sessionOwnerId;
+    expect(input.sessionDir).toBe(owner ? `/users/${owner}/sessions/cloud` : "/sessions");
+    expect(input.userId).toBe("requester");
+    await fs.rm(workspaceDir, { recursive: true, force: true });
+  });
+
   it("uses run model override for container sdk config", async () => {
     const workspaceDir = await fs.mkdtemp(
       path.join(os.tmpdir(), "yoplai-container-input-")

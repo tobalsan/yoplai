@@ -19,6 +19,7 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Fixed
 
+- Slack's default `threadPolicy: always` keeps each opener and all thread replies in one persisted session owned by the opener, retaining attachments while each sender uses their own credentials; different senders wait for separate turns.
 - Container `send_file` now waits for gateway media registration and file-card emission before reporting success, returns registration failures to the agent, and logs failed outbound file requests.
 - Preserve the complete chat transcript after Pi compaction, show expandable summaries and the compaction status in both history views, and load older messages on demand without counting archived usage toward active context.
 - Give gateway tools per-call timeouts and cooperative cancellation so a hung tool returns an error without losing the turn.

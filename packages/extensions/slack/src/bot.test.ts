@@ -143,6 +143,9 @@ vi.mock("@slack/bolt", () => ({
 
 const mockRunAgent = vi.fn();
 const mockGetSessionEntry = vi.fn();
+const mockEnsureSession = vi.fn();
+const mockHasSession = vi.fn();
+const mockResetSession = vi.fn();
 const mockClearSessionEntry = vi.fn();
 const mockDeleteSession = vi.fn();
 const mockInvalidateHistoryCache = vi.fn();
@@ -159,6 +162,9 @@ vi.mock("./context.js", () => ({
     readMediaFile: mockReadMediaFile,
     getDataDir: () => dataDir,
     getSessionEntry: mockGetSessionEntry,
+    ensureSession: mockEnsureSession,
+    hasSession: mockHasSession,
+    resetSession: mockResetSession,
     clearSessionEntry: mockClearSessionEntry,
     deleteSession: mockDeleteSession,
     invalidateHistoryCache: mockInvalidateHistoryCache,
@@ -230,6 +236,9 @@ describe("createSlackBot", () => {
     pairing.enabled = false;
     clearAllHistory();
     mockGetSessionEntry.mockResolvedValue(undefined);
+    mockEnsureSession.mockResolvedValue({ sessionId: "session", updatedAt: 1 });
+    mockHasSession.mockResolvedValue(true);
+    mockResetSession.mockResolvedValue(undefined);
     mockClearSessionEntry.mockResolvedValue({
       sessionId: "session",
       updatedAt: 1,
@@ -472,6 +481,7 @@ describe("createSlackBot", () => {
     pairing.resolve.mockReturnValue(undefined);
     pairing.issue.mockResolvedValue("https://yoplai.test/api/slack/pair/agent-link");
     mockGetSessionEntry.mockResolvedValue({ sessionId: "s1" });
+    mockEnsureSession.mockResolvedValue({ sessionId: "s1", updatedAt: 1 });
     let toolResult: unknown;
     mockRunAgent.mockImplementationOnce(async () => {
       toolResult = await pairTool.execute({ channel: "UOTHER" }, { agent, config: {} as never, sessionId: "s1" });
@@ -502,6 +512,7 @@ describe("createSlackBot", () => {
     pairing.resolve.mockReturnValue(undefined);
     pairing.issue.mockResolvedValue("https://yoplai.test/api/slack/pair/agent-link");
     mockGetSessionEntry.mockResolvedValue({ sessionId: "s1" });
+    mockEnsureSession.mockResolvedValue({ sessionId: "s1", updatedAt: 1 });
     mockRunAgent.mockImplementationOnce(async () => {
       const result = await createCredentialConnectLink({ agent, config: {} as never, sessionId: "s1" }, { kind: "oauth", provider: "google" });
       expect(result).toBe("<slack-pair-link>");
@@ -738,6 +749,38 @@ describe("createSlackBot", () => {
     );
   });
 
+  it.each(["always", "follow", "never"] as const)("keys opener and replies under threadPolicy %s", async (threadPolicy) => {
+    const { createSlackBot } = await import("./bot.js");
+    const bot = createSlackBot([agent], { ...config, channels: { C1: { agent: "main", requireMention: false, threadPolicy } } });
+    await bot?.start();
+    const handler = getMessageHandler(apps[0]);
+    await handler({ message: { ts: "3.0", text: "open", channel: "C1", user: "U1", channel_type: "channel" }, client: apps[0].client });
+    await handler({ message: { ts: "3.1", thread_ts: "3.0", text: "reply", channel: "C1", user: "U1", channel_type: "channel" }, client: apps[0].client });
+    expect(mockRunAgent.mock.calls.map(([params]) => params.sessionKey)).toEqual([threadPolicy === "always" ? "slack:C1:3.0" : "slack:C1", "slack:C1:3.0"]);
+  });
+
+  it.each(["always", "follow", "never"] as const)("honors explicit binding owner under threadPolicy %s", async (threadPolicy) => {
+    const store = createSlackThreadSessionBindingStore(dataDir);
+    store.setBinding({ channelId: "C1", threadTs: "4.0", sessionId: "scheduled", agentId: "main", owner: "scheduler-owner", source: "agent" });
+    store.close();
+    const { createSlackBot } = await import("./bot.js");
+    const bot = createSlackBot([agent], { ...config, channels: { C1: { agent: "main", threadPolicy } } });
+    await bot?.start();
+    await getMessageHandler(apps[0])({ message: { ts: "4.1", thread_ts: "4.0", text: "no mention needed", channel: "C1", user: "U1", channel_type: "channel" }, client: apps[0].client });
+    expect(mockRunAgent).toHaveBeenCalledWith(expect.objectContaining({ sessionId: "scheduled", sessionOwnerId: "scheduler-owner", userId: undefined }));
+  });
+
+  it.each([null, "opener"])("!stop resolves a bound session in owner %s's store", async (owner) => {
+    const store = createSlackThreadSessionBindingStore(dataDir);
+    store.setBinding({ channelId: "C1", threadTs: "4.0", sessionId: "bound", agentId: "main", owner, source: "inbound" });
+    store.close();
+    const { createSlackBot } = await import("./bot.js");
+    const bot = createSlackBot([agent], config);
+    await bot?.start();
+    await getMessageHandler(apps[0])({ message: { ts: "4.1", thread_ts: "4.0", text: "!stop", channel: "C1", user: "U1", channel_type: "channel" }, client: apps[0].client });
+    expect(mockRunAgent).toHaveBeenCalledWith(expect.objectContaining({ message: "/stop", sessionId: "bound", sessionOwnerId: owner, userId: undefined }));
+  });
+
   it("keeps bound replies in their thread when thread policy is never", async () => {
     const store = createSlackThreadSessionBindingStore(dataDir);
     store.setBinding({
@@ -771,68 +814,24 @@ describe("createSlackBot", () => {
     );
   });
 
-  it("falls back to normal thread routing when a bound session cannot resume", async () => {
+  it("repairs an unavailable binding before running and retains its owner", async () => {
     const store = createSlackThreadSessionBindingStore(dataDir);
-    store.setBinding({
-      channelId: "C1",
-      threadTs: "1.0",
-      sessionId: "missing-session",
-      agentId: "main",
-    });
+    store.setBinding({ channelId: "C1", threadTs: "1.0", sessionId: "missing-session", agentId: "main", owner: "opener" });
     store.close();
-    mockRunAgent
-      .mockRejectedValueOnce(new Error("session not found"))
-      .mockImplementationOnce(async (params) => {
-        // Fired on the retried (fallback) run: proves the progress display
-        // was recreated against the fallback thread target rather than
-        // still posting to the stale bound-session threadTs.
-        params.onEvent?.({ type: "progress", label: "Checking files" });
-        return {
-          payloads: [{ text: "fallback" }],
-          meta: { durationMs: 1, sessionId: "new-session" },
-        };
-      });
+    mockHasSession.mockResolvedValue(false);
+    mockEnsureSession.mockResolvedValue({ sessionId: "new-session", updatedAt: 1 });
     const { createSlackBot } = await import("./bot.js");
-    const bot = createSlackBot([agent], {
-      ...config,
-      channels: { C1: { agent: "main", threadPolicy: "never" } },
-    });
+    const bot = createSlackBot([agent], { ...config, channels: { C1: { agent: "main", threadPolicy: "never" } } });
     await bot?.start();
-
-    await getMessageHandler(apps[0])({
-      message: {
-        ts: "1.1",
-        thread_ts: "1.0",
-        text: "follow up",
-        channel: "C1",
-        user: "U1",
-        channel_type: "channel",
-      },
-      client: apps[0].client,
-    });
-
-    expect(mockRunAgent).toHaveBeenNthCalledWith(
-      1,
-      expect.objectContaining({ sessionId: "missing-session" })
-    );
-    expect(mockRunAgent).toHaveBeenNthCalledWith(
-      2,
-      expect.not.objectContaining({ sessionId: expect.anything() })
-    );
-    expect(mockRunAgent).toHaveBeenLastCalledWith(
-      expect.objectContaining({ sessionKey: "slack:C1:1.0" })
-    );
-    expect(apps[0].client.chat.postMessage).toHaveBeenCalledWith(
-      expect.not.objectContaining({ thread_ts: expect.anything() })
-    );
-    // The mid-run progress milestone must land on the recreated (fallback)
-    // progress display, never on the stale bound-thread one.
-    expect(apps[0].client.chat.postMessage).toHaveBeenCalledWith(
-      expect.objectContaining({ text: "Checking files…" })
-    );
-    expect(apps[0].client.chat.postMessage).not.toHaveBeenCalledWith(
-      expect.objectContaining({ thread_ts: "1.0" })
-    );
+    await getMessageHandler(apps[0])({ message: { ts: "1.1", thread_ts: "1.0", text: "follow up", channel: "C1", user: "U1", channel_type: "channel" }, client: apps[0].client });
+    expect(mockResetSession).toHaveBeenCalledWith("main", "missing-session", "opener");
+    expect(mockEnsureSession).toHaveBeenCalledWith("main", "slack:C1:1.0", "opener");
+    expect(mockRunAgent).toHaveBeenCalledOnce();
+    expect(mockRunAgent).toHaveBeenCalledWith(expect.objectContaining({ sessionId: "new-session", sessionOwnerId: "opener" }));
+    const repaired = createSlackThreadSessionBindingStore(dataDir);
+    expect(repaired.getBinding("C1", "1.0", "main")).toMatchObject({ sessionId: "new-session", owner: "opener", source: "agent" });
+    repaired.close();
+    expect(apps[0].client.chat.postMessage).toHaveBeenCalledWith(expect.objectContaining({ thread_ts: "1.0", text: "ok" }));
   });
 
   it("does not auto-deliver after slack.send_message posts to the bound thread", async () => {
@@ -2755,7 +2754,7 @@ describe("createSlackAgentBot", () => {
     expect(mockRunAgent).toHaveBeenCalledWith(
       expect.objectContaining({
         agentId: "a1",
-        sessionKey: "slack:C999",
+        sessionKey: "slack:C999:1.1",
         source: "slack",
       })
     );
@@ -2814,7 +2813,7 @@ describe("createSlackAgentBot", () => {
     expect(mockRunAgent).toHaveBeenCalledWith(
       expect.objectContaining({
         agentId: "a1",
-        sessionKey: "slack:C1",
+        sessionKey: "slack:C1:2.2",
         source: "slack",
       })
     );

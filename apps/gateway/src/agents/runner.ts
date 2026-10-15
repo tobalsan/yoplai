@@ -54,10 +54,12 @@ import {
 import { maybeAutoTitleSession } from "../maintenance/session-auto-title.js";
 import { maybeGenerateToolLabel } from "../maintenance/tool-labels.js";
 import { notifyProviderQuota } from "./quota-notification.js";
+import { getSession } from "./sessions.js";
 
 export type InternalRunAgentParams = SharedRunAgentParams & {
   userId?: string;
   extensionRuntime?: ExtensionRuntime;
+  deferredTurn?: boolean;
   resolvedSession?: {
     sessionId: string;
     sessionKey?: string;
@@ -107,6 +109,8 @@ export async function runAgent(
     throw new Error(`Agent not found: ${params.agentId}`);
   }
 
+  const sessionOwnerId = params.sessionOwnerId === undefined ? params.userId : params.sessionOwnerId ?? undefined;
+
   // Resolve SDK adapter
   const sdkId = (agent.sdk ?? getDefaultSdkId()) as SdkId;
   const extensionRuntime = params.extensionRuntime ?? getExtensionRuntime();
@@ -125,7 +129,7 @@ export async function runAgent(
       const entry = await getSessionEntry(
         params.agentId,
         params.sessionKey,
-        params.userId
+        sessionOwnerId
       );
       sessionId = entry?.sessionId;
     } else {
@@ -172,7 +176,7 @@ export async function runAgent(
       params.agentId,
       sessionId,
       params.message.trim().split(/\s+/, 1)[0]!,
-      params.userId
+      sessionOwnerId
     );
 
     const ackText = aborted ? "Run aborted." : "No active run.";
@@ -191,14 +195,14 @@ export async function runAgent(
   if (params.resolvedSession) {
     sessionId = params.resolvedSession.sessionId;
     if (params.resolvedSession.isNew) {
-      invalidateResolvedHistoryFile(params.agentId, sessionId, params.userId);
+      invalidateResolvedHistoryFile(params.agentId, sessionId, sessionOwnerId);
     }
   } else if (params.sessionId) {
     sessionId = params.sessionId;
   } else if (sessionKey) {
     const resolved = await resolveSessionId({
       agentId: params.agentId,
-      userId: params.userId,
+      userId: sessionOwnerId,
       sessionKey,
       message: params.message,
     });
@@ -206,7 +210,7 @@ export async function runAgent(
     message = resolved.message;
     // Invalidate cached history path on reset (new session via /new, /reset, or idle timeout)
     if (resolved.isNew) {
-      invalidateResolvedHistoryFile(params.agentId, sessionId, params.userId);
+      invalidateResolvedHistoryFile(params.agentId, sessionId, sessionOwnerId);
     }
   } else {
     sessionId = "default";
@@ -216,7 +220,8 @@ export async function runAgent(
     agentId: params.agentId,
     sessionId,
     sessionKey,
-    userId: params.userId,
+    userId: sessionOwnerId,
+    requesterId: params.requesterId ?? params.userId,
     source: params.source,
     slackDelivery: params.slackDelivery,
     trace: params.trace,
@@ -232,7 +237,7 @@ export async function runAgent(
   const maxHops =
     agent.agentLoop?.maxHops ?? globalLoop?.maxHops ?? DEFAULT_MAX_HOPS;
   const loopGuard = checkAgentLoop({
-    key: `${params.agentId}:${params.userId ?? "default"}:${sessionId}`,
+    key: `${params.agentId}:${sessionOwnerId ?? "default"}:${sessionId}`,
     sender: params.sender,
     maxAgentTurns,
     maxHops,
@@ -271,14 +276,14 @@ export async function runAgent(
           resolvedSessionKey,
           directive.thinkLevel,
           sessionId,
-          params.userId
+          sessionOwnerId
         );
         await appendSessionMeta(
           params.agentId,
           sessionId,
           "thinkingLevel",
           directive.thinkLevel,
-          params.userId
+          sessionOwnerId
         );
 
         // If no remaining message, just acknowledge and return
@@ -351,26 +356,39 @@ export async function runAgent(
   // An ordinary inbound message must never implicitly interrupt work that is
   // durably active. It remains a conversational follow-up until the agent
   // explicitly changes the task through its lifecycle tools.
-  const activeTask = await getTask(params.agentId, sessionId, params.userId);
-  const join = await lifecycle.handleJoin({
-    queueMode: activeTask?.status === "active" ? "queue" : agent.queueMode,
+  const activeTask = await getTask(params.agentId, sessionId, sessionOwnerId);
+  const joinPolicy = {
+    queueMode: activeTask?.status === "active" ? "queue" : agent.queueMode ?? "queue",
     capabilities,
     adapter,
     message,
     sender: params.sender,
-  });
-  if (join.handled) {
-    lifecycle.emitQueuedAck(message, join.result.text);
-    return {
-      payloads: [{ text: join.result.text }],
-      meta: { durationMs: 0, sessionId, queued: true },
-    };
-  }
+    params: { ...params, message, sessionOwnerId: sessionOwnerId ?? null },
+  };
 
   await ensureSessionsDir();
   const workspaceDir = resolveWorkspaceDir(agent.workspace);
 
-  const abortController = await waitForCompactionActivation(params.agentId, sessionId, params.userId, () => lifecycle.beginRun());
+  let abortController: AbortController | undefined;
+  while (!abortController) {
+    // Check and reserve synchronously after all asynchronous setup. Two senders
+    // arriving at an idle thread must not both activate it.
+    abortController = await waitForCompactionActivation(params.agentId, sessionId, sessionOwnerId, () =>
+      {
+        if (getSession(params.agentId, sessionId)?.resetting) throw new Error("Session is being reset. Retry once the reset completes.");
+        return lifecycle.isStreaming() ? undefined : lifecycle.beginRun();
+      }
+    );
+    if (abortController) break;
+    const join = await lifecycle.handleJoin(joinPolicy);
+    if (join.handled) {
+      lifecycle.emitQueuedAck(message, join.result.text, join.result.deferred);
+      return {
+        payloads: [{ text: join.result.text }],
+        meta: { durationMs: 0, sessionId, queued: true },
+      };
+    }
+  }
 
   // Wire external abort signal (e.g. scheduler timeout) into the session abort path.
   if (params.signal?.aborted) {
@@ -381,7 +399,6 @@ export async function runAgent(
 
   const started = Date.now();
   let aborted = false;
-  let runCompleted = false;
   const holdback = createNoReplyHoldback(emit);
 
   try {
@@ -405,6 +422,8 @@ export async function runAgent(
       agentId: params.agentId,
       agent,
       userId: params.userId,
+      sessionOwnerId: sessionOwnerId ?? null,
+      requesterId: params.requesterId,
       sessionId,
       sessionKey,
       message,
@@ -424,7 +443,7 @@ export async function runAgent(
           maybeGenerateToolLabel({
             agentId: params.agentId,
             sessionId,
-            userId: params.userId,
+            userId: sessionOwnerId,
             toolName: event.name,
             args: event.arguments,
           });
@@ -497,12 +516,11 @@ export async function runAgent(
 
     const durationMs = Date.now() - started;
     emit({ type: "done", meta: { durationMs, aborted } });
-    runCompleted = true;
     if (!aborted && sdkId === "pi") {
       maybeAutoTitleSession({
         agentId: params.agentId,
         sessionId,
-        userId: params.userId,
+        userId: sessionOwnerId,
       });
     }
 
@@ -532,25 +550,40 @@ export async function runAgent(
   } finally {
     lifecycle.finishRun();
 
-    // Drain pending queue if adapter lacks native queue support
-    if (runCompleted && !capabilities.queueWhileStreaming) {
-      const pendingMessages = lifecycle.drainPendingMessages();
-      for (const pending of pendingMessages) {
-        // Run next message - omit onEvent to use agentEventBus only
-        await runAgent({
-          agentId: params.agentId,
-          userId: params.userId,
-          message: pending.message,
-          sender: pending.sender,
-          sessionId,
-          sessionKey,
-          thinkLevel: params.thinkLevel,
-          extensionRuntime,
-          source: params.source,
-          slackDelivery: params.slackDelivery,
-          trace: params.trace,
-          // onEvent omitted - events go to agentEventBus only
-        });
+    // Deferred turns keep the sender's complete request, including credentials and delivery.
+    if (!params.deferredTurn) {
+      const drainingSession = getSession(params.agentId, sessionId);
+      while (!drainingSession?.resetting && getSession(params.agentId, sessionId) === drainingSession) {
+        const pendingMessages = lifecycle.drainPendingMessages();
+        if (!pendingMessages.length) break;
+        for (const pending of pendingMessages) {
+          if (drainingSession?.resetting || getSession(params.agentId, sessionId) !== drainingSession) {
+            pending.params?.onEvent?.({ type: "done", meta: { durationMs: 0, aborted: true } });
+            continue;
+          }
+          let outcome: { result: SharedRunAgentResult } | { error: unknown };
+          try {
+            outcome = { result: await runAgent({
+              ...(pending.params ?? params),
+              message: pending.message,
+              sender: pending.sender,
+              sessionId,
+              sessionKey,
+              resolvedSession: undefined,
+              deferredTurn: true,
+              extensionRuntime,
+              onEvent: pending.params?.onEvent,
+            }) };
+          } catch (error) {
+            logError("[agent] queued turn failed", error, { agentId: params.agentId, sessionId });
+            outcome = { error };
+          }
+          try {
+            await pending.params?.onDeferredResult?.(outcome);
+          } catch (error) {
+            logError("[agent] queued delivery failed", error, { agentId: params.agentId, sessionId });
+          }
+        }
       }
     }
   }

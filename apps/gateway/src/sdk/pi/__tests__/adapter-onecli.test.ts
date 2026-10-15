@@ -542,9 +542,10 @@ describe("pi adapter onecli env wiring", () => {
     mockCreateAgentSession.mockResolvedValue({ session });
 
     const { piAdapter } = await import("../adapter.js");
-    await piAdapter.run(makeRunParams(agent));
+    const params = { ...makeRunParams(agent), userId: "requester", sessionOwnerId: "opener", requesterId: "slack:U2" };
+    await piAdapter.run(params);
 
-    expect(mockGetExtensionAgentTools).toHaveBeenCalledWith(agent, config, undefined, undefined);
+    expect(mockGetExtensionAgentTools).toHaveBeenCalledWith(agent, config, undefined, "requester", params);
     const options = mockCreateAgentSession.mock.calls[0]?.[0] as {
       tools?: string[];
       customTools?: Array<{
@@ -587,6 +588,9 @@ describe("pi adapter onecli env wiring", () => {
         agent,
         config,
         env: expect.any(Object),
+        userId: "requester",
+        sessionOwnerId: "opener",
+        requesterId: "slack:U2",
       })
     );
   });

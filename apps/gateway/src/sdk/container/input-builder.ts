@@ -60,6 +60,7 @@ export class ContainerInputBuilder {
       systemFiles: params.agent.system_files,
       warn: (message) => logWarn(message),
     });
+    const sessionOwnerId = params.sessionOwnerId === undefined ? params.userId : params.sessionOwnerId ?? undefined;
     return {
       agentId: params.agentId,
       sessionId: params.sessionId,
@@ -88,7 +89,7 @@ export class ContainerInputBuilder {
           params.agent.retryBaseDelay ?? DEFAULT_RETRY_BASE_DELAY_SECONDS,
       },
       workspaceDir: "/workspace",
-      sessionDir: params.userId ? `/users/${params.userId}/sessions/${params.agentId}` : "/sessions",
+      sessionDir: sessionOwnerId ? `/users/${sessionOwnerId}/sessions/${params.agentId}` : "/sessions",
       ipcDir: "/workspace/ipc",
       gatewayUrl: resolveContainerGatewayUrl(config),
       gatewaySocketPath: usesGatewaySocket(config.sandbox ?? {})

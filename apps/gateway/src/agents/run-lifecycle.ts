@@ -12,6 +12,7 @@ import {
   clearSessionHandle,
   enqueuePendingUserMessage,
   getSessionHandle,
+  getSession,
   isStreaming,
   popAllPendingUserMessages,
   popPendingMessages,
@@ -52,6 +53,7 @@ type LifecycleContext = {
   sessionId: string;
   sessionKey?: string;
   userId?: string;
+  requesterId?: string;
   source?: string;
   slackDelivery?: ContainerDeliveryContext["slack"];
   background?: boolean;
@@ -65,11 +67,12 @@ type QueuePolicy = {
   adapter: SdkAdapter;
   message: string;
   sender?: RunAgentParams["sender"];
+  params?: RunAgentParams;
 };
 
 type QueueDecision =
   | { handled: false }
-  | { handled: true; result: { text: string; queued: true } };
+  | { handled: true; result: { text: string; queued: true; deferred: boolean } };
 
 export class SessionRunLifecycle {
   private currentTurn: TurnBuffer | null = null;
@@ -116,7 +119,7 @@ export class SessionRunLifecycle {
    * itself is untraced so it neither creates an input-less trace nor closes
    * the active run's trace (traces are keyed by agent+session).
    */
-  emitQueuedAck(message: string, text: string): void {
+  emitQueuedAck(message: string, text: string, deferred = false): void {
     if (message.trim()) {
       agentEventBus.emitHistoryEvent({
         ...sanitizeForStorage({
@@ -136,7 +139,7 @@ export class SessionRunLifecycle {
       { type: "text", data: text },
       { type: "done", meta: { durationMs: 0, queued: true } },
     ] as StreamEvent[]) {
-      this.context.onEvent?.(event);
+      if (!deferred || event.type !== "done") this.context.onEvent?.(event);
       agentEventBus.emitStreamEvent({
         ...event,
         agentId: this.context.agentId,
@@ -175,11 +178,13 @@ export class SessionRunLifecycle {
   async handleJoin(policy: QueuePolicy): Promise<QueueDecision> {
     if (!this.isStreaming()) return { handled: false };
 
-    if (policy.queueMode === "queue") {
+    const differentRequester = getSession(this.context.agentId, this.context.sessionId)?.requesterId !== this.context.requesterId;
+    if (policy.queueMode === "queue" || differentRequester) {
       let deliveredToCurrentRun = false;
       if (
         policy.capabilities.queueWhileStreaming &&
-        policy.adapter.queueMessage
+        policy.adapter.queueMessage &&
+        !differentRequester
       ) {
         enqueuePendingUserMessage(
           this.context.agentId,
@@ -210,14 +215,15 @@ export class SessionRunLifecycle {
           this.context.agentId,
           this.context.sessionId,
           policy.message,
-          policy.sender
+          policy.sender,
+          policy.params
         );
       }
 
       const text = deliveredToCurrentRun
         ? "Message queued into current run"
         : "Message queued for next run";
-      return { handled: true, result: { text, queued: true } };
+      return { handled: true, result: { text, queued: true, deferred: !deliveredToCurrentRun } };
     }
 
     if (policy.queueMode === "interrupt") {
@@ -236,6 +242,11 @@ export class SessionRunLifecycle {
       abortController,
       this.context.background
     );
+    const session = getSession(this.context.agentId, this.context.sessionId);
+    if (session) {
+      session.requesterId = this.context.requesterId;
+      session.settled = new Promise<void>((resolve) => { session.resolveSettled = resolve; });
+    }
     return abortController;
   }
 
@@ -250,8 +261,13 @@ export class SessionRunLifecycle {
         this.context.agentId,
         this.context.sessionId
       );
-      for (const { message } of buffered) {
-        adapter.queueMessage(handle, message, this.buildDeliveryContext());
+      for (const pending of buffered) {
+        const requesterId = pending.params?.requesterId ?? pending.params?.userId;
+        if (requesterId !== this.context.requesterId) {
+          bufferPendingMessage(this.context.agentId, this.context.sessionId, pending.message, pending.sender, pending.params);
+          continue;
+        }
+        adapter.queueMessage(handle, pending.message, this.buildDeliveryContext());
       }
     }
   }
@@ -347,6 +363,9 @@ export class SessionRunLifecycle {
     clearSessionHandle(this.context.agentId, this.context.sessionId);
     setSessionCurrentTurn(this.context.agentId, this.context.sessionId, null);
     setSessionStreaming(this.context.agentId, this.context.sessionId, false);
+    const session = getSession(this.context.agentId, this.context.sessionId);
+    session?.resolveSettled?.();
+    if (session) session.resolveSettled = undefined;
   }
 
   drainPendingMessages(): PendingMessage[] {
