@@ -14,6 +14,7 @@ import {
   getSessionUploadsDir,
 } from "../../agents/container.js";
 import { getMediaInboundDir } from "../../media/metadata.js";
+import { getConversationFiles, CONTAINER_FILES_DIR } from "../../media/conversation-files.js";
 
 export type ContainerLaunchSpec = {
   args: string[];
@@ -24,6 +25,7 @@ export type ContainerLaunchSpec = {
   ipcInputDir: string;
   hostDataDir: string;
   hostUploadsDir: string;
+  conversationFiles: { hostPath: string; runtimePath: string };
 };
 
 export function buildContainerLaunchSpec(
@@ -44,6 +46,12 @@ export function buildContainerLaunchSpec(
     config.onecli,
     params.sessionId
   );
+  const conversationFiles = getConversationFiles(params.agentId, params.sessionId, params.userId, true, homeDir);
+  // Docker cannot create a nested bind target beneath a read-only workspace.
+  for (const directory of ["files", "ipc"]) {
+    fs.mkdirSync(path.join(params.workspaceDir, directory), { recursive: true });
+  }
+  mounts.push({ source: conversationFiles.hostPath, target: CONTAINER_FILES_DIR, readonly: false });
   if (sessionOwnerId !== params.userId) {
     // A shared turn may read its thread, never the owner's other sessions.
     const isolatedSessionsDir = path.join(ipcDir, "sessions");
@@ -98,6 +106,7 @@ export function buildContainerLaunchSpec(
       params.agentId,
       params.sessionId
     ),
+    conversationFiles,
   };
 }
 

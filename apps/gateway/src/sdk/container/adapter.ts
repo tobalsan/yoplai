@@ -336,12 +336,13 @@ export function getContainerAdapter(): SdkAdapter {
             data: hostDataDir,
             uploads: launchSpec.hostUploadsDir,
           },
+          conversationFiles: launchSpec.conversationFiles,
           oauthProviders: Object.keys(oauthTokens ?? {}),
           userId: params.userId,
           sessionOwnerId: params.sessionOwnerId === undefined ? params.userId ?? null : params.sessionOwnerId,
           requesterId: params.requesterId,
           registerFileOutput: (event, signal) =>
-            fileOutputAdapter.handle(params, event, hostDataDir, signal),
+            fileOutputAdapter.handle(params, event, hostDataDir, signal, launchSpec.conversationFiles),
           projectId: params.context?.project?.id,
           emitProgress: (event) =>
             params.onEvent({ type: "progress", ...event }),
@@ -577,7 +578,7 @@ export function getContainerAdapter(): SdkAdapter {
             }
             recordActivity("file_output");
             const task = fileOutputAdapter
-              .handle(params, event, hostDataDir)
+              .handle(params, event, hostDataDir, params.abortSignal, launchSpec.conversationFiles)
               .catch((error) => {
                 logError("[container] file_output failed", error, {
                   agentId: params.agentId,

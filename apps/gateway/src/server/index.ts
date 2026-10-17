@@ -255,7 +255,14 @@ app.all("/api/*", async (c) => {
       ? "/"
       : url.pathname;
   url.pathname = pathname || "/";
-  const request = new Request(url, c.req.raw);
+  const init = {
+    method: c.req.method,
+    headers: c.req.raw.headers,
+    body: c.req.raw.body,
+    signal: c.req.raw.signal,
+    duplex: "half",
+  };
+  const request = new Request(url, init);
 
   let authContext: RequestAuthContext | null = null;
   if (currentExtensionRuntime().isEnabled("multiUser")) {

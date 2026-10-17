@@ -17,6 +17,7 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Added
 
+- Per-conversation writable files for extension downloads and edits, available at `/workspace/files` in sandboxes, with local Pi `send_file` support and requester-private output downloads.
 - With cron monitoring enabled, Scheduled jobs refresh every two seconds and show a pulsing Running badge with elapsed time until execution finishes.
 - Scheduled run history refreshes automatically, and running traces show live thinking, tool results, and output while following the bottom until you scroll up.
 - Scheduled run traces show the prompt, thinking, tool calls and results, and final output, preserving the run's original storage identity after sharing a job.
@@ -51,6 +52,7 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Fixed
 
+- Gateway API forwarding works with Node.js 24's request validation, and fresh read-only sandbox workspaces create the conversation-files and IPC mount targets before launch.
 - Maintenance-model calls (session auto-titles, tool labels, project instruction drafts) no longer send `temperature`, which reasoning models such as `openai-codex` reject with "Unsupported parameter: temperature".
 - Threadit: a download cannot write outside the workspace through a symlink. Sandbox uploads read `/workspace/data` and `/workspace/uploads`. A disabled agent drops its token. An agent that enables Threadit later gets a poller without a restart.
 - Slack's default `threadPolicy: always` keeps each opener and all thread replies in one persisted session owned by the opener, retaining attachments while each sender uses their own credentials; different senders wait for separate turns.

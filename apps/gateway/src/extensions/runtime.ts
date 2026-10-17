@@ -12,8 +12,9 @@ import { oauthConnectionRefusal, requestCredentialConnectLink, resolveExtensionO
 import { resolveAgentEnv } from "../config/index.js";
 import { getOAuthService } from "../oauth/service.js";
 import { extensionSecretFields, resolveExtensionTokenConfig } from "../credentials/extension-tokens.js";
+import { getConversationFiles } from "../media/conversation-files.js";
 
-type RunIdentity = Pick<ExtensionAgentToolContext, "sessionOwnerId" | "requesterId">;
+type RunIdentity = Pick<ExtensionAgentToolContext, "sessionOwnerId" | "requesterId" | "conversationFiles">;
 
 function buildHookContext(
   agent: AgentConfig,
@@ -304,6 +305,7 @@ export class ExtensionRuntime {
         requesterId: identity?.requesterId,
         emitProgress,
         signal,
+        conversationFiles: identity?.conversationFiles ?? (sessionId ? getConversationFiles(agent.id, sessionId, userId) : undefined),
       }),
     };
   }

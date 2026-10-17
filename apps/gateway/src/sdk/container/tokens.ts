@@ -1,4 +1,4 @@
-import type { ContainerFileOutputRequest } from "@yoplai/shared";
+import type { ContainerFileOutputRequest, ExtensionAgentToolContext } from "@yoplai/shared";
 
 const activeTokens = new Map<
   string,
@@ -11,6 +11,7 @@ export type ContainerTokenContext = {
   runId: string;
   containerName: string;
   roots: { workspace: string; data: string; uploads: string };
+  conversationFiles?: ExtensionAgentToolContext["conversationFiles"];
   oauthProviders?: string[];
   userId?: string;
   sessionOwnerId?: string | null;

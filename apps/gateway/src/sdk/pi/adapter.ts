@@ -53,6 +53,8 @@ import { getFullHistory } from "../../history/store.js";
 import { getMediaFileMetadata } from "../../media/metadata.js";
 import { getBuiltInSkillsDir } from "./skills.js";
 import { executeProjectTool, projectTools } from "../../chat-projects/tools.js";
+import { getConversationFiles } from "../../media/conversation-files.js";
+import { ContainerFileOutputAdapter } from "../container/file-output.js";
 
 function runFailureError(message: string): Error {
   return Object.assign(new Error(message), {
@@ -116,6 +118,7 @@ async function createPiExtensionTools(
 ): Promise<{ tools: AgentTool[]; invisibleToolNames: Set<string> }> {
   const config = loadConfig();
   const env = resolveAgentEnv(agent, config);
+  const conversationFiles = getConversationFiles(agent.id, params.sessionId, params.userId);
   const tools = await getExtensionAgentTools(
     agent,
     config,
@@ -132,7 +135,7 @@ async function createPiExtensionTools(
       label: tool.description,
       description: tool.description,
       parameters: tool.parameters as unknown as AgentTool["parameters"],
-      execute: async (_toolCallId, toolParams) => {
+      execute: async (_toolCallId, toolParams, signal) => {
         const result = await tool.execute(toolParams, {
           agent,
           config,
@@ -141,6 +144,8 @@ async function createPiExtensionTools(
           userId: params.userId,
           sessionOwnerId: params.sessionOwnerId === undefined ? params.userId ?? null : params.sessionOwnerId,
           requesterId: params.requesterId,
+          signal: signal ? AbortSignal.any([signal, params.abortSignal]) : params.abortSignal,
+          conversationFiles,
           emitProgress: (event) =>
             params.onEvent({ type: "progress", ...event }),
         });
@@ -150,6 +155,23 @@ async function createPiExtensionTools(
         };
       },
     };
+  });
+  piTools.push({
+    name: claimAgentToolName("send_file", usedToolNames),
+    label: "Send file to user",
+    description: "Send a regular file directly in this conversation's files directory as a downloadable card in chat. Nested paths and symlinks are not supported. Finish writing the file first.",
+    parameters: {
+      type: "object",
+      properties: { path: { type: "string", description: "Absolute path to the conversation file" } },
+      required: ["path"],
+    } as AgentTool["parameters"],
+    execute: async (_toolCallId, args, signal) => {
+      const input = args as { path?: unknown };
+      if (typeof input.path !== "string") throw new Error("send_file requires a path");
+      await new ContainerFileOutputAdapter().handle(params, { type: "file_output", path: input.path }, undefined,
+        signal ? AbortSignal.any([signal, params.abortSignal]) : params.abortSignal, conversationFiles);
+      return { content: [{ type: "text", text: "File sent to user" }], details: {} };
+    },
   });
   if (params.context?.project?.id) {
     for (const tool of projectTools) piTools.push({
@@ -445,6 +467,7 @@ export const piAdapter: SdkAdapter = {
         isFirstRun ? FIRST_RUN_BOOTSTRAP_PROMPT : undefined,
         ...extensionPrompts,
         renderedContext || undefined,
+        `Conversation files: ${getConversationFiles(agent.id, params.sessionId, params.userId).runtimePath}. Download and edit files here; use send_file to share the result with the user.`,
       ].filter((prompt): prompt is string => Boolean(prompt));
 
       const sessionManager = SessionManager.open(sessionFile, SESSIONS_DIR);

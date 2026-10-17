@@ -1398,6 +1398,9 @@ api.get("/media/download/:id", async (c) => {
   if (!metadata) {
     return c.json({ error: "File not found" }, 404);
   }
+  if (metadata.userId && metadata.userId !== await getRequestUserId(c)) {
+    return c.json({ error: "forbidden" }, 403);
+  }
 
   // Media tied to an agent session inherits that agent's access boundary: a
   // caller who cannot chat the agent must not be able to pull its attachments

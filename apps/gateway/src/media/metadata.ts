@@ -17,6 +17,7 @@ export type MediaFileMetadata = {
   createdAt: string;
   agentId?: string;
   sessionId?: string;
+  userId?: string;
 };
 
 export type MediaMetadataStore = Record<string, MediaFileMetadata>;
@@ -152,6 +153,7 @@ export async function registerMediaFile(input: {
   fileId?: string;
   agentId?: string;
   sessionId?: string;
+  userId?: string;
 }): Promise<MediaFileMetadata> {
   await ensureMediaDirectories();
 
@@ -167,6 +169,7 @@ export async function registerMediaFile(input: {
     createdAt: new Date().toISOString(),
     agentId: input.agentId,
     sessionId: input.sessionId,
+    userId: input.userId,
   };
 
   return withMetadataLock(async () => {
