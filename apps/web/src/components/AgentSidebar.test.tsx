@@ -57,6 +57,7 @@ vi.mock("@solidjs/router", () => ({
 }));
 
 const { AgentSidebar } = await import("./AgentSidebar");
+const { SessionSearch } = await import("./SessionSearch");
 const { connectPromptRequest, clearConnectPromptRequest } = await import("../onboarding/state");
 const { resetCapabilitiesForTests, setCapabilitiesForTests } = await import(
   "../lib/capabilities"
@@ -85,6 +86,26 @@ describe("AgentSidebar", () => {
     fetchProjectsMock.mockResolvedValue([]);
     resetCapabilitiesForTests();
     vi.clearAllMocks();
+  });
+
+  it.each([false, true])("opens Search above Agents without a Sessions header (collapsed=%s)", async (collapsed) => {
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const dispose = render(() => <>
+      <AgentSidebar collapsed={() => collapsed} onToggleCollapse={() => {}} />
+      <SessionSearch />
+    </>, container);
+    const search = Array.from(container.querySelectorAll("button")).find((item) => item.getAttribute("aria-label") === "Search");
+    const agents = Array.from(container.querySelectorAll("a")).find((item) => item.textContent === "Agents")!;
+    expect(search).toBeDefined();
+    expect(search!.compareDocumentPosition(agents) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(container.textContent).not.toContain("Sessions");
+    search!.click();
+    await Promise.resolve();
+    const input = container.querySelector('[aria-label="Search chats"]');
+    expect(container.querySelector('[role="dialog"]')).not.toBeNull();
+    expect(document.activeElement).toBe(input);
+    dispose();
   });
 
   it("renders sidebar logo and primary navigation links", () => {
@@ -319,7 +340,7 @@ describe("AgentSidebar", () => {
     dispose();
   });
 
-  it("orders pinned above recent with recency groups, shared search and live unpin", async () => {
+  it("orders pinned above recent with recency groups and live unpin", async () => {
     vi.useFakeTimers();
     const now = Date.now();
     const session = (sessionId: string, lastActivity: number, pinned: number | null) => ({
@@ -339,13 +360,6 @@ describe("AgentSidebar", () => {
     expect(sections[1].getAttribute("aria-label")).toBe("Recent");
     expect(sections[0].querySelectorAll(".sessions-group")).toHaveLength(2);
     expect(sections[1].textContent).not.toContain("Pinned today");
-    container.querySelector<HTMLButtonElement>('[aria-label="Search sessions"]')!.click();
-    const input = container.querySelector<HTMLInputElement>(".sessions-search")!;
-    input.value = "Pinned old";
-    input.dispatchEvent(new Event("input", { bubbles: true }));
-    expect(labels()).toEqual(["Pinned old"]);
-    input.value = "";
-    input.dispatchEvent(new Event("input", { bubbles: true }));
     const unpin = Array.from(container.querySelectorAll<HTMLButtonElement>(".session-action")).find((button) => button.textContent?.trim() === "Unpin")!;
     fetchAgentSessionsMock.mockResolvedValue({ items: items.map((item) => ({ ...item, pinned: null })) });
     unpin.click();

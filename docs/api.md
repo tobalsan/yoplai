@@ -12,10 +12,23 @@ Gateway exposes Hono HTTP API and `/ws` realtime broker. Enabled extensions add 
 | GET    | `/api/agents/:id/status`   | Agent run status                       |
 | POST   | `/api/agents/:id/messages` | Send message and await result          |
 | GET    | `/api/agents/:id/history`  | Session history (`sessionKey`, `view`) |
+| GET    | `/api/agents/sessions` | Sidebar session summaries (`includeArchived=1` optional) |
+| GET    | `/api/agents/sessions/search?q=words` | Full-text search of the caller's interactive chats |
 | GET    | `/api/media/download/:id`  | Managed media download                 |
 | WS     | `/ws`                      | Send/subscribe streaming protocol      |
 
 Exact request/response schemas in `packages/shared` and route source are authoritative.
+
+Session search returns `{ items: [...] }`: sidebar summaries (including avatar)
+plus `match: "title" | "content"` and an optional `snippet` for content matches.
+The shown label is `title || firstUserMessage || sessionId`. Each query word is
+a case-insensitive substring that must occur in the label or user/assistant text,
+possibly across messages. Tool calls/results, thinking and system text do not
+count. Only the caller's sessions of visible agents are scanned, including chat
+Project sessions, excluding archived and non-interactive sessions. Empty queries
+return no items. Title matches precede content matches, each newest first by
+`lastActivity`, capped at 50. Search scans canonical history without an index;
+unlike sidebar polling, search requests remain in the access log.
 
 ## Extension route groups
 

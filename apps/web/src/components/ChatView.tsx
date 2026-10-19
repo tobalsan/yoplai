@@ -3010,7 +3010,7 @@ export function ChatView() {
             class="taskboard-btn"
             href="/projects"
             aria-label="Open taskboard"
-            title="Tasks (Cmd+K)"
+            title="Tasks"
           >
             <svg
               width="18"

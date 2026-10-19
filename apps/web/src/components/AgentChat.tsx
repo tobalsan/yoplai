@@ -1489,20 +1489,6 @@ export function AgentChat(props: AgentChatProps) {
         void handleStop();
         return;
       }
-
-      if (
-        (event.metaKey || event.ctrlKey) &&
-        !event.shiftKey &&
-        !event.altKey &&
-        event.key.toLowerCase() === "k"
-      ) {
-        const canStartNewSession =
-          (props.agentType === "lead" && Boolean(props.agentId)) ||
-          (props.agentType === "subagent" && canSendSubagent());
-        if (!canStartNewSession) return;
-        event.preventDefault();
-        void handleSend("/new");
-      }
     };
 
     window.addEventListener("keydown", handleGlobalKeyDown);

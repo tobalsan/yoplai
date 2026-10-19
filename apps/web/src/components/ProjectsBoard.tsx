@@ -15,7 +15,6 @@ import { useNavigate, useSearchParams } from "@solidjs/router";
 import {
   fetchProjects,
   fetchAreas,
-  fetchArchivedProjects,
   fetchProject,
   createArea as createAreaApi,
   updateProject,
@@ -1020,14 +1019,6 @@ function getStatusLabel(status: string): string {
   return match ? match.title : status;
 }
 
-function getStatusColor(status: string): string {
-  if (status === "cancelled") return "#f08b57";
-  if (status === "archived") return "#6b6b6b";
-  if (status === "trashed") return "#a05a5a";
-  const match = COLUMNS.find((col) => col.id === status);
-  return match?.color ?? "#6b6b6b";
-}
-
 function sortByCreatedAsc(a: ProjectListItem, b: ProjectListItem): number {
   const aRaw = getFrontmatterString(a.frontmatter, "created");
   const bRaw = getFrontmatterString(b.frontmatter, "created");
@@ -1065,12 +1056,6 @@ export function ProjectsBoard(
     const area = (areas() ?? []).find((item) => item.id === areaId);
     return area?.title ?? areaId;
   });
-  const [commandOpen, setCommandOpen] = createSignal(false);
-  const [commandQuery, setCommandQuery] = createSignal("");
-  const [commandSelectedIndex, setCommandSelectedIndex] = createSignal(0);
-  const [commandArchivedProjects] = createResource(commandOpen, async (open) =>
-    open ? fetchArchivedProjects() : []
-  );
   const [agents] = createResource(fetchAgents);
   const [globalSubagents] = createResource(fetchAllSubagents);
   const [detail, { refetch: refetchDetail }] = createResource(
@@ -1215,7 +1200,6 @@ export function ProjectsBoard(
   let subagentLogPaneRef: HTMLDivElement | undefined;
   let createNotesRef: HTMLTextAreaElement | undefined;
   let fileInputRef: HTMLInputElement | undefined;
-  let commandInputRef: HTMLInputElement | undefined;
   let savedRepo = "";
   let repoStatusTimer: number | undefined;
   let wasProjectRealtimeSuspended = props.suspendProjectRealtime ?? false;
@@ -1536,54 +1520,6 @@ export function ProjectsBoard(
       list.sort(sortByCreatedAsc);
     }
     return byStatus;
-  });
-
-  const commandProjects = createMemo(() => {
-    const merged = new Map<string, ProjectListItem>();
-    for (const item of projects() ?? []) {
-      merged.set(item.id, item);
-    }
-    for (const item of commandArchivedProjects() ?? []) {
-      merged.set(item.id, item);
-    }
-    return Array.from(merged.values());
-  });
-
-  const commandResults = createMemo(() => {
-    const list = commandProjects();
-    const query = commandQuery().trim().toLowerCase();
-    const rank = (item: ProjectListItem): number => {
-      if (!query) return 100;
-      const id = item.id.toLowerCase();
-      const title = item.title.toLowerCase();
-      if (id === query) return 0;
-      if (id.startsWith(query)) return 1;
-      if (title.startsWith(query)) {
-        return 2;
-      }
-      if (id.includes(query)) return 3;
-      if (title.includes(query)) {
-        return 4;
-      }
-      return Number.POSITIVE_INFINITY;
-    };
-    const sorted = list
-      .map((item) => ({ item, rank: rank(item) }))
-      .filter((entry) => (query ? Number.isFinite(entry.rank) : true))
-      .sort((a, b) => {
-        if (a.rank !== b.rank) return a.rank - b.rank;
-        const aCreated = Date.parse(
-          getFrontmatterString(a.item.frontmatter, "created") ?? ""
-        );
-        const bCreated = Date.parse(
-          getFrontmatterString(b.item.frontmatter, "created") ?? ""
-        );
-        const aTime = Number.isNaN(aCreated) ? 0 : aCreated;
-        const bTime = Number.isNaN(bCreated) ? 0 : bCreated;
-        return bTime - aTime;
-      })
-      .map((entry) => entry.item);
-    return sorted.slice(0, 12);
   });
 
   createEffect(() => {
@@ -2519,24 +2455,11 @@ export function ProjectsBoard(
   });
 
   createEffect(() => {
-    const open = commandOpen();
-    if (!open) return;
-    requestAnimationFrame(() => commandInputRef?.focus());
-  });
-
-  createEffect(() => {
-    commandQuery();
-    const items = commandResults();
-    setCommandSelectedIndex(items.length > 0 ? 0 : -1);
-  });
-
-  createEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if (e.key === "c" && !createModalOpen() && !activeProjectId()) {
         const target = e.target as HTMLElement;
         if (target.tagName === "INPUT" || target.tagName === "TEXTAREA") return;
         if (target.isContentEditable) return;
-        if (commandOpen()) return;
         if (e.metaKey || e.ctrlKey || e.altKey || e.shiftKey) return;
         if (window.getSelection()?.toString()) return;
         e.preventDefault();
@@ -2546,52 +2469,6 @@ export function ProjectsBoard(
     window.addEventListener("keydown", handler);
     onCleanup(() => window.removeEventListener("keydown", handler));
   });
-
-  createEffect(() => {
-    const handler = (e: KeyboardEvent) => {
-      if (!(e.metaKey || e.ctrlKey) || e.key.toLowerCase() !== "k") return;
-      e.preventDefault();
-      if (commandOpen()) {
-        setCommandOpen(false);
-        setCommandQuery("");
-        setCommandSelectedIndex(0);
-      } else {
-        setCommandOpen(true);
-      }
-    };
-    window.addEventListener("keydown", handler);
-    onCleanup(() => window.removeEventListener("keydown", handler));
-  });
-
-  const closeCommandBar = () => {
-    setCommandOpen(false);
-    setCommandQuery("");
-    setCommandSelectedIndex(0);
-  };
-
-  const openFromCommandBar = (id: string) => {
-    closeCommandBar();
-    openDetail(id);
-  };
-
-  const renderCommandMatch = (text: string) => {
-    const query = commandQuery().trim();
-    if (!query) return text;
-    const lowerText = text.toLowerCase();
-    const lowerQuery = query.toLowerCase();
-    const index = lowerText.indexOf(lowerQuery);
-    if (index === -1) return text;
-    const start = text.slice(0, index);
-    const match = text.slice(index, index + query.length);
-    const end = text.slice(index + query.length);
-    return (
-      <>
-        {start}
-        <mark class="command-highlight">{match}</mark>
-        {end}
-      </>
-    );
-  };
 
   return (
     <div
@@ -2622,102 +2499,6 @@ export function ProjectsBoard(
           <div class="create-success-card">
             <div class="create-success-title">Moved to trash</div>
             <div class="create-success-subtitle">{deleteSuccess()}</div>
-          </div>
-        </div>
-      </Show>
-      <Show when={commandOpen()}>
-        <div
-          class="overlay"
-          role="dialog"
-          aria-modal="true"
-          aria-label="Search projects"
-        >
-          <div class="overlay-backdrop" onClick={closeCommandBar} />
-          <div class="command-bar" onClick={(e) => e.stopPropagation()}>
-            <input
-              ref={commandInputRef}
-              class="command-input"
-              type="text"
-              value={commandQuery()}
-              placeholder="Search projects by ID or title..."
-              onInput={(e) => setCommandQuery(e.currentTarget.value)}
-              onKeyDown={(e) => {
-                const items = commandResults();
-                if (e.key === "Escape") {
-                  e.preventDefault();
-                  closeCommandBar();
-                  return;
-                }
-                if (e.key === "ArrowDown") {
-                  e.preventDefault();
-                  if (items.length === 0) return;
-                  setCommandSelectedIndex((prev) =>
-                    prev >= items.length - 1 ? 0 : prev + 1
-                  );
-                  return;
-                }
-                if (e.key === "ArrowUp") {
-                  e.preventDefault();
-                  if (items.length === 0) return;
-                  setCommandSelectedIndex((prev) =>
-                    prev <= 0 ? items.length - 1 : prev - 1
-                  );
-                  return;
-                }
-                if (e.key === "Enter") {
-                  e.preventDefault();
-                  const index = commandSelectedIndex();
-                  const selected =
-                    index >= 0 && index < items.length
-                      ? items[index]
-                      : items[0];
-                  if (selected) openFromCommandBar(selected.id);
-                }
-              }}
-            />
-            <Show when={commandArchivedProjects.loading}>
-              <div class="command-loading">Loading archived projects...</div>
-            </Show>
-            <div class="command-results">
-              <Show
-                when={commandResults().length > 0}
-                fallback={<div class="command-empty">No matching projects</div>}
-              >
-                <For each={commandResults()}>
-                  {(item, index) => {
-                    const isActive = () => commandSelectedIndex() === index();
-                    const status = getStatus(item);
-                    return (
-                      <button
-                        id={`command-result-${index()}`}
-                        class="command-result"
-                        classList={{ active: isActive() }}
-                        type="button"
-                        onMouseEnter={() => setCommandSelectedIndex(index())}
-                        onClick={() => openFromCommandBar(item.id)}
-                      >
-                        <div class="command-result-main">
-                          <span class="command-result-id">
-                            {renderCommandMatch(item.id)}
-                          </span>
-                          <span class="command-result-title">
-                            {renderCommandMatch(item.title)}
-                          </span>
-                        </div>
-                        <div class="command-result-meta">
-                          <span
-                            class="command-status-pill"
-                            style={{ "--status-color": getStatusColor(status) }}
-                          >
-                            {getStatusLabel(status)}
-                          </span>
-                        </div>
-                      </button>
-                    );
-                  }}
-                </For>
-              </Show>
-            </div>
           </div>
         </div>
       </Show>
@@ -4614,134 +4395,6 @@ export function ProjectsBoard(
           padding: 20px;
           gap: 16px;
           animation: overlay-in 0.2s ease;
-        }
-
-        .command-bar {
-          position: relative;
-          width: min(760px, 92vw);
-          max-height: min(74vh, 640px);
-          background: var(--bg-inset);
-          border: 1px solid var(--mix-modal-border);
-          border-radius: 16px;
-          z-index: 2;
-          display: flex;
-          flex-direction: column;
-          box-shadow: 0 24px 60px var(--shadow-md);
-          overflow: hidden;
-          animation: overlay-in 0.18s ease;
-        }
-
-        .command-input {
-          width: 100%;
-          border: none;
-          border-bottom: 1px solid var(--mix-modal-border);
-          background: var(--mix-modal-header-bg);
-          color: var(--text-primary);
-          padding: 16px 18px;
-          font-size: 16px;
-          font-family: inherit;
-        }
-
-        .command-input::placeholder {
-          color: var(--text-secondary);
-        }
-
-        .command-input:focus {
-          outline: none;
-          background: var(--mix-input-bg);
-        }
-
-        .command-loading {
-          padding: 8px 18px;
-          font-size: 12px;
-          color: var(--text-secondary);
-          border-bottom: 1px solid var(--mix-modal-border);
-        }
-
-        .command-results {
-          display: flex;
-          flex-direction: column;
-          overflow-y: auto;
-          max-height: min(60vh, 520px);
-          padding: 8px;
-          gap: 6px;
-        }
-
-        .command-empty {
-          padding: 18px;
-          color: var(--text-secondary);
-          font-size: 14px;
-          text-align: center;
-        }
-
-        .command-result {
-          border: 1px solid transparent;
-          background: var(--mix-input-bg);
-          color: var(--text-primary);
-          border-radius: 10px;
-          padding: 10px 12px;
-          text-align: left;
-          cursor: pointer;
-          display: flex;
-          flex-direction: column;
-          gap: 5px;
-        }
-
-        .command-result:hover,
-        .command-result.active {
-          border-color: #3b6ecc;
-          background: var(--mix-hover-bg);
-        }
-
-        .command-result-main {
-          display: flex;
-          gap: 10px;
-          align-items: baseline;
-          min-width: 0;
-        }
-
-        .command-result-id {
-          flex: 0 0 auto;
-          font-size: 11px;
-          font-weight: 700;
-          letter-spacing: 0.12em;
-          color: var(--text-secondary);
-        }
-
-        .command-result-title {
-          font-size: 14px;
-          font-weight: 600;
-          white-space: nowrap;
-          overflow: hidden;
-          text-overflow: ellipsis;
-        }
-
-        .command-result-meta {
-          display: flex;
-          align-items: center;
-          flex-wrap: wrap;
-          gap: 10px;
-          font-size: 11px;
-          color: var(--text-secondary);
-          text-transform: uppercase;
-          letter-spacing: 0.06em;
-        }
-
-        .command-status-pill {
-          border-radius: 999px;
-          padding: 3px 8px;
-          border: 1px solid color-mix(in oklch, var(--status-color) 65%, var(--mix-col-border) 35%);
-          background: color-mix(in oklch, var(--status-color) 28%, var(--mix-input-bg) 72%);
-          color: color-mix(in oklch, var(--status-color) 70%, var(--text-primary) 30%);
-          font-weight: 700;
-          line-height: 1;
-        }
-
-        .command-highlight {
-          background: color-mix(in oklch, #d2b356 45%, transparent);
-          color: #f6f0df;
-          border-radius: 3px;
-          padding: 0 2px;
         }
 
         .overlay-close {

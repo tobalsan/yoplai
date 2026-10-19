@@ -65,9 +65,9 @@ import {
   isSafeSessionId,
   parseSessionFileName,
   sessionIdIsInteractive,
-  summarizeSessionFile,
-  type SessionSummary,
+  readSessionFile,
 } from "../history/sessions.js";
+import { matchSession } from "../history/session-search.js";
 import { CONFIG_DIR } from "../config/index.js";
 import { CredentialStore } from "../credentials/store.js";
 import { createConnectionRoutes } from "../credentials/routes.js";
@@ -612,13 +612,12 @@ api.get("/agents/status", async (c) => {
   return c.json({ statuses });
 });
 
-// GET /api/agents/sessions - list past lead-agent sessions
-api.get("/agents/sessions", async (c) => {
+// Shared sidebar scope: filename ownership, visible agents, interactive sessions and archive state.
+async function listSidebarSessions(c: Context, includeArchived = false) {
   const userId = await getRequestUserId(c);
   const historyDir = getUserHistoryDir(userId, CONFIG_DIR);
   const agents = await getVisibleAgents(c);
   const agentIds = agents.map((agent) => agent.id);
-  const includeArchived = c.req.query("includeArchived") === "1";
   let entries: Array<{ dir: string; file: string }> = [];
   try {
     entries = (await fs.readdir(historyDir)).map((file) => ({
@@ -633,27 +632,40 @@ api.get("/agents/sessions", async (c) => {
       const parsed = parseSessionFileName(file, agentIds);
       if (!parsed || !sessionIdIsInteractive(parsed.sessionId)) return null;
       const agent = agents.find((item) => item.id === parsed.agentId);
-      const summary = await summarizeSessionFile({
+      const session = await readSessionFile({
         filePath: path.join(dir, file),
         ...parsed,
         userId,
       });
-      if (!summary) return null;
+      if (!session || (!includeArchived && session.summary.archived !== null)) return null;
       const avatar = resolveAvatarForApi(agent?.avatar, parsed.agentId);
       return {
-        ...summary,
-        ...(avatar ? { avatar } : {}),
+        ...session,
+        summary: { ...session.summary, ...(avatar ? { avatar } : {}) },
       };
     })
   );
 
-  const filtered = items
-    .filter((item): item is SessionSummary => item !== null)
-    .filter((item) => includeArchived || item.archived === null);
+  return items.filter((item): item is NonNullable<typeof item> => item !== null);
+}
 
-  return c.json({
-    items: filtered.sort((a, b) => b.lastActivity - a.lastActivity),
+// GET /api/agents/sessions - list past lead-agent sessions
+api.get("/agents/sessions", async (c) => {
+  const sessions = await listSidebarSessions(c, c.req.query("includeArchived") === "1");
+  return c.json({ items: sessions.map((session) => session.summary).sort((a, b) => b.lastActivity - a.lastActivity) });
+});
+
+// GET /api/agents/sessions/search - search the caller's sidebar history without an index.
+api.get("/agents/sessions/search", async (c) => {
+  const query = c.req.query("q") ?? "";
+  if (!query.trim()) return c.json({ items: [] });
+  const sessions = await listSidebarSessions(c);
+  const items = sessions.flatMap(({ summary, messages }) => {
+    const match = matchSession(summary.title || summary.firstUserMessage || summary.sessionId, messages, query);
+    return match ? [{ ...summary, ...match }] : [];
   });
+  items.sort((a, b) => Number(b.match === "title") - Number(a.match === "title") || b.lastActivity - a.lastActivity);
+  return c.json({ items: items.slice(0, 50) });
 });
 
 // DELETE /api/agents/:agentId/sessions/:sessionId - delete a session history file

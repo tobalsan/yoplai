@@ -33,6 +33,7 @@ import { Button } from "./ui/Button";
 import type { SessionSummary } from "../api/types";
 import { hasStaffRole as hasAdminRole } from "../lib/roles";
 import { showToast } from "../lib/toast";
+import { openSessionSearch } from "./SessionSearch";
 
 type AgentSidebarProps = {
   collapsed: Accessor<boolean>;
@@ -134,8 +135,6 @@ export function AgentSidebar(props: AgentSidebarProps) {
   const [deleteProjectError, setDeleteProjectError] = createSignal("");
   const [moveChatError, setMoveChatError] = createSignal("");
   const [currentTime, setCurrentTime] = createSignal(Date.now());
-  const [search, setSearch] = createSignal("");
-  const [searchOpen, setSearchOpen] = createSignal(false);
   const [listScrolling, setListScrolling] = createSignal(false);
   let scrollIdleTimer: ReturnType<typeof setTimeout> | undefined;
   const onListScroll = () => {
@@ -220,17 +219,8 @@ export function AgentSidebar(props: AgentSidebarProps) {
     });
   });
 
-  const visibleSessions = () => {
-    const query = search().trim().toLowerCase();
-    return query
-      ? sessions().filter((item) =>
-          `${item.title ?? ""} ${item.firstUserMessage}`.toLowerCase().includes(query)
-        )
-      : sessions();
-  };
-
   const sessionsInSection = (pinned: boolean) =>
-    visibleSessions().filter((item) => !projects().some((project) => project.id === item.projectId) && (item.pinned != null) === pinned);
+    sessions().filter((item) => !projects().some((project) => project.id === item.projectId) && (item.pinned != null) === pinned);
   const groupLabels = (pinned: boolean) =>
     [...new Set(sessionsInSection(pinned).map((session) => groupLabel(session.lastActivity, currentTime())))];
   const sessionsInGroup = (pinned: boolean, label: string) =>
@@ -417,6 +407,10 @@ export function AgentSidebar(props: AgentSidebarProps) {
         </div>
         <div class="sidebar-content">
           <nav class="sidebar-nav" aria-label="Primary">
+            <button type="button" class="nav-link sidebar-search" aria-label="Search" title="Search (Cmd/Ctrl+K)" onClick={openSessionSearch}>
+              <i class="fa-solid fa-magnifying-glass nav-icon" aria-hidden="true" />
+              <span class="nav-full">Search</span>
+            </button>
             <Show when={isExtensionEnabled("projects")}>
               <A
                 href="/projects"
@@ -492,31 +486,8 @@ export function AgentSidebar(props: AgentSidebarProps) {
             </Show>
           </nav>
           <section class="sidebar-sessions" aria-label="Sessions">
-            <div class="sessions-header">
-              <span>Sessions</span>
-              <button
-                type="button"
-                aria-label="Search sessions"
-                aria-pressed={searchOpen()}
-                onClick={() => {
-                  setSearchOpen((open) => !open);
-                  if (searchOpen()) return;
-                  setSearch("");
-                }}
-              >
-                ⌕
-              </button>
-            </div>
             <Show when={sessionError()}>
               <div role="alert">{sessionError()}</div>
-            </Show>
-            <Show when={searchOpen()}>
-              <input
-                class="sessions-search"
-                placeholder="Search sessions"
-                value={search()}
-                onInput={(event) => setSearch(event.currentTarget.value)}
-              />
             </Show>
             <div class="sessions-list" classList={{ scrolling: listScrolling() }} onScroll={onListScroll}>
               <section class="sessions-section" aria-label="Projects">
@@ -575,7 +546,7 @@ export function AgentSidebar(props: AgentSidebarProps) {
                     </div>
                       <Show when={!collapsedProjects().includes(project.id)}>
                         <div class="chat-project-sessions">
-                          <For each={visibleSessions().filter((session) => session.projectId === project.id).sort((a, b) => Number(b.pinned != null) - Number(a.pinned != null) || b.lastActivity - a.lastActivity)}>{renderSession}</For>
+                          <For each={sessions().filter((session) => session.projectId === project.id).sort((a, b) => Number(b.pinned != null) - Number(a.pinned != null) || b.lastActivity - a.lastActivity)}>{renderSession}</For>
                         </div>
                       </Show>
                     </div>
@@ -1072,17 +1043,6 @@ export function AgentSidebar(props: AgentSidebarProps) {
           cursor: pointer;
         }
 
-        .sessions-search {
-          width: 100%;
-          box-sizing: border-box;
-          border: 1px solid var(--border-default);
-          border-radius: 8px;
-          background: var(--bg-surface);
-          color: var(--text-primary);
-          padding: 7px 8px;
-          font-size: 12px;
-        }
-
         .sessions-list {
           flex: 1;
           min-height: 0;
@@ -1447,6 +1407,20 @@ export function AgentSidebar(props: AgentSidebarProps) {
         .nav-link:hover {
           background: var(--bg-raised);
           color: var(--text-primary);
+        }
+
+        .sidebar-search {
+          width: 100%;
+          border: none;
+          background: transparent;
+          font-family: inherit;
+          text-align: left;
+          cursor: pointer;
+        }
+
+        .sidebar-search:focus-visible {
+          outline: 2px solid var(--text-secondary);
+          outline-offset: -2px;
         }
 
         .nav-link.active {

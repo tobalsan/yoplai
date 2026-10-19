@@ -2,6 +2,7 @@ import { JSX, Show, createEffect, onCleanup, createUniqueId } from "solid-js";
 
 type ModalProps = {
   title: string;
+  titleHidden?: boolean;
   onClose: () => void;
   children: JSX.Element;
   footer?: JSX.Element;
@@ -23,7 +24,7 @@ export function Modal(props: ModalProps) {
       panelRef.querySelectorAll<HTMLElement>(
         'button:not([disabled]), input:not([disabled]), textarea:not([disabled]), select:not([disabled]), a[href], [tabindex]:not([tabindex="-1"])'
       )
-    );
+    ).filter((element) => element.tabIndex >= 0);
   };
 
   const handleKeyDown = (event: KeyboardEvent) => {
@@ -105,7 +106,7 @@ export function Modal(props: ModalProps) {
         aria-labelledby={titleId}
         onMouseDown={(event) => event.stopPropagation()}
       >
-        <header class="ui-modal__header">
+        <header class="ui-modal__header" classList={{ "ui-modal__header--hidden": props.titleHidden }}>
           <h2 id={titleId}>{props.title}</h2>
         </header>
         <div class="ui-modal__body">
@@ -158,6 +159,16 @@ export function Modal(props: ModalProps) {
           margin: 0;
           font-size: 16px;
           font-weight: 650;
+        }
+
+        .ui-modal__header--hidden {
+          position: absolute;
+          width: 1px;
+          height: 1px;
+          padding: 0;
+          overflow: hidden;
+          clip-path: inset(50%);
+          white-space: nowrap;
         }
 
         .ui-modal__body {

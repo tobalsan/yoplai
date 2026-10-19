@@ -1,6 +1,7 @@
 import type {
   FileAttachment,
   SessionSummary,
+  SessionSearchResult,
   ThinkLevel,
 } from "./types";
 import { API_BASE, apiFetch as fetch } from "./core";
@@ -87,6 +88,13 @@ export async function fetchAgentSessions(options?: {
   const res = await fetch(url);
   if (res.status === 401) throw new UnauthenticatedError();
   if (!res.ok) return { items: [] };
+  return res.json();
+}
+
+export async function searchSessions(query: string, signal: AbortSignal): Promise<{ items: SessionSearchResult[] }> {
+  const params = new URLSearchParams({ q: query });
+  const res = await fetch(`${API_BASE}/agents/sessions/search?${params}`, { signal });
+  if (!res.ok) throw new Error("Unable to search chats");
   return res.json();
 }
 

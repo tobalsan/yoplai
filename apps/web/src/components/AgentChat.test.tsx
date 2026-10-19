@@ -2,7 +2,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createSignal } from "solid-js";
 import { delegateEvents, render } from "solid-js/web";
+import { Route, Router } from "@solidjs/router";
 import { AgentChat, __resetAgentChatStateForTests } from "./AgentChat";
+import { SessionSearch } from "./SessionSearch";
 import type { SubscriptionCallbacks } from "../api/realtime";
 
 const {
@@ -253,26 +255,140 @@ describe("AgentChat stop/send behavior", () => {
     dispose();
   });
 
-  it("starts a new session on Cmd+K", async () => {
-    const { dispose } = renderLead();
+  it.each(["metaKey", "ctrlKey"])("opens Search and keeps the current session on %s+K", async (modifier) => {
+    fetchFullHistoryMock.mockResolvedValue({
+      messages: [
+        {
+          role: "assistant",
+          timestamp: 1,
+          content: [{ type: "text", text: "Keep this conversation" }],
+        },
+      ],
+    });
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const dispose = render(() => (
+      <Router root={(props) => <><SessionSearch />{props.children}</>}>
+        <Route path="*" component={() => (
+          <AgentChat
+            agentId="lead-1"
+            agentName="Lead"
+            agentType="lead"
+            sessionKey="project:PRO-1:lead-1"
+            onBack={() => {}}
+          />
+        )} />
+      </Router>
+    ), container);
     await tick();
     await tick();
 
     window.dispatchEvent(
-      new KeyboardEvent("keydown", { key: "k", metaKey: true })
+      new KeyboardEvent("keydown", { key: "k", [modifier]: true })
+    );
+    await tick();
+
+    expect(streamMessageMock).not.toHaveBeenCalled();
+    expect(container.textContent).toContain("Keep this conversation");
+    expect(container.querySelector('[role="dialog"]')?.textContent).toContain("Search chats");
+
+    window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", cancelable: true }));
+    await tick();
+    expect(container.querySelector('[role="dialog"]')).toBeNull();
+
+    const input = container.querySelector<HTMLTextAreaElement>(
+      '[placeholder="Type a message..."]'
+    )!;
+    input.value = "Continue here";
+    input.dispatchEvent(new InputEvent("input", { bubbles: true }));
+    input.dispatchEvent(
+      new KeyboardEvent("keydown", { key: "Enter", bubbles: true })
     );
     await tick();
 
     expect(streamMessageMock).toHaveBeenCalledWith(
       "lead-1",
-      "/new",
-      "main",
+      "Continue here",
+      "project:PRO-1:lead-1",
       expect.any(Function),
       expect.any(Function),
       expect.any(Function),
       expect.any(Object),
       expect.anything()
     );
+
+    dispose();
+  });
+
+  it("closes Search with Escape while the embedded chat continues to completion", async () => {
+    let finish = () => {};
+    const abortStream = vi.fn();
+    streamMessageMock.mockImplementation(
+      (
+        _agentId: string,
+        _message: string,
+        _sessionKey: string,
+        _onText: (text: string) => void,
+        onDone: () => void
+      ) => {
+        finish = onDone;
+        return abortStream;
+      }
+    );
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const dispose = render(() => (
+      <Router root={(props) => <><SessionSearch />{props.children}</>}>
+        <Route path="*" component={() => (
+          <AgentChat
+            agentId="lead-1"
+            agentName="Lead"
+            agentType="lead"
+            sessionKey="project:PRO-1:lead-1"
+            onBack={() => {}}
+          />
+        )} />
+      </Router>
+    ), container);
+    await tick();
+    await tick();
+
+    const input = container.querySelector<HTMLTextAreaElement>(
+      '[placeholder="Type a message..."]'
+    )!;
+    input.value = "Keep running";
+    input.dispatchEvent(new InputEvent("input", { bubbles: true }));
+    input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+    await tick();
+    const stopButton = () => Array.from(container.querySelectorAll("button"))
+      .find((button) => button.textContent?.trim() === "Stop");
+    expect(stopButton()).toBeDefined();
+
+    window.dispatchEvent(new KeyboardEvent("keydown", { key: "k", metaKey: true }));
+    await tick();
+    expect(container.querySelector('[role="dialog"]')).not.toBeNull();
+    container.querySelector('[role="combobox"]')!.dispatchEvent(
+      new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true })
+    );
+    await tick();
+
+    expect(container.querySelector('[role="dialog"]')).toBeNull();
+    expect(streamMessageMock.mock.calls.map((call) => call[1])).toEqual(["Keep running"]);
+    expect(abortStream).not.toHaveBeenCalled();
+    expect(stopButton()).toBeDefined();
+
+    fetchFullHistoryMock.mockResolvedValue({
+      messages: [{
+        role: "assistant",
+        timestamp: 2,
+        content: [{ type: "text", text: "Completed after Search closed" }],
+      }],
+    });
+    finish();
+    await tick();
+    await tick();
+    expect(container.textContent).toContain("Completed after Search closed");
+    expect(stopButton()).toBeUndefined();
 
     dispose();
   });
