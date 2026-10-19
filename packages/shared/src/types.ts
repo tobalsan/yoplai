@@ -2595,6 +2595,7 @@ export const ContainerInputSchema = z.object({
   attachments: z.array(FileAttachmentSchema).optional(),
   imageInputSupported: z.boolean().optional(),
   workspaceDir: z.string(),
+  managedSkillsDir: z.string().optional(),
   sessionDir: z.string(),
   ipcDir: z.string(),
   gatewayUrl: z.string(),

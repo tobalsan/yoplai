@@ -25,6 +25,18 @@ afterEach(() => {
 });
 
 describe("multi-user middleware", () => {
+  it("allows only the exact skill import POST without a session", async () => {
+    setRuntime({ auth: { api: { getSession: vi.fn(async () => null) } } });
+    const { createAuthMiddleware } = await import("./middleware.js");
+    const app = new Hono();
+    app.use("/api/*", createAuthMiddleware());
+    app.all("/api/skills/*", (c) => c.json({ ok: true }));
+    expect((await app.request("/api/skills/import", { method: "POST" })).status).toBe(200);
+    for (const [url, method] of [["/api/skills/import", "GET"], ["/api/skills/import/extra", "POST"], ["/api/skills/import-token", "POST"], ["/api/skills/other", "GET"]]) {
+      expect((await app.request(url, { method })).status).toBe(401);
+    }
+  });
+
   it.each(["pair", "connect"])("allows only the exact Slack %s GET landing publicly", async (flow) => {
     setRuntime({
       auth: { api: { getSession: vi.fn(async () => null) } },

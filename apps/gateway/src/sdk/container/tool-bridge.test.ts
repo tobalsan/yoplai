@@ -26,6 +26,11 @@ vi.mock("../../extensions/tools.js", () => ({
 }));
 
 describe("container tool bridge", () => {
+  it("exposes skill_save for every Pi run", async () => {
+    const bridge = new ContainerToolBridge();
+    const tools = await bridge.buildTools({ agent: { id: "cloud" } } as never, { extensions: {} } as never);
+    expect(tools.map((tool) => tool.name)).toContain("skill_save");
+  });
   it("exposes project memory tools only for resolved project chats", async () => {
     const bridge = new ContainerToolBridge();
     const params = { agent: { id: "cloud" } };
@@ -56,6 +61,7 @@ describe("container tool bridge", () => {
         parameters: { type: "object" },
       },
       expect.objectContaining({ extensionId: "gateway", name: "extract_document" }),
+      expect.objectContaining({ extensionId: "gateway", name: "skill_save" }),
     ]);
   });
 

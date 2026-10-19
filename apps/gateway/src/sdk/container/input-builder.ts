@@ -30,7 +30,8 @@ export class ContainerInputBuilder {
     agentToken: string,
     bootstrapPrompt?: string,
     runId?: string,
-    oauthTokens?: ContainerInput["oauthTokens"]
+    oauthTokens?: ContainerInput["oauthTokens"],
+    managedSkillsDir?: string
   ): Promise<ContainerInput> {
     const extensionSystemPrompts = await this.toolBridge.buildSystemPrompts(
       params,
@@ -94,6 +95,7 @@ export class ContainerInputBuilder {
           params.agent.retryBaseDelay ?? DEFAULT_RETRY_BASE_DELAY_SECONDS,
       },
       workspaceDir: "/workspace",
+      managedSkillsDir,
       sessionDir: sessionOwnerId ? `/users/${sessionOwnerId}/sessions/${params.agentId}` : "/sessions",
       ipcDir: "/workspace/ipc",
       gatewayUrl: resolveContainerGatewayUrl(config),

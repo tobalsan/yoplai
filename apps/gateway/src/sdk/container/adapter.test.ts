@@ -41,6 +41,10 @@ vi.mock("./oauth-tokens.js", () => ({
   resolveOAuthTokens: mockResolveOAuthTokens,
 }));
 
+vi.mock("../../skills/resolver.js", () => ({
+  resolveRunSkills: vi.fn(async () => ({ skills: [], diagnostics: [] })),
+}));
+
 vi.mock("../../media/describe.js", () => ({
   configuredModelSupportsImages: vi.fn(async () => true),
   describeImage: vi.fn(async () => ""),
@@ -123,7 +127,7 @@ function tempDir(): string {
 
 /** Flush microtask queue so the async run() reaches spawn. */
 const tick = async () => {
-  for (let i = 0; i < 10; i += 1) {
+  for (let i = 0; i < 20; i += 1) {
     await Promise.resolve();
   }
 };
@@ -400,6 +404,7 @@ describe("container adapter", () => {
           extensionId: "gateway",
           name: "extract_document",
         }),
+        expect.objectContaining({ extensionId: "gateway", name: "skill_save" }),
       ],
       sdkConfig: {
         sdk: "pi",

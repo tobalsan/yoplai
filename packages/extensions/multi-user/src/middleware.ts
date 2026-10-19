@@ -223,6 +223,7 @@ export function forwardAuthContextToRequest(
 }
 
 function shouldSkipAuth(path: string, method: string): boolean {
+  if (method === "POST" && path === "/api/skills/import") return true;
   if (method === "GET" && /^\/api\/slack\/(?:pair|connect)\/[A-Za-z0-9_-]{43}$/.test(path)) return true;
   if (path === "/api/auth" || path.startsWith("/api/auth/")) return true;
   if (path === "/api/capabilities") return true;

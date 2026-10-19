@@ -19,6 +19,7 @@ import { getExtensionRuntime } from "../extensions/registry.js";
 import type { ExtensionRuntime } from "../extensions/runtime.js";
 import { WsBroker, type WsBrokerAuthAdapter } from "./ws-broker.js";
 import { accessLogger } from "./access-log.js";
+import { SKILL_IMPORT_TOKEN_PREFIX } from "../skills/import-tokens.js";
 import { getAgent, CONFIG_DIR } from "../config/index.js";
 import { createDashboardAssetRoutes, createDashboardRoutes } from "../canvas/routes.js";
 import { getDashboardRegistry } from "../canvas/store.js";
@@ -71,6 +72,11 @@ function allowedCorsOrigins(): string[] {
 }
 
 const app = new Hono();
+app.use("/api/*", async (c, next) => {
+  const bearer = /^Bearer\s+(\S+)$/i.exec(c.req.header("authorization") ?? "")?.[1];
+  if (bearer?.startsWith(SKILL_IMPORT_TOKEN_PREFIX) && !(c.req.method === "POST" && c.req.path === "/api/skills/import")) return c.json({ error: "unauthorized" }, 401);
+  await next();
+});
 let activeExtensionRuntime: ExtensionRuntime | undefined;
 
 function currentExtensionRuntime(): ExtensionRuntime {

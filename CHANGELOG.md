@@ -32,6 +32,7 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Added
 
+- Skills directory with private uploads, per-user enablement across Pi agents, named read/write and platform-wide read sharing, import tokens, ten-version rollback, and chat-driven creation with `skill_save`; host and sandbox runs resolve the same managed skills each turn.
 - Superadmins can mark global system extensions and HTTP MCP servers in Admin Extensions, hiding them from users and admins on agent configuration pages while preserving runtime behavior. System flags remove Top stars in multi-user mode and appear in the settings audit log.
 - Public/Private agent visibility separates chat access from team ownership, with team-scoped management, scheduler access checks, and a staff No team view for placing newcomers; sign-up no longer joins teams and legacy All teams agents migrate to Public.
 - A personal main agent: a character-select picker on home, fresh chats on return, and quick changes from a star in the chat header or on Agents page cards (with confirmation; main agent listed first and highlighted), plus a settings cog in the chat header whose Back link returns to that chat. A click anywhere on an Agents card opens a chat with that agent. Available in single-user and multi-user installs; blank home visits do not create saved sessions.

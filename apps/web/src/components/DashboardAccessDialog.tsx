@@ -10,9 +10,16 @@ type UserShare = Extract<DashboardShare, { kind: "user" }>;
 const initials = (name: string) =>
   name.split(/\s+/).filter(Boolean).slice(0, 2).map((part) => part[0]!.toUpperCase()).join("") || "?";
 
-export function DashboardAccessDialog(props: { dashboard: Pick<DashboardRow, "id" | "title" | "shares">; onClose: () => void; onSaved: () => void | Promise<void> }) {
+export function DashboardAccessDialog(props: {
+  dashboard: Pick<DashboardRow, "id" | "title" | "shares">;
+  onClose: () => void; onSaved: () => void | Promise<void>;
+  loadRecipients?: typeof fetchDashboardRecipients;
+  saveShares?: (id: string, shares: DashboardShare[]) => Promise<unknown>;
+  platformReadOnly?: boolean;
+  note?: string;
+}) {
   const initial = props.dashboard.shares ?? [];
-  const [recipients] = createResource(fetchDashboardRecipients);
+  const [recipients] = createResource(props.loadRecipients ?? fetchDashboardRecipients);
   const [userShares, setUserShares] = createSignal<UserShare[]>(initial.filter((share): share is UserShare => share.kind === "user"));
   const [everyoneMode, setEveryoneMode] = createSignal<Mode | null>(initial.find((share) => share.kind === "all")?.mode ?? null);
   const [selected, setSelected] = createSignal("");
@@ -36,7 +43,7 @@ export function DashboardAccessDialog(props: { dashboard: Pick<DashboardRow, "id
   };
   const save = async () => {
     setBusy(true); setError(undefined);
-    try { await saveDashboardShares(props.dashboard.id, shares()); await props.onSaved(); props.onClose(); }
+    try { await (props.saveShares ?? saveDashboardShares)(props.dashboard.id, shares()); await props.onSaved(); props.onClose(); }
     catch (cause) { setError(cause instanceof Error ? cause.message : "Unable to save access."); }
     finally { setBusy(false); }
   };
@@ -89,11 +96,11 @@ export function DashboardAccessDialog(props: { dashboard: Pick<DashboardRow, "id
         <Show when={everyoneMode()}>
           <select class="share-select" aria-label="Everyone permission" disabled={busy()} value={everyoneMode()!}
             onChange={(event) => setEveryoneMode(event.currentTarget.value as Mode)}>
-            <option value="read">Can view</option><option value="write">Can edit</option>
+            <option value="read">Can view</option><Show when={!props.platformReadOnly}><option value="write">Can edit</option></Show>
           </select>
         </Show>
       </div>
-      <p class="share-note"><i class="fa-solid fa-circle-info" aria-hidden="true" />People see this page and its live data. Editors see drafts. Publishing also needs access to the agent.</p>
+      <p class="share-note"><i class="fa-solid fa-circle-info" aria-hidden="true" />{props.note ?? "People see this page and its live data. Editors see drafts. Publishing also needs access to the agent."}</p>
       <style>{`
         .share-add, .share-person, .share-general { display: flex; align-items: center; gap: 10px; }
         .share-add .share-select { flex: 1; min-width: 0; }

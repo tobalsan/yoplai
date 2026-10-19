@@ -456,6 +456,10 @@ export function AgentSidebar(props: AgentSidebarProps) {
               <i class="fa-solid fa-comments nav-icon" aria-hidden="true" />
               <span class="nav-full">Agents</span>
             </A>
+            <A href="/skills" class="nav-link" classList={{ active: stripBase(location.pathname).startsWith("/skills") }} title="Skills" data-tour="nav-skills">
+              <i class="fa-solid fa-book-open nav-icon" aria-hidden="true" />
+              <span class="nav-full">Skills</span>
+            </A>
             <A href="/dashboards" class="nav-link" classList={{ active: stripBase(location.pathname).startsWith("/dashboards") }} title="Dashboards">
               <i class="fa-solid fa-chart-line nav-icon" aria-hidden="true" />
               <span class="nav-full">Dashboards</span>

@@ -23,6 +23,7 @@ import {
 } from "../canvas/dashboard-files.js";
 import { dashboardCsp, renderDashboardHtml } from "../canvas/routes.js";
 import { executeProjectTool, projectTools } from "../chat-projects/tools.js";
+import { executeSkillSave } from "../skills/tools.js";
 
 const InternalToolRequestSchema = z.object({
   tool: z.string(),
@@ -319,6 +320,8 @@ export function createInternalTools(
             await context.registerFileOutput(event, signal);
             return { registered: true };
           })()
+        : parsed.data.tool === "skill_save"
+        ? executeSkillSave(parsed.data.args, { userId: context.userId })
         : projectTools.some((tool) => tool.name === parsed.data.tool)
         ? executeProjectTool(parsed.data.tool, parsed.data.args, context)
         : parsed.data.tool === "extract_document"
