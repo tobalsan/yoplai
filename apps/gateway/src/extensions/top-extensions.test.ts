@@ -18,18 +18,18 @@ describe("top-extensions store", () => {
   });
 
   it("returns empty lists when file missing", () => {
-    expect(readTopExtensions()).toEqual({ extensions: [], mcp: [] });
+    expect(readTopExtensions()).toEqual({ extensions: [], mcp: [], system: { extensions: [], mcp: [] } });
   });
 
   it("round-trips atomically", () => {
-    writeTopExtensions({ extensions: ["gmail"], mcp: ["https://a.test/mcp"] });
-    expect(readTopExtensions()).toEqual({ extensions: ["gmail"], mcp: ["https://a.test/mcp"] });
+    writeTopExtensions({ extensions: ["gmail"], mcp: ["https://a.test/mcp"], system: { extensions: [], mcp: [] } });
+    expect(readTopExtensions()).toEqual({ extensions: ["gmail"], mcp: ["https://a.test/mcp"], system: { extensions: [], mcp: [] } });
     expect(fs.readdirSync(dir)).toEqual(["top-extensions.json"]);
   });
 
   it("tolerates corrupt file", () => {
     fs.writeFileSync(path.join(dir, "top-extensions.json"), "{nope");
-    expect(readTopExtensions()).toEqual({ extensions: [], mcp: [] });
+    expect(readTopExtensions()).toEqual({ extensions: [], mcp: [], system: { extensions: [], mcp: [] } });
   });
 
   it("sanitizes: normalizes, dedupes, drops unknown ids and non-http", () => {
@@ -41,7 +41,7 @@ describe("top-extensions store", () => {
         },
         new Set(["gmail"])
       )
-    ).toEqual({ extensions: ["gmail"], mcp: ["https://a.test/mcp"] });
+    ).toEqual({ extensions: ["gmail"], mcp: ["https://a.test/mcp"], system: { extensions: [], mcp: [] } });
   });
 
   it("labels MCP candidates with their configured displayName", () => {

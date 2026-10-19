@@ -29,7 +29,7 @@ function mcpServerPath(agentId: string, name: string): string {
   return `/agents/${encodeURIComponent(agentId)}/mcp-servers/${encodeURIComponent(name)}`;
 }
 
-export function McpExtensionCard(props: { server: McpServer; agentId: string }) {
+export function McpExtensionCard(props: { server: McpServer; agentId: string; system?: boolean }) {
   const href = () => mcpServerPath(props.agentId, props.server.name);
   return (
     <li class="edit-agent-ext-item" data-tour="ext-card" data-tour-ext={`mcp:${props.server.name}`}>
@@ -37,7 +37,7 @@ export function McpExtensionCard(props: { server: McpServer; agentId: string }) 
         <McpIcon src={props.server.iconUrl} />
         <div class="edit-agent-ext-body">
           <div class="edit-agent-ext-main">
-            <span class="edit-agent-ext-name">{mcpDisplayName(props.server.name, props.server.title)}</span>
+            <span class="edit-agent-ext-name">{mcpDisplayName(props.server.name, props.server.title)}<Show when={props.system}><span class="edit-agent-ext-system">System</span></Show></span>
             <span class="edit-agent-ext-desc">{props.server.description ?? props.server.url ?? "Local MCP server"}</span>
           </div>
         </div>

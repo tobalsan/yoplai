@@ -255,7 +255,11 @@ api.put("/admin/top-extensions", async (c) => {
   }
   const { extensions: candidates } = await listTopExtensionCandidates();
   const before = readTopExtensions();
-  const next = sanitizeTopExtensions(body as { extensions: unknown; mcp: unknown }, new Set(candidates.map((entry) => entry.id)));
+  const next = sanitizeTopExtensions({ ...body, system: "system" in body ? body.system : before.system }, new Set(candidates.map((entry) => entry.id)));
+  if (isExtensionLoaded("multiUser")) {
+    next.extensions = next.extensions.filter((id) => !next.system.extensions.includes(id));
+    next.mcp = next.mcp.filter((url) => !next.system.mcp.includes(url));
+  }
   writeTopExtensions(next);
   recordSettingsChange({ ...await getAuditActor(c), action: "top_extensions.update", targetType: "top-extensions",
     changes: diffSettings(before, next, []),

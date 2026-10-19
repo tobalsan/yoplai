@@ -206,6 +206,20 @@ describe("api core session resolution", () => {
     expect((await api.request("/agents/alpha/history?sessionId=s1&view=full&limit=100&before=bad")).status).toBe(400);
   });
 
+  it("keeps Top stars despite stored system flags in single-user mode", async () => {
+    buildExtensionCatalog.mockResolvedValue([{ id: "webhooks" }]);
+    const { api } = await import("./api.core.js");
+    const save = (body: unknown) => api.request("/admin/top-extensions", {
+      method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify(body),
+    });
+    await save({ extensions: [], mcp: [], system: { extensions: ["webhooks"], mcp: ["https://a.test/mcp"] } });
+    const response = await save({ extensions: ["webhooks"], mcp: ["https://a.test/mcp"] });
+    expect(response.status).toBe(200);
+    const expected = { extensions: ["webhooks"], mcp: ["https://a.test/mcp"], system: { extensions: ["webhooks"], mcp: ["https://a.test/mcp"] } };
+    expect(await response.json()).toEqual(expected);
+    expect(await (await api.request("/top-extensions")).json()).toEqual(expected);
+  });
+
   it("returns an empty agent list without default resolution errors", async () => {
     const { api } = await import("./api.core.js");
 

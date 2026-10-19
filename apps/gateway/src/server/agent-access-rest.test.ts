@@ -498,10 +498,34 @@ describe("REST per-agent access gating (multi-user)", () => {
     expect(await read("allowed-agent", "alice", "DELETE")).toEqual({ supported: true, seen: false, at: null });
   });
 
+  it("saves sanitized system flags and returns them from both GET routes", async () => {
+    const base = `http://127.0.0.1:${port}/api`;
+    const headers = { ...authHeader("root", "superadmin"), "content-type": "application/json" };
+    const put = await fetch(`${base}/admin/top-extensions`, {
+      method: "PUT", headers,
+      body: JSON.stringify({ extensions: [], mcp: [], system: {
+        extensions: ["webhooks", "webhooks", "ghost"],
+        mcp: ["HTTPS://A.test/mcp/", "https://a.test/mcp?x=1", "npx x"],
+      } }),
+    });
+    expect(put.status).toBe(200);
+    const expected = { extensions: [], mcp: [], system: { extensions: ["webhooks"], mcp: ["https://a.test/mcp"] } };
+    expect(await put.json()).toEqual(expected);
+    expect(await (await fetch(`${base}/top-extensions`, { headers: authHeader("alice") })).json()).toEqual(expected);
+    expect(await (await fetch(`${base}/admin/top-extensions`, { headers })).json()).toMatchObject(expected);
+    const audit = await (await fetch(`${base}/audit/settings?action=top_extensions.update`, { headers })).json() as { entries: unknown[] };
+    expect(audit.entries).toContainEqual(expect.objectContaining({
+      actorUserId: "root",
+      action: "top_extensions.update",
+      changes: [{ field: "system", before: { extensions: [], mcp: [] }, after: { extensions: ["webhooks"], mcp: ["https://a.test/mcp"] } }],
+    }));
+    await fs.rm(path.join(tmpDir, ".yoplai", "top-extensions.json"));
+  });
+
   it("gates admin top-extensions to superadmin and serves the public list", async () => {
     const base = `http://127.0.0.1:${port}/api`;
     const json = (h: Record<string, string>) => ({ ...h, "content-type": "application/json" });
-    expect(await (await fetch(`${base}/top-extensions`, { headers: authHeader("alice") })).json()).toEqual({ extensions: [], mcp: [] });
+    expect(await (await fetch(`${base}/top-extensions`, { headers: authHeader("alice") })).json()).toEqual({ extensions: [], mcp: [], system: { extensions: [], mcp: [] } });
     for (const role of ["user", "admin"]) {
       expect((await fetch(`${base}/admin/top-extensions`, { headers: authHeader("u", role) })).status).toBe(403);
       const put = await fetch(`${base}/admin/top-extensions`, { method: "PUT", headers: json(authHeader("u", role)), body: JSON.stringify({ extensions: [], mcp: [] }) });
@@ -517,7 +541,36 @@ describe("REST per-agent access gating (multi-user)", () => {
       method: "PUT", headers: json(authHeader("root", "superadmin")),
       body: JSON.stringify({ extensions: [known, known, "ghost"], mcp: ["HTTPS://A.test/mcp/", "npx x"] }),
     });
-    expect(await put.json()).toEqual({ extensions: [known], mcp: ["https://a.test/mcp"] });
-    expect(await (await fetch(`${base}/top-extensions`, { headers: authHeader("alice") })).json()).toEqual({ extensions: [known], mcp: ["https://a.test/mcp"] });
+    expect(await put.json()).toEqual({ extensions: [known], mcp: ["https://a.test/mcp"], system: { extensions: [], mcp: [] } });
+    expect(await (await fetch(`${base}/top-extensions`, { headers: authHeader("alice") })).json()).toEqual({ extensions: [known], mcp: ["https://a.test/mcp"], system: { extensions: [], mcp: [] } });
+  });
+
+  it("reads legacy files without system data as empty system lists", async () => {
+    await fs.writeFile(path.join(tmpDir, ".yoplai", "top-extensions.json"), JSON.stringify({ extensions: ["webhooks"], mcp: ["https://a.test/mcp"] }));
+    const response = await fetch(`http://127.0.0.1:${port}/api/top-extensions`, { headers: authHeader("alice") });
+    expect(await response.json()).toEqual({ extensions: ["webhooks"], mcp: ["https://a.test/mcp"], system: { extensions: [], mcp: [] } });
+  });
+
+  it("preserves system flags when an older client only updates Top lists", async () => {
+    const base = `http://127.0.0.1:${port}/api`;
+    const headers = { ...authHeader("root", "superadmin"), "content-type": "application/json" };
+    await fetch(`${base}/admin/top-extensions`, { method: "PUT", headers,
+      body: JSON.stringify({ extensions: [], mcp: [], system: { extensions: ["webhooks"], mcp: ["https://a.test/mcp"] } }),
+    });
+    const put = await fetch(`${base}/admin/top-extensions`, { method: "PUT", headers,
+      body: JSON.stringify({ extensions: [], mcp: ["https://other.test/mcp"] }),
+    });
+    expect(await put.json()).toEqual({ extensions: [], mcp: ["https://other.test/mcp"], system: { extensions: ["webhooks"], mcp: ["https://a.test/mcp"] } });
+  });
+
+  it("removes system extensions and normalized MCP URLs from Top in multi-user mode", async () => {
+    const base = `http://127.0.0.1:${port}/api`;
+    const put = await fetch(`${base}/admin/top-extensions`, {
+      method: "PUT", headers: { ...authHeader("root", "superadmin"), "content-type": "application/json" },
+      body: JSON.stringify({ extensions: ["webhooks"], mcp: ["HTTPS://A.test/mcp/", "https://other.test/mcp"],
+        system: { extensions: ["webhooks"], mcp: ["https://a.test/mcp?x=1"] },
+      }),
+    });
+    expect(await put.json()).toEqual({ extensions: [], mcp: ["https://other.test/mcp"], system: { extensions: ["webhooks"], mcp: ["https://a.test/mcp"] } });
   });
 });

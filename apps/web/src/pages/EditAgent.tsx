@@ -347,14 +347,17 @@ export function EditAgent() {
     const top = topExtensions() ?? EMPTY_TOP_EXTENSIONS;
     const topIds = new Set(top.extensions);
     const topUrls = new Set(top.mcp);
-    const items: { name: string; top: boolean; ext?: ExtensionCatalogEntry; server?: McpServer }[] = [
-      ...extensionCatalog().filter((ext) => ext.id !== "mcp").map((ext) => ({ name: ext.displayName, top: topIds.has(ext.id), ext })),
+    const systemIds = new Set(capabilities.multiUser ? top.system.extensions : []);
+    const systemUrls = new Set(capabilities.multiUser ? top.system.mcp : []);
+    const items: { name: string; top: boolean; system: boolean; ext?: ExtensionCatalogEntry; server?: McpServer }[] = [
+      ...extensionCatalog().filter((ext) => ext.id !== "mcp").map((ext) => ({ name: ext.displayName, top: topIds.has(ext.id), system: systemIds.has(ext.id), ext })),
       ...(mcpStatus()?.servers ?? []).map((server) => {
         const url = server.url ? normalizeMcpServerUrl(server.url) : null;
-        return { name: mcpDisplayName(server.name, server.title), top: url !== null && topUrls.has(url), server };
+        return { name: mcpDisplayName(server.name, server.title), top: url !== null && topUrls.has(url), system: url !== null && systemUrls.has(url), server };
       }),
     ];
-    return items.sort((a, b) => Number(b.top) - Number(a.top) || a.name.localeCompare(b.name, undefined, { sensitivity: "base" }));
+    return items.filter((item) => isSuperadmin() || !item.system)
+      .sort((a, b) => Number(b.top) - Number(a.top) || a.name.localeCompare(b.name, undefined, { sensitivity: "base" }));
   });
 
   // Set up = credentials exist for Just me or Whole team (OAuth connection or
@@ -543,7 +546,7 @@ export function EditAgent() {
             </Show>
             <Show
               when={
-                extensionListLoaded() && !extensions.error && !mcpServers.error && extensionCatalog().filter((ext) => ext.id !== "mcp").length === 0 && (mcpStatus()?.servers.length ?? 0) === 0
+                extensionListLoaded() && !extensions.error && !mcpServers.error && extensionListItems().length === 0
               }
             >
               <div class="edit-agent-ext-empty">No extensions available.</div>
@@ -551,7 +554,7 @@ export function EditAgent() {
             <ul class="edit-agent-ext-list">
               <For each={extensionListLoaded() ? extensionListItems() : []}>
                 {(item) => (
-                  <Show when={item.ext} keyed fallback={<McpExtensionCard server={item.server!} agentId={dashboardAgentId() ?? params.agentId} />}>
+                  <Show when={item.ext} keyed fallback={<McpExtensionCard server={item.server!} agentId={dashboardAgentId() ?? params.agentId} system={item.system} />}>
                     {(ext) => (
                   <li class="edit-agent-ext-item" data-tour="ext-card" data-tour-ext={ext.id}>
                     <A
@@ -585,6 +588,7 @@ export function EditAgent() {
                         <div class="edit-agent-ext-main">
                           <span class="edit-agent-ext-name">
                             {ext.displayName}
+                            <Show when={item.system}><span class="edit-agent-ext-system">System</span></Show>
                           </span>
                           <span class="edit-agent-ext-desc">
                             {ext.description}
@@ -978,6 +982,8 @@ export function EditAgent() {
           font-weight: 600;
           color: var(--text-primary);
         }
+
+        .edit-agent-ext-system { display: inline-block; margin-left: 8px; border: 1px solid var(--border-default); border-radius: 4px; padding: 1px 5px; font-size: 10px; color: var(--text-secondary); }
 
         .edit-agent-ext-desc {
           font-size: 12px;

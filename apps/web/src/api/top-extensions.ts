@@ -1,6 +1,7 @@
 import { API_BASE, apiFetch as fetch } from "./core";
 
-export type TopExtensions = { extensions: string[]; mcp: string[] };
+type ExtensionFlags = { extensions: string[]; mcp: string[] };
+export type TopExtensions = ExtensionFlags & { system: ExtensionFlags };
 
 type TopExtensionCandidates = {
   extensions: { id: string; displayName: string; description: string; iconDataUri?: string }[];
@@ -9,9 +10,9 @@ type TopExtensionCandidates = {
 
 export type AdminTopExtensions = TopExtensions & { candidates: TopExtensionCandidates };
 
-export const EMPTY_TOP_EXTENSIONS: TopExtensions = { extensions: [], mcp: [] };
+export const EMPTY_TOP_EXTENSIONS: TopExtensions = { extensions: [], mcp: [], system: { extensions: [], mcp: [] } };
 
-/** Admin-flagged Top extension ids and normalized MCP URLs; any signed-in user may read them. */
+/** Global Top and system flags; any signed-in user may read them. */
 export async function fetchTopExtensions(): Promise<TopExtensions> {
   const res = await fetch(`${API_BASE}/top-extensions`);
   if (!res.ok) throw new Error("Failed to fetch top extensions");

@@ -26,6 +26,7 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Added
 
+- Superadmins can mark global system extensions and HTTP MCP servers in Admin Extensions, hiding them from users and admins on agent configuration pages while preserving runtime behavior. System flags remove Top stars in multi-user mode and appear in the settings audit log.
 - A personal main agent: a character-select picker on home, fresh chats on return, and quick changes from a star in the chat header or on Agents page cards (with confirmation; main agent listed first and highlighted), plus a settings cog in the chat header whose Back link returns to that chat. A click anywhere on an Agents card opens a chat with that agent. Available in single-user and multi-user installs; blank home visits do not create saved sessions.
 - Private-by-default owned dashboards, selected-user/platform-wide read/write sharing, a Dashboards home, private legacy claiming, and durable published HTML separate from live drafts/history. Viewing/management is independent of agent access; publication still requires agent execution. Create/update publish explicitly; `dashboard_link` only returns readable links.
 - Optional tool output schemas for structured codemode results in host and container runs, including full large results and Slack history/replies; connection refusals and declared tool errors retain their data and signal errors.

@@ -71,6 +71,19 @@ describe("extension-disabled API responses", () => {
     }
   });
 
+  it("serves core extension flags through the full app when multi-user is disabled", async () => {
+    const { app } = await import("./index.js");
+    const expected = { extensions: ["webhooks"], mcp: ["https://a.test/mcp"], system: { extensions: ["webhooks"], mcp: ["https://a.test/mcp"] } };
+    const saved = await app.request("/api/admin/top-extensions", {
+      method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify(expected),
+    });
+    expect(saved.status).toBe(200);
+    expect(await saved.json()).toEqual(expected);
+    expect(await (await app.request("/api/top-extensions")).json()).toEqual(expected);
+    expect(await (await app.request("/api/admin/top-extensions")).json()).toMatchObject(expected);
+    expect((await app.request("/api/admin/users")).status).toBe(404);
+  });
+
   it("gates routes loaded from an external extension", async () => {
     const { getExtensionRuntime } = await import("../extensions/registry.js");
     getExtensionRuntime().load([

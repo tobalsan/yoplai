@@ -56,7 +56,7 @@ const {
 }));
 
 vi.mock("../api/top-extensions", () => ({
-  EMPTY_TOP_EXTENSIONS: { extensions: [], mcp: [] },
+  EMPTY_TOP_EXTENSIONS: { extensions: [], mcp: [], system: { extensions: [], mcp: [] } },
   fetchTopExtensions: fetchTopExtensionsMock,
 }));
 
@@ -159,6 +159,15 @@ function setSession(role: string | null) {
 let container: HTMLElement;
 let dispose: () => void;
 
+function queryAllByText(text: string): Node[] {
+  const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT);
+  const matches: Node[] = [];
+  for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+    if (node.textContent === text) matches.push(node);
+  }
+  return matches;
+}
+
 async function mountEdit(agentId: string) {
   useParamsMock.mockReturnValue({ agentId });
   dispose = render(() => <EditAgent />, container);
@@ -193,7 +202,7 @@ beforeEach(() => {
   useParamsMock.mockReset();
   navigateMock.mockReset();
   useLocationMock.mockReset().mockReturnValue({ state: undefined });
-  fetchTopExtensionsMock.mockReset().mockResolvedValue({ extensions: [], mcp: [] });
+  fetchTopExtensionsMock.mockReset().mockResolvedValue({ extensions: [], mcp: [], system: { extensions: [], mcp: [] } });
   container = document.createElement("div");
   document.body.appendChild(container);
 });
@@ -585,6 +594,73 @@ describe("EditAgent", () => {
     ]);
   });
 
+  function seedSystemItems(enabled = true) {
+    fetchAgentsMock.mockResolvedValue([agent({ id: "scribe" })]);
+    fetchAgentExtensionsMock.mockResolvedValue([
+      { id: "webhooks", displayName: "Webhooks", description: "Incoming events", enabled, tier: "toggle-only", requiredSecrets: [] },
+      { id: "notion", displayName: "Notion", description: "Notes", enabled: false, tier: "auto-form", requiredSecrets: [] },
+    ]);
+    fetchMcpServersMock.mockResolvedValue({ canConfigureTeam: false, servers: [
+      { name: "email", title: "AIMX Email", type: "http", url: "HTTPS://Email.test/mcp/?agent=scribe", auth: "none", state: enabled ? "connected" : "disconnected", readOnly: true },
+      { name: "docs", title: "Public Docs", type: "http", url: "https://docs.test/mcp", auth: "none", state: "connected", readOnly: true },
+      { name: "local", title: "Local tools", type: "stdio", auth: "stdio", state: "connected", readOnly: true },
+    ] });
+    fetchTopExtensionsMock.mockResolvedValue({ extensions: [], mcp: [], system: { extensions: ["webhooks"], mcp: ["https://email.test/mcp"] } });
+  }
+
+  it.each([
+    { role: "user", enabled: true }, { role: "user", enabled: false },
+    { role: "admin", enabled: true }, { role: "admin", enabled: false },
+  ])("hides system extensions and MCP servers for $role, enabled=$enabled", async ({ role, enabled }) => {
+    setCapabilitiesForTests({ forkedAgents: false, multiUser: true });
+    setSession(role);
+    seedSystemItems(enabled);
+    await mountEdit("scribe");
+    expect(container.textContent).not.toContain("Webhooks");
+    expect(container.textContent).not.toContain("AIMX Email");
+    expect(container.textContent).toContain("Notion");
+    expect(container.textContent).toContain("Public Docs");
+    expect(container.textContent).toContain("Local tools");
+  });
+
+  it("shows system items with badges to a superadmin", async () => {
+    setCapabilitiesForTests({ forkedAgents: false, multiUser: true });
+    setSession("superadmin");
+    seedSystemItems();
+    await mountEdit("scribe");
+    expect(container.textContent).toContain("Webhooks");
+    expect(container.textContent).toContain("AIMX Email");
+    expect(container.textContent).toContain("Notion");
+    expect(container.textContent).toContain("Public Docs");
+    expect(queryAllByText("System")).toHaveLength(2);
+  });
+
+  it("shows the empty state when a user's only items are system items", async () => {
+    setCapabilitiesForTests({ forkedAgents: false, multiUser: true });
+    setSession("user");
+    seedSystemItems();
+    fetchAgentExtensionsMock.mockResolvedValue([{ id: "webhooks", displayName: "Webhooks", enabled: true, tier: "toggle-only", requiredSecrets: [] }]);
+    fetchMcpServersMock.mockResolvedValue({ canConfigureTeam: false, servers: [
+      { name: "email", title: "AIMX Email", type: "http", url: "https://email.test/mcp", auth: "none", state: "connected", readOnly: true },
+    ] });
+    await mountEdit("scribe");
+    expect(container.textContent).toContain("No extensions available.");
+    expect(container.textContent).not.toContain("Webhooks");
+    expect(container.textContent).not.toContain("AIMX Email");
+  });
+
+  it.each(["user", "superadmin"])("ignores system flags in single-user mode for role %s", async (role) => {
+    setCapabilitiesForTests({ forkedAgents: false, multiUser: false });
+    setSession(role);
+    seedSystemItems();
+    await mountEdit("scribe");
+    expect(container.textContent).toContain("Webhooks");
+    expect(container.textContent).toContain("AIMX Email");
+    expect(container.textContent).toContain("Notion");
+    expect(container.textContent).toContain("Public Docs");
+    expect(queryAllByText("System")).toHaveLength(0);
+  });
+
   it("sorts Top extensions and Top MCP servers first, then by name", async () => {
     setCapabilitiesForTests({ forkedAgents: false });
     setSession("user");
@@ -612,7 +688,7 @@ describe("EditAgent", () => {
         { name: "aaa", type: "http", url: "https://aaa.example/mcp", auth: "oauth", state: "connected", readOnly: false },
       ],
     });
-    fetchTopExtensionsMock.mockResolvedValue({ extensions: ["zeta"], mcp: ["https://mcp.linear.app/mcp"] });
+    fetchTopExtensionsMock.mockResolvedValue({ extensions: ["zeta"], mcp: ["https://mcp.linear.app/mcp"], system: { extensions: [], mcp: [] } });
     await mountEdit("scribe");
 
     expect(Array.from(container.querySelectorAll(".edit-agent-ext-name")).map((n) => n.textContent)).toEqual([
@@ -737,7 +813,7 @@ describe("EditAgent", () => {
     ]);
     let resolveMcp: (value: unknown) => void = () => {};
     fetchMcpServersMock.mockReturnValue(new Promise((resolve) => { resolveMcp = resolve; }));
-    fetchTopExtensionsMock.mockResolvedValue({ extensions: [], mcp: ["https://docs.test/mcp"] });
+    fetchTopExtensionsMock.mockResolvedValue({ extensions: [], mcp: ["https://docs.test/mcp"], system: { extensions: [], mcp: [] } });
     useParamsMock.mockReturnValue({ agentId: "scribe" });
     dispose = render(() => <Suspense fallback={<p class="suspended">Loading</p>}><EditAgent /></Suspense>, container);
     await new Promise((resolve) => setTimeout(resolve, 0));

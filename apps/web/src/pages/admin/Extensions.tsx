@@ -7,6 +7,7 @@ import {
 } from "../../api/top-extensions";
 import AdminLayout from "./AdminLayout";
 import { McpIcon } from "../../components/McpExtensionCard";
+import { capabilities } from "../../lib/capabilities";
 
 /** Extension icon, or the generic puzzle piece the Edit-Agent list uses. */
 function ExtensionIcon(props: { src?: string }) {
@@ -38,13 +39,16 @@ export default function AdminExtensionsPage() {
   const [pending, setPending] = createSignal<string | null>(null);
   const [error, setError] = createSignal<string | null>(null);
 
-  async function toggle(kind: "extensions" | "mcp", value: string) {
+  async function toggle(kind: "extensions" | "mcp", value: string, system = false) {
     const current = data.error ? undefined : data();
     if (!current) return;
     const next: TopExtensions = {
-      extensions: kind === "extensions" ? toggled(current.extensions, value) : current.extensions,
-      mcp: kind === "mcp" ? toggled(current.mcp, value) : current.mcp,
+      extensions: current.extensions,
+      mcp: current.mcp,
+      system: current.system,
     };
+    if (system) next.system = { ...current.system, [kind]: toggled(current.system[kind], value) };
+    else next[kind] = toggled(current[kind], value);
     setPending(`${kind}:${value}`);
     setError(null);
     try {
@@ -75,10 +79,31 @@ export default function AdminExtensionsPage() {
     );
   };
 
+  const systemToggle = (kind: "extensions" | "mcp", value: string, label: string) => {
+    const on = () => (data.error ? false : data()?.system[kind].includes(value) === true);
+    return (
+      <Show when={capabilities.multiUser}>
+        <button
+          type="button"
+          role="switch"
+          class="top-system"
+          aria-checked={on()}
+          aria-label={`${on() ? "Unmark" : "Mark"} ${label} as system`}
+          disabled={pending() !== null}
+          onClick={() => void toggle(kind, value, true)}
+        >
+          System
+        </button>
+      </Show>
+    );
+  };
+
   return (
     <AdminLayout
-      title="Top extensions"
-      description="Star the extensions and MCP servers your team should connect first. They sort first and users are prompted to connect them."
+      title="Extensions"
+      description={capabilities.multiUser
+        ? "Star Top extensions and MCP servers to promote them. Mark system items to hide them from users and admins on agent configuration pages."
+        : "Star the extensions and MCP servers your team should connect first. They sort first and users are prompted to connect them."}
     >
       <Show when={error()}>{(message) => <p class="top-error">{message()}</p>}</Show>
       <Show when={data.error}>
@@ -94,6 +119,7 @@ export default function AdminExtensionsPage() {
                   {(ext) => (
                     <div class="top-row" data-extension={ext.id}>
                       {star("extensions", ext.id, ext.displayName)}
+                      {systemToggle("extensions", ext.id, ext.displayName)}
                       <ExtensionIcon src={ext.iconDataUri} />
                       <div class="top-info">
                         <span class="top-name">{ext.displayName}</span>
@@ -111,6 +137,7 @@ export default function AdminExtensionsPage() {
                   {(server) => (
                     <div class="top-row" data-mcp={server.url}>
                       {star("mcp", server.url, server.displayName)}
+                      {systemToggle("mcp", server.url, server.displayName)}
                       <McpIcon src={server.iconUrl} />
                       <div class="top-info">
                         <span class="top-name">{server.displayName}</span>
@@ -180,6 +207,8 @@ export default function AdminExtensionsPage() {
           cursor: pointer;
         }
         .top-star.on { color: var(--warning, #f59e0b); }
+        .top-system { border: 1px solid var(--border-default); border-radius: 6px; padding: 4px 8px; background: var(--bg-surface); color: var(--text-secondary); cursor: pointer; }
+        .top-system[aria-checked="true"] { background: var(--accent, #3b82f6); color: #fff; }
         .top-empty { padding: 16px 18px; color: var(--text-secondary); }
         .top-error { color: var(--error, #ef4444); }
       `}</style>

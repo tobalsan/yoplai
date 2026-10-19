@@ -71,7 +71,7 @@ const server = (partial: Partial<McpServer>): McpServer =>
   ({ name: "linear", type: "http", url: "https://mcp.linear.app/mcp", auth: "oauth", state: "disconnected", readOnly: false, ...partial }) as McpServer;
 
 describe("buildConnectRows", () => {
-  const top = { extensions: ["a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m"], mcp: ["https://mcp.linear.app/mcp"] };
+  const top = { extensions: ["a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m"], mcp: ["https://mcp.linear.app/mcp"], system: { extensions: [], mcp: [] } };
   it("derives every row state", () => {
     const rows = buildConnectRows({
       top,

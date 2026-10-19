@@ -141,8 +141,8 @@ app.use("/api/*", async (c, next) => {
   const path = c.req.path;
   const runtime = currentExtensionRuntime();
   for (const matcher of runtime.getRouteMatchers()) {
-    // Main-agent preferences are core routes, available without multi-user.
-    if (matcher.extension === "multiUser" && path === "/api/me/main-agent") continue;
+    // These core routes are also available without multi-user.
+    if (matcher.extension === "multiUser" && (path === "/api/me/main-agent" || path === "/api/admin/top-extensions")) continue;
     if (!matcher.matches(path)) continue;
     if (isExtensionEnabled(config, matcher.extension, runtime)) break;
     if (matcher.allowWhenDisabled && runtime.isEnabled(matcher.extension))

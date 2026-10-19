@@ -5,13 +5,13 @@ import { stripBase } from "../../lib/path";
 import { isSuperadmin } from "../../lib/roles";
 
 
-/** Admin sections, one tab each; users exist only in multi-user mode, Top extensions and MCP servers are superadmin-only. */
+/** Admin sections, one tab each; users exist only in multi-user mode, extensions and MCP servers are superadmin-only. */
 function adminTabs() {
   return [
     { href: "/admin/users", label: "User management", visible: !!capabilities.multiUser },
     {
       href: "/admin/extensions",
-      label: "Top extensions",
+      label: "Extensions",
       visible: !capabilities.multiUser || isSuperadmin(capabilities.user?.role),
     },
     {

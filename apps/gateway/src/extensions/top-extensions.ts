@@ -3,7 +3,8 @@ import path from "node:path";
 import { normalizeMcpServerUrl } from "@yoplai/shared";
 import { CONFIG_DIR } from "../config/index.js";
 
-export type TopExtensions = { extensions: string[]; mcp: string[] };
+type ExtensionFlags = { extensions: string[]; mcp: string[] };
+export type TopExtensions = ExtensionFlags & { system: ExtensionFlags };
 
 const topExtensionsPath = () => path.join(CONFIG_DIR, "top-extensions.json");
 
@@ -13,10 +14,10 @@ function uniqueStrings(values: unknown): string[] {
 }
 
 /** Normalize MCP urls (dropping non-http), dedupe both lists. */
-export function sanitizeTopExtensions(
+function sanitizeLists(
   input: { extensions?: unknown; mcp?: unknown },
   knownExtensionIds?: Set<string>
-): TopExtensions {
+): ExtensionFlags {
   const extensions = uniqueStrings(input.extensions).filter(
     (id) => !knownExtensionIds || knownExtensionIds.has(id)
   );
@@ -30,12 +31,20 @@ export function sanitizeTopExtensions(
   return { extensions, mcp };
 }
 
+export function sanitizeTopExtensions(
+  input: { extensions?: unknown; mcp?: unknown; system?: unknown },
+  knownExtensionIds?: Set<string>
+): TopExtensions {
+  const system = input.system && typeof input.system === "object" ? input.system : {};
+  return { ...sanitizeLists(input, knownExtensionIds), system: sanitizeLists(system, knownExtensionIds) };
+}
+
 export function readTopExtensions(): TopExtensions {
   try {
     const raw = JSON.parse(fs.readFileSync(topExtensionsPath(), "utf8")) as Record<string, unknown>;
     return sanitizeTopExtensions(raw && typeof raw === "object" ? raw : {});
   } catch {
-    return { extensions: [], mcp: [] };
+    return sanitizeTopExtensions({});
   }
 }
 
