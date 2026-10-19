@@ -360,7 +360,7 @@ function findWritableExtensionAgent(
 
 async function getVisibleAgents(c: Context) {
   const agents = getActiveAgents();
-  if (!isExtensionLoaded("multiUser") || !loadConfig().forkedAgents) {
+  if (!isExtensionLoaded("multiUser")) {
     return agents;
   }
 

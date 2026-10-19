@@ -21,20 +21,11 @@ import { createTeamStore } from "./teams.js";
 import { createMembershipStore } from "./membership.js";
 import { createForkStore } from "./forks.js";
 import { createAccessResolver } from "./access.js";
+import type { MultiUserRuntime } from "./runtime-state.js";
 
-const getMultiUserRuntime = vi.fn();
 const recordAudit = vi.fn();
 const notifyAgentListChanged = vi.fn();
 
-vi.mock("./runtime-state.js", () => ({
-  getMultiUserRuntime,
-}));
-
-// Mirror the sibling admin-routes test's top-level mocks. Mocking the gateway
-// config + registry modules forces Vitest to hoist/apply all mocks (including
-// ./index.js) before the first request, avoiding a first-test warmup race where
-// the auth middleware's getMultiUserRuntime binding is briefly the un-mocked
-// original (which returns the null module singleton -> spurious 401).
 const getLoadedExtensions = vi.fn(() => [{ id: "multiUser" }]);
 
 vi.mock(
@@ -109,12 +100,14 @@ function buildRuntime() {
     membership,
     forks,
     access: createAccessResolver({ membership, forks }),
+    getPoolAgentIds: () => ["scribe"],
   };
 }
 
 async function makeApp(role: Role = "admin") {
   getSession = vi.fn(async () => createSession(role));
-  getMultiUserRuntime.mockReturnValue(buildRuntime());
+  const { setMultiUserRuntime } = await import("./runtime-state.js");
+  setMultiUserRuntime(buildRuntime() as unknown as MultiUserRuntime);
   const { registerMultiUserRoutes } = await import("./routes.js");
   const { createAuthMiddleware } = await import("./middleware.js");
   const app = new Hono();
@@ -132,11 +125,6 @@ function req(path: string, body?: unknown, method = "POST") {
 }
 
 beforeAll(async () => {
-  // Prime the mocked module graph once before any test. The first import of
-  // ./routes.js + ./middleware.js after a fresh module registry can resolve
-  // ./index.js to its un-mocked binding (runtime singleton = null -> 401);
-  // doing it here rather than in the first real test keeps every asserted
-  // request stable.
   await import("./routes.js");
   await import("./middleware.js");
 });
@@ -174,7 +162,9 @@ beforeEach(async () => {
   );
 });
 
-afterEach(() => {
+afterEach(async () => {
+  const { setMultiUserRuntime } = await import("./runtime-state.js");
+  setMultiUserRuntime(null);
   db.close();
   fs.rmSync(homeDir, { recursive: true, force: true });
 });
@@ -182,7 +172,8 @@ afterEach(() => {
 describe("admin fork/assignment routes", () => {
   it("blocks a pending regular user upstream even when the fork is Public", async () => {
     const app = await makeApp("user");
-    const runtime = getMultiUserRuntime();
+    const { getMultiUserRuntime } = await import("./runtime-state.js");
+    const runtime = getMultiUserRuntime()!;
     runtime.forks.setTeams("scribe", { mode: "list", teamIds: [] }, "superadmin-1");
     runtime.forks.setPublic("scribe", true);
     const { requireAgentAccess } = await import("./middleware.js");

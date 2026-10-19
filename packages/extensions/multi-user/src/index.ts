@@ -16,10 +16,14 @@ import { createConnectPromptStore } from "./connect-prompt.js";
 import { createForkStore } from "./forks.js";
 import { createAccessResolver } from "./access.js";
 import { createPoolCatalogResolver } from "./catalog.js";
-import { getMultiUserRuntime, setMultiUserRuntime } from "./runtime-state.js";
+import {
+  canUserUseAgent,
+  getMultiUserRuntime,
+  setMultiUserRuntime,
+} from "./runtime-state.js";
 import path from "node:path";
 
-export { getMultiUserRuntime } from "./runtime-state.js";
+export { canUserUseAgent, getMultiUserRuntime } from "./runtime-state.js";
 export type { MultiUserRuntime } from "./runtime-state.js";
 
 function hasSuperadminRole(role: string | string[] | null | undefined): boolean {
@@ -33,19 +37,11 @@ export function getAgentFilter(
 ): <T extends Pick<AgentConfig, "id">>(agents: T[]) => T[] {
   return (agents) => {
     const activeRuntime = getMultiUserRuntime();
-    // Superadmins and single-user (no runtime) see everything. Everyone else,
-    // admins included, resolves visibility from team membership.
-    if (
-      !activeRuntime ||
-      hasSuperadminRole(role) ||
-      activeRuntime.getPoolAgentIds().length === 0
-    ) {
+    // Superadmins and single-user (no runtime) see everything.
+    if (!activeRuntime || hasSuperadminRole(role)) {
       return agents;
     }
-    const visibleAgentIds = new Set(
-      activeRuntime.access.getVisibleChatAgents(userId)
-    );
-    return agents.filter((agent) => visibleAgentIds.has(agent.id));
+    return agents.filter((agent) => canUserUseAgent(userId, agent.id));
   };
 }
 

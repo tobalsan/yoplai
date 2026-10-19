@@ -1,5 +1,5 @@
 import type { Context, MiddlewareHandler } from "hono";
-import { getMultiUserRuntime } from "./runtime-state.js";
+import { canUserUseAgent, getMultiUserRuntime } from "./runtime-state.js";
 import { getImpersonation } from "./impersonation.js";
 
 export const FORWARDED_AUTH_CONTEXT_HEADER = "x-yoplai-auth-context";
@@ -498,7 +498,7 @@ export async function hasAgentAccess(
   agentId: string
 ): Promise<boolean> {
   if (!authContext) return true;
-  // Only superadmins see every agent; admins are scoped to their teams.
+  // Only superadmins bypass agent access rules.
   if (hasSuperadminRole(authContext)) return true;
 
   const runtime = getMultiUserRuntime();
@@ -514,8 +514,7 @@ export async function hasAgentAccess(
     return true;
   }
 
-  // Chat access follows Public visibility or shared teams.
-  return runtime.access.canUserChatAgent(authContext.user.id, agentId);
+  return canUserUseAgent(authContext.user.id, agentId);
 }
 
 export const requireAgentAccess = (agentIdParam = "id"): MiddlewareHandler => {

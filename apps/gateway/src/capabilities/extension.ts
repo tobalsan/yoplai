@@ -162,7 +162,7 @@ async function canConfigureAgent(
   const registry = await import("../extensions/registry.js");
   if (!registry.isExtensionLoaded("multiUser")) return true;
   if (!userId) return false;
-  const { getMultiUserRuntime } = await import("@yoplai/extension-multi-user");
+  const { canUserUseAgent, getMultiUserRuntime } = await import("@yoplai/extension-multi-user");
   const runtime = getMultiUserRuntime();
   if (!runtime) return false;
   const user = runtime.db
@@ -170,7 +170,7 @@ async function canConfigureAgent(
     .get(userId) as { role?: unknown } | undefined;
   const roles = Array.isArray(user?.role) ? user.role : [user?.role];
   if (roles.includes("superadmin")) return true;
-  return runtime.access.canUserChatAgent(userId, agentId);
+  return canUserUseAgent(userId, agentId);
 }
 
 async function reloadAfterWrite(): Promise<GatewayConfig> {

@@ -38,3 +38,16 @@ export function getMultiUserRuntime(): MultiUserRuntime | null {
 export function setMultiUserRuntime(next: MultiUserRuntime | null): void {
   runtime = next;
 }
+
+/** Plain agents without a pool are Public; recorded forks keep their access rules. */
+export function canUserUseAgent(userId: string, agentId: string): boolean {
+  const activeRuntime = getMultiUserRuntime();
+  if (!activeRuntime) return true;
+  if (
+    activeRuntime.getPoolAgentIds().length === 0 &&
+    !activeRuntime.forks.getForkByAgentId(agentId)
+  ) {
+    return true;
+  }
+  return activeRuntime.access.canUserChatAgent(userId, agentId);
+}

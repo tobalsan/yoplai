@@ -11,6 +11,7 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Fixed
 
+- Multi-user instances without an agent pool let approved users and admins use plain agents, including chat, avatars and capability self-enable. Existing fork restrictions also apply to agent lists.
 - Agents no longer name other users' private dashboards when they list dashboards. Every run now gets a short rule: `dashboard_link` is the only source for the user's dashboards, and the agent does not mention or hint at others. Also, `dashboard_link` with no slug returns `{ dashboards, note }`.
 - A Pi run now switches to `fallback_model` when the primary provider is unreachable ("Connection error.").
 - With codemode on, a script call with wrong arguments now adds the tool's signature to the codemode result. The model then uses the correct parameter names on the next try. A call to a deferred tool that is not loaded now tells the model to use `tool_search`.

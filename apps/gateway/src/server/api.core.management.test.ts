@@ -19,7 +19,6 @@ const state = vi.hoisted(() => ({
   config: {} as GatewayConfig,
   runtime: null as Pick<MultiUserRuntime, "db" | "membership" | "forks" | "access" | "getPoolAgentIds"> | null,
 }));
-vi.mock("../../../../packages/extensions/multi-user/src/runtime-state.js", () => ({ getMultiUserRuntime: () => state.runtime }));
 vi.mock("../audit/store.js", () => ({ recordSettingsChange: () => undefined, getAuditActor: async () => ({}) }));
 vi.mock("../config/index.js", () => ({
   get CONFIG_DIR() { return state.dir; },
@@ -82,10 +81,14 @@ describe("public agent team configuration permissions", () => {
       oauth: { encryptionKey: "management-test-key", redirectBaseUrl: "http://localhost:4000", providers: { google: { clientId: "test", clientSecret: "test" } } },
       extensions: {}, sessions: { idleMinutes: 360 }, agentFab: false,
     };
+    const { setMultiUserRuntime } = await import("../../../../packages/extensions/multi-user/src/runtime-state.js");
+    setMultiUserRuntime(state.runtime as MultiUserRuntime);
     api = (await import("./api.core.js")).api;
   });
 
-  afterEach(() => {
+  afterEach(async () => {
+    const { setMultiUserRuntime } = await import("../../../../packages/extensions/multi-user/src/runtime-state.js");
+    setMultiUserRuntime(null);
     state.runtime?.db.close();
     state.runtime = null;
     fs.rmSync(state.dir, { recursive: true, force: true });

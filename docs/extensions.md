@@ -117,6 +117,8 @@ New users receive no explicit team membership at sign-up; legacy `autoJoinPublic
 
 Roles are user/admin/superadmin. Headless clients can use `yoplai user token create|list|revoke` and bearer authentication. Full setup and pool/team behavior: [multi-user README](../packages/extensions/multi-user/README.md).
 
+Without a configured agent pool, an agent with no fork record is treated as Public: every approved user and admin can list and use it, including chat, avatars and capability self-enable. Agents with existing fork records (including migrated legacy assignments) keep their Public or linked-team access rules and are hidden from users who cannot open them. Pending users stay blocked; agent management and team credentials still require the existing ownership permissions.
+
 ## Optional web routes
 
 Web app fetches `/api/capabilities` and lazy-loads enabled route bundles. Core web imports must not hard-depend on optional board/project modules.

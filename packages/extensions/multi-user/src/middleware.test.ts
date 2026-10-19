@@ -1,20 +1,32 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { Hono } from "hono";
+import Database from "better-sqlite3";
+import { createAccessResolver } from "./access.js";
+import {
+  ensureAgentForksTable,
+  ensureTeamMembersTable,
+  ensureTeamsTable,
+  migrateAssignmentsToTeams,
+} from "./db.js";
+import { createForkStore } from "./forks.js";
+import { createMembershipStore } from "./membership.js";
+import { setMultiUserRuntime, type MultiUserRuntime } from "./runtime-state.js";
 
-const getMultiUserRuntime = vi.fn();
+const databases: Database.Database[] = [];
 
-vi.mock("./runtime-state.js", () => ({
-  getMultiUserRuntime,
-}));
+function setRuntime(runtime: unknown): void {
+  setMultiUserRuntime(runtime as MultiUserRuntime | null);
+}
 
 afterEach(() => {
+  setMultiUserRuntime(null);
+  for (const db of databases.splice(0)) db.close();
   vi.clearAllMocks();
-  vi.resetModules();
 });
 
 describe("multi-user middleware", () => {
   it.each(["pair", "connect"])("allows only the exact Slack %s GET landing publicly", async (flow) => {
-    getMultiUserRuntime.mockReturnValue({
+    setRuntime({
       auth: { api: { getSession: vi.fn(async () => null) } },
     });
     const { createAuthMiddleware } = await import("./middleware.js");
@@ -30,7 +42,7 @@ describe("multi-user middleware", () => {
   });
 
   it("returns 401 when session is missing", async () => {
-    getMultiUserRuntime.mockReturnValue({
+    setRuntime({
       auth: {
         api: {
           getSession: vi.fn(async () => null),
@@ -51,7 +63,7 @@ describe("multi-user middleware", () => {
   });
 
   it("attaches auth context for approved users", async () => {
-    getMultiUserRuntime.mockReturnValue({
+    setRuntime({
       auth: {
         api: {
           getSession: vi.fn(async () => ({
@@ -99,7 +111,7 @@ describe("multi-user middleware", () => {
   });
 
   it("returns 403 for unapproved users", async () => {
-    getMultiUserRuntime.mockReturnValue({
+    setRuntime({
       auth: {
         api: {
           getSession: vi.fn(async () => ({
@@ -130,7 +142,7 @@ describe("multi-user middleware", () => {
   });
 
   it("enforces admin-only access", async () => {
-    getMultiUserRuntime.mockReturnValue({
+    setRuntime({
       auth: {
         api: {
           getSession: vi.fn(async () => ({
@@ -162,7 +174,7 @@ describe("multi-user middleware", () => {
   });
 
   it("enforces agent assignments for non-admin users", async () => {
-    getMultiUserRuntime.mockReturnValue({
+    setRuntime({
       auth: {
         api: {
           getSession: vi.fn(async () => ({
@@ -183,6 +195,7 @@ describe("multi-user middleware", () => {
           get: vi.fn(() => undefined),
         })),
       },
+      getPoolAgentIds: () => ["agent-1"],
       access: {
         canUserChatAgent: vi.fn(() => false),
       },
@@ -209,7 +222,7 @@ describe("multi-user middleware", () => {
       key: { id: "key-1", referenceId: "user-1" },
     }));
     const getSession = vi.fn(async () => null);
-    getMultiUserRuntime.mockReturnValue({
+    setRuntime({
       auth: { api: { getSession, verifyApiKey } },
       db: {
         prepare: vi.fn((sql: string) => ({
@@ -261,7 +274,7 @@ describe("multi-user middleware", () => {
   });
 
   it("returns 403 for bearer tokens of unapproved users", async () => {
-    getMultiUserRuntime.mockReturnValue({
+    setRuntime({
       auth: {
         api: {
           getSession: vi.fn(async () => null),
@@ -305,7 +318,7 @@ describe("multi-user middleware", () => {
       user: { id: "user-1", role: "user", approved: true },
       session: { id: "session-1", userId: "user-1" },
     }));
-    getMultiUserRuntime.mockReturnValue({
+    setRuntime({
       auth: { api: { getSession, verifyApiKey } },
       db: { prepare: vi.fn() },
     });
@@ -326,7 +339,7 @@ describe("multi-user middleware", () => {
   });
 
   it("returns 401 for bearer where verifyApiKey returns valid=false", async () => {
-    getMultiUserRuntime.mockReturnValue({
+    setRuntime({
       auth: {
         api: {
           getSession: vi.fn(async () => null),
@@ -353,7 +366,7 @@ describe("multi-user middleware", () => {
   });
 
   it("enforces agent assignments for bearer auth on unassigned agents", async () => {
-    getMultiUserRuntime.mockReturnValue({
+    setRuntime({
       auth: {
         api: {
           getSession: vi.fn(async () => null),
@@ -375,6 +388,7 @@ describe("multi-user middleware", () => {
           })),
         })),
       },
+      getPoolAgentIds: () => ["agent-1"],
       access: {
         canUserChatAgent: vi.fn(() => false),
       },
@@ -399,7 +413,7 @@ describe("multi-user middleware", () => {
 
   it("allows bearer auth on an agent the resolver grants", async () => {
     const canUserChatAgent = vi.fn(() => true);
-    getMultiUserRuntime.mockReturnValue({
+    setRuntime({
       auth: {
         api: {
           getSession: vi.fn(async () => null),
@@ -421,6 +435,7 @@ describe("multi-user middleware", () => {
           })),
         })),
       },
+      getPoolAgentIds: () => ["agent-1"],
       access: { canUserChatAgent },
     });
 
@@ -445,7 +460,7 @@ describe("multi-user middleware", () => {
 
   it("allows bearer auth for superadmins regardless of team membership", async () => {
     const canUserChatAgent = vi.fn(() => false);
-    getMultiUserRuntime.mockReturnValue({
+    setRuntime({
       auth: {
         api: {
           getSession: vi.fn(async () => null),
@@ -467,6 +482,7 @@ describe("multi-user middleware", () => {
           })),
         })),
       },
+      getPoolAgentIds: () => ["agent-1"],
       access: { canUserChatAgent },
     });
 
@@ -493,7 +509,7 @@ describe("multi-user middleware", () => {
       valid: true,
       key: { id: "key-1", referenceId: "user-1" },
     }));
-    getMultiUserRuntime.mockReturnValue({
+    setRuntime({
       auth: {
         api: {
           getSession: vi.fn(async () => null),
@@ -545,7 +561,7 @@ describe("multi-user middleware", () => {
         return undefined;
       }),
     }));
-    getMultiUserRuntime.mockReturnValue({
+    setRuntime({
       auth: {
         api: {
           getSession: vi.fn(async () => ({
@@ -600,7 +616,7 @@ describe("multi-user middleware", () => {
   });
 
   it("ignores active impersonation for bearer tokens", async () => {
-    getMultiUserRuntime.mockReturnValue({
+    setRuntime({
       auth: {
         api: {
           getSession: vi.fn(async () => null),
@@ -644,7 +660,7 @@ describe("multi-user middleware", () => {
   });
 
   it("validates websocket requests via Better Auth session lookup", async () => {
-    getMultiUserRuntime.mockReturnValue({
+    setRuntime({
       auth: {
         api: {
           getSession: vi.fn(async () => ({
@@ -686,7 +702,7 @@ describe("multi-user middleware", () => {
   });
 
   function mockSessionRole(role: string) {
-    getMultiUserRuntime.mockReturnValue({
+    setRuntime({
       auth: {
         api: {
           getSession: vi.fn(async () => ({
@@ -700,7 +716,6 @@ describe("multi-user middleware", () => {
 
   it("staff bypass (requireAdmin) allows both admin and superadmin", async () => {
     for (const role of ["admin", "superadmin"]) {
-      vi.resetModules();
       mockSessionRole(role);
       const { createAuthMiddleware, requireAdmin } =
         await import("./middleware.js");
@@ -731,7 +746,6 @@ describe("multi-user middleware", () => {
 
   it("requireSuperadmin rejects admin and user with 403", async () => {
     for (const role of ["admin", "user"]) {
-      vi.resetModules();
       mockSessionRole(role);
       const { createAuthMiddleware, requireSuperadmin } =
         await import("./middleware.js");
@@ -748,7 +762,7 @@ describe("multi-user middleware", () => {
   });
 
   it("single-user mode: requireSuperadmin passes through when multiUser not loaded", async () => {
-    getMultiUserRuntime.mockReturnValue(null);
+    setRuntime(null);
     const { requireSuperadmin } = await import("./middleware.js");
     const app = new Hono();
     app.get("/api/su", requireSuperadmin(), (c) => c.json({ ok: true }));
@@ -813,5 +827,110 @@ describe("multi-user middleware", () => {
 
     expect(request.headers.has("x-aihub-auth-context")).toBe(false);
     expect(request.headers.get("x-yoplai-auth-context")).toBeTruthy();
+  });
+});
+
+function createAgentAccessFixture() {
+  const db = new Database(":memory:");
+  db.pragma("foreign_keys = ON");
+  databases.push(db);
+  db.exec(`CREATE TABLE user (id TEXT PRIMARY KEY, name TEXT, email TEXT, approved INTEGER, role TEXT);
+    INSERT INTO user (id) VALUES ('admin-1'), ('member'), ('outsider');
+    CREATE TABLE agent_assignments (userId TEXT, agentId TEXT, assignedBy TEXT);
+    INSERT INTO agent_assignments (userId, agentId, assignedBy) VALUES ('member', 'legacy', 'admin-1');
+  `);
+  ensureTeamsTable(db);
+  ensureTeamMembersTable(db);
+  ensureAgentForksTable(db);
+  migrateAssignmentsToTeams(db);
+  const forks = createForkStore({
+    db,
+    getPoolAgent: () => null,
+    getForksDir: () => {
+      throw new Error("This fixture must not create forks on disk");
+    },
+  });
+  const membership = createMembershipStore(db);
+  const poolAgentIds: string[] = [];
+  setRuntime({
+    db,
+    forks,
+    membership,
+    access: createAccessResolver({ membership, forks }),
+    getPoolAgentIds: () => poolAgentIds,
+  });
+  return { forks, poolAgentIds };
+}
+
+describe("agent access policy", () => {
+  it("treats a no-pool plain agent as Public", async () => {
+    createAgentAccessFixture();
+    const { canUserUseAgent } = await import("./runtime-state.js");
+    expect(canUserUseAgent("outsider", "plain")).toBe(true);
+  });
+
+  it.each(["user", "admin"])("grants %s access to a no-pool plain agent", async (role) => {
+    createAgentAccessFixture();
+    const { hasAgentAccess } = await import("./middleware.js");
+    expect(await hasAgentAccess({
+      user: { id: "outsider", role, approved: true },
+      session: { id: "session-1", userId: "outsider" },
+    }, "plain")).toBe(true);
+  });
+
+  it.each([false, true])("preserves Private and Public fork access with pool mode %s", async (poolMode) => {
+    const { forks, poolAgentIds } = createAgentAccessFixture();
+    if (poolMode) poolAgentIds.push("legacy");
+    const { canUserUseAgent } = await import("./runtime-state.js");
+    expect(canUserUseAgent("member", "legacy")).toBe(true);
+    expect(canUserUseAgent("outsider", "legacy")).toBe(false);
+
+    forks.setPublic("legacy", true);
+    expect(canUserUseAgent("outsider", "legacy")).toBe(true);
+  });
+
+  it.each([false, true])("keeps the agent gate scoped to recorded fork access with pool mode %s", async (poolMode) => {
+    const { forks, poolAgentIds } = createAgentAccessFixture();
+    if (poolMode) poolAgentIds.push("legacy");
+    const { hasAgentAccess } = await import("./middleware.js");
+    const context = (id: string, role: string) => ({
+      user: { id, role, approved: true },
+      session: { id: "session-1", userId: id },
+    });
+    for (const role of ["user", "admin"]) {
+      expect(await hasAgentAccess(context("member", role), "legacy")).toBe(true);
+      expect(await hasAgentAccess(context("outsider", role), "legacy")).toBe(false);
+    }
+    expect(await hasAgentAccess(context("outsider", "superadmin"), "legacy")).toBe(true);
+
+    forks.setPublic("legacy", true);
+    for (const role of ["user", "admin"]) {
+      expect(await hasAgentAccess(context("outsider", role), "legacy")).toBe(true);
+    }
+  });
+
+  it("uses the live pool catalog when plain-agent access changes", async () => {
+    const { poolAgentIds } = createAgentAccessFixture();
+    const { canUserUseAgent } = await import("./runtime-state.js");
+    expect(canUserUseAgent("outsider", "plain")).toBe(true);
+    poolAgentIds.push("template");
+    expect(canUserUseAgent("outsider", "plain")).toBe(false);
+    poolAgentIds.pop();
+    expect(canUserUseAgent("outsider", "plain")).toBe(true);
+  });
+
+  it("limits the admin template exception to unforked agents in the pool", async () => {
+    const { poolAgentIds } = createAgentAccessFixture();
+    poolAgentIds.push("template", "legacy");
+    const { hasAgentAccess } = await import("./middleware.js");
+    const { canUserUseAgent } = await import("./runtime-state.js");
+    const admin = {
+      user: { id: "outsider", role: "admin", approved: true },
+      session: { id: "session-1", userId: "outsider" },
+    };
+    expect(await hasAgentAccess(admin, "template")).toBe(true);
+    expect(await hasAgentAccess(admin, "legacy")).toBe(false);
+    expect(await hasAgentAccess(admin, "plain")).toBe(false);
+    expect(canUserUseAgent("outsider", "template")).toBe(false);
   });
 });

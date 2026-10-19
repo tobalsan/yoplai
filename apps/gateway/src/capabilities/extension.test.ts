@@ -1,5 +1,12 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import fs from "node:fs";
+import path from "node:path";
 import type { ExtensionAgentTool } from "@yoplai/shared";
+import { createAccessResolver } from "../../../../packages/extensions/multi-user/src/access.js";
+import { ASSIGNMENTS_TO_TEAMS_MIGRATION, initializeMultiUserDatabase, migrateAssignmentsToTeams } from "../../../../packages/extensions/multi-user/src/db.js";
+import { createForkStore } from "../../../../packages/extensions/multi-user/src/forks.js";
+import { createMembershipStore } from "../../../../packages/extensions/multi-user/src/membership.js";
+import { setMultiUserRuntime, type MultiUserRuntime } from "../../../../packages/extensions/multi-user/src/runtime-state.js";
 
 const loadCapabilityCatalog = vi.fn();
 const readMcpServerSources = vi.fn();
@@ -8,6 +15,7 @@ const mergeMcpServerConfig = vi.fn();
 const reloadExtensions = vi.fn();
 const logInfo = vi.fn();
 const getSessionHistory = vi.fn();
+let multiUserEnabled = false;
 
 vi.mock("./catalog.js", () => ({
   loadCapabilityCatalog,
@@ -26,7 +34,7 @@ vi.mock("../config/validate.js", () => ({
   resolveStartupConfig: async () => config,
 }));
 vi.mock("../extensions/registry.js", () => ({
-  isExtensionLoaded: () => false,
+  isExtensionLoaded: () => multiUserEnabled,
   reloadExtensions,
 }));
 vi.mock("../logging.js", () => ({ logInfo }));
@@ -43,10 +51,10 @@ const context = {
   userId: "user",
 };
 
-function tool(name: string) {
+function tool(name: string, agent = config.agents[0]) {
   return (
     capabilityDiscoveryExtension.getAgentTools!(
-      config.agents[0] as never
+      agent as never
     ) as ExtensionAgentTool[]
   ).find((candidate) => candidate.name === name)!;
 }
@@ -479,5 +487,141 @@ describe("capability discovery tools", () => {
         matchedCapabilityIds: expect.not.arrayContaining(["discord"]),
       })
     );
+  });
+});
+
+describe("multi-user capability self-enable", () => {
+  let db: ReturnType<typeof initializeMultiUserDatabase>;
+  let fixtureDir: string;
+  let poolAgentIds: string[];
+
+  beforeEach(() => {
+    multiUserEnabled = true;
+    fixtureDir = fs.mkdtempSync(path.join(process.cwd(), ".capability-test-"));
+    db = initializeMultiUserDatabase(path.join(fixtureDir, "auth.db"));
+    db.exec(`
+      CREATE TABLE user (id TEXT PRIMARY KEY, role TEXT);
+      INSERT INTO user (id, role) VALUES ('user', 'user'), ('member', 'user');
+      INSERT INTO agent_assignments (userId, agentId, assignedBy)
+      VALUES ('member', 'legacy', 'member');
+    `);
+    db.prepare("DELETE FROM schema_migrations WHERE name = ?").run(ASSIGNMENTS_TO_TEAMS_MIGRATION);
+    migrateAssignmentsToTeams(db);
+    const forks = createForkStore({
+      db,
+      getPoolAgent: () => null,
+      getForksDir: () => { throw new Error("Fixture must not create forks on disk"); },
+    });
+    const membership = createMembershipStore(db);
+    poolAgentIds = [];
+    setMultiUserRuntime({
+      db,
+      forks,
+      membership,
+      access: createAccessResolver({ membership, forks }),
+      getPoolAgentIds: () => poolAgentIds,
+    } as MultiUserRuntime);
+    updateAgentExtensionConfig.mockClear();
+    reloadExtensions.mockClear();
+    loadCapabilityCatalog.mockResolvedValue([
+      {
+        id: "sheets",
+        displayName: "Sheets",
+        description: "Edit spreadsheets.",
+        kind: "extension",
+        tools: [],
+        enableTier: "self-enable",
+        settingsPath: "/agents/support/extensions/sheets/config",
+        enabledOnAgents: [],
+        enabled: false,
+      },
+    ]);
+    getSessionHistory.mockResolvedValue([
+      { role: "user", content: "yes, enable sheets", timestamp: Date.now() - 1_000 },
+    ]);
+  });
+
+  afterEach(() => {
+    setMultiUserRuntime(null);
+    multiUserEnabled = false;
+    db.close();
+    fs.rmSync(fixtureDir, { recursive: true, force: true });
+  });
+
+  it("lets a user enable a capability on a no-pool plain agent", async () => {
+    const plainContext = { ...context, sessionId: "no-pool-plain" };
+    await tool("capabilities.list").execute(
+      { need: "spreadsheet" },
+      plainContext as never
+    );
+
+    await expect(
+      tool("capabilities.enable").execute(
+        { id: "sheets", kind: "extension" },
+        plainContext as never
+      )
+    ).resolves.toEqual({
+      outcome: "enabled",
+      reason: "Capability enabled for this agent.",
+    });
+    expect(updateAgentExtensionConfig).toHaveBeenCalledTimes(1);
+    expect(updateAgentExtensionConfig).toHaveBeenCalledWith(
+      "/tmp/support", "sheets", { enabled: true }
+    );
+    expect(reloadExtensions).toHaveBeenCalledTimes(1);
+    expect(reloadExtensions).toHaveBeenCalledWith(config);
+  });
+
+  it("refuses a no-pool Private legacy fork for a non-member", async () => {
+    const legacyAgent = { ...config.agents[0], id: "legacy", workspace: "/tmp/legacy" };
+    const legacyContext = {
+      ...context,
+      agent: legacyAgent,
+      config: { ...config, agents: [config.agents[0], legacyAgent] },
+      sessionId: "no-pool-restricted",
+    };
+    await tool("capabilities.list", legacyAgent).execute(
+      { need: "spreadsheet" },
+      legacyContext as never
+    );
+
+    await expect(
+      tool("capabilities.enable", legacyAgent).execute(
+        { id: "sheets", kind: "extension" },
+        legacyContext as never
+      )
+    ).resolves.toEqual({
+      outcome: "refused",
+      reason: "You are not allowed to configure this agent.",
+    });
+    expect(updateAgentExtensionConfig).not.toHaveBeenCalled();
+    expect(reloadExtensions).not.toHaveBeenCalled();
+  });
+
+  it("keeps refusing a pooled Private fork for a non-member", async () => {
+    poolAgentIds.push("legacy");
+    const legacyAgent = { ...config.agents[0], id: "legacy", workspace: "/tmp/legacy" };
+    const pooledContext = {
+      ...context,
+      agent: legacyAgent,
+      config: { ...config, agents: [config.agents[0], legacyAgent], pool: [legacyAgent] },
+      sessionId: "pooled-restricted",
+    };
+    await tool("capabilities.list", legacyAgent).execute(
+      { need: "spreadsheet" },
+      pooledContext as never
+    );
+
+    await expect(
+      tool("capabilities.enable", legacyAgent).execute(
+        { id: "sheets", kind: "extension" },
+        pooledContext as never
+      )
+    ).resolves.toEqual({
+      outcome: "refused",
+      reason: "You are not allowed to configure this agent.",
+    });
+    expect(updateAgentExtensionConfig).not.toHaveBeenCalled();
+    expect(reloadExtensions).not.toHaveBeenCalled();
   });
 });

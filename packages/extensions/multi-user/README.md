@@ -119,6 +119,14 @@ credentials/OAuth, or pause/resume/delete Team scheduled jobs. Public grants no
 management permission. Personal connections and member-level operations remain
 available to users who can chat the agent.
 
+When no agent pool is configured, agents without a fork record are treated as
+Public for access: every approved user and admin can list and use them, including
+HTTP/WebSocket chat, avatars and capability self-enable. Existing fork records,
+including same-id forks migrated from legacy assignments, keep their own Public
+or linked-team rules; inaccessible agents are hidden from the list. Pool behavior,
+approval checks and management permissions stay unchanged. An ordinary admin
+cannot manage team credentials on a plain agent without an owning fork team.
+
 The **All users** team flag remains a locked, live membership rule for all current
 and future users. The legacy team `private` API field remains inert and is hidden
 from the UI. Staff see a **No team** list including pending users; adding someone

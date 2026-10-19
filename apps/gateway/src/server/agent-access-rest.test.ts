@@ -4,6 +4,7 @@ import * as path from "node:path";
 import os from "node:os";
 import type { Context } from "hono";
 import type { AddressInfo } from "node:net";
+import { WebSocket } from "ws";
 import type {
   MultiUserRuntime,
 } from "../../../../packages/extensions/multi-user/src/runtime-state.js";
@@ -572,5 +573,262 @@ describe("REST per-agent access gating (multi-user)", () => {
       }),
     });
     expect(await put.json()).toEqual({ extensions: [], mcp: ["https://other.test/mcp"], system: { extensions: ["webhooks"], mcp: ["https://a.test/mcp"] } });
+  });
+});
+
+describe("agent access without a pool (mixed migrated and plain agents)", () => {
+  let tmpDir: string;
+  let previousEnv: Pick<NodeJS.ProcessEnv, "YOPLAI_HOME" | "HOME" | "USERPROFILE">;
+  let server: ReturnType<typeof import("./index.js").startServer>;
+  let baseUrl: string;
+  let clearRuntime: (() => void) | undefined;
+  const users = new Map<string, { id: string; cookie: string }>();
+  const avatar = '<svg xmlns="http://www.w3.org/2000/svg"><text>access-fixture</text></svg>';
+  const runAgent = vi.fn<typeof import("../agents/index.js").runAgent>();
+
+  beforeAll(async () => {
+    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-no-pool-access-"));
+    previousEnv = { YOPLAI_HOME: process.env.YOPLAI_HOME, HOME: process.env.HOME, USERPROFILE: process.env.USERPROFILE };
+    process.env.YOPLAI_HOME = path.join(tmpDir, ".yoplai");
+    process.env.HOME = tmpDir;
+    process.env.USERPROFILE = tmpDir;
+    await writeTestV3Config(process.env.YOPLAI_HOME, {
+      agents: ["plain-agent", "legacy-agent"].map((id) => ({ id, extraYaml: "avatar: avatar.svg" })),
+      extensions: { multiUser: {
+        enabled: true, autoApprove: false,
+        emailAndPassword: { enabled: true }, sessionSecret: "no-pool-test-session-secret-32-characters",
+      } },
+    });
+    for (const id of ["plain-agent", "legacy-agent"]) {
+      await fs.writeFile(path.join(process.env.YOPLAI_HOME, "agents", id, "avatar.svg"), avatar);
+    }
+    vi.resetModules();
+    vi.doUnmock("@yoplai/extension-multi-user");
+    vi.doMock("../agents/index.js", async () => ({
+      ...await vi.importActual<typeof import("../agents/index.js")>("../agents/index.js"),
+      runAgent,
+    }));
+    runAgent.mockImplementation(async (params) => {
+      params.onEvent?.({ type: "text", data: "dispatch-ok" });
+      params.onEvent?.({ type: "done", meta: { durationMs: 1 } });
+      return { payloads: [{ text: "dispatch-ok" }], meta: { durationMs: 1, sessionId: "dispatch-session" } };
+    });
+    const { clearConfigCacheForTests, loadConfig } = await import("../config/index.js");
+    clearConfigCacheForTests();
+    const config = loadConfig();
+    const dbMod = await import("../../../../packages/extensions/multi-user/src/db.js");
+    const { createMultiUserAuth } = await import("@yoplai/extension-multi-user");
+    const db = dbMod.initializeMultiUserDatabase(path.join(process.env.YOPLAI_HOME, "auth.db"));
+    const multiUser = config.extensions?.multiUser;
+    if (!multiUser?.enabled) throw new Error("Missing multi-user fixture config");
+    const auth = await createMultiUserAuth(config, multiUser, db);
+    for (const name of ["root", "alice", "mallory", "boss", "pending"]) {
+      const body = { name, email: `${name}@example.test`, password: "fixture-password-123" };
+      const signup = await auth.handler(new Request("http://127.0.0.1:4000/api/auth/sign-up/email", {
+        method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body),
+      }));
+      expect(signup.status).toBe(200);
+      const { user } = await signup.json() as { user: { id: string } };
+      if (name !== "pending") {
+        db.prepare("UPDATE user SET approved = 1, role = ? WHERE id = ?")
+          .run(name === "root" ? "superadmin" : name === "boss" ? "admin" : "user", user.id);
+      }
+      const signin = await auth.handler(new Request("http://127.0.0.1:4000/api/auth/sign-in/email", {
+        method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body),
+      }));
+      expect(signin.status).toBe(200);
+      users.set(name, { id: user.id, cookie: signin.headers.getSetCookie().map((value) => value.split(";")[0]).join("; ") });
+    }
+    // Exercise the same-id Private fork produced by the real legacy migration.
+    db.prepare("INSERT INTO agent_assignments (userId, agentId, assignedBy) VALUES (?, ?, ?)")
+      .run(users.get("alice")!.id, "legacy-agent", users.get("root")!.id);
+    db.prepare("DELETE FROM schema_migrations WHERE name = ?").run(dbMod.ASSIGNMENTS_TO_TEAMS_MIGRATION);
+    dbMod.migrateAssignmentsToTeams(db);
+    const { createForkStore } = await import("../../../../packages/extensions/multi-user/src/forks.js");
+    const { createMembershipStore } = await import("../../../../packages/extensions/multi-user/src/membership.js");
+    const { createAccessResolver } = await import("../../../../packages/extensions/multi-user/src/access.js");
+    const forks = createForkStore({ db, getForksDir: () => path.join(process.env.YOPLAI_HOME!, "agents"), getPoolAgent: () => null });
+    const membership = createMembershipStore(db);
+    const { setMultiUserRuntime } = await import("../../../../packages/extensions/multi-user/src/runtime-state.js");
+    setMultiUserRuntime({ auth, db, forks, membership, access: createAccessResolver({ forks, membership }), getPoolAgentIds: () => [] } as unknown as MultiUserRuntime);
+    clearRuntime = () => { setMultiUserRuntime(null); db.close(); };
+    const { startServer } = await import("./index.js");
+    server = startServer(0, "127.0.0.1");
+    await new Promise<void>((resolve) => server.listening ? resolve() : server.once("listening", resolve));
+    baseUrl = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+  });
+
+  afterAll(async () => {
+    if (server) await new Promise<void>((resolve) => server.close(() => resolve()));
+    clearRuntime?.();
+    vi.doUnmock("../agents/index.js");
+    vi.doUnmock("../extensions/registry.js");
+    for (const key of ["YOPLAI_HOME", "HOME", "USERPROFILE"] as const) {
+      if (previousEnv[key] === undefined) delete process.env[key];
+      else process.env[key] = previousEnv[key];
+    }
+    if (tmpDir) await fs.rm(tmpDir, { recursive: true, force: true });
+  });
+
+  function request(name: string, pathname: string, init?: RequestInit) {
+    return fetch(`${baseUrl}/api${pathname}`, { signal: AbortSignal.timeout(3000), ...init, headers: { cookie: users.get(name)!.cookie, "content-type": "application/json" } });
+  }
+
+  async function connect(name: string): Promise<WebSocket> {
+    const ws = new WebSocket(`${baseUrl.replace("http:", "ws:")}/ws`, { headers: { cookie: users.get(name)!.cookie }, handshakeTimeout: 2000 });
+    await new Promise<void>((resolve, reject) => { ws.once("open", resolve); ws.once("error", reject); });
+    return ws;
+  }
+
+  function receive(ws: WebSocket, action: () => void): Promise<Record<string, unknown>[]> {
+    return new Promise((resolve, reject) => {
+      const frames: Record<string, unknown>[] = [];
+      const timeout = setTimeout(() => { ws.off("message", onMessage); reject(new Error("WebSocket response hung")); }, 2000);
+      const onMessage = (raw: import("ws").RawData) => {
+        const frame = JSON.parse(raw.toString()) as Record<string, unknown>;
+        frames.push(frame);
+        if (frame.type === "done" || frame.type === "error" || frame.type === "text" && frame.data === "subscription-ok") {
+          clearTimeout(timeout);
+          ws.off("message", onMessage);
+          resolve(frames);
+        }
+      };
+      ws.on("message", onMessage);
+      action();
+    });
+  }
+
+  it("lists exactly the agents each user can open in a mixed no-pool instance", async () => {
+    for (const [name, expected] of [
+      ["alice", ["legacy-agent", "plain-agent"]],
+      ["mallory", ["plain-agent"]],
+      ["boss", ["plain-agent"]],
+      ["root", ["legacy-agent", "plain-agent"]],
+    ] as const) {
+      const list = await request(name, "/agents");
+      expect(list.status).toBe(200);
+      expect((await list.json() as { id: string }[]).map((agent) => agent.id).sort()).toEqual(expected);
+      for (const agent of ["plain-agent", "legacy-agent"]) {
+        expect((await request(name, `/agents/${agent}`)).status).toBe(expected.some((id) => id === agent) ? 200 : 403);
+      }
+    }
+  });
+
+  it("serves real avatars and session reads only for accessible agents", async () => {
+    for (const name of ["mallory", "boss", "alice", "root"]) {
+      for (const agent of ["plain-agent", "legacy-agent"]) {
+        const allowed = agent === "plain-agent" || name === "alice" || name === "root";
+        const image = await request(name, `/agents/${agent}/avatar`);
+        expect(image.status).toBe(allowed ? 200 : 403);
+        if (allowed) {
+          expect(image.headers.get("content-type")).toContain("image/svg+xml");
+          expect(await image.text()).toBe(avatar);
+        }
+        for (const route of ["history", "status"]) {
+          expect((await request(name, `/agents/${agent}/${route}`)).status).toBe(allowed ? 200 : 403);
+        }
+      }
+    }
+  });
+
+  it("dispatches HTTP chat for accessible agents and keeps working after a run failure", async () => {
+    for (const [name, agent] of [["mallory", "plain-agent"], ["boss", "plain-agent"], ["alice", "legacy-agent"]]) {
+      runAgent.mockClear();
+      const response = await request(name, `/agents/${agent}/messages`, {
+        method: "POST", body: JSON.stringify({ message: "hello", sessionId: "http-access" }),
+      });
+      expect(response.status).toBe(200);
+      expect(await response.json()).toEqual({ payloads: [{ text: "dispatch-ok" }], meta: { durationMs: 1, sessionId: "dispatch-session" } });
+      expect(runAgent).toHaveBeenCalledTimes(1);
+      expect(runAgent).toHaveBeenCalledWith(expect.objectContaining({ agentId: agent, userId: users.get(name)!.id, message: "hello" }));
+    }
+    runAgent.mockClear();
+    expect((await request("mallory", "/agents/legacy-agent/messages", { method: "POST", body: JSON.stringify({ message: "denied" }) })).status).toBe(403);
+    expect(runAgent).not.toHaveBeenCalled();
+    runAgent.mockRejectedValueOnce(new Error("fixture run failed"));
+    expect((await request("mallory", "/agents/plain-agent/messages", { method: "POST", body: JSON.stringify({ message: "failure", sessionId: "http-failure" }) })).status).toBe(500);
+    const retry = await request("mallory", "/agents/plain-agent/messages", { method: "POST", body: JSON.stringify({ message: "retry", sessionId: "http-retry" }) });
+    expect(retry.status).toBe(200);
+    expect(await retry.json()).toMatchObject({ payloads: [{ text: "dispatch-ok" }] });
+  });
+
+  it("denies a genuinely pending session through real HTTP auth and WebSocket validation", async () => {
+    runAgent.mockClear();
+    for (const route of ["/agents", "/agents/plain-agent", "/agents/plain-agent/avatar", "/agents/plain-agent/history"]) {
+      const response = await request("pending", route);
+      expect(response.status).toBe(403);
+      expect(await response.json()).toEqual({ error: "forbidden" });
+    }
+    expect((await request("pending", "/agents/plain-agent/messages", { method: "POST", body: JSON.stringify({ message: "pending" }) })).status).toBe(403);
+    const ws = new WebSocket(`${baseUrl.replace("http:", "ws:")}/ws`, { headers: { cookie: users.get("pending")!.cookie }, handshakeTimeout: 2000 });
+    try {
+      const status = await new Promise<number>((resolve, reject) => {
+        const timeout = setTimeout(() => reject(new Error("Pending WebSocket validation hung")), 2500);
+        ws.once("unexpected-response", (_request, response) => { clearTimeout(timeout); response.resume(); resolve(response.statusCode ?? 0); });
+        ws.once("open", () => { clearTimeout(timeout); reject(new Error("Pending user was allowed to connect")); });
+        ws.on("error", () => undefined);
+      });
+      expect(status).toBe(401);
+      expect(runAgent).not.toHaveBeenCalled();
+    } finally {
+      ws.terminate();
+    }
+  });
+
+  it("dispatches WebSocket chat for users and admins while restricting legacy forks", async () => {
+    for (const [name, agent] of [["mallory", "plain-agent"], ["boss", "plain-agent"], ["alice", "legacy-agent"], ["root", "legacy-agent"]]) {
+      const ws = await connect(name);
+      try {
+        runAgent.mockClear();
+        const frames = await receive(ws, () => ws.send(JSON.stringify({ type: "send", agentId: agent, message: "ws-hello", sessionId: "ws-access" })));
+        expect(frames).toEqual([{ type: "text", data: "dispatch-ok" }, { type: "done", meta: { durationMs: 1 } }]);
+        expect(runAgent).toHaveBeenCalledTimes(1);
+        expect(runAgent).toHaveBeenCalledWith(expect.objectContaining({ agentId: agent, userId: users.get(name)!.id, message: "ws-hello" }));
+      } finally {
+        ws.terminate();
+      }
+    }
+    for (const name of ["mallory", "boss"]) {
+      const ws = await connect(name);
+      try {
+        runAgent.mockClear();
+        for (const type of ["send", "subscribe"]) {
+          expect(await receive(ws, () => ws.send(JSON.stringify({ type, agentId: "legacy-agent", message: "denied", sessionId: "ws-access" })))).toEqual([{ type: "error", message: "Forbidden" }]);
+        }
+        expect(runAgent).not.toHaveBeenCalled();
+      } finally {
+        ws.terminate();
+      }
+    }
+  });
+
+  it("delivers subscribed updates to accessible no-pool agents", async () => {
+    const { agentEventBus } = await import("../agents/index.js");
+    for (const [name, agent] of [["mallory", "plain-agent"], ["boss", "plain-agent"], ["alice", "legacy-agent"]]) {
+      const ws = await connect(name);
+      try {
+        ws.send(JSON.stringify({ type: "subscribe", agentId: agent, sessionId: "subscription-access" }));
+        await new Promise<void>((resolve, reject) => {
+          const timeout = setTimeout(() => reject(new Error("WebSocket ping hung")), 2000);
+          ws.once("pong", () => { clearTimeout(timeout); resolve(); });
+          ws.ping();
+        });
+        expect(await receive(ws, () => agentEventBus.emitStreamEvent({ type: "text", data: "subscription-ok", agentId: agent, sessionId: "subscription-access" }))).toEqual([{ type: "text", data: "subscription-ok" }]);
+      } finally {
+        ws.terminate();
+      }
+    }
+  });
+
+  it("keeps the WebSocket usable after an allowed run fails", async () => {
+    const ws = await connect("mallory");
+    try {
+      runAgent.mockRejectedValueOnce(new Error("fixture WS run failed"));
+      const send = () => ws.send(JSON.stringify({ type: "send", agentId: "plain-agent", message: "retry", sessionId: "ws-retry" }));
+      expect(await receive(ws, send)).toEqual([{ type: "error", message: "fixture WS run failed" }]);
+      expect(await receive(ws, send)).toEqual([{ type: "text", data: "dispatch-ok" }, { type: "done", meta: { durationMs: 1 } }]);
+    } finally {
+      ws.terminate();
+    }
   });
 });

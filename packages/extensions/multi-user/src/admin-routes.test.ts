@@ -4,6 +4,7 @@ import Database from "better-sqlite3";
 import { ensureTeamMembersTable, ensureTeamsTable } from "./db.js";
 import { createTeamStore } from "./teams.js";
 import { createMembershipStore } from "./membership.js";
+import type { MultiUserRuntime } from "./runtime-state.js";
 
 function createInMemoryTeamStore(extraUserIds: string[] = []) {
   const db = new Database(":memory:");
@@ -19,18 +20,18 @@ function createInMemoryTeamStore(extraUserIds: string[] = []) {
   return { teams, membership };
 }
 
-const getMultiUserRuntime = vi.fn();
+async function setRuntime(runtime: unknown): Promise<void> {
+  const { setMultiUserRuntime } = await import("./runtime-state.js");
+  setMultiUserRuntime(runtime as MultiUserRuntime | null);
+}
 const getAgent = vi.fn();
 const getActiveAgents = vi.fn();
 const getLoadedExtensions = vi.fn();
 
-vi.mock("./runtime-state.js", () => ({
-  getMultiUserRuntime,
-}));
-
 vi.mock("./index.js", async () => {
   const actual =
     await vi.importActual<typeof import("./index.js")>("./index.js");
+  const { getMultiUserRuntime } = await import("./runtime-state.js");
   return {
     ...actual,
     getAgentFilter:
@@ -316,7 +317,6 @@ function encodeAuthHeader(value: unknown) {
 }
 
 beforeEach(() => {
-  vi.resetModules();
   vi.clearAllMocks();
   getAgent.mockImplementation((agentId: string) =>
     [
@@ -341,14 +341,15 @@ beforeEach(() => {
   getLoadedExtensions.mockReturnValue([{ id: "multiUser" }]);
 });
 
-afterEach(() => {
+afterEach(async () => {
+  await setRuntime(null);
   vi.clearAllMocks();
 });
 
 describe("multi-user admin routes", () => {
   it("audits effective admin changes once with before/after and actor", async () => {
     const runtime = createRuntime();
-    getMultiUserRuntime.mockReturnValue(runtime.runtime);
+    await setRuntime(runtime.runtime);
     const { registerMultiUserRoutes } = await importAdminRoutes();
     const { createAuthMiddleware } = await importAuthMiddleware();
     const app = createAdminApp();
@@ -397,7 +398,7 @@ describe("multi-user admin routes", () => {
 
   it("admin can list users", async () => {
     const runtime = createRuntime();
-    getMultiUserRuntime.mockReturnValue(runtime.runtime);
+    await setRuntime(runtime.runtime);
 
     const { registerMultiUserRoutes } = await importAdminRoutes();
     const { createAuthMiddleware } = await importAuthMiddleware();
@@ -424,7 +425,7 @@ describe("multi-user admin routes", () => {
   it("superadmin can start impersonation for another user", async () => {
     vi.spyOn(console, "info").mockImplementation(() => undefined);
     const runtime = createRuntime({ session: createSession("superadmin") });
-    getMultiUserRuntime.mockReturnValue(runtime.runtime);
+    await setRuntime(runtime.runtime);
 
     const { registerMultiUserRoutes } = await importAdminRoutes();
     const { createAuthMiddleware } = await importAuthMiddleware();
@@ -452,7 +453,7 @@ describe("multi-user admin routes", () => {
 
   it("rejects self impersonation", async () => {
     const runtime = createRuntime({ session: createSession("superadmin") });
-    getMultiUserRuntime.mockReturnValue(runtime.runtime);
+    await setRuntime(runtime.runtime);
 
     const { registerMultiUserRoutes } = await importAdminRoutes();
     const { createAuthMiddleware } = await importAuthMiddleware();
@@ -479,7 +480,7 @@ describe("multi-user admin routes", () => {
 
   it("admin can approve and reject a user", async () => {
     const runtime = createRuntime();
-    getMultiUserRuntime.mockReturnValue(runtime.runtime);
+    await setRuntime(runtime.runtime);
 
     const { registerMultiUserRoutes } = await importAdminRoutes();
     const { createAuthMiddleware } = await importAuthMiddleware();
@@ -525,7 +526,7 @@ describe("multi-user admin routes", () => {
     role: string
   ) {
     const runtime = createRuntime({ session });
-    getMultiUserRuntime.mockReturnValue(runtime.runtime);
+    await setRuntime(runtime.runtime);
 
     const { registerMultiUserRoutes } = await importAdminRoutes();
     const { createAuthMiddleware } = await importAuthMiddleware();
@@ -609,7 +610,7 @@ describe("multi-user admin routes", () => {
         },
       ],
     });
-    getMultiUserRuntime.mockReturnValue(runtime.runtime);
+    await setRuntime(runtime.runtime);
 
     const { registerMultiUserRoutes } = await importAdminRoutes();
     const { createAuthMiddleware } = await importAuthMiddleware();
@@ -644,7 +645,7 @@ describe("multi-user admin routes", () => {
 
   it("admin can still approve users (non-role change)", async () => {
     const runtime = createRuntime({ session: createSession("admin") });
-    getMultiUserRuntime.mockReturnValue(runtime.runtime);
+    await setRuntime(runtime.runtime);
 
     const { registerMultiUserRoutes } = await importAdminRoutes();
     const { createAuthMiddleware } = await importAuthMiddleware();
@@ -676,7 +677,7 @@ describe("multi-user admin routes", () => {
   it("admin can list and set agent assignments", async () => {
     const runtime = createRuntime();
     runtime.assignmentStore.seed("agent-a", ["user-1"]);
-    getMultiUserRuntime.mockReturnValue(runtime.runtime);
+    await setRuntime(runtime.runtime);
 
     const { registerMultiUserRoutes } = await importAdminRoutes();
     const { createAuthMiddleware } = await importAuthMiddleware();
@@ -719,7 +720,7 @@ describe("multi-user admin routes", () => {
 
   it("rejects unknown user ids when setting agent assignments", async () => {
     const runtime = createRuntime();
-    getMultiUserRuntime.mockReturnValue(runtime.runtime);
+    await setRuntime(runtime.runtime);
 
     const { registerMultiUserRoutes } = await importAdminRoutes();
     const { createAuthMiddleware } = await importAuthMiddleware();
@@ -750,7 +751,7 @@ describe("multi-user admin routes", () => {
 
   it("admin can create, edit, list and delete a team", async () => {
     const runtime = createRuntime();
-    getMultiUserRuntime.mockReturnValue(runtime.runtime);
+    await setRuntime(runtime.runtime);
 
     const { registerMultiUserRoutes } = await importAdminRoutes();
     const { createAuthMiddleware } = await importAuthMiddleware();
@@ -817,7 +818,7 @@ describe("multi-user admin routes", () => {
   it("rejects nonboolean privacy on create and PATCH", async () => {
     const runtime = createRuntime();
     const team = runtime.teams.createTeam({ name: "Platform", createdBy: "admin-1" });
-    getMultiUserRuntime.mockReturnValue(runtime.runtime);
+    await setRuntime(runtime.runtime);
     const { registerMultiUserRoutes } = await importAdminRoutes();
     const { createAuthMiddleware } = await importAuthMiddleware();
     const app = createAdminApp();
@@ -841,7 +842,7 @@ describe("multi-user admin routes", () => {
 
   it("rejects a duplicate team name with 409", async () => {
     const runtime = createRuntime();
-    getMultiUserRuntime.mockReturnValue(runtime.runtime);
+    await setRuntime(runtime.runtime);
     runtime.teams.createTeam({ name: "Alpha", createdBy: "admin-1" });
 
     const { registerMultiUserRoutes } = await importAdminRoutes();
@@ -872,7 +873,7 @@ describe("multi-user admin routes", () => {
     });
     runtime.membership.setMembers(allUsersTeam.id, { mode: "all" }, "admin-1");
     runtime.membership.setMembers(otherTeam.id, { mode: "list", userIds: ["user-2"] }, "admin-1");
-    getMultiUserRuntime.mockReturnValue(runtime.runtime);
+    await setRuntime(runtime.runtime);
 
     const { registerMultiUserRoutes } = await importAdminRoutes();
     const { createAuthMiddleware } = await importAuthMiddleware();
@@ -892,7 +893,7 @@ describe("multi-user admin routes", () => {
 
   it("returns 404 when editing a missing team", async () => {
     const runtime = createRuntime();
-    getMultiUserRuntime.mockReturnValue(runtime.runtime);
+    await setRuntime(runtime.runtime);
 
     const { registerMultiUserRoutes } = await importAdminRoutes();
     const { createAuthMiddleware } = await importAuthMiddleware();
@@ -917,7 +918,7 @@ describe("multi-user admin routes", () => {
       private: true,
       createdBy: "admin-1",
     });
-    getMultiUserRuntime.mockReturnValue(runtime.runtime);
+    await setRuntime(runtime.runtime);
 
     const { registerMultiUserRoutes } = await importAdminRoutes();
     const { createAuthMiddleware } = await importAuthMiddleware();
@@ -935,7 +936,7 @@ describe("multi-user admin routes", () => {
 
   it("non-admin cannot mutate teams (403)", async () => {
     const runtime = createRuntime({ session: createSession("user") });
-    getMultiUserRuntime.mockReturnValue(runtime.runtime);
+    await setRuntime(runtime.runtime);
 
     const { registerMultiUserRoutes } = await importAdminRoutes();
     const { createAuthMiddleware } = await importAuthMiddleware();
@@ -959,7 +960,7 @@ describe("multi-user admin routes", () => {
     const own = runtime.teams.createTeam({ name: "Own", createdBy: "superadmin-1" });
     const other = runtime.teams.createTeam({ name: "Other", createdBy: "superadmin-1" });
     runtime.runtime.membership.setMembers(own.id, { mode: "list", userIds: ["admin-1"] }, "superadmin-1");
-    getMultiUserRuntime.mockReturnValue(runtime.runtime);
+    await setRuntime(runtime.runtime);
 
     const { registerMultiUserRoutes } = await importAdminRoutes();
     const { createAuthMiddleware } = await importAuthMiddleware();
@@ -984,7 +985,7 @@ describe("multi-user admin routes", () => {
   it("admin sets and removes team members", async () => {
     const runtime = createRuntime();
     const team = runtime.teams.createTeam({ name: "Platform", createdBy: "admin-1" });
-    getMultiUserRuntime.mockReturnValue(runtime.runtime);
+    await setRuntime(runtime.runtime);
 
     const { registerMultiUserRoutes } = await importAdminRoutes();
     const { createAuthMiddleware } = await importAuthMiddleware();
@@ -1034,7 +1035,7 @@ describe("multi-user admin routes", () => {
   it("sets All users, returns the full roster, and rejects individual removal", async () => {
     const runtime = createRuntime();
     const team = runtime.teams.createTeam({ name: "Platform", createdBy: "admin-1" });
-    getMultiUserRuntime.mockReturnValue(runtime.runtime);
+    await setRuntime(runtime.runtime);
 
     const { registerMultiUserRoutes } = await importAdminRoutes();
     const { createAuthMiddleware } = await importAuthMiddleware();
@@ -1065,7 +1066,7 @@ describe("multi-user admin routes", () => {
       createdBy: "admin-1",
     });
     runtime.membership.setMembers(team.id, { mode: "list", userIds: ["user-1"] }, "admin-1");
-    getMultiUserRuntime.mockReturnValue(runtime.runtime);
+    await setRuntime(runtime.runtime);
 
     const { registerMultiUserRoutes } = await importAdminRoutes();
     const { createAuthMiddleware } = await importAuthMiddleware();
@@ -1103,7 +1104,7 @@ describe("multi-user admin routes", () => {
       name: "Platform",
       createdBy: "admin-1",
     });
-    getMultiUserRuntime.mockReturnValue(runtime.runtime);
+    await setRuntime(runtime.runtime);
 
     const { registerMultiUserRoutes } = await importAdminRoutes();
     const { createAuthMiddleware } = await importAuthMiddleware();
@@ -1136,7 +1137,7 @@ describe("multi-user admin routes", () => {
       name: "Platform",
       createdBy: "admin-1",
     });
-    getMultiUserRuntime.mockReturnValue(runtime.runtime);
+    await setRuntime(runtime.runtime);
 
     const { registerMultiUserRoutes } = await importAdminRoutes();
     const { createAuthMiddleware } = await importAuthMiddleware();
@@ -1162,7 +1163,7 @@ describe("multi-user admin routes", () => {
       createdBy: "admin-1",
     });
     runtime.membership.setMembers(team.id, { mode: "list", userIds: ["user-1"] }, "admin-1");
-    getMultiUserRuntime.mockReturnValue(runtime.runtime);
+    await setRuntime(runtime.runtime);
 
     const { registerMultiUserRoutes } = await importAdminRoutes();
     const { createAuthMiddleware } = await importAuthMiddleware();
@@ -1183,7 +1184,7 @@ describe("multi-user admin routes", () => {
 
   it("non-admin gets 403 on admin routes", async () => {
     const runtime = createRuntime({ session: createSession("user") });
-    getMultiUserRuntime.mockReturnValue(runtime.runtime);
+    await setRuntime(runtime.runtime);
 
     const { registerMultiUserRoutes } = await importAdminRoutes();
     const { createAuthMiddleware } = await importAuthMiddleware();
@@ -1204,7 +1205,7 @@ describe("multi-user admin routes", () => {
     const runtime = createRuntime({ session: createSession("user") });
     runtime.assignmentStore.seed("agent-a", ["user-1"]);
     runtime.assignmentStore.seed("agent-b", ["user-1", "user-2"]);
-    getMultiUserRuntime.mockReturnValue(runtime.runtime);
+    await setRuntime(runtime.runtime);
 
     const { registerMultiUserRoutes } = await importAdminRoutes();
     const { createAuthMiddleware } = await importAuthMiddleware();
@@ -1232,7 +1233,7 @@ describe("multi-user api core", () => {
   it("/api/agents filters assignments for non-admin users", async () => {
     const runtime = createRuntime();
     runtime.assignmentStore.seed("agent-b", ["user-1"]);
-    getMultiUserRuntime.mockReturnValue(runtime.runtime);
+    await setRuntime(runtime.runtime);
 
     const { api } =
       await import("../../../../apps/gateway/src/server/api.core.js");
@@ -1263,7 +1264,7 @@ describe("multi-user api core", () => {
   it("/api/agents stays unfiltered for admins", async () => {
     const runtime = createRuntime();
     runtime.assignmentStore.seed("agent-b", ["user-1"]);
-    getMultiUserRuntime.mockReturnValue(runtime.runtime);
+    await setRuntime(runtime.runtime);
 
     const { api } =
       await import("../../../../apps/gateway/src/server/api.core.js");
@@ -1295,7 +1296,7 @@ describe("multi-user api core", () => {
   it("/api/agents/status filters assignments for non-admin users", async () => {
     const runtime = createRuntime();
     runtime.assignmentStore.seed("agent-b", ["user-1"]);
-    getMultiUserRuntime.mockReturnValue(runtime.runtime);
+    await setRuntime(runtime.runtime);
 
     const { api } =
       await import("../../../../apps/gateway/src/server/api.core.js");
@@ -1328,7 +1329,7 @@ describe("multi-user api core", () => {
   it("/api/capabilities includes multi-user info", async () => {
     const runtime = createRuntime();
     runtime.assignmentStore.seed("agent-b", ["user-1"]);
-    getMultiUserRuntime.mockReturnValue(runtime.runtime);
+    await setRuntime(runtime.runtime);
 
     const { api } =
       await import("../../../../apps/gateway/src/server/api.core.js");
