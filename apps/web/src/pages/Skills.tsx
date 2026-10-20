@@ -94,7 +94,7 @@ export function Skills() {
   };
   const createChat = (agentId: string) => {
     startNewChat(agentId);
-    navigate(`/chat/${encodeURIComponent(agentId)}`, { state: { initialMessage: CREATE_SKILL_PROMPT } });
+    navigate(`/chat/${encodeURIComponent(agentId)}`, { state: { draftMessage: CREATE_SKILL_PROMPT } });
   };
   const createSkill = async () => {
     setAdding(false); setBusy("create"); setError("");

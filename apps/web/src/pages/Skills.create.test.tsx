@@ -41,27 +41,31 @@ beforeEach(() => {
   }));
 });
 afterEach(() => { dispose?.(); root.remove(); resetCapabilitiesForTests(); vi.unstubAllGlobals(); });
+const PROMPT = "Help me create a skill. Let's start with you interviewing me to understand what the skill should do.";
+const input = () => document.body.querySelector("textarea");
 function click(label: string) {
   const button = Array.from(document.body.querySelectorAll("button")).find((element) => element.getAttribute("aria-label") === label || element.textContent?.trim() === label);
   expect(button, label).toBeDefined(); button!.click();
 }
 describe("Create skill", () => {
-  it("opens a fresh chat with the main agent and sends the interview exactly once", async () => {
+  it("opens a fresh chat with the main agent and fills in the prompt without sending it", async () => {
     dispose = render(() => <Router><Route path="/skills" component={Skills} /><Route path="/chat/:agentId" component={ChatView} /></Router>, root);
     await vi.waitFor(() => expect(root.textContent).toContain("No skills yet."));
     click("Add skill"); click("Create skill");
-    await vi.waitFor(() => expect(frames.filter((frame) => frame.type === "send")).toHaveLength(1));
-    expect(frames.find((frame) => frame.type === "send")).toMatchObject({ agentId: "sage", message: "Help me create a skill. Let's start with you interviewing me to understand what the skill should do." });
-    expect(String(frames.find((frame) => frame.type === "send")?.sessionKey)).toMatch(/^web-/);
+    await vi.waitFor(() => expect(input()?.value).toBe(PROMPT));
+    expect(location.pathname).toBe("/chat/sage");
+    expect(frames.filter((frame) => frame.type === "send")).toHaveLength(0);
   });
-  it("asks for an agent when no main agent is set, then sends the interview", async () => {
+  it("asks for an agent when no main agent is set, then fills in the prompt", async () => {
     mainAgentId = null;
     dispose = render(() => <Router><Route path="/skills" component={Skills} /><Route path="/chat/:agentId" component={ChatView} /></Router>, root);
     await vi.waitFor(() => expect(root.textContent).toContain("No skills yet."));
     click("Add skill"); click("Create skill");
     await vi.waitFor(() => expect(document.body.textContent).toContain("Create skill: choose an agent"));
     expect(frames.filter((frame) => frame.type === "send")).toHaveLength(0); click("Sage");
-    await vi.waitFor(() => expect(frames.find((frame) => frame.type === "send")).toMatchObject({ agentId: "sage", message: "Help me create a skill. Let's start with you interviewing me to understand what the skill should do." }));
+    await vi.waitFor(() => expect(input()?.value).toBe(PROMPT));
+    expect(location.pathname).toBe("/chat/sage");
+    expect(frames.filter((frame) => frame.type === "send")).toHaveLength(0);
   });
   it("offers skill-capable agents when the main agent is OpenClaw", async () => {
     mainAgentId = "claw"; includeOpenClaw = true;
@@ -69,7 +73,8 @@ describe("Create skill", () => {
     await vi.waitFor(() => expect(root.textContent).toContain("No skills yet.")); click("Add skill"); click("Create skill");
     await vi.waitFor(() => expect(document.body.textContent).toContain("Create skill: choose an agent"));
     expect(Array.from(document.body.querySelectorAll("button")).some((button) => button.textContent === "Claw")).toBe(false);
-    click("Sage"); await vi.waitFor(() => expect(frames.find((frame) => frame.type === "send")?.agentId).toBe("sage"));
+    click("Sage"); await vi.waitFor(() => expect(input()?.value).toBe(PROMPT));
+    expect(location.pathname).toBe("/chat/sage");
   });
   it("explains the alternatives when no agent supports skills", async () => {
     mainAgentId = "claw"; includeOpenClaw = true; onlyOpenClaw = true;
