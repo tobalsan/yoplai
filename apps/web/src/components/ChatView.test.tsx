@@ -351,6 +351,27 @@ describe("ChatView abort handling", () => {
     dispose();
   });
 
+  it.each(["simple", "full"])("does not offer copying a failed %s turn while history reload is delayed", async (mode) => {
+    routeState.view = mode;
+    let onError: ((text: string) => void) | undefined;
+    streamMessageMock.mockImplementation((_id, _message, _key, _onText, _onDone, callback) => {
+      onError = callback;
+      return () => {};
+    });
+    const { container, dispose } = renderView();
+    await tick(); await tick();
+    const input = queryByRole(container, "textbox") as HTMLTextAreaElement;
+    input.value = "Question";
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    queryByRole(container, "button", { name: "Send message" })!.click();
+    await waitFor(() => expect(onError).toBeDefined());
+    fetchFullHistoryMock.mockImplementation(() => new Promise(() => {}));
+    onError!("The AI service is temporarily unavailable.");
+    await waitFor(() => expect(container.textContent).toContain("The AI service is temporarily unavailable."));
+    expect(queryByRole(container, "button", { name: "Copy reply" })).toBeNull();
+    dispose();
+  });
+
   it("links the settings cog to the agent edit page", async () => {
     const { container, dispose } = renderView();
     await waitFor(() => expect(container.querySelector('a[aria-label="Agent settings"]')).not.toBeNull());
@@ -2053,6 +2074,25 @@ describe("ChatView abort handling", () => {
       callbacks: () => callbacks,
     };
   }
+
+  it("does not offer copying a queued failure while history reload is delayed", async () => {
+    const { container, dispose } = await startFullStream();
+    let onError: ((text: string) => void) | undefined;
+    streamMessageMock.mockImplementation((_id, _message, _key, _onText, _onDone, callback) => {
+      onError = callback;
+      return () => {};
+    });
+    const input = queryByRole(container, "textbox") as HTMLTextAreaElement;
+    input.value = "Pending question";
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+    await waitFor(() => expect(onError).toBeDefined());
+    fetchFullHistoryMock.mockImplementation(() => new Promise(() => {}));
+    onError!("The queued request failed.");
+    await waitFor(() => expect(container.textContent).toContain("The queued request failed."));
+    expect(queryByRole(container, "button", { name: "Copy reply" })).toBeNull();
+    dispose();
+  });
 
   it.each(["simple", "full"])("copies one complete %s reply when a user queued a message mid-turn", async (mode) => {
     routeState.view = mode;

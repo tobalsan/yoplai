@@ -967,7 +967,7 @@ export function ChatView() {
   void refreshToolLabels();
   const params = useParams<{ agentId: string; view?: string }>();
   const navigate = useNavigate();
-  const location = useLocation<{ mainAgentHome?: boolean }>();
+  const location = useLocation<{ mainAgentHome?: boolean; draftMessage?: string }>();
   const [agent] = createResource(() => params.agentId, fetchAgent);
   // Settings live on the pool agent in forked mode; the chat agent is a fork.
   const [settingsPoolActions] = createResource(
@@ -1268,6 +1268,7 @@ export function ChatView() {
 
   const visibleFullMessages = fullMessages;
   const copyTurnOverrides = new WeakMap<object, number>();
+  const copyExcludedMessages = new WeakSet<object>();
   const [streamingCopyTurnTimestamp, setStreamingCopyTurnTimestamp] = createSignal<number>();
   const activeCopyTurnTimestamp = (messages: { role: string; timestamp: number }[]) => {
     if (!isStreaming()) return Infinity;
@@ -1301,13 +1302,13 @@ export function ChatView() {
   const simpleCopyReplies = createMemo(() => copyReplies<SimpleViewMessage>(simpleMessages().map((message) => ({
     role: message.role,
     timestamp: message.timestamp,
-    blocks: message.role === "assistant" && !message.meta?.failure
+    blocks: message.role === "assistant" && !message.meta?.failure && !copyExcludedMessages.has(message)
       ? [{ key: message, text: message.content }] : [],
   })), activeCopyTurnTimestamp(simpleMessages())));
   const fullCopyReplies = createMemo(() => copyReplies(fullMessages().map((message) => ({
     role: message.role,
     timestamp: message.timestamp,
-    blocks: message.role === "assistant" && !message.meta?.failure
+    blocks: message.role === "assistant" && !message.meta?.failure && !copyExcludedMessages.has(message)
       ? message.content.flatMap((block) => block.type === "text" ? [{ key: block as ContentBlock, text: block.text }] : block.type === "file" ? [{ key: block as ContentBlock }] : [])
       : [],
   })), activeCopyTurnTimestamp(fullMessages())));
@@ -2663,15 +2664,14 @@ export function ChatView() {
             return;
           }
           const content = error;
-          setSimpleMessages((prev) => [
-            ...prev,
-            {
-              id: crypto.randomUUID(),
-              role: "assistant",
-              content,
-              timestamp: Date.now(),
-            },
-          ]);
+          const notice: Message = {
+            id: crypto.randomUUID(),
+            role: "assistant",
+            content,
+            timestamp: Date.now(),
+          };
+          copyExcludedMessages.add(notice);
+          setSimpleMessages((prev) => [...prev, notice]);
           resetStreamingState();
           void loadHistory(viewMode());
           if (queueCleanup) queueCleanup();
@@ -2863,23 +2863,21 @@ export function ChatView() {
       (error) => {
         if (!isCurrentDirectStream()) return;
         const content = error;
-        setSimpleMessages((prev) => [
-          ...prev,
-          {
-            id: crypto.randomUUID(),
-            role: "assistant",
-            content,
-            timestamp: Date.now(),
-          },
-        ]);
-        setFullMessages((prev) => [
-          ...prev,
-          {
-            role: "assistant",
-            content: [{ type: "text", text: content }],
-            timestamp: Date.now(),
-          },
-        ]);
+        const notice: Message = {
+          id: crypto.randomUUID(),
+          role: "assistant",
+          content,
+          timestamp: Date.now(),
+        };
+        const fullNotice: FullHistoryMessage = {
+          role: "assistant",
+          content: [{ type: "text", text: content }],
+          timestamp: Date.now(),
+        };
+        copyExcludedMessages.add(notice);
+        copyExcludedMessages.add(fullNotice);
+        setSimpleMessages((prev) => [...prev, notice]);
+        setFullMessages((prev) => [...prev, fullNotice]);
         resetStreamingState();
         void loadHistory(viewMode());
         cleanup = null;
@@ -3019,6 +3017,16 @@ export function ChatView() {
     navigate(`/chat/${encodeURIComponent(agentId)}`);
     requestAnimationFrame(() => textareaRef?.focus());
   };
+
+  let draftMessageUsed = false;
+  createEffect(() => {
+    const message = location.state?.draftMessage;
+    if (!message || draftMessageUsed || loading() || !agent()) return;
+    draftMessageUsed = true;
+    navigate(`${location.pathname}${location.search}`, { replace: true, state: { mainAgentHome: location.state?.mainAgentHome } });
+    if (simpleMessages().length || fullMessages().length) return;
+    prefillSuggestion(message);
+  });
 
   return (
     <div

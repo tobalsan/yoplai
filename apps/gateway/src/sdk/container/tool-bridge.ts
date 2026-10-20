@@ -3,6 +3,7 @@ import { getExtensionSystemPromptContributions } from "../../extensions/prompts.
 import { getExtensionAgentTools } from "../../extensions/tools.js";
 import type { SdkRunParams } from "../types.js";
 import { projectTools } from "../../chat-projects/tools.js";
+import { skillSaveTool } from "../../skills/tools.js";
 
 export class ContainerToolBridge {
   async buildSystemPrompts(
@@ -36,6 +37,7 @@ export class ContainerToolBridge {
       description: "Extract normalized text from a PDF under /workspace, /workspace/data, or /workspace/uploads.",
       parameters: { type: "object", properties: { path: { type: "string", description: "Absolute container path to a PDF" } }, required: ["path"] },
     }];
+    gatewayTools.push(skillSaveTool);
     if (includeDescribeImage) gatewayTools.push({
       extensionId: "gateway", name: "describe_image", description: "Describe an image under /workspace, optionally answering a specific question.",
       parameters: { type: "object", properties: { path: { type: "string", description: "Absolute container image path" }, question: { type: "string" } }, required: ["path"] },

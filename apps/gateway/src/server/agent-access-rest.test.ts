@@ -767,6 +767,15 @@ describe("agent access without a pool (mixed migrated and plain agents)", () => 
     expect(await retry.json()).toMatchObject({ payloads: [{ text: "dispatch-ok" }] });
   });
 
+  it("keeps global authentication and account eligibility on dashboard pin routes", async () => {
+    for (const method of ["PUT", "DELETE"]) {
+      const unauthenticated = await fetch(`${baseUrl}/api/dashboards/unknown/pin`, { method });
+      expect(unauthenticated.status).toBe(401);
+      expect((await request("pending", "/dashboards/unknown/pin", { method })).status).toBe(403);
+      expect((await request("alice", "/dashboards/unknown/pin", { method })).status).toBe(404);
+    }
+  });
+
   it("denies a genuinely pending session through real HTTP auth and WebSocket validation", async () => {
     runAgent.mockClear();
     for (const route of ["/agents", "/agents/plain-agent", "/agents/plain-agent/avatar", "/agents/plain-agent/history"]) {

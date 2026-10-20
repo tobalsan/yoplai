@@ -16,6 +16,7 @@ import {
 import { dashboardHtml, listAgentDashboards } from "./list.js";
 import { dashboardAccessPolicy, type DashboardActor } from "./policy.js";
 import { DashboardRegistry } from "./store.js";
+import { DashboardPinStore } from "./pins.js";
 import { executeDashboardQueries } from "./sql.js";
 
 // Versions are cached for a week; bump when the kit changes. Older versions keep
@@ -192,7 +193,7 @@ async function routeActor(deps: DashboardRouteDependencies, auth: unknown, agent
   return { eligible: true, hasAgentAccess: !!agentId && await deps.hasAgentAccess(auth, agentId) };
 }
 
-export function createDashboardResourceRoutes(deps: DashboardRouteDependencies): Hono {
+export function createDashboardResourceRoutes(deps: DashboardRouteDependencies & { pins: DashboardPinStore }): Hono {
   const routes = new Hono();
   routes.use("*", async (c, next) => {
     if (deps.getConfig().canvas?.enabled === false) return c.notFound();
@@ -204,6 +205,7 @@ export function createDashboardResourceRoutes(deps: DashboardRouteDependencies):
     if (!auth) return c.json({ error: "unauthorized" }, 401);
     const actor = await routeActor(deps, auth);
     if (!actor.eligible) return c.json({ error: "account_ineligible" }, 403);
+    const pins = actor.userId ? await deps.pins.list(actor.userId) : new Set<string>();
     const owned = [];
     const shared = [];
     const entries = (await deps.registry.all()).filter((entry) => entry.ownerUserId &&
@@ -216,8 +218,9 @@ export function createDashboardResourceRoutes(deps: DashboardRouteDependencies):
       const rows = await listAgentDashboards(agent, deps.registry, deps.getConfig(), { actor: await routeActor(deps, auth, agentId), ownerName: deps.getOwnerName });
       for (const row of rows) {
         if (row.legacy || !listedIds.has(row.id)) continue;
-        if (row.isOwner) owned.push(row);
-        else shared.push(row);
+        const dashboard = { ...row, pinned: pins.has(row.id) };
+        if (row.isOwner) owned.push(dashboard);
+        else shared.push(dashboard);
       }
     }
     return c.json({ owned, shared });
@@ -227,6 +230,18 @@ export function createDashboardResourceRoutes(deps: DashboardRouteDependencies):
     if (!auth) return c.json({ error: "unauthorized" }, 401);
     if (!(await routeActor(deps, auth)).eligible) return c.json({ error: "account_ineligible" }, 403);
     return c.json({ users: await deps.listRecipients?.() ?? [] });
+  });
+  routes.on(["PUT", "DELETE"], "/:id/pin", async (c) => {
+    const auth = await deps.authenticate(c.req.raw);
+    if (!auth) return c.json({ error: "unauthorized" }, 401);
+    if (!(await routeActor(deps, auth)).eligible) return c.json({ error: "account_ineligible" }, 403);
+    const entry = await deps.registry.get(c.req.param("id"));
+    if (!entry?.ownerUserId) return c.notFound();
+    const actor = await routeActor(deps, auth, entry.agentId);
+    if (!actor.userId || !dashboardAccessPolicy.canRead(entry, actor)) return c.notFound();
+    const pinned = c.req.method === "PUT";
+    await deps.pins.set(actor.userId, entry.id, pinned);
+    return c.json({ ok: true, pinned });
   });
   routes.patch("/:id/sharing", async (c) => {
     const auth = await deps.authenticate(c.req.raw);

@@ -19,6 +19,7 @@ function adminTabs() {
       label: "MCP servers",
       visible: !capabilities.multiUser || isSuperadmin(capabilities.user?.role),
     },
+    { href: "/admin/skills", label: "Skills", visible: !capabilities.multiUser || isSuperadmin(capabilities.user?.role) },
   ].filter((tab) => tab.visible);
 }
 

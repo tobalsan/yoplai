@@ -481,6 +481,7 @@ export async function runAgent(
       additionalSkillPaths: [
         getBuiltInSkillsDir(),
         path.join(input.workspaceDir, "skills"),
+        ...(input.managedSkillsDir ? [input.managedSkillsDir] : []),
       ],
       systemPromptOverride: () => PI_SYSTEM_PROMPT,
       appendSystemPrompt: [
