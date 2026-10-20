@@ -46,6 +46,8 @@ import {
   prepareLaunchFilesystem,
 } from "./launch-spec.js";
 import { ContainerInputBuilder } from "./input-builder.js";
+import { getSkillContext } from "../../skills/context.js";
+import { resolveRunSkills } from "../../skills/resolver.js";
 import {
   configuredModelSupportsImages,
   describeImage,
@@ -263,9 +265,14 @@ export function getContainerAdapter(): SdkAdapter {
     },
     async run(params: SdkRunParams) {
       const config = loadConfig();
+      const skillContext = await getSkillContext();
+      const selectedSkills = (params.agent.sdk ?? getDefaultSdkId()) === "pi"
+        ? await resolveRunSkills(skillContext.store, { agentId: params.agentId, userId: params.userId, multiUser: skillContext.multiUser, policy: skillContext.policy })
+        : { skills: [], diagnostics: [] };
+      for (const collision of selectedSkills.diagnostics) logWarn("[skills] managed skill shadowed", collision);
       // Before the launch spec: read-only mounts only cover files that exist.
       const isFirstRun = await ensureWorkspaceFiles(params.workspaceDir);
-      const launchSpec = buildContainerLaunchSpec(params, config);
+      const launchSpec = buildContainerLaunchSpec(params, config, selectedSkills.skills);
       const { args, containerName, ipcDir, runId, hostDataDir } = launchSpec;
       const fileOutputAdapter = new ContainerFileOutputAdapter();
       prepareLaunchFilesystem(params, launchSpec);
@@ -365,7 +372,8 @@ export function getContainerAdapter(): SdkAdapter {
           agentToken,
           isFirstRun ? FIRST_RUN_BOOTSTRAP_PROMPT : undefined,
           runId,
-          oauthTokens
+          oauthTokens,
+          selectedSkills.skills.length ? "/skills" : undefined
         );
         invisibleToolNames = new Set(
           input.extensionTools

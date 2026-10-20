@@ -12,6 +12,9 @@ Breaking changes are marked **⚠ BREAKING**.
 ### Added
 
 - Slack agents can add emoji reactions with `slack.add_reaction`, targeting the current inbound message or an explicit message.
+- Superadmins can mark an agent workspace skill as System on **Admin → Skills** in multi-user mode. System agent skills are hidden from the **Skills** page. Agents still load them.
+- Superadmins can transfer a user skill to another user on **Admin → Skills**. This restores a skill whose owner is banned, rejected or removed. The list shows an **Owner inactive** label.
+- Superadmins can move an agent workspace skill to the default skills with **Make default** on **Admin → Skills**. All agents and users get it, always on. A name that another skill already uses is blocked. The dialog lists the paths outside the skill folder that the skill refers to, and asks you to confirm.
 - Search your chat titles and full user/assistant transcripts from the sidebar or Cmd/Ctrl+K, with highlighted snippets and keyboard navigation. Replaces the inline session filter, Board project palette and embedded-chat Cmd+K reset.
 - Set `branding.icon` to a square PNG in `$YOPLAI_HOME` to give the instance its own favicon and app icon. Safari "Add to Dock", iOS "Add to Home Screen", and the web app manifest use it.
 
@@ -26,6 +29,8 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Changed
 
+- The skill menu on **Skills** now lists Share, Update, Versions and Delete, each with an icon. Share was Manage access, and Update was Replace. Your own skills no longer show the "You" owner line.
+- The Import, Version history and Update dialogs on **Skills** have a clearer layout. Import shows numbered steps and puts Copy prompt first. The import prompt now tells the other assistant to ask which skills to import before it sends any. Lists show as rows, and an empty history shows a short note.
 - The agent Dashboards tab and the Dashboards page use one aligned row layout: title, an access pill (Private, Can view, Can edit, people count or Everyone) and fixed icon actions. "Manage access" opens a new Share dialog with "People with access" and "General access". Superadmins see "Owned by" for dashboards that nobody shared with them.
 - The user picker in the dashboard Share dialog and on the Teams page is now a search box. Type part of a name or email, then pick a user with the mouse or the arrow keys and Enter. Enter adds the picked user at once, with no click on Add.
 - The team Members dialog uses the same layout as the dashboard Share dialog: a search box to add members (faded, with the hint "All users are already in this team" when nobody is left to add), rows with initials and email, an "All users" checkbox in its own "General membership" section, and agent avatars with Public/Private icons. Member changes save from the dialog footer, and closing with unsaved changes asks to discard them first.
@@ -39,6 +44,7 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Added
 
+- Skills directory with private uploads, per-user enablement across Pi agents, named read/write and platform-wide read sharing, import tokens, ten-version rollback, and chat-driven creation with `skill_save`; host and sandbox runs resolve the same managed skills each turn.
 - Superadmins can mark global system extensions and HTTP MCP servers in Admin Extensions, hiding them from users and admins on agent configuration pages while preserving runtime behavior. System flags remove Top stars in multi-user mode and appear in the settings audit log.
 - Public/Private agent visibility separates chat access from team ownership, with team-scoped management, scheduler access checks, and a staff No team view for placing newcomers; sign-up no longer joins teams and legacy All teams agents migrate to Public.
 - A personal main agent: a character-select picker on home, fresh chats on return, and quick changes from a star in the chat header or on Agents page cards (with confirmation; main agent listed first and highlighted), plus a settings cog in the chat header whose Back link returns to that chat. A click anywhere on an Agents card opens a chat with that agent. Available in single-user and multi-user installs; blank home visits do not create saved sessions.

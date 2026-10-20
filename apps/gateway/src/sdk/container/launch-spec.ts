@@ -30,7 +30,8 @@ export type ContainerLaunchSpec = {
 
 export function buildContainerLaunchSpec(
   params: SdkRunParams,
-  config: GatewayConfig
+  config: GatewayConfig,
+  managedSkills: readonly { name: string; directory: string }[] = []
 ): ContainerLaunchSpec {
   const globalSandbox = config.sandbox ?? {};
   const homeDir = resolveHomeDir();
@@ -52,6 +53,9 @@ export function buildContainerLaunchSpec(
     fs.mkdirSync(path.join(params.workspaceDir, directory), { recursive: true });
   }
   mounts.push({ source: conversationFiles.hostPath, target: CONTAINER_FILES_DIR, readonly: false });
+  for (const skill of managedSkills) {
+    mounts.push({ source: skill.directory, target: `/skills/${skill.name}`, readonly: true });
+  }
   if (sessionOwnerId !== params.userId) {
     // A shared turn may read its thread, never the owner's other sessions.
     const isolatedSessionsDir = path.join(ipcDir, "sessions");

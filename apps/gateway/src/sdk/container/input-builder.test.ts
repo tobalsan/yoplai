@@ -9,6 +9,21 @@ import type { SdkRunParams } from "../types.js";
 import { ExtensionRuntime } from "../../extensions/runtime.js";
 
 describe("container input builder", () => {
+  it("preserves the selected managed skills directory through the runner input schema", async () => {
+    const workspaceDir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-managed-input-"));
+    try {
+      await fs.writeFile(path.join(workspaceDir, "SOUL.md"), "test soul");
+      const builder = new ContainerInputBuilder({ buildSystemPrompts: async () => [], buildTools: async () => [] });
+      const params = {
+        agentId: "test", sessionId: "session", message: "hello", workspaceDir,
+        agent: { id: "test", model: { provider: "anthropic", model: "test" } },
+      } as SdkRunParams;
+      const input = await builder.build(params, { agents: [params.agent], extensions: {} } as GatewayConfig, "test-token", undefined, undefined, undefined, "/skills");
+      expect(ContainerInputSchema.parse(JSON.parse(JSON.stringify(input))).managedSkillsDir).toBe("/skills");
+    } finally {
+      await fs.rm(workspaceDir, { recursive: true, force: true });
+    }
+  });
   it("transports resolved deferral settings and extension namespace capabilities through JSON", async () => {
     const workspaceDir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-deferral-input-"));
     try {

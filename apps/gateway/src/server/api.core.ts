@@ -81,6 +81,10 @@ import { resolveSessionDataFile } from "../sessions/files.js";
 import { createOAuthRoutes } from "../oauth/routes.js";
 import { createMainAgentRoutes } from "../main-agent/routes.js";
 import { createChatProjectRoutes } from "../chat-projects/routes.js";
+import { createSkillRoutes } from "../skills/routes.js";
+import { getSkillContext, resolveSkillActor } from "../skills/context.js";
+import { ImportTokenStore } from "../skills/import-tokens.js";
+import { listSkillRecipients, skillOwnerName } from "../skills/http-auth.js";
 import { ChatProjectStore, isSafeChatProjectId } from "../chat-projects/store.js";
 import { getOAuthService } from "../oauth/service.js";
 import { readToolLabels } from "../maintenance/tool-labels.js";
@@ -395,6 +399,19 @@ function contentDispositionFilename(filename: string): string {
 api.route("/", createMainAgentRoutes({ dataDir: CONFIG_DIR, getUserId: getRequestUserId, getEligibleAgents: getEligibleMainAgents }));
 api.route("/", createConnectionRoutes({ canAccessAgent: callerHasAgentAccess, getUserId: getRequestUserId }));
 api.route("/", createChatProjectRoutes({ getUserId: getRequestUserId, getAgentIds: () => loadConfig().agents.map((agent) => agent.id) }));
+api.route("/", createSkillRoutes({
+  getContext: getSkillContext,
+  tokens: new ImportTokenStore(CONFIG_DIR),
+  getActor: async (c) => resolveSkillActor((c.get("multiUserAuthContext") as import("@yoplai/extension-multi-user").RequestAuthContext | undefined)?.user.id),
+  getAgents: async (c) => (await getVisibleAgents(c)).filter((agent) => !agent.sdk || agent.sdk === "pi").map((agent) => ({ id: agent.id, name: agent.name, directory: path.join(resolveWorkspaceDir(agent.workspace), "skills") })),
+  getOwnerName: skillOwnerName,
+  getRecipients: listSkillRecipients,
+  publicBaseUrl: () => {
+    const config = loadConfig();
+    return config.server?.baseUrl ?? config.web?.baseUrl ?? `http://localhost:${config.gateway?.port ?? 4000}`;
+  },
+  audit: async (c, action, targetId, changes) => recordSettingsChange({ ...await getAuditActor(c), action, targetType: "skill", targetId, changes }),
+}));
 api.route("/", createOAuthRoutes(
   undefined,
   callerHasAgentAccess,

@@ -72,6 +72,17 @@ afterEach(() => {
 });
 
 describe("container launch spec", () => {
+  it("mounts selected managed skills read-only under their canonical names", () => {
+    const root = tempDir();
+    process.env.YOPLAI_HOME = root;
+    const agent = createAgent(root);
+    const directory = path.join(root, "skill-library", "users", "alice", "writing");
+    fs.mkdirSync(directory, { recursive: true });
+    const spec = buildContainerLaunchSpec(createParams(agent, "managed"), { agents: [agent], extensions: {} } as GatewayConfig, [
+      { name: "writing", directory },
+    ]);
+    expect(spec.args).toContain(`type=bind,source=${directory},target=/skills/writing,readonly`);
+  });
   it.each(["opener", null])("mounts only the current session when owner %s differs from requester", (sessionOwnerId) => {
     const root = tempDir();
     process.env.YOPLAI_HOME = root;

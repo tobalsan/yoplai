@@ -1,5 +1,5 @@
 import { Button } from "./Button";
-import { createSignal, createEffect, onCleanup, Show, createUniqueId } from "solid-js";
+import { createSignal, createEffect, onCleanup, Show, createUniqueId, type JSX } from "solid-js";
 
 type ConfirmDialogProps = {
   title: string;
@@ -10,6 +10,7 @@ type ConfirmDialogProps = {
   onCancel: () => void;
   error?: string;
   dismissible?: boolean;
+  children?: JSX.Element;
 };
 
 export function ConfirmDialog(props: ConfirmDialogProps) {
@@ -106,6 +107,7 @@ export function ConfirmDialog(props: ConfirmDialogProps) {
       >
         <h3 id={titleId}>{props.title}</h3>
         <p id={descId}>{props.description}</p>
+        {props.children}
         <Show when={props.error}>
           {(message) => <p class="ui-confirm-error" role="alert">{message()}</p>}
         </Show>

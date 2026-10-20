@@ -54,7 +54,10 @@ import {
 import { describeImage } from "../../media/describe.js";
 import { getFullHistory } from "../../history/store.js";
 import { getMediaFileMetadata } from "../../media/metadata.js";
-import { getBuiltInSkillsDir } from "./skills.js";
+import { createManagedSkillsStaging, getBuiltInSkillsDir } from "./skills.js";
+import { getSkillContext } from "../../skills/context.js";
+import { resolveRunSkills } from "../../skills/resolver.js";
+import { executeSkillSave, skillSaveTool } from "../../skills/tools.js";
 import { executeProjectTool, projectTools } from "../../chat-projects/tools.js";
 import { getConversationFiles } from "../../media/conversation-files.js";
 import { ContainerFileOutputAdapter } from "../container/file-output.js";
@@ -187,6 +190,16 @@ async function createPiExtensionTools(
       await new ContainerFileOutputAdapter().handle(params, { type: "file_output", path: input.path }, undefined,
         signal ? AbortSignal.any([signal, params.abortSignal]) : params.abortSignal, conversationFiles);
       return { content: [{ type: "text", text: "File sent to user" }], details: {} };
+    },
+  });
+  const skillSaveName = claimAgentToolName(skillSaveTool.name, usedToolNames);
+  descriptors.push({ ...skillSaveTool, name: skillSaveName, canonicalName: skillSaveTool.name });
+  piTools.push({
+    name: skillSaveName, label: "Save skill", description: skillSaveTool.description,
+    parameters: skillSaveTool.parameters as unknown as ToolDefinition["parameters"],
+    execute: async (_toolCallId, args) => {
+      const result = await executeSkillSave(args, { userId: params.userId });
+      return { content: [{ type: "text", text: stringifyToolResult(result) }], details: result };
     },
   });
   if (params.context?.project?.id) {
@@ -342,6 +355,7 @@ export const piAdapter: SdkAdapter = {
 
   async run(params: SdkRunParams): Promise<SdkRunResult> {
     let persistSession: (() => Promise<void>) | undefined;
+    let managedSkills: Awaited<ReturnType<typeof createManagedSkillsStaging>> | undefined;
     return withPiOnecliEnv(params.agentId, async () => {
       const persistentSessionFile = await resolveSessionFile(
         params.agentId,
@@ -530,6 +544,13 @@ export const piAdapter: SdkAdapter = {
       const includeGlobalSkills = agent.globalSkills === true;
 
       const workspaceSkillsDir = path.join(params.workspaceDir, "skills");
+      const skillContext = await getSkillContext();
+      const selectedSkills = await resolveRunSkills(skillContext.store, {
+        agentId: params.agentId, userId: params.userId,
+        multiUser: skillContext.multiUser, policy: skillContext.policy,
+      });
+      for (const collision of selectedSkills.diagnostics) logWarn("[skills] managed skill shadowed", collision);
+      managedSkills = await createManagedSkillsStaging(selectedSkills.skills);
 
       const resourceLoader = new DefaultResourceLoader({
         cwd: params.workspaceDir,
@@ -561,7 +582,7 @@ export const piAdapter: SdkAdapter = {
         systemPromptOverride: () => PI_SYSTEM_PROMPT,
         appendSystemPrompt:
           allAppendedPrompts.length > 0 ? allAppendedPrompts : undefined,
-        additionalSkillPaths: [getBuiltInSkillsDir(), workspaceSkillsDir],
+        additionalSkillPaths: [getBuiltInSkillsDir(), workspaceSkillsDir, managedSkills.directory],
         agentsFilesOverride: () => ({ agentsFiles: contextFiles }),
         ...(!includeGlobalSkills && {
           skillsOverride: (result) => ({
@@ -997,7 +1018,8 @@ export const piAdapter: SdkAdapter = {
 
       return { text: finalText, aborted };
     }).finally(async () => {
-      await persistSession?.();
+      try { await persistSession?.(); }
+      finally { await managedSkills?.cleanup(); }
     });
   },
 

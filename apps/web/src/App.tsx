@@ -30,6 +30,7 @@ import { McpServerDetails } from "./pages/McpServerDetails";
 import { ChatProject } from "./pages/ChatProject";
 import { Teams } from "./pages/Teams";
 import { Dashboards } from "./pages/Dashboards";
+import { Skills } from "./pages/Skills";
 import { AccountConnections } from "./pages/AccountConnections";
 import { SessionArchive } from "./pages/SessionArchive";
 import {
@@ -60,6 +61,7 @@ const LazyLoginPage = lazy(() => import("./pages/Login"));
 const LazyAdminUsersPage = lazy(() => import("./pages/admin/Users"));
 const LazyAdminExtensionsPage = lazy(() => import("./pages/admin/Extensions"));
 const LazyAdminMcpServersPage = lazy(() => import("./pages/admin/McpServers"));
+const LazyAdminSkillsPage = lazy(() => import("./pages/admin/Skills"));
 
 const QUICK_CHAT_LAST_AGENT_KEY = "yoplai:quick-chat-last-agent";
 const LEGACY_QUICK_CHAT_LAST_AGENT_KEY = "aihub:quick-chat-last-agent";
@@ -439,6 +441,8 @@ export default function App() {
         path="/dashboards"
         component={() => <GuardedRoute><LeftNavShell><Dashboards /></LeftNavShell></GuardedRoute>}
       />
+      <Route path={["/skills", "/skills/:id"]} component={() => <GuardedRoute><LeftNavShell><Skills /></LeftNavShell></GuardedRoute>} />
+      <Route path="/admin/skills" component={() => <GuardedRoute><LeftNavShell><Suspense><LazyAdminSkillsPage /></Suspense></LeftNavShell></GuardedRoute>} />
       <Route
         path="/teams"
         component={() => (
