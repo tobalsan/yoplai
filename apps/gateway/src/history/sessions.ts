@@ -3,6 +3,8 @@ import path from "node:path";
 import { getUserHistoryDir } from "@yoplai/extension-multi-user/isolation";
 import { CONFIG_DIR } from "../config/index.js";
 import { getSessionEntry } from "../sessions/index.js";
+import { textFromContent, type SearchMessage } from "./session-search.js";
+export { textFromContent } from "./session-search.js";
 
 export type SessionSummary = {
   agentId: string;
@@ -107,32 +109,23 @@ export function sessionIdIsInteractive(sessionId: string): boolean {
   );
 }
 
-export function textFromContent(content: unknown): string {
-  if (!Array.isArray(content)) return "";
-  return content
-    .map((block) => {
-      if (!block || typeof block !== "object") return "";
-      const obj = block as Record<string, unknown>;
-      return obj.type === "text" && typeof obj.text === "string"
-        ? obj.text
-        : "";
-    })
-    .filter(Boolean)
-    .join("\n")
-    .trim();
-}
-
-export async function summarizeSessionFile(params: {
+type SessionFileParams = {
   filePath: string;
   agentId: string;
   sessionId: string;
   createdAt: number;
   userId?: string;
-}): Promise<SessionSummary | null> {
+};
+
+/** Read canonical history once for both its sidebar summary and searchable text. */
+export async function readSessionFile(
+  params: SessionFileParams
+): Promise<{ summary: SessionSummary; messages: SearchMessage[] } | null> {
   const [raw, stat] = await Promise.all([
     fs.readFile(params.filePath, "utf8"),
     fs.stat(params.filePath),
   ]);
+  const messages: SearchMessage[] = [];
   let firstUserMessage = "";
   let title: string | undefined;
   let pinned: number | null = null;
@@ -167,6 +160,7 @@ export async function summarizeSessionFile(params: {
       if (entry.role !== "user" && entry.role !== "assistant") continue;
       const text = textFromContent(entry.content);
       if (!text) continue;
+      messages.push({ role: entry.role, content: entry.content });
       if (timestamp) lastActivity = Math.max(lastActivity, timestamp);
       messageCount += 1;
       if (entry.role === "user" && !firstUserMessage) firstUserMessage = text;
@@ -178,18 +172,27 @@ export async function summarizeSessionFile(params: {
   if (messageCount === 0) return null;
   const main = await getSessionEntry(params.agentId, "main", params.userId);
   return {
-    agentId: params.agentId,
-    sessionId: params.sessionId,
-    createdAt: params.createdAt || stat.birthtimeMs,
-    lastActivity,
-    messageCount,
-    pinned,
-    archived,
-    projectId,
-    firstUserMessage,
-    ...(title ? { title } : {}),
-    isMain: main?.sessionId === params.sessionId,
+    messages,
+    summary: {
+      agentId: params.agentId,
+      sessionId: params.sessionId,
+      createdAt: params.createdAt || stat.birthtimeMs,
+      lastActivity,
+      messageCount,
+      pinned,
+      archived,
+      projectId,
+      firstUserMessage,
+      ...(title ? { title } : {}),
+      isMain: main?.sessionId === params.sessionId,
+    },
   };
+}
+
+export async function summarizeSessionFile(
+  params: SessionFileParams
+): Promise<SessionSummary | null> {
+  return (await readSessionFile(params))?.summary ?? null;
 }
 
 /** Current project of one session read from disk without writing; null when untagged or missing. */

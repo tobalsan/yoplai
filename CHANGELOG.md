@@ -14,6 +14,8 @@ Breaking changes are marked **⚠ BREAKING**.
 - Superadmins can mark an agent workspace skill as System on **Admin → Skills** in multi-user mode. System agent skills are hidden from the **Skills** page. Agents still load them.
 - Superadmins can transfer a user skill to another user on **Admin → Skills**. This restores a skill whose owner is banned, rejected or removed. The list shows an **Owner inactive** label.
 - Superadmins can move an agent workspace skill to the default skills with **Make default** on **Admin → Skills**. All agents and users get it, always on. A name that another skill already uses is blocked. The dialog lists the paths outside the skill folder that the skill refers to, and asks you to confirm.
+- Search your chat titles and full user/assistant transcripts from the sidebar or Cmd/Ctrl+K, with highlighted snippets and keyboard navigation. Replaces the inline session filter, Board project palette and embedded-chat Cmd+K reset.
+- Set `branding.icon` to a square PNG in `$YOPLAI_HOME` to give the instance its own favicon and app icon. Safari "Add to Dock", iOS "Add to Home Screen", and the web app manifest use it.
 
 ### Fixed
 

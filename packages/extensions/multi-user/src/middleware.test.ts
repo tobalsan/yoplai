@@ -53,6 +53,15 @@ describe("multi-user middleware", () => {
     expect((await app.request(`/api/slack/other/${"a".repeat(43)}`)).status).toBe(401);
   });
 
+  it.each(["/api/branding/icon", "/api/manifest.webmanifest"])("allows unauthenticated GET of %s", async (route) => {
+    setRuntime({ auth: { api: { getSession: vi.fn(async () => null) } } });
+    const { createAuthMiddleware } = await import("./middleware.js");
+    const app = new Hono();
+    app.use("/api/*", createAuthMiddleware());
+    app.get(route, (c) => c.json({ ok: true }));
+    expect((await app.request(route)).status).toBe(200);
+  });
+
   it("returns 401 when session is missing", async () => {
     setRuntime({
       auth: {

@@ -110,6 +110,11 @@ export type SessionSummary = {
   isMain: boolean;
 };
 
+export type SessionSearchResult = SessionSummary & {
+  match: "title" | "content";
+  snippet?: string;
+};
+
 // History view mode
 export type HistoryViewMode = "simple" | "full";
 

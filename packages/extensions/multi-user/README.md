@@ -247,7 +247,8 @@ ownership — enabling multi-user mode is a fresh start for auth-owned state.
 - WebSocket upgrades go through the same `getValidatedAuthContext` path, so
   bearer tokens authenticate WS clients too.
 - The auth middleware skips `/api/auth/*`, `/api/capabilities`,
-  `/api/branding/logo`, and `/api/theme.css` — these always answer
+  `/api/branding/logo`, `/api/branding/icon`, `/api/manifest.webmanifest`,
+  and `/api/theme.css` — these always answer
   unauthenticated requests (still attaching context if a valid session or
   bearer is present).
 - API sub-apps receive the auth context via the `x-yoplai-auth-context`

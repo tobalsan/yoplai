@@ -18,6 +18,7 @@ import { QuickChatFAB } from "./components/QuickChatFAB";
 import { QuickChatOverlay } from "./components/QuickChatOverlay";
 import { OnboardingTour } from "./onboarding/OnboardingTour";
 import { ConnectToolsPrompt } from "./components/ConnectToolsPrompt";
+import { SessionSearch } from "./components/SessionSearch";
 import { LeftNavShell } from "./components/LeftNavShell";
 import { AgentCatalog } from "./pages/AgentCatalog";
 import { MainAgentHome } from "./pages/MainAgentHome";
@@ -249,6 +250,7 @@ function Layout(props: { children?: JSX.Element }) {
           {props.children}
           <OnboardingTour />
           <ConnectToolsPrompt />
+          <SessionSearch />
         </div>
         <ToastHost />
       </Show>

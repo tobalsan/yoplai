@@ -397,6 +397,74 @@ describe("api core session resolution", () => {
     ]);
   });
 
+  it("searches the caller's sidebar sessions, including project and CLI histories, without tool text", async () => {
+    await fs.rm("/tmp/yoplai-test", { recursive: true, force: true });
+    multiUserState.loaded = true;
+    multiUserState.authContext = { user: { id: "alice" }, session: { id: "s", userId: "alice" } };
+    getActiveAgents.mockReturnValue([{ id: "alpha", name: "Alpha", avatar: "🦊" }]);
+    getSessionEntry.mockResolvedValue(null);
+    const seed = async (owner: string, agent: string, session: string, metadata: unknown[] = []) => {
+      const dir = `/tmp/yoplai-test/sessions/users/${owner}/history`;
+      await fs.mkdir(dir, { recursive: true });
+      await fs.writeFile(path.join(dir, `${agent}-${session}.jsonl`), [
+        "malformed history line",
+        JSON.stringify({ type: "history", role: "user", content: [{ type: "text", text: "PgBouncer question" }], timestamp: 1000 }),
+        JSON.stringify({ type: "history", role: "assistant", content: [{ type: "thinking", thinking: "privatekeyword" }, { type: "toolCall", name: "tool", arguments: { query: "privatekeyword" } }, { type: "text", text: "The deep answer describes pooling." }], timestamp: 2000 }),
+        ...metadata.map((entry) => JSON.stringify(entry)),
+      ].join("\n"));
+    };
+    await seed("alice", "alpha", "project-chat", [{ type: "meta", key: "project", value: "project-1" }]);
+    await seed("alice", "alpha", "cli-current");
+    await seed("alice", "alpha", "subagent-current");
+    await seed("alice", "alpha", "archived", [{ type: "meta", key: "archived", value: 3000 }]);
+    await seed("alice", "alpha", "scheduler-nightly");
+    await seed("alice", "hidden", "private");
+    await seed("bob", "alpha", "teammate");
+    const { api } = await import("./api.core.js");
+    const response = await api.request("/agents/sessions/search?q=POOLING%20pgbouncer");
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body.items.map((item: { sessionId: string }) => item.sessionId).sort()).toEqual(["cli-current", "project-chat", "subagent-current"]);
+    expect(body.items.find((item: { sessionId: string }) => item.sessionId === "project-chat")).toMatchObject({ agentId: "alpha", projectId: "project-1", avatar: "🦊", match: "content", snippet: "PgBouncer question", messageCount: 2 });
+    expect(await (await api.request("/agents/sessions/search?q=privatekeyword")).json()).toEqual({ items: [] });
+  });
+
+  it("puts title matches first, orders both groups by activity and limits search to 50", async () => {
+    const dir = "/tmp/yoplai-test/history";
+    await fs.rm("/tmp/yoplai-test", { recursive: true, force: true });
+    await fs.mkdir(dir, { recursive: true });
+    getActiveAgents.mockReturnValue([{ id: "alpha", name: "Alpha" }]);
+    getSessionEntry.mockResolvedValue(null);
+    for (let i = 0; i < 55; i++) {
+      const lines = [
+        { type: "history", role: "user", content: [{ type: "text", text: "Ordinary opening" }], timestamp: Date.UTC(2026, 5, 1) + i * 1000 },
+        { type: "history", role: "assistant", content: [{ type: "text", text: "The needle is deep in the answer" }], timestamp: Date.UTC(2026, 5, 1) + i * 1000 },
+        ...(i < 2 ? [{ type: "meta", key: "title", value: "Needle title" }] : []),
+      ];
+      await fs.writeFile(path.join(dir, `2026-01-01T00-00-00-000Z_alpha-rank${i}.jsonl`), lines.map((entry) => JSON.stringify(entry)).join("\n"));
+    }
+    const { api } = await import("./api.core.js");
+    const body = await (await api.request("/agents/sessions/search?q=needle")).json();
+    expect(body.items).toHaveLength(50);
+    expect(body.items.slice(0, 3).map((item: { sessionId: string; match: string }) => [item.sessionId, item.match])).toEqual([["rank1", "title"], ["rank0", "title"], ["rank54", "content"]]);
+    expect(body.items[49].sessionId).toBe("rank7");
+  });
+
+  it("uses the session id label for assistant-only history and returns no results for blank queries", async () => {
+    const dir = "/tmp/yoplai-test/history";
+    await fs.rm("/tmp/yoplai-test", { recursive: true, force: true });
+    await fs.mkdir(dir, { recursive: true });
+    getActiveAgents.mockReturnValue([{ id: "alpha", name: "Alpha" }]);
+    getSessionEntry.mockResolvedValue(null);
+    await fs.writeFile(path.join(dir, "alpha-assistant-only-42.jsonl"), JSON.stringify({ type: "history", role: "assistant", content: [{ type: "text", text: "An answer without a question" }], timestamp: 1000 }));
+    const { api } = await import("./api.core.js");
+    for (const query of ["", "?q=", "?q=%20%09%0A"]) {
+      expect(await (await api.request(`/agents/sessions/search${query}`)).json()).toEqual({ items: [] });
+    }
+    const body = await (await api.request("/agents/sessions/search?q=ONLY-42")).json();
+    expect(body.items).toEqual([expect.objectContaining({ sessionId: "assistant-only-42", firstUserMessage: "", match: "title" })]);
+  });
+
   it("does not sort renamed sessions by file mtime", async () => {
     const sessionsDir = "/tmp/yoplai-test/history";
     await fs.rm("/tmp/yoplai-test", { recursive: true, force: true });

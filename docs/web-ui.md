@@ -13,6 +13,19 @@ Gateway starts Solid.js UI by default. UI discovers enabled features from `/api/
 
 Persistent left navigation adapts to capabilities and role. Branding comes from capability config when set.
 
+Search is the first navigation item, including in the collapsed sidebar. Click it
+or press Cmd+K (Ctrl+K on Windows/Linux) on any page except login to search your
+chat titles and user/assistant message text across accessible agents and chat
+Projects. All whitespace-separated words must occur, in any order, ignoring
+case. Archived chats and other users' chats are excluded.
+
+The palette opens with a focused input and no recent-session list. Results show
+the chat label, agent, relative date and a highlighted content snippet. Title
+matches come first, newest first within each group, with at most 50 results.
+Use Up/Down and Enter, or click a result, to open the chat. Escape or clicking
+outside closes search. Cmd+K no longer starts a new embedded chat or opens the
+retired Board project palette.
+
 ## Chat
 
 Core chat supports:

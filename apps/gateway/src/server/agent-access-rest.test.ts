@@ -420,6 +420,21 @@ describe("REST per-agent access gating (multi-user)", () => {
     expect(await get("/api/agents/sessions", authHeader("mallory"))).toBe(200);
   });
 
+  it("allows non-staff session search and limits it to their visible agents and own history", async () => {
+    for (const [user, agent] of [["alice", "allowed-agent"], ["alice", "blocked-agent"], ["bob", "allowed-agent"]]) {
+      const dir = path.join(tmpDir, ".yoplai", "sessions", "users", user, "history");
+      await fs.mkdir(dir, { recursive: true });
+      await fs.writeFile(path.join(dir, `${agent}-search-scope.jsonl`), JSON.stringify({ type: "history", role: "user", content: [{ type: "text", text: "ownershipprobe" }], timestamp: 1000 }));
+    }
+    const search = async (user: string) => {
+      const response = await fetch(`http://127.0.0.1:${port}/api/agents/sessions/search?q=ownershipprobe`, { headers: authHeader(user) });
+      expect(response.status).toBe(200);
+      return (await response.json()) as { items: Array<{ agentId: string; sessionId: string }> };
+    };
+    expect((await search("alice")).items).toEqual([expect.objectContaining({ agentId: "allowed-agent", sessionId: "search-scope" })]);
+    expect((await search("mallory")).items).toEqual([]);
+  });
+
   it("does not treat aggregate /agents/status as a per-agent address", async () => {
     expect(await get("/api/agents/status", authHeader("mallory"))).toBe(200);
   });

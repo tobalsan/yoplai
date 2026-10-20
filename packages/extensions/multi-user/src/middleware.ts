@@ -228,6 +228,8 @@ function shouldSkipAuth(path: string, method: string): boolean {
   if (path === "/api/auth" || path.startsWith("/api/auth/")) return true;
   if (path === "/api/capabilities") return true;
   if (path === "/api/branding/logo") return true;
+  if (path === "/api/branding/icon") return true;
+  if (path === "/api/manifest.webmanifest") return true;
   if (path === "/api/theme.css") return true;
   return false;
 }

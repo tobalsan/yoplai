@@ -65,9 +65,9 @@ import {
   isSafeSessionId,
   parseSessionFileName,
   sessionIdIsInteractive,
-  summarizeSessionFile,
-  type SessionSummary,
+  readSessionFile,
 } from "../history/sessions.js";
+import { matchSession } from "../history/session-search.js";
 import { CONFIG_DIR } from "../config/index.js";
 import { CredentialStore } from "../credentials/store.js";
 import { createConnectionRoutes } from "../credentials/routes.js";
@@ -431,33 +431,69 @@ api.get("/theme.css", async (c) => {
   }
 });
 
-api.get("/branding/logo", async (c) => {
-  const logo = loadConfig().branding?.logo;
-  if (!logo) return c.json({ error: "Not found" }, 404);
+const BRANDING_MIME_TYPES: Record<string, string> = {
+  ".png": "image/png",
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".svg": "image/svg+xml",
+  ".webp": "image/webp",
+  ".ico": "image/x-icon",
+};
+
+function brandingMimeType(file: string): string {
+  return BRANDING_MIME_TYPES[path.extname(file).toLowerCase()] ?? "application/octet-stream";
+}
+
+async function serveBrandingFile(c: Context, configured: string | undefined) {
+  if (!configured) return c.json({ error: "Not found" }, 404);
   const homeDir = resolveHomeDir();
-  const filePath = path.resolve(homeDir, logo);
-  if (!filePath.startsWith(homeDir)) {
+  const filePath = path.resolve(homeDir, configured);
+  const relative = path.relative(homeDir, filePath);
+  if (relative.startsWith("..") || path.isAbsolute(relative)) {
     return c.json({ error: "Invalid path" }, 400);
   }
   try {
     const stat = await fs.stat(filePath);
     if (!stat.isFile()) return c.json({ error: "Not found" }, 404);
-    const ext = path.extname(filePath).toLowerCase();
-    const mimeMap: Record<string, string> = {
-      ".png": "image/png",
-      ".jpg": "image/jpeg",
-      ".jpeg": "image/jpeg",
-      ".svg": "image/svg+xml",
-      ".webp": "image/webp",
-    };
-    const contentType = mimeMap[ext] ?? "application/octet-stream";
     const stream = createReadStream(filePath);
-    c.header("Content-Type", contentType);
+    c.header("Content-Type", brandingMimeType(filePath));
     c.header("Cache-Control", "public, max-age=3600");
     return c.body(Readable.toWeb(stream) as unknown as ReadableStream);
   } catch {
     return c.json({ error: "Not found" }, 404);
   }
+}
+
+api.get("/branding/logo", (c) => serveBrandingFile(c, loadConfig().branding?.logo));
+
+api.get("/branding/icon", (c) => serveBrandingFile(c, loadConfig().branding?.icon));
+
+api.get("/manifest.webmanifest", (c) => {
+  const branding = loadConfig().branding;
+  const name = branding?.name ?? "Yoplai";
+  c.header("Content-Type", "application/manifest+json");
+  c.header("Cache-Control", "no-cache");
+  return c.body(
+    JSON.stringify({
+      name,
+      short_name: name,
+      start_url: "/",
+      scope: "/",
+      display: "standalone",
+      background_color: "#0a0a0a",
+      theme_color: "#0a0a0a",
+      icons: branding?.icon
+        ? [
+            {
+              src: "/api/branding/icon",
+              sizes: "any",
+              type: brandingMimeType(branding.icon),
+              purpose: "any",
+            },
+          ]
+        : [],
+    })
+  );
 });
 
 api.get("/tool-labels", async (c) => c.json(await readToolLabels()));
@@ -536,6 +572,7 @@ api.get("/capabilities", async (c) => {
           branding: {
             name: branding.name,
             logo: branding.logo ? "/api/branding/logo" : undefined,
+            icon: branding.icon ? "/api/branding/icon" : undefined,
           },
         }
       : {}),
@@ -629,13 +666,12 @@ api.get("/agents/status", async (c) => {
   return c.json({ statuses });
 });
 
-// GET /api/agents/sessions - list past lead-agent sessions
-api.get("/agents/sessions", async (c) => {
+// Shared sidebar scope: filename ownership, visible agents, interactive sessions and archive state.
+async function listSidebarSessions(c: Context, includeArchived = false) {
   const userId = await getRequestUserId(c);
   const historyDir = getUserHistoryDir(userId, CONFIG_DIR);
   const agents = await getVisibleAgents(c);
   const agentIds = agents.map((agent) => agent.id);
-  const includeArchived = c.req.query("includeArchived") === "1";
   let entries: Array<{ dir: string; file: string }> = [];
   try {
     entries = (await fs.readdir(historyDir)).map((file) => ({
@@ -650,27 +686,40 @@ api.get("/agents/sessions", async (c) => {
       const parsed = parseSessionFileName(file, agentIds);
       if (!parsed || !sessionIdIsInteractive(parsed.sessionId)) return null;
       const agent = agents.find((item) => item.id === parsed.agentId);
-      const summary = await summarizeSessionFile({
+      const session = await readSessionFile({
         filePath: path.join(dir, file),
         ...parsed,
         userId,
       });
-      if (!summary) return null;
+      if (!session || (!includeArchived && session.summary.archived !== null)) return null;
       const avatar = resolveAvatarForApi(agent?.avatar, parsed.agentId);
       return {
-        ...summary,
-        ...(avatar ? { avatar } : {}),
+        ...session,
+        summary: { ...session.summary, ...(avatar ? { avatar } : {}) },
       };
     })
   );
 
-  const filtered = items
-    .filter((item): item is SessionSummary => item !== null)
-    .filter((item) => includeArchived || item.archived === null);
+  return items.filter((item): item is NonNullable<typeof item> => item !== null);
+}
 
-  return c.json({
-    items: filtered.sort((a, b) => b.lastActivity - a.lastActivity),
+// GET /api/agents/sessions - list past lead-agent sessions
+api.get("/agents/sessions", async (c) => {
+  const sessions = await listSidebarSessions(c, c.req.query("includeArchived") === "1");
+  return c.json({ items: sessions.map((session) => session.summary).sort((a, b) => b.lastActivity - a.lastActivity) });
+});
+
+// GET /api/agents/sessions/search - search the caller's sidebar history without an index.
+api.get("/agents/sessions/search", async (c) => {
+  const query = c.req.query("q") ?? "";
+  if (!query.trim()) return c.json({ items: [] });
+  const sessions = await listSidebarSessions(c);
+  const items = sessions.flatMap(({ summary, messages }) => {
+    const match = matchSession(summary.title || summary.firstUserMessage || summary.sessionId, messages, query);
+    return match ? [{ ...summary, ...match }] : [];
   });
+  items.sort((a, b) => Number(b.match === "title") - Number(a.match === "title") || b.lastActivity - a.lastActivity);
+  return c.json({ items: items.slice(0, 50) });
 });
 
 // DELETE /api/agents/:agentId/sessions/:sessionId - delete a session history file
