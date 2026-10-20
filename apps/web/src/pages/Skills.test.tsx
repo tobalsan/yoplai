@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { render } from "solid-js/web";
-import { ErrorBoundary } from "solid-js";
+import { ErrorBoundary, Suspense } from "solid-js";
 import { Route, Router } from "@solidjs/router";
 import { resetCapabilitiesForTests, setCapabilitiesForTests } from "../lib/capabilities";
 import { Skills } from "./Skills";
@@ -125,6 +125,18 @@ describe("Skills", () => {
     mine.push(row("s3", "weekly-review"));
     await vi.advanceTimersByTimeAsync(5_000);
     expect(root.textContent).toContain("weekly-review guidance");
+  });
+  it("keeps the page on screen while a background refresh is in flight", async () => {
+    dispose = render(() => <Router><Route path="/skills" component={() => <Suspense fallback={<p>Booting</p>}><Skills /></Suspense>} /></Router>, root);
+    await vi.waitFor(() => expect(root.textContent).toContain("meeting-notes guidance"));
+    let release!: () => void;
+    respond = (path, init) => path === "/api/skills" && (init?.method ?? "GET") === "GET" ? new Promise<Response>((resolve) => { release = () => resolve(Response.json({ default: [], mine, sharedWithMe: [], agent: [] })); }) : undefined;
+    window.dispatchEvent(new Event("focus"));
+    await vi.waitFor(() => expect(requests.filter((request) => request.path === "/api/skills").length).toBe(2));
+    expect(root.textContent).toContain("meeting-notes guidance");
+    expect(root.textContent).not.toContain("Booting");
+    expect(root.textContent).not.toContain("Loading skills");
+    release();
   });
   it("strips the browser folder root in multipart paths", async () => {
     await mount(); click("Add skill"); click("Upload folder");

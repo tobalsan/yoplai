@@ -20,8 +20,9 @@ export function Skills() {
   const navigate = useNavigate();
   const [skills, { refetch: refetchList }] = createResource(() => !params.id, fetchSkills);
   const [detail, { refetch: refetchDetail }] = createResource(() => params.id, fetchSkill);
-  const listData = () => skills.error ? undefined : skills();
-  const detailData = () => detail.error ? undefined : detail();
+  // `.latest` keeps background refetches from suspending the route and blanking the page.
+  const listData = () => skills.error ? undefined : skills.latest;
+  const detailData = () => detail.error ? undefined : detail.latest;
   const refetch = () => Promise.all([refetchList(), refetchDetail()]);
   onMount(() => {
     let refreshing = false;
@@ -110,7 +111,7 @@ export function Skills() {
     <Show when={deleting()}>{(row) => <ConfirmDialog title="Delete skill" description={`Delete ${row().name}, its saved versions and all shares? This cannot be undone.`} confirmLabel="Delete" danger error={error()} onCancel={() => setDeleting(undefined)} onConfirm={async () => { try { await deleteSkill(row().id); setDeleting(undefined); if (params.id) navigate("/skills"); else await refetch(); } catch (cause) { setError(cause instanceof Error ? cause.message : "Unable to delete skill."); } }} />}</Show>
     <Show when={!params.id}><input type="search" aria-label="Search skills" placeholder="Search skills" value={search()} onInput={(event) => setSearch(event.currentTarget.value)} /></Show>
     <Show when={skills.error || detail.error || error()}><p role="alert">{error() || "Unable to load skills."}<button onClick={() => void refetch()}>Retry</button></p></Show>
-    <Show when={skills.loading || detail.loading}><p role="status">Loading skills…</p></Show>
+    <Show when={skills.state === "pending" || detail.state === "pending"}><p role="status">Loading skills…</p></Show>
     <Show when={params.id ? detailData() : undefined}>{(row) => <>{group("Skill", [row()])}<section aria-label="Skill instructions" class="skill-instructions" innerHTML={renderMarkdown(row().skillMd, { stripFrontmatter: false })} /><section><h2>Files</h2><ul class="skills-list"><For each={row().files}>{(file) => <li>{file.path} <small>{file.size} bytes</small></li>}</For></ul></section></>}</Show>
     <Show when={!params.id}>
     {group("Default", listData()?.default)}{group("Mine", listData()?.mine)}<Show when={capabilities.multiUser}>{group("Shared with me", listData()?.sharedWithMe)}</Show>{group("Agent skills", listData()?.agent)}
