@@ -1,10 +1,11 @@
 import { For, Show, createResource, createSignal } from "solid-js";
 import { A } from "@solidjs/router";
-import { deleteSkill, fetchAdminSkills, fetchSkillRecipients, setSkillAdminDisabled, type SkillRow } from "../../api/skills";
+import { deleteSkill, fetchAdminSkills, fetchSkillRecipients, setSkillAdminDisabled, setSkillSystem, type SkillRow } from "../../api/skills";
 import { capabilities } from "../../lib/capabilities";
 import { isSuperadmin } from "../../lib/roles";
 import { Button } from "../../components/ui/Button";
 import { ConfirmDialog } from "../../components/ui/ConfirmDialog";
+import { AgentSkillTabs } from "../../components/AgentSkillTabs";
 import AdminLayout from "./AdminLayout";
 
 const formatDate = (value: string | number | null) => value ? new Date(value).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" }) : "—";
@@ -17,6 +18,7 @@ export default function AdminSkills() {
   const [error, setError] = createSignal("");
   const [busy, setBusy] = createSignal(false);
   const [deleting, setDeleting] = createSignal<SkillRow>();
+  const [agentTab, setAgentTab] = createSignal<string>();
   const userName = (id: string) => recipients.latest?.users?.find((user) => user.id === id)?.name ?? "Unknown user";
   const platformWide = (row: SkillRow) => row.shares.some((share) => share.kind === "all");
   const run = async (operation: () => Promise<void>) => {
@@ -62,6 +64,15 @@ export default function AdminSkills() {
               </table>
             </Show>
           </div>
+        </section>
+        <section class="admin-skills-section" aria-labelledby="admin-skills-agent">
+          {header("admin-skills-agent", "Agent skills", result().agent.length, "Skills in agent workspaces. Only the agent that owns the workspace uses them. Mark a skill as System to hide it from the Skills page.")}
+          <Show when={result().agent.length} fallback={<div class="admin-skills-panel"><p class="admin-skills-empty">No agent workspace skills.</p></div>}>
+            <AgentSkillTabs rows={result().agent} selected={agentTab()} onSelect={setAgentTab} renderRow={(row) => <li class="admin-skills-agent-row">
+              <div class="admin-skills-skill"><A href={`/skills/${encodeURIComponent(row.id)}`}>{row.name}</A><p title={row.description}>{row.description}</p></div>
+              <Show when={capabilities.multiUser}><button type="button" role="switch" class="admin-skills-system-toggle" aria-checked={row.system === true} aria-label={`${row.system ? "Unmark" : "Mark"} ${row.name} as system`} disabled={busy()} onClick={() => void run(async () => { await setSkillSystem(row.id, !row.system); })}>System</button></Show>
+            </li>} />
+          </Show>
         </section>
         <section class="admin-skills-section" aria-labelledby="admin-skills-system">
           {header("admin-skills-system", "System skills", result().system.length, "Always on for every user. Operators add default skills in skill-library/default/.")}
@@ -115,6 +126,9 @@ export default function AdminSkills() {
       .admin-skills-system li { display: flex; align-items: flex-start; justify-content: space-between; gap: 24px; padding: 14px 16px; border-bottom: 1px solid var(--border-subtle); }
       .admin-skills-system li:last-child { border-bottom: 0; }
       .admin-skills-system-meta { display: flex; flex-direction: column; align-items: flex-end; gap: 6px; flex-shrink: 0; font-size: 13px; }
+      .admin-skills-agent-row { display: flex; align-items: flex-start; justify-content: space-between; gap: 24px; font-size: 14px; }
+      .admin-skills-system-toggle { flex-shrink: 0; border: 1px solid var(--border-default); border-radius: 6px; padding: 4px 8px; background: var(--bg-surface); color: var(--text-secondary); cursor: pointer; }
+      .admin-skills-system-toggle[aria-checked="true"] { background: var(--accent, #3b82f6); color: #fff; }
       .admin-skills-empty { margin: 0; padding: 20px 16px; font-size: 14px; color: var(--text-secondary); }
       .admin-skills-notice { max-width: 1120px; margin: 0 0 16px; padding: 12px 16px; border: 1px solid var(--border-default); border-radius: 12px; background: var(--bg-surface); color: var(--text-secondary); font-size: 14px; }
       .admin-skills-error { color: var(--text-primary); background: color-mix(in srgb, #ef4444 10%, var(--bg-surface)); }

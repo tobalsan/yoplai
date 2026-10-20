@@ -169,6 +169,28 @@ describe("Skills HTTP", () => {
     expect((await request(`/skills/${id}`, "DELETE")).status).toBe(200);
   });
 
+  it("hides system agent skills from the list and from non-superadmin detail in multi-user mode", async () => {
+    const agentDir = path.join(home, "agents/hr");
+    await fs.mkdir(path.join(agentDir, "onboarding"), { recursive: true });
+    await fs.writeFile(path.join(agentDir, "onboarding/SKILL.md"), skillText.replace("meeting-notes", "onboarding"));
+    const { routes } = setup(true, [{ id: "hr", name: "HR", directory: agentDir }]);
+    const id = "agent:hr:onboarding";
+    const request = (suffix: string, method = "GET", body?: unknown, user = "root") => routes.request(suffix, { method, headers: { "x-test-user": user, "content-type": "application/json" }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
+    const listed = async (user: string) => (await (await request("/skills", "GET", undefined, user)).json()).agent.map((skill: { id: string }) => skill.id);
+    expect(await listed("alice")).toEqual([id]);
+    expect((await request(`/skills/${id}/system`, "PUT", { system: true }, "alice")).status).toBe(403);
+    expect((await request("/skills/agent:hr:missing/system", "PUT", { system: true })).status).toBe(404);
+    expect((await request(`/skills/${id}/system`, "PUT", { system: true })).status).toBe(200);
+    expect(await listed("alice")).toEqual([]);
+    expect(await listed("root")).toEqual([]);
+    expect((await request(`/skills/${id}`, "GET", undefined, "alice")).status).toBe(404);
+    expect((await request(`/skills/${id}`)).status).toBe(200);
+    expect((await (await request("/admin/skills")).json()).agent).toMatchObject([{ id, system: true }]);
+    expect((await request(`/skills/${id}/system`, "PUT", { system: false })).status).toBe(200);
+    expect(await listed("alice")).toEqual([id]);
+    expect((await request(`/skills/${id}`, "GET", undefined, "alice")).status).toBe(200);
+  });
+
   it("reports managed-name shadowing without applying agent restrictions", async () => {
     const { routes, store } = setup();
     const { skill } = await store.create("local", { files: [{ path: "SKILL.md", content: skillText }] });

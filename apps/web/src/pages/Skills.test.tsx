@@ -111,7 +111,7 @@ describe("Skills", () => {
   });
   it("lets a superadmin inspect collisions and disable a platform-wide skill", async () => {
     setCapabilitiesForTests({ multiUser: true, user: { id: "admin", name: "Admin", role: "superadmin" } });
-    respond = (path) => path === "/api/skills/recipients" ? Response.json({ users: [{ id: "bob", name: "Bob", email: "bob@example.com" }] }) : path === "/api/admin/skills" ? Response.json({ skills: [{ ...row("s1", "meeting-notes", { shares: [{ kind: "all", mode: "read" }, { kind: "user", id: "bob", mode: "write" }] }), enabledCount: 3, collisions: ["default:meeting-notes"] }], system: [row("builtin:dashboard", "dashboard", { kind: "builtin", locked: true }), row("default:hr-writing", "hr-writing", { kind: "default", locked: true, agents: ["hr"] })] }) : undefined;
+    respond = (path) => path === "/api/skills/recipients" ? Response.json({ users: [{ id: "bob", name: "Bob", email: "bob@example.com" }] }) : path === "/api/admin/skills" ? Response.json({ skills: [{ ...row("s1", "meeting-notes", { shares: [{ kind: "all", mode: "read" }, { kind: "user", id: "bob", mode: "write" }] }), enabledCount: 3, collisions: ["default:meeting-notes"] }], agent: [], system: [row("builtin:dashboard", "dashboard", { kind: "builtin", locked: true }), row("default:hr-writing", "hr-writing", { kind: "default", locked: true, agents: ["hr"] })] }) : undefined;
     history.replaceState({}, "", "/admin/skills");
     dispose = render(() => <Router><Route path="/admin/skills" component={AdminSkills} /></Router>, root);
     await vi.waitFor(() => expect(root.textContent).toContain("default:meeting-notes"));
@@ -121,6 +121,18 @@ describe("Skills", () => {
     await vi.waitFor(() => expect(root.textContent).toContain("Bob · edit")); expect(root.textContent).not.toContain("bob · edit");
     click("Disable meeting-notes");
     await vi.waitFor(() => expect(requests).toContainEqual({ path: "/api/skills/s1/admin", method: "PUT", body: { disabledByAdmin: true } }));
+  });
+  it("lets a superadmin mark an agent skill as system on the admin page", async () => {
+    setCapabilitiesForTests({ multiUser: true, user: { id: "admin", name: "Admin", role: "superadmin" } });
+    const onboarding = row("agent:hr:skills/onboarding", "onboarding", { kind: "agent", agentId: "hr", agentName: "HR", locked: true, canWrite: false, canManage: false, system: false });
+    respond = (path) => path === "/api/skills/recipients" ? Response.json({ users: [] }) : path === "/api/admin/skills" ? Response.json({ skills: [], agent: [onboarding], system: [] }) : undefined;
+    history.replaceState({}, "", "/admin/skills");
+    dispose = render(() => <Router><Route path="/admin/skills" component={AdminSkills} /></Router>, root);
+    await vi.waitFor(() => expect(root.textContent).toContain("onboarding guidance"));
+    expect(root.querySelector("[role=tabpanel]")?.getAttribute("aria-label")).toBe("HR");
+    expect(control<HTMLAnchorElement>("link", "onboarding").getAttribute("href")).toBe("/skills/agent%3Ahr%3Askills%2Fonboarding");
+    click("Mark onboarding as system");
+    await vi.waitFor(() => expect(requests).toContainEqual({ path: "/api/skills/agent%3Ahr%3Askills%2Fonboarding/system", method: "PUT", body: { system: true } }));
   });
   it("refreshes on focus and discovers a newly imported skill through polling", async () => {
     vi.useFakeTimers();
@@ -164,6 +176,14 @@ describe("Skills", () => {
     await vi.waitFor(() => expect(root.textContent).toContain("pitch guidance"));
     expect(root.textContent).not.toContain("onboarding guidance");
     expect(control("tabpanel", "Sales")).toBeDefined();
+    window.dispatchEvent(new Event("focus"));
+    await vi.waitFor(() => expect(requests.filter((request) => request.path === "/api/skills").length).toBeGreaterThan(1));
+    const search = control<HTMLInputElement>("searchbox", "Search skills");
+    search.value = "nothing-matches"; search.dispatchEvent(new InputEvent("input", { bubbles: true }));
+    await vi.waitFor(() => expect(root.textContent).not.toContain("pitch guidance"));
+    search.value = ""; search.dispatchEvent(new InputEvent("input", { bubbles: true }));
+    await vi.waitFor(() => expect(root.textContent).toContain("pitch guidance"));
+    expect(root.textContent).not.toContain("onboarding guidance");
   });
   it("keeps the page on screen while a background refresh is in flight", async () => {
     dispose = render(() => <Router><Route path="/skills" component={() => <Suspense fallback={<p>Booting</p>}><Skills /></Suspense>} /></Router>, root);

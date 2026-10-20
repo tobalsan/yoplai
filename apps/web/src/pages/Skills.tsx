@@ -10,10 +10,10 @@ import { SkillImportDialog } from "../components/SkillImportDialog";
 import { SkillVersionsDialog } from "../components/SkillVersionsDialog";
 import { renderMarkdown } from "../lib/markdown";
 import { fetchMainAgentOptions } from "../api/main-agent";
-import { fetchAgents } from "../api/agents";
 import { startNewChat } from "../api/chat";
 import type { Agent } from "../api/types";
 import { Modal } from "../components/ui/Modal";
+import { AgentSkillTabs } from "../components/AgentSkillTabs";
 
 // Show YAML front matter as a code block, not as Markdown headings.
 const skillMarkdown = (text: string) => text.replace(/^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/, (_match, yaml: string) => "```yaml\n" + yaml + "\n```\n\n");
@@ -53,7 +53,6 @@ export function Skills() {
   const [versions, setVersions] = createSignal<SkillRow>();
   const [deleting, setDeleting] = createSignal<SkillRow>();
   const [createAgents, setCreateAgents] = createSignal<Agent[]>();
-  const [agents] = createResource(() => !params.id, () => fetchAgents().catch(() => []));
   const [agentTab, setAgentTab] = createSignal<string>();
   createEffect(on(() => params.id, () => { setOpenActions(undefined); setAdding(false); }, { defer: true }));
   let zipInput: HTMLInputElement | undefined;
@@ -110,32 +109,7 @@ export function Skills() {
     finally { setBusy(undefined); }
   };
   const owner = (row: SkillRow) => row.kind === "builtin" ? "Built-in" : row.kind === "default" ? "Default" : row.kind === "agent" ? `${row.agentName} workspace` : row.canManage ? "You" : row.ownerName;
-  const avatarOf = (agentId: string) => agents.latest?.find((agent) => agent.id === agentId)?.avatar;
-  const agentTabs = () => {
-    const tabs = new Map<string, { id: string; name: string; count: number }>();
-    for (const row of rows(listData()?.agent)) {
-      const id = row.agentId ?? "";
-      const tab = tabs.get(id) ?? { id, name: row.agentName ?? id, count: 0 };
-      tab.count += 1; tabs.set(id, tab);
-    }
-    return [...tabs.values()].sort((a, b) => a.name.localeCompare(b.name));
-  };
-  const activeAgent = () => agentTabs().find((tab) => tab.id === agentTab())?.id ?? agentTabs()[0]?.id;
-  const moveTab = (event: KeyboardEvent) => {
-    const tabs = agentTabs(); const step = event.key === "ArrowRight" ? 1 : event.key === "ArrowLeft" ? -1 : 0;
-    if (!step || !tabs.length) return;
-    event.preventDefault();
-    const next = tabs[(tabs.findIndex((tab) => tab.id === activeAgent()) + step + tabs.length) % tabs.length];
-    setAgentTab(next.id);
-    (event.currentTarget as HTMLElement).querySelector<HTMLElement>(`[data-agent="${CSS.escape(next.id)}"]`)?.focus();
-  };
-  const group = (title: string, items: SkillRow[] | undefined, info?: string, empty?: string, byAgent = false) => <section class="skills-section" aria-label={title}>
-    <Show when={info}><header class="skills-section-header"><span class="skills-info" tabindex="0" role="img" aria-label={info} data-tip={info}><i class="fa-solid fa-circle-info" aria-hidden="true" /></span><h2>{title}</h2><Show when={items}><span class="skills-count">{rows(items).length}</span></Show></header></Show>
-    <Show when={rows(items).length} fallback={<p class="skills-empty">{search() ? `No skills match "${search()}".` : empty ?? "No skills found."}</p>}>
-    <Show when={byAgent}><div class="skills-tabs" role="tablist" aria-label="Agents" onKeyDown={moveTab}><For each={agentTabs()}>{(tab) => <button type="button" role="tab" class="skills-tab" data-agent={tab.id} aria-selected={activeAgent() === tab.id} tabindex={activeAgent() === tab.id ? 0 : -1} onClick={() => setAgentTab(tab.id)}>
-      <span class="skills-tab-avatar" aria-hidden="true"><Show when={avatarOf(tab.id)} fallback={tab.name.slice(0, 1).toUpperCase()}>{(avatar) => <Show when={avatar().startsWith("/") || /^https?:\/\//i.test(avatar())} fallback={avatar()}><img src={avatar()} alt="" /></Show>}</Show></span>
-      {tab.name}<span class="skills-tab-count">{tab.count}</span></button>}</For></div></Show>
-    <div role={byAgent ? "tabpanel" : undefined} aria-label={byAgent ? agentTabs().find((tab) => tab.id === activeAgent())?.name : undefined}><ul class="skills-list"><For each={byAgent ? rows(items).filter((row) => (row.agentId ?? "") === activeAgent()) : rows(items)}>{(row) => <li class="skill-row">
+  const skillRow = (row: SkillRow, byAgent: boolean) => <li class="skill-row">
     <div class="skill-copy"><Show when={!params.id}><A href={`/skills/${encodeURIComponent(row.id)}`}>{row.name}</A></Show><p title={row.description}>{row.description}</p><Show when={!byAgent}><div class="skill-meta"><span>{owner(row)}</span><Show when={row.canManage && row.shares?.length}><span class="skill-pill">Shared</span></Show><Show when={row.mode === "read" && row.kind === "user"}><span>Can view</span></Show><Show when={row.mode === "write" && !row.canManage}><span>Can edit</span></Show><Show when={row.shadowed}><span class="skill-pill skill-pill--warn" title="Another enabled skill with the same name loads instead.">Not loaded: same name as another skill</span></Show><Show when={row.disabledByAdmin}><span class="skill-pill skill-pill--warn">Disabled by admin</span></Show></div></Show></div>
     <Show when={row.kind !== "agent"}><Show when={!row.locked} fallback={<span class="skill-locked" aria-label="Always on"><i class="fa-solid fa-lock" aria-hidden="true" /> Always on</span>}><input type="checkbox" role="switch" aria-label={`Enable ${row.name}`} checked={row.enabled} disabled={!!busy() || row.disabledByAdmin} onChange={(event) => void toggle(row, event.currentTarget.checked)} /></Show></Show>
     <Show when={row.kind === "user" && (row.canWrite || row.canManage)}><details class="skill-actions" open={openActions() === row.id} onClick={(event) => { if ((event.target as HTMLElement).closest("button")) setOpenActions(undefined); }}><summary role="button" aria-label={`Actions for ${row.name}`} aria-expanded={openActions() === row.id} onClick={(event) => { event.preventDefault(); setOpenActions(openActions() === row.id ? undefined : row.id); }}><i class="fa-solid fa-ellipsis" aria-hidden="true" /></summary><div class="skill-action-menu">
@@ -144,7 +118,11 @@ export function Skills() {
     <Show when={row.canWrite && row.kind === "user"}><button aria-label={`Versions of ${row.name}`} onClick={() => setVersions(row)}>Versions</button></Show>
     <Show when={row.canManage}><button aria-label={`Delete ${row.name}`} onClick={() => { setError(""); setDeleting(row); }}>Delete</button></Show>
     </div></details></Show>
-  </li>}</For></ul></div></Show></section>;
+  </li>;
+  const group = (title: string, items: () => SkillRow[] | undefined, info?: string, empty?: string, byAgent = false) => <section class="skills-section" aria-label={title}>
+    <Show when={info}><header class="skills-section-header"><span class="skills-info" tabindex="0" role="img" aria-label={info} data-tip={info}><i class="fa-solid fa-circle-info" aria-hidden="true" /></span><h2>{title}</h2><Show when={items()}><span class="skills-count">{rows(items()).length}</span></Show></header></Show>
+    <Show when={rows(items()).length} fallback={<p class="skills-empty">{search() ? `No skills match "${search()}".` : empty ?? "No skills found."}</p>}>
+    <Show when={byAgent} fallback={<ul class="skills-list"><For each={rows(items())}>{(row) => skillRow(row, false)}</For></ul>}><AgentSkillTabs rows={rows(items())} selected={agentTab()} onSelect={setAgentTab} renderRow={(row) => skillRow(row, true)} /></Show></Show></section>;
   const formatSize = (size: number) => size < 1024 ? `${size} bytes` : `${(size / 1024).toFixed(1)} KB`;
   return <main class="skills-page"><div class="skills-shell">
     <Show when={params.id}><A class="skills-back" href="/skills"><i class="fa-solid fa-arrow-left" aria-hidden="true" /> All skills</A></Show>
@@ -165,11 +143,11 @@ export function Skills() {
     <Show when={!params.id}><label class="skills-search"><i class="fa-solid fa-magnifying-glass" aria-hidden="true" /><input type="search" aria-label="Search skills" placeholder="Search skills" value={search()} onInput={(event) => setSearch(event.currentTarget.value)} /></label></Show>
     <Show when={skills.error || detail.error || error()}><p class="skills-notice skills-notice--error" role="alert">{error() || "Unable to load skills."} <button class="skills-link-button" onClick={() => void refetch()}>Retry</button></p></Show>
     <Show when={skills.state === "pending" || detail.state === "pending"}><p class="skills-notice" role="status">Loading skills…</p></Show>
-    <Show when={params.id ? detailData() : undefined}>{(row) => <>{group("Skill", [row()])}
+    <Show when={params.id ? detailData() : undefined}>{(row) => <>{group("Skill", () => [row()])}
       <section class="skills-section"><header class="skills-section-header"><h2>Instructions</h2><p>The SKILL.md file the agent reads.</p></header><div aria-label="Skill instructions" class="skill-instructions" innerHTML={renderMarkdown(skillMarkdown(row().skillMd), { stripFrontmatter: false })} /></section>
       <section class="skills-section"><header class="skills-section-header"><h2>Files</h2><span class="skills-count">{row().files.length}</span></header><ul class="skills-list skills-files"><For each={row().files}>{(file) => <li><i class="fa-regular fa-file-lines" aria-hidden="true" /><span class="skills-file-path">{file.path}</span><small>{formatSize(file.size)}</small></li>}</For></ul></section></>}</Show>
     <Show when={!params.id && listData()}>
-    {group("Your skills", listData()?.mine, "Skills you upload, create or import.", "No skills yet. Use Add skill to upload, create or import one.")}<Show when={capabilities.multiUser && listData()?.sharedWithMe?.length}>{group("Shared with me", listData()?.sharedWithMe, "Skills other people share with you.")}</Show>{group("Agent skills", listData()?.agent, "These skills are specific to each agent. Unlike your own skills, or those shared with you, they do not apply to all agents, but only the agent who owns the workspace in which the skill lives.", "No agent workspace skills.", true)}
+    {group("Your skills", () => listData()?.mine, "Skills you upload, create or import.", "No skills yet. Use Add skill to upload, create or import one.")}<Show when={capabilities.multiUser && listData()?.sharedWithMe?.length}>{group("Shared with me", () => listData()?.sharedWithMe, "Skills other people share with you.")}</Show>{group("Agent skills", () => listData()?.agent, "These skills are specific to each agent. Unlike your own skills, or those shared with you, they do not apply to all agents, but only the agent who owns the workspace in which the skill lives.", "No agent workspace skills.", true)}
     </Show>
     </div>
     <style>{`
@@ -200,13 +178,6 @@ export function Skills() {
       .skills-section-header h2 { margin: 0; font-size: 16px; font-weight: 600; }
       .skills-section-header p { flex-basis: 100%; margin: 4px 0 0; font-size: 13px; color: var(--text-secondary); }
       .skills-count { padding: 1px 8px; border-radius: 999px; background: var(--bg-raised); color: var(--text-secondary); font-size: 12px; font-weight: 600; font-variant-numeric: tabular-nums; }
-      .skills-tabs { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 12px; box-shadow: inset 0 -1px 0 var(--border-subtle); }
-      .skills-tab { display: inline-flex; align-items: center; gap: 8px; flex-shrink: 0; padding: 8px 12px; border: 0; border-bottom: 2px solid transparent; background: none; color: var(--text-secondary); font: inherit; font-size: 13px; font-weight: 500; cursor: pointer; white-space: nowrap; transition: color 120ms, border-color 120ms; }
-      .skills-tab:hover { color: var(--text-primary); }
-      .skills-tab[aria-selected=true] { border-bottom-color: var(--accent, #3b82f6); color: var(--text-primary); }
-      .skills-tab-avatar { display: inline-grid; place-items: center; width: 22px; height: 22px; overflow: hidden; border-radius: 999px; background: var(--bg-raised); color: var(--text-secondary); font-size: 12px; font-weight: 700; }
-      .skills-tab-avatar img { width: 100%; height: 100%; object-fit: cover; }
-      .skills-tab-count { color: var(--text-tertiary); font-size: 12px; font-variant-numeric: tabular-nums; }
       .skills-list { list-style: none; margin: 0; padding: 0; border: 1px solid var(--border-default); border-radius: 12px; background: var(--bg-surface); }
       .skills-list > li { padding: 14px 16px; border-bottom: 1px solid var(--border-subtle); }
       .skills-list > li:last-child { border-bottom: 0; }

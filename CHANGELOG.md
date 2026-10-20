@@ -9,6 +9,10 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ## [Unreleased]
 
+### Added
+
+- Superadmins can mark an agent workspace skill as System on **Admin → Skills** in multi-user mode. System agent skills are hidden from the **Skills** page. Agents still load them.
+
 ### Fixed
 
 - Multi-user instances without an agent pool let approved users and admins use plain agents, including chat, avatars and capability self-enable. Existing fork restrictions also apply to agent lists.

@@ -52,6 +52,16 @@ export class SkillStore {
   async get(id: string): Promise<SkillRow | null> { return (await this.list()).find((row) => row.id === id) ?? null; }
   private async require(id: string): Promise<SkillRow> { const row = await this.get(id); if (!row) throw new SkillError("not_found", 404); return row; }
   async getState(userId: string): Promise<SkillState> { return readJson(this.stateFile(userId), { enabled: [] }); }
+  private systemAgentFile(): string { return path.join(this.root, "system-agent-skills.json"); }
+  async systemAgentSkills(): Promise<string[]> { return readJson(this.systemAgentFile(), []); }
+  setSystemAgentSkill(id: string, system: boolean): Promise<string[]> {
+    return this.mutate(async () => {
+      const next = (await this.systemAgentSkills()).filter((item) => item !== id);
+      if (system) next.push(id);
+      await writeJsonAtomic(this.systemAgentFile(), next);
+      return next;
+    });
+  }
   private async scan(directory: string, prefix: string): Promise<SkillDirectory[]> {
     let entries;
     try { entries = await fs.readdir(directory, { withFileTypes: true }); }

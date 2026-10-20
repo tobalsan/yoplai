@@ -115,12 +115,13 @@ export function createSkillRoutes(deps: SkillRoutesDeps): Hono {
     const visible = await policy.filterVisible(await store.list(), actor);
     const mine = await Promise.all(visible.filter((skill) => skill.ownerId === actor.userId).map((skill) => present(store, policy, actor, skill)));
     const sharedWithMe = await Promise.all(visible.filter((skill) => skill.ownerId !== actor.userId && skill.shares.some((share) => share.kind === "all" || share.id === actor.userId)).map((skill) => present(store, policy, actor, skill)));
+    const hidden = new Set(multiUser ? await store.systemAgentSkills() : []);
     const { diagnostics } = await resolveRunSkills(store, { agentId: "", userId: actor.userId, multiUser, policy, ignoreAgentRestrictions: true });
     const shadowed = new Set(diagnostics.map((diagnostic) => diagnostic.id));
     for (const skill of [...mine, ...sharedWithMe]) skill.shadowed = shadowed.has(skill.id);
     return c.json({
       mine, sharedWithMe: multiUser ? sharedWithMe : [],
-      agent: (await agentSkills(c)).map(directoryRow),
+      agent: (await agentSkills(c)).filter((skill) => !hidden.has(skill.id)).map(directoryRow),
     });
   });
   routes.post("/skills", async (c) => {
@@ -170,7 +171,9 @@ export function createSkillRoutes(deps: SkillRoutesDeps): Hono {
   });
   routes.get("/skills/:id", async (c) => {
     const ctx = await context(c);
-    const directory = await findDirectory(c, ctx.store, c.req.param("id"));
+    const id = c.req.param("id");
+    if (ctx.multiUser && ctx.actor.role !== "superadmin" && (await ctx.store.systemAgentSkills()).includes(id)) throw new SkillError("not_found", 404);
+    const directory = await findDirectory(c, ctx.store, id);
     if (directory) {
       const skillFile = "skillFile" in directory && typeof directory.skillFile === "string" ? directory.skillFile : undefined;
       const content = skillFile && path.basename(skillFile) !== "SKILL.md"
@@ -220,7 +223,21 @@ export function createSkillRoutes(deps: SkillRoutesDeps): Hono {
       ...await present(store, policy, actor, skill), enabledCount: await store.enableCount(skill.id),
       collisions: reserved.filter((other) => other.name === skill.name).map((other) => other.id),
     })));
-    return c.json({ skills, system: reserved.map(directoryRow) });
+    const ids = await store.systemAgentSkills();
+    const agent = (await agentSkills(c)).map((row) => ({ ...directoryRow(row), system: ids.includes(row.id) }));
+    return c.json({ skills, agent, system: reserved.map(directoryRow) });
+  });
+  routes.put("/skills/:id/system", async (c) => {
+    const { store, actor } = await context(c);
+    if (actor.role !== "superadmin") throw new SkillError("forbidden", 403);
+    const id = c.req.param("id")!;
+    if (!(await agentSkills(c)).some((skill) => skill.id === id)) throw new SkillError("not_found", 404);
+    const result = z.object({ system: z.boolean() }).strict().safeParse(await jsonBody(c));
+    if (!result.success) throw new SkillError("invalid_system_state");
+    const before = (await store.systemAgentSkills()).includes(id);
+    await store.setSystemAgentSkill(id, result.data.system);
+    await deps.audit?.(c, "skill.system", id, [{ field: "system", before, after: result.data.system }]);
+    return c.json({ ok: true });
   });
   routes.put("/skills/:id/admin", async (c) => {
     const { store, actor, skill } = await userRow(c);
