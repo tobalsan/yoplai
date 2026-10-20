@@ -107,9 +107,9 @@ export function Skills() {
     finally { setBusy(undefined); }
   };
   const owner = (row: SkillRow) => row.kind === "builtin" ? "Built-in" : row.kind === "default" ? "Default" : row.kind === "agent" ? `${row.agentName} workspace` : row.canManage ? "You" : row.ownerName;
-  const group = (title: string, items: SkillRow[] | undefined, description?: string, empty?: string) => <section class="skills-section" aria-label={title}>
-    <Show when={description}><header class="skills-section-header"><h2>{title}</h2><Show when={items}><span class="skills-count">{rows(items).length}</span></Show><p>{description}</p></header></Show>
-    <ul class="skills-list"><For each={rows(items)} fallback={<li class="skills-empty">{search() ? `No skills match "${search()}".` : empty ?? "No skills found."}</li>}>{(row) => <li class="skill-row">
+  const group = (title: string, items: SkillRow[] | undefined, info?: string, empty?: string) => <section class="skills-section" aria-label={title}>
+    <Show when={info}><header class="skills-section-header"><span class="skills-info" tabindex="0" role="img" aria-label={info} data-tip={info}><i class="fa-solid fa-circle-info" aria-hidden="true" /></span><h2>{title}</h2><Show when={items}><span class="skills-count">{rows(items).length}</span></Show></header></Show>
+    <Show when={rows(items).length} fallback={<p class="skills-empty">{search() ? `No skills match "${search()}".` : empty ?? "No skills found."}</p>}><ul class="skills-list"><For each={rows(items)}>{(row) => <li class="skill-row">
     <div class="skill-copy"><Show when={!params.id}><A href={`/skills/${encodeURIComponent(row.id)}`}>{row.name}</A></Show><p title={row.description}>{row.description}</p><div class="skill-meta"><span>{owner(row)}</span><Show when={row.canManage && row.shares?.length}><span class="skill-pill">Shared</span></Show><Show when={row.mode === "read" && row.kind === "user"}><span>Can view</span></Show><Show when={row.mode === "write" && !row.canManage}><span>Can edit</span></Show><Show when={row.shadowed}><span class="skill-pill skill-pill--warn" title="Another enabled skill with the same name loads instead.">Not loaded: same name as another skill</span></Show><Show when={row.disabledByAdmin}><span class="skill-pill skill-pill--warn">Disabled by admin</span></Show></div></div>
     <Show when={row.kind !== "agent"}><Show when={!row.locked} fallback={<span class="skill-locked" aria-label="Always on"><i class="fa-solid fa-lock" aria-hidden="true" /> Always on</span>}><input type="checkbox" role="switch" aria-label={`Enable ${row.name}`} checked={row.enabled} disabled={!!busy() || row.disabledByAdmin} onChange={(event) => void toggle(row, event.currentTarget.checked)} /></Show></Show>
     <Show when={row.kind === "user" && (row.canWrite || row.canManage)}><details class="skill-actions" open={openActions() === row.id} onClick={(event) => { if ((event.target as HTMLElement).closest("button")) setOpenActions(undefined); }}><summary role="button" aria-label={`Actions for ${row.name}`} aria-expanded={openActions() === row.id} onClick={(event) => { event.preventDefault(); setOpenActions(openActions() === row.id ? undefined : row.id); }}><i class="fa-solid fa-ellipsis" aria-hidden="true" /></summary><div class="skill-action-menu">
@@ -118,7 +118,7 @@ export function Skills() {
     <Show when={row.canWrite && row.kind === "user"}><button aria-label={`Versions of ${row.name}`} onClick={() => setVersions(row)}>Versions</button></Show>
     <Show when={row.canManage}><button aria-label={`Delete ${row.name}`} onClick={() => { setError(""); setDeleting(row); }}>Delete</button></Show>
     </div></details></Show>
-  </li>}</For></ul></section>;
+  </li>}</For></ul></Show></section>;
   const formatSize = (size: number) => size < 1024 ? `${size} bytes` : `${(size / 1024).toFixed(1)} KB`;
   return <main class="skills-page"><div class="skills-shell">
     <Show when={params.id}><A class="skills-back" href="/skills"><i class="fa-solid fa-arrow-left" aria-hidden="true" /> All skills</A></Show>
@@ -143,7 +143,7 @@ export function Skills() {
       <section class="skills-section"><header class="skills-section-header"><h2>Instructions</h2><p>The SKILL.md file the agent reads.</p></header><div aria-label="Skill instructions" class="skill-instructions" innerHTML={renderMarkdown(skillMarkdown(row().skillMd), { stripFrontmatter: false })} /></section>
       <section class="skills-section"><header class="skills-section-header"><h2>Files</h2><span class="skills-count">{row().files.length}</span></header><ul class="skills-list skills-files"><For each={row().files}>{(file) => <li><i class="fa-regular fa-file-lines" aria-hidden="true" /><span class="skills-file-path">{file.path}</span><small>{formatSize(file.size)}</small></li>}</For></ul></section></>}</Show>
     <Show when={!params.id && listData()}>
-    {group("Mine", listData()?.mine, "Skills you upload, create or import. New skills start off.", "No skills yet. Use Add skill to upload, create or import one.")}<Show when={capabilities.multiUser}>{group("Shared with me", listData()?.sharedWithMe, "Skills other people share with you.", "Nobody shares a skill with you yet.")}</Show>{group("Agent skills", listData()?.agent, "Read-only skills from agent workspaces. The agent always loads them.", "No agent workspace skills.")}
+    {group("Your skills", listData()?.mine, "Skills you upload, create or import.", "No skills yet. Use Add skill to upload, create or import one.")}<Show when={capabilities.multiUser && listData()?.sharedWithMe?.length}>{group("Shared with me", listData()?.sharedWithMe, "Skills other people share with you.")}</Show>{group("Agent skills", listData()?.agent, "Read-only skills from agent workspaces. The agent always loads them.", "No agent workspace skills.")}
     </Show>
     </div>
     <style>{`
@@ -180,7 +180,11 @@ export function Skills() {
       .skills-list > li:first-child { border-radius: 11px 11px 0 0; }
       .skills-list > li:last-child { border-radius: 0 0 11px 11px; }
       .skills-list > li:only-child { border-radius: 11px; }
-      .skills-empty { font-size: 14px; color: var(--text-secondary); }
+      .skills-empty { margin: 0; font-size: 14px; color: var(--text-tertiary); }
+      .skills-info { position: relative; align-self: center; display: inline-flex; font-size: 13px; color: var(--text-tertiary); cursor: help; }
+      .skills-info:hover, .skills-info:focus-visible { color: var(--text-secondary); }
+      .skills-info::after { content: attr(data-tip); position: absolute; left: 0; top: calc(100% + 6px); z-index: 10; width: max-content; max-width: 280px; padding: 6px 10px; border: 1px solid var(--border-default); border-radius: 8px; background: var(--bg-raised); color: var(--text-primary); font-size: 12px; font-weight: 400; line-height: 1.4; opacity: 0; pointer-events: none; transition: opacity 120ms; }
+      .skills-info:hover::after, .skills-info:focus-visible::after { opacity: 1; }
       .skill-row { display: flex; align-items: center; gap: 16px; transition: background-color 120ms; }
       .skill-row:hover { background: color-mix(in srgb, var(--bg-raised) 40%, transparent); }
       .skill-copy { flex: 1; min-width: 0; }

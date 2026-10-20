@@ -45,7 +45,8 @@ async function mount() { dispose = render(() => <Router><Route path="/skills" co
 describe("Skills", () => {
   it("groups skills, locks built-ins, searches and enables the user's skill", async () => {
     await mount();
-    expect(Array.from(root.querySelectorAll("h2"), (heading) => heading.textContent)).toEqual(["Mine", "Shared with me", "Agent skills"]);
+    expect(Array.from(root.querySelectorAll("h2"), (heading) => heading.textContent)).toEqual(["Your skills", "Agent skills"]);
+    expect(control("img", "Skills you upload, create or import.")).toBeDefined();
     const toggle = control<HTMLInputElement>("switch", "Enable meeting-notes"); toggle.click();
     await vi.waitFor(() => expect(requests).toContainEqual({ path: "/api/skills/s1/enabled", method: "PUT", body: { enabled: true } }));
     const search = control<HTMLInputElement>("searchbox", "Search skills"); search.value = "dashboard"; search.dispatchEvent(new InputEvent("input", { bubbles: true }));
@@ -219,6 +220,8 @@ describe("Skills", () => {
   it("lets a named writer replace by id without offering ownership actions", async () => {
     respond = (path) => path === "/api/skills" ? Response.json({ mine: [], sharedWithMe: [row("shared1", "meeting-notes", { canManage: false, ownerName: "Bob" })], agent: [] }) : undefined;
     await mount(); actions();
+    expect(root.textContent).toContain("No skills yet. Use Add skill to upload, create or import one.");
+    expect(Array.from(root.querySelectorAll("h2"), (heading) => heading.textContent)).toContain("Shared with me");
     expect(root.textContent).toContain("Can edit");
     expect(Array.from(root.querySelectorAll("button")).some((button) => button.textContent === "Manage access" || button.textContent === "Delete")).toBe(false);
     click("Replace meeting-notes"); click("Replace from folder");
