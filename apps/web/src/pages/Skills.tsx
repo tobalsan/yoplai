@@ -207,11 +207,28 @@ export function Skills() {
       .skill-row input[role=switch]:checked::before { background: white; transform: translateX(14px); }
       .skill-row input[role=switch]:disabled { opacity: .5; cursor: default; }
       .skills-page button:focus-visible, .skill-actions summary:focus-visible, .skill-row input:focus-visible, .skill-copy a:focus-visible, .skills-back:focus-visible { outline: 2px solid var(--accent, #3b82f6); outline-offset: 2px; }
-      .skill-instructions { padding: 24px 28px; border: 1px solid var(--border-default); border-radius: 12px; background: var(--bg-surface); font-size: 14px; line-height: 1.65; overflow-wrap: anywhere; }
+      .skill-instructions { padding: 24px 28px; border: 1px solid var(--border-default); border-radius: 12px; background: var(--bg-surface); font-size: 14px; line-height: 1.7; overflow-wrap: anywhere; }
+      .skill-instructions > * { margin-bottom: 12px; }
       .skill-instructions > :first-child { margin-top: 0; }
       .skill-instructions > :last-child { margin-bottom: 0; }
-      .skill-instructions pre { overflow: auto; padding: 12px 14px; background: var(--bg-inset, var(--bg-raised)); border-radius: 8px; font-size: 13px; }
+      .skill-instructions :is(h1, h2, h3, h4, h5, h6) { margin: 28px 0 10px; line-height: 1.3; font-weight: 600; letter-spacing: -0.01em; }
+      .skill-instructions h1 { font-size: 22px; }
+      .skill-instructions h2 { padding-bottom: 6px; border-bottom: 1px solid var(--border-subtle); font-size: 18px; }
+      .skill-instructions h3 { font-size: 16px; }
+      .skill-instructions :is(h4, h5, h6) { font-size: 14px; }
+      .skill-instructions :is(h1, h2, h3, h4, h5, h6) + :is(h2, h3, h4, h5, h6) { margin-top: 12px; }
+      .skill-instructions :is(ul, ol) { padding-left: 24px; }
+      .skill-instructions li + li, .skill-instructions li > :is(ul, ol) { margin-top: 4px; }
+      .skill-instructions li > p { margin-bottom: 4px; }
+      .skill-instructions li::marker { color: var(--text-tertiary); }
+      .skill-instructions a { color: var(--accent); text-underline-offset: 2px; }
+      .skill-instructions blockquote { padding-left: 14px; border-left: 3px solid var(--border-default); color: var(--text-secondary); }
+      .skill-instructions hr { height: 0; margin: 24px 0; border: 0; border-top: 1px solid var(--border-default); }
+      .skill-instructions table { border-collapse: collapse; font-size: 13px; }
+      .skill-instructions :is(th, td) { padding: 6px 10px; border: 1px solid var(--border-default); text-align: left; }
+      .skill-instructions pre { overflow: auto; margin: 4px 0 16px; padding: 12px 14px; background: var(--bg-inset, var(--bg-raised)); border-radius: 8px; font-size: 13px; line-height: 1.55; }
       .skill-instructions pre, .skill-instructions code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+      .skill-instructions :not(pre) > code { padding: 1px 5px; border-radius: 4px; background: var(--bg-raised); font-size: 0.9em; }
       .skill-instructions img { max-width: 100%; }
       .skills-files > li { display: flex; align-items: center; gap: 10px; padding: 10px 16px; font-size: 13px; }
       .skills-files i { color: var(--text-tertiary); }
