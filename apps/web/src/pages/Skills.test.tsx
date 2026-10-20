@@ -126,6 +126,12 @@ describe("Skills", () => {
     await vi.advanceTimersByTimeAsync(5_000);
     expect(root.textContent).toContain("weekly-review guidance");
   });
+  it("opens the detail page of a skill whose id needs URL encoding", async () => {
+    respond = (path) => path === "/api/skills/builtin%3Adashboard" ? Response.json({ ...row("builtin:dashboard", "dashboard", { kind: "builtin" }), skillMd: "Dashboard instructions", files: [{ path: "SKILL.md", size: 22 }] }) : undefined;
+    await mount(); control<HTMLAnchorElement>("link", "dashboard").click();
+    await vi.waitFor(() => expect(root.textContent).toContain("Dashboard instructions"));
+    expect(root.textContent).not.toContain("Unable to load skills");
+  });
   it("keeps the page on screen while a background refresh is in flight", async () => {
     dispose = render(() => <Router><Route path="/skills" component={() => <Suspense fallback={<p>Booting</p>}><Skills /></Suspense>} /></Router>, root);
     await vi.waitFor(() => expect(root.textContent).toContain("meeting-notes guidance"));

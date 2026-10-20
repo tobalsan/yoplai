@@ -19,7 +19,7 @@ export function Skills() {
   const params = useParams<{ id?: string }>();
   const navigate = useNavigate();
   const [skills, { refetch: refetchList }] = createResource(() => !params.id, fetchSkills);
-  const [detail, { refetch: refetchDetail }] = createResource(() => params.id, fetchSkill);
+  const [detail, { refetch: refetchDetail }] = createResource(() => params.id && decodeURIComponent(params.id), fetchSkill); // the router keeps %3A etc. encoded
   // `.latest` keeps background refetches from suspending the route and blanking the page.
   const listData = () => skills.error ? undefined : skills.latest;
   const detailData = () => detail.error ? undefined : detail.latest;
