@@ -134,7 +134,7 @@ export function Skills() {
     <input ref={zipInput} aria-label="Skill zip file" type="file" accept=".zip" hidden onChange={(event) => selected(event, false)} />
     <input ref={(element) => { folderInput = element; element.setAttribute("webkitdirectory", ""); }} aria-label="Skill folder files" type="file" multiple hidden onChange={(event) => selected(event, true)} />
     <Show when={replacement()}>{(item) => <ConfirmDialog title="Replace existing skill" description="Replace the content of your skill? Sharing and enable settings will be kept, and the current content saved in version history." confirmLabel="Replace" error={error()} onCancel={() => setReplacement(undefined)} onConfirm={() => upload(item().files, item().folder, item().id)} />}</Show>
-    <Show when={choosingReplacement()}>{(row) => <Modal title={`Update ${row().name}`} onClose={() => setChoosingReplacement(undefined)}><p>Upload a new version with the same skill name. Sharing and enable settings stay the same.</p><Button onClick={() => { setReplaceTarget(row().id); setChoosingReplacement(undefined); zipInput?.click(); }}>Update from zip</Button><Button onClick={() => { setReplaceTarget(row().id); setChoosingReplacement(undefined); folderInput?.click(); }}>Update from folder</Button></Modal>}</Show>
+    <Show when={choosingReplacement()}>{(row) => <Modal title={`Update ${row().name}`} onClose={() => setChoosingReplacement(undefined)}><p class="skill-dialog-intro">Upload a new version with the same skill name. Sharing and enable settings stay the same, and the current content goes to version history.</p><div class="skill-dialog-choices"><Button icon="fa-regular fa-file-zipper" onClick={() => { setReplaceTarget(row().id); setChoosingReplacement(undefined); zipInput?.click(); }}>Update from zip</Button><Button icon="fa-regular fa-folder-open" onClick={() => { setReplaceTarget(row().id); setChoosingReplacement(undefined); folderInput?.click(); }}>Update from folder</Button></div></Modal>}</Show>
     <Show when={managing()}>{(row) => <DashboardAccessDialog dashboard={{ id: row().id, title: row().name, shares: row().shares }} loadRecipients={fetchSkillRecipients} saveShares={saveSkillShares} platformReadOnly note="People with access can turn this skill on for their own agents. Editors can change its content. Only you can share or delete it." onClose={() => setManaging(undefined)} onSaved={async () => { await refetch(); }} />}</Show>
     <Show when={importing()}><SkillImportDialog onClose={() => setImporting(false)} /></Show>
     <Show when={createAgents()}>{(agents) => <Modal title="Create skill: choose an agent" onClose={() => setCreateAgents(undefined)} footer={<Button onClick={() => setCreateAgents(undefined)}>Cancel</Button>}><p>Who do you want to create this skill with?</p><For each={agents()} fallback={<p>No agents with skill support are available. Ask your operator for an agent that supports skills, or upload or import a skill instead.</p>}>{(agent) => <Button onClick={() => createChat(agent.id)}>{agent.name}</Button>}</For></Modal>}</Show>
@@ -196,6 +196,36 @@ export function Skills() {
       .skill-copy a:hover { text-decoration: underline; }
       .skill-copy p { margin: 3px 0 0; font-size: 13px; line-height: 1.45; color: var(--text-secondary); overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
       .skill-meta:empty { display: none; }
+      .skill-dialog-intro { margin: 0; font-size: 14px; line-height: 1.5; color: var(--text-secondary); }
+      .skill-dialog-status { margin: 0; font-size: 13px; color: var(--text-secondary); }
+      .skill-dialog-link { border: 0; padding: 0; background: none; color: inherit; font: inherit; text-decoration: underline; cursor: pointer; }
+      .skill-dialog-steps { margin: 0; padding: 0; list-style: none; counter-reset: step; display: grid; gap: 10px; font-size: 14px; line-height: 1.45; color: var(--text-secondary); }
+      .skill-dialog-steps li { counter-increment: step; display: grid; grid-template-columns: 22px 1fr; column-gap: 10px; align-items: start; }
+      .skill-dialog-steps li::before { content: counter(step); display: grid; place-items: center; width: 22px; height: 22px; border-radius: 50%; background: var(--bg-raised); color: var(--text-primary); font-size: 12px; font-weight: 600; font-variant-numeric: tabular-nums; }
+      .skill-dialog-start, .skill-dialog-choices { display: flex; flex-wrap: wrap; gap: 8px; }
+      .skill-dialog-token { display: grid; gap: 14px; padding: 14px; border: 1px solid var(--border-default); border-radius: 10px; background: var(--bg-base); }
+      .skill-dialog-notice { display: flex; gap: 8px; align-items: baseline; margin: 0; font-size: 13px; color: var(--text-primary); }
+      .skill-dialog-notice i { color: #d97706; }
+      .skill-dialog-field { display: grid; gap: 6px; }
+      .skill-dialog-field-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 32px; font-size: 13px; font-weight: 500; color: var(--text-secondary); }
+      .skill-dialog-inline { display: flex; gap: 8px; }
+      .skill-dialog-inline .ui-button, .skill-dialog-field-head .ui-button { flex-shrink: 0; white-space: nowrap; }
+      .skill-dialog-field textarea, .skill-dialog-field input { width: 100%; min-width: 0; box-sizing: border-box; padding: 9px 10px; border: 1px solid var(--border-default); border-radius: 8px; background: var(--bg-surface); color: var(--text-primary); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; line-height: 1.5; resize: vertical; }
+      .skill-dialog-field textarea:focus-visible, .skill-dialog-field input:focus-visible { outline: 2px solid var(--accent, #3b82f6); outline-offset: 1px; }
+      .skill-dialog-section { display: grid; gap: 8px; }
+      .skill-dialog-section h3 { margin: 0; font-size: 13px; font-weight: 600; color: var(--text-primary); }
+      .skill-dialog-list { margin: 0; padding: 0; list-style: none; border: 1px solid var(--border-default); border-radius: 10px; }
+      .skill-dialog-list li { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 10px 12px; }
+      .skill-dialog-list li + li { border-top: 1px solid var(--border-subtle); }
+      .skill-dialog-list li > div { display: grid; gap: 2px; min-width: 0; }
+      .skill-dialog-list strong { font-size: 14px; font-weight: 500; color: var(--text-primary); font-variant-numeric: tabular-nums; }
+      .skill-dialog-list span { font-size: 12px; color: var(--text-tertiary); }
+      .skill-dialog-list .ui-button { flex-shrink: 0; padding: 5px 10px; font-size: 12.5px; }
+      .skill-dialog-list .ui-button[aria-label^="Revoke"] { color: var(--color-danger, #dc2626); }
+      .skill-dialog-empty { display: grid; justify-items: center; gap: 4px; padding: 24px 16px; border: 1px dashed var(--border-default); border-radius: 10px; text-align: center; }
+      .skill-dialog-empty i { margin-bottom: 6px; font-size: 18px; color: var(--text-tertiary); }
+      .skill-dialog-empty p { margin: 0; font-size: 14px; font-weight: 500; color: var(--text-primary); }
+      .skill-dialog-empty span { font-size: 13px; color: var(--text-secondary); }
       .skill-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; margin-top: 8px; font-size: 12px; color: var(--text-tertiary); }
       .skill-meta > span:not(.skill-pill) + span:not(.skill-pill)::before { content: "·"; margin-right: 10px; }
       .skill-pill { display: inline-flex; align-items: center; padding: 1px 8px; border-radius: 999px; border: 1px solid var(--border-default); color: var(--text-secondary); }
