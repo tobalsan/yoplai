@@ -420,7 +420,7 @@ Take `best_description` from the JSON output and update the skill's SKILL.md fro
 
 When the user is satisfied, call `skill_save` with `name` and `files: [{ path, content, encoding: "utf8" }]`. Include a root `SKILL.md` with the same name and a non-empty description, plus every referenced resource. Use `encoding: "base64"` for binary files. Pass `skillId` when updating an existing shared skill. Keep the name unchanged.
 
-Tell the user the skill is available under Mine, initially off, and link to the Skills page returned by the tool. Updates keep sharing and enable settings and record a version. If the tool refuses a userless or Team-mode run, ask the user to continue in a personal chat.
+Tell the user the skill is available under Your skills, initially off, and link to the Skills page returned by the tool. Updates keep sharing and enable settings and record a version. If the tool refuses a userless or Team-mode run, ask the user to continue in a personal chat.
 
 ---
 

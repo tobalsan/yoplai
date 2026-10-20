@@ -324,7 +324,7 @@ The image includes pinned `playwright-cli` and Chromium. Pi Bash inherits `YOPLA
 - Container event/output framing constants and schemas live in `packages/shared`.
 - Default `yoplai-agent:latest` rebuilds when build-context content changes; custom images are not rebuilt.
 
-Host and sandbox Pi agents share the Yoplai base system prompt from `packages/shared/src/pi-system-prompt.ts`; sandbox runs append container-specific instructions.
+Host and sandbox Pi agents share the Yoplai base system prompt from `packages/shared/src/pi-system-prompt.ts`. It tells agents to save requested skills with `skill_save`, not in the workspace `skills/` folder. Sandbox runs append container-specific instructions.
 
 Pi supports extension tools in and out of containers. Sandbox Claude fails loudly when extension tools are present rather than silently omitting them.
 
