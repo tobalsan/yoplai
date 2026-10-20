@@ -108,13 +108,14 @@ describe("Skills", () => {
   });
   it("lets a superadmin inspect collisions and disable a platform-wide skill", async () => {
     setCapabilitiesForTests({ multiUser: true, user: { id: "admin", name: "Admin", role: "superadmin" } });
-    respond = (path) => path === "/api/admin/skills" ? Response.json({ skills: [{ ...row("s1", "meeting-notes", { shares: [{ kind: "all", mode: "read" }] }), enabledCount: 3, collisions: ["default:meeting-notes"] }], system: [row("builtin:dashboard", "dashboard", { kind: "builtin", locked: true }), row("default:hr-writing", "hr-writing", { kind: "default", locked: true, agents: ["hr"] })] }) : undefined;
+    respond = (path) => path === "/api/skills/recipients" ? Response.json({ users: [{ id: "bob", name: "Bob", email: "bob@example.com" }] }) : path === "/api/admin/skills" ? Response.json({ skills: [{ ...row("s1", "meeting-notes", { shares: [{ kind: "all", mode: "read" }, { kind: "user", id: "bob", mode: "write" }] }), enabledCount: 3, collisions: ["default:meeting-notes"] }], system: [row("builtin:dashboard", "dashboard", { kind: "builtin", locked: true }), row("default:hr-writing", "hr-writing", { kind: "default", locked: true, agents: ["hr"] })] }) : undefined;
     history.replaceState({}, "", "/admin/skills");
     dispose = render(() => <Router><Route path="/admin/skills" component={AdminSkills} /></Router>, root);
     await vi.waitFor(() => expect(root.textContent).toContain("default:meeting-notes"));
     expect(root.textContent).toContain("Ada"); expect(root.textContent).toContain("3 users");
     expect(root.textContent).toContain("System skills"); expect(control<HTMLAnchorElement>("link", "dashboard").getAttribute("href")).toBe("/skills/builtin%3Adashboard");
     expect(root.textContent).toContain("All agents"); expect(root.textContent).toContain("hr-writing");
+    await vi.waitFor(() => expect(root.textContent).toContain("Bob · edit")); expect(root.textContent).not.toContain("bob · edit");
     click("Disable meeting-notes");
     await vi.waitFor(() => expect(requests).toContainEqual({ path: "/api/skills/s1/admin", method: "PUT", body: { disabledByAdmin: true } }));
   });
@@ -126,6 +127,18 @@ describe("Skills", () => {
     mine.push(row("s3", "weekly-review"));
     await vi.advanceTimersByTimeAsync(5_000);
     expect(root.textContent).toContain("weekly-review guidance");
+  });
+  it("closes the Add skill menu when the user clicks elsewhere on the page", async () => {
+    await mount(); click("Add skill");
+    expect(document.body.textContent).toContain("Upload zip");
+    control<HTMLInputElement>("searchbox", "Search skills").dispatchEvent(new Event("pointerdown", { bubbles: true }));
+    await vi.waitFor(() => expect(document.body.textContent).not.toContain("Upload zip"));
+  });
+  it("closes a skill actions menu when the user clicks elsewhere on the page", async () => {
+    await mount(); actions();
+    await vi.waitFor(() => expect(control<HTMLElement>("button", "Actions for meeting-notes").getAttribute("aria-expanded")).toBe("true"));
+    control<HTMLInputElement>("searchbox", "Search skills").dispatchEvent(new Event("pointerdown", { bubbles: true }));
+    await vi.waitFor(() => expect(control<HTMLElement>("button", "Actions for meeting-notes").getAttribute("aria-expanded")).toBe("false"));
   });
   it("opens the detail page of a skill whose id needs URL encoding", async () => {
     const notes = row("agent:hr:notes", "notes", { kind: "agent", agentName: "HR", locked: true, canWrite: false, canManage: false });
