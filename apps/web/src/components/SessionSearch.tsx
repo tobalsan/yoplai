@@ -232,7 +232,6 @@ function SearchPalette(props: { onClose: () => void }) {
         border: none; outline: none; background: transparent; color: var(--text-primary);
         font: inherit; font-size: 16px; caret-color: var(--text-primary);
       }
-      .session-search-field:focus-within { box-shadow: inset 0 -2px var(--text-secondary); }
       .session-search-field input::placeholder { color: var(--text-secondary); opacity: 1; }
       .session-search-state { padding: 24px 16px; color: var(--text-secondary); font-size: 14px; }
       .session-search-state[role="alert"] { color: var(--tone-error); }
