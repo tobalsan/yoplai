@@ -29,3 +29,8 @@ it("keeps nested list items and quoted paragraphs on separate plain-text lines",
     "- Parent\n- Child\n\nFirst paragraph\n\nSecond paragraph"
   );
 });
+
+it("keeps literal HTML displayed as text in plain clipboard content", () => {
+  const result = formatReplyClipboard(["<div>Hello</div>"]);
+  expect(result.plain).toBe("<div>Hello</div>");
+});

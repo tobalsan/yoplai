@@ -75,7 +75,10 @@ export function formatReplyClipboard(texts: string[]): {
           .join("\n");
       return children();
     };
-    const plain = Array.from(root.children).map(plainNode).join("\n\n");
+    const plain = Array.from(root.childNodes)
+      .filter((node) => node.nodeType !== Node.TEXT_NODE || node.textContent?.trim())
+      .map(plainNode)
+      .join("\n\n");
     return { html: root.innerHTML, plain };
   });
   return {
