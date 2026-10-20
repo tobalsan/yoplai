@@ -25,7 +25,7 @@ export function SkillImportDialog(props: { onClose: () => void }) {
   return <Modal title="Import from Claude or ChatGPT" size="lg" onClose={props.onClose} dismissible={!busy()} error={error()} footer={<Button onClick={props.onClose} disabled={busy()}>Done</Button>}>
     <ol class="skill-dialog-steps">
       <li>Generate an import token.</li>
-      <li>Copy the prompt and paste it into Claude or ChatGPT. For 24 hours, it can send skill files to your library.</li>
+      <li><span>Copy the prompt and paste it into Claude or ChatGPT. For 24 hours, it can send skill files to your library. <strong>If you want to import specific skills, do not forget to customize the prompt to name them first.</strong></span></li>
       <li>Turn on the skills that you want. Imported skills stay off until you turn them on.</li>
     </ol>
     <Show when={created()} fallback={<div class="skill-dialog-start"><Button variant="primary" icon="fa-solid fa-key" disabled={busy()} onClick={() => void run(async () => { setCreated(await createImportToken()); await refetch(); })}>Generate import token</Button></div>}>{(token) => <section class="skill-dialog-token" aria-label="New import token">

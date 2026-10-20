@@ -125,6 +125,7 @@ describe("Skills HTTP", () => {
     expect(token.prompt.includes(token.token)).toBe(true);
     expect(token.prompt).toContain("https://skills.example.test/api/skills/import");
     expect(token.prompt).toContain("SKILL.md");
+    expect(token.prompt).toContain("ask me which skills to import");
     const listed = await (await routes.request("/skills/import-token")).json();
     expect(listed.tokens).toEqual([{ id: token.id, createdAt: token.createdAt, expiresAt: token.expiresAt }]);
     expect((await fs.readFile(path.join(home, "skill-library/import-tokens.json"), "utf8")).includes(token.token)).toBe(false);

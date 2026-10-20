@@ -201,6 +201,7 @@ export function Skills() {
       .skill-dialog-link { border: 0; padding: 0; background: none; color: inherit; font: inherit; text-decoration: underline; cursor: pointer; }
       .skill-dialog-steps { margin: 0; padding: 0; list-style: none; counter-reset: step; display: grid; gap: 10px; font-size: 14px; line-height: 1.45; color: var(--text-secondary); }
       .skill-dialog-steps li { counter-increment: step; display: grid; grid-template-columns: 22px 1fr; column-gap: 10px; align-items: start; }
+      .skill-dialog-steps strong { font-weight: 600; color: var(--text-primary); }
       .skill-dialog-steps li::before { content: counter(step); display: grid; place-items: center; width: 22px; height: 22px; border-radius: 50%; background: var(--bg-raised); color: var(--text-primary); font-size: 12px; font-weight: 600; font-variant-numeric: tabular-nums; }
       .skill-dialog-start, .skill-dialog-choices { display: flex; flex-wrap: wrap; gap: 8px; }
       .skill-dialog-token { display: grid; gap: 14px; padding: 14px; border: 1px solid var(--border-default); border-radius: 10px; background: var(--bg-base); }
