@@ -137,7 +137,7 @@ describe("pi adapter onecli env wiring", () => {
     mockCreateAgentSession.mockResolvedValue({ session });
     const { piAdapter } = await import("../adapter.js");
     await piAdapter.run(makeRunParams(agent));
-    expect(mockCreateAgentSession).toHaveBeenLastCalledWith(expect.objectContaining({ customTools: [expect.objectContaining({ name: "send_file" })] }));
+    expect(mockCreateAgentSession).toHaveBeenLastCalledWith(expect.objectContaining({ customTools: [expect.objectContaining({ name: "send_file" }), expect.objectContaining({ name: "skill_save" })] }));
     await piAdapter.run({ ...makeRunParams(agent), context: { kind: "web", project: { id: "research", instructions: "" } } });
     expect(mockCreateAgentSession).toHaveBeenLastCalledWith(expect.objectContaining({
       customTools: expect.arrayContaining([
@@ -591,7 +591,7 @@ describe("pi adapter onecli env wiring", () => {
     const customToolNames = options.customTools?.map(
       (candidate) => candidate.name
     );
-    expect(customToolNames).toEqual(["scratchpad_read", "send_file"]);
+    expect(customToolNames).toEqual(["scratchpad_read", "send_file", "skill_save"]);
     expect(options.tools).toEqual([
       "read",
       "bash",
@@ -599,6 +599,7 @@ describe("pi adapter onecli env wiring", () => {
       "write",
       "scratchpad_read",
       "send_file",
+      "skill_save",
       "tool_search",
     ]);
     expect(customToolNames).not.toEqual(

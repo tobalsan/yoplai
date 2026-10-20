@@ -81,6 +81,7 @@ describe("AdminExtensionsPage", () => {
       ["User management", "/admin/users"],
       ["Extensions", "/admin/extensions"],
       ["MCP servers", "/admin/mcp-servers"],
+      ["Skills", "/admin/skills"],
     ]);
     expect(container.querySelector(".admin-tab.active")?.textContent).toBe("Extensions");
   });
@@ -129,7 +130,7 @@ describe("AdminExtensionsPage", () => {
 
   it("hides User management in single-user mode", async () => {
     const container = await mountWith({ multiUser: false });
-    expect(Array.from(container.querySelectorAll(".admin-tab")).map((t) => t.textContent)).toEqual(["Extensions", "MCP servers"]);
+    expect(Array.from(container.querySelectorAll(".admin-tab")).map((t) => t.textContent)).toEqual(["Extensions", "MCP servers", "Skills"]);
   });
 
   it("lists candidates and toggles stars via PUT", async () => {

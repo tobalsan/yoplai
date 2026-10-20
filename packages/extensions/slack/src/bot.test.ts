@@ -2639,6 +2639,282 @@ describe("createSlackBot", () => {
   });
 });
 
+describe.each(["component", "per-agent"] as const)("proactive DM routing (%s)", (mode) => {
+  beforeEach(async () => {
+    dataDir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-slack-proactive-"));
+    apps.length = 0;
+    receivers.length = 0;
+    streamHandlers.length = 0;
+    vi.clearAllMocks();
+    mockRunAgent.mockReset();
+    pairing.enabled = false;
+    clearAllHistory();
+    mockGetSessionEntry.mockResolvedValue(undefined);
+    mockEnsureSession.mockResolvedValue({ sessionId: "session", updatedAt: 1 });
+    mockHasSession.mockResolvedValue(true);
+    mockRunAgent.mockResolvedValue({
+      payloads: [{ text: "ok" }],
+      meta: { durationMs: 1, sessionId: "session" },
+    });
+  });
+
+  afterEach(async () => {
+    clearActiveBots();
+    await fs.rm(dataDir, { recursive: true, force: true });
+  });
+
+  async function startBot(dmOverrides: Partial<NonNullable<SlackComponentConfig["dm"]>> = {}) {
+    const { createSlackBot, createSlackAgentBot } = await import("./bot.js");
+    const dm = {
+      enabled: true,
+      agent: "main",
+      allowFrom: ["Uhr"],
+      proactiveReplies: { enabled: true, maxReplies: 1 },
+      reactionNotifications: "all" as const,
+      threadPolicy: "follow" as const,
+      ...dmOverrides,
+    };
+    const bot = mode === "component"
+      ? createSlackBot([agent], { ...config, dm })
+      : createSlackAgentBot({ ...agent, slack: { token: "xoxb-test", appToken: "xapp-test", dm } });
+    apps[0].client.auth.test.mockResolvedValue({ user_id: "Ubot", team_id: "T1" });
+    await bot?.start();
+    return bot;
+  }
+
+  async function trackMessages(messages: Array<[string, string]>) {
+    const { createProactiveDmNoteStore } = await import("./proactive-dm-notes.js");
+    const store = createProactiveDmNoteStore(dataDir);
+    try {
+      for (const [channel, ts] of messages) store.trackMessage("main", channel, ts);
+    } finally {
+      store.close();
+    }
+  }
+
+  const send = (channel: string, user: string, ts: string, threadTs?: string, text = "hi") =>
+    getMessageHandler(apps[0])({
+      message: { ts, thread_ts: threadTs, text, channel, user, channel_type: "im" },
+      client: apps[0].client,
+    });
+
+  const react = (channel: string, user: string, ts: string) =>
+    getEventHandler(apps[0], "reaction_added")({
+      event: { reaction: "thumbsup", user, item: { type: "message", channel, ts } },
+      client: apps[0].client,
+    });
+
+  it("keeps each unpaired person's proactive replies in a stable D-channel session", async () => {
+    await trackMessages([["D1", "1.0"], ["D1", "2.0"], ["D2", "3.0"]]);
+    const bot = await startBot();
+    await send("D1", "UA", "1.1", "1.0");
+    await send("D2", "UB", "3.1", "3.0");
+    await send("D1", "UA", "2.1", "2.0");
+    expect(mockRunAgent.mock.calls.map(([run]) => [run.sessionKey, run.sessionOwnerId])).toEqual([
+      ["slack:D1", null], ["slack:D2", null], ["slack:D1", null],
+    ]);
+    expect(apps[0].client.chat.postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ channel: "D1", text: "ok", thread_ts: "2.0" })
+    );
+    await bot?.stop();
+  });
+
+  it("routes tracked proactive reactions with replies while allowlisted users keep main", async () => {
+    await trackMessages([["D1", "1.0"]]);
+    const bot = await startBot();
+    apps[0].client.conversations.history.mockResolvedValue({
+      messages: [{ ts: "1.0", user: "Ubot", text: "How are you?" }],
+    });
+    await send("D1", "UA", "1.1", "1.0");
+    await react("D1", "UA", "1.0");
+    await send("D1", "Uhr", "1.2", "1.0");
+    await react("D1", "Uhr", "1.0");
+    expect(mockRunAgent.mock.calls.map(([run]) => run.sessionKey)).toEqual([
+      "slack:D1", "slack:D1", "main", "main",
+    ]);
+    expect(mockRunAgent.mock.calls[1][0].message).toContain("> How are you?");
+    expect(apps[0].client.chat.postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ channel: "D1", text: "ok", thread_ts: "1.0" })
+    );
+    await bot?.stop();
+  });
+
+  it.each([
+    { requester: undefined, owner: null },
+    { requester: "alice", owner: "alice" },
+  ])("preserves requester ownership $owner and stored foreign bindings without routing through them", async ({ requester, owner }) => {
+    await trackMessages([["D1", "1.0"]]);
+    const store = createSlackThreadSessionBindingStore(dataDir);
+    const binding = store.setBinding({
+      channelId: "D1", threadTs: "1.0", agentId: "main",
+      sessionId: "foreign-session", owner: "foreign-owner", source: "agent",
+    });
+    store.close();
+    pairing.enabled = true;
+    pairing.resolve.mockReturnValue(requester);
+    const bot = await startBot();
+    mockHasSession.mockResolvedValue(false);
+    await send("D1", "UA", "1.1", "1.0");
+    const run = mockRunAgent.mock.calls[0][0];
+    expect(run).toMatchObject({ userId: requester, sessionOwnerId: owner, sessionKey: "slack:D1" });
+    expect(run.sessionId).toBeUndefined();
+    expect(mockResetSession).not.toHaveBeenCalled();
+    const persisted = createSlackThreadSessionBindingStore(dataDir);
+    try {
+      expect(persisted.getBinding("D1", "1.0", "main")).toEqual(binding);
+    } finally {
+      persisted.close();
+    }
+    await react("D1", "UA", "1.0");
+    expect(mockRunAgent).toHaveBeenLastCalledWith(expect.objectContaining({ userId: requester, sessionKey: "slack:D1" }));
+    await bot?.stop();
+  });
+
+  it("keeps admission caps and treats bang text as an ordinary proactive reply", async () => {
+    await trackMessages([["D1", "1.0"]]);
+    const bot = await startBot();
+    await send("D1", "UA", "2.0");
+    await send("D1", "UA", "2.1", "9.9");
+    await react("D1", "UA", "9.9");
+    expect(mockRunAgent).not.toHaveBeenCalled();
+    await send("D1", "UA", "2.2", "1.0", "!new");
+    expect(mockRunAgent).toHaveBeenCalledWith(expect.objectContaining({
+      message: "!new", sessionKey: "slack:D1",
+    }));
+    expect(mockResetSession).not.toHaveBeenCalled();
+    expect(apps[0].client.chat.postEphemeral).not.toHaveBeenCalled();
+    await send("D1", "UA", "2.3", "1.0");
+    expect(mockRunAgent).toHaveBeenCalledTimes(1);
+    await react("D1", "UA", "1.0");
+    await react("D1", "UA", "1.0");
+    expect(mockRunAgent).toHaveBeenCalledTimes(3);
+    const respond = vi.fn().mockResolvedValue(undefined);
+    await getCommandHandler(apps[0], "/new")({
+      command: { channel_id: "D1", user_id: "UA" },
+      ack: vi.fn().mockResolvedValue(undefined), respond,
+    });
+    expect(mockRunAgent).toHaveBeenCalledTimes(3);
+    expect(respond).toHaveBeenCalledWith(expect.objectContaining({
+      text: "No agent is configured for this Slack route.",
+    }));
+    await bot?.stop();
+  });
+
+  it("delivers deferred proactive replies and failures to the original thread", async () => {
+    await trackMessages([["D1", "1.0"], ["D1", "2.0"]]);
+    const bot = await startBot();
+    mockRunAgent.mockResolvedValue({
+      payloads: [], meta: { durationMs: 0, sessionId: "session", queued: true },
+    });
+    await send("D1", "UA", "1.1", "1.0");
+    const first = mockRunAgent.mock.calls[0][0];
+    expect(first.slackDelivery).toEqual({ channel: "D1", threadTs: "1.0", eventId: "1.1" });
+    await first.onDeferredResult({ result: {
+      payloads: [{ text: "deferred answer" }], meta: { durationMs: 1, sessionId: "session" },
+    } });
+    expect(apps[0].client.chat.postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ channel: "D1", text: "deferred answer", thread_ts: "1.0" })
+    );
+    await send("D1", "UA", "2.1", "2.0");
+    await mockRunAgent.mock.calls[1][0].onDeferredResult({ error: new Error("provider failed") });
+    expect(apps[0].client.chat.postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ channel: "D1", text: "Something went wrong, please try again.", thread_ts: "2.0" })
+    );
+    await bot?.stop();
+  });
+
+  it.each([false, true])("reacts to the inbound message and preserves it after thinking cleanup (background %s)", async (bound) => {
+    if (bound) {
+      const store = createSlackThreadSessionBindingStore(dataDir);
+      store.setBinding({
+        channelId: "D1", threadTs: "1.0", agentId: "main", sessionId: "session",
+        owner: null, source: "agent",
+      });
+      store.close();
+    }
+    mockGetSessionEntry.mockResolvedValue({ sessionId: "session" });
+    const bot = await startBot({ allowFrom: undefined });
+    const { slackAgentTools } = await import("./agent-tools.js");
+    const tool = slackAgentTools().find((tool) => tool.name === "slack.add_reaction")!;
+    const reactions = new Set<string>();
+    apps[0].client.reactions.add.mockImplementation(async ({ name }) => { reactions.add(name); return {}; });
+    apps[0].client.reactions.remove.mockImplementation(async ({ name }) => { reactions.delete(name); return {}; });
+    let toolResult: unknown;
+    mockRunAgent.mockImplementationOnce(async (run) => {
+      toolResult = await tool.execute({ name: "white_check_mark" }, {
+        agent, config: {} as never, sessionId: "session",
+        userId: run.userId, sessionOwnerId: run.sessionOwnerId, requesterId: run.requesterId,
+      });
+      return { payloads: [], meta: { durationMs: 1, sessionId: "session" } };
+    });
+    await send("D1", "UA", "1.1", "1.0");
+    expect(toolResult).toEqual({ ok: true });
+    expect(mockRunAgent.mock.calls[0][0].background).toBe(bound);
+    expect(apps[0].client.reactions.add).toHaveBeenCalledWith({
+      name: "white_check_mark", channel: "D1", timestamp: "1.1",
+    });
+    expect([...reactions]).toEqual(["white_check_mark"]);
+    expect(apps[0].client.chat.postMessage).not.toHaveBeenCalled();
+    await bot?.stop();
+  });
+
+  it("retains queued message targets until deferred completion and rejects overlapping senders", async () => {
+    mockGetSessionEntry.mockResolvedValue({ sessionId: "session" });
+    const bot = await startBot({ allowFrom: undefined });
+    const { slackAgentTools } = await import("./agent-tools.js");
+    const tool = slackAgentTools().find((tool) => tool.name === "slack.add_reaction")!;
+    mockRunAgent.mockResolvedValue({ payloads: [], meta: { durationMs: 0, sessionId: "session", queued: true } });
+    const context = { agent, config: {} as never, sessionId: "session", requesterId: "slack:T1:UA" };
+    const reactToMessage = () => tool.execute({ name: "white_check_mark" }, context);
+    const complete = (index: number) => mockRunAgent.mock.calls[index][0].onDeferredResult({ result: {
+      payloads: [], meta: { durationMs: 1, sessionId: "session" },
+    } });
+    await send("D1", "UA", "1.1", "1.0");
+    expect(await reactToMessage()).toEqual({ ok: true });
+    await send("D1", "UA", "1.2", "1.0");
+    const ambiguous = await reactToMessage();
+    await complete(0);
+    const remaining = await reactToMessage();
+    await complete(1);
+    const expired = await reactToMessage();
+    expect(ambiguous).toMatchObject({ ok: false, error: expect.stringContaining("channel and timestamp") });
+    expect(remaining).toEqual({ ok: true });
+    expect(apps[0].client.reactions.add).toHaveBeenLastCalledWith({
+      name: "white_check_mark", channel: "D1", timestamp: "1.2",
+    });
+    expect(expired).toMatchObject({ ok: false, error: expect.stringContaining("channel and timestamp") });
+    await bot?.stop();
+  });
+
+  it("never borrows a queued message target for reaction or scheduled runs in the same session", async () => {
+    mockGetSessionEntry.mockResolvedValue({ sessionId: "session" });
+    const bot = await startBot({ allowFrom: undefined });
+    const { slackAgentTools } = await import("./agent-tools.js");
+    const tool = slackAgentTools().find((tool) => tool.name === "slack.add_reaction")!;
+    mockRunAgent.mockResolvedValueOnce({ payloads: [], meta: { durationMs: 0, sessionId: "session", queued: true } });
+    await send("D1", "UA", "1.1", "1.0");
+    let reactionResult: unknown;
+    mockRunAgent.mockImplementationOnce(async (run) => {
+      reactionResult = await tool.execute({ name: "white_check_mark" }, {
+        agent, config: {} as never, sessionId: "session", userId: run.userId, requesterId: run.requesterId,
+      });
+      return { payloads: [], meta: { durationMs: 1, sessionId: "session" } };
+    });
+    await react("D1", "UA", "1.0");
+    const scheduledResult = await tool.execute({ name: "white_check_mark" }, {
+      agent, config: {} as never, sessionId: "session",
+    });
+    await mockRunAgent.mock.calls[0][0].onDeferredResult({ result: {
+      payloads: [], meta: { durationMs: 1, sessionId: "session" },
+    } });
+    expect(mockRunAgent.mock.calls[1][0].sessionKey).toBe("main");
+    expect(reactionResult).toMatchObject({ ok: false, error: expect.stringContaining("channel and timestamp") });
+    expect(scheduledResult).toMatchObject({ ok: false, error: expect.stringContaining("channel and timestamp") });
+    expect(apps[0].client.reactions.add).not.toHaveBeenCalledWith(expect.objectContaining({ name: "white_check_mark" }));
+    await bot?.stop();
+  });
+});
+
 describe("createSlackAgentBot", () => {
   beforeEach(() => {
     apps.length = 0;
@@ -2908,7 +3184,7 @@ describe("createSlackAgentBot", () => {
     expect(mockRunAgent).toHaveBeenCalledTimes(1);
     expect(mockRunAgent).toHaveBeenLastCalledWith(
       expect.objectContaining({
-        sessionKey: "main",
+        sessionKey: "slack:D1",
         message: expect.stringContaining("> Please confirm your start date."),
       })
     );

@@ -941,7 +941,7 @@ export function ChatView() {
   void refreshToolLabels();
   const params = useParams<{ agentId: string; view?: string }>();
   const navigate = useNavigate();
-  const location = useLocation<{ mainAgentHome?: boolean }>();
+  const location = useLocation<{ mainAgentHome?: boolean; draftMessage?: string }>();
   const [agent] = createResource(() => params.agentId, fetchAgent);
   // Settings live on the pool agent in forked mode; the chat agent is a fork.
   const [settingsPoolActions] = createResource(
@@ -2937,6 +2937,16 @@ export function ChatView() {
     navigate(`/chat/${encodeURIComponent(agentId)}`);
     requestAnimationFrame(() => textareaRef?.focus());
   };
+
+  let draftMessageUsed = false;
+  createEffect(() => {
+    const message = location.state?.draftMessage;
+    if (!message || draftMessageUsed || loading() || !agent()) return;
+    draftMessageUsed = true;
+    navigate(`${location.pathname}${location.search}`, { replace: true, state: { mainAgentHome: location.state?.mainAgentHome } });
+    if (simpleMessages().length || fullMessages().length) return;
+    prefillSuggestion(message);
+  });
 
   return (
     <div

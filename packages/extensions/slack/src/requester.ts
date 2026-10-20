@@ -43,6 +43,7 @@ export type ActiveSlackSender = {
   /** Shared-thread overlapping runs cannot safely identify a tool caller. */
   credentialConnectAmbiguous?: boolean;
   channel?: string;
+  messageTs?: string;
   threadTs?: string;
   /** Set by slack.pair; the bot substitutes it for the reply placeholder. */
   pairingLink?: string;
@@ -77,7 +78,6 @@ export async function findSlackSender(
     if (requesterId && sender.requesterId !== requesterId) continue;
     const id = sender.sessionId ?? (await resolveSessionId(agentId, sender.sessionKey));
     if (id === sessionId) {
-      if (requesterId) return sender;
       if (!requireUnique) return sender;
       if (matched) return undefined;
       matched = sender;

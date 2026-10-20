@@ -154,8 +154,9 @@ Flow:
    (with the original message as `thread_starter`) and answers in the thread.
 3. After `maxReplies` accepted replies, further replies in that thread are
    silently ignored. Omit `maxReplies` for unlimited replies.
-4. Anything else from a non-allowlisted user is ignored as before: top-level
-   DMs, replies under non-proactive messages, and `!` commands.
+4. Top-level DMs, replies under non-proactive messages, and slash commands from
+   non-allowlisted users stay rejected. `!` text in an admitted proactive thread
+   reply is processed as an ordinary message, without executing a command.
 
 | Option | Meaning |
 | --- | --- |
@@ -179,6 +180,13 @@ Notes:
   Only top-level sends are tracked; `slack.send_message` with `threadTs` is not.
 - Replies must be in the thread; use `dm.threadPolicy` as usual for how the
   agent's own answers are threaded.
+- Non-allowlisted participants' admitted replies and reactions share a stable
+  `slack:<D-channel>` session key across proactive message roots. Thread bindings
+  do not override this routing. Paired participants use their own session store;
+  unpaired participants use the shared store with separate keys. Allowlisted
+  participants continue to use `main`.
+- Existing idle expiry and resets still apply; a stable key does not retain
+  history indefinitely. Pairing changes the store without migrating history.
 - Needs `im:history` and `reactions:read` scopes plus the `message.im`,
   `reaction_added`, and `reaction_removed` bot events.
 
@@ -192,6 +200,7 @@ This is the path used by scheduled jobs.
 | --- | --- |
 | `slack.create_thread` | Post a thread parent to a channel ID (`C...`) or user ID (`U...`, delivered as a DM), bind it to the active agent session, and return the resolved channel + parent timestamp for follow-up replies. |
 | `slack.send_message` | Post to a channel ID (`C...`) or user ID (`U...`, delivered as a DM). DM sends leave a one-time visibility note for the main session when that user replies. Supports an optional `threadTs` to reply in a thread. Markdown is converted to Slack mrkdwn and long messages are chunked. |
+| `slack.add_reaction` | Add an emoji by `name` (for example `white_check_mark`). Omit both `channel` and `timestamp` to react to the current inbound message, or supply both for an explicit message. Ambiguous and non-message runs require an explicit target. Posts no text; final agent replies are still delivered normally. |
 | `slack.list_channels` | List channel IDs + names (filterable by name substring) so agents can resolve/remember IDs. Backed by the `conversations.list` Web API. |
 | `slack.join_channel` | Join a public channel by ID (`C...`) so the bot can read history and receive messages without a manual invite. Private channels still need an invite. Backed by the `conversations.join` Web API. |
 | `slack.leave_channel` | Leave a channel by ID (`C...` or `G...`). Backed by the `conversations.leave` Web API. |
@@ -295,6 +304,7 @@ The bot token needs scopes matching the features you use:
 | Feature | Scopes |
 | --- | --- |
 | `slack.create_thread`, `slack.send_message` | `chat:write` (and `chat:write.public` to post to channels the bot has not joined) |
+| `slack.add_reaction`, built-in thinking reaction | `reactions:write` |
 | `slack.list_channels` | `channels:read` (public), `groups:read` (private) |
 | `slack.join_channel` | `channels:join` |
 | `slack.leave_channel` | `channels:manage` (public), `groups:write` (private) |
