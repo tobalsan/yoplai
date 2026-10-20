@@ -26,7 +26,7 @@ beforeEach(() => {
     const path = String(input); const method = init?.method ?? "GET";
     requests.push({ path, method, body: typeof init?.body === "string" ? JSON.parse(init.body) : init?.body });
     const custom = await respond(path, init); if (custom) return custom;
-    if (path === "/api/skills" && method === "GET") return Response.json({ default: [row("builtin:dashboard", "dashboard", { kind: "builtin", locked: true, enabled: true, canWrite: false, canManage: false })], mine, sharedWithMe: [], agent: [] });
+    if (path === "/api/skills" && method === "GET") return Response.json({ mine, sharedWithMe: [], agent: [] });
     if (path.endsWith("/enabled")) { mine = mine.map((skill) => ({ ...skill, enabled: true })); return Response.json({ ok: true }); }
     return Response.json({});
   }));
@@ -44,8 +44,7 @@ async function mount() { dispose = render(() => <Router><Route path="/skills" co
 describe("Skills", () => {
   it("groups skills, locks built-ins, searches and enables the user's skill", async () => {
     await mount();
-    for (const heading of ["Default", "Mine", "Shared with me", "Agent skills"]) expect(root.textContent).toContain(heading);
-    expect(root.textContent).toContain("Always on");
+    expect(Array.from(root.querySelectorAll("h2"), (heading) => heading.textContent)).toEqual(["Mine", "Shared with me", "Agent skills"]);
     const toggle = control<HTMLInputElement>("switch", "Enable meeting-notes"); toggle.click();
     await vi.waitFor(() => expect(requests).toContainEqual({ path: "/api/skills/s1/enabled", method: "PUT", body: { enabled: true } }));
     const search = control<HTMLInputElement>("searchbox", "Search skills"); search.value = "dashboard"; search.dispatchEvent(new InputEvent("input", { bubbles: true }));
@@ -109,11 +108,13 @@ describe("Skills", () => {
   });
   it("lets a superadmin inspect collisions and disable a platform-wide skill", async () => {
     setCapabilitiesForTests({ multiUser: true, user: { id: "admin", name: "Admin", role: "superadmin" } });
-    respond = (path) => path === "/api/admin/skills" ? Response.json({ skills: [{ ...row("s1", "meeting-notes", { shares: [{ kind: "all", mode: "read" }] }), enabledCount: 3, collisions: ["default:meeting-notes"] }] }) : undefined;
+    respond = (path) => path === "/api/admin/skills" ? Response.json({ skills: [{ ...row("s1", "meeting-notes", { shares: [{ kind: "all", mode: "read" }] }), enabledCount: 3, collisions: ["default:meeting-notes"] }], system: [row("builtin:dashboard", "dashboard", { kind: "builtin", locked: true }), row("default:hr-writing", "hr-writing", { kind: "default", locked: true, agents: ["hr"] })] }) : undefined;
     history.replaceState({}, "", "/admin/skills");
     dispose = render(() => <Router><Route path="/admin/skills" component={AdminSkills} /></Router>, root);
     await vi.waitFor(() => expect(root.textContent).toContain("default:meeting-notes"));
     expect(root.textContent).toContain("Ada"); expect(root.textContent).toContain("3 users");
+    expect(root.textContent).toContain("System skills"); expect(control<HTMLAnchorElement>("link", "dashboard").getAttribute("href")).toBe("/skills/builtin%3Adashboard");
+    expect(root.textContent).toContain("All agents"); expect(root.textContent).toContain("hr-writing");
     click("Disable meeting-notes");
     await vi.waitFor(() => expect(requests).toContainEqual({ path: "/api/skills/s1/admin", method: "PUT", body: { disabledByAdmin: true } }));
   });
@@ -127,16 +128,17 @@ describe("Skills", () => {
     expect(root.textContent).toContain("weekly-review guidance");
   });
   it("opens the detail page of a skill whose id needs URL encoding", async () => {
-    respond = (path) => path === "/api/skills/builtin%3Adashboard" ? Response.json({ ...row("builtin:dashboard", "dashboard", { kind: "builtin" }), skillMd: "Dashboard instructions", files: [{ path: "SKILL.md", size: 22 }] }) : undefined;
-    await mount(); control<HTMLAnchorElement>("link", "dashboard").click();
-    await vi.waitFor(() => expect(root.textContent).toContain("Dashboard instructions"));
+    const notes = row("agent:hr:notes", "notes", { kind: "agent", agentName: "HR", locked: true, canWrite: false, canManage: false });
+    respond = (path) => path === "/api/skills" ? Response.json({ mine, sharedWithMe: [], agent: [notes] }) : path === "/api/skills/agent%3Ahr%3Anotes" ? Response.json({ ...notes, skillMd: "Notes instructions", files: [{ path: "SKILL.md", size: 18 }] }) : undefined;
+    await mount(); control<HTMLAnchorElement>("link", "notes").click();
+    await vi.waitFor(() => expect(root.textContent).toContain("Notes instructions"));
     expect(root.textContent).not.toContain("Unable to load skills");
   });
   it("keeps the page on screen while a background refresh is in flight", async () => {
     dispose = render(() => <Router><Route path="/skills" component={() => <Suspense fallback={<p>Booting</p>}><Skills /></Suspense>} /></Router>, root);
     await vi.waitFor(() => expect(root.textContent).toContain("meeting-notes guidance"));
     let release!: () => void;
-    respond = (path, init) => path === "/api/skills" && (init?.method ?? "GET") === "GET" ? new Promise<Response>((resolve) => { release = () => resolve(Response.json({ default: [], mine, sharedWithMe: [], agent: [] })); }) : undefined;
+    respond = (path, init) => path === "/api/skills" && (init?.method ?? "GET") === "GET" ? new Promise<Response>((resolve) => { release = () => resolve(Response.json({ mine, sharedWithMe: [], agent: [] })); }) : undefined;
     window.dispatchEvent(new Event("focus"));
     await vi.waitFor(() => expect(requests.filter((request) => request.path === "/api/skills").length).toBe(2));
     expect(root.textContent).toContain("meeting-notes guidance");
@@ -186,7 +188,7 @@ describe("Skills", () => {
     await vi.waitFor(() => expect(root.textContent).toContain("meeting-notes guidance"));
   });
   it("lets a named writer replace by id without offering ownership actions", async () => {
-    respond = (path) => path === "/api/skills" ? Response.json({ default: [], mine: [], sharedWithMe: [row("shared1", "meeting-notes", { canManage: false, ownerName: "Bob" })], agent: [] }) : undefined;
+    respond = (path) => path === "/api/skills" ? Response.json({ mine: [], sharedWithMe: [row("shared1", "meeting-notes", { canManage: false, ownerName: "Bob" })], agent: [] }) : undefined;
     await mount(); actions();
     expect(root.textContent).toContain("Can edit");
     expect(Array.from(root.querySelectorAll("button")).some((button) => button.textContent === "Manage access" || button.textContent === "Delete")).toBe(false);

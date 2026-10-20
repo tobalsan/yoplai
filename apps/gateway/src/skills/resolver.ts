@@ -9,8 +9,8 @@ export type ResolvedRunSkills = {
 export async function resolveRunSkills(store: SkillStore, options: { agentId: string; userId?: string; multiUser: boolean; policy: SkillAccessPolicy; ignoreAgentRestrictions?: boolean }): Promise<ResolvedRunSkills> {
   let userId = options.multiUser ? options.userId : "local";
   if (options.multiUser && userId && !await options.policy.options.getEligibleAccount?.(userId)) userId = undefined;
-  const state = userId ? await store.getState(userId) : { enabled: [], disabledDefaults: [] };
-  const defaults = (await store.defaults()).filter((skill) => !state.disabledDefaults.includes(skill.name) && (options.ignoreAgentRestrictions || !skill.agents || skill.agents.includes(options.agentId)));
+  const state = userId ? await store.getState(userId) : { enabled: [] };
+  const defaults = (await store.defaults()).filter((skill) => (options.ignoreAgentRestrictions || !skill.agents || skill.agents.includes(options.agentId)));
   const candidates: ResolvedRunSkills["skills"] = defaults;
   if (userId) {
     const enabled = (await store.list()).filter((row) => state.enabled.includes(row.id) && !row.disabledByAdmin && (row.ownerId === userId || row.shares.some((share) => share.kind === "all" || share.id === userId)));

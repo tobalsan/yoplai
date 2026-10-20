@@ -103,11 +103,10 @@ export function createSkillRoutes(deps: SkillRoutesDeps): Hono {
     }
     return skills;
   };
-  const directoryRow = async (store: SkillStore, actor: SkillActor, skill: SkillDirectory & { agentId?: string; agentName?: string }) => {
+  const directoryRow = (skill: SkillDirectory & { agentId?: string; agentName?: string }) => {
     const kind = skill.id.split(":")[0];
-    const locked = kind !== "default";
-    return { id: skill.id, name: skill.name, description: skill.description, kind, agentId: skill.agentId, agentName: skill.agentName,
-      ownerName: "", enabled: locked || !(await store.getState(actor.userId)).disabledDefaults.includes(skill.name), locked, shadowed: false,
+    return { id: skill.id, name: skill.name, description: skill.description, kind, agentId: skill.agentId, agentName: skill.agentName, agents: skill.agents,
+      ownerName: "", enabled: true, locked: true, shadowed: false,
       canRead: true, canWrite: false, canManage: false, shares: [], mode: "read" };
   };
   const findDirectory = async (c: Context, store: SkillStore, id: string) => [...await store.builtins(), ...await store.defaults(), ...await agentSkills(c)].find((skill) => skill.id === id);
@@ -120,9 +119,8 @@ export function createSkillRoutes(deps: SkillRoutesDeps): Hono {
     const shadowed = new Set(diagnostics.map((diagnostic) => diagnostic.id));
     for (const skill of [...mine, ...sharedWithMe]) skill.shadowed = shadowed.has(skill.id);
     return c.json({
-      default: await Promise.all([...await store.builtins(), ...await store.defaults()].map((skill) => directoryRow(store, actor, skill))),
       mine, sharedWithMe: multiUser ? sharedWithMe : [],
-      agent: await Promise.all((await agentSkills(c)).map((skill) => directoryRow(store, actor, skill))),
+      agent: (await agentSkills(c)).map(directoryRow),
     });
   });
   routes.post("/skills", async (c) => {
@@ -178,7 +176,7 @@ export function createSkillRoutes(deps: SkillRoutesDeps): Hono {
       const content = skillFile && path.basename(skillFile) !== "SKILL.md"
         ? { skillMd: await fs.readFile(skillFile, "utf8"), files: [{ path: path.basename(skillFile), size: (await fs.stat(skillFile)).size }] }
         : await inspectSkillDirectory(directory.directory);
-      return c.json({ ...await directoryRow(ctx.store, ctx.actor, directory), ...content });
+      return c.json({ ...directoryRow(directory), ...content });
     }
     const { store, policy, actor, skill } = await userRow(c);
     return c.json({ ...await present(store, policy, actor, skill), ...await store.detail(skill.id) });
@@ -189,17 +187,11 @@ export function createSkillRoutes(deps: SkillRoutesDeps): Hono {
     return c.json({ id: updated.id, name: updated.name });
   });
   routes.put("/skills/:id/enabled", async (c) => {
-    const ctx = await context(c);
+    if (/^(builtin|default|agent):/.test(c.req.param("id"))) throw new SkillError("skill_locked");
+    const { store, actor, skill } = await userRow(c);
     const result = z.object({ enabled: z.boolean() }).strict().safeParse(await jsonBody(c));
     if (!result.success) throw new SkillError("invalid_enabled");
-    const directory = await findDirectory(c, ctx.store, c.req.param("id"));
-    if (directory) {
-      if (!directory.id.startsWith("default:")) throw new SkillError("skill_locked");
-      await ctx.store.setEnabled(ctx.actor.userId, directory.id, result.data.enabled);
-    } else {
-      const { store, actor, skill } = await userRow(c);
-      await store.setEnabled(actor.userId, skill.id, result.data.enabled);
-    }
+    await store.setEnabled(actor.userId, skill.id, result.data.enabled);
     return c.json({ ok: true });
   });
   routes.put("/skills/:id/shares", async (c) => {
@@ -228,7 +220,7 @@ export function createSkillRoutes(deps: SkillRoutesDeps): Hono {
       ...await present(store, policy, actor, skill), enabledCount: await store.enableCount(skill.id),
       collisions: reserved.filter((other) => other.name === skill.name).map((other) => other.id),
     })));
-    return c.json({ skills });
+    return c.json({ skills, system: reserved.map(directoryRow) });
   });
   routes.put("/skills/:id/admin", async (c) => {
     const { store, actor, skill } = await userRow(c);

@@ -29,7 +29,7 @@ beforeEach(() => {
   vi.stubGlobal("WebSocket", Socket); vi.stubGlobal("scrollTo", vi.fn());
   vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
     const path = String(input);
-    if (path === "/api/skills") return Response.json({ default: [], mine: [], sharedWithMe: [], agent: [] });
+    if (path === "/api/skills") return Response.json({ mine: [], sharedWithMe: [], agent: [] });
     if (path === "/api/me/main-agent") return Response.json({ mainAgentId, accessible: !!mainAgentId, pickerDismissedAt: null });
     if (path === "/api/agents") return Response.json(includeOpenClaw ? [{ ...agent, id: "claw", name: "Claw", sdk: "openclaw" }, ...(onlyOpenClaw ? [] : [agent])] : [agent]);
     if (path === "/api/agents/sage") return Response.json(agent);

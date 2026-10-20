@@ -73,7 +73,7 @@ describe("Pi managed skills loading", () => {
       } finally { await staging.cleanup(); }
     }
   });
-  it("honors default restrictions and requester disables while preserving defaults for ineligible users", async () => {
+  it("honors default restrictions and keeps defaults on, even with an old disabled state", async () => {
     const store = new SkillStore(home);
     const directory = path.join(home, "skill-library/default/hr-writing");
     await fs.mkdir(directory, { recursive: true });
@@ -89,8 +89,10 @@ describe("Pi managed skills loading", () => {
     }
     expect(await names("hr")).toContain("hr-writing");
     expect(await names("assistant")).not.toContain("hr-writing");
-    await store.setEnabled("alice", "default:hr-writing", false);
-    expect(await names("hr")).not.toContain("hr-writing");
+    await expect(store.setEnabled("alice", "default:hr-writing", false)).rejects.toThrow("skill_locked");
+    await fs.mkdir(path.join(home, "skill-library/users/alice"), { recursive: true });
+    await fs.writeFile(path.join(home, "skill-library/users/alice/state.json"), JSON.stringify({ enabled: [], disabledDefaults: ["hr-writing"] }));
+    expect(await names("hr")).toContain("hr-writing");
     eligible = false;
     expect(await names("hr")).toContain("hr-writing");
   });

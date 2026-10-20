@@ -30,6 +30,10 @@ export default function AdminSkills() {
         </td></tr>}</For>
       </tbody></table></div>
       <Show when={!skills.loading && data()?.skills.length === 0}><p>No user skills.</p></Show>
+      <h2>System skills</h2><p>Always on for every user. Operators add defaults in <code>skill-library/default/</code>.</p>
+      <div class="admin-skills-table"><table><thead><tr><th>Skill</th><th>Type</th><th>Agents</th></tr></thead><tbody>
+        <For each={data()?.system ?? []}>{(row) => <tr><td><A href={`/skills/${encodeURIComponent(row.id)}`}>{row.name}</A><p>{row.description}</p></td><td>{row.kind === "builtin" ? "Built-in" : "Default"}</td><td>{row.agents?.join(", ") || "All agents"}</td></tr>}</For>
+      </tbody></table></div>
       <Show when={deleting()}>{(row) => <ConfirmDialog title="Delete platform-wide skill" description={`Delete ${row().name} for its owner and everyone it is shared with? This cannot be undone.`} confirmLabel="Delete" danger error={error()} onCancel={() => setDeleting(undefined)} onConfirm={() => run(async () => { await deleteSkill(row().id); setDeleting(undefined); })} />}</Show>
     </Show>
     <style>{`.admin-skills-table{overflow:auto}.admin-skills-table table{width:100%;border-collapse:collapse;color:var(--text-primary)}.admin-skills-table th,.admin-skills-table td{text-align:left;vertical-align:top;padding:12px;border-bottom:1px solid var(--border-subtle)}.admin-skills-table th{font-size:12px;color:var(--text-secondary)}.admin-skills-table a{color:var(--text-primary)}.admin-skills-table button{margin:0 8px 8px 0}`}</style>

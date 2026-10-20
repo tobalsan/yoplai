@@ -99,19 +99,18 @@ describe("Skills HTTP", () => {
     await fs.writeFile(path.join(defaultDir, "SKILL.md"), skillText);
     const { routes } = setup(false, [{ id: "hr", name: "HR", directory: agentDir }]);
     const list = await (await routes.request("/skills")).json();
-    expect(list).toMatchObject({ default: expect.arrayContaining([
-      expect.objectContaining({ id: "default:meeting-notes", enabled: true, locked: false }),
-      expect.objectContaining({ id: "builtin:dashboard", enabled: true, locked: true }),
-    ]), agent: [expect.objectContaining({ id: "agent:hr:meeting-notes", agentId: "hr", agentName: "HR", locked: true })], sharedWithMe: [] });
+    expect(list.default).toBeUndefined();
+    expect(list).toMatchObject({ agent: [expect.objectContaining({ id: "agent:hr:meeting-notes", agentId: "hr", agentName: "HR", locked: true })], sharedWithMe: [] });
     for (const id of ["default:meeting-notes", "agent:hr:meeting-notes", "builtin:dashboard"]) {
       expect((await routes.request(`/skills/${encodeURIComponent(id)}`)).status).toBe(200);
       expect((await routes.request(`/skills/${encodeURIComponent(id)}/content`, { method: "PUT", body: upload() })).status).toBe(404);
     }
     const enable = (id: string) => routes.request(`/skills/${encodeURIComponent(id)}/enabled`, { method: "PUT", headers: { "content-type": "application/json" }, body: '{"enabled":false}' });
-    expect((await enable("default:meeting-notes")).status).toBe(200);
-    expect((await enable("builtin:dashboard")).status).toBe(400);
-    expect((await enable("agent:hr:meeting-notes")).status).toBe(400);
-    expect(await (await routes.request("/skills")).json()).toMatchObject({ default: expect.arrayContaining([expect.objectContaining({ id: "default:meeting-notes", enabled: false })]) });
+    for (const id of ["default:meeting-notes", "builtin:dashboard", "agent:hr:meeting-notes"]) expect(await (await enable(id)).json()).toEqual({ error: "skill_locked" });
+    expect(await (await routes.request("/admin/skills")).json()).toMatchObject({ system: expect.arrayContaining([
+      expect.objectContaining({ id: "default:meeting-notes", kind: "default", enabled: true, locked: true }),
+      expect.objectContaining({ id: "builtin:dashboard", kind: "builtin", enabled: true, locked: true }),
+    ]) });
     const collision = await routes.request("/skills", { method: "POST", body: upload() });
     expect(collision.status).toBe(409);
     expect(await collision.json()).toEqual({ error: "name_taken", kind: "default" });
@@ -170,7 +169,7 @@ describe("Skills HTTP", () => {
     expect((await request(`/skills/${id}`, "DELETE")).status).toBe(200);
   });
 
-  it("reports managed-name shadowing without applying agent restrictions and clears it when the default is disabled", async () => {
+  it("reports managed-name shadowing without applying agent restrictions", async () => {
     const { routes, store } = setup();
     const { skill } = await store.create("local", { files: [{ path: "SKILL.md", content: skillText }] });
     await store.setEnabled("local", skill.id, true);
@@ -179,8 +178,6 @@ describe("Skills HTTP", () => {
     await fs.writeFile(path.join(directory, "SKILL.md"), skillText);
     await fs.writeFile(path.join(directory, ".yoplai.json"), '{"agents":["hr"]}');
     expect(await (await routes.request("/skills")).json()).toMatchObject({ mine: [{ id: skill.id, shadowed: true }] });
-    await store.setEnabled("local", "default:meeting-notes", false);
-    expect(await (await routes.request("/skills")).json()).toMatchObject({ mine: [{ id: skill.id, shadowed: false }] });
   });
 
   it("bounds announced and streamed upload bodies, preserves nested paths, and accepts a valid upload after rejection", async () => {

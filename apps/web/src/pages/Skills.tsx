@@ -114,7 +114,7 @@ export function Skills() {
     <Show when={skills.state === "pending" || detail.state === "pending"}><p role="status">Loading skills…</p></Show>
     <Show when={params.id ? detailData() : undefined}>{(row) => <>{group("Skill", [row()])}<section aria-label="Skill instructions" class="skill-instructions" innerHTML={renderMarkdown(row().skillMd, { stripFrontmatter: false })} /><section><h2>Files</h2><ul class="skills-list"><For each={row().files}>{(file) => <li>{file.path} <small>{file.size} bytes</small></li>}</For></ul></section></>}</Show>
     <Show when={!params.id}>
-    {group("Default", listData()?.default)}{group("Mine", listData()?.mine)}<Show when={capabilities.multiUser}>{group("Shared with me", listData()?.sharedWithMe)}</Show>{group("Agent skills", listData()?.agent)}
+    {group("Mine", listData()?.mine)}<Show when={capabilities.multiUser}>{group("Shared with me", listData()?.sharedWithMe)}</Show>{group("Agent skills", listData()?.agent)}
     </Show>
     <style>{`
       .skills-page { flex: 1; min-width: 0; overflow: auto; padding: 32px; color: var(--text-primary); }

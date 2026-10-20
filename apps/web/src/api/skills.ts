@@ -9,7 +9,7 @@ export type SkillRow = {
   canRead: boolean; canWrite: boolean; canManage: boolean; disabledByAdmin?: boolean;
   agentId?: string; agentName?: string;
 };
-export type SkillGroups = { default: SkillRow[]; mine: SkillRow[]; sharedWithMe: SkillRow[]; agent: SkillRow[] };
+export type SkillGroups = { mine: SkillRow[]; sharedWithMe: SkillRow[]; agent: SkillRow[] };
 export type SkillDetail = SkillRow & { skillMd: string; files: Array<{ path: string; size: number }> };
 
 export class SkillRequestError extends Error {
@@ -57,7 +57,7 @@ export const revokeImportToken = (id: string) => request(`/skills/import-token/$
 export const deleteSkill = (id: string) => request(`/skills/${encodeURIComponent(id)}`, { method: "DELETE" });
 export const fetchSkillVersions = (id: string) => request<{ versions: Array<{ id: string; createdAt: string }> }>(`/skills/${encodeURIComponent(id)}/versions`);
 export const restoreSkillVersion = (id: string, versionId: string) => request(`/skills/${encodeURIComponent(id)}/versions/${encodeURIComponent(versionId)}/restore`, { method: "POST" });
-export const fetchAdminSkills = () => request<{ skills: Array<SkillRow & { enabledCount: number; collisions: string[] }> }>("/admin/skills");
+export const fetchAdminSkills = () => request<{ skills: Array<SkillRow & { enabledCount: number; collisions: string[] }>; system: Array<SkillRow & { agents?: string[] }> }>("/admin/skills");
 export const setSkillAdminDisabled = (id: string, disabledByAdmin: boolean) => request(`/skills/${encodeURIComponent(id)}/admin`, {
   method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ disabledByAdmin }),
 });

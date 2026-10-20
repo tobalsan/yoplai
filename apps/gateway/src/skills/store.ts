@@ -51,7 +51,7 @@ export class SkillStore {
   async list(): Promise<SkillRow[]> { return readJson(this.registryFile(), []); }
   async get(id: string): Promise<SkillRow | null> { return (await this.list()).find((row) => row.id === id) ?? null; }
   private async require(id: string): Promise<SkillRow> { const row = await this.get(id); if (!row) throw new SkillError("not_found", 404); return row; }
-  async getState(userId: string): Promise<SkillState> { return readJson(this.stateFile(userId), { enabled: [], disabledDefaults: [] }); }
+  async getState(userId: string): Promise<SkillState> { return readJson(this.stateFile(userId), { enabled: [] }); }
   private async scan(directory: string, prefix: string): Promise<SkillDirectory[]> {
     let entries;
     try { entries = await fs.readdir(directory, { withFileTypes: true }); }
@@ -155,17 +155,10 @@ export class SkillStore {
   async setEnabled(userId: string, id: string, enabled: boolean): Promise<void> {
     return this.mutate(async () => {
       const state = await this.getState(userId);
-      if (id.startsWith("builtin:") || id.startsWith("agent:")) throw new SkillError("skill_locked");
-      if (id.startsWith("default:")) {
-        const skill = (await this.defaults()).find((item) => item.id === id);
-        if (!skill) throw new SkillError("not_found", 404);
-        state.disabledDefaults = state.disabledDefaults.filter((name) => name !== skill.name);
-        if (!enabled) state.disabledDefaults.push(skill.name);
-      } else {
-        await this.require(id);
-        state.enabled = state.enabled.filter((item) => item !== id);
-        if (enabled) state.enabled.push(id);
-      }
+      if (/^(builtin|default|agent):/.test(id)) throw new SkillError("skill_locked");
+      await this.require(id);
+      state.enabled = state.enabled.filter((item) => item !== id);
+      if (enabled) state.enabled.push(id);
       await writeJsonAtomic(this.stateFile(userId), state);
     });
   }

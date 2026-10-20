@@ -6,7 +6,7 @@ export type SkillRow = {
   createdAt: number; updatedAt: number; shares: SkillShare[]; disabledByAdmin: boolean;
 };
 export type SkillDirectory = { id: string; name: string; description: string; directory: string; agents?: string[] };
-export type SkillState = { enabled: string[]; disabledDefaults: string[] };
+export type SkillState = { enabled: string[] };
 export type SkillActor = { userId: string; role?: string };
 export type SkillPermissions = { canRead: boolean; canWrite: boolean; canManage: boolean };
 export class SkillError extends Error {
