@@ -414,33 +414,69 @@ api.get("/theme.css", async (c) => {
   }
 });
 
-api.get("/branding/logo", async (c) => {
-  const logo = loadConfig().branding?.logo;
-  if (!logo) return c.json({ error: "Not found" }, 404);
+const BRANDING_MIME_TYPES: Record<string, string> = {
+  ".png": "image/png",
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".svg": "image/svg+xml",
+  ".webp": "image/webp",
+  ".ico": "image/x-icon",
+};
+
+function brandingMimeType(file: string): string {
+  return BRANDING_MIME_TYPES[path.extname(file).toLowerCase()] ?? "application/octet-stream";
+}
+
+async function serveBrandingFile(c: Context, configured: string | undefined) {
+  if (!configured) return c.json({ error: "Not found" }, 404);
   const homeDir = resolveHomeDir();
-  const filePath = path.resolve(homeDir, logo);
-  if (!filePath.startsWith(homeDir)) {
+  const filePath = path.resolve(homeDir, configured);
+  const relative = path.relative(homeDir, filePath);
+  if (relative.startsWith("..") || path.isAbsolute(relative)) {
     return c.json({ error: "Invalid path" }, 400);
   }
   try {
     const stat = await fs.stat(filePath);
     if (!stat.isFile()) return c.json({ error: "Not found" }, 404);
-    const ext = path.extname(filePath).toLowerCase();
-    const mimeMap: Record<string, string> = {
-      ".png": "image/png",
-      ".jpg": "image/jpeg",
-      ".jpeg": "image/jpeg",
-      ".svg": "image/svg+xml",
-      ".webp": "image/webp",
-    };
-    const contentType = mimeMap[ext] ?? "application/octet-stream";
     const stream = createReadStream(filePath);
-    c.header("Content-Type", contentType);
+    c.header("Content-Type", brandingMimeType(filePath));
     c.header("Cache-Control", "public, max-age=3600");
     return c.body(Readable.toWeb(stream) as unknown as ReadableStream);
   } catch {
     return c.json({ error: "Not found" }, 404);
   }
+}
+
+api.get("/branding/logo", (c) => serveBrandingFile(c, loadConfig().branding?.logo));
+
+api.get("/branding/icon", (c) => serveBrandingFile(c, loadConfig().branding?.icon));
+
+api.get("/manifest.webmanifest", (c) => {
+  const branding = loadConfig().branding;
+  const name = branding?.name ?? "Yoplai";
+  c.header("Content-Type", "application/manifest+json");
+  c.header("Cache-Control", "no-cache");
+  return c.body(
+    JSON.stringify({
+      name,
+      short_name: name,
+      start_url: "/",
+      scope: "/",
+      display: "standalone",
+      background_color: "#0a0a0a",
+      theme_color: "#0a0a0a",
+      icons: branding?.icon
+        ? [
+            {
+              src: "/api/branding/icon",
+              sizes: "any",
+              type: brandingMimeType(branding.icon),
+              purpose: "any",
+            },
+          ]
+        : [],
+    })
+  );
 });
 
 api.get("/tool-labels", async (c) => c.json(await readToolLabels()));
@@ -519,6 +555,7 @@ api.get("/capabilities", async (c) => {
           branding: {
             name: branding.name,
             logo: branding.logo ? "/api/branding/logo" : undefined,
+            icon: branding.icon ? "/api/branding/icon" : undefined,
           },
         }
       : {}),

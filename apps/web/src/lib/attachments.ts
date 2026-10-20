@@ -16,6 +16,7 @@ const ACCEPTED_FILE_TYPES = [
   "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
   "application/vnd.ms-excel",
   "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  "application/vnd.openxmlformats-officedocument.presentationml.presentation",
 ].join(",");
 
 const SUPPORTED_FILE_TYPES = new Set(ACCEPTED_FILE_TYPES.split(","));
@@ -35,6 +36,7 @@ const SUPPORTED_FILE_EXTENSIONS = new Set([
   "docx",
   "xls",
   "xlsx",
+  "pptx",
 ]);
 
 export const FILE_INPUT_ACCEPT = [

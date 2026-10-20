@@ -63,11 +63,11 @@ describe("createChatRuntime", () => {
 
       runtime.attachFiles([
         new File(["ok"], "note.txt", { type: "text/plain" }),
+        new File(["deck"], "deck.pptx", { type: "application/vnd.openxmlformats-officedocument.presentationml.presentation" }),
         new File(["bad"], "archive.zip", { type: "application/zip" }),
       ]);
 
-      expect(runtime.pendingFiles()).toHaveLength(1);
-      expect(runtime.pendingFiles()[0].name).toBe("note.txt");
+      expect(runtime.pendingFiles().map((file) => file.name)).toEqual(["note.txt", "deck.pptx"]);
       expect(runtime.uploadError()).toBe("Unsupported file type: archive.zip");
 
       runtime.clearFiles();

@@ -1165,6 +1165,7 @@ const GatewayCommonFields = {
     .object({
       name: z.string().optional(),
       logo: z.string().optional(),
+      icon: z.string().optional(),
     })
     .optional(),
   agentFab: z.boolean().optional().default(false),
@@ -1745,6 +1746,7 @@ export const CapabilitiesResponseSchema = z.object({
     .object({
       name: z.string().optional(),
       logo: z.string().optional(),
+      icon: z.string().optional(),
     })
     .optional(),
 });

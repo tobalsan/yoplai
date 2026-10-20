@@ -110,7 +110,7 @@ Core `yoplai.json` fields:
 | `extensionsPath`                     | External extension directory; defaults to `$YOPLAI_HOME/extensions` |
 | `sandbox`, `onecli`, `oauth`         | Isolation (incl. `sandbox.gatewayTransport`: `http`/`socket`), proxy, and host OAuth settings |
 | `maintenance`                        | Model for gateway-owned background LLM tasks                        |
-| `branding`                           | Optional organization name/logo                                     |
+| `branding`                           | Optional organization name/logo/icon                                |
 | `agentFab`                           | Enable global quick-chat control                                    |
 | `notifications.channels`             | Named Discord/Slack delivery targets                                |
 | `dream`                              | Global nightly-consolidation prompt/timeout/window                  |
@@ -118,6 +118,20 @@ Core `yoplai.json` fields:
 | `taskboard`, `projects`, `subagents` | Legacy/compatibility config surfaces; prefer owning extensions      |
 
 Schema in `packages/shared/src/types.ts` is final source of truth. Extension-specific fields belong in [Extensions](extensions.md) and owning package READMEs.
+
+### Branding
+
+```json
+{
+  "branding": {
+    "name": "Acme AI",
+    "logo": "branding/logo.svg",
+    "icon": "branding/icon.png"
+  }
+}
+```
+
+Paths are relative to `$YOPLAI_HOME`. The icon should be a square PNG of at least 512px. Yoplai uses it for the browser favicon, the Safari and iOS app icon, and the web app manifest.
 
 ### Maintenance model
 

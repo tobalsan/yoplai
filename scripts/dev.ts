@@ -4,14 +4,15 @@
  *
  * - Ensures only one Vite process (won't respawn on gateway restart)
  * - Uses YOPLAI_SKIP_WEB env var to prevent double-spawn
- * - Forwards SIGINT/SIGTERM to both processes
+ * - Stops the full child process tree on SIGINT/SIGTERM (pnpm shims do not
+ *   forward signals, so stopping only direct children leaves orphans)
  * - Auto-discovers free ports for gateway and web UI
  * - Passes --dev flag to gateway to disable external services
  */
 import fs from "node:fs";
 import net from "node:net";
 import path from "node:path";
-import { spawn, ChildProcess } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import { readEnv, resolveConfigPath } from "../packages/shared/src/config-path.js";
 
 interface Config {
@@ -66,12 +67,61 @@ async function findFreePort(basePort: number, maxAttempts: number = 50): Promise
   throw new Error(`No free port found in range ${basePort}-${basePort + maxAttempts - 1}`);
 }
 
+const STOP_GRACE_MS = 10_000;
+
+/** All live descendants of this process, found from `ps` parent PIDs. */
+function descendantPids(): number[] {
+  const children = new Map<number, number[]>();
+  const rows = execFileSync("ps", ["-axo", "pid=,ppid="], { encoding: "utf8" });
+  for (const row of rows.trim().split("\n")) {
+    const [pid, ppid] = row.trim().split(/\s+/).map(Number);
+    children.set(ppid, [...(children.get(ppid) ?? []), pid]);
+  }
+  const found: number[] = [];
+  const queue = [process.pid];
+  while (queue.length > 0) {
+    for (const pid of children.get(queue.shift()!) ?? []) {
+      found.push(pid);
+      queue.push(pid);
+    }
+  }
+  return found;
+}
+
+function isAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err) {
+    return (err as NodeJS.ErrnoException).code === "EPERM";
+  }
+}
+
+function signalAll(pids: number[], signal: NodeJS.Signals): void {
+  for (const pid of pids) {
+    try {
+      process.kill(pid, signal);
+    } catch {
+      // Already gone.
+    }
+  }
+}
+
+async function waitForExit(pids: number[], timeoutMs: number): Promise<number[]> {
+  const deadline = Date.now() + timeoutMs;
+  let alive = pids.filter(isAlive);
+  while (alive.length > 0 && Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    alive = alive.filter(isAlive);
+  }
+  return alive;
+}
+
 async function main() {
   const config = loadConfig();
   const uiEnabled = config.ui?.enabled !== false; // default true
 
   const rootDir = path.dirname(path.dirname(new URL(import.meta.url).pathname));
-  const children: ChildProcess[] = [];
 
   // Find free ports
   const baseGatewayPort = config.gateway?.port ?? 4000;
@@ -91,7 +141,7 @@ async function main() {
   // Start web UI (unless disabled or already spawned)
   if (uiEnabled && !readEnv("SKIP_WEB") && uiPort) {
     console.log("[dev] Starting web UI...");
-    const web = spawn("pnpm", ["--filter", "@yoplai/web", "dev"], {
+    spawn("pnpm", ["--filter", "@yoplai/web", "dev"], {
       stdio: "inherit",
       cwd: rootDir,
       env: {
@@ -104,7 +154,6 @@ async function main() {
         VITE_YOPLAI_UI_PORT: String(uiPort),
       },
     });
-    children.push(web);
   } else if (!uiEnabled) {
     console.log("[dev] Web UI disabled (ui.enabled: false)");
   }
@@ -121,27 +170,36 @@ async function main() {
       env: { ...process.env, YOPLAI_SKIP_WEB: "1", YOPLAI_DEV: "1", YOPLAI_WORKSPACE_ROOT: rootDir, YOPLAI_GATEWAY_PORT: String(gatewayPort), NODE_OPTIONS: gatewayNodeOptions, ...(uiPort ? { YOPLAI_UI_PORT: String(uiPort) } : {}) },
     }
   );
-  children.push(gateway);
 
-  // Cleanup handler
-  const cleanup = (signal: string) => {
-    console.log(`\n[dev] Received ${signal}, shutting down...`);
-    for (const child of children) {
-      child.kill("SIGTERM");
+  let stopping = false;
+  // `fromTerminal`: a Ctrl-C already sent SIGINT to every process in the
+  // group. A second signal makes `tsx watch` SIGKILL the gateway during its
+  // shutdown, so in that case send SIGTERM only to late survivors.
+  const stopTree = async (reason: string, code: number, fromTerminal = false) => {
+    if (stopping) return;
+    stopping = true;
+    console.log(`\n[dev] ${reason}, shutting down...`);
+    // Snapshot the tree first: once a pnpm shim exits, its children move to
+    // PID 1 and drop out of the tree.
+    const pids = descendantPids();
+    if (!fromTerminal) signalAll(pids, "SIGTERM");
+    let alive = await waitForExit(pids, STOP_GRACE_MS);
+    if (alive.length > 0 && fromTerminal) {
+      signalAll(alive, "SIGTERM");
+      alive = await waitForExit(alive, STOP_GRACE_MS);
     }
-    process.exit(0);
+    if (alive.length > 0) {
+      console.log(`[dev] Force killing ${alive.length} process(es)`);
+      signalAll(alive, "SIGKILL");
+    }
+    process.exit(code);
   };
 
-  process.on("SIGINT", () => cleanup("SIGINT"));
-  process.on("SIGTERM", () => cleanup("SIGTERM"));
+  process.on("SIGINT", () => void stopTree("Received SIGINT", 0, true));
+  process.on("SIGTERM", () => void stopTree("Received SIGTERM", 0));
 
   // Exit when gateway exits
-  gateway.on("exit", (code) => {
-    for (const child of children) {
-      if (child !== gateway) child.kill("SIGTERM");
-    }
-    process.exit(code ?? 0);
-  });
+  gateway.on("exit", (code) => void stopTree("Gateway exited", code ?? 0));
 }
 
 main().catch((err) => {

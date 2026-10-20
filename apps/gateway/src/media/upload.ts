@@ -30,6 +30,7 @@ const ALLOWED_MIME_TYPES = new Set([
   "application/vnd.openxmlformats-officedocument.wordprocessingml.document", // .docx
   "application/vnd.ms-excel", // .xls
   "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", // .xlsx
+  "application/vnd.openxmlformats-officedocument.presentationml.presentation", // .pptx
 ]);
 
 const MIME_TO_EXTENSIONS: Record<string, string[]> = {
@@ -48,6 +49,7 @@ const MIME_TO_EXTENSIONS: Record<string, string[]> = {
   ],
   "application/vnd.ms-excel": ["xls"],
   "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": ["xlsx"],
+  "application/vnd.openxmlformats-officedocument.presentationml.presentation": ["pptx"],
 };
 
 const EXTENSION_TO_MIME_TYPES: Record<string, string[]> = {
@@ -67,6 +69,7 @@ const EXTENSION_TO_MIME_TYPES: Record<string, string[]> = {
   ],
   xls: ["application/vnd.ms-excel"],
   xlsx: ["application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"],
+  pptx: ["application/vnd.openxmlformats-officedocument.presentationml.presentation"],
 };
 
 const ALLOWED_EXTENSIONS = new Set(Object.keys(EXTENSION_TO_MIME_TYPES));

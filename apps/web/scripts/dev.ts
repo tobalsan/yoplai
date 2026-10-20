@@ -76,14 +76,16 @@ async function main() {
     }
   }
 
-  // Spawn vite dev server
-  const vite = spawn("pnpm", ["exec", "vite"], {
+  // Spawn vite dev server. Run the bin directly, not through `pnpm exec`: the
+  // pnpm shim does not forward signals, so vite.kill() would orphan vite.
+  const webDir = path.dirname(path.dirname(new URL(import.meta.url).pathname));
+  const vite = spawn(path.join(webDir, "node_modules/.bin/vite"), [], {
     stdio: "inherit",
     env: {
       ...process.env,
       // Vite reads host/port from config, but we can override via env if needed
     },
-    cwd: path.dirname(path.dirname(new URL(import.meta.url).pathname)),
+    cwd: webDir,
   });
 
   // Cleanup on exit

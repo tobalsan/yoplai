@@ -82,6 +82,7 @@ describe("media upload API", () => {
         "test.xlsx",
         "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
       ],
+      ["test.pptx", "application/vnd.openxmlformats-officedocument.presentationml.presentation"],
     ];
 
     for (const [filename, mimeType] of files) {
@@ -136,6 +137,32 @@ describe("media upload API", () => {
     expect(res.status).toBe(200);
     const json = await res.json();
     expect(json.mimeType).toBe("text/markdown");
+  });
+
+  it("accepts PowerPoint decks with a blank or generic browser MIME", async () => {
+    for (const type of ["", "application/octet-stream"]) {
+      const formData = new FormData();
+      formData.set("file", new File([new Uint8Array([1])], "deck.pptx", { type }));
+
+      const res = await Promise.resolve(
+        api.request("/media/upload", { method: "POST", body: formData })
+      );
+
+      expect(res.status).toBe(200);
+      expect((await res.json()).mimeType).toBe("application/vnd.openxmlformats-officedocument.presentationml.presentation");
+    }
+  });
+
+  it("rejects a PowerPoint name with a mismatched MIME", async () => {
+    const formData = new FormData();
+    formData.set("file", new File([new Uint8Array([1])], "deck.pptx", { type: "application/pdf" }));
+
+    const res = await Promise.resolve(
+      api.request("/media/upload", { method: "POST", body: formData })
+    );
+
+    expect(res.status).toBe(400);
+    expect((await res.json()).error).toContain("does not match");
   });
 
   it("rejects files larger than 25MB", async () => {
