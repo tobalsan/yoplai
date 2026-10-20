@@ -114,3 +114,14 @@ it("skips a curated skill when its present agent-restriction sidecar is null", a
   await fs.rm(path.join(directory, ".yoplai.json"));
   expect((await store.defaults()).map((skill) => skill.name)).toEqual(["greetings"]);
 });
+
+it("transfers a skill with its versions and rejects the same owner", async () => {
+  const store = new SkillStore(home);
+  const { skill } = await store.create("alice", input());
+  await store.replace(skill.id, input("Second draft."));
+  await expect(store.transfer(skill.id, "alice")).rejects.toThrow("same_owner");
+  expect((await store.transfer(skill.id, "bob")).ownerId).toBe("bob");
+  expect(await fs.readFile(path.join(home, "skill-library/users/bob/greetings/SKILL.md"), "utf8")).toContain("Second draft.");
+  expect(await store.versions(skill.id)).toHaveLength(1);
+  await expect(fs.stat(path.join(home, "skill-library/users/alice/greetings"))).rejects.toThrow();
+});

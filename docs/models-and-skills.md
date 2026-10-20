@@ -90,6 +90,10 @@ A Pi agent gets skills from five sources. The agent sees one list of skills, wit
 | Default | `$YOPLAI_HOME/skill-library/default/<name>/` | The operator, on disk | Always on | All Pi agents, or the agents in `.yoplai.json` | **Admin → Skills** |
 | User | `$YOPLAI_HOME/skill-library/users/<owner>/<name>/` | Each user, on the **Skills** page or with `skill_save` | Off until the user turns it on | All Pi agents of that user | **Skills** page, in **Your skills** or **Shared with me** |
 
+A superadmin can move an agent workspace skill to the default skills with **Make default** on **Admin → Skills**. Yoplai moves the folder out of the workspace. Yoplai blocks the move when a built-in, default or user skill has the same name. Before the move, the dialog lists the paths outside the skill folder that the skill refers to. Other agents may not have these files.
+
+A superadmin can give a user skill to another user with **Transfer** on **Admin → Skills**. Use this when the owner is banned, rejected or removed. Then the skill works again for the people who share it.
+
 Yoplai reads default and user skills again at the start of each run. You do not have to restart the gateway after you add a default skill. To limit a default skill to some agents, add `.yoplai.json` with `{ "agents": ["hr"] }` next to its `SKILL.md`.
 
 #### Load order

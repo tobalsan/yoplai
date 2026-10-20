@@ -64,6 +64,25 @@ async function multipart(c: Context): Promise<SkillInput> {
   return { files: await Promise.all((entries as File[]).map(async (file) => ({ path: file.name, content: Buffer.from(await file.arrayBuffer()).toString("base64"), encoding: "base64" as const }))) };
 }
 
+// Find paths that point outside the skill folder: absolute paths, ~/ and $HOME/ paths, and ../ paths that leave the folder.
+// The check skips URLs, shebang lines and /dev/ paths.
+const PATH_PATTERN = /(?<![\w:/.$>}!-])((?:~|\$HOME|\.\.)(?:\/[^\s`"'()<>[\]{},;*]+)+|\/(?:[\w.@-]+\/)+[\w.@-]*)/g;
+async function outsidePaths(directory: string): Promise<string[]> {
+  const found = new Set<string>();
+  for (const file of (await inspectSkillDirectory(directory)).files) {
+    if (file.size > 1024 * 1024) continue;
+    const data = await fs.readFile(path.join(directory, file.path));
+    if (data.includes(0)) continue;
+    for (const match of data.toString("utf8").matchAll(PATH_PATTERN)) {
+      const value = match[1].replace(/[.:]+$/, "");
+      if (value.startsWith("/dev/")) continue;
+      if (value.startsWith("..") && path.resolve(directory, path.dirname(file.path), value).startsWith(directory + path.sep)) continue;
+      found.add(value);
+    }
+  }
+  return [...found].sort();
+}
+
 export function createSkillRoutes(deps: SkillRoutesDeps): Hono {
   const routes = new Hono();
   routes.use("*", async (c, next) => {
@@ -84,6 +103,13 @@ export function createSkillRoutes(deps: SkillRoutesDeps): Hono {
     const ctx = await context(c);
     const skill = await ctx.store.get(c.req.param("id")!);
     if (!skill || !(write ? await ctx.policy.canWrite(skill, ctx.actor) : await ctx.policy.canRead(skill, ctx.actor))) throw new SkillError("not_found", 404);
+    return { ...ctx, skill };
+  };
+  const superadminRow = async (c: Context) => {
+    const ctx = await context(c);
+    if (ctx.actor.role !== "superadmin") throw new SkillError("forbidden", 403);
+    const skill = await ctx.store.get(c.req.param("id")!);
+    if (!skill) throw new SkillError("not_found", 404);
     return { ...ctx, skill };
   };
   const present = async (store: SkillStore, policy: SkillAccessPolicy, actor: SkillActor, skill: SkillRow) => ({
@@ -216,11 +242,12 @@ export function createSkillRoutes(deps: SkillRoutesDeps): Hono {
     return c.json({ ok: true });
   });
   routes.get("/admin/skills", async (c) => {
-    const { store, policy, actor } = await context(c);
+    const { store, policy, actor, multiUser } = await context(c);
     if (actor.role !== "superadmin") throw new SkillError("forbidden", 403);
     const reserved = [...await store.builtins(), ...await store.defaults()];
+    const active = new Set((await deps.getRecipients()).map((user) => user.id));
     const skills = await Promise.all((await store.list()).map(async (skill) => ({
-      ...await present(store, policy, actor, skill), enabledCount: await store.enableCount(skill.id),
+      ...await present(store, policy, actor, skill), ownerActive: !multiUser || active.has(skill.ownerId), enabledCount: await store.enableCount(skill.id),
       collisions: reserved.filter((other) => other.name === skill.name).map((other) => other.id),
     })));
     const ids = await store.systemAgentSkills();
@@ -239,9 +266,37 @@ export function createSkillRoutes(deps: SkillRoutesDeps): Hono {
     await deps.audit?.(c, "skill.system", id, [{ field: "system", before, after: result.data.system }]);
     return c.json({ ok: true });
   });
+  const agentSource = async (c: Context) => {
+    const ctx = await context(c);
+    if (ctx.actor.role !== "superadmin") throw new SkillError("forbidden", 403);
+    const source = (await agentSkills(c)).find((skill) => skill.id === c.req.param("id"));
+    if (!source) throw new SkillError("not_found", 404);
+    if (path.basename(source.skillFile) !== "SKILL.md") throw new SkillError("unsupported_skill");
+    return { ...ctx, source };
+  };
+  routes.get("/skills/:id/default", async (c) => {
+    const { source } = await agentSource(c);
+    return c.json({ outsidePaths: await outsidePaths(source.directory) });
+  });
+  routes.post("/skills/:id/default", async (c) => {
+    const { store, source } = await agentSource(c);
+    const id = source.id;
+    const { name } = await store.addDefault(source.directory);
+    await store.setSystemAgentSkill(id, false);
+    await deps.audit?.(c, "skill.make_default", source.agentId, [{ field: "default", after: `default:${name}` }]);
+    return c.json({ id: `default:${name}`, name });
+  });
+  routes.put("/skills/:id/owner", async (c) => {
+    const { store, skill } = await superadminRow(c);
+    const result = z.object({ ownerId: z.string().min(1) }).strict().safeParse(await jsonBody(c));
+    if (!result.success) throw new SkillError("invalid_owner");
+    if (!(await deps.getRecipients()).some((user) => user.id === result.data.ownerId)) throw new SkillError("ineligible_recipient");
+    await store.transfer(skill.id, result.data.ownerId);
+    await deps.audit?.(c, "skill.owner", skill.id, [{ field: "ownerId", before: skill.ownerId, after: result.data.ownerId }]);
+    return c.json({ ok: true });
+  });
   routes.put("/skills/:id/admin", async (c) => {
-    const { store, actor, skill } = await userRow(c);
-    if (actor.role !== "superadmin") throw new SkillError("forbidden", 403);
+    const { store, skill } = await superadminRow(c);
     const result = z.object({ disabledByAdmin: z.boolean() }).strict().safeParse(await jsonBody(c));
     if (!result.success) throw new SkillError("invalid_admin_state");
     if (result.data.disabledByAdmin && !skill.shares.some((share) => share.kind === "all")) throw new SkillError("platform_share_required");
@@ -260,7 +315,8 @@ export function createSkillRoutes(deps: SkillRoutesDeps): Hono {
     return c.json({ id: updated.id, name: updated.name });
   });
   routes.delete("/skills/:id", async (c) => {
-    const { store, policy, actor, skill } = await userRow(c);
+    const admin = (await context(c)).actor.role === "superadmin";
+    const { store, policy, actor, skill } = admin ? await superadminRow(c) : await userRow(c);
     if (!await policy.canManage(skill, actor) && !(actor.role === "superadmin" && skill.shares.some((share) => share.kind === "all"))) throw new SkillError("forbidden", 403);
     await store.delete(skill.id);
     await deps.audit?.(c, "skill.delete", skill.id, [{ field: "deleted", before: false, after: true }]);

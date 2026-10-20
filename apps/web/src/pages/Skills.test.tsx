@@ -131,7 +131,7 @@ describe("Skills", () => {
     await vi.waitFor(() => expect(root.textContent).toContain("onboarding guidance"));
     expect(root.querySelector("[role=tabpanel]")?.getAttribute("aria-label")).toBe("HR");
     expect(control<HTMLAnchorElement>("link", "onboarding").getAttribute("href")).toBe("/skills/agent%3Ahr%3Askills%2Fonboarding");
-    click("Mark onboarding as system");
+    control<HTMLInputElement>("switch", "Mark onboarding as system").click();
     await vi.waitFor(() => expect(requests).toContainEqual({ path: "/api/skills/agent%3Ahr%3Askills%2Fonboarding/system", method: "PUT", body: { system: true } }));
   });
   it("refreshes on focus and discovers a newly imported skill through polling", async () => {

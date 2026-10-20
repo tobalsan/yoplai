@@ -128,6 +128,48 @@ export class SkillStore {
       return { skill, replaced: false };
     });
   }
+  // Move the folder as is, so dotfiles, symlinks and file modes stay.
+  async addDefault(source: string): Promise<{ name: string }> {
+    if ((await fs.lstat(source)).isSymbolicLink()) throw new SkillError("unsupported_skill");
+    const content = readSkillMetadata(await fs.readFile(path.join(source, "SKILL.md"), "utf8"));
+    return this.mutate(async () => {
+      if ((await this.builtins()).some((skill) => skill.name === content.name) || ["dashboard", "skill-creator"].includes(content.name)) throw new SkillError("name_taken", 409, { kind: "builtin" });
+      if ((await this.defaults()).some((skill) => skill.name === content.name)) throw new SkillError("name_taken", 409, { kind: "default" });
+      if ((await this.list()).some((row) => row.name === content.name)) throw new SkillError("name_taken", 409, { kind: "user" });
+      const target = path.join(this.root, "default", content.name);
+      await fs.mkdir(path.dirname(target), { recursive: true });
+      try { await fs.rename(source, target); }
+      catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "EXDEV") throw error;
+        await fs.cp(source, target, { recursive: true, verbatimSymlinks: true, errorOnExist: true, force: false });
+        await fs.rm(source, { recursive: true, force: true });
+      }
+      // An agent sidecar would limit the default to some agents. Defaults made here apply to all agents.
+      await fs.rm(path.join(target, ".yoplai.json"), { force: true });
+      return { name: content.name };
+    });
+  }
+  async transfer(id: string, ownerId: string): Promise<SkillRow> {
+    this.userId(ownerId);
+    return this.mutate(async () => {
+      const row = await this.require(id);
+      if (row.ownerId === ownerId) throw new SkillError("same_owner");
+      const moved = { ...row, ownerId, updatedAt: Date.now(), shares: row.shares.filter((share) => !(share.kind === "user" && share.id === ownerId)) };
+      await fs.mkdir(path.dirname(this.directory(moved)), { recursive: true });
+      await fs.rename(this.directory(row), this.directory(moved));
+      let versionsMoved = false;
+      try {
+        const versions = this.versionsDirectory(row);
+        if (await fs.stat(versions).then(() => true, () => false)) { await fs.mkdir(path.dirname(this.versionsDirectory(moved)), { recursive: true }); await fs.rename(versions, this.versionsDirectory(moved)); versionsMoved = true; }
+        await writeJsonAtomic(this.registryFile(), (await this.list()).map((item) => item.id === id ? moved : item));
+      } catch (error) {
+        if (versionsMoved) await fs.rename(this.versionsDirectory(moved), this.versionsDirectory(row));
+        await fs.rename(this.directory(moved), this.directory(row));
+        throw error;
+      }
+      return moved;
+    });
+  }
   private versionsDirectory(row: SkillRow): string { return path.join(this.root, "users", this.userId(row.ownerId), ".versions", row.name); }
   private async recordVersion(row: SkillRow): Promise<void> {
     const versions = this.versionsDirectory(row);

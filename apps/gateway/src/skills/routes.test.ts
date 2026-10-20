@@ -191,6 +191,60 @@ describe("Skills HTTP", () => {
     expect((await request(`/skills/${id}`, "GET", undefined, "alice")).status).toBe(200);
   });
 
+  it("lets only superadmins transfer a skill, even when the owner is banned", async () => {
+    const { routes, store } = setup(true);
+    const { skill } = await store.create("banned", { files: [{ path: "SKILL.md", content: skillText }] });
+    await store.shares(skill.id, [{ kind: "user", id: "bob", mode: "write" }, { kind: "user", id: "carol", mode: "read" }]);
+    const request = (suffix: string, method = "GET", body?: unknown, user = "root") => routes.request(suffix, { method, headers: { "x-test-user": user, "content-type": "application/json" }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
+    const put = (user: string, ownerId: string) => request(`/skills/${skill.id}/owner`, "PUT", { ownerId }, user);
+    expect((await request("/admin/skills")).status).toBe(200);
+    expect((await (await request("/admin/skills")).json()).skills[0]).toMatchObject({ ownerActive: false });
+    expect((await put("alice", "bob")).status).toBe(403);
+    expect((await put("root", "pending")).status).toBe(400);
+    expect((await put("root", "banned")).status).toBe(400);
+    expect((await request("/skills/missing/owner", "PUT", { ownerId: "bob" })).status).toBe(404);
+    expect((await put("root", "bob")).status).toBe(200);
+    expect(await store.get(skill.id)).toMatchObject({ ownerId: "bob", shares: [{ kind: "user", id: "carol", mode: "read" }] });
+    expect(await fs.readFile(path.join(home, "skill-library/users/bob/meeting-notes/SKILL.md"), "utf8")).toBe(skillText);
+    await expect(fs.stat(path.join(home, "skill-library/users/banned/meeting-notes"))).rejects.toThrow();
+    expect(await (await request(`/skills/${skill.id}`, "GET", undefined, "bob")).json()).toMatchObject({ canManage: true, canWrite: true });
+    expect((await request(`/skills/${skill.id}`, "GET", undefined, "carol")).status).toBe(200);
+    expect((await request(`/skills/${skill.id}`, "GET", undefined, "alice")).status).toBe(404);
+    expect((await put("root", "bob")).status).toBe(400);
+    expect((await (await request("/admin/skills")).json()).skills[0]).toMatchObject({ ownerActive: true });
+  });
+
+  it("moves an agent skill into the default library and blocks name clashes", async () => {
+    const agentDir = path.join(home, "agents/hr");
+    for (const name of ["onboarding", "meeting-notes"]) {
+      await fs.mkdir(path.join(agentDir, name), { recursive: true });
+      await fs.writeFile(path.join(agentDir, name, "SKILL.md"), skillText.replace("meeting-notes", name));
+    }
+    await fs.writeFile(path.join(agentDir, "onboarding/.env.example"), "KEY=");
+    await fs.mkdir(path.join(agentDir, "onboarding/references"));
+    await fs.writeFile(path.join(agentDir, "onboarding/references/notes.md"), "Read `/workspace/data/hr.csv`, ../run.sh, ../../leave-policy/x.md, ~/notes.txt and https://example.com/a/b.");
+    await fs.writeFile(path.join(agentDir, "onboarding/run.sh"), "#!/bin/sh\n", { mode: 0o755 });
+    await fs.writeFile(path.join(agentDir, "onboarding/.yoplai.json"), JSON.stringify({ agents: ["hr"] }));
+    const { routes, store } = setup(true, [{ id: "hr", name: "HR", directory: agentDir }]);
+    await store.create("alice", { files: [{ path: "SKILL.md", content: skillText }] });
+    const request = (suffix: string, user = "root") => routes.request(suffix, { method: "POST", headers: { "x-test-user": user } });
+    expect((await request("/skills/agent:hr:onboarding/default", "alice")).status).toBe(403);
+    const check = await routes.request("/skills/agent:hr:onboarding/default", { headers: { "x-test-user": "root" } });
+    expect(await check.json()).toEqual({ outsidePaths: ["../../leave-policy/x.md", "/workspace/data/hr.csv", "~/notes.txt"] });
+    expect((await routes.request("/skills/agent:hr:onboarding/default", { headers: { "x-test-user": "alice" } })).status).toBe(403);
+    const clash = await request("/skills/agent:hr:meeting-notes/default");
+    expect(clash.status).toBe(409);
+    expect(await clash.json()).toEqual({ error: "name_taken", kind: "user" });
+    await fs.stat(path.join(agentDir, "meeting-notes/SKILL.md"));
+    expect(await (await request("/skills/agent:hr:onboarding/default")).json()).toEqual({ id: "default:onboarding", name: "onboarding" });
+    await expect(fs.stat(path.join(agentDir, "onboarding"))).rejects.toThrow();
+    const moved = path.join(home, "skill-library/default/onboarding");
+    await fs.stat(path.join(moved, ".env.example"));
+    expect((await fs.stat(path.join(moved, "run.sh"))).mode & 0o111).toBeTruthy();
+    expect((await store.defaults()).find((skill) => skill.name === "onboarding")?.agents).toBeUndefined();
+    expect((await routes.request("/skills/default:onboarding", { headers: { "x-test-user": "alice" } })).status).toBe(200);
+  });
+
   it("reports managed-name shadowing without applying agent restrictions", async () => {
     const { routes, store } = setup();
     const { skill } = await store.create("local", { files: [{ path: "SKILL.md", content: skillText }] });

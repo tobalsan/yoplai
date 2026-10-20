@@ -73,7 +73,12 @@ export const revokeImportToken = (id: string) => request(`/skills/import-token/$
 export const deleteSkill = (id: string) => request(`/skills/${encodeURIComponent(id)}`, { method: "DELETE" });
 export const fetchSkillVersions = (id: string) => request<{ versions: Array<{ id: string; createdAt: string }> }>(`/skills/${encodeURIComponent(id)}/versions`);
 export const restoreSkillVersion = (id: string, versionId: string) => request(`/skills/${encodeURIComponent(id)}/versions/${encodeURIComponent(versionId)}/restore`, { method: "POST" });
-export const fetchAdminSkills = () => request<{ skills: Array<SkillRow & { enabledCount: number; collisions: string[] }>; agent: SkillRow[]; system: Array<SkillRow & { agents?: string[] }> }>("/admin/skills");
+export const fetchAdminSkills = () => request<{ skills: Array<SkillRow & { enabledCount: number; collisions: string[]; ownerActive: boolean; ownerId: string }>; agent: SkillRow[]; system: Array<SkillRow & { agents?: string[] }> }>("/admin/skills");
+export const transferSkillOwner = (id: string, ownerId: string) => request(`/skills/${encodeURIComponent(id)}/owner`, {
+  method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ ownerId }),
+});
+export const checkSkillDefault = (id: string) => request<{ outsidePaths: string[] }>(`/skills/${encodeURIComponent(id)}/default`);
+export const makeSkillDefault = (id: string) => request<{ id: string; name: string }>(`/skills/${encodeURIComponent(id)}/default`, { method: "POST" });
 export const setSkillSystem = (id: string, system: boolean) => request(`/skills/${encodeURIComponent(id)}/system`, {
   method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ system }),
 });
