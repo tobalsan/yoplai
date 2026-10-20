@@ -2,6 +2,7 @@ import { For, Show, createEffect, createResource, createSignal, on, onCleanup, o
 import { A, useNavigate, useParams } from "@solidjs/router";
 import { fetchSkills, fetchSkill, setSkillEnabled, uploadSkill, fetchSkillRecipients, saveSkillShares, deleteSkill, SkillRequestError, type SkillRow } from "../api/skills";
 import { capabilities } from "../lib/capabilities";
+import { showToast } from "../lib/toast";
 import { Button } from "../components/ui/Button";
 import { ConfirmDialog } from "../components/ui/ConfirmDialog";
 import { DashboardAccessDialog } from "../components/DashboardAccessDialog";
@@ -74,10 +75,16 @@ export function Skills() {
   const upload = async (files: File[], folder: boolean, id?: string) => {
     if (!files.length) return;
     setBusy("upload"); setError("");
-    try { await uploadSkill(files, folder, id); setReplacement(undefined); await refetch(); }
-    catch (cause) {
-      if (cause instanceof SkillRequestError && cause.code === "skill_exists" && cause.skillId) setReplacement({ id: cause.skillId, files, folder });
-      else setError(cause instanceof Error ? cause.message : "Unable to upload skill.");
+    try {
+      const skill = await uploadSkill(files, folder, id);
+      setReplacement(undefined);
+      showToast(id ? `Skill "${skill.name}" replaced.` : `Skill "${skill.name}" added. Turn it on to use it.`, "success");
+      await refetch();
+    } catch (cause) {
+      if (cause instanceof SkillRequestError && cause.code === "skill_exists" && cause.skillId) { setReplacement({ id: cause.skillId, files, folder }); return; }
+      const message = cause instanceof Error ? cause.message : "Unable to upload skill.";
+      showToast(`Upload failed: ${message}`, "error");
+      if (replacement()) setError(message);
     } finally { setBusy(undefined); }
   };
   const selected = (event: Event, folder: boolean) => {

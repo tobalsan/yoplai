@@ -5,6 +5,7 @@ import { ErrorBoundary, Suspense } from "solid-js";
 import { Route, Router } from "@solidjs/router";
 import { resetCapabilitiesForTests, setCapabilitiesForTests } from "../lib/capabilities";
 import { Skills } from "./Skills";
+import { ToastHost } from "../lib/toast";
 import AdminSkills from "./admin/Skills";
 
 let root: HTMLDivElement;
@@ -158,6 +159,21 @@ describe("Skills", () => {
     expect(root.textContent).not.toContain("Booting");
     expect(root.textContent).not.toContain("Loading skills");
     release();
+  });
+  it("shows a toast after a successful or failed zip upload", async () => {
+    let fail = false;
+    respond = (path, init) => path === "/api/skills" && init?.method === "POST" ? (fail ? Response.json({ error: "missing_skill_md" }, { status: 400 }) : Response.json({ id: "s9", name: "notes" }, { status: 201 })) : undefined;
+    dispose = render(() => <><ToastHost /><Router><Route path="/skills" component={Skills} /></Router></>, root);
+    await vi.waitFor(() => expect(root.textContent).toContain("meeting-notes guidance"));
+    const send = () => {
+      const file = control<HTMLInputElement>("file", "Skill zip file");
+      Object.defineProperty(file, "files", { value: [new File(["zip-data"], "notes.zip", { type: "application/zip" })], configurable: true });
+      file.dispatchEvent(new Event("change", { bubbles: true }));
+    };
+    send();
+    await vi.waitFor(() => expect(document.body.textContent).toContain('Skill "notes" added. Turn it on to use it.'));
+    fail = true; send();
+    await vi.waitFor(() => expect(document.body.textContent).toContain("Upload failed: Add a SKILL.md file at the top level of the skill."));
   });
   it("strips the browser folder root in multipart paths", async () => {
     await mount(); click("Add skill"); click("Upload folder");

@@ -12,9 +12,25 @@ export type SkillRow = {
 export type SkillGroups = { mine: SkillRow[]; sharedWithMe: SkillRow[]; agent: SkillRow[] };
 export type SkillDetail = SkillRow & { skillMd: string; files: Array<{ path: string; size: number }> };
 
+const ERROR_MESSAGES: Record<string, string> = {
+  skill_exists: "A skill with this name already exists.",
+  missing_skill_md: "Add a SKILL.md file at the top level of the skill.",
+  invalid_frontmatter: "SKILL.md must start with a front matter block that has a name and a description.",
+  invalid_name: "The skill name can use only lowercase letters, numbers and hyphens, with a maximum of 64 characters.",
+  missing_description: "Add a description to the SKILL.md front matter.",
+  name_mismatch: "The name in SKILL.md must be the same as the skill name.",
+  invalid_zip: "The file is not a valid zip archive.",
+  body_too_large: "The upload is too large. The maximum is 25 MB.",
+  content_too_large: "The skill is too large. The maximum is 25 MB.",
+  too_many_entries: "The skill has too many files. The maximum is 200.",
+  invalid_path: "A file path in the skill is not valid.",
+  duplicate_path: "The skill contains the same file path two times.",
+  special_entry: "The skill contains a link or a special file. Use only normal files and folders.",
+};
+
 export class SkillRequestError extends Error {
   constructor(public status: number, public code: string, public skillId?: string, kind?: string) {
-    super(code === "name_taken" ? `That skill name belongs to ${kind === "user" ? "another user" : `a ${kind ?? "reserved"} skill`}. Choose another name.` : code === "skill_exists" ? "A skill with this name already exists." : code.replaceAll("_", " "));
+    super(code === "name_taken" ? `That skill name belongs to ${kind === "user" ? "another user" : `a ${kind ?? "reserved"} skill`}. Choose another name.` : ERROR_MESSAGES[code] ?? code.replaceAll("_", " "));
   }
 }
 
@@ -41,7 +57,7 @@ export function uploadSkill(files: File[], folder: boolean, skillId?: string) {
     const path = folder ? file.webkitRelativePath.split("/").slice(1).join("/") : file.name;
     body.append(folder ? "files" : "file", file, path);
   }
-  return request(skillId ? `/skills/${encodeURIComponent(skillId)}/content` : "/skills", { method: skillId ? "PUT" : "POST", body });
+  return request<{ id: string; name: string }>(skillId ? `/skills/${encodeURIComponent(skillId)}/content` : "/skills", { method: skillId ? "PUT" : "POST", body });
 }
 
 export const fetchSkillRecipients = () => request<{ users: DashboardRecipient[] }>("/skills/recipients");
