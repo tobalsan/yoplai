@@ -28,6 +28,7 @@ beforeEach(() => {
     requests.push({ path, method, body: typeof init?.body === "string" ? JSON.parse(init.body) : init?.body });
     const custom = await respond(path, init); if (custom) return custom;
     if (path === "/api/skills" && method === "GET") return Response.json({ mine, sharedWithMe: [], agent: [] });
+    if (path === "/api/agents") return Response.json([{ id: "hr", name: "HR", avatar: "🦊" }, { id: "sales", name: "Sales" }]);
     if (path.endsWith("/enabled")) { mine = mine.map((skill) => ({ ...skill, enabled: true })); return Response.json({ ok: true }); }
     return Response.json({});
   }));
@@ -148,6 +149,21 @@ describe("Skills", () => {
     await mount(); control<HTMLAnchorElement>("link", "notes").click();
     await vi.waitFor(() => expect(root.textContent).toContain("Notes instructions"));
     expect(root.textContent).not.toContain("Unable to load skills");
+  });
+  it("shows agent skills in one tab for each agent", async () => {
+    const agentRow = (agentId: string, agentName: string, name: string) => row(`agent:${agentId}:${name}`, name, { kind: "agent", agentId, agentName, locked: true, canWrite: false, canManage: false });
+    respond = (path) => path === "/api/skills" ? Response.json({ mine, sharedWithMe: [], agent: [agentRow("sales", "Sales", "pitch"), agentRow("hr", "HR", "onboarding"), agentRow("hr", "HR", "leave")] }) : undefined;
+    await mount();
+    const tabs = () => Array.from(root.querySelectorAll<HTMLButtonElement>('[role="tab"]'));
+    expect(tabs().map((tab) => tab.textContent)).toEqual(["🦊HR2", "SSales1"]);
+    expect(tabs()[0].getAttribute("aria-selected")).toBe("true");
+    expect(root.textContent).toContain("onboarding guidance");
+    expect(root.textContent).not.toContain("pitch guidance");
+    expect(root.textContent).not.toContain("HR workspace");
+    tabs()[1].click();
+    await vi.waitFor(() => expect(root.textContent).toContain("pitch guidance"));
+    expect(root.textContent).not.toContain("onboarding guidance");
+    expect(control("tabpanel", "Sales")).toBeDefined();
   });
   it("keeps the page on screen while a background refresh is in flight", async () => {
     dispose = render(() => <Router><Route path="/skills" component={() => <Suspense fallback={<p>Booting</p>}><Skills /></Suspense>} /></Router>, root);
