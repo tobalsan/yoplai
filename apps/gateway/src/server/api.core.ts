@@ -88,6 +88,7 @@ import { loadSuggestions } from "../suggestions/loader.js";
 import { listAgentDashboards } from "../canvas/list.js";
 import { getDashboardRegistry } from "../canvas/store.js";
 import { createDashboardResourceRoutes } from "../canvas/routes.js";
+import { DashboardPinStore } from "../canvas/pins.js";
 import { resolveDashboardHttpActor, listDashboardRecipients, dashboardOwnerName } from "../canvas/http-auth.js";
 import { getAuditActor, listSettingsChanges, recordSettingsChange } from "../audit/store.js";
 import { diffSettings } from "../audit/diff.js";
@@ -1519,6 +1520,7 @@ export { api };
 
 api.route("/dashboards", createDashboardResourceRoutes({
   getConfig: loadConfig, getAgent,
+  pins: new DashboardPinStore(path.join(CONFIG_DIR, "canvas", "pins.json")),
   registry: getDashboardRegistry(path.join(CONFIG_DIR, "canvas", "registry.json")),
   async authenticate(request) {
     if (!loadConfig().extensions?.multiUser?.enabled) return {};

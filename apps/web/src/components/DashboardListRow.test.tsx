@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { createSignal } from "solid-js";
 import { render } from "solid-js/web";
 import { DashboardListRow } from "./DashboardListRow";
 import type { DashboardRow } from "../api/dashboards";
@@ -18,6 +19,27 @@ const show = (dashboard: DashboardRow) => { dispose = render(() => <DashboardLis
 const buttons = () => Array.from(root.querySelectorAll("button")).map((button) => button.textContent?.trim());
 
 describe("DashboardListRow ownership label", () => {
+  it("exposes an accessible pin toggle only when a callback is supplied", () => {
+    const onPin = vi.fn();
+    const [pinned, setPinned] = createSignal(false);
+    const [pending, setPending] = createSignal(false);
+    dispose = render(() => <DashboardListRow dashboard={row({ pinned: pinned() })} onPin={onPin} pinPending={pending()} />, root);
+    const toggle = () => root.querySelector<HTMLButtonElement>('button[aria-pressed]')!;
+    expect(toggle().getAttribute("aria-label")).toBe("Pin");
+    expect(toggle().getAttribute("aria-pressed")).toBe("false");
+    toggle().click();
+    expect(onPin).toHaveBeenCalledOnce();
+    setPinned(true);
+    expect(toggle().getAttribute("aria-label")).toBe("Unpin");
+    expect(toggle().getAttribute("aria-pressed")).toBe("true");
+    setPending(true);
+    expect(toggle().disabled).toBe(true);
+    toggle().click();
+    expect(onPin).toHaveBeenCalledOnce();
+    dispose();
+    show(row({}));
+    expect(root.querySelector('button[aria-pressed]')).toBeNull();
+  });
   it("says Owned by you for owners and offers Manage access", () => {
     show(row({ isOwner: true, shares: [{ kind: "user", id: "u", mode: "read" }] }));
     expect(root.textContent).toContain("Owned by you");

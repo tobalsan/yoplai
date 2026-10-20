@@ -3,7 +3,7 @@ import type { DashboardRow } from "../api/dashboards";
 
 type RowDashboard = Pick<DashboardRow,
   "link" | "title" | "params" | "legacy" | "isOwner" | "ownerName" | "mode" | "updatedAt" | "publishedAt"
-> & Partial<Pick<DashboardRow, "shared" | "shares" | "agentName">>;
+> & Partial<Pick<DashboardRow, "shared" | "shares" | "agentName" | "pinned">>;
 
 export function ownershipLabel(dashboard: Pick<RowDashboard, "legacy" | "isOwner" | "shared" | "ownerName">) {
   if (dashboard.isOwner) return "Owned by you";
@@ -37,6 +37,8 @@ export function DashboardListActions(props: {
   onDelete?: () => void;
   /** Keeps an empty Delete column so rows without Delete stay aligned. */
   reserveDelete?: boolean;
+  onPin?: () => void;
+  pinPending?: boolean;
 }) {
   const [copied, setCopied] = createSignal(false);
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -56,6 +58,16 @@ export function DashboardListActions(props: {
   const canDelete = () => props.dashboard.isOwner && !!props.onDelete;
   return (
     <div class="dashboard-list-row__actions">
+      <Show when={props.onPin}>
+        <span class="dashboard-slot dashboard-slot--pin">
+          <button type="button" class="dashboard-action dashboard-action--pin"
+            aria-label={props.dashboard.pinned ? "Unpin" : "Pin"}
+            title={props.dashboard.pinned ? "Unpin" : "Pin"}
+            aria-pressed={!!props.dashboard.pinned} disabled={props.pinPending} onClick={props.onPin}>
+            <i class="fa-solid fa-thumbtack" aria-hidden="true" />
+          </button>
+        </span>
+      </Show>
       <span class="dashboard-slot dashboard-slot--open" classList={{ "dashboard-slot--empty": props.dashboard.params.length > 0 }}>
         <Show when={props.dashboard.params.length === 0}>
           <a class="dashboard-action" href={props.dashboard.link} target="_blank" rel="noopener noreferrer">
@@ -112,6 +124,10 @@ export function DashboardListActions(props: {
         .dashboard-action:focus-visible { outline: 2px solid var(--accent, #3b82f6); outline-offset: 1px; }
         .dashboard-action--danger { color: var(--color-danger, #dc2626); }
         .dashboard-action--danger:hover { color: var(--color-danger, #dc2626); background: color-mix(in srgb, var(--color-danger, #dc2626) 12%, transparent); }
+        .dashboard-action--pin { justify-content: center; width: 40px; height: 40px; padding: 0; }
+        .dashboard-action--pin[aria-pressed="true"] { color: var(--accent, #3b82f6); background: var(--accent-bg, rgba(59, 130, 246, 0.14)); }
+        .dashboard-action--pin:active:not(:disabled) { background: var(--bg-raised); }
+        .dashboard-action--pin:disabled { opacity: 0.5; cursor: wait; }
         @container (max-width: 640px) {
           .dashboard-list-row__grid { grid-template-columns: minmax(0, 1fr) auto; }
           .dashboard-list-row__actions { grid-column: 1 / -1; flex-wrap: wrap; margin-left: -10px; }
@@ -130,6 +146,8 @@ export function DashboardListRow(props: {
   onClaim?: () => void;
   onDelete?: () => void;
   reserveDelete?: boolean;
+  onPin?: () => void;
+  pinPending?: boolean;
 }) {
   const meta = () => {
     const dashboard = props.dashboard;
@@ -154,7 +172,7 @@ export function DashboardListRow(props: {
             </span>
           )}</Show>
         </div>
-        <DashboardListActions dashboard={props.dashboard} onManage={props.onManage} onClaim={props.onClaim} onDelete={props.onDelete} reserveDelete={props.reserveDelete} />
+        <DashboardListActions dashboard={props.dashboard} onManage={props.onManage} onClaim={props.onClaim} onDelete={props.onDelete} reserveDelete={props.reserveDelete} onPin={props.onPin} pinPending={props.pinPending} />
       </div>
     </div>
   );

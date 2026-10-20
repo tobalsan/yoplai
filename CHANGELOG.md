@@ -11,6 +11,8 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Added
 
+- Pin owned or shared dashboards to a personal Pinned section on the Dashboards page; pins persist across reloads and restarts.
+
 - Search your chat titles and full user/assistant transcripts from the sidebar or Cmd/Ctrl+K, with highlighted snippets and keyboard navigation. Replaces the inline session filter, Board project palette and embedded-chat Cmd+K reset.
 - Set `branding.icon` to a square PNG in `$YOPLAI_HOME` to give the instance its own favicon and app icon. Safari "Add to Dock", iOS "Add to Home Screen", and the web app manifest use it.
 

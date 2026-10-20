@@ -21,6 +21,7 @@ export type DashboardRow = {
   ownerName: string | null;
   mode: "read" | "write";
   shares?: DashboardShare[];
+  pinned?: boolean;
 };
 
 export type DashboardRecipient = { id: string; name: string; email: string };
@@ -33,6 +34,10 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 
 export function fetchDashboards() {
   return request<{ owned: DashboardRow[]; shared: DashboardRow[] }>("");
+}
+
+export function setDashboardPinned(id: string, pinned: boolean) {
+  return request<{ ok: true; pinned: boolean }>(`/${encodeURIComponent(id)}/pin`, { method: pinned ? "PUT" : "DELETE" });
 }
 
 export function fetchDashboardRecipients() {
