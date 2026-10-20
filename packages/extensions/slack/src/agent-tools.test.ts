@@ -10,6 +10,7 @@ import { clearSlackContext, setSlackContext } from "./context.js";
 import { createSlackThreadSessionBindingStore } from "./thread-session-bindings.js";
 import type { SlackBot } from "./bot.js";
 import type { SlackWebClient } from "./types.js";
+import { trackSlackSender } from "./requester.js";
 
 function agent(id: string, slack?: AgentConfig["slack"]): AgentConfig {
   return {
@@ -82,7 +83,228 @@ describe("slack agent tools", () => {
       "slack.list_update_cells",
       "slack.list_item_create",
       "slack.list_item_delete",
+      "slack.add_reaction",
     ]);
+  });
+
+  it("add_reaction reacts to the trusted incoming message using its client without pairing", async () => {
+    const add = vi.fn().mockResolvedValue({ ok: true });
+    const otherAdd = vi.fn().mockResolvedValue({ ok: true });
+    registerMockBot("alpha", { reactions: { add: otherAdd } as never });
+    const release = trackSlackSender({
+      agentId: "alpha", sessionKey: "main", sessionId: "session-1",
+      requesterId: "slack:T123:U123", user: "U123", channel: "D123",
+      messageTs: "123.456", client: { reactions: { add } } as unknown as SlackWebClient,
+    });
+    try {
+      const result = await tool("slack.add_reaction").execute(
+        { name: "white_check_mark" },
+        { agent: agent("alpha"), config: config(), sessionId: "session-1", requesterId: "slack:T123:U123" }
+      );
+      expect(result).toEqual({ ok: true });
+      expect(add).toHaveBeenCalledWith({ name: "white_check_mark", channel: "D123", timestamp: "123.456" });
+      expect(otherAdd).not.toHaveBeenCalled();
+    } finally {
+      release();
+    }
+  });
+
+  it("add_reaction accepts an explicit target without an incoming run", async () => {
+    const add = vi.fn().mockResolvedValue({ ok: true });
+    registerMockBot("slack", { reactions: { add } as never });
+    const result = await tool("slack.add_reaction").execute(
+      { name: "white_check_mark", channel: "D777", timestamp: "777.123" },
+      { agent: agent("alpha"), config: config() }
+    );
+    expect(result).toEqual({ ok: true });
+    expect(add).toHaveBeenCalledWith({ name: "white_check_mark", channel: "D777", timestamp: "777.123" });
+  });
+
+  it.each([{ channel: "D777" }, { timestamp: "777.123" }])("add_reaction rejects a partial explicit target %j", async (target) => {
+    const add = vi.fn().mockResolvedValue({ ok: true });
+    const release = trackSlackSender({
+      agentId: "alpha", sessionKey: "main", sessionId: "session-1",
+      requesterId: "slack:T123:U123", user: "U123", channel: "D123",
+      messageTs: "123.456", client: { reactions: { add } } as unknown as SlackWebClient,
+    });
+    try {
+      const result = await tool("slack.add_reaction").execute(
+        { name: "white_check_mark", ...target },
+        { agent: agent("alpha"), config: config(), sessionId: "session-1", requesterId: "slack:T123:U123" }
+      );
+      expect(result).toMatchObject({ ok: false, error: expect.stringContaining("channel and timestamp") });
+      expect(add).not.toHaveBeenCalled();
+    } finally {
+      release();
+    }
+  });
+
+  it("add_reaction strips surrounding colons while preserving skin-tone separators", async () => {
+    const add = vi.fn().mockResolvedValue({ ok: true });
+    registerMockBot("alpha", { reactions: { add } as never });
+    expect(await tool("slack.add_reaction").execute(
+      { name: ":thumbsup::skin-tone-6:", channel: "D123", timestamp: "123.456" },
+      { agent: agent("alpha"), config: config() }
+    )).toEqual({ ok: true });
+    expect(add).toHaveBeenCalledWith({ name: "thumbsup::skin-tone-6", channel: "D123", timestamp: "123.456" });
+  });
+
+  it.each(["", ":", "::"])("add_reaction rejects empty normalized emoji name %j", async (name) => {
+    const add = vi.fn().mockResolvedValue({ ok: true });
+    registerMockBot("alpha", { reactions: { add } as never });
+    expect(await tool("slack.add_reaction").execute(
+      { name, channel: "D123", timestamp: "123.456" },
+      { agent: agent("alpha"), config: config() }
+    )).toMatchObject({ ok: false });
+    expect(add).not.toHaveBeenCalled();
+  });
+
+  it("add_reaction rejects two queued messages from the same requester", async () => {
+    const add = vi.fn().mockResolvedValue({ ok: true });
+    const releases = ["123.456", "123.789"].map((messageTs) => trackSlackSender({
+      agentId: "alpha", sessionKey: "main", sessionId: "session-1",
+      requesterId: "slack:T123:U123", user: "U123", channel: "D123",
+      messageTs, client: { reactions: { add } } as unknown as SlackWebClient,
+    }));
+    try {
+      expect(await tool("slack.add_reaction").execute(
+        { name: "white_check_mark" },
+        { agent: agent("alpha"), config: config(), sessionId: "session-1", requesterId: "slack:T123:U123" }
+      )).toMatchObject({ ok: false, error: expect.stringContaining("channel and timestamp") });
+      expect(add).not.toHaveBeenCalled();
+    } finally {
+      releases.forEach((release) => release());
+    }
+  });
+
+  it("add_reaction requires message requester correlation before looking up a shared session", async () => {
+    const add = vi.fn().mockResolvedValue({ ok: true });
+    setSlackContext({ getSessionEntry: async () => { throw new Error("Session lookup needs requester correlation"); } } as never);
+    const release = trackSlackSender({
+      agentId: "alpha", sessionKey: "main", requesterId: "slack:T123:U123",
+      user: "U123", channel: "D123", messageTs: "123.456",
+      client: { reactions: { add } } as unknown as SlackWebClient,
+    });
+    try {
+      expect(await tool("slack.add_reaction").execute(
+        { name: "white_check_mark" },
+        { agent: agent("alpha"), config: config(), sessionId: "session-1" }
+      )).toMatchObject({ ok: false, error: expect.stringContaining("channel and timestamp") });
+      expect(add).not.toHaveBeenCalled();
+    } finally {
+      release();
+    }
+  });
+
+  it("add_reaction treats Slack's structured already_reacted error as success", async () => {
+    const add = vi.fn().mockRejectedValue(Object.assign(new Error("Slack API rejected the request"), {
+      data: { error: "already_reacted" },
+    }));
+    registerMockBot("alpha", { reactions: { add } as never });
+    expect(await tool("slack.add_reaction").execute(
+      { name: "white_check_mark", channel: "D123", timestamp: "123.456" },
+      { agent: agent("alpha"), config: config() }
+    )).toEqual({ ok: true });
+  });
+
+  it.each([
+    { sessionOwnerId: "paired-user", userId: "credential-user", expectedOwner: "paired-user" },
+    { sessionOwnerId: null, userId: "credential-user", expectedOwner: undefined },
+    { sessionOwnerId: undefined, userId: "paired-user", expectedOwner: "paired-user" },
+  ])("add_reaction resolves the message session under its effective owner $sessionOwnerId", async ({ sessionOwnerId, userId, expectedOwner }) => {
+    const add = vi.fn().mockResolvedValue({ ok: true });
+    setSlackContext({
+      getSessionEntry: async (_agentId: string, _key: string, owner?: string) =>
+        owner === expectedOwner ? { sessionId: "session-1" } : undefined,
+    } as never);
+    const release = trackSlackSender({
+      agentId: "alpha", sessionKey: "main", requesterId: "slack:T123:U123",
+      user: "U123", channel: "D123", messageTs: "123.456",
+      client: { reactions: { add } } as unknown as SlackWebClient,
+    });
+    try {
+      expect(await tool("slack.add_reaction").execute(
+        { name: "white_check_mark" },
+        { agent: agent("alpha"), config: config(), sessionId: "session-1", sessionOwnerId, userId, requesterId: "slack:T123:U123" }
+      )).toEqual({ ok: true });
+      expect(add).toHaveBeenCalledWith({ name: "white_check_mark", channel: "D123", timestamp: "123.456" });
+    } finally {
+      release();
+    }
+  });
+
+  it.each(["no sender", "no message timestamp", "no channel"])("add_reaction requires an explicit target with %s", async (scenario) => {
+    const add = vi.fn().mockResolvedValue({ ok: true });
+    const release = scenario === "no sender" ? undefined : trackSlackSender({
+      agentId: "alpha", sessionKey: "main", sessionId: "session-1",
+      requesterId: "slack:T123:U123", user: "U123",
+      channel: scenario === "no channel" ? undefined : "D123",
+      messageTs: scenario === "no message timestamp" ? undefined : "123.456",
+      client: { reactions: { add } } as unknown as SlackWebClient,
+    });
+    try {
+      expect(await tool("slack.add_reaction").execute(
+        { name: "white_check_mark" },
+        { agent: agent("alpha"), config: config(), sessionId: "session-1", requesterId: "slack:T123:U123" }
+      )).toMatchObject({ ok: false, error: expect.stringContaining("channel and timestamp") });
+      expect(add).not.toHaveBeenCalled();
+    } finally {
+      release?.();
+    }
+  });
+
+  it.each([
+    { error: Object.assign(new Error("Slack API rejected the request"), { data: { error: "missing_scope" } }), expected: "Slack API rejected the request" },
+    { error: new Error("network unavailable"), expected: "network unavailable" },
+    { error: new Error("already_reacted"), expected: "already_reacted" },
+  ])("add_reaction reports other Slack errors: $expected", async ({ error, expected }) => {
+    const add = vi.fn().mockRejectedValue(error);
+    registerMockBot("alpha", { reactions: { add } as never });
+    expect(await tool("slack.add_reaction").execute(
+      { name: "white_check_mark", channel: "D123", timestamp: "123.456" },
+      { agent: agent("alpha"), config: config() }
+    )).toEqual({ ok: false, error: expected });
+  });
+
+  it.each([
+    { sessionId: undefined, requesterId: "slack:T123:U123" },
+    { sessionId: "session-1", requesterId: "slack:T123:U999" },
+    { sessionId: "other-session", requesterId: "slack:T123:U123" },
+  ])("add_reaction rejects a caller without a matching message run %j", async (correlation) => {
+    const add = vi.fn().mockResolvedValue({ ok: true });
+    const release = trackSlackSender({
+      agentId: "alpha", sessionKey: "main", sessionId: "session-1",
+      requesterId: "slack:T123:U123", user: "U123", channel: "D123",
+      messageTs: "123.456", client: { reactions: { add } } as unknown as SlackWebClient,
+    });
+    try {
+      expect(await tool("slack.add_reaction").execute(
+        { name: "white_check_mark" },
+        { agent: agent("alpha"), config: config(), ...correlation }
+      )).toMatchObject({ ok: false, error: expect.stringContaining("channel and timestamp") });
+      expect(add).not.toHaveBeenCalled();
+    } finally {
+      release();
+    }
+  });
+
+  it("add_reaction selects the correlated requester when another sender shares the session", async () => {
+    const add = vi.fn().mockResolvedValue({ ok: true });
+    const releases = ["U999", "U123"].map((user) => trackSlackSender({
+      agentId: "alpha", sessionKey: "main", sessionId: "session-1",
+      requesterId: `slack:T123:${user}`, user, channel: user === "U123" ? "D123" : "D999",
+      messageTs: user === "U123" ? "123.456" : "999.999",
+      client: { reactions: { add } } as unknown as SlackWebClient,
+    }));
+    try {
+      expect(await tool("slack.add_reaction").execute(
+        { name: "white_check_mark" },
+        { agent: agent("alpha"), config: config(), sessionId: "session-1", requesterId: "slack:T123:U123" }
+      )).toEqual({ ok: true });
+      expect(add).toHaveBeenCalledWith({ name: "white_check_mark", channel: "D123", timestamp: "123.456" });
+    } finally {
+      releases.forEach((release) => release());
+    }
   });
 
   it.each([undefined, null, "opener"])("create_thread records effective session owner %s rather than the caller", async (sessionOwnerId) => {

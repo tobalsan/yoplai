@@ -1008,9 +1008,11 @@ async function handleSlackMessage(
   }
 
   const threadPolicy = target.channelConfig?.threadPolicy ?? target.dmConfig?.threadPolicy;
-  const sessionKey = target.isMainSession
-    ? DEFAULT_MAIN_KEY
-    : buildSlackSessionKey(data.channel, data.thread_ts, result.isDm ? undefined : data.ts, threadPolicy);
+  const sessionKey = target.proactiveReply
+    ? buildSlackSessionKey(data.channel)
+    : target.isMainSession
+      ? DEFAULT_MAIN_KEY
+      : buildSlackSessionKey(data.channel, data.thread_ts, result.isDm ? undefined : data.ts, threadPolicy);
   const historyKey = buildSlackHistoryKey(data.channel, data.thread_ts);
   const defaultReplyThreadTs = resolveReplyThreadTs(
     target.channelConfig?.threadPolicy ?? target.dmConfig?.threadPolicy,
@@ -1018,6 +1020,8 @@ async function handleSlackMessage(
     data.thread_ts
   );
   const replyThreadTs = binding ? data.thread_ts : defaultReplyThreadTs;
+  // Proactive participants keep their own DM session and owner, not the bound session.
+  if (target.proactiveReply) binding = undefined;
   const fileThreadTs = data.thread_ts ?? data.ts;
 
   let thinkingDisplay: ThinkingStreamDisplay | null = null;
@@ -1158,7 +1162,7 @@ async function handleSlackMessage(
     let slackToolPostedToThread = false;
     const slackToolCallsToThread = new Set<string>();
     const activeSender: ActiveSlackSender | undefined = data.user
-      ? { agentId: target.agent.id, sessionKey, requesterId, client, user: data.user, channel: data.channel, threadTs: replyThreadTs }
+      ? { agentId: target.agent.id, sessionKey, requesterId, client, user: data.user, channel: data.channel, messageTs: data.ts, threadTs: replyThreadTs }
       : undefined;
     let untrack: (() => void) | undefined;
     const runAgent = async (sessionId?: string) => {
@@ -1322,15 +1326,18 @@ async function handleSlackReaction(
     return;
   }
   const channel = data.item.channel;
+  const proactiveReply = Boolean(
+    target.dmConfig &&
+    !isDmUserAllowed(target.dmConfig, data.user) &&
+    target.dmConfig.proactiveReplies?.enabled &&
+    channel &&
+    data.item.ts &&
+    isTrackedProactiveMessage(target.agent.id, channel, data.item.ts)
+  );
   if (
     target.dmConfig &&
     !isDmUserAllowed(target.dmConfig, data.user) &&
-    !(
-      target.dmConfig.proactiveReplies?.enabled &&
-      channel &&
-      data.item.ts &&
-      isTrackedProactiveMessage(target.agent.id, channel, data.item.ts)
-    )
+    !proactiveReply
   ) {
     console.debug(`${target.logPrefix} Reaction ignored: dm_user_not_allowed`);
     return;
@@ -1382,9 +1389,11 @@ async function handleSlackReaction(
       agentId: target.agent.id,
       userId: await resolveSlackRequester(client, data.user),
       message: formatReactionMessage(data, action, messageInfo?.text),
-      sessionKey: target.dmConfig
-        ? DEFAULT_MAIN_KEY
-        : buildSlackSessionKey(result.channel, reactionThreadTs),
+      sessionKey: proactiveReply
+        ? buildSlackSessionKey(result.channel)
+        : target.dmConfig
+          ? DEFAULT_MAIN_KEY
+          : buildSlackSessionKey(result.channel, reactionThreadTs),
       source: "slack",
       slackDelivery: {
         channel: result.channel,

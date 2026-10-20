@@ -11,11 +11,13 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Added
 
+- Slack agents can add emoji reactions with `slack.add_reaction`, targeting the current inbound message or an explicit message.
 - Search your chat titles and full user/assistant transcripts from the sidebar or Cmd/Ctrl+K, with highlighted snippets and keyboard navigation. Replaces the inline session filter, Board project palette and embedded-chat Cmd+K reset.
 - Set `branding.icon` to a square PNG in `$YOPLAI_HOME` to give the instance its own favicon and app icon. Safari "Add to Dock", iOS "Add to Home Screen", and the web app manifest use it.
 
 ### Fixed
 
+- Non-allowlisted proactive Slack DM replies and reactions now use a separate session per DM conversation, preserving requester ownership and thread delivery.
 - Multi-user instances without an agent pool let approved users and admins use plain agents, including chat, avatars and capability self-enable. Existing fork restrictions also apply to agent lists.
 - Agents no longer name other users' private dashboards when they list dashboards. Every run now gets a short rule: `dashboard_link` is the only source for the user's dashboards, and the agent does not mention or hint at others. Also, `dashboard_link` with no slug returns `{ dashboards, note }`.
 - A Pi run now switches to `fallback_model` when the primary provider is unreachable ("Connection error.").

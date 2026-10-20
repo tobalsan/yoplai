@@ -24,6 +24,14 @@ const sendMessageSchema = z.object({
   threadTs: z.string().min(1).optional(),
 });
 
+const addReactionSchema = z.object({
+  name: z.string().transform((name) => name.replace(/^:+|:+$/g, "")).pipe(z.string().min(1)),
+  channel: z.string().min(1).optional(),
+  timestamp: z.string().min(1).optional(),
+}).refine((input) => Boolean(input.channel) === Boolean(input.timestamp), {
+  message: "Provide channel and timestamp together.",
+});
+
 const createThreadSchema = z.object({
   channel: z.string().min(1),
   text: z.string().min(1),
@@ -1442,6 +1450,50 @@ export function slackAgentTools(): ExtensionAgentTool[] {
           await client.slackLists.items.delete({ list_id: input.list, id: input.rowId });
           return { ok: true, listId: input.list, rowId: input.rowId };
         } catch (error) {
+          return toolError(error);
+        }
+      },
+    },
+    {
+      name: "slack.add_reaction",
+      description: "Add an emoji reaction to the incoming Slack message. Provide channel and timestamp together to target another message.",
+      parameters: {
+        type: "object",
+        properties: {
+          name: { type: "string", description: "Emoji name, such as white_check_mark." },
+          channel: { type: "string", description: "Explicit target channel; requires timestamp." },
+          timestamp: { type: "string", description: "Explicit message timestamp; requires channel." },
+        },
+        required: ["name"],
+        additionalProperties: false,
+      },
+      async execute(args, { agent, config, env, sessionId, sessionOwnerId, userId, requesterId }) {
+        try {
+          const input = addReactionSchema.parse(args);
+          if (input.channel && input.timestamp) {
+            const client = resolveSlackClient(agent, config, env);
+            if (!client) return toolError("No Slack token is configured for this agent.");
+            await client.reactions.add({ name: input.name, channel: input.channel, timestamp: input.timestamp });
+            return { ok: true };
+          }
+          if (!requesterId) {
+            return toolError("Provide explicit channel and timestamp to identify the Slack message.");
+          }
+          const context = getSlackContextIfInitialized();
+          const sender = await findSlackSender(agent.id, sessionId, async (agentId, key) =>
+            (await context?.getSessionEntry(agentId, key, sessionOwnerId === undefined ? userId : sessionOwnerId ?? undefined))?.sessionId,
+            true,
+            requesterId
+          );
+          if (!sender?.channel || !sender.messageTs) {
+            return toolError("Provide explicit channel and timestamp to identify the Slack message.");
+          }
+          await sender.client.reactions.add({ name: input.name, channel: sender.channel, timestamp: sender.messageTs });
+          return { ok: true };
+        } catch (error) {
+          if ((error as { data?: { error?: string } } | null)?.data?.error === "already_reacted") {
+            return { ok: true };
+          }
           return toolError(error);
         }
       },
