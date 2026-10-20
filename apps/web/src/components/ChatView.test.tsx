@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { queryAllByRole, queryByRole } from "@testing-library/dom";
 import { createSignal } from "solid-js";
 import { delegateEvents, render } from "solid-js/web";
 import { ChatView, ThinkingLine } from "./ChatView";
@@ -200,6 +201,154 @@ describe("ChatView abort handling", () => {
     document.body.innerHTML = "";
     resetCapabilitiesForTests();
     vi.clearAllMocks();
+    vi.unstubAllGlobals();
+  });
+
+  it.each(["simple", "full"])("copies all eligible turn text in %s view with rich feedback", async (mode) => {
+    routeState.view = mode;
+    const write = vi.fn().mockResolvedValue(undefined);
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    class Item {
+      constructor(public data: Record<string, Blob>) {}
+    }
+    vi.stubGlobal("ClipboardItem", Item);
+    vi.stubGlobal("navigator", { ...navigator, clipboard: { write, writeText } });
+    fetchFullHistoryMock.mockResolvedValue({ messages: [
+      { role: "user", timestamp: 1, content: [{ type: "text", text: "Question" }] },
+      { role: "assistant", timestamp: 2, content: [
+        { type: "text", text: "## Before" },
+        { type: "thinking", thinking: "private thinking" },
+        { type: "toolCall", id: "tool-1", name: "tool-secret", arguments: {} },
+      ] },
+      { role: "toolResult", timestamp: 3, toolCallId: "tool-1", toolName: "tool-secret", content: [{ type: "text", text: "private result" }] },
+      { role: "assistant", timestamp: 4, content: [{ type: "text", text: "**After**" }] },
+    ] });
+    const { container, dispose } = renderView();
+    const buttons = () => queryAllByRole(container, "button", { name: "Copy reply" });
+    await waitFor(() => expect(buttons()).toHaveLength(1));
+    buttons()[0].click();
+    await waitFor(() => expect(container.textContent).toContain("Copied"));
+    const item = write.mock.calls[0][0][0] as Item;
+    const read = (blob: Blob) => new Promise<string>((resolve) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result));
+      reader.readAsText(blob);
+    });
+    expect(await read(item.data["text/plain"])).toBe("Before\n\nAfter");
+    const html = await read(item.data["text/html"]);
+    expect(html).toContain("<h2>Before</h2>");
+    expect(html).toContain("<strong>After</strong>");
+    expect(html).not.toContain("private");
+    expect(html).not.toContain("tool-secret");
+    expect(writeText).not.toHaveBeenCalled();
+    dispose();
+    vi.unstubAllGlobals();
+  });
+
+  it("falls back to clean text when rich clipboard APIs are absent", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    vi.stubGlobal("ClipboardItem", undefined);
+    vi.stubGlobal("navigator", { ...navigator, clipboard: { writeText } });
+    fetchFullHistoryMock.mockResolvedValue({ messages: [
+      { role: "user", timestamp: 1, content: [{ type: "text", text: "Question" }] },
+      { role: "assistant", timestamp: 2, content: [{ type: "text", text: "**Answer**" }] },
+    ] });
+    const { container, dispose } = renderView();
+    const button = () => queryByRole(container, "button", { name: "Copy reply" });
+    await waitFor(() => expect(button()).not.toBeNull());
+    button()!.click();
+    await waitFor(() => expect(container.textContent).toContain("Copied"));
+    expect(writeText).toHaveBeenCalledWith("Answer");
+    dispose();
+  });
+
+  it.each(["rich rejects", "both reject"])("reports clipboard outcome when %s", async (outcome) => {
+    const write = vi.fn().mockRejectedValue(new Error("blocked"));
+    const writeText = outcome === "both reject" ? vi.fn().mockRejectedValue(new Error("blocked")) : vi.fn().mockResolvedValue(undefined);
+    vi.stubGlobal("ClipboardItem", class { constructor(public data: Record<string, Blob>) {} });
+    vi.stubGlobal("navigator", { ...navigator, clipboard: { write, writeText } });
+    fetchFullHistoryMock.mockResolvedValue({ messages: [
+      { role: "user", timestamp: 1, content: [{ type: "text", text: "Question" }] },
+      { role: "assistant", timestamp: 2, content: [{ type: "text", text: "**Answer**" }] },
+    ] });
+    const { container, dispose } = renderView();
+    const button = () => queryByRole(container, "button", { name: "Copy reply" });
+    await waitFor(() => expect(button()).not.toBeNull());
+    button()!.click();
+    await waitFor(() => expect(button()!.textContent).toContain(outcome === "both reject" ? "Copy failed" : "Copied"));
+    expect(write).toHaveBeenCalledOnce();
+    expect(writeText).toHaveBeenCalledWith("Answer");
+    dispose();
+  });
+
+  it.each(["simple", "full"])("hides copying of the active %s turn even with a pending user", async (mode) => {
+    routeState.view = mode;
+    fetchFullHistoryMock.mockResolvedValue({ messages: [
+      { role: "user", timestamp: 1, content: [{ type: "text", text: "Question" }] },
+      { role: "assistant", timestamp: 2, content: [{ type: "text", text: "Partial reply" }] },
+      { role: "user", timestamp: 5, content: [{ type: "text", text: "Pending question" }] },
+    ], isStreaming: true, activeTurn: { userText: "Question", userTimestamp: 1, startedAt: 2, text: "more", thinking: "", toolCalls: [] } });
+    const { container, dispose } = renderView();
+    await waitFor(() => expect(container.textContent).toContain("Partial reply"));
+    expect(queryAllByRole(container, "button", { name: "Copy reply" })).toHaveLength(0);
+    dispose();
+  });
+
+  it.each(["simple", "full"])("does not copy an incomplete first history turn in %s view", async (mode) => {
+    routeState.view = mode;
+    fetchFullHistoryMock.mockResolvedValue({ messages: [
+      { role: "assistant", timestamp: 2, content: [{ type: "text", text: "Incomplete earlier turn" }] },
+      { role: "user", timestamp: 3, content: [{ type: "text", text: "New question" }] },
+      { role: "assistant", timestamp: 4, content: [{ type: "text", text: "Complete answer" }] },
+    ], nextCursor: "earlier", historyOffset: 100 });
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    vi.stubGlobal("ClipboardItem", undefined);
+    vi.stubGlobal("navigator", { ...navigator, clipboard: { writeText } });
+    const { container, dispose } = renderView();
+    const buttons = () => queryAllByRole(container, "button", { name: "Copy reply" });
+    await waitFor(() => expect(buttons()).toHaveLength(1));
+    buttons()[0].click();
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith("Complete answer"));
+    dispose();
+  });
+
+  it.each(["simple", "full"])("copies exact code in %s view after streamed HTML is replaced", async (mode) => {
+    routeState.view = mode;
+    let callbacks: SubscriptionCallbacks = {};
+    subscribeToSessionMock.mockImplementation((_id, _key, next) => { callbacks = next; return () => {}; });
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    vi.stubGlobal("navigator", { ...navigator, clipboard: { writeText } });
+    const { container, dispose } = renderView();
+    await tick(); await tick();
+    callbacks.onText?.("```sh\n  echo '**raw**'\n\t<x>\n");
+    await tick();
+    callbacks.onText?.("\n```");
+    const button = () => queryByRole(container, "button", { name: "Copy code" });
+    await waitFor(() => expect(button()).not.toBeNull());
+    button()!.click();
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith("  echo '**raw**'\n\t<x>\n\n"));
+    expect(button()!.textContent).toContain("Copied");
+    dispose();
+  });
+
+  it("keeps chat usable while a clipboard write hangs", async () => {
+    const write = vi.fn(() => new Promise<void>(() => {}));
+    vi.stubGlobal("ClipboardItem", class { constructor(public data: Record<string, Blob>) {} });
+    vi.stubGlobal("navigator", { ...navigator, clipboard: { write, writeText: vi.fn() } });
+    fetchFullHistoryMock.mockResolvedValue({ messages: [
+      { role: "user", timestamp: 1, content: [{ type: "text", text: "Question" }] },
+      { role: "assistant", timestamp: 2, content: [{ type: "text", text: "Answer" }] },
+    ] });
+    const { container, dispose } = renderView();
+    await waitFor(() => expect(queryByRole(container, "button", { name: "Copy reply" })).not.toBeNull());
+    queryByRole(container, "button", { name: "Copy reply" })!.click();
+    const input = queryByRole(container, "textbox") as HTMLTextAreaElement;
+    input.value = "Next question";
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    queryByRole(container, "button", { name: "Send message" })!.click();
+    await waitFor(() => expect(streamMessageMock).toHaveBeenCalledWith("agent-1", "Next question", "main", expect.any(Function), expect.any(Function), expect.any(Function), expect.any(Object), expect.any(Object)));
+    expect(write).toHaveBeenCalledOnce();
+    dispose();
   });
 
   it("links the settings cog to the agent edit page", async () => {
@@ -1904,6 +2053,46 @@ describe("ChatView abort handling", () => {
       callbacks: () => callbacks,
     };
   }
+
+  it.each(["simple", "full"])("copies one complete %s reply when a user queued a message mid-turn", async (mode) => {
+    routeState.view = mode;
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    vi.stubGlobal("ClipboardItem", undefined);
+    vi.stubGlobal("navigator", { ...navigator, clipboard: { writeText } });
+    const { container, dispose, onText, onDone } = await startFullStream();
+    onText("Before queue");
+    await tick();
+    streamMessageMock.mockImplementation(() => vi.fn());
+    const input = container.querySelector("textarea")!;
+    input.value = "Pending question";
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+    await tick();
+    onText("After queue");
+    const buttons = () => queryAllByRole(container, "button", { name: "Copy reply" });
+    expect(buttons()).toHaveLength(0);
+    onDone();
+    await waitFor(() => expect(buttons()).toHaveLength(1));
+    buttons()[0].click();
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith("Before queue\n\nAfter queue"));
+    dispose();
+  });
+
+  it.each(["simple", "full"])("copies a stopped reply after the %s turn finishes", async (mode) => {
+    routeState.view = mode;
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    vi.stubGlobal("ClipboardItem", undefined);
+    vi.stubGlobal("navigator", { ...navigator, clipboard: { writeText } });
+    const { container, dispose, onText, onDone } = await startFullStream();
+    onText("Stopped answer");
+    queryByRole(container, "button", { name: "Stop agent" })!.click();
+    await tick();
+    onDone();
+    await waitFor(() => expect(queryByRole(container, "button", { name: "Copy reply" })).not.toBeNull());
+    queryByRole(container, "button", { name: "Copy reply" })!.click();
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith("Stopped answer"));
+    dispose();
+  });
 
   it.each([
     ["full", "direct"], ["simple", "direct"], ["full", "queued"], ["simple", "queued"],

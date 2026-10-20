@@ -2,6 +2,8 @@ import { marked, type Tokens } from "marked";
 import DOMPurify from "dompurify";
 
 type RenderMarkdownOptions = {
+  copyCode?: boolean;
+  preserveCodeWhitespace?: boolean;
   breaks?: boolean;
   stripFrontmatter?: boolean;
   stripFirstHeading?: boolean;
@@ -61,6 +63,22 @@ export function renderMarkdown(
   const renderer = new marked.Renderer();
 
   renderer.html = ({ text }: Tokens.HTML | Tokens.Tag) => escapeHtml(text);
+
+  if (options?.copyCode || options?.preserveCodeWhitespace) {
+    renderer.code = ({ text, raw }: Tokens.Code) => {
+      const opening = raw.match(/^ {0,3}(`{3,}|~{3,})[^\n]*\n/);
+      if (opening) {
+        const body = raw.slice(opening[0].length);
+        const fence = opening[1];
+        const closing = new RegExp(`^ {0,3}${fence[0]}{${fence.length},}[ \\t]*(?:\\n)?$`, "m").exec(body);
+        text = closing ? body.slice(0, closing.index) : body;
+      }
+      const code = `<pre><code>${escapeHtml(text)}</code></pre>`;
+      return options.copyCode
+        ? `<div class="chat-code-block"><button type="button" class="copy-button" aria-label="Copy code" title="Copy code" data-copy-code="${escapeHtml(JSON.stringify(text))}"><span aria-live="polite">⧉</span></button>${code}</div>`
+        : code;
+    };
+  }
 
   renderer.link = ({ href, title, text }: Tokens.Link) => {
     const rawHref = normalizeHref(href) ?? "";

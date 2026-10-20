@@ -52,6 +52,9 @@ import type {
 import { formatTimestamp } from "../lib/format";
 import { extractBlockText } from "../lib/history";
 import { renderMarkdown } from "../lib/markdown";
+import { formatReplyClipboard } from "../lib/reply-clipboard";
+import { writeReplyClipboard } from "../lib/clipboard";
+import { CopyButton } from "./CopyButton";
 import {
   capabilities,
   isExtensionEnabled,
@@ -938,6 +941,29 @@ function ActiveToolIndicator(props: { tools: ActiveToolCall[] }) {
 }
 
 export function ChatView() {
+  const codeCopyTimers = new Map<HTMLButtonElement, ReturnType<typeof setTimeout>>();
+  onCleanup(() => codeCopyTimers.forEach((timer) => clearTimeout(timer)));
+  const handleCodeCopy = (event: MouseEvent) => {
+    if (!(event.target instanceof Element)) return;
+    const button = event.target.closest<HTMLButtonElement>("button[data-copy-code]");
+    if (!button) return;
+    const text: string = JSON.parse(button.dataset.copyCode!);
+    const status = button.querySelector("span")!;
+    const showFeedback = (success: boolean) => {
+      status.textContent = success ? "Copied" : "Copy failed";
+      clearTimeout(codeCopyTimers.get(button));
+      const timer = setTimeout(() => {
+        status.textContent = "⧉";
+        codeCopyTimers.delete(button);
+      }, 2000);
+      codeCopyTimers.set(button, timer);
+    };
+    try {
+      void navigator.clipboard.writeText(text).then(() => showFeedback(true), () => showFeedback(false));
+    } catch {
+      showFeedback(false);
+    }
+  };
   void refreshToolLabels();
   const params = useParams<{ agentId: string; view?: string }>();
   const navigate = useNavigate();
@@ -1241,6 +1267,50 @@ export function ChatView() {
   });
 
   const visibleFullMessages = fullMessages;
+  const copyTurnOverrides = new WeakMap<object, number>();
+  const [streamingCopyTurnTimestamp, setStreamingCopyTurnTimestamp] = createSignal<number>();
+  const activeCopyTurnTimestamp = (messages: { role: string; timestamp: number }[]) => {
+    if (!isStreaming()) return Infinity;
+    if (streamingCopyTurnTimestamp() !== undefined) return streamingCopyTurnTimestamp()!;
+    const started = streamingStartedAt() ?? Infinity;
+    return messages.filter((message) => message.role === "user" && message.timestamp <= started).at(-1)?.timestamp ?? -Infinity;
+  };
+  const copyReplies = <T extends object>(rows: { role: string; timestamp: number; blocks: { key: T; text?: string }[] }[], activeTurn: number) => {
+    const turns = new Map<number, { texts: string[]; anchor?: T }>();
+    let current: number | undefined;
+    for (const row of rows) {
+      if (row.role === "user") {
+        current = row.timestamp;
+        if (!turns.has(current)) turns.set(current, { texts: [] });
+      } else if (row.role === "assistant") {
+        for (const block of row.blocks) {
+          const turnId = copyTurnOverrides.get(block.key) ?? current;
+          const turn = turnId === undefined ? undefined : turns.get(turnId);
+          if (!turn) continue;
+          turn.anchor = block.key;
+          if (block.text?.trim() && !isNoReply(block.text)) turn.texts.push(block.text);
+        }
+      }
+    }
+    const replies = new Map<T, string[]>();
+    for (const [id, turn] of turns) {
+      if (id < activeTurn && turn.anchor && turn.texts.length) replies.set(turn.anchor, turn.texts);
+    }
+    return replies;
+  };
+  const simpleCopyReplies = createMemo(() => copyReplies<SimpleViewMessage>(simpleMessages().map((message) => ({
+    role: message.role,
+    timestamp: message.timestamp,
+    blocks: message.role === "assistant" && !message.meta?.failure
+      ? [{ key: message, text: message.content }] : [],
+  })), activeCopyTurnTimestamp(simpleMessages())));
+  const fullCopyReplies = createMemo(() => copyReplies(fullMessages().map((message) => ({
+    role: message.role,
+    timestamp: message.timestamp,
+    blocks: message.role === "assistant" && !message.meta?.failure
+      ? message.content.flatMap((block) => block.type === "text" ? [{ key: block as ContentBlock, text: block.text }] : block.type === "file" ? [{ key: block as ContentBlock }] : [])
+      : [],
+  })), activeCopyTurnTimestamp(fullMessages())));
   const fullDisplaySegments = createMemo(() =>
     groupActivityItems(
       fullHistoryDisplayRows(visibleFullMessages(), toolResultsMap()),
@@ -1558,6 +1628,7 @@ export function ChatView() {
     ));
     setIsStreaming(true);
     setStreamingStartedAt(turn.startedAt ?? Date.now());
+    setStreamingCopyTurnTimestamp(turn.userTimestamp);
     setStreamingThinking(turn.thinking ?? "");
     setStreamingThinkingAt(turn.thinking ? turn.startedAt : null);
     setStreamingText(turn.text ?? "");
@@ -2108,6 +2179,7 @@ export function ChatView() {
     setIsStreaming(false);
     setStreamingFinished(false);
     setStreamingStartedAt(null);
+    setStreamingCopyTurnTimestamp(undefined);
   };
 
   const appendStreamingAssistantMessage = () => {
@@ -2214,7 +2286,12 @@ export function ChatView() {
               timestamp,
             },
           ];
-    for (const m of simpleStreamMessages) noAnimIds.add(m.id);
+    const copyTurn = activeCopyTurnTimestamp(simpleMessages());
+    for (const message of simpleStreamMessages) {
+      noAnimIds.add(message.id);
+      copyTurnOverrides.set(message, copyTurn);
+    }
+    for (const block of contentBlocks) copyTurnOverrides.set(block, copyTurn);
     setSimpleMessages((prev) => [...prev, ...simpleStreamMessages]);
     const toolResults = blocks
       .filter((block) => block.type === "toolCall" && block.result)
@@ -2406,7 +2483,7 @@ export function ChatView() {
       {
         role: "user",
         content: [{ type: "text", text: messageText }, ...inboundFiles],
-        timestamp: Date.now(),
+        timestamp: userMsg.timestamp,
       },
     ]);
 
@@ -2424,7 +2501,7 @@ export function ChatView() {
           {
             text: messageText,
             files: inboundFiles.length > 0 ? inboundFiles : undefined,
-            timestamp: Date.now(),
+            timestamp: userMsg.timestamp,
           },
         ]);
       }
@@ -2506,6 +2583,7 @@ export function ChatView() {
             queuedToolResults.length > 0
           ) {
             const timestamp = Date.now();
+            for (const block of blocks) copyTurnOverrides.set(block, userMsg.timestamp);
             setSimpleMessages((prev) => [
               ...prev,
               ...blocks.flatMap((block): SimpleViewMessage[] => {
@@ -2554,6 +2632,9 @@ export function ChatView() {
                   ];
                 }
                 return [];
+              }).map((message) => {
+                copyTurnOverrides.set(message, userMsg.timestamp);
+                return message;
               }),
             ]);
             setFullMessages((prev) => [
@@ -2680,6 +2761,7 @@ export function ChatView() {
       cleanup = null;
     }
 
+    setStreamingCopyTurnTimestamp(userMsg.timestamp);
     setIsStreaming(true);
     setStreamingFinished(false);
     setStreamingStartedAt(Date.now());
@@ -2737,10 +2819,10 @@ export function ChatView() {
           }
           batch(() => {
             aborted = false;
+            appendStreamingAssistantMessage();
             skipNextHistoryRefresh = true;
             setShowInterrupted(true);
-            setActiveTools([]);
-            setIsStreaming(false);
+            resetStreamingState();
             setStreamingFinished(true);
             cleanup = null;
           });
@@ -2942,6 +3024,7 @@ export function ChatView() {
     <div
       ref={chatViewRef}
       class="chat-view"
+      onClick={handleCodeCopy}
       classList={{
         "drop-active": isFileDragActive(),
         "hero-mode": heroPhase() !== "off",
@@ -3257,7 +3340,7 @@ export function ChatView() {
                                   <Show when={item().content}>
                                     <div
                                       class="content markdown-content"
-                                      innerHTML={renderMarkdown(item().content)}
+                                      innerHTML={renderMarkdown(item().content, { copyCode: true })}
                                     />
                                   </Show>
                                   <For each={item().files ?? []}>
@@ -3272,6 +3355,9 @@ export function ChatView() {
                               )}
                               <div class="message-time">
                                 {formatTimestamp(item().timestamp)}
+                                <Show when={simpleCopyReplies().get(row())}>
+                                  {(texts) => <CopyButton label="Copy reply" copy={() => writeReplyClipboard(formatReplyClipboard(texts()))} />}
+                                </Show>
                               </div>
                             </div>
                           )}
@@ -3335,7 +3421,7 @@ export function ChatView() {
                                         type: "text";
                                         text: string;
                                       }
-                                    ).text
+                                    ).text, { copyCode: true }
                                   )}
                                 />
                               </Show>
@@ -3347,6 +3433,9 @@ export function ChatView() {
                                 )}
                                 <div class="message-time">
                                   {formatTimestamp(assistantRow().timestamp)}
+                                  <Show when={fullCopyReplies().get(assistantRow().block)}>
+                                    {(texts) => <CopyButton label="Copy reply" copy={() => writeReplyClipboard(formatReplyClipboard(texts()))} />}
+                                  </Show>
                                 </div>
                               </Show>
                             </div>
@@ -3465,7 +3554,7 @@ export function ChatView() {
                                 <div
                                   class="block-text markdown-content"
                                   innerHTML={renderMarkdown(
-                                    (block() as { text: string }).text
+                                    (block() as { text: string }).text, { copyCode: true }
                                   )}
                                 />
                               </Match>
@@ -3510,7 +3599,7 @@ export function ChatView() {
                 <div class="message assistant streaming">
                   <div
                     class="content markdown-content"
-                    innerHTML={renderMarkdown(streamingText())}
+                    innerHTML={renderMarkdown(streamingText(), { copyCode: true })}
                   />
                   {(streamingTextAt() || streamingStartedAt()) && (
                     <div class="message-time">
@@ -3563,7 +3652,7 @@ export function ChatView() {
                                 <div
                                   class="content markdown-content"
                                   innerHTML={renderMarkdown(
-                                    (block() as { text: string }).text
+                                    (block() as { text: string }).text, { copyCode: true }
                                   )}
                                 />
                                 <div class="message-time">
@@ -4415,6 +4504,28 @@ export function ChatView() {
           font-variant-numeric: tabular-nums;
         }
 
+        .copy-button {
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          gap: 5px;
+          min-width: 32px;
+          min-height: 32px;
+          margin-left: 6px;
+          padding: 5px;
+          border: 0;
+          border-radius: 6px;
+          background: transparent;
+          color: var(--text-secondary);
+          cursor: pointer;
+          vertical-align: middle;
+          font: inherit;
+        }
+
+        .copy-button:hover, .copy-button:focus-visible {
+          background: var(--tool-bg);
+        }
+
         .message.user .message-time {
           color: color-mix(in srgb, var(--accent) 48%, var(--text-muted));
         }
@@ -4719,6 +4830,23 @@ export function ChatView() {
           border-radius: 6px;
           font-family: 'SF Mono', 'Cascadia Code', 'Consolas', monospace;
           font-size: 0.9em;
+        }
+
+        .chat-code-block {
+          position: relative;
+          min-width: 0;
+        }
+
+        .chat-code-block > .copy-button {
+          position: absolute;
+          top: 4px;
+          right: 4px;
+          background: var(--bg-surface);
+          font-size: 15px;
+        }
+
+        .chat-code-block pre {
+          padding-top: 40px;
         }
 
         .markdown-content pre {
@@ -5176,6 +5304,14 @@ export function ChatView() {
         }
 
         @media (max-width: 720px) {
+          .copy-button {
+            min-width: 44px;
+            min-height: 44px;
+          }
+
+          .chat-code-block pre {
+            padding-top: 52px;
+          }
           .header {
             padding: 10px 12px;
           }

@@ -11,6 +11,7 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Added
 
+- Copy complete agent replies as formatted HTML and clean text, or copy individual code blocks, from the main web chat in simple and full views, with accessible mobile controls and clipboard feedback.
 - Search your chat titles and full user/assistant transcripts from the sidebar or Cmd/Ctrl+K, with highlighted snippets and keyboard navigation. Replaces the inline session filter, Board project palette and embedded-chat Cmd+K reset.
 - Set `branding.icon` to a square PNG in `$YOPLAI_HOME` to give the instance its own favicon and app icon. Safari "Add to Dock", iOS "Add to Home Screen", and the web app manifest use it.
 
