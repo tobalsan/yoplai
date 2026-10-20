@@ -66,7 +66,7 @@ describe("Skills", () => {
   });
   it("shares with a named writer and offers platform access only for reading", async () => {
     respond = (path) => path === "/api/skills/recipients" ? Response.json({ users: [{ id: "bob", name: "Bob", email: "bob@example.com" }] }) : undefined;
-    await mount(); actions(); click("Manage access for meeting-notes");
+    await mount(); actions(); click("Share meeting-notes");
     await vi.waitFor(() => expect(document.body.textContent).toContain("People with access"));
     const picker = control<HTMLInputElement>("combobox", "Select a user"); await vi.waitFor(() => expect(picker.disabled).toBe(false)); picker.focus(); picker.value = "Bob"; picker.dispatchEvent(new InputEvent("input", { bubbles: true }));
     await vi.waitFor(() => expect(document.body.textContent).toContain("Bob (bob@example.com)"));
@@ -106,8 +106,8 @@ describe("Skills", () => {
     history.replaceState({}, "", "/skills/shared1"); await mount();
     expect(root.textContent).toContain("Record decisions and owners.");
     expect(root.textContent).toContain("references/example.md"); expect(root.textContent).toContain("44 bytes");
-    expect(Array.from(root.querySelectorAll("button")).some((button) => button.textContent?.includes("Replace"))).toBe(false);
-    expect(Array.from(root.querySelectorAll("button")).some((button) => button.textContent?.includes("Manage access"))).toBe(false);
+    expect(Array.from(root.querySelectorAll("button")).some((button) => button.textContent?.includes("Update"))).toBe(false);
+    expect(Array.from(root.querySelectorAll("button")).some((button) => button.textContent?.includes("Share"))).toBe(false);
   });
   it("lets a superadmin inspect collisions and disable a platform-wide skill", async () => {
     setCapabilitiesForTests({ multiUser: true, user: { id: "admin", name: "Admin", role: "superadmin" } });
@@ -259,8 +259,8 @@ describe("Skills", () => {
     expect(root.textContent).toContain("No skills yet. Use Add skill to upload, create or import one.");
     expect(Array.from(root.querySelectorAll("h2"), (heading) => heading.textContent)).toContain("Shared with me");
     expect(root.textContent).toContain("Can edit");
-    expect(Array.from(root.querySelectorAll("button")).some((button) => button.textContent === "Manage access" || button.textContent === "Delete")).toBe(false);
-    click("Replace meeting-notes"); click("Replace from folder");
+    expect(Array.from(root.querySelectorAll("button")).some((button) => button.textContent === "Share" || button.textContent === "Delete")).toBe(false);
+    click("Update meeting-notes"); click("Update from folder");
     const skill = new File(["replacement"], "SKILL.md"); Object.defineProperty(skill, "webkitRelativePath", { value: "replacement/SKILL.md" });
     const input = control<HTMLInputElement>("file", "Skill folder files"); Object.defineProperty(input, "files", { value: [skill], configurable: true }); input.dispatchEvent(new Event("change", { bubbles: true }));
     await vi.waitFor(() => expect(requests.some((request) => request.path === "/api/skills/shared1/content" && request.method === "PUT")).toBe(true));
