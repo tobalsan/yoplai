@@ -19,6 +19,7 @@ import { QuickChatOverlay } from "./components/QuickChatOverlay";
 import { OnboardingTour } from "./onboarding/OnboardingTour";
 import { ConnectToolsPrompt } from "./components/ConnectToolsPrompt";
 import { SessionSearch } from "./components/SessionSearch";
+import { TurnNotifier } from "./components/TurnNotifier";
 import { LeftNavShell } from "./components/LeftNavShell";
 import { AgentCatalog } from "./pages/AgentCatalog";
 import { MainAgentHome } from "./pages/MainAgentHome";
@@ -251,6 +252,7 @@ function Layout(props: { children?: JSX.Element }) {
           <OnboardingTour />
           <ConnectToolsPrompt />
           <SessionSearch />
+          <TurnNotifier enabled={!isLoginPage()} />
         </div>
         <ToastHost />
       </Show>

@@ -5,6 +5,7 @@ import {
   type RunAgentParams,
   type StreamEvent,
   type RunFailureKind,
+  type WebCompletion,
 } from "@yoplai/shared";
 import {
   abortSession,
@@ -155,7 +156,7 @@ export class SessionRunLifecycle {
     adapter: SdkAdapter,
     capabilities: SdkCapabilities
   ): Promise<boolean> {
-    if (!this.isStreaming()) return false;
+    if (!this.isStreaming() || !getSession(this.context.agentId, this.context.sessionId)?.abortController) return false;
 
     if (capabilities.interrupt && adapter.abort) {
       const handle = getSessionHandle(
@@ -361,10 +362,10 @@ export class SessionRunLifecycle {
     this.noticeWritten = true;
   }
 
-  finishRun() {
+  finishRun(completion?: WebCompletion) {
     clearSessionHandle(this.context.agentId, this.context.sessionId);
     setSessionCurrentTurn(this.context.agentId, this.context.sessionId, null);
-    setSessionStreaming(this.context.agentId, this.context.sessionId, false);
+    setSessionStreaming(this.context.agentId, this.context.sessionId, false, undefined, false, completion);
     const session = getSession(this.context.agentId, this.context.sessionId);
     if (session) session.bufferedTurns = undefined;
     session?.resolveSettled?.();

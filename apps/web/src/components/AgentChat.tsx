@@ -41,6 +41,7 @@ import { extractBlockText, getTextBlocks } from "../lib/history";
 import { toggleZenMode, zenMode } from "../lib/layout";
 import { renderMarkdown } from "../lib/markdown";
 import { createChatAttachmentRuntime } from "../lib/chat-runtime";
+import { registerViewedChat } from "../lib/chat-notifications";
 
 type AgentChatProps = {
   agentId: string | null;
@@ -59,6 +60,7 @@ type AgentChatProps = {
   onOpenProject?: (id: string) => void;
   fullscreen?: boolean;
   showHeader?: boolean;
+  viewed?: boolean;
   inputDraft?: string;
   onInputDraftChange?: (value: string) => void;
 };
@@ -1287,6 +1289,7 @@ export function AgentChat(props: AgentChatProps) {
   const [leadLive, setLeadLive] = createSignal("");
   const [leadStreaming, setLeadStreaming] = createSignal(false);
   const [leadPending, setLeadPending] = createSignal(false);
+  const [resolvedLeadSessionId, setResolvedLeadSessionId] = createSignal<string>();
   const [leadHistoryMessages, setLeadHistoryMessages] = createSignal<
     FullHistoryMessage[]
   >([]);
@@ -1350,6 +1353,7 @@ export function AgentChat(props: AgentChatProps) {
     pollStateKey = null;
   };
   const teardownChatRuntime = () => {
+    setResolvedLeadSessionId(undefined);
     if (streamCleanup) {
       streamCleanup();
       streamCleanup = null;
@@ -1367,6 +1371,12 @@ export function AgentChat(props: AgentChatProps) {
   const sessionKey = createMemo(() => {
     if (props.sessionKey) return props.sessionKey;
     return props.agentId ? getSessionKey(props.agentId) : "main";
+  });
+  createEffect(() => {
+    const sessionId = resolvedLeadSessionId();
+    if (props.viewed && props.agentId && sessionId) {
+      onCleanup(registerViewedChat(props.agentId, sessionId));
+    }
   });
   const cliTokens = new Set(["claude", "codex", "pi"]);
   const canSendLead = createMemo(
@@ -1854,7 +1864,12 @@ export function AgentChat(props: AgentChatProps) {
 
   const loadLeadHistory = async () => {
     if (!props.agentId) return;
-    const res = await fetchFullHistory(props.agentId, sessionKey());
+    const agentId = props.agentId;
+    const key = sessionKey();
+    const setupToken = subagentSetupToken;
+    const res = await fetchFullHistory(agentId, key);
+    if (setupToken !== subagentSetupToken || agentId !== props.agentId || key !== sessionKey()) return;
+    setResolvedLeadSessionId(res.sessionId);
     const rawMessages = res.messages ?? [];
     const lastMessage = rawMessages.at(-1);
     if (lastMessage?.role === "assistant" && lastMessage.meta?.failure &&
@@ -2492,7 +2507,8 @@ export function AgentChat(props: AgentChatProps) {
           markLeadStreaming();
           updateLeadUserLogState(clientId, { pending: false, queued: false });
         },
-        onSessionReset: () => {
+        onSessionReset: (sessionId) => {
+          setResolvedLeadSessionId(sessionId);
           setLeadLogs([]);
           setLeadLive("");
           setLeadStreaming(false);

@@ -101,6 +101,7 @@ export function QuickChatOverlay(props: QuickChatOverlayProps) {
                   agentName={agent().name}
                   fullscreen={props.mobile}
                   showHeader={false}
+                  viewed={props.open}
                   onBack={() => {}}
                 />
               </div>

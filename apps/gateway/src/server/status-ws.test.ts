@@ -119,6 +119,170 @@ describe("gateway status websocket", () => {
     ]);
   });
 
+  it("delivers the same completed web-run marker over status WS and the sessions API", async () => {
+    const registry = await import("../sdk/registry.js");
+    const sdk = vi.spyOn(registry, "getSdkAdapter").mockReturnValue({
+      id: "openclaw", displayName: "Test",
+      capabilities: { queueWhileStreaming: false, interrupt: false, toolEvents: true, fullHistory: true },
+      resolveDisplayModel: () => ({}),
+      run: async (params) => {
+        params.onHistoryEvent({ type: "assistant_text", text: "transport answer", timestamp: Date.now() });
+        return { text: "transport answer" };
+      },
+    });
+    const ws = new WebSocket(`ws://127.0.0.1:${port}/ws`);
+    const statuses: unknown[] = [];
+    let resolveIdle!: () => void;
+    const idle = new Promise<void>((resolve) => { resolveIdle = resolve; });
+    ws.on("message", (raw) => {
+      const event = JSON.parse(raw.toString());
+      if (event.type === "status" && event.sessionId === "web-transport") {
+        statuses.push(event);
+        if (event.sessionStatus === "idle") resolveIdle();
+      }
+    });
+    try {
+      await new Promise<void>((resolve) => ws.once("open", resolve));
+      ws.send(JSON.stringify({ type: "subscribeStatus" }));
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      const { runAgent } = await import("../agents/runner.js");
+      await runAgent({ agentId: "status-agent", sessionId: "web-transport", source: "web", message: "transport question" });
+      await Promise.race([idle, new Promise((_, reject) => setTimeout(() => reject(new Error("status timeout")), 2000))]);
+      const response = await fetch(`http://127.0.0.1:${port}/api/agents/sessions`);
+      expect(response.status).toBe(200);
+      const body = await response.json();
+      const summary = body.items.find((item: { sessionId: string }) => item.sessionId === "web-transport");
+      expect(summary).toMatchObject({ lastWebCompletion: { id: expect.any(String), endedAt: expect.any(Number) } });
+      expect(statuses).toEqual([
+        { type: "status", agentId: "status-agent", sessionId: "web-transport", status: "streaming", sessionStatus: "streaming" },
+        { type: "status", agentId: "status-agent", sessionId: "web-transport", status: "idle", sessionStatus: "idle", completion: summary.lastWebCompletion },
+      ]);
+    } finally {
+      sdk.mockRestore();
+      const closed = new Promise<void>((resolve) => ws.once("close", resolve));
+      ws.close();
+      await closed;
+    }
+  });
+
+  it("aborts and settles a deleted chat before removing history, without a completion or resurrection", async () => {
+    let release!: () => void;
+    let entered!: () => void;
+    let cancelled!: () => void;
+    const runningAdapter = new Promise<void>((resolve) => { entered = resolve; });
+    const finish = new Promise<void>((resolve) => { release = resolve; });
+    const aborted = new Promise<void>((resolve) => { cancelled = resolve; });
+    let signal: AbortSignal | undefined;
+    const registry = await import("../sdk/registry.js");
+    const sdk = vi.spyOn(registry, "getSdkAdapter").mockReturnValue({
+      id: "pi", displayName: "Test",
+      capabilities: { queueWhileStreaming: false, interrupt: false, toolEvents: true, fullHistory: true },
+      resolveDisplayModel: () => ({}),
+      run: async (params) => {
+        signal = params.abortSignal;
+        signal.addEventListener("abort", cancelled, { once: true });
+        entered();
+        await finish;
+        params.onHistoryEvent({ type: "assistant_text", text: "late answer", timestamp: Date.now() });
+        return { text: "late answer" };
+      },
+    });
+    const { agentEventBus, runAgent } = await import("../agents/index.js");
+    const completions: unknown[] = [];
+    const unsubscribe = agentEventBus.onStatusChange((event) => {
+      if (event.sessionId === "deleted-running" && event.completion) completions.push(event);
+    });
+    const running = runAgent({ agentId: "status-agent", sessionId: "deleted-running", source: "web", message: "delete this run" });
+    try {
+      await runningAdapter;
+      const deleting = fetch(`http://127.0.0.1:${port}/api/agents/status-agent/sessions/deleted-running`, { method: "DELETE" });
+      await Promise.race([aborted, deleting]);
+      const wasAborted = signal?.aborted;
+      release();
+      await running;
+      expect((await deleting).status).toBe(200);
+      expect(wasAborted).toBe(true);
+      expect(completions).toEqual([]);
+      const list = await (await fetch(`http://127.0.0.1:${port}/api/agents/sessions`)).json();
+      expect(list.items.some((item: { sessionId: string }) => item.sessionId === "deleted-running")).toBe(false);
+    } finally { release(); await running; unsubscribe(); sdk.mockRestore(); }
+  });
+
+  it("returns a bounded conflict for a deletion whose adapter hangs, retaining history for retry", async () => {
+    let release!: () => void;
+    let entered!: () => void;
+    const ready = new Promise<void>((resolve) => { entered = resolve; });
+    const finish = new Promise<void>((resolve) => { release = resolve; });
+    const registry = await import("../sdk/registry.js");
+    const sdk = vi.spyOn(registry, "getSdkAdapter").mockReturnValue({
+      id: "pi", displayName: "Test",
+      capabilities: { queueWhileStreaming: false, interrupt: false, toolEvents: true, fullHistory: true },
+      resolveDisplayModel: () => ({}),
+      run: async () => { entered(); await finish; return { text: "late result" }; },
+    });
+    const { runAgent } = await import("../agents/runner.js");
+    const running = runAgent({ agentId: "status-agent", sessionId: "delete-hanging", source: "web", message: "still running" });
+    const url = `http://127.0.0.1:${port}/api/agents/status-agent/sessions/delete-hanging`;
+    const list = async () => (await (await fetch(`http://127.0.0.1:${port}/api/agents/sessions`)).json()).items as Array<{ sessionId: string; lastWebCompletion?: unknown }>;
+    try {
+      await ready;
+      const response = await fetch(url, { method: "DELETE" });
+      expect(response.status).toBe(409);
+      expect(await response.json()).toEqual({ error: "Session is still stopping; retry deletion once the active turn ends." });
+      expect((await list()).find((item) => item.sessionId === "delete-hanging")).not.toHaveProperty("lastWebCompletion");
+      release();
+      await running;
+      expect((await fetch(url, { method: "DELETE" })).status).toBe(200);
+      expect((await list()).some((item) => item.sessionId === "delete-hanging")).toBe(false);
+    } finally { release(); await running; sdk.mockRestore(); }
+  });
+
+  it("does not abort another owner's active chat when deleting a separately owned chat with the same explicit id", async () => {
+    let release!: () => void;
+    let entered!: () => void;
+    let cancelled!: () => void;
+    const ready = new Promise<void>((resolve) => { entered = resolve; });
+    const finish = new Promise<void>((resolve) => { release = resolve; });
+    const aborted = new Promise<void>((resolve) => { cancelled = resolve; });
+    let signal: AbortSignal | undefined;
+    const registry = await import("../sdk/registry.js");
+    const sdk = vi.spyOn(registry, "getSdkAdapter").mockReturnValue({
+      id: "pi", displayName: "Test",
+      capabilities: { queueWhileStreaming: false, interrupt: false, toolEvents: true, fullHistory: true },
+      resolveDisplayModel: () => ({}),
+      run: async (params) => {
+        if (params.userId === "other-owner") {
+          signal = params.abortSignal;
+          signal.addEventListener("abort", cancelled, { once: true });
+          entered();
+          await finish;
+        }
+        params.onHistoryEvent({ type: "assistant_text", text: "owned answer", timestamp: Date.now() });
+        return { text: "owned answer" };
+      },
+    });
+    const { runAgent } = await import("../agents/runner.js");
+    const base = { agentId: "status-agent", sessionId: "same-explicit-id", source: "web" as const, message: "owned question" };
+    await runAgent({ ...base, source: "cli" });
+    const otherRun = runAgent({ ...base, userId: "other-owner" });
+    try {
+      await ready;
+      const deleting = fetch(`http://127.0.0.1:${port}/api/agents/status-agent/sessions/same-explicit-id`, { method: "DELETE" });
+      await Promise.race([aborted, deleting]);
+      const wasAborted = signal?.aborted;
+      release();
+      await otherRun;
+      expect((await deleting).status).toBe(409);
+      expect(wasAborted).toBe(false);
+      const { listAllSessionSummaries } = await import("../history/sessions.js");
+      expect(await listAllSessionSummaries("other-owner", ["status-agent"])).toEqual([
+        expect.objectContaining({ sessionId: "same-explicit-id", lastWebCompletion: { id: expect.any(String), endedAt: expect.any(Number) } }),
+      ]);
+      const own = await (await fetch(`http://127.0.0.1:${port}/api/agents/sessions`)).json();
+      expect(own.items.some((item: { sessionId: string }) => item.sessionId === "same-explicit-id")).toBe(true);
+    } finally { release(); await otherRun; sdk.mockRestore(); }
+  });
+
   it("client receives events after reconnecting", async () => {
     const ws1 = new WebSocket(`ws://127.0.0.1:${port}/ws`);
     await new Promise<void>((resolve) => ws1.once("open", () => resolve()));

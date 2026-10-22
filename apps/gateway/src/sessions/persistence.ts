@@ -90,6 +90,8 @@ export async function ensureSession(
   };
 }
 
+export class SessionStillStoppingError extends Error {}
+
 export async function resetSession(
   agentId: string,
   sessionId: string,
@@ -108,7 +110,7 @@ export async function resetSession(
             timeout = setTimeout(
               () =>
                 reject(
-                  new Error(
+                  new SessionStillStoppingError(
                     "Session is still stopping; retry !new once the active turn ends."
                   )
                 ),

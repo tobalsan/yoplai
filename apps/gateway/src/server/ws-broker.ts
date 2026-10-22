@@ -355,6 +355,7 @@ export class WsBroker {
       status: event.status,
       sessionId: event.sessionId,
       sessionStatus: event.sessionStatus,
+      ...(event.completion ? { completion: event.completion } : {}),
     };
     const access = await Promise.all(
       [...this.statusSubscribers].map(async (ws) => ({

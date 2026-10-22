@@ -1,4 +1,4 @@
-import type { LeadSessionChangedEvent, SubagentRunStatus } from "@yoplai/shared/types";
+import type { LeadSessionChangedEvent, SubagentRunStatus, WebCompletion } from "@yoplai/shared/types";
 import { getWsUrl, type WsStreamEvent } from "./ws";
 
 export type RealtimeInterest =
@@ -15,6 +15,7 @@ export type RealtimeEvent =
       status: "streaming" | "idle";
       sessionId: string;
       sessionStatus: "streaming" | "idle";
+      completion?: WebCompletion;
     }
   | { type: "file_changed"; projectId: string; file: string }
   | { type: "agent_changed"; projectId: string }

@@ -17,9 +17,14 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Added
 
+- Unread chat dots, a turn-finished chime across browser tabs, and a persistent sound toggle beside the chat avatar.
 - MCP server instructions from the initialize handshake now reach the agent as namespace instructions. A deferred MCP group without a description uses the first instructions line as its summary.
 - `yoplai gateway idle` tells you if any agent turn, subagent, or orchestrator worker is running. It exits 1 and lists them when busy.
 - `yoplai gateway restart` now refuses while work is running. Use `--force` to restart anyway.
+
+### Changed
+
+- Sidebar chats now fit on one line, with full titles and chat details available on hover or keyboard focus.
 
 ## v0.26.0 — Chat projects, Skills directory + owned dashboards
 

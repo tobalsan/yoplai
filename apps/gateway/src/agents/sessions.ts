@@ -1,6 +1,6 @@
 import { agentEventBus } from "./events.js";
 import { reportSessionTurns } from "./active-turns.js";
-import type { RunAgentParams } from "@yoplai/shared";
+import type { RunAgentParams, WebCompletion } from "@yoplai/shared";
 import type { TurnBuffer } from "../history/store.js";
 
 export type PendingMessage = {
@@ -139,7 +139,8 @@ export function setSessionStreaming(
   sessionId: string,
   streaming: boolean,
   abortController?: AbortController,
-  background = false
+  background = false,
+  completion?: WebCompletion
 ) {
   const session = getOrCreateSession(agentId, sessionId);
   const wasSessionStreaming = session.isStreaming;
@@ -150,11 +151,11 @@ export function setSessionStreaming(
   session.lastActivity = Date.now();
   session.abortController = streaming ? abortController : undefined;
 
-  // Emit a status change event whenever this specific session's streaming
-  // state changed. The event carries both the session-scoped status (so the
+  // Emit on a streaming change or a persisted completion, even if cleanup
+  // already cleared streaming. The event carries session-scoped status (so the
   // chat view can scope its Stop button to its own session) and the
   // agent-wide aggregate (so the sidebar activity indicator stays agent-wide).
-  if (wasSessionStreaming !== streaming) {
+  if (wasSessionStreaming !== streaming || completion) {
     syncActiveTurns();
     const isAgentStreaming = getAllSessionsForAgent(agentId).some(
       (s) => s.isStreaming && !s.background
@@ -164,6 +165,7 @@ export function setSessionStreaming(
       status: isAgentStreaming ? "streaming" : "idle",
       sessionId,
       sessionStatus: streaming ? "streaming" : "idle",
+      ...(completion ? { completion } : {}),
     });
   }
 }

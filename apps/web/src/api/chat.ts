@@ -77,6 +77,8 @@ export class UnauthenticatedError extends Error {
 
 export async function fetchAgentSessions(options?: {
   includeArchived?: boolean;
+  strict?: boolean;
+  signal?: AbortSignal;
 }): Promise<{
   items: SessionSummary[];
 }> {
@@ -85,9 +87,12 @@ export async function fetchAgentSessions(options?: {
     params.set("includeArchived", "1");
   }
   const url = `${API_BASE}/agents/sessions${params.toString() ? `?${params}` : ""}`;
-  const res = await fetch(url);
+  const res = await fetch(url, options?.signal ? { signal: options.signal } : undefined);
   if (res.status === 401) throw new UnauthenticatedError();
-  if (!res.ok) return { items: [] };
+  if (!res.ok) {
+    if (options?.strict) throw new Error("Failed to fetch sessions");
+    return { items: [] };
+  }
   return res.json();
 }
 

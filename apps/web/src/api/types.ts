@@ -24,6 +24,7 @@ import type {
   ThinkingBlock,
   TodoItem,
   ToolCallBlock,
+  WebCompletion,
 } from "@yoplai/shared/types";
 export type {
   ContextEstimate,
@@ -108,6 +109,7 @@ export type SessionSummary = {
   projectId?: string | null;
   avatar?: string;
   isMain: boolean;
+  lastWebCompletion?: WebCompletion;
 };
 
 export type SessionSearchResult = SessionSummary & {

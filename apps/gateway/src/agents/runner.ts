@@ -1,5 +1,6 @@
 import fs from "node:fs/promises";
 import path from "node:path";
+import { randomUUID } from "node:crypto";
 import { classifyRunFailure, runFailureMessage } from "@yoplai/shared";
 import type {
   RunAgentParams as SharedRunAgentParams,
@@ -9,6 +10,7 @@ import type {
   SimpleHistoryMessage,
   FullHistoryMessage,
   HistoryViewMode,
+  WebCompletion,
 } from "@yoplai/shared";
 import {
   getAgent,
@@ -397,15 +399,17 @@ export async function runAgent(
     }
   }
 
+  let acceptsAbort = true;
   // Wire external abort signal (e.g. scheduler timeout) into the session abort path.
   if (params.signal?.aborted) {
     abortController.abort();
   } else {
-    params.signal?.addEventListener("abort", () => abortController.abort(), { once: true });
+    params.signal?.addEventListener("abort", () => { if (acceptsAbort) abortController.abort(); }, { once: true });
   }
 
   const started = Date.now();
   let aborted = false;
+  let answerPersisted = false;
   const holdback = createNoReplyHoldback(emit);
 
   try {
@@ -528,6 +532,7 @@ export async function runAgent(
     aborted = result.aborted ?? false;
 
     await lifecycle.flushTurns();
+    answerPersisted = true;
 
     const durationMs = Date.now() - started;
     emit({ type: "done", meta: { durationMs, aborted } });
@@ -551,6 +556,7 @@ export async function runAgent(
       const kind = classifyRunFailure(err, errMessage);
       const text = runFailureMessage(kind, agent.language ?? "en");
       await lifecycle.writeFailureNotice({ kind, text });
+      answerPersisted = true;
       emit({ type: "error", message: errMessage, kind, userMessage: text });
       if (kind === "quota") {
         void notifyProviderQuota(agent, params.model).catch((error) => {
@@ -563,7 +569,24 @@ export async function runAgent(
     }
     throw err;
   } finally {
-    lifecycle.finishRun();
+    let completion: WebCompletion | undefined;
+    try {
+      if (answerPersisted && params.source === "web" && !aborted && !abortController.signal.aborted) {
+        // Completion wins synchronously after the answer is durable. Keep the
+        // run reserved while metadata settles, but Stop can no longer abort it.
+        acceptsAbort = false;
+        const session = getSession(params.agentId, sessionId);
+        if (session?.abortController === abortController) session.abortController = undefined;
+        const marker = { id: randomUUID(), endedAt: Date.now() };
+        await appendSessionMeta(params.agentId, sessionId, "lastWebCompletion", marker, sessionOwnerId);
+        completion = marker;
+      }
+    } catch (error) {
+      logError("[agent] completion marker write failed", error, { agentId: params.agentId, sessionId });
+    } finally {
+      acceptsAbort = false;
+      lifecycle.finishRun(completion);
+    }
 
     // Deferred turns keep the sender's complete request, including credentials and delivery.
     if (!params.deferredTurn) {

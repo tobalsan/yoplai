@@ -2088,6 +2088,11 @@ export type WsSessionResetEvent = {
   sessionId: string;
 };
 
+export type WebCompletion = {
+  id: string;
+  endedAt: number;
+};
+
 export type WsStatusEvent = {
   type: "status";
   agentId: string;
@@ -2097,6 +2102,7 @@ export type WsStatusEvent = {
   sessionId: string;
   /** Streaming status of that specific session. */
   sessionStatus: "streaming" | "idle";
+  completion?: WebCompletion;
 };
 
 export type WsFileChangedEvent = {

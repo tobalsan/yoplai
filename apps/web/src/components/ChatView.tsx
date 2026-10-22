@@ -78,6 +78,11 @@ import {
 import { showToast } from "../lib/toast";
 import { MainAgentStarButton } from "./MainAgentStarButton";
 import { fetchPoolActions } from "../api/teams";
+import {
+  notificationSoundEnabled,
+  registerViewedChat,
+  toggleNotificationSound,
+} from "../lib/chat-notifications";
 
 function isEmoji(str: string): boolean {
   return /^\p{Emoji}/u.test(str) && str.length <= 4;
@@ -1144,6 +1149,13 @@ export function ChatView() {
     typeof searchParams.session === "string" && searchParams.session.trim()
       ? searchParams.session
       : undefined;
+  createEffect(on([() => params.agentId, sessionKey, explicitSessionId], () => {
+    setResolvedSessionId(pendingResetSession === currentSession() ? explicitSessionId() : undefined);
+  }));
+  createEffect(() => {
+    const sessionId = resolvedSessionId();
+    if (sessionId) onCleanup(registerViewedChat(params.agentId, sessionId));
+  });
   const sessionScope = (sessionId = explicitSessionId()) =>
     `${params.agentId}:${sessionKey()}:${sessionId ?? ""}`;
   const currentSession = () => sessionScope();
@@ -1540,17 +1552,25 @@ export function ChatView() {
     }
   };
 
+  let contextRefreshSession: string | null = null;
   const refreshContextUsage = async () => {
     const requestedSession = currentSession();
-    const res = await fetchFullHistory(
-      params.agentId,
-      sessionKey(),
-      explicitSessionId(),
-      { limit: 1 }
-    );
-    if (requestedSession !== currentSession()) return;
-    setActiveContextUsage(res.activeContextUsage);
-    setContextFullMessages(res.messages);
+    if (contextRefreshSession === requestedSession) return;
+    contextRefreshSession = requestedSession;
+    try {
+      const res = await fetchFullHistory(
+        params.agentId,
+        sessionKey(),
+        explicitSessionId(),
+        { limit: 1 }
+      );
+      if (requestedSession !== currentSession()) return;
+      if (res.sessionId) setResolvedSessionId(res.sessionId);
+      setActiveContextUsage(res.activeContextUsage);
+      setContextFullMessages(res.messages);
+    } finally {
+      if (contextRefreshSession === requestedSession) contextRefreshSession = null;
+    }
   };
 
   const compactKey = (agentId: string, key: string, sessionId?: string) =>
@@ -2457,6 +2477,7 @@ export function ChatView() {
     };
 
     const handleSessionReset = (sessionId: string) => {
+      setResolvedSessionId(sessionId);
       setSimpleMessages([]);
       setFullMessages([]);
       setPendingQueuedMessages([]);
@@ -2830,6 +2851,7 @@ export function ChatView() {
         }
 
         if (viewMode() !== "full") {
+          if (!resolvedSessionId()) void refreshContextUsage();
           batch(() => {
             appendStreamingAssistantMessage();
             skipNextHistoryRefresh = true;
@@ -2850,6 +2872,7 @@ export function ChatView() {
             streamingBlocks().some((block) => block.type === "text");
           appendStreamingAssistantMessage();
           if (!streamedText) void loadHistory("full");
+          else if (!resolvedSessionId()) void refreshContextUsage();
           skipNextHistoryRefresh = true;
           // Update thinkingLevel if pending was used
           if (pendingThinkLevel()) {
@@ -3095,6 +3118,15 @@ export function ChatView() {
               </Show>
             </div>
           </div>
+          <button
+            type="button"
+            class="notification-sound-btn"
+            aria-label={notificationSoundEnabled() ? "Notification sound on" : "Notification sound off"}
+            aria-pressed={notificationSoundEnabled()}
+            onClick={toggleNotificationSound}
+          >
+            <i class={notificationSoundEnabled() ? "fa-solid fa-bell" : "fa-solid fa-bell-slash"} aria-hidden="true" />
+          </button>
         </div>
         <Show when={isExtensionEnabled("projects")}>
           <A
@@ -3973,6 +4005,7 @@ export function ChatView() {
         }
 
         .back-btn,
+        .notification-sound-btn,
         .taskboard-btn {
           width: 38px;
           height: 38px;
@@ -3989,6 +4022,7 @@ export function ChatView() {
         }
 
         .back-btn:hover,
+        .notification-sound-btn:hover,
         .taskboard-btn:hover {
           background: var(--surface-1);
           border-color: var(--surface-2);
@@ -3996,6 +4030,7 @@ export function ChatView() {
         }
 
         .back-btn:focus-visible,
+        .notification-sound-btn:focus-visible,
         .taskboard-btn:focus-visible,
         .new-chat-btn:focus-visible,
         .toggle-btn:focus-visible,

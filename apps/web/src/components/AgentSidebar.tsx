@@ -6,6 +6,7 @@ import {
   createEffect,
   createResource,
   createSignal,
+  createUniqueId,
   onCleanup,
   onMount,
   lazy,
@@ -34,6 +35,7 @@ import type { SessionSummary } from "../api/types";
 import { hasStaffRole as hasAdminRole } from "../lib/roles";
 import { showToast } from "../lib/toast";
 import { openSessionSearch } from "./SessionSearch";
+import { captureChatReads, isChatUnread, observeChatSessions } from "../lib/chat-notifications";
 
 type AgentSidebarProps = {
   collapsed: Accessor<boolean>;
@@ -76,31 +78,6 @@ function groupLabel(timestamp: number, currentTime: number): string {
   return date.toLocaleString(undefined, { month: "long", year: "numeric" });
 }
 
-/** Slide an overflowing session title left so its tail clears the hover action icons. */
-function revealTitle(wrap: HTMLElement): void {
-  const title = wrap.querySelector<HTMLElement>(".session-title");
-  const text = wrap.querySelector<HTMLElement>(".session-title-text");
-  const actions = wrap.querySelector<HTMLElement>(".session-actions");
-  if (!title || !text) return;
-  // Only titles clipped at rest scroll; a fitting title stays put even if the
-  // hover icons cover its tail.
-  const overflowing = text.scrollWidth > title.clientWidth;
-  wrap.classList.toggle("overflowing", overflowing);
-  if (!overflowing) return;
-  const reserve = actions?.offsetWidth ?? 0;
-  const shift = text.scrollWidth + reserve - title.clientWidth;
-  // Forward travel fills 30% of the loop (see keyframes); the rest is pauses and the return.
-  const travelMs = Math.max(1200, shift * 16);
-  wrap.style.setProperty("--title-shift", `${shift}px`);
-  wrap.style.setProperty("--title-loop-ms", `${Math.round(travelMs / 0.3)}ms`);
-}
-
-function resetTitle(wrap: HTMLElement): void {
-  wrap.classList.remove("overflowing");
-  wrap.style.removeProperty("--title-shift");
-  wrap.style.removeProperty("--title-loop-ms");
-}
-
 export function AgentSidebar(props: AgentSidebarProps) {
   const location = useLocation();
   const navigate = useNavigate();
@@ -136,6 +113,32 @@ export function AgentSidebar(props: AgentSidebarProps) {
   const [moveChatError, setMoveChatError] = createSignal("");
   const [currentTime, setCurrentTime] = createSignal(Date.now());
   const [listScrolling, setListScrolling] = createSignal(false);
+  const [sidebarHovered, setSidebarHovered] = createSignal(false);
+  const [tooltip, setTooltip] = createSignal<{ session: SessionSummary; row: HTMLElement } | null>(null);
+  let tooltipTimer: ReturnType<typeof setTimeout> | undefined;
+  const hideTooltip = () => {
+    clearTimeout(tooltipTimer);
+    setTooltip(null);
+  };
+  const showTooltip = (session: SessionSummary, row: HTMLElement) => {
+    if (!props.collapsed() || sidebarHovered()) setTooltip({ session, row });
+  };
+  const queueTooltip = (session: SessionSummary, row: HTMLElement) => {
+    hideTooltip();
+    tooltipTimer = setTimeout(() => showTooltip(session, row), 450);
+  };
+  createEffect(() => {
+    if (props.collapsed() && !sidebarHovered()) hideTooltip();
+  });
+  const sessionLabel = (session: SessionSummary) => session.title || session.firstUserMessage || session.sessionId;
+  const sessionDetails = (session: SessionSummary) => (
+    <>
+      <strong>{sessionLabel(session)}</strong>
+      <span>{relativeTime(session.lastActivity, currentTime())} · {session.agentId}</span>
+      <Show when={session.isMain}><b>MAIN</b></Show>
+      <Show when={session.pinned != null}><span>Pinned</span></Show>
+    </>
+  );
   let scrollIdleTimer: ReturnType<typeof setTimeout> | undefined;
   const onListScroll = () => {
     setListScrolling(true);
@@ -147,8 +150,12 @@ export function AgentSidebar(props: AgentSidebarProps) {
 
   const refreshSessions = async () => {
     if (pollStopped || document.visibilityState !== "visible") return;
+    const userId = capabilities.user?.id;
+    const readsAtStart = captureChatReads();
     try {
-      const res = await fetchAgentSessions();
+      const res = await fetchAgentSessions({ strict: true });
+      if (userId !== capabilities.user?.id || pollStopped) return;
+      observeChatSessions(res.items, readsAtStart);
       setSessions(res.items);
     } catch (err) {
       if (err instanceof UnauthenticatedError) {
@@ -172,6 +179,7 @@ export function AgentSidebar(props: AgentSidebarProps) {
   window.addEventListener("focus", refresh);
   document.addEventListener("visibilitychange", refresh);
   onCleanup(() => {
+    clearTimeout(tooltipTimer);
     clearTimeout(scrollIdleTimer);
     window.clearInterval(poll);
     window.clearInterval(clock);
@@ -182,6 +190,7 @@ export function AgentSidebar(props: AgentSidebarProps) {
   // Close session/project menus on outside click or Escape
   onMount(() => {
     const handleClickOutside = (event: MouseEvent) => {
+      hideTooltip();
       const openMenus = document.querySelectorAll<HTMLDetailsElement>("details.session-actions[open]");
       openMenus.forEach((menu) => {
         if (!menu.contains(event.target as Node)) {
@@ -192,6 +201,7 @@ export function AgentSidebar(props: AgentSidebarProps) {
 
     const handleEscape = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
+        hideTooltip();
         const openMenus = document.querySelectorAll<HTMLDetailsElement>("details.session-actions[open]");
         openMenus.forEach((menu) => menu.removeAttribute("open"));
       }
@@ -211,11 +221,13 @@ export function AgentSidebar(props: AgentSidebarProps) {
 
     document.addEventListener("mousedown", handleClickOutside);
     document.addEventListener("keydown", handleEscape);
+    window.addEventListener("scroll", hideTooltip, true);
     document.addEventListener("toggle", handleToggle, true);
 
     onCleanup(() => {
       document.removeEventListener("mousedown", handleClickOutside);
       document.removeEventListener("keydown", handleEscape);
+      window.removeEventListener("scroll", hideTooltip, true);
       document.removeEventListener("toggle", handleToggle, true);
     });
   });
@@ -236,20 +248,22 @@ export function AgentSidebar(props: AgentSidebarProps) {
     const selected = () =>
       currentChat().agentId === session.agentId &&
       currentChat().sessionId === session.sessionId;
-    const label = () => session.title || session.firstUserMessage || session.sessionId;
+    const descriptionId = createUniqueId();
     return (
       <div
         class="session-row-wrap"
-        onMouseEnter={(e) => revealTitle(e.currentTarget)}
-        onMouseLeave={(e) => resetTitle(e.currentTarget)}
-        onFocusIn={(e) => revealTitle(e.currentTarget)}
-        onFocusOut={(e) => resetTitle(e.currentTarget)}
+        onMouseEnter={(event) => queueTooltip(session, event.currentTarget)}
+        onMouseMove={(event) => queueTooltip(session, event.currentTarget)}
+        onMouseLeave={hideTooltip}
       >
         <button
           type="button"
           class="session-row"
           classList={{ active: selected() }}
-          onClick={() => selectSession(session)}
+          aria-describedby={descriptionId}
+          onFocus={(event) => showTooltip(session, event.currentTarget)}
+          onBlur={hideTooltip}
+          onClick={() => { hideTooltip(); selectSession(session); }}
         >
           <span class="session-avatar">
             <Show
@@ -266,17 +280,16 @@ export function AgentSidebar(props: AgentSidebarProps) {
               )}
             </Show>
           </span>
+          <Show when={isChatUnread(session)}>
+            <span class="session-unread-dot" role="img" aria-label="Unread messages" />
+          </Show>
           <span class="session-main">
             <span class="session-title">
-              <span class="session-title-text">{label()}</span>
-            </span>
-            <span class="session-meta">
-              {relativeTime(session.lastActivity, currentTime())} · {session.agentId}
-              <Show when={session.isMain}> <b>MAIN</b></Show>
-              <Show when={session.pinned != null}> <i class="fa-solid fa-thumbtack session-pin" aria-label="Pinned" /></Show>
+              <span class="session-title-text">{sessionLabel(session)}</span>
             </span>
           </span>
         </button>
+        <span id={descriptionId} class="session-description">{sessionDetails(session)}</span>
         <details class="session-actions">
           <summary aria-label="Session menu">⋯</summary>
           <div class="session-menu">
@@ -373,7 +386,17 @@ export function AgentSidebar(props: AgentSidebarProps) {
     );
   };
   return (
-    <aside class="agent-sidebar" classList={{ collapsed: props.collapsed() }}>
+    <aside class="agent-sidebar" classList={{ collapsed: props.collapsed() }} onMouseEnter={() => setSidebarHovered(true)} onMouseLeave={() => { setSidebarHovered(false); hideTooltip(); }}>
+      <Show when={tooltip()}>{(details) => (
+        <div class="session-tooltip" role="tooltip" ref={(element) => queueMicrotask(() => {
+          if (!element.isConnected) return;
+          const rect = details().row.getBoundingClientRect();
+          element.style.left = `${Math.max(8, Math.min(rect.right + 8, window.innerWidth - element.offsetWidth - 8))}px`;
+          element.style.top = `${Math.max(8, Math.min(rect.top, window.innerHeight - element.offsetHeight - 8))}px`;
+        })}>
+          {sessionDetails(details().session)}
+        </div>
+      )}</Show>
       <div class="agent-sidebar-shell">
         <div class="sidebar-header">
           <A class="sidebar-logo" href="/">
@@ -518,6 +541,9 @@ export function AgentSidebar(props: AgentSidebarProps) {
                           localStorage.setItem("yoplai:collapsed-chat-projects", JSON.stringify(next));
                         }}>{collapsedProjects().includes(project.id) ? "▸" : "▾"}</button>
                         <i class="fa-solid fa-folder project-icon" aria-hidden="true" />
+                        <Show when={collapsedProjects().includes(project.id) && sessions().some((session) => session.projectId === project.id && isChatUnread(session))}>
+                          <span class="session-unread-dot" role="img" aria-label="Unread messages" />
+                        </Show>
                         <A href={`/p/${project.id}`} class="project-link" classList={{ active: isActive() }}>{project.name}</A>
                       </div>
                       <details class="session-actions">
@@ -1094,7 +1120,7 @@ export function AgentSidebar(props: AgentSidebarProps) {
           display: flex;
           align-items: center;
           gap: 8px;
-          padding: 7px 6px;
+          padding: 7px 28px 7px 6px;
           border: none;
           border-radius: 8px;
           background: transparent;
@@ -1130,13 +1156,19 @@ export function AgentSidebar(props: AgentSidebarProps) {
 
         .session-main {
           min-width: 0;
-          display: flex;
-          flex-direction: column;
-          gap: 2px;
+          flex: 1;
         }
 
-        .session-title,
-        .session-meta {
+        .session-unread-dot {
+          width: 6px;
+          height: 6px;
+          flex-shrink: 0;
+          border-radius: 50%;
+          background: var(--accent, #3b82f6);
+        }
+
+        .session-title {
+          display: block;
           overflow: hidden;
           text-overflow: ellipsis;
           white-space: nowrap;
@@ -1146,33 +1178,48 @@ export function AgentSidebar(props: AgentSidebarProps) {
           font-size: 12px;
         }
 
-        .session-title-text {
-          display: inline-block;
+        .session-description {
+          position: absolute;
+          width: 1px;
+          height: 1px;
+          padding: 0;
+          margin: -1px;
+          overflow: hidden;
+          clip-path: inset(50%);
+          white-space: nowrap;
         }
 
-        .session-row-wrap.overflowing:hover .session-title-text,
-        .session-row-wrap.overflowing:focus-within .session-title-text {
-          animation: session-title-scroll var(--title-loop-ms, 3000ms) ease-in-out infinite;
-        }
-
-        /* Short pause at the start, slide to the tail, long pause to finish reading, slide back. */
-        @keyframes session-title-scroll {
-          0%, 8% { transform: translateX(0); }
-          38%, 78% { transform: translateX(calc(-1 * var(--title-shift, 0px))); }
-          100% { transform: translateX(0); }
-        }
-
-        .session-row-wrap:hover .session-title,
-        .session-row-wrap:focus-within .session-title {
-          text-overflow: clip;
-        }
-
-        .session-meta {
+        .session-tooltip {
+          position: fixed;
+          z-index: 1000;
+          width: 280px;
+          max-width: calc(100vw - 16px);
+          box-sizing: border-box;
+          display: flex;
+          flex-wrap: wrap;
+          gap: 6px;
+          padding: 10px 12px;
+          border: 1px solid var(--border-default);
+          border-radius: 8px;
+          background: var(--bg-surface);
+          box-shadow: 0 4px 12px var(--shadow-md);
+          color: var(--text-secondary);
           font-size: 11px;
-          color: var(--text-tertiary);
+          pointer-events: none;
         }
 
-        .session-meta b {
+        .session-tooltip strong,
+        .session-tooltip > span:first-of-type {
+          width: 100%;
+          overflow-wrap: anywhere;
+        }
+
+        .session-tooltip strong {
+          color: var(--text-primary);
+          font-size: 12px;
+        }
+
+        .session-tooltip b {
           color: var(--accent, #3b82f6);
           font-size: 10px;
         }
@@ -1211,11 +1258,6 @@ export function AgentSidebar(props: AgentSidebarProps) {
           padding: 4px;
         }
 
-        .session-pin {
-          font-size: 10px;
-          color: var(--text-tertiary);
-        }
-
         .chat-project-sessions {
           padding-left: 14px;
         }
@@ -1246,13 +1288,6 @@ export function AgentSidebar(props: AgentSidebarProps) {
         .session-action i {
           width: 16px;
           text-align: center;
-        }
-
-        @media (prefers-reduced-motion: reduce) {
-          .session-row-wrap.overflowing:hover .session-title-text,
-          .session-row-wrap.overflowing:focus-within .session-title-text {
-            animation: none;
-          }
         }
 
         .session-action.danger {

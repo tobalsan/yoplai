@@ -42,10 +42,11 @@ import {
 import type { FullHistoryMessage, SimpleHistoryMessage, HistoryViewMode } from "@yoplai/shared";
 import type { AgentConfig, GatewayConfig } from "@yoplai/shared";
 import {
-  clearSessionEntry,
   getSessionEntry,
   getSessionThinkLevel,
 } from "../sessions/index.js";
+import { resetSession, SessionStillStoppingError } from "../sessions/persistence.js";
+import { getSession } from "../agents/sessions.js";
 import {
   saveUploadedFile,
   resolveUploadMimeType,
@@ -741,11 +742,17 @@ api.delete("/agents/:agentId/sessions/:sessionId", async (c) => {
     sessionId,
   });
   if (!filePath) return c.json({ error: "Session not found" }, 404);
-  await fs.unlink(filePath);
-  invalidateResolvedHistoryFile(agentId, sessionId, userId);
-  const main = await getSessionEntry(agentId, "main", userId);
-  if (main?.sessionId === sessionId) {
-    await clearSessionEntry(agentId, "main", userId);
+  const active = getSession(agentId, sessionId);
+  if (active?.resolveSettled && (active.storageOwnerId ?? null) !== (userId ?? null)) {
+    return c.json({ error: "Session is busy; retry deletion once the active turn ends." }, 409);
+  }
+  try {
+    await resetSession(agentId, sessionId, userId);
+  } catch (error) {
+    if (error instanceof SessionStillStoppingError) {
+      return c.json({ error: "Session is still stopping; retry deletion once the active turn ends." }, 409);
+    }
+    throw error;
   }
   return c.json({ ok: true });
 });

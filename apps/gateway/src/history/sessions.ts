@@ -1,5 +1,6 @@
 import fs from "node:fs/promises";
 import path from "node:path";
+import type { WebCompletion } from "@yoplai/shared";
 import { getUserHistoryDir } from "@yoplai/extension-multi-user/isolation";
 import { CONFIG_DIR } from "../config/index.js";
 import { getSessionEntry } from "../sessions/index.js";
@@ -19,6 +20,7 @@ export type SessionSummary = {
   projectId: string | null;
   avatar?: string;
   isMain: boolean;
+  lastWebCompletion?: WebCompletion;
 };
 
 /** Owner persisted in the first canonical history entry of a file, or null (legacy/unreadable). */
@@ -132,6 +134,7 @@ export async function readSessionFile(
   let archived: number | null = null;
   let projectId: string | null = null;
   let messageCount = 0;
+  let lastWebCompletion: WebCompletion | undefined;
   let lastActivity = params.createdAt || stat.birthtimeMs;
 
   for (const line of raw.split(/\r?\n/)) {
@@ -154,6 +157,13 @@ export async function readSessionFile(
       }
       if (entry.type === "meta" && entry.key === "project") {
         projectId = typeof entry.value === "string" ? entry.value : null;
+        continue;
+      }
+      if (entry.type === "meta" && entry.key === "lastWebCompletion") {
+        const value = entry.value as Partial<WebCompletion> | null;
+        if (value && typeof value.id === "string" && value.id.length > 0 && typeof value.endedAt === "number" && Number.isFinite(value.endedAt) && value.endedAt > 0) {
+          lastWebCompletion = { id: value.id, endedAt: value.endedAt };
+        }
         continue;
       }
       if (entry.type !== "history") continue;
@@ -185,6 +195,7 @@ export async function readSessionFile(
       firstUserMessage,
       ...(title ? { title } : {}),
       isMain: main?.sessionId === params.sessionId,
+      ...(lastWebCompletion ? { lastWebCompletion } : {}),
     },
   };
 }

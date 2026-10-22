@@ -2,7 +2,7 @@
 
 import { EventEmitter } from "node:events";
 import { sanitizeForStorage } from "./sanitize.js";
-import type { StreamEvent, HistoryEvent, AgentTraceContext } from "./types.js";
+import type { StreamEvent, HistoryEvent, AgentTraceContext, WebCompletion } from "./types.js";
 import type { LeadSessionChangedEvent } from "./lead-sessions/types.js";
 
 export type RunSource =
@@ -38,6 +38,7 @@ export type AgentStatusChangeEvent = {
   sessionId: string;
   /** Streaming status of that specific session. */
   sessionStatus: "streaming" | "idle";
+  completion?: WebCompletion;
 };
 
 export type ProjectFileChangedEvent = {

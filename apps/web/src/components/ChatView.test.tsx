@@ -4,6 +4,8 @@ import { queryAllByRole, queryByRole } from "@testing-library/dom";
 import { createSignal } from "solid-js";
 import { delegateEvents, render } from "solid-js/web";
 import { ChatView, ThinkingLine } from "./ChatView";
+import { TurnNotifier } from "./TurnNotifier";
+import { QuickChatOverlay } from "./QuickChatOverlay";
 import type { SubscriptionCallbacks } from "../api/realtime";
 import type { StreamCallbacks } from "../api/chat";
 import {
@@ -107,6 +109,41 @@ vi.mock("../api/chat-projects", () => ({
 }));
 
 const tick = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+class NotificationSocket {
+  static OPEN = 1;
+  static instances: NotificationSocket[] = [];
+  readyState = 1;
+  onopen: (() => void) | null = null;
+  onclose: (() => void) | null = null;
+  onmessage: ((event: { data: string }) => void) | null = null;
+  constructor() { NotificationSocket.instances.push(this); }
+  send() {}
+  close() { this.readyState = 3; this.onclose?.(); }
+  complete(id: string, endedAt: number, sessionId = "session-main") {
+    this.onmessage?.({ data: JSON.stringify({
+      type: "status", agentId: "agent-1", sessionId,
+      status: "idle", sessionStatus: "idle", completion: { id, endedAt },
+    }) });
+  }
+}
+
+function mountNotifications() {
+  NotificationSocket.instances = [];
+  localStorage.setItem("yoplai:chat-read-init:local", "1");
+  const visibility = vi.spyOn(document, "visibilityState", "get").mockReturnValue("visible");
+  const focus = vi.spyOn(document, "hasFocus").mockReturnValue(true);
+  vi.stubGlobal("WebSocket", NotificationSocket);
+  vi.stubGlobal("Audio", class { volume = 0; play() { return Promise.resolve(); } });
+  vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ items: [
+    { agentId: "agent-1", agentName: "Agent", sessionId: "session-main", sessionKey: "main", lastActivity: 1 },
+    { agentId: "agent-1", agentName: "Agent", sessionId: "session-other", sessionKey: "main", lastActivity: 1 },
+  ] }), { status: 200, headers: { "content-type": "application/json" } })));
+  const container = document.createElement("div");
+  document.body.appendChild(container);
+  const dispose = render(() => <TurnNotifier enabled={true} />, container);
+  return () => { dispose(); visibility.mockRestore(); focus.mockRestore(); };
+}
 async function waitFor(assertion: () => void) {
   let lastError: unknown;
   for (let i = 0; i < 20; i += 1) {
@@ -144,6 +181,7 @@ function renderView() {
 
 describe("ChatView abort handling", () => {
   beforeEach(() => {
+    localStorage.clear();
     delegateEvents(["click", "input", "keydown"]);
     Element.prototype.scrollIntoView = vi.fn();
     URL.createObjectURL = vi.fn(() => "blob:preview");
@@ -202,6 +240,127 @@ describe("ChatView abort handling", () => {
     resetCapabilitiesForTests();
     vi.clearAllMocks();
     vi.unstubAllGlobals();
+  });
+
+  it("toggles notification sound beside the agent and follows other tabs", async () => {
+    const view = renderView();
+    await waitFor(() => expect(queryByRole(view.container, "button", { name: "Notification sound on" })).not.toBeNull());
+    const bell = queryByRole(view.container, "button", { name: "Notification sound on" })!;
+    expect(bell.getAttribute("aria-pressed")).toBe("true");
+    expect(bell.closest("header")?.textContent).toContain("Agent");
+
+    bell.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    expect(localStorage.getItem("yoplai:notify-sound")).toBe("off");
+    expect(queryByRole(view.container, "button", { name: "Notification sound off" })?.getAttribute("aria-pressed")).toBe("false");
+
+    localStorage.setItem("yoplai:notify-sound", "on");
+    window.dispatchEvent(new StorageEvent("storage", { key: "yoplai:notify-sound", newValue: "on" }));
+    expect(queryByRole(view.container, "button", { name: "Notification sound on" })?.getAttribute("aria-pressed")).toBe("true");
+    view.dispose();
+  });
+
+  it("reads its resolved chat without a session URL and stops reading on navigation", async () => {
+    const disposeNotifier = mountNotifications();
+    const view = renderView();
+    await tick();
+    const socket = NotificationSocket.instances[0];
+    socket.complete("viewed-answer-1", 101);
+    expect(localStorage.getItem("yoplai:chat-read:local:agent-1:session-main")).toBe("viewed-answer-1");
+
+    fetchFullHistoryMock.mockImplementationOnce(() => new Promise(() => {}));
+    routeState.session = "session-other";
+    setRouteVersion((value) => value + 1);
+    socket.complete("viewed-answer-2", 102);
+    expect(localStorage.getItem("yoplai:chat-read:local:agent-1:session-main")).toBe("viewed-answer-1");
+    view.dispose();
+    disposeNotifier();
+  });
+
+  it("reads the resolved QuickChat session only while the overlay is open", async () => {
+    fetchFullHistoryMock.mockResolvedValueOnce({ messages: [] });
+    let finish: (() => void) | undefined;
+    streamMessageMock.mockImplementation((_agent, _message, _key, onText, onDone) => {
+      finish = () => { onText("First quick answer"); onDone(); };
+      return () => {};
+    });
+    const disposeNotifier = mountNotifications();
+    const [open, setOpen] = createSignal(true);
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const dispose = render(() => <QuickChatOverlay
+      open={open()}
+      mobile={false}
+      agents={[{ id: "agent-1", name: "Agent", model: { provider: "openai", model: "gpt-5" } }]}
+      selectedAgentId="agent-1"
+      onSelectAgent={() => {}}
+      onMinimize={() => setOpen(false)}
+      onClose={() => setOpen(false)}
+    />, container);
+    await tick();
+    const input = container.querySelector("textarea")!;
+    input.value = "First quick question";
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    container.querySelector<HTMLButtonElement>(".send-btn")!.click();
+    finish!();
+    await tick();
+    const socket = NotificationSocket.instances[0];
+    socket.complete("quick-answer-1", 1001);
+    expect(localStorage.getItem("yoplai:chat-read:local:agent-1:session-main")).toBe("quick-answer-1");
+
+    queryByRole(container, "button", { name: "Minimize quick chat" })!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    socket.complete("quick-answer-2", 1002);
+    expect(localStorage.getItem("yoplai:chat-read:local:agent-1:session-main")).toBe("quick-answer-1");
+    setOpen(true);
+    expect(localStorage.getItem("yoplai:chat-read:local:agent-1:session-main")).toBe("quick-answer-2");
+    dispose();
+    socket.complete("quick-answer-3", 1003);
+    expect(localStorage.getItem("yoplai:chat-read:local:agent-1:session-main")).toBe("quick-answer-2");
+    disposeNotifier();
+  });
+
+  it("reads the first answer after sending from a blank chat without a persisted session", async () => {
+    fetchFullHistoryMock.mockResolvedValueOnce({ messages: [] });
+    let finish: (() => void) | undefined;
+    streamMessageMock.mockImplementation((_agent, _message, _key, onText, onDone) => {
+      finish = () => { onText("First answer"); onDone(); };
+      return () => {};
+    });
+    const disposeNotifier = mountNotifications();
+    const view = renderView();
+    await tick();
+    const input = view.container.querySelector("textarea")!;
+    input.value = "First question";
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    view.container.querySelector<HTMLButtonElement>(".send-btn")!.click();
+    finish!();
+    await tick();
+    NotificationSocket.instances[0].complete("first-answer", 2001);
+    expect(localStorage.getItem("yoplai:chat-read:local:agent-1:session-main")).toBe("first-answer");
+    view.dispose();
+    disposeNotifier();
+  });
+
+  it("keeps a reset session viewed while its history is loading", async () => {
+    let reset: ((sessionId: string) => void) | undefined;
+    streamMessageMock.mockImplementation((_agent, _message, _key, _onText, _onDone, _onError, callbacks) => {
+      reset = callbacks.onSessionReset;
+      return () => {};
+    });
+    const disposeNotifier = mountNotifications();
+    const view = renderView();
+    await tick();
+    fetchFullHistoryMock.mockImplementationOnce(() => new Promise(() => {}));
+    const input = view.container.querySelector("textarea")!;
+    input.value = "/new";
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    view.container.querySelector<HTMLButtonElement>(".send-btn")!.click();
+    reset!("session-other");
+    routeState.session = "session-other";
+    setRouteVersion((value) => value + 1);
+    NotificationSocket.instances[0].complete("reset-answer", 3001, "session-other");
+    expect(localStorage.getItem("yoplai:chat-read:local:agent-1:session-other")).toBe("reset-answer");
+    view.dispose();
+    disposeNotifier();
   });
 
   it.each(["simple", "full"])("copies all eligible turn text in %s view with rich feedback", async (mode) => {

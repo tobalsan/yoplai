@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { createSignal } from "solid-js";
+import { createSignal, splitProps } from "solid-js";
 import { render } from "solid-js/web";
 
 // matchMedia must exist before theme.ts module-level code runs
@@ -19,6 +19,7 @@ const pinAgentSessionMock = vi.fn(async () => {});
 const archiveAgentSessionMock = vi.fn(async () => {});
 const fetchTopExtensionsMock = vi.fn(async () => ({ extensions: ["exa"], mcp: [] as string[] }));
 const showToastMock = vi.fn();
+let actualRouter = false;
 
 function setVisibility(state: DocumentVisibilityState) {
   vi.spyOn(document, "visibilityState", "get").mockReturnValue(state);
@@ -58,18 +59,27 @@ vi.mock("../lib/toast", () => ({
   showToast: showToastMock,
 }));
 
-vi.mock("@solidjs/router", () => ({
-  A: (props: Record<string, unknown>) => <a {...props} />,
-  useLocation: () => ({
+vi.mock("@solidjs/router", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@solidjs/router")>();
+  return {
+  ...actual,
+  A: (props: Parameters<typeof actual.A>[0]) => {
+    if (actualRouter) return <actual.A {...props} />;
+    const [, anchorProps] = splitProps(props, ["state"]);
+    return <a {...anchorProps} />;
+  },
+  useLocation: () => actualRouter ? actual.useLocation() : ({
     get pathname() {
       return pathname();
     },
     search: "",
   }),
-  useNavigate: () => navigateMock,
-}));
+  useNavigate: () => actualRouter ? actual.useNavigate() : navigateMock,
+  };
+});
 
 const { AgentSidebar } = await import("./AgentSidebar");
+const { Router, Route } = await import("@solidjs/router");
 const { SessionSearch } = await import("./SessionSearch");
 const { connectPromptRequest, clearConnectPromptRequest } = await import("../onboarding/state");
 const { resetCapabilitiesForTests, setCapabilitiesForTests } = await import(
@@ -78,11 +88,15 @@ const { resetCapabilitiesForTests, setCapabilitiesForTests } = await import(
 
 describe("AgentSidebar", () => {
   afterEach(() => {
+    actualRouter = false;
     document.body.innerHTML = "";
     document.documentElement.removeAttribute("data-theme");
     localStorage.removeItem("yoplai-theme");
     localStorage.removeItem("yoplai:recent-project-views");
     localStorage.removeItem("yoplai:collapsed-chat-projects");
+    for (const key of Object.keys(localStorage)) {
+      if (key.startsWith("yoplai:chat-read")) localStorage.removeItem(key);
+    }
     fetchChatProjectsMock.mockReset();
     fetchChatProjectsMock.mockResolvedValue({ items: [] });
     moveChatToProjectMock.mockReset();
@@ -106,6 +120,135 @@ describe("AgentSidebar", () => {
     fetchProjectsMock.mockResolvedValue([]);
     resetCapabilitiesForTests();
     vi.clearAllMocks();
+  });
+
+  it("keeps row details off the title line and exposes them on keyboard focus", async () => {
+    vi.useFakeTimers();
+    actualRouter = true;
+    const chat = {
+      agentId: "alpha", sessionId: "main", title: "Planning a careful release", createdAt: Date.now() - 120000,
+      lastActivity: Date.now() - 120000, messageCount: 3, isMain: true, pinned: Date.now(),
+    };
+    const actualApi = await vi.importActual<typeof import("../api")>("../api");
+    const actualProjects = await vi.importActual<typeof import("../api/chat-projects")>("../api/chat-projects");
+    fetchAgentSessionsMock.mockImplementation(actualApi.fetchAgentSessions);
+    fetchChatProjectsMock.mockImplementation(actualProjects.fetchChatProjects);
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => Response.json({
+      items: String(input).endsWith("/agents/sessions") ? [chat] : [],
+    }));
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const dispose = render(() => <Router><Route path="*" component={() => <AgentSidebar collapsed={() => false} onToggleCollapse={() => {}} />} /></Router>, container);
+    await vi.advanceTimersByTimeAsync(1);
+    const row = Array.from(container.querySelectorAll<HTMLButtonElement>("button")).find((button) => button.textContent?.includes(chat.title))!;
+    expect(row.textContent?.trim()).toBe("A" + chat.title);
+    const description = document.getElementById(row.getAttribute("aria-describedby")!);
+    expect(description?.textContent).toContain("2m · alpha");
+    expect(description?.textContent).toContain("MAIN");
+    expect(description?.textContent).toContain("Pinned");
+    expect(container.querySelector('[role="tooltip"]')).toBeNull();
+    row.focus();
+    const tooltip = container.querySelector('[role="tooltip"]');
+    expect(tooltip?.textContent).toContain(chat.title);
+    expect(tooltip?.textContent).toContain("2m · alpha");
+    expect(tooltip?.textContent).toContain("MAIN");
+    expect(tooltip?.textContent).toContain("Pinned");
+    row.blur();
+    expect(container.querySelector('[role="tooltip"]')).toBeNull();
+    dispose();
+  });
+
+  it("shows one card after pointer rest and dismisses it when interaction moves on", async () => {
+    vi.useFakeTimers();
+    actualRouter = true;
+    const chat = { agentId: "alpha", sessionId: "hover", title: "Hover details", createdAt: Date.now(), lastActivity: Date.now(), messageCount: 1, isMain: false };
+    const actualApi = await vi.importActual<typeof import("../api")>("../api");
+    const actualProjects = await vi.importActual<typeof import("../api/chat-projects")>("../api/chat-projects");
+    fetchAgentSessionsMock.mockImplementation(actualApi.fetchAgentSessions);
+    fetchChatProjectsMock.mockImplementation(actualProjects.fetchChatProjects);
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => Response.json({ items: String(input).endsWith("/agents/sessions") ? [chat] : [] }));
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const [collapsed, setCollapsed] = createSignal(false);
+    const dispose = render(() => <Router><Route path="*" component={() => <AgentSidebar collapsed={collapsed} onToggleCollapse={() => {}} />} /></Router>, container);
+    await vi.advanceTimersByTimeAsync(1);
+    const row = container.querySelector<HTMLButtonElement>(".session-row")!;
+    const wrap = row.parentElement!;
+    const hover = async () => {
+      wrap.dispatchEvent(new MouseEvent("mouseenter"));
+      await vi.advanceTimersByTimeAsync(449);
+      expect(container.querySelector('[role="tooltip"]')).toBeNull();
+      await vi.advanceTimersByTimeAsync(1);
+      expect(container.querySelectorAll('[role="tooltip"]')).toHaveLength(1);
+      expect(container.querySelector('[role="tooltip"]')?.textContent).toContain("Hover details");
+    };
+    await hover();
+    wrap.dispatchEvent(new MouseEvent("mouseleave"));
+    expect(container.querySelector('[role="tooltip"]')).toBeNull();
+    wrap.dispatchEvent(new MouseEvent("mouseenter"));
+    await vi.advanceTimersByTimeAsync(300);
+    wrap.dispatchEvent(new MouseEvent("mousemove", { bubbles: true }));
+    await vi.advanceTimersByTimeAsync(300);
+    expect(container.querySelector('[role="tooltip"]')).toBeNull();
+    await vi.advanceTimersByTimeAsync(150);
+    expect(container.querySelectorAll('[role="tooltip"]')).toHaveLength(1);
+    document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    expect(container.querySelector('[role="tooltip"]')).toBeNull();
+    await hover();
+    document.body.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+    expect(container.querySelector('[role="tooltip"]')).toBeNull();
+    await hover();
+    container.querySelector(".sessions-list")!.dispatchEvent(new Event("scroll"));
+    expect(container.querySelector('[role="tooltip"]')).toBeNull();
+    setCollapsed(true);
+    wrap.dispatchEvent(new MouseEvent("mouseenter"));
+    await vi.advanceTimersByTimeAsync(450);
+    expect(container.querySelector('[role="tooltip"]')).toBeNull();
+    container.querySelector("aside")!.dispatchEvent(new MouseEvent("mouseenter"));
+    await hover();
+    container.querySelector("aside")!.dispatchEvent(new MouseEvent("mouseleave"));
+    expect(container.querySelector('[role="tooltip"]')).toBeNull();
+    dispose();
+  });
+
+  it("shows unread answers in rows and collapsed projects and updates reads from another tab", async () => {
+    vi.useFakeTimers();
+    actualRouter = true;
+    localStorage.setItem("yoplai:chat-read-init:local", "1");
+    localStorage.setItem("yoplai:collapsed-chat-projects", '["work"]');
+    const chats = [
+      { agentId: "alpha", sessionId: "ordinary-dot", title: "Ordinary answer", createdAt: 1, lastActivity: 1, messageCount: 1, isMain: false, lastWebCompletion: { id: "ordinary-ready", endedAt: 20 } },
+      { agentId: "alpha", sessionId: "project-dot", title: "Project answer", projectId: "work", createdAt: 1, lastActivity: 1, messageCount: 1, isMain: false, lastWebCompletion: { id: "project-ready", endedAt: 30 } },
+    ];
+    const actualApi = await vi.importActual<typeof import("../api")>("../api");
+    const actualProjects = await vi.importActual<typeof import("../api/chat-projects")>("../api/chat-projects");
+    fetchAgentSessionsMock.mockImplementation(actualApi.fetchAgentSessions);
+    fetchChatProjectsMock.mockImplementation(actualProjects.fetchChatProjects);
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => Response.json({
+      items: String(input).endsWith("/agents/sessions") ? chats : [{ id: "work", name: "Work", createdAt: 1, updatedAt: 1 }],
+    }));
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const dispose = render(() => <Router><Route path="*" component={() => <AgentSidebar collapsed={() => false} onToggleCollapse={() => {}} />} /></Router>, container);
+    await vi.advanceTimersByTimeAsync(1);
+    const projects = container.querySelector('section[aria-label="Projects"]')!;
+    expect(projects.querySelector('[role="img"][aria-label="Unread messages"]')).not.toBeNull();
+    expect(projects.textContent).not.toContain("Project answer");
+    expect(container.querySelectorAll('[role="img"][aria-label="Unread messages"]')).toHaveLength(2);
+    container.querySelector<HTMLButtonElement>('[aria-label="Toggle Work"]')!.click();
+    const projectRow = Array.from(projects.querySelectorAll("button")).find((button) => button.textContent?.includes("Project answer"))!;
+    expect(projectRow.querySelector('[role="img"][aria-label="Unread messages"]')).not.toBeNull();
+    const readInOtherTab = (sessionId: string, completionId: string) => {
+      const key = `yoplai:chat-read:local:alpha:${sessionId}`;
+      localStorage.setItem(key, completionId);
+      window.dispatchEvent(new StorageEvent("storage", { key, newValue: completionId }));
+    };
+    readInOtherTab("project-dot", "project-ready");
+    expect(projects.querySelector('[role="img"][aria-label="Unread messages"]')).toBeNull();
+    expect(container.querySelectorAll('[role="img"][aria-label="Unread messages"]')).toHaveLength(1);
+    readInOtherTab("ordinary-dot", "ordinary-ready");
+    expect(container.querySelector('[role="img"][aria-label="Unread messages"]')).toBeNull();
+    dispose();
   });
 
   it.each([false, true])("opens Search above Agents without a Sessions header (collapsed=%s)", async (collapsed) => {
@@ -572,7 +715,8 @@ describe("AgentSidebar", () => {
     expect(menu.open).toBe(true);
     expect(document.activeElement).toBe(action);
     await vi.advanceTimersByTimeAsync(60000);
-    expect(container.querySelector(".session-meta")?.textContent).toContain("1m");
+    const row = container.querySelector<HTMLButtonElement>(".session-row")!;
+    expect(document.getElementById(row.getAttribute("aria-describedby")!)?.textContent).toContain("1m");
     expect(container.querySelector("details")).toBe(menu);
     expect(menu.open).toBe(true);
     expect(document.activeElement).toBe(action);
