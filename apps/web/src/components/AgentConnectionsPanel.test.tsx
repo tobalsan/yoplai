@@ -74,6 +74,18 @@ describe("AgentConnectionsPanel", () => {
     expect(marks).toEqual(["data:gmail", "data:exa", "C"]);
   });
 
+  it("shows each MCP server icon, falling back to a letter", async () => {
+    fetchConnectionsMock.mockResolvedValue([]);
+    fetchMcpMock.mockResolvedValue([
+      { kind: "mcp", id: "notion", name: "notion (MCP)", personal: true, team: false, iconUrl: "data:notion" },
+      { kind: "mcp", id: "claap", name: "claap (MCP)", personal: true, team: false },
+    ]);
+    dispose = render(() => <AgentConnectionsPanel agentId="scribe" includeMcp />, root);
+    await tick();
+    const marks = Array.from(root.querySelectorAll(".agent-connection-mark")).map((mark) => mark.querySelector("img")?.getAttribute("src") ?? mark.textContent);
+    expect(marks).toEqual(["data:notion", "C"]);
+  });
+
   it("marks missing connections red and offers no disconnect", async () => {
     fetchConnectionsMock.mockResolvedValue([{ kind: "extension", id: "exa", name: "Exa", personal: false, team: false }]);
     dispose = render(() => <AgentConnectionsPanel agentId="scribe" />, root);

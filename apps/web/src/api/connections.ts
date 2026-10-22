@@ -1,4 +1,5 @@
 import { API_BASE, apiFetch as fetch } from "./core";
+import { fetchMcpServersFast } from "./mcp-servers";
 
 export type AgentConnection = {
   kind: "oauth" | "extension" | "mcp";
@@ -6,6 +7,8 @@ export type AgentConnection = {
   name: string;
   personal: boolean;
   team: boolean;
+  /** Cached server icon, for MCP connections only. */
+  iconUrl?: string;
 };
 
 export async function fetchAgentConnections(agentId: string): Promise<AgentConnection[]> {
@@ -47,9 +50,14 @@ async function fetchMcpStatus(agentId: string, scope: "team" | "personal"): Prom
 }
 
 export async function fetchAgentMcpConnections(agentId: string, includePersonal: boolean): Promise<AgentConnection[]> {
-  const [teamServers, personalServers] = await Promise.all([
+  const [teamServers, personalServers, icons] = await Promise.all([
     fetchMcpStatus(agentId, "team"),
     includePersonal ? fetchMcpStatus(agentId, "personal") : Promise.resolve([]),
+    // Icons are cosmetic: a failed fast list keeps the letter fallback.
+    fetchMcpServersFast(agentId).then(
+      (list) => new Map(list.servers.flatMap((server) => server.iconUrl ? [[server.name, server.iconUrl] as const] : [])),
+      () => new Map<string, string>(),
+    ),
   ]);
   const team = new Map(teamServers.map((server) => [server.name, server]));
   const personal = new Map(personalServers.map((server) => [server.name, server]));
@@ -64,6 +72,7 @@ export async function fetchAgentMcpConnections(agentId: string, includePersonal:
       name: `${name} (MCP)`,
       personal: personalServer?.state === "connected" || personalServer?.state === "needs_reconnect",
       team: teamServer?.state === "connected" || teamServer?.state === "needs_reconnect" || teamServer?.state === "static",
+      ...(icons.has(name) ? { iconUrl: icons.get(name) } : {}),
     }];
   });
 }

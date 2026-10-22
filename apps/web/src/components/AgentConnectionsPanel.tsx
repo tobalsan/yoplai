@@ -165,12 +165,11 @@ const KIND_LABELS: Record<AgentConnection["kind"], string> = {
   mcp: "MCP server",
 };
 
-/** Icon of the extension behind a connection: same id, same OAuth provider, or the MCP extension. */
+/** Icon of a connection: the MCP server icon, or the extension with the same id or OAuth provider. */
 function iconFor(connection: AgentConnection, extensions: ExtensionCatalogEntry[] = []): string | undefined {
+  if (connection.kind === "mcp") return connection.iconUrl;
   const matches = extensions.filter((extension) =>
-    connection.kind === "extension" ? extension.id === connection.id
-      : connection.kind === "oauth" ? extension.oauth?.provider === connection.id
-        : extension.id === "mcp"
+    connection.kind === "extension" ? extension.id === connection.id : extension.oauth?.provider === connection.id
   );
   return (matches.find((extension) => extension.enabled) ?? matches[0])?.iconDataUri;
 }
