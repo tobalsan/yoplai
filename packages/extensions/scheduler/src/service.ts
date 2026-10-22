@@ -507,7 +507,7 @@ export class SchedulerService {
     const nextAt = this.getNextWakeAt();
     if (!nextAt) return;
 
-    const delay = Math.max(nextAt - Date.now(), 0);
+    const delay = Math.min(Math.max(nextAt - Date.now(), 0), 2_147_483_647);
     this.timer = setTimeout(() => this.tick(), delay);
     this.timer.unref?.();
   }

@@ -188,6 +188,48 @@ describe("pi adapter transient provider retry", () => {
     mockGetModel.mockClear();
   });
 
+  it("logs successful primary attempts at info and failed primary attempts at warn", async () => {
+    const agent = makeAgent({ retryMaxAttempts: 1 });
+    setLoadedConfig({ agents: [agent] } as GatewayConfig);
+    const session = makeSession();
+    session.prompt.mockImplementationOnce(async () => {
+      session.agent.state.messages.push(successTurn());
+    }).mockImplementationOnce(async () => {
+      session.agent.state.messages.push(erroredTurn());
+    });
+    mockCreateAgentSession.mockResolvedValue({ session });
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const attempts = (output: typeof log) => output.mock.calls
+      .filter(([line]) => String(line).startsWith("{"))
+      .map(([line]) => JSON.parse(String(line)))
+      .filter((entry) => entry.msg === "[agent] primary model attempt completed");
+    try {
+      const { piAdapter } = await import("../adapter.js");
+      await expect(piAdapter.run(makeRunParams(agent))).resolves.toEqual({
+        text: "recovered", aborted: false,
+      });
+      expect(attempts(log)).toEqual([{
+        level: "info", msg: "[agent] primary model attempt completed",
+        agentId: "pi-agent", provider: "anthropic", model: "claude-3-5-sonnet-20241022",
+        attempt: 1, durationMs: expect.any(Number), outcome: "success",
+      }]);
+      expect(attempts(warn)).toEqual([]);
+
+      await expect(piAdapter.run(makeRunParams(agent))).rejects.toThrow(RELACE_ERROR);
+      expect(attempts(warn)).toEqual([{
+        level: "warn", msg: "[agent] primary model attempt completed",
+        agentId: "pi-agent", provider: "anthropic", model: "claude-3-5-sonnet-20241022",
+        attempt: 1, durationMs: expect.any(Number), outcome: "failure",
+        failureCategory: "unavailable", failure: RELACE_ERROR,
+      }]);
+      expect(attempts(log)).toHaveLength(1);
+    } finally {
+      log.mockRestore();
+      warn.mockRestore();
+    }
+  });
+
   it("uses an override provider's stored OAuth credential independently of agent auth", async () => {
     const agent = makeAgent({ auth: { mode: "api_key" } });
     setLoadedConfig({ agents: [agent] } as GatewayConfig);

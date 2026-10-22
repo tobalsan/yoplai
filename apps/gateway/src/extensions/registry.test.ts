@@ -21,6 +21,49 @@ import { ExtensionRuntime } from "./runtime.js";
 const require = createRequire(import.meta.url);
 
 describe("extension registry", () => {
+  it("warns once per unknown agent-extension pair across loads and reloads", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "yoplai-unknown-extension-"));
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const config = (agentId: string, extensionId: string) => GatewayConfigSchema.parse({
+      version: 3, extensionsPath: root,
+      agents: [{
+        id: agentId, name: agentId, workspace: root,
+        model: { provider: "anthropic", model: "claude" },
+        extensions: { [extensionId]: { enabled: true } },
+      }],
+    });
+    try {
+      const first = config("unknown-pair-alpha", "unknown-pair-one");
+      await loadExtensions(first);
+      await loadExtensions(first);
+      await reloadExtensions(first);
+      expect(warn).toHaveBeenCalledTimes(1);
+      await reloadExtensions(config("unknown-pair-beta", "unknown-pair-one"));
+      await reloadExtensions(config("unknown-pair-alpha", "unknown-pair-two"));
+      expect(warn.mock.calls.map((call) => {
+        expect(call).toHaveLength(1);
+        expect(String(call[0]).split("\n")).toHaveLength(1);
+        return JSON.parse(String(call[0]));
+      })).toEqual([
+        {
+          level: "warn", agentId: "unknown-pair-alpha", extensionId: "unknown-pair-one",
+          msg: '[extensions] agent "unknown-pair-alpha" references unknown extension "unknown-pair-one"',
+        },
+        {
+          level: "warn", agentId: "unknown-pair-beta", extensionId: "unknown-pair-one",
+          msg: '[extensions] agent "unknown-pair-beta" references unknown extension "unknown-pair-one"',
+        },
+        {
+          level: "warn", agentId: "unknown-pair-alpha", extensionId: "unknown-pair-two",
+          msg: '[extensions] agent "unknown-pair-alpha" references unknown extension "unknown-pair-two"',
+        },
+      ]);
+    } finally {
+      warn.mockRestore();
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it("runs later config reload hooks after a hook throws null", async () => {
     vi.spyOn(console, "warn").mockImplementation(() => {});
     let laterRan = false;
