@@ -972,6 +972,66 @@ describe("SchedulerService persistence and lifecycle", () => {
   });
 });
 
+describe("SchedulerService distant deadlines", () => {
+  it("caps early wakes without moving a one-shot deadline or running it early", async () => {
+    const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-scheduler-distant-"));
+    vi.useFakeTimers({ toFake: ["Date", "setTimeout", "clearTimeout"] });
+    vi.setSystemTime(new Date("2026-01-01T00:00:00.000Z"));
+    const timers = vi.fn(globalThis.setTimeout);
+    vi.stubGlobal("setTimeout", timers);
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    const alpha = agent("alpha", path.join(tmpDir, "alpha"));
+    const runAgent = vi.fn(async () => ({
+      payloads: [{ text: "Done" }], meta: { durationMs: 1, sessionId: "distant" },
+    }));
+    setSchedulerContext(context({
+      version: 3, agents: [alpha], extensions: { scheduler: { enabled: true } },
+      sessions: { idleMinutes: 360 }, agentFab: false,
+    }, runAgent));
+    const scheduler = new SchedulerService();
+    const deadline = Date.parse("2026-03-02T00:00:00.000Z");
+    try {
+      await scheduler.add("alpha", {
+        name: "In sixty days", schedule: { runAt: "2026-03-02T00:00:00.000Z" },
+        payload: jobPayload({ message: "Due" }),
+      });
+      await scheduler.start();
+      expect(timers.mock.calls.every(([, delay]) => Number(delay) <= 2_147_483_647)).toBe(true);
+      expect(timers.mock.calls.at(-1)?.[1]).toBe(2_147_483_647);
+      for (let wake = 0; wake < 2; wake++) {
+        const armed = timers.mock.calls.length;
+        await vi.advanceTimersByTimeAsync(2_147_483_647);
+        await vi.waitFor(() => expect(timers.mock.calls.length).toBeGreaterThan(armed), { interval: 0 });
+        const [waiting] = await scheduler.list("alpha") as Array<{ state?: { nextRunAtMs?: number } }>;
+        expect(waiting?.state?.nextRunAtMs).toBe(deadline);
+        expect(runAgent).not.toHaveBeenCalled();
+      }
+      expect(timers.mock.calls.at(-1)?.[1]).toBe(889_032_706);
+      await vi.advanceTimersByTimeAsync(889_032_705);
+      expect(runAgent).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(1);
+      await vi.waitFor(async () => {
+        const [finished] = await scheduler.list("alpha") as Array<{
+          state?: { lastStatus?: string; runningForMs?: number };
+        }>;
+        expect(finished?.state?.lastStatus).toBe("ok");
+        expect(finished?.state?.runningForMs).toBeUndefined();
+      }, { interval: 0 });
+      expect(runAgent).toHaveBeenCalledOnce();
+      await vi.advanceTimersByTimeAsync(86_400_000);
+      expect(runAgent).toHaveBeenCalledOnce();
+      expect(timers.mock.calls.every(([, delay]) => Number(delay) <= 2_147_483_647)).toBe(true);
+    } finally {
+      await scheduler.stop();
+      clearSchedulerContext();
+      vi.restoreAllMocks();
+      vi.unstubAllGlobals();
+      vi.useRealTimers();
+      await fs.rm(tmpDir, { recursive: true, force: true });
+    }
+  });
+});
+
 describe("SchedulerService timeout and loop isolation", () => {
   let tmpDir: string | undefined;
 

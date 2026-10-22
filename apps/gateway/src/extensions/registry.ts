@@ -2,6 +2,7 @@ import path from "node:path";
 import type { AgentConfig, Extension, GatewayConfig } from "@yoplai/shared";
 import { discoverExternalExtensions, readEnv } from "@yoplai/shared";
 import { CONFIG_DIR } from "../config/index.js";
+import { logWarn } from "../logging.js";
 import { ExtensionRuntime, registerExtensionOAuthProviders } from "./runtime.js";
 import { taskLifecycleExtension } from "../tasks/extension.js";
 import { capabilityDiscoveryExtension } from "../capabilities/extension.js";
@@ -19,6 +20,8 @@ type ExtensionRegistration = {
 };
 
 type ExtensionModule = Record<string, unknown>;
+
+const warnedUnknownExtensions = new Set<string>();
 
 const MONOREPO_DEV_EXTENSION_IMPORTS: Record<string, string> = {
   "@yoplai/extension-board": new URL(
@@ -530,9 +533,14 @@ async function deriveExtensionsToLoad(
     for (const [id, value] of Object.entries(agentExtensions)) {
       if (toRecord(value).enabled === false) continue;
       if (!loadedExtensionIds.has(id)) {
-        console.warn(
-          `[extensions] agent "${agent.id}" references unknown extension "${id}"`
-        );
+        const key = JSON.stringify([agent.id, id]);
+        if (!warnedUnknownExtensions.has(key)) {
+          warnedUnknownExtensions.add(key);
+          logWarn(
+            `[extensions] agent "${agent.id}" references unknown extension "${id}"`,
+            { agentId: agent.id, extensionId: id }
+          );
+        }
       }
     }
   }

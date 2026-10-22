@@ -32,7 +32,7 @@ import type {
   HistoryEvent,
 } from "../types.js";
 import { CONFIG_DIR, loadConfig, resolveAgentEnv } from "../../config/index.js";
-import { logError, logWarn } from "../../logging.js";
+import { logError, logInfo, logWarn } from "../../logging.js";
 import { buildOnecliEnv } from "../../config/onecli.js";
 import { resolveSystemFiles } from "@yoplai/shared/node/system-files";
 import { createRuntimeSessionFile } from "@yoplai/shared/node/sanitize-session";
@@ -892,7 +892,7 @@ export const piAdapter: SdkAdapter = {
               { agentId: params.agent.id }
             ),
           onAttempt: (attempt, durationMs, failure) =>
-            logWarn("[agent] primary model attempt completed", {
+            (failure ? logWarn : logInfo)("[agent] primary model attempt completed", {
               agentId: params.agent.id,
               provider: effectiveModel.provider,
               model: effectiveModel.model,

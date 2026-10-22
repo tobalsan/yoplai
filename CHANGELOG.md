@@ -11,6 +11,7 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Fixed
 
+- Cap scheduler waits for distant jobs, log successful primary model attempts at info, and warn only once per unknown agent-extension pair per process.
 - Pause sidebar chat and project refreshes while the tab is hidden, and refresh both lists when it becomes visible or focused again.
 - Reduce gateway log noise: log agent env key names once per content change, emit one access completion line, and quiet fast successful GETs for chat projects, skills and static assets while retaining errors, redirects and slow requests.
 - Emit structured scheduler and channel failures with job/session context, preserve full scheduler diagnostics on disk, and classify upstream tool 4xx and explicitly marked input errors as warnings.
