@@ -13,6 +13,7 @@ import { disconnectOAuth, fetchOAuthStatus, oauthAuthorizeUrl, type OAuthConnect
 import { CredentialScopeTabs, preferredScope, STATUS_CONNECTED, STATUS_NOT_SET_UP, STATUS_RECONNECT, type CredentialScope, type ScopeStatus } from "./CredentialScopeTabs";
 import { onOAuthReturn } from "../lib/oauth-popup";
 import { readOAuthResult } from "../lib/oauth-return";
+import { showToast } from "../lib/toast";
 import { ReconnectWarning, ScopeUsageNote, TEAM_MANAGED_NOTE } from "./ScopedConnectionNotes";
 
 type ConnectionState = OAuthConnectionState;
@@ -48,6 +49,7 @@ export function OAuthConnectCard(props: {
 }) {
   const settings = children(() => props.children);
   const oauthResult = readOAuthResult();
+  if (oauthResult?.status === "connected") showToast(`Connected to ${props.label}`, "success");
   const [statuses, setStatuses] = createSignal<Partial<Record<CredentialScope, OAuthStatus>>>({});
   const [loading, setLoading] = createSignal(false);
   const [error, setError] = createSignal<string>();
@@ -144,10 +146,8 @@ export function OAuthConnectCard(props: {
   return (
     <>
       <style>{OAUTH_CONNECT_CARD_STYLES}</style>
-      <Show when={oauthResult}>
-        {(result) => result().status === "connected"
-          ? <p role="status">Connected</p>
-          : <div class="oauth-error" role="alert">{result().error}</div>}
+      <Show when={oauthResult?.status === "error" && oauthResult}>
+        {(result) => <div class="oauth-error" role="alert">{result().error}</div>}
       </Show>
       <Show when={error()}>
         {(message) => <div class="oauth-error">{message()}</div>}

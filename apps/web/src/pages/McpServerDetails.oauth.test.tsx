@@ -2,6 +2,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { render } from "solid-js/web";
 import { McpServerDetails } from "./McpServerDetails";
+import { ToastHost } from "../lib/toast";
 
 vi.mock("../auth/client", () => ({
   useSession: () => () => ({ isPending: false, data: { user: { id: "alice" } } }),
@@ -25,9 +26,9 @@ describe("MCP OAuth return", () => {
     window.history.replaceState(null, "", "/agents/oauth-return/mcp-servers/webflow?keep=yes&oauth=connected&oauth_scope=team#settings");
     vi.stubGlobal("fetch", vi.fn(() => new Promise<Response>(() => {})));
 
-    dispose = render(() => <McpServerDetails />, document.body);
+    dispose = render(() => <><McpServerDetails /><ToastHost /></>, document.body);
 
-    expect(document.querySelector('[role="status"]')?.textContent).toBe("Connected");
+    expect(document.querySelector('[data-testid="toast-success"]')?.textContent).toContain("Connected to Webflow");
     const selected = document.querySelector('[role="tab"][aria-selected="true"]');
     expect(selected?.textContent).toContain("Whole team");
     expect(window.location.pathname + window.location.search + window.location.hash).toBe("/agents/oauth-return/mcp-servers/webflow?keep=yes#settings");

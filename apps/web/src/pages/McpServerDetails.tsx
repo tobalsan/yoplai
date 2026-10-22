@@ -20,6 +20,7 @@ import { OAUTH_CONNECT_CARD_STYLES } from "../components/OAuthConnectCard";
 import { EXTENSION_DETAILS_STYLES } from "./ExtensionDetails";
 import { onOAuthReturn } from "../lib/oauth-popup";
 import { readOAuthResult } from "../lib/oauth-return";
+import { showToast } from "../lib/toast";
 import { ReconnectWarning, ScopeUsageNote, TEAM_MANAGED_NOTE } from "../components/ScopedConnectionNotes";
 
 function errorMessage(cause: unknown, fallback: string): string {
@@ -46,6 +47,7 @@ export function McpServerDetails() {
   // so slow live status checks never suspend the app into a blank screen.
   const status = () => (servers.error ? undefined : (["ready", "refreshing"].includes(servers.state) ? servers.latest : undefined) ?? cachedMcpServers(params.agentId));
   const server = createMemo<McpServer | undefined>(() => status()?.servers.find((item) => item.name === params.serverName));
+  if (oauthResult?.status === "connected") showToast(`Connected to ${mcpDisplayName(params.serverName, server()?.title)}`, "success");
   const canConfigureTeam = () => status()?.canConfigureTeam !== false;
   const canEditLabels = () => status()?.canEditLabels === true;
   const [error, setError] = createSignal<string>();
@@ -119,10 +121,8 @@ export function McpServerDetails() {
     <>
       <div class="ext-details mcp-details">
         <A href={`/agents/${encodeURIComponent(params.agentId)}/edit`} class="ext-details-back" data-tour="back-to-agent">← Back to agent</A>
-        <Show when={oauthResult}>
-          {(result) => result().status === "connected"
-            ? <p role="status">Connected</p>
-            : <div class="oauth-error" role="alert">{result().error}</div>}
+        <Show when={oauthResult?.status === "error" && oauthResult}>
+          {(result) => <div class="oauth-error" role="alert">{result().error}</div>}
         </Show>
         <Show when={servers.loading && !server()}><div class="ext-details-status">Loading MCP server…</div></Show>
         <Show when={servers.error}><div class="ext-details-status ext-details-error">Failed to load MCP server.</div></Show>
