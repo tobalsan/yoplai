@@ -1,5 +1,5 @@
 import { A } from "@solidjs/router";
-import { createEffect, createSignal, Show } from "solid-js";
+import { createEffect, createSignal, Match, Show, Switch } from "solid-js";
 import { mcpDisplayName, type McpServer } from "../api/mcp-servers";
 
 export function McpIcon(props: { src?: string }) {
@@ -29,8 +29,9 @@ function mcpServerPath(agentId: string, name: string): string {
   return `/agents/${encodeURIComponent(agentId)}/mcp-servers/${encodeURIComponent(name)}`;
 }
 
-export function McpExtensionCard(props: { server: McpServer; agentId: string; system?: boolean }) {
+export function McpExtensionCard(props: { server: McpServer; agentId: string; system?: boolean; checking?: boolean; failed?: boolean; onRetry?: () => void }) {
   const href = () => mcpServerPath(props.agentId, props.server.name);
+  const active = () => !props.server.shared || props.server.enabled;
   return (
     <li class="edit-agent-ext-item" data-tour="ext-card" data-tour-ext={`mcp:${props.server.name}`}>
       <A href={href()} class="edit-agent-ext-open">
@@ -42,18 +43,29 @@ export function McpExtensionCard(props: { server: McpServer; agentId: string; sy
           </div>
         </div>
       </A>
-      <Show when={isMcpServerSetUp(props.server)} fallback={
-        <A href={href()} class="edit-agent-ext-add" aria-label={`Set up ${props.server.name}`} title={`Set up ${props.server.name}`}>+</A>
-      }>
-        <span class="edit-agent-ext-check" role="img" aria-label={`${props.server.name} connected`} title="Connected">
-          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M3.5 8.5l3 3 6-7" stroke-linecap="round" stroke-linejoin="round" /></svg>
-        </span>
-      </Show>
+      <Switch fallback={<A href={href()} class="edit-agent-ext-add" aria-label={`Set up ${props.server.name}`} title={`Set up ${props.server.name}`}>+</A>}>
+        <Match when={active() && props.checking}>
+          <span class="mcp-ext-status" role="status">Checking…</span>
+        </Match>
+        <Match when={active() && (props.failed || props.server.state === "unreachable")}>
+          <span class="mcp-ext-status" role="status">{props.failed ? "Failed to check status." : "Unreachable"} <button type="button" class="mcp-ext-add-button" aria-label={`Retry ${props.server.name}`} onClick={props.onRetry}>Retry</button></span>
+        </Match>
+        <Match when={active() && props.server.state === "needs_reconnect"}>
+          <A href={href()} class="mcp-ext-reconnect" aria-label={`Reconnect ${props.server.name}`}>Reconnect</A>
+        </Match>
+        <Match when={active() && isMcpServerSetUp(props.server)}>
+          <span class="edit-agent-ext-check" role="img" aria-label={`${props.server.name} connected`} title="Connected">
+            <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M3.5 8.5l3 3 6-7" stroke-linecap="round" stroke-linejoin="round" /></svg>
+          </span>
+        </Match>
+      </Switch>
     </li>
   );
 }
 
 export const MCP_EXTENSION_STYLES = `
+.mcp-ext-status { align-self: center; flex: none; font-size: 12px; color: var(--text-secondary); }
+.mcp-ext-reconnect { align-self: center; flex: none; font-size: 12px; color: var(--text-secondary); }
 .edit-agent-ext-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .edit-agent-ext-head h2 { margin: 0; }
 .edit-agent-ext-icon.mcp-ext-icon-filled { padding: 0; }

@@ -17,6 +17,7 @@ const { saveMcpServerLabelMock, setSharedMcpServerMock, fetchMcpServersMock, fet
 vi.mock("../api/mcp-servers", () => ({
   cachedMcpServers: () => undefined,
   mcpDisplayName: (name: string, title?: string) => title || name.charAt(0).toUpperCase() + name.slice(1),
+  fetchMcpServersFast: fetchMcpServersMock,
   fetchMcpServer: fetchMcpServersMock,
   fetchMcpServerConfig: fetchMcpServerConfigMock,
   saveMcpServerConfig: saveMcpServerConfigMock,

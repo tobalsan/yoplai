@@ -122,7 +122,7 @@ describe("main agent home", () => {
     await mountHome();
     expect(container.querySelector('[role="dialog"]')?.textContent).toContain("Pick your main agent");
     expect(container.querySelector("h1")?.textContent).toBe("Agents");
-    expect(document.activeElement?.textContent).toBe("Make Sage my main agent");
+    await vi.waitFor(() => expect(document.activeElement?.textContent).toBe("Make Sage my main agent"));
   });
 
   it("records a deliberate dismissal and offers the picker again on the next home visit", async () => {

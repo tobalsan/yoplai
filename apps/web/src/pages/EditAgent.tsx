@@ -5,6 +5,7 @@ import {
   createSignal,
   For,
   onCleanup,
+  untrack,
   Show,
 } from "solid-js";
 import { A, useLocation, useParams } from "@solidjs/router";
@@ -32,7 +33,7 @@ import { ToastNotification, type ToastVariant } from "../components/ui/Toast";
 import { SchedulesPanel } from "./SchedulesPanel";
 import { AgentConnectionsPanel } from "../components/AgentConnectionsPanel";
 import { McpExtensionCard, MCP_EXTENSION_STYLES } from "../components/McpExtensionCard";
-import { addMcpServer, cachedMcpServers, mcpDisplayName, fetchMcpServers, type McpScope, type McpServer } from "../api/mcp-servers";
+import { addMcpServer, mcpDisplayName, fetchMcpServer, fetchMcpServersFast, type McpScope, type McpServer } from "../api/mcp-servers";
 import { hasStaffRole as hasAdminRole, isSuperadmin as isSuperadminRole } from "../lib/roles";
 import { onOAuthReturn } from "../lib/oauth-popup";
 import { readOAuthResult } from "../lib/oauth-return";
@@ -284,13 +285,45 @@ export function EditAgent() {
   const [extensions, { refetch: refetchExtensions }] =
     createResource(() => dashboardAgentId() ?? (isAdmin() ? params.agentId : null), fetchAgentExtensions);
   const extensionCatalog = () => extensions.error ? [] : extensions() ?? [];
-  const [mcpServers, { refetch: refetchMcpServers }] = createResource(() => dashboardAgentId() ?? null, fetchMcpServers);
-  // `.latest` keeps background refetches (e.g. on window focus) from suspending the whole page.
-  // Memoized so loading-state flips don't rebuild the list when the data is unchanged.
+  const [mcpServers, { refetch: refetchMcpServers }] = createResource(
+    () => dashboardAgentId() ?? null,
+    async (id) => ({ agentId: id, list: await fetchMcpServersFast(id) })
+  );
   const mcpStatus = createMemo(() => {
-    const id = dashboardAgentId();
-    return mcpServers.error ? undefined : (["ready", "refreshing"].includes(mcpServers.state) ? mcpServers.latest : undefined) ?? (id ? cachedMcpServers(id) : undefined);
+    const loaded = !mcpServers.error && ["ready", "refreshing"].includes(mcpServers.state) ? mcpServers.latest : undefined;
+    return loaded?.agentId === dashboardAgentId() ? loaded?.list : undefined;
   });
+  const [liveServers, setLiveServers] = createSignal<Record<string, { server?: McpServer; checking: boolean; failed: boolean }>>({});
+  let generation = 0;
+  const requests = new Map<string, number>();
+  createEffect(() => {
+    void dashboardAgentId();
+    generation++;
+    requests.clear();
+    setLiveServers({});
+  });
+  onCleanup(() => { generation++; });
+  const checkServer = async (name: string) => {
+    const id = dashboardAgentId();
+    if (!id) return;
+    const currentGeneration = generation;
+    const request = (requests.get(name) ?? 0) + 1;
+    requests.set(name, request);
+    setLiveServers((previous) => ({ ...previous, [name]: { ...previous[name], checking: true, failed: false } }));
+    const current = () => generation === currentGeneration && dashboardAgentId() === id && requests.get(name) === request;
+    try {
+      const list = await fetchMcpServer(id, name);
+      if (current()) setLiveServers((previous) => ({ ...previous, [name]: { server: list.servers.find((server) => server.name === name) ?? previous[name]?.server, checking: false, failed: false } }));
+    } catch {
+      if (current()) setLiveServers((previous) => ({ ...previous, [name]: { ...previous[name], checking: false, failed: true } }));
+    }
+  };
+  const refreshMcpStatus = () => {
+    if (!extensionListLoaded()) return;
+    for (const server of mcpStatus()?.servers ?? []) {
+      if (!server.shared || server.enabled) void checkServer(server.name);
+    }
+  };
   const [addOpen, setAddOpen] = createSignal(false);
   const [mcpUrl, setMcpUrl] = createSignal("");
   const [mcpScope, setMcpScope] = createSignal<McpScope>("personal");
@@ -304,7 +337,7 @@ export function EditAgent() {
     if (!session().isPending && !session().data?.user) setMcpScope("team");
   });
   createEffect(() => {
-    onCleanup(onOAuthReturn(() => { void refetchMcpServers(); }, { extension: "mcp" }));
+    onCleanup(onOAuthReturn(refreshMcpStatus, { extension: "mcp" }));
   });
 
   const addCustomExtension = async (event: SubmitEvent) => {
@@ -345,14 +378,23 @@ export function EditAgent() {
     }
   };
 
-  // Initial load only: hold the list until extensions and MCP servers both settle (errors included) so it never reorders.
+  // Hold the list until regular extensions, Top flags, and fast MCP configuration settle.
   // A fetch still unresolved once agent resolution is done was never started (no chat agent / not admin): nothing to wait for.
   const [topExtensions] = createResource(() => fetchTopExtensions().catch(() => EMPTY_TOP_EXTENSIONS));
   const [extensionListLoaded, setExtensionListLoaded] = createSignal(false);
   createEffect(() => {
+    void dashboardAgentId();
+    setExtensionListLoaded(false);
+  });
+  createEffect(() => {
     const agentResolved = !agents.loading && !forks.loading && !poolActions.loading;
     const settled = (state: string) => state === "ready" || state === "errored" || (agentResolved && state === "unresolved");
     if (settled(extensions.state) && settled(mcpServers.state) && settled(topExtensions.state)) setExtensionListLoaded(true);
+  });
+
+  createEffect(() => {
+    if (!extensionListLoaded() || !mcpStatus()) return;
+    untrack(refreshMcpStatus);
   });
 
   // Normal extensions and MCP servers share one list: admin-flagged Top first, then by display name.
@@ -573,7 +615,16 @@ export function EditAgent() {
             <ul class="edit-agent-ext-list">
               <For each={extensionListLoaded() ? extensionListItems() : []}>
                 {(item) => (
-                  <Show when={item.ext} keyed fallback={<McpExtensionCard server={item.server!} agentId={dashboardAgentId() ?? params.agentId} system={item.system} />}>
+                  <Show when={item.ext} keyed fallback={
+                    <McpExtensionCard
+                      server={liveServers()[item.server!.name]?.server ?? item.server!}
+                      agentId={dashboardAgentId() ?? params.agentId}
+                      system={item.system}
+                      checking={liveServers()[item.server!.name]?.checking ?? item.server!.status === "pending"}
+                      failed={liveServers()[item.server!.name]?.failed}
+                      onRetry={() => void checkServer(item.server!.name)}
+                    />
+                  }>
                     {(ext) => (
                   <li class="edit-agent-ext-item" data-tour="ext-card" data-tour-ext={ext.id}>
                     <A

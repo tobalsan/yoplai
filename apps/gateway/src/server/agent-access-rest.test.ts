@@ -269,6 +269,14 @@ describe("REST per-agent access gating (multi-user)", () => {
     expect(await post("/api/mcp/servers/callback?agent=blocked-agent", authHeader("mallory"))).toBe(403);
   });
 
+  it("keeps fast MCP configuration and individual status checks behind agent access", async () => {
+    for (const mode of ["&live=0", "&live=0&server=custom", "&server=custom"]) {
+      expect(await get(`/api/mcp/servers?agent=allowed-agent${mode}`, authHeader("mallory"))).toBe(403);
+      expect(await get(`/api/mcp/servers?agent=allowed-agent${mode}`, authHeader("alice"))).toBe(404);
+      expect(await get(`/api/mcp/servers?${mode.slice(1)}`, authHeader("alice"))).toBe(400);
+    }
+  });
+
   it("rejects reading a single agent without access", async () => {
     expect(
       await get("/api/agents/allowed-agent", authHeader("mallory"))

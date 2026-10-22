@@ -76,7 +76,8 @@ vi.mock("../api/extensions", () => ({
 vi.mock("../api/mcp-servers", () => ({
   cachedMcpServers: () => undefined,
   mcpDisplayName: (name: string, title?: string) => title || name.charAt(0).toUpperCase() + name.slice(1),
-  fetchMcpServers: fetchMcpServersMock,
+  fetchMcpServersFast: fetchMcpServersMock,
+  fetchMcpServer: async () => ({ servers: [] }),
   addMcpServer: addMcpServerMock,
   removeMcpServer: removeMcpServerMock,
   disconnectMcpServer: disconnectMcpServerMock,
@@ -1104,7 +1105,7 @@ describe("EditAgent", () => {
     const popup = { close: vi.fn() };
     vi.spyOn(window, "open").mockReturnValue(popup as unknown as Window);
     await mountEdit("scribe");
-    expect(fetchMcpServersMock).toHaveBeenCalledWith("scribe-fork", expect.any(Object));
+    expect(fetchMcpServersMock).toHaveBeenCalledWith("scribe-fork");
 
     Array.from(container.querySelectorAll<HTMLButtonElement>("button")).find((button) => button.textContent === "Add custom extension")!.click();
     const input = container.querySelector<HTMLInputElement>('.mcp-ext-dialog input[type="url"]')!;
@@ -1154,7 +1155,7 @@ describe("EditAgent", () => {
     await mountEdit("scribe-fork");
     expect(container.textContent).not.toContain("Agent not found");
     expect(container.querySelector(".edit-agent-name")?.textContent).toBe("Scribe");
-    expect(fetchMcpServersMock).toHaveBeenCalledWith("scribe-fork", expect.any(Object));
+    expect(fetchMcpServersMock).toHaveBeenCalledWith("scribe-fork");
     expect(container.querySelector<HTMLButtonElement>(".mcp-ext-add-button")?.disabled).toBe(false);
   });
 

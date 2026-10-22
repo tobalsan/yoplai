@@ -5,7 +5,8 @@ import {
   disconnectMcpServer,
   fetchMcpServerConfig,
   fetchMcpServer,
-  cachedMcpServers,
+  fetchMcpServersFast,
+  type McpServerList,
   mcpDisplayName,
   removeMcpServer,
   saveMcpServerConfig,
@@ -38,14 +39,50 @@ export function McpServerDetails() {
   const navigate = useNavigate();
   const session = useSession();
   const oauthResult = readOAuthResult();
-  const [servers, { refetch }] = createResource(
+  const [servers, { refetch: refetchFast }] = createResource(
     () => ({ agent: params.agentId, name: params.serverName }),
-    (key) => fetchMcpServer(key.agent, key.name)
+    async (key) => ({ ...key, list: await fetchMcpServersFast(key.agent, key.name) })
   );
-  // `.latest` keeps background refetches (e.g. on window focus) from suspending the page.
-  // Read only settled values (via `.state`, which never suspends) and fall back to the cached list,
-  // so slow live status checks never suspend the app into a blank screen.
-  const status = () => (servers.error ? undefined : (["ready", "refreshing"].includes(servers.state) ? servers.latest : undefined) ?? cachedMcpServers(params.agentId));
+  const fastStatus = createMemo(() => {
+    const loaded = !servers.error && ["ready", "refreshing"].includes(servers.state) ? servers.latest : undefined;
+    return loaded?.agent === params.agentId && loaded?.name === params.serverName ? loaded.list : undefined;
+  });
+  const [live, setLive] = createSignal<{ agent: string; name: string; list: McpServerList }>();
+  const [checking, setChecking] = createSignal(false);
+  const [statusFailed, setStatusFailed] = createSignal(false);
+  let request = 0;
+  const refetch = async () => {
+    const agent = params.agentId;
+    const name = params.serverName;
+    const configured = fastStatus()?.servers.find((server) => server.name === name);
+    if (!configured || (configured.shared && !configured.enabled)) return;
+    const currentRequest = ++request;
+    setChecking(true);
+    setStatusFailed(false);
+    const current = () => request === currentRequest && params.agentId === agent && params.serverName === name;
+    try {
+      const list = await fetchMcpServer(agent, name);
+      if (current()) setLive({ agent, name, list });
+    } catch {
+      if (current()) setStatusFailed(true);
+    } finally {
+      if (current()) setChecking(false);
+    }
+  };
+  onCleanup(() => { request++; });
+  createEffect(() => {
+    const list = fastStatus();
+    request++;
+    setLive(undefined);
+    setChecking(false);
+    setStatusFailed(false);
+    const configured = list?.servers.find((server) => server.name === params.serverName);
+    if (configured && (!configured.shared || configured.enabled)) void refetch();
+  });
+  const status = () => {
+    const latest = live();
+    return latest?.agent === params.agentId && latest.name === params.serverName ? latest.list : fastStatus();
+  };
   const server = createMemo<McpServer | undefined>(() => status()?.servers.find((item) => item.name === params.serverName));
   if (oauthResult?.status === "connected") showToast(`Connected to ${mcpDisplayName(params.serverName, server()?.title)}`, "success");
   const canConfigureTeam = () => status()?.canConfigureTeam !== false;
@@ -59,6 +96,15 @@ export function McpServerDetails() {
   onCleanup(() => window.removeEventListener("pageshow", onPageShow));
   const [scope, setScope] = createSignal<McpScope>(oauthResult?.scope ?? "personal");
   let scopePicked = !!oauthResult;
+  let scopeKey = JSON.stringify([params.agentId, params.serverName]);
+  createEffect(() => {
+    const key = JSON.stringify([params.agentId, params.serverName]);
+    if (key !== scopeKey) {
+      scopeKey = key;
+      scopePicked = false;
+      setScope("personal");
+    }
+  });
 
   createEffect(() => {
     onCleanup(onOAuthReturn(() => { void refetch(); }, { extension: "mcp" }));
@@ -104,7 +150,7 @@ export function McpServerDetails() {
     setError(undefined);
     try {
       await setSharedMcpServer(params.agentId, params.serverName, enabled);
-      await refetch();
+      await refetchFast();
     } catch (cause) {
       setError(errorMessage(cause, "Failed to update MCP server."));
     } finally { setBusy(false); }
@@ -131,7 +177,7 @@ export function McpServerDetails() {
           {(result) => <div class="oauth-error" role="alert">{result().error}</div>}
         </Show>
         <Show when={servers.loading && !server()}><div class="ext-details-status">Loading MCP server…</div></Show>
-        <Show when={servers.error}><div class="ext-details-status ext-details-error">Failed to load MCP server.</div></Show>
+        <Show when={servers.error}><div class="ext-details-status ext-details-error" role="alert">Failed to load MCP server. <button type="button" class="oauth-btn" onClick={() => void refetchFast()}>Retry</button></div></Show>
         <Show when={!servers.loading && !servers.error && !server()}>
           <div class="ext-details-status ext-details-error">MCP server not found.</div>
         </Show>
@@ -162,6 +208,16 @@ export function McpServerDetails() {
                   </Show>
                 </div>
               </div>
+              <Show when={(!current().shared || current().enabled) && (checking() || statusFailed() || current().state === "unreachable" || current().state === "connected")}>
+                <p role="status">
+                  <Switch fallback="Connected">
+                    <Match when={checking()}>Checking…</Match>
+                    <Match when={statusFailed() || current().state === "unreachable"}>
+                      {statusFailed() ? "Failed to check status." : "Unreachable"} <button type="button" class="oauth-btn" onClick={() => void refetch()}>Retry</button>
+                    </Match>
+                  </Switch>
+                </p>
+              </Show>
               <Show when={error()}>{(message) => <div class="oauth-error" role="alert">{message()}</div>}</Show>
               <Show when={current().shared && !current().enabled}>
                 <p class="oauth-shared-note">Shared by your admins. Enable it to use its tools in this agent.</p>
@@ -170,7 +226,7 @@ export function McpServerDetails() {
               <Show when={current().auth !== "oauth"}>
                 {current().shared
                   ? <p class="oauth-shared-note">This shared server has no sign-in or configuration here; a superadmin manages it.</p>
-                  : <McpConfigEditor agentId={params.agentId} name={params.serverName} onSaved={() => void refetch()} />}
+                  : <McpConfigEditor agentId={params.agentId} name={params.serverName} onSaved={() => void refetchFast()} />}
               </Show>
               </Show>
 
@@ -227,7 +283,7 @@ export function McpServerDetails() {
         <Show when={server() && canEditLabels() && !server()?.shared}>
           <details class="mcp-edit-details">
             <summary>Edit MCP details</summary>
-            <McpLabelForm agentId={params.agentId} name={params.serverName} label={server()?.manualLabel} onSaved={() => void refetch()} />
+            <McpLabelForm agentId={params.agentId} name={params.serverName} label={server()?.manualLabel} onSaved={() => void refetchFast()} />
           </details>
         </Show>
       </div>

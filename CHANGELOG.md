@@ -11,6 +11,7 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Fixed
 
+- Show MCP cards and connection settings before live discovery completes, keep their initial Top/name order during status refreshes, and retry unreachable servers individually without treating outages as lost OAuth grants.
 - Connect OAuth extensions from settings in the same tab, return with an immediate result, and load only the selected MCP server on its details page; chat connect prompts keep popups.
 - Refresh Google profile photos on every sign-in without replacing local names or emails, and show photos across user lists and sharing with initials for missing or broken images.
 - Cap scheduler waits for distant jobs, log successful primary model attempts at info, and warn only once per unknown agent-extension pair per process.

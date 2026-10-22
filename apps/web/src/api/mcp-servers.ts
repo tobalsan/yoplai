@@ -11,9 +11,10 @@ export type McpServer = {
   url?: string;
   iconUrl?: string;
   auth: "oauth" | "none" | "static" | "stdio";
-  state: "connected" | "disconnected" | "needs_reconnect";
-  personalState?: McpServer["state"];
-  teamState?: McpServer["state"];
+  state: "connected" | "disconnected" | "needs_reconnect" | "unreachable";
+  status?: "pending";
+  personalState?: Exclude<McpServer["state"], "unreachable">;
+  teamState?: Exclude<McpServer["state"], "unreachable">;
   /** Email or name of the connected account per scope, when the provider reveals it. */
   personalAccount?: string;
   teamAccount?: string;
@@ -34,6 +35,7 @@ const endpoint = (agentId: string) => `/api/mcp/servers?agent=${encodeURICompone
 
 export type McpServerList = { servers: McpServer[]; canConfigureTeam: boolean; canEditLabels?: boolean };
 const lastLists = new Map<string, McpServerList>();
+const statusRequests = new Map<string, object>();
 
 /** Last list fetched for an agent; lets pages render instantly while live status refreshes. */
 export function cachedMcpServers(agentId: string): McpServerList | undefined {
@@ -48,11 +50,26 @@ export async function fetchMcpServers(agentId: string): Promise<McpServerList> {
   return list;
 }
 
+/** Configuration and credential presence only; never waits for MCP discovery. */
+export async function fetchMcpServersFast(agentId: string, name?: string): Promise<McpServerList> {
+  const response = await fetch(`${endpoint(agentId)}&live=0${name === undefined ? "" : `&server=${encodeURIComponent(name)}`}`, { signal: AbortSignal.timeout(35_000) });
+  if (!response.ok) throw new Error("Failed to load MCP servers.");
+  const list: McpServerList = await response.json();
+  if (name === undefined) lastLists.set(agentId, list);
+  return list;
+}
+
 /** Live status for one details page; leave the full agent-list cache intact. */
 export async function fetchMcpServer(agentId: string, name: string): Promise<McpServerList> {
+  const key = JSON.stringify([agentId, name]);
+  const request = {};
+  statusRequests.set(key, request);
   const response = await fetch(`${endpoint(agentId)}&server=${encodeURIComponent(name)}`, { signal: AbortSignal.timeout(35_000) });
   if (!response.ok) throw new Error("Failed to load MCP server.");
-  return response.json();
+  const list: McpServerList = await response.json();
+  const cached = lastLists.get(agentId);
+  if (cached && statusRequests.get(key) === request) lastLists.set(agentId, { ...cached, servers: cached.servers.map((server) => list.servers.find((item) => item.name === server.name) ?? server) });
+  return list;
 }
 
 export async function addMcpServer(agentId: string, url: string, credentialScope: McpScope, returnTo?: string): Promise<{ server: McpServer; authorizationUrl?: string }> {
