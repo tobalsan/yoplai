@@ -6,16 +6,20 @@ import { fetchAgents } from "../../api/agents";
 import type { Agent } from "../../api/types";
 
 function OAuthConnectPage() {
-  const [query] = useSearchParams();
+  const [query, setQuery] = useSearchParams();
   const [agents, setAgents] = createSignal<Agent[]>([]);
   const [selectedAgent, setSelectedAgent] = createSignal(typeof query.agent === "string" ? query.agent : "");
   const [agentsError, setAgentsError] = createSignal<string>();
+  const selectAgent = (agentId: string) => {
+    setSelectedAgent(agentId);
+    setQuery({ agent: agentId, oauth: undefined, oauth_scope: undefined, oauth_error: undefined }, { replace: true });
+  };
 
   createEffect(() => {
     void fetchAgents()
       .then((list) => {
         setAgents(list);
-        if (!selectedAgent() && list.length > 0) setSelectedAgent(list[0].id);
+        if (!selectedAgent() && list.length > 0) selectAgent(list[0].id);
       })
       .catch((cause) =>
         setAgentsError(cause instanceof Error ? cause.message : String(cause))
@@ -47,7 +51,7 @@ function OAuthConnectPage() {
           <select
             id="oauth-agent"
             value={selectedAgent()}
-            onChange={(event) => setSelectedAgent(event.currentTarget.value)}
+            onChange={(event) => selectAgent(event.currentTarget.value)}
           >
             <For each={agents()}>
               {(agent) => (
@@ -56,11 +60,9 @@ function OAuthConnectPage() {
             </For>
           </select>
         </div>
-        <OAuthConnectCard
-          agentId={selectedAgent()}
-          provider="google"
-          label="Google Drive"
-        />
+        <Show when={selectedAgent()} keyed>
+          {(agentId) => <OAuthConnectCard agentId={agentId} provider="google" label="Google Drive" />}
+        </Show>
       </div>
     </LeftNavShell>
   );

@@ -7,17 +7,6 @@ export function openOAuthPopup(url: string): Window | null {
   return window.open(url, POPUP_NAME, POPUP_FEATURES);
 }
 
-/** Opens a blank popup to be navigated once an async step finishes (see `navigateOAuthPopup`). */
-export function reserveOAuthPopup(): Window | null {
-  return openOAuthPopup("");
-}
-
-/** Sends a reserved popup to `url`; falls back to this window when it was blocked or closed. */
-export function navigateOAuthPopup(popup: Window | null, url: string): void {
-  if (popup && !popup.closed) popup.location.replace(url);
-  else window.location.assign(url);
-}
-
 /**
  * Calls `onReturn` when the window regains focus or the OAuth popup posts its
  * result message (optionally only for one `extension`). Returns a disposer.

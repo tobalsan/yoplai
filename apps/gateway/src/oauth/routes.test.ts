@@ -2,6 +2,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { JSDOM } from "jsdom";
 import type { GatewayConfig } from "@yoplai/shared";
 import { createOAuthRoutes } from "./routes.js";
 import { OAuthService } from "./service.js";
@@ -92,11 +93,114 @@ describe("oauth routes", () => {
     expect(res.status).toBe(400);
   });
 
+  it("returns to the originating page after connecting, keeping its query and hash", async () => {
+    const fetchImpl = vi.fn(async (input: RequestInfo | URL) => new Response(JSON.stringify(
+      String(input).includes("token") ? { access_token: "A1", expires_in: 3600 } : { email: "alice@example.com" }
+    ), { headers: { "Content-Type": "application/json" } }));
+    const app = createOAuthRoutes(new OAuthService({ store, fetchImpl, loadConfig: makeConfig }));
+    const authorization = await app.request(`/oauth/google/authorize?agent=a1&scope=team&returnTo=${encodeURIComponent("/agents/a1/extensions/google?view=settings#permissions")}`);
+    const state = new URL(authorization.headers.get("location")!).searchParams.get("state");
+    const callback = await app.request(`/oauth/google/callback?code=code-1&state=${state}`);
+    expect(callback.status).toBe(302);
+    expect(callback.headers.get("location")).toBe("/agents/a1/extensions/google?view=settings&oauth=connected&oauth_scope=team#permissions");
+  });
+
+  it("returns a provider denial to the selected personal page and consumes the state", async () => {
+    const app = createOAuthRoutes(new OAuthService({ store, loadConfig: makeConfig }), undefined, async () => "alice");
+    const authorization = await app.request("/oauth/google/authorize?agent=a1&scope=personal&returnTo=%2Fconnections%3Fagent%3Da1");
+    const state = new URL(authorization.headers.get("location")!).searchParams.get("state");
+    const callback = await app.request(`/oauth/google/callback?error=access_denied&state=${state}`);
+    expect(callback.status).toBe(302);
+    const location = new URL(callback.headers.get("location")!, "https://yoplai.invalid");
+    expect(location.pathname).toBe("/connections");
+    expect(location.searchParams.get("agent")).toBe("a1");
+    expect(location.searchParams.get("oauth")).toBe("error");
+    expect(location.searchParams.get("oauth_scope")).toBe("personal");
+    expect(location.searchParams.get("oauth_error")).toContain("access_denied");
+    const replay = await app.request(`/oauth/google/callback?error=access_denied&state=${state}`);
+    expect(replay.status).toBe(400);
+    expect(replay.headers.get("location")).toBeNull();
+    expect(await replay.text()).toContain("Invalid or expired OAuth state");
+  });
+
+  it.each(["https://evil.example", "//evil.example", "/\t/evil.example", "/\n/evil.example", "/\\evil.example", "/agents/a1\u0000", "/safe/..//nested.example//evil.example"])("ignores unsafe return paths: %j", async (returnTo) => {
+    const app = createOAuthRoutes(new OAuthService({ store, loadConfig: makeConfig }));
+    const authorization = await app.request(`/oauth/google/authorize?agent=a1&scope=team&returnTo=${encodeURIComponent(returnTo)}`);
+    const state = new URL(authorization.headers.get("location")!).searchParams.get("state");
+    const callback = await app.request(`/oauth/google/callback?error=access_denied&state=${state}`);
+    expect(callback.status).toBe(400);
+    expect(callback.headers.get("location")).toBeNull();
+    expect(await callback.text()).toContain("access_denied");
+  });
+
+  it("returns an exchange failure to the originating page without making the state reusable", async () => {
+    const fetchImpl = vi.fn(async () => new Response(JSON.stringify({ error: "invalid_grant", error_description: "The authorization code expired" }), {
+      status: 400, headers: { "Content-Type": "application/json" },
+    }));
+    const app = createOAuthRoutes(new OAuthService({ store, fetchImpl, loadConfig: makeConfig }));
+    const authorization = await app.request("/oauth/google/authorize?agent=a1&scope=team&returnTo=%2Fagents%2Fa1%2Fedit");
+    const state = new URL(authorization.headers.get("location")!).searchParams.get("state");
+    const callback = await app.request(`/oauth/google/callback?code=expired&state=${state}`);
+    expect(callback.status).toBe(302);
+    const location = new URL(callback.headers.get("location")!, "https://yoplai.invalid");
+    expect(location.pathname).toBe("/agents/a1/edit");
+    expect(location.searchParams.get("oauth")).toBe("error");
+    expect(location.searchParams.get("oauth_scope")).toBe("team");
+    expect(location.searchParams.get("oauth_error")).toContain("The authorization code expired");
+    const replay = await app.request(`/oauth/google/callback?code=expired&state=${state}`);
+    expect(replay.status).toBe(400);
+    expect(replay.headers.get("location")).toBeNull();
+    expect(await replay.text()).toContain("Invalid or expired OAuth state");
+  });
+
+  it("rejects callbacks from another provider without consuming or revealing the return page", async () => {
+    const app = createOAuthRoutes(new OAuthService({ store, loadConfig: makeConfig }));
+    const authorization = await app.request("/oauth/google/authorize?agent=a1&scope=team&returnTo=%2Fconnections");
+    const state = new URL(authorization.headers.get("location")!).searchParams.get("state");
+    for (const result of ["code=wrong-provider", "error=access_denied"]) {
+      const callback = await app.request(`/oauth/zendesk/callback?${result}&state=${state}`);
+      expect(callback.status).toBe(400);
+      expect(callback.headers.get("location")).toBeNull();
+      expect(await callback.text()).toContain("OAuth provider mismatch for state");
+    }
+    const callback = await app.request(`/oauth/google/callback?error=access_denied&state=${state}`);
+    expect(callback.status).toBe(302);
+    expect(callback.headers.get("location")).toContain("/connections?oauth=error");
+  });
+
+  it("keeps the popup result when a provider denies a flow without a return page", async () => {
+    const app = createOAuthRoutes(new OAuthService({ store, loadConfig: makeConfig }));
+    const authorization = await app.request("/oauth/google/authorize?agent=a1&scope=team");
+    const state = new URL(authorization.headers.get("location")!).searchParams.get("state");
+    const callback = await app.request(`/oauth/google/callback?error=access_denied&state=${state}`);
+    expect(callback.status).toBe(400);
+    expect(callback.headers.get("location")).toBeNull();
+    expect(await callback.text()).toContain("You can close this window and return to Yoplai.");
+  });
+
   it("offers Just me and Whole team when a connect link has no scope", async () => {
     const app = createOAuthRoutes(new OAuthService({ store, loadConfig: makeConfig }), undefined, async () => "alice");
     const response = await app.request("/oauth/google/authorize?agent=a1");
     expect(response.status).toBe(200);
     expect(await response.text()).toContain("Just me");
+  });
+
+  it("keeps the return page through either scope choice", async () => {
+    const app = createOAuthRoutes(new OAuthService({ store, loadConfig: makeConfig }), undefined, async () => "alice");
+    const response = await app.request("/oauth/google/authorize?agent=a1&returnTo=%2Fconnections%3Fagent%3Da1%23google");
+    const document = new JSDOM(await response.text()).window.document;
+    for (const label of ["Just me", "Whole team"]) {
+      const link = Array.from(document.links).find((entry) => entry.textContent === label)!;
+      const authorization = await app.request(link.getAttribute("href")!.replace(/^\/api/, ""));
+      const state = new URL(authorization.headers.get("location")!).searchParams.get("state");
+      const callback = await app.request(`/oauth/google/callback?error=access_denied&state=${state}`);
+      expect(callback.status).toBe(302);
+      const location = new URL(callback.headers.get("location")!, "https://yoplai.invalid");
+      expect(location.pathname).toBe("/connections");
+      expect(location.searchParams.get("agent")).toBe("a1");
+      expect(location.searchParams.get("oauth_scope")).toBe(label === "Just me" ? "personal" : "team");
+      expect(location.hash).toBe("#google");
+    }
   });
 
   it("restricts team connections to callers allowed to configure the team", async () => {

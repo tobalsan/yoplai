@@ -37,15 +37,17 @@ export async function disconnectOAuth(
   );
 }
 
-/** Authorize URL for the host OAuth popup. `scopes` are the provider scopes to request. */
+/** Authorize URL for host OAuth. `scopes` are the provider scopes to request. */
 export function oauthAuthorizeUrl(
   agentId: string,
   provider: string,
   scope: OAuthScope,
-  scopes: string[]
+  scopes: string[],
+  returnTo?: string
 ): string {
   const query = new URLSearchParams({ agent: agentId });
   if (scopes.length) query.set("scopes", scopes.join(","));
   query.set("scope", scope);
+  if (returnTo) query.set("returnTo", returnTo);
   return `/api/oauth/${encodeURIComponent(provider)}/authorize?${query.toString()}`;
 }

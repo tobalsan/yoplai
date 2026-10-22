@@ -48,21 +48,21 @@ export async function fetchMcpServers(agentId: string): Promise<McpServerList> {
   return list;
 }
 
-export async function addMcpServer(agentId: string, url: string, credentialScope: McpScope): Promise<{ server: McpServer; authorizationUrl?: string }> {
-  const response = await fetch(endpoint(agentId), {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ url, credentialScope }),
-    signal: AbortSignal.timeout(45_000),
-  });
-  if (!response.ok) throw new Error((await response.text()) || "Failed to add MCP server.");
+/** Live status for one details page; leave the full agent-list cache intact. */
+export async function fetchMcpServer(agentId: string, name: string): Promise<McpServerList> {
+  const response = await fetch(`${endpoint(agentId)}&server=${encodeURIComponent(name)}`, { signal: AbortSignal.timeout(35_000) });
+  if (!response.ok) throw new Error("Failed to load MCP server.");
   return response.json();
 }
 
-/** True when the signed-in user already has a usable personal grant for this URL (shared from another agent). */
-export async function fetchMcpPersonalStatus(agentId: string, url: string): Promise<{ connected: boolean }> {
-  const response = await fetch(`/api/mcp/servers/personal-status?agent=${encodeURIComponent(agentId)}&url=${encodeURIComponent(url)}`, { signal: AbortSignal.timeout(10_000) });
-  if (!response.ok) throw new Error("Failed to check MCP connection.");
+export async function addMcpServer(agentId: string, url: string, credentialScope: McpScope, returnTo?: string): Promise<{ server: McpServer; authorizationUrl?: string }> {
+  const response = await fetch(endpoint(agentId), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ url, credentialScope, returnTo }),
+    signal: AbortSignal.timeout(45_000),
+  });
+  if (!response.ok) throw new Error((await response.text()) || "Failed to add MCP server.");
   return response.json();
 }
 

@@ -11,7 +11,8 @@ import {
 import { useSession } from "../auth/client";
 import { disconnectOAuth, fetchOAuthStatus, oauthAuthorizeUrl, type OAuthConnectionState, type OAuthStatus } from "../api/oauth";
 import { CredentialScopeTabs, preferredScope, STATUS_CONNECTED, STATUS_NOT_SET_UP, STATUS_RECONNECT, type CredentialScope, type ScopeStatus } from "./CredentialScopeTabs";
-import { navigateOAuthPopup, onOAuthReturn, openOAuthPopup, reserveOAuthPopup } from "../lib/oauth-popup";
+import { onOAuthReturn } from "../lib/oauth-popup";
+import { readOAuthResult } from "../lib/oauth-return";
 import { ReconnectWarning, ScopeUsageNote, TEAM_MANAGED_NOTE } from "./ScopedConnectionNotes";
 
 type ConnectionState = OAuthConnectionState;
@@ -46,11 +47,12 @@ export function OAuthConnectCard(props: {
   children?: JSX.Element;
 }) {
   const settings = children(() => props.children);
+  const oauthResult = readOAuthResult();
   const [statuses, setStatuses] = createSignal<Partial<Record<CredentialScope, OAuthStatus>>>({});
   const [loading, setLoading] = createSignal(false);
   const [error, setError] = createSignal<string>();
   const session = useSession();
-  const [ownScope, setOwnScope] = createSignal<CredentialScope>("personal");
+  const [ownScope, setOwnScope] = createSignal<CredentialScope>(oauthResult?.scope ?? "personal");
   const scope = () => props.scope ?? ownScope();
   const setScope = (next: CredentialScope) => {
     setOwnScope(next);
@@ -58,7 +60,8 @@ export function OAuthConnectCard(props: {
   };
   const scopesFor = (target: CredentialScope) => (target === "personal" ? props.personalScopes ?? props.scopes : props.scopes) ?? [];
   const [canConfigureTeam, setCanConfigureTeam] = createSignal(true);
-  let scopePicked = false;
+  let scopePicked = !!oauthResult;
+  if (oauthResult) props.onScopeChange?.(oauthResult.scope);
   let statusRequest = 0;
 
   const refreshStatus = async () => {
@@ -119,23 +122,16 @@ export function OAuthConnectCard(props: {
   const teamReadOnly = () => scope() === "team" && !canConfigureTeam();
 
   const authorizeUrl = (target: CredentialScope, scopes: string[]) =>
-    oauthAuthorizeUrl(props.agentId, props.provider, target, scopes);
+    oauthAuthorizeUrl(props.agentId, props.provider, target, scopes, window.location.pathname + window.location.search + window.location.hash);
 
   const connect = async () => {
     if (!props.agentId) return;
     const target = scope();
-    if (!props.hasUnsavedSettings?.()) {
-      openOAuthPopup(authorizeUrl(target, scopesFor(target)));
-      return;
-    }
-    // Reserve the popup in the click event; browsers block windows opened after fetch.
-    const popup = reserveOAuthPopup();
     try {
-      const url = authorizeUrl(target, (await props.saveSettings?.()) ?? scopesFor(target));
-      navigateOAuthPopup(popup, url);
+      const scopes = props.hasUnsavedSettings?.() ? await props.saveSettings?.() : undefined;
+      window.location.assign(authorizeUrl(target, scopes ?? scopesFor(target)));
       setError(undefined);
     } catch (cause) {
-      popup?.close();
       setError(cause instanceof Error ? cause.message : String(cause));
     }
   };
@@ -148,6 +144,11 @@ export function OAuthConnectCard(props: {
   return (
     <>
       <style>{OAUTH_CONNECT_CARD_STYLES}</style>
+      <Show when={oauthResult}>
+        {(result) => result().status === "connected"
+          ? <p role="status">Connected</p>
+          : <div class="oauth-error" role="alert">{result().error}</div>}
+      </Show>
       <Show when={error()}>
         {(message) => <div class="oauth-error">{message()}</div>}
       </Show>

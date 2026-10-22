@@ -17,7 +17,7 @@ const { saveMcpServerLabelMock, setSharedMcpServerMock, fetchMcpServersMock, fet
 vi.mock("../api/mcp-servers", () => ({
   cachedMcpServers: () => undefined,
   mcpDisplayName: (name: string, title?: string) => title || name.charAt(0).toUpperCase() + name.slice(1),
-  fetchMcpServers: fetchMcpServersMock,
+  fetchMcpServer: fetchMcpServersMock,
   fetchMcpServerConfig: fetchMcpServerConfigMock,
   saveMcpServerConfig: saveMcpServerConfigMock,
   removeMcpServer: removeMcpServerMock,
@@ -55,7 +55,7 @@ beforeEach(() => {
   container = document.createElement("div");
   document.body.appendChild(container);
 });
-afterEach(() => { dispose?.(); container.remove(); vi.restoreAllMocks(); });
+afterEach(() => { dispose?.(); container.remove(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
 describe("McpServerDetails", () => {
   it("connects, disconnects only the selected scope, and removes after confirmation", async () => {
@@ -64,7 +64,8 @@ describe("McpServerDetails", () => {
     ] });
     disconnectMcpServerMock.mockResolvedValue(undefined);
     removeMcpServerMock.mockResolvedValue(undefined);
-    const open = vi.spyOn(window, "open").mockReturnValue(null);
+    const assign = vi.fn();
+    vi.stubGlobal("location", { href: "http://localhost/agents/scribe/mcp-servers/docs", pathname: "/agents/scribe/mcp-servers/docs", search: "", hash: "", assign });
     await mount();
 
     button("Disconnect")!.click();
@@ -73,7 +74,7 @@ describe("McpServerDetails", () => {
     container.querySelector<HTMLButtonElement>('[data-scope="team"]')!.click();
     await tick();
     button("Connect")!.click();
-    expect(open).toHaveBeenCalledWith("/api/mcp/oauth/authorize?agent=scribe&server=docs&scope=team", "yoplai-oauth", expect.any(String));
+    expect(assign).toHaveBeenCalledWith("/api/mcp/oauth/authorize?agent=scribe&server=docs&scope=team&returnTo=%2Fagents%2Fscribe%2Fmcp-servers%2Fdocs");
     button("Remove server")!.click();
     await tick();
     expect(container.querySelector('[role="alert"]')?.textContent).toContain("deletes the extension from this agent for all users");

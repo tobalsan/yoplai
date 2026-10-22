@@ -32,9 +32,10 @@ import { ToastNotification, type ToastVariant } from "../components/ui/Toast";
 import { SchedulesPanel } from "./SchedulesPanel";
 import { AgentConnectionsPanel } from "../components/AgentConnectionsPanel";
 import { McpExtensionCard, MCP_EXTENSION_STYLES } from "../components/McpExtensionCard";
-import { addMcpServer, cachedMcpServers, fetchMcpPersonalStatus, mcpDisplayName, fetchMcpServers, type McpScope, type McpServer } from "../api/mcp-servers";
+import { addMcpServer, cachedMcpServers, mcpDisplayName, fetchMcpServers, type McpScope, type McpServer } from "../api/mcp-servers";
 import { hasStaffRole as hasAdminRole, isSuperadmin as isSuperadminRole } from "../lib/roles";
-import { onOAuthReturn, reserveOAuthPopup } from "../lib/oauth-popup";
+import { onOAuthReturn } from "../lib/oauth-popup";
+import { readOAuthResult } from "../lib/oauth-return";
 import { claimDashboard } from "../api/dashboards";
 import { DashboardListActions, DashboardListRow, ownershipLabel } from "../components/DashboardListRow";
 import { DashboardAccessDialog } from "../components/DashboardAccessDialog";
@@ -294,35 +295,14 @@ export function EditAgent() {
   const [mcpUrl, setMcpUrl] = createSignal("");
   const [mcpScope, setMcpScope] = createSignal<McpScope>("personal");
   const [mcpError, setMcpError] = createSignal<string>();
-  const [mcpAddedToast, setMcpAddedToast] = createSignal<{ message: string; variant: ToastVariant }>();
+  const oauthResult = readOAuthResult();
+  const [mcpAddedToast, setMcpAddedToast] = createSignal<{ message: string; variant: ToastVariant } | undefined>(oauthResult
+    ? { message: oauthResult.status === "connected" ? "Connected" : oauthResult.error ?? "Connection failed.", variant: oauthResult.status === "connected" ? "success" : "error" }
+    : undefined);
   const [mcpBusy, setMcpBusy] = createSignal(false);
   createEffect(() => {
     if (!session().isPending && !session().data?.user) setMcpScope("team");
   });
-  // Href of the typed URL when the user already has a usable personal grant for it, so adding it needs no OAuth popup.
-  const [connectedMcpHref, setConnectedMcpHref] = createSignal<string>();
-  createEffect(() => {
-    const targetId = dashboardAgentId();
-    const raw = mcpUrl().trim();
-    const scope = mcpScope();
-    setConnectedMcpHref(undefined);
-    let url: URL;
-    try {
-      url = new URL(raw);
-    } catch {
-      return;
-    }
-    if (!targetId || scope !== "personal" || (url.protocol !== "http:" && url.protocol !== "https:")) return;
-    let stale = false;
-    const timer = setTimeout(() => {
-      void fetchMcpPersonalStatus(targetId, url.href).then(
-        (status) => { if (!stale && status.connected) setConnectedMcpHref(url.href); },
-        () => {},
-      );
-    }, 300);
-    onCleanup(() => { stale = true; clearTimeout(timer); });
-  });
-
   createEffect(() => {
     onCleanup(onOAuthReturn(() => { void refetchMcpServers(); }, { extension: "mcp" }));
   });
@@ -344,24 +324,18 @@ export function EditAgent() {
       setMcpAddedToast({ message: DUPLICATE_MCP_MESSAGE, variant: "warning" });
       return;
     }
-    // Reserve the popup in the click event; browsers block windows opened after fetch.
-    // Skipped when a shared personal grant already covers this URL.
-    const alreadyConnected = mcpScope() === "personal" && connectedMcpHref() === url.href;
-    const popup = alreadyConnected ? null : reserveOAuthPopup();
     setMcpBusy(true);
     setMcpError(undefined);
     try {
-      const result = await addMcpServer(targetId, url.href, mcpScope());
+      const result = await addMcpServer(targetId, url.href, mcpScope(), window.location.pathname + window.location.search + window.location.hash);
       setAddOpen(false);
       setMcpUrl("");
       setMcpAddedToast({ message: `Added ${mcpDisplayName(result.server.name, result.server.title)}.`, variant: "success" });
       if (result.authorizationUrl) {
-        if (popup && !popup.closed) popup.location.replace(result.authorizationUrl);
-        else if (!popup) window.location.assign(result.authorizationUrl);
-      } else popup?.close();
+        window.location.assign(result.authorizationUrl);
+      }
       void refetchMcpServers();
     } catch (cause) {
-      popup?.close();
       const message = cause instanceof Error ? cause.message : "Failed to add MCP server.";
       if (message === DUPLICATE_MCP_MESSAGE) setMcpAddedToast({ message, variant: "warning" });
       else setMcpError(message);

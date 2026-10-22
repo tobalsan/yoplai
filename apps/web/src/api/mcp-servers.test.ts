@@ -1,7 +1,19 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { removeMcpServer } from "./mcp-servers";
+import { cachedMcpServers, fetchMcpServer, fetchMcpServers, removeMcpServer } from "./mcp-servers";
 
 afterEach(() => vi.unstubAllGlobals());
+
+it("fetches only the requested server without replacing the agent's cached list", async () => {
+  const all = { servers: [{ name: "webflow" }, { name: "docs" }], canConfigureTeam: true };
+  const one = { servers: [{ name: "webflow" }], canConfigureTeam: true };
+  const fetch = vi.fn().mockResolvedValueOnce(new Response(JSON.stringify(all))).mockResolvedValueOnce(new Response(JSON.stringify(one)));
+  vi.stubGlobal("fetch", fetch);
+  await fetchMcpServers("cache-isolation");
+
+  expect(await fetchMcpServer("cache-isolation", "webflow")).toEqual(one);
+  expect(fetch.mock.calls[1]?.[0]).toBe("/api/mcp/servers?agent=cache-isolation&server=webflow");
+  expect(cachedMcpServers("cache-isolation")?.servers.map((server) => server.name)).toEqual(["webflow", "docs"]);
+});
 
 describe("removeMcpServer", () => {
   it("explains that only admins can remove on 403", async () => {

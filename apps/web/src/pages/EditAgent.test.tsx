@@ -24,7 +24,6 @@ const {
   fetchAgentExtensionsMock,
   fetchMcpServersMock,
   addMcpServerMock,
-  fetchMcpPersonalStatusMock,
   removeMcpServerMock,
   disconnectMcpServerMock,
   patchAgentExtensionMock,
@@ -46,7 +45,6 @@ const {
   fetchAgentExtensionsMock: vi.fn(),
   fetchMcpServersMock: vi.fn(),
   addMcpServerMock: vi.fn(),
-  fetchMcpPersonalStatusMock: vi.fn(),
   removeMcpServerMock: vi.fn(),
   disconnectMcpServerMock: vi.fn(),
   patchAgentExtensionMock: vi.fn(),
@@ -80,7 +78,6 @@ vi.mock("../api/mcp-servers", () => ({
   mcpDisplayName: (name: string, title?: string) => title || name.charAt(0).toUpperCase() + name.slice(1),
   fetchMcpServers: fetchMcpServersMock,
   addMcpServer: addMcpServerMock,
-  fetchMcpPersonalStatus: fetchMcpPersonalStatusMock,
   removeMcpServer: removeMcpServerMock,
   disconnectMcpServer: disconnectMcpServerMock,
 }));
@@ -162,6 +159,7 @@ function setSession(role: string | null) {
 
 let container: HTMLElement;
 let dispose: () => void;
+let assign: ReturnType<typeof vi.fn>;
 
 function queryAllByText(text: string): Node[] {
   const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT);
@@ -174,6 +172,7 @@ function queryAllByText(text: string): Node[] {
 
 async function mountEdit(agentId: string) {
   useParamsMock.mockReturnValue({ agentId });
+  vi.stubGlobal("location", { href: `http://localhost/agents/${agentId}/edit`, pathname: `/agents/${agentId}/edit`, search: "", hash: "", assign });
   dispose = render(() => <EditAgent />, container);
   await new Promise((resolve) => setTimeout(resolve, 0));
   await new Promise((resolve) => setTimeout(resolve, 0));
@@ -186,6 +185,7 @@ function openTab(label: string) {
 }
 
 beforeEach(() => {
+  assign = vi.fn();
   setCapabilitiesForTests({ forkedAgents: true });
   fetchPoolMock.mockReset();
   fetchAgentsMock.mockReset().mockResolvedValue([]);
@@ -197,7 +197,6 @@ beforeEach(() => {
   fetchAgentExtensionsMock.mockReset().mockResolvedValue([]);
   fetchMcpServersMock.mockReset().mockResolvedValue({ servers: [], canConfigureTeam: true });
   addMcpServerMock.mockReset();
-  fetchMcpPersonalStatusMock.mockReset().mockResolvedValue({ connected: false });
   removeMcpServerMock.mockReset();
   disconnectMcpServerMock.mockReset();
   patchAgentExtensionMock.mockReset();
@@ -217,6 +216,7 @@ afterEach(() => {
   dispose?.();
   container.remove();
   resetCapabilitiesForTests();
+  vi.unstubAllGlobals();
 });
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
@@ -998,7 +998,7 @@ describe("EditAgent", () => {
     expect(container.querySelector('[data-tour-ext^="mcp:"] .edit-agent-ext-icon svg')).not.toBeNull();
   });
 
-  it("reserves an OAuth popup before the add request completes and keeps a canceled server disconnected", async () => {
+  it("redirects after the add request completes and keeps a canceled server disconnected", async () => {
     setCapabilitiesForTests({ forkedAgents: false });
     setSession("user");
     fetchAgentsMock.mockResolvedValue([agent({ id: "scribe" })]);
@@ -1014,22 +1014,21 @@ describe("EditAgent", () => {
     input.value = "https://docs.test/mcp";
     input.dispatchEvent(new Event("input", { bubbles: true }));
     container.querySelector<HTMLFormElement>(".mcp-ext-dialog form")!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
-    expect(open).toHaveBeenCalledTimes(1);
-    expect(addMcpServerMock).toHaveBeenCalledWith("scribe", "https://docs.test/mcp", "personal");
+    expect(open).not.toHaveBeenCalled();
+    expect(addMcpServerMock).toHaveBeenCalledWith("scribe", "https://docs.test/mcp", "personal", "/agents/scribe/edit");
 
     fetchMcpServersMock.mockResolvedValue({ canConfigureTeam: true, servers: [
       { name: "docs", type: "http", url: "https://docs.test/mcp", auth: "oauth", state: "disconnected", personalState: "disconnected", readOnly: false },
     ] });
     pending.resolve({ server: { name: "docs" }, authorizationUrl: "https://provider.test/authorize" });
     await new Promise((resolve) => setTimeout(resolve, 0));
-    expect(popup.location.replace).toHaveBeenCalledWith("https://provider.test/authorize");
-    popup.closed = true;
+    expect(assign).toHaveBeenCalledWith("https://provider.test/authorize");
     window.dispatchEvent(new Event("focus"));
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(container.querySelector('[aria-label="Set up docs"]')).not.toBeNull();
   });
 
-  describe("adding a custom extension when already connected", () => {
+  describe("adding a custom extension", () => {
     async function submitAdd(url: string, scope?: "team", arrange?: () => void) {
       setCapabilitiesForTests({ forkedAgents: false });
       setSession("user");
@@ -1044,24 +1043,14 @@ describe("EditAgent", () => {
       const input = container.querySelector<HTMLInputElement>('.mcp-ext-dialog input[type="url"]')!;
       input.value = url;
       input.dispatchEvent(new Event("input", { bubbles: true }));
-      await new Promise((resolve) => setTimeout(resolve, 450));
       container.querySelector<HTMLFormElement>(".mcp-ext-dialog form")!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
       await new Promise((resolve) => setTimeout(resolve, 0));
     }
 
-    it("does not open the OAuth popup when personal-status reports connected", async () => {
+    it("adds without a popup when no personal connection exists", async () => {
       const open = vi.spyOn(window, "open").mockReturnValue({ close: vi.fn() } as unknown as Window);
-      fetchMcpPersonalStatusMock.mockResolvedValue({ connected: true });
       await submitAdd("https://docs.test/mcp");
-      expect(fetchMcpPersonalStatusMock).toHaveBeenCalledWith("scribe", "https://docs.test/mcp");
       expect(open).not.toHaveBeenCalled();
-      expect(addMcpServerMock).toHaveBeenCalledWith("scribe", "https://docs.test/mcp", "personal");
-    });
-
-    it("opens the OAuth popup when personal-status reports not connected", async () => {
-      const open = vi.spyOn(window, "open").mockReturnValue({ close: vi.fn() } as unknown as Window);
-      await submitAdd("https://docs.test/mcp");
-      expect(open).toHaveBeenCalledTimes(1);
     });
 
     it("shows a success toast naming the added server", async () => {
@@ -1087,12 +1076,11 @@ describe("EditAgent", () => {
       expect(container.querySelector('[data-testid="toast-warning"]')?.textContent).toContain("This MCP server has already been added.");
     });
 
-    it("always opens the OAuth popup for team scope", async () => {
+    it("adds without a popup for team scope", async () => {
       const open = vi.spyOn(window, "open").mockReturnValue({ close: vi.fn() } as unknown as Window);
-      fetchMcpPersonalStatusMock.mockResolvedValue({ connected: true });
       await submitAdd("https://docs.test/mcp", "team");
-      expect(addMcpServerMock).toHaveBeenCalledWith("scribe", "https://docs.test/mcp", "team");
-      expect(open).toHaveBeenCalledTimes(1);
+      expect(addMcpServerMock).toHaveBeenCalledWith("scribe", "https://docs.test/mcp", "team", "/agents/scribe/edit");
+      expect(open).not.toHaveBeenCalled();
     });
   });
 
@@ -1124,7 +1112,7 @@ describe("EditAgent", () => {
     input.dispatchEvent(new Event("input", { bubbles: true }));
     container.querySelector<HTMLFormElement>(".mcp-ext-dialog form")!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
     await new Promise((resolve) => setTimeout(resolve, 0));
-    expect(addMcpServerMock).toHaveBeenCalledWith("scribe-fork", "https://docs.test/mcp", "personal");
+    expect(addMcpServerMock).toHaveBeenCalledWith("scribe-fork", "https://docs.test/mcp", "personal", "/agents/scribe/edit");
   });
 
   it("loads a member's extension catalog from the runnable fork and links to it", async () => {

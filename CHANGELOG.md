@@ -11,6 +11,7 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Fixed
 
+- Connect OAuth extensions from settings in the same tab, return with an immediate result, and load only the selected MCP server on its details page; chat connect prompts keep popups.
 - Refresh Google profile photos on every sign-in without replacing local names or emails, and show photos across user lists and sharing with initials for missing or broken images.
 - Cap scheduler waits for distant jobs, log successful primary model attempts at info, and warn only once per unknown agent-extension pair per process.
 - Pause sidebar chat and project refreshes while the tab is hidden, and refresh both lists when it becomes visible or focused again.

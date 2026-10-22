@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { navigateOAuthPopup, onOAuthReturn, openOAuthPopup, reserveOAuthPopup } from "./oauth-popup";
+import { onOAuthReturn, openOAuthPopup } from "./oauth-popup";
 
 afterEach(() => vi.restoreAllMocks());
 
@@ -10,22 +10,10 @@ describe("OAuth popup", () => {
   it("opens the named popup with fixed geometry", () => {
     const open = vi.spyOn(window, "open").mockReturnValue(null);
     openOAuthPopup("/api/x");
-    reserveOAuthPopup();
-    expect(open).toHaveBeenNthCalledWith(1, "/api/x", "yoplai-oauth", "width=520,height=640");
-    expect(open).toHaveBeenNthCalledWith(2, "", "yoplai-oauth", "width=520,height=640");
+    expect(open).toHaveBeenCalledWith( "/api/x", "yoplai-oauth", "width=520,height=640");
   });
 
-  it("navigates a live reserved popup, else the current window", () => {
-    const replace = vi.fn();
-    navigateOAuthPopup({ closed: false, location: { replace } } as unknown as Window, "/go");
-    expect(replace).toHaveBeenCalledWith("/go");
-    const assign = vi.fn();
-    vi.stubGlobal("location", { assign });
-    navigateOAuthPopup({ closed: true, location: { replace } } as unknown as Window, "/a");
-    navigateOAuthPopup(null, "/b");
-    expect(assign.mock.calls).toEqual([["/a"], ["/b"]]);
-    vi.unstubAllGlobals();
-  });
+
 });
 
 describe("onOAuthReturn", () => {

@@ -35,10 +35,22 @@ interface PendingAuth {
   scopes: string[];
   scope: CredentialScope;
   createdAt: number;
+  returnTo?: string;
   onComplete?: () => Promise<void>;
 }
 
 const PENDING_TTL_MS = 10 * 60 * 1000;
+
+function normalizeReturnTo(value: string | undefined): string | undefined {
+  if (!value || /[\p{Cc}\\]/u.test(value)) return undefined;
+  try {
+    const url = new URL(value, "https://yoplai.invalid");
+    if (url.origin !== "https://yoplai.invalid" || url.pathname.startsWith("//")) return undefined;
+    return `${url.pathname}${url.search}${url.hash}`;
+  } catch {
+    return undefined;
+  }
+}
 
 /**
  * Resolve `$env:` refs in BYO provider credentials. The runtime `loadConfig()`
@@ -81,6 +93,17 @@ export interface OAuthServiceDeps {
 export interface StartAuthResult {
   authorizeUrl: string;
   state: string;
+}
+
+export class OAuthCallbackError extends Error {
+  readonly returnTo?: string;
+  readonly scope: "personal" | "team";
+
+  constructor(error: unknown, pending: PendingAuth) {
+    super(error instanceof Error ? error.message : String(error));
+    this.returnTo = pending.returnTo;
+    this.scope = pending.scope.type;
+  }
 }
 
 /**
@@ -148,6 +171,7 @@ export class OAuthService {
     scopes?: string[];
     scope?: "team" | "personal";
     userId?: string;
+    returnTo?: string;
     onComplete?: () => Promise<void>;
   }): Promise<StartAuthResult> {
     let scope: CredentialScope = { type: "team" };
@@ -189,6 +213,7 @@ export class OAuthService {
       scopes,
       scope,
       createdAt: Date.now(),
+      returnTo: normalizeReturnTo(input.returnTo),
       onComplete: input.onComplete,
     });
 
@@ -206,9 +231,10 @@ export class OAuthService {
   /** Handle the provider callback: exchange the code and persist the connection. */
   async handleCallback(input: {
     provider: string;
-    code: string;
+    code?: string;
+    error?: string;
     state: string;
-  }): Promise<OAuthConnection> {
+  }): Promise<OAuthConnection & { returnTo?: string }> {
     this.#cleanupPending();
     const pending = this.#pending.get(input.state);
     if (!pending) {
@@ -219,64 +245,70 @@ export class OAuthService {
     }
     this.#pending.delete(input.state);
 
-    const config = this.#loadConfig();
-    const provider = this.#materializeProvider(
-      config,
-      this.#resolveProvider(input.provider)
-    );
-    const credentials = await this.#credentialSource(config).getClientCredentials(
-      provider.id
-    );
-    if (!credentials) {
-      throw new Error(`No OAuth client configured for provider "${provider.id}"`);
-    }
-
-    const tokens = await exchangeCodeForTokens(
-      {
-        provider,
-        credentials,
-        code: input.code,
-        redirectUri: pending.redirectUri,
-        codeVerifier: pending.codeVerifier,
-      },
-      this.#fetch
-    );
-
-    const account =
-      tokens.account ??
-      (await fetchAccountLabel(provider, tokens.accessToken, this.#fetch));
-
-    const now = Date.now();
-    const connection: OAuthConnection = {
-      agentId: pending.agentId,
-      provider: provider.id,
-      scope: pending.scope.type,
-      userId: pending.scope.type === "personal" ? pending.scope.userId : undefined,
-      accessToken: tokens.accessToken,
-      refreshToken: tokens.refreshToken,
-      expiresAt: tokens.expiresAt,
-      scopes: tokens.scopes.length > 0 ? tokens.scopes : pending.scopes,
-      account,
-      tokenType: tokens.tokenType,
-      connectedAt: now,
-      updatedAt: now,
-    };
-    const saved = this.#store.save(connection);
-    if (pending.onComplete) {
-      let timer: ReturnType<typeof setTimeout> | undefined;
-      try {
-        await Promise.race([
-          pending.onComplete(),
-          new Promise<void>((resolve) => { timer = setTimeout(resolve, 5000); }),
-        ]);
-      } catch {
-        // A failed notification must not undo a successfully saved connection.
-        console.warn("OAuth connected, but completion notification failed");
-      } finally {
-        if (timer) clearTimeout(timer);
+    try {
+      if (input.error) throw new Error(`Google returned an error: ${input.error}`);
+      if (!input.code) throw new Error("Missing code or state.");
+      const config = this.#loadConfig();
+      const provider = this.#materializeProvider(
+        config,
+        this.#resolveProvider(input.provider)
+      );
+      const credentials = await this.#credentialSource(config).getClientCredentials(
+        provider.id
+      );
+      if (!credentials) {
+        throw new Error(`No OAuth client configured for provider "${provider.id}"`);
       }
+
+      const tokens = await exchangeCodeForTokens(
+        {
+          provider,
+          credentials,
+          code: input.code,
+          redirectUri: pending.redirectUri,
+          codeVerifier: pending.codeVerifier,
+        },
+        this.#fetch
+      );
+
+      const account =
+        tokens.account ??
+        (await fetchAccountLabel(provider, tokens.accessToken, this.#fetch));
+
+      const now = Date.now();
+      const connection: OAuthConnection = {
+        agentId: pending.agentId,
+        provider: provider.id,
+        scope: pending.scope.type,
+        userId: pending.scope.type === "personal" ? pending.scope.userId : undefined,
+        accessToken: tokens.accessToken,
+        refreshToken: tokens.refreshToken,
+        expiresAt: tokens.expiresAt,
+        scopes: tokens.scopes.length > 0 ? tokens.scopes : pending.scopes,
+        account,
+        tokenType: tokens.tokenType,
+        connectedAt: now,
+        updatedAt: now,
+      };
+      const saved = this.#store.save(connection);
+      if (pending.onComplete) {
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        try {
+          await Promise.race([
+            pending.onComplete(),
+            new Promise<void>((resolve) => { timer = setTimeout(resolve, 5000); }),
+          ]);
+        } catch {
+          // A failed notification must not undo a successfully saved connection.
+          console.warn("OAuth connected, but completion notification failed");
+        } finally {
+          if (timer) clearTimeout(timer);
+        }
+      }
+      return { ...saved, returnTo: pending.returnTo };
+    } catch (error) {
+      throw new OAuthCallbackError(error, pending);
     }
-    return saved;
   }
 
   /** Current connection status for a (agent, provider) pair. */

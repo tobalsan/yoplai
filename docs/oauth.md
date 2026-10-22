@@ -73,6 +73,10 @@ The connection card shows and disconnects the selected scope. Google extensions 
 
 `GET /api/oauth/:provider/authorize?agent=<id>` asks for the scope; passing `scope=personal` or `scope=team` starts authorization directly. Personal ownership comes from the authenticated session, never a caller-supplied user ID. Status and disconnect accept the same scope; status without it reports the requester's effective connection. Team authorize/disconnect return `403 team_requires_admin` for non-admins in multi-user mode, and status includes `canConfigureTeam`.
 
+Settings connect actions use a full-page redirect and pass `returnTo` with the current page path (including query and hash). Both provider OAuth and MCP OAuth accept only same-site paths without control characters or backslashes. The pending flow retains this path and its scope; callbacks redirect to it with `oauth=connected` or `oauth=error`, `oauth_scope=personal|team`, and `oauth_error` on failure. Pages show the result immediately and remove the flags with a history replace. Without a valid return path or pending flow, callbacks keep the popup result page used by chat and Slack links. The standalone Connections page retains its selected agent in the query.
+
+MCP details fetch `GET /api/mcp/servers?agent=<id>&server=<name>` so unrelated servers are not contacted. The filtered response has the usual list shape and does not replace the agent's full-list browser cache. Adding a server sends `returnTo` in the JSON body and returns to Edit Agent after authorization.
+
 Tokens are stored under `$YOPLAI_HOME/oauth/`. Persistence requires `oauth.encryptionKey` and fails closed rather than writing plaintext:
 
 ```json

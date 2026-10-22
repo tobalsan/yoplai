@@ -1,6 +1,6 @@
 import { Hono, type Context } from "hono";
 import { getOAuthProvider, type CredentialScope } from "@yoplai/shared";
-import { getOAuthService, type OAuthService } from "./service.js";
+import { getOAuthService, OAuthCallbackError, type OAuthService } from "./service.js";
 import { getAuditActor, recordSettingsChange } from "../audit/store.js";
 
 /**
@@ -74,7 +74,7 @@ export function createOAuthRoutes(
     if (denied) return denied;
     const scope = c.req.query("scope");
     if (scope === undefined) {
-      return c.html(renderScopePage(provider, agentId, c.req.query("scopes"), !!(await getRequesterUserId(c)), await canConfigureTeam(c, agentId)));
+      return c.html(renderScopePage(provider, agentId, c.req.query("scopes"), !!(await getRequesterUserId(c)), await canConfigureTeam(c, agentId), c.req.query("returnTo")));
     }
     const resolved = await resolveRequestedScope(c, scope, agentId, {
       teamRequiresAdmin: true,
@@ -95,6 +95,7 @@ export function createOAuthRoutes(
         agentId,
         provider,
         scopes,
+        returnTo: c.req.query("returnTo"),
         scope: scopeType,
         userId: scopeType === "personal" ? userId : undefined,
         onComplete: async () => {
@@ -119,21 +120,25 @@ export function createOAuthRoutes(
     const code = c.req.query("code");
     const state = c.req.query("state");
     const providerError = c.req.query("error");
-    if (providerError) {
+    if (providerError && !state) {
       return c.html(
         renderResultPage(false, `Google returned an error: ${providerError}`),
         400
       );
     }
-    if (!code || !state) {
+    if ((!code && !providerError) || !state) {
       return c.html(renderResultPage(false, "Missing code or state."), 400);
     }
     try {
       const connection = await service.handleCallback({
         provider,
         code,
+        error: providerError,
         state,
       });
+      if (connection.returnTo) {
+        return c.redirect(oauthReturnUrl(connection.returnTo, connection.scope ?? "team"), 302);
+      }
       return c.html(
         renderResultPage(
           true,
@@ -141,6 +146,9 @@ export function createOAuthRoutes(
         )
       );
     } catch (error) {
+      if (error instanceof OAuthCallbackError && error.returnTo) {
+        return c.redirect(oauthReturnUrl(error.returnTo, error.scope, error.message), 302);
+      }
       return c.html(
         renderResultPage(
           false,
@@ -219,9 +227,18 @@ export function createOAuthRoutes(
   return router;
 }
 
-function renderScopePage(provider: string, agentId: string, scopes: string | undefined, personalAvailable: boolean, teamAvailable: boolean): string {
+function oauthReturnUrl(returnTo: string, scope: "personal" | "team", error?: string): string {
+  const url = new URL(returnTo, "https://yoplai.invalid");
+  url.searchParams.set("oauth", error === undefined ? "connected" : "error");
+  url.searchParams.set("oauth_scope", scope);
+  if (error !== undefined) url.searchParams.set("oauth_error", error);
+  return `${url.pathname}${url.search}${url.hash}`;
+}
+
+function renderScopePage(provider: string, agentId: string, scopes: string | undefined, personalAvailable: boolean, teamAvailable: boolean, returnTo?: string): string {
   const query = new URLSearchParams({ agent: agentId });
   if (scopes) query.set("scopes", scopes);
+  if (returnTo) query.set("returnTo", returnTo);
   const base = `/api/oauth/${encodeURIComponent(provider)}/authorize?${query.toString()}`;
   return `<!doctype html><html><head><meta charset="utf-8"><title>Connect ${escapeHtml(provider)}</title></head>
 <body><h1>Who is this connection for?</h1>

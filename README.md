@@ -169,6 +169,8 @@ In multi-user mode, add your own extension API token (and, if needed, your own e
 
 Use an agent's **My connections** tab to inspect and disconnect your personal connections and see team availability. **Account settings** lets you remove Slack pairings; the next Slack request uses the unpaired flow. Disconnecting affects only your credentials and the next request uses team credentials when available.
 
+Connecting an OAuth extension from settings takes you to the provider in the same tab and returns to the page with a connection result. Pending extension settings are saved before leaving. Chat's **Connect tools** prompt keeps its popup so the conversation stays open.
+
 ## Troubleshooting
 
 ### `yoplai.json` not found

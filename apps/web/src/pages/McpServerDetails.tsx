@@ -4,7 +4,7 @@ import { useSession } from "../auth/client";
 import {
   disconnectMcpServer,
   fetchMcpServerConfig,
-  fetchMcpServers,
+  fetchMcpServer,
   cachedMcpServers,
   mcpDisplayName,
   removeMcpServer,
@@ -18,7 +18,8 @@ import { CredentialScopeTabs, preferredScope, STATUS_CONNECTED, STATUS_NOT_SET_U
 import { McpIcon } from "../components/McpExtensionCard";
 import { OAUTH_CONNECT_CARD_STYLES } from "../components/OAuthConnectCard";
 import { EXTENSION_DETAILS_STYLES } from "./ExtensionDetails";
-import { onOAuthReturn, openOAuthPopup } from "../lib/oauth-popup";
+import { onOAuthReturn } from "../lib/oauth-popup";
+import { readOAuthResult } from "../lib/oauth-return";
 import { ReconnectWarning, ScopeUsageNote, TEAM_MANAGED_NOTE } from "../components/ScopedConnectionNotes";
 
 function errorMessage(cause: unknown, fallback: string): string {
@@ -35,8 +36,12 @@ export function McpServerDetails() {
   const params = useParams<{ agentId: string; serverName: string }>();
   const navigate = useNavigate();
   const session = useSession();
-  const [servers, { refetch }] = createResource(() => params.agentId, fetchMcpServers);
-  // `.latest` keeps background refetches (focus, OAuth popup) from suspending the page.
+  const oauthResult = readOAuthResult();
+  const [servers, { refetch }] = createResource(
+    () => ({ agent: params.agentId, name: params.serverName }),
+    (key) => fetchMcpServer(key.agent, key.name)
+  );
+  // `.latest` keeps background refetches (e.g. on window focus) from suspending the page.
   // Read only settled values (via `.state`, which never suspends) and fall back to the cached list,
   // so slow live status checks never suspend the app into a blank screen.
   const status = () => (servers.error ? undefined : (["ready", "refreshing"].includes(servers.state) ? servers.latest : undefined) ?? cachedMcpServers(params.agentId));
@@ -45,8 +50,8 @@ export function McpServerDetails() {
   const canEditLabels = () => status()?.canEditLabels === true;
   const [error, setError] = createSignal<string>();
   const [busy, setBusy] = createSignal(false);
-  const [scope, setScope] = createSignal<McpScope>("personal");
-  let scopePicked = false;
+  const [scope, setScope] = createSignal<McpScope>(oauthResult?.scope ?? "personal");
+  let scopePicked = !!oauthResult;
 
   createEffect(() => {
     onCleanup(onOAuthReturn(() => { void refetch(); }, { extension: "mcp" }));
@@ -54,7 +59,7 @@ export function McpServerDetails() {
 
   const tabStatus = (target: McpScope): ScopeStatus | undefined => {
     const state = target === "personal" ? server()?.personalState : server()?.teamState;
-    if (!server()) return undefined;
+    if (!server()) return oauthResult?.scope === target && oauthResult.status === "connected" ? STATUS_CONNECTED : undefined;
     if (state === "needs_reconnect") return STATUS_RECONNECT;
     return state === "connected" ? STATUS_CONNECTED : STATUS_NOT_SET_UP;
   };
@@ -69,8 +74,9 @@ export function McpServerDetails() {
   const teamReadOnly = () => scope() === "team" && !canConfigureTeam();
 
   const connect = () => {
-    openOAuthPopup(
-      `/api/mcp/oauth/authorize?agent=${encodeURIComponent(params.agentId)}&server=${encodeURIComponent(params.serverName)}&scope=${scope()}`
+    const returnTo = window.location.pathname + window.location.search + window.location.hash;
+    window.location.assign(
+      `/api/mcp/oauth/authorize?agent=${encodeURIComponent(params.agentId)}&server=${encodeURIComponent(params.serverName)}&scope=${scope()}&returnTo=${encodeURIComponent(returnTo)}`
     );
   };
 
@@ -113,6 +119,11 @@ export function McpServerDetails() {
     <>
       <div class="ext-details mcp-details">
         <A href={`/agents/${encodeURIComponent(params.agentId)}/edit`} class="ext-details-back" data-tour="back-to-agent">← Back to agent</A>
+        <Show when={oauthResult}>
+          {(result) => result().status === "connected"
+            ? <p role="status">Connected</p>
+            : <div class="oauth-error" role="alert">{result().error}</div>}
+        </Show>
         <Show when={servers.loading && !server()}><div class="ext-details-status">Loading MCP server…</div></Show>
         <Show when={servers.error}><div class="ext-details-status ext-details-error">Failed to load MCP server.</div></Show>
         <Show when={!servers.loading && !servers.error && !server()}>
@@ -150,62 +161,68 @@ export function McpServerDetails() {
                 <p class="oauth-shared-note">Shared by your admins. Enable it to use its tools in this agent.</p>
               </Show>
               <Show when={!current().shared || current().enabled}>
-              <Show when={current().auth === "oauth"} fallback={current().shared
-                ? <p class="oauth-shared-note">This shared server has no sign-in or configuration here; a superadmin manages it.</p>
-                : <McpConfigEditor agentId={params.agentId} name={params.serverName} onSaved={() => void refetch()} />}>
-                <CredentialScopeTabs
-                  value={scope()}
-                  personalDisabled={!session().data?.user}
-                  teamLocked={!canConfigureTeam()}
-                  status={{ personal: tabStatus("personal"), team: tabStatus("team") }}
-                  onChange={(next) => { scopePicked = true; setScope(next); }}
-                >
-                  <div class="oauth-card-head">
-                    <span class="oauth-provider-name">{mcpDisplayName(current().name, current().title)}</span>
-                    <Show when={!teamReadOnly()}>
-                      <Switch fallback={<button type="button" class="oauth-btn oauth-btn-primary" disabled={busy()} onClick={connect}>Connect {mcpDisplayName(current().name, current().title)}</button>}>
-                        <Match when={scopedState() === "connected"}>
-                          <div class="oauth-actions">
-                            <button type="button" class="oauth-btn oauth-btn-danger" disabled={busy()} onClick={() => void disconnect()}>Disconnect</button>
-                          </div>
-                        </Match>
-                        <Match when={scopedState() === "needs_reconnect"}>
-                          <div class="oauth-actions">
-                            <button type="button" class="oauth-btn oauth-btn-primary" disabled={busy()} onClick={connect}>Reconnect</button>
-                            <button type="button" class="oauth-btn oauth-btn-danger" disabled={busy()} onClick={() => void disconnect()}>Disconnect</button>
-                          </div>
-                        </Match>
-                      </Switch>
-                    </Show>
-                  </div>
-                  <Show when={teamReadOnly()}>
-                    <p class="oauth-shared-note">{TEAM_MANAGED_NOTE}</p>
-                  </Show>
-                  <Show when={scopedState() === "needs_reconnect" && !teamReadOnly()}>
-                    <ReconnectWarning />
-                  </Show>
-                  <Show when={scopedState() === "connected"}>
-                    <Show when={scope() === "personal" ? server()?.personalAccount : server()?.teamAccount}>
-                      {(account) => (
-                        <div class="oauth-account">
-                          <span class="oauth-account-label">Connected as</span>
-                          <span class="oauth-account-value">{account()}</span>
-                        </div>
-                      )}
-                    </Show>
-                    <ScopeUsageNote scope={scope()} />
-                  </Show>
-                </CredentialScopeTabs>
+              <Show when={current().auth !== "oauth"}>
+                {current().shared
+                  ? <p class="oauth-shared-note">This shared server has no sign-in or configuration here; a superadmin manages it.</p>
+                  : <McpConfigEditor agentId={params.agentId} name={params.serverName} onSaved={() => void refetch()} />}
               </Show>
               </Show>
-              <Show when={canEditLabels() && !current().shared}>
-                <details class="mcp-edit-details">
-                  <summary>Edit MCP details</summary>
-                  <McpLabelForm agentId={params.agentId} name={params.serverName} label={current().manualLabel} onSaved={() => void refetch()} />
-                </details>
-              </Show>
+
             </>
           )}
+        </Show>
+        <Show when={(server()?.auth === "oauth" || oauthResult) && (!server()?.shared || server()?.enabled)}>
+          <CredentialScopeTabs
+            value={scope()}
+            personalDisabled={!session().data?.user}
+            teamLocked={!canConfigureTeam()}
+            status={{ personal: tabStatus("personal"), team: tabStatus("team") }}
+            onChange={(next) => { scopePicked = true; setScope(next); }}
+          >
+            <Show when={server()}>
+            <div class="oauth-card-head">
+              <span class="oauth-provider-name">{mcpDisplayName(params.serverName, server()?.title)}</span>
+              <Show when={!teamReadOnly()}>
+                <Switch fallback={<button type="button" class="oauth-btn oauth-btn-primary" disabled={busy()} onClick={connect}>Connect {mcpDisplayName(params.serverName, server()?.title)}</button>}>
+                  <Match when={scopedState() === "connected"}>
+                    <div class="oauth-actions">
+                      <button type="button" class="oauth-btn oauth-btn-danger" disabled={busy()} onClick={() => void disconnect()}>Disconnect</button>
+                    </div>
+                  </Match>
+                  <Match when={scopedState() === "needs_reconnect"}>
+                    <div class="oauth-actions">
+                      <button type="button" class="oauth-btn oauth-btn-primary" disabled={busy()} onClick={connect}>Reconnect</button>
+                      <button type="button" class="oauth-btn oauth-btn-danger" disabled={busy()} onClick={() => void disconnect()}>Disconnect</button>
+                    </div>
+                  </Match>
+                </Switch>
+              </Show>
+            </div>
+            </Show>
+            <Show when={teamReadOnly()}>
+              <p class="oauth-shared-note">{TEAM_MANAGED_NOTE}</p>
+            </Show>
+            <Show when={scopedState() === "needs_reconnect" && !teamReadOnly()}>
+              <ReconnectWarning />
+            </Show>
+            <Show when={scopedState() === "connected"}>
+              <Show when={scope() === "personal" ? server()?.personalAccount : server()?.teamAccount}>
+                {(account) => (
+                  <div class="oauth-account">
+                    <span class="oauth-account-label">Connected as</span>
+                    <span class="oauth-account-value">{account()}</span>
+                  </div>
+                )}
+              </Show>
+              <ScopeUsageNote scope={scope()} />
+            </Show>
+          </CredentialScopeTabs>
+        </Show>
+        <Show when={server() && canEditLabels() && !server()?.shared}>
+          <details class="mcp-edit-details">
+            <summary>Edit MCP details</summary>
+            <McpLabelForm agentId={params.agentId} name={params.serverName} label={server()?.manualLabel} onSaved={() => void refetch()} />
+          </details>
         </Show>
       </div>
       <style>{OAUTH_CONNECT_CARD_STYLES + EXTENSION_DETAILS_STYLES + `

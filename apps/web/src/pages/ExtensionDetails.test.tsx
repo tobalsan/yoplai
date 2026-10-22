@@ -79,15 +79,18 @@ function setSession(role: string | null) {
 
 let container: HTMLElement;
 let dispose: () => void;
+let assign: ReturnType<typeof vi.fn>;
 
 async function mount(agentId: string, extensionId: string) {
   useParamsMock.mockReturnValue({ agentId, extensionId });
+  vi.stubGlobal("location", { href: `http://localhost/agents/${agentId}/extensions/${extensionId}`, pathname: `/agents/${agentId}/extensions/${extensionId}`, search: "", hash: "", assign });
   dispose = render(() => <ExtensionDetails />, container);
   await new Promise((resolve) => setTimeout(resolve, 0));
   await new Promise((resolve) => setTimeout(resolve, 0));
 }
 
 beforeEach(() => {
+  assign = vi.fn();
   fetchAgentExtensionsMock.mockReset();
   patchAgentExtensionMock.mockReset();
   useSessionMock.mockReset();
@@ -100,6 +103,8 @@ beforeEach(() => {
 afterEach(() => {
   dispose?.();
   container.remove();
+  vi.restoreAllMocks();
+  vi.unstubAllGlobals();
 });
 
 describe("ExtensionDetails", () => {
@@ -277,10 +282,8 @@ describe("ExtensionDetails", () => {
       (button) => button.textContent?.includes("Grant Gmail access")
     );
     grant?.click();
-    expect(openMock).toHaveBeenCalledWith(
-      "/api/oauth/google/authorize?agent=scribe&scopes=gmail.modify%2Cuserinfo.email&scope=personal",
-      "yoplai-oauth",
-      "width=520,height=640"
+    expect(assign).toHaveBeenCalledWith(
+      "/api/oauth/google/authorize?agent=scribe&scopes=gmail.modify%2Cuserinfo.email&scope=personal&returnTo=%2Fagents%2Fscribe%2Fextensions%2Fgmail"
     );
     openMock.mockRestore();
     vi.unstubAllGlobals();
@@ -342,7 +345,6 @@ describe("ExtensionDetails", () => {
     const checkbox = () => container.querySelector<HTMLInputElement>("#ext-field-allowWrite")!;
     const tab = (scope: string) => container.querySelector<HTMLButtonElement>(`.cred-tab[data-scope="${scope}"]`)!;
     const connectButton = () => container.querySelector<HTMLButtonElement>(".oauth-btn-primary")!;
-    const popup = () => ({ closed: false, close: vi.fn(), location: { replace: vi.fn() } });
     beforeEach(() => {
       vi.stubGlobal("fetch", vi.fn(async () => ({ ok: true, json: async () => ({ connected: false, provider: "google" }) })));
     });
@@ -389,7 +391,6 @@ describe("ExtensionDetails", () => {
       setSession("user");
       fetchAgentExtensionsMock.mockResolvedValue([driveEntry()]);
       patchAgentExtensionMock.mockResolvedValue([writeEntry("personal", false)]);
-      const open = vi.spyOn(window, "open").mockReturnValue(null);
       await mount("scribe", "drive");
       await flush();
       expect(checkbox().disabled).toBe(false);
@@ -398,7 +399,7 @@ describe("ExtensionDetails", () => {
       expect(patchAgentExtensionMock).toHaveBeenCalledWith("scribe", "drive", expect.objectContaining({ credentialScope: "personal", config: { allowWrite: true } }));
       expect(container.textContent).toContain("Saved ✓");
       connectButton().click();
-      const url = String(open.mock.calls.at(-1)?.[0]);
+      const url = String(assign.mock.calls.at(-1)?.[0]);
       expect(url).toContain("drive.file");
       expect(url).toContain("spreadsheets");
       expect(url).toContain("scope=personal");
@@ -407,7 +408,6 @@ describe("ExtensionDetails", () => {
     it("keeps Whole team read-only for a non-admin and uses team scopes there", async () => {
       setSession("user");
       fetchAgentExtensionsMock.mockResolvedValue([driveEntry({ configValues: { allowWrite: true }, oauth: { provider: "google", scopes: ["drive.readonly", "drive.file"], personalScopes: ["drive.readonly"] } })]);
-      const open = vi.spyOn(window, "open").mockReturnValue(null);
       await mount("scribe", "drive");
       await flush();
       tab("team").click();
@@ -421,23 +421,21 @@ describe("ExtensionDetails", () => {
       expect(checkbox().checked).toBe(false);
       expect(checkbox().disabled).toBe(false);
       connectButton().click();
-      expect(String(open.mock.calls.at(-1)?.[0])).not.toContain("drive.file");
+      expect(String(assign.mock.calls.at(-1)?.[0])).not.toContain("drive.file");
     });
 
-    it("saves the ticked Just me setting when Connect is clicked, then opens the reserved popup with the new scopes", async () => {
+    it("saves the ticked Just me setting when Connect is clicked, then redirects with the new scopes", async () => {
       setSession("user");
       fetchAgentExtensionsMock.mockResolvedValue([driveEntry()]);
       patchAgentExtensionMock.mockResolvedValue([writeEntry("personal", false)]);
-      const reserved = popup();
-      const open = vi.spyOn(window, "open").mockReturnValue(reserved as unknown as Window);
       await mount("scribe", "drive");
       await flush();
       checkbox().click();
       connectButton().click();
-      expect(open).toHaveBeenCalledWith("", "yoplai-oauth", "width=520,height=640");
+      expect(assign).not.toHaveBeenCalled();
       await flush();
       expect(patchAgentExtensionMock).toHaveBeenCalledWith("scribe", "drive", expect.objectContaining({ credentialScope: "personal", config: { allowWrite: true } }));
-      const url = String(reserved.location.replace.mock.calls[0]?.[0]);
+      const url = String(assign.mock.calls[0]?.[0]);
       expect(url).toContain("drive.file");
       expect(url).toContain("spreadsheets");
       expect(url).toContain("scope=personal");
@@ -447,8 +445,6 @@ describe("ExtensionDetails", () => {
       setSession("admin");
       fetchAgentExtensionsMock.mockResolvedValue([driveEntry({ canConfigureTeam: true })]);
       patchAgentExtensionMock.mockResolvedValue([writeEntry("team", true)]);
-      const reserved = popup();
-      vi.spyOn(window, "open").mockReturnValue(reserved as unknown as Window);
       await mount("scribe", "drive");
       await flush();
       tab("team").click();
@@ -457,24 +453,21 @@ describe("ExtensionDetails", () => {
       connectButton().click();
       await flush();
       expect(patchAgentExtensionMock).toHaveBeenCalledWith("scribe", "drive", expect.objectContaining({ credentialScope: "team", config: { allowWrite: true } }));
-      const url = String(reserved.location.replace.mock.calls[0]?.[0]);
+      const url = String(assign.mock.calls[0]?.[0]);
       expect(url).toContain("drive.file");
       expect(url).toContain("scope=team");
     });
 
-    it("closes the reserved popup and shows the error when saving on Connect fails", async () => {
+    it("stays on the page and shows the error when saving on Connect fails", async () => {
       setSession("user");
       fetchAgentExtensionsMock.mockResolvedValue([driveEntry()]);
       patchAgentExtensionMock.mockRejectedValue(new Error("Failed to update extension"));
-      const reserved = popup();
-      vi.spyOn(window, "open").mockReturnValue(reserved as unknown as Window);
       await mount("scribe", "drive");
       await flush();
       checkbox().click();
       connectButton().click();
       await flush();
-      expect(reserved.close).toHaveBeenCalled();
-      expect(reserved.location.replace).not.toHaveBeenCalled();
+      expect(assign).not.toHaveBeenCalled();
       expect(container.textContent).toContain("Failed to update extension");
     });
 
@@ -483,8 +476,6 @@ describe("ExtensionDetails", () => {
       fetchAgentExtensionsMock.mockResolvedValue([driveEntry({ canConfigureTeam: true })]);
       let resolvePatch!: (value: ExtensionCatalogEntry[]) => void;
       patchAgentExtensionMock.mockReturnValue(new Promise((resolve) => { resolvePatch = resolve; }));
-      const reserved = popup();
-      vi.spyOn(window, "open").mockReturnValue(reserved as unknown as Window);
       await mount("scribe", "drive");
       await flush();
       checkbox().click();
@@ -492,7 +483,7 @@ describe("ExtensionDetails", () => {
       tab("team").click();
       resolvePatch([writeEntry("personal", true)]);
       await flush();
-      const url = String(reserved.location.replace.mock.calls[0]?.[0]);
+      const url = String(assign.mock.calls[0]?.[0]);
       expect(url).toContain("scope=personal");
       expect(url).toContain("drive.file");
     });
@@ -500,13 +491,12 @@ describe("ExtensionDetails", () => {
     it("does not save on Connect when the checkbox is unchanged", async () => {
       setSession("user");
       fetchAgentExtensionsMock.mockResolvedValue([driveEntry()]);
-      const open = vi.spyOn(window, "open").mockReturnValue(null);
       await mount("scribe", "drive");
       await flush();
       connectButton().click();
       await flush();
       expect(patchAgentExtensionMock).not.toHaveBeenCalled();
-      expect(open).toHaveBeenCalledWith("/api/oauth/google/authorize?agent=scribe&scopes=drive.readonly&scope=personal", "yoplai-oauth", "width=520,height=640");
+      expect(assign).toHaveBeenCalledWith("/api/oauth/google/authorize?agent=scribe&scopes=drive.readonly&scope=personal&returnTo=%2Fagents%2Fscribe%2Fextensions%2Fdrive");
     });
   });
 });
