@@ -54,6 +54,20 @@ describe("OAuthConnectCard scope", () => {
     expect(fetchMock).toHaveBeenCalledWith("/api/oauth/google/disconnect?agent=probe&scope=personal", { method: "POST", credentials: "include" });
   });
 
+  it("shows feedback while the sign-in page loads and resets it when Back restores the page", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ connected: false, provider: "google" }))));
+    vi.stubGlobal("location", { href: "http://localhost/connections?agent=probe", pathname: "/connections", search: "?agent=probe", hash: "", assign: vi.fn() });
+    dispose = render(() => <OAuthConnectCard agentId="probe" provider="google" label="Google" />, document.body);
+    await flush();
+    const button = () => Array.from(document.querySelectorAll<HTMLButtonElement>("button")).find((item) => /Connect Google|Redirecting/.test(item.textContent ?? ""))!;
+    button().click();
+    expect(button().textContent).toBe("Redirecting…");
+    expect(button().disabled).toBe(true);
+    window.dispatchEvent(new PageTransitionEvent("pageshow", { persisted: true }));
+    expect(button().textContent).toBe("Connect Google");
+    expect(button().disabled).toBe(false);
+  });
+
   it("opens on the connected team tab, read-only for non-admins, when Just me is not set up", async () => {
     const fetchMock = vi.fn(async (input: string) => new Response(JSON.stringify(input.includes("scope=team")
       ? { connected: true, provider: "google", account: "team@example.test", scopes: [], canConfigureTeam: false }

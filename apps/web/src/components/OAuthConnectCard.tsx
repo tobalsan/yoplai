@@ -52,6 +52,11 @@ export function OAuthConnectCard(props: {
   if (oauthResult?.status === "connected") showToast(`Connected to ${props.label}`, "success");
   const [statuses, setStatuses] = createSignal<Partial<Record<CredentialScope, OAuthStatus>>>({});
   const [loading, setLoading] = createSignal(false);
+  // Show feedback while the provider sign-in page loads. Reset it when Back restores this page from the bfcache.
+  const [redirecting, setRedirecting] = createSignal(false);
+  const onPageShow = (event: PageTransitionEvent) => { if (event.persisted) setRedirecting(false); };
+  window.addEventListener("pageshow", onPageShow);
+  onCleanup(() => window.removeEventListener("pageshow", onPageShow));
   const [error, setError] = createSignal<string>();
   const session = useSession();
   const [ownScope, setOwnScope] = createSignal<CredentialScope>(oauthResult?.scope ?? "personal");
@@ -129,11 +134,13 @@ export function OAuthConnectCard(props: {
   const connect = async () => {
     if (!props.agentId) return;
     const target = scope();
+    setRedirecting(true);
     try {
       const scopes = props.hasUnsavedSettings?.() ? await props.saveSettings?.() : undefined;
       window.location.assign(authorizeUrl(target, scopes ?? scopesFor(target)));
       setError(undefined);
     } catch (cause) {
+      setRedirecting(false);
       setError(cause instanceof Error ? cause.message : String(cause));
     }
   };
@@ -172,10 +179,10 @@ export function OAuthConnectCard(props: {
               <button
                 class="oauth-btn oauth-btn-primary"
                 data-tour="oauth-connect"
-                disabled={!props.agentId}
+                disabled={!props.agentId || redirecting()}
                 onClick={() => void connect()}
               >
-                Connect {props.label}
+                {redirecting() ? "Redirecting…" : `Connect ${props.label}`}
               </button>
             }
           >
@@ -194,8 +201,8 @@ export function OAuthConnectCard(props: {
             </Match>
             <Match when={needsGrant()}>
               <div class="oauth-actions">
-                <button class="oauth-btn oauth-btn-primary" data-tour="oauth-grant" onClick={() => void connect()}>
-                  Grant {props.label} access
+                <button class="oauth-btn oauth-btn-primary" data-tour="oauth-grant" disabled={redirecting()} onClick={() => void connect()}>
+                  {redirecting() ? "Redirecting…" : `Grant ${props.label} access`}
                 </button>
                 <button
                   class="oauth-btn oauth-btn-danger"
@@ -207,8 +214,8 @@ export function OAuthConnectCard(props: {
             </Match>
             <Match when={lifecycle() === "needs_reconnect"}>
               <div class="oauth-actions">
-                <button class="oauth-btn oauth-btn-primary" onClick={() => void connect()}>
-                  Reconnect
+                <button class="oauth-btn oauth-btn-primary" disabled={redirecting()} onClick={() => void connect()}>
+                  {redirecting() ? "Redirecting…" : "Reconnect"}
                 </button>
                 <button
                   class="oauth-btn oauth-btn-danger"

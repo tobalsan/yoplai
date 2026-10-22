@@ -52,6 +52,11 @@ export function McpServerDetails() {
   const canEditLabels = () => status()?.canEditLabels === true;
   const [error, setError] = createSignal<string>();
   const [busy, setBusy] = createSignal(false);
+  // Show feedback while the provider sign-in page loads. Reset it when Back restores this page from the bfcache.
+  const [redirecting, setRedirecting] = createSignal(false);
+  const onPageShow = (event: PageTransitionEvent) => { if (event.persisted) setRedirecting(false); };
+  window.addEventListener("pageshow", onPageShow);
+  onCleanup(() => window.removeEventListener("pageshow", onPageShow));
   const [scope, setScope] = createSignal<McpScope>(oauthResult?.scope ?? "personal");
   let scopePicked = !!oauthResult;
 
@@ -76,6 +81,7 @@ export function McpServerDetails() {
   const teamReadOnly = () => scope() === "team" && !canConfigureTeam();
 
   const connect = () => {
+    setRedirecting(true);
     const returnTo = window.location.pathname + window.location.search + window.location.hash;
     window.location.assign(
       `/api/mcp/oauth/authorize?agent=${encodeURIComponent(params.agentId)}&server=${encodeURIComponent(params.serverName)}&scope=${scope()}&returnTo=${encodeURIComponent(returnTo)}`
@@ -183,7 +189,7 @@ export function McpServerDetails() {
             <div class="oauth-card-head">
               <span class="oauth-provider-name">{mcpDisplayName(params.serverName, server()?.title)}</span>
               <Show when={!teamReadOnly()}>
-                <Switch fallback={<button type="button" class="oauth-btn oauth-btn-primary" disabled={busy()} onClick={connect}>Connect {mcpDisplayName(params.serverName, server()?.title)}</button>}>
+                <Switch fallback={<button type="button" class="oauth-btn oauth-btn-primary" disabled={busy() || redirecting()} onClick={connect}>{redirecting() ? "Redirecting…" : `Connect ${mcpDisplayName(params.serverName, server()?.title)}`}</button>}>
                   <Match when={scopedState() === "connected"}>
                     <div class="oauth-actions">
                       <button type="button" class="oauth-btn oauth-btn-danger" disabled={busy()} onClick={() => void disconnect()}>Disconnect</button>
@@ -191,7 +197,7 @@ export function McpServerDetails() {
                   </Match>
                   <Match when={scopedState() === "needs_reconnect"}>
                     <div class="oauth-actions">
-                      <button type="button" class="oauth-btn oauth-btn-primary" disabled={busy()} onClick={connect}>Reconnect</button>
+                      <button type="button" class="oauth-btn oauth-btn-primary" disabled={busy() || redirecting()} onClick={connect}>{redirecting() ? "Redirecting…" : "Reconnect"}</button>
                       <button type="button" class="oauth-btn oauth-btn-danger" disabled={busy()} onClick={() => void disconnect()}>Disconnect</button>
                     </div>
                   </Match>
