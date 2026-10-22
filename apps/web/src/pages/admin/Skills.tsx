@@ -106,7 +106,7 @@ export default function AdminSkills() {
       <Show when={transferring()}>{(row) => <ConfirmDialog title="Transfer skill" description={`Give ${row().name} to another user. The new owner can edit, share and delete it. The current owner loses access unless it is shared with them.`} confirmLabel="Transfer" error={error()} onCancel={() => setTransferring(undefined)} onConfirm={async () => { if (!newOwner()) { setError("Choose a new owner."); return; } await run(async () => { await transferSkillOwner(row().id, newOwner()); setTransferring(undefined); }); }}>
         <div class="admin-skills-owner-field"><span>New owner</span>
           <UserPicker class="admin-skills-owner-picker" value={newOwner()} onChange={setNewOwner}
-            users={(recipients.latest?.users ?? []).filter((user) => user.id !== row().ownerId).map((user) => ({ id: user.id, label: `${user.name} (${user.email})` }))} />
+            users={(recipients.latest?.users ?? []).filter((user) => user.id !== row().ownerId).map((user) => ({ id: user.id, label: `${user.name} (${user.email})`, name: user.name, image: user.image }))} />
         </div>
       </ConfirmDialog>}</Show>
       <Show when={makingDefault()}>{(row) => <ConfirmDialog title="Make default skill" description={`Move ${row().name} from ${row().agentName}'s workspace to the default skills? All agents and all users get it, always on. It is removed from the workspace.`} confirmLabel={defaultCheck.latest?.outsidePaths.length ? "Make default anyway" : "Make default"} error={error()} onCancel={() => setMakingDefault(undefined)} onConfirm={() => run(async () => { await makeSkillDefault(row().id); setMakingDefault(undefined); })}>

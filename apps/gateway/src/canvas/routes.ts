@@ -77,7 +77,7 @@ export type DashboardRouteDependencies = {
   authenticate(request: Request): Promise<unknown | null>;
   hasAgentAccess(auth: unknown, agentId: string): Promise<boolean>;
   resolveActor?(auth: unknown, agentId?: string): Promise<DashboardActor>;
-  listRecipients?(): Promise<Array<{ id: string; name: string; email: string }>>;
+  listRecipients?(): Promise<Array<{ id: string; name: string; email: string; image?: string | null }>>;
   getOwnerName?(id: string): Promise<string>;
 };
 

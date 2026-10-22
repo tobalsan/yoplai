@@ -24,7 +24,7 @@ export type DashboardRow = {
   pinned?: boolean;
 };
 
-export type DashboardRecipient = { id: string; name: string; email: string };
+export type DashboardRecipient = { id: string; name: string; email: string; image?: string | null };
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await apiFetch(`${API_BASE}/dashboards${path}`, { signal: AbortSignal.timeout(15_000), ...init });

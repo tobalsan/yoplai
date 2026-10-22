@@ -9,7 +9,7 @@ import type { MultiUserRuntime } from "./runtime-state.js";
 function createInMemoryTeamStore(extraUserIds: string[] = []) {
   const db = new Database(":memory:");
   db.pragma("foreign_keys = ON");
-  db.exec("CREATE TABLE user (id TEXT PRIMARY KEY, name TEXT, email TEXT)");
+  db.exec("CREATE TABLE user (id TEXT PRIMARY KEY, name TEXT, email TEXT, image TEXT)");
   for (const id of ["admin-1", "superadmin-1", ...extraUserIds]) {
     db.prepare("INSERT OR IGNORE INTO user (id) VALUES (?)").run(id);
   }
@@ -1006,7 +1006,7 @@ describe("multi-user admin routes", () => {
     await expect(firstAdd.json()).resolves.toEqual({
       teamId: team.id,
       allUsers: false,
-      members: [{ id: "user-1", name: null, email: null }],
+      members: [{ id: "user-1", name: null, email: null, image: null }],
     });
 
     // Re-adding is idempotent: still one member, still 200.
@@ -1015,7 +1015,7 @@ describe("multi-user admin routes", () => {
     await expect(secondAdd.json()).resolves.toEqual({
       teamId: team.id,
       allUsers: false,
-      members: [{ id: "user-1", name: null, email: null }],
+      members: [{ id: "user-1", name: null, email: null, image: null }],
     });
 
     const removeResponse = await app.request(
@@ -1085,12 +1085,12 @@ describe("multi-user admin routes", () => {
       teamId: team.id,
       allUsers: true,
       members: [
-        { id: "admin-1", name: null, email: null },
-        { id: "superadmin-1", name: null, email: null },
-        { id: "user-1", name: null, email: null },
-        { id: "user-2", name: null, email: null },
+        { id: "admin-1", name: null, email: null, image: null },
+        { id: "superadmin-1", name: null, email: null, image: null },
+        { id: "user-1", name: null, email: null, image: null },
+        { id: "user-2", name: null, email: null, image: null },
       ],
-      savedMembers: [{ id: "user-1", name: null, email: null }],
+      savedMembers: [{ id: "user-1", name: null, email: null, image: null }],
     };
     await expect(setResponse.json()).resolves.toEqual(expectedBody);
 
@@ -1178,7 +1178,7 @@ describe("multi-user admin routes", () => {
     await expect(response.json()).resolves.toEqual({
       teamId: team.id,
       allUsers: false,
-      members: [{ id: "user-1", name: null, email: null }],
+      members: [{ id: "user-1", name: null, email: null, image: null }],
     });
   });
 

@@ -2,6 +2,7 @@ import type { Accessor } from "solid-js";
 import { Show, createMemo, createSignal, onCleanup, createEffect, on } from "solid-js";
 import { useNavigate, useLocation } from "@solidjs/router";
 import { signOut, useSession } from "./client";
+import { UserAvatar } from "../components/UserAvatar";
 
 type SidebarAccountPanelProps = {
   collapsed: Accessor<boolean>;
@@ -12,13 +13,6 @@ type SessionUser = {
   email?: string | null;
   image?: string | null;
 };
-
-function initialsFor(name: string | null | undefined): string {
-  const value = name?.trim();
-  if (!value) return "?";
-  const parts = value.split(/\s+/).slice(0, 2);
-  return parts.map((part) => part[0]?.toUpperCase() ?? "").join("") || "?";
-}
 
 export default function SidebarAccountPanel(_props: SidebarAccountPanelProps) {
   const session = useSession();
@@ -88,14 +82,7 @@ export default function SidebarAccountPanel(_props: SidebarAccountPanelProps) {
                 aria-expanded={menuOpen()}
                 aria-label="Account menu"
               >
-                <div class="sidebar-account-avatar" aria-hidden="true">
-                  <Show
-                    when={currentUser().image}
-                    fallback={<span>{initialsFor(currentUser().name)}</span>}
-                  >
-                    <img src={currentUser().image!} alt="" />
-                  </Show>
-                </div>
+                <UserAvatar class="sidebar-account-avatar" name={currentUser().name} email={currentUser().email} image={currentUser().image} />
                 <div class="sidebar-account-body">
                   <div class="sidebar-account-name">
                     {currentUser().name ?? "Signed in"}

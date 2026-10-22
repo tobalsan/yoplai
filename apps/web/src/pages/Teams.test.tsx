@@ -84,6 +84,22 @@ describe("team organization", () => {
     expect(container.textContent).not.toContain("Newcomer");
   });
 
+  it("shows photos and initials in the No team directory", async () => {
+    dispose();
+    mocks.fetchTeamlessUsers.mockResolvedValue([
+      { id: "ada", name: "Ada Lovelace", email: "ada@example.test", image: "https://lh3.googleusercontent.com/ada", approved: true, role: "user" },
+      { id: "bob", name: "Bob Ross", email: "bob@example.test", image: null, approved: true, role: "user" },
+    ]);
+    dispose = render(() => <Teams />, container);
+    await vi.waitFor(() => expect(container.textContent).toContain("No team (2)"));
+    const rows = container.querySelectorAll(".team-member");
+    const photo = rows[0]!.querySelector("img");
+    expect(photo?.getAttribute("src")).toBe("https://lh3.googleusercontent.com/ada");
+    expect(rows[1]!.querySelector(".team-detail__avatar")?.textContent).toBe("BR");
+    photo!.dispatchEvent(new Event("error"));
+    expect(rows[0]!.querySelector(".team-detail__avatar")?.textContent).toBe("AL");
+  });
+
   it("keeps placement retryable after failure and the rest of the page usable during a hung add", async () => {
     mocks.addTeamMember.mockRejectedValueOnce(new Error("Placement failed"));
     await vi.waitFor(() => expect(container.textContent).toContain("No team (1)"));
@@ -137,6 +153,25 @@ describe("team organization", () => {
     const rows = [...container.querySelectorAll("li")];
     expect(rows.find((row) => row.textContent?.includes("Casey"))?.textContent).toContain("Public");
     expect(rows.find((row) => row.textContent?.includes("Henry"))?.textContent).toContain("Private");
+  });
+
+  it("shows member photos with initials for absent or failed photos", async () => {
+    mocks.fetchTeamMembers.mockResolvedValue({ teamId: team.id, allUsers: false, members: [
+      { id: "ada", name: "Ada Lovelace", email: "ada@example.test", image: "https://lh3.googleusercontent.com/ada" },
+      { id: "bob", name: "Bob Ross", email: "bob@example.test", image: null },
+    ] });
+    await click("Members");
+    const photo = await vi.waitFor(() => {
+      const image = container.querySelector<HTMLImageElement>('img[src="https://lh3.googleusercontent.com/ada"]');
+      expect(image).not.toBeNull();
+      return image!;
+    });
+    const bob = [...container.querySelectorAll("li")].find((row) => row.textContent?.includes("Bob Ross"))!;
+    expect(bob.querySelector(".team-detail__avatar")?.textContent).toBe("BR");
+    const adaAvatar = photo.parentElement!;
+    photo.dispatchEvent(new Event("error"));
+    expect(adaAvatar.querySelector("img")).toBeNull();
+    expect(adaAvatar.textContent).toBe("AL");
   });
 
   it("asks before removing an agent from the team", async () => {

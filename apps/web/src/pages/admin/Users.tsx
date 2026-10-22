@@ -11,6 +11,7 @@ import { fetchUsers, startImpersonation, updateUser } from "../../api/admin";
 import { useSession } from "../../auth/client";
 import AdminLayout from "./AdminLayout";
 import { hasStaffRole as hasAdminRole, isSuperadmin as hasSuperadminRole } from "../../lib/roles";
+import { UserAvatar } from "../../components/UserAvatar";
 
 type SessionUser = {
   id?: string;
@@ -123,11 +124,7 @@ export default function AdminUsersPage() {
                       <tr>
                         <td>
                           <div class="admin-user-cell">
-                            <div class="admin-user-avatar">
-                              {user.name?.trim()?.[0]?.toUpperCase() ??
-                                user.email?.[0]?.toUpperCase() ??
-                                "?"}
-                            </div>
+                            <UserAvatar class="admin-user-avatar" name={user.name} email={user.email} image={user.image} />
                             <div>
                               <div class="admin-user-name">
                                 {user.name ?? "Unnamed user"}

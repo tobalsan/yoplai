@@ -142,7 +142,7 @@ beforeEach(async () => {
 
   db = new Database(":memory:");
   db.pragma("foreign_keys = ON");
-  db.exec("CREATE TABLE user (id TEXT PRIMARY KEY, name TEXT, email TEXT, role TEXT DEFAULT 'user', approved INTEGER DEFAULT 1)");
+  db.exec("CREATE TABLE user (id TEXT PRIMARY KEY, name TEXT, email TEXT, image TEXT, role TEXT DEFAULT 'user', approved INTEGER DEFAULT 1)");
   for (const id of ["admin-1", "superadmin-1", "user-1"]) {
     db.prepare("INSERT INTO user (id) VALUES (?)").run(id);
   }
@@ -191,13 +191,13 @@ describe("admin fork/assignment routes", () => {
     const add = (app: Hono, team = teamId, user = "user-1") => app.request(req(`/admin/teams/${team}/members/${user}`));
     const response = await add(app);
     expect(response.status).toBe(200);
-    expect(await response.json()).toEqual({ teamId, allUsers: false, members: [{ id: "admin-1", name: null, email: null }, { id: "user-1", name: null, email: null }] });
+    expect(await response.json()).toEqual({ teamId, allUsers: false, members: [{ id: "admin-1", name: null, email: null, image: null }, { id: "user-1", name: null, email: null, image: null }] });
     expect(notifyAgentListChanged).toHaveBeenCalledTimes(1);
     expect(recordAudit).toHaveBeenLastCalledWith(expect.objectContaining({ action: "admin.team_member_add", changes: [{ field: "userIds", before: ["admin-1"], after: ["admin-1", "user-1"] }] }));
     expect((await add(app)).status).toBe(200);
     expect(recordAudit).toHaveBeenCalledTimes(1);
     const noTeam = await app.request(req("/admin/users/no-team", undefined, "GET"));
-    expect(await noTeam.json()).toEqual({ users: [{ id: "superadmin-1", name: null, email: null, approved: true, role: "user" }] });
+    expect(await noTeam.json()).toEqual({ users: [{ id: "superadmin-1", name: null, email: null, image: null, approved: true, role: "user" }] });
     expect((await add(app, "team-b")).status).toBe(403);
     expect((await add(app, "missing")).status).toBe(404);
     expect((await add(app, teamId, "missing")).status).toBe(404);
@@ -214,7 +214,7 @@ describe("admin fork/assignment routes", () => {
     const list = (app: Hono) => app.request(req("/admin/users/no-team", undefined, "GET"));
     const response = await list(app);
     expect(response.status).toBe(200);
-    expect(await response.json()).toEqual({ users: [{ id: "user-1", name: "Pending", email: "pending@example.com", approved: false, role: "user" }] });
+    expect(await response.json()).toEqual({ users: [{ id: "user-1", name: "Pending", email: "pending@example.com", image: null, approved: false, role: "user" }] });
     expect((await list(await makeApp("superadmin"))).status).toBe(200);
     expect((await list(await makeApp("user"))).status).toBe(403);
     createMembershipStore(db).setMembers("team-b", { mode: "all" }, "superadmin-1");

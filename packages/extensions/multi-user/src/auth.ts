@@ -125,6 +125,8 @@ function buildMultiUserAuth(
             clientId: google.clientId,
             clientSecret: google.clientSecret,
             prompt: "select_account",
+            overrideUserInfoOnSignIn: true,
+            mapProfileToUser: (profile) => ({ image: profile.picture ?? null }),
           },
         }
       : {},
@@ -205,6 +207,15 @@ function buildMultiUserAuth(
     ],
     databaseHooks: {
       user: {
+        update: {
+          before: async (user, context) => {
+            if (context?.path === "/callback/:id" && context.params?.id === "google" && "image" in user) {
+              // Better Auth refreshes the session from this update. Keep local
+              // identity edits while accepting only Google's current picture.
+              return { data: { ...user, name: undefined, email: undefined, emailVerified: undefined } };
+            }
+          },
+        },
         create: {
           before: async (user) => {
             if (!isAllowedDomain(user.email, multiUserConfig.allowedDomains)) {

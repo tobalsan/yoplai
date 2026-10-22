@@ -28,6 +28,7 @@ import {
 import { fetchUsers, type AdminUser } from "../api/admin";
 import { fetchPool } from "../api/agents";
 import { UserPicker } from "../components/UserPicker";
+import { UserAvatar } from "../components/UserAvatar";
 import { ConfirmDialog } from "../components/ui/ConfirmDialog";
 import { teamRemovalWarning } from "../lib/team-removal";
 import { useSession } from "../auth/client";
@@ -373,9 +374,6 @@ function userLabel(
 
 const isEmoji = (value: string) => /^\p{Emoji}/u.test(value) && value.length <= 4;
 
-const initials = (name: string) =>
-  name.split(/\s+/).filter(Boolean).slice(0, 2).map((part) => part[0]!.toUpperCase()).join("") || "?";
-
 function memberProfileLabel(m: TeamMemberProfile): string {
   return m.name || m.email || m.id;
 }
@@ -470,10 +468,10 @@ function TeamDetail(props: {
   });
 
   const displayedMembers = createMemo(() => {
-    const fromProfile = (m: TeamMemberProfile) => ({ id: m.id, name: memberProfileLabel(m), email: m.name ? m.email : null });
+    const fromProfile = (m: TeamMemberProfile) => ({ id: m.id, name: memberProfileLabel(m), email: m.name ? m.email : null, image: m.image });
     const fromDirectory = (id: string) => {
       const user = directory().get(id);
-      return { id, name: userLabel(id, directory()), email: user?.name ? user.email : null };
+      return { id, name: userLabel(id, directory()), email: user?.name ? user.email : null, image: user?.image };
     };
     const list = !draftAll()
       ? draftIds().map((id) => {
@@ -574,6 +572,8 @@ function TeamDetail(props: {
                 users={addableUsers().map((user) => ({
                   id: user.id,
                   label: user.name && user.email ? `${user.name} (${user.email})` : userLabel(user.id, directory()),
+                  name: user.name,
+                  image: user.image,
                 }))}
               />
               <button
@@ -603,7 +603,7 @@ function TeamDetail(props: {
                   <For each={displayedMembers()}>
                     {(member) => (
                       <li class="team-detail__row">
-                        <span class="team-detail__avatar" aria-hidden="true">{initials(member.name)}</span>
+                        <UserAvatar class="team-detail__avatar" name={member.name} email={member.email} image={member.image} />
                         <span class="team-detail__text">
                           <strong>{member.name}</strong>
                           <Show when={member.email}><span>{member.email}</span></Show>
@@ -769,12 +769,15 @@ function TeamlessUserRow(props: { user: TeamlessUser; teams: Team[]; onAdded: (u
   };
   return (
     <li class="team-member">
-      <div>
-        <span class="team-member__name">{label()}</span>
-        <Show when={props.user.email && props.user.email !== label()}><p class="team-detail__hint">{props.user.email}</p></Show>
-        <Show when={props.teams.length === 0}><p class="team-detail__hint">You do not manage any teams.</p></Show>
-        <Show when={error()}>{(message) => <p role="alert" class="team-modal__error">{message()}</p>}</Show>
-        <Show when={!props.user.approved}><span class="team-detail__hint"> Pending</span></Show>
+      <div class="team-member__profile">
+        <UserAvatar class="team-detail__avatar" name={props.user.name} email={props.user.email} image={props.user.image} />
+        <div>
+          <span class="team-member__name">{label()}</span>
+          <Show when={props.user.email && props.user.email !== label()}><p class="team-detail__hint">{props.user.email}</p></Show>
+          <Show when={props.teams.length === 0}><p class="team-detail__hint">You do not manage any teams.</p></Show>
+          <Show when={error()}>{(message) => <p role="alert" class="team-modal__error">{message()}</p>}</Show>
+          <Show when={!props.user.approved}><span class="team-detail__hint"> Pending</span></Show>
+        </div>
       </div>
       <div class="team-detail__add">
         <select class="team-field__input" aria-label={`Team for ${label()}`} value={teamId()} disabled={busy() || props.teams.length === 0} onChange={(event) => setTeamId(event.currentTarget.value)}>
@@ -1285,6 +1288,12 @@ export function Teams() {
         .team-member__name {
           font-size: 13px;
           color: var(--text-primary);
+        }
+
+        .team-member__profile {
+          display: flex;
+          align-items: center;
+          gap: 8px;
         }
 
         .team-detail__body {

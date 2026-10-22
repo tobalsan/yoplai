@@ -4,6 +4,7 @@ import { render } from "solid-js/web";
 
 const { saveMock, recipientsMock } = vi.hoisted(() => ({ saveMock: vi.fn(), recipientsMock: vi.fn() }));
 vi.mock("../api/dashboards", () => ({ saveDashboardShares: saveMock, fetchDashboardRecipients: recipientsMock }));
+vi.mock("../auth/client", () => ({ useSession: () => () => ({ data: { user: { name: "Owner Person", image: "https://lh3.googleusercontent.com/owner" } } }) }));
 
 import { DashboardAccessDialog } from "./DashboardAccessDialog";
 
@@ -37,6 +38,22 @@ const open = async (shares: object[] = []) => {
 };
 
 describe("DashboardAccessDialog", () => {
+  it("shows owner and recipient photos, with initials for missing and failed photos", async () => {
+    recipientsMock.mockResolvedValue({ users: [
+      { id: "u1", name: "Ada Lovelace", email: "ada@example.com", image: "https://lh3.googleusercontent.com/ada" },
+      { id: "u2", name: "Bob Ross", email: "bob@example.com", image: null },
+    ] });
+    await open([{ kind: "user", id: "u1", mode: "read" }, { kind: "user", id: "u2", mode: "read" }]);
+    const rows = document.body.querySelectorAll(".share-person");
+    expect(rows[0]!.querySelector("img")?.getAttribute("src")).toBe("https://lh3.googleusercontent.com/owner");
+    const photo = rows[1]!.querySelector("img");
+    expect(photo?.getAttribute("src")).toBe("https://lh3.googleusercontent.com/ada");
+    expect(rows[2]!.querySelector(".share-avatar")?.textContent).toBe("BR");
+    photo!.dispatchEvent(new Event("error"));
+    expect(rows[1]!.querySelector("img")).toBeNull();
+    expect(rows[1]!.querySelector(".share-avatar")?.textContent).toBe("AL");
+  });
+
   it("titles the dialog with the dashboard and disables Save until changed", async () => {
     await open();
     expect(document.body.textContent).toContain('Share "Revenue"');
@@ -76,7 +93,7 @@ describe("DashboardAccessDialog", () => {
     await search("");
     expect(options()).toHaveLength(0);
     const input = await search("paint");
-    expect(options().map((option) => option.textContent)).toEqual(["Bob Ross (bob@paint.org)"]);
+    expect(options().map((option) => option.textContent)).toEqual(["BRBob Ross (bob@paint.org)"]);
     input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
     await tick();
     expect(document.body.querySelector('button[aria-label="Remove Bob Ross"]')).not.toBeNull();

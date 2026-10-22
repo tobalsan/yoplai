@@ -1,10 +1,11 @@
 import { For, Show, createEffect, createMemo, createSignal, createUniqueId, untrack } from "solid-js";
+import { UserAvatar } from "./UserAvatar";
 
 const MAX_RESULTS = 50;
 
 /** Searchable user combobox: type part of a name or email, then pick with the mouse or arrow keys + Enter. Enter also calls `onEnter` after a pick. */
 export function UserPicker(props: {
-  users: { id: string; label: string }[];
+  users: { id: string; label: string; name?: string | null; image?: string | null }[];
   value: string;
   onChange: (id: string) => void;
   /** Called after Enter picks a user, or on Enter when a user is already picked. */
@@ -73,7 +74,8 @@ export function UserPicker(props: {
           <For each={matches()} fallback={<li class="user-picker__empty">No matching users</li>}>{(user, index) => (
             <li id={`${listId}-${index()}`} role="option" aria-selected={index() === active()} class="user-picker__option"
               onMouseDown={(event) => event.preventDefault()} onMouseEnter={() => setActive(index())} onClick={() => pick(user)}>
-              {user.label}
+              <UserAvatar class="user-picker__avatar" name={user.name ?? user.label} image={user.image} />
+              <span>{user.label}</span>
             </li>
           )}</For>
         </ul>
@@ -86,7 +88,8 @@ export function UserPicker(props: {
         .user-picker input:disabled { cursor: not-allowed; }
         .user-picker:focus-within { outline: 2px solid var(--accent, #3b82f6); outline-offset: 1px; }
         .user-picker__list { position: absolute; z-index: 10; top: calc(100% + 4px); left: 0; right: 0; max-height: 240px; overflow-y: auto; margin: 0; padding: 4px; list-style: none; background: var(--bg-surface); border: 1px solid var(--border-default); border-radius: 8px; box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12); }
-        .user-picker__option { padding: 7px 8px; border-radius: 6px; font-size: 13px; color: var(--text-primary); cursor: pointer; overflow-wrap: anywhere; }
+        .user-picker__option { display: flex; align-items: center; gap: 8px; padding: 7px 8px; border-radius: 6px; font-size: 13px; color: var(--text-primary); cursor: pointer; overflow-wrap: anywhere; }
+        .user-picker__avatar { flex: none; width: 28px; height: 28px; display: inline-flex; align-items: center; justify-content: center; border-radius: 50%; background: var(--bg-raised); color: var(--text-secondary); font-size: 11px; font-weight: 600; }
         .user-picker__option[aria-selected="true"] { background: var(--bg-raised); }
         .user-picker__empty { padding: 7px 8px; font-size: 13px; color: var(--text-secondary); }
       `}</style>

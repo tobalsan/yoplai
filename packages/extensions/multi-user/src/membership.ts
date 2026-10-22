@@ -7,7 +7,7 @@ export type TeamMember = {
   addedAt: string;
 };
 
-export type TeamMemberProfile = { id: string; name: string | null; email: string | null };
+export type TeamMemberProfile = { id: string; name: string | null; email: string | null; image: string | null };
 export type TeamlessUserProfile = TeamMemberProfile & { approved: boolean; role: string };
 export type TeamMembership = { mode: "all" } | { mode: "list"; userIds: string[] };
 
@@ -97,7 +97,7 @@ export function createMembershipStore(db: Database.Database): MembershipStore {
   return {
     listTeamlessUsers() {
       teamlessUsersStatement ??= db.prepare(`
-        SELECT u.id, u.name, u.email, u.approved, u.role FROM user u
+        SELECT u.id, u.name, u.email, u.image, u.approved, u.role FROM user u
         WHERE NOT EXISTS (SELECT 1 FROM teams WHERE allUsers = 1)
           AND NOT EXISTS (SELECT 1 FROM team_members m WHERE m.userId = u.id)
         ORDER BY u.id
@@ -149,7 +149,7 @@ export function createMembershipStore(db: Database.Database): MembershipStore {
     },
     listMemberProfilesForTeam(teamId) {
       memberProfilesStatement ??= db.prepare(`
-        SELECT u.id AS id, u.name AS name, u.email AS email
+        SELECT u.id AS id, u.name AS name, u.email AS email, u.image AS image
         FROM user AS u
         WHERE (SELECT allUsers FROM teams WHERE id = ?) = 1
           OR EXISTS (SELECT 1 FROM team_members m WHERE m.teamId = ? AND m.userId = u.id)
@@ -159,7 +159,7 @@ export function createMembershipStore(db: Database.Database): MembershipStore {
     },
     listSavedMemberProfilesForTeam(teamId) {
       savedMemberProfilesStatement ??= db.prepare(`
-        SELECT u.id AS id, u.name AS name, u.email AS email
+        SELECT u.id AS id, u.name AS name, u.email AS email, u.image AS image
         FROM user AS u
         JOIN team_members m ON m.teamId = ? AND m.userId = u.id
         ORDER BY u.id

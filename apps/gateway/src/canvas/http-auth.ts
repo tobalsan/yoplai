@@ -14,10 +14,10 @@ export async function resolveDashboardHttpActor(auth: unknown, agentId?: string)
   return { userId, eligible: !!account, superadmin: account?.role === "superadmin", hasAgentAccess: !!currentAuth && !!agentId && await hasAgentAccess(currentAuth, agentId) };
 }
 
-export async function listDashboardRecipients(): Promise<Array<{ id: string; name: string; email: string }>> {
+export async function listDashboardRecipients(): Promise<Array<{ id: string; name: string; email: string; image: string | null }>> {
   if (!loadConfig().extensions?.multiUser?.enabled) return [];
   const { getMultiUserRuntime } = await import("@yoplai/extension-multi-user");
-  return getMultiUserRuntime()?.db.prepare("SELECT id, name, email FROM user WHERE COALESCE(banned, 0) = 0 AND (approved = 1 OR role = 'superadmin') ORDER BY name, email").all() as Array<{ id: string; name: string; email: string }> ?? [];
+  return getMultiUserRuntime()?.db.prepare("SELECT id, name, email, image FROM user WHERE COALESCE(banned, 0) = 0 AND (approved = 1 OR role = 'superadmin') ORDER BY name, email").all() as Array<{ id: string; name: string; email: string; image: string | null }> ?? [];
 }
 
 export async function dashboardOwnerName(userId: string): Promise<string> {

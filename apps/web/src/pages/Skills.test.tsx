@@ -70,7 +70,7 @@ describe("Skills", () => {
     await vi.waitFor(() => expect(document.body.textContent).toContain("People with access"));
     const picker = control<HTMLInputElement>("combobox", "Select a user"); await vi.waitFor(() => expect(picker.disabled).toBe(false)); picker.focus(); picker.value = "Bob"; picker.dispatchEvent(new InputEvent("input", { bubbles: true }));
     await vi.waitFor(() => expect(document.body.textContent).toContain("Bob (bob@example.com)"));
-    control<HTMLElement>("option", "Bob (bob@example.com)").click(); click("Add");
+    control<HTMLElement>("option", "BBob (bob@example.com)").click(); click("Add");
     const permission = control<HTMLSelectElement>("combobox", "Permission for Bob"); permission.value = "write"; permission.dispatchEvent(new Event("change", { bubbles: true }));
     const general = control<HTMLSelectElement>("combobox", "General access"); general.value = "all"; general.dispatchEvent(new Event("change", { bubbles: true }));
     expect(control<HTMLSelectElement>("combobox", "Everyone permission").textContent).not.toContain("Can edit");

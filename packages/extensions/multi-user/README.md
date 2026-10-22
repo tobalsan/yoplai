@@ -16,6 +16,7 @@ email/password), and a session secret.
 - A SQLite database (`auth.db`) of users, sessions, agent assignments, and
   API keys, managed by [Better Auth](https://better-auth.com).
 - Google OAuth and/or email/password sign-in via Better Auth.
+- Google profile photos refresh on each sign-in without replacing locally edited names or emails. Photos appear in the sidebar, teams, user pickers, sharing dialogs and admin user list; missing or failed images show initials.
 - A superadmin role (auto-assigned to the first registered user) plus an
   `approved` flag gating non-admin access.
 - Team membership, pool-agent forks, and team-based agent access. Users and

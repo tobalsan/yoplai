@@ -22,7 +22,7 @@ function seedUser(id: string): void {
 beforeEach(() => {
   db = new Database(":memory:");
   db.pragma("foreign_keys = ON");
-  db.exec("CREATE TABLE user (id TEXT PRIMARY KEY, name TEXT, email TEXT)");
+  db.exec("CREATE TABLE user (id TEXT PRIMARY KEY, name TEXT, email TEXT, image TEXT)");
   ensureTeamsTable(db);
   ensureTeamMembersTable(db);
   seedUser("admin-1");
@@ -80,8 +80,8 @@ describe("membership store", () => {
     // The rows are latent, not deleted: the saved roster still lists them
     // even though the live reads above return the full directory.
     expect(membership.listSavedMemberProfilesForTeam(team.id)).toEqual([
-      { id: "user-1", name: null, email: null },
-      { id: "user-2", name: null, email: null },
+      { id: "user-1", name: null, email: null, image: null },
+      { id: "user-2", name: null, email: null, image: null },
     ]);
   });
 
@@ -108,7 +108,7 @@ describe("membership store", () => {
     membership.setMembers(team.id, { mode: "list", userIds: ["user-2"] }, "admin-1");
     expect(membership.getMembership(team.id)).toEqual({ mode: "list", userIds: ["user-2"] });
     expect(membership.listSavedMemberProfilesForTeam(team.id)).toEqual([
-      { id: "user-2", name: null, email: null },
+      { id: "user-2", name: null, email: null, image: null },
     ]);
   });
 
@@ -233,7 +233,7 @@ describe("membership store", () => {
       addMember(alpha.id, "user-3");
 
       expect(membership.listMemberProfilesForTeam(alpha.id)).toEqual([
-        { id: "user-3", name: "User Three", email: "user3@example.com" },
+        { id: "user-3", name: "User Three", email: "user3@example.com", image: null },
       ]);
     });
 
@@ -242,7 +242,7 @@ describe("membership store", () => {
       addMember(alpha.id, "user-1");
 
       expect(membership.listMemberProfilesForTeam(alpha.id)).toEqual([
-        { id: "user-1", name: null, email: null },
+        { id: "user-1", name: null, email: null, image: null },
       ]);
     });
   });

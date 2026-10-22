@@ -3,12 +3,11 @@ import { fetchDashboardRecipients, saveDashboardShares, type DashboardRow, type 
 import { Modal } from "./ui/Modal";
 import { Button } from "./ui/Button";
 import { UserPicker } from "./UserPicker";
+import { UserAvatar } from "./UserAvatar";
+import { useSession } from "../auth/client";
 
 type Mode = "read" | "write";
 type UserShare = Extract<DashboardShare, { kind: "user" }>;
-
-const initials = (name: string) =>
-  name.split(/\s+/).filter(Boolean).slice(0, 2).map((part) => part[0]!.toUpperCase()).join("") || "?";
 
 export function DashboardAccessDialog(props: {
   dashboard: Pick<DashboardRow, "id" | "title" | "shares">;
@@ -18,6 +17,8 @@ export function DashboardAccessDialog(props: {
   platformReadOnly?: boolean;
   note?: string;
 }) {
+  const session = useSession();
+  const owner = () => session().data?.user;
   const initial = props.dashboard.shares ?? [];
   const [recipients] = createResource(props.loadRecipients ?? fetchDashboardRecipients);
   const [userShares, setUserShares] = createSignal<UserShare[]>(initial.filter((share): share is UserShare => share.kind === "user"));
@@ -53,13 +54,13 @@ export function DashboardAccessDialog(props: {
       <Show when={recipients.error}><p role="alert">Unable to load users.</p></Show>
       <div class="share-add">
         <UserPicker class="share-select" value={selected()} onChange={setSelected} onEnter={add} disabled={busy() || recipients.loading}
-          users={users().filter((user) => !userShares().some((share) => share.id === user.id)).map((user) => ({ id: user.id, label: `${user.name} (${user.email})` }))} />
+          users={users().filter((user) => !userShares().some((share) => share.id === user.id)).map((user) => ({ id: user.id, label: `${user.name} (${user.email})`, name: user.name, image: user.image }))} />
         <Button variant="primary" disabled={busy() || !selected()} onClick={add}>Add</Button>
       </div>
       <h3 class="share-heading">People with access</h3>
       <ul class="share-list">
         <li class="share-person">
-          <span class="share-avatar" aria-hidden="true">Y</span>
+          <UserAvatar class="share-avatar" name={owner()?.name ?? "You"} email={owner()?.email} image={owner()?.image} />
           <span class="share-person__text"><strong>You</strong></span>
           <span class="share-owner">Owner</span>
         </li>
@@ -68,7 +69,7 @@ export function DashboardAccessDialog(props: {
           const name = () => user()?.name ?? "Unavailable account";
           return (
             <li class="share-person">
-              <span class="share-avatar" aria-hidden="true">{user() ? initials(user()!.name) : "?"}</span>
+              <UserAvatar class="share-avatar" name={user()?.name} email={user()?.email} image={user()?.image} />
               <span class="share-person__text">
                 <strong>{name()}</strong>
                 <Show when={user()}><span>{user()!.email}</span></Show>

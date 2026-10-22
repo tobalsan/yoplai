@@ -39,6 +39,20 @@ describe("SidebarAccountPanel", () => {
     document.body.innerHTML = "";
     navigateMock.mockReset();
     resetCapabilitiesForTests();
+    sessionDataSignal[1]({ data: { user: { name: "Test User", email: "test@example.com" } } });
+  });
+
+  it("shows the current photo, falls back on failure, and retries a changed photo", () => {
+    sessionDataSignal[1]({ data: { user: { name: "Test User", image: "https://lh3.googleusercontent.com/old-photo" } } });
+    const dispose = render(() => <SidebarAccountPanel collapsed={() => false} />, document.body);
+    const avatar = document.querySelector(".sidebar-account-avatar")!;
+    expect(avatar.querySelector("img")?.getAttribute("src")).toBe("https://lh3.googleusercontent.com/old-photo");
+    avatar.querySelector("img")!.dispatchEvent(new Event("error"));
+    expect(avatar.querySelector("img")).toBeNull();
+    expect(avatar.textContent).toBe("TU");
+    sessionDataSignal[1]({ data: { user: { name: "Test User", image: "https://lh3.googleusercontent.com/new-photo" } } });
+    expect(avatar.querySelector("img")?.getAttribute("src")).toBe("https://lh3.googleusercontent.com/new-photo");
+    dispose();
   });
 
   it("renders menu toggle in multi-user mode", () => {

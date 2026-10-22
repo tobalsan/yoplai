@@ -21,7 +21,7 @@ export type TeamInput = {
   private?: boolean;
 };
 
-export type TeamMemberProfile = { id: string; name: string | null; email: string | null };
+export type TeamMemberProfile = { id: string; name: string | null; email: string | null; image?: string | null };
 export type TeamlessUser = TeamMemberProfile & { approved: boolean; role: string };
 
 export type TeamMembersResponse = {

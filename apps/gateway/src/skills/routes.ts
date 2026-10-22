@@ -16,7 +16,7 @@ type SkillRoutesDeps = {
   getActor(c: Context): Promise<SkillActor | undefined>;
   getAgents(c: Context): Promise<{ id: string; name: string; directory: string }[]>;
   getOwnerName(id: string): Promise<string>;
-  getRecipients(): Promise<{ id: string; name: string; email: string }[]>;
+  getRecipients(): Promise<{ id: string; name: string; email: string; image?: string | null }[]>;
   publicBaseUrl(): string;
   audit?(c: Context, action: string, targetId: string, changes: { field: string; before?: unknown; after?: unknown }[]): Promise<void>;
 };
