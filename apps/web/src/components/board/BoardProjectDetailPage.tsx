@@ -421,11 +421,6 @@ export function BoardProjectDetailPage(
     return runId ? `${base}&run=${encodeURIComponent(runId)}` : base;
   };
 
-  const projectAgentLeadUrl = (leadId: string | undefined) => {
-    const base = `/board/projects/${encodeURIComponent(projectId())}?tab=agent`;
-    return leadId ? `${base}&lead=${encodeURIComponent(leadId)}` : base;
-  };
-
   const queryStringValue = (value: string | string[] | undefined) =>
     Array.isArray(value) ? value[0] : value;
 
@@ -1062,12 +1057,8 @@ export function BoardProjectDetailPage(
                   <AgentRunChatPanel
                     projectId={projectId()}
                     selectedRunId={queryStringValue(searchParams.run)}
-                    selectedLeadId={queryStringValue(searchParams.lead)}
                     onSelectedRunIdChange={(runId) =>
                       navigateTo(projectAgentRunUrl(runId), { replace: true })
-                    }
-                    onSelectedLeadIdChange={(leadId) =>
-                      navigateTo(projectAgentLeadUrl(leadId), { replace: true })
                     }
                     filter={(run) => isProjectShapingRun(run, projectId())}
                   />

@@ -23,8 +23,7 @@ The palette opens with a focused input and no recent-session list. Results show
 the chat label, agent, relative date and a highlighted content snippet. Title
 matches come first, newest first within each group, with at most 50 results.
 Use Up/Down and Enter, or click a result, to open the chat. Escape or clicking
-outside closes search. Cmd+K no longer starts a new embedded chat or opens the
-retired Board project palette.
+outside closes search.
 
 ## Chat
 
@@ -53,7 +52,7 @@ Project detail:
 
 - Pitch uses `PITCH.md`; legacy README body may be fallback.
 - Slice specs use `SPECS.md`; tasks, validation, and thread stay separate.
-- Agent tab combines scoped lead sessions and subagent runs.
+- Agent tab shows scoped subagent runs, their logs, and follow-up messages.
 - Changes tab displays Space queue, diffs, commits, rebase/conflict, and integration actions.
 
 See [Projects](projects.md).
