@@ -60,11 +60,6 @@ type ChatRuntimeDeps = {
   uploadFiles: typeof uploadFiles;
 };
 
-type ChatAttachmentRuntimeOptions = {
-  acceptFile?: (file: File) => boolean | string;
-  previewImages?: boolean;
-};
-
 type SendInput = {
   agentId: string;
   text: string;
@@ -156,9 +151,7 @@ function attachToolResult(
   );
 }
 
-export function createChatAttachmentRuntime(
-  options: ChatAttachmentRuntimeOptions = {}
-) {
+export function createChatAttachmentRuntime() {
   const [pendingFiles, setPendingFiles] = createSignal<PendingFile[]>([]);
   const [uploadingFiles, setUploadingFiles] = createSignal(false);
   const [uploadError, setUploadError] = createSignal("");
@@ -174,12 +167,6 @@ export function createChatAttachmentRuntime(
     setUploadError("");
     const next: PendingFile[] = [];
     for (const file of Array.from(files)) {
-      const accepted = options.acceptFile?.(file);
-      if (typeof accepted === "string") {
-        setUploadError(accepted);
-        continue;
-      }
-      if (accepted === false) continue;
       if (!isSupportedFile(file)) {
         setUploadError(`Unsupported file type: ${file.name}`);
         continue;
@@ -188,17 +175,7 @@ export function createChatAttachmentRuntime(
         setUploadError(`File exceeds 25 MB: ${file.name}`);
         continue;
       }
-      if (options.previewImages === false) {
-        next.push({
-          id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
-          file,
-          name: file.name,
-          mimeType: file.type || "application/octet-stream",
-          size: file.size,
-        });
-      } else {
-        next.push(createPendingFile(file));
-      }
+      next.push(createPendingFile(file));
     }
     if (next.length > 0) setPendingFiles((prev) => [...prev, ...next]);
   };
