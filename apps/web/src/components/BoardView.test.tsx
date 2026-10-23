@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Suspense, createSignal } from "solid-js";
+import { within, isInaccessible } from "@testing-library/dom";
 import { delegateEvents, render } from "solid-js/web";
 import { BoardView } from "./BoardView";
 
@@ -53,13 +54,9 @@ const {
   fetchAgentsMock,
   fetchAreaSummariesMock,
   fetchBoardProjectsMock,
-  fetchFullHistoryMock,
   fetchProjectMock,
   fetchSubagentsMock,
   fetchRuntimeSubagentsMock,
-  getSessionKeyMock,
-  streamMessageMock,
-  subscribeToSessionMock,
   subscribeToFileChangesMock,
   subscribeToSubagentChangesMock,
   subscribeToRealtimeMock,
@@ -68,13 +65,9 @@ const {
   fetchAgentsMock: vi.fn(),
   fetchAreaSummariesMock: vi.fn(),
   fetchBoardProjectsMock: vi.fn(),
-  fetchFullHistoryMock: vi.fn(),
   fetchProjectMock: vi.fn(),
   fetchSubagentsMock: vi.fn(),
   fetchRuntimeSubagentsMock: vi.fn(),
-  getSessionKeyMock: vi.fn(),
-  streamMessageMock: vi.fn(),
-  subscribeToSessionMock: vi.fn(),
   subscribeToFileChangesMock: vi.fn(),
   subscribeToSubagentChangesMock: vi.fn(),
   subscribeToRealtimeMock: vi.fn(),
@@ -139,13 +132,11 @@ vi.mock("../api", () => ({
   fetchAreaSummaries: fetchAreaSummariesMock,
   fetchBoardActivity: vi.fn(async () => ({ items: [] })),
   fetchBoardProjects: fetchBoardProjectsMock,
-  fetchFullHistory: fetchFullHistoryMock,
   fetchProject: fetchProjectMock,
   fetchSubagents: fetchSubagentsMock,
   fetchRuntimeSubagents: fetchRuntimeSubagentsMock,
   fetchRuntimeSubagentLogs: vi.fn(async () => ({ events: [], cursor: 0 })),
   fetchSlices: vi.fn(async () => []),
-  getSessionKey: getSessionKeyMock,
   selectDefaultProjectManagerAgent: vi.fn((agents) => agents[0]),
   moveBoardProject: vi.fn(),
   interruptRuntimeSubagent: vi.fn(async () => ({ ok: true, data: {} })),
@@ -153,49 +144,15 @@ vi.mock("../api", () => ({
   deleteRuntimeSubagent: vi.fn(async () => ({ ok: true })),
   postAbort: vi.fn(),
   resumeRuntimeSubagent: vi.fn(),
-  streamMessage: streamMessageMock,
   subscribeToFileChanges: subscribeToFileChangesMock,
   subscribeToSubagentChanges: subscribeToSubagentChangesMock,
   subscribeToRealtime: subscribeToRealtimeMock,
-  subscribeToSession: subscribeToSessionMock,
   updateProject: vi.fn(),
   updateSlice: vi.fn(),
   uploadFiles: uploadFilesMock,
 }));
 
-vi.mock("../api/agents", () => ({
-  fetchFullHistory: fetchFullHistoryMock,
-}));
-
-vi.mock("../api/chat", () => ({
-  getSessionKey: getSessionKeyMock,
-  postAbort: vi.fn(),
-  streamMessage: streamMessageMock,
-}));
-
-vi.mock("../api/media", () => ({
-  uploadFiles: uploadFilesMock,
-}));
-
-vi.mock("../api/realtime", () => ({
-  subscribeToSession: subscribeToSessionMock,
-}));
-
 const tick = () => new Promise((resolve) => setTimeout(resolve, 0));
-
-function createFileDragEvent(
-  type: "dragenter" | "dragover" | "drop",
-  files: File[]
-) {
-  const event = new Event(type, {
-    bubbles: true,
-    cancelable: true,
-  }) as DragEvent;
-  Object.defineProperty(event, "dataTransfer", {
-    value: { files, types: ["Files"], dropEffect: "none" },
-  });
-  return event;
-}
 
 function renderView() {
   const container = document.createElement("div");
@@ -220,7 +177,7 @@ function renderViewWithParentSuspense() {
   return { container, dispose };
 }
 
-describe("BoardView attachments", () => {
+describe("BoardView", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     window.history.replaceState(null, "", "/");
@@ -249,12 +206,6 @@ describe("BoardView attachments", () => {
         queueMode: "queue",
       },
     ]);
-    fetchFullHistoryMock.mockResolvedValue({
-      messages: [],
-      thinkingLevel: undefined,
-      isStreaming: false,
-      activeTurn: null,
-    });
     fetchBoardProjectsMock.mockResolvedValue([
       {
         id: "PRO-1",
@@ -285,9 +236,6 @@ describe("BoardView attachments", () => {
     });
     fetchSubagentsMock.mockResolvedValue({ ok: true, data: { items: [] } });
     fetchRuntimeSubagentsMock.mockResolvedValue({ items: [] });
-    getSessionKeyMock.mockReturnValue("main");
-    streamMessageMock.mockImplementation(() => () => {});
-    subscribeToSessionMock.mockImplementation(() => () => {});
     subscribeToFileChangesMock.mockReturnValue(() => {});
     subscribeToSubagentChangesMock.mockReturnValue(() => {});
     subscribeToRealtimeMock.mockReturnValue(() => {});
@@ -307,89 +255,35 @@ describe("BoardView attachments", () => {
     vi.clearAllMocks();
   });
 
-  it("uploads selected files and sends them with the board chat message", async () => {
+  it("shows the canvas tabs without a chat composer", async () => {
     const { container, dispose } = renderView();
     await tick();
     await tick();
 
-    const file = new File(["contents"], "report.pdf", {
-      type: "application/pdf",
-    });
-    const fileInput = container.querySelector(".board-file-input");
-    if (!(fileInput instanceof HTMLInputElement)) {
-      throw new Error("Expected file input");
-    }
-    Object.defineProperty(fileInput, "files", {
-      value: [file],
-      configurable: true,
-    });
-    fileInput.dispatchEvent(new Event("change", { bubbles: true }));
-    await tick();
-
-    expect(
-      container.querySelector(".board-attachment-name")?.textContent
-    ).toContain("report.pdf");
-
-    const textarea = container.querySelector(".board-chat-input");
-    if (!(textarea instanceof HTMLTextAreaElement)) {
-      throw new Error("Expected textarea");
-    }
-    textarea.value = "Review this";
-    textarea.dispatchEvent(new InputEvent("input", { bubbles: true }));
-
-    const sendButton = container.querySelector(".board-chat-send");
-    if (!(sendButton instanceof HTMLButtonElement)) {
-      throw new Error("Expected send button");
-    }
-    sendButton.click();
-    await tick();
-    await tick();
-
-    expect(uploadFilesMock).toHaveBeenCalledWith([file]);
-    expect(streamMessageMock).toHaveBeenCalledWith(
-      "agent-1",
-      "Review this",
-      "main",
-      expect.any(Function),
-      expect.any(Function),
-      expect.any(Function),
-      expect.any(Object),
-      {
-        attachments: [
-          {
-            path: "/tmp/uploaded/report.pdf",
-            mimeType: "application/pdf",
-            filename: "report.pdf",
-            size: 12,
-          },
-        ],
-      }
-    );
+    expect(within(container).getByRole("button", { name: "Scratchpad" })).toBeTruthy();
+    expect(within(container).getByRole("button", { name: "Project lifecycle" })).toBeTruthy();
+    expect(within(container).queryByPlaceholderText("Ask anything...")).toBeNull();
 
     dispose();
   });
 
-  it("adds pending files when dropped on the board chat", async () => {
+  it("switches between Scratchpad and Project lifecycle", async () => {
     const { container, dispose } = renderView();
     await tick();
     await tick();
+    const scratchpad = within(container).getByLabelText("Scratchpad");
+    expect(isInaccessible(scratchpad)).toBe(false);
 
-    const messages = container.querySelector(".board-chat-messages");
-    if (!(messages instanceof HTMLDivElement)) {
-      throw new Error("Expected messages container");
-    }
-
-    messages.dispatchEvent(
-      createFileDragEvent("drop", [
-        new File(["image"], "screenshot.png", { type: "image/png" }),
-      ])
-    );
+    within(container).getByRole("button", { name: "Project lifecycle" }).click();
     await tick();
-    await tick();
+    expect(isInaccessible(scratchpad)).toBe(true);
+    expect(within(container).getByRole("textbox").getAttribute("placeholder")).toBe("Search by title or ID…");
 
-    expect(
-      container.querySelector(".board-attachment-name")?.textContent
-    ).toContain("screenshot.png");
+    within(container).getByRole("button", { name: "Scratchpad" }).click();
+    await tick();
+    expect(isInaccessible(scratchpad)).toBe(false);
+    expect(within(container).getByRole("textbox", { name: "Scratchpad" })).toBe(scratchpad);
+    expect(within(container).getAllByRole("textbox")).toHaveLength(1);
 
     dispose();
   });
@@ -489,47 +383,6 @@ describe("BoardView attachments", () => {
     dispose();
   });
 
-  it("keeps board chat DOM state mounted when opening a lifecycle project", async () => {
-    const { container, dispose } = renderView();
-    await tick();
-    await tick();
-
-    const projectsTab = Array.from(
-      container.querySelectorAll<HTMLButtonElement>(".board-canvas-tab")
-    ).find((button) => button.textContent === "Project lifecycle");
-    projectsTab?.click();
-    await tick();
-    await tick();
-
-    const chat = container.querySelector<HTMLElement>(".board-chat");
-    const textarea =
-      container.querySelector<HTMLTextAreaElement>(".board-chat-input");
-    if (!chat || !textarea) {
-      throw new Error("Expected board chat and textarea");
-    }
-    chat.dataset.canary = "alive";
-    textarea.value = "CANARY-SENTINEL";
-    textarea.dispatchEvent(new InputEvent("input", { bubbles: true }));
-
-    const row = container.querySelector<HTMLElement>(
-      '[data-testid="project-card-PRO-1"]'
-    );
-    row?.click();
-    await tick();
-    await tick();
-
-    expect(container.querySelector(".board-chat")).toBe(chat);
-    expect(chat.dataset.canary).toBe("alive");
-    expect(
-      container.querySelector<HTMLTextAreaElement>(".board-chat-input")?.value
-    ).toBe("CANARY-SENTINEL");
-    expect(container.querySelector(".bpd")).not.toBeNull();
-    expect(navigateMock).not.toHaveBeenCalled();
-    expect(window.location.pathname).toBe("/board/projects/PRO-1");
-
-    dispose();
-  });
-
   it("keeps embedded project tab navigation out of the router", async () => {
     const { container, dispose } = renderView();
     await tick();
@@ -613,12 +466,9 @@ describe("BoardView attachments", () => {
     await tick();
     await tick();
 
-    const projectsTab = Array.from(
-      container.querySelectorAll<HTMLButtonElement>(".board-canvas-tab")
-    ).find((button) => button.textContent === "Project lifecycle");
-    expect(projectsTab?.classList.contains("active")).toBe(true);
-    expect(container.querySelector(".bpd")).not.toBeNull();
-    expect(container.textContent).toContain("Embedded Overview Project");
+    expect(isInaccessible(within(container).getByText("Embedded Overview Project", { exact: true }))).toBe(false);
+    expect(within(container).queryByRole("textbox", { name: "Scratchpad" })).toBeNull();
+    expect(within(container).queryByPlaceholderText("Ask anything...")).toBeNull();
 
     dispose();
   });
@@ -672,7 +522,7 @@ describe("BoardView attachments", () => {
     expect(
       container.querySelector("[data-testid='canvas-loading']")
     ).not.toBeNull();
-    expect(container.querySelector(".board-chat")).not.toBeNull();
+    expect(within(container).getByRole("button", { name: "Scratchpad" })).toBeTruthy();
 
     dispose();
   });
