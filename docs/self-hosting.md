@@ -50,7 +50,7 @@ Set `ui.tailscale.mode: "serve"` with gateway/UI bind left as loopback. Tailscal
 
 For remote host:
 
-1. Install Node 22.19+, pnpm 11, Git, and optional Docker.
+1. Install Node 24 LTS (22.19+ still supported), pnpm 11, Git, and optional Docker.
 2. Clone, install, build, and configure under dedicated OS user.
 3. Keep `$YOPLAI_HOME` outside repository.
 4. Restrict permissions on `.env`, `auth.json`, OAuth data, and bot tokens.

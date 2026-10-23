@@ -15,7 +15,7 @@
 # ---------- builder stage ----------
 # Build yoplai CLI from source. Produces a self-contained /out via
 # `pnpm deploy --prod` (resolves workspace:* deps into real node_modules).
-FROM node:22-slim AS builder
+FROM node:24-slim AS builder
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
@@ -38,7 +38,7 @@ RUN pnpm build
 RUN pnpm --filter @yoplai/gateway deploy --prod --legacy /out
 
 # ---------- runtime stage ----------
-FROM node:22-slim
+FROM node:24-slim
 
 # System deps:
 # - curl, ca-certificates: outbound HTTPS to the LLM API at run time

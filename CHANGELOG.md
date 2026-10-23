@@ -33,6 +33,7 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Changed
 
+- Sandbox and Harbor eval images now run on Node 24 LTS instead of Node 22, which only receives security fixes. Rebuild custom images that start `FROM yoplai-agent:latest`. The gateway still supports Node 22.19+.
 - Sidebar chats now fit on one line, with full titles and chat details available on hover or keyboard focus.
 
 ## v0.26.0 — Chat projects, Skills directory + owned dashboards

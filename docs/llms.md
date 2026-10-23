@@ -91,7 +91,7 @@ Browser code should use browser-safe subpaths, not the package root, which also 
 
 ### `container/agent-runner`
 
-Standalone Node 22 process for sandboxed agents. It reads `ContainerInput` JSON from stdin, runs Pi or Claude, streams framed events on stdout, and writes framed `ContainerOutput`. It may import `@yoplai/shared` and SDK packages, but never gateway source.
+Standalone Node 24 process for sandboxed agents. It reads `ContainerInput` JSON from stdin, runs Pi or Claude, streams framed events on stdout, and writes framed `ContainerOutput`. It may import `@yoplai/shared` and SDK packages, but never gateway source.
 
 Container tool deadlines and verified shutdown live in gateway `sdk/container/`;
 the runner's `bash-deadline.ts` wraps native Pi Bash to respect the gateway's

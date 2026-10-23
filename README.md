@@ -28,7 +28,7 @@ This guide creates one local Pi agent authenticated with Anthropic OAuth. No Doc
 Install:
 
 - [Git](https://git-scm.com/)
-- Node.js **22.19.0 or newer**
+- Node.js **22.19.0 or newer** (24 LTS recommended; sandboxes run Node 24)
 - pnpm **11** (`corepack enable` can install the repository-pinned version)
 - An Anthropic account for OAuth login
 
