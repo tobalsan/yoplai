@@ -7,6 +7,7 @@ import { PDFParse, PasswordException } from "pdf-parse";
 import XLSX from "xlsx";
 
 const RAW_TEXT_MIME_TYPES = new Set([
+  "application/json",
   "text/csv",
   "text/markdown",
   "text/plain",

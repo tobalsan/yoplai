@@ -53,6 +53,18 @@ slack:
     enabled: true
 ```
 
+## File attachments
+
+Send Markdown (`.md`, `.markdown`), text, CSV, JSON or Slack code snippets in a
+DM or thread to give the agent the complete file. Snippets with other extensions
+or no extension are saved as text with `.txt` appended to their display name.
+Images (JPEG, PNG, GIF, WebP), PDF, Word, Excel and PowerPoint (`.pptx`, `.ppt`)
+are also supported, up to 25MB per file. SVG remains web-only.
+
+If a text file cannot be downloaded or saved, the bot posts an error and passes
+along any available preview clearly marked as truncated. Other files in the
+message still get processed. Unsupported formats receive a threaded error.
+
 ## Routing
 
 - **Channels** — keys under `channels` are Slack channel IDs (`C...`), with

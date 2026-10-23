@@ -19,9 +19,8 @@ import {
 import {
   MAX_UPLOAD_SIZE_BYTES,
   downloadSlackFile,
-  extractSnippetText,
+  extractSlackFilePreview,
   formatSlackFileError,
-  isSlackSnippet,
   isSupportedSlackFile,
   uploadSlackFileToMedia,
   type SlackFile,
@@ -174,6 +173,7 @@ function toSlackFiles(value: unknown): SlackFile[] {
       filetype: asString(file.filetype),
       size: asNumber(file.size),
       url_private_download: asString(file.url_private_download),
+      url_private: asString(file.url_private),
       subtype: asString(file.subtype),
       mode: asString(file.mode),
       preview: asString(file.preview),
@@ -557,12 +557,6 @@ async function collectSlackAttachments(params: {
   const attachments: FileAttachment[] = [];
 
   for (const file of files) {
-    if (isSlackSnippet(file)) {
-      const snippet = extractSnippetText(file);
-      if (snippet) snippets.push(snippet);
-      continue;
-    }
-
     if (file.size && file.size > MAX_UPLOAD_SIZE_BYTES) {
       await sendSlackFileError(
         client,
@@ -590,6 +584,8 @@ async function collectSlackAttachments(params: {
       const downloaded = await downloadSlackFile(file, botToken);
       attachments.push(await uploadSlackFileToMedia(downloaded, saveMediaFile));
     } catch (err) {
+      const preview = extractSlackFilePreview(file);
+      if (preview) snippets.push(preview);
       const reason = err instanceof Error ? err.message : "Download failed";
       await sendSlackFileError(
         client,

@@ -2,9 +2,11 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   MAX_UPLOAD_SIZE_BYTES,
   downloadSlackFile,
-  extractSnippetText,
+  extractSlackFilePreview,
   formatSlackFileError,
   getSlackFileMimeType,
+  getSlackFileFilename,
+  isSlackTextFile,
   isSupportedSlackFile,
   isSlackSnippet,
   uploadSlackFileToMedia,
@@ -40,12 +42,12 @@ describe("Slack attachment helpers", () => {
     }
   });
 
-  it("rejects MIME types outside the v1 allowlist", () => {
+  it("rejects unsupported binary files", () => {
     expect(
       isSupportedSlackFile({ name: "archive.zip", mimetype: "application/zip" })
     ).toBe(false);
     expect(
-      isSupportedSlackFile({ name: "notes.txt", mimetype: "text/plain" })
+      isSupportedSlackFile({ name: "picture.svg", mimetype: "image/svg+xml" })
     ).toBe(false);
   });
 
@@ -72,7 +74,7 @@ describe("Slack attachment helpers", () => {
     expect(isSupportedSlackFile({ name: "sheet.xlsx" })).toBe(true);
   });
 
-  it("extracts Slack snippets as inline code text", () => {
+  it("marks failed text file previews as truncated", () => {
     const file: SlackFile = {
       name: "example.ts",
       mode: "snippet",
@@ -81,8 +83,35 @@ describe("Slack attachment helpers", () => {
     };
 
     expect(isSlackSnippet(file)).toBe(true);
-    expect(extractSnippetText(file)).toContain("Snippet: example.ts");
-    expect(extractSnippetText(file)).toContain("const x = 1;");
+    expect(extractSlackFilePreview(file)).toBe("Snippet: example.ts (truncated preview; the full file could not be downloaded)\n```\nconst x = 1;\n```");
+    expect(extractSlackFilePreview({ name: "notes.md", preview: "intro" })).toContain("truncated preview");
+    expect(extractSlackFilePreview({ name: "notes.md", preview: "  " })).toBeNull();
+    expect(extractSlackFilePreview({ name: "archive.zip", preview: "binary" })).toBeNull();
+  });
+
+  it("requires a real dotted suffix unless Slack marks the file as a snippet", () => {
+    expect(isSlackTextFile({ name: "csv", mimetype: "text/csv" })).toBe(false);
+    expect(isSupportedSlackFile({ name: "csv", mimetype: "text/csv" })).toBe(false);
+    expect(isSlackTextFile({ name: "Untitled", subtype: "snippet", filetype: "python" })).toBe(true);
+    expect(isSlackTextFile({ name: "script.py", mode: "snippet" })).toBe(true);
+    expect(isSlackTextFile({ name: "script.py", mimetype: "text/plain" })).toBe(false);
+    expect(isSlackTextFile({ name: "NOTES.MARKDOWN" })).toBe(true);
+  });
+
+  it.each([
+    ["notes.md", "text/markdown", "notes.md"],
+    ["notes.markdown", "text/markdown", "notes.markdown"],
+    ["notes.txt", "text/plain", "notes.txt"],
+    ["data.csv", "text/csv", "data.csv"],
+    ["data.json", "application/json", "data.json"],
+    ["script.py", "text/plain", "script.py.txt"],
+    ["Untitled", "text/plain", "Untitled.txt"],
+    ["my notes", "text/plain", "my notes.txt"],
+  ])("maps %s to a gateway-compatible text attachment", (name, mimeType, filename) => {
+    const file = { name, mode: "snippet", mimetype: "text/plain" };
+    expect(isSupportedSlackFile(file)).toBe(true);
+    expect(getSlackFileMimeType(file)).toBe(mimeType);
+    expect(getSlackFileFilename(file)).toBe(filename);
   });
 
   it("downloads Slack files with bot-token auth", async () => {

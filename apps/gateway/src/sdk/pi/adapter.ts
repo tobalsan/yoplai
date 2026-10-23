@@ -698,7 +698,8 @@ export const piAdapter: SdkAdapter = {
       }
 
       const attachmentContext = await buildDocumentAttachmentContext(
-        params.attachments
+        params.attachments,
+        { includeUnextractedPath: true }
       );
       const messageWithAttachments = appendAttachmentContext(
         params.message,

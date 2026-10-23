@@ -432,7 +432,7 @@ Access logs emit one completion line. Fast successful GETs for health, session p
 
 - **Core agents:** `/api/agents`, status, messages, history, sessions, extension catalog/config. `GET /api/agents/sessions/search?q=words` shares the sidebar's filename-based enumeration and reads each candidate once for its summary and match. It returns `{ items }` (summaries with avatar plus `match: "title" | "content"`, optional snippet), excludes archived chats, and searches the caller's visible-agent interactive sessions including chat Projects. Case-insensitive substring words must all occur across the shown label (`title || firstUserMessage || sessionId`) and user/assistant text; tool/thinking/system content is excluded. Title matches precede content matches, newest first within each group, capped at 50; blank input returns no items. No index/cache; search remains access-logged.
 - **Realtime:** `/ws`
-- **Media:** `/api/media/*`
+- **Media:** `/api/media/*`. Gateway uploads and Slack share the pure extension/MIME table at `@yoplai/shared/media-types`; Slack excludes SVG. Slack text files and snippets are downloaded in full as attachments, with a marked preview only on failure. JSON joins Markdown/text/CSV raw extraction; PowerPoint (`pptx`, `ppt`) remains unextracted. Only in-process Pi opts into validated host paths for unextracted documents; container/OpenClaw callers keep their own path listings.
 - **Capabilities/auth:** `/api/capabilities`, `/api/auth/*`, `/api/me`
 - **Multi-user admin:** `/api/admin/users`, `/api/admin/teams`, `/api/admin/forks`, pool/team access routes
 - **Scheduler:** `/api/schedules/*`

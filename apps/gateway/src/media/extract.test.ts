@@ -36,6 +36,18 @@ const XLSX_MIME =
   "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
 
 describe("extractText", () => {
+  it("extracts complete JSON as raw UTF-8 without parsing or truncating", async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-json-"));
+    const filePath = path.join(dir, "data.json");
+    const content = '{\n  "message": "café",\n  "tail": "' + "x".repeat(12_000) + '"\n}\n';
+    try {
+      await fs.writeFile(filePath, content);
+      expect(await extractText(filePath, "application/json")).toBe(content);
+    } finally {
+      await fs.rm(dir, { recursive: true, force: true });
+    }
+  });
+
   beforeEach(() => {
     children.length = 0;
     getPdfText.mockReset();

@@ -1,4 +1,4 @@
-import type { AgentConfig, SlackComponentConfig } from "@yoplai/shared";
+import type { AgentConfig, FileAttachment, SlackComponentConfig } from "@yoplai/shared";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -209,6 +209,16 @@ function getMessageHandler(app: MockSlackApp): SlackMessageCallback {
   return app.message.mock.calls[0]?.[0] as SlackMessageCallback;
 }
 
+function useDiskMediaStorage(): void {
+  mockSaveMediaFile.mockImplementation(
+    async (data: Uint8Array, mimeType: string, filename = "file") => {
+      const filePath = path.join(dataDir, filename);
+      await fs.writeFile(filePath, data);
+      return { path: filePath, mimeType, filename, size: data.byteLength };
+    }
+  );
+}
+
 function getEventHandler(
   app: MockSlackApp,
   name: "reaction_added" | "reaction_removed" | "app_mention"
@@ -228,6 +238,16 @@ function getCommandHandler(
 }
 
 describe("createSlackBot", () => {
+  async function sendFiles(files: unknown[], text = ""): Promise<void> {
+    const { createSlackBot } = await import("./bot.js");
+    const bot = createSlackBot([agent], config);
+    await bot?.start();
+    await getMessageHandler(apps[0])({
+      message: { ts: "1.1", thread_ts: "1.0", text, channel: "C1", user: "U1", channel_type: "channel", files },
+      client: apps[0].client,
+    });
+  }
+
   beforeEach(async () => {
     dataDir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-slack-notes-"));
     apps.length = 0;
@@ -1237,7 +1257,10 @@ describe("createSlackBot", () => {
     );
   });
 
-  it("inlines Slack snippets into the agent message", async () => {
+  it.each(["im", "thread"])("downloads the full markdown snippet in a %s", async (destination) => {
+    useDiskMediaStorage();
+    const body = Array.from({ length: 150 }, (_, index) => `Line ${index + 1}: complete brief`).join("\n");
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(body)));
     const { createSlackBot } = await import("./bot.js");
     const bot = createSlackBot([agent], config);
     await bot?.start();
@@ -1246,30 +1269,136 @@ describe("createSlackBot", () => {
     await messageHandler({
       message: {
         ts: "1.1",
-        text: "explain this",
-        channel: "C1",
+        text: "read this",
+        channel: destination === "im" ? "D1" : "C1",
         user: "U1",
-        channel_type: "channel",
+        channel_type: destination === "im" ? "im" : "channel",
+        ...(destination === "thread" ? { thread_ts: "1.0" } : {}),
         files: [
           {
             id: "F1",
-            name: "example.ts",
+            name: "brief.md",
             mode: "snippet",
             mimetype: "text/plain",
-            preview: "const x = 1;",
+            preview: "Only the truncated preview",
+            url_private_download: "https://files.slack.test/brief.md",
           },
         ],
       },
       client: apps[0].client,
     });
 
-    expect(mockSaveMediaFile).not.toHaveBeenCalled();
     expect(mockRunAgent).toHaveBeenCalledWith(
       expect.objectContaining({
-        message: expect.stringContaining("const x = 1;"),
-        attachments: [],
+        message: "read this",
+        attachments: [expect.objectContaining({ filename: "brief.md", mimeType: "text/markdown" })],
       })
     );
+    const attachment = mockRunAgent.mock.calls[0][0].attachments[0] as FileAttachment;
+    expect(await fs.readFile(attachment.path, "utf8")).toBe(body);
+  });
+
+  it.each(["preferred", "fallback"])("downloads from the %s Slack private URL", async (choice) => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response('{"all":"rows"}'));
+    vi.stubGlobal("fetch", fetchMock);
+    await sendFiles([{
+      name: "data.json", mimetype: "text/plain",
+      url_private_download: choice === "preferred" ? "https://files.slack.test/download" : "",
+      url_private: "https://files.slack.test/private",
+    }]);
+    expect(fetchMock).toHaveBeenCalledWith(
+      `https://files.slack.test/${choice === "preferred" ? "download" : "private"}`,
+      { headers: { Authorization: "Bearer xoxb-test" } }
+    );
+    expect(mockRunAgent).toHaveBeenCalledWith(expect.objectContaining({
+      message: "", attachments: [expect.objectContaining({ filename: "data.json", mimeType: "application/json" })],
+    }));
+  });
+
+  it.each([
+    ["notes.txt", "hosted", "text/plain", "notes.txt"],
+    ["data.csv", "hosted", "text/csv", "data.csv"],
+    ["data.json", "hosted", "application/json", "data.json"],
+    ["notes.markdown", "hosted", "text/markdown", "notes.markdown"],
+    ["Untitled", "snippet", "text/plain", "Untitled.txt"],
+    ["script.py", "snippet", "text/plain", "script.py.txt"],
+    ["my notes", "snippet", "text/plain", "my notes.txt"],
+    ["slides.pptx", "hosted", "application/vnd.openxmlformats-officedocument.presentationml.presentation", "slides.pptx"],
+    ["slides.ppt", "hosted", "application/vnd.ms-powerpoint", "slides.ppt"],
+  ])("delivers complete %s files with a usable display name", async (name, mode, mimeType, filename) => {
+    useDiskMediaStorage();
+    const body = "first row\n  preserved spacing,é\nLAST ROW\n";
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(body)));
+    await sendFiles([{
+      name, mode, filetype: "python", mimetype: name.startsWith("slides.") ? mimeType : "text/plain",
+      preview: "truncated first row", url_private_download: "https://files.slack.test/full",
+    }]);
+    expect(mockRunAgent).toHaveBeenCalledWith(expect.objectContaining({
+      message: "", attachments: [expect.objectContaining({ filename, mimeType })],
+    }));
+    const attachment = mockRunAgent.mock.calls[0][0].attachments[0] as FileAttachment;
+    expect(await fs.readFile(attachment.path, "utf8")).toBe(body);
+  });
+
+  it.each([
+    ["missing URL", "snippet", "Slack file is missing a download URL"],
+    ["403", "snippet", "Slack download failed with 403"],
+    ["save failure", "snippet", "storage unavailable"],
+    ["403", "hosted", "Slack download failed with 403"],
+  ])("marks the preview after %s (%s), while delivering another file", async (failure, mode, reason) => {
+    vi.stubGlobal("fetch", vi.fn(async (url: string) =>
+      url.endsWith("/bad") && failure === "403"
+        ? new Response("forbidden", { status: 403 })
+        : new Response("complete bytes")
+    ));
+    if (failure === "save failure") mockSaveMediaFile.mockRejectedValueOnce(new Error("storage unavailable"));
+    await sendFiles([
+      { name: "brief.md", mode, preview: "first lines only", url_private_download: failure === "missing URL" ? undefined : "https://files.slack.test/bad" },
+      { name: "report.pdf", mimetype: "application/pdf", url_private_download: "https://files.slack.test/report.pdf" },
+    ]);
+    expect(mockRunAgent).toHaveBeenCalledWith(expect.objectContaining({
+      message: "Snippet: brief.md (truncated preview; the full file could not be downloaded)\n```\nfirst lines only\n```",
+      attachments: [expect.objectContaining({ filename: "report.pdf", mimeType: "application/pdf" })],
+    }));
+    expect(apps[0].client.chat.postMessage).toHaveBeenCalledWith(expect.objectContaining({
+      thread_ts: "1.0", text: `Could not process brief.md: ${reason}`,
+    }));
+  });
+
+  it("posts only an error when a failed text-only message has no preview", async () => {
+    await sendFiles([{ name: "notes.md", mode: "snippet" }]);
+    expect(mockRunAgent).not.toHaveBeenCalled();
+    expect(apps[0].client.chat.postMessage).toHaveBeenCalledWith(expect.objectContaining({
+      thread_ts: "1.0", text: "Could not process notes.md: Slack file is missing a download URL",
+    }));
+  });
+
+  it("rejects an unsupported extension named like an object property without dropping other files", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response("pdf bytes")));
+    await sendFiles([
+      { name: "payload.constructor", mimetype: "application/octet-stream" },
+      { name: "report.pdf", mimetype: "application/pdf", url_private_download: "https://files.slack.test/report.pdf" },
+    ]);
+    expect(mockRunAgent).toHaveBeenCalledWith(expect.objectContaining({
+      attachments: [expect.objectContaining({ filename: "report.pdf" })],
+    }));
+    expect(apps[0].client.chat.postMessage).toHaveBeenCalledWith(expect.objectContaining({
+      text: "Could not process payload.constructor: Unsupported file type application/octet-stream",
+    }));
+  });
+
+  it.each(["snippet", "hosted"])("rejects oversized %s text files before downloading", async (mode) => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    await sendFiles([{
+      name: "large.md", mode, size: 25 * 1024 * 1024 + 1,
+      preview: "first lines", url_private_download: "https://files.slack.test/large.md",
+    }]);
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(mockRunAgent).not.toHaveBeenCalled();
+    expect(apps[0].client.chat.postMessage).toHaveBeenCalledWith(expect.objectContaining({
+      thread_ts: "1.0", text: "Could not process large.md: File exceeds the 25MB upload limit",
+    }));
   });
 
   it("posts a threaded error for oversized Slack files", async () => {

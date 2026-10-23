@@ -69,6 +69,11 @@
       "development": "./src/main-agent.ts",
       "import": "./dist/main-agent.js",
       "types": "./dist/main-agent.d.ts"
+    },
+    "./media-types": {
+      "development": "./src/media-types.ts",
+      "import": "./dist/media-types.js",
+      "types": "./dist/media-types.d.ts"
     }
   },
   "scripts": {

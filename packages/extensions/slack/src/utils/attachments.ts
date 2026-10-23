@@ -1,50 +1,9 @@
 import type { FileAttachment } from "@yoplai/shared";
+import { EXTENSION_TO_MIME_TYPES } from "@yoplai/shared/media-types";
 
 export const MAX_UPLOAD_SIZE_BYTES = 25 * 1024 * 1024;
 
-const SUPPORTED_MIME_TYPES = new Set([
-  "image/jpeg",
-  "image/png",
-  "image/gif",
-  "image/webp",
-  "application/pdf",
-  "application/msword",
-  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-  "application/vnd.ms-excel",
-  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-]);
-
-const SUPPORTED_EXTENSIONS = new Set([
-  "jpg",
-  "jpeg",
-  "png",
-  "gif",
-  "webp",
-  "pdf",
-  "doc",
-  "docx",
-  "xls",
-  "xlsx",
-]);
-
-const MIME_TYPES_BY_EXTENSION = new Map([
-  ["jpg", "image/jpeg"],
-  ["jpeg", "image/jpeg"],
-  ["png", "image/png"],
-  ["gif", "image/gif"],
-  ["webp", "image/webp"],
-  ["pdf", "application/pdf"],
-  ["doc", "application/msword"],
-  [
-    "docx",
-    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-  ],
-  ["xls", "application/vnd.ms-excel"],
-  [
-    "xlsx",
-    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-  ],
-]);
+const TEXT_EXTENSIONS = new Set(["md", "markdown", "txt", "csv", "json"]);
 
 export type SlackFile = {
   id?: string;
@@ -54,6 +13,7 @@ export type SlackFile = {
   filetype?: string;
   size?: number;
   url_private_download?: string;
+  url_private?: string;
   subtype?: string;
   mode?: string;
   preview?: string;
@@ -70,72 +30,70 @@ function getSlackFilename(file: SlackFile): string {
 }
 
 function getExtension(filename: string): string | undefined {
-  return filename.toLowerCase().split(".").pop();
+  const match = /.+\.([^.]+)$/.exec(filename);
+  return match?.[1]?.toLowerCase();
 }
 
 export function isSlackSnippet(file: SlackFile): boolean {
   return file.subtype === "snippet" || file.mode === "snippet";
 }
 
-export function extractSnippetText(file: SlackFile): string | null {
-  if (!isSlackSnippet(file)) return null;
+export function extractSlackFilePreview(file: SlackFile): string | null {
+  if (!isSlackTextFile(file)) return null;
   const preview = file.preview?.trim();
   if (!preview) return null;
   const filename = getSlackFilename(file);
-  return [`Snippet: ${filename}`, "```", preview, "```"].join("\n");
+  return [
+    `Snippet: ${filename} (truncated preview; the full file could not be downloaded)`,
+    "```", preview, "```",
+  ].join("\n");
+}
+
+export function isSlackTextFile(file: SlackFile): boolean {
+  const ext = getExtension(getSlackFilename(file));
+  return isSlackSnippet(file) || Boolean(ext && TEXT_EXTENSIONS.has(ext));
 }
 
 export function isSupportedSlackFile(file: SlackFile): boolean {
-  const mimeType = file.mimetype?.toLowerCase();
+  if (isSlackTextFile(file)) return true;
   const ext = getExtension(getSlackFilename(file));
-  if (!ext || !SUPPORTED_EXTENSIONS.has(ext)) return false;
-  const expectedMimeType = MIME_TYPES_BY_EXTENSION.get(ext);
-  if (!mimeType) return true;
-  return Boolean(
-    expectedMimeType &&
-      mimeType === expectedMimeType &&
-      SUPPORTED_MIME_TYPES.has(mimeType)
-  );
+  if (!ext || ext === "svg" || !Object.hasOwn(EXTENSION_TO_MIME_TYPES, ext)) return false;
+  const allowed = EXTENSION_TO_MIME_TYPES[ext];
+  if (!allowed) return false;
+  const mimeType = file.mimetype?.toLowerCase();
+  return !mimeType || allowed.includes(mimeType);
 }
 
 export function getSlackFileMimeType(file: SlackFile): string {
-  const mimeType = file.mimetype?.toLowerCase();
-  if (mimeType) return mimeType;
   const ext = getExtension(getSlackFilename(file));
-  switch (ext) {
-    case "jpg":
-    case "jpeg":
-      return "image/jpeg";
-    case "png":
-      return "image/png";
-    case "gif":
-      return "image/gif";
-    case "webp":
-      return "image/webp";
-    case "pdf":
-      return "application/pdf";
-    case "doc":
-      return "application/msword";
-    case "docx":
-      return "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
-    case "xls":
-      return "application/vnd.ms-excel";
-    case "xlsx":
-      return "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
-    default:
-      return "application/octet-stream";
+  if (isSlackTextFile(file)) {
+    return ext && TEXT_EXTENSIONS.has(ext)
+      ? EXTENSION_TO_MIME_TYPES[ext][0]
+      : "text/plain";
   }
+  return file.mimetype?.toLowerCase()
+    || (ext && EXTENSION_TO_MIME_TYPES[ext]?.[0])
+    || "application/octet-stream";
+}
+
+export function getSlackFileFilename(file: SlackFile): string {
+  const filename = getSlackFilename(file);
+  const ext = getExtension(filename);
+  return isSlackTextFile(file) && (!ext || !TEXT_EXTENSIONS.has(ext))
+    ? filename + ".txt"
+    : filename;
 }
 
 export async function downloadSlackFile(
   file: SlackFile,
   botToken: string
 ): Promise<DownloadedSlackFile> {
-  if (!file.url_private_download) {
+  const url = file.url_private_download?.trim() || file.url_private?.trim();
+  if (!url) {
     throw new Error("Slack file is missing a download URL");
   }
 
-  const response = await fetch(file.url_private_download, {
+  const response = await fetch(url, {
     headers: { Authorization: `Bearer ${botToken}` },
   });
   if (!response.ok) {
@@ -150,7 +108,7 @@ export async function downloadSlackFile(
   return {
     buffer,
     mimeType: getSlackFileMimeType(file),
-    filename: getSlackFilename(file),
+    filename: getSlackFileFilename(file),
   };
 }
 

@@ -1,14 +1,59 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 import { ContainerInputSchema, type GatewayConfig } from "@yoplai/shared";
 import { ContainerInputBuilder } from "./input-builder.js";
 import type { SdkRunParams } from "../types.js";
 import { ExtensionRuntime } from "../../extensions/runtime.js";
+import { appendAttachmentContext, buildDocumentAttachmentContext } from "../attachments.js";
+import { prepareContainerUploads } from "./launch-spec.js";
 
 describe("container input builder", () => {
+  it("carries complete document text and copies attachments to remapped container paths without host paths", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-container-documents-"));
+    vi.stubEnv("YOPLAI_HOME", root);
+    try {
+      const inbound = path.join(root, "media", "inbound");
+      const workspaceDir = path.join(root, "workspace");
+      await fs.mkdir(inbound, { recursive: true });
+      await fs.mkdir(workspaceDir);
+      await fs.writeFile(path.join(workspaceDir, "SOUL.md"), "Document test guidance");
+      const text = `  heading\n\n${"row,full text\n".repeat(2000)}FINAL-ROW  `;
+      const presentation = Buffer.from([0x50, 0x4b, 3, 4, 0, 255]);
+      const attachments = [
+        { path: path.join(inbound, "report.txt"), filename: "report.txt", mimeType: "text/plain", size: Buffer.byteLength(text) },
+        { path: path.join(inbound, "slides.pptx"), filename: "slides.pptx", mimeType: "application/vnd.openxmlformats-officedocument.presentationml.presentation", size: presentation.length },
+      ];
+      await fs.writeFile(attachments[0].path, text);
+      await fs.writeFile(attachments[1].path, presentation);
+      const context = await buildDocumentAttachmentContext(attachments);
+      const params = {
+        agentId: "test", sessionId: "documents", workspaceDir, attachments,
+        message: appendAttachmentContext("Read these", context),
+        agent: { id: "test", model: { provider: "anthropic", model: "test" } },
+      } as SdkRunParams;
+      const builder = new ContainerInputBuilder({ buildSystemPrompts: async () => [], buildTools: async () => [] });
+      const input = await builder.build(params, { agents: [params.agent], extensions: {} } as GatewayConfig, "test-token");
+      const uploads = path.join(workspaceDir, "uploads");
+      prepareContainerUploads(attachments, uploads);
+
+      expect(input.message).toContain(`heading\n\n${"row,full text\n".repeat(2000)}FINAL-ROW`);
+      expect(input.message).toContain("File: slides.pptx");
+      expect(input.message).not.toContain(root);
+      expect(input.message).not.toContain("Path:");
+      expect(input.attachments).toHaveLength(2);
+      for (const attachment of input.attachments ?? []) {
+        expect(attachment.path).toMatch(/^\/workspace\/uploads\/[^/]+$/);
+        const copied = await fs.readFile(path.join(uploads, path.basename(attachment.path)));
+        expect(copied).toEqual(attachment.filename === "report.txt" ? Buffer.from(text) : presentation);
+      }
+    } finally {
+      vi.unstubAllEnvs();
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
   it("preserves the selected managed skills directory through the runner input schema", async () => {
     const workspaceDir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-managed-input-"));
     try {

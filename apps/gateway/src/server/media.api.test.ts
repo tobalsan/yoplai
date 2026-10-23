@@ -122,6 +122,40 @@ describe("media upload API", () => {
     expect(json.error).toContain("does not match");
   });
 
+  it("uploads JSON, legacy PowerPoint and markdown aliases with canonical browser defaults", async () => {
+    for (const [filename, canonical] of [
+      ["data.json", "application/json"],
+      ["deck.ppt", "application/vnd.ms-powerpoint"],
+      ["notes.markdown", "text/markdown"],
+    ]) {
+      for (const type of [canonical, "", "application/octet-stream"]) {
+        const formData = new FormData();
+        formData.set("file", new File(["complete document"], filename, { type }));
+        const res = await api.request("/media/upload", { method: "POST", body: formData });
+        expect(res.status).toBe(200);
+        const upload = await res.json();
+        expect(upload.mimeType).toBe(canonical);
+        expect(await fs.readFile(upload.path, "utf8")).toBe("complete document");
+      }
+    }
+  });
+
+  it("accepts every shared Slack file type through the real gateway upload validator", async () => {
+    const { EXTENSION_TO_MIME_TYPES } = await import("@yoplai/shared/media-types");
+    const { isSupportedSlackFile } = await import("../../../../packages/extensions/slack/src/utils/attachments.js");
+    for (const [extension, [mimeType]] of Object.entries(EXTENSION_TO_MIME_TYPES)) {
+      const filename = `attachment.${extension}`;
+      const slackSupported = isSupportedSlackFile({ name: filename, mimetype: mimeType });
+      expect(slackSupported).toBe(extension !== "svg");
+      if (!slackSupported) continue;
+      const formData = new FormData();
+      formData.set("file", new File(["full file"], filename, { type: mimeType }));
+      const response = await api.request("/media/upload", { method: "POST", body: formData });
+      expect(response.status).toBe(200);
+      expect((await response.json()).mimeType).toBe(mimeType);
+    }
+  });
+
   it("accepts allowed extensions when browser MIME is blank", async () => {
     const file = new File([new Uint8Array([1])], "notes.md", { type: "" });
     const formData = new FormData();

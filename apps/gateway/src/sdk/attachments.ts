@@ -46,7 +46,8 @@ export async function readInboundAttachment(
 }
 
 export async function buildDocumentAttachmentContext(
-  attachments: FileAttachment[] | undefined
+  attachments: FileAttachment[] | undefined,
+  options?: { includeUnextractedPath?: boolean }
 ): Promise<string> {
   const documents = (attachments ?? []).filter(
     (attachment) => !isImageAttachment(attachment)
@@ -56,9 +57,11 @@ export async function buildDocumentAttachmentContext(
   const blocks: string[] = [];
   for (const attachment of documents) {
     let text: string | null;
+    let validatedPath: string | undefined;
     try {
       const normalized = await normalizeInboundAttachment(attachment);
       text = await extractText(normalized.path, attachment.mimeType);
+      validatedPath = normalized.path;
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       logWarn("Failed to extract attachment text", {
@@ -72,6 +75,9 @@ export async function buildDocumentAttachmentContext(
       [
         `File: ${getAttachmentFilename(attachment)}`,
         `MIME type: ${attachment.mimeType}`,
+        !content && options?.includeUnextractedPath && validatedPath
+          ? `Path: ${validatedPath}`
+          : "",
         content
           ? ""
           : "Content: not extracted; inspect the attached file path if available.",

@@ -1,43 +1,11 @@
+import { EXTENSION_TO_MIME_TYPES } from "@yoplai/shared/media-types";
 import type { FileAttachment, FileBlock } from "../api/types";
 
 export const MAX_UPLOAD_SIZE_BYTES = 25 * 1024 * 1024;
 
-const ACCEPTED_FILE_TYPES = [
-  "image/jpeg",
-  "image/png",
-  "image/gif",
-  "image/webp",
-  "image/svg+xml",
-  "application/pdf",
-  "text/plain",
-  "text/markdown",
-  "text/csv",
-  "application/msword",
-  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-  "application/vnd.ms-excel",
-  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-  "application/vnd.openxmlformats-officedocument.presentationml.presentation",
-].join(",");
-
-const SUPPORTED_FILE_TYPES = new Set(ACCEPTED_FILE_TYPES.split(","));
-const SUPPORTED_FILE_EXTENSIONS = new Set([
-  "jpg",
-  "jpeg",
-  "png",
-  "gif",
-  "webp",
-  "svg",
-  "pdf",
-  "txt",
-  "md",
-  "markdown",
-  "csv",
-  "doc",
-  "docx",
-  "xls",
-  "xlsx",
-  "pptx",
-]);
+const SUPPORTED_FILE_TYPES = new Set(Object.values(EXTENSION_TO_MIME_TYPES).flat());
+const ACCEPTED_FILE_TYPES = Array.from(SUPPORTED_FILE_TYPES).join(",");
+const SUPPORTED_FILE_EXTENSIONS = new Set(Object.keys(EXTENSION_TO_MIME_TYPES));
 
 export const FILE_INPUT_ACCEPT = [
   ACCEPTED_FILE_TYPES,

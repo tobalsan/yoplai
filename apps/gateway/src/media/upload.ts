@@ -1,3 +1,4 @@
+import { EXTENSION_TO_MIME_TYPES } from "@yoplai/shared/media-types";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
@@ -12,65 +13,13 @@ export { MEDIA_INBOUND_DIR };
 
 export const MAX_UPLOAD_SIZE_BYTES = 25 * 1024 * 1024;
 
-// Allowed MIME types for upload
-const ALLOWED_MIME_TYPES = new Set([
-  // Images
-  "image/jpeg",
-  "image/png",
-  "image/gif",
-  "image/webp",
-  "image/svg+xml",
-  // Documents
-  "application/pdf",
-  "text/markdown",
-  "text/plain",
-  "text/csv",
-  // Office formats
-  "application/msword", // .doc
-  "application/vnd.openxmlformats-officedocument.wordprocessingml.document", // .docx
-  "application/vnd.ms-excel", // .xls
-  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", // .xlsx
-  "application/vnd.openxmlformats-officedocument.presentationml.presentation", // .pptx
-]);
+const ALLOWED_MIME_TYPES = new Set(Object.values(EXTENSION_TO_MIME_TYPES).flat());
 
-const MIME_TO_EXTENSIONS: Record<string, string[]> = {
-  "image/jpeg": ["jpg", "jpeg"],
-  "image/png": ["png"],
-  "image/gif": ["gif"],
-  "image/webp": ["webp"],
-  "image/svg+xml": ["svg"],
-  "application/pdf": ["pdf"],
-  "text/markdown": ["md", "markdown"],
-  "text/plain": ["txt"],
-  "text/csv": ["csv"],
-  "application/msword": ["doc"],
-  "application/vnd.openxmlformats-officedocument.wordprocessingml.document": [
-    "docx",
-  ],
-  "application/vnd.ms-excel": ["xls"],
-  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": ["xlsx"],
-  "application/vnd.openxmlformats-officedocument.presentationml.presentation": ["pptx"],
-};
-
-const EXTENSION_TO_MIME_TYPES: Record<string, string[]> = {
-  jpg: ["image/jpeg"],
-  jpeg: ["image/jpeg"],
-  png: ["image/png"],
-  gif: ["image/gif"],
-  webp: ["image/webp"],
-  svg: ["image/svg+xml"],
-  pdf: ["application/pdf"],
-  txt: ["text/plain"],
-  md: ["text/markdown", "text/plain"],
-  csv: ["text/csv", "text/plain", "application/vnd.ms-excel"],
-  doc: ["application/msword"],
-  docx: [
-    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-  ],
-  xls: ["application/vnd.ms-excel"],
-  xlsx: ["application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"],
-  pptx: ["application/vnd.openxmlformats-officedocument.presentationml.presentation"],
-};
+const MIME_TO_EXTENSIONS: Record<string, string[]> = {};
+for (const [extension, mimeTypes] of Object.entries(EXTENSION_TO_MIME_TYPES)) {
+  const canonical = mimeTypes[0];
+  if (canonical) (MIME_TO_EXTENSIONS[canonical] ??= []).push(extension);
+}
 
 const ALLOWED_EXTENSIONS = new Set(Object.keys(EXTENSION_TO_MIME_TYPES));
 
