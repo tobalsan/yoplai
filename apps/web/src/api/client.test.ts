@@ -19,7 +19,6 @@ import {
   fetchRuntimeSubagentLogs,
   fetchSubagents,
   fetchSubagentLogs,
-  spawnSubagent,
   interruptSubagent,
   archiveSubagent,
   unarchiveSubagent,
@@ -512,42 +511,6 @@ describe("api client (projects/subagents)", () => {
     });
     expect(res.ok).toBe(true);
     expect(res.sha).toBe("abc123");
-  });
-
-  it("spawns subagent", async () => {
-    fetchMock.mockResolvedValue({
-      ok: true,
-      json: async () => ({ slug: "alpha" }),
-    });
-
-    const res = await spawnSubagent("PRO-2", {
-      slug: "alpha",
-      cli: "claude",
-      name: "Worker A",
-      prompt: "hello",
-      model: "sonnet",
-      reasoningEffort: "medium",
-      mode: "worktree",
-      baseBranch: "main",
-      resume: true,
-    });
-
-    expectFetchCall("/api/projects/PRO-2/subagents", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        slug: "alpha",
-        cli: "claude",
-        name: "Worker A",
-        prompt: "hello",
-        model: "sonnet",
-        reasoningEffort: "medium",
-        mode: "worktree",
-        baseBranch: "main",
-        resume: true,
-      }),
-    });
-    expect(res.ok).toBe(true);
   });
 
   it("interrupts subagent", async () => {
