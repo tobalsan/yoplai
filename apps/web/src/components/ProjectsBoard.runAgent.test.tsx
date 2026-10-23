@@ -8,7 +8,6 @@ vi.mock("@solidjs/router", () => ({
 }));
 vi.mock("./AgentSidebar", () => ({ AgentSidebar: () => null }));
 vi.mock("./ContextPanel", () => ({ ContextPanel: () => null }));
-vi.mock("./AgentChat", () => ({ AgentChat: () => null }));
 
 import { parseRunAgent } from "./ProjectsBoard";
 

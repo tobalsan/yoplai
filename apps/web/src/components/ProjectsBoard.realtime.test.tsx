@@ -70,7 +70,6 @@ vi.mock("../api", () => ({
 
 vi.mock("./AgentSidebar", () => ({ AgentSidebar: () => null }));
 vi.mock("./ContextPanel", () => ({ ContextPanel: () => null }));
-vi.mock("./AgentChat", () => ({ AgentChat: () => null }));
 vi.mock("./ActivityFeed", () => ({ ActivityFeed: () => null }));
 
 vi.mock("@solidjs/router", () => ({

@@ -7,7 +7,6 @@ import { readMigratedLocal } from "./local-storage";
 const RENAMED_KEYS: Array<[newKey: string, legacyKey: string]> = [
   ["yoplai-theme", "aihub-theme"],
   ["yoplai:context-panel:mode", "aihub:context-panel:mode"],
-  ["yoplai:context-panel:selected-agent", "aihub:context-panel:selected-agent"],
   ["yoplai:recent-project-views", "aihub:recent-project-views"],
   ["yoplai:board:selected-agent", "aihub:board:selected-agent"],
   ["yoplai:projects:expanded-columns", "aihub:projects:expanded-columns"],

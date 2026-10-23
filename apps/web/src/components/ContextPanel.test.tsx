@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { createSignal } from "solid-js";
+import { within } from "@testing-library/dom";
 import { describe, expect, it, vi } from "vitest";
 import { render } from "solid-js/web";
 import { ContextPanel } from "./ContextPanel";
@@ -12,8 +12,6 @@ async function flushAsync(): Promise<void> {
 }
 
 vi.mock("../api", () => ({
-  fetchAgents: vi.fn(async () => []),
-  fetchAllSubagents: vi.fn(async () => ({ items: [] })),
   fetchProjects: vi.fn(async () => [
     {
       id: "PRO-1",
@@ -30,8 +28,7 @@ vi.mock("../lib/capabilities", () => ({
   isExtensionEnabled: () => true,
 }));
 
-vi.mock("./ActivityFeed", () => ({ ActivityFeed: () => null }));
-vi.mock("./AgentChat", () => ({ AgentChat: () => null }));
+vi.mock("./ActivityFeed", () => ({ ActivityFeed: () => <div>Activity feed</div> }));
 vi.mock("./AgentDirectory", () => ({ AgentDirectory: () => null }));
 vi.mock("@solidjs/router", () => ({
   A: (props: Record<string, unknown>) => <a {...props} />,
@@ -39,6 +36,32 @@ vi.mock("@solidjs/router", () => ({
 }));
 
 describe("ContextPanel", () => {
+  it.each(["chat", "unknown"])("opens saved %s mode on Agents with recent project links", async (mode) => {
+    localStorage.clear();
+    localStorage.setItem("yoplai:context-panel:mode", mode);
+    localStorage.setItem(
+      "yoplai:recent-project-views",
+      JSON.stringify([{ id: "PRO-1", title: "Alpha", viewedAt: Date.now() }])
+    );
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const dispose = render(() => (
+      <ContextPanel
+        collapsed={() => false}
+        onToggleCollapse={() => {}}
+        onSelectAgent={() => {}}
+        onOpenProject={() => {}}
+      />
+    ), container);
+    await flushAsync();
+
+    expect(within(container).queryByRole("button", { name: "Chat" })).toBeNull();
+    expect(within(container).getByRole("link", { name: /PRO-1: Alpha/ }).getAttribute("href")).toBe("/projects/PRO-1");
+
+    dispose();
+    container.remove();
+    localStorage.clear();
+  });
   it("renders recent projects at the bottom", async () => {
     localStorage.setItem("yoplai:context-panel:mode", "agents");
     localStorage.setItem(
@@ -53,9 +76,7 @@ describe("ContextPanel", () => {
         <ContextPanel
           collapsed={() => false}
           onToggleCollapse={() => {}}
-          selectedAgent={() => null}
           onSelectAgent={() => {}}
-          onClearSelection={() => {}}
           onOpenProject={() => {}}
         />
       ),
@@ -94,9 +115,7 @@ describe("ContextPanel", () => {
         <ContextPanel
           collapsed={() => false}
           onToggleCollapse={() => {}}
-          selectedAgent={() => null}
           onSelectAgent={() => {}}
-          onClearSelection={() => {}}
           onOpenProject={() => {}}
         />
       ),
@@ -136,9 +155,7 @@ describe("ContextPanel", () => {
         <ContextPanel
           collapsed={() => false}
           onToggleCollapse={() => {}}
-          selectedAgent={() => null}
           onSelectAgent={() => {}}
-          onClearSelection={() => {}}
           onOpenProject={() => {}}
         />
       ),
@@ -157,8 +174,8 @@ describe("ContextPanel", () => {
     localStorage.removeItem("yoplai:recent-project-views");
   });
 
-  it("hides recent projects outside the Agents tab", async () => {
-    localStorage.setItem("yoplai:context-panel:mode", "chat");
+  it("restores Feed mode without recent project links", async () => {
+    localStorage.setItem("yoplai:context-panel:mode", "feed");
     localStorage.setItem(
       "yoplai:recent-project-views",
       JSON.stringify([{ id: "PRO-1", viewedAt: Date.now() }])
@@ -171,9 +188,7 @@ describe("ContextPanel", () => {
         <ContextPanel
           collapsed={() => false}
           onToggleCollapse={() => {}}
-          selectedAgent={() => null}
           onSelectAgent={() => {}}
-          onClearSelection={() => {}}
           onOpenProject={() => {}}
         />
       ),
@@ -182,46 +197,37 @@ describe("ContextPanel", () => {
 
     await flushAsync();
 
-    expect(container.querySelector(".panel-recent")).toBeNull();
+    expect(within(container).queryByRole("link", { name: /PRO-1/ })).toBeNull();
+    expect(within(container).getByText("Activity feed")).toBeTruthy();
 
     dispose();
     localStorage.removeItem("yoplai:context-panel:mode");
     localStorage.removeItem("yoplai:recent-project-views");
   });
 
-  it("does not force-switch back to chat when reopening Agents for the same selection", async () => {
-    localStorage.setItem("yoplai:context-panel:mode", "chat");
-    const [selectedAgent] = createSignal("lead-1");
-
+  it("restores Agents mode with recent project links", async () => {
+    localStorage.clear();
+    localStorage.setItem("yoplai:context-panel:mode", "agents");
+    localStorage.setItem("yoplai:recent-project-views", JSON.stringify([
+      { id: "PRO-1", title: "Alpha", viewedAt: Date.now() },
+    ]));
     const container = document.createElement("div");
     document.body.appendChild(container);
-    const dispose = render(
-      () => (
-        <ContextPanel
-          collapsed={() => false}
-          onToggleCollapse={() => {}}
-          selectedAgent={selectedAgent}
-          onSelectAgent={() => {}}
-          onClearSelection={() => {}}
-          onOpenProject={() => {}}
-        />
-      ),
-      container
-    );
-
+    const dispose = render(() => (
+      <ContextPanel
+        collapsed={() => false}
+        onToggleCollapse={() => {}}
+        onSelectAgent={() => {}}
+        onOpenProject={() => {}}
+      />
+    ), container);
     await flushAsync();
 
-    const agentsTab = Array.from(
-      container.querySelectorAll(".panel-tabs button")
-    ).find((button) => button.textContent === "Agents") as HTMLButtonElement;
-    agentsTab.click();
-    await Promise.resolve();
-
-    expect(agentsTab.classList.contains("active")).toBe(true);
-    expect(container.querySelector(".panel-recent")).not.toBeNull();
+    expect(within(container).getByRole("link", { name: /PRO-1: Alpha/ })).toBeTruthy();
 
     dispose();
-    localStorage.removeItem("yoplai:context-panel:mode");
+    container.remove();
+    localStorage.clear();
   });
 
   it("adopts panel mode and recent projects stored under the legacy aihub keys", async () => {
@@ -239,9 +245,7 @@ describe("ContextPanel", () => {
         <ContextPanel
           collapsed={() => false}
           onToggleCollapse={() => {}}
-          selectedAgent={() => null}
           onSelectAgent={() => {}}
-          onClearSelection={() => {}}
           onOpenProject={() => {}}
         />
       ),
@@ -265,7 +269,7 @@ describe("ContextPanel", () => {
 
   it("keeps the new panel mode when a legacy value also exists", async () => {
     localStorage.clear();
-    localStorage.setItem("yoplai:context-panel:mode", "chat");
+    localStorage.setItem("yoplai:context-panel:mode", "feed");
     localStorage.setItem("aihub:context-panel:mode", "agents");
 
     const container = document.createElement("div");
@@ -275,9 +279,7 @@ describe("ContextPanel", () => {
         <ContextPanel
           collapsed={() => false}
           onToggleCollapse={() => {}}
-          selectedAgent={() => null}
           onSelectAgent={() => {}}
-          onClearSelection={() => {}}
           onOpenProject={() => {}}
         />
       ),
@@ -286,10 +288,7 @@ describe("ContextPanel", () => {
 
     await flushAsync();
 
-    const activeTab = Array.from(
-      container.querySelectorAll(".panel-tabs button")
-    ).find((button) => button.classList.contains("active"));
-    expect(activeTab?.textContent).toBe("Chat");
+    expect(within(container).getByText("Activity feed")).toBeTruthy();
 
     dispose();
     localStorage.clear();
