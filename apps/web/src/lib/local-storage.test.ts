@@ -8,7 +8,6 @@ const RENAMED_KEYS: Array<[newKey: string, legacyKey: string]> = [
   ["yoplai-theme", "aihub-theme"],
   ["yoplai:context-panel:mode", "aihub:context-panel:mode"],
   ["yoplai:recent-project-views", "aihub:recent-project-views"],
-  ["yoplai:board:selected-agent", "aihub:board:selected-agent"],
   ["yoplai:projects:expanded-columns", "aihub:projects:expanded-columns"],
   ["yoplai:projects:create-form", "aihub:projects:create-form"],
   ["yoplai:projects:delete-success", "aihub:projects:delete-success"],

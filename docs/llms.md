@@ -57,7 +57,7 @@ Important seams:
 Solid.js SPA. It consumes `/api/capabilities` and loads optional extension routes only when enabled.
 
 - `src/api/`: domain API clients and realtime client
-- `src/lib/chat-runtime.ts`: shared streaming/history/attachment runtime
+- `src/lib/chat-runtime.ts`: main chat attachment staging
 - `src/lib/web-route-registry.tsx`: optional extension route discovery
 - `src/extensions/`: extension-owned route bundles
 - `src/components/ui/`: shared primitives (Modal, ConfirmDialog, Button, TextField, TextAreaField) used by chat projects and sidebar; scoped styles, no external UI library

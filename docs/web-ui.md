@@ -33,7 +33,7 @@ Core chat supports:
 - WebSocket streaming and background subscriptions
 - simple and full structured history views
 - Copy reply after the last agent bubble's timestamp copies all text in a completed turn, excluding tools, thinking, files and failure notices. Rich paste preserves structure while using the destination's font and colors; plain paste removes markdown formatting. Incomplete turns from paginated history cannot be copied until their beginning is loaded.
-- Copy code on each agent code block copies its raw text, including indentation and newlines. Both copy controls support keyboard/touch, remain visible on narrow screens, and show Copied or Copy failed. Clipboard access requires HTTPS or localhost; browsers without rich clipboard support fall back to plain text. These controls are limited to the main chat, excluding board chat.
+- Copy code on each agent code block copies its raw text, including indentation and newlines. Both copy controls support keyboard/touch, remain visible on narrow screens, and show Copied or Copy failed. Clipboard access requires HTTPS or localhost; browsers without rich clipboard support fall back to plain text. These controls are limited to the main chat.
 - thinking/tool/file blocks where authorized
 - file picker and drag-and-drop uploads
 - stop/abort with partial response preservation
@@ -47,7 +47,7 @@ Full tool/thinking/model view is restricted in multi-user mode. Canonical transc
 
 ## Projects and board
 
-Projects provide lifecycle views, editable pitch/spec documents, slice kanban, threads, activity, subagent runs, and Space integration. Board may provide split shell, lead-agent chat, scratchpad, project projections, and worktree status.
+Projects provide lifecycle views, editable pitch/spec documents, slice kanban, threads, activity, subagent runs, and Space integration. Board home provides a full-width canvas with local Scratchpad and Project lifecycle tabs, project projections, and worktree status.
 
 Project detail:
 
