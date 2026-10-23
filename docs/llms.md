@@ -62,7 +62,7 @@ Solid.js SPA. It consumes `/api/capabilities` and loads optional extension route
 - `src/extensions/`: extension-owned route bundles
 - `src/components/ui/`: shared primitives (Modal, ConfirmDialog, Button, TextField, TextAreaField) used by chat projects and sidebar; scoped styles, no external UI library
 - core chat supports simple/full history, streaming, attachments, aborts, and explicit sessions
-- Main `ChatView` copies complete agent turns as semantic HTML plus clean text through `lib/reply-clipboard.ts` and `lib/clipboard.ts`; tool/thinking/file/failure content is excluded. It hides reply copying during the active turn and for incomplete history turns. Code copying is opt-in via `renderMarkdown({ copyCode: true })` with a ChatView-owned delegated handler, including streaming HTML replacement; other markdown surfaces and `AgentChat` keep their default rendering.
+- Main `ChatView` copies complete agent turns as semantic HTML plus clean text through `lib/reply-clipboard.ts` and `lib/clipboard.ts`; tool/thinking/file/failure content is excluded. It hides reply copying during the active turn and for incomplete history turns. Code copying is opt-in via `renderMarkdown({ copyCode: true })` with a ChatView-owned delegated handler, including streaming HTML replacement; other markdown surfaces keep their default rendering.
 
 `SessionSearch` mounts once in the app layout. Search is first in sidebar navigation
 (then optional Board/Orchestrator, Agents and existing items); the old Sessions

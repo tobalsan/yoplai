@@ -1,6 +1,5 @@
 import type { SubagentRun, SubagentRunStatus } from "@yoplai/shared/types";
 import type {
-  FileAttachment,
   RuntimeSubagentListResponse,
   SubagentGlobalListResponse,
   SubagentListResponse,
@@ -174,56 +173,6 @@ export async function fetchSubagentLogs(
     return { ok: false, error: data.error ?? "Failed to fetch logs" };
   }
   const data = (await res.json()) as SubagentLogsResponse;
-  return { ok: true, data };
-}
-
-export type SpawnSubagentInput = {
-  slug: string;
-  cli: string;
-  name?: string;
-  prompt: string;
-  template?: "lead" | "custom";
-  promptRole?: "coordinator" | "worker" | "reviewer" | "legacy";
-  includeDefaultPrompt?: boolean;
-  includeRoleInstructions?: boolean;
-  includePostRun?: boolean;
-  model?: string;
-  reasoningEffort?: string;
-  thinking?: string;
-  mode?: "main-run" | "worktree" | "clone" | "none";
-  baseBranch?: string;
-  resume?: boolean;
-  attachments?: FileAttachment[];
-  agentId?: string;
-};
-
-export type SpawnSubagentResult =
-  | {
-      ok: true;
-      data: { slug: string; agentId?: string; sessionKey?: string };
-    }
-  | { ok: false; error: string };
-
-export async function spawnSubagent(
-  projectId: string,
-  input: SpawnSubagentInput
-): Promise<SpawnSubagentResult> {
-  const res = await fetch(`${API_BASE}/projects/${projectId}/subagents`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(input),
-  });
-  if (!res.ok) {
-    const data = await res
-      .json()
-      .catch(() => ({ error: "Failed to spawn subagent" }));
-    return { ok: false, error: data.error ?? "Failed to spawn subagent" };
-  }
-  const data = (await res.json()) as {
-    slug: string;
-    agentId?: string;
-    sessionKey?: string;
-  };
   return { ok: true, data };
 }
 
