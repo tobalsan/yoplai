@@ -139,3 +139,33 @@ it("refreshes live cards without fetching configuration again and ignores late c
   expect(document.body.textContent).toContain("Checking…");
   expect(queryByRole(document.body, "img", { name: "docs connected" })).toBeNull();
 });
+
+it("keeps the last card state on screen while a focus refresh checks again", async () => {
+  const requests: string[] = [];
+  const second = Promise.withResolvers<Response>();
+  let checks = 0;
+  vi.stubGlobal("fetch", (input: string) => {
+    requests.push(input);
+    if (input === "/api/agents") return Promise.resolve(json([{ id: "status-order", name: "Agent" }]));
+    if (input.endsWith("/extensions")) return Promise.resolve(json({ extensions: [] }));
+    if (input === "/api/top-extensions") return Promise.resolve(json({ extensions: [], mcp: [], system: { extensions: [], mcp: [] } }));
+    if (input.endsWith("&live=0")) return Promise.resolve(json({ servers: [server("expired", { auth: "oauth", personalState: "needs_reconnect" })] }));
+    if (input.endsWith("&server=expired")) {
+      return checks++ === 0
+        ? Promise.resolve(json({ servers: [server("expired", { auth: "oauth", state: "needs_reconnect", personalState: "needs_reconnect", status: undefined })] }))
+        : second.promise;
+    }
+    throw new Error(`Unexpected request ${input}`);
+  });
+  dispose = render(() => <EditAgent />, document.body);
+  await tick(); await tick();
+  expect(getByRole(document.body, "link", { name: "Reconnect expired" })).toBeTruthy();
+  window.dispatchEvent(new Event("focus"));
+  await tick();
+  expect(requests.filter((request) => request.endsWith("&server=expired"))).toHaveLength(2);
+  expect(getByRole(document.body, "link", { name: "Reconnect expired" })).toBeTruthy();
+  expect(document.body.textContent).not.toContain("Checking…");
+  second.resolve(json({ servers: [server("expired", { auth: "oauth", state: "connected", personalState: "connected", status: undefined })] }));
+  await tick();
+  expect(getByRole(document.body, "img", { name: "expired connected" })).toBeTruthy();
+});

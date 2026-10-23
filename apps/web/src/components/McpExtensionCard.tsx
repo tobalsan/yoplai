@@ -45,16 +45,16 @@ export function McpExtensionCard(props: { server: McpServer; agentId: string; sy
       </A>
       <Switch fallback={<A href={href()} class="edit-agent-ext-add" aria-label={`Set up ${props.server.name}`} title={`Set up ${props.server.name}`}>+</A>}>
         <Match when={active() && props.checking}>
-          <span class="mcp-ext-status" role="status">Checking…</span>
+          <span class="mcp-ext-checking" role="status" title="Checking connection"><span class="mcp-ext-sr-only">Checking…</span></span>
         </Match>
         <Match when={active() && (props.failed || props.server.state === "unreachable")}>
           <span class="mcp-ext-status" role="status">{props.failed ? "Failed to check status." : "Unreachable"} <button type="button" class="mcp-ext-add-button" aria-label={`Retry ${props.server.name}`} onClick={props.onRetry}>Retry</button></span>
         </Match>
         <Match when={active() && props.server.state === "needs_reconnect"}>
-          <A href={href()} class="mcp-ext-reconnect" aria-label={`Reconnect ${props.server.name}`}>Reconnect</A>
+          <A href={href()} class="mcp-ext-reconnect mcp-ext-fade" aria-label={`Reconnect ${props.server.name}`}>Reconnect</A>
         </Match>
         <Match when={active() && isMcpServerSetUp(props.server)}>
-          <span class="edit-agent-ext-check" role="img" aria-label={`${props.server.name} connected`} title="Connected">
+          <span class="edit-agent-ext-check mcp-ext-fade" role="img" aria-label={`${props.server.name} connected`} title="Connected">
             <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M3.5 8.5l3 3 6-7" stroke-linecap="round" stroke-linejoin="round" /></svg>
           </span>
         </Match>
@@ -66,6 +66,13 @@ export function McpExtensionCard(props: { server: McpServer; agentId: string; sy
 export const MCP_EXTENSION_STYLES = `
 .mcp-ext-status { align-self: center; flex: none; font-size: 12px; color: var(--text-secondary); }
 .mcp-ext-reconnect { align-self: center; flex: none; font-size: 12px; color: var(--text-secondary); }
+.mcp-ext-checking { align-self: center; flex: none; width: 32px; height: 32px; display: grid; place-items: center; animation: mcp-ext-fade-in .2s ease .15s both; }
+.mcp-ext-checking::before { content: ""; width: 14px; height: 14px; border-radius: 50%; border: 2px solid var(--border-default); border-top-color: var(--text-secondary); animation: mcp-ext-spin .9s cubic-bezier(.5,.15,.5,.85) infinite; }
+.mcp-ext-fade { animation: mcp-ext-fade-in .25s ease both; }
+.mcp-ext-sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; border: 0; }
+@keyframes mcp-ext-spin { to { transform: rotate(360deg); } }
+@keyframes mcp-ext-fade-in { from { opacity: 0; transform: scale(.85); } }
+@media (prefers-reduced-motion: reduce) { .mcp-ext-checking::before { animation-duration: 2s; } .mcp-ext-fade, .mcp-ext-checking { animation: none; } }
 .edit-agent-ext-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .edit-agent-ext-head h2 { margin: 0; }
 .edit-agent-ext-icon.mcp-ext-icon-filled { padding: 0; }

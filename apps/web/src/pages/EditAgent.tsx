@@ -303,13 +303,14 @@ export function EditAgent() {
     setLiveServers({});
   });
   onCleanup(() => { generation++; });
-  const checkServer = async (name: string) => {
+  // `quiet` keeps the last result on screen (focus and OAuth-return refresh), so cards do not flash on each tab switch.
+  const checkServer = async (name: string, quiet = false) => {
     const id = dashboardAgentId();
     if (!id) return;
     const currentGeneration = generation;
     const request = (requests.get(name) ?? 0) + 1;
     requests.set(name, request);
-    setLiveServers((previous) => ({ ...previous, [name]: { ...previous[name], checking: true, failed: false } }));
+    if (!quiet || !liveServers()[name]?.server) setLiveServers((previous) => ({ ...previous, [name]: { ...previous[name], checking: true, failed: false } }));
     const current = () => generation === currentGeneration && dashboardAgentId() === id && requests.get(name) === request;
     try {
       const list = await fetchMcpServer(id, name);
@@ -321,7 +322,7 @@ export function EditAgent() {
   const refreshMcpStatus = () => {
     if (!extensionListLoaded()) return;
     for (const server of mcpStatus()?.servers ?? []) {
-      if (!server.shared || server.enabled) void checkServer(server.name);
+      if (!server.shared || server.enabled) void checkServer(server.name, true);
     }
   };
   const [addOpen, setAddOpen] = createSignal(false);
