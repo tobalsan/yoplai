@@ -21,18 +21,6 @@ export async function fetchPool(): Promise<Agent[]> {
   return res.json();
 }
 
-export function selectDefaultProjectManagerAgent(
-  agents: Agent[],
-  preferredAgentId?: string | null
-): Agent | undefined {
-  if (preferredAgentId) {
-    const preferred = agents.find((agent) => agent.id === preferredAgentId);
-    if (preferred) return preferred;
-  }
-
-  return agents.find((agent) => agent.isDefaultProjectManager) ?? agents[0];
-}
-
 export async function fetchAgent(agentId: string): Promise<Agent> {
   const res = await fetch(`${API_BASE}/agents/${agentId}`);
   if (!res.ok) throw new Error("Failed to fetch agent");

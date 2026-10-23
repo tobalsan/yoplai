@@ -1,4 +1,4 @@
-import type { LeadSessionChangedEvent, SubagentRunStatus } from "@yoplai/shared/types";
+import type { SubagentRunStatus } from "@yoplai/shared/types";
 import type { ActiveTurn } from "./agents";
 import { dispatchWsEvent, wsDebug, type WsStreamEvent } from "./ws";
 import {
@@ -72,11 +72,6 @@ export type SubagentChangeCallbacks = {
   onError?: (error: string) => void;
 };
 
-export type LeadSessionChangeCallbacks = {
-  onLeadSessionChanged?: (event: LeadSessionChangedEvent) => void;
-  onError?: (error: string) => void;
-};
-
 const statusSubscribers = new Set<StatusCallbacks>();
 let statusCleanup: (() => void) | null = null;
 
@@ -118,24 +113,19 @@ function disconnectStatusSocket(): void {
 
 const fileChangeSubscribers = new Set<FileChangeCallbacks>();
 const subagentChangeSubscribers = new Set<SubagentChangeCallbacks>();
-const leadSessionChangeSubscribers = new Set<LeadSessionChangeCallbacks>();
 let projectCleanup: (() => void) | null = null;
 
 function connectProjectSocket(): void {
   if (projectCleanup) return;
   if (
     fileChangeSubscribers.size === 0 &&
-    subagentChangeSubscribers.size === 0 &&
-    leadSessionChangeSubscribers.size === 0
+    subagentChangeSubscribers.size === 0
   ) {
     return;
   }
 
   const interests: RealtimeInterest[] = [{ type: "project" }];
-  if (
-    subagentChangeSubscribers.size > 0 ||
-    leadSessionChangeSubscribers.size > 0
-  ) {
+  if (subagentChangeSubscribers.size > 0) {
     interests.push({ type: "subagents" });
   }
   projectCleanup = subscribeToRealtime({
@@ -166,20 +156,11 @@ function connectProjectSocket(): void {
         }
         return;
       }
-      if (event.type === "lead_session_changed") {
-        for (const subscriber of leadSessionChangeSubscribers) {
-          subscriber.onLeadSessionChanged?.(event);
-        }
-        return;
-      }
       if (event.type === "error") {
         for (const subscriber of fileChangeSubscribers) {
           subscriber.onError?.(event.message);
         }
         for (const subscriber of subagentChangeSubscribers) {
-          subscriber.onError?.(event.message);
-        }
-        for (const subscriber of leadSessionChangeSubscribers) {
           subscriber.onError?.(event.message);
         }
       }
@@ -190,9 +171,6 @@ function connectProjectSocket(): void {
       }
       for (const subscriber of subagentChangeSubscribers) {
         subscriber.onError?.("Subagent subscription connection error");
-      }
-      for (const subscriber of leadSessionChangeSubscribers) {
-        subscriber.onError?.("Lead session subscription connection error");
       }
     },
   });
@@ -225,8 +203,7 @@ export function subscribeToFileChanges(
     fileChangeSubscribers.delete(callbacks);
     if (
       fileChangeSubscribers.size === 0 &&
-      subagentChangeSubscribers.size === 0 &&
-      leadSessionChangeSubscribers.size === 0
+      subagentChangeSubscribers.size === 0
     ) {
       disconnectProjectSocket();
     }
@@ -246,41 +223,10 @@ export function subscribeToSubagentChanges(
     subagentChangeSubscribers.delete(callbacks);
     if (
       fileChangeSubscribers.size === 0 &&
-      subagentChangeSubscribers.size === 0 &&
-      leadSessionChangeSubscribers.size === 0
+      subagentChangeSubscribers.size === 0
     ) {
       disconnectProjectSocket();
-    } else if (
-      subagentChangeSubscribers.size === 0 &&
-      leadSessionChangeSubscribers.size === 0
-    ) {
-      disconnectProjectSocket();
-      connectProjectSocket();
-    }
-  };
-}
-
-export function subscribeToLeadSessionChanges(
-  callbacks: LeadSessionChangeCallbacks
-): () => void {
-  leadSessionChangeSubscribers.add(callbacks);
-  if (projectCleanup) {
-    disconnectProjectSocket();
-  }
-  connectProjectSocket();
-
-  return () => {
-    leadSessionChangeSubscribers.delete(callbacks);
-    if (
-      fileChangeSubscribers.size === 0 &&
-      subagentChangeSubscribers.size === 0 &&
-      leadSessionChangeSubscribers.size === 0
-    ) {
-      disconnectProjectSocket();
-    } else if (
-      subagentChangeSubscribers.size === 0 &&
-      leadSessionChangeSubscribers.size === 0
-    ) {
+    } else if (subagentChangeSubscribers.size === 0) {
       disconnectProjectSocket();
       connectProjectSocket();
     }

@@ -7,67 +7,39 @@ import {
   onCleanup,
 } from "solid-js";
 import type { JSX } from "solid-js";
-import type {
-  FileAttachment,
-  FullHistoryMessage,
-  LeadSession,
-  SubagentRun,
-} from "@yoplai/shared/types";
+import type { SubagentRun } from "@yoplai/shared/types";
 import {
   archiveRuntimeSubagent,
-  createLeadSession,
-  deleteLeadSession,
   deleteRuntimeSubagent,
-  fetchAgents,
-  fetchLeadSessionTranscript,
-  fetchLeadSessions,
   fetchRuntimeSubagentLogs,
   fetchRuntimeSubagents,
   interruptRuntimeSubagent,
-  patchLeadSession,
-  postAbort,
   resumeRuntimeSubagent,
-  selectDefaultProjectManagerAgent,
-  sendLeadSessionMessage,
   subscribeToFileChanges,
-  subscribeToLeadSessionChanges,
   subscribeToSubagentChanges,
   uploadFiles,
 } from "../api";
-import type { Agent, SubagentLogEvent } from "../api/types";
+import type { SubagentLogEvent } from "../api/types";
 import { FILE_INPUT_ACCEPT, formatFileSize } from "../lib/attachments";
 import { BoardChatLog } from "./BoardChatRenderer";
 import type { BoardLogItem } from "./BoardChatRenderer";
-
-type Segment = "lead" | "subagents";
 
 type LogState = {
   events: SubagentLogEvent[];
   cursor: number;
 };
 
-type LeadTranscriptState = {
-  messages: FullHistoryMessage[];
-  loaded: boolean;
-};
-
 type PendingMessage = {
   id: string;
-  family: Segment;
   targetId: string;
   content: string;
   queued: boolean;
   sending: boolean;
   error?: string;
-  files?: FileAttachment[];
 };
 
 function formatRuntimeTime(run: SubagentRun) {
   return formatElapsed(run.lastActiveAt ?? run.finishedAt ?? run.startedAt);
-}
-
-function formatLeadTime(session: LeadSession) {
-  return formatElapsed(session.updatedAt || session.createdAt);
 }
 
 function formatElapsed(raw: string) {
@@ -83,10 +55,6 @@ function formatElapsed(raw: string) {
 
 function isRunning(run: SubagentRun) {
   return run.status === "running" || run.status === "starting";
-}
-
-function isLegacyLeadSession(session: LeadSession) {
-  return session.id === `lead:${session.projectId}:legacy:${session.agentId}`;
 }
 
 function parseJsonRecord(raw: string): Record<string, unknown> | null {
@@ -190,27 +158,6 @@ function transcriptItems(events: SubagentLogEvent[]) {
     .filter((item): item is BoardLogItem => item !== null);
 }
 
-function messageText(message: FullHistoryMessage) {
-  return message.content
-    .map((block) => {
-      if (block.type === "text") return block.text;
-      if (block.type === "file") return block.filename ?? block.fileId;
-      return "";
-    })
-    .filter(Boolean)
-    .join("\n\n");
-}
-
-function leadItems(messages: FullHistoryMessage[]) {
-  return messages
-    .map((message): BoardLogItem | null => {
-      if (message.role !== "user" && message.role !== "assistant") return null;
-      const content = messageText(message).trim();
-      return content ? { type: "text", role: message.role, content } : null;
-    })
-    .filter((item): item is BoardLogItem => item !== null);
-}
-
 function latestExcerpt(items: BoardLogItem[]) {
   const item = [...items].reverse().find((entry) => {
     if (entry.type === "text") return entry.content.trim();
@@ -231,75 +178,35 @@ function runSortValue(run: SubagentRun) {
   return Date.parse(run.lastActiveAt ?? run.finishedAt ?? run.startedAt) || 0;
 }
 
-function leadSortValue(session: LeadSession) {
-  return Date.parse(session.updatedAt || session.createdAt) || 0;
-}
-
 function singleQueryValue(value: string | string[] | undefined) {
   return Array.isArray(value) ? value[0] : value;
-}
-
-function upsertLeadSession(
-  sessions: LeadSession[],
-  session: LeadSession
-): LeadSession[] {
-  return [session, ...sessions.filter((item) => item.id !== session.id)];
 }
 
 export function AgentRunChatPanel(props: {
   projectId: string;
   sliceId?: string;
   selectedRunId?: string | string[];
-  selectedLeadId?: string | string[];
   onSelectedRunIdChange?: (runId: string | undefined) => void;
-  onSelectedLeadIdChange?: (leadId: string | undefined) => void;
   filter?: (run: SubagentRun) => boolean;
 }) {
-  const [agents, setAgents] = createSignal<Agent[]>([]);
-  const [leadSessions, setLeadSessions] = createSignal<LeadSession[]>([]);
   const [runs, setRuns] = createSignal<SubagentRun[]>([]);
   const [logsByRunId, setLogsByRunId] = createSignal<Record<string, LogState>>(
     {}
   );
-  const [leadTranscripts, setLeadTranscripts] = createSignal<
-    Record<string, LeadTranscriptState>
-  >({});
   const [loading, setLoading] = createSignal(true);
   const [error, setError] = createSignal<string | null>(null);
   const [archivedOpen, setArchivedOpen] = createSignal(false);
-  const [activeSegment, setActiveSegment] = createSignal<Segment>("lead");
   const [selectionCleared, setSelectionCleared] = createSignal(false);
   const [internalRunId, setInternalRunId] = createSignal<string | undefined>();
-  const [internalLeadId, setInternalLeadId] = createSignal<string | undefined>();
   const [draft, setDraft] = createSignal("");
   const [pendingFiles, setPendingFiles] = createSignal<File[]>([]);
   const [pendingMessages, setPendingMessages] = createSignal<PendingMessage[]>(
     []
   );
-  const [creatingLeadSession, setCreatingLeadSession] = createSignal(false);
-  const [draftAgentByLeadId, setDraftAgentByLeadId] = createSignal<
-    Record<string, string>
-  >({});
   let fileInputEl: HTMLInputElement | undefined;
   let chatMessagesEl: HTMLDivElement | undefined;
   let loadSeq = 0;
 
-  const scopedLeadSessions = createMemo(() =>
-    leadSessions().filter((session) =>
-      props.sliceId
-        ? session.sliceId === props.sliceId
-        : session.sliceId === undefined
-    )
-  );
-  const sortedLeads = createMemo(() =>
-    [...scopedLeadSessions()].sort((a, b) => leadSortValue(b) - leadSortValue(a))
-  );
-  const activeLeads = createMemo(() =>
-    sortedLeads().filter((session) => !session.archivedAt)
-  );
-  const archivedLeads = createMemo(() =>
-    sortedLeads().filter((session) => session.archivedAt)
-  );
   const sortedRuns = createMemo(() =>
     [...runs()].sort((a, b) => runSortValue(b) - runSortValue(a))
   );
@@ -310,30 +217,15 @@ export function AgentRunChatPanel(props: {
   const selectedRunId = createMemo(
     () => singleQueryValue(props.selectedRunId) ?? internalRunId()
   );
-  const selectedLeadId = createMemo(
-    () => singleQueryValue(props.selectedLeadId) ?? internalLeadId()
-  );
   const selectedRun = createMemo(() =>
     sortedRuns().find((run) => run.id === selectedRunId())
   );
-  const selectedLead = createMemo(() =>
-    sortedLeads().find((session) => session.id === selectedLeadId())
-  );
   const selectedItems = createMemo(() =>
-    activeSegment() === "lead"
-      ? selectedLead()
-        ? leadItems(leadTranscripts()[selectedLead()!.id]?.messages ?? [])
-        : []
-      : selectedRun()
-        ? transcriptItems(logsByRunId()[selectedRun()!.id]?.events ?? [])
-        : []
+    selectedRun()
+      ? transcriptItems(logsByRunId()[selectedRun()!.id]?.events ?? [])
+      : []
   );
   const waitingForSelectedAssistant = createMemo(() => {
-    if (activeSegment() === "lead") {
-      return pendingForSelected().some(
-        (message) => message.sending && !message.error
-      );
-    }
     const hasAssistantText = selectedItems().some(
       (item) =>
         item.type === "text" &&
@@ -344,13 +236,6 @@ export function AgentRunChatPanel(props: {
     const run = selectedRun();
     return Boolean(run && isRunning(run));
   });
-  const scopeId = createMemo(() =>
-    props.sliceId ? `${props.projectId}:${props.sliceId}` : props.projectId
-  );
-  const lastViewedKey = createMemo(() => `lead-session:lastViewed:${scopeId()}`);
-  const defaultAgent = createMemo(() =>
-    selectDefaultProjectManagerAgent(agents())
-  );
 
   async function loadRunLogs(runId: string) {
     const data = await fetchRuntimeSubagentLogs(runId, 0);
@@ -360,48 +245,24 @@ export function AgentRunChatPanel(props: {
     }));
   }
 
-  async function loadLeadTranscript(sessionId: string) {
-    const data = await fetchLeadSessionTranscript(sessionId);
-    setLeadTranscripts((prev) => ({
-      ...prev,
-      [sessionId]: { messages: data.messages, loaded: true },
-    }));
-  }
-
   async function loadAll(projectId: string, sliceId: string | undefined, seq: number) {
     setLoading(true);
     try {
-      const [agentList, activeLeadData, archivedLeadData, runData] =
-        await Promise.all([
-          fetchAgents(),
-          fetchLeadSessions(projectId, { archived: false, sliceId }),
-          fetchLeadSessions(projectId, { archived: true, sliceId }),
-          fetchRuntimeSubagents({
-            projectId,
-            sliceId,
-            includeArchived: true,
-          }),
-        ]);
+      const runData = await fetchRuntimeSubagents({
+        projectId,
+        sliceId,
+        includeArchived: true,
+      });
       if (seq !== loadSeq) return;
-      const allLeads = [...activeLeadData.items, ...archivedLeadData.items].filter(
-        (session) =>
-          sliceId ? session.sliceId === sliceId : session.sliceId === undefined
-      );
       const runItems = props.filter
         ? runData.items.filter(props.filter)
         : runData.items;
       const orderedRuns = [...runItems].sort(
         (a, b) => runSortValue(b) - runSortValue(a)
       );
-      setAgents(agentList);
-      setLeadSessions(allLeads);
       setRuns(orderedRuns);
       setLogsByRunId({});
-      setLeadTranscripts({});
-      await Promise.all([
-        ...orderedRuns.map((run) => loadRunLogs(run.id)),
-        ...allLeads.map((session) => loadLeadTranscript(session.id)),
-      ]);
+      await Promise.all(orderedRuns.map((run) => loadRunLogs(run.id)));
       if (seq !== loadSeq) return;
       setError(null);
     } catch (err) {
@@ -415,9 +276,7 @@ export function AgentRunChatPanel(props: {
     const projectId = props.projectId;
     const sliceId = props.sliceId;
     loadSeq += 1;
-    setLeadSessions([]);
     setRuns([]);
-    setInternalLeadId(undefined);
     setInternalRunId(undefined);
     setSelectionCleared(false);
     void loadAll(projectId, sliceId, loadSeq);
@@ -427,86 +286,24 @@ export function AgentRunChatPanel(props: {
     return transcriptItems(logsByRunId()[run.id]?.events ?? []);
   }
 
-  function leadSessionItems(session: LeadSession) {
-    return leadItems(leadTranscripts()[session.id]?.messages ?? []);
-  }
-
-  function leadHasUserMessage(session: LeadSession) {
-    return (leadTranscripts()[session.id]?.messages ?? []).some(
-      (message) => message.role === "user"
-    );
-  }
-
   function shouldShowRun(run: SubagentRun) {
     return isRunning(run) || runItems(run).length > 0;
   }
 
   function selectRun(runId: string | undefined, cleared = false) {
     setSelectionCleared(cleared);
-    setActiveSegment("subagents");
     setInternalRunId(runId);
-    setInternalLeadId(undefined);
     props.onSelectedRunIdChange?.(runId);
   }
 
-  function selectLead(leadId: string | undefined, cleared = false) {
-    setSelectionCleared(cleared);
-    setActiveSegment("lead");
-    setInternalLeadId(leadId);
-    setInternalRunId(undefined);
-    if (leadId) localStorage.setItem(lastViewedKey(), leadId);
-    props.onSelectedLeadIdChange?.(leadId);
-  }
-
   createEffect(() => {
-    if (loading()) return;
-    const leadParam = singleQueryValue(props.selectedLeadId);
-    const runParam = singleQueryValue(props.selectedRunId);
-    if (leadParam && sortedLeads().some((session) => session.id === leadParam)) {
-      setActiveSegment("lead");
-      return;
-    }
-    if (runParam && sortedRuns().some((run) => run.id === runParam)) {
-      setActiveSegment("subagents");
-      return;
-    }
-    if (selectedLead()) {
-      setActiveSegment("lead");
-      return;
-    }
-    if (selectedRun()) {
-      setActiveSegment("subagents");
-      return;
-    }
-    if (selectionCleared()) return;
-
-    const lastViewed = localStorage.getItem(lastViewedKey());
-    const lastLead = activeLeads().find((session) => session.id === lastViewed);
-    if (lastLead) {
-      selectLead(lastLead.id);
-      return;
-    }
-    const newestVisibleLead = activeLeads().find(leadHasUserMessage);
-    if (newestVisibleLead) {
-      selectLead(newestVisibleLead.id);
-      return;
-    }
-    if (activeLeads().length > 0) {
-      setActiveSegment("lead");
-      return;
-    }
+    if (loading() || selectedRun() || selectionCleared()) return;
     const nextRun = activeRuns().find((run) => shouldShowRun(run));
-    if (nextRun) {
-      selectRun(nextRun.id);
-      return;
-    }
-    setActiveSegment("lead");
+    if (nextRun) selectRun(nextRun.id);
   });
 
   createEffect(() => {
-    const lead = selectedLead();
-    const run = selectedRun();
-    if (lead?.archivedAt || run?.archived) setArchivedOpen(true);
+    if (selectedRun()?.archived) setArchivedOpen(true);
   });
 
   createEffect(() => {
@@ -514,7 +311,6 @@ export function AgentRunChatPanel(props: {
     if (!run || isRunning(run)) return;
     const next = pendingMessages().find(
       (message) =>
-        message.family === "subagents" &&
         message.targetId === run.id &&
         message.queued &&
         !message.sending
@@ -529,30 +325,6 @@ export function AgentRunChatPanel(props: {
     },
     onError: setError,
   });
-  const unsubscribeLeadSessions = subscribeToLeadSessionChanges({
-    onLeadSessionChanged: (event) => {
-      if (event.session.projectId !== props.projectId) return;
-      const inScope = props.sliceId
-        ? event.session.sliceId === props.sliceId
-        : event.session.sliceId === undefined;
-      if (!inScope) return;
-      if (event.kind === "deleted") {
-        setLeadSessions((prev) =>
-          prev.filter((session) => session.id !== event.session.id)
-        );
-        setLeadTranscripts((prev) => {
-          const next = { ...prev };
-          delete next[event.session.id];
-          return next;
-        });
-        if (selectedLeadId() === event.session.id) selectLead(undefined, true);
-        return;
-      }
-      setLeadSessions((prev) => upsertLeadSession(prev, event.session));
-      void loadLeadTranscript(event.session.id);
-    },
-    onError: setError,
-  });
   const unsubscribeFiles = subscribeToFileChanges({
     onAgentChanged: (projectId) => {
       if (projectId === props.projectId) {
@@ -563,18 +335,12 @@ export function AgentRunChatPanel(props: {
   });
   onCleanup(() => {
     unsubscribeSubagents();
-    unsubscribeLeadSessions();
     unsubscribeFiles();
   });
 
   function clearSelectedRunAfterMutation(runId: string) {
     setRuns((prev) => prev.filter((run) => run.id !== runId));
     if (selectedRunId() === runId) selectRun(undefined, true);
-  }
-
-  function clearSelectedLeadAfterMutation(leadId: string) {
-    setLeadSessions((prev) => prev.filter((session) => session.id !== leadId));
-    if (selectedLeadId() === leadId) selectLead(undefined, true);
   }
 
   async function stopSelected() {
@@ -587,20 +353,6 @@ export function AgentRunChatPanel(props: {
     }
     const seq = ++loadSeq;
     await loadAll(props.projectId, props.sliceId, seq);
-  }
-
-  async function stopSelectedChat() {
-    if (activeSegment() === "subagents") {
-      await stopSelected();
-      return;
-    }
-    const lead = selectedLead();
-    if (!lead) return;
-    try {
-      await postAbort(lead.agentId, lead.transcriptRef);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    }
   }
 
   async function archiveSelectedRun() {
@@ -629,67 +381,6 @@ export function AgentRunChatPanel(props: {
       return;
     }
     clearSelectedRunAfterMutation(run.id);
-  }
-
-  async function archiveLead(session: LeadSession, archived: boolean) {
-    try {
-      const updated = await patchLeadSession(session.id, { archived });
-      setLeadSessions((prev) =>
-        prev.map((item) => (item.id === updated.id ? updated : item))
-      );
-      if (archived && selectedLeadId() === session.id) selectLead(undefined, true);
-      if (!archived) setArchivedOpen(false);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    }
-  }
-
-  async function renameLead(session: LeadSession) {
-    const title = window.prompt("Rename lead session", session.title)?.trim();
-    if (!title || title === session.title) return;
-    try {
-      const updated = await patchLeadSession(session.id, { title });
-      setLeadSessions((prev) =>
-        prev.map((item) => (item.id === updated.id ? updated : item))
-      );
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    }
-  }
-
-  async function deleteLead(session: LeadSession) {
-    if (isLegacyLeadSession(session)) return;
-    if (!window.confirm("Delete this lead session?")) return;
-    try {
-      await deleteLeadSession(session.id);
-      clearSelectedLeadAfterMutation(session.id);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    }
-  }
-
-  async function createNewLeadSession() {
-    if (creatingLeadSession()) return;
-    const agent = defaultAgent();
-    if (!agent) return;
-    setCreatingLeadSession(true);
-    try {
-      const created = await createLeadSession(props.projectId, {
-        agentId: agent.id,
-        ...(props.sliceId ? { sliceId: props.sliceId } : {}),
-      });
-      setLeadSessions((prev) => upsertLeadSession(prev, created));
-      setLeadTranscripts((prev) => ({
-        ...prev,
-        [created.id]: { messages: [], loaded: true },
-      }));
-      setDraftAgentByLeadId((prev) => ({ ...prev, [created.id]: agent.id }));
-      selectLead(created.id);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setCreatingLeadSession(false);
-    }
   }
 
   function addFiles(files: FileList | File[]) {
@@ -728,40 +419,6 @@ export function AgentRunChatPanel(props: {
     await loadAll(props.projectId, props.sliceId, seq);
   }
 
-  async function sendLead(message: PendingMessage, agentId?: string) {
-    setPendingMessages((prev) =>
-      prev.map((item) =>
-        item.id === message.id ? { ...item, sending: true, queued: false } : item
-      )
-    );
-    try {
-      const response = await sendLeadSessionMessage(message.targetId, {
-        content: message.content,
-        ...(agentId ? { agentId } : {}),
-        ...(message.files?.length ? { files: message.files } : {}),
-      });
-      setLeadSessions((prev) =>
-        prev.map((session) =>
-          session.id === response.session.id ? response.session : session
-        )
-      );
-      setPendingMessages((prev) => prev.filter((item) => item.id !== message.id));
-      await loadLeadTranscript(message.targetId);
-    } catch (err) {
-      setPendingMessages((prev) =>
-        prev.map((item) =>
-          item.id === message.id
-            ? {
-                ...item,
-                sending: false,
-                error: err instanceof Error ? err.message : String(err),
-              }
-            : item
-        )
-      );
-    }
-  }
-
   async function sendMessage() {
     const text = draft().trim();
     const files = pendingFiles();
@@ -774,31 +431,10 @@ export function AgentRunChatPanel(props: {
     setDraft("");
     setPendingFiles([]);
 
-    if (activeSegment() === "lead") {
-      const lead = selectedLead();
-      if (!lead) return;
-      const agentId = leadAgentLocked(lead)
-        ? undefined
-        : draftAgentByLeadId()[lead.id] || lead.agentId;
-      const message: PendingMessage = {
-        id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
-        family: "lead",
-        targetId: lead.id,
-        content,
-        queued: false,
-        sending: false,
-        files: attachments,
-      };
-      setPendingMessages((prev) => [...prev, message]);
-      await sendLead(message, agentId);
-      return;
-    }
-
     const run = selectedRun();
     if (!run) return;
     const message: PendingMessage = {
       id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
-      family: "subagents",
       targetId: run.id,
       content,
       queued: isRunning(run),
@@ -808,37 +444,20 @@ export function AgentRunChatPanel(props: {
     if (!isRunning(run)) await sendPendingRun(message);
   }
 
-  function leadAgentLocked(session: LeadSession) {
-    const transcript = leadTranscripts()[session.id];
-    if (!transcript?.loaded) return true;
-    return transcript.messages.some((message) => message.role === "user");
-  }
-
-  function leadAgent(session: LeadSession) {
-    return agents().find((agent) => agent.id === session.agentId);
-  }
-
   function pendingForSelected() {
-    const family = activeSegment();
-    const id = family === "lead" ? selectedLeadId() : selectedRunId();
     return pendingMessages().filter(
-      (message) => message.family === family && message.targetId === id
+      (message) => message.targetId === selectedRunId()
     );
   }
 
   function selectedChatIsRunning() {
-    if (activeSegment() === "lead") {
-      return pendingForSelected().some(
-        (message) => message.sending && !message.error
-      );
-    }
     if (draft().trim() || pendingFiles().length > 0) return false;
     const run = selectedRun();
     return Boolean(run && isRunning(run));
   }
 
   createEffect(() => {
-    const id = activeSegment() === "lead" ? selectedLeadId() : selectedRunId();
+    const id = selectedRunId();
     const itemCount = selectedItems().length;
     const pendingCount = pendingForSelected().length;
     const isWaiting = waitingForSelectedAssistant();
@@ -848,113 +467,6 @@ export function AgentRunChatPanel(props: {
       chatMessagesEl.scrollTop = chatMessagesEl.scrollHeight;
     });
   });
-
-  function AgentBadge(props: { agent?: Agent; agentId: string }) {
-    const label = () => props.agent?.name ?? props.agentId;
-    return (
-      <span class="lead-agent-badge">
-        <span>{label()}</span>
-      </span>
-    );
-  }
-
-  function RowActionIcon(props: { type: "rename" | "archive" | "unarchive" | "delete" }) {
-    return (
-      <svg
-        width="14"
-        height="14"
-        viewBox="0 0 24 24"
-        fill="none"
-        stroke="currentColor"
-        stroke-width="2"
-        stroke-linecap="round"
-        stroke-linejoin="round"
-        aria-hidden="true"
-      >
-        <Show when={props.type === "rename"}>
-          <path d="M12 20h9" />
-          <path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z" />
-        </Show>
-        <Show when={props.type === "archive"}>
-          <path d="M21 8v13H3V8" />
-          <path d="M1 3h22v5H1Z" />
-          <path d="M10 12h4" />
-        </Show>
-        <Show when={props.type === "unarchive"}>
-          <path d="M21 8v13H3V8" />
-          <path d="M1 3h22v5H1Z" />
-          <path d="m9 15 3-3 3 3" />
-          <path d="M12 12v6" />
-        </Show>
-        <Show when={props.type === "delete"}>
-          <path d="M3 6h18" />
-          <path d="M8 6V4h8v2" />
-          <path d="M19 6l-1 14H6L5 6" />
-          <path d="M10 11v6" />
-          <path d="M14 11v6" />
-        </Show>
-      </svg>
-    );
-  }
-
-  function LeadRow(rowProps: { session: LeadSession }) {
-    const items = createMemo(() => leadSessionItems(rowProps.session));
-    const archived = () => !!rowProps.session.archivedAt;
-    return (
-      <div
-        class={`agent-run-row lead-session-row ${
-          selectedLeadId() === rowProps.session.id ? "selected" : ""
-        }`}
-        onDblClick={() => void renameLead(rowProps.session)}
-      >
-        <button
-          type="button"
-          class="agent-run-row-main"
-          onClick={() => selectLead(rowProps.session.id)}
-        >
-          <div class="agent-run-row-title">{rowProps.session.title}</div>
-          <div class="agent-run-row-excerpt">{latestExcerpt(items())}</div>
-          <div class="agent-run-row-meta">
-            <AgentBadge
-              agent={leadAgent(rowProps.session)}
-              agentId={rowProps.session.agentId}
-            />
-            <span>{formatLeadTime(rowProps.session)}</span>
-          </div>
-        </button>
-        <div class="agent-run-row-actions">
-          <button
-            type="button"
-            aria-label="Rename lead session"
-            title="Rename"
-            onClick={() => void renameLead(rowProps.session)}
-          >
-            <RowActionIcon type="rename" />
-          </button>
-          <button
-            type="button"
-            aria-label={
-              archived() ? "Unarchive lead session" : "Archive lead session"
-            }
-            title={archived() ? "Unarchive" : "Archive"}
-            onClick={() => void archiveLead(rowProps.session, !archived())}
-          >
-            <RowActionIcon type={archived() ? "unarchive" : "archive"} />
-          </button>
-          <Show when={!isLegacyLeadSession(rowProps.session)}>
-            <button
-              type="button"
-              aria-label="Delete lead session"
-              title="Delete"
-              onClick={() => void deleteLead(rowProps.session)}
-            >
-              <RowActionIcon type="delete" />
-            </button>
-          </Show>
-        </div>
-      </div>
-    );
-  }
 
   function RunRow(rowProps: { run: SubagentRun }) {
     const items = createMemo(() => runItems(rowProps.run));
@@ -977,29 +489,17 @@ export function AgentRunChatPanel(props: {
     );
   }
 
-  const leadCount = createMemo(() => activeLeads().length);
   const subagentCount = createMemo(
     () => activeRuns().filter((run) => shouldShowRun(run)).length
   );
-  const archivedLeadCount = createMemo(() => archivedLeads().length);
   const archivedRunCount = createMemo(
     () => archivedRuns().filter((run) => shouldShowRun(run)).length
   );
-  const sidebarCount = createMemo(
-    () =>
-      leadCount() + subagentCount() + archivedLeadCount() + archivedRunCount()
-  );
+  const sidebarCount = createMemo(() => subagentCount() + archivedRunCount());
 
   function renderSidebarList() {
     return (
       <div class="agent-run-list">
-        <Show when={leadCount() > 0}>
-          <SidebarSection title="Lead chats">
-            <For each={activeLeads()}>
-              {(session) => <LeadRow session={session} />}
-            </For>
-          </SidebarSection>
-        </Show>
         <Show when={subagentCount() > 0}>
           <SidebarSection title="Subagents">
             <For each={activeRuns().filter((run) => shouldShowRun(run))}>
@@ -1007,22 +507,13 @@ export function AgentRunChatPanel(props: {
             </For>
           </SidebarSection>
         </Show>
-        <Show when={archivedLeadCount() + archivedRunCount() > 0}>
+        <Show when={archivedRunCount() > 0}>
           <ArchivedSection>
-            <Show when={archivedLeadCount() > 0}>
-              <SidebarSection title="Lead chats">
-              <For each={archivedLeads()}>
-                {(session) => <LeadRow session={session} />}
+            <SidebarSection title="Subagents">
+              <For each={archivedRuns().filter((run) => shouldShowRun(run))}>
+                {(run) => <RunRow run={run} />}
               </For>
-              </SidebarSection>
-            </Show>
-            <Show when={archivedRunCount() > 0}>
-              <SidebarSection title="Subagents">
-                <For each={archivedRuns().filter((run) => shouldShowRun(run))}>
-                  {(run) => <RunRow run={run} />}
-                </For>
-              </SidebarSection>
-            </Show>
+            </SidebarSection>
           </ArchivedSection>
         </Show>
       </div>
@@ -1055,33 +546,6 @@ export function AgentRunChatPanel(props: {
     );
   }
 
-  function LeadComposerAgentPicker(props: { session: LeadSession }) {
-    const locked = () => leadAgentLocked(props.session);
-    const currentAgentId = () =>
-      draftAgentByLeadId()[props.session.id] || props.session.agentId;
-    return (
-      <Show when={!locked()}>
-        <div class="lead-agent-picker">
-          <select
-            aria-label="Lead agent"
-            value={currentAgentId()}
-            onChange={(event) => {
-              const agentId = event.currentTarget.value;
-              setDraftAgentByLeadId((prev) => ({
-                ...prev,
-                [props.session.id]: agentId,
-              }));
-            }}
-          >
-            <For each={agents()}>
-              {(agent) => <option value={agent.id}>{agent.name}</option>}
-            </For>
-          </select>
-        </div>
-      </Show>
-    );
-  }
-
   return (
     <div
       class="agent-run-chat-panel"
@@ -1092,22 +556,12 @@ export function AgentRunChatPanel(props: {
         {(message) => <div class="agent-run-error">{message()}</div>}
       </Show>
       <aside class="agent-run-sidebar">
-        <div class="agent-run-sidebar-header">
-          <button
-            type="button"
-            class="agent-run-new-session"
-            onClick={() => void createNewLeadSession()}
-            disabled={!defaultAgent() || creatingLeadSession()}
-          >
-            + New session
-          </button>
-        </div>
         <div class="agent-run-sidebar-scroll">
           <Show
             when={sidebarCount() > 0}
             fallback={
               <div class="agent-run-empty">
-                {loading() ? "Loading agent sessions…" : "No agent runs yet."}
+                {loading() ? "Loading agent runs…" : "No agent runs yet."}
               </div>
             }
           >
@@ -1117,88 +571,41 @@ export function AgentRunChatPanel(props: {
       </aside>
       <section class="agent-run-chat">
         <Show
-          when={activeSegment() === "lead"}
+          when={selectedRun()}
           fallback={
-            <Show
-              when={selectedRun()}
-              fallback={
-                <div class="agent-run-placeholder">No agent run selected.</div>
-              }
-            >
-              {(run) => (
-                <>
-                  <header class="agent-run-chat-header">
-                    <div>
-                      <div class="agent-run-chat-title">{run().label}</div>
-                      <div class="agent-run-chat-meta">
-                        {run().status} · {run().cli}
-                        <Show when={run().model}> · {run().model}</Show> ·{" "}
-                        {formatRuntimeTime(run())}
-                      </div>
-                    </div>
-                    <div class="agent-run-actions">
-                      <button
-                        type="button"
-                        onClick={stopSelected}
-                        disabled={!isRunning(run())}
-                      >
-                        Stop
-                      </button>
-                      <button type="button" onClick={archiveSelectedRun}>
-                        Archive
-                      </button>
-                      <button type="button" onClick={deleteSelectedRun}>
-                        Delete
-                      </button>
-                    </div>
-                  </header>
-                  <ChatBody agentName={run().label} />
-                </>
-              )}
-            </Show>
+            <div class="agent-run-placeholder">No agent run selected.</div>
           }
         >
-          <Show
-            when={selectedLead()}
-            fallback={
-              <div class="agent-run-placeholder">No lead session selected.</div>
-            }
-          >
-            {(session) => (
-              <>
-                <header class="agent-run-chat-header">
-                  <div>
-                    <div class="agent-run-chat-title">{session().title}</div>
-                    <div class="agent-run-chat-meta">
-                      <AgentBadge
-                        agent={leadAgent(session())}
-                        agentId={session().agentId}
-                      />
-                      <span>{formatLeadTime(session())}</span>
-                    </div>
+          {(run) => (
+            <>
+              <header class="agent-run-chat-header">
+                <div>
+                  <div class="agent-run-chat-title">{run().label}</div>
+                  <div class="agent-run-chat-meta">
+                    {run().status} · {run().cli}
+                    <Show when={run().model}> · {run().model}</Show> ·{" "}
+                    {formatRuntimeTime(run())}
                   </div>
-                  <div class="agent-run-actions">
-                    <button type="button" onClick={() => void renameLead(session())}>
-                      Rename
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => void archiveLead(session(), !session().archivedAt)}
-                    >
-                      {session().archivedAt ? "Unarchive" : "Archive"}
-                    </button>
-                    <Show when={!isLegacyLeadSession(session())}>
-                      <button type="button" onClick={() => void deleteLead(session())}>
-                        Delete
-                      </button>
-                    </Show>
-                  </div>
-                </header>
-                <LeadComposerAgentPicker session={session()} />
-                <ChatBody agentName={leadAgent(session())?.name ?? session().agentId} />
-              </>
-            )}
-          </Show>
+                </div>
+                <div class="agent-run-actions">
+                  <button
+                    type="button"
+                    onClick={stopSelected}
+                    disabled={!isRunning(run())}
+                  >
+                    Stop
+                  </button>
+                  <button type="button" onClick={archiveSelectedRun}>
+                    Archive
+                  </button>
+                  <button type="button" onClick={deleteSelectedRun}>
+                    Delete
+                  </button>
+                </div>
+              </header>
+              <ChatBody agentName={run().label} />
+            </>
+          )}
         </Show>
       </section>
       <style>{`
@@ -1219,24 +626,6 @@ export function AgentRunChatPanel(props: {
           min-height: 0;
           border-right: 1px solid var(--border-default);
           background: color-mix(in srgb, var(--text-primary, #111827) 3%, transparent);
-        }
-
-        .agent-run-sidebar-header {
-          display: grid;
-          gap: 8px;
-          padding: 8px;
-          border-bottom: 1px solid var(--border-default);
-        }
-
-        .agent-run-new-session {
-          background: transparent;
-          border: 1px solid var(--border-default);
-          border-radius: 6px;
-          color: var(--text-primary);
-          min-height: 30px;
-          text-align: left;
-          padding: 0 10px;
-          cursor: pointer;
         }
 
         .agent-run-sidebar-scroll {
@@ -1288,20 +677,6 @@ export function AgentRunChatPanel(props: {
           cursor: pointer;
         }
 
-        .lead-session-row {
-          cursor: default;
-        }
-
-        .agent-run-row-main {
-          width: 100%;
-          padding: 0;
-          border: 0;
-          background: transparent;
-          text-align: left;
-          color: inherit;
-          cursor: pointer;
-        }
-
         .agent-run-row:hover,
         .agent-run-row.selected {
           border-color: var(--border-default);
@@ -1332,47 +707,6 @@ export function AgentRunChatPanel(props: {
           margin-top: 6px;
           color: var(--text-tertiary, var(--text-secondary));
           font-size: 11px;
-        }
-
-        .agent-run-row-actions {
-          position: absolute;
-          top: 6px;
-          right: 6px;
-          display: flex;
-          gap: 4px;
-          opacity: 0;
-          pointer-events: none;
-          transition: opacity 120ms ease;
-        }
-
-        .agent-run-row-actions button {
-          border: 1px solid var(--border-default);
-          border-radius: 4px;
-          background: var(--surface-default, #fff);
-          color: var(--text-secondary);
-          display: inline-grid;
-          place-items: center;
-          width: 22px;
-          height: 22px;
-          padding: 0;
-          cursor: pointer;
-        }
-
-        .agent-run-row:hover .agent-run-row-actions,
-        .agent-run-row:focus-within .agent-run-row-actions {
-          opacity: 1;
-          pointer-events: auto;
-        }
-
-        .agent-run-row-actions button:hover {
-          color: var(--text-primary);
-          border-color: var(--text-secondary);
-        }
-
-        .lead-agent-badge {
-          display: inline-flex;
-          align-items: center;
-          min-width: 0;
         }
 
         .agent-run-archived {
@@ -1429,24 +763,6 @@ export function AgentRunChatPanel(props: {
         .agent-run-actions button:disabled {
           cursor: default;
           opacity: 0.5;
-        }
-
-        .lead-agent-picker {
-          display: flex;
-          align-items: center;
-          gap: 8px;
-          min-height: 42px;
-          padding: 8px 20px 0;
-          color: var(--text-secondary);
-          font-size: 12px;
-        }
-
-        .lead-agent-picker select {
-          border: 1px solid var(--border-default);
-          border-radius: 6px;
-          background: var(--surface-default, #fff);
-          color: var(--text-primary);
-          padding: 5px 8px;
         }
 
         .agent-run-chat-messages {
@@ -1839,7 +1155,7 @@ export function AgentRunChatPanel(props: {
                 type="button"
                 class="board-chat-send board-chat-stop"
                 aria-label="Stop response"
-                onClick={() => void stopSelectedChat()}
+                onClick={() => void stopSelected()}
               >
                 <svg
                   width="18"
