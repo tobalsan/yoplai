@@ -6,16 +6,12 @@ import {
   lazy,
   createMemo,
   createResource,
-  createSignal,
   onCleanup,
   onMount,
   type JSX,
 } from "solid-js";
-import { fetchAgents, getSessionKey, subscribeToSession } from "./api";
-import type { Agent } from "./api/types";
+import { fetchAgents } from "./api";
 import { ChatView } from "./components/ChatView";
-import { QuickChatFAB } from "./components/QuickChatFAB";
-import { QuickChatOverlay } from "./components/QuickChatOverlay";
 import { OnboardingTour } from "./onboarding/OnboardingTour";
 import { ConnectToolsPrompt } from "./components/ConnectToolsPrompt";
 import { SessionSearch } from "./components/SessionSearch";
@@ -34,10 +30,7 @@ import { Dashboards } from "./pages/Dashboards";
 import { Skills } from "./pages/Skills";
 import { AccountConnections } from "./pages/AccountConnections";
 import { SessionArchive } from "./pages/SessionArchive";
-import {
-  ImpersonationBanner,
-  impersonationStatus,
-} from "./components/ImpersonationBanner";
+import { ImpersonationBanner } from "./components/ImpersonationBanner";
 import {
   capabilitiesReady,
   capabilities,
@@ -64,60 +57,10 @@ const LazyAdminExtensionsPage = lazy(() => import("./pages/admin/Extensions"));
 const LazyAdminMcpServersPage = lazy(() => import("./pages/admin/McpServers"));
 const LazyAdminSkillsPage = lazy(() => import("./pages/admin/Skills"));
 
-const QUICK_CHAT_LAST_AGENT_KEY = "yoplai:quick-chat-last-agent";
-const LEGACY_QUICK_CHAT_LAST_AGENT_KEY = "aihub:quick-chat-last-agent";
-
-function readQuickChatAgentId(): string | null {
-  if (typeof window === "undefined") return null;
-  const stored = localStorage.getItem(QUICK_CHAT_LAST_AGENT_KEY);
-  if (stored) return stored;
-  const legacy = localStorage.getItem(LEGACY_QUICK_CHAT_LAST_AGENT_KEY);
-  if (legacy) {
-    localStorage.setItem(QUICK_CHAT_LAST_AGENT_KEY, legacy);
-    return legacy;
-  }
-  return null;
-}
-
-function pickDefaultQuickAgentId(agents: Agent[]): string | null {
-  if (agents.length === 0) return null;
-  const lead =
-    agents.find(
-      (agent) =>
-        agent.id.toLowerCase().includes("lead") ||
-        agent.name.toLowerCase().includes("lead")
-    ) ?? agents[0];
-  return lead.id;
-}
-
 function Layout(props: { children?: JSX.Element }) {
   const location = useLocation();
   const isLoginPage = createMemo(() =>
     stripBase(location.pathname).startsWith("/login")
-  );
-  const canLoadQuickChatAgents = createMemo(
-    () =>
-      capabilitiesReady() &&
-      capabilities.agentFab === true &&
-      !isLoginPage() &&
-      (!capabilities.multiUser || Boolean(capabilities.user))
-  );
-  const [quickChatOpen, setQuickChatOpen] = createSignal(false);
-  const [quickChatHasUnread, setQuickChatHasUnread] = createSignal(false);
-  const [quickChatMobile, setQuickChatMobile] = createSignal(false);
-  const [quickChatAgentId, setQuickChatAgentId] = createSignal<string | null>(
-    readQuickChatAgentId()
-  );
-  const [agents] = createResource(canLoadQuickChatAgents, async (enabled) =>
-    enabled ? fetchAgents() : []
-  );
-  const quickChatAgents = createMemo(() => agents() ?? []);
-  const selectedQuickChatAgent = createMemo(
-    () =>
-      quickChatAgents().find((agent) => agent.id === quickChatAgentId()) ?? null
-  );
-  const quickChatFabLabel = createMemo(
-    () => selectedQuickChatAgent()?.name ?? "Lead agent"
   );
   const chatAgentId = createMemo(() => {
     const match = stripBase(location.pathname).match(/^\/chat\/([^/]+)/);
@@ -154,76 +97,6 @@ function Layout(props: { children?: JSX.Element }) {
     });
   });
 
-  onMount(() => {
-    const media = window.matchMedia("(max-width: 768px)");
-    const update = (matches: boolean) => setQuickChatMobile(matches);
-    update(media.matches);
-    const handler = (event: MediaQueryListEvent) => update(event.matches);
-    if (media.addEventListener) {
-      media.addEventListener("change", handler);
-      onCleanup(() => media.removeEventListener("change", handler));
-    } else {
-      media.addListener(handler);
-      onCleanup(() => media.removeListener(handler));
-    }
-  });
-
-  createEffect(() => {
-    const list = quickChatAgents();
-    if (list.length === 0) return;
-    const current = quickChatAgentId();
-    if (current && list.some((agent) => agent.id === current)) return;
-    const next = pickDefaultQuickAgentId(list);
-    setQuickChatAgentId(next);
-  });
-
-  createEffect(() => {
-    const agentId = quickChatAgentId();
-    if (typeof window === "undefined") return;
-    if (agentId) {
-      localStorage.setItem(QUICK_CHAT_LAST_AGENT_KEY, agentId);
-    } else {
-      localStorage.removeItem(QUICK_CHAT_LAST_AGENT_KEY);
-    }
-  });
-
-  createEffect(() => {
-    if (!quickChatOpen()) return;
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        setQuickChatOpen(false);
-      }
-    };
-    window.addEventListener("keydown", onKeyDown);
-    onCleanup(() => window.removeEventListener("keydown", onKeyDown));
-  });
-
-  const isOnChatPage = createMemo(() => {
-    const p = stripBase(location.pathname);
-    return p.startsWith("/chat/") || p.startsWith("/agents");
-  });
-
-  createEffect(() => {
-    if (quickChatOpen()) setQuickChatHasUnread(false);
-  });
-
-  createEffect(() => {
-    if (isOnChatPage() && quickChatOpen()) setQuickChatOpen(false);
-  });
-
-  createEffect(() => {
-    const agentId = quickChatAgentId();
-    if (!agentId) return;
-    const cleanup = subscribeToSession(agentId, getSessionKey(agentId), {
-      onHistoryUpdated: () => {
-        if (!quickChatOpen()) {
-          setQuickChatHasUnread(true);
-        }
-      },
-    });
-    onCleanup(cleanup);
-  });
-
   createEffect(() => {
     if (isLoginPage()) return;
     const onKeyDown = (event: KeyboardEvent) => {
@@ -255,38 +128,6 @@ function Layout(props: { children?: JSX.Element }) {
           <TurnNotifier enabled={!isLoginPage()} />
         </div>
         <ToastHost />
-      </Show>
-      <Show
-        when={
-          canLoadQuickChatAgents() &&
-          !isOnChatPage() &&
-          !impersonationStatus()?.active
-        }
-      >
-        <QuickChatOverlay
-          open={quickChatOpen()}
-          mobile={quickChatMobile()}
-          agents={quickChatAgents()}
-          selectedAgentId={quickChatAgentId()}
-          onSelectAgent={(agentId) => {
-            setQuickChatAgentId(agentId);
-            setQuickChatHasUnread(false);
-          }}
-          onMinimize={() => setQuickChatOpen(false)}
-          onClose={() => setQuickChatOpen(false)}
-        />
-        <QuickChatFAB
-          open={quickChatOpen}
-          hasUnread={quickChatHasUnread}
-          agentLabel={quickChatFabLabel}
-          onToggle={() => {
-            setQuickChatOpen((prev) => {
-              const next = !prev;
-              if (next) setQuickChatHasUnread(false);
-              return next;
-            });
-          }}
-        />
       </Show>
       <style>{`
         .app {
