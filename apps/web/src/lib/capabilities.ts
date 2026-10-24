@@ -9,7 +9,6 @@ const defaultCapabilities: CapabilitiesResponse = {
   agents: [],
   multiUser: false,
   forkedAgents: false,
-  agentFab: false,
   enableCronMonitoring: false,
 };
 
@@ -67,7 +66,6 @@ export function setCapabilitiesForTests(
     multiUser: value.multiUser ?? defaultCapabilities.multiUser,
     authMethods: value.authMethods,
     forkedAgents: value.forkedAgents ?? defaultCapabilities.forkedAgents,
-    agentFab: value.agentFab ?? defaultCapabilities.agentFab,
     enableCronMonitoring: value.enableCronMonitoring ?? defaultCapabilities.enableCronMonitoring,
     user: value.user,
   });

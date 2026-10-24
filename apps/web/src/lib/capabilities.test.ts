@@ -36,16 +36,13 @@ describe("capabilities store", () => {
         extensions: { projects: true },
         agents: ["main"],
         multiUser: false,
-        agentFab: true,
       }),
     });
 
     const result = await loadCapabilities();
 
     expect(result.multiUser).toBe(false);
-    expect(result.agentFab).toBe(true);
     expect(capabilities.multiUser).toBe(false);
-    expect(capabilities.agentFab).toBe(true);
     expect(capabilitiesReady()).toBe(true);
     expect(capabilities.enableCronMonitoring).toBe(false);
   });

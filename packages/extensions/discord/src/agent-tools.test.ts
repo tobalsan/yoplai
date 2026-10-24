@@ -38,7 +38,6 @@ function config(extensionsDiscord?: unknown): GatewayConfig {
       ? { discord: extensionsDiscord as never }
       : undefined,
     sessions: { idleMinutes: 360 },
-    agentFab: false,
   } as unknown as GatewayConfig;
 }
 

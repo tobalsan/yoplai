@@ -79,7 +79,7 @@ describe("public agent team configuration permissions", () => {
     state.config = {
       agents: [{ id: "alpha", name: "Alpha", queueMode: "queue", model: { provider: "anthropic", model: "claude" }, workspace: path.join(state.dir, "agents/alpha"), extensions: { token: { enabled: true }, oauth: { enabled: true }, settings: { enabled: true } } }],
       oauth: { encryptionKey: "management-test-key", redirectBaseUrl: "http://localhost:4000", providers: { google: { clientId: "test", clientSecret: "test" } } },
-      extensions: {}, sessions: { idleMinutes: 360 }, agentFab: false,
+      extensions: {}, sessions: { idleMinutes: 360 },
     };
     const { setMultiUserRuntime } = await import("../../../../packages/extensions/multi-user/src/runtime-state.js");
     setMultiUserRuntime(state.runtime as MultiUserRuntime);

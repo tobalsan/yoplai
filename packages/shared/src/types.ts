@@ -1246,7 +1246,6 @@ const GatewayCommonFields = {
       icon: z.string().optional(),
     })
     .optional(),
-  agentFab: z.boolean().optional().default(false),
   enableCronMonitoring: z.boolean().optional(),
   canvas: z
     .object({
@@ -1832,7 +1831,6 @@ export const CapabilitiesResponseSchema = z.object({
     .object({ google: z.boolean(), emailAndPassword: z.boolean() })
     .optional(),
   forkedAgents: z.boolean().optional().default(false),
-  agentFab: z.boolean(),
   enableCronMonitoring: z.boolean().optional(),
   home: z.string().optional(),
   user: CapabilitiesUserSchema.optional(),

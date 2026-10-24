@@ -9,6 +9,10 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ## [Unreleased]
 
+### Removed
+
+- Remove quick chat and unused embedded chats from the context panel, projects board, board home and project lead sessions; keep the main chat and subagent run follow-ups.
+
 ### Added
 
 - Mattermost bot channel with threaded conversations, direct messages, files, proactive tools and scheduler delivery.

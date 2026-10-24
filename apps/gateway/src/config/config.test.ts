@@ -104,6 +104,7 @@ describe("config validation", () => {
     const config = loadConfig();
 
     expect(config.agents.map((agent) => agent.id)).toEqual(["legacy-agent"]);
+    expect(config).not.toHaveProperty("agentFab");
     expect(config.extensions?.sessions).toEqual({
       autoTitleModel: "anthropic/claude-haiku",
     });

@@ -112,7 +112,6 @@ Core `yoplai.json` fields:
 | `sandbox`, `onecli`, `oauth`         | Isolation (incl. `sandbox.gatewayTransport`: `http`/`socket`), proxy, and host OAuth settings |
 | `maintenance`                        | Model for gateway-owned background LLM tasks                        |
 | `branding`                           | Optional organization name/logo/icon                                |
-| `agentFab`                           | Enable global quick-chat control                                    |
 | `notifications.channels`             | Named Discord/Slack delivery targets                                |
 | `dream`                              | Global nightly-consolidation prompt/timeout/window                  |
 | `env`                                | Lowest-precedence instance env values; prefer `.env` for secrets    |
