@@ -10,6 +10,7 @@ import {
   onCleanup,
   Show,
   on,
+  type JSX,
 } from "solid-js";
 
 import { useParams, useNavigate, useSearchParams, useLocation, A } from "@solidjs/router";
@@ -609,6 +610,8 @@ export function ChatView() {
     prefillSuggestion(message);
   });
 
+  const sidePanel: JSX.Element | undefined = undefined;
+
   return (
     <div
       ref={chatViewRef}
@@ -1018,6 +1021,8 @@ export function ChatView() {
 
         <div class="hero-spacer hero-spacer-bottom" />
       </div>
+
+      <Show when={sidePanel}>{(panel) => panel()}</Show>
 
       <Show when={contextUsageDisplay()}>
         {(display) => (
