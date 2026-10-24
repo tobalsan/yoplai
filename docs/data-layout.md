@@ -33,7 +33,7 @@ Multi-user mode puts user-scoped maps/history under `sessions/users/<userId>/`. 
 
 ## Project data
 
-Project root defaults/configures separately through `extensions.projects.root`. Each project stores Markdown/frontmatter documents, slices, threads, generated scope map, lead-session records/transcripts, Space state, and workspace metadata. See [Projects](projects.md).
+Project root defaults/configures separately through `extensions.projects.root`. Each project stores Markdown/frontmatter documents, slices, threads, generated scope map, Space state, and workspace metadata. See [Projects](projects.md).
 
 Board content may use `$YOPLAI_HOME` or `extensions.board.contentRoot`.
 

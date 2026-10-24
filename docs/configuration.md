@@ -149,20 +149,6 @@ Gateway-owned work such as core session titles uses `maintenance` when set:
 
 Both fields are required. The Pi model runtime resolves its credentials from an existing OAuth login, a stored API key, or the provider's host environment key; OneCLI is not used. When omitted, maintenance work uses the session agent's configured model.
 
-### Session auto-titles
-
-Set `extensions.sessions.autoTitleModel` to choose model used for lead-session titles:
-
-```json
-{
-  "extensions": {
-    "sessions": { "autoTitleModel": "anthropic/claude-haiku" }
-  }
-}
-```
-
-When omitted, gateway selects cheapest available Anthropic Haiku model and refuses Opus/thinking models for auto-title work.
-
 ### Notification channels
 
 Named channels are referenced by scheduler, project orchestration, and `yoplai notify`:
