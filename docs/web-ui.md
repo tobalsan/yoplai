@@ -44,6 +44,39 @@ Core chat supports:
 
 Full tool/thinking/model view is restricted in multi-user mode. Canonical transcript lives in gateway history store; Pi runtime session files are not UI source of truth.
 
+## MCP App views
+
+MCP App tool calls appear as their own rows in the main chat, in simple and full
+mode. The row starts with "Loading view…" and stays visible when surrounding
+activity collapses. Its header identifies the server and "MCP App". The view's
+reported height is clamped to 40–800 px. Ordinary tools keep their existing groups.
+
+Views initialize with their saved arguments and raw result, including returned
+error results. Reloading, reopening a session or restarting the gateway replays
+the saved data without running the tool again. A view can reinitialize once when
+a live turn becomes history, and again on reconnect. During a live turn, later
+text, tool calls and out-of-order results keep the same frame.
+
+Views may call their own server's app-visible tools and read its resources as the
+signed-in viewer. HTTP(S) links open in a new tab; other schemes are refused.
+Initialization has a 15-second deadline, including the view request. A relayed
+request with no response within 32 seconds removes the view. Loading failures,
+unavailable resources/origins and timeouts show the text result and "View
+unavailable"; view work does not block Stop or sending another message. A normal
+JSON-RPC error, such as a model-only tool refusal, stays inside the view.
+
+This slice supports inline views only: no fullscreen, side panel, reuse across
+calls, display mode changes, UI messages or model-context updates. No device
+permissions are granted. The apps origin must have a different hostname from the
+chat; a different port alone is insufficient. All servers' views share one apps
+origin and its storage, separate from chat storage/cookies. CSP uses approved
+origin lists and drops wildcards; see [configuration](configuration.md#mcp-apps).
+
+The bootstrap uses a private ticket variant: the host sends
+`ui/notifications/sandbox-resource-ready` with empty HTML and the bootstrap loads
+the saved resource through its ticket. That one bootstrap message is not literal
+MCP Apps specification conformance; the inner view uses the official protocol.
+
 ## Projects and board
 
 Projects provide lifecycle views, editable pitch/spec documents, slice kanban, threads, activity, subagent runs, and Space integration. Board home provides a full-width canvas with local Scratchpad and Project lifecycle tabs, project projections, and worktree status.

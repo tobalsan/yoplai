@@ -14,6 +14,12 @@ import {
   setCapabilitiesForTests,
 } from "../lib/capabilities";
 
+const { loadMcpAppViewMock } = vi.hoisted(() => ({ loadMcpAppViewMock: vi.fn() }));
+vi.mock("../api/mcp-apps", () => ({
+  loadMcpAppView: loadMcpAppViewMock,
+  relayMcpAppRequest: vi.fn(),
+  logMcpAppEvent: vi.fn().mockResolvedValue(undefined),
+}));
 const navigateMock = vi.fn();
 const [routeVersion, setRouteVersion] = createSignal(0);
 const { archiveAgentSessionMock } = vi.hoisted(() => ({ archiveAgentSessionMock: vi.fn() }));
@@ -27,6 +33,7 @@ const {
   fetchCapabilitiesMock,
   fetchAgentSessionsMock,
   getSessionKeyMock,
+  startNewChatMock,
   postAbortMock,
   postCompactMock,
   streamMessageMock,
@@ -50,6 +57,7 @@ const {
   fetchCapabilitiesMock: vi.fn(),
   fetchAgentSessionsMock: vi.fn(),
   getSessionKeyMock: vi.fn(),
+  startNewChatMock: vi.fn(),
   postAbortMock: vi.fn(),
   postCompactMock: vi.fn(),
   streamMessageMock: vi.fn(),
@@ -91,6 +99,7 @@ vi.mock("../api", () => ({
   fetchCapabilities: fetchCapabilitiesMock,
   fetchAgentSessions: fetchAgentSessionsMock,
   getSessionKey: getSessionKeyMock,
+  startNewChat: startNewChatMock,
   postAbort: postAbortMock,
   postCompact: postCompactMock,
   streamMessage: streamMessageMock,
@@ -190,6 +199,11 @@ describe("ChatView abort handling", () => {
     URL.createObjectURL = vi.fn(() => "blob:preview");
     URL.revokeObjectURL = vi.fn();
 
+    loadMcpAppViewMock.mockResolvedValue({
+      available: true, sandboxUrl: "https://apps.test/sandbox", appsOrigin: "https://apps.test",
+      server: "fixture", toolName: "draw", args: { title: "Sketch" },
+      result: { content: [{ type: "text", text: "Drawn" }] }, csp: {}, prefersBorder: true,
+    });
     fetchAgentMock.mockResolvedValue({
       id: "agent-1",
       name: "Agent",
@@ -222,6 +236,7 @@ describe("ChatView abort handling", () => {
     });
     setCapabilitiesForTests({ multiUser: false });
     getSessionKeyMock.mockReturnValue("main");
+    startNewChatMock.mockImplementation(() => { getSessionKeyMock.mockReturnValue("fresh-key"); });
     postAbortMock.mockResolvedValue(undefined);
     postCompactMock.mockResolvedValue(undefined);
     streamMessageMock.mockImplementation(() => () => {});
@@ -2561,6 +2576,310 @@ describe("ChatView abort handling", () => {
     await waitFor(() => expect(queryByRole(container, "button", { name: "Copy reply" })).not.toBeNull());
     queryByRole(container, "button", { name: "Copy reply" })!.click();
     await waitFor(() => expect(writeText).toHaveBeenCalledWith("Stopped answer"));
+    dispose();
+  });
+
+  it.each(["simple", "full"])("shows a marked MCP App row as soon as the call starts in %s mode", async (mode) => {
+    routeState.view = mode;
+    const { container, dispose, callbacks } = await startFullStream();
+    callbacks()?.onToolCall?.("app-a", "fixture_draw", { title: "Sketch" }, undefined,
+      { server: "fixture", tool: "draw", resourceUri: "ui://fixture/view.html" });
+    await tick();
+    expect(container.textContent).toContain("Loading view…");
+    expect(container.querySelector('[title="fixture_draw"]')?.closest(".activity-group")).toBeNull();
+    dispose();
+  });
+
+  it.each(["simple", "full"])("mounts a live MCP App result below its label in %s mode", async (mode) => {
+    routeState.view = mode;
+    fetchCapabilitiesMock.mockResolvedValue({ version: 2, extensions: {}, agents: [], apps: { available: true } });
+    setCapabilitiesForTests({ apps: { available: true } });
+    const { container, dispose, callbacks } = await startFullStream();
+    const view = { server: "fixture", tool: "draw", resourceUri: "ui://fixture/view.html" };
+    callbacks()?.onToolCall?.("app-a", "fixture_draw", { title: "Sketch" }, undefined, view);
+    callbacks()?.onToolResult?.("app-a", "fixture_draw", "Drawn", false, undefined, undefined, { ...view, recordId: "record-a" });
+    await waitFor(() => expect(container.querySelector('iframe[title="fixture MCP App"]')).not.toBeNull());
+    const frame = container.querySelector('iframe[title="fixture MCP App"]')!;
+    expect(frame.closest(".mcp-app-tool-row")?.querySelector('[title="fixture_draw"]')).not.toBeNull();
+    expect(frame.closest(".activity-group")).toBeNull();
+    expect(loadMcpAppViewMock.mock.calls[0]?.slice(0, 3)).toEqual(["agent-1", "session-main", "app-a"]);
+    dispose();
+  });
+
+  it.each(["simple", "full"])("replays a historical MCP App outside collapsed activity in %s mode", async (mode) => {
+    routeState.view = mode;
+    fetchCapabilitiesMock.mockResolvedValue({ version: 2, extensions: {}, agents: [], apps: { available: true } });
+    setCapabilitiesForTests({ apps: { available: true } });
+    fetchFullHistoryMock.mockResolvedValue({ sessionId: "session-main", messages: [
+      { role: "assistant", timestamp: 1, content: [
+        { type: "toolCall", id: "ordinary", name: "bash", arguments: { command: "date" } },
+        { type: "toolCall", id: "app-history", name: "fixture_draw", arguments: {} },
+      ] },
+      { role: "toolResult", timestamp: 2, toolCallId: "app-history", toolName: "fixture_draw", content: [{ type: "text", text: "Saved drawing" }],
+        view: { server: "fixture", tool: "draw", resourceUri: "ui://fixture/view.html", recordId: "record-history" } },
+    ] });
+    const { container, dispose } = renderView();
+    await waitFor(() => expect(container.querySelector('iframe[title="fixture MCP App"]')).not.toBeNull());
+    const frame = container.querySelector('iframe[title="fixture MCP App"]')!;
+    const activity = queryByRole(container, "button", { name: /Worked.*1 tool call/ })!;
+    expect(activity).not.toBeNull();
+    activity.click();
+    activity.click();
+    expect(frame.isConnected).toBe(true);
+    expect(frame.closest(".activity-group")).toBeNull();
+    expect(loadMcpAppViewMock.mock.calls[0]?.slice(0, 3)).toEqual(["agent-1", "session-main", "app-history"]);
+    dispose();
+  });
+
+  it.each([
+    ["simple", "success"], ["full", "success"], ["simple", "capture-failure"], ["full", "capture-failure"],
+  ] as const)("keeps a live MCP App frame connected through out-of-order %s updates and %s", async (mode, earlierResult) => {
+    routeState.view = mode;
+    fetchCapabilitiesMock.mockResolvedValue({ version: 2, extensions: {}, agents: [], apps: { available: true } });
+    setCapabilitiesForTests({ apps: { available: true } });
+    const { container, dispose, callbacks, onText } = await startFullStream();
+    const marker = { server: "fixture", tool: "draw", resourceUri: "ui://fixture/view.html" };
+    callbacks()?.onToolCall?.("ordinary-parent", "codemode", {});
+    callbacks()?.onToolCall?.("app-a", "fixture_draw", {}, undefined, marker);
+    callbacks()?.onToolCall?.("app-b", "fixture_draw", {}, "ordinary-parent", marker);
+    callbacks()?.onToolResult?.("app-b", "fixture_draw", "B drawing", false, undefined, "ordinary-parent", { ...marker, recordId: "record-b" });
+    await waitFor(() => expect(container.querySelectorAll('iframe[title="fixture MCP App"]')).toHaveLength(1));
+    const frameB = container.querySelector('iframe[title="fixture MCP App"]')!;
+    const expectB = () => {
+      expect(frameB.isConnected).toBe(true);
+      expect(container.querySelectorAll('iframe[title="fixture MCP App"]')).toContain(frameB);
+    };
+    onText("Text keeps streaming");
+    await tick(); expectB();
+    callbacks()?.onToolCall?.("later-ordinary", "bash", { command: "pwd" });
+    await tick(); expectB();
+    callbacks()?.onToolResult?.("later-ordinary", "bash", "working directory", false, undefined, undefined, { ...marker, recordId: "not-marked" });
+    await tick(); expectB();
+    expect(container.querySelectorAll('iframe[title="fixture MCP App"]')).toHaveLength(1);
+    callbacks()?.onToolResult?.("app-a", "fixture_draw", earlierResult === "success" ? "A drawing" : "Capture failed", false,
+      undefined, undefined, earlierResult === "success" ? { ...marker, recordId: "record-a" } : undefined);
+    await tick(); expectB();
+    if (earlierResult === "capture-failure") expect(container.textContent).toContain("View unavailable");
+    callbacks()?.onToolCall?.("app-c", "fixture_draw", {}, "app-b", marker);
+    callbacks()?.onToolResult?.("app-c", "fixture_draw", "Nested drawing", false, undefined, "app-b", { ...marker, recordId: "record-c" });
+    await tick(); expectB();
+    const activity = queryAllByRole(container, "button", { name: /Worked.*1 tool call/ })[0];
+    activity?.click();
+    expectB();
+    dispose();
+  });
+
+  it.each(["simple", "full"])("keeps ordinary children visible when an MCP App splits their tool run in %s mode", async (mode) => {
+    routeState.view = mode;
+    const { container, dispose, callbacks } = await startFullStream();
+    const marker = { server: "fixture", tool: "draw", resourceUri: "ui://fixture/view.html" };
+    callbacks()?.onToolCall?.("parent", "ordinary_parent", {});
+    callbacks()?.onToolCall?.("view-child", "fixture_draw", {}, "parent", marker);
+    callbacks()?.onToolCall?.("ordinary-child", "ordinary_child", {}, "parent");
+    callbacks()?.onToolCall?.("view-parent-child", "view_parent_child", {}, "view-child");
+    await tick();
+    const groups = queryAllByRole(container, "button", { name: /Working|Worked/ });
+    expect(groups).toHaveLength(2);
+    for (const toggle of queryAllByRole(container, "button", { name: /Calling tools|Called tools/ })) toggle.click();
+    expect(container.querySelector('[title="ordinary_parent"]')).not.toBeNull();
+    expect(container.querySelector('[title="ordinary_child"]')).not.toBeNull();
+    expect(container.querySelector('[title="view_parent_child"]')).not.toBeNull();
+    expect(container.textContent).toContain("Loading view…");
+    dispose();
+  });
+
+  it.each(["simple", "full"])("hydrates and reconnects marked MCP App calls and results in %s mode", async (mode) => {
+    routeState.view = mode;
+    fetchCapabilitiesMock.mockResolvedValue({ version: 2, extensions: {}, agents: [], apps: { available: true } });
+    setCapabilitiesForTests({ apps: { available: true } });
+    let subscription: SubscriptionCallbacks | undefined;
+    subscribeToSessionMock.mockImplementation((_agent, _key, callbacks) => { subscription = callbacks; return () => {}; });
+    const marker = { server: "fixture", tool: "draw", resourceUri: "ui://fixture/view.html" };
+    const activeTurn = {
+      userText: "Draw", userTimestamp: 1, startedAt: 2, thinking: "", text: "",
+      toolCalls: [{ id: "app-hydrated", name: "fixture_draw", arguments: {}, status: "done" as const, view: marker }],
+      toolResults: [{ id: "app-hydrated", name: "fixture_draw", content: "Persisted drawing", isError: true, view: { ...marker, recordId: "record-hydrated" } }],
+    };
+    fetchFullHistoryMock.mockResolvedValue({ messages: [], sessionId: "session-main", isStreaming: true, activeTurn });
+    const { container, dispose } = renderView();
+    await waitFor(() => expect(container.querySelector('iframe[title="fixture MCP App"]')).not.toBeNull());
+    expect(container.querySelector('iframe[title="fixture MCP App"]')?.closest(".activity-group")).toBeNull();
+    subscription?.onActiveTurn?.({ ...activeTurn, text: "Reconnect text" });
+    await tick();
+    expect(container.textContent).toContain("Reconnect text");
+    expect(container.querySelector('iframe[title="fixture MCP App"]')).not.toBeNull();
+    expect(loadMcpAppViewMock.mock.calls.every((call) => call[2] === "app-hydrated")).toBe(true);
+    dispose();
+  });
+
+  it("resolves a new chat session before mounting its live MCP App", async () => {
+    fetchCapabilitiesMock.mockResolvedValue({ version: 2, extensions: {}, agents: [], apps: { available: true } });
+    setCapabilitiesForTests({ apps: { available: true } });
+    fetchFullHistoryMock.mockResolvedValueOnce({ messages: [] });
+    const { container, dispose, callbacks } = await startFullStream();
+    let resolveSession: ((value: { messages: never[]; sessionId: string }) => void) | undefined;
+    fetchFullHistoryMock.mockImplementationOnce(() => new Promise((resolve) => { resolveSession = resolve; }));
+    const marker = { server: "fixture", tool: "draw", resourceUri: "ui://fixture/view.html" };
+    callbacks()?.onToolCall?.("first-app", "fixture_draw", {}, undefined, marker);
+    callbacks()?.onToolResult?.("first-app", "fixture_draw", "First drawing", false, undefined, undefined, { ...marker, recordId: "first-record" });
+    await tick();
+    expect(container.textContent).toContain("Loading view…");
+    expect(container.textContent).not.toContain("View unavailable");
+    expect(resolveSession).toBeDefined();
+    resolveSession!({ messages: [], sessionId: "fresh-session" });
+    await waitFor(() => expect(container.querySelector('iframe[title="fixture MCP App"]')).not.toBeNull());
+    expect(loadMcpAppViewMock.mock.calls[0]?.slice(0, 3)).toEqual(["agent-1", "fresh-session", "first-app"]);
+    dispose();
+  });
+
+  it.each(["simple", "full"])("keeps fixed MCP App classification when the turn completes in %s mode", async (mode) => {
+    routeState.view = mode;
+    fetchCapabilitiesMock.mockResolvedValue({ version: 2, extensions: {}, agents: [], apps: { available: true } });
+    setCapabilitiesForTests({ apps: { available: true } });
+    const { container, dispose, callbacks, onText, onDone } = await startFullStream();
+    const marker = { server: "fixture", tool: "draw", resourceUri: "ui://fixture/view.html" };
+    callbacks()?.onToolCall?.("captured-failed", "fixture_draw", {}, undefined, marker);
+    callbacks()?.onToolResult?.("captured-failed", "fixture_draw", "Capture failed text", true);
+    callbacks()?.onToolCall?.("unmarked", "ordinary_tool", {});
+    callbacks()?.onToolResult?.("unmarked", "ordinary_tool", "Unmarked text", false, undefined, undefined, { ...marker, recordId: "late-ref" });
+    onText("Done");
+    onDone();
+    await tick();
+    expect(container.textContent).toContain("Capture failed text");
+    expect(container.textContent).toContain("View unavailable");
+    expect(container.querySelector('iframe[title="fixture MCP App"]')).toBeNull();
+    expect(loadMcpAppViewMock).not.toHaveBeenCalled();
+    dispose();
+  });
+
+  it.each(["simple", "full"])("keeps MCP App markers and references in queued completion in %s mode", async (mode) => {
+    routeState.view = mode;
+    fetchCapabilitiesMock.mockResolvedValue({ version: 2, extensions: {}, agents: [], apps: { available: true } });
+    setCapabilitiesForTests({ apps: { available: true } });
+    const { container, dispose, callbacks, onText, onDone } = await startFullStream();
+    onText("First turn");
+    const input = queryByRole(container, "textbox") as HTMLTextAreaElement;
+    input.value = "Queued draw";
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+    await tick();
+    const marker = { server: "fixture", tool: "draw", resourceUri: "ui://fixture/view.html" };
+    callbacks()?.onToolCall?.("queued-app", "fixture_draw", {}, undefined, marker);
+    callbacks()?.onToolResult?.("queued-app", "fixture_draw", "Queued drawing", false, undefined, undefined, { ...marker, recordId: "queued-record" });
+    onText("Queued done");
+    onDone();
+    await waitFor(() => expect(container.querySelector('iframe[title="fixture MCP App"]')).not.toBeNull());
+    expect(loadMcpAppViewMock.mock.calls[0]?.slice(0, 3)).toEqual(["agent-1", "session-main", "queued-app"]);
+    dispose();
+  });
+
+  it.each(["simple", "full"])("attaches a late MCP App result after a queued message flushes the live call in %s mode", async (mode) => {
+    routeState.view = mode;
+    fetchCapabilitiesMock.mockResolvedValue({ version: 2, extensions: {}, agents: [], apps: { available: true } });
+    setCapabilitiesForTests({ apps: { available: true } });
+    const { container, dispose, callbacks } = await startFullStream();
+    const firstCallbacks = callbacks();
+    const marker = { server: "fixture", tool: "draw", resourceUri: "ui://fixture/view.html" };
+    firstCallbacks?.onToolCall?.("late-app", "fixture_draw", {}, undefined, marker);
+    const input = queryByRole(container, "textbox") as HTMLTextAreaElement;
+    input.value = "Another request";
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+    await tick();
+    firstCallbacks?.onToolResult?.("late-app", "fixture_draw", "Late drawing", false, undefined, undefined, { ...marker, recordId: "late-record" });
+    await waitFor(() => expect(container.querySelector('iframe[title="fixture MCP App"]')).not.toBeNull());
+    expect(loadMcpAppViewMock.mock.calls[0]?.slice(0, 3)).toEqual(["agent-1", "session-main", "late-app"]);
+    dispose();
+  });
+
+  it.each(["rejected", "missing", "hung"])("falls back from a %s MCP App session lookup without blocking the live chat", async (outcome) => {
+    fetchCapabilitiesMock.mockResolvedValue({ version: 2, extensions: {}, agents: [], apps: { available: true } });
+    setCapabilitiesForTests({ apps: { available: true } });
+    fetchFullHistoryMock.mockResolvedValueOnce({ messages: [] });
+    const { container, dispose, callbacks, onText } = await startFullStream();
+    let lookupSignal: AbortSignal | undefined;
+    fetchFullHistoryMock.mockImplementationOnce((_agent, _key, _id, _page, signal) => {
+      lookupSignal = signal;
+      if (outcome === "rejected") return Promise.reject(new Error("Offline"));
+      if (outcome === "missing") return Promise.resolve({ messages: [] });
+      return new Promise(() => {});
+    });
+    vi.useFakeTimers();
+    try {
+      const marker = { server: "fixture", tool: "draw", resourceUri: "ui://fixture/view.html" };
+      callbacks()?.onToolCall?.("unresolved-app", "fixture_draw", {}, undefined, marker);
+      callbacks()?.onToolResult?.("unresolved-app", "fixture_draw", "Usable text", false, undefined, undefined, { ...marker, recordId: "record-unresolved" });
+      onText("Chat still progresses");
+      queryByRole(container, "button", { name: "Stop agent" })!.click();
+      await vi.advanceTimersByTimeAsync(15_000);
+      expect(container.textContent).toContain("Chat still progresses");
+      expect(container.textContent).toContain("Usable text");
+      expect(container.textContent).toContain("View unavailable");
+      expect(postAbortMock).toHaveBeenCalled();
+      expect(loadMcpAppViewMock).not.toHaveBeenCalled();
+      if (outcome === "hung") expect(lookupSignal?.aborted).toBe(true);
+    } finally { dispose(); vi.useRealTimers(); }
+  });
+
+  it.each([
+    ["simple", "loading"], ["full", "loading"], ["simple", "disabled"], ["full", "disabled"],
+    ["simple", "capture-failure"], ["full", "capture-failure"], ["simple", "unavailable-response"], ["full", "unavailable-response"],
+    ["simple", "failed-request"], ["full", "failed-request"], ["simple", "same-hostname"], ["full", "same-hostname"],
+    ["simple", "error-result"], ["full", "error-result"],
+  ] as const)("handles MCP App %s row state %s", async (mode, state) => {
+    routeState.view = mode;
+    fetchCapabilitiesMock.mockResolvedValue({ version: 2, extensions: {}, agents: [], apps: { available: true } });
+    setCapabilitiesForTests({ apps: { available: true } });
+    const { container, dispose, callbacks } = await startFullStream();
+    if (state === "loading") resetCapabilitiesForTests();
+    if (state === "disabled") setCapabilitiesForTests({ apps: { available: false } });
+    if (state === "unavailable-response") loadMcpAppViewMock.mockResolvedValueOnce({ available: false, reason: "resource gone" });
+    if (state === "failed-request") loadMcpAppViewMock.mockRejectedValueOnce(new Error("offline"));
+    if (state === "same-hostname") loadMcpAppViewMock.mockResolvedValueOnce({
+      available: true, sandboxUrl: "https://apps.test/sandbox", appsOrigin: window.location.origin,
+      server: "fixture", toolName: "draw", args: {}, result: {}, csp: {}, prefersBorder: false,
+    });
+    const marker = { server: "fixture", tool: "draw", resourceUri: "ui://fixture/view.html" };
+    callbacks()?.onToolCall?.("state-app", "fixture_draw", {}, undefined, marker);
+    callbacks()?.onToolResult?.("state-app", "fixture_draw", "Result text survives", state === "error-result", undefined, undefined,
+      state === "capture-failure" ? undefined : { ...marker, recordId: "state-record" });
+    await tick();
+    if (state === "loading") {
+      expect(container.textContent).toContain("Loading view…");
+      expect(loadMcpAppViewMock).not.toHaveBeenCalled();
+      setCapabilitiesForTests({ apps: { available: true } });
+    }
+    if (state === "loading" || state === "error-result") {
+      await waitFor(() => expect(container.querySelector('iframe[title="fixture MCP App"]')).not.toBeNull());
+    } else {
+      await waitFor(() => expect(container.textContent).toContain("View unavailable"));
+      expect(container.textContent).toContain("Result text survives");
+      expect(container.querySelector("iframe")).toBeNull();
+    }
+    dispose();
+  });
+
+  it.each(["simple", "full"])("resolves the new session for an MCP App after New chat in %s mode", async (mode) => {
+    routeState.view = mode;
+    fetchCapabilitiesMock.mockResolvedValue({ version: 2, extensions: {}, agents: [], apps: { available: true } });
+    setCapabilitiesForTests({ apps: { available: true } });
+    const { container, dispose, callbacks, onText, onDone } = await startFullStream();
+    onText("Prior conversation");
+    onDone();
+    await tick();
+    queryByRole(container, "button", { name: "Start a new chat" })!.click();
+    await tick();
+    const input = queryByRole(container, "textbox") as HTMLTextAreaElement;
+    input.value = "Draw in the fresh chat";
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    queryByRole(container, "button", { name: "Send message" })!.click();
+    await tick();
+    fetchFullHistoryMock.mockResolvedValueOnce({ messages: [], sessionId: "session-fresh" });
+    const marker = { server: "fixture", tool: "draw", resourceUri: "ui://fixture/view.html" };
+    callbacks()?.onToolCall?.("fresh-app", "fixture_draw", {}, undefined, marker);
+    callbacks()?.onToolResult?.("fresh-app", "fixture_draw", "Fresh drawing", false, undefined, undefined, { ...marker, recordId: "fresh-record" });
+    await waitFor(() => expect(container.querySelector('iframe[title="fixture MCP App"]')).not.toBeNull());
+    expect(loadMcpAppViewMock.mock.calls[0]?.slice(0, 3)).toEqual(["agent-1", "session-fresh", "fresh-app"]);
     dispose();
   });
 

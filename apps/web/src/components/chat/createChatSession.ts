@@ -11,6 +11,7 @@ import {
   batch,
   type Accessor,
 } from "solid-js";
+import type { McpAppView, McpAppViewReference } from "@yoplai/shared/types";
 import { isNoReply } from "@yoplai/shared/no-reply";
 import { getMaxContextTokens } from "@yoplai/shared/model-context";
 import {
@@ -39,7 +40,7 @@ import type {
 import { refreshToolLabels } from "../../lib/tool-labels";
 import { registerViewedChat } from "../../lib/chat-notifications";
 import type { PendingFile } from "../../lib/attachments";
-import { fullMessagesToSimpleView, type SimpleViewMessage } from "./chat-history";
+import { fullMessagesToSimpleView, type SimpleViewMessage, type ChatContentBlock } from "./chat-history";
 
 export type StreamingBlock =
   | {
@@ -61,6 +62,7 @@ export type StreamingBlock =
       status: "running" | "done" | "error";
       timestamp: number;
       result?: FullToolResultMessage;
+      view?: McpAppView;
     }
   | (FileBlock & { timestamp: number });
 
@@ -118,6 +120,8 @@ export function createChatSession(input: ChatSessionInput) {
   const [resolvedSessionId, setResolvedSessionId] = createSignal<
     string | undefined
   >(undefined);
+  const [appSessionFailed, setAppSessionFailed] = createSignal(false);
+  let appSessionLookup: AbortController | undefined;
   const [streamingThinking, setStreamingThinking] = createSignal("");
   const [streamingThinkingAt, setStreamingThinkingAt] = createSignal<
     number | null
@@ -178,6 +182,9 @@ export function createChatSession(input: ChatSessionInput) {
   const noAnimIds = new Set<string>();
 
   createEffect(on([() => input.agentId(), sessionKey, explicitSessionId], () => {
+    appSessionLookup?.abort();
+    appSessionLookup = undefined;
+    setAppSessionFailed(false);
     setResolvedSessionId(pendingResetSession === currentSession() ? explicitSessionId() : undefined);
   }));
   createEffect(() => {
@@ -512,6 +519,7 @@ export function createChatSession(input: ChatSessionInput) {
           id: tc.id,
           parentToolCallId: tc.parentToolCallId,
           result: knownResults.get(tc.id),
+          view: tc.view,
           name: tc.name,
           arguments: tc.arguments,
           status: tc.status,
@@ -527,7 +535,7 @@ export function createChatSession(input: ChatSessionInput) {
       }))
     );
     for (const result of turn.toolResults ?? []) {
-      attachStreamingToolResult(result.id, result.name, result.content, result.isError, result.details, result.parentToolCallId);
+      attachStreamingToolResult(result.id, result.name, result.content, result.isError, result.details, result.parentToolCallId, result.view);
     }
     // Ensure the user message that triggered the active run is visible
     // even before the persisted history is re-fetched.
@@ -606,13 +614,40 @@ export function createChatSession(input: ChatSessionInput) {
     });
   };
 
+  const resolveAppSession = () => {
+    if (explicitSessionId() || resolvedSessionId() || appSessionLookup || appSessionFailed()) return;
+    const scope = currentSession();
+    const controller = new AbortController();
+    appSessionLookup = controller;
+    const timer = setTimeout(() => {
+      if (scope === currentSession()) setAppSessionFailed(true);
+      controller.abort();
+    }, 15_000);
+    controller.signal.addEventListener("abort", () => clearTimeout(timer), { once: true });
+    void fetchFullHistory(input.agentId(), sessionKey(), undefined, { limit: 1 }, controller.signal)
+      .then((response) => {
+        if (controller.signal.aborted || scope !== currentSession()) return;
+        if (response.sessionId) setResolvedSessionId(response.sessionId);
+        else setAppSessionFailed(true);
+      })
+      .catch(() => {
+        if (!controller.signal.aborted && scope === currentSession()) setAppSessionFailed(true);
+      })
+      .finally(() => {
+        clearTimeout(timer);
+        if (appSessionLookup === controller) appSessionLookup = undefined;
+      });
+  };
+
   const appendStreamingToolCallBlock = (
     id: string,
     name: string,
     args: unknown,
     parentToolCallId?: string,
-    timestamp = Date.now()
+    timestamp = Date.now(),
+    view?: McpAppView
   ) => {
+    if (view) resolveAppSession();
     setStreamingBlocks((blocks) => {
       if (blocks.some((b) => b.type === "toolCall" && b.id === id))
         return blocks;
@@ -624,6 +659,7 @@ export function createChatSession(input: ChatSessionInput) {
           parentToolCallId,
           name,
           arguments: args,
+          view,
           status: "running",
           timestamp,
         },
@@ -650,7 +686,8 @@ export function createChatSession(input: ChatSessionInput) {
     content: string,
     isError: boolean,
     details?: { diff?: string },
-    parentToolCallId?: string
+    parentToolCallId?: string,
+    view?: McpAppViewReference
   ) => {
     const result: FullToolResultMessage = {
       role: "toolResult",
@@ -660,10 +697,12 @@ export function createChatSession(input: ChatSessionInput) {
       content: [{ type: "text", text: content }],
       isError,
       details,
+      view,
       timestamp: Date.now(),
     };
     if (flushedRunningToolIds.delete(id)) {
       setFullMessages((prev) => [...prev, result]);
+      setSimpleMessages((prev) => prev.map((message) => message.role === "tool" && message.id === id ? { ...message, result } : message));
       return;
     }
     const status = isError ? "error" : "done";
@@ -746,11 +785,11 @@ export function createChatSession(input: ChatSessionInput) {
           if (ownsDisplayedDirectStream()) return;
           setIsStreaming(true);
         },
-        onToolCall: (id, name, args, parentToolCallId) => {
+        onToolCall: (id, name, args, parentToolCallId, view) => {
           if (!isCurrentSubscription()) return;
           if (ownsDisplayedDirectStream()) return;
           setStreamingFinished(false);
-          appendStreamingToolCallBlock(id, name, args, parentToolCallId);
+          appendStreamingToolCallBlock(id, name, args, parentToolCallId, Date.now(), view);
           setStreamingToolCalls((prev) => {
             if (prev.some((tc) => tc.id === id)) return prev;
             return [
@@ -799,10 +838,10 @@ export function createChatSession(input: ChatSessionInput) {
           );
           updateStreamingToolBlockStatus(toolName, isError ? "error" : "done");
         },
-        onToolResult: (id, name, content, isError, details, parentToolCallId) => {
+        onToolResult: (id, name, content, isError, details, parentToolCallId, view) => {
           if (!isCurrentSubscription()) return;
           if (ownsDisplayedDirectStream()) return;
-          attachStreamingToolResult(id, name, content, isError, details, parentToolCallId);
+          attachStreamingToolResult(id, name, content, isError, details, parentToolCallId, view);
         },
         onFileOutput: (file) => {
           if (!isCurrentSubscription()) return;
@@ -941,7 +980,7 @@ export function createChatSession(input: ChatSessionInput) {
     }
 
     const completedAt = Date.now();
-    const contentBlocks: ContentBlock[] =
+    const contentBlocks: ChatContentBlock[] =
       blocks.length > 0
         ? blocks.map((block, index) => {
             if (block.type === "toolCall") {
@@ -949,6 +988,7 @@ export function createChatSession(input: ChatSessionInput) {
                 type: "toolCall",
                 id: block.id,
                 parentToolCallId: block.parentToolCallId,
+                viewCall: !!block.view,
                 name: block.name,
                 arguments: block.arguments,
               };
@@ -1007,6 +1047,7 @@ export function createChatSession(input: ChatSessionInput) {
                   id: block.id,
                   parentToolCallId: block.parentToolCallId,
                   result: block.result,
+                  viewCall: !!block.view,
                   role: "tool",
                   toolName: block.name,
                   arguments: block.arguments,
@@ -1208,7 +1249,7 @@ export function createChatSession(input: ChatSessionInput) {
       let queuedText = "";
       let queuedThinking = "";
       const queuedFiles: FileBlock[] = [];
-      const queuedBlocks: ContentBlock[] = [];
+      const queuedBlocks: ChatContentBlock[] = [];
       const queuedToolResults: FullToolResultMessage[] = [];
       const queuedToolCalls: Array<{
         id: string;
@@ -1256,7 +1297,7 @@ export function createChatSession(input: ChatSessionInput) {
             );
           }
 
-          const blocks: ContentBlock[] = queuedBlocks.length
+          const blocks: ChatContentBlock[] = queuedBlocks.length
             ? queuedBlocks
             : [
                 ...(queuedThinking
@@ -1313,6 +1354,7 @@ export function createChatSession(input: ChatSessionInput) {
                       id: block.id,
                       parentToolCallId: block.parentToolCallId,
                       result: queuedToolResults.find((result) => result.toolCallId === block.id),
+                      viewCall: block.viewCall,
                       role: "tool",
                       toolName: block.name,
                       arguments: block.arguments,
@@ -1386,7 +1428,7 @@ export function createChatSession(input: ChatSessionInput) {
               queuedBlocks.push({ type: "thinking", thinking: chunk });
             }
           },
-          onToolCall: (id, name, args, parentToolCallId) => {
+          onToolCall: (id, name, args, parentToolCallId, view) => {
             if (!isCurrentQueuedStream()) return;
             queuedToolCalls.push({
               id,
@@ -1402,6 +1444,7 @@ export function createChatSession(input: ChatSessionInput) {
               parentToolCallId,
               name,
               arguments: args,
+              viewCall: !!view,
             });
           },
           onToolEnd: (toolName, isError) => {
@@ -1412,7 +1455,7 @@ export function createChatSession(input: ChatSessionInput) {
               }
             }
           },
-          onToolResult: (id, name, content, isError, details, parentToolCallId) => {
+          onToolResult: (id, name, content, isError, details, parentToolCallId, view) => {
             if (!isCurrentQueuedStream()) return;
             queuedToolResults.push({
               role: "toolResult",
@@ -1422,6 +1465,7 @@ export function createChatSession(input: ChatSessionInput) {
               content: [{ type: "text", text: content }],
               isError,
               details,
+              view,
               timestamp: Date.now(),
             });
           },
@@ -1595,10 +1639,10 @@ export function createChatSession(input: ChatSessionInput) {
           if (!isCurrentDirectStream()) return;
           setIsStreaming(true);
         },
-        onToolCall: (id, name, args, parentToolCallId) => {
+        onToolCall: (id, name, args, parentToolCallId, view) => {
           if (!isCurrentDirectStream()) return;
           setStreamingFinished(false);
-          appendStreamingToolCallBlock(id, name, args, parentToolCallId);
+          appendStreamingToolCallBlock(id, name, args, parentToolCallId, Date.now(), view);
           setStreamingToolCalls((prev) => [
             ...prev,
             {
@@ -1638,9 +1682,9 @@ export function createChatSession(input: ChatSessionInput) {
           );
           updateStreamingToolBlockStatus(toolName, isError ? "error" : "done");
         },
-        onToolResult: (id, name, content, isError, details, parentToolCallId) => {
+        onToolResult: (id, name, content, isError, details, parentToolCallId, view) => {
           if (!isCurrentDirectStream()) return;
-          attachStreamingToolResult(id, name, content, isError, details, parentToolCallId);
+          attachStreamingToolResult(id, name, content, isError, details, parentToolCallId, view);
         },
         onFileOutput: (file) => {
           if (!isCurrentDirectStream()) return;
@@ -1691,6 +1735,10 @@ export function createChatSession(input: ChatSessionInput) {
 
 
   const startNewChat = (agentId: string) => {
+    appSessionLookup?.abort();
+    appSessionLookup = undefined;
+    setAppSessionFailed(false);
+    setResolvedSessionId(undefined);
     if (cleanup) cleanup();
     cleanup = null;
     directStreamSession = null;
@@ -1712,12 +1760,14 @@ export function createChatSession(input: ChatSessionInput) {
     "role" in message ? simpleCopyReplies().get(message) : fullCopyReplies().get(message);
   const shouldAnimate = (id: string) => !noAnimIds.delete(id);
   onCleanup(() => {
+    appSessionLookup?.abort();
     cleanup?.();
     subscriptionCleanup?.();
     statusCleanup?.();
   });
 
   return {
+    appSessionId: () => explicitSessionId() ?? resolvedSessionId() ?? (appSessionFailed() ? null : undefined),
     simpleMessages, fullMessages, streamingBlocks, streamingText, streamingThinking,
     streamingToolCalls, streamingFiles, streamingTextAt, streamingStartedAt,
     streamingFinished, activeTools, isStreaming, loading, stopping, showInterrupted,

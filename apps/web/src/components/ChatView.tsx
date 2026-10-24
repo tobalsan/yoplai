@@ -843,7 +843,7 @@ export function ChatView() {
             "drop-target": isFileDragActive() && activeDropZone() === "history",
           }}
         >
-          <ChatTranscript session={session} viewMode={viewMode} />
+          <ChatTranscript agentId={params.agentId} session={session} viewMode={viewMode} />
         </div>
 
         <div class="composer-zone">

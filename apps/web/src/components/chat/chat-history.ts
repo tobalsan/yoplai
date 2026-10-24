@@ -11,9 +11,14 @@ export function userText(message: FullHistoryMessage): string {
 }
 
 
+// Local completion keeps the append-time classification; persisted tool calls stay unchanged.
+export type ChatToolCall = Extract<ContentBlock, { type: "toolCall" }> & { viewCall?: boolean };
+export type ChatContentBlock = Exclude<ContentBlock, { type: "toolCall" }> | ChatToolCall;
+
 export type SimpleToolMessage = {
   id: string;
   parentToolCallId?: string;
+  viewCall?: boolean;
   result?: FullToolResultMessage;
   role: "tool";
   toolName: string;
@@ -54,6 +59,7 @@ export function compactSummary(message: FullHistoryMessage): string | undefined 
 
 export type FullDisplayRow =
   | { kind: "activity"; item: ActivityItem; historyIndex: number }
+  | { kind: "mcp-app"; call: Extract<ContentBlock, { type: "toolCall" }>; result?: FullToolResultMessage; historyIndex: number }
   | {
       kind: "assistant-content";
       historyIndex: number;
@@ -93,6 +99,11 @@ export function fullHistoryDisplayRows(
           },
         });
       } else if (block.type === "toolCall") {
+        const result = toolResults.get(block.id);
+        if ((block as ChatToolCall).viewCall ?? !!result?.view) {
+          rows.push({ kind: "mcp-app", call: block, result, historyIndex });
+          continue;
+        }
         rows.push({
           kind: "activity",
           historyIndex,
@@ -179,6 +190,7 @@ export function fullMessagesToSimpleView(
           id: block.id,
           parentToolCallId: block.parentToolCallId,
           result: results.get(block.id),
+          viewCall: (block as ChatToolCall).viewCall ?? !!results.get(block.id)?.view,
           role: "tool",
           toolName: block.name,
           arguments: block.arguments,
