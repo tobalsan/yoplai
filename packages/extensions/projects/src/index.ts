@@ -102,19 +102,6 @@ import {
   updateProjectLifecycle,
   updateProjectWithCancelInterrupt,
 } from "./use-cases/update-project-lifecycle.js";
-import {
-  createLeadSession,
-  deleteLeadSession,
-  findLeadSession,
-  listLeadSessions,
-  patchLeadSession,
-} from "./lead-sessions/store.js";
-import {
-  leadTranscriptHasUserMessage,
-  readLeadTranscript,
-  sendLeadSessionMessage,
-} from "./lead-sessions/transcript.js";
-import { maybeAutoTitleLeadSession } from "./lead-sessions/auto-title.js";
 export { interruptCancelledOrchestratorRuns } from "./use-cases/update-project-lifecycle.js";
 
 const registeredApps = new WeakSet<object>();
@@ -163,31 +150,6 @@ const UpdateSubagentRequestSchema = z.object({
   model: z.string().optional(),
   reasoningEffort: z.string().optional(),
   thinking: z.string().optional(),
-});
-
-const CreateLeadSessionRequestSchema = z.object({
-  agentId: z.string(),
-  sliceId: z.string().optional(),
-});
-
-const PatchLeadSessionRequestSchema = z.object({
-  title: z.string().optional(),
-  archived: z.boolean().optional(),
-});
-
-const SendLeadSessionMessageRequestSchema = z.object({
-  content: z.string(),
-  agentId: z.string().optional(),
-  files: z
-    .array(
-      z.object({
-        path: z.string(),
-        mimeType: z.string(),
-        filename: z.string().optional(),
-        size: z.number().optional(),
-      })
-    )
-    .optional(),
 });
 
 let watcher: ProjectWatcher | null = null;
@@ -388,25 +350,6 @@ function attachmentContentType(name: string): string {
   if (ext === ".svg") return "image/svg+xml";
   if (ext === ".pdf") return "application/pdf";
   return "application/octet-stream";
-}
-
-async function clearLeadSessionState(
-  agentId: string,
-  sessionKey: string,
-  userId?: string
-): Promise<void> {
-  const cleared = await getProjectsContext().clearSessionEntry(
-    agentId,
-    sessionKey,
-    userId
-  );
-  if (!cleared) return;
-  getProjectsContext().deleteSession(agentId, cleared.sessionId);
-  await getProjectsContext().invalidateHistoryCache(
-    agentId,
-    cleared.sessionId,
-    userId
-  );
 }
 
 function isUploadedFile(
@@ -1057,217 +1000,6 @@ export function registerProjectRoutes(app: Hono): void {
     return c.json(result.data);
   });
 
-  app.get("/projects/:id/lead-sessions", async (c) => {
-    const id = c.req.param("id");
-    const archived = c.req.query("archived") === "true";
-    const sliceId = c.req.query("sliceId") || undefined;
-    const config = getProjectsConfig();
-    const result = await listLeadSessions(config, id, { archived, sliceId });
-    if (!result.ok) {
-      return c.json({ error: result.error }, result.status);
-    }
-    return c.json(result.data);
-  });
-
-  app.post("/projects/:id/lead-sessions", async (c) => {
-    const id = c.req.param("id");
-    const parsed = CreateLeadSessionRequestSchema.safeParse(await c.req.json());
-    if (!parsed.success) {
-      return c.json(
-        { error: parsed.error.issues[0]?.message ?? "Invalid body" },
-        400
-      );
-    }
-    const ctx = getProjectsContext();
-    const agent = ctx.getAgent(parsed.data.agentId);
-    if (!agent || !ctx.isAgentActive(parsed.data.agentId)) {
-      return c.json({ error: "Agent not found" }, 404);
-    }
-    const config = getProjectsConfig();
-    const result = await createLeadSession(config, id, parsed.data);
-    if (!result.ok) {
-      return c.json({ error: result.error }, result.status);
-    }
-    ctx.emit("lead_session.changed", {
-      type: "lead_session_changed",
-      kind: "created",
-      session: result.data,
-    });
-    return c.json(result.data, 201);
-  });
-
-  app.patch("/lead-sessions/:id", async (c) => {
-    const id = c.req.param("id");
-    const parsed = PatchLeadSessionRequestSchema.safeParse(await c.req.json());
-    if (!parsed.success) {
-      return c.json(
-        { error: parsed.error.issues[0]?.message ?? "Invalid body" },
-        400
-      );
-    }
-    const config = getProjectsConfig();
-    const result = await patchLeadSession(config, id, parsed.data);
-    if (!result.ok) {
-      return c.json({ error: result.error }, result.status);
-    }
-    getProjectsContext().emit("lead_session.changed", {
-      type: "lead_session_changed",
-      kind: parsed.data.archived === true ? "archived" : "updated",
-      session: result.data,
-    });
-    return c.json(result.data);
-  });
-
-  app.delete("/lead-sessions/:id", async (c) => {
-    const id = c.req.param("id");
-    const config = getProjectsConfig();
-    const result = await deleteLeadSession(config, id);
-    if (!result.ok) {
-      return c.json({ error: result.error }, result.status);
-    }
-    getProjectsContext().emit("lead_session.changed", {
-      type: "lead_session_changed",
-      kind: "deleted",
-      session: result.data,
-    });
-    return c.json({ ok: true, session: result.data });
-  });
-
-  app.get("/lead-sessions/:id/transcript", async (c) => {
-    const id = c.req.param("id");
-    const config = getProjectsConfig();
-    const found = await findLeadSession(config, id);
-    if (!found.ok) {
-      return c.json({ error: found.error }, found.status);
-    }
-    return c.json(await readLeadTranscript(found.projectDir, found.session));
-  });
-
-  app.post("/lead-sessions/:id/messages", async (c) => {
-    const id = c.req.param("id");
-    const parsed = SendLeadSessionMessageRequestSchema.safeParse(
-      await c.req.json()
-    );
-    if (!parsed.success) {
-      return c.json(
-        { error: parsed.error.issues[0]?.message ?? "Invalid body" },
-        400
-      );
-    }
-    const content = parsed.data.content.trim();
-    if (!content) return c.json({ error: "Content is required" }, 400);
-
-    const config = getProjectsConfig();
-    const found = await findLeadSession(config, id);
-    if (!found.ok) {
-      return c.json({ error: found.error }, found.status);
-    }
-    const hasUserMessage = await leadTranscriptHasUserMessage(
-      found.projectDir,
-      found.session
-    );
-    let session = found.session;
-    if (parsed.data.agentId && parsed.data.agentId !== found.session.agentId) {
-      if (hasUserMessage) {
-        return c.json({ error: "Lead agent is locked for this session" }, 409);
-      }
-      const ctx = getProjectsContext();
-      const agent = ctx.getAgent(parsed.data.agentId);
-      if (!agent || !ctx.isAgentActive(parsed.data.agentId)) {
-        return c.json({ error: "Agent not found" }, 404);
-      }
-      session = { ...found.session, agentId: parsed.data.agentId };
-    }
-
-    const result = await sendLeadSessionMessage({
-      projectDir: found.projectDir,
-      session,
-      content,
-      files: parsed.data.files,
-    });
-    getProjectsContext().emit("lead_session.changed", {
-      type: "lead_session_changed",
-      kind: "updated",
-      session: result.session,
-    });
-    maybeAutoTitleLeadSession({
-      config,
-      projectDir: found.projectDir,
-      session: result.session,
-      hadUserMessageBeforeSend: hasUserMessage,
-    });
-    return c.json({ session: result.session, result: result.result });
-  });
-
-  app.delete("/projects/:id/lead-sessions/:agentId", async (c) => {
-    const id = c.req.param("id");
-    const agentId = c.req.param("agentId");
-    const config = getProjectsConfig();
-    const projectResult = await getProject(config, id);
-    if (!projectResult.ok) {
-      return c.json({ error: projectResult.error }, 404);
-    }
-    const project = projectResult.data;
-    const frontmatter = project.frontmatter ?? {};
-    const sessionKeys =
-      typeof frontmatter.sessionKeys === "object" &&
-      frontmatter.sessionKeys !== null
-        ? { ...(frontmatter.sessionKeys as Record<string, string>) }
-        : {};
-    const sessionKey = sessionKeys[agentId];
-    if (!sessionKey) {
-      return c.json({ error: "Lead session not found" }, 404);
-    }
-    delete sessionKeys[agentId];
-    await clearLeadSessionState(agentId, sessionKey);
-    const updateResult = await updateProject(config, id, {
-      sessionKeys: Object.keys(sessionKeys).length > 0 ? sessionKeys : null,
-    });
-    if (!updateResult.ok) {
-      return c.json({ error: updateResult.error }, 400);
-    }
-    emitProjectFileChanged(
-      id,
-      projectDirNameFromPath(project.path),
-      "README.md"
-    );
-    return c.json({ ok: true, agentId });
-  });
-
-  app.post("/projects/:id/lead-sessions/:agentId/reset", async (c) => {
-    const id = c.req.param("id");
-    const agentId = c.req.param("agentId");
-    const config = getProjectsConfig();
-    const projectResult = await getProject(config, id);
-    if (!projectResult.ok) {
-      return c.json({ error: projectResult.error }, 404);
-    }
-    const project = projectResult.data;
-    const frontmatter = project.frontmatter ?? {};
-    const sessionKeys =
-      typeof frontmatter.sessionKeys === "object" &&
-      frontmatter.sessionKeys !== null
-        ? { ...(frontmatter.sessionKeys as Record<string, string>) }
-        : {};
-    const sessionKey = sessionKeys[agentId];
-    if (!sessionKey) {
-      return c.json({ error: "Lead session not found" }, 404);
-    }
-    await clearLeadSessionState(agentId, sessionKey);
-    const nextSessionKey = `project:${id}:${agentId}`;
-    sessionKeys[agentId] = nextSessionKey;
-    const updateResult = await updateProject(config, id, { sessionKeys });
-    if (!updateResult.ok) {
-      return c.json({ error: updateResult.error }, 400);
-    }
-    emitProjectFileChanged(
-      id,
-      projectDirNameFromPath(project.path),
-      "README.md"
-    );
-    return c.json({ ok: true, agentId, sessionKey: nextSessionKey });
-  });
-
   app.get("/subagents", async (c) => {
     const config = getProjectsConfig();
     const includeArchived = ["1", "true"].includes(
@@ -1872,7 +1604,6 @@ const projectsExtension: Extension = {
     "/api/areas",
     "/api/config",
     "/api/projects",
-    "/api/lead-sessions",
     "/api/subagents",
     "/api/activity",
     "/api/taskboard",
