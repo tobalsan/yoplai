@@ -214,7 +214,7 @@ function schedulerAgentTools(): ExtensionAgentTool[] {
                 target: {
                   type: "string",
                   description:
-                    'Delivery sink id, e.g. "slack", "telegram", "discord".',
+                    'Delivery sink id, e.g. "slack", "telegram", "discord", "mattermost".',
                 },
                 channel: { type: "string" },
                 user: { type: "string" },
@@ -328,7 +328,7 @@ function schedulerAgentTools(): ExtensionAgentTool[] {
                 target: {
                   type: "string",
                   description:
-                    'Delivery sink id, e.g. "slack", "telegram", "discord".',
+                    'Delivery sink id, e.g. "slack", "telegram", "discord", "mattermost".',
                 },
                 channel: { type: "string" },
                 user: { type: "string" },

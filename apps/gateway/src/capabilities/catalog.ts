@@ -80,6 +80,7 @@ function compact(text: string): string {
 const SETTINGS_ONLY_EXTENSION_IDS = new Set([
   "discord",
   "irc",
+  "mattermost",
   "slack",
   "telegram",
   "webhooks",

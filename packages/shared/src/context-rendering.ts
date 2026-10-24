@@ -9,6 +9,8 @@ import type {
   TelegramContextBlock,
   UserContext,
   IrcContext,
+  MattermostContext,
+  MattermostContextBlock,
 } from "./types.js";
 
 export const SLACK_FORMATTING = [
@@ -28,6 +30,17 @@ export const SLACK_REPLY_DELIVERY = [
   "Your final text answer is posted to this Slack conversation automatically. Do not call slack.send_message to reply here; use it only when the user or your instructions explicitly tell you to post somewhere else.",
   "[END REPLY]",
 ].join("\n");
+
+export const MATTERMOST_REPLY_DELIVERY = [
+  "[REPLY]",
+  "Your final text answer is posted to this Mattermost conversation automatically, in the same thread. Do not call mattermost.send_message to reply here; use it only when the user or your instructions explicitly tell you to post somewhere else.",
+  "[END REPLY]",
+].join("\n");
+
+type ChannelContextBlock =
+  | DiscordContextBlock
+  | SlackContextBlock
+  | MattermostContextBlock;
 
 function renderThreadStarter(
   starter: { author: string; content: string; timestamp: number } | undefined,
@@ -54,7 +67,7 @@ function renderHistory(
 }
 
 function getMetadata(
-  blocks: DiscordContextBlock[] | SlackContextBlock[]
+  blocks: ChannelContextBlock[]
 ): ChannelContextMetadata | undefined {
   const block = blocks.find((entry) => entry.type === "metadata");
   if (!block) return undefined;
@@ -69,19 +82,19 @@ function getMetadata(
   };
 }
 
-function getBlock<T extends DiscordContextBlock["type"] | SlackContextBlock["type"]>(
-  blocks: DiscordContextBlock[] | SlackContextBlock[],
+function getBlock<T extends ChannelContextBlock["type"]>(
+  blocks: ChannelContextBlock[],
   type: T
-): Extract<DiscordContextBlock | SlackContextBlock, { type: T }> | undefined {
+): Extract<ChannelContextBlock, { type: T }> | undefined {
   return blocks.find((block) => block.type === type) as
-    | Extract<DiscordContextBlock | SlackContextBlock, { type: T }>
+    | Extract<ChannelContextBlock, { type: T }>
     | undefined;
 }
 
 function renderChannelContext(
   metadata: ChannelContextMetadata,
-  blocks: DiscordContextBlock[] | SlackContextBlock[],
-  options?: { includeSlackFormatting?: boolean }
+  blocks: ChannelContextBlock[],
+  options?: { includeSlackFormatting?: boolean; trailer?: string }
 ): string {
   const channelName =
     renderBlockOrFallback(getBlock(blocks, "channel_name"), {
@@ -131,6 +144,9 @@ function renderChannelContext(
   if (options?.includeSlackFormatting) {
     parts.push("", SLACK_FORMATTING, "", SLACK_REPLY_DELIVERY);
   }
+  if (options?.trailer) {
+    parts.push("", options.trailer);
+  }
 
   return parts.join("\n");
 }
@@ -139,7 +155,7 @@ const UNPAIRED_SENDER_NOTE =
   "sender_identity: unpaired — this Slack user is not linked to a Yoplai account, so tools use team credentials only (never their personal connections). If a requested tool needs credentials, call that tool first and share its single connection link, which pairs and connects together. Use slack.pair only when the user explicitly asks to pair or expects their own account/data without needing a credential connection; if team credentials are used, say the data is the team's, not theirs.";
 
 function renderBlockOrFallback(
-  block: DiscordContextBlock | SlackContextBlock | undefined,
+  block: ChannelContextBlock | undefined,
   fallback: string
 ): string {
   if (!block) return fallback;
@@ -172,6 +188,14 @@ export function renderSlackContext(ctx: SlackContext): string {
   if (!metadata) return "";
   return renderChannelContext(metadata, ctx.blocks, {
     includeSlackFormatting: true,
+  });
+}
+
+export function renderMattermostContext(ctx: MattermostContext): string {
+  const metadata = getMetadata(ctx.blocks);
+  if (!metadata) return "";
+  return renderChannelContext(metadata, ctx.blocks, {
+    trailer: MATTERMOST_REPLY_DELIVERY,
   });
 }
 
@@ -218,6 +242,7 @@ export function renderAgentContext(ctx: AgentContext): string {
   if (ctx.kind === "slack") rendered = renderSlackContext(ctx);
   if (ctx.kind === "telegram") rendered = renderTelegramContext(ctx);
   if (ctx.kind === "irc") rendered = renderIrcContext(ctx);
+  if (ctx.kind === "mattermost") rendered = renderMattermostContext(ctx);
   if (ctx.kind === "web") rendered = renderUserContext(ctx);
   if (ctx.project) {
     const block = ["[PROJECT CONTEXT]", ctx.project.instructions,
@@ -352,4 +377,41 @@ export function buildTelegramContext(opts: {
   }
 
   return { kind: "telegram", blocks };
+}
+
+export function buildMattermostContext(opts: {
+  metadata?: ChannelContextMetadata;
+  channelName?: string;
+  channelTopic?: string;
+  threadStarter?: { author: string; content: string; timestamp: number };
+  history?: Array<{ author: string; content: string; timestamp: number }>;
+}): MattermostContext {
+  const blocks: MattermostContextBlock[] = [];
+
+  if (opts.metadata) {
+    blocks.push({
+      type: "metadata",
+      channel: "mattermost",
+      place: opts.metadata.place,
+      conversationType: opts.metadata.conversationType,
+      sender: opts.metadata.sender,
+      ...(opts.metadata.conversationId
+        ? { conversationId: opts.metadata.conversationId }
+        : {}),
+    });
+  }
+  if (opts.channelName) {
+    blocks.push({ type: "channel_name", name: opts.channelName });
+  }
+  if (opts.channelTopic) {
+    blocks.push({ type: "channel_topic", topic: opts.channelTopic });
+  }
+  if (opts.threadStarter) {
+    blocks.push({ type: "thread_starter", ...opts.threadStarter });
+  }
+  if (opts.history && opts.history.length > 0) {
+    blocks.push({ type: "history", messages: opts.history });
+  }
+
+  return { kind: "mattermost", blocks };
 }

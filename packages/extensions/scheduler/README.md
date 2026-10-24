@@ -312,7 +312,7 @@ Each entry is `{ target, channel? | user? }` — `target` names the extension wh
 Empty/blank values are rejected at schema-validation time. `target`/`channel`/`user` are extension-specific
 strings, not IDs the scheduler interprets itself — see each extension's own README for what its sink expects:
 [discord](../discord/README.md#scheduler-delivery-sink), [slack](../slack/README.md#scheduler-delivery),
-[telegram](../telegram/README.md#delivery-sink).
+[telegram](../telegram/README.md#delivery-sink), [mattermost](../mattermost/README.md#delivery-sink).
 
 ### What gets delivered, and when a run stays silent
 

@@ -32,6 +32,7 @@ export default defineConfig({
       { find: "@yoplai/extension-langfuse", replacement: extSrc("langfuse") },
       { find: "@yoplai/extension-discord", replacement: extSrc("discord") },
       { find: "@yoplai/extension-slack", replacement: extSrc("slack") },
+      { find: "@yoplai/extension-mattermost", replacement: extSrc("mattermost") },
       { find: "@yoplai/extension-webhooks", replacement: extSrc("webhooks") },
       { find: /^@yoplai\/extension-multi-user\/isolation$/, replacement: extSrc("multi-user", "isolation.ts") },
       { find: /^@yoplai\/extension-multi-user\/middleware$/, replacement: extSrc("multi-user", "middleware.ts") },

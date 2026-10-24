@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   buildSlackContext,
+  buildMattermostContext,
   buildTelegramContext,
   buildUserContext,
   renderAgentContext,
@@ -80,6 +81,37 @@ describe("renderAgentContext telegram context", () => {
 
   it("returns empty string without metadata", () => {
     expect(renderAgentContext(buildTelegramContext({}))).toBe("");
+  });
+});
+
+describe("renderAgentContext mattermost context", () => {
+  it("renders a thread reply with its channel, starter and reply note", () => {
+    const rendered = renderAgentContext(
+      buildMattermostContext({
+        metadata: {
+          channel: "mattermost",
+          place: "#Support / thread root1",
+          conversationType: "thread_reply",
+          sender: "@alice",
+          conversationId: "root1",
+        },
+        channelName: "Support",
+        channelTopic: "Customer questions",
+        threadStarter: { author: "@bob", content: "Invoice missing", timestamp: 0 },
+      })
+    );
+    expect(rendered).toContain("channel: mattermost");
+    expect(rendered).toContain("conversation_type: thread_reply");
+    expect(rendered).toContain("conversation_id: root1");
+    expect(rendered).toContain("channel_name: #Support");
+    expect(rendered).toContain("channel_topic: Customer questions");
+    expect(rendered).toContain("@bob at 1970-01-01T00:00:00.000Z - Invoice missing");
+    expect(rendered).toContain("Do not call mattermost.send_message to reply here");
+    expect(rendered).not.toContain("[FORMATTING]");
+  });
+
+  it("returns empty string without metadata", () => {
+    expect(renderAgentContext(buildMattermostContext({}))).toBe("");
   });
 });
 

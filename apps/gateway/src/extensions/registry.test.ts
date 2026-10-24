@@ -506,6 +506,7 @@ describe("extension registry", () => {
     expect(byId.discord?.packageName).toBe("@yoplai/extension-discord");
     expect(byId.slack?.packageName).toBe("@yoplai/extension-slack");
     expect(byId.telegram?.packageName).toBe("@yoplai/extension-telegram");
+    expect(byId.mattermost?.packageName).toBe("@yoplai/extension-mattermost");
     expect(byId.webhooks?.packageName).toBe("@yoplai/extension-webhooks");
   });
 

@@ -108,6 +108,7 @@ const EXTENSION_LOAD_PRIORITY: Record<string, number> = {
   subagents: -5,
   discord: 10,
   irc: 10,
+  mattermost: 10,
   slack: 10,
   telegram: 10,
   threadit: 10,
@@ -184,6 +185,24 @@ const EXTENSION_REGISTRY: Record<string, ExtensionRegistration> = {
       if (config.extensions?.telegram) {
         return {
           ...config.extensions.telegram,
+          _perAgentFallback: hasPerAgent,
+        };
+      }
+      return hasPerAgent ? { _perAgent: true } : undefined;
+    },
+    routePrefixes: [],
+  },
+  mattermost: {
+    packageName: "@yoplai/extension-mattermost",
+    load: () =>
+      import("@yoplai/extension-mattermost").then(
+        (module) => module.mattermostExtension
+      ),
+    getConfig: (config) => {
+      const hasPerAgent = config.agents?.some((a) => a.mattermost?.token);
+      if (config.extensions?.mattermost) {
+        return {
+          ...config.extensions.mattermost,
           _perAgentFallback: hasPerAgent,
         };
       }
@@ -293,6 +312,7 @@ const AGENT_ROOT_CONFIG_KEYS: Record<string, string> = {
   slack: "slack",
   telegram: "telegram",
   irc: "irc",
+  mattermost: "mattermost",
   webhooks: "webhooks",
 };
 
