@@ -2,7 +2,7 @@ import { createSignal, createEffect, createMemo, For, Index, onCleanup, Show, on
 import { toolLabel } from "@yoplai/shared/tool-labels";
 import { toolLabelTemplates } from "../../lib/tool-labels";
 import type { FullToolResultMessage, ContentBlock, FileBlock, ModelMeta, ActiveToolCall } from "../../api/types";
-import type { CompactStatus } from "../ChatView";
+import type { CompactStatus } from "./createChatSession";
 import { formatTimestamp } from "../../lib/format";
 import { extractBlockText } from "../../lib/history";
 import { renderMarkdown } from "../../lib/markdown";
