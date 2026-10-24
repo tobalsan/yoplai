@@ -65,7 +65,7 @@ Solid.js SPA. It consumes `/api/capabilities` and loads optional extension route
 `SessionSearch` mounts once in the app layout. Search is first in sidebar navigation
 (then optional Board/Orchestrator, Agents and existing items); the old Sessions
 header and inline title filter are removed. Cmd/Ctrl+K opens the focused palette
-on every page except login, including embedded chats, without sending `/new`.
+on every page except login, without sending `/new`.
 The Board project palette is retired. The palette debounces 200 ms, aborts on
 each input change, guards all async state against stale responses, and highlights
 query words using text nodes. Arrows/Enter open an encoded chat URL; Escape is
@@ -438,7 +438,7 @@ Access logs emit one completion line. Fast successful GETs for health, session p
 - **Capabilities/auth:** `/api/capabilities`, `/api/auth/*`, `/api/me`
 - **Multi-user admin:** `/api/admin/users`, `/api/admin/teams`, `/api/admin/forks`, pool/team access routes
 - **Scheduler:** `/api/schedules/*`
-- **Projects/slices:** `/api/projects/*` (including nested slice routes), lead sessions, project subagents, Space/changes routes
+- **Projects/slices:** `/api/projects/*` (including nested slice routes), project subagents, Space/changes routes
 - **Runtime subagents:** `/api/subagents/*`
 - **Orchestrator:** `/api/orchestrator/*` plus tracker webhook routes
 - **OAuth connections:** `/api/oauth/:provider/*`
