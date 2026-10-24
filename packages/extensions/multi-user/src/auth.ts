@@ -26,7 +26,7 @@ function getAuthBaseUrl(config: GatewayConfig): string {
   return normalizeOrigin(configured);
 }
 
-function getTrustedOrigins(config: GatewayConfig): string[] {
+export function getTrustedOrigins(config: GatewayConfig): string[] {
   const uiPort = config.ui?.port ?? 3000;
   const candidates = [
     nonEmpty(config.server?.baseUrl),
@@ -71,6 +71,7 @@ function isAllowedDomain(email: string, allowedDomains?: string[]): boolean {
 }
 
 export type MultiUserAuth = {
+  options?: ReturnType<typeof betterAuth>["options"];
   handler: ReturnType<typeof betterAuth>["handler"];
   api: ReturnType<typeof betterAuth>["api"] & {
     listUsers(args: {

@@ -439,6 +439,7 @@ describe("multi-user integration", () => {
       expect(capabilitiesResponse.status).toBe(200);
       await expect(capabilitiesResponse.json()).resolves.toEqual({
         version: 2,
+        apps: { available: false },
         extensions: {},
         agents: ["main"],
         multiUser: false,
@@ -505,6 +506,7 @@ describe("multi-user integration", () => {
       expect(response.status).toBe(200);
       await expect(response.json()).resolves.toEqual({
         version: 2,
+        apps: { available: false },
         extensions: { canvas: true, sessionHistory: true },
         agents: ["main"],
         multiUser: false,

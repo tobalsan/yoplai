@@ -23,7 +23,7 @@ import { configuredModelSupportsImages } from "../../media/describe.js";
 const DEFAULT_GATEWAY_PORT = 4000;
 
 export class ContainerInputBuilder {
-  constructor(private readonly toolBridge = new ContainerToolBridge()) {}
+  constructor(private readonly toolBridge: Pick<ContainerToolBridge, "buildSystemPrompts" | "buildTools"> = new ContainerToolBridge()) {}
 
   async build(
     params: SdkRunParams,

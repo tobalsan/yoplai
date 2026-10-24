@@ -105,6 +105,7 @@ Core `yoplai.json` fields:
 | `defaultProjectManager`              | Preferred board/project lead agent id                               |
 | `gateway`, `ui`, `server`, `web`     | Network and public/base URL settings                                |
 | `canvas`                             | Dashboard serving (`enabled`, optional public `baseUrl`)            |
+| `apps`                               | Isolated MCP Apps origin and listener port                         |
 | `sessions.idleMinutes`               | Logical-session idle rotation; default 360                          |
 | `agentLoop`                          | Agent-to-agent loop limits (`maxAgentTurns`, `maxHops`)             |
 | `extensions`                         | Built-in/external extension configuration                           |
@@ -192,6 +193,29 @@ See [Extensions](extensions.md).
 | `ui.tailscale.resetOnExit` | Reset serve config on exit (`tailscale serve reset`, wipes non-Yoplai entries too); default false |
 
 Prefer `loopback` until authentication and a secure access path are configured. For Tailscale Serve, both gateway and UI binds must be loopback; Yoplai maps UI below `/yoplai` and API/WS to gateway.
+
+### MCP Apps
+
+The gateway captures MCP view results and provides isolated view routes. Web chat remains text-only until the inline view host is installed (artifacts slice 1c).
+
+`apps.port` defaults to `4001` and binds on the gateway's interface. For trusted chat origins on `localhost`, `127.0.0.1` or `[::1]`, the view origin defaults to `http://yoplai-apps.localhost:<apps.port>`; Chromium resolves this hostname to loopback without DNS setup. If that port is taken, the gateway continues with views unavailable. `pnpm dev` does not probe the apps port: choose another `apps.port` when needed.
+
+For a proxied deployment:
+
+```json
+{
+  "apps": {
+    "origin": "https://views.example.net",
+    "port": 4001
+  }
+}
+```
+
+Use a different registrable domain from the chat for production. Add DNS and a proxy site forwarding only to the apps listener; do not apply `X-Frame-Options: SAMEORIGIN` to that site, and verify the final headers through the proxy. Keep the chat site's framing protection. The configured origin must be a bare HTTPS origin with a different hostname from the chat; a different port on the same hostname does not isolate cookies. HTTP is allowed only on loopback or `*.localhost`. Authentication cookies remain host-only; do not configure a cross-subdomain cookie domain.
+
+Remote chat origins, including Tailscale Serve, require an explicit `apps.origin`. Missing or invalid origins and listener startup failures leave chat working with text only. `POST view` accepts only configured trusted chat origins from its browser `Origin` header. `/api/capabilities` reports `apps.available` for listener readiness; eligibility is also checked for each view request.
+
+Views receive only declared CSP origins; wildcards and entries with paths are dropped. Camera, microphone and geolocation are disabled. Results larger than 5 MB are not captured; view HTML is limited to 2 MB. Tickets expire after one hour, and session deletion removes captured records and revokes tickets; archiving retains them. Replay re-reads the view resource without re-running the tool. See [the gateway contract](llms.md#mcp-apps-gateway) for routes and protocol details.
 
 ## Sessions
 

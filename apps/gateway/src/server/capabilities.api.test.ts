@@ -51,6 +51,7 @@ describe("/capabilities API", () => {
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toEqual({
       version: 2,
+      apps: { available: false },
       // only configured extensions load (heartbeat absent from config)
       extensions: { canvas: true, sessionHistory: true, scheduler: true },
       agents: ["main"],

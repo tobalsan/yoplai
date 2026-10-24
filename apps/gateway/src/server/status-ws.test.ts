@@ -119,6 +119,45 @@ describe("gateway status websocket", () => {
     ]);
   });
 
+  it("reconnects with view markers and result references through HTTP and WebSocket", async () => {
+    const store = await import("../history/store.js");
+    const sessions = await import("../agents/sessions.js");
+    const sessionId = "apps-reconnect";
+    const marker = { server: "drawing", tool: "draw", resourceUri: "ui://drawing/view" };
+    const view = { ...marker, recordId: "00112233445566778899aabbccddeeff" };
+    const turn = store.createTurnBuffer();
+    store.bufferHistoryEvent(turn, { type: "tool_call", id: "call-1", name: "drawing_draw", args: {}, view: marker, timestamp: 1 });
+    store.bufferHistoryEvent(turn, { type: "tool_result", id: "call-1", name: "drawing_draw", content: "unchanged", isError: false, view, timestamp: 2 });
+    sessions.setSessionStreaming("status-agent", sessionId, true);
+    sessions.setSessionCurrentTurn("status-agent", sessionId, turn);
+    const ws = new WebSocket(`ws://127.0.0.1:${port}/ws`);
+    try {
+      await new Promise<void>((resolve, reject) => {
+        ws.once("open", resolve);
+        ws.once("error", reject);
+      });
+      const response = await fetch(`http://127.0.0.1:${port}/api/agents/status-agent/history?sessionId=${sessionId}&view=full`);
+      const history = await response.json();
+      expect(history.activeTurn.toolCalls[0]).toHaveProperty("view", marker);
+      expect(history.activeTurn.toolResults[0]).toHaveProperty("view", view);
+      const snapshot = new Promise<unknown>((resolve, reject) => {
+        const timer = setTimeout(() => reject(new Error("No active turn snapshot")), 2000);
+        ws.on("message", raw => {
+          const event = JSON.parse(raw.toString());
+          if (event.type === "active_turn") { clearTimeout(timer); resolve(event); }
+        });
+      });
+      ws.send(JSON.stringify({ type: "subscribe", agentId: "status-agent", sessionKey: "main", sessionId }));
+      await expect(snapshot).resolves.toMatchObject({
+        toolCalls: [{ id: "call-1", view: marker }], toolResults: [{ id: "call-1", view }],
+      });
+    } finally {
+      sessions.setSessionStreaming("status-agent", sessionId, false);
+      sessions.setSessionCurrentTurn("status-agent", sessionId, null);
+      ws.terminate();
+    }
+  });
+
   it("delivers the same completed web-run marker over status WS and the sessions API", async () => {
     const registry = await import("../sdk/registry.js");
     const sdk = vi.spyOn(registry, "getSdkAdapter").mockReturnValue({

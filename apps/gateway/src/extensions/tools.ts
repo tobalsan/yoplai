@@ -49,7 +49,7 @@ export async function executeExtensionAgentTool(
   userId?: string,
   emitProgress?: ExtensionAgentToolContext["emitProgress"],
   signal?: AbortSignal,
-  identity?: Pick<ExtensionAgentToolContext, "sessionOwnerId" | "requesterId" | "actorUserId" | "actorKind" | "conversationFiles">
+  identity?: Pick<ExtensionAgentToolContext, "sessionOwnerId" | "requesterId" | "actorUserId" | "actorKind" | "conversationFiles" | "toolCallId">
 ): Promise<{ found: boolean; result?: unknown }> {
   return runtime.executeTool(
     agent,
