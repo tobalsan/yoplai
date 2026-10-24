@@ -7,6 +7,8 @@ import { ChatView, ThinkingLine } from "./ChatView";
 import { TurnNotifier } from "./TurnNotifier";
 import type { SubscriptionCallbacks } from "../api/realtime";
 import type { StreamCallbacks } from "../api/chat";
+import type { FullHistoryMessage } from "../api/types";
+import { ToastHost } from "../lib/toast";
 import {
   resetCapabilitiesForTests,
   setCapabilitiesForTests,
@@ -14,6 +16,7 @@ import {
 
 const navigateMock = vi.fn();
 const [routeVersion, setRouteVersion] = createSignal(0);
+const { archiveAgentSessionMock } = vi.hoisted(() => ({ archiveAgentSessionMock: vi.fn() }));
 
 const {
   fetchAgentMock,
@@ -79,6 +82,7 @@ vi.mock("@solidjs/router", () => ({
 }));
 
 vi.mock("../api", () => ({
+  archiveAgentSession: archiveAgentSessionMock,
   fetchAgent: fetchAgentMock,
   fetchAgentSuggestions: fetchAgentSuggestionsMock,
   fetchSimpleHistory: fetchSimpleHistoryMock,
@@ -224,6 +228,7 @@ describe("ChatView abort handling", () => {
     subscribeToSessionMock.mockImplementation(() => () => {});
     subscribeToRealtimeMock.mockImplementation(() => () => {});
     uploadFilesMock.mockResolvedValue([]);
+    archiveAgentSessionMock.mockResolvedValue(undefined);
     routeState.view = undefined;
     routeState.session = undefined;
     routeState.project = undefined;
@@ -1327,6 +1332,83 @@ describe("ChatView abort handling", () => {
     dispose();
   });
 
+  it("prepends a deferred earlier page while live text continues", async () => {
+    let resolveEarlier: ((page: { messages: FullHistoryMessage[]; historyOffset: number }) => void) | undefined;
+    let appendText: StreamCallbacks["onText"] | undefined;
+    fetchFullHistoryMock
+      .mockResolvedValueOnce({
+        messages: [{ role: "user", content: [{ type: "text", text: "Recent question" }], timestamp: 100 }],
+        sessionId: "session-main", nextCursor: "before-recent", historyOffset: 100,
+      })
+      .mockImplementationOnce(() => new Promise((resolve) => { resolveEarlier = resolve; }));
+    streamMessageMock.mockImplementation((_agent, _text, _key, onText) => {
+      appendText = onText;
+      return vi.fn();
+    });
+    const { container, dispose } = renderView();
+    await waitFor(() => expect(container.querySelector(".load-earlier")).not.toBeNull());
+    const textarea = container.querySelector<HTMLTextAreaElement>("textarea")!;
+    textarea.value = "Current question";
+    textarea.dispatchEvent(new Event("input", { bubbles: true }));
+    container.querySelector<HTMLButtonElement>(".send-btn")!.click();
+    appendText!("Live answer");
+    container.querySelector<HTMLButtonElement>(".load-earlier")!.click();
+    appendText!(" during fetch");
+    expect(container.textContent).toContain("Live answer during fetch");
+    resolveEarlier!({
+      messages: [{ role: "user", content: [{ type: "text", text: "Earlier question" }], timestamp: 1 }],
+      historyOffset: 99,
+    });
+    await waitFor(() => expect(container.textContent).toContain("Earlier question"));
+    appendText!(" and after prepend");
+    expect(container.textContent).toContain("Live answer during fetch and after prepend");
+    expect(Array.from(container.querySelectorAll(".message.user .content"), (node) => node.textContent)).toEqual([
+      "Earlier question", "Recent question", "Current question",
+    ]);
+    expect(queryByRole(container, "button", { name: "Stop agent" })).not.toBeNull();
+    dispose();
+  });
+
+  it("drops a deferred earlier page and old live chunks after switching sessions", async () => {
+    let resolveEarlier: ((page: { messages: FullHistoryMessage[] }) => void) | undefined;
+    let appendText: StreamCallbacks["onText"] | undefined;
+    fetchFullHistoryMock
+      .mockResolvedValueOnce({
+        messages: [{ role: "user", content: [{ type: "text", text: "Old session question" }], timestamp: 100 }],
+        sessionId: "session-main", nextCursor: "before-old", historyOffset: 100,
+      })
+      .mockImplementationOnce(() => new Promise((resolve) => { resolveEarlier = resolve; }))
+      .mockResolvedValue({
+        messages: [{ role: "user", content: [{ type: "text", text: "Other session question" }], timestamp: 200 }],
+        sessionId: "other-session", nextCursor: "before-old",
+      });
+    streamMessageMock.mockImplementation((_agent, _text, _key, onText) => {
+      appendText = onText;
+      return vi.fn();
+    });
+    const { container, dispose } = renderView();
+    await waitFor(() => expect(container.querySelector(".load-earlier")).not.toBeNull());
+    const textarea = container.querySelector<HTMLTextAreaElement>("textarea")!;
+    textarea.value = "Old stream request";
+    textarea.dispatchEvent(new Event("input", { bubbles: true }));
+    container.querySelector<HTMLButtonElement>(".send-btn")!.click();
+    appendText!("Old live answer");
+    container.querySelector<HTMLButtonElement>(".load-earlier")!.click();
+    routeState.session = "other-session";
+    setRouteVersion((version) => version + 1);
+    await waitFor(() => expect(container.textContent).toContain("Other session question"));
+    resolveEarlier!({
+      messages: [{ role: "user", content: [{ type: "text", text: "Stale earlier question" }], timestamp: 1 }],
+    });
+    appendText!("Stale later chunk");
+    await tick();
+    expect(container.textContent).toContain("Other session question");
+    expect(container.textContent).not.toContain("Stale earlier question");
+    expect(container.textContent).not.toContain("Old live answer");
+    expect(container.textContent).not.toContain("Stale later chunk");
+    dispose();
+  });
+
   it("retries failed earlier-page loads without losing the visible tail", async () => {
     const recent = { role: "user", content: [{ type: "text", text: "visible tail" }], timestamp: 5 };
     fetchFullHistoryMock.mockResolvedValueOnce({ messages: [recent], nextCursor: "older", historyOffset: 1 })
@@ -1675,6 +1757,182 @@ describe("ChatView abort handling", () => {
       expect.any(Object)
     );
 
+    dispose();
+  });
+
+  it("shows the restored toast before beginning the pending upload", async () => {
+    routeState.session = "archived-session";
+    fetchAgentSessionsMock
+      .mockResolvedValueOnce({ items: [{ agentId: "agent-1", sessionId: "archived-session", archived: 1 }] })
+      .mockResolvedValue({ items: [] });
+    let finishRestore: (() => void) | undefined;
+    archiveAgentSessionMock.mockImplementationOnce(() => new Promise<void>((resolve) => { finishRestore = resolve; }));
+    const toasts = document.createElement("div");
+    document.body.appendChild(toasts);
+    const disposeToasts = render(() => <ToastHost />, toasts);
+    const toastAtUpload: string[] = [];
+    uploadFilesMock.mockImplementationOnce(async () => {
+      toastAtUpload.push(toasts.textContent ?? "");
+      return [{ path: "/media/restored.md", filename: "restore.md", mimeType: "text/markdown" }];
+    });
+    const { container, dispose } = renderView();
+    await waitFor(() => expect(container.querySelector(".archived-banner")).not.toBeNull());
+    const textarea = container.querySelector<HTMLTextAreaElement>("textarea")!;
+    textarea.value = "Send after restore";
+    textarea.dispatchEvent(new Event("input", { bubbles: true }));
+    textarea.dispatchEvent(createFileDragEvent("drop", [
+      new File(["Restored attachment"], "restore.md", { type: "text/markdown" }),
+    ]));
+    container.querySelector<HTMLButtonElement>(".send-btn")!.click();
+    await waitFor(() => expect(archiveAgentSessionMock).toHaveBeenCalledWith("agent-1", "archived-session", false));
+    expect(uploadFilesMock).not.toHaveBeenCalled();
+    finishRestore!();
+    await waitFor(() => expect(streamMessageMock).toHaveBeenCalledTimes(1));
+    expect(toastAtUpload).toHaveLength(1);
+    expect(toastAtUpload[0]).toContain("Chat restored");
+    expect(toasts.textContent).toContain("Chat restored");
+    expect(textarea.value).toBe("");
+    toasts.querySelector<HTMLButtonElement>('[data-testid="toast-close"]')!.click();
+    dispose();
+    disposeToasts();
+  });
+
+  it("shows a failed restore notice and keeps the unsent draft and attachment", async () => {
+    routeState.session = "archived-session";
+    fetchAgentSessionsMock.mockResolvedValue({ items: [
+      { agentId: "agent-1", sessionId: "archived-session", archived: 1 },
+    ] });
+    archiveAgentSessionMock.mockRejectedValueOnce(new Error("Restore denied"));
+    const { container, dispose } = renderView();
+    await waitFor(() => expect(container.querySelector(".archived-banner")).not.toBeNull());
+    const textarea = container.querySelector<HTMLTextAreaElement>("textarea")!;
+    textarea.value = "Keep this archived draft";
+    textarea.dispatchEvent(new Event("input", { bubbles: true }));
+    textarea.dispatchEvent(createFileDragEvent("drop", [
+      new File(["Not uploaded"], "restore-failure.md", { type: "text/markdown" }),
+    ]));
+    container.querySelector<HTMLButtonElement>(".send-btn")!.click();
+    await waitFor(() => expect(container.querySelector(".messages")?.textContent).toContain("Error: Restore denied"));
+    expect(textarea.value).toBe("Keep this archived draft");
+    expect(queryByRole(container, "button", { name: "Remove restore-failure.md" })).not.toBeNull();
+    expect(container.querySelector(".messages")?.textContent).not.toContain("Keep this archived draft");
+    expect(container.querySelector(".archived-banner")).not.toBeNull();
+    expect(uploadFilesMock).not.toHaveBeenCalled();
+    expect(streamMessageMock).not.toHaveBeenCalled();
+    dispose();
+  });
+
+  it("keeps the draft and pending file when upload fails without sending", async () => {
+    uploadFilesMock.mockRejectedValueOnce(new Error("Upload unavailable"));
+    const { container, dispose } = renderView();
+    await tick();
+    const textarea = container.querySelector<HTMLTextAreaElement>("textarea")!;
+    textarea.value = "Keep this draft";
+    textarea.dispatchEvent(new Event("input", { bubbles: true }));
+    textarea.dispatchEvent(createFileDragEvent("drop", [
+      new File(["Attachment contents"], "upload-failure.md", { type: "text/markdown" }),
+    ]));
+    await waitFor(() => expect(queryByRole(container, "button", { name: "Remove upload-failure.md" })).not.toBeNull());
+    container.querySelector<HTMLButtonElement>(".send-btn")!.click();
+    await waitFor(() => expect(container.querySelector(".upload-error")?.textContent).toBe("Upload unavailable"));
+    expect(textarea.value).toBe("Keep this draft");
+    expect(queryByRole(container, "button", { name: "Remove upload-failure.md" })).not.toBeNull();
+    expect(container.querySelector(".messages")?.textContent).not.toContain("Keep this draft");
+    expect(streamMessageMock).not.toHaveBeenCalled();
+    expect(queryByRole(container, "button", { name: "Send message" })?.hasAttribute("disabled")).toBe(false);
+    dispose();
+  });
+
+  it("clears pending files and navigates when a queued stream resets its session", async () => {
+    const streams: Array<{
+      onText: StreamCallbacks["onText"];
+      onDone: StreamCallbacks["onDone"];
+      callbacks: Partial<StreamCallbacks>;
+    }> = [];
+    streamMessageMock.mockImplementation((_agent, _text, _key, onText, onDone, _onError, callbacks) => {
+      streams.push({ onText, onDone, callbacks });
+      return vi.fn();
+    });
+    const { container, dispose } = renderView();
+    await tick();
+    const textarea = container.querySelector<HTMLTextAreaElement>("textarea")!;
+    textarea.value = "First request";
+    textarea.dispatchEvent(new Event("input", { bubbles: true }));
+    container.querySelector<HTMLButtonElement>(".send-btn")!.click();
+    await waitFor(() => expect(streams).toHaveLength(1));
+    streams[0].onText("First reply");
+    textarea.value = "Queued request";
+    textarea.dispatchEvent(new Event("input", { bubbles: true }));
+    textarea.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+    await waitFor(() => expect(streams).toHaveLength(2));
+    streams[0].onDone();
+    await waitFor(() => expect(container.querySelector<HTMLButtonElement>(".attach-btn")!.disabled).toBe(false));
+    textarea.dispatchEvent(createFileDragEvent("drop", [
+      new File(["For the next turn"], "after-queue.md", { type: "text/markdown" }),
+    ]));
+    await waitFor(() => expect(queryByRole(container, "button", { name: "Remove after-queue.md" })).not.toBeNull());
+
+    streams[1].callbacks.onSessionReset!("fresh-queued-session");
+    expect(navigateMock).toHaveBeenCalledWith("/chat/agent-1?session=fresh-queued-session");
+    expect(queryByRole(container, "button", { name: "Remove after-queue.md" })).toBeNull();
+    expect(container.textContent).not.toContain("First request");
+    expect(container.textContent).not.toContain("Queued request");
+    streams[1].onText("Fresh queued reply");
+    streams[1].onDone();
+    await waitFor(() => expect(container.textContent).toContain("Fresh queued reply"));
+    dispose();
+  });
+
+  it("clears a file staged during auto-compaction when the direct stream resets its session", async () => {
+    let finishCompaction: (() => void) | undefined;
+    let resetSession: StreamCallbacks["onSessionReset"];
+    fetchFullHistoryMock
+      .mockResolvedValueOnce({
+        messages: [{ role: "assistant", content: [{ type: "text", text: "Previous reply" }], timestamp: 1 }],
+        sessionId: "session-main",
+        activeContextUsage: { inputTokens: 102400, model: "gpt-5.2" },
+        isStreaming: false,
+        activeTurn: null,
+      })
+      .mockResolvedValue({
+        messages: [{ role: "assistant", content: [{ type: "text", text: "Previous reply" }], timestamp: 1 }],
+        sessionId: "session-main",
+        activeContextUsage: { inputTokens: 0, model: "gpt-5" },
+        isStreaming: false,
+        activeTurn: null,
+      });
+    postCompactMock.mockImplementationOnce(() => new Promise<void>((resolve) => {
+      finishCompaction = resolve;
+    }));
+    streamMessageMock.mockImplementation((_agent, _text, _key, _onText, _onDone, _onError, callbacks: Partial<StreamCallbacks>) => {
+      resetSession = callbacks.onSessionReset;
+      return vi.fn();
+    });
+
+    const { container, dispose } = renderView();
+    await waitFor(() => expect(container.textContent).toContain("~80% context used"));
+    const textarea = container.querySelector<HTMLTextAreaElement>("textarea")!;
+    textarea.value = "Continue the conversation";
+    textarea.dispatchEvent(new Event("input", { bubbles: true }));
+    container.querySelector<HTMLButtonElement>(".send-btn")!.click();
+    await waitFor(() => expect(container.textContent).toContain("Compacting context..."));
+    expect(container.querySelector<HTMLButtonElement>(".attach-btn")!.disabled).toBe(false);
+    textarea.dispatchEvent(createFileDragEvent("drop", [
+      new File(["Keep for the next message"], "next-message.md", { type: "text/markdown" }),
+    ]));
+    await waitFor(() => expect(queryByRole(container, "button", { name: "Remove next-message.md" })).not.toBeNull());
+
+    finishCompaction!();
+    await waitFor(() => expect(queryByRole(container, "button", { name: "Stop agent" })).not.toBeNull());
+    expect(uploadFilesMock).not.toHaveBeenCalled();
+    expect(queryByRole(container, "button", { name: "Remove next-message.md" })).not.toBeNull();
+    expect(container.textContent).toContain("Continue the conversation");
+
+    resetSession!("fresh-direct-session");
+    expect(navigateMock).toHaveBeenCalledWith("/chat/agent-1?session=fresh-direct-session");
+    expect(queryByRole(container, "button", { name: "Remove next-message.md" })).toBeNull();
+    expect(container.textContent).not.toContain("Continue the conversation");
+    expect(container.textContent).not.toContain("Previous reply");
     dispose();
   });
 

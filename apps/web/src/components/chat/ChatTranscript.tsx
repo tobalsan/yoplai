@@ -3,7 +3,7 @@
 // through accessors and retain history/block references used by reply copying.
 import { createMemo, For, Index, Show, Switch, Match, type JSX, type Accessor } from "solid-js";
 import type { HistoryViewMode, FullHistoryMessage, FullToolResultMessage, ContentBlock, FileBlock, ActiveToolCall } from "../../api/types";
-import type { StreamingBlock, CompactStatus } from "../ChatView";
+import type { StreamingBlock, CompactStatus } from "./createChatSession";
 import { groupActivityItems, streamingActivityItems, type ActivitySegment } from "../../lib/chat-activity";
 import { formatTimestamp } from "../../lib/format";
 import { formatReplyClipboard } from "../../lib/reply-clipboard";
