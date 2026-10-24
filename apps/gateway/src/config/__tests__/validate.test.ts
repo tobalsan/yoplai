@@ -60,9 +60,23 @@ describe("startup validation", () => {
         skipped: [],
       });
       expect(
-        warnings.filter((warning) => warning.startsWith("[extensions]"))
+        warnings.flatMap((warning) => {
+          try {
+            const entry: unknown = JSON.parse(warning);
+            return entry !== null && typeof entry === "object" &&
+              "msg" in entry && typeof entry.msg === "string" &&
+              entry.msg.startsWith("[extensions]") ? [entry] : [];
+          } catch {
+            return [];
+          }
+        })
       ).toEqual([
-        '[extensions] agent "main" references unknown extension "missing"',
+        expect.objectContaining({
+          level: "warn",
+          msg: '[extensions] agent "main" references unknown extension "missing"',
+          agentId: "main",
+          extensionId: "missing",
+        }),
       ]);
     } finally {
       console.warn = originalWarn;
