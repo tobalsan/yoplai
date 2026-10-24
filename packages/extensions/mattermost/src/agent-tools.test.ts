@@ -5,6 +5,7 @@ import {
   GatewayConfigSchema,
   type AgentConfig,
   type GatewayConfig,
+  type RunAgentResult,
 } from "@yoplai/shared";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
@@ -13,7 +14,7 @@ import {
   mattermostAgentTools,
   parseDestination,
 } from "./agent-tools.js";
-import { createMattermostBot } from "./bot.js";
+import { createMattermostBot, type MattermostBot } from "./bot.js";
 import { clearActiveBots, registerActiveBot } from "./bot-registry.js";
 import { clearMattermostContext, setMattermostContext } from "./context.js";
 import { withThreadBindings } from "./thread-session-bindings.js";
@@ -123,6 +124,9 @@ describe("parseDestination", () => {
 describe("Mattermost agent tools and delivery sink", () => {
   let dataDir: string;
   let server: FakeMattermost;
+  let ctx: ReturnType<typeof buildFakeContext>;
+  let sockets: FakeSocketFactory;
+  let bot: MattermostBot;
   const config = makeConfig();
 
   beforeEach(async () => {
@@ -131,10 +135,10 @@ describe("Mattermost agent tools and delivery sink", () => {
     );
     server = new FakeMattermost();
     vi.spyOn(console, "log").mockImplementation(() => undefined);
-    const ctx = buildFakeContext({ config, dataDir });
+    ctx = buildFakeContext({ config, dataDir });
     setMattermostContext(ctx);
-    const sockets = new FakeSocketFactory();
-    const bot = createMattermostBot(
+    sockets = new FakeSocketFactory();
+    bot = createMattermostBot(
       config.agents,
       config.extensions!.mattermost!,
       { fetch: server.fetch, createSocket: sockets.create }
@@ -148,6 +152,7 @@ describe("Mattermost agent tools and delivery sink", () => {
   });
 
   afterEach(async () => {
+    await bot.stop();
     clearActiveBots();
     clearMattermostContext();
     vi.restoreAllMocks();
@@ -246,6 +251,169 @@ describe("Mattermost agent tools and delivery sink", () => {
         { sessionId: "s" }
       )
     ).resolves.toMatchObject({ ok: false });
+  });
+
+  it("continues a settled owned session from a tool-created thread without granting requester credentials", async () => {
+    const session = await ctx.ensureSession("support", "web-chat", "owner-alice");
+    expect(await ctx.hasSession("support", session.sessionId)).toBe(false);
+    const result = await call(
+      "mattermost.create_thread",
+      { channel: CHANNEL, text: "Owned report" },
+      { sessionId: session.sessionId, userId: "owner-alice" }
+    );
+    expect(result.ok).toBe(true);
+    const rootId = result.rootId as string;
+    const post = server.addPost({
+      channel_id: CHANNEL,
+      root_id: rootId,
+      user_id: ALICE.id,
+      message: "What happened next?",
+    });
+    sockets.last().posted(post, 1);
+    await flush();
+    expect(ctx.runs).toHaveLength(1);
+    expect(ctx.runs[0]).toMatchObject({
+      sessionId: session.sessionId,
+      sessionOwnerId: "owner-alice",
+      message: "What happened next?",
+    });
+    expect(ctx.runs[0].userId).toBeUndefined();
+    expect(withThreadBindings(dataDir, (store) => store.getBinding(rootId, "support")))
+      .toMatchObject({ owner: "owner-alice", source: "agent", sessionId: session.sessionId });
+  });
+
+  it.each([false, true])("resets an owned thread and keeps its binding (first reply already received: %s)", async (replyFirst) => {
+    const session = await ctx.ensureSession("support", "web-chat", "owner-alice");
+    const other = await ctx.ensureSession("support", "web-chat", "owner-bob");
+    const result = await call(
+      "mattermost.create_thread",
+      { channel: CHANNEL, text: "Owned report" },
+      { sessionId: session.sessionId, sessionOwnerId: "owner-alice", userId: "different-requester" }
+    );
+    const rootId = result.rootId as string;
+    const send = async (message: string, seq: number) => {
+      sockets.last().posted(server.addPost({
+        channel_id: CHANNEL,
+        root_id: rootId,
+        user_id: ALICE.id,
+        message,
+      }), seq);
+      await flush();
+    };
+    if (replyFirst) await send("Before reset", 1);
+    await send("!new", 2);
+    const binding = withThreadBindings(dataDir, (store) => store.getBinding(rootId, "support"));
+    expect(binding).toMatchObject({ owner: "owner-alice", source: "agent" });
+    expect(binding?.sessionId).not.toBe(session.sessionId);
+    expect(await ctx.hasSession("support", session.sessionId, "owner-alice")).toBe(false);
+    expect(await ctx.getSessionEntry("support", "web-chat", "owner-alice")).toBeUndefined();
+    expect(await ctx.hasSession("support", other.sessionId, "owner-bob")).toBe(true);
+    expect(await ctx.hasSession("support", binding!.sessionId, "owner-alice")).toBe(true);
+    expect(await ctx.hasSession("support", binding!.sessionId)).toBe(false);
+    await send("After reset without mention", 3);
+    expect(ctx.runs.at(-1)).toMatchObject({
+      sessionId: binding!.sessionId,
+      sessionOwnerId: "owner-alice",
+      message: "After reset without mention",
+    });
+    expect(ctx.runs.at(-1)?.userId).toBeUndefined();
+  });
+
+  it.each([
+    { context: { sessionOwnerId: "job-owner", userId: "requester" }, owner: "job-owner" },
+    { context: { sessionOwnerId: null, userId: "requester" }, owner: null },
+    { context: {}, owner: null },
+  ])("uses the calling session owner $owner for a thread", async ({ context, owner }) => {
+    const session = await ctx.ensureSession("support", "origin", owner ?? undefined);
+    const result = await call("mattermost.create_thread", { channel: CHANNEL, text: "Report" }, {
+      sessionId: session.sessionId, ...context,
+    });
+    const rootId = result.rootId as string;
+    sockets.last().posted(server.addPost({
+      channel_id: CHANNEL, root_id: rootId, user_id: ALICE.id, message: "Continue",
+    }), 1);
+    await flush();
+    expect(ctx.runs[0]).toMatchObject({ sessionId: session.sessionId, sessionOwnerId: owner });
+    expect(ctx.runs[0].userId).toBeUndefined();
+    expect(withThreadBindings(dataDir, (store) => store.getBinding(rootId, "support")))
+      .toMatchObject({ owner, source: "agent" });
+  });
+
+  it("continues the owned session after the bot and binding store reopen", async () => {
+    const session = await ctx.ensureSession("support", "owned-chat", "owner-alice");
+    const result = await call("mattermost.create_thread", { channel: CHANNEL, text: "Report" }, {
+      sessionId: session.sessionId, userId: "owner-alice",
+    });
+    await bot.stop();
+    clearActiveBots();
+    clearMattermostContext();
+    setMattermostContext(ctx);
+    sockets = new FakeSocketFactory();
+    bot = createMattermostBot(config.agents, config.extensions!.mattermost!, {
+      fetch: server.fetch, createSocket: sockets.create,
+    })!;
+    const started = bot.start();
+    await flush();
+    sockets.last().open();
+    sockets.last().hello("after-restart");
+    await started;
+    registerActiveBot("mattermost", bot);
+    sockets.last().posted(server.addPost({
+      channel_id: CHANNEL, root_id: result.rootId as string, user_id: ALICE.id,
+      message: "Still the same conversation?",
+    }), 1);
+    await flush();
+    expect(ctx.runs[0]).toMatchObject({ sessionId: session.sessionId, sessionOwnerId: "owner-alice" });
+    expect(ctx.runs[0].userId).toBeUndefined();
+  });
+
+  it("recreates a deleted owned session and preserves its thread source", async () => {
+    const session = await ctx.ensureSession("support", "owned-chat", "owner-alice");
+    const result = await call("mattermost.create_thread", { channel: CHANNEL, text: "Report" }, {
+      sessionId: session.sessionId, sessionOwnerId: "owner-alice",
+    });
+    await ctx.resetSession("support", session.sessionId, "owner-alice");
+    const rootId = result.rootId as string;
+    sockets.last().posted(server.addPost({
+      channel_id: CHANNEL, root_id: rootId, user_id: ALICE.id, message: "Recover this thread",
+    }), 1);
+    await flush();
+    const run = ctx.runs[0];
+    expect(run.sessionId).not.toBe(session.sessionId);
+    expect(run.sessionOwnerId).toBe("owner-alice");
+    expect(run.userId).toBeUndefined();
+    expect(await ctx.hasSession("support", run.sessionId!, "owner-alice")).toBe(true);
+    expect(await ctx.hasSession("support", run.sessionId!)).toBe(false);
+    expect(withThreadBindings(dataDir, (store) => store.getBinding(rootId, "support")))
+      .toMatchObject({ owner: "owner-alice", source: "agent", sessionId: run.sessionId });
+  });
+
+  it("keeps the owned session while an inbound reply is queued for deferred delivery", async () => {
+    let deferred: ((outcome: { result: RunAgentResult }) => Promise<void> | void) | undefined;
+    ctx = buildFakeContext({ config, dataDir, run: (params) => {
+      deferred = params.onDeferredResult;
+      return { payloads: [], meta: { durationMs: 0, sessionId: session.sessionId, queued: true } };
+    } });
+    setMattermostContext(ctx);
+    const session = await ctx.ensureSession("support", "scheduled-job", "job-owner");
+    const result = await call("mattermost.create_thread", { channel: CHANNEL, text: "Job result" }, {
+      sessionId: session.sessionId, userId: "job-owner",
+    });
+    const rootId = result.rootId as string;
+    sockets.last().posted(server.addPost({
+      channel_id: CHANNEL, root_id: rootId, user_id: ALICE.id, message: "Follow up on the job",
+    }), 1);
+    await flush();
+    expect(ctx.runs).toHaveLength(1);
+    expect(ctx.runs[0]).toMatchObject({ sessionId: session.sessionId, sessionOwnerId: "job-owner" });
+    expect(ctx.runs[0].userId).toBeUndefined();
+    expect(server.created().map((post) => post.message)).toEqual(["Job result"]);
+    await deferred!({ result: {
+      payloads: [{ text: "Deferred owned answer" }], meta: { durationMs: 1, sessionId: session.sessionId },
+    } });
+    expect(server.created().at(-1)).toMatchObject({ root_id: rootId, message: "Deferred owned answer" });
+    expect(withThreadBindings(dataDir, (store) => store.getBinding(rootId, "support")))
+      .toMatchObject({ sessionId: session.sessionId, owner: "job-owner", source: "agent" });
   });
 
   it("delivers scheduled results to a channel thread and throws when refused", async () => {

@@ -1,6 +1,7 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import Database from "better-sqlite3";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   ThreadSessionBindingStore,
@@ -27,12 +28,14 @@ describe("Mattermost thread session bindings", () => {
         rootId: "r1",
         agentId: "a1",
         sessionId: "s1",
+        owner: "owner-alice",
         source: "inbound",
       })
     );
     const store = new ThreadSessionBindingStore(dir);
     try {
       expect(store.getBinding("r1", "a1")).toEqual(created);
+      expect(store.getBinding("r1", "a1")?.owner).toBe("owner-alice");
       expect(store.getBinding("r1", "a2")).toBeUndefined();
     } finally {
       store.close();
@@ -42,6 +45,27 @@ describe("Mattermost thread session bindings", () => {
   it("uses its own database file, apart from Discord and Slack", async () => {
     withThreadBindings(dir, () => undefined);
     expect(await fs.readdir(dir)).toEqual(["mattermost-thread-sessions.db"]);
+  });
+
+  it("opens the previous schema and treats existing bindings as shared", () => {
+    const legacy = new Database(path.join(dir, "mattermost-thread-sessions.db"));
+    legacy.exec(`CREATE TABLE thread_sessions (
+      channel_id TEXT NOT NULL, root_id TEXT NOT NULL, agent_id TEXT NOT NULL,
+      session_id TEXT NOT NULL, source TEXT NOT NULL, created_at INTEGER NOT NULL,
+      PRIMARY KEY (root_id, agent_id)
+    );
+    INSERT INTO thread_sessions VALUES ('c1', 'r1', 'a1', 'legacy-session', 'agent', 42);`);
+    legacy.close();
+    expect(withThreadBindings(dir, (store) => store.getBinding("r1", "a1"))).toEqual({
+      channelId: "c1", rootId: "r1", agentId: "a1", sessionId: "legacy-session",
+      source: "agent", createdAt: 42, owner: null,
+    });
+    withThreadBindings(dir, (store) => store.setBinding({
+      channelId: "c1", rootId: "r1", agentId: "a1", sessionId: "owned-session",
+      source: "agent", owner: "owner-alice",
+    }));
+    expect(withThreadBindings(dir, (store) => store.getBinding("r1", "a1")))
+      .toMatchObject({ sessionId: "owned-session", owner: "owner-alice" });
   });
 
   it("keeps one session per agent and thread, replacing on rebind", () => {

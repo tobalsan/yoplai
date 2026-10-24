@@ -171,6 +171,49 @@ describe("MattermostSocket", () => {
     env.socket.stop();
   });
 
+  it("keeps the last traffic watermark through failed reconnects after silence", async () => {
+    vi.setSystemTime(1_000_000);
+    const env = setup();
+    await connect(env);
+    await vi.advanceTimersByTimeAsync(5_000);
+    env.factory.last().message({ event: "typing", seq: 1, data: {} });
+    await vi.advanceTimersByTimeAsync(35_000);
+    expect(env.factory.last().terminated).toBe(true);
+    await vi.advanceTimersByTimeAsync(1_000);
+    env.factory.last().open();
+    env.factory.last().drop();
+    await vi.advanceTimersByTimeAsync(2_000);
+    env.factory.last().open();
+    env.factory.last().hello("conn-2");
+    expect(env.reconnects).toEqual([
+      { resumed: false, disconnectedAt: 1_005_000 },
+    ]);
+    env.socket.stop();
+  });
+
+  it("uses detection time for ordinary closes and clears the previous watermark at hello", async () => {
+    vi.setSystemTime(1_000_000);
+    const env = setup();
+    await connect(env);
+    await vi.advanceTimersByTimeAsync(5_000);
+    env.factory.last().message({ event: "typing", seq: 1, data: {} });
+    await vi.advanceTimersByTimeAsync(2_000);
+    env.factory.last().drop();
+    await vi.advanceTimersByTimeAsync(1_000);
+    env.factory.last().open();
+    env.factory.last().hello("conn-2");
+    await vi.advanceTimersByTimeAsync(2_000);
+    env.factory.last().drop();
+    await vi.advanceTimersByTimeAsync(1_000);
+    env.factory.last().open();
+    env.factory.last().hello("conn-3");
+    expect(env.reconnects).toEqual([
+      { resumed: false, disconnectedAt: 1_007_000 },
+      { resumed: false, disconnectedAt: 1_010_000 },
+    ]);
+    env.socket.stop();
+  });
+
   it("stays down after stop()", async () => {
     const env = setup();
     await connect(env);

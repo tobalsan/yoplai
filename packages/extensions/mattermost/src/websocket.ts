@@ -42,7 +42,7 @@ export type SocketFactory = (
 export type ReconnectInfo = {
   /** True when the server replayed what was missed; false means a gap. */
   resumed: boolean;
-  /** When the previous connection dropped (epoch ms). */
+  /** Recovery watermark: close time, or last traffic when silence was detected. */
   disconnectedAt: number;
 };
 
@@ -254,6 +254,7 @@ export class MattermostSocket {
     const idleTimeout = this.options.idleTimeoutMs ?? DEFAULT_IDLE_TIMEOUT_MS;
     this.pingTimer = setInterval(() => {
       if (Date.now() - this.lastTrafficAt > idleTimeout) {
+        this.disconnectedAt ??= this.lastTrafficAt;
         console.warn(
           `${this.options.logPrefix} WebSocket silent too long; reconnecting`
         );

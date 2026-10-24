@@ -98,14 +98,17 @@ const MATTERMOST_ID = /^[a-z0-9]{26}$/;
 
 async function resolveDmChannel(
   bot: MattermostBot,
-  user: string
+  user: string,
+  signal?: AbortSignal
 ): Promise<string> {
+  signal?.throwIfAborted();
   const identity = bot.identity();
   if (!identity) throw new Error("The Mattermost bot is not connected yet.");
   const userId = MATTERMOST_ID.test(user)
     ? user
-    : (await bot.rest.getUserByUsername(user)).id;
-  const channel = await bot.rest.createDirectChannel(identity.id, userId);
+    : (await bot.rest.getUserByUsername(user, signal)).id;
+  signal?.throwIfAborted();
+  const channel = await bot.rest.createDirectChannel(identity.id, userId, signal);
   return channel.id;
 }
 
@@ -116,19 +119,22 @@ async function resolveDmChannel(
 export async function sendMattermostMessage(
   agent: AgentConfig,
   config: GatewayConfig,
-  input: SendInput
+  input: SendInput,
+  signal?: AbortSignal
 ): Promise<{ channelId: string; postId: string; rootId?: string }> {
+  signal?.throwIfAborted();
   const { bot, source } = resolveBot(agent);
   const denied = checkTarget(agent, config, source, input);
   if (denied) throw new Error(denied);
 
   const channelId = input.user
-    ? await resolveDmChannel(bot, input.user)
+    ? await resolveDmChannel(bot, input.user, signal)
     : input.channel!;
   if (input.rootId) {
     // A root post from another channel would move the reply out of the
     // allowlisted channel; refuse it rather than rely on the server.
-    const root = await bot.rest.getPost(input.rootId);
+    signal?.throwIfAborted();
+    const root = await bot.rest.getPost(input.rootId, signal);
     if (root.channel_id !== channelId) {
       throw new Error("rootId does not belong to this channel.");
     }
@@ -136,11 +142,12 @@ export async function sendMattermostMessage(
 
   let first: { id: string } | undefined;
   for (const chunk of splitMessage(input.text)) {
+    signal?.throwIfAborted();
     const created = await bot.rest.createPost({
       channel_id: channelId,
       message: chunk,
       ...(input.rootId ? { root_id: input.rootId } : {}),
-    });
+    }, signal);
     first ??= created;
   }
   if (!first) throw new Error("Nothing to send.");
@@ -209,12 +216,12 @@ export function mattermostAgentTools(): ExtensionAgentTool[] {
         required: ["text"],
         additionalProperties: false,
       },
-      async execute(args, { agent, config }) {
+      async execute(args, { agent, config, signal }) {
         try {
           const input = sendMessageSchema.parse(args);
           return {
             ok: true,
-            ...(await sendMattermostMessage(agent, config, input)),
+            ...(await sendMattermostMessage(agent, config, input, signal)),
           };
         } catch (error) {
           return toolError(error);
@@ -240,8 +247,9 @@ export function mattermostAgentTools(): ExtensionAgentTool[] {
         required: ["channel", "text"],
         additionalProperties: false,
       },
-      async execute(args, { agent, config, sessionId }) {
+      async execute(args, { agent, config, sessionId, sessionOwnerId, userId, signal }) {
         try {
+          signal?.throwIfAborted();
           const input = createThreadSchema.parse(args);
           if (!sessionId)
             return toolError("No active session ID is available for binding.");
@@ -259,14 +267,15 @@ export function mattermostAgentTools(): ExtensionAgentTool[] {
           const root = await bot.rest.createPost({
             channel_id: input.channel,
             message: head!,
-          });
+          }, signal);
           const identity = bot.identity();
           if (rest.length > 0 && identity) {
             await postReply(
               { rest: bot.rest, bot: identity, userNames: new Map() },
               input.channel,
               root.id,
-              rest.join("\n\n")
+              rest.join("\n\n"),
+              signal
             );
           }
           withThreadBindings(context.getDataDir(), (store) =>
@@ -275,6 +284,7 @@ export function mattermostAgentTools(): ExtensionAgentTool[] {
               rootId: root.id,
               agentId: agent.id,
               sessionId,
+              owner: sessionOwnerId === undefined ? userId ?? null : sessionOwnerId,
               source: "agent",
             })
           );

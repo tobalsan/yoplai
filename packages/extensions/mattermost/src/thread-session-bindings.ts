@@ -18,20 +18,22 @@ export type ThreadSessionBinding = {
   rootId: string;
   agentId: string;
   sessionId: string;
+  owner: string | null;
   source: ThreadSessionBindingSource;
   createdAt: number;
 };
 
 export type SetThreadSessionBindingInput = Omit<
   ThreadSessionBinding,
-  "createdAt"
->;
+  "createdAt" | "owner"
+> & { owner?: string | null };
 
 type Row = {
   channel_id: string;
   root_id: string;
   agent_id: string;
   session_id: string;
+  owner: string | null;
   source: ThreadSessionBindingSource;
   created_at: number;
 };
@@ -53,6 +55,12 @@ export class ThreadSessionBindingStore {
   created_at   INTEGER NOT NULL,
   PRIMARY KEY (root_id, agent_id)
 );`);
+    const columns = this.db
+      .prepare("PRAGMA table_info(thread_sessions)")
+      .all() as Array<{ name: string }>;
+    if (!columns.some((column) => column.name === "owner")) {
+      this.db.exec("ALTER TABLE thread_sessions ADD COLUMN owner TEXT");
+    }
   }
 
   getBinding(
@@ -70,13 +78,14 @@ export class ThreadSessionBindingStore {
   /** Insert or replace the binding of a thread for one agent. */
   setBinding(input: SetThreadSessionBindingInput): ThreadSessionBinding {
     const createdAt = Date.now();
+    const binding = { ...input, owner: input.owner ?? null, createdAt };
     this.db
       .prepare(
-        `INSERT OR REPLACE INTO thread_sessions (channel_id, root_id, agent_id, session_id, source, created_at)
-VALUES (@channelId, @rootId, @agentId, @sessionId, @source, @createdAt)`
+        `INSERT OR REPLACE INTO thread_sessions (channel_id, root_id, agent_id, session_id, source, created_at, owner)
+VALUES (@channelId, @rootId, @agentId, @sessionId, @source, @createdAt, @owner)`
       )
-      .run({ ...input, createdAt });
-    return { ...input, createdAt };
+      .run(binding);
+    return binding;
   }
 
   deleteBinding(rootId: string, agentId: string): void {
@@ -96,6 +105,7 @@ function toBinding(row: Row): ThreadSessionBinding {
     rootId: row.root_id,
     agentId: row.agent_id,
     sessionId: row.session_id,
+    owner: row.owner,
     source: row.source,
     createdAt: row.created_at,
   };

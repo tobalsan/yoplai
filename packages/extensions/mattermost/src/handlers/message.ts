@@ -230,14 +230,16 @@ async function post(
   channelId: string,
   rootId: string | undefined,
   message: string,
-  fileIds?: string[]
+  fileIds?: string[],
+  signal?: AbortSignal
 ): Promise<void> {
+  signal?.throwIfAborted();
   await deps.rest.createPost({
     channel_id: channelId,
     message,
     ...(rootId ? { root_id: rootId } : {}),
     ...(fileIds && fileIds.length > 0 ? { file_ids: fileIds } : {}),
-  });
+  }, signal);
 }
 
 /** Post a reply as one or more posts, all in the same thread. */
@@ -245,11 +247,12 @@ export async function postReply(
   deps: MattermostTurnDeps,
   channelId: string,
   rootId: string | undefined,
-  text: string
+  text: string,
+  signal?: AbortSignal
 ): Promise<number> {
   const chunks = splitMessage(text);
   for (const chunk of chunks) {
-    await post(deps, channelId, rootId, chunk);
+    await post(deps, channelId, rootId, chunk, undefined, signal);
   }
   return chunks.length;
 }
@@ -263,25 +266,28 @@ async function resolveThreadSession(
   channelId: string,
   rootId: string,
   sessionKey: string
-): Promise<string> {
+): Promise<{ sessionId: string; owner: string | null }> {
   const ctx = getMattermostContext();
   const binding = withThreadBindings(ctx.getDataDir(), (store) =>
     store.getBinding(rootId, agentId)
   );
-  if (binding && (await ctx.hasSession(agentId, binding.sessionId))) {
-    return binding.sessionId;
+  const owner = binding?.owner ?? null;
+  if (binding && (await ctx.hasSession(agentId, binding.sessionId, owner ?? undefined))) {
+    return { sessionId: binding.sessionId, owner };
   }
-  const entry = await ctx.ensureSession(agentId, sessionKey);
+  if (binding) await ctx.clearSessionEntry(agentId, sessionKey, owner ?? undefined);
+  const entry = await ctx.ensureSession(agentId, sessionKey, owner ?? undefined);
   withThreadBindings(ctx.getDataDir(), (store) =>
     store.setBinding({
       channelId,
       rootId,
       agentId,
       sessionId: entry.sessionId,
+      owner,
       source: binding?.source ?? "inbound",
     })
   );
-  return entry.sessionId;
+  return { sessionId: entry.sessionId, owner };
 }
 
 async function handleReset(
@@ -293,18 +299,23 @@ async function handleReset(
   const { post: p } = inbound;
   const rootId = replyRootId(p, route.isDm);
   try {
-    const cleared = await ctx.clearSessionEntry(
-      route.agent.id,
-      sessionKeyFor(p, route.isDm)
+    const binding = route.isDm ? undefined : withThreadBindings(ctx.getDataDir(), (store) =>
+      store.getBinding(p.root_id || p.id, route.agent.id)
     );
-    if (cleared) {
-      ctx.deleteSession(route.agent.id, cleared.sessionId);
-      await ctx.invalidateHistoryCache(route.agent.id, cleared.sessionId);
-    }
-    if (!route.isDm) {
+    const sessionKey = sessionKeyFor(p, route.isDm);
+    if (binding) {
+      const userId = binding.owner ?? undefined;
+      await ctx.resetSession(route.agent.id, binding.sessionId, userId);
+      const entry = await ctx.ensureSession(route.agent.id, sessionKey, userId);
       withThreadBindings(ctx.getDataDir(), (store) =>
-        store.deleteBinding(p.root_id || p.id, route.agent.id)
+        store.setBinding({ ...binding, sessionId: entry.sessionId })
       );
+    } else {
+      const cleared = await ctx.clearSessionEntry(route.agent.id, sessionKey);
+      if (cleared) {
+        ctx.deleteSession(route.agent.id, cleared.sessionId);
+        await ctx.invalidateHistoryCache(route.agent.id, cleared.sessionId);
+      }
     }
   } catch (err) {
     console.error(`${route.logPrefix} Session reset failed:`, err);
@@ -429,7 +440,6 @@ export async function handleMattermostPost(
     kind?: Parameters<typeof runFailureMessage>[0]
   ) => {
     typing.stop();
-    await status?.finish("failed");
     try {
       await post(
         deps,
@@ -440,22 +450,26 @@ export async function handleMattermostPost(
     } catch (sendErr) {
       console.error(`${route.logPrefix} Error reply failed:`, sendErr);
     }
+    await status?.finish("failed");
   };
 
-  await status?.start();
-  await typing.start();
+  void status?.start();
+  void typing.start();
 
   let sessionId: string | undefined;
+  let sessionOwnerId: string | null = null;
   let context;
   let attachments: FileAttachment[] = [];
   try {
     if (!route.isDm) {
-      sessionId = await resolveThreadSession(
+      const session = await resolveThreadSession(
         agent.id,
         p.channel_id,
         p.root_id || p.id,
         sessionKey
       );
+      sessionId = session.sessionId;
+      sessionOwnerId = session.owner;
     }
     context = await buildContext(inbound, route, deps);
 
@@ -535,6 +549,7 @@ export async function handleMattermostPost(
       attachments: attachments.length > 0 ? attachments : undefined,
       sessionKey,
       ...(sessionId ? { sessionId } : {}),
+      sessionOwnerId,
       background: Boolean(sessionId),
       source: "mattermost",
       context,
@@ -566,6 +581,7 @@ export async function handleMattermostPost(
     if (result.meta.queued) {
       // Keep 👀 and typing off until the deferred answer arrives.
       typing.stop();
+      await status?.clear();
       return;
     }
     await deliver(result);

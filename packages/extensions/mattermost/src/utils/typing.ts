@@ -7,6 +7,7 @@ export const TYPING_INTERVAL_MS = 4_000;
 
 export class TypingKeepAlive {
   private timer: ReturnType<typeof setInterval> | undefined;
+  private generation = 0;
 
   constructor(
     private readonly send: () => Promise<void>,
@@ -15,11 +16,14 @@ export class TypingKeepAlive {
 
   async start(): Promise<void> {
     this.stop();
+    const generation = this.generation;
     await this.tick();
+    if (generation !== this.generation) return;
     this.timer = setInterval(() => void this.tick(), this.intervalMs);
   }
 
   stop(): void {
+    this.generation++;
     if (this.timer) clearInterval(this.timer);
     this.timer = undefined;
   }

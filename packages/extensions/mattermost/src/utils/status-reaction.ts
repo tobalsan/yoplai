@@ -14,6 +14,7 @@ export const STATUS_EMOJI = {
 export class StatusReaction {
   private working = false;
   private settled = false;
+  private cleared = false;
 
   constructor(
     private readonly rest: Pick<
@@ -25,20 +26,26 @@ export class StatusReaction {
   ) {}
 
   async start(): Promise<void> {
+    this.working = true;
     try {
       await this.rest.addReaction(
         this.botUserId,
         this.postId,
         STATUS_EMOJI.working
       );
-      this.working = true;
     } catch {
       // Presentation only.
+    } finally {
+      if (this.cleared) {
+        this.working = true;
+        await this.clear();
+      }
     }
   }
 
   /** Drop 👀 without a verdict (the turn was queued behind another one). */
   async clear(): Promise<void> {
+    this.cleared = true;
     if (!this.working) return;
     this.working = false;
     try {

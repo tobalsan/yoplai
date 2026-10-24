@@ -89,14 +89,17 @@ A per-agent bot answers DMs only when `dm` is present.
   Each thread is one durable agent session (key
   `mattermost:<channelId>:<rootPostId>`), recorded in `mattermost-thread-sessions.db` so it
   survives gateway restarts. If the session has disappeared, the thread gets a
-  new one.
+  new one in the same owner's storage. Agent-started threads keep the calling
+  session and its owner, including after a gateway restart; inbound threads
+  use shared storage. Mattermost senders do not gain the owner's credentials.
 - **DMs** use the agent's main session, as on Discord, Slack and Telegram. The
   reply is flat, or in the thread if the user wrote in one.
 - **Reset.** `!new` or `!reset` clears the conversation (the thread's session,
   or the DM main session). Slash commands are not used: Mattermost would treat
-  them as its own.
+  them as its own. In an agent-started thread, this also clears the originating
+  web or scheduler conversation, then binds a fresh session to the same owner.
 - **Feedback.** "is typing…" is shown while the agent works, and the post gets
-  👀, then ✅ or ❌.
+  👀, then ✅ or ❌. These best-effort indicators never delay the agent or its answer.
 - **Long answers** are split into posts of at most 15,000 characters (the server
   limit is 16,383), cut at paragraph or line boundaries. Code blocks cut in two
   are closed and reopened.
@@ -104,8 +107,8 @@ A per-agent bot answers DMs only when `dm` is present.
   25 MB) attached to a post are passed to the agent; other files get a short
   note. Files the agent produces are uploaded to the same thread.
 - **Busy session.** A post sent while the agent is still answering in the same
-  thread is queued. Its answer is posted when it comes, and its 👀 stays until
-  then.
+  thread is queued. Its answer is posted when it comes; typing and 👀 are cleared
+  while it waits.
 
 ## Connection
 
@@ -117,7 +120,14 @@ A per-agent bot answers DMs only when `dm` is present.
   `connection_id` and the next `sequence_number`, so the server replays missed
   events. If the server cannot (restart, long outage), the bot re-reads the
   configured channels and the DMs it knows over REST, up to 10 minutes back.
-  Every post is handled once, whatever path it came through.
+  After a silent loss, recovery starts from the last received traffic, with a
+  five-second overlap and the same ten-minute cap. Recovered posts resolve the
+  canonical sender username before the same allowlist gate used for live posts.
+  Accepted post IDs are deduplicated in memory across live and recovered events;
+  this is not durable exactly-once delivery.
+- REST operations have one deadline across retries and response reads: 30 seconds
+  normally, 120 seconds for file transfers. Cancelled tools abort in-flight calls
+  and stop before subsequent requests; they cannot retract an accepted post.
 
 ## Agent tools
 

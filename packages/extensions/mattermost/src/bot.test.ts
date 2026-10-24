@@ -121,6 +121,13 @@ describe("Mattermost bot", () => {
     });
   }
 
+  async function reconnect(connectionId = "conn-2"): Promise<void> {
+    await vi.advanceTimersByTimeAsync(1_200);
+    sockets.last().open();
+    sockets.last().hello(connectionId);
+    await vi.advanceTimersByTimeAsync(0);
+  }
+
   it("answers a mention in a configured channel, in a thread under the post", async () => {
     const ctx = await startComponent();
     const post = userPost("@yoplai summarize the week");
@@ -367,7 +374,10 @@ describe("Mattermost bot", () => {
     );
     expect(
       withThreadBindings(dataDir, (s) => s.getBinding(root.id, "support"))
-    ).toBeUndefined();
+    ).toMatchObject({ owner: null, source: "inbound" });
+    expect(
+      withThreadBindings(dataDir, (s) => s.getBinding(root.id, "support"))?.sessionId
+    ).not.toBe(ctx.runs[0].sessionId);
   });
 
   it("hands inbound files to the agent and uploads files it produces", async () => {
@@ -450,10 +460,7 @@ describe("Mattermost bot", () => {
       const missed = userPost("@yoplai while you were away", {
         create_at: Date.now() + 500,
       });
-      await vi.advanceTimersByTimeAsync(1_200);
-      sockets.last().open();
-      sockets.last().hello("conn-2");
-      await vi.advanceTimersByTimeAsync(0);
+      await reconnect();
       await vi.runOnlyPendingTimersAsync();
 
       expect(
@@ -466,6 +473,208 @@ describe("Mattermost bot", () => {
         "while you were away",
       ]);
       expect(ctx.runs[1].sessionKey).toBe(`mattermost:${CHANNEL}:${missed.id}`);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("answers recovered channel posts allowed by canonical username", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "setInterval", "Date"] });
+    try {
+      const ctx = await startComponent({
+        [CHANNEL]: { agent: "support", users: ["alice"] },
+      });
+      sockets.last().drop();
+      userPost("@yoplai recovered by username");
+      await reconnect();
+      expect(ctx.runs.map((run) => run.message)).toEqual([
+        "recovered by username",
+      ]);
+      expect(server.created().map((post) => post.message)).toEqual(["agent-ok"]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("answers recovered DMs allowed by username", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "setInterval", "Date"] });
+    try {
+      const ctx = await startComponent(undefined, {
+        dm: { agent: "sales", allowFrom: ["alice"] },
+      });
+      sockets.last().posted(userPost("live dm", { channel_id: DM_CHANNEL }), 1, {
+        channel_type: "D",
+      });
+      await vi.advanceTimersByTimeAsync(0);
+      sockets.last().drop();
+      userPost("recovered dm", { channel_id: DM_CHANNEL });
+      await reconnect();
+      expect(ctx.runs.map((run) => run.message)).toEqual([
+        "live dm",
+        "recovered dm",
+      ]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("leaves a rejected recovered post available after username lookup recovers", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "setInterval", "Date"] });
+    try {
+      const ctx = await startComponent({
+        [CHANNEL]: { agent: "support", users: ["alice"] },
+      });
+      sockets.last().drop();
+      userPost("@yoplai retry the sender lookup");
+      server.overrides.push({
+        match: (method, path) => method === "GET" && path === `/users/${ALICE.id}`,
+        reply: { status: 404 },
+      });
+      await reconnect();
+      expect(ctx.runs).toHaveLength(0);
+      expect(
+        logs.some((line) => line.includes("Could not resolve sender username"))
+      ).toBe(true);
+
+      sockets.last().drop();
+      await reconnect("conn-3");
+      expect(ctx.runs.map((run) => run.message)).toEqual([
+        "retry the sender lookup",
+      ]);
+      expect(server.created().map((post) => post.message)).toEqual(["agent-ok"]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("still accepts recovered id-authorized posts when username lookup fails", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "setInterval", "Date"] });
+    try {
+      const ctx = await startComponent({
+        [CHANNEL]: { agent: "support", users: [ALICE.id] },
+      });
+      sockets.last().drop();
+      userPost("@yoplai allowed by id");
+      server.overrides.push({
+        match: (method, path) => method === "GET" && path === `/users/${ALICE.id}`,
+        reply: { status: 404 },
+      });
+      await reconnect();
+      expect(ctx.runs.map((run) => run.message)).toEqual(["allowed by id"]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("ignores recovered posts from a username outside the allowlist", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "setInterval", "Date"] });
+    try {
+      const ctx = await startComponent({
+        [CHANNEL]: { agent: "support", users: ["bob"] },
+      });
+      sockets.last().drop();
+      userPost("@yoplai Alice is not Bob");
+      await reconnect();
+      expect(ctx.runs).toHaveLength(0);
+      expect(server.created()).toHaveLength(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("runs overlapping live and recovered delivery only once", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "setInterval", "Date"] });
+    try {
+      const ctx = await startComponent({
+        [CHANNEL]: { agent: "support", users: ["alice"] },
+      });
+      sockets.last().drop();
+      const missed = userPost("@yoplai delivered both ways");
+      await vi.advanceTimersByTimeAsync(1_200);
+      sockets.last().open();
+      sockets.last().hello("conn-2");
+      sockets.last().posted(missed, 1);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(ctx.runs.map((run) => run.message)).toEqual(["delivered both ways"]);
+      expect(server.created().map((post) => post.message)).toEqual(["agent-ok"]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("answers a post from the silent gap once after failed reconnect attempts", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "setInterval", "Date"] });
+    vi.setSystemTime(1_000_000);
+    try {
+      const ctx = await startComponent();
+      await vi.advanceTimersByTimeAsync(5_000);
+      sockets.last().message({ event: "typing", seq: 1, data: {} });
+      const missed = userPost("@yoplai during the silent gap", {
+        create_at: 1_010_000,
+      });
+      await vi.advanceTimersByTimeAsync(85_000);
+      expect(sockets.last().terminated).toBe(true);
+      await vi.advanceTimersByTimeAsync(1_200);
+      sockets.last().open();
+      sockets.last().drop();
+      await vi.advanceTimersByTimeAsync(2_400);
+      sockets.last().open();
+      sockets.last().hello("conn-2");
+      await vi.advanceTimersByTimeAsync(0);
+
+      expect(
+        server.requests
+          .filter((request) => request.path.includes("/posts?since="))
+          .map((request) => request.path)
+      ).toEqual([`/channels/${CHANNEL}/posts?since=1000000`]);
+      sockets.last().posted(missed, 1);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(ctx.runs.map((run) => run.message)).toEqual(["during the silent gap"]);
+      expect(server.created().map((post) => post.message)).toEqual(["agent-ok"]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("caps silent-gap catch-up to ten minutes", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "setInterval", "Date"] });
+    vi.setSystemTime(1_000_000);
+    try {
+      const ctx = await startComponent();
+      await vi.advanceTimersByTimeAsync(5_000);
+      sockets.last().message({ event: "typing", seq: 1, data: {} });
+      userPost("@yoplai too old", { create_at: 1_010_000 });
+      userPost("@yoplai still fresh", { create_at: 1_704_000 });
+      await vi.advanceTimersByTimeAsync(700_000);
+      sockets.last().open();
+      sockets.last().hello("conn-2");
+      await vi.advanceTimersByTimeAsync(0);
+
+      expect(
+        server.requests
+          .filter((request) => request.path.includes("/posts?since="))
+          .map((request) => request.path)
+      ).toEqual([`/channels/${CHANNEL}/posts?since=1105000`]);
+      expect(ctx.runs.map((run) => run.message)).toEqual(["still fresh"]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("skips REST catch-up after a successful socket resume", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "setInterval", "Date"] });
+    try {
+      const ctx = await startComponent();
+      sockets.last().drop();
+      const missed = userPost("@yoplai replayed by the server");
+      await reconnect("conn-1");
+      expect(
+        server.requests.some((request) => request.path.includes("/posts?since="))
+      ).toBe(false);
+      expect(ctx.runs).toHaveLength(0);
+      sockets.last().posted(missed, 1);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(ctx.runs.map((run) => run.message)).toEqual(["replayed by the server"]);
     } finally {
       vi.useRealTimers();
     }

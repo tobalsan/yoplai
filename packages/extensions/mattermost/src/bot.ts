@@ -140,12 +140,28 @@ function createBot(params: {
   const handleInbound = async (inbound: InboundPost): Promise<void> => {
     if (!identity) return;
     const { post } = inbound;
-    if (!seen.claim(post.id)) return;
     if (post.user_id === identity.id) return;
 
     const route = params.resolveRoute(post, inbound.channelType);
     if (!route) return;
     if (route.isDm) dmChannels.add(post.channel_id);
+
+    if (!inbound.senderName) {
+      const cached = userNames.get(post.user_id);
+      if (cached?.startsWith("@")) {
+        inbound.senderName = cached;
+      } else {
+        try {
+          const user = await rest.getUser(post.user_id);
+          if (user.username) {
+            inbound.senderName = `@${user.username}`;
+            userNames.set(post.user_id, inbound.senderName);
+          }
+        } catch {
+          console.debug(`${route.logPrefix} Could not resolve sender username`);
+        }
+      }
+    }
 
     const gate = processPost(inbound, route, identity, {
       threadUnlocked: threadUnlocked(route, post),
@@ -156,6 +172,7 @@ function createBot(params: {
       }
       return;
     }
+    if (!seen.claim(post.id)) return;
     const deps: MattermostTurnDeps = { rest, bot: identity, userNames };
     await handleMattermostPost(inbound, route, deps, gate.text);
   };

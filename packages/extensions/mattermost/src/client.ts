@@ -90,9 +90,28 @@ export function normalizeBaseUrl(url: string): string {
 
 const RETRYABLE_STATUS = new Set([429, 502, 503, 504]);
 const MAX_ATTEMPTS = 3;
+const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
+const DEFAULT_FILE_TIMEOUT_MS = 120_000;
 
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
+export type MattermostRestOptions = {
+  requestTimeoutMs?: number;
+  fileTimeoutMs?: number;
+};
+
+function sleep(ms: number, signal: AbortSignal): Promise<void> {
+  signal.throwIfAborted();
+  return new Promise((resolve, reject) => {
+    const onAbort = (): void => {
+      clearTimeout(timer);
+      signal.removeEventListener("abort", onAbort);
+      reject(signal.reason);
+    };
+    const timer = setTimeout(() => {
+      signal.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
+    signal.addEventListener("abort", onAbort, { once: true });
+  });
 }
 
 export class MattermostRestClient {
@@ -102,15 +121,78 @@ export class MattermostRestClient {
     url: string,
     private readonly token: string,
     private readonly fetchImpl: FetchLike = (input, init) => fetch(input, init),
-    private readonly retryDelayMs = 500
+    private readonly retryDelayMs = 500,
+    private readonly options: MattermostRestOptions = {}
   ) {
     this.baseUrl = normalizeBaseUrl(url);
   }
 
-  private async send(
+  private async withDeadline<T>(
     method: string,
     path: string,
-    body?: unknown
+    caller: AbortSignal | undefined,
+    timeoutMs: number,
+    run: (signal: AbortSignal) => Promise<T>
+  ): Promise<T> {
+    const controller = new AbortController();
+    const failure = (timeout: boolean): Error => {
+      const cancelled = caller?.aborted || !timeout;
+      const error = new Error(
+        `Mattermost ${method} ${path} ${cancelled ? "cancelled" : "timed out"}`
+      );
+      error.name = cancelled ? "AbortError" : "TimeoutError";
+      return error;
+    };
+    if (caller?.aborted) throw failure(false);
+
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let onAbort: (() => void) | undefined;
+    const aborted = new Promise<never>((_resolve, reject) => {
+      const abort = (timeout: boolean): void => {
+        const error = failure(timeout);
+        controller.abort(error);
+        reject(error);
+      };
+      onAbort = () => abort(false);
+      timer = setTimeout(() => abort(true), timeoutMs);
+      caller?.addEventListener("abort", onAbort, { once: true });
+    });
+    try {
+      return await Promise.race([run(controller.signal), aborted]);
+    } catch (error) {
+      if (caller?.aborted) throw failure(false);
+      if (controller.signal.aborted) throw controller.signal.reason;
+      if (error instanceof MattermostApiError) throw error;
+      throw new Error(`Mattermost ${method} ${path} failed`);
+    } finally {
+      clearTimeout(timer);
+      if (onAbort) caller?.removeEventListener("abort", onAbort);
+    }
+  }
+
+  private send(
+    method: string,
+    path: string,
+    body?: unknown,
+    caller?: AbortSignal
+  ): Promise<void> {
+    return this.withDeadline(
+      method,
+      path,
+      caller,
+      this.options.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS,
+      async (signal) => {
+        const response = await this.sendWithRetries(method, path, body, signal);
+        await response.arrayBuffer();
+      }
+    );
+  }
+
+  private async sendWithRetries(
+    method: string,
+    path: string,
+    body: unknown,
+    signal: AbortSignal
   ): Promise<Response> {
     const headers: Record<string, string> = {
       Authorization: `Bearer ${this.token}`,
@@ -125,20 +207,23 @@ export class MattermostRestClient {
     }
 
     for (let attempt = 1; ; attempt++) {
+      signal.throwIfAborted();
       const response = await this.fetchImpl(`${this.baseUrl}/api/v4${path}`, {
         method,
         headers,
         body: payload,
+        signal,
       });
       if (response.ok) return response;
       if (RETRYABLE_STATUS.has(response.status) && attempt < MAX_ATTEMPTS) {
+        await response.body?.cancel();
         // Mattermost's rate limiter says when the bucket refills.
         const reset = Number(response.headers.get("x-ratelimit-reset"));
         const wait =
           Number.isFinite(reset) && reset > 0
             ? Math.min(reset * 1000, 10_000)
             : this.retryDelayMs * attempt;
-        await sleep(wait);
+        await sleep(wait, signal);
         continue;
       }
       let serverId: string | undefined;
@@ -148,8 +233,8 @@ export class MattermostRestClient {
           id?: string;
           message?: string;
         };
-        serverId = error.id;
-        serverMessage = error.message;
+        serverId = error.id?.replaceAll(this.token, "[redacted]");
+        serverMessage = error.message?.replaceAll(this.token, "[redacted]");
       } catch {
         // Not every failure has a JSON body (e.g. a proxy error page).
       }
@@ -166,50 +251,89 @@ export class MattermostRestClient {
   private async json<T>(
     method: string,
     path: string,
-    body?: unknown
+    body?: unknown,
+    caller?: AbortSignal,
+    timeoutMs = this.options.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS
   ): Promise<T> {
-    const response = await this.send(method, path, body);
-    return (await response.json()) as T;
-  }
-
-  getMe(): Promise<MattermostUser> {
-    return this.json("GET", "/users/me");
-  }
-
-  getUser(userId: string): Promise<MattermostUser> {
-    return this.json("GET", `/users/${encodeURIComponent(userId)}`);
-  }
-
-  getUserByUsername(username: string): Promise<MattermostUser> {
-    return this.json(
-      "GET",
-      `/users/username/${encodeURIComponent(username.replace(/^@/, ""))}`
+    return this.withDeadline(
+      method,
+      path,
+      caller,
+      timeoutMs,
+      async (signal) => {
+        const response = await this.sendWithRetries(method, path, body, signal);
+        return (await response.json()) as T;
+      }
     );
   }
 
-  getChannel(channelId: string): Promise<MattermostChannel> {
-    return this.json("GET", `/channels/${encodeURIComponent(channelId)}`);
+  getMe(signal?: AbortSignal): Promise<MattermostUser> {
+    return this.json("GET", "/users/me", undefined, signal);
   }
 
-  getPost(postId: string): Promise<MattermostPost> {
-    return this.json("GET", `/posts/${encodeURIComponent(postId)}`);
+  getUser(userId: string, signal?: AbortSignal): Promise<MattermostUser> {
+    return this.json(
+      "GET",
+      `/users/${encodeURIComponent(userId)}`,
+      undefined,
+      signal
+    );
   }
 
-  createPost(input: CreatePostInput): Promise<MattermostPost> {
-    return this.json("POST", "/posts", input);
+  getUserByUsername(
+    username: string,
+    signal?: AbortSignal
+  ): Promise<MattermostUser> {
+    return this.json(
+      "GET",
+      `/users/username/${encodeURIComponent(username.replace(/^@/, ""))}`,
+      undefined,
+      signal
+    );
+  }
+
+  getChannel(
+    channelId: string,
+    signal?: AbortSignal
+  ): Promise<MattermostChannel> {
+    return this.json(
+      "GET",
+      `/channels/${encodeURIComponent(channelId)}`,
+      undefined,
+      signal
+    );
+  }
+
+  getPost(postId: string, signal?: AbortSignal): Promise<MattermostPost> {
+    return this.json(
+      "GET",
+      `/posts/${encodeURIComponent(postId)}`,
+      undefined,
+      signal
+    );
+  }
+
+  createPost(
+    input: CreatePostInput,
+    signal?: AbortSignal
+  ): Promise<MattermostPost> {
+    return this.json("POST", "/posts", input, signal);
   }
 
   /** Posts created or changed in a channel since `since` (epoch ms), oldest first. */
   async getChannelPostsSince(
     channelId: string,
-    since: number
+    since: number,
+    signal?: AbortSignal
   ): Promise<MattermostPost[]> {
     const list = await this.json<{
       order: string[];
       posts: Record<string, MattermostPost>;
     }>(
       "GET",
-      `/channels/${encodeURIComponent(channelId)}/posts?since=${Math.floor(since)}`
+      `/channels/${encodeURIComponent(channelId)}/posts?since=${Math.floor(since)}`,
+      undefined,
+      signal
     );
     return Object.values(list.posts ?? {}).sort(
       (a, b) => a.create_at - b.create_at
@@ -219,42 +343,58 @@ export class MattermostRestClient {
   /** Open (or reuse) the direct-message channel between the bot and a user. */
   createDirectChannel(
     botUserId: string,
-    userId: string
+    userId: string,
+    signal?: AbortSignal
   ): Promise<MattermostChannel> {
-    return this.json("POST", "/channels/direct", [botUserId, userId]);
+    return this.json("POST", "/channels/direct", [botUserId, userId], signal);
   }
 
   async sendTyping(
     botUserId: string,
     channelId: string,
-    parentId?: string
+    parentId?: string,
+    signal?: AbortSignal
   ): Promise<void> {
-    await this.send("POST", `/users/${encodeURIComponent(botUserId)}/typing`, {
-      channel_id: channelId,
-      ...(parentId ? { parent_id: parentId } : {}),
-    });
+    await this.send(
+      "POST",
+      `/users/${encodeURIComponent(botUserId)}/typing`,
+      {
+        channel_id: channelId,
+        ...(parentId ? { parent_id: parentId } : {}),
+      },
+      signal
+    );
   }
 
   async addReaction(
     botUserId: string,
     postId: string,
-    emojiName: string
+    emojiName: string,
+    signal?: AbortSignal
   ): Promise<void> {
-    await this.send("POST", "/reactions", {
-      user_id: botUserId,
-      post_id: postId,
-      emoji_name: emojiName,
-    });
+    await this.send(
+      "POST",
+      "/reactions",
+      {
+        user_id: botUserId,
+        post_id: postId,
+        emoji_name: emojiName,
+      },
+      signal
+    );
   }
 
   async removeReaction(
     botUserId: string,
     postId: string,
-    emojiName: string
+    emojiName: string,
+    signal?: AbortSignal
   ): Promise<void> {
     await this.send(
       "DELETE",
-      `/users/${encodeURIComponent(botUserId)}/posts/${encodeURIComponent(postId)}/reactions/${encodeURIComponent(emojiName)}`
+      `/users/${encodeURIComponent(botUserId)}/posts/${encodeURIComponent(postId)}/reactions/${encodeURIComponent(emojiName)}`,
+      undefined,
+      signal
     );
   }
 
@@ -263,7 +403,8 @@ export class MattermostRestClient {
     channelId: string,
     data: Uint8Array,
     filename: string,
-    mimeType?: string
+    mimeType?: string,
+    signal?: AbortSignal
   ): Promise<MattermostFileInfo> {
     const form = new FormData();
     form.append("channel_id", channelId);
@@ -278,18 +419,34 @@ export class MattermostRestClient {
     const result = await this.json<{ file_infos: MattermostFileInfo[] }>(
       "POST",
       "/files",
-      form
+      form,
+      signal,
+      this.options.fileTimeoutMs ?? DEFAULT_FILE_TIMEOUT_MS
     );
     const info = result.file_infos?.[0];
     if (!info) throw new Error("Mattermost did not return the uploaded file.");
     return info;
   }
 
-  async downloadFile(fileId: string): Promise<Uint8Array> {
-    const response = await this.send(
+  async downloadFile(
+    fileId: string,
+    signal?: AbortSignal
+  ): Promise<Uint8Array> {
+    const path = `/files/${encodeURIComponent(fileId)}`;
+    return this.withDeadline(
       "GET",
-      `/files/${encodeURIComponent(fileId)}`
+      path,
+      signal,
+      this.options.fileTimeoutMs ?? DEFAULT_FILE_TIMEOUT_MS,
+      async (signal) => {
+        const response = await this.sendWithRetries(
+          "GET",
+          path,
+          undefined,
+          signal
+        );
+        return new Uint8Array(await response.arrayBuffer());
+      }
     );
-    return new Uint8Array(await response.arrayBuffer());
   }
 }

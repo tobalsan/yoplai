@@ -9,6 +9,7 @@ import type {
   GatewayConfig,
   RunAgentParams,
   RunAgentResult,
+  SessionEntry,
 } from "@yoplai/shared";
 import type { MattermostPost } from "./client.js";
 import type { SocketLike } from "./websocket.js";
@@ -355,7 +356,8 @@ export function buildFakeContext(options: {
 } {
   const runs: RunAgentParams[] = [];
   const sinks = new Map<string, DeliverySink>();
-  const sessions = options.sessions ?? new Set<string>();
+  const sessionStores = new Map<string, Set<string>>();
+  const entries = new Map<string, SessionEntry>();
   const media = new Map<string, Uint8Array>();
   let sessionCounter = 0;
   const run: FakeRun =
@@ -364,6 +366,22 @@ export function buildFakeContext(options: {
       payloads: [{ text: "agent-ok" }],
       meta: { durationMs: 1, sessionId: "s" },
     }));
+
+  const storageKey = (agentId: string, userId?: string) =>
+    JSON.stringify([agentId, userId ?? null]);
+  const entryKey = (agentId: string, sessionKey: string, userId?: string) =>
+    JSON.stringify([agentId, userId ?? null, sessionKey]);
+  const sessions = (agentId: string, userId?: string) => {
+    const key = storageKey(agentId, userId);
+    let store = sessionStores.get(key);
+    if (!store) {
+      store = !userId && options.sessions ? options.sessions : new Set<string>();
+      sessionStores.set(key, store);
+    }
+    return store;
+  };
+  const getSessionEntry = async (agentId: string, sessionKey: string, userId?: string) =>
+    entries.get(entryKey(agentId, sessionKey, userId));
 
   return {
     runs,
@@ -383,20 +401,34 @@ export function buildFakeContext(options: {
       return run(params);
     },
     getSubagentTemplates: () => [],
-    resolveSessionId: async () => undefined,
-    getSessionEntry: async () => undefined,
-    hasSession: async (_agentId: string, sessionId: string) =>
-      sessions.has(sessionId),
-    resetSession: async () => {},
-    ensureSession: async (_agentId: string, sessionKey: string) => {
-      const sessionId = `session-${++sessionCounter}-${sessionKey}`;
-      sessions.add(sessionId);
-      return { sessionId, updatedAt: Date.now() };
+    resolveSessionId: getSessionEntry,
+    getSessionEntry,
+    hasSession: async (agentId: string, sessionId: string, userId?: string) =>
+      sessions(agentId, userId).has(sessionId),
+    resetSession: async (agentId: string, sessionId: string, userId?: string) => {
+      sessions(agentId, userId).delete(sessionId);
+      for (const [key, entry] of entries) {
+        const [entryAgent, entryOwner] = JSON.parse(key) as [string, string | null, string];
+        if (entryAgent === agentId && entryOwner === (userId ?? null) && entry.sessionId === sessionId) {
+          entries.delete(key);
+        }
+      }
     },
-    clearSessionEntry: async (_agentId: string, sessionKey: string) => ({
-      sessionId: `cleared-${sessionKey}`,
-      updatedAt: 0,
-    }),
+    ensureSession: async (agentId: string, sessionKey: string, userId?: string) => {
+      const key = entryKey(agentId, sessionKey, userId);
+      const existing = entries.get(key);
+      const sessionId = existing?.sessionId ?? `session-${++sessionCounter}-${sessionKey}`;
+      sessions(agentId, userId).add(sessionId);
+      const entry = { sessionId, updatedAt: Date.now() };
+      entries.set(key, entry);
+      return entry;
+    },
+    clearSessionEntry: async (agentId: string, sessionKey: string, userId?: string) => {
+      const key = entryKey(agentId, sessionKey, userId);
+      const entry = entries.get(key);
+      entries.delete(key);
+      return entry;
+    },
     restoreSessionUpdatedAt: () => undefined,
     deleteSession: () => undefined,
     invalidateHistoryCache: async () => undefined,
