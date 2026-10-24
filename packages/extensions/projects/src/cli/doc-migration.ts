@@ -52,7 +52,6 @@ async function loadGatewayConfig(): Promise<GatewayConfig> {
       agents: [],
       extensions: {},
       sessions: { idleMinutes: 360 },
-      agentFab: false,
     };
   }
 }

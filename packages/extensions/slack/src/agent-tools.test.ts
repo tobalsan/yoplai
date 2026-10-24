@@ -32,7 +32,6 @@ function config(extensionsSlack?: unknown): GatewayConfig {
       ? { slack: extensionsSlack as never }
       : undefined,
     sessions: { idleMinutes: 360 },
-    agentFab: false,
   } as unknown as GatewayConfig;
 }
 

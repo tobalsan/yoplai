@@ -7,15 +7,11 @@ import type { ExtensionContext, GatewayConfig } from "@yoplai/shared";
 import { subagentsExtension } from "./index.js";
 
 function context(
-  config: Omit<GatewayConfig, "agentFab"> & { agentFab?: boolean },
+  config: GatewayConfig,
   dataDir = "/tmp/yoplai-subagents-test"
 ): ExtensionContext {
-  const normalizedConfig: GatewayConfig = {
-    ...config,
-    agentFab: config.agentFab ?? false,
-  };
   return {
-    getConfig: () => normalizedConfig,
+    getConfig: () => config,
     getDataDir: () => dataDir,
     reloadConfig: () => undefined,
     getAgent: () => undefined,
@@ -27,7 +23,7 @@ function context(
       payloads: [],
       meta: { durationMs: 0, sessionId: "test" },
     }),
-    getSubagentTemplates: () => normalizedConfig.subagents ?? [],
+    getSubagentTemplates: () => config.subagents ?? [],
     resolveSessionId: async () => undefined,
     getSessionEntry: async () => undefined,
     hasSession: async () => false,

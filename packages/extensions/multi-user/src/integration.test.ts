@@ -442,7 +442,6 @@ describe("multi-user integration", () => {
         extensions: {},
         agents: ["main"],
         multiUser: false,
-        agentFab: false,
         enableCronMonitoring: false,
         forkedAgents: false,
       });
@@ -509,7 +508,6 @@ describe("multi-user integration", () => {
         extensions: { canvas: true, sessionHistory: true },
         agents: ["main"],
         multiUser: false,
-        agentFab: false,
         enableCronMonitoring: false,
         forkedAgents: false,
       });
