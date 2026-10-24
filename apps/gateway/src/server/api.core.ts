@@ -1,3 +1,4 @@
+import { createMcpAppRoutes, appsAvailable } from "../mcp-apps/views.js";
 import { createReadStream } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
@@ -544,6 +545,7 @@ api.get("/capabilities", async (c) => {
 
   return c.json({
     version: 2,
+    apps: { available: appsAvailable() },
     extensions,
     agents: agents.map((agent) => agent.id),
     multiUser: isMultiUserEnabled,
@@ -606,6 +608,8 @@ async function resolveExistingSessionHistoryFile(params: {
   });
   return filePath ?? null;
 }
+
+api.route("/", createMcpAppRoutes({ getConfig: loadConfig, getRuntime: getExtensionRuntime, getUserId: getRequestUserId, resolveHistoryFile: resolveExistingSessionHistoryFile }));
 
 // GET /api/agents - list all agents (respects single-agent mode)
 api.get("/agents", async (c) => {
@@ -1396,6 +1400,7 @@ api.get("/agents/:id/history", async (c) => {
           name: tc.name,
           arguments: tc.args,
           status: tc.status,
+          view: tc.view,
         })),
         toolResults: turn.toolResults,
       }

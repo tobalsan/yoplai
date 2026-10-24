@@ -1,4 +1,4 @@
-import type { ContainerExtensionTool, GatewayConfig } from "@yoplai/shared";
+import { claimAgentToolName, type ContainerExtensionTool, type GatewayConfig, type McpAppView } from "@yoplai/shared";
 import { getExtensionSystemPromptContributions } from "../../extensions/prompts.js";
 import { getExtensionAgentTools } from "../../extensions/tools.js";
 import type { SdkRunParams } from "../types.js";
@@ -6,6 +6,8 @@ import { projectTools } from "../../chat-projects/tools.js";
 import { skillSaveTool } from "../../skills/tools.js";
 
 export class ContainerToolBridge {
+  readonly mcpViews = new Map<string, McpAppView>();
+
   async buildSystemPrompts(
     params: SdkRunParams,
     config: GatewayConfig
@@ -31,6 +33,16 @@ export class ContainerToolBridge {
       params.userId,
       params
     );
+    // Match the runner's Pi inventory, including its send_file reservation.
+    const usedToolNames = new Set(["read", "bash", "edit", "write", "tool_search", "codemode"]);
+    claimAgentToolName("send_file", usedToolNames);
+    this.mcpViews.clear();
+    for (const tool of tools) {
+      const name = claimAgentToolName(tool.name, usedToolNames);
+      if (tool.mcp?.ui?.resourceUri) this.mcpViews.set(name, {
+        server: tool.mcp.server, tool: tool.mcp.tool, resourceUri: tool.mcp.ui.resourceUri,
+      });
+    }
     const gatewayTools: ContainerExtensionTool[] = [{
       extensionId: "gateway",
       name: "extract_document",
