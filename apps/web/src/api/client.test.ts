@@ -85,7 +85,6 @@ describe("api client (projects/subagents)", () => {
         extensions: { projects: true },
         agents: ["main"],
         multiUser: false,
-        agentFab: false,
       }),
     });
 

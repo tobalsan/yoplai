@@ -215,7 +215,6 @@ describe("ChatView abort handling", () => {
       extensions: {},
       agents: ["agent-1"],
       multiUser: false,
-      agentFab: false,
     });
     setCapabilitiesForTests({ multiUser: false });
     getSessionKeyMock.mockReturnValue("main");
@@ -2464,7 +2463,6 @@ describe("ChatView stale-thinking reconciliation", () => {
       extensions: {},
       agents: ["agent-1"],
       multiUser: false,
-      agentFab: false,
     });
     setCapabilitiesForTests({ multiUser: false });
     getSessionKeyMock.mockReturnValue("main");
@@ -2696,7 +2694,6 @@ describe("ChatView project chip", () => {
       extensions: {},
       agents: ["agent-1"],
       multiUser: false,
-      agentFab: false,
     });
     setCapabilitiesForTests({ multiUser: false });
     getSessionKeyMock.mockReturnValue("main");

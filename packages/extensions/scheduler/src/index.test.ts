@@ -79,7 +79,7 @@ describe("scheduler routes", () => {
     const alpha = agent("alpha", path.join(tmpDir, "alpha"));
     const config: GatewayConfig = {
       agents: [alpha], extensions: { scheduler: { enabled: true }, multiUser: { enabled: true, emailAndPassword: { enabled: true }, sessionSecret: "test-session-secret-at-least-32-characters" } },
-      sessions: { idleMinutes: 360 }, agentFab: false,
+      sessions: { idleMinutes: 360 },
     };
     const runAgent = vi.fn(async ({ sessionId }: { sessionId: string }) => ({
       meta: { sessionId }, payloads: [{ text: "Done" }],
@@ -141,7 +141,7 @@ describe("scheduler routes", () => {
   it("shares a private job on Mine → Team and makes it private to the Team → Mine switcher", async () => {
     tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-scheduler-owner-routes-"));
     const alpha = agent("alpha", path.join(tmpDir, "alpha"));
-    const config: GatewayConfig = { version: 3, agents: [alpha], extensions: { scheduler: { enabled: true } }, sessions: { idleMinutes: 360 }, agentFab: false };
+    const config: GatewayConfig = { version: 3, agents: [alpha], extensions: { scheduler: { enabled: true } }, sessions: { idleMinutes: 360 } };
     creatorLookup.mockReturnValue({ name: "Alice Example" });
     const ctx = context(config);
     const record = vi.fn();
@@ -182,7 +182,7 @@ describe("scheduler routes", () => {
   it("lists signed-in Team creations for another member with the server-resolved creator name", async () => {
     tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-scheduler-team-routes-"));
     const alpha = agent("alpha", path.join(tmpDir, "alpha"));
-    const config: GatewayConfig = { version: 3, agents: [alpha], extensions: { scheduler: { enabled: true } }, sessions: { idleMinutes: 360 }, agentFab: false };
+    const config: GatewayConfig = { version: 3, agents: [alpha], extensions: { scheduler: { enabled: true } }, sessions: { idleMinutes: 360 } };
     setSchedulerContext(context(config));
     creatorLookup.mockReturnValue({ name: "Alice Example" });
     const app = new Hono().basePath("/api");
@@ -212,7 +212,7 @@ describe("scheduler routes", () => {
   it("keeps legacy creator-less Team jobs unlabeled when multi-user lookup is unavailable", async () => {
     tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-scheduler-legacy-routes-"));
     const alpha = agent("alpha", path.join(tmpDir, "alpha"));
-    const config: GatewayConfig = { version: 3, agents: [alpha], extensions: { scheduler: { enabled: true } }, sessions: { idleMinutes: 360 }, agentFab: false };
+    const config: GatewayConfig = { version: 3, agents: [alpha], extensions: { scheduler: { enabled: true } }, sessions: { idleMinutes: 360 } };
     setSchedulerContext(context(config));
     creatorLookup.mockImplementation(() => { throw new Error("Unavailable"); });
     const app = new Hono().basePath("/api");
@@ -238,7 +238,6 @@ describe("scheduler routes", () => {
       agents: [alpha],
       extensions: { scheduler: { enabled: true } },
       sessions: { idleMinutes: 360 },
-      agentFab: false,
     };
     setSchedulerContext(context(config, runAgent));
     const app = new Hono().basePath("/api");
@@ -282,7 +281,6 @@ describe("scheduler routes", () => {
       agents: [alpha],
       extensions: { scheduler: { enabled: true } },
       sessions: { idleMinutes: 360 },
-      agentFab: false,
     };
     setSchedulerContext(context(config));
     const app = new Hono().basePath("/api");
@@ -315,7 +313,6 @@ describe("scheduler routes", () => {
       agents: [alpha],
       extensions: { scheduler: { enabled: true } },
       sessions: { idleMinutes: 360 },
-      agentFab: false,
     };
     setSchedulerContext(context(config));
     const app = new Hono().basePath("/api");
@@ -345,7 +342,6 @@ describe("scheduler routes", () => {
       agents: [alpha],
       extensions: { scheduler: { enabled: true } },
       sessions: { idleMinutes: 360 },
-      agentFab: false,
     };
     setSchedulerContext(context(config));
     const app = new Hono().basePath("/api");
@@ -376,7 +372,6 @@ describe("scheduler routes", () => {
       agents: [alpha],
       extensions: { scheduler: { enabled: true } },
       sessions: { idleMinutes: 360 },
-      agentFab: false,
     };
     setSchedulerContext(context(config));
     const app = new Hono().basePath("/api");
