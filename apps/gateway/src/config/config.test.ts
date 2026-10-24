@@ -88,6 +88,28 @@ describe("config validation", () => {
     ]);
   });
 
+  it("loads legacy embedded-chat settings without disrupting agent discovery", async () => {
+    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-legacy-chat-config-"));
+    await writeAgent(path.join(tmpDir, "agents", "legacy-agent"), "legacy-agent");
+    await fs.writeFile(path.join(tmpDir, "yoplai.json"), `{
+      "version": 3,
+      "agentFab": true,
+      "extensions": {
+        "sessions": { "autoTitleModel": "anthropic/claude-haiku" }
+      }
+    }`);
+    vi.stubEnv("YOPLAI_HOME", tmpDir);
+    const { loadConfig } = await import("./index.js");
+
+    const config = loadConfig();
+
+    expect(config.agents.map((agent) => agent.id)).toEqual(["legacy-agent"]);
+    expect(config).not.toHaveProperty("agentFab");
+    expect(config.extensions?.sessions).toEqual({
+      autoTitleModel: "anthropic/claude-haiku",
+    });
+  });
+
   it("preserves the optional codemode flag from agent YAML", async () => {
     tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-config-"));
     for (const id of ["enabled", "disabled", "default"]) {

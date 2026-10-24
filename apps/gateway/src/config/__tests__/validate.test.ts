@@ -59,10 +59,13 @@ describe("startup validation", () => {
         loaded: ["canvas", "sessionHistory"],
         skipped: [],
       });
-      expect(
-        warnings.filter((warning) => warning.startsWith("[extensions]"))
-      ).toEqual([
-        '[extensions] agent "main" references unknown extension "missing"',
+      expect(warnings.map((warning) => JSON.parse(warning))).toEqual([
+        {
+          level: "warn",
+          msg: '[extensions] agent "main" references unknown extension "missing"',
+          agentId: "main",
+          extensionId: "missing",
+        },
       ]);
     } finally {
       console.warn = originalWarn;

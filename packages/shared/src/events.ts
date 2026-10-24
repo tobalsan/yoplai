@@ -3,7 +3,6 @@
 import { EventEmitter } from "node:events";
 import { sanitizeForStorage } from "./sanitize.js";
 import type { StreamEvent, HistoryEvent, AgentTraceContext, WebCompletion } from "./types.js";
-import type { LeadSessionChangedEvent } from "./lead-sessions/types.js";
 
 export type RunSource =
   | "web"
@@ -124,16 +123,6 @@ export class AgentEventBus extends EventEmitter {
   onAgentChanged(handler: (event: ProjectAgentChangedEvent) => void) {
     this.on("agentChanged", handler);
     return () => this.off("agentChanged", handler);
-  }
-
-  emitLeadSessionChanged(event: LeadSessionChangedEvent) {
-    this.recordEvent("leadSessionChanged", event);
-    this.emit("lead_session.changed", event);
-  }
-
-  onLeadSessionChanged(handler: (event: LeadSessionChangedEvent) => void) {
-    this.on("lead_session.changed", handler);
-    return () => this.off("lead_session.changed", handler);
   }
 }
 

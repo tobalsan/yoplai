@@ -5,7 +5,6 @@ import { createSignal } from "solid-js";
 import { delegateEvents, render } from "solid-js/web";
 import { ChatView, ThinkingLine } from "./ChatView";
 import { TurnNotifier } from "./TurnNotifier";
-import { QuickChatOverlay } from "./QuickChatOverlay";
 import type { SubscriptionCallbacks } from "../api/realtime";
 import type { StreamCallbacks } from "../api/chat";
 import {
@@ -216,7 +215,6 @@ describe("ChatView abort handling", () => {
       extensions: {},
       agents: ["agent-1"],
       multiUser: false,
-      agentFab: false,
     });
     setCapabilitiesForTests({ multiUser: false });
     getSessionKeyMock.mockReturnValue("main");
@@ -273,48 +271,6 @@ describe("ChatView abort handling", () => {
     socket.complete("viewed-answer-2", 102);
     expect(localStorage.getItem("yoplai:chat-read:local:agent-1:session-main")).toBe("viewed-answer-1");
     view.dispose();
-    disposeNotifier();
-  });
-
-  it("reads the resolved QuickChat session only while the overlay is open", async () => {
-    fetchFullHistoryMock.mockResolvedValueOnce({ messages: [] });
-    let finish: (() => void) | undefined;
-    streamMessageMock.mockImplementation((_agent, _message, _key, onText, onDone) => {
-      finish = () => { onText("First quick answer"); onDone(); };
-      return () => {};
-    });
-    const disposeNotifier = mountNotifications();
-    const [open, setOpen] = createSignal(true);
-    const container = document.createElement("div");
-    document.body.appendChild(container);
-    const dispose = render(() => <QuickChatOverlay
-      open={open()}
-      mobile={false}
-      agents={[{ id: "agent-1", name: "Agent", model: { provider: "openai", model: "gpt-5" } }]}
-      selectedAgentId="agent-1"
-      onSelectAgent={() => {}}
-      onMinimize={() => setOpen(false)}
-      onClose={() => setOpen(false)}
-    />, container);
-    await tick();
-    const input = container.querySelector("textarea")!;
-    input.value = "First quick question";
-    input.dispatchEvent(new Event("input", { bubbles: true }));
-    container.querySelector<HTMLButtonElement>(".send-btn")!.click();
-    finish!();
-    await tick();
-    const socket = NotificationSocket.instances[0];
-    socket.complete("quick-answer-1", 1001);
-    expect(localStorage.getItem("yoplai:chat-read:local:agent-1:session-main")).toBe("quick-answer-1");
-
-    queryByRole(container, "button", { name: "Minimize quick chat" })!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
-    socket.complete("quick-answer-2", 1002);
-    expect(localStorage.getItem("yoplai:chat-read:local:agent-1:session-main")).toBe("quick-answer-1");
-    setOpen(true);
-    expect(localStorage.getItem("yoplai:chat-read:local:agent-1:session-main")).toBe("quick-answer-2");
-    dispose();
-    socket.complete("quick-answer-3", 1003);
-    expect(localStorage.getItem("yoplai:chat-read:local:agent-1:session-main")).toBe("quick-answer-2");
     disposeNotifier();
   });
 
@@ -2507,7 +2463,6 @@ describe("ChatView stale-thinking reconciliation", () => {
       extensions: {},
       agents: ["agent-1"],
       multiUser: false,
-      agentFab: false,
     });
     setCapabilitiesForTests({ multiUser: false });
     getSessionKeyMock.mockReturnValue("main");
@@ -2739,7 +2694,6 @@ describe("ChatView project chip", () => {
       extensions: {},
       agents: ["agent-1"],
       multiUser: false,
-      agentFab: false,
     });
     setCapabilitiesForTests({ multiUser: false });
     getSessionKeyMock.mockReturnValue("main");

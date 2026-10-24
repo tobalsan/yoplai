@@ -65,7 +65,7 @@ describe("scheduler agent tools", () => {
   it("hides tools when scheduler is disabled", async () => {
     tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-scheduler-tools-"));
     const alpha = agent("alpha", path.join(tmpDir, "alpha"));
-    const config: GatewayConfig = { version: 3, agents: [alpha], extensions: { scheduler: { enabled: false } }, sessions: { idleMinutes: 360 }, agentFab: false };
+    const config: GatewayConfig = { version: 3, agents: [alpha], extensions: { scheduler: { enabled: false } }, sessions: { idleMinutes: 360 } };
 
     expect(await schedulerExtension.getAgentTools?.(alpha, { config })).toEqual([]);
   });
@@ -74,7 +74,7 @@ describe("scheduler agent tools", () => {
     tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-scheduler-tools-"));
     const alpha = agent("alpha", path.join(tmpDir, "alpha"));
     const beta = agent("beta", path.join(tmpDir, "beta"));
-    const config: GatewayConfig = { version: 3, agents: [alpha, beta], extensions: { scheduler: { enabled: true } }, sessions: { idleMinutes: 360 }, agentFab: false };
+    const config: GatewayConfig = { version: 3, agents: [alpha, beta], extensions: { scheduler: { enabled: true } }, sessions: { idleMinutes: 360 } };
     setSchedulerContext(context(config));
     const tools = await schedulerExtension.getAgentTools?.(alpha, { config });
     const byName = new Map(tools?.map((tool) => [tool.name, tool]));
@@ -123,7 +123,7 @@ describe("scheduler agent tools", () => {
   it("shares authenticated Team chat jobs and keeps default Mine jobs private", async () => {
     tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-scheduler-sharing-tools-"));
     const alpha = agent("alpha", path.join(tmpDir, "alpha"));
-    const config: GatewayConfig = { version: 3, agents: [alpha], extensions: { scheduler: { enabled: true } }, sessions: { idleMinutes: 360 }, agentFab: false };
+    const config: GatewayConfig = { version: 3, agents: [alpha], extensions: { scheduler: { enabled: true } }, sessions: { idleMinutes: 360 } };
     setSchedulerContext(context(config));
     const tools = await schedulerExtension.getAgentTools!(alpha, { config });
     const byName = new Map(tools.map((tool) => [tool.name, tool]));
@@ -145,7 +145,7 @@ describe("scheduler agent tools", () => {
   it("returns structured validation errors", async () => {
     tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-scheduler-tools-"));
     const alpha = agent("alpha", path.join(tmpDir, "alpha"));
-    const config: GatewayConfig = { version: 3, agents: [alpha], extensions: { scheduler: { enabled: true } }, sessions: { idleMinutes: 360 }, agentFab: false };
+    const config: GatewayConfig = { version: 3, agents: [alpha], extensions: { scheduler: { enabled: true } }, sessions: { idleMinutes: 360 } };
     setSchedulerContext(context(config));
     const tools = await schedulerExtension.getAgentTools?.(alpha, { config });
     const create = tools!.find((tool) => tool.name === "scheduler.create_job")!;
@@ -173,7 +173,7 @@ describe("scheduler agent tools", () => {
   it("creates a script-only job via the tool", async () => {
     tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-scheduler-tools-"));
     const alpha = agent("alpha", path.join(tmpDir, "alpha"));
-    const config: GatewayConfig = { version: 3, agents: [alpha], extensions: { scheduler: { enabled: true } }, sessions: { idleMinutes: 360 }, agentFab: false };
+    const config: GatewayConfig = { version: 3, agents: [alpha], extensions: { scheduler: { enabled: true } }, sessions: { idleMinutes: 360 } };
     setSchedulerContext(context(config));
     const tools = await schedulerExtension.getAgentTools?.(alpha, { config });
     const create = tools!.find((tool) => tool.name === "scheduler.create_job")!;
@@ -191,7 +191,7 @@ describe("scheduler agent tools", () => {
   it("creates a gated job via the tool", async () => {
     tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-scheduler-tools-"));
     const alpha = agent("alpha", path.join(tmpDir, "alpha"));
-    const config: GatewayConfig = { version: 3, agents: [alpha], extensions: { scheduler: { enabled: true } }, sessions: { idleMinutes: 360 }, agentFab: false };
+    const config: GatewayConfig = { version: 3, agents: [alpha], extensions: { scheduler: { enabled: true } }, sessions: { idleMinutes: 360 } };
     setSchedulerContext(context(config));
     const tools = await schedulerExtension.getAgentTools?.(alpha, { config });
     const create = tools!.find((tool) => tool.name === "scheduler.create_job")!;
@@ -212,7 +212,7 @@ describe("scheduler agent tools", () => {
   it("rejects an invalid script/message combination with a readable error", async () => {
     tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-scheduler-tools-"));
     const alpha = agent("alpha", path.join(tmpDir, "alpha"));
-    const config: GatewayConfig = { version: 3, agents: [alpha], extensions: { scheduler: { enabled: true } }, sessions: { idleMinutes: 360 }, agentFab: false };
+    const config: GatewayConfig = { version: 3, agents: [alpha], extensions: { scheduler: { enabled: true } }, sessions: { idleMinutes: 360 } };
     setSchedulerContext(context(config));
     const tools = await schedulerExtension.getAgentTools?.(alpha, { config });
     const create = tools!.find((tool) => tool.name === "scheduler.create_job")!;
@@ -229,7 +229,7 @@ describe("scheduler agent tools", () => {
   it("switches an agent job to script-only by clearing message with null", async () => {
     tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-scheduler-tools-"));
     const alpha = agent("alpha", path.join(tmpDir, "alpha"));
-    const config: GatewayConfig = { version: 3, agents: [alpha], extensions: { scheduler: { enabled: true } }, sessions: { idleMinutes: 360 }, agentFab: false };
+    const config: GatewayConfig = { version: 3, agents: [alpha], extensions: { scheduler: { enabled: true } }, sessions: { idleMinutes: 360 } };
     setSchedulerContext(context(config));
     const tools = await schedulerExtension.getAgentTools?.(alpha, { config });
     const byName = new Map(tools?.map((tool) => [tool.name, tool]));
@@ -253,7 +253,7 @@ describe("scheduler agent tools", () => {
   it("updates an existing job's script fields", async () => {
     tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-scheduler-tools-"));
     const alpha = agent("alpha", path.join(tmpDir, "alpha"));
-    const config: GatewayConfig = { version: 3, agents: [alpha], extensions: { scheduler: { enabled: true } }, sessions: { idleMinutes: 360 }, agentFab: false };
+    const config: GatewayConfig = { version: 3, agents: [alpha], extensions: { scheduler: { enabled: true } }, sessions: { idleMinutes: 360 } };
     setSchedulerContext(context(config));
     const tools = await schedulerExtension.getAgentTools?.(alpha, { config });
     const byName = new Map(tools?.map((tool) => [tool.name, tool]));
@@ -280,7 +280,7 @@ describe("scheduler agent tools", () => {
   it("creates a job with deliver targets, then replaces and clears them on update", async () => {
     tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-scheduler-tools-"));
     const alpha = agent("alpha", path.join(tmpDir, "alpha"));
-    const config: GatewayConfig = { version: 3, agents: [alpha], extensions: { scheduler: { enabled: true } }, sessions: { idleMinutes: 360 }, agentFab: false };
+    const config: GatewayConfig = { version: 3, agents: [alpha], extensions: { scheduler: { enabled: true } }, sessions: { idleMinutes: 360 } };
     setSchedulerContext(context(config));
     const tools = await schedulerExtension.getAgentTools?.(alpha, { config });
     const byName = new Map(tools?.map((tool) => [tool.name, tool]));
@@ -320,7 +320,7 @@ describe("scheduler agent tools", () => {
   it("sets a per-job model override on create and update", async () => {
     tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-scheduler-tools-"));
     const alpha = agent("alpha", path.join(tmpDir, "alpha"));
-    const config: GatewayConfig = { version: 3, agents: [alpha], extensions: { scheduler: { enabled: true } }, sessions: { idleMinutes: 360 }, agentFab: false };
+    const config: GatewayConfig = { version: 3, agents: [alpha], extensions: { scheduler: { enabled: true } }, sessions: { idleMinutes: 360 } };
     setSchedulerContext(context(config));
     const tools = await schedulerExtension.getAgentTools?.(alpha, { config });
     const byName = new Map(tools?.map((tool) => [tool.name, tool]));
@@ -354,7 +354,7 @@ describe("scheduler agent tools", () => {
   it("rejects a deliver entry with both channel and user", async () => {
     tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-scheduler-tools-"));
     const alpha = agent("alpha", path.join(tmpDir, "alpha"));
-    const config: GatewayConfig = { version: 3, agents: [alpha], extensions: { scheduler: { enabled: true } }, sessions: { idleMinutes: 360 }, agentFab: false };
+    const config: GatewayConfig = { version: 3, agents: [alpha], extensions: { scheduler: { enabled: true } }, sessions: { idleMinutes: 360 } };
     setSchedulerContext(context(config));
     const tools = await schedulerExtension.getAgentTools?.(alpha, { config });
     const create = tools!.find((tool) => tool.name === "scheduler.create_job")!;

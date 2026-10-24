@@ -556,7 +556,6 @@ api.get("/capabilities", async (c) => {
         }
       : {}),
     forkedAgents: config.forkedAgents ?? false,
-    agentFab: config.agentFab ?? false,
     enableCronMonitoring: config.enableCronMonitoring ?? false,
     ...(home ? { home } : {}),
     ...(isMultiUserEnabled && authContext
