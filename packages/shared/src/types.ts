@@ -288,6 +288,7 @@ const AgentConfigBaseSchema = z.object({
   slack: z.lazy(() => SlackAgentConfigSchema).optional(),
   telegram: z.lazy(() => TelegramAgentConfigSchema).optional(),
   irc: z.lazy(() => IrcAgentConfigSchema).optional(),
+  mattermost: z.lazy(() => MattermostAgentConfigSchema).optional(),
   reasoning: ThinkLevelSchema.optional(),
   thinkLevel: ThinkLevelSchema.optional(),
   queueMode: z.enum(["queue", "interrupt"]).optional().default("queue"),
@@ -906,6 +907,74 @@ export const TelegramAgentConfigSchema = z.object({
 });
 export type TelegramAgentConfig = z.infer<typeof TelegramAgentConfigSchema>;
 
+// Mattermost. Channels are an allowlist keyed by channel ID: posts in any other
+// channel are ignored. Allowlist entries elsewhere are user IDs or usernames.
+const MattermostUrlSchema = z
+  .string()
+  .url()
+  .refine((value) => /^https?:\/\//i.test(value), {
+    message: "Mattermost url must start with http:// or https://",
+  });
+
+export const MattermostExtensionChannelConfigSchema = z.object({
+  agent: z.string().min(1),
+  requireMention: z.boolean().optional(),
+  // Once the bot has answered in a thread, later replies in that thread reach
+  // it without a mention. Off by default, like Slack's threadUnlock.
+  threadUnlock: z.boolean().optional(),
+  users: z.array(z.string()).optional(),
+});
+export type MattermostExtensionChannelConfig = z.infer<
+  typeof MattermostExtensionChannelConfigSchema
+>;
+
+export const MattermostExtensionDmConfigSchema = z.object({
+  enabled: z.boolean().optional(),
+  agent: z.string().min(1).optional(),
+  allowFrom: z.array(z.string()).optional(),
+});
+export type MattermostExtensionDmConfig = z.infer<
+  typeof MattermostExtensionDmConfigSchema
+>;
+
+const MattermostBehaviorConfigShape = {
+  // React to each accepted post with 👀, then ✅ or ❌ when the turn ends.
+  acknowledgeMessages: z.boolean().optional(),
+  // Download files attached to inbound posts and hand them to the agent.
+  attachmentsEnabled: z.boolean().optional(),
+  // Answer other bots (all, or only these user IDs). Bots must still mention.
+  allowBots: z.union([z.boolean(), z.array(z.string())]).optional(),
+};
+
+export const MattermostExtensionConfigSchema = z.object({
+  enabled: z.boolean().optional(),
+  url: MattermostUrlSchema,
+  token: SecretRefSchema,
+  channels: z
+    .record(z.string(), MattermostExtensionChannelConfigSchema)
+    .optional(),
+  dm: MattermostExtensionDmConfigSchema.optional(),
+  ...MattermostBehaviorConfigShape,
+});
+export type MattermostExtensionConfig = z.infer<
+  typeof MattermostExtensionConfigSchema
+>;
+export type MattermostComponentConfig = MattermostExtensionConfig;
+
+export const MattermostAgentConfigSchema = z.object({
+  url: MattermostUrlSchema,
+  token: SecretRefSchema,
+  channels: z
+    .record(
+      z.string(),
+      MattermostExtensionChannelConfigSchema.omit({ agent: true })
+    )
+    .optional(),
+  dm: MattermostExtensionDmConfigSchema.omit({ agent: true }).optional(),
+  ...MattermostBehaviorConfigShape,
+});
+export type MattermostAgentConfig = z.infer<typeof MattermostAgentConfigSchema>;
+
 export const NotificationChannelConfigSchema = z.object({
   discord: z.string().min(1).optional(),
   slack: z.string().min(1).optional(),
@@ -1099,6 +1168,7 @@ export const ExtensionsConfigSchema = z
     threadit: ThreaditExtensionConfigSchema.optional(),
     slack: SlackExtensionConfigSchema.optional(),
     telegram: TelegramExtensionConfigSchema.optional(),
+    mattermost: MattermostExtensionConfigSchema.optional(),
     scheduler: z
       .object({
         enabled: z.boolean().optional(),
@@ -2308,7 +2378,7 @@ export type ChannelConversationType =
   | "thread_reply";
 
 export type ChannelContextMetadata = {
-  channel: "discord" | "slack" | "telegram" | "irc";
+  channel: "discord" | "slack" | "telegram" | "irc" | "mattermost";
   place: string;
   conversationType: ChannelConversationType;
   sender: string;
@@ -2421,6 +2491,33 @@ export type IrcContext = {
   >;
 };
 
+export type MattermostContextBlock =
+  | {
+      type: "metadata";
+      channel: "mattermost";
+      place: string;
+      conversationType: ChannelConversationType;
+      sender: string;
+      conversationId?: string;
+    }
+  | { type: "channel_topic"; topic: string }
+  | { type: "channel_name"; name: string }
+  | {
+      type: "thread_starter";
+      author: string;
+      content: string;
+      timestamp: number;
+    }
+  | {
+      type: "history";
+      messages: Array<{ author: string; content: string; timestamp: number }>;
+    };
+
+export type MattermostContext = {
+  kind: "mattermost";
+  blocks: MattermostContextBlock[];
+};
+
 export type UserContext = {
   kind: "web";
   name?: string;
@@ -2431,6 +2528,7 @@ export type AgentContext = (
   | SlackContext
   | TelegramContext
   | IrcContext
+  | MattermostContext
   | UserContext
 ) & { project?: { id?: string; instructions: string; filesPath?: string; files?: string; references?: string; notes?: string; sessionHistory?: boolean } };
 
@@ -2447,7 +2545,7 @@ const ContextHistoryBlockSchema = z.object({
 
 const ContextMetadataBlockSchema = z.object({
   type: z.literal("metadata"),
-  channel: z.enum(["discord", "slack", "telegram", "irc"]),
+  channel: z.enum(["discord", "slack", "telegram", "irc", "mattermost"]),
   place: z.string(),
   conversationType: z.enum([
     "direct_message",
@@ -2507,6 +2605,10 @@ export const AgentContextSchema: z.ZodType<AgentContext> = z.discriminatedUnion(
       blocks: z.array(
         z.union([ContextMetadataBlockSchema, ContextHistoryBlockSchema])
       ),
+    }),
+    z.object({
+      kind: z.literal("mattermost"),
+      blocks: z.array(RichContextBlockSchema),
     }),
     z.object({ kind: z.literal("web"), name: z.string().optional() }),
   ]

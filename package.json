@@ -3,7 +3,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "pnpm --filter @yoplai/shared --filter @yoplai/extension-irc --filter @yoplai/extension-threadit --filter @yoplai/extension-heartbeat --filter @yoplai/extension-scheduler --filter @yoplai/extension-langfuse --filter @yoplai/extension-multi-user --filter @yoplai/extension-discord --filter @yoplai/extension-slack --filter @yoplai/extension-telegram --filter @yoplai/extension-webhooks --filter @yoplai/extension-projects --filter @yoplai/extension-board --filter @yoplai/extension-subagents --filter @yoplai/extension-orchestrator --filter @yoplai/gateway --filter @yoplai/agent-runner build",
+    "build": "pnpm --filter @yoplai/shared --filter @yoplai/extension-irc --filter @yoplai/extension-threadit --filter @yoplai/extension-heartbeat --filter @yoplai/extension-scheduler --filter @yoplai/extension-langfuse --filter @yoplai/extension-multi-user --filter @yoplai/extension-discord --filter @yoplai/extension-slack --filter @yoplai/extension-telegram --filter @yoplai/extension-mattermost --filter @yoplai/extension-webhooks --filter @yoplai/extension-projects --filter @yoplai/extension-board --filter @yoplai/extension-subagents --filter @yoplai/extension-orchestrator --filter @yoplai/gateway --filter @yoplai/agent-runner build",
     "build:web": "pnpm --filter @yoplai/web build",
     "dev": "pnpm exec tsx scripts/dev.ts",
     "dev:gateway": "pnpm --filter @yoplai/shared exec tsc --watch --preserveWatchOutput & NODE_OPTIONS='--conditions=development' YOPLAI_WEB_DEV=1 pnpm --filter @yoplai/gateway exec tsx watch --include '../../packages/shared/dist/**/*' src/cli/index.ts gateway",

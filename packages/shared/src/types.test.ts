@@ -22,6 +22,62 @@ describe("multi-user legacy config compatibility", () => {
   });
 });
 
+describe("Mattermost config schemas", () => {
+  const agent = {
+    id: "main",
+    name: "Main",
+    workspace: "~/main",
+    model: { provider: "anthropic", model: "claude" },
+  };
+
+  it("accepts a root bot with routed channels and DMs, and a per-agent bot", () => {
+    const config = GatewayConfigSchema.parse({
+      version: 2,
+      agents: [
+        {
+          ...agent,
+          mattermost: {
+            url: "https://chat.example.test",
+            token: "$env:MATTERMOST_BOT_TOKEN",
+            channels: { chan1: { requireMention: false } },
+            dm: { enabled: true, allowFrom: ["alice"] },
+          },
+        },
+      ],
+      extensions: {
+        mattermost: {
+          enabled: true,
+          url: "https://chat.example.test",
+          token: "$env:MATTERMOST_BOT_TOKEN",
+          channels: { chan1: { agent: "main", requireMention: true, threadUnlock: true } },
+          dm: { enabled: true, agent: "main" },
+          acknowledgeMessages: false,
+        },
+      },
+    });
+    expect(config.extensions?.mattermost?.channels?.chan1.agent).toBe("main");
+    expect(config.agents[0].mattermost?.dm?.allowFrom).toEqual(["alice"]);
+  });
+
+  it("rejects a non-http url and a channel without an agent", () => {
+    const base = { version: 2, agents: [agent] };
+    expect(
+      GatewayConfigSchema.safeParse({
+        ...base,
+        extensions: { mattermost: { url: "ftp://chat.example.test", token: "t" } },
+      }).success
+    ).toBe(false);
+    expect(
+      GatewayConfigSchema.safeParse({
+        ...base,
+        extensions: {
+          mattermost: { url: "https://chat.example.test", token: "t", channels: { c: {} } },
+        },
+      }).success
+    ).toBe(false);
+  });
+});
+
 describe("ScheduleSchema", () => {
   it("requires exactly one schedule kind", () => {
     expect(
@@ -395,6 +451,23 @@ describe("container IPC schemas", () => {
     expect(AgentContextSchema.safeParse({ kind: "unknown" }).success).toBe(
       false
     );
+    expect(
+      AgentContextSchema.safeParse({
+        kind: "mattermost",
+        blocks: [
+          {
+            type: "metadata",
+            channel: "mattermost",
+            place: "#support / thread root1",
+            conversationType: "thread_reply",
+            sender: "@alice",
+            conversationId: "root1",
+          },
+          { type: "channel_name", name: "support" },
+          { type: "thread_starter", author: "@bob", content: "hi", timestamp: 0 },
+        ],
+      }).success
+    ).toBe(true);
   });
 
   it("parses container input and output", () => {

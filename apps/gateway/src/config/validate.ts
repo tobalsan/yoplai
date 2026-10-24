@@ -30,6 +30,7 @@ function validateComponentAgentReferences(
   const errors: string[] = [];
   const discord = config.extensions?.discord;
   const irc = config.extensions?.irc;
+  const mattermost = config.extensions?.mattermost;
 
   for (const [channelId, route] of Object.entries(discord?.channels ?? {})) {
     if (!agentIds.has(route.agent)) {
@@ -49,6 +50,19 @@ function validateComponentAgentReferences(
     if (!agentIds.has(route.agent)) errors.push(`Component "irc" channel "${channel}" references unknown agent "${route.agent}"`);
   }
   if (irc?.dm?.agent && !agentIds.has(irc.dm.agent)) errors.push(`Component "irc" dm references unknown agent "${irc.dm.agent}"`);
+
+  for (const [channelId, route] of Object.entries(mattermost?.channels ?? {})) {
+    if (!agentIds.has(route.agent)) {
+      errors.push(
+        `Component "mattermost" channel "${channelId}" references unknown agent "${route.agent}"`
+      );
+    }
+  }
+  if (mattermost?.dm?.agent && !agentIds.has(mattermost.dm.agent)) {
+    errors.push(
+      `Component "mattermost" dm references unknown agent "${mattermost.dm.agent}"`
+    );
+  }
 
   return {
     valid: errors.length === 0,

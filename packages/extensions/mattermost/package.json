@@ -1,0 +1,27 @@
+{
+  "name": "@yoplai/extension-mattermost",
+  "version": "0.1.0",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "development": "./src/index.ts",
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "scripts": {
+    "build": "tsc"
+  },
+  "dependencies": {
+    "@yoplai/shared": "workspace:*",
+    "better-sqlite3": "^12.10.0",
+    "ws": "^8.19.0",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/ws": "^8.18.1"
+  }
+}

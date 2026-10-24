@@ -60,9 +60,23 @@ describe("startup validation", () => {
         skipped: [],
       });
       expect(
-        warnings.filter((warning) => warning.startsWith("[extensions]"))
+        warnings.flatMap((warning) => {
+          try {
+            const entry: unknown = JSON.parse(warning);
+            return entry !== null && typeof entry === "object" &&
+              "msg" in entry && typeof entry.msg === "string" &&
+              entry.msg.startsWith("[extensions]") ? [entry] : [];
+          } catch {
+            return [];
+          }
+        })
       ).toEqual([
-        '[extensions] agent "main" references unknown extension "missing"',
+        expect.objectContaining({
+          level: "warn",
+          msg: '[extensions] agent "main" references unknown extension "missing"',
+          agentId: "main",
+          extensionId: "missing",
+        }),
       ]);
     } finally {
       console.warn = originalWarn;
@@ -123,6 +137,73 @@ describe("startup validation", () => {
     await expect(validateStartupConfig(config, extensions)).rejects.toThrow(
       'references unknown agent "missing"'
     );
+  });
+
+  it("rejects unknown agents in mattermost channel and dm routes", async () => {
+    const config = GatewayConfigSchema.parse({
+      version: 2,
+      agents: [
+        {
+          id: "main",
+          name: "Main",
+          workspace: "~/agents/main",
+          model: { provider: "anthropic", model: "claude" },
+        },
+      ],
+      extensions: {
+        mattermost: {
+          url: "https://chat.example.test",
+          token: "mattermost-token",
+          channels: { chan1: { agent: "main" } },
+          dm: { agent: "ghost" },
+        },
+      },
+    });
+
+    const extensions = await loadExtensions(config);
+    await expect(validateStartupConfig(config, extensions)).rejects.toThrow(
+      'Component "mattermost" dm references unknown agent "ghost"'
+    );
+  });
+
+  it("resolves the mattermost bot token from $env:", async () => {
+    process.env.TEST_MATTERMOST_BOT_TOKEN = "mm-resolved";
+    const config = GatewayConfigSchema.parse({
+      version: 2,
+      agents: [
+        {
+          id: "main",
+          name: "Main",
+          workspace: "~/agents/main",
+          model: { provider: "anthropic", model: "claude" },
+          mattermost: {
+            url: "https://chat.example.test",
+            token: "$env:TEST_MATTERMOST_BOT_TOKEN",
+          },
+        },
+      ],
+      extensions: {
+        mattermost: {
+          url: "https://chat.example.test",
+          token: "$env:TEST_MATTERMOST_BOT_TOKEN",
+        },
+      },
+    });
+
+    try {
+      await expect(resolveStartupConfig(config)).resolves.toMatchObject({
+        agents: [
+          expect.objectContaining({
+            mattermost: expect.objectContaining({ token: "mm-resolved" }),
+          }),
+        ],
+        extensions: {
+          mattermost: expect.objectContaining({ token: "mm-resolved" }),
+        },
+      });
+    } finally {
+      delete process.env.TEST_MATTERMOST_BOT_TOKEN;
+    }
   });
 
   it("returns loaded and skipped component summary", async () => {

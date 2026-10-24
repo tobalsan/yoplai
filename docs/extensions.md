@@ -29,6 +29,7 @@ Some messaging transports retain supported per-agent compatibility config. Webho
 | `heartbeat`    | Periodic check-ins, scheduler-gated        | [Scheduling](scheduling.md)                                                                 |
 | `irc`          | IRC transport                              | [package README](../packages/extensions/irc/README.md)                                      |
 | `langfuse`     | Agent tracing and observations             | package source/config schema                                                                |
+| `mattermost`   | Mattermost channel/thread/DM transport     | [Messaging channels](channels.md#mattermost) / [package README](../packages/extensions/mattermost/README.md) |
 | `multiUser`    | Better Auth, teams, agent forks, isolation | [package README](../packages/extensions/multi-user/README.md)                               |
 | `orchestrator` | Tracker-backed autonomous workers          | [package README](../packages/extensions/orchestrator/README.md)                             |
 | `projects`     | Projects, slices, subagents, Space         | [Projects guide](projects.md) / [package README](../packages/extensions/projects/README.md) |
