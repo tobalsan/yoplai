@@ -197,4 +197,3 @@ export function fullMessagesToSimpleView(
   }
   return simple;
 }
-
