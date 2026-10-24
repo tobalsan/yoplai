@@ -356,3 +356,45 @@ describe("subscribeToRealtime", () => {
     expect(ws.sent).toContain(JSON.stringify({ type: "unsubscribe" }));
   });
 });
+
+// The wire payloads here come from the slice 1b contract, independently of the web projections.
+describe("MCP App wire delivery", () => {
+  beforeEach(() => {
+    MockWebSocket.instances = [];
+    vi.stubGlobal("WebSocket", MockWebSocket as unknown as typeof WebSocket);
+    vi.stubGlobal("window", { location: { protocol: "http:", host: "localhost:5173" }, setTimeout, clearTimeout });
+  });
+  afterEach(() => vi.unstubAllGlobals());
+
+  it.each(["direct", "queued", "background"])("preserves view data on the %s connection", (path) => {
+    const onToolCall = vi.fn();
+    const onToolResult = vi.fn();
+    const onActiveTurn = vi.fn();
+    const cleanup = path === "background"
+      ? subscribeToSession("agent", "main", { onToolCall, onToolResult, onActiveTurn })
+      : streamMessage("agent", "draw", "main", vi.fn(), vi.fn(), vi.fn(), { onToolCall, onToolResult });
+    const socket = MockWebSocket.instances[0]!;
+    socket.open();
+    if (path === "queued") socket.receive({ type: "done", meta: { queued: true } });
+    // Queued follow-up execution is delivered on the background session subscription.
+    const queuedCleanup = path === "queued" ? subscribeToSession("agent", "main", { onToolCall, onToolResult, onActiveTurn }) : undefined;
+    const delivery = path === "queued" ? MockWebSocket.instances[1]! : socket;
+    if (queuedCleanup) delivery.open();
+    delivery.receive({ type: "tool_call", id: "view-1", name: "draw", arguments: {}, view: { server: "fixture", tool: "draw", resourceUri: "ui://drawing" } });
+    delivery.receive({ type: "tool_result", id: "view-1", name: "draw", content: "drawn", view: { server: "fixture", tool: "draw", resourceUri: "ui://drawing", recordId: "saved-1" } });
+    expect(onToolCall).toHaveBeenCalledWith("view-1", "draw", {}, undefined, { server: "fixture", tool: "draw", resourceUri: "ui://drawing" });
+    expect(onToolResult).toHaveBeenCalledWith("view-1", "draw", "drawn", false, undefined, undefined, { server: "fixture", tool: "draw", resourceUri: "ui://drawing", recordId: "saved-1" });
+    queuedCleanup?.();
+    cleanup();
+  });
+
+  it("preserves active-turn call markers and result refs on realtime reconnect delivery", () => {
+    const onActiveTurn = vi.fn();
+    const cleanup = subscribeToSession("agent", "main", { onActiveTurn });
+    const socket = MockWebSocket.instances[0]!;
+    socket.open();
+    socket.receive({ type: "active_turn", agentId: "agent", sessionId: "session", userText: "draw", userTimestamp: 1, startedAt: 2, thinking: "", text: "", toolCalls: [{ id: "c", name: "draw", arguments: {}, status: "done", view: { server: "fixture", tool: "draw", resourceUri: "ui://drawing" } }], toolResults: [{ id: "c", name: "draw", content: "drawn", isError: false, view: { server: "fixture", tool: "draw", resourceUri: "ui://drawing", recordId: "saved" } }] });
+    expect(onActiveTurn.mock.calls[0]?.[0]).toMatchObject({ toolCalls: [{ view: { server: "fixture", tool: "draw", resourceUri: "ui://drawing" } }], toolResults: [{ view: { recordId: "saved" } }] });
+    cleanup();
+  });
+});
