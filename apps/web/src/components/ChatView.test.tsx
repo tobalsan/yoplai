@@ -2338,6 +2338,61 @@ describe("ChatView abort handling", () => {
   });
 
   it.each(["full", "simple"] as const)(
+    "retains streamed text nodes and collapsed activity across chunks in %s view",
+    async (mode) => {
+      routeState.view = mode;
+      const { container, dispose, callbacks, onText } = await startFullStream();
+      callbacks()?.onThinking?.("Check the inputs ");
+      await tick();
+      const activity = container.querySelector<HTMLElement>(".activity-group")!;
+      expect(activity.querySelector(".activity-group-items")).not.toBeNull();
+      activity.querySelector<HTMLButtonElement>(".activity-group-header")!.click();
+      callbacks()?.onThinking?.("and choose a result.");
+      await tick();
+      expect(container.querySelector(".activity-group")).toBe(activity);
+      expect(activity.isConnected).toBe(true);
+      expect(activity.querySelector(".activity-group-items")).toBeNull();
+
+      const textNodes = () => container.querySelectorAll<HTMLElement>(
+        mode === "full" ? ".streaming .block-text" : ".message.streaming .content"
+      );
+      onText("First answer");
+      await tick();
+      const first = textNodes()[0];
+      expect(first.textContent?.trim()).toBe("First answer");
+      onText(" grows.");
+      await tick();
+      expect(textNodes()[0]).toBe(first);
+      expect(first.isConnected).toBe(true);
+      expect(first.textContent?.trim()).toBe("First answer grows.");
+      expect(container.querySelector(".activity-group")).toBe(activity);
+      expect(activity.querySelector(".activity-group-items")).toBeNull();
+
+      callbacks()?.onToolCall?.("node-tool", "bash", { command: "pwd" });
+      await tick();
+      const toolActivity = container.querySelectorAll<HTMLElement>(".activity-group")[1];
+      expect(toolActivity.querySelector(".activity-group-items")).not.toBeNull();
+      toolActivity.querySelector<HTMLButtonElement>(".activity-group-header")!.click();
+      callbacks()?.onToolResult?.("node-tool", "bash", "/conversation", false);
+      onText("Later answer");
+      await tick();
+      const later = textNodes()[1];
+      expect(later.textContent?.trim()).toBe("Later answer");
+      onText(" also grows.");
+      await tick();
+      expect(textNodes()[1]).toBe(later);
+      expect(later.isConnected).toBe(true);
+      expect(later.textContent?.trim()).toBe("Later answer also grows.");
+      expect(textNodes()[0]).toBe(first);
+      expect(first.isConnected).toBe(true);
+      expect(container.querySelectorAll(".activity-group")[1]).toBe(toolActivity);
+      expect(toolActivity.isConnected).toBe(true);
+      expect(toolActivity.querySelector(".activity-group-items")).toBeNull();
+      dispose();
+    }
+  );
+
+  it.each(["full", "simple"] as const)(
     "re-renders streamed text chunks in %s view",
     async (mode) => {
       routeState.view = mode;
