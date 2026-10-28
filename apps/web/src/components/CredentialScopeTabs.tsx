@@ -193,6 +193,13 @@ ${STATUS_PILL_STYLES}.cred-tab:disabled .cred-tab-status { opacity: .8; }
   border: 1px solid var(--border-default); border-radius: var(--cred-radius); background: var(--bg-surface); padding: 20px;
 }
 .cred-tabs[data-active="personal"] .cred-tabs-panel { border-top-left-radius: 0; }
+@media (max-width: 768px) {
+  .cred-tabs-list { flex-direction: column; margin-bottom: 8px; }
+  .cred-tab { margin-bottom: 0; border-bottom: 1px solid transparent; border-radius: 11px; }
+  .cred-tab-label { flex-wrap: wrap; white-space: normal; }
+  .cred-tab-caption { white-space: normal; }
+  .cred-tabs[data-active="personal"] .cred-tabs-panel { border-top-left-radius: var(--cred-radius); }
+}
 @media (prefers-reduced-motion: reduce) {
   .cred-tab, .cred-tab::before, .cred-tab-icon { transition: none; }
 }

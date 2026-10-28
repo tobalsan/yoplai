@@ -100,30 +100,32 @@ export function ExtensionDetails() {
         <Show when={entry()}>
           {(ext) => (
             <>
-              <div class="ext-details-icon">
-                <Show
-                  when={ext().iconDataUri}
-                  fallback={
-                    <svg
-                      viewBox="0 0 24 24"
-                      fill="none"
-                      stroke="currentColor"
-                      stroke-width="1.6"
-                      aria-hidden="true"
-                    >
-                      <path
-                        d="M9 3.5a1.5 1.5 0 0 1 3 0V4h1.5A1.5 1.5 0 0 1 15 5.5V7h-1v2a2 2 0 1 1 0 4v2h1v1.5a1.5 1.5 0 0 1-1.5 1.5H13v-1a2 2 0 1 0-4 0v1H7.5A1.5 1.5 0 0 1 6 16.5V15h1v-2a2 2 0 1 0 0-4V7h1V5.5A1.5 1.5 0 0 1 9.5 4H9v-.5Z"
-                        stroke-linejoin="round"
-                      />
-                    </svg>
-                  }
-                >
-                  {(src) => (
-                    <img src={src()} alt="" class="ext-details-icon-img" />
-                  )}
-                </Show>
+              <div class="ext-details-heading">
+                <div class="ext-details-icon">
+                  <Show
+                    when={ext().iconDataUri}
+                    fallback={
+                      <svg
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="1.6"
+                        aria-hidden="true"
+                      >
+                        <path
+                          d="M9 3.5a1.5 1.5 0 0 1 3 0V4h1.5A1.5 1.5 0 0 1 15 5.5V7h-1v2a2 2 0 1 1 0 4v2h1v1.5a1.5 1.5 0 0 1-1.5 1.5H13v-1a2 2 0 1 0-4 0v1H7.5A1.5 1.5 0 0 1 6 16.5V15h1v-2a2 2 0 1 0 0-4V7h1V5.5A1.5 1.5 0 0 1 9.5 4H9v-.5Z"
+                          stroke-linejoin="round"
+                        />
+                      </svg>
+                    }
+                  >
+                    {(src) => (
+                      <img src={src()} alt="" class="ext-details-icon-img" />
+                    )}
+                  </Show>
+                </div>
+                <h1 class="ext-details-name">{ext().displayName}</h1>
               </div>
-              <h1 class="ext-details-name">{ext().displayName}</h1>
               <p class="ext-details-desc">{ext().description}</p>
 
               <Show when={ext().oauth}>
@@ -215,6 +217,8 @@ export function ExtensionDetails() {
 }
 
 export const EXTENSION_DETAILS_STYLES = `
+        .ext-details-heading { display: contents; }
+
         .ext-details {
           padding: 24px;
           max-width: 520px;
@@ -314,5 +318,12 @@ export const EXTENSION_DETAILS_STYLES = `
 
         .ext-details-configure:hover {
           background: var(--border-default);
+        }
+
+        @media (max-width: 768px) {
+          .ext-details { padding-top: 72px; }
+          .ext-details-heading { display: flex; align-items: center; gap: 14px; }
+          .ext-details-heading .ext-details-icon { flex: none; margin-bottom: 0; }
+          .ext-details-name { min-width: 0; overflow-wrap: anywhere; }
         }
       `;
