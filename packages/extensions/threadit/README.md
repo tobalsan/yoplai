@@ -52,7 +52,7 @@ One poller runs for each active agent with a threadit config.
 8. The final answer becomes a reply to the item message. Long answers split into several replies. The extension then adds ✅.
 9. An answer of exactly `NO_REPLY`, a silent run, or an empty answer posts nothing. It only adds ✅.
 10. A stop request from a human aborts the turn. Any activity response can carry it, and the poller checks the message every `pollIntervalMs` during a turn. If it arrives before the turn starts, the agent does not run. The extension replies `Stopped on request.` and adds ✅.
-11. A failed run posts an `error` activity (`Run failed`) and replies `I could not finish this request.` The item stays at 👀.
+11. A failed run posts an `error` activity (`Run failed`), then replies `I could not finish this request.` The item stays at 👀 and can be retried from the board once the failure reply is confirmed posted.
 12. After 10 minutes with no activity, the extension posts `Still working`.
 13. A turn that runs longer than `turnTimeoutMinutes` is aborted and fails. Abort and drain take at most 30 seconds, also on shutdown.
 14. If the run is queued behind another turn, the extension waits for the deferred result.

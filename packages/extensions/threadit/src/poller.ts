@@ -306,8 +306,8 @@ export class ThreaditPoller {
       if (this.handled.has(item.id)) continue;
       const state = sessionOf(item, this.meId)?.state ?? "";
       if (state === "working" || state === "stale") {
-        await this.handleItem(item, true);
-        if (!this.handled.has(item.id) && !this.stopped) complete = false;
+        const done = await this.handleItem(item, true);
+        if (!done && !this.stopped) complete = false;
       } else if (state === "stopping") {
         this.handled.add(item.id);
         await this.finishStopped(item);
@@ -410,6 +410,8 @@ export class ThreaditPoller {
     // The item keeps 👀, so markDone never clears this marker.
     if ((await this.replyAll(item, FAILURE_REPLY)) === "ok") {
       await this.clearMarker(item.id);
+      this.handled.delete(item.id);
+      this.retrying.delete(item.id);
     }
   }
 
@@ -445,23 +447,24 @@ export class ThreaditPoller {
 
   // ---- one item ----
 
-  private async handleItem(item: BoardMessage, resumed: boolean): Promise<void> {
+  /** False only when a transient working reaction needs another recovery attempt. */
+  private async handleItem(item: BoardMessage, resumed: boolean): Promise<boolean> {
     if (stopRequestedFor(item, this.meId)) {
       this.handled.add(item.id);
       await this.markDone(item);
-      return;
+      return true;
     }
     if (resumed && this.hasReply(item)) {
       this.handled.add(item.id);
       await this.markDone(item);
-      return;
+      return true;
     }
     if (resumed && (await this.hasMarker(item.id))) {
       this.handled.add(item.id);
       this.log("warn", "reply delivery is unconfirmed, item stays at working");
-      return;
+      return true;
     }
-    if (this.stopped) return;
+    if (this.stopped) return true;
     const reacted = await this.api.react(item.id, WORKING);
     if (!reacted.ok) {
       if (reacted.kind !== "closed") {
@@ -478,10 +481,10 @@ export class ThreaditPoller {
         this.retrying.add(item.id);
         this.recovered = false;
       }
-      return;
+      return !retryable;
     }
     this.handled.add(item.id);
-    if (this.stopped) return;
+    if (this.stopped) return true;
 
     const first = await this.postActivity(
       item,
@@ -489,24 +492,24 @@ export class ThreaditPoller {
       resumed && !this.retrying.has(item.id) ? "Resumed after restart" : "Started",
       false
     );
-    if (first.status === "closed") return;
+    if (first.status === "closed") return true;
     if (first.status === "ok" && first.stop) {
       await this.finishStopped(item);
-      return;
+      return true;
     }
 
     const context = await this.api.context(item.id);
     if (!context.ok) {
       this.log("warn", "could not read the context", context);
-      if (this.stopped) return;
+      if (this.stopped) return true;
       await this.failItem(item);
-      return;
+      return true;
     }
-    if (this.stopped) return;
+    if (this.stopped) return true;
     const prompt = buildPrompt(this.me?.username ?? "", context.data);
 
     const end = await this.runTurn(item, prompt);
-    if (this.stopped) return;
+    if (this.stopped) return true;
     switch (end.kind) {
       case "answer":
         await this.replyAndFinish(item, end.text);
@@ -526,6 +529,7 @@ export class ThreaditPoller {
       case "shutdown":
         break;
     }
+    return true;
   }
 
   // ---- one turn ----
