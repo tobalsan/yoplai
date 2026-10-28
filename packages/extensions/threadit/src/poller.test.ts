@@ -262,10 +262,77 @@ describe("ThreaditPoller", () => {
     expect(replies(board)).toEqual([]);
   });
 
+  it("runs a failed item again after a board retry in the same thread session", async () => {
+    let releaseError: () => void = () => {};
+    const errorResponse = new Promise<void>((resolve) => (releaseError = resolve));
+    let runs = 0;
+    const { board, runAgent, poller } = setup(
+      {
+        unacknowledged: [message(3)],
+        onReaction: async () => {
+          board.unacknowledged = [];
+          return undefined;
+        },
+        beforeActivity: (body) => body.kind === "error" ? errorResponse : Promise.resolve(),
+      },
+      async () => {
+        if (++runs === 1) throw new Error("first run failed");
+        return okResult("Retry answered");
+      }
+    );
+    poller.start();
+    await waitFor(() => expect(activities(board)).toContainEqual({ kind: "error", body: "Run failed" }));
+    expect(replies(board)).toEqual([]);
+    releaseError();
+    await waitFor(() => expect(replies(board)).toEqual([
+      { body: "I could not finish this request.", parent_id: 3 },
+    ]));
+    expect(reactions(board)).toEqual(["👀"]);
+
+    // Retry clears the failure reply and returns the item without an own-session reply_id.
+    board.unacknowledged = [message(3)];
+    await waitFor(() => expect(reactions(board)).toEqual(["👀", "👀", "✅"]));
+    await settle();
+    expect(runAgent).toHaveBeenCalledTimes(2);
+    for (const [params] of runAgent.mock.calls) {
+      expect(params).toMatchObject({ sessionKey: "threadit:thread-40" });
+    }
+    expect(activities(board)).toEqual([
+      { kind: "thought", body: "Started" },
+      { kind: "error", body: "Run failed" },
+      { kind: "thought", body: "Started" },
+    ]);
+    expect(replies(board)).toEqual([
+      { body: "I could not finish this request.", parent_id: 3 },
+      { body: "Retry answered", parent_id: 3 },
+    ]);
+  });
+
+  it.each([400, 500, 409])("keeps a failed item blocked when its failure reply returns HTTP %i", async (status) => {
+    const { board, runAgent, poller } = setup(
+      {
+        unacknowledged: [message(3)],
+        onReply: () => Response.json({ error: { code: "thread_closed" } }, { status }),
+      },
+      async () => { throw new Error("run failed"); }
+    );
+    poller.start();
+    await waitFor(() => expect(replies(board).length).toBeGreaterThan(0));
+    const polls = board.calls.filter((c) => c.path === "/api/attention").length;
+    await waitFor(() => expect(board.calls.filter((c) => c.path === "/api/attention").length).toBeGreaterThan(polls + 2));
+    expect(runAgent).toHaveBeenCalledTimes(1);
+    expect(replies(board)).toEqual([{ body: "I could not finish this request.", parent_id: 3 }]);
+    expect(reactions(board)).toEqual(["👀"]);
+  });
+
   it("keeps the working reaction after a failed run", async () => {
     const { board, poller } = setup({ unacknowledged: [message(3)] }, async () => {
       throw new Error("provider said secret-token");
     });
+    board.onReply = () => {
+      board.unacknowledged = []; // At 👀, the real board no longer lists the item here.
+      return Response.json({ id: 900 });
+    };
     poller.start();
     await waitFor(() => expect(replies(board)).toHaveLength(1));
     expect(replies(board)[0]).toEqual({ body: "I could not finish this request.", parent_id: 3 });
@@ -279,6 +346,10 @@ describe("ThreaditPoller", () => {
     const { board, poller } = setup({ unacknowledged: [message(3)] }, async () =>
       okResult("", { aborted: true })
     );
+    board.onReply = () => {
+      board.unacknowledged = []; // At 👀, the real board no longer lists the item here.
+      return Response.json({ id: 900 });
+    };
     poller.start();
     await waitFor(() => expect(replies(board)).toHaveLength(1));
     expect(reactions(board)).toEqual(["👀"]);
@@ -524,6 +595,10 @@ describe("ThreaditPoller", () => {
       (params) => abortable(params),
       { turnTimeoutMs: 60 }
     );
+    board.onReply = () => {
+      board.unacknowledged = []; // At 👀, the real board no longer lists the item here.
+      return Response.json({ id: 900 });
+    };
     poller.start();
     await waitFor(() => expect(replies(board)).toHaveLength(1));
     expect((runAgent.mock.calls[0]![0] as RunAgentParams).signal?.aborted).toBe(true);
@@ -551,6 +626,10 @@ describe("ThreaditPoller", () => {
       setTimeout(() => void params.onDeferredResult?.({ error: new Error("nope") }), 20);
       return { payloads: [], meta: { durationMs: 0, sessionId: "s", queued: true } };
     });
+    board.onReply = () => {
+      board.unacknowledged = []; // At 👀, the real board no longer lists the item here.
+      return Response.json({ id: 900 });
+    };
     poller.start();
     await waitFor(() => expect(replies(board)).toHaveLength(1));
     expect(replies(board)[0]!.body).toBe("I could not finish this request.");
@@ -617,6 +696,10 @@ describe("ThreaditPoller", () => {
       { turnTimeoutMs: 100 }
     );
     const began = Date.now();
+    board.onReply = () => {
+      board.unacknowledged = []; // At 👀, the real board no longer lists the item here.
+      return Response.json({ id: 900 });
+    };
     poller.start();
     await waitFor(() => expect(replies(board)).toHaveLength(1));
     expect(Date.now() - began).toBeLessThan(1000);
@@ -662,6 +745,32 @@ describe("ThreaditPoller", () => {
     await waitFor(() => expect(replies(board)).toEqual([{ body: "recovered", parent_id: 5 }]));
     expect(runAgent).toHaveBeenCalledTimes(1);
     expect(failed).toBe(true);
+  });
+
+  it("finishes startup recovery after a resumed run fails", async () => {
+    let processingLists = 0;
+    const { board, runAgent, poller } = setup(
+      {
+        processing: [message(5, { agent_sessions: [session()] })],
+        onAttention: (status) => {
+          if (status === "processing") processingLists++;
+          return undefined;
+        },
+      },
+      async () => { throw new Error("resumed run failed"); }
+    );
+    poller.start();
+    await waitFor(() => expect(replies(board)).toHaveLength(1));
+    await settle();
+    expect(runAgent).toHaveBeenCalledTimes(1);
+    expect(processingLists).toBe(1);
+    expect(activities(board)).toEqual([
+      { kind: "thought", body: "Resumed after restart" },
+      { kind: "error", body: "Run failed" },
+    ]);
+    expect(replies(board)).toEqual([{ body: "I could not finish this request.", parent_id: 5 }]);
+    expect(reactions(board)).toEqual(["👀"]);
+    expect(board.calls.filter((c) => c.path === "/api/attention").length).toBeGreaterThan(2);
   });
 
   it("retries a processing item whose first working reaction fails", async () => {
