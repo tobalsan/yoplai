@@ -307,6 +307,13 @@ export function McpServerDetails() {
         .mcp-label-form button { justify-self: start; }
         .mcp-config-editor textarea { width: 100%; min-height: 240px; box-sizing: border-box; padding: 10px; border: 1px solid var(--border-default); border-radius: 8px; background: var(--bg-base); color: var(--text-primary); font: 12px/1.5 ui-monospace, monospace; }
         .mcp-config-editor p { color: var(--text-secondary); font-size: 13px; margin: 8px 0; }
+        @media (max-width: 768px) {
+          .mcp-details-head { display: grid; grid-template-columns: 56px minmax(0, 1fr); gap: 12px 14px; }
+          .mcp-details-head > div:not(.mcp-details-remove) { display: contents; }
+          .mcp-details-head .ext-details-desc, .mcp-details-remove { grid-column: 1 / -1; }
+          .mcp-details-remove { margin-left: 0; max-width: none; text-align: left; }
+          .mcp-details-remove-actions { justify-content: flex-start; }
+        }
       `}</style>
     </>
   );
