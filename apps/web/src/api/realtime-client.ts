@@ -1,4 +1,4 @@
-import type { LeadSessionChangedEvent, SubagentRunStatus, WebCompletion } from "@yoplai/shared/types";
+import type { SubagentRunStatus, WebCompletion } from "@yoplai/shared/types";
 import { getWsUrl, type WsStreamEvent } from "./ws";
 
 export type RealtimeInterest =
@@ -26,7 +26,6 @@ export type RealtimeEvent =
       status: SubagentRunStatus;
     }
   | { type: `orchestrator.${string}`; [key: string]: unknown }
-  | LeadSessionChangedEvent
   | WsStreamEvent;
 
 export type SubscribeToRealtimeOptions = {
@@ -68,7 +67,7 @@ function shouldDeliver(
   if (event.type === "file_changed" || event.type === "agent_changed") {
     return matchesProject(interests, event);
   }
-  if (event.type === "subagent_changed" || event.type === "lead_session_changed") {
+  if (event.type === "subagent_changed") {
     return hasInterest(interests, "subagents");
   }
   if (event.type.startsWith("orchestrator.")) {

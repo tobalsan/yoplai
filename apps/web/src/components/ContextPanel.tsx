@@ -10,22 +10,19 @@ import {
 } from "solid-js";
 import { A, useLocation } from "@solidjs/router";
 import { ActivityFeed } from "./ActivityFeed";
-import { AgentChat } from "./AgentChat";
 import { AgentDirectory } from "./AgentDirectory";
-import { fetchAgents, fetchAllSubagents, fetchProjects } from "../api";
+import { fetchProjects } from "../api";
 import { isExtensionEnabled } from "../lib/capabilities";
 import { readMigratedLocal } from "../lib/local-storage";
 
 type ContextPanelProps = {
   collapsed: Accessor<boolean>;
   onToggleCollapse: () => void;
-  selectedAgent: Accessor<string | null>;
   onSelectAgent: (id: string) => void;
-  onClearSelection: () => void;
   onOpenProject: (id: string) => void;
 };
 
-type PanelMode = "agents" | "feed" | "chat";
+type PanelMode = "agents" | "feed";
 type RecentProjectView = {
   id: string;
   viewedAt: number;
@@ -101,8 +98,6 @@ function writeRecentProjectViews(items: RecentProjectView[]): void {
 export function ContextPanel(props: ContextPanelProps) {
   const location = useLocation();
   const [mode, setMode] = createSignal<PanelMode>("agents");
-  const [agents] = createResource(fetchAgents);
-  const [subagents] = createResource(fetchAllSubagents);
   const [projects] = createResource(
     () => isExtensionEnabled("projects"),
     async (enabled) => (enabled ? fetchProjects() : [])
@@ -111,74 +106,12 @@ export function ContextPanel(props: ContextPanelProps) {
     readRecentProjectViews()
   );
   const storageKey = "yoplai:context-panel:mode";
-  let lastSelectedAgent: string | null | undefined;
   const projectTitleById = createMemo(() => {
     const map = new Map<string, string>();
     for (const project of projects() ?? []) {
       map.set(project.id, project.title);
     }
     return map;
-  });
-
-  const agentType = createMemo(() => {
-    const selected = props.selectedAgent();
-    if (!selected) return null;
-    if (selected.startsWith("PRO-")) return "subagent" as const;
-    return "lead" as const;
-  });
-
-  const subagentInfo = createMemo(() => {
-    const selected = props.selectedAgent();
-    if (!selected || !selected.startsWith("PRO-")) return undefined;
-    const [projectId, token] = selected.split("/");
-    if (!projectId || !token) return undefined;
-    const items = subagents()?.items ?? [];
-    const match = items.find(
-      (item) =>
-        item.projectId === projectId &&
-        (item.slug === token || item.cli === token)
-    );
-    if (!match) {
-      const projectItems = items.filter((item) => item.projectId === projectId);
-      if (projectItems.length === 1) {
-        return {
-          projectId,
-          slug: projectItems[0].slug,
-          cli: projectItems[0].cli,
-          status: projectItems[0].status,
-        };
-      }
-    }
-    return {
-      projectId,
-      slug: match?.slug ?? token,
-      cli: match?.cli,
-      status: match?.status,
-    };
-  });
-
-  const agentName = createMemo(() => {
-    const selected = props.selectedAgent();
-    if (!selected) return null;
-    if (selected.startsWith("PRO-")) {
-      const [projectId, token] = selected.split("/");
-      const match = subagents()?.items.find(
-        (item) =>
-          item.projectId === projectId &&
-          (item.slug === token || item.cli === token)
-      );
-      return `${projectId}/${match?.cli ?? token}`;
-    }
-    const match = agents()?.find((agent) => agent.id === selected);
-    return match?.name ?? selected;
-  });
-
-  createEffect(() => {
-    const selected = props.selectedAgent();
-    if (selected && selected !== lastSelectedAgent) {
-      setMode("chat");
-    }
-    lastSelectedAgent = selected;
   });
 
   createEffect(() => {
@@ -219,9 +152,7 @@ export function ContextPanel(props: ContextPanelProps) {
 
   onMount(() => {
     const saved = readMigratedLocal(storageKey);
-    if (saved === "agents" || saved === "feed" || saved === "chat") {
-      setMode(saved);
-    }
+    setMode(saved === "feed" ? "feed" : "agents");
   });
 
   createEffect(() => {
@@ -233,11 +164,6 @@ export function ContextPanel(props: ContextPanelProps) {
       props.onToggleCollapse();
     }
     setMode(nextMode);
-  };
-
-  const handleBack = () => {
-    props.onClearSelection();
-    setMode("agents");
   };
 
   return (
@@ -261,13 +187,6 @@ export function ContextPanel(props: ContextPanelProps) {
             </button>
             <button
               type="button"
-              classList={{ active: mode() === "chat" }}
-              onClick={() => setMode("chat")}
-            >
-              Chat
-            </button>
-            <button
-              type="button"
               classList={{ active: mode() === "feed" }}
               onClick={() => setMode("feed")}
             >
@@ -287,14 +206,6 @@ export function ContextPanel(props: ContextPanelProps) {
           </button>
           <button
             type="button"
-            classList={{ active: mode() === "chat" }}
-            onClick={() => expandAndShow("chat")}
-            title="Chat"
-          >
-            💬
-          </button>
-          <button
-            type="button"
             classList={{ active: mode() === "feed" }}
             onClick={() => expandAndShow("feed")}
             title="Activity Feed"
@@ -310,7 +221,7 @@ export function ContextPanel(props: ContextPanelProps) {
             aria-hidden={mode() !== "agents"}
           >
             <AgentDirectory
-              selectedAgent={props.selectedAgent}
+              selectedAgent={() => null}
               onSelectAgent={props.onSelectAgent}
               onOpenProject={props.onOpenProject}
             />
@@ -318,16 +229,6 @@ export function ContextPanel(props: ContextPanelProps) {
           <Show when={mode() === "feed"}>
             <ActivityFeed
               onSelectAgent={props.onSelectAgent}
-              onOpenProject={props.onOpenProject}
-            />
-          </Show>
-          <Show when={mode() === "chat"}>
-            <AgentChat
-              agentId={agentType() === "lead" ? props.selectedAgent() : null}
-              agentName={agentName()}
-              agentType={agentType()}
-              subagentInfo={subagentInfo()}
-              onBack={handleBack}
               onOpenProject={props.onOpenProject}
             />
           </Show>

@@ -1,13 +1,7 @@
 import { z } from "zod";
 import { RunFailureKindSchema, type RunFailureKind } from "./run-failure.js";
-import type {
-  LeadSession,
-  LeadSessionChangedEvent,
-} from "./lead-sessions/types.js";
 import type { Hono } from "hono";
 import type { CredentialScope } from "./oauth/types.js";
-
-export type { LeadSession, LeadSessionChangedEvent };
 
 // Think levels
 export const ThinkLevelSchema = z.enum([
@@ -1101,13 +1095,6 @@ export type SubagentsExtensionConfig = z.infer<
   typeof SubagentsExtensionConfigSchema
 >;
 
-export const SessionsExtensionConfigSchema = z.object({
-  autoTitleModel: z.string().optional(),
-});
-export type SessionsExtensionConfig = z.infer<
-  typeof SessionsExtensionConfigSchema
->;
-
 export const OrchestratorExtensionConfigSchema = z.object({
   enabled: z.boolean().optional(),
   projects: z.array(z.string()).optional().default([]),
@@ -1179,7 +1166,6 @@ export const ExtensionsConfigSchema = z
     projects: ProjectsExtensionConfigSchema.optional(),
     orchestrator: OrchestratorExtensionConfigSchema.optional(),
     subagents: SubagentsExtensionConfigSchema.optional(),
-    sessions: SessionsExtensionConfigSchema.optional(),
     langfuse: LangfuseExtensionConfigSchema.optional(),
     multiUser: MultiUserConfigSchema.optional(),
     board: z
@@ -1260,7 +1246,6 @@ const GatewayCommonFields = {
       icon: z.string().optional(),
     })
     .optional(),
-  agentFab: z.boolean().optional().default(false),
   enableCronMonitoring: z.boolean().optional(),
   canvas: z
     .object({
@@ -1846,7 +1831,6 @@ export const CapabilitiesResponseSchema = z.object({
     .object({ google: z.boolean(), emailAndPassword: z.boolean() })
     .optional(),
   forkedAgents: z.boolean().optional().default(false),
-  agentFab: z.boolean(),
   enableCronMonitoring: z.boolean().optional(),
   home: z.string().optional(),
   user: CapabilitiesUserSchema.optional(),
@@ -2249,7 +2233,6 @@ export type WsServerMessage =
   | WsFileChangedEvent
   | WsAgentChangedEvent
   | WsSubagentChangedEvent
-  | LeadSessionChangedEvent
   | WsActiveTurnSnapshot;
 
 // History types

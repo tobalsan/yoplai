@@ -39,26 +39,4 @@ describe("session auto-title config", () => {
       ).toBe(false);
     }
   });
-
-  it("accepts extensions.sessions.autoTitleModel", () => {
-    const config = GatewayConfigSchema.parse({
-      agents: [agent("pom")],
-      extensions: {
-        sessions: { autoTitleModel: "anthropic/claude-3-5-haiku" },
-      },
-    });
-
-    expect(config.extensions?.sessions?.autoTitleModel).toBe(
-      "anthropic/claude-3-5-haiku"
-    );
-  });
-
-  it("rejects non-string autoTitleModel values", () => {
-    const result = GatewayConfigSchema.safeParse({
-      agents: [agent("pom")],
-      extensions: { sessions: { autoTitleModel: 123 } },
-    });
-
-    expect(result.success).toBe(false);
-  });
 });

@@ -24,7 +24,6 @@ import {
   createProject,
   validateProjectRepo,
   fetchAgents,
-  fetchAllSubagents,
   fetchFullHistory,
   fetchSubagents,
   fetchSubagentLogs,
@@ -48,11 +47,9 @@ import type {
   ContentBlock,
   SubagentListItem,
   SubagentLogEvent,
-  SubagentStatus,
 } from "../api/types";
 import { AgentSidebar } from "./AgentSidebar";
 import { ContextPanel } from "./ContextPanel";
-import { AgentChat } from "./AgentChat";
 import { formatCreatedRelative, formatRunRelative } from "../lib/format";
 import { extractBlockText } from "../lib/history";
 import { renderMarkdown as renderMarkdownHtml } from "../lib/markdown";
@@ -1057,7 +1054,6 @@ export function ProjectsBoard(
     return area?.title ?? areaId;
   });
   const [agents] = createResource(fetchAgents);
-  const [globalSubagents] = createResource(fetchAllSubagents);
   const [detail, { refetch: refetchDetail }] = createResource(
     () => activeProjectId(),
     async (id) => (id ? fetchProject(id) : null)
@@ -1145,12 +1141,8 @@ export function ProjectsBoard(
   >(null);
   const [dragOverColumn, setDragOverColumn] = createSignal<string | null>(null);
   const [filterText, setFilterText] = createSignal("");
-  const [selectedAgent, setSelectedAgent] = createSignal<string | null>(null);
   const [sidebarCollapsed, setSidebarCollapsed] = createSignal(false);
   const [isMobile, setIsMobile] = createSignal(false);
-  const [mobileOverlay, setMobileOverlay] = createSignal<"chat" | null>(null);
-  const selectedAgentStorageKey = "yoplai:context-panel:selected-agent";
-  const legacySelectedAgentStorageKey = "aihub:context-panel:selected-agent";
 
   const matchingAreas = createMemo(() => {
     const query = createArea().trim().toLowerCase();
@@ -1203,19 +1195,6 @@ export function ProjectsBoard(
   let savedRepo = "";
   let repoStatusTimer: number | undefined;
   let wasProjectRealtimeSuspended = props.suspendProjectRealtime ?? false;
-
-  onMount(() => {
-    const saved = localStorage.getItem(selectedAgentStorageKey);
-    if (saved) {
-      setSelectedAgent(saved);
-      return;
-    }
-    const legacy = localStorage.getItem(legacySelectedAgentStorageKey);
-    if (legacy) {
-      localStorage.setItem(selectedAgentStorageKey, legacy);
-      setSelectedAgent(legacy);
-    }
-  });
 
   onMount(() => {
     try {
@@ -1282,15 +1261,6 @@ export function ProjectsBoard(
     wasProjectRealtimeSuspended = suspended;
   });
 
-  createEffect(() => {
-    const value = selectedAgent();
-    if (value) {
-      localStorage.setItem(selectedAgentStorageKey, value);
-    } else {
-      localStorage.removeItem(selectedAgentStorageKey);
-    }
-  });
-
   createEffect(
     on(
       isMobile,
@@ -1300,35 +1270,10 @@ export function ProjectsBoard(
           setRightPanelCollapsedPersistent(true);
           return;
         }
-        if (mobileOverlay()) setMobileOverlay(null);
       },
       { defer: true }
     )
   );
-
-  createEffect(() => {
-    const value = selectedAgent();
-    if (!value) return;
-    if (value.startsWith("PRO-")) {
-      const items = subagents() ?? [];
-      if (items.length === 0) return;
-      const [projectId, token] = value.split("/");
-      const activeId = activeProjectId();
-      if (activeId && projectId !== activeId) {
-        setSelectedAgent(null);
-        return;
-      }
-      const exists = items.some(
-        (item) => item.slug === token || item.cli === token
-      );
-      if (!exists) setSelectedAgent(null);
-      return;
-    }
-    const list = agents() ?? [];
-    if (list.length === 0) return;
-    const exists = list.some((agent) => agent.id === value);
-    if (!exists) setSelectedAgent(null);
-  });
 
   const runAgentOptions = createMemo(() => {
     // Only show CLI agents (not lead agents) since UI v2
@@ -1344,65 +1289,6 @@ export function ProjectsBoard(
     if (!detailRepo()) return false;
     if (detailRunMode() !== "main-run" && !detailSlug().trim()) return false;
     return true;
-  });
-
-  const agentType = createMemo(() => {
-    const selected = selectedAgent();
-    if (!selected) return null;
-    if (selected.startsWith("PRO-")) return "subagent" as const;
-    return "lead" as const;
-  });
-
-  const subagentInfo = createMemo(() => {
-    const selected = selectedAgent();
-    if (!selected || !selected.startsWith("PRO-")) return undefined;
-    const [projectId, token] = selected.split("/");
-    if (!projectId || !token) return undefined;
-    const items = globalSubagents()?.items ?? [];
-    const match = items.find(
-      (item) =>
-        item.projectId === projectId &&
-        (item.slug === token || item.cli === token)
-    );
-    if (!match) {
-      const projectItems = items.filter((item) => item.projectId === projectId);
-      if (projectItems.length === 1) {
-        return {
-          projectId,
-          slug: projectItems[0].slug,
-          cli: projectItems[0].cli,
-          runMode: projectItems[0].runMode as
-            | "main-run"
-            | "worktree"
-            | "clone"
-            | undefined,
-          status: projectItems[0].status as SubagentStatus,
-        };
-      }
-    }
-    return {
-      projectId,
-      slug: match?.slug ?? token,
-      cli: match?.cli,
-      runMode: match?.runMode as "main-run" | "worktree" | "clone" | undefined,
-      status: (match?.status ?? "idle") as SubagentStatus,
-    };
-  });
-
-  const agentName = createMemo(() => {
-    const selected = selectedAgent();
-    if (!selected) return null;
-    if (selected.startsWith("PRO-")) {
-      const [projectId, token] = selected.split("/");
-      const match = globalSubagents()?.items.find(
-        (item) =>
-          item.projectId === projectId &&
-          (item.slug === token || item.cli === token)
-      );
-      return `${projectId}/${match?.cli ?? token}`;
-    }
-    const match = agents()?.find((agent) => agent.id === selected);
-    return match?.name ?? selected;
   });
 
   const isMonitoringHidden = createMemo(() => {
@@ -1636,17 +1522,6 @@ export function ProjectsBoard(
         e.preventDefault();
         closeDetail();
       }
-    };
-    window.addEventListener("keydown", handler);
-    onCleanup(() => window.removeEventListener("keydown", handler));
-  });
-
-  createEffect(() => {
-    const handler = (e: KeyboardEvent) => {
-      if (e.key !== "Escape") return;
-      if (!mobileOverlay()) return;
-      e.preventDefault();
-      setMobileOverlay(null);
     };
     window.addEventListener("keydown", handler);
     onCleanup(() => window.removeEventListener("keydown", handler));
@@ -2119,10 +1994,12 @@ export function ProjectsBoard(
   };
 
   const handleSelectAgent = (id: string) => {
-    setSelectedAgent(id);
-    if (isMobile()) {
-      setMobileOverlay("chat");
+    if ((agents() ?? []).some((agent) => agent.id === id)) {
+      navigate(`/chat/${encodeURIComponent(id)}`);
+      return;
     }
+    const [projectId, runSlug] = id.split("/");
+    if (projectId.startsWith("PRO-") && runSlug) openDetail(projectId);
   };
 
   const openDetail = (id: string) => {
@@ -2139,10 +2016,6 @@ export function ProjectsBoard(
 
   const closeDetail = () => {
     setSearchParams({ project: undefined });
-  };
-
-  const closeMobileOverlay = () => {
-    setMobileOverlay(null);
   };
 
   const openCreateModal = () => {
@@ -6278,24 +6151,6 @@ export function ProjectsBoard(
           }
         }
 
-.mobile-overlay {
-          position: fixed;
-          inset: 0;
-          z-index: 900;
-          background: var(--bg-inset);
-          display: flex;
-          flex-direction: column;
-        }
-
-        .mobile-overlay-panel {
-          flex: 1;
-          display: flex;
-          flex-direction: column;
-          background: var(--bg-inset);
-          animation: overlay-in 0.2s ease;
-          min-height: 0;
-        }
-
         @media (max-width: 768px) {
           .app-layout {
             display: block;
@@ -6372,29 +6227,9 @@ export function ProjectsBoard(
       <ContextPanel
         collapsed={rightPanelCollapsed}
         onToggleCollapse={toggleRightPanelCollapsed}
-        selectedAgent={selectedAgent}
         onSelectAgent={handleSelectAgent}
-        onClearSelection={() => {
-          setSelectedAgent(null);
-          if (isMobile()) setMobileOverlay(null);
-        }}
         onOpenProject={openDetail}
       />
-      <Show when={isMobile() && mobileOverlay() === "chat"}>
-        <div class="mobile-overlay" role="dialog" aria-modal="true">
-          <div class="mobile-overlay-panel">
-            <AgentChat
-              agentId={agentType() === "lead" ? selectedAgent() : null}
-              agentName={agentName()}
-              agentType={agentType()}
-              subagentInfo={subagentInfo()}
-              onBack={closeMobileOverlay}
-              onOpenProject={openDetail}
-              fullscreen
-            />
-          </div>
-        </div>
-      </Show>
     </div>
   );
 }

@@ -7,9 +7,6 @@ import { AgentRunChatPanel } from "./AgentRunChatPanel";
 import {
   archiveRuntimeSubagent,
   deleteRuntimeSubagent,
-  fetchAgents,
-  fetchLeadSessionTranscript,
-  fetchLeadSessions,
   fetchRuntimeSubagentLogs,
   fetchRuntimeSubagents,
   interruptRuntimeSubagent,
@@ -18,37 +15,17 @@ import {
 } from "../api";
 
 vi.mock("../api", () => ({
-  fetchAgents: vi.fn(async () => [
-    {
-      id: "pom",
-      name: "Pom",
-      model: { provider: "anthropic", model: "claude" },
-      isDefaultProjectManager: true,
-    },
-  ]),
-  selectDefaultProjectManagerAgent: vi.fn((agents) => agents[0]),
-  fetchLeadSessions: vi.fn(async () => ({ items: [] })),
-  createLeadSession: vi.fn(),
-  patchLeadSession: vi.fn(),
-  deleteLeadSession: vi.fn(),
-  fetchLeadSessionTranscript: vi.fn(async () => ({ messages: [] })),
-  sendLeadSessionMessage: vi.fn(),
   fetchRuntimeSubagents: vi.fn(),
   fetchRuntimeSubagentLogs: vi.fn(),
   resumeRuntimeSubagent: vi.fn(),
   interruptRuntimeSubagent: vi.fn(async () => ({ ok: true, data: {} })),
-  postAbort: vi.fn(async () => {}),
   archiveRuntimeSubagent: vi.fn(async () => ({ ok: true, data: {} })),
   deleteRuntimeSubagent: vi.fn(async () => ({ ok: true })),
   subscribeToFileChanges: vi.fn(() => () => {}),
   subscribeToSubagentChanges: vi.fn(() => () => {}),
-  subscribeToLeadSessionChanges: vi.fn(() => () => {}),
   uploadFiles: vi.fn(async () => []),
 }));
 
-const fetchAgentsMock = vi.mocked(fetchAgents);
-const fetchLeadSessionsMock = vi.mocked(fetchLeadSessions);
-const fetchLeadTranscriptMock = vi.mocked(fetchLeadSessionTranscript);
 const fetchRunsMock = vi.mocked(fetchRuntimeSubagents);
 const fetchLogsMock = vi.mocked(fetchRuntimeSubagentLogs);
 const resumeMock = vi.mocked(resumeRuntimeSubagent);
@@ -83,16 +60,6 @@ beforeEach(() => {
     new Date("2026-05-13T10:05:00Z").getTime()
   );
   vi.spyOn(window, "confirm").mockReturnValue(true);
-  fetchAgentsMock.mockResolvedValue([
-    {
-      id: "pom",
-      name: "Pom",
-      model: { provider: "anthropic", model: "claude" },
-      isDefaultProjectManager: true,
-    },
-  ]);
-  fetchLeadSessionsMock.mockResolvedValue({ items: [] });
-  fetchLeadTranscriptMock.mockResolvedValue({ messages: [] });
   container = document.createElement("div");
   document.body.appendChild(container);
 });
