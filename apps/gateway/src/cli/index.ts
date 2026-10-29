@@ -1,6 +1,11 @@
 #!/usr/bin/env node
 import { Command } from "commander";
-import { spawn, ChildProcess, execSync } from "node:child_process";
+import {
+  spawn,
+  ChildProcess,
+  execSync,
+  execFileSync,
+} from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -221,7 +226,176 @@ export function resolveUiHost(bind?: string, tailscaleServe = false): string {
   return "127.0.0.1";
 }
 
+const WEB_START_WINDOW_MS = 5000;
+const stoppedWebProcesses = new WeakSet<ChildProcess>();
+
+function inspectWebProcess(command: string, args: string[]): string {
+  return execFileSync(command, args, {
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"],
+    timeout: 1000,
+  }).trim();
+}
+
+function webPortListeners(port: number): number[] {
+  let output: string;
+  try {
+    output = inspectWebProcess("lsof", [
+      "-nP",
+      `-iTCP:${port}`,
+      "-sTCP:LISTEN",
+      "-t",
+    ]);
+  } catch (error) {
+    // lsof exits 1 with no output when no socket matches.
+    const failure = error as {
+      status?: number;
+      stdout?: string;
+      stderr?: string;
+    };
+    if (
+      failure.status === 1 &&
+      !String(failure.stdout ?? "").trim() &&
+      !String(failure.stderr ?? "").trim()
+    )
+      return [];
+    throw error;
+  }
+  return [...new Set(output.split(/\s+/).filter(Boolean).map(Number))];
+}
+
+async function reclaimWebPort(
+  port: number,
+  monorepoRoot: string
+): Promise<boolean> {
+  let reclaiming = false;
+  try {
+    const canonicalRoot = fs.realpathSync(monorepoRoot);
+    const listeners = webPortListeners(port);
+    if (!listeners.length) return true;
+    const ownGroup = Number(
+      inspectWebProcess("ps", ["-p", String(process.pid), "-o", "pgid="])
+    );
+    const groups = new Set<number>();
+    for (const pid of listeners) {
+      const command = inspectWebProcess("ps", [
+        "-p",
+        String(pid),
+        "-o",
+        "command=",
+      ]);
+      const cwd = inspectWebProcess("lsof", [
+        "-a",
+        "-p",
+        String(pid),
+        "-d",
+        "cwd",
+        "-Fn",
+      ])
+        .split("\n")
+        .find((line) => line.startsWith("n"))
+        ?.slice(1);
+      const insideRepo = (candidate: string) => {
+        let resolved: string;
+        try {
+          resolved = fs.realpathSync(candidate);
+        } catch {
+          return false;
+        }
+        const relative = path.relative(canonicalRoot, resolved);
+        return (
+          relative === "" ||
+          (!relative.startsWith(`..${path.sep}`) &&
+            relative !== ".." &&
+            !path.isAbsolute(relative))
+        );
+      };
+      const commandPaths = command.match(/"[^"]*"|'[^']*'|[^\s"']+/g) ?? [];
+      const sameRepo =
+        (cwd && insideRepo(cwd)) ||
+        commandPaths.some((token) => {
+          const candidate = token.replace(/^["']|["']$/g, "");
+          return path.isAbsolute(candidate) && insideRepo(candidate);
+        });
+      const pgid = Number(
+        inspectWebProcess("ps", ["-p", String(pid), "-o", "pgid="])
+      );
+      if (
+        !/\bvite\b/.test(command) ||
+        !/\bpreview\b/.test(command) ||
+        !sameRepo ||
+        !Number.isSafeInteger(pgid) ||
+        pgid <= 1 ||
+        !Number.isSafeInteger(ownGroup) ||
+        ownGroup <= 1 ||
+        pgid === ownGroup
+      ) {
+        logError(
+          `[gateway] web UI port ${port} is held by pid ${pid}; skipping web UI`,
+          new Error("Port listener is not a safe same-repo preview"),
+          { port, pid }
+        );
+        return false;
+      }
+      groups.add(pgid);
+    }
+    reclaiming = true;
+    for (const signal of ["SIGTERM", "SIGKILL"] as const) {
+      for (const pgid of groups) {
+        try {
+          process.kill(-pgid, signal);
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error;
+        }
+      }
+      const deadline = Date.now() + WEB_START_WINDOW_MS;
+      let current = webPortListeners(port);
+      while (current.length) {
+        if (Date.now() >= deadline) break;
+        await new Promise((resolve) => setTimeout(resolve, 100));
+        current = webPortListeners(port);
+      }
+      if (!current.length) return true;
+      if (
+        signal === "SIGTERM" &&
+        current.some(
+          (pid) =>
+            !listeners.includes(pid) ||
+            !groups.has(
+              Number(
+                inspectWebProcess("ps", ["-p", String(pid), "-o", "pgid="])
+              )
+            )
+        )
+      ) {
+        logError(
+          "[gateway] web UI port owner changed; skipping web UI",
+          new Error("Port listener changed during shutdown"),
+          { port, pid: current[0] }
+        );
+        return false;
+      }
+    }
+    logError(
+      "[gateway] web UI port did not become free",
+      new Error("Timed out waiting for preview shutdown"),
+      { port }
+    );
+    return false;
+  } catch (error) {
+    logError(
+      reclaiming
+        ? "[gateway] failed to reclaim web UI port"
+        : "[gateway] failed to inspect web UI port",
+      error,
+      { port }
+    );
+    return !reclaiming;
+  }
+}
+
 export function stopWebUIProcess(child: ChildProcess): void {
+  stoppedWebProcesses.add(child);
   if (process.platform !== "win32" && child.pid) {
     // pnpm launches Vite as a descendant; kill its process group as well.
     try {
@@ -244,10 +418,10 @@ function getApiBaseUrl(): string {
   return `http://${host}:${port}`;
 }
 
-export function startWebUI(
+export async function startWebUI(
   uiConfig: UiConfig,
   gatewayPort: number
-): ChildProcess | null {
+): Promise<ChildProcess | null> {
   if (readEnv("SKIP_WEB")) return null;
 
   const port = uiConfig.port ?? 3000;
@@ -259,6 +433,13 @@ export function startWebUI(
   // Get monorepo root (gateway is at apps/gateway/dist/cli or apps/gateway/src/cli)
   const gatewayRoot = path.resolve(__dirname, "../..");
   const monorepoRoot = path.resolve(gatewayRoot, "../..");
+
+  if (
+    !useDevServer &&
+    process.platform !== "win32" &&
+    !(await reclaimWebPort(port, monorepoRoot))
+  )
+    return null;
 
   // Use vite dev for hot reload, vite preview for production-like serving
   const viteCmd = useDevServer ? "dev" : "preview";
@@ -280,6 +461,23 @@ export function startWebUI(
     env: { ...process.env, YOPLAI_SKIP_WEB: "1" },
     ...(process.platform !== "win32" ? { detached: true } : {}),
   });
+
+  if (!useDevServer) {
+    const startedAt = Date.now();
+    child.once("exit", (exitCode, signal) => {
+      if (
+        !stoppedWebProcesses.has(child) &&
+        Date.now() - startedAt < WEB_START_WINDOW_MS &&
+        (exitCode !== 0 || signal)
+      ) {
+        logError(
+          "[gateway] web UI exited early",
+          new Error(`Preview exited with ${signal ?? exitCode}`),
+          { port, exitCode }
+        );
+      }
+    });
+  }
 
   let tailscaleReady = false;
   if (useTailscaleServe) {
@@ -356,7 +554,7 @@ const gatewayCmd = program
       // Start web UI if enabled (default: true) and not in dev mode
       // In dev mode, web UI is started by scripts/dev.ts with proper port coordination
       if (uiEnabled && !opts.dev) {
-        webProcess = startWebUI(config.ui ?? {}, actualPort);
+        webProcess = await startWebUI(config.ui ?? {}, actualPort);
       }
 
       if (opts.dev) {

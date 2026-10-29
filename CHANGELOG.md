@@ -32,6 +32,7 @@ Breaking changes are marked **⚠ BREAKING**.
 - Pause sidebar chat and project refreshes while the tab is hidden, and refresh both lists when it becomes visible or focused again.
 - Reduce gateway log noise: log agent env key names once per content change, emit one access completion line, and quiet fast successful GETs for chat projects, skills and static assets while retaining errors, redirects and slow requests.
 - Emit structured scheduler and channel failures with job/session context, preserve full scheduler diagnostics on disk, and classify upstream tool 4xx and explicitly marked input errors as warnings.
+- Gateway restarts reclaim stale same-repo Vite previews, preserve foreign UI port listeners, and report early web UI exits with structured startup errors.
 
 ### Added
 
