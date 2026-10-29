@@ -18,6 +18,7 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Fixed
 
+- Guard gateway tool-call cleanup against retained abort listeners and timers after repeated successful calls.
 - Gateway access log redacts OAuth codes, state and other secret query parameters.
 - Keep queued chat tool activity in its current group without duplicate legacy tool pills.
 - Slack acknowledges queued messages once per conversation/run with the running task, elapsed time and `!stop` hint, then uses hourglass reactions for further messages; proactive DM replies omit the unavailable cancel command.
