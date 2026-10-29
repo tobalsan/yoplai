@@ -31,7 +31,7 @@ function isPollingOrHealthPath(path: string): boolean {
 export function accessLogger(): MiddlewareHandler {
   const normalLogger = logger((message) => {
     if (message.startsWith("<-- ")) return;
-    const safeMessage = stripAnsi(message).replace(
+    const safeMessage = stripAnsi(message).replace(/\/(sandbox|content)\/[^/?\s]+(?:\?[^\s]*)?/g, "/$1/[redacted]").replace(
       /\/internal\/dashboards\/[^/?\s]+\/html\?[^\s]*/g,
       (target) => {
         const url = new URL(target, "http://gateway");

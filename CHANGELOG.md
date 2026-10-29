@@ -15,6 +15,7 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Added
 
+- Capture MCP Apps results for replay, expose owner-scoped view/RPC routes and an isolated view listener configured by `apps.origin`/`apps.port`; app-only tools stay out of capability discovery. Web chat remains text-only until the inline view host ships.
 - Mattermost bot channel with threaded conversations, direct messages, files, proactive tools and scheduler delivery.
 - Slack downloads full Markdown, text, CSV, JSON and code snippets as attachments, and accepts PowerPoint files. Web and gateway uploads now also accept JSON, legacy PowerPoint and `.markdown` files.
 - Add the `reflect` agent option. It adds a self-improvement prompt so the agent saves lessons to skills and `memory.md` in the same turn. Off by default.

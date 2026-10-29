@@ -167,7 +167,7 @@ async function dispatchInternalTool(
   userId?: string,
   emitProgress?: ContainerTokenContext["emitProgress"],
   signal?: AbortSignal,
-  identity?: Pick<ContainerTokenContext, "sessionOwnerId" | "requesterId" | "conversationFiles" | "actorUserId" | "actorKind">
+  identity?: Pick<ContainerTokenContext, "sessionOwnerId" | "requesterId" | "conversationFiles" | "actorUserId" | "actorKind"> & { toolCallId?: string }
 ): Promise<unknown> {
   signal?.throwIfAborted();
   const config = deps.getConfig();
@@ -337,7 +337,7 @@ export function createInternalTools(
           context.userId,
           context.emitProgress,
           signal,
-          context
+          { ...context, toolCallId: parsed.data.toolCallId }
         );
       const result = await Promise.race([work, aborted]);
       signal.throwIfAborted();

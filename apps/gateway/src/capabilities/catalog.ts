@@ -309,7 +309,11 @@ export async function listReachableMcpTools(
   try {
     const initialized = await request("initialize", {
       protocolVersion: "2024-11-05",
-      capabilities: {},
+      capabilities: {
+        extensions: {
+          "io.modelcontextprotocol/ui": { mimeTypes: ["text/html;profile=mcp-app"] },
+        },
+      },
       clientInfo: { name: "yoplai-capability-discovery", version: "1" },
     });
     await request(
@@ -322,6 +326,13 @@ export async function listReachableMcpTools(
     if (!Array.isArray(listed.result?.result?.tools)) return [];
     return listed.result.result.tools.flatMap((tool) => {
       if (!isRecord(tool) || typeof tool.name !== "string") return [];
+      const ui = isRecord(tool._meta) && isRecord(tool._meta.ui) ? tool._meta.ui : undefined;
+      const visibility = ui?.visibility;
+      if (
+        Array.isArray(visibility) &&
+        visibility.every((item) => item === "model" || item === "app") &&
+        !visibility.includes("model")
+      ) return [];
       return [
         {
           name: tool.name,

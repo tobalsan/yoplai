@@ -8,7 +8,7 @@ import { getCurrentTools } from "@earendil-works/pi-ai";
 import { createToolDeferralCatalog } from "@yoplai/shared/tool-deferral";
 import type { AssistantMessage, ImageContent } from "@earendil-works/pi-ai";
 import type { AgentSession as PiAgentSession } from "@earendil-works/pi-coding-agent";
-import type { AgentConfig } from "@yoplai/shared";
+import type { AgentConfig, McpAppView } from "@yoplai/shared";
 import {
   DEFAULT_RETRY_BASE_DELAY_SECONDS,
   DEFAULT_RETRY_MAX_ATTEMPTS,
@@ -62,6 +62,7 @@ import { executeSkillSave, skillSaveTool } from "../../skills/tools.js";
 import { executeProjectTool, projectTools } from "../../chat-projects/tools.js";
 import { getConversationFiles } from "../../media/conversation-files.js";
 import { ContainerFileOutputAdapter } from "../container/file-output.js";
+import { clearMcpAppViews, getMcpAppView } from "../../mcp-apps/capture.js";
 
 type SignatureSchema = Parameters<typeof renderToolSignature>[0]["inputSchema"];
 
@@ -136,9 +137,13 @@ async function createPiExtensionTools(
     params
   );
   const invisibleToolNames = new Set<string>();
+  const mcpViews = new Map<string, McpAppView>();
   const descriptors: Parameters<typeof createToolDeferralCatalog>[0][number][] = [];
   const piTools: ToolDefinition[] = tools.map((tool): ToolDefinition => {
     const name = claimAgentToolName(tool.name, usedToolNames);
+    if (tool.mcp?.ui?.resourceUri) mcpViews.set(name, {
+      server: tool.mcp.server, tool: tool.mcp.tool, resourceUri: tool.mcp.ui.resourceUri,
+    });
     if (tool.extensionId === "taskLifecycle") invisibleToolNames.add(name);
     descriptors.push({ ...tool, name, canonicalName: tool.name });
     return {
@@ -147,12 +152,13 @@ async function createPiExtensionTools(
       description: tool.description,
       parameters: tool.parameters as unknown as ToolDefinition["parameters"],
       ...(tool.outputSchema ? { outputSchema: tool.outputSchema as ToolDefinition["outputSchema"] } : {}),
-      execute: async (_toolCallId, toolParams, signal) => {
+      execute: async (toolCallId, toolParams, signal) => {
         const result = await tool.execute(toolParams, {
           agent,
           config,
           env,
           sessionId: params.sessionId,
+          toolCallId,
           userId: params.userId,
           actorUserId: params.actorUserId,
           actorKind: params.actorKind,
@@ -267,7 +273,7 @@ async function createPiExtensionTools(
       },
     });
   }
-  return { tools: piTools, invisibleToolNames, descriptors };
+  return { tools: piTools, invisibleToolNames, descriptors, mcpViews };
 }
 
 export async function findSessionImageAttachment(
@@ -485,7 +491,7 @@ export const piAdapter: SdkAdapter = {
         modelSupportsImages(model) &&
         (!configuredFallback || modelSupportsImages(configuredFallback));
       const usedToolNames = new Set([...builtInTools, "tool_search", "codemode"]);
-      const { tools: extensionTools, invisibleToolNames, descriptors } =
+      const { tools: extensionTools, invisibleToolNames, descriptors, mcpViews } =
         await createPiExtensionTools(
           agent,
           usedToolNames,
@@ -774,6 +780,8 @@ export const piAdapter: SdkAdapter = {
           const args = (evt as { args?: unknown }).args;
           const parentToolCallId = evt.parentToolCallId;
 
+          const view = mcpViews.get(toolName);
+
           if (invisibleToolNames.has(toolName)) return;
           params.onEvent({ type: "tool_start", toolName });
           params.onEvent({
@@ -782,6 +790,7 @@ export const piAdapter: SdkAdapter = {
             name: toolName,
             arguments: args,
             parentToolCallId,
+            ...(view ? { view } : {}),
           });
           params.onHistoryEvent({
             type: "tool_call",
@@ -789,6 +798,7 @@ export const piAdapter: SdkAdapter = {
             name: toolName,
             args,
             parentToolCallId,
+            ...(view ? { view } : {}),
             timestamp: Date.now(),
           });
         }
@@ -799,6 +809,7 @@ export const piAdapter: SdkAdapter = {
           const isError = (evt as { isError?: boolean }).isError ?? false;
           const rawResult = (evt as { result?: unknown }).result;
           const parentToolCallId = evt.parentToolCallId;
+          const view = getMcpAppView(params, toolCallId);
 
           if (invisibleToolNames.has(toolName)) return;
           // Extract text from result - handle both string and structured formats
@@ -824,6 +835,7 @@ export const piAdapter: SdkAdapter = {
             content,
             isError,
             parentToolCallId,
+            ...(view ? { view } : {}),
           });
           params.onHistoryEvent({
             type: "tool_result",
@@ -832,6 +844,7 @@ export const piAdapter: SdkAdapter = {
             content,
             isError,
             parentToolCallId,
+            ...(view ? { view } : {}),
             timestamp: Date.now(),
           });
         }
@@ -1021,6 +1034,7 @@ export const piAdapter: SdkAdapter = {
 
       return { text: finalText, aborted };
     }).finally(async () => {
+      clearMcpAppViews(params);
       try { await persistSession?.(); }
       finally { await managedSkills?.cleanup(); }
     });

@@ -1,6 +1,7 @@
 import { serve } from "@hono/node-server";
 import path from "node:path";
 import { Hono } from "hono";
+import { startAppsListener } from "../mcp-apps/views.js";
 import { logError } from "../logging.js";
 import { cors } from "hono/cors";
 import { readEnv, resolveBindHost, resolveHomeDir } from "@yoplai/shared";
@@ -381,6 +382,9 @@ export function startServer(
     port: resolvedPort,
     hostname: resolvedHost,
   });
+
+  const stopApps = startAppsListener(config, resolvedHost);
+  server.once("close", stopApps);
 
   const wsAuthAdapter: WsBrokerAuthAdapter = {
     isMultiUserEnabled: () => currentExtensionRuntime().isEnabled("multiUser"),
