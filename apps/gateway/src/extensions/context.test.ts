@@ -129,6 +129,54 @@ describe("createExtensionContext media helpers", () => {
     expect(credentials.get(personal)).toEqual({ account: "alice" });
   });
 
+  it("reports active run details only for the session owner and excludes paused tasks", async () => {
+    const { writeTestV3Config } = await import("../test-utils/v3-config.js");
+    await writeTestV3Config(tmpDir);
+    const { SessionRunLifecycle } = await import("../agents/run-lifecycle.js");
+    const { adoptTask, updateTask } = await import("../tasks/store.js");
+    const { createExtensionContext } = await import("./context.js");
+    const ctx = createExtensionContext({} as GatewayConfig);
+    expect(await ctx.getActiveRun!("alpha", "live", "alice")).toBeUndefined();
+    const clock = vi.spyOn(Date, "now").mockReturnValue(60_000);
+    const lifecycle = new SessionRunLifecycle({ agentId: "alpha", sessionId: "live", userId: "alice" });
+    lifecycle.beginRun();
+    clock.mockRestore();
+    try {
+      expect(await ctx.getActiveRun!("alpha", "live", "alice")).toEqual({ startedAt: 60_000 });
+      await adoptTask("alpha", "live", "Review sales pipeline", "alice");
+      await adoptTask("alpha", "live", "Another owner's task", "bob");
+      expect(await ctx.getActiveRun!("alpha", "live", "alice")).toEqual({ startedAt: 60_000, taskTitle: "Review sales pipeline" });
+      expect(await ctx.getActiveRun!("alpha", "live", "bob")).toBeUndefined();
+      expect(await ctx.getActiveRun!("alpha", "live")).toBeUndefined();
+      await updateTask("alpha", "live", "alice", { status: "paused" });
+      expect(await ctx.getActiveRun!("alpha", "live", "alice")).toEqual({ startedAt: 60_000 });
+    } finally {
+      lifecycle.finishRun();
+    }
+    expect(await ctx.getActiveRun!("alpha", "live", "alice")).toBeUndefined();
+  });
+
+  it("reports shared run details with an omitted or explicit shared owner", async () => {
+    const { writeTestV3Config } = await import("../test-utils/v3-config.js");
+    await writeTestV3Config(tmpDir);
+    const { SessionRunLifecycle } = await import("../agents/run-lifecycle.js");
+    const { adoptTask } = await import("../tasks/store.js");
+    const { createExtensionContext } = await import("./context.js");
+    const ctx = createExtensionContext({} as GatewayConfig);
+    const clock = vi.spyOn(Date, "now").mockReturnValue(90_000);
+    const lifecycle = new SessionRunLifecycle({ agentId: "alpha", sessionId: "shared" });
+    lifecycle.beginRun();
+    clock.mockRestore();
+    try {
+      await adoptTask("alpha", "shared", "Shared investigation");
+      expect(await ctx.getActiveRun!("alpha", "shared")).toEqual({ startedAt: 90_000, taskTitle: "Shared investigation" });
+      expect(await ctx.getActiveRun!("alpha", "shared", null)).toEqual({ startedAt: 90_000, taskTitle: "Shared investigation" });
+      expect(await ctx.getActiveRun!("alpha", "shared", "alice")).toBeUndefined();
+    } finally {
+      lifecycle.finishRun();
+    }
+  });
+
   it("reads canonical full history from the explicit owner or shared store", async () => {
     const { writeTestV3Config } = await import("../test-utils/v3-config.js");
     await writeTestV3Config(tmpDir);

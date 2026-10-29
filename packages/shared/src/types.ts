@@ -1513,6 +1513,12 @@ export interface ExtensionContext {
 
   // Agent runtime state
   isAgentStreaming(agentId: string): boolean;
+  /** Streaming run details for the selected session storage owner. */
+  getActiveRun?(
+    agentId: string,
+    sessionId: string,
+    sessionOwnerId?: string | null
+  ): Promise<{ startedAt: number; taskTitle?: string } | undefined>;
   resolveWorkspaceDir(agent: AgentConfig): string;
 
   // Agent execution

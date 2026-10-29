@@ -45,6 +45,7 @@ import { credentialConnectHost } from "../credentials/connect.js";
 import { recordSettingsChange } from "../audit/store.js";
 import { updateAgentExtensionConfig } from "./agent-config-writer.js";
 import { reloadAfterExtensionWrite } from "./reload.js";
+import { getTask } from "../tasks/store.js";
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   if (value === null || typeof value !== "object") return false;
@@ -116,6 +117,16 @@ export function createExtensionContext(
     isAgentActive,
     isAgentStreaming: (agentId: string) =>
       getAllSessionsForAgent(agentId).some((session) => session.isStreaming),
+    getActiveRun: async (agentId, sessionId, sessionOwnerId) => {
+      const session = getSession(agentId, sessionId);
+      if (!session?.isStreaming || session.streamStartedAt === undefined ||
+          session.storageOwnerId !== (sessionOwnerId ?? null)) return undefined;
+      const startedAt = session.streamStartedAt;
+      const task = await getTask(agentId, sessionId, sessionOwnerId ?? undefined);
+      // The run may settle or be replaced during the ledger read.
+      if (!session.isStreaming || session.streamStartedAt !== startedAt) return undefined;
+      return { startedAt, ...(task?.status === "active" ? { taskTitle: task.title } : {}) };
+    },
     resolveWorkspaceDir: (agent) => resolveWorkspaceDir(agent.workspace),
     runAgent,
     getSubagentTemplates,
