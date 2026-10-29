@@ -2,6 +2,10 @@ import { Agent } from "undici";
 
 const socketDispatchers = new Map<string, Agent>();
 
+export class RunCancelledError extends Error {
+  override name = "RunCancelledError";
+}
+
 /**
  * Routes a gateway request through a Unix socket when one is configured, so
  * the container needs no network path to the host. The URL still supplies the
@@ -63,6 +67,9 @@ export async function callGatewayTool(
       result && typeof result === "object" && "error" in result
         ? (result as { error: unknown }).error
         : undefined;
+    if (response.status === 409 && detail === "run cancelled") {
+      throw new RunCancelledError(`Gateway tool ${tool} failed with 409: run cancelled`);
+    }
     throw new Error(
       `Gateway tool ${tool} failed with ${response.status}${detail ? `: ${detail}` : ""}`
     );

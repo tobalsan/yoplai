@@ -74,6 +74,8 @@ vi.mock("../api/extensions", () => ({
 }));
 
 vi.mock("../api/mcp-servers", () => ({
+  refreshMcpServerIcon: vi.fn(),
+  refreshMcpCatalogIcon: vi.fn(),
   cachedMcpServers: () => undefined,
   mcpDisplayName: (name: string, title?: string) => title || name.charAt(0).toUpperCase() + name.slice(1),
   fetchMcpServersFast: fetchMcpServersMock,

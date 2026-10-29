@@ -88,7 +88,9 @@ describe("config validation", () => {
     ]);
   });
 
-  it("preserves the optional codemode flag from agent YAML", async () => {
+  // ALG-566 Testing Decisions approve the config-loader seam: YAML parsing
+  // catches accepted/rejected configuration, not runner enforcement.
+  it("preserves the optional codemode flag and limits from agent YAML", async () => {
     tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-config-"));
     for (const id of ["enabled", "disabled", "default"]) {
       const dir = path.join(tmpDir, "agents", id);
@@ -96,15 +98,27 @@ describe("config validation", () => {
       if (id !== "default") {
         await fs.appendFile(path.join(dir, "agent.yaml"), `codemode: ${id === "enabled"}\n`);
       }
+      if (id === "enabled") {
+        await fs.appendFile(path.join(dir, "agent.yaml"), "codemodeLimits:\n  maxToolCalls: 12\n  maxConcurrentToolCalls: 2\n");
+      }
     }
     await fs.writeFile(path.join(tmpDir, "yoplai.json"), JSON.stringify({ version: 3 }));
     vi.stubEnv("YOPLAI_HOME", tmpDir);
     const { loadConfig } = await import("./index.js");
-    expect(loadConfig().agents.map((agent) => [agent.id, agent.codemode])).toEqual([
-      ["default", undefined],
-      ["disabled", false],
-      ["enabled", true],
+    expect(loadConfig().agents.map((agent) => [agent.id, agent.codemode, agent.codemodeLimits])).toEqual([
+      ["default", undefined, undefined],
+      ["disabled", false, undefined],
+      ["enabled", true, { maxToolCalls: 12, maxConcurrentToolCalls: 2 }],
     ]);
+  });
+
+  it.each([0, -1, 1.5])("rejects codemode limits that are not positive integers (%s)", (limit) => {
+    for (const setting of ["maxToolCalls", "maxConcurrentToolCalls"]) {
+      expect(AgentYamlConfigSchema.safeParse({
+        id: "test", name: "Test", model: { provider: "test", model: "test" },
+        codemodeLimits: { [setting]: limit },
+      }).success).toBe(false);
+    }
   });
 
   it("preserves tool deferral overrides from agent YAML without inventing absent settings", async () => {
