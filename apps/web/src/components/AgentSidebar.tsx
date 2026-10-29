@@ -1,5 +1,6 @@
 import {
   Accessor,
+  type JSX,
   For,
   Suspense,
   Show,
@@ -9,8 +10,10 @@ import {
   createUniqueId,
   onCleanup,
   onMount,
+  on,
   lazy,
 } from "solid-js";
+import { Portal } from "solid-js/web";
 import { A, useLocation, useNavigate } from "@solidjs/router";
 import { theme, toggleTheme } from "../theme";
 import { capabilities, isExtensionEnabled } from "../lib/capabilities";
@@ -51,6 +54,20 @@ function readCollapsedProjects(): string[] {
     const stored: unknown = JSON.parse(localStorage.getItem("yoplai:collapsed-chat-projects") ?? "[]");
     return Array.isArray(stored) ? stored.filter((id): id is string => typeof id === "string") : [];
   } catch { return []; }
+}
+
+export function positionSidebarMenu(
+  trigger: { top: number; bottom: number; right: number },
+  size: { width: number; height: number },
+  viewport: { width: number; height: number },
+): { left: number; top: number } {
+  const below = trigger.bottom + 4;
+  const above = trigger.top - size.height - 4;
+  const top = below + size.height > viewport.height - 8 && above >= 8 ? above : below;
+  return {
+    left: Math.max(8, Math.min(trigger.right - size.width, viewport.width - size.width - 8)),
+    top: Math.max(8, Math.min(top, viewport.height - size.height - 8)),
+  };
 }
 
 function relativeTime(timestamp: number, now: number): string {
@@ -115,6 +132,48 @@ export function AgentSidebar(props: AgentSidebarProps) {
   const [listScrolling, setListScrolling] = createSignal(false);
   const [sidebarHovered, setSidebarHovered] = createSignal(false);
   const [tooltip, setTooltip] = createSignal<{ session: SessionSummary; row: HTMLElement } | null>(null);
+  const [openMenu, setOpenMenu] = createSignal<HTMLDetailsElement | null>(null);
+  let menuPanel: HTMLDivElement | undefined;
+  const closeMenu = () => {
+    openMenu()?.removeAttribute("open");
+    setOpenMenu(null);
+    menuPanel = undefined;
+  };
+  createEffect(on(props.collapsed, (collapsed) => {
+    if (collapsed) closeMenu();
+  }));
+  const SidebarMenu = (menuProps: { label: string; children: JSX.Element }) => {
+    let owner!: HTMLDetailsElement;
+    onCleanup(() => { if (openMenu() === owner) closeMenu(); });
+    return (
+      <details class="session-actions" ref={owner} onToggle={(event) => {
+        if (event.currentTarget.open) {
+          if (openMenu() !== owner) closeMenu();
+          hideTooltip();
+          setOpenMenu(owner);
+        } else if (openMenu() === owner) closeMenu();
+      }}>
+        <summary aria-label={menuProps.label}>⋯</summary>
+        <Show when={openMenu() === owner}>
+          <Portal>
+            <div class="session-menu" role="group" aria-label={`${menuProps.label} actions`} onClick={closeMenu} ref={(element) => {
+              menuPanel = element;
+              queueMicrotask(() => {
+                if (!element.isConnected) return;
+                const trigger = owner.querySelector("summary")!.getBoundingClientRect();
+                const position = positionSidebarMenu(trigger, element.getBoundingClientRect(), { width: window.innerWidth, height: window.innerHeight });
+                element.style.left = `${position.left}px`;
+                element.style.top = `${position.top}px`;
+                element.querySelector<HTMLElement>("a, button")?.focus({ preventScroll: true });
+              });
+            }}>
+              {menuProps.children}
+            </div>
+          </Portal>
+        </Show>
+      </details>
+    );
+  };
   let tooltipTimer: ReturnType<typeof setTimeout> | undefined;
   const hideTooltip = () => {
     clearTimeout(tooltipTimer);
@@ -187,48 +246,34 @@ export function AgentSidebar(props: AgentSidebarProps) {
     document.removeEventListener("visibilitychange", refresh);
   });
 
-  // Close session/project menus on outside click or Escape
+  // The popup is portalled, so outside clicks must check both it and its trigger.
   onMount(() => {
     const handleClickOutside = (event: MouseEvent) => {
       hideTooltip();
-      const openMenus = document.querySelectorAll<HTMLDetailsElement>("details.session-actions[open]");
-      openMenus.forEach((menu) => {
-        if (!menu.contains(event.target as Node)) {
-          menu.removeAttribute("open");
-        }
-      });
+      const target = event.target as Node;
+      if (!openMenu()?.contains(target) && !menuPanel?.contains(target)) closeMenu();
     };
-
     const handleEscape = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
         hideTooltip();
-        const openMenus = document.querySelectorAll<HTMLDetailsElement>("details.session-actions[open]");
-        openMenus.forEach((menu) => menu.removeAttribute("open"));
+        const trigger = openMenu()?.querySelector("summary");
+        closeMenu();
+        trigger?.focus();
       }
     };
-
-    // Close other menus when opening one
-    const handleToggle = (event: Event) => {
-      const menu = event.target as HTMLDetailsElement;
-      if (menu.open && menu.classList.contains("session-actions")) {
-        document.querySelectorAll<HTMLDetailsElement>("details.session-actions[open]").forEach((otherMenu) => {
-          if (otherMenu !== menu) {
-            otherMenu.removeAttribute("open");
-          }
-        });
-      }
+    const handleScroll = (event: Event) => {
+      hideTooltip();
+      if (!(event.target instanceof Node && menuPanel?.contains(event.target))) closeMenu();
     };
-
     document.addEventListener("mousedown", handleClickOutside);
     document.addEventListener("keydown", handleEscape);
-    window.addEventListener("scroll", hideTooltip, true);
-    document.addEventListener("toggle", handleToggle, true);
-
+    window.addEventListener("scroll", handleScroll, true);
+    window.addEventListener("resize", closeMenu);
     onCleanup(() => {
       document.removeEventListener("mousedown", handleClickOutside);
       document.removeEventListener("keydown", handleEscape);
-      window.removeEventListener("scroll", hideTooltip, true);
-      document.removeEventListener("toggle", handleToggle, true);
+      window.removeEventListener("scroll", handleScroll, true);
+      window.removeEventListener("resize", closeMenu);
     });
   });
 
@@ -290,103 +335,101 @@ export function AgentSidebar(props: AgentSidebarProps) {
           </span>
         </button>
         <span id={descriptionId} class="session-description">{sessionDetails(session)}</span>
-        <details class="session-actions">
-          <summary aria-label="Session menu">⋯</summary>
-          <div class="session-menu">
+        <SidebarMenu label="Session menu">
+          <button
+            type="button"
+            class="session-action"
+            onClick={async () => {
+              closeMenu();
+              setSessionError("");
+              try {
+                await pinAgentSession(session.agentId, session.sessionId, session.pinned == null);
+                await refreshSessions();
+                window.dispatchEvent(new Event("chat-projects-changed"));
+              } catch {
+                setSessionError("Failed to update session pin. Try again.");
+              }
+            }}
+          >
+            <i class="fa-solid fa-thumbtack" aria-hidden="true" />
+            {session.pinned == null ? "Pin" : "Unpin"}
+          </button>
+          <button type="button" class="session-action" onClick={() => {
+            closeMenu();
+            setMoveChatError("");
+            setMovingSession(session);
+          }}>
+            <i class="fa-solid fa-folder" aria-hidden="true" />
+            Move to project…
+          </button>
+          <Show when={session.projectId}>
+            <button type="button" class="session-action" onClick={async () => {
+              closeMenu();
+              try { await moveChatToProject(session.agentId, session.sessionId, null); await refreshSessions(); window.dispatchEvent(new Event("chat-projects-changed")); setSessionError(""); }
+              catch { setSessionError("Unable to remove chat from project. Try again."); }
+            }}>
+              <i class="fa-solid fa-folder-minus" aria-hidden="true" />
+              Remove from project
+            </button>
+          </Show>
+          <button
+            type="button"
+            class="session-action"
+            aria-label="Rename session"
+            onClick={() => {
+              closeMenu();
+              setRenameChatError("");
+              setSessionTitleInput(session.title ?? session.firstUserMessage ?? "");
+              setRenamingSession(session);
+            }}
+          >
+            <i class="fa-solid fa-pen" aria-hidden="true" />
+            Rename
+          </button>
+          <Show when={!session.isMain}>
             <button
               type="button"
               class="session-action"
-              onClick={async (event) => {
-                event.currentTarget.closest("details")?.removeAttribute("open");
+              aria-label="Archive session"
+              onClick={async () => {
+                closeMenu();
                 setSessionError("");
                 try {
-                  await pinAgentSession(session.agentId, session.sessionId, session.pinned == null);
-                  await refreshSessions();
+                  await archiveAgentSession(session.agentId, session.sessionId, true);
+                  setSessions((prev) => prev.filter((s) => s.sessionId !== session.sessionId));
+                  if (chatRouteSession(location.pathname, location.search).sessionId === session.sessionId) {
+                    navigate(`/chat/${session.agentId}`);
+                  }
+                  showToast("Chat archived", "success");
                   window.dispatchEvent(new Event("chat-projects-changed"));
-                } catch {
-                  setSessionError("Failed to update session pin. Try again.");
+                } catch (err) {
+                  setSessionError(err instanceof Error ? err.message : "Failed to archive session. Try again.");
                 }
               }}
             >
-              <i class="fa-solid fa-thumbtack" aria-hidden="true" />
-              {session.pinned == null ? "Pin" : "Unpin"}
+              <i class="fa-solid fa-box-archive" aria-hidden="true" />
+              Archive
             </button>
-            <button type="button" class="session-action" onClick={(event) => {
-              event.currentTarget.closest("details")?.removeAttribute("open");
-              setMoveChatError("");
-              setMovingSession(session);
-            }}>
-              <i class="fa-solid fa-folder" aria-hidden="true" />
-              Move to project…
-            </button>
-            <Show when={session.projectId}>
-              <button type="button" class="session-action" onClick={async () => {
-                try { await moveChatToProject(session.agentId, session.sessionId, null); await refreshSessions(); window.dispatchEvent(new Event("chat-projects-changed")); setSessionError(""); }
-                catch { setSessionError("Unable to remove chat from project. Try again."); }
-              }}>
-                <i class="fa-solid fa-folder-minus" aria-hidden="true" />
-                Remove from project
-              </button>
-            </Show>
-            <button
-              type="button"
-              class="session-action"
-              aria-label="Rename session"
-              onClick={(event) => {
-                event.currentTarget.closest("details")?.removeAttribute("open");
-                setRenameChatError("");
-                setSessionTitleInput(session.title ?? session.firstUserMessage ?? "");
-                setRenamingSession(session);
-              }}
-            >
-              <i class="fa-solid fa-pen" aria-hidden="true" />
-              Rename
-            </button>
-            <Show when={!session.isMain}>
-              <button
-                type="button"
-                class="session-action"
-                aria-label="Archive session"
-                onClick={async (event) => {
-                  event.currentTarget.closest("details")?.removeAttribute("open");
-                  setSessionError("");
-                  try {
-                    await archiveAgentSession(session.agentId, session.sessionId, true);
-                    setSessions((prev) => prev.filter((s) => s.sessionId !== session.sessionId));
-                    if (chatRouteSession(location.pathname, location.search).sessionId === session.sessionId) {
-                      navigate(`/chat/${session.agentId}`);
-                    }
-                    showToast("Chat archived", "success");
-                    window.dispatchEvent(new Event("chat-projects-changed"));
-                  } catch (err) {
-                    setSessionError(err instanceof Error ? err.message : "Failed to archive session. Try again.");
-                  }
-                }}
-              >
-                <i class="fa-solid fa-box-archive" aria-hidden="true" />
-                Archive
-              </button>
-            </Show>
-            <hr class="session-menu-separator" />
-            <button
-              type="button"
-              class="session-action danger"
-              aria-label="Delete session"
-              onClick={(event) => {
-                event.currentTarget.closest("details")?.removeAttribute("open");
-                setDeletingSession(session);
-              }}
-            >
-              <i class="fa-solid fa-trash" aria-hidden="true" />
-              Delete
-            </button>
-          </div>
-        </details>
+          </Show>
+          <hr class="session-menu-separator" />
+          <button
+            type="button"
+            class="session-action danger"
+            aria-label="Delete session"
+            onClick={() => {
+              closeMenu();
+              setDeletingSession(session);
+            }}
+          >
+            <i class="fa-solid fa-trash" aria-hidden="true" />
+            Delete
+          </button>
+        </SidebarMenu>
       </div>
     );
   };
   return (
-    <aside class="agent-sidebar" classList={{ collapsed: props.collapsed() }} onMouseEnter={() => setSidebarHovered(true)} onMouseLeave={() => { setSidebarHovered(false); hideTooltip(); }}>
+    <aside class="agent-sidebar" classList={{ collapsed: props.collapsed(), "menu-open": !!openMenu() }} onMouseEnter={() => setSidebarHovered(true)} onMouseLeave={() => { setSidebarHovered(false); hideTooltip(); }}>
       <Show when={tooltip()}>{(details) => (
         <div class="session-tooltip" role="tooltip" ref={(element) => queueMicrotask(() => {
           if (!element.isConnected) return;
@@ -523,6 +566,7 @@ export function AgentSidebar(props: AgentSidebarProps) {
                   <span>Projects</span>
                   <button
                     type="button"
+                    class="new-project-btn"
                     aria-label="New project"
                     onClick={() => setShowCreateProject(true)}
                   >
@@ -534,26 +578,24 @@ export function AgentSidebar(props: AgentSidebarProps) {
                   return (
                     <div class="chat-project">
                     <div class="session-row-wrap">
-                      <div class="chat-project-header">
-                        <button type="button" class="project-chevron" aria-label={`Toggle ${project.name}`} aria-expanded={!collapsedProjects().includes(project.id)} onClick={() => {
+                      <button type="button" class="chat-project-header" classList={{ active: isActive() }} aria-label={project.name} aria-current={isActive() ? "page" : undefined} aria-expanded={!collapsedProjects().includes(project.id)} onClick={() => {
                           const next = collapsedProjects().includes(project.id) ? collapsedProjects().filter((id) => id !== project.id) : [...collapsedProjects(), project.id];
                           setCollapsedProjects(next);
                           localStorage.setItem("yoplai:collapsed-chat-projects", JSON.stringify(next));
-                        }}>{collapsedProjects().includes(project.id) ? "▸" : "▾"}</button>
+                        }}>
                         <i class="fa-solid fa-folder project-icon" aria-hidden="true" />
                         <Show when={collapsedProjects().includes(project.id) && sessions().some((session) => session.projectId === project.id && isChatUnread(session))}>
                           <span class="session-unread-dot" role="img" aria-label="Unread messages" />
                         </Show>
-                        <A href={`/p/${project.id}`} class="project-link" classList={{ active: isActive() }}>{project.name}</A>
-                      </div>
-                      <details class="session-actions">
-                        <summary aria-label="Project menu">⋯</summary>
-                        <div class="session-menu">
+                        <span class="project-name">{project.name}</span>
+                      </button>
+                      <SidebarMenu label="Project menu">
+                          <A href={`/p/${project.id}`} class="session-action" onClick={closeMenu}>Open</A>
                           <button
                             type="button"
                             class="session-action"
-                            onClick={(event) => {
-                              event.currentTarget.closest("details")?.removeAttribute("open");
+                            onClick={() => {
+                              closeMenu();
                               setRenameProjectError("");
                               setProjectNameInput(project.name);
                               setRenamingProject(project);
@@ -564,16 +606,15 @@ export function AgentSidebar(props: AgentSidebarProps) {
                           <button
                             type="button"
                             class="session-action danger"
-                            onClick={(event) => {
-                              event.currentTarget.closest("details")?.removeAttribute("open");
+                            onClick={() => {
+                              closeMenu();
                               setDeleteProjectError("");
                               setDeletingProject(project);
                             }}
                           >
                             Delete…
                           </button>
-                        </div>
-                      </details>
+                      </SidebarMenu>
                     </div>
                       <Show when={!collapsedProjects().includes(project.id)}>
                         <div class="chat-project-sessions">
@@ -891,38 +932,36 @@ export function AgentSidebar(props: AgentSidebarProps) {
           display: flex;
           align-items: center;
           gap: 6px;
-          padding: 6px;
+          width: 100%;
+          min-width: 0;
+          padding: 8px 40px 8px 6px;
+          border: none;
+          border-radius: 8px;
+          background: transparent;
+          color: var(--text-primary);
+          font: inherit;
+          font-size: 12px;
+          text-align: left;
+          cursor: pointer;
         }
-        .project-chevron,
+        .chat-project-header:hover,
+        .chat-project-header.active {
+          background: var(--bg-raised);
+        }
+        .chat-project-header:focus-visible {
+          outline: 2px solid var(--text-secondary);
+          outline-offset: -2px;
+        }
         .project-icon {
           flex-shrink: 0;
-        }
-        .project-chevron {
-          border: none;
-          background: transparent;
-          color: var(--text-secondary);
-          cursor: pointer;
-          padding: 2px 4px;
-          font-size: 11px;
-        }
-        .project-icon {
           font-size: 11px;
           color: var(--text-tertiary);
         }
-        .project-link {
-          flex: 1;
+        .project-name {
           min-width: 0;
-          color: var(--text-primary);
-          text-decoration: none;
-          font-size: 12px;
           overflow: hidden;
           text-overflow: ellipsis;
           white-space: nowrap;
-          padding: 2px 4px;
-          border-radius: 4px;
-        }
-        .project-link.active {
-          background: var(--bg-raised);
         }
         .project-move-list {
           display: flex;
@@ -996,7 +1035,7 @@ export function AgentSidebar(props: AgentSidebarProps) {
           width: 50px;
         }
 
-        .agent-sidebar.collapsed:hover .agent-sidebar-shell {
+        .agent-sidebar.collapsed:is(:hover, .menu-open) .agent-sidebar-shell {
           width: 250px;
           box-shadow: 12px 0 24px var(--shadow-md);
         }
@@ -1074,12 +1113,42 @@ export function AgentSidebar(props: AgentSidebarProps) {
           cursor: pointer;
         }
 
+        .sessions-header .new-project-btn {
+          display: grid;
+          place-items: center;
+          flex: 0 0 28px;
+          width: 28px;
+          height: 28px;
+          padding: 0;
+          border: 1px solid var(--border-default);
+          border-radius: 6px;
+          background: var(--bg-surface);
+          font-size: 12px;
+          line-height: 1;
+        }
+
+        .new-project-btn:hover,
+        .session-actions summary:hover,
+        .session-action:hover {
+          background: var(--bg-raised);
+          color: var(--text-primary);
+        }
+
+        .new-project-btn:focus-visible,
+        .session-actions summary:focus-visible,
+        .session-action:focus-visible {
+          outline: 2px solid var(--text-secondary);
+          outline-offset: -2px;
+        }
+
         .sessions-list {
           flex: 1;
           min-height: 0;
           overflow: auto;
           /* Put the scrollbar gutter in the sidebar padding so right space matches left. */
           margin-right: -10px;
+          padding-right: 10px;
+          overflow-x: hidden;
           display: flex;
           flex-direction: column;
           gap: 10px;
@@ -1122,7 +1191,7 @@ export function AgentSidebar(props: AgentSidebarProps) {
           display: flex;
           align-items: center;
           gap: 8px;
-          padding: 7px 6px;
+          padding: 7px 40px 7px 6px;
           border: none;
           border-radius: 8px;
           background: transparent;
@@ -1255,9 +1324,19 @@ export function AgentSidebar(props: AgentSidebarProps) {
         }
 
         .session-actions summary {
+          display: grid;
+          place-items: center;
+          width: 28px;
+          height: 28px;
+          border-radius: 6px;
           cursor: pointer;
           list-style: none;
-          padding: 4px;
+          font-size: 18px;
+          line-height: 1;
+        }
+
+        .session-actions summary::-webkit-details-marker {
+          display: none;
         }
 
         .chat-project-sessions {
@@ -1266,10 +1345,13 @@ export function AgentSidebar(props: AgentSidebarProps) {
 
         .session-menu {
           white-space: nowrap;
-          min-width: 160px;
-          position: absolute;
-          top: 100%;
-          right: 0;
+          min-width: min(160px, calc(100vw - 16px));
+          max-width: calc(100vw - 16px);
+          max-height: calc(100dvh - 16px);
+          box-sizing: border-box;
+          overflow: auto;
+          position: fixed;
+          z-index: 1000;
           display: flex;
           flex-direction: column;
           padding: 4px;
@@ -1285,6 +1367,9 @@ export function AgentSidebar(props: AgentSidebarProps) {
           gap: 8px;
           padding: 6px 10px;
           text-align: left;
+          text-decoration: none;
+          font-family: inherit;
+          font-size: 12px;
         }
 
         .session-action i {
@@ -1302,7 +1387,7 @@ export function AgentSidebar(props: AgentSidebarProps) {
           border-top: 1px solid var(--border-default);
         }
 
-        .agent-sidebar.collapsed:not(:hover) .sidebar-sessions {
+        .agent-sidebar.collapsed:not(:hover):not(.menu-open) .sidebar-sessions {
           display: none;
         }
 
@@ -1519,37 +1604,37 @@ export function AgentSidebar(props: AgentSidebarProps) {
         }
 
         /* Hover to expand: restore full content */
-        .agent-sidebar.collapsed:hover .logo-full,
-        .agent-sidebar.collapsed:hover .nav-full,
-        .agent-sidebar.collapsed:hover .dev-badge,
-        .agent-sidebar.collapsed:hover .collapse-btn,
-        .agent-sidebar.collapsed:hover .theme-label,
-        .agent-sidebar.collapsed:hover .sidebar-recent {
+        .agent-sidebar.collapsed:is(:hover, .menu-open) .logo-full,
+        .agent-sidebar.collapsed:is(:hover, .menu-open) .nav-full,
+        .agent-sidebar.collapsed:is(:hover, .menu-open) .dev-badge,
+        .agent-sidebar.collapsed:is(:hover, .menu-open) .collapse-btn,
+        .agent-sidebar.collapsed:is(:hover, .menu-open) .theme-label,
+        .agent-sidebar.collapsed:is(:hover, .menu-open) .sidebar-recent {
           display: revert;
         }
 
-        .agent-sidebar.collapsed:hover .logo-short {
+        .agent-sidebar.collapsed:is(:hover, .menu-open) .logo-short {
           display: none;
         }
 
-        .agent-sidebar.collapsed:hover .sidebar-header {
+        .agent-sidebar.collapsed:is(:hover, .menu-open) .sidebar-header {
           justify-content: unset;
           padding: 10px 10px;
         }
 
-        .agent-sidebar.collapsed:hover .sidebar-logo {
+        .agent-sidebar.collapsed:is(:hover, .menu-open) .sidebar-logo {
           flex: 1;
           gap: 8px;
           justify-content: unset;
           width: auto;
         }
 
-        .agent-sidebar.collapsed:hover .nav-link {
+        .agent-sidebar.collapsed:is(:hover, .menu-open) .nav-link {
           justify-content: flex-start;
           padding: 8px 10px;
         }
 
-        .agent-sidebar.collapsed:hover .theme-toggle {
+        .agent-sidebar.collapsed:is(:hover, .menu-open) .theme-toggle {
           justify-content: unset;
         }
 
@@ -1579,7 +1664,7 @@ export function AgentSidebar(props: AgentSidebarProps) {
           }
 
           .agent-sidebar.collapsed .agent-sidebar-shell,
-          .agent-sidebar.collapsed:hover .agent-sidebar-shell {
+          .agent-sidebar.collapsed:is(:hover, .menu-open) .agent-sidebar-shell {
             position: relative;
             inset: auto;
             width: 100%;
