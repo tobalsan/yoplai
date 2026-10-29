@@ -11,6 +11,7 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Added
 
+- Refresh saved MCP server icons from user server details and the admin catalog, with inline results and immediate icon updates.
 - Mattermost bot channel with threaded conversations, direct messages, files, proactive tools and scheduler delivery.
 - Slack downloads full Markdown, text, CSV, JSON and code snippets as attachments, and accepts PowerPoint files. Web and gateway uploads now also accept JSON, legacy PowerPoint and `.markdown` files.
 - Add the `reflect` agent option. It adds a self-improvement prompt so the agent saves lessons to skills and `memory.md` in the same turn. Off by default.

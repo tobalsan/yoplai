@@ -4,6 +4,7 @@ import {
   fetchMcpCatalog,
   mcpDisplayName,
   removeMcpCatalogServer,
+  refreshMcpCatalogIcon,
   updateMcpCatalogServer,
   type McpCatalogServer,
 } from "../../api/mcp-servers";
@@ -23,6 +24,17 @@ export default function AdminMcpServersPage() {
   const [editName, setEditName] = createSignal("");
   const [editDescription, setEditDescription] = createSignal("");
   const [confirming, setConfirming] = createSignal<string>();
+  const [iconResults, setIconResults] = createSignal<Record<string, { busy?: boolean; message?: string; error?: string }>>({});
+  const refreshIcon = async (server: McpCatalogServer) => {
+    setIconResults((results) => ({ ...results, [server.name]: { busy: true } }));
+    try {
+      const result = await refreshMcpCatalogIcon(server.name);
+      mutate((list) => list?.map((item) => item.name === server.name ? { ...item, iconUrl: result.server.iconUrl } : item));
+      setIconResults((results) => ({ ...results, [server.name]: { message: result.status === "updated" ? "Icon updated" : result.status === "not_connected" ? "This server needs sign-in; its own icon is captured the next time an agent connects." : "No new icon found; kept the current one" } }));
+    } catch (cause) {
+      setIconResults((results) => ({ ...results, [server.name]: { error: message(cause, "Failed to refresh MCP server icon.") } }));
+    }
+  };
 
   async function run(action: () => Promise<void>, fallback: string) {
     setBusy(true);
@@ -94,6 +106,7 @@ export default function AdminMcpServersPage() {
                       <Show when={confirming() === server.name} fallback={
                         <Show when={editing() === server.name} fallback={
                           <>
+                            <button type="button" disabled={busy() || iconResults()[server.name]?.busy} onClick={() => void refreshIcon(server)}>{iconResults()[server.name]?.busy ? "Refreshing…" : "Refresh icon"}</button>
                             <button type="button" disabled={busy()} onClick={() => startEdit(server)}>Edit</button>
                             <button type="button" disabled={busy()} onClick={() => setConfirming(server.name)}>Remove</button>
                           </>
@@ -107,6 +120,8 @@ export default function AdminMcpServersPage() {
                         <button type="button" disabled={busy()} onClick={() => setConfirming(undefined)}>Cancel</button>
                       </Show>
                     </div>
+                    <Show when={iconResults()[server.name]?.message}>{(text) => <span class="mcps-sub" role="status">{text()}</span>}</Show>
+                    <Show when={iconResults()[server.name]?.error}>{(text) => <span class="mcps-error" role="alert">{text()}</span>}</Show>
                   </div>
                 )}
               </For>

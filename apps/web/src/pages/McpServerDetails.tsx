@@ -9,6 +9,7 @@ import {
   type McpServerList,
   mcpDisplayName,
   removeMcpServer,
+  refreshMcpServerIcon,
   saveMcpServerConfig,
   saveMcpServerLabel,
   setSharedMcpServer,
@@ -156,6 +157,42 @@ export function McpServerDetails() {
     } finally { setBusy(false); }
   };
 
+  const [iconOverride, setIconOverride] = createSignal<{ agent: string; name: string; iconUrl?: string }>();
+  const [refreshingIcon, setRefreshingIcon] = createSignal(false);
+  const [iconMessage, setIconMessage] = createSignal<string>();
+  const [iconError, setIconError] = createSignal<string>();
+  let iconRequest = 0;
+  createEffect(() => {
+    void params.agentId; void params.serverName;
+    iconRequest++;
+    setIconOverride(undefined);
+    setRefreshingIcon(false);
+    setIconMessage(undefined);
+    setIconError(undefined);
+  });
+  onCleanup(() => { iconRequest++; });
+  const refreshIcon = async () => {
+    const agent = params.agentId;
+    const name = params.serverName;
+    const currentRequest = ++iconRequest;
+    const current = () => iconRequest === currentRequest && params.agentId === agent && params.serverName === name;
+    setRefreshingIcon(true);
+    setIconMessage(undefined);
+    setIconError(undefined);
+    try {
+      const result = await refreshMcpServerIcon(agent, name);
+      if (!current()) return;
+      setIconOverride({ agent, name, iconUrl: result.server.iconUrl });
+      setIconMessage(result.status === "updated" ? "Icon updated" : result.status === "not_connected" ? "Connect this server first, then refresh the icon" : "No new icon found; kept the current one");
+    } catch (cause) {
+      if (current()) setIconError(errorMessage(cause, "Failed to refresh MCP server icon."));
+    } finally { if (current()) setRefreshingIcon(false); }
+  };
+  const iconUrl = () => {
+    const saved = iconOverride();
+    return saved?.agent === params.agentId && saved.name === params.serverName ? saved.iconUrl : server()?.iconUrl;
+  };
+
   const [confirmRemove, setConfirmRemove] = createSignal(false);
   const remove = async () => {
     setBusy(true);
@@ -185,13 +222,20 @@ export function McpServerDetails() {
           {(current) => (
             <>
               <div class="mcp-details-head">
-                <McpIcon src={current().iconUrl} />
+                <McpIcon src={iconUrl()} />
                 <div>
                   <h1 class="ext-details-name">{mcpDisplayName(current().name, current().title)}</h1>
                   <Show when={current().description}>{(description) => <p class="ext-details-desc">{description()}</p>}</Show>
                   <p class="ext-details-desc">{current().url ?? "Local MCP server"}</p>
                 </div>
                 <div class="mcp-details-remove">
+                  <Show when={!current().shared && current().type === "http"}>
+                    <div class="mcp-icon-refresh">
+                      <button type="button" class="oauth-btn" disabled={refreshingIcon()} onClick={() => void refreshIcon()}>{refreshingIcon() ? "Refreshing…" : "Refresh icon"}</button>
+                      <Show when={iconMessage()}>{(text) => <p role="status">{text()}</p>}</Show>
+                      <Show when={iconError()}>{(text) => <p class="ext-details-error" role="alert">{text()}</p>}</Show>
+                    </div>
+                  </Show>
                   <Show when={current().shared}>
                     <button type="button" class="oauth-btn" classList={{ "oauth-btn-primary": !current().enabled }} disabled={busy()} onClick={() => void setEnabled(!current().enabled)}>{current().enabled ? "Disable" : "Enable"}</button>
                   </Show>
@@ -296,6 +340,8 @@ export function McpServerDetails() {
         .mcp-details-head .ext-details-desc { margin: 2px 0 0; overflow-wrap: anywhere; }
         .mcp-details-remove { margin-left: auto; align-self: flex-start; flex: none; max-width: 260px; text-align: right; }
         .mcp-details-remove p { color: var(--text-secondary); font-size: 13px; margin: 0 0 8px; }
+        .mcp-icon-refresh { margin-bottom: 8px; }
+        .mcp-details-remove .mcp-icon-refresh p { margin: 8px 0 0; }
         .mcp-details-remove-actions { display: flex; gap: 8px; justify-content: flex-end; }
         .mcp-edit-details { margin-top: 28px; font-size: 13px; color: var(--text-tertiary, var(--text-secondary)); }
         .mcp-edit-details summary { cursor: pointer; width: fit-content; user-select: none; }

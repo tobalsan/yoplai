@@ -2,8 +2,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { render } from "solid-js/web";
 
-const m = vi.hoisted(() => ({ fetchMcpCatalog: vi.fn(), addMcpCatalogServer: vi.fn(), updateMcpCatalogServer: vi.fn(), removeMcpCatalogServer: vi.fn() }));
-vi.mock("../../api/mcp-servers", () => ({ ...m, mcpDisplayName: (name: string, title?: string) => title || name }));
+const m = vi.hoisted(() => ({ refreshMcpCatalogIcon: vi.fn(), fetchMcpCatalog: vi.fn(), addMcpCatalogServer: vi.fn(), updateMcpCatalogServer: vi.fn(), removeMcpCatalogServer: vi.fn() }));
+vi.mock("../../api/mcp-servers", () => ({ ...m, refreshMcpServerIcon: vi.fn(), mcpDisplayName: (name: string, title?: string) => title || name }));
 vi.mock("@solidjs/router", () => ({
   A: (props: Record<string, unknown>) => <a {...props} />,
   useLocation: () => ({ pathname: "/admin/mcp-servers", search: "" }),
@@ -48,6 +48,7 @@ describe("AdminMcpServersPage", () => {
 
     m.updateMcpCatalogServer.mockResolvedValue({ name: "linear", url: "https://mcp.linear.app/mcp", displayName: "Lin", description: "Issues" });
     click(container, "Edit");
+    expect(Array.from(container.querySelectorAll("button")).some((button) => button.textContent === "Refresh icon")).toBe(false);
     type(container.querySelector<HTMLInputElement>('[aria-label="Name for linear"]')!, "Lin");
     click(container, "Save");
     await flush();
@@ -56,11 +57,46 @@ describe("AdminMcpServersPage", () => {
 
     m.removeMcpCatalogServer.mockResolvedValue(undefined);
     click(container, "Remove");
+    expect(Array.from(container.querySelectorAll("button")).some((button) => button.textContent === "Refresh icon")).toBe(false);
     expect(m.removeMcpCatalogServer).not.toHaveBeenCalled();
     click(container, "Confirm remove");
     await flush();
     expect(m.removeMcpCatalogServer).toHaveBeenCalledWith("linear");
     expect(container.textContent).toContain("No shared MCP servers yet.");
+  });
+
+  it("refreshes a catalog row icon with inline feedback", async () => {
+    const container = await mount();
+    const refresh = Promise.withResolvers<{ status: string; server: object }>();
+    m.refreshMcpCatalogIcon.mockReturnValue(refresh.promise);
+    click(container, "Refresh icon");
+    expect(Array.from(container.querySelectorAll("button")).find((button) => button.textContent === "Refreshing…")?.disabled).toBe(true);
+    refresh.resolve({ status: "updated", server: { name: "linear", url: "https://mcp.linear.app/mcp", iconUrl: "https://linear.test/new.png" } });
+    await flush();
+    expect(m.refreshMcpCatalogIcon).toHaveBeenCalledWith("linear");
+    expect(container.querySelector('[data-server="linear"] [role="status"]')?.textContent).toBe("Icon updated");
+    expect(container.querySelector('[data-server="linear"] img')?.getAttribute("src")).toBe("https://linear.test/new.png");
+  });
+
+  it.each([
+    ["unchanged", "No new icon found; kept the current one"],
+    ["not_connected", "This server needs sign-in; its own icon is captured the next time an agent connects."],
+  ])("shows the %s result and replaces the returned row icon", async (status, expected) => {
+    const container = await mount();
+    m.refreshMcpCatalogIcon.mockResolvedValue({ status, server: { name: "linear", url: "https://mcp.linear.app/mcp", iconUrl: "https://linear.test/favicon.png" } });
+    click(container, "Refresh icon");
+    await flush();
+    expect(container.querySelector('[data-server="linear"] [role="status"]')?.textContent).toBe(expected);
+    expect(container.querySelector('[data-server="linear"] img')?.getAttribute("src")).toBe("https://linear.test/favicon.png");
+  });
+
+  it("reports a refresh error on its row and allows retry", async () => {
+    const container = await mount();
+    m.refreshMcpCatalogIcon.mockRejectedValue(new Error("Icon lookup timed out"));
+    click(container, "Refresh icon");
+    await flush();
+    expect(container.querySelector('[data-server="linear"] [role="alert"]')?.textContent).toBe("Icon lookup timed out");
+    expect(Array.from(container.querySelectorAll("button")).find((button) => button.textContent === "Refresh icon")?.disabled).toBe(false);
   });
 
   it("shows add errors", async () => {
