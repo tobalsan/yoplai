@@ -17,6 +17,7 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Fixed
 
+- Gateway restarts reclaim stale same-repo Vite previews, preserve foreign UI port listeners, and report early web UI exits with structured startup errors.
 - Allow failed Threadit items to run again after a board Retry without restarting the gateway.
 - Keep extension and MCP server details readable on phones, with clear back navigation, stacked headers and scope tabs that fit the screen.
 - Mattermost threads retain their session owner across replies, resets and restarts; reconnect recovery honors username allowlists and covers silent disconnects. REST deadlines and tool cancellation bound stalled calls, while reaction and typing failures no longer delay answers.
