@@ -18,7 +18,8 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Fixed
 
-- Gateway restarts reclaim stale same-repo Vite previews, preserve foreign UI port listeners, and report early web UI exits with structured startup errors.
+- Gateway access log redacts OAuth codes, state and other secret query parameters.
+- Keep queued chat tool activity in its current group without duplicate legacy tool pills.
 - Slack acknowledges queued messages once per conversation/run with the running task, elapsed time and `!stop` hint, then uses hourglass reactions for further messages; proactive DM replies omit the unavailable cancel command.
 - Stop sandboxed codemode scripts when their run is cancelled, cap each script at 200 nested tool calls and 10 concurrent gateway calls by default (configurable with `codemodeLimits`), and give codemode agents guidance for long jobs.
 - Allow failed Threadit items to run again after a board Retry without restarting the gateway.
@@ -31,6 +32,7 @@ Breaking changes are marked **⚠ BREAKING**.
 - Pause sidebar chat and project refreshes while the tab is hidden, and refresh both lists when it becomes visible or focused again.
 - Reduce gateway log noise: log agent env key names once per content change, emit one access completion line, and quiet fast successful GETs for chat projects, skills and static assets while retaining errors, redirects and slow requests.
 - Emit structured scheduler and channel failures with job/session context, preserve full scheduler diagnostics on disk, and classify upstream tool 4xx and explicitly marked input errors as warnings.
+- Gateway restarts reclaim stale same-repo Vite previews, preserve foreign UI port listeners, and report early web UI exits with structured startup errors.
 
 ### Added
 
