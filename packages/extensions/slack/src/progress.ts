@@ -47,7 +47,7 @@ export type SlackProgressDisplay = {
   start: () => void;
   publish: () => Promise<void>;
   milestone: (label: string) => void;
-  // Resolves true if a terminal Slack edit was made (a bubble existed),
+  // Resolves true if a terminal Slack edit or deletion was made (a bubble existed),
   // false if nothing was ever posted.
   finish: (state: "completed" | "failed" | "interrupted" | "waiting") => Promise<boolean>;
 };
@@ -251,8 +251,8 @@ export function createSlackProgressDisplay(options: {
       // whether there's anything left to terminal-edit.
       if (publishPromise) await publishPromise;
       if (!ts) return false;
-      if (state === "completed") {
-        // The reply itself signals completion; drop the bubble entirely.
+      if (state === "completed" || state === "waiting") {
+        // The reply or queued acknowledgement replaces the bubble.
         // Clearing ts first makes any pending update/retry a no-op.
         const bubbleTs = ts;
         ts = undefined;
@@ -273,9 +273,7 @@ export function createSlackProgressDisplay(options: {
       const text =
         state === "interrupted"
             ? "Interrupted."
-            : state === "waiting"
-              ? "Waiting for current work."
-              : "Failed.";
+            : "Failed.";
       latest = text;
       await update(true);
       return true;
