@@ -2,6 +2,20 @@ import type { MiddlewareHandler } from "hono";
 import { logger } from "hono/logger";
 
 const SLOW_REQUEST_MS = 500;
+const SECRET_QUERY_NAMES = new Set([
+  "code",
+  "state",
+  "token",
+  "access_token",
+  "refresh_token",
+  "id_token",
+  "client_secret",
+  "password",
+  "api_key",
+  "apikey",
+  "signature",
+  "sig",
+]);
 const ANSI_ESCAPE = new RegExp(
   `${String.fromCharCode(27)}\\[[0-?]*[ -/]*[@-~]`,
   "g"
@@ -9,6 +23,32 @@ const ANSI_ESCAPE = new RegExp(
 
 export function stripAnsi(value: string): string {
   return value.replace(ANSI_ESCAPE, "");
+}
+
+function redactQuery(target: string): string {
+  const queryStart = target.indexOf("?");
+  if (queryStart === -1 || queryStart === target.length - 1) return target;
+
+  const path = target.slice(0, queryStart);
+  try {
+    const query = target
+      .slice(queryStart + 1)
+      .split("&")
+      .map((pair) => {
+        const equals = pair.indexOf("=");
+        const name = equals === -1 ? pair : pair.slice(0, equals);
+        const decodedName = decodeURIComponent(
+          name.replace(/\+/g, " ")
+        ).toLowerCase();
+        return equals !== -1 && SECRET_QUERY_NAMES.has(decodedName)
+          ? `${name}=[redacted]`
+          : pair;
+      })
+      .join("&");
+    return `${path}?${query}`;
+  } catch {
+    return path;
+  }
 }
 
 function isPollingOrHealthPath(path: string): boolean {
@@ -32,13 +72,8 @@ export function accessLogger(): MiddlewareHandler {
   const normalLogger = logger((message) => {
     if (message.startsWith("<-- ")) return;
     const safeMessage = stripAnsi(message).replace(
-      /\/internal\/dashboards\/[^/?\s]+\/html\?[^\s]*/g,
-      (target) => {
-        const url = new URL(target, "http://gateway");
-        if (!url.searchParams.has("token")) return target;
-        url.searchParams.set("token", "[redacted]");
-        return url.pathname + url.search;
-      }
+      /^(--> \S+ )(\S+)/,
+      (_, prefix: string, target: string) => prefix + redactQuery(target)
     );
     console.log(safeMessage);
   });

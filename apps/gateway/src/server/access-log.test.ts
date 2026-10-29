@@ -194,6 +194,104 @@ describe("accessLogger", () => {
     );
   });
 
+  it.each([
+    [
+      "/api/auth/callback/google?state=signin-state&code=signin-code&returnTo=%2Fagents",
+      "/api/auth/callback/google?state=[redacted]&code=[redacted]&returnTo=%2Fagents",
+    ],
+    [
+      "/api/oauth/google/callback?state=connector-state&code=connector-code&agent=sales&scope=email%20profile",
+      "/api/oauth/google/callback?state=[redacted]&code=[redacted]&agent=sales&scope=email%20profile",
+    ],
+    [
+      "/api/mcp/oauth/callback?code=mcp-code&state=mcp-state&agent=support",
+      "/api/mcp/oauth/callback?code=[redacted]&state=[redacted]&agent=support",
+    ],
+    [
+      "/api/oauth/zendesk/callback?code=zendesk-code&state=zendesk-state&returnTo=%2Fagents%3Ftab%3Dconnections",
+      "/api/oauth/zendesk/callback?code=[redacted]&state=[redacted]&returnTo=%2Fagents%3Ftab%3Dconnections",
+    ],
+  ])("redacts OAuth callback credentials in %s", async (target, expected) => {
+    const app = new Hono();
+    const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    vi.spyOn(Date, "now").mockReturnValue(0);
+    app.use("*", accessLogger());
+    app.get("*", (c) => c.text("ok"));
+
+    const response = await app.request(target);
+
+    expect(response.status).toBe(200);
+    expect(log.mock.calls).toEqual([[`--> GET ${expected} 200 0ms`]]);
+  });
+
+  it("redacts all secret query names on arbitrary routes, regardless of casing or encoding", async () => {
+    const app = new Hono();
+    const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    vi.spyOn(Date, "now").mockReturnValue(0);
+    app.use("*", accessLogger());
+    app.post("/hooks/test", (c) => c.text("ok"));
+
+    await app.request(
+      "/hooks/test?Access_Token=secret-a&refresh_token=secret-b&id_token=secret-c&client_secret=secret-d&password=secret-e&api_key=secret-f&apikey=secret-g&signature=secret-h&sig=secret-i&CODE=secret-j&%63ode=secret-k&STATE=secret-l&token=secret-m",
+      { method: "POST" }
+    );
+
+    expect(log.mock.calls).toEqual([
+      [
+        "--> POST /hooks/test?Access_Token=[redacted]&refresh_token=[redacted]&id_token=[redacted]&client_secret=[redacted]&password=[redacted]&api_key=[redacted]&apikey=[redacted]&signature=[redacted]&sig=[redacted]&CODE=[redacted]&%63ode=[redacted]&STATE=[redacted]&token=[redacted] 200 0ms",
+      ],
+    ]);
+  });
+
+  it("drops malformed queries without failing or losing the completion line", async () => {
+    const app = new Hono();
+    const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    vi.spyOn(Date, "now").mockReturnValue(0);
+    app.use("*", accessLogger());
+    app.get("/hooks/test", (c) => c.text("ok"));
+
+    const response = await app.request(
+      "/hooks/test?%E0%A4%A=1&code=malformed-secret"
+    );
+
+    expect(response.status).toBe(200);
+    expect(log.mock.calls).toEqual([["--> GET /hooks/test 200 0ms"]]);
+  });
+
+  it("preserves non-secret pairs byte-for-byte and redacts every repeated secret value", async () => {
+    const app = new Hono();
+    const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    vi.spyOn(Date, "now").mockReturnValue(0);
+    app.use("*", accessLogger());
+    app.get("/hooks/test", (c) => c.text("ok"));
+
+    await app.request(
+      "/hooks/test?codex=public-code&statement=public-state&tag=a%20b&tag=a+b&co+de=public&&flag&code=first=part&code=second&state=&note=x=y?z"
+    );
+
+    expect(log.mock.calls).toEqual([
+      [
+        "--> GET /hooks/test?codex=public-code&statement=public-state&tag=a%20b&tag=a+b&co+de=public&&flag&code=[redacted]&code=[redacted]&state=[redacted]&note=x=y?z 200 0ms",
+      ],
+    ]);
+  });
+
+  it.each(["/hooks/test", "/hooks/test?", "/hooks/test?code"])(
+    "keeps %s unchanged without throwing",
+    async (target) => {
+      const app = new Hono();
+      const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
+      vi.spyOn(Date, "now").mockReturnValue(0);
+      app.use("*", accessLogger());
+      app.get("/hooks/test", (c) => c.text("ok"));
+
+      const response = await app.request(target);
+
+      expect(response.status).toBe(200);
+      expect(log.mock.calls).toEqual([[`--> GET ${target} 200 0ms`]]);
+    }
+  );
+
   it("redacts dashboard preview tokens in the completion line", async () => {
     const app = new Hono();
     const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
@@ -207,7 +305,9 @@ describe("accessLogger", () => {
     expect(log).toHaveBeenCalledTimes(1);
     for (const [message] of log.mock.calls) {
       expect(message).not.toContain("secret");
-      expect(message).toContain("token=%5Bredacted%5D&theme=dark&id=7");
+      expect(message).toContain(
+        "%74oken=[redacted]&token=[redacted]&theme=dark&id=7"
+      );
     }
   });
 });
