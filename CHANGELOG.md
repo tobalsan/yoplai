@@ -18,6 +18,7 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Fixed
 
+- Gateway access log redacts OAuth codes, state and other secret query parameters.
 - Keep queued chat tool activity in its current group without duplicate legacy tool pills.
 - Slack acknowledges queued messages once per conversation/run with the running task, elapsed time and `!stop` hint, then uses hourglass reactions for further messages; proactive DM replies omit the unavailable cancel command.
 - Stop sandboxed codemode scripts when their run is cancelled, cap each script at 200 nested tool calls and 10 concurrent gateway calls by default (configurable with `codemodeLimits`), and give codemode agents guidance for long jobs.
