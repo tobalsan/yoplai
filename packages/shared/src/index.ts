@@ -25,3 +25,4 @@ export * from "./pi-system-prompt.js";
 export * from "./no-reply.js";
 export * from "./credential-connect.js";
 export * from "./mcp-url.js";
+export * from "./codemode.js";

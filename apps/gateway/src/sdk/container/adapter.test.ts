@@ -1033,6 +1033,7 @@ describe("container adapter", () => {
   });
 
   it("refuses to write into a settled run's removed namespace", async () => {
+    vi.useFakeTimers();
     const root = tempDir();
     process.env.YOPLAI_HOME = path.join(root, "yoplai");
     const agent = createAgent(root);
@@ -1046,6 +1047,9 @@ describe("container adapter", () => {
     const handle = vi.mocked(params.onSessionHandle!).mock
       .calls[0][0] as ContainerSessionHandleShape;
 
+    processes[0].emitStreamEvent({
+      type: "tool_call", id: "late-deadline", name: "bash", args: {}, timestamp: 0,
+    });
     processes[0].emitOutput({ text: "done" });
     processes[0].finish(0);
     await run;
@@ -1057,6 +1061,7 @@ describe("container adapter", () => {
       getContainerAdapter().queueMessage?.(handle, "too late")
     ).rejects.toSatisfy(isRunSettledError);
     getContainerAdapter().abort?.(handle);
+    await vi.advanceTimersByTimeAsync(315_000);
     expect(fs.existsSync(handle.ipcDir)).toBe(false);
   });
 
@@ -1263,6 +1268,9 @@ describe("container adapter", () => {
     expect(signal.aborted).toBe(false);
     vi.advanceTimersByTime(15_000);
     expect(signal.aborted).toBe(true);
+    // ALG-566 approves the adapter seam: prove the runner receives a close
+    // before Docker exits; this does not exercise the runner's IPC poller.
+    expect(fs.existsSync(path.join((handle as ContainerSessionHandleShape).ipcDir, "input", "_close"))).toBe(true);
     processes[0].emitOutput({ text: "late success" });
     processes[0].finish(0);
     await rejection;

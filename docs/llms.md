@@ -110,6 +110,9 @@ cooperative; a timeout does not prove a remote side effect did not happen.
 Run cancellation and container shutdown abort in-flight gateway calls, and
 late results/progress are discarded. External MCP clients must forward the
 signal themselves; the platform cannot cancel their remote transport alone.
+Gateway timeout stops also write the IPC close sentinel immediately. A gateway
+`409 run cancelled` reply aborts the runner session, including codemode scripts
+that catch tool errors and nested calls waiting for a concurrency slot.
 The same call deadlines, correlation IDs, and cancellation apply over HTTP
 and Unix-socket gateway transport. Browser CLI commands use the Bash deadline
 wrapper; terminal watchdog timeouts retain their localized failure notices.
@@ -262,6 +265,21 @@ Workspace bootstrap creates missing `AGENTS.md`, `SOUL.md`, and `USER.md` from `
 Pi discovers skills and commands from workspace and user Pi directories. Extension tool names are provider-sanitized for the model while gateway dispatch retains original extension/tool identity.
 
 Pi agents can opt into the built-in JavaScript `codemode` tool with `codemode: true` in `agent.yaml`, on the host or in a container. An absent or false flag leaves it off; existing agents are not enabled automatically. The resource loader registers `createCodemodeExtension({ mode: "on", inlineBudget: 1000, models: false })` before reload/session creation, and the session's explicit tool allowlist includes `codemode` only when enabled. Non-Pi adapters are unchanged.
+
+Container scripts default to 200 admitted nested tool calls and 10 concurrent
+gateway-backed calls per script. Optional positive-integer agent settings
+`codemodeLimits.maxToolCalls` and `codemodeLimits.maxConcurrentToolCalls` override
+these independently. Native calls count toward the total; argument validation
+failures before admission do not. Concurrency queues only gateway-backed tools
+(including `send_file`), with slots released on success, failure or cancellation.
+Direct model calls are outside these limits. Exceeding the total cap tells the
+script to split work into more codemode calls and save/resume progress.
+
+Whenever codemode is enabled, host and container prompts advise a measured small
+batch, timeout-sized calls with saved progress, stopping on 409 or three consecutive
+failures, and telling the user the plan/count/time before jobs over about a minute.
+Container guidance includes its resolved caps. Host Pi has guidance only and
+enforces neither of these per-script caps.
 
 Scripts call registered tools as `await tools.<sanitized_name>(args)` and print only the final selection with `text(...)`. Deferred tools remain callable before loading; scripts discover them with `searchTools()`. Our extension/MCP bridge tools return text: parse a known JSON text response with `JSON.parse` before accessing its fields. Raw child results remain inspectable in display history, but Pi keeps them out of the next model request. Script calls retain tool validation, handlers, cancellation and the existing invisible-tool policy. Classifier/image models are not enabled.
 
