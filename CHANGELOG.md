@@ -18,6 +18,7 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Fixed
 
+- Size and align the sidebar New project button, keep row menu triggers inside the sidebar, and show complete project/chat menus within the viewport, including mobile drawers and scrolled lists.
 - Gateway access log redacts OAuth codes, state and other secret query parameters.
 - Keep queued chat tool activity in its current group without duplicate legacy tool pills.
 - Slack acknowledges queued messages once per conversation/run with the running task, elapsed time and `!stop` hint, then uses hourglass reactions for further messages; proactive DM replies omit the unavailable cancel command.
@@ -43,6 +44,7 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Changed
 
+- Toggle project chats by clicking the folder or project name; open project pages from the first item in their row menu.
 - Sandbox and Harbor eval images now run on Node 24 LTS instead of Node 22, which only receives security fixes. Rebuild custom images that start `FROM yoplai-agent:latest`. The gateway still supports Node 22.19+.
 - Sidebar chats now fit on one line, with full titles and chat details available on hover or keyboard focus.
 
