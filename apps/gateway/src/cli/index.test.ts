@@ -70,10 +70,8 @@ vi.mock("@yoplai/extension-projects", () => ({
 describe("gateway web UI process management", () => {
   const originalArgv = process.argv;
   const originalPlatform = process.platform;
-  const initialListeners = new Map<
-    string,
-    ReturnType<typeof process.listeners>
-  >();
+  let initialUncaughtListeners: NodeJS.UncaughtExceptionListener[];
+  let initialRejectionListeners: NodeJS.UnhandledRejectionListener[];
 
   function mockPreviewListener() {
     const state = {
@@ -92,9 +90,8 @@ describe("gateway web UI process management", () => {
   }
 
   beforeEach(() => {
-    for (const event of ["uncaughtException", "unhandledRejection"]) {
-      initialListeners.set(event, process.listeners(event));
-    }
+    initialUncaughtListeners = process.listeners("uncaughtException");
+    initialRejectionListeners = process.listeners("unhandledRejection");
     vi.resetModules();
     vi.clearAllMocks();
     vi.mocked(readEnv).mockReturnValue(undefined);
@@ -109,11 +106,13 @@ describe("gateway web UI process management", () => {
   });
 
   afterEach(() => {
-    for (const event of ["uncaughtException", "unhandledRejection"]) {
-      for (const listener of process.listeners(event)) {
-        if (!initialListeners.get(event)?.includes(listener))
-          process.removeListener(event, listener);
-      }
+    for (const listener of process.listeners("uncaughtException")) {
+      if (!initialUncaughtListeners.includes(listener))
+        process.removeListener("uncaughtException", listener);
+    }
+    for (const listener of process.listeners("unhandledRejection")) {
+      if (!initialRejectionListeners.includes(listener))
+        process.removeListener("unhandledRejection", listener);
     }
     Object.defineProperty(process, "platform", { value: originalPlatform });
     vi.useRealTimers();
