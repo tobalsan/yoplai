@@ -1,3 +1,4 @@
+import type { McpAppView, McpAppViewReference } from "@yoplai/shared/types";
 import type { SubagentRunStatus } from "@yoplai/shared/types";
 import type { ActiveTurn } from "./agents";
 import { dispatchWsEvent, wsDebug, type WsStreamEvent } from "./ws";
@@ -10,14 +11,15 @@ import {
 export type SubscriptionCallbacks = {
   onText?: (text: string) => void;
   onThinking?: (text: string) => void;
-  onToolCall?: (id: string, name: string, args: unknown, parentToolCallId?: string) => void;
+  onToolCall?: (id: string, name: string, args: unknown, parentToolCallId?: string, view?: McpAppView) => void;
   onToolResult?: (
     id: string,
     name: string,
     content: string,
     isError: boolean,
     details?: { diff?: string },
-    parentToolCallId?: string
+    parentToolCallId?: string,
+    view?: McpAppViewReference
   ) => void;
   onToolStart?: (toolName: string) => void;
   onToolEnd?: (toolName: string, isError: boolean) => void;

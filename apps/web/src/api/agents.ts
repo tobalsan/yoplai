@@ -59,13 +59,7 @@ export type ActiveTurn = {
   startedAt: number;
   thinking: string;
   text: string;
-  toolCalls: Array<{
-    id: string;
-    name: string;
-    arguments: unknown;
-    parentToolCallId?: string;
-    status: "running" | "done" | "error";
-  }>;
+  toolCalls: WsActiveTurnSnapshot["toolCalls"];
   toolResults?: WsActiveTurnSnapshot["toolResults"];
 };
 
@@ -95,7 +89,8 @@ export async function fetchFullHistory(
   agentId: string,
   sessionKey: string,
   sessionId?: string,
-  page?: { limit: number; before?: string }
+  page?: { limit: number; before?: string },
+  signal?: AbortSignal
 ): Promise<HistoryResponse<FullHistoryMessage>> {
   const query = new URLSearchParams(historyQuery("full", sessionKey, sessionId));
   if (page) {
@@ -103,7 +98,8 @@ export async function fetchFullHistory(
     if (page.before) query.set("before", page.before);
   }
   const res = await fetch(
-    `${API_BASE}/agents/${agentId}/history?${query}`
+    `${API_BASE}/agents/${agentId}/history?${query}`,
+    signal ? { signal } : undefined
   );
   if (!res.ok) {
     if (page?.before) throw new Error("Failed to fetch history");

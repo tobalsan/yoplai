@@ -33,3 +33,16 @@ describe("terminal failure dispatch", () => {
     expect(onError).toHaveBeenCalledWith("Something went wrong, please try again.");
   });
 });
+
+describe("MCP App dispatch", () => {
+  it.each([undefined, "parent"])("preserves call markers and result references with parent %s", (parentToolCallId) => {
+    const onToolCall = vi.fn();
+    const onToolResult = vi.fn();
+    const view = { server: "fixture", tool: "draw", resourceUri: "ui://fixture/card" };
+    const reference = { ...view, recordId: "record-7" };
+    dispatchWsEvent({ type: "tool_call", id: "draw-7", name: "fixture_draw", arguments: { label: "hello" }, parentToolCallId, view }, { onToolCall });
+    dispatchWsEvent({ type: "tool_result", id: "draw-7", name: "fixture_draw", content: "card", isError: true, parentToolCallId, view: reference }, { onToolResult });
+    expect(onToolCall).toHaveBeenCalledWith("draw-7", "fixture_draw", { label: "hello" }, parentToolCallId, { server: "fixture", tool: "draw", resourceUri: "ui://fixture/card" });
+    expect(onToolResult).toHaveBeenCalledWith("draw-7", "fixture_draw", "card", true, undefined, parentToolCallId, { server: "fixture", tool: "draw", resourceUri: "ui://fixture/card", recordId: "record-7" });
+  });
+});

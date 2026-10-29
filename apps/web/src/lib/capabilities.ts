@@ -4,6 +4,7 @@ import { createSignal } from "solid-js";
 import { createStore } from "solid-js/store";
 
 const defaultCapabilities: CapabilitiesResponse = {
+  apps: { available: false },
   version: 2,
   extensions: {},
   agents: [],
@@ -22,7 +23,7 @@ export async function loadCapabilities(): Promise<CapabilitiesResponse> {
   if (loadPromise) return loadPromise;
   loadPromise = fetchCapabilities()
     .then((data) => {
-      setCapabilities({ ...data, enableCronMonitoring: data.enableCronMonitoring ?? false });
+      setCapabilities({ ...data, apps: data.apps ?? { available: false }, enableCronMonitoring: data.enableCronMonitoring ?? false });
       setCapabilitiesReady(true);
       return data;
     })
@@ -60,6 +61,7 @@ export function setCapabilitiesForTests(
   value: Partial<CapabilitiesResponse>
 ): void {
   setCapabilities({
+    apps: value.apps ?? { available: false },
     version: value.version ?? defaultCapabilities.version,
     extensions: value.extensions ?? defaultCapabilities.extensions,
     agents: value.agents ?? defaultCapabilities.agents,
@@ -77,3 +79,7 @@ export function isExtensionEnabled(id: string): boolean {
 }
 
 export { capabilities, capabilitiesReady };
+
+export function appsAvailable(): boolean | undefined {
+  return capabilitiesReady() ? capabilities.apps?.available === true : undefined;
+}

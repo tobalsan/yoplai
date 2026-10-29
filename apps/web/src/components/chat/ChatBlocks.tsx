@@ -7,6 +7,8 @@ import { formatTimestamp } from "../../lib/format";
 import { extractBlockText } from "../../lib/history";
 import { renderMarkdown } from "../../lib/markdown";
 import { formatFileSize } from "../../lib/attachments";
+import { McpAppView } from "./McpAppView";
+import { appsAvailable } from "../../lib/capabilities";
 import { groupActivityItems, lastFiveWords } from "../../lib/chat-activity";
 
 export function CompactionSummary(props: { text: string; timestamp: number }) {
@@ -164,6 +166,18 @@ function SimpleToolBlock(props: { name: string; arguments?: unknown }) {
   );
 }
 
+export function McpAppToolRow(props: { agentId: string; sessionId?: string | null; toolCallId: string; name: string; arguments?: unknown; result?: FullToolResultMessage }) {
+  return <div class="mcp-app-tool-row">
+    <SimpleToolBlock name={props.name} arguments={props.arguments} />
+    <Show when={!!props.result && appsAvailable() !== undefined && (appsAvailable() === false || !props.result?.view || props.sessionId !== undefined)} fallback={<p role="status">Loading view…</p>}>
+      <Show when={!!props.result?.view && appsAvailable() === true && !!props.sessionId}
+        fallback={<><pre class="tool-code">{getToolResultText(props.result)}</pre><p role="status">View unavailable</p></>}>
+        <McpAppView agentId={props.agentId} sessionId={props.sessionId!} toolCallId={props.toolCallId} text={getToolResultText(props.result)} />
+      </Show>
+    </Show>
+  </div>;
+}
+
 function ToolRunSection(props: {
   tools: Extract<ActivityItem, { type: "tool" }>[];
   simple?: boolean;
@@ -199,7 +213,7 @@ function ToolRunSection(props: {
       </button>
       <Show when={expanded()}>
         <div class="activity-tool-run">
-          <Index each={props.tools.filter((tool) => !tool.parentToolCallId)}>
+          <Index each={props.tools.filter((tool) => !tool.parentToolCallId || !props.tools.some((parent) => parent.id === tool.parentToolCallId))}>
             {(tool) => {
               const children = () => props.tools.filter(
                 (child) => child.parentToolCallId === tool().id && tool().id
