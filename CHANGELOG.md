@@ -18,6 +18,7 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Fixed
 
+- Guard gateway tool-call cleanup against retained abort listeners and timers after repeated successful calls.
 - Size and align the sidebar New project button, keep row menu triggers inside the sidebar, and show complete project/chat menus within the viewport, including mobile drawers and scrolled lists.
 - Gateway access log redacts OAuth codes, state and other secret query parameters.
 - Keep queued chat tool activity in its current group without duplicate legacy tool pills.

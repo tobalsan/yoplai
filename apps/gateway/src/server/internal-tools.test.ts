@@ -1,6 +1,7 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { getEventListeners } from "node:events";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { GatewayConfig } from "@yoplai/shared";
 import {
@@ -112,6 +113,28 @@ afterEach(() => {
 });
 
 describe("internal tools", () => {
+  it("releases call listeners and deadlines after repeated successful tools on one run", async () => {
+    vi.useFakeTimers();
+    const { app, executeExtensionTool } = createDeps();
+    registerToken("token-cleanup");
+    const runSignal = getContainerTokenContext("token-cleanup")!.abortController.signal;
+    const initialListeners = getEventListeners(runSignal, "abort").length;
+
+    for (let round = 0; round < 200; round++) {
+      const response = await postTool(app, {
+        tool: "extension.success", args: {}, sessionId: "session-1",
+        agentId: "agent-1", agentToken: "token-cleanup",
+      });
+      expect(response.status).toBe(200);
+      expect(await response.json()).toEqual({ id: "PRO-1", title: "Project One" });
+      const signal = executeExtensionTool.mock.calls[round][8] as AbortSignal;
+      expect(getEventListeners(runSignal, "abort")).toHaveLength(initialListeners);
+      expect(getEventListeners(signal, "abort")).toHaveLength(0);
+      expect(vi.getTimerCount()).toBe(0);
+      expect(signal.aborted).toBe(false);
+    }
+  });
+
   it("refuses project tools when the authenticated run has no project", async () => {
     const { app, executeExtensionTool } = createDeps();
     registerToken("token-project-refusal");
