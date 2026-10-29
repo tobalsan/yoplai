@@ -17,6 +17,7 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Fixed
 
+- Keep queued chat tool activity in its current group without duplicate legacy tool pills.
 - Allow failed Threadit items to run again after a board Retry without restarting the gateway.
 - Keep extension and MCP server details readable on phones, with clear back navigation, stacked headers and scope tabs that fit the screen.
 - Mattermost threads retain their session owner across replies, resets and restarts; reconnect recovery honors username allowlists and covers silent disconnects. REST deadlines and tool cancellation bound stalled calls, while reaction and typing failures no longer delay answers.
