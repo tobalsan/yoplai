@@ -4,6 +4,7 @@ import {
   fetchMcpCatalog,
   mcpDisplayName,
   removeMcpCatalogServer,
+  iconRefreshOutcome,
   refreshMcpCatalogIcon,
   updateMcpCatalogServer,
   type McpCatalogServer,
@@ -30,7 +31,7 @@ export default function AdminMcpServersPage() {
     try {
       const result = await refreshMcpCatalogIcon(server.name);
       mutate((list) => list?.map((item) => item.name === server.name ? { ...item, iconUrl: result.server.iconUrl } : item));
-      setIconResults((results) => ({ ...results, [server.name]: { message: result.status === "updated" ? "Icon updated" : result.status === "not_connected" ? "This server needs sign-in; its own icon is captured the next time an agent connects." : "No new icon found; kept the current one" } }));
+      setIconResults((results) => ({ ...results, [server.name]: iconRefreshOutcome(result, "This server needs sign-in; its own icon is captured the next time an agent connects.") }));
     } catch (cause) {
       setIconResults((results) => ({ ...results, [server.name]: { error: message(cause, "Failed to refresh MCP server icon.") } }));
     }

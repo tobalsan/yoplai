@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { render } from "solid-js/web";
 
 const m = vi.hoisted(() => ({ refreshMcpCatalogIcon: vi.fn(), fetchMcpCatalog: vi.fn(), addMcpCatalogServer: vi.fn(), updateMcpCatalogServer: vi.fn(), removeMcpCatalogServer: vi.fn() }));
-vi.mock("../../api/mcp-servers", () => ({ ...m, refreshMcpServerIcon: vi.fn(), mcpDisplayName: (name: string, title?: string) => title || name }));
+vi.mock("../../api/mcp-servers", async () => ({ ...m, iconRefreshOutcome: (await vi.importActual<typeof import("../../api/mcp-servers")>("../../api/mcp-servers")).iconRefreshOutcome, refreshMcpServerIcon: vi.fn(), mcpDisplayName: (name: string, title?: string) => title || name }));
 vi.mock("@solidjs/router", () => ({
   A: (props: Record<string, unknown>) => <a {...props} />,
   useLocation: () => ({ pathname: "/admin/mcp-servers", search: "" }),
@@ -88,6 +88,18 @@ describe("AdminMcpServersPage", () => {
     await flush();
     expect(container.querySelector('[data-server="linear"] [role="status"]')?.textContent).toBe(expected);
     expect(container.querySelector('[data-server="linear"] img')?.getAttribute("src")).toBe("https://linear.test/favicon.png");
+  });
+
+  it.each([
+    [{ status: "unreachable", error: "MCP server status timed out" }],
+    [{ status: "unchanged", error: "MCP server status timed out" }],
+  ])("reports a timed-out refresh as a row error, never as no new icon (%o)", async (response) => {
+    const container = await mount();
+    m.refreshMcpCatalogIcon.mockResolvedValue({ ...response, server: { name: "linear", url: "https://mcp.linear.app/mcp" } });
+    click(container, "Refresh icon");
+    await flush();
+    expect(container.querySelector('[data-server="linear"] [role="alert"]')?.textContent).toContain("MCP server status timed out");
+    expect(container.textContent).not.toContain("No new icon found");
   });
 
   it("reports a refresh error on its row and allows retry", async () => {

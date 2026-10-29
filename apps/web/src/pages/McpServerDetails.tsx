@@ -9,6 +9,7 @@ import {
   type McpServerList,
   mcpDisplayName,
   removeMcpServer,
+  iconRefreshOutcome,
   refreshMcpServerIcon,
   saveMcpServerConfig,
   saveMcpServerLabel,
@@ -183,7 +184,13 @@ export function McpServerDetails() {
       const result = await refreshMcpServerIcon(agent, name);
       if (!current()) return;
       setIconOverride({ agent, name, iconUrl: result.server.iconUrl });
-      setIconMessage(result.status === "updated" ? "Icon updated" : result.status === "not_connected" ? "Connect this server first, then refresh the icon" : "No new icon found; kept the current one");
+      const outcome = iconRefreshOutcome(result, "Connect this server first, then refresh the icon");
+      if ("error" in outcome) {
+        setIconError(outcome.error);
+        const list = live()?.agent === agent && live()?.name === name ? live()!.list : fastStatus();
+        if (list) setLive({ agent, name, list: { ...list, servers: list.servers.map((item) => item.name === name ? { ...item, ...result.server } : item) } });
+      }
+      else setIconMessage(outcome.message);
     } catch (cause) {
       if (current()) setIconError(errorMessage(cause, "Failed to refresh MCP server icon."));
     } finally { if (current()) setRefreshingIcon(false); }

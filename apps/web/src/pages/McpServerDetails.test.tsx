@@ -18,7 +18,8 @@ const { refreshMcpServerIconMock, saveMcpServerLabelMock, setSharedMcpServerMock
   navigateMock: vi.fn(),
 }));
 
-vi.mock("../api/mcp-servers", () => ({
+vi.mock("../api/mcp-servers", async () => ({
+  iconRefreshOutcome: (await vi.importActual<typeof import("../api/mcp-servers")>("../api/mcp-servers")).iconRefreshOutcome,
   refreshMcpCatalogIcon: vi.fn(),
   refreshMcpServerIcon: refreshMcpServerIconMock,
   cachedMcpServers: () => undefined,
@@ -230,6 +231,7 @@ it("refreshes a user HTTP icon immediately while live status still contains the 
 it.each([
   ["unchanged", "No new icon found; kept the current one"],
   ["not_connected", "Connect this server first, then refresh the icon"],
+  ["not_saved", "This server is edited by hand, so its icon isn't saved."],
 ])("explains the %s refresh result", async (status, expected) => {
   const server = { name: "docs", type: "http", auth: "oauth", state: "disconnected", readOnly: false };
   fetchMcpServersMock.mockResolvedValue({ servers: [server] });
@@ -238,6 +240,17 @@ it.each([
   button("Refresh icon")!.click();
   await tick();
   expect(Array.from(container.querySelectorAll('[role="status"]')).some((item) => item.textContent === expected)).toBe(true);
+});
+
+it("shows a timed-out refresh as an error, never as no new icon, and updates the status line", async () => {
+  fetchMcpServersMock.mockResolvedValue({ servers: [{ name: "docs", type: "http", auth: "none", state: "connected", readOnly: false }] });
+  refreshMcpServerIconMock.mockResolvedValue({ status: "unchanged", server: { name: "docs", type: "http", auth: "none", state: "unreachable", error: "MCP server status timed out", readOnly: false } });
+  await mount();
+  button("Refresh icon")!.click();
+  await tick();
+  expect(Array.from(container.querySelectorAll('[role="alert"]')).some((item) => item.textContent?.includes("MCP server status timed out"))).toBe(true);
+  expect(container.textContent).not.toContain("No new icon found");
+  expect(container.textContent).not.toContain("Connected");
 });
 
 it("shows a refresh failure as an alert and allows retry", async () => {
