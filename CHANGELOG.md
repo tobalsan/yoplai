@@ -17,6 +17,7 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Fixed
 
+- Size and align the sidebar New project button, keep row menu triggers inside the sidebar, and show complete project/chat menus within the viewport, including mobile drawers and scrolled lists.
 - Allow failed Threadit items to run again after a board Retry without restarting the gateway.
 - Keep extension and MCP server details readable on phones, with clear back navigation, stacked headers and scope tabs that fit the screen.
 - Mattermost threads retain their session owner across replies, resets and restarts; reconnect recovery honors username allowlists and covers silent disconnects. REST deadlines and tool cancellation bound stalled calls, while reaction and typing failures no longer delay answers.
@@ -37,6 +38,7 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Changed
 
+- Toggle project chats by clicking the folder or project name; open project pages from the first item in their row menu.
 - Sandbox and Harbor eval images now run on Node 24 LTS instead of Node 22, which only receives security fixes. Rebuild custom images that start `FROM yoplai-agent:latest`. The gateway still supports Node 22.19+.
 - Sidebar chats now fit on one line, with full titles and chat details available on hover or keyboard focus.
 

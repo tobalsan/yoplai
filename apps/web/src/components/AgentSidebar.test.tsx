@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { getByRole } from "@testing-library/dom";
 import { createSignal, splitProps } from "solid-js";
 import { render } from "solid-js/web";
 
@@ -78,13 +79,18 @@ vi.mock("@solidjs/router", async (importOriginal) => {
   };
 });
 
-const { AgentSidebar } = await import("./AgentSidebar");
+const { AgentSidebar, positionSidebarMenu } = await import("./AgentSidebar");
 const { Router, Route } = await import("@solidjs/router");
 const { SessionSearch } = await import("./SessionSearch");
 const { connectPromptRequest, clearConnectPromptRequest } = await import("../onboarding/state");
 const { resetCapabilitiesForTests, setCapabilitiesForTests } = await import(
   "../lib/capabilities"
 );
+
+async function openSidebarMenu(container: HTMLElement, label = "Session menu") {
+  container.querySelector<HTMLElement>('[aria-label="' + label + '"]')!.click();
+  await vi.advanceTimersByTimeAsync(1);
+}
 
 describe("AgentSidebar", () => {
   afterEach(() => {
@@ -120,6 +126,15 @@ describe("AgentSidebar", () => {
     fetchProjectsMock.mockResolvedValue([]);
     resetCapabilitiesForTests();
     vi.clearAllMocks();
+  });
+
+  it.each([
+    { trigger: { top: 40, bottom: 60, right: 220 }, size: { width: 160, height: 200 }, viewport: { width: 390, height: 800 }, expected: { left: 60, top: 64 } },
+    { trigger: { top: 740, bottom: 760, right: 390 }, size: { width: 180, height: 200 }, viewport: { width: 390, height: 800 }, expected: { left: 202, top: 536 } },
+    { trigger: { top: 5, bottom: 25, right: 30 }, size: { width: 160, height: 100 }, viewport: { width: 390, height: 800 }, expected: { left: 8, top: 29 } },
+    { trigger: { top: 5, bottom: 25, right: 390 }, size: { width: 374, height: 300 }, viewport: { width: 390, height: 320 }, expected: { left: 8, top: 12 } },
+  ])("positions a sidebar menu within the viewport: $expected", ({ trigger, size, viewport, expected }) => {
+    expect(positionSidebarMenu(trigger, size, viewport)).toEqual(expected);
   });
 
   it("keeps row details off the title line and exposes them on keyboard focus", async () => {
@@ -235,7 +250,7 @@ describe("AgentSidebar", () => {
     expect(projects.querySelector('[role="img"][aria-label="Unread messages"]')).not.toBeNull();
     expect(projects.textContent).not.toContain("Project answer");
     expect(container.querySelectorAll('[role="img"][aria-label="Unread messages"]')).toHaveLength(2);
-    container.querySelector<HTMLButtonElement>('[aria-label="Toggle Work"]')!.click();
+    getByRole(container, "button", { name: "Work" }).click();
     const projectRow = Array.from(projects.querySelectorAll("button")).find((button) => button.textContent?.includes("Project answer"))!;
     expect(projectRow.querySelector('[role="img"][aria-label="Unread messages"]')).not.toBeNull();
     const readInOtherTab = (sessionId: string, completionId: string) => {
@@ -470,23 +485,113 @@ describe("AgentSidebar", () => {
     await vi.advanceTimersByTimeAsync(1);
     expect(Array.from(container.querySelectorAll(".sessions-section")).map((node) => node.getAttribute("aria-label"))).toEqual(["Projects", "Pinned", "Recent"]);
     expect(Array.from(container.querySelectorAll(".session-title-text")).map((node) => node.textContent)).toEqual(["Project pin", "New", "Global pin", "Recent"]);
-    const toggle = () => container.querySelector<HTMLButtonElement>('[aria-label="Toggle Work"]')!;
+    const toggle = () => getByRole(container, "button", { name: "Work" });
+    expect(toggle().getAttribute("aria-expanded")).toBe("true");
+    expect(toggle().querySelector("a")).toBeNull();
+    expect(container.querySelector('button[aria-label="Toggle Work"]')).toBeNull();
     toggle().click();
+    expect(toggle().getAttribute("aria-expanded")).toBe("false");
+    expect(localStorage.getItem("yoplai:collapsed-chat-projects")).toBe('["p1"]');
     expect(container.querySelector('[aria-label="Projects"]')!.textContent).not.toContain("Project pin");
     dispose();
     dispose = render(() => <AgentSidebar collapsed={() => false} onToggleCollapse={() => {}} />, container);
     await vi.advanceTimersByTimeAsync(1);
     expect(toggle().getAttribute("aria-expanded")).toBe("false");
     toggle().click();
-    const buttons = () => Array.from(container.querySelectorAll<HTMLButtonElement>(".session-action"));
+    const buttons = () => Array.from(document.querySelectorAll<HTMLButtonElement>(".session-action"));
+    const menu = container.querySelectorAll<HTMLDetailsElement>("details")[1]!;
+    menu.querySelector("summary")!.click();
+    await vi.advanceTimersByTimeAsync(1);
     buttons().find((button) => button.textContent === "Remove from project")!.click();
+    expect(menu.open).toBe(false);
     await vi.advanceTimersByTimeAsync(1);
     expect(moveChatToProjectMock).toHaveBeenCalledWith("a", "pin", null);
+    await openSidebarMenu(container);
     buttons().find((button) => button.textContent === "Move to project…")!.click();
     container.querySelector<HTMLButtonElement>('[role="dialog"] button')!.click();
     await vi.advanceTimersByTimeAsync(1);
     expect(moveChatToProjectMock).toHaveBeenCalledWith("a", "pin", "p1");
     dispose();
+  });
+
+  it("opens projects deliberately from the first menu item and marks their row active", async () => {
+    vi.useFakeTimers();
+    fetchChatProjectsMock.mockResolvedValue({ items: [{ id: "p1", name: "Work", createdAt: 1, updatedAt: 1 }] });
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const dispose = render(() => <AgentSidebar collapsed={() => false} onToggleCollapse={() => {}} />, container);
+    try {
+      await vi.advanceTimersByTimeAsync(1);
+      const row = getByRole(container, "button", { name: "Work" });
+      expect(row.getAttribute("aria-current")).toBeNull();
+      expect(row.querySelector('a[href="/p/p1"]')).toBeNull();
+      container.querySelector<HTMLElement>('[aria-label="Project menu"]')!.click();
+      await vi.advanceTimersByTimeAsync(1);
+      const open = getByRole(document.body, "link", { name: "Open" });
+      expect(Array.from(open.parentElement!.querySelectorAll("a, button")).map((item) => item.textContent?.trim())).toEqual(["Open", "Rename…", "Delete…"]);
+      expect(open.getAttribute("href")).toBe("/p/p1");
+      open.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+      expect(container.querySelector("details[open]")).not.toBeNull();
+      open.addEventListener("click", (event) => event.preventDefault());
+      open.click();
+      await vi.advanceTimersByTimeAsync(1);
+      expect(container.querySelector("details[open]")).toBeNull();
+      setPathname("/p/p1");
+      expect(row.getAttribute("aria-current")).toBe("page");
+    } finally { dispose(); }
+  });
+
+  it("keeps one menu open and dismisses it when its row moves or the drawer closes", async () => {
+    vi.useFakeTimers();
+    fetchChatProjectsMock.mockResolvedValue({ items: [{ id: "p1", name: "Work", createdAt: 1, updatedAt: 1 }] });
+    fetchAgentSessionsMock.mockResolvedValue({ items: [{ agentId: "a", sessionId: "one", firstUserMessage: "Chat", lastActivity: 1 }] });
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const [collapsed, setCollapsed] = createSignal(false);
+    const dispose = render(() => <AgentSidebar collapsed={collapsed} onToggleCollapse={() => {}} />, container);
+    try {
+      await vi.advanceTimersByTimeAsync(1);
+      const project = container.querySelector<HTMLElement>('[aria-label="Project menu"]')!;
+      const chat = container.querySelector<HTMLElement>('[aria-label="Session menu"]')!;
+      project.click();
+      await vi.advanceTimersByTimeAsync(1);
+      chat.click();
+      await vi.advanceTimersByTimeAsync(1);
+      expect(container.querySelectorAll("details[open]")).toHaveLength(1);
+      expect(project.parentElement!.hasAttribute("open")).toBe(false);
+      container.querySelector(".sessions-list")!.dispatchEvent(new Event("scroll"));
+      await vi.advanceTimersByTimeAsync(1);
+      expect(container.querySelector("details[open]")).toBeNull();
+      project.click();
+      await vi.advanceTimersByTimeAsync(1);
+      window.dispatchEvent(new Event("resize"));
+      await vi.advanceTimersByTimeAsync(1);
+      expect(container.querySelector("details[open]")).toBeNull();
+      project.click();
+      await vi.advanceTimersByTimeAsync(1);
+      setCollapsed(true);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(container.querySelector("details[open]")).toBeNull();
+    } finally { dispose(); }
+  });
+
+  it("focuses menu actions when opened and returns to the trigger on Escape", async () => {
+    vi.useFakeTimers();
+    fetchChatProjectsMock.mockResolvedValue({ items: [{ id: "p1", name: "Work", createdAt: 1, updatedAt: 1 }] });
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const dispose = render(() => <AgentSidebar collapsed={() => false} onToggleCollapse={() => {}} />, container);
+    try {
+      await vi.advanceTimersByTimeAsync(1);
+      const trigger = container.querySelector<HTMLElement>('[aria-label="Project menu"]')!;
+      trigger.focus();
+      trigger.click();
+      await vi.advanceTimersByTimeAsync(1);
+      expect(document.activeElement).toBe(getByRole(document.body, "link", { name: "Open" }));
+      document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+      expect(document.activeElement).toBe(trigger);
+      expect(container.querySelector("details[open]")).toBeNull();
+    } finally { dispose(); }
   });
 
   it("defers hidden mount and resumes both lists on visibility", async () => {
@@ -553,14 +658,15 @@ describe("AgentSidebar", () => {
     document.body.appendChild(container);
     const dispose = render(() => <AgentSidebar collapsed={() => false} onToggleCollapse={() => {}} />, container);
     const click = (text: string, selector = "button") => {
-      const button = Array.from(container.querySelectorAll<HTMLButtonElement>(selector)).find((item) => item.textContent?.trim() === text);
+      const button = Array.from(document.querySelectorAll<HTMLButtonElement>(selector)).find((item) => item.textContent?.trim() === text);
       expect(button).toBeDefined();
       button!.click();
     };
-    const startMutation = () => {
+    const startMutation = async () => {
       if (mutation === "create") {
         container.querySelector<HTMLButtonElement>('[aria-label="New project"]')!.click();
       } else {
+        await openSidebarMenu(container, mutation === "move" ? "Session menu" : "Project menu");
         click(mutation === "rename" ? "Rename…" : mutation === "delete" ? "Delete…" : "Move to project…", ".session-action");
       }
       if (mutation === "create" || mutation === "rename") {
@@ -579,7 +685,7 @@ describe("AgentSidebar", () => {
         const mock = mutation === "rename" ? renameChatProjectMock : mutation === "delete" ? deleteChatProjectMock : moveChatToProjectMock;
         mock.mockImplementationOnce(() => new Promise<void>((resolve) => { finishMutation = resolve; }));
       }
-      startMutation();
+      await startMutation();
       expect(finishMutation).toBeDefined();
       const baseline = fetchChatProjectsMock.mock.calls.length;
       setVisibility("hidden");
@@ -591,7 +697,7 @@ describe("AgentSidebar", () => {
       await vi.advanceTimersByTimeAsync(0);
       expect(fetchChatProjectsMock).toHaveBeenCalledTimes(baseline + 1);
       const visibleBaseline = fetchChatProjectsMock.mock.calls.length;
-      startMutation();
+      await startMutation();
       await vi.advanceTimersByTimeAsync(0);
       expect(fetchChatProjectsMock.mock.calls.length).toBeGreaterThan(visibleBaseline);
       expect(container.querySelector('[role="dialog"], [role="alertdialog"]')).toBeNull();
@@ -681,7 +787,8 @@ describe("AgentSidebar", () => {
     expect(sections[1].getAttribute("aria-label")).toBe("Recent");
     expect(sections[0].querySelectorAll(".sessions-group")).toHaveLength(2);
     expect(sections[1].textContent).not.toContain("Pinned today");
-    const unpin = Array.from(container.querySelectorAll<HTMLButtonElement>(".session-action")).find((button) => button.textContent?.trim() === "Unpin")!;
+    await openSidebarMenu(container);
+    const unpin = Array.from(document.querySelectorAll<HTMLButtonElement>(".session-action")).find((button) => button.textContent?.trim() === "Unpin")!;
     fetchAgentSessionsMock.mockResolvedValue({ items: items.map((item) => ({ ...item, pinned: null })) });
     unpin.click();
     await vi.advanceTimersByTimeAsync(1);
@@ -706,8 +813,8 @@ describe("AgentSidebar", () => {
     const dispose = render(() => <AgentSidebar collapsed={() => false} onToggleCollapse={() => {}} />, container);
     await vi.advanceTimersByTimeAsync(1);
     const menu = container.querySelector<HTMLDetailsElement>("details")!;
-    menu.open = true;
-    const action = menu.querySelector<HTMLButtonElement>("button")!;
+    await openSidebarMenu(container);
+    const action = getByRole(document.body, "button", { name: "Pin" });
     action.focus();
     fetchAgentSessionsMock.mockResolvedValue({ items: [{ ...item }] });
     await vi.advanceTimersByTimeAsync(3000);
@@ -738,12 +845,14 @@ describe("AgentSidebar", () => {
     document.body.appendChild(container);
     const dispose = render(() => <AgentSidebar collapsed={() => false} onToggleCollapse={() => {}} />, container);
     await vi.advanceTimersByTimeAsync(1);
-    container.querySelector<HTMLButtonElement>(".session-row-wrap .session-action")!.click();
+    await openSidebarMenu(container);
+    getByRole(document.body, "button", { name: "Pin" }).click();
     await vi.advanceTimersByTimeAsync(1);
     expect(container.querySelector('[role="alert"]')?.textContent).toContain("Failed to update session pin");
     let finishPin: (() => void) | undefined;
     pinAgentSessionMock.mockImplementationOnce(() => new Promise<void>((resolve) => { finishPin = resolve; }));
-    container.querySelector<HTMLButtonElement>(".session-row-wrap .session-action")!.click();
+    await openSidebarMenu(container);
+    getByRole(document.body, "button", { name: "Pin" }).click();
     await vi.advanceTimersByTimeAsync(1);
     expect(container.querySelector('[role="alert"]')).toBeNull();
     fetchAgentSessionsMock.mockResolvedValue({ items: [{ ...item, title: "Updated while pin waits" }] });
@@ -936,7 +1045,8 @@ describe("AgentSidebar", () => {
       container
     );
     await vi.advanceTimersByTimeAsync(1);
-    const actions = () => Array.from(container.querySelectorAll<HTMLButtonElement>(".session-action"));
+    await openSidebarMenu(container);
+    const actions = () => Array.from(document.querySelectorAll<HTMLButtonElement>(".session-action"));
     expect(actions().find((btn) => btn.textContent?.includes("Archive"))).toBeTruthy();
     actions().find((btn) => btn.textContent?.includes("Archive"))!.click();
     await vi.advanceTimersByTimeAsync(1);
@@ -969,7 +1079,8 @@ describe("AgentSidebar", () => {
       container
     );
     await vi.advanceTimersByTimeAsync(1);
-    const actions = () => Array.from(container.querySelectorAll<HTMLButtonElement>(".session-action"));
+    await openSidebarMenu(container);
+    const actions = () => Array.from(document.querySelectorAll<HTMLButtonElement>(".session-action"));
     expect(actions().find((btn) => btn.textContent?.includes("Archive"))).toBeFalsy();
     dispose();
   });
@@ -998,7 +1109,8 @@ describe("AgentSidebar", () => {
       container
     );
     await vi.advanceTimersByTimeAsync(1);
-    expect(container.querySelector("hr.session-menu-separator")).toBeTruthy();
+    await openSidebarMenu(container);
+    expect(document.querySelector("hr.session-menu-separator")).toBeTruthy();
     dispose();
   });
 
@@ -1064,7 +1176,7 @@ describe("AgentSidebar", () => {
     expect(menu!.open).toBe(false);
     
     // Open menu
-    menu!.setAttribute("open", "");
+    await openSidebarMenu(container);
     expect(menu!.open).toBe(true);
     
     // Click outside (on document.body which doesn't contain the menu)
@@ -1104,7 +1216,7 @@ describe("AgentSidebar", () => {
     expect(menu).toBeTruthy();
     
     // Open menu
-    menu!.setAttribute("open", "");
+    await openSidebarMenu(container);
     expect(menu!.open).toBe(true);
     
     // Press Escape
@@ -1141,7 +1253,8 @@ describe("AgentSidebar", () => {
     );
     await vi.advanceTimersByTimeAsync(1);
     
-    const archiveButton = Array.from(container.querySelectorAll<HTMLButtonElement>(".session-action")).find(
+    await openSidebarMenu(container);
+    const archiveButton = Array.from(document.querySelectorAll<HTMLButtonElement>(".session-action")).find(
       (btn) => btn.textContent?.includes("Archive")
     );
     expect(archiveButton).toBeTruthy();
