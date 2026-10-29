@@ -41,6 +41,8 @@ vi.mock("../api/extensions", () => ({
   fetchOAuthScopeState: m.fetchOAuthScopeState,
 }));
 vi.mock("../api/mcp-servers", () => ({
+  refreshMcpServerIcon: vi.fn(),
+  refreshMcpCatalogIcon: vi.fn(),
   fetchMcpServers: m.fetchMcpServers,
   mcpDisplayName: (name: string, title?: string) => title || name.charAt(0).toUpperCase() + name.slice(1),
 }));

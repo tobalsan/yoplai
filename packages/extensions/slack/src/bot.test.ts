@@ -142,6 +142,8 @@ vi.mock("@slack/bolt", () => ({
 }));
 
 const mockRunAgent = vi.fn();
+const mockGetActiveRun = vi.fn();
+let activeRunLookupAvailable = true;
 const mockGetSessionEntry = vi.fn();
 const mockEnsureSession = vi.fn();
 const mockHasSession = vi.fn();
@@ -157,6 +159,7 @@ vi.mock("./context.js", () => ({
   getSlackContext: vi.fn(() => ({
     logger: { error: vi.fn() },
     runAgent: mockRunAgent,
+    getActiveRun: activeRunLookupAvailable ? mockGetActiveRun : undefined,
     resolveSessionId: mockGetSessionEntry,
     credentialConnect: {},
     saveMediaFile: mockSaveMediaFile,
@@ -257,6 +260,8 @@ describe("createSlackBot", () => {
     pairing.enabled = false;
     clearAllHistory();
     mockGetSessionEntry.mockResolvedValue(undefined);
+    activeRunLookupAvailable = true;
+    mockGetActiveRun.mockResolvedValue(undefined);
     mockEnsureSession.mockResolvedValue({ sessionId: "session", updatedAt: 1 });
     mockHasSession.mockResolvedValue(true);
     mockResetSession.mockResolvedValue(undefined);
@@ -1682,27 +1687,146 @@ describe("createSlackBot", () => {
     );
   });
 
-  it("shows queued work as waiting rather than interrupted", async () => {
+  it("acknowledges five queued messages with one task reply and four hourglasses", async () => {
     const { createSlackBot } = await import("./bot.js");
     const bot = createSlackBot([agent], config);
     await bot?.start();
-    mockRunAgent.mockResolvedValueOnce({
+    const clock = vi.spyOn(Date, "now").mockReturnValue(180_000);
+    mockGetActiveRun.mockResolvedValue({ startedAt: 60_000, taskTitle: "Review sales pipeline" });
+    mockRunAgent.mockImplementation(async (params) => {
+      for (const handler of [...streamHandlers]) {
+        await handler({ type: "done", agentId: "main", sessionId: "session", sessionKey: params.sessionKey });
+      }
+      return {
       payloads: [{ text: "Message queued into current run" }],
       meta: { durationMs: 0, sessionId: "session", queued: true },
+      };
     });
 
-    await getMessageHandler(apps[0])({ message: { ts: "1.3", text: "follow up", channel: "C1", user: "U1", channel_type: "channel" }, client: apps[0].client });
-
-    // The queue resolves before the progress bubble's publish delay elapses,
-    // so no bubble ever exists to terminal-edit; the user must still see
-    // some acknowledgement that their message was queued.
+    try {
+      for (const [ts, user] of [["1.1", "U1"], ["1.2", "U2"], ["1.3", "U1"], ["1.4", "U2"], ["1.5", "U1"]]) {
+        await getMessageHandler(apps[0])({ message: { ts, thread_ts: "1.0", text: "follow up", channel: "C1", user, channel_type: "channel" }, client: apps[0].client });
+      }
+    } finally {
+      clock.mockRestore();
+    }
     expect(apps[0].client.chat.update).not.toHaveBeenCalled();
+    expect(apps[0].client.chat.postMessage).toHaveBeenCalledOnce();
     expect(apps[0].client.chat.postMessage).toHaveBeenCalledWith(
       expect.objectContaining({
-        text: "Waiting for current work.",
-        thread_ts: "1.3",
+        text: expect.stringContaining("Review sales pipeline"),
+        thread_ts: "1.0",
       })
     );
+    const text = apps[0].client.chat.postMessage.mock.calls[0][0].text;
+    expect(text).toContain("2 minutes");
+    expect(text).toContain("Your message is queued");
+    expect(text).toContain("`!stop`");
+    expect(apps[0].client.reactions.add.mock.calls.filter(([call]) => call.name === "hourglass_flowing_sand").map(([call]) => call)).toEqual([
+      { channel: "C1", timestamp: "1.2", name: "hourglass_flowing_sand" },
+      { channel: "C1", timestamp: "1.3", name: "hourglass_flowing_sand" },
+      { channel: "C1", timestamp: "1.4", name: "hourglass_flowing_sand" },
+      { channel: "C1", timestamp: "1.5", name: "hourglass_flowing_sand" },
+    ]);
+    expect(apps[0].client.reactions.remove.mock.calls.map(([call]) => call.timestamp)).toEqual(["1.1", "1.2", "1.3", "1.4", "1.5"]);
+  });
+
+  it("keeps task titles literal instead of interpreting Slack mentions", async () => {
+    const { createSlackBot } = await import("./bot.js");
+    createSlackBot([agent], config);
+    mockGetActiveRun.mockResolvedValue({ startedAt: 60_000, taskTitle: "Review <pipeline> & <!channel>" });
+    mockRunAgent.mockResolvedValue({ payloads: [], meta: { durationMs: 0, sessionId: "session", queued: true } });
+    await getMessageHandler(apps[0])({ message: { ts: "1.1", thread_ts: "1.0", text: "follow up", channel: "C1", user: "U1", channel_type: "channel" }, client: apps[0].client });
+    expect(apps[0].client.chat.postMessage).toHaveBeenCalledWith(expect.objectContaining({ text: expect.stringContaining("Review &lt;pipeline&gt; &amp; &lt;!channel&gt;") }));
+  });
+
+  it("keeps a very long task title within one busy reply including the cancel hint", async () => {
+    const { createSlackBot } = await import("./bot.js");
+    createSlackBot([agent], config);
+    mockGetActiveRun.mockResolvedValue({ startedAt: Date.now(), taskTitle: "Review quarterly report " + "details ".repeat(1000) });
+    mockRunAgent.mockResolvedValue({ payloads: [], meta: { durationMs: 0, sessionId: "session", queued: true } });
+    await getMessageHandler(apps[0])({ message: { ts: "1.1", thread_ts: "1.0", text: "follow up", channel: "C1", user: "U1", channel_type: "channel" }, client: apps[0].client });
+    expect(apps[0].client.chat.postMessage).toHaveBeenCalledOnce();
+    const text = apps[0].client.chat.postMessage.mock.calls[0][0].text;
+    expect(text).toContain("Review quarterly report");
+    expect(text).toContain("Your message is queued");
+    expect(text).toContain("`!stop`");
+  });
+
+  it("removes a published progress bubble before acknowledging queued work", async () => {
+    const { createSlackBot } = await import("./bot.js");
+    createSlackBot([agent], config);
+    mockRunAgent.mockImplementationOnce(async (params) => {
+      params.onEvent?.({ type: "progress", label: "Checking files" });
+      return { payloads: [], meta: { durationMs: 0, sessionId: "session", queued: true } };
+    });
+    await getMessageHandler(apps[0])({ message: { ts: "1.2", thread_ts: "1.0", text: "follow up", channel: "C1", user: "U1", channel_type: "channel" }, client: apps[0].client });
+    expect(apps[0].client.chat.delete).toHaveBeenCalledWith({ channel: "C1", ts: "reply-ts" });
+    expect(apps[0].client.chat.update).not.toHaveBeenCalled();
+    expect(apps[0].client.chat.postMessage).toHaveBeenCalledWith(expect.objectContaining({ thread_ts: "1.0", text: expect.stringContaining("Your message is queued") }));
+  });
+
+  it.each(["absent", "idle", "failed"])("acknowledges queued messages when the host lookup is %s", async (lookup) => {
+    const { createSlackBot } = await import("./bot.js");
+    activeRunLookupAvailable = lookup !== "absent";
+    if (lookup === "failed") mockGetActiveRun.mockRejectedValue(new Error("host unavailable"));
+    createSlackBot([agent], config);
+    mockRunAgent.mockResolvedValue({ payloads: [], meta: { durationMs: 0, sessionId: "session", queued: true } });
+    for (const ts of ["1.1", "1.2"]) {
+      await getMessageHandler(apps[0])({ message: { ts, thread_ts: "1.0", text: "follow up", channel: "C1", user: "U1", channel_type: "channel" }, client: apps[0].client });
+    }
+    expect(apps[0].client.chat.postMessage).toHaveBeenCalledOnce();
+    expect(apps[0].client.chat.postMessage).toHaveBeenCalledWith(expect.objectContaining({ text: "I'm busy. Your message is queued. Send `!stop` to cancel.", thread_ts: "1.0" }));
+    expect(apps[0].client.reactions.add).toHaveBeenCalledWith({ channel: "C1", timestamp: "1.2", name: "hourglass_flowing_sand" });
+  });
+
+  it("acknowledges separate DM conversations independently even when both use main", async () => {
+    const { createSlackBot } = await import("./bot.js");
+    createSlackBot([agent], config);
+    mockGetActiveRun.mockResolvedValue({ startedAt: 60_000 });
+    mockRunAgent.mockResolvedValue({ payloads: [], meta: { durationMs: 0, sessionId: "session", queued: true } });
+    for (const [channel, user] of [["D1", "U1"], ["D2", "U2"]]) {
+      await getMessageHandler(apps[0])({ message: { ts: "1.1", text: "follow up", channel, user, channel_type: "im" }, client: apps[0].client });
+    }
+    expect(apps[0].client.chat.postMessage).toHaveBeenCalledTimes(2);
+    expect(apps[0].client.chat.postMessage.mock.calls.map(([call]) => call.channel)).toEqual(["D1", "D2"]);
+  });
+
+  it.each([[15_000, "15 seconds"], [7_200_000, "2 hours"]])("shows elapsed time without a task and acknowledges the next run (%s ms)", async (elapsed, expected) => {
+    const { createSlackBot } = await import("./bot.js");
+    createSlackBot([agent], { ...config, channels: { C1: { agent: "main", requireMention: false, threadPolicy: "never" } } });
+    const clock = vi.spyOn(Date, "now").mockReturnValue(10_000_000);
+    mockGetActiveRun.mockResolvedValueOnce({ startedAt: 10_000_000 - Number(elapsed) })
+      .mockResolvedValueOnce({ startedAt: 9_999_000 });
+    mockRunAgent.mockResolvedValue({ payloads: [], meta: { durationMs: 0, sessionId: "session", queued: true } });
+    try {
+      for (const ts of ["1.1", "1.2"]) {
+        await getMessageHandler(apps[0])({ message: { ts, text: "follow up", channel: "C1", user: "U1", channel_type: "channel" }, client: apps[0].client });
+      }
+    } finally {
+      clock.mockRestore();
+    }
+    const messages = apps[0].client.chat.postMessage.mock.calls.map(([call]) => call);
+    expect(messages).toHaveLength(2);
+    expect(messages[0].text).toBe(`I'm busy (running for ${expected}). Your message is queued. Send \`!stop\` to cancel.`);
+    expect(messages[1].text).toBe("I'm busy (running for 1 second). Your message is queued. Send `!stop` to cancel.");
+    expect(messages.every((call) => call.thread_ts === undefined)).toBe(true);
+  });
+
+  it("keeps handling queued messages after Slack rejects an hourglass", async () => {
+    const { createSlackBot } = await import("./bot.js");
+    createSlackBot([agent], config);
+    mockGetActiveRun.mockResolvedValue({ startedAt: 60_000 });
+    mockRunAgent.mockResolvedValue({ payloads: [], meta: { durationMs: 0, sessionId: "session", queued: true } });
+    apps[0].client.reactions.add.mockImplementation(async ({ name }) => {
+      if (name === "hourglass_flowing_sand") throw new Error("missing_scope");
+    });
+    for (const ts of ["1.1", "1.2", "1.3"]) {
+      await getMessageHandler(apps[0])({ message: { ts, thread_ts: "1.0", text: "follow up", channel: "C1", user: "U1", channel_type: "channel" }, client: apps[0].client });
+    }
+    expect(mockRunAgent).toHaveBeenCalledTimes(3);
+    expect(apps[0].client.chat.postMessage).toHaveBeenCalledOnce();
+    expect(apps[0].client.reactions.add).toHaveBeenCalledWith({ channel: "C1", timestamp: "1.3", name: "hourglass_flowing_sand" });
   });
 
   it("blocks /new for users outside channel allowlist", async () => {
@@ -2780,6 +2904,8 @@ describe.each(["component", "per-agent"] as const)("proactive DM routing (%s)", 
     pairing.enabled = false;
     clearAllHistory();
     mockGetSessionEntry.mockResolvedValue(undefined);
+    activeRunLookupAvailable = true;
+    mockGetActiveRun.mockResolvedValue(undefined);
     mockEnsureSession.mockResolvedValue({ sessionId: "session", updatedAt: 1 });
     mockHasSession.mockResolvedValue(true);
     mockRunAgent.mockResolvedValue({
@@ -2897,6 +3023,23 @@ describe.each(["component", "per-agent"] as const)("proactive DM routing (%s)", 
     }
     await react("D1", "UA", "1.0");
     expect(mockRunAgent).toHaveBeenLastCalledWith(expect.objectContaining({ userId: requester, sessionKey: "slack:D1" }));
+    await bot?.stop();
+  });
+
+  it("acknowledges queued proactive replies without advertising disabled bang commands", async () => {
+    await trackMessages([["D1", "1.0"]]);
+    const bot = await startBot({ proactiveReplies: { enabled: true, maxReplies: 3 } });
+    mockGetActiveRun.mockResolvedValue({ startedAt: 60_000, taskTitle: "Review sales pipeline" });
+    mockRunAgent.mockResolvedValue({ payloads: [], meta: { durationMs: 0, sessionId: "session", queued: true } });
+    await send("D1", "UA", "1.1", "1.0");
+    await send("D1", "UA", "1.2", "1.0");
+    expect(apps[0].client.chat.postMessage).toHaveBeenCalledOnce();
+    expect(apps[0].client.chat.postMessage).toHaveBeenCalledWith(expect.objectContaining({ channel: "D1", thread_ts: "1.0", text: expect.stringContaining("Your message is queued") }));
+    expect(apps[0].client.chat.postMessage.mock.calls[0][0].text).not.toContain("!stop");
+    expect(apps[0].client.reactions.add).toHaveBeenCalledWith({ channel: "D1", timestamp: "1.2", name: "hourglass_flowing_sand" });
+    for (const [run] of mockRunAgent.mock.calls) {
+      await run.onDeferredResult({ result: { payloads: [], meta: { durationMs: 0, sessionId: "session" } } });
+    }
     await bot?.stop();
   });
 

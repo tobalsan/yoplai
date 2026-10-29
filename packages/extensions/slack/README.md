@@ -117,6 +117,14 @@ bypass mention requirements or `threadUnlock`. `follow` and `never` retain
 channel keys for top-level messages and thread keys for existing threads;
 DM/main-session keys are unchanged.
 
+When a message is queued during an active run, Slack replies once per
+conversation/run with the running task (if active in the task ledger), elapsed
+time, confirmation that the message is queued, and `!stop` to cancel the run.
+Further queued messages receive an hourglass reaction instead. The reply follows
+the route's thread policy. Proactive DM replies omit `!stop` because bang commands
+are disabled for those senders. If run details are unavailable, Slack sends one
+generic busy reply, then reactions.
+
 `!new` in a bound thread clears its session and binding; the next admitted
 message binds a new session to that sender. `!stop` targets the bound session.
 If its history is unavailable, the next reply creates and binds a replacement
