@@ -139,3 +139,23 @@ export async function fetchAgentStatuses(): Promise<AgentStatusResponse> {
   if (!res.ok) throw new Error("Failed to fetch agent statuses");
   return res.json();
 }
+
+export type AvatarStyles = { default: string; styles: { id: string; label: string }[] };
+
+export async function fetchAvatarStyles(): Promise<AvatarStyles> {
+  const res = await fetch(`${API_BASE}/avatars/styles`);
+  if (!res.ok) throw new Error("Failed to fetch avatar styles");
+  return res.json();
+}
+
+/** Generate, save and select a new avatar. Takes up to a couple of minutes. */
+export async function generateAgentAvatar(agentId: string, style: string): Promise<{ avatar: string; style: string }> {
+  const res = await fetch(`${API_BASE}/agents/${encodeURIComponent(agentId)}/avatar`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ style }),
+  });
+  const body = (await res.json().catch(() => ({}))) as { avatar?: string; style?: string; error?: string };
+  if (!res.ok || !body.avatar) throw new Error(body.error ?? "Avatar generation failed");
+  return { avatar: body.avatar, style: body.style ?? style };
+}

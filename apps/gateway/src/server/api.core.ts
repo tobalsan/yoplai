@@ -81,6 +81,7 @@ import {
 import { resolveSessionDataFile } from "../sessions/files.js";
 import { createOAuthRoutes } from "../oauth/routes.js";
 import { createMainAgentRoutes } from "../main-agent/routes.js";
+import { createAvatarRoutes } from "../avatars/routes.js";
 import { createChatProjectRoutes } from "../chat-projects/routes.js";
 import { createSkillRoutes } from "../skills/routes.js";
 import { getSkillContext, resolveSkillActor } from "../skills/context.js";
@@ -413,6 +414,14 @@ api.route("/", createSkillRoutes({
     return config.server?.baseUrl ?? config.web?.baseUrl ?? `http://localhost:${config.gateway?.port ?? 4000}`;
   },
   audit: async (c, action, targetId, changes) => recordSettingsChange({ ...await getAuditActor(c), action, targetType: "skill", targetId, changes }),
+}));
+api.route("/", createAvatarRoutes({
+  getConfig: loadConfig,
+  getAgent: (id) => (isAgentActive(id) ? getAgent(id) : undefined),
+  canManageAgent: canConfigureTeamExtensions,
+  afterWrite: reloadAfterConfigWrite,
+  audit: async (c, agentId, before, after) => recordSettingsChange({ ...await getAuditActor(c), action: "avatar.generate", agentId,
+    targetType: "agent", targetId: agentId, changes: diffSettings({ avatar: before }, { avatar: after }) }),
 }));
 api.route("/", createOAuthRoutes(
   undefined,

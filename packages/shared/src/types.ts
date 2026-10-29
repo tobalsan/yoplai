@@ -1250,6 +1250,18 @@ const GatewayCommonFields = {
       enabled: z.boolean().default(true),
     })
     .optional(),
+  avatars: z
+    .object({
+      /** Default style id for generated agent avatars (built-in or from `styles`). */
+      style: z.string().optional(),
+      /** Image source: a ChatGPT subscription (`openai-codex`) or an OpenAI API key (`openai`). */
+      provider: z.enum(["openai-codex", "openai"]).optional(),
+      /** Chat model for `openai-codex`, image model for `openai`. */
+      model: z.string().optional(),
+      /** Extra or overriding styles: id -> prompt describing the look. */
+      styles: z.record(z.string(), z.string()).optional(),
+    })
+    .optional(),
   oauth: OAuthConfigSchema.optional(),
   extensions: ExtensionsConfigSchema,
   extensionsPath: z.string().optional(),

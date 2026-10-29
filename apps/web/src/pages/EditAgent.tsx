@@ -32,6 +32,7 @@ import { capabilities, isExtensionEnabled } from "../lib/capabilities";
 import { ToastNotification, type ToastVariant } from "../components/ui/Toast";
 import { SchedulesPanel } from "./SchedulesPanel";
 import { AgentConnectionsPanel } from "../components/AgentConnectionsPanel";
+import { AvatarGenerator } from "../components/AvatarGenerator";
 import { McpExtensionCard, MCP_EXTENSION_STYLES } from "../components/McpExtensionCard";
 import { addMcpServer, mcpDisplayName, fetchMcpServer, fetchMcpServersFast, type McpScope, type McpServer } from "../api/mcp-servers";
 import { hasStaffRole as hasAdminRole, isSuperadmin as isSuperadminRole } from "../lib/roles";
@@ -231,6 +232,9 @@ export function EditAgent() {
   const [agents] = createResource(() =>
     capabilities.forkedAgents ? fetchPool() : fetchAgents()
   );
+  // A freshly generated avatar, shown until the agent list is fetched again.
+  const [avatarOverride, setAvatarOverride] = createSignal<string>();
+  const canGenerateAvatar = () => !capabilities.multiUser || isAdmin();
   const [activeAgents] = createResource(() =>
     capabilities.forkedAgents ? fetchAgents() : Promise.resolve([])
   );
@@ -453,7 +457,7 @@ export function EditAgent() {
         <Show when={agent()}>
           {(current) => (
             <div class="edit-agent-header">
-              <Show when={current().avatar}>
+              <Show when={avatarOverride() ?? current().avatar}>
                 {(avatar) => (
                   <div class="edit-agent-avatar">
                     {isEmoji(avatar()) ? (
@@ -477,6 +481,13 @@ export function EditAgent() {
                 </div>
                 <Show when={current().role}>
                   <div class="edit-agent-role">{current().role}</div>
+                </Show>
+                <Show when={canGenerateAvatar() && !capabilities.forkedAgents}>
+                  <AvatarGenerator
+                    agentId={current().id}
+                    hasAvatar={Boolean(avatarOverride() ?? current().avatar)}
+                    onGenerated={setAvatarOverride}
+                  />
                 </Show>
               </div>
             </div>

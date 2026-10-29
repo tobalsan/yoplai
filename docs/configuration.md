@@ -149,6 +149,31 @@ Gateway-owned work such as core session titles uses `maintenance` when set:
 
 Both fields are required. The Pi model runtime resolves its credentials from an existing OAuth login, a stored API key, or the provider's host environment key; OneCLI is not used. When omitted, maintenance work uses the session agent's configured model.
 
+### Agent avatars
+
+Agent avatars can be generated as images in a chosen style, from the agent page (**New avatar**, shown to whoever can manage the agent) or the CLI:
+
+```bash
+pnpm yoplai agent avatar --list-styles
+pnpm yoplai agent avatar my-agent --style manga
+pnpm yoplai agent avatar --all
+```
+
+The image is saved as `avatar.png` in the agent's workspace and `agent.yaml` gets `avatar: avatar.png`. The prompt uses the agent's `name`, `role` and `description`.
+
+Built-in styles: `3d` (default), `manga`, `flat`, `watercolor`, `pixel`. Set a default or add your own:
+
+```json
+{
+  "avatars": {
+    "style": "manga",
+    "styles": { "studio": "Studio photo portrait, soft key light, plain grey backdrop" }
+  }
+}
+```
+
+Images come from a ChatGPT subscription (`yoplai auth login openai-codex`) when one is connected, otherwise from an OpenAI API key (`OPENAI_API_KEY`). Pin one with `avatars.provider` (`openai-codex` or `openai`); `avatars.model` picks the ChatGPT model (default: the newest one the account accepts) or the OpenAI image model (default `gpt-image-1`). Generation takes up to a minute or two. Pool agents in forked mode are not covered by the page button.
+
 ### Session auto-titles
 
 Set `extensions.sessions.autoTitleModel` to choose model used for lead-session titles:

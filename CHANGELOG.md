@@ -11,6 +11,7 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Added
 
+- Generate agent avatars in a chosen style (3D animated by default, manga, flat, watercolor, pixel, or your own) from the agent page or `yoplai agent avatar`, using a ChatGPT subscription or an OpenAI API key.
 - Mattermost bot channel with threaded conversations, direct messages, files, proactive tools and scheduler delivery.
 - Slack downloads full Markdown, text, CSV, JSON and code snippets as attachments, and accepts PowerPoint files. Web and gateway uploads now also accept JSON, legacy PowerPoint and `.markdown` files.
 - Add the `reflect` agent option. It adds a self-improvement prompt so the agent saves lessons to skills and `memory.md` in the same turn. Off by default.

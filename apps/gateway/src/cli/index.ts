@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { Command } from "commander";
+import { registerAvatarCommand } from "../avatars/cli.js";
 import { spawn, ChildProcess, execSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
@@ -389,9 +390,10 @@ const gatewayCmd = program
 
 registerGatewayServiceCommands(gatewayCmd);
 
-program
-  .command("agent")
-  .description("Manage agents")
+const agentCmd = program.command("agent").description("Manage agents");
+registerAvatarCommand(agentCmd, { loadConfig });
+
+agentCmd
   .command("list")
   .description("List all configured agents")
   .action(() => {

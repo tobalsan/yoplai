@@ -5,8 +5,9 @@ import { AgentYamlConfigSchema } from "@yoplai/shared";
 import type { ExtensionConfigPatch } from "@yoplai/shared";
 
 /**
- * Write path for an agent's `config.extensions`. Runtime agent config is
- * read-only today; this is the only place that mutates an agent's `agent.yaml`.
+ * Write path for an agent's `config.extensions` and `avatar`. Runtime agent
+ * config is read-only today; this is the only place that mutates an agent's
+ * `agent.yaml`.
  *
  * The change is applied to the raw parsed YAML (not the runtime-resolved
  * config) so we preserve `$env:NAME` sentinels and any fields the schema passes
@@ -219,4 +220,23 @@ export async function updateAgentExtensionConfig(
   if (staleEnv.length > 0) await removeEnvVars(path.join(workspaceDir, ".env"), staleEnv);
 
   return nextConfig;
+}
+
+/**
+ * Point an agent's `avatar` at a file in its workspace, keeping comments and
+ * every other field of `agent.yaml` as written.
+ */
+export async function updateAgentAvatar(workspaceDir: string, avatar: string): Promise<void> {
+  const agentPath = path.join(workspaceDir, "agent.yaml");
+  const doc = parseDocument(await fs.readFile(agentPath, "utf8"));
+  const parsed = doc.toJS() as unknown;
+  if (!isRecord(parsed)) {
+    throw new Error(`Malformed agent.yaml at ${agentPath}`);
+  }
+  const validation = AgentYamlConfigSchema.safeParse({ ...parsed, avatar });
+  if (!validation.success) {
+    throw new Error(`agent.yaml would be invalid after update: ${validation.error.message}`);
+  }
+  doc.set("avatar", avatar);
+  await writeLocked(agentPath, doc.toString());
 }
