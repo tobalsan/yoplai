@@ -107,6 +107,130 @@ async function fixture(bridge?: (response: http.ServerResponse) => Promise<unkno
 }
 
 describe("Container Pi codemode", () => {
+  // ALG-566 Testing Decisions approves this seam: real scripts and gateway
+  // requests catch admission/queue/cancel behavior, not Docker shutdown or UI.
+  it("stops admitting calls at the configured cap and tells the script to split the work", async () => {
+    const { run, respond, requests, events } = await fixture();
+    respond([
+      script('for (let i = 0; i < 5; i++) { try { await tools.fixture_count({}); } catch (error) { text(error.message); } }'),
+      fauxAssistantMessage("done"),
+    ]);
+    await expect(run({ codemodeLimits: { maxToolCalls: 3 } })).resolves.toMatchObject({ text: "done" });
+    expect(requests).toHaveLength(3);
+    expect(events).toContainEqual(expect.objectContaining({
+      type: "tool_result", id: "codemode-parent",
+      content: expect.stringContaining("3 tool calls in one script"),
+    }));
+    expect(events).toContainEqual(expect.objectContaining({
+      type: "tool_result", id: "codemode-parent",
+      content: expect.stringContaining("Split the work into more codemode calls"),
+    }));
+  });
+
+  it.each([false, true])("aborts on the first run-cancelled reply despite empty catches, including queued work (%s), and permits a later run", async (parallel) => {
+    let calls = 0;
+    const { run, respond, requests, events } = await fixture(async (response) => {
+      calls += 1;
+      if (calls === 2) {
+        response.statusCode = 409;
+        return { error: "run cancelled" };
+      }
+      return { count: 7 };
+    });
+    respond([script(parallel
+      ? 'await Promise.all(Array.from({ length: 20 }, () => tools.fixture_count({}).catch(() => {}))); text("should not finish");'
+      : 'for (let i = 0; i < 20; i++) { await tools.fixture_count({}).catch(() => {}); } text("should not finish");'), fauxAssistantMessage("should not continue")]);
+    await expect(run({ codemodeLimits: { maxConcurrentToolCalls: 1 } })).resolves.toMatchObject({ aborted: true });
+    expect(requests).toHaveLength(2);
+    expect(events).not.toContainEqual(expect.objectContaining({ type: "tool_result", id: "codemode-parent", content: expect.stringContaining("should not finish") }));
+    respond([script('text(JSON.parse(await tools.fixture_count({})).count);', "after-cancel"), fauxAssistantMessage("recovered")]);
+    await expect(run({ sessionId: "after-cancel-session" })).resolves.toMatchObject({ text: "recovered", aborted: false });
+    expect(requests).toHaveLength(3);
+  });
+
+  it("queues parallel gateway calls above the concurrency cap and completes every call", async () => {
+    let inFlight = 0;
+    let peak = 0;
+    let finished = 0;
+    const { run, respond, requests, events } = await fixture(async () => {
+      inFlight += 1;
+      peak = Math.max(peak, inFlight);
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      inFlight -= 1;
+      finished += 1;
+      return { count: 7 };
+    });
+    respond([
+      script('const results = await Promise.all(Array.from({ length: 6 }, () => tools.fixture_count({}))); text(`finished=${results.length}`);'),
+      fauxAssistantMessage("done"),
+    ]);
+    await expect(run({ codemodeLimits: { maxConcurrentToolCalls: 2 } })).resolves.toMatchObject({ text: "done" });
+    expect(peak).toBe(2);
+    expect(finished).toBe(6);
+    expect(requests).toHaveLength(6);
+    expect(events).toContainEqual(expect.objectContaining({
+      type: "tool_result", id: "codemode-parent", isError: false,
+      content: expect.stringContaining("finished=6"),
+    }));
+  });
+
+  it("releases slots after failed and timed out calls so queued work still progresses", async () => {
+    let calls = 0;
+    const { run, respond, requests, events } = await fixture(async (response) => {
+      calls += 1;
+      if (calls === 1) await new Promise<void>((resolve) => response.once("close", resolve));
+      if (calls === 2) throw new Error("fixture failure");
+      return { count: 7 };
+    });
+    respond([
+      script('const results = await Promise.all([tools.fixture_count({ timeout: 0.03 }).catch(() => "timed out"), tools.fixture_count({}).catch(() => "failed"), tools.fixture_count({}).then(result => JSON.parse(result).count)]); text(results.join(","));'),
+      fauxAssistantMessage("done"),
+    ]);
+    await expect(run({ codemodeLimits: { maxConcurrentToolCalls: 1 } })).resolves.toMatchObject({ text: "done" });
+    expect(requests).toHaveLength(3);
+    expect(events).toContainEqual(expect.objectContaining({
+      type: "tool_result", id: "codemode-parent", isError: false,
+      content: expect.stringContaining("timed out,failed,7"),
+    }));
+  });
+
+  it("counts native calls, excludes invalid arguments, and gives each script its own cap", async () => {
+    const { input, run, respond, requests, events } = await fixture();
+    respond([
+      script('try { await tools.fixture_count({}); } catch {} await tools.write({ path: "progress.txt", content: "saved" }); text(await tools.read({ path: "progress.txt" })); try { await tools.fixture_count({ id: 1 }); } catch (error) { text(error.message); }'),
+      script('text(await tools.fixture_count({ id: 2 }));', "next-script"),
+      fauxAssistantMessage(fauxToolCall("fixture_count", { id: 3 }), { stopReason: "toolUse" }),
+      fauxAssistantMessage("done"),
+    ]);
+    await expect(run({
+      codemodeLimits: { maxToolCalls: 2 },
+      toolDeferral: { enabled: false, alwaysOnTools: [], alwaysOnExtensions: [] },
+      extensionTools: [{ ...input.extensionTools![0], parameters: { type: "object", properties: { id: { type: "number" } }, required: ["id"] } }],
+    })).resolves.toMatchObject({ text: "done" });
+    expect(requests.map((request) => request.args)).toEqual([{ id: 2 }, { id: 3 }]);
+    expect(events).toContainEqual(expect.objectContaining({ type: "tool_result", id: "codemode-parent", content: expect.stringContaining("saved") }));
+    expect(events).toContainEqual(expect.objectContaining({ type: "tool_result", id: "codemode-parent", content: expect.stringContaining("2 tool calls in one script; cap 2") }));
+  });
+
+  it.each([true, false])("sends long-job guidance only with codemode enabled, without requiring deferral (%s)", async (codemode) => {
+    const { run, respond } = await fixture();
+    let request = "";
+    respond([(context) => {
+      request = JSON.stringify(context.messages);
+      return fauxAssistantMessage("done");
+    }]);
+    await run({ codemode, extensionTools: [], toolDeferral: { enabled: false, alwaysOnTools: [], alwaysOnExtensions: [] }, codemodeLimits: { maxToolCalls: 17, maxConcurrentToolCalls: 2 } });
+    for (const rule of [
+      "Run one small batch first. Measure the latency, then estimate the full job before you run it.",
+      "Split a long job into codemode calls that each fit the timeout. Save progress to a file and resume from it.",
+      "Stop the loop on a 409, or after 3 failures in a row. Do not hide errors with an empty `.catch()`.",
+      "Before a job that takes more than about 1 minute, tell the user the plan, the call count, and the time.",
+      "Per script: at most 17 tool calls and 2 concurrent gateway tool calls.",
+    ]) {
+      expect(request.includes(rule)).toBe(codemode);
+    }
+  });
+
   it("appends the tool signature to the codemode result when a script hides a validation error", async () => {
     const { input, run, respond } = await fixture();
     let nextRequest = "";

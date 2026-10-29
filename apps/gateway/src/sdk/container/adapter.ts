@@ -473,6 +473,7 @@ export function getContainerAdapter(): SdkAdapter {
         ): void => {
           if (timeoutKind || settled) return;
           abortContainerRun(runAgentToken);
+          writeCloseSentinel(ipcDir);
           timeoutKind = kind;
           timeoutMessage =
             message ??

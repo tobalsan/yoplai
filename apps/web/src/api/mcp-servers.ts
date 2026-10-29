@@ -72,6 +72,30 @@ export async function fetchMcpServer(agentId: string, name: string): Promise<Mcp
   return list;
 }
 
+export type McpIconRefreshStatus = "updated" | "unchanged" | "not_connected" | "not_saved" | "unreachable" | "save_failed";
+
+/** Maps a refresh result to a truthful message; a timeout/unreachable server is an error even if the status says "unchanged". */
+export function iconRefreshOutcome(result: { status: McpIconRefreshStatus; error?: string; server?: { name: string; state?: string; error?: string } }, notConnected: string): { message: string } | { error: string } {
+  const error = result.error ?? result.server?.error;
+  if (result.status === "save_failed") return { error: `Couldn't save the new icon${error ? `: ${error}` : ""}. Kept the current icon.` };
+  if (result.status === "unreachable" || result.server?.state === "unreachable" || error) return { error: `The server didn't respond: ${error ?? "it could not be reached"}. Kept the current icon.` };
+  if (result.status === "not_connected") return { message: notConnected };
+  if (result.status === "not_saved") return { message: "This server is edited by hand, so its icon isn't saved." };
+  return { message: result.status === "updated" ? "Icon updated" : "No new icon found; kept the current one" };
+}
+
+export async function refreshMcpServerIcon(agentId: string, name: string): Promise<{ status: McpIconRefreshStatus; error?: string; server: McpServer }> {
+  const key = JSON.stringify([agentId, name]);
+  const request = {};
+  statusRequests.set(key, request);
+  const response = await fetch(`/api/mcp/servers/icon/refresh?agent=${encodeURIComponent(agentId)}&server=${encodeURIComponent(name)}`, { method: "POST", signal: AbortSignal.timeout(35_000) });
+  if (!response.ok) throw new Error((await response.text()) || "Failed to refresh MCP server icon.");
+  const result: { status: McpIconRefreshStatus; error?: string; server: McpServer } = await response.json();
+  const cached = lastLists.get(agentId);
+  if (cached && statusRequests.get(key) === request) lastLists.set(agentId, { ...cached, servers: cached.servers.map((server) => server.name === result.server.name ? { ...server, ...result.server } : server) });
+  return result;
+}
+
 export async function addMcpServer(agentId: string, url: string, credentialScope: McpScope, returnTo?: string): Promise<{ server: McpServer; authorizationUrl?: string }> {
   const response = await fetch(endpoint(agentId), {
     method: "POST",
@@ -155,3 +179,4 @@ export const fetchMcpCatalog = async (): Promise<McpCatalogServer[]> => (await c
 export const addMcpCatalogServer = (input: { url: string; displayName?: string; description?: string }) => catalogRequest<{ server: McpCatalogServer }>("", jsonPost(input), "Failed to add MCP server.").then((result) => result.server);
 export const updateMcpCatalogServer = (name: string, label: { displayName: string; description: string }) => catalogRequest<{ server: McpCatalogServer }>(`/update?server=${encodeURIComponent(name)}`, jsonPost(label), "Failed to save MCP server.").then((result) => result.server);
 export const removeMcpCatalogServer = async (name: string): Promise<void> => { await catalogRequest(`/remove?server=${encodeURIComponent(name)}`, { method: "POST" }, "Failed to remove MCP server."); };
+export const refreshMcpCatalogIcon = (name: string) => catalogRequest<{ status: McpIconRefreshStatus; error?: string; server: McpCatalogServer }>(`/icon/refresh?server=${encodeURIComponent(name)}`, { method: "POST", signal: AbortSignal.timeout(35_000) }, "Failed to refresh MCP server icon.");

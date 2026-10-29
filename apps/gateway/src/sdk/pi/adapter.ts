@@ -15,6 +15,7 @@ import {
   PI_SYSTEM_PROMPT,
   claimAgentToolName,
   classifyRunFailure,
+  codemodeGuidance,
   findFailedTurn,
   formatImageDescriptionBlocks,
   getProviderErrorCategory,
@@ -567,6 +568,8 @@ export const piAdapter: SdkAdapter = {
             : []),
           (pi) => {
             pi.on("before_agent_start", (event) => {
+              if (agent.codemode === true)
+                event.systemPromptOptions.sections["codemode-guidance"] = codemodeGuidance();
               if (catalog.summary)
                 event.systemPromptOptions.sections["deferred-tools"] = catalog.summary;
               else delete event.systemPromptOptions.sections["deferred-tools"];

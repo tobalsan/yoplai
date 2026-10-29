@@ -1,6 +1,12 @@
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { claimAgentToolName, type ContainerInput } from "@yoplai/shared";
-import { callGatewayTool } from "./gateway-client.js";
+import { callGatewayTool, RunCancelledError } from "./gateway-client.js";
+import type { CodemodeLimiter } from "./codemode-limiter.js";
+
+export interface GatewayToolControls {
+  onRunCancelled?: () => void;
+  limiter?: CodemodeLimiter;
+}
 
 export function gatewayTool(
   input: ContainerInput,
@@ -11,7 +17,8 @@ export function gatewayTool(
   usedToolNames: Set<string>,
   formatResult: (result: unknown, toolCallId: string) => Promise<string>,
   gatewayName = name,
-  outputSchema?: Record<string, unknown>
+  outputSchema?: Record<string, unknown>,
+  controls: GatewayToolControls = {}
 ): ToolDefinition {
   const modelToolName = claimAgentToolName(name, usedToolNames);
   const schema = parameters as {
@@ -77,7 +84,9 @@ export function gatewayTool(
       const signal = sdkSignal
         ? AbortSignal.any([sdkSignal, deadline])
         : deadline;
+      let release: (() => void) | undefined;
       try {
+        if (controls.limiter) release = await controls.limiter.acquire(toolCallId, signal);
         signal.throwIfAborted();
         const result = await callGatewayTool(
           input.gatewayUrl,
@@ -108,6 +117,10 @@ export function gatewayTool(
           } : {}),
         };
       } catch (error) {
+        if (error instanceof RunCancelledError) {
+          controls.onRunCancelled?.();
+          throw error;
+        }
         if (sdkSignal?.aborted && signal.reason === sdkSignal.reason)
           throw sdkSignal.reason;
         const message = deadline.aborted
@@ -118,6 +131,7 @@ export function gatewayTool(
         throw new Error(message + note);
       } finally {
         clearTimeout(timer);
+        release?.();
       }
     },
   };

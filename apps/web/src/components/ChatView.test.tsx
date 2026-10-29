@@ -2277,6 +2277,63 @@ describe("ChatView abort handling", () => {
     dispose();
   });
 
+  it.each([
+    ["simple", "completed"], ["simple", "running"],
+    ["full", "completed"], ["full", "running"],
+  ] as const)("keeps %s %s tool activity grouped after queueing", async (mode, status) => {
+    routeState.view = mode;
+    const { container, dispose, callbacks } = await startFullStream();
+    callbacks()!.onToolStart!("bash");
+    callbacks()!.onToolCall!("before-queue", "bash", { command: "pwd" });
+    if (status === "completed") {
+      callbacks()!.onToolResult!("before-queue", "bash", "before queue result", false);
+      callbacks()!.onToolEnd!("bash", false);
+    }
+    await tick();
+    expect(queryByRole(container, "button", { name: "Working · 1 tool call" })).not.toBeNull();
+
+    streamMessageMock.mockImplementation(() => vi.fn());
+    const input = container.querySelector("textarea")!;
+    input.value = "Pending question";
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+    await tick();
+
+    expect(container.textContent).toContain("Pending question");
+    const group = queryByRole(container, "button", { name: /Worked.* · 1 tool call/ });
+    expect(group).not.toBeNull();
+    expect(group!.parentElement!.querySelector(".activity-group-items")).toBeNull();
+    expect(container.querySelector(".active-tools, .active-tool")).toBeNull();
+    expect(container.querySelector(".thinking-dots")).not.toBeNull();
+
+    if (status === "running") {
+      callbacks()!.onToolResult!("before-queue", "bash", "before queue result", false);
+      callbacks()!.onToolEnd!("bash", false);
+      await tick();
+      expect(container.querySelector(".active-tools, .active-tool")).toBeNull();
+      expect(container.querySelector(".thinking-dots")).not.toBeNull();
+    }
+    group!.click();
+    queryByRole(container, "button", { name: /Ran commands|Running commands/ })!.click();
+    expect(container.querySelectorAll('[title="bash"]')).toHaveLength(1);
+    if (mode === "full") {
+      (container.querySelector(".tool-header") as HTMLButtonElement).click();
+      expect(container.textContent).toContain("before queue result");
+    }
+
+    callbacks()!.onToolStart!("read");
+    callbacks()!.onToolCall!("after-queue", "read", { path: "README.md" });
+    await tick();
+    expect(queryByRole(container, "button", { name: "Working · 1 tool call" })).not.toBeNull();
+    queryByRole(container, "button", { name: "Calling tools" })!.click();
+    expect(container.querySelectorAll(".activity-group")).toHaveLength(2);
+    expect(container.querySelectorAll('[title="bash"]')).toHaveLength(1);
+    expect(container.querySelectorAll('[title="read"]')).toHaveLength(1);
+    expect(container.querySelector(".active-tools, .active-tool")).toBeNull();
+    expect(container.querySelector(".thinking-dots")).toBeNull();
+    dispose();
+  });
+
   it.each(["simple", "full"])("copies a stopped reply after the %s turn finishes", async (mode) => {
     routeState.view = mode;
     const writeText = vi.fn().mockResolvedValue(undefined);

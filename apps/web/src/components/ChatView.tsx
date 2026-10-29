@@ -2344,6 +2344,7 @@ export function ChatView() {
         }
       }
       if (!appendStreamingAssistantMessage()) return;
+      setActiveTools([]);
       setStreamingBlocks([]);
       setStreamingText("");
       setStreamingThinking("");

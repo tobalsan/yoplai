@@ -71,6 +71,7 @@ import {
 } from "./progress.js";
 import { getSlackProgressStore } from "./progress-store.js";
 import { toolCallMilestone } from "./tool-milestones.js";
+import { createBusyNoticePolicy } from "./busy-notice.js";
 import { getSlackPairingService, SlackPairingError } from "./pairing.js";
 import {
   type ActiveSlackSender,
@@ -928,6 +929,7 @@ async function handleSlackMessage(
   client: SlackWebClient,
   target: SlackMessageTarget,
   botUserId: string | undefined,
+  busyNotice: ReturnType<typeof createBusyNoticePolicy>,
   // Returns false when this delivery duplicates one already being acted on.
   claimEvent: () => boolean = () => true,
   // Drops the claim taken via claimEvent above. Only called on a genuine
@@ -1248,14 +1250,22 @@ async function handleSlackMessage(
     thinkingDisplay?.setSessionId(agentResult.meta.sessionId);
 
     if (agentResult.meta.queued) {
-      const shown = await progressDisplay.finish("waiting");
-      if (!shown) {
+      await progressDisplay.finish("waiting");
+      const run = await ctx.getActiveRun?.(target.agent.id, agentResult.meta.sessionId, sessionOwnerId).catch(() => undefined);
+      const notice = busyNotice(JSON.stringify([target.agent.id, data.channel, sessionKey]), run, !target.proactiveReply);
+      if (notice.kind === "reply") {
         await sendSlackReply(
           client,
           data.channel,
-          [{ text: "Waiting for current work." }],
+          [{ text: notice.text }],
           replyThreadTs
         );
+      } else {
+        try {
+          await client.reactions.add({ channel: data.channel, timestamp: data.ts, name: "hourglass_flowing_sand" });
+        } catch {
+          // Slack may reject duplicate reactions or unavailable scopes.
+        }
       }
       await thinkingDisplay?.cleanup();
       return;
@@ -1560,6 +1570,7 @@ function wireSlackBot(w: SlackBotWiring): SlackBot {
   // user message under different event_ids, so a shared store would let one
   // bot's claim suppress every other bot's copy.
   const deduper = createSlackEventDeduper();
+  const busyNotice = createBusyNoticePolicy();
   let cleanupBroadcasts: (() => void) | null = null;
   let progressRecovery: ReturnType<typeof setInterval> | undefined;
   let botUserId: string | undefined;
@@ -1589,6 +1600,7 @@ function wireSlackBot(w: SlackBotWiring): SlackBot {
       eventClient as unknown as SlackWebClient,
       effectiveTarget,
       botUserId,
+      busyNotice,
       () => claimSlackMessageEvent(deduper, body, data, target.logPrefix),
       () => releaseSlackMessageEvent(deduper, body, data)
     );
@@ -1617,6 +1629,7 @@ function wireSlackBot(w: SlackBotWiring): SlackBot {
       eventClient as unknown as SlackWebClient,
       effectiveTarget,
       botUserId,
+      busyNotice,
       () => claimSlackMessageEvent(deduper, body, data, target.logPrefix),
       () => releaseSlackMessageEvent(deduper, body, data)
     );

@@ -1,8 +1,12 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { render } from "solid-js/web";
+import { createStore } from "solid-js/store";
 
-const { saveMcpServerLabelMock, setSharedMcpServerMock, fetchMcpServersMock, fetchMcpServerConfigMock, saveMcpServerConfigMock, removeMcpServerMock, disconnectMcpServerMock, useSessionMock, navigateMock } = vi.hoisted(() => ({
+const route = createStore({ agentId: "scribe", serverName: "docs" });
+
+const { refreshMcpServerIconMock, saveMcpServerLabelMock, setSharedMcpServerMock, fetchMcpServersMock, fetchMcpServerConfigMock, saveMcpServerConfigMock, removeMcpServerMock, disconnectMcpServerMock, useSessionMock, navigateMock } = vi.hoisted(() => ({
+  refreshMcpServerIconMock: vi.fn(),
   saveMcpServerLabelMock: vi.fn(),
   setSharedMcpServerMock: vi.fn(),
   fetchMcpServersMock: vi.fn(),
@@ -14,7 +18,10 @@ const { saveMcpServerLabelMock, setSharedMcpServerMock, fetchMcpServersMock, fet
   navigateMock: vi.fn(),
 }));
 
-vi.mock("../api/mcp-servers", () => ({
+vi.mock("../api/mcp-servers", async () => ({
+  iconRefreshOutcome: (await vi.importActual<typeof import("../api/mcp-servers")>("../api/mcp-servers")).iconRefreshOutcome,
+  refreshMcpCatalogIcon: vi.fn(),
+  refreshMcpServerIcon: refreshMcpServerIconMock,
   cachedMcpServers: () => undefined,
   mcpDisplayName: (name: string, title?: string) => title || name.charAt(0).toUpperCase() + name.slice(1),
   fetchMcpServersFast: fetchMcpServersMock,
@@ -34,7 +41,7 @@ vi.mock("@solidjs/router", () => ({
     a.textContent = String(props.children ?? "");
     return a;
   },
-  useParams: () => ({ agentId: "scribe", serverName: "docs" }),
+  useParams: () => route[0],
   useNavigate: () => navigateMock,
 }));
 
@@ -52,6 +59,7 @@ async function mount() {
 
 beforeEach(() => {
   vi.resetAllMocks();
+  route[1]({ agentId: "scribe", serverName: "docs" });
   useSessionMock.mockReturnValue(() => ({ isPending: false, data: { user: { id: "u" } } }));
   container = document.createElement("div");
   document.body.appendChild(container);
@@ -122,6 +130,7 @@ describe("McpServerDetails", () => {
     await mount();
     expect(container.querySelector<HTMLTextAreaElement>("textarea")!.readOnly).toBe(true);
     expect(button("Save")).toBeUndefined();
+    expect(button("Refresh icon")).toBeUndefined();
   });
 
   it("hides Remove server from non-admins", async () => {
@@ -130,6 +139,7 @@ describe("McpServerDetails", () => {
     ] });
     await mount();
     expect(button("Remove server")).toBeUndefined();
+    expect(button("Refresh icon")).toBeTruthy();
   });
 
   it("shows Remove server to admins and surfaces a remove failure", async () => {
@@ -192,10 +202,99 @@ describe("McpServerDetails", () => {
     setSharedMcpServerMock.mockResolvedValue({});
     await mount();
     expect(button("Remove server")).toBeFalsy();
+    expect(button("Refresh icon")).toBeFalsy();
     expect(container.querySelector(".mcp-label-form")).toBeNull();
     expect(fetchMcpServerConfigMock).not.toHaveBeenCalled();
     button("Enable")!.click();
     await tick();
     expect(setSharedMcpServerMock).toHaveBeenCalledWith("scribe", "docs", true);
   });
+});
+
+
+it("refreshes a user HTTP icon immediately while live status still contains the old icon", async () => {
+  const server = { name: "docs", type: "http", url: "https://docs.test/mcp", iconUrl: "https://old.test/icon.png", auth: "oauth", state: "connected", readOnly: false };
+  fetchMcpServersMock.mockResolvedValue({ servers: [server], canConfigureTeam: false });
+  const refresh = Promise.withResolvers<{ status: string; server: object }>();
+  refreshMcpServerIconMock.mockReturnValue(refresh.promise);
+  await mount();
+  button("Refresh icon")!.click();
+  expect(button("Refreshing")?.disabled).toBe(true);
+  refresh.resolve({ status: "updated", server: { ...server, iconUrl: "https://new.test/icon.png" } });
+  await tick();
+  expect(refreshMcpServerIconMock).toHaveBeenCalledWith("scribe", "docs");
+  expect(container.textContent).toContain("Icon updated");
+  expect(Array.from(container.querySelectorAll('[role="status"]')).some((item) => item.textContent === "Icon updated")).toBe(true);
+  expect(container.querySelector(".mcp-details-head img")?.getAttribute("src")).toBe("https://new.test/icon.png");
+});
+
+it.each([
+  ["unchanged", "No new icon found; kept the current one"],
+  ["not_connected", "Connect this server first, then refresh the icon"],
+  ["not_saved", "This server is edited by hand, so its icon isn't saved."],
+])("explains the %s refresh result", async (status, expected) => {
+  const server = { name: "docs", type: "http", auth: "oauth", state: "disconnected", readOnly: false };
+  fetchMcpServersMock.mockResolvedValue({ servers: [server] });
+  refreshMcpServerIconMock.mockResolvedValue({ status, server });
+  await mount();
+  button("Refresh icon")!.click();
+  await tick();
+  expect(Array.from(container.querySelectorAll('[role="status"]')).some((item) => item.textContent === expected)).toBe(true);
+});
+
+it("shows a timed-out refresh as an error, never as no new icon, and updates the status line", async () => {
+  fetchMcpServersMock.mockResolvedValue({ servers: [{ name: "docs", type: "http", auth: "none", state: "connected", readOnly: false }] });
+  refreshMcpServerIconMock.mockResolvedValue({ status: "unchanged", server: { name: "docs", type: "http", auth: "none", state: "unreachable", error: "MCP server status timed out", readOnly: false } });
+  await mount();
+  button("Refresh icon")!.click();
+  await tick();
+  expect(Array.from(container.querySelectorAll('[role="alert"]')).some((item) => item.textContent?.includes("MCP server status timed out"))).toBe(true);
+  expect(container.textContent).not.toContain("No new icon found");
+  expect(container.textContent).not.toContain("Connected");
+});
+
+it("clears the Unreachable status when a retry after a timeout succeeds", async () => {
+  fetchMcpServersMock.mockResolvedValue({ servers: [{ name: "docs", type: "http", auth: "none", state: "connected", readOnly: false }] });
+  refreshMcpServerIconMock.mockResolvedValueOnce({ status: "unreachable", error: "MCP server status timed out", server: { name: "docs", type: "http", auth: "none", state: "unreachable", error: "MCP server status timed out", readOnly: false } });
+  await mount();
+  button("Refresh icon")!.click();
+  await tick();
+  expect(container.textContent).toContain("Unreachable");
+  refreshMcpServerIconMock.mockResolvedValueOnce({ status: "updated", server: { name: "docs", type: "http", iconUrl: "https://new.test/icon.png", auth: "none", state: "connected", readOnly: false } });
+  button("Refresh icon")!.click();
+  await tick();
+  expect(container.textContent).toContain("Icon updated");
+  expect(container.textContent).not.toContain("Unreachable");
+  expect(container.querySelector('[role="alert"]')).toBeNull();
+});
+
+it("shows a refresh failure as an alert and allows retry", async () => {
+  fetchMcpServersMock.mockResolvedValue({ servers: [{ name: "docs", type: "http", auth: "oauth", state: "connected", readOnly: false }] });
+  refreshMcpServerIconMock.mockRejectedValue(new Error("Server timed out"));
+  await mount();
+  button("Refresh icon")!.click();
+  await tick();
+  expect(container.querySelector('[role="alert"]')?.textContent).toContain("Server timed out");
+  expect(button("Refresh icon")?.disabled).toBe(false);
+});
+
+
+it("clears icon feedback and ignores a refresh that finishes after navigating away", async () => {
+  const docs = { name: "docs", type: "http", iconUrl: "https://old.test/docs.png", auth: "oauth", state: "connected", readOnly: false };
+  const notes = { ...docs, name: "notes", iconUrl: "https://old.test/notes.png" };
+  fetchMcpServersMock.mockResolvedValue({ servers: [docs, notes] });
+  const refresh = Promise.withResolvers<{ status: string; server: object }>();
+  refreshMcpServerIconMock.mockReturnValue(refresh.promise);
+  await mount();
+  button("Refresh icon")!.click();
+  route[1]("serverName", "notes");
+  await tick(); await tick();
+  expect(button("Refresh icon")?.disabled).toBe(false);
+  refresh.resolve({ status: "updated", server: { ...docs, iconUrl: "https://new.test/docs.png" } });
+  await tick();
+  expect(container.textContent).not.toContain("Icon updated");
+  expect(container.querySelector(".mcp-details-head img")?.getAttribute("src")).toBe("https://old.test/notes.png");
+  route[1]("serverName", "docs");
+  await tick(); await tick();
+  expect(container.querySelector(".mcp-details-head img")?.getAttribute("src")).toBe("https://old.test/docs.png");
 });
