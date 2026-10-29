@@ -107,17 +107,23 @@ describe("container input builder", () => {
     }
   });
 
-  it.each([true, false, undefined])("transports codemode %s to the runner", async (codemode) => {
+  // ALG-566 Testing Decisions approve JSON input-builder propagation; runtime
+  // admission and throttling are covered through the runner seam.
+  it.each([true, false, undefined])("transports codemode %s and limits to the runner", async (codemode) => {
     const workspaceDir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-codemode-input-"));
     try {
       await fs.writeFile(path.join(workspaceDir, "SOUL.md"), "test soul");
       const builder = new ContainerInputBuilder({ buildSystemPrompts: async () => [], buildTools: async () => [] });
       const params = {
         agentId: "test", sessionId: "session", message: "hello", workspaceDir,
-        agent: { id: "test", codemode, model: { provider: "anthropic", model: "test" } },
+        agent: { id: "test", codemode, codemodeLimits: { maxToolCalls: 12, maxConcurrentToolCalls: 2 }, model: { provider: "anthropic", model: "test" } },
       } as SdkRunParams;
       const input = await builder.build(params, { agents: [params.agent], extensions: {} } as GatewayConfig, "test-token");
-      expect(ContainerInputSchema.parse(JSON.parse(JSON.stringify(input))).codemode).toBe(codemode);
+      const parsed = ContainerInputSchema.parse(JSON.parse(JSON.stringify(input)));
+      expect(parsed.codemode).toBe(codemode);
+      expect(parsed.codemodeLimits).toEqual({ maxToolCalls: 12, maxConcurrentToolCalls: 2 });
+      const defaults = await builder.build({ ...params, agent: { ...params.agent, codemodeLimits: undefined } }, { agents: [params.agent], extensions: {} } as GatewayConfig, "test-token");
+      expect(ContainerInputSchema.parse(JSON.parse(JSON.stringify(defaults))).codemodeLimits).toBeUndefined();
     } finally {
       await fs.rm(workspaceDir, { recursive: true, force: true });
     }

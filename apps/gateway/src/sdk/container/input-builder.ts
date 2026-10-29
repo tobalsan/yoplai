@@ -72,6 +72,7 @@ export class ContainerInputBuilder {
     return {
       agentId: params.agentId,
       codemode: params.agent.codemode,
+      codemodeLimits: params.agent.codemodeLimits,
       toolDeferral: resolveToolDeferralConfig(params.agent.toolDeferral),
       sessionId: params.sessionId,
       runId,

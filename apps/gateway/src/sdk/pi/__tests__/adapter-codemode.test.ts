@@ -14,6 +14,7 @@ import {
   fauxToolCall,
   type FauxResponseFactory,
 } from "@earendil-works/pi-ai/providers/faux";
+import { getCurrentSystemPrompt } from "@earendil-works/pi-ai";
 import { ExtensionRuntime } from "../../../extensions/runtime.js";
 import { setLoadedConfig } from "../../../config/index.js";
 import { piAdapter } from "../adapter.js";
@@ -185,6 +186,37 @@ async function bounded<T>(promise: Promise<T>): Promise<T> {
 }
 
 describe("Pi adapter codemode", () => {
+  // ALG-566 Testing Decisions approve observing the real Pi model request:
+  // this catches prompt delivery with/without deferral, not container limits.
+  it.each([
+    [true, true],
+    [true, false],
+    [false, false],
+    [undefined, false],
+  ])("includes long-job guidance only with codemode %s (deferral %s), without host caps", async (codemode, deferral) => {
+    const run = fixture(codemode);
+    run.params.agent.toolDeferral = { enabled: deferral };
+    run.params.agent.codemodeLimits = { maxToolCalls: 17, maxConcurrentToolCalls: 2 };
+    let prompt = "";
+    setup.faux.setResponses([(context) => {
+      prompt = getCurrentSystemPrompt(context.messages);
+      return fauxAssistantMessage("done");
+    }]);
+    await expect(piAdapter.run(run.params)).resolves.toMatchObject({ text: "done" });
+    for (const rule of [
+      "Run one small batch first. Measure the latency, then estimate the full job before you run it.",
+      "Split a long job into codemode calls that each fit the timeout. Save progress to a file and resume from it.",
+      "Stop the loop on a 409, or after 3 failures in a row. Do not hide errors with an empty `.catch()`.",
+      "Before a job that takes more than about 1 minute, tell the user the plan, the call count, and the time.",
+    ]) {
+      expect(prompt.includes(rule)).toBe(codemode === true);
+    }
+    expect(prompt).not.toContain("17 tool calls");
+    expect(prompt).not.toContain("2 concurrent");
+    expect(prompt).not.toContain("200 tool calls");
+    expect(prompt).not.toContain("10 concurrent");
+  });
+
   it("appends the tool signature to the codemode result when a script hides a validation error", async () => {
     const run = fixture(true, async () => ({ count: 1 }), "fixture", undefined, {
       type: "object",

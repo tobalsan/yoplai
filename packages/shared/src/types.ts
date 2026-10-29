@@ -268,6 +268,12 @@ export const ToolDeferralConfigSchema = z.object({
 });
 export type ToolDeferralConfig = z.infer<typeof ToolDeferralConfigSchema>;
 
+export const CodemodeLimitsSchema = z.object({
+  maxToolCalls: z.number().int().positive().optional(),
+  maxConcurrentToolCalls: z.number().int().positive().optional(),
+});
+export type CodemodeLimits = z.infer<typeof CodemodeLimitsSchema>;
+
 // Agent config
 const AgentConfigBaseSchema = z.object({
   id: z.string(),
@@ -304,6 +310,7 @@ const AgentConfigBaseSchema = z.object({
   extensions: z.record(z.string(), ExtensionBaseConfigSchema).optional(),
   globalSkills: z.boolean().optional(), // Include ~/.agents/skills/ (default: false)
   codemode: z.boolean().optional(),
+  codemodeLimits: CodemodeLimitsSchema.optional(),
   toolDeferral: ToolDeferralConfigSchema.optional(),
   onecliToken: z.string().optional(), // Per-agent OneCLI proxy token
   sandbox: AgentSandboxConfigSchema.optional(),
@@ -1506,6 +1513,12 @@ export interface ExtensionContext {
 
   // Agent runtime state
   isAgentStreaming(agentId: string): boolean;
+  /** Streaming run details for the selected session storage owner. */
+  getActiveRun?(
+    agentId: string,
+    sessionId: string,
+    sessionOwnerId?: string | null
+  ): Promise<{ startedAt: number; taskTitle?: string } | undefined>;
   resolveWorkspaceDir(agent: AgentConfig): string;
 
   // Agent execution
@@ -2731,6 +2744,7 @@ export type ContainerSystemFile = z.infer<typeof ContainerSystemFileSchema>;
 export const ContainerInputSchema = z.object({
   agentId: z.string(),
   codemode: z.boolean().optional(),
+  codemodeLimits: CodemodeLimitsSchema.optional(),
   toolDeferral: ToolDeferralConfigSchema.required().optional(),
   sessionId: z.string(),
   // Optional for back-compat with containers launched before per-run IPC
