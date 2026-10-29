@@ -18,6 +18,7 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Fixed
 
+- Stop sandboxed codemode scripts when their run is cancelled, cap each script at 200 nested tool calls and 10 concurrent gateway calls by default (configurable with `codemodeLimits`), and give codemode agents guidance for long jobs.
 - Allow failed Threadit items to run again after a board Retry without restarting the gateway.
 - Keep extension and MCP server details readable on phones, with clear back navigation, stacked headers and scope tabs that fit the screen.
 - Mattermost threads retain their session owner across replies, resets and restarts; reconnect recovery honors username allowlists and covers silent disconnects. REST deadlines and tool cancellation bound stalled calls, while reaction and typing failures no longer delay answers.

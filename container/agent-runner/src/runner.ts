@@ -23,12 +23,15 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import { getBuiltInSkillsDir } from "./skills.js";
 import { createDeadlineBashTool } from "./bash-deadline.js";
-import { gatewayTool } from "./gateway-tool.js";
+import { gatewayTool, type GatewayToolControls } from "./gateway-tool.js";
+import { CodemodeLimiter } from "./codemode-limiter.js";
 import {
   ContainerDeliveryEnvelopeSchema,
   DEFAULT_RETRY_BASE_DELAY_SECONDS,
   DEFAULT_RETRY_MAX_ATTEMPTS,
   PI_SYSTEM_PROMPT,
+  codemodeGuidance,
+  resolveCodemodeLimits,
   findFailedTurn,
   getProviderErrorCategory,
   isReplayableFailedTurn,
@@ -412,14 +415,24 @@ export async function runAgent(
       input.sessionDir
     );
     const toolDeferral = resolveToolDeferralConfig(input.toolDeferral);
+    const codemodeLimits = resolveCodemodeLimits(input.codemodeLimits);
+    const codemodeLimiter = input.codemode === true
+      ? new CodemodeLimiter(codemodeLimits)
+      : undefined;
     const builtInTools = ["read", "bash", "edit", "write"];
     const usedToolNames = new Set([
       ...builtInTools,
       "tool_search",
       "codemode",
     ]);
-    const sendFileTool = createSendFileTool(input, usedToolNames);
-    const extensionTools = createExtensionTools(input, usedToolNames);
+    const gatewayControls: GatewayToolControls = {
+      limiter: codemodeLimiter,
+      onRunCancelled: () => {
+        if (!activeAbortRequested) abortActiveAgent();
+      },
+    };
+    const sendFileTool = createSendFileTool(input, usedToolNames, gatewayControls);
+    const extensionTools = createExtensionTools(input, usedToolNames, gatewayControls);
     const customTools = [
       ...(input.turnDeadlineAt !== undefined
         ? [createDeadlineBashTool(input.workspaceDir, input.turnDeadlineAt)]
@@ -464,9 +477,14 @@ export async function runAgent(
           ? [createCodemodeExtension({ mode: "on", inlineBudget: 1000, models: false })]
           : []),
         (pi) => {
+          pi.on("tool_call", (event) => {
+            const reason = codemodeLimiter?.admit(event.toolCallId, event.parentToolCallId);
+            return reason ? { block: true, reason } : undefined;
+          });
           pi.on("before_agent_start", (event) => {
             if (catalog.summary) event.systemPromptOptions.sections["deferred-tools"] = catalog.summary;
             else delete event.systemPromptOptions.sections["deferred-tools"];
+            if (input.codemode === true) event.systemPromptOptions.sections["codemode-guidance"] = codemodeGuidance(codemodeLimits);
           });
           pi.on("message_end", (event) => {
             const unloaded = catalog.hintUnloadedToolResult(event.message);
@@ -787,7 +805,8 @@ async function loadContextFiles(
 
 function createExtensionTools(
   input: ContainerInput,
-  usedToolNames: Set<string>
+  usedToolNames: Set<string>,
+  controls: GatewayToolControls
 ): ToolDefinition[] {
   return (input.extensionTools ?? []).map((tool) =>
     gatewayTool(
@@ -800,14 +819,16 @@ function createExtensionTools(
       (result, toolCallId) =>
         formatGatewayToolResult(input, toolCallId, tool.name, result),
       tool.name,
-      tool.outputSchema
+      tool.outputSchema,
+      controls
     )
   );
 }
 
 function createSendFileTool(
   input: ContainerInput,
-  usedToolNames: Set<string>
+  usedToolNames: Set<string>,
+  controls: GatewayToolControls
 ): ToolDefinition {
   return gatewayTool(
     input,
@@ -836,7 +857,9 @@ function createSendFileTool(
       }
       return "File sent to user";
     },
-    "__register_file_output"
+    "__register_file_output",
+    undefined,
+    controls
   );
 }
 
