@@ -72,11 +72,12 @@ export async function fetchMcpServer(agentId: string, name: string): Promise<Mcp
   return list;
 }
 
-export type McpIconRefreshStatus = "updated" | "unchanged" | "not_connected" | "not_saved" | "unreachable";
+export type McpIconRefreshStatus = "updated" | "unchanged" | "not_connected" | "not_saved" | "unreachable" | "save_failed";
 
 /** Maps a refresh result to a truthful message; a timeout/unreachable server is an error even if the status says "unchanged". */
 export function iconRefreshOutcome(result: { status: McpIconRefreshStatus; error?: string; server?: { name: string; state?: string; error?: string } }, notConnected: string): { message: string } | { error: string } {
   const error = result.error ?? result.server?.error;
+  if (result.status === "save_failed") return { error: `Couldn't save the new icon${error ? `: ${error}` : ""}. Kept the current icon.` };
   if (result.status === "unreachable" || result.server?.state === "unreachable" || error) return { error: `The server didn't respond: ${error ?? "it could not be reached"}. Kept the current icon.` };
   if (result.status === "not_connected") return { message: notConnected };
   if (result.status === "not_saved") return { message: "This server is edited by hand, so its icon isn't saved." };

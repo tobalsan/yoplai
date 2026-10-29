@@ -253,6 +253,21 @@ it("shows a timed-out refresh as an error, never as no new icon, and updates the
   expect(container.textContent).not.toContain("Connected");
 });
 
+it("clears the Unreachable status when a retry after a timeout succeeds", async () => {
+  fetchMcpServersMock.mockResolvedValue({ servers: [{ name: "docs", type: "http", auth: "none", state: "connected", readOnly: false }] });
+  refreshMcpServerIconMock.mockResolvedValueOnce({ status: "unreachable", error: "MCP server status timed out", server: { name: "docs", type: "http", auth: "none", state: "unreachable", error: "MCP server status timed out", readOnly: false } });
+  await mount();
+  button("Refresh icon")!.click();
+  await tick();
+  expect(container.textContent).toContain("Unreachable");
+  refreshMcpServerIconMock.mockResolvedValueOnce({ status: "updated", server: { name: "docs", type: "http", iconUrl: "https://new.test/icon.png", auth: "none", state: "connected", readOnly: false } });
+  button("Refresh icon")!.click();
+  await tick();
+  expect(container.textContent).toContain("Icon updated");
+  expect(container.textContent).not.toContain("Unreachable");
+  expect(container.querySelector('[role="alert"]')).toBeNull();
+});
+
 it("shows a refresh failure as an alert and allows retry", async () => {
   fetchMcpServersMock.mockResolvedValue({ servers: [{ name: "docs", type: "http", auth: "oauth", state: "connected", readOnly: false }] });
   refreshMcpServerIconMock.mockRejectedValue(new Error("Server timed out"));

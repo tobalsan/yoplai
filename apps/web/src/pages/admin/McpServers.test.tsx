@@ -102,6 +102,15 @@ describe("AdminMcpServersPage", () => {
     expect(container.textContent).not.toContain("No new icon found");
   });
 
+  it("reports a failed icon save as a row error, never as updated", async () => {
+    const container = await mount();
+    m.refreshMcpCatalogIcon.mockResolvedValue({ status: "save_failed", error: "disk full", server: { name: "linear", url: "https://mcp.linear.app/mcp" } });
+    click(container, "Refresh icon");
+    await flush();
+    expect(container.querySelector('[data-server="linear"] [role="alert"]')?.textContent).toContain("Couldn't save the new icon: disk full");
+    expect(container.textContent).not.toContain("Icon updated");
+  });
+
   it("reports a refresh error on its row and allows retry", async () => {
     const container = await mount();
     m.refreshMcpCatalogIcon.mockRejectedValue(new Error("Icon lookup timed out"));

@@ -185,11 +185,9 @@ export function McpServerDetails() {
       if (!current()) return;
       setIconOverride({ agent, name, iconUrl: result.server.iconUrl });
       const outcome = iconRefreshOutcome(result, "Connect this server first, then refresh the icon");
-      if ("error" in outcome) {
-        setIconError(outcome.error);
-        const list = live()?.agent === agent && live()?.name === name ? live()!.list : fastStatus();
-        if (list) setLive({ agent, name, list: { ...list, servers: list.servers.map((item) => item.name === name ? { ...item, ...result.server } : item) } });
-      }
+      const list = live()?.agent === agent && live()?.name === name ? live()!.list : fastStatus();
+      if (list) setLive({ agent, name, list: { ...list, servers: list.servers.map((item) => item.name === name ? { ...item, error: undefined, ...result.server } : item) } });
+      if ("error" in outcome) setIconError(outcome.error);
       else setIconMessage(outcome.message);
     } catch (cause) {
       if (current()) setIconError(errorMessage(cause, "Failed to refresh MCP server icon."));
