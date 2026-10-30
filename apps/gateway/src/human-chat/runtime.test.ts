@@ -1,21 +1,21 @@
 import { describe, expect, it } from "vitest";
 import { GatewayConfigSchema, type AgentConfig } from "@yoplai/shared";
 import { ExtensionRuntime } from "../extensions/runtime.js";
-import { chatShapeExtension } from "./index.js";
+import { humanChatExtension } from "./index.js";
 
 const config = GatewayConfigSchema.parse({
   version: 2,
-  agents: [{ id: "main", name: "Main", workspace: "~/agents/main", model: { provider: "anthropic", model: "claude" }, extensions: { "chat-shape": {} } }],
+  agents: [{ id: "main", name: "Main", workspace: "~/agents/main", model: { provider: "anthropic", model: "claude" }, extensions: { "human-chat": {} } }],
 });
 const agent = config.agents[0] as AgentConfig;
 const runtime = new ExtensionRuntime();
-runtime.load([chatShapeExtension]);
+runtime.load([humanChatExtension]);
 
 const names = async (identity?: Record<string, unknown>) =>
   (await runtime.getTools(agent, config, undefined, identity as never)).map((t) => t.name);
 const prompts = (identity?: Record<string, unknown>) => runtime.getPromptContributions(agent, config, undefined, identity as never);
 
-describe("chat-shape through the extension runtime", () => {
+describe("human-chat through the extension runtime", () => {
   it("human turn: rules and reply_mode", async () => {
     const run = { source: "web", sessionId: "s1" };
     expect(await names(run)).toEqual(["reply_mode"]);

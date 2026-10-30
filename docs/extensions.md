@@ -40,19 +40,19 @@ Some messaging transports retain supported per-agent compatibility config. Webho
 | `telegram`     | Telegram transport                         | [package README](../packages/extensions/telegram/README.md)                                 |
 | `webhooks`     | HTTP webhook triggers                      | [Webhooks](webhooks.md)                                                                     |
 
-## Short chat replies (`chat-shape`)
+## Short chat replies (`human-chat`)
 
 Opt-in for each agent, off by default:
 
 ```yaml
 # agent.yaml
 extensions:
-  chat-shape: {}        # or a bare `chat-shape:` key. `enabled: false` turns it off
-  # chat-shape:
-  #   log: data/chat-shape/long-mode.jsonl   # default, relative to the workspace
+  human-chat: {}        # or a bare `human-chat:` key. `enabled: false` turns it off
+  # human-chat:
+  #   log: data/human-chat/long-mode.jsonl   # default, relative to the workspace
 ```
 
-When on, replies to a human follow the chat-shape rules: one topic, 1-5 sentences, at most one question. Human sources are web, Telegram, Discord, Slack, Mattermost, and IRC. The agent gets the rules in its system prompt, a nudge on each human turn, and a `reply_mode` tool to declare long mode. The gateway holds the reply until the turn ends and lints it. On a failure, it asks the agent for one hidden rewrite. Live streaming stops for these turns, and a follow-up message waits for its own turn. The gateway does not shape scheduler, heartbeat, webhook, agent-sender, or background runs. A message that is exactly `/topics` lists the open topic plans in `<workspace>/topics/`. Internals: [llms.md](llms.md).
+When on, replies to a human follow the human-chat rules: one topic, 1-5 sentences, at most one question. Human sources are web, Telegram, Discord, Slack, Mattermost, and IRC. The agent gets the rules in its system prompt, a nudge on each human turn, and a `reply_mode` tool to declare long mode. The gateway holds the reply until the turn ends and lints it. On a failure, it asks the agent for one hidden rewrite. Live streaming stops for these turns, and a follow-up message waits for its own turn. The gateway does not shape scheduler, heartbeat, webhook, agent-sender, or background runs. A message that is exactly `/topics` lists the open topic plans in `<workspace>/topics/`. Internals: [llms.md](llms.md).
 
 ## External extensions
 

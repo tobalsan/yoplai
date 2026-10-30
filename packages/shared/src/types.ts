@@ -307,12 +307,12 @@ const AgentConfigBaseSchema = z.object({
   reflect: ReflectConfigSchema.optional(),
   webhooks: z.record(z.string(), WebhookConfigSchema).optional(),
   introMessage: z.string().optional(), // Custom intro for /new (default: "New conversation started.")
-  // A bare `chat-shape:` key is null in YAML; it means an empty block (on).
+  // A bare `human-chat:` key is null in YAML; it means an empty block (on).
   extensions: z
     .preprocess(
       (value) =>
-        value && typeof value === "object" && (value as Record<string, unknown>)["chat-shape"] === null
-          ? { ...value, "chat-shape": {} }
+        value && typeof value === "object" && (value as Record<string, unknown>)["human-chat"] === null
+          ? { ...value, "human-chat": {} }
           : value,
       z.record(z.string(), ExtensionBaseConfigSchema)
     )

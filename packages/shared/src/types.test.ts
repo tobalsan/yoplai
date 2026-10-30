@@ -78,16 +78,16 @@ describe("Mattermost config schemas", () => {
   });
 });
 
-describe("bare chat-shape extension key", () => {
-  it("parses `chat-shape:` (null) as an empty block", () => {
+describe("bare human-chat extension key", () => {
+  it("parses `human-chat:` (null) as an empty block", () => {
     const parsed = AgentConfigSchema.parse({
       id: "main",
       name: "Main",
       workspace: "~/main",
       model: { provider: "anthropic", model: "claude" },
-      extensions: { "chat-shape": null },
+      extensions: { "human-chat": null },
     });
-    expect(parsed.extensions).toEqual({ "chat-shape": {} });
+    expect(parsed.extensions).toEqual({ "human-chat": {} });
   });
 });
 

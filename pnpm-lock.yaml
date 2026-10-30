@@ -227,9 +227,6 @@ importers:
       better-sqlite3:
         specifier: ^12.10.0
         version: 12.10.0
-      chat-shape:
-        specifier: file:/Users/thinh/code/agentropy/chat-shape
-        version: file:../../code/agentropy/chat-shape
       commander:
         specifier: ^12.1.0
         version: 12.1.0
@@ -245,6 +242,9 @@ importers:
       hono:
         specifier: ^4.11.4
         version: 4.11.4
+      human-chat:
+        specifier: file:/Users/thinh/code/agentropy/human-chat
+        version: file:../../code/agentropy/human-chat
       js-yaml:
         specifier: ^4.1.1
         version: 4.1.1
@@ -2867,11 +2867,6 @@ packages:
     resolution: {integrity: sha512-2uNTXIuTTxk7ciZgAU1BQcgnchcG0xXnrs6jzkQfj9SsRa9M2s5zE8WT96hS6KmG4MzWHSrvH43DF1m4XRkrFg==}
     engines: {node: '>=22'}
 
-  chat-shape@file:../../code/agentropy/chat-shape:
-    resolution: {directory: ../../code/agentropy/chat-shape, type: directory}
-    engines: {node: '>=22'}
-    hasBin: true
-
   check-error@2.1.3:
     resolution: {integrity: sha512-PAJdDJusoxnwm1VwW07VWwUN1sl7smmC3OKggvndJFadxxDRyFJBX/ggnu/KE4kQAB7a3Dp8f/YXC1FlUprWmA==}
     engines: {node: '>= 16'}
@@ -3394,6 +3389,11 @@ packages:
   https-proxy-agent@9.1.0:
     resolution: {integrity: sha512-ag87y7cJJ9/3+GxFr8Oy4O5faDsGRGnBGsJj/YjOSsSx/5eadKLYTMPlzuR6obgoCDDm0abAAZitXXQkMOPSpA==}
     engines: {node: '>= 20'}
+
+  human-chat@file:../../code/agentropy/human-chat:
+    resolution: {directory: ../../code/agentropy/human-chat, type: directory}
+    engines: {node: '>=22'}
+    hasBin: true
 
   iconv-lite@0.7.2:
     resolution: {integrity: sha512-im9DjEDQ55s9fL4EYzOAv0yMqmMBSZp6G0VvFyTMPKWxiSBHUj9NW/qqLmXUwXrrM7AvqSlTCfvqRb0cM8yYqw==}
@@ -6998,8 +6998,6 @@ snapshots:
 
   chalk@6.0.0: {}
 
-  chat-shape@file:../../code/agentropy/chat-shape: {}
-
   check-error@2.1.3: {}
 
   chokidar@4.0.3:
@@ -7613,6 +7611,8 @@ snapshots:
     transitivePeerDependencies:
       - kerberos
       - supports-color
+
+  human-chat@file:../../code/agentropy/human-chat: {}
 
   iconv-lite@0.7.2:
     dependencies:

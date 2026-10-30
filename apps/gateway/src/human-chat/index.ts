@@ -9,7 +9,7 @@ import {
   listOpenPlans,
   type LintResult,
   type ReplyMode,
-} from "chat-shape";
+} from "human-chat";
 import type { AgentConfig, Extension, ExtensionRunInfo, StreamEvent } from "@yoplai/shared";
 import type { HistoryEvent } from "../sdk/types.js";
 import { logWarn } from "../logging.js";
@@ -35,14 +35,14 @@ export function isHumanTurn(run?: RunParams): boolean {
 
 function shapeConfig(agent: AgentConfig): Record<string, unknown> | undefined {
   const extensions = agent.extensions as Record<string, unknown> | undefined;
-  if (!extensions || !("chat-shape" in extensions)) return undefined;
-  // A bare `chat-shape:` key is null: on, with no options.
-  const config = (extensions["chat-shape"] ?? {}) as Record<string, unknown>;
+  if (!extensions || !("human-chat" in extensions)) return undefined;
+  // A bare `human-chat:` key is null: on, with no options.
+  const config = (extensions["human-chat"] ?? {}) as Record<string, unknown>;
   return config.enabled === false ? undefined : config;
 }
 
 /** True when the agent has the adapter on, for any turn. */
-export function chatShapeEnabled(agent: AgentConfig): boolean {
+export function humanChatEnabled(agent: AgentConfig): boolean {
   return shapeConfig(agent) !== undefined;
 }
 
@@ -51,9 +51,9 @@ export function isShapingSession(agentId: string, sessionId: string): boolean {
   return active.has(key(agentId, sessionId));
 }
 
-export const chatShapeExtension: Extension = {
-  id: "chat-shape",
-  displayName: "Chat shape",
+export const humanChatExtension: Extension = {
+  id: "human-chat",
+  displayName: "Human chat",
   description: "Short-turn chat replies, enforced by a linter.",
   dependencies: [],
   factory: true,
@@ -127,7 +127,7 @@ export function startShapedTurn(
   const config = shapeConfig(agent);
   if (!config) return undefined;
   if (!isHumanTurn({ ...params, sessionId })) return undefined;
-  const log = typeof config.log === "string" ? config.log : path.join(workspaceDir, "data", "chat-shape", "long-mode.jsonl");
+  const log = typeof config.log === "string" ? config.log : path.join(workspaceDir, "data", "human-chat", "long-mode.jsonl");
   return new ShapedTurn(agent.id, sessionId, log);
 }
 
@@ -206,7 +206,7 @@ export class ShapedTurn {
       await fs.mkdir(path.dirname(this.logPath), { recursive: true });
       await fs.appendFile(this.logPath, `${JSON.stringify(line)}\n`);
     } catch (error) {
-      logWarn("[chat-shape] log write failed", { agentId: this.agentId, error: String(error) });
+      logWarn("[human-chat] log write failed", { agentId: this.agentId, error: String(error) });
     }
   }
 

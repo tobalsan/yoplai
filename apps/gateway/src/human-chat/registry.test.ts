@@ -14,15 +14,15 @@ async function loadedIds(extensions?: Record<string, unknown>) {
   return (await loadExtensions(config)).map((e) => e.id);
 }
 
-describe("chat-shape registration", () => {
+describe("human-chat registration", () => {
   it("is off by default and when disabled", async () => {
-    expect(await loadedIds()).not.toContain("chat-shape");
-    expect(await loadedIds({ "chat-shape": { enabled: false } })).not.toContain("chat-shape");
+    expect(await loadedIds()).not.toContain("human-chat");
+    expect(await loadedIds({ "human-chat": { enabled: false } })).not.toContain("human-chat");
   });
   it("loads when an agent has the block", async () => {
-    expect(await loadedIds({ "chat-shape": {} })).toContain("chat-shape");
+    expect(await loadedIds({ "human-chat": {} })).toContain("human-chat");
   });
-  it("loads for a bare `chat-shape:` key (null in YAML)", async () => {
-    expect(await loadedIds({ "chat-shape": null })).toContain("chat-shape");
+  it("loads for a bare `human-chat:` key (null in YAML)", async () => {
+    expect(await loadedIds({ "human-chat": null })).toContain("human-chat");
   });
 });

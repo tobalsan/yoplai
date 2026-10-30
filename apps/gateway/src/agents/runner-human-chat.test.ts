@@ -10,7 +10,7 @@ const getSdkAdapter = vi.fn();
 const emitHistoryEvent = vi.fn();
 
 vi.mock("../config/index.js", () => ({
-  CONFIG_DIR: "/tmp/yoplai-chat-shape-test",
+  CONFIG_DIR: "/tmp/yoplai-human-chat-test",
   getAgent,
   loadConfig: vi.fn(() => ({ agents: [], extensions: {}, sessions: {} })),
   resolveWorkspaceDir: (workspace: string) => workspace,
@@ -121,12 +121,12 @@ const readLog = async () =>
 
 beforeEach(async () => {
   vi.clearAllMocks();
-  dir = await fs.mkdtemp(path.join(os.tmpdir(), "chat-shape-"));
+  dir = await fs.mkdtemp(path.join(os.tmpdir(), "human-chat-"));
   log = path.join(dir, "long.jsonl");
-  getAgent.mockImplementation(() => agent({ "chat-shape": { log } }));
+  getAgent.mockImplementation(() => agent({ "human-chat": { log } }));
 });
 
-describe("chat-shape adapter in runAgent", () => {
+describe("human-chat adapter in runAgent", () => {
   it("off: streams deltas as before and adds no nudge", async () => {
     getAgent.mockImplementation(() => agent());
     const seen: number[] = [];
@@ -167,7 +167,7 @@ describe("chat-shape adapter in runAgent", () => {
     const run = scriptedAdapter([says(LONG), says(SHORT)]);
     const { text, result } = await turn();
     expect(run).toHaveBeenCalledTimes(2);
-    expect(run.mock.calls[1][0].message).toMatch(/^\[chat-shape\] /);
+    expect(run.mock.calls[1][0].message).toMatch(/^\[human-chat\] /);
     expect(run.mock.calls[1][0].nudge).toBeUndefined();
     expect(text).toEqual([SHORT]);
     expect(result.payloads).toEqual([{ text: SHORT }]);
@@ -186,10 +186,10 @@ describe("chat-shape adapter in runAgent", () => {
   });
 
   it("long mode via reply_mode tool: passes and logs without reply text", async () => {
-    const { chatShapeExtension } = await import("../chat-shape/index.js");
+    const { humanChatExtension } = await import("../human-chat/index.js");
     const run = scriptedAdapter([
       async (p) => {
-        const [tool] = await chatShapeExtension.getAgentTools!(agent({ "chat-shape": {} }), humanHook);
+        const [tool] = await humanChatExtension.getAgentTools!(agent({ "human-chat": {} }), humanHook);
         await tool.execute(
           { mode: "long", type: "steps", note: "install steps for user" },
           { agent: agent(), config: {}, sessionId: "s1" } as never
@@ -245,39 +245,39 @@ describe("chat-shape adapter in runAgent", () => {
   });
 });
 
-describe("chat-shape extension", () => {
+describe("human-chat extension", () => {
   it("is off without agent config: no tool, no rules", async () => {
-    const { chatShapeExtension } = await import("../chat-shape/index.js");
-    expect(await chatShapeExtension.getAgentTools!(agent(), humanHook)).toEqual([]);
-    expect(await chatShapeExtension.getSystemPromptContributions!(agent(), humanHook)).toBeUndefined();
-    expect(await chatShapeExtension.getAgentTools!(agent({ "chat-shape": { enabled: false } }), humanHook)).toEqual([]);
+    const { humanChatExtension } = await import("../human-chat/index.js");
+    expect(await humanChatExtension.getAgentTools!(agent(), humanHook)).toEqual([]);
+    expect(await humanChatExtension.getSystemPromptContributions!(agent(), humanHook)).toBeUndefined();
+    expect(await humanChatExtension.getAgentTools!(agent({ "human-chat": { enabled: false } }), humanHook)).toEqual([]);
   });
 
   it("on: adds the rules and reply_mode; bad type lists the valid types", async () => {
-    const { chatShapeExtension } = await import("../chat-shape/index.js");
-    const on = agent({ "chat-shape": {} });
-    expect(await chatShapeExtension.getSystemPromptContributions!(on, humanHook)).toContain("## Chat replies");
-    const [tool] = await chatShapeExtension.getAgentTools!(on, humanHook);
+    const { humanChatExtension } = await import("../human-chat/index.js");
+    const on = agent({ "human-chat": {} });
+    expect(await humanChatExtension.getSystemPromptContributions!(on, humanHook)).toContain("## Chat replies");
+    const [tool] = await humanChatExtension.getAgentTools!(on, humanHook);
     const ctx = { agent: on, config: {}, sessionId: "s9" } as never;
     expect(await tool.execute({ mode: "long", type: "reference", note: "a b c" }, ctx)).toBe("Long mode on for this reply.");
     expect(() => tool.execute({ mode: "long", type: "bogus", note: "a b c" }, ctx)).toThrow(/user_asked, comparison/);
   });
 
   it("rejects an invalid note, so the agent can fix it before the lint", async () => {
-    const { chatShapeExtension } = await import("../chat-shape/index.js");
-    const on = agent({ "chat-shape": {} });
-    const [tool] = await chatShapeExtension.getAgentTools!(on, humanHook);
+    const { humanChatExtension } = await import("../human-chat/index.js");
+    const on = agent({ "human-chat": {} });
+    const [tool] = await humanChatExtension.getAgentTools!(on, humanHook);
     const ctx = { agent: on, config: {}, sessionId: "s9" } as never;
     for (const note of ["", "two words", undefined, 5]) {
       expect(() => tool.execute({ mode: "long", type: "steps", note }, ctx)).toThrow(/note/);
     }
   });
 
-  it("a bare chat-shape key (null) turns the adapter on", async () => {
-    const { chatShapeExtension } = await import("../chat-shape/index.js");
-    const on = agent({ "chat-shape": null as never });
-    expect(await chatShapeExtension.getSystemPromptContributions!(on, humanHook)).toContain("## Chat replies");
-    expect(await chatShapeExtension.getAgentTools!(on, humanHook)).toHaveLength(1);
+  it("a bare human-chat key (null) turns the adapter on", async () => {
+    const { humanChatExtension } = await import("../human-chat/index.js");
+    const on = agent({ "human-chat": null as never });
+    expect(await humanChatExtension.getSystemPromptContributions!(on, humanHook)).toContain("## Chat replies");
+    expect(await humanChatExtension.getAgentTools!(on, humanHook)).toHaveLength(1);
   });
 
   it.each([
@@ -287,16 +287,16 @@ describe("chat-shape extension", () => {
     ["no source", {}],
     ["compaction session", { source: "web", sessionId: "compact:1" }],
   ])("skipped turn (%s) gets no rules and no reply_mode tool", async (_name, run) => {
-    const { chatShapeExtension } = await import("../chat-shape/index.js");
-    const on = agent({ "chat-shape": {} });
+    const { humanChatExtension } = await import("../human-chat/index.js");
+    const on = agent({ "human-chat": {} });
     const hook = { config: {}, run: { sessionId: "s1", ...run } } as never;
-    expect(await chatShapeExtension.getSystemPromptContributions!(on, hook)).toBeUndefined();
-    expect(await chatShapeExtension.getAgentTools!(on, hook)).toEqual([]);
-    expect(await chatShapeExtension.getAgentTools!(on)).toEqual([]);
+    expect(await humanChatExtension.getSystemPromptContributions!(on, hook)).toBeUndefined();
+    expect(await humanChatExtension.getAgentTools!(on, hook)).toEqual([]);
+    expect(await humanChatExtension.getAgentTools!(on)).toEqual([]);
   });
 });
 
-describe("chat-shape run isolation", () => {
+describe("human-chat run isolation", () => {
   it("passes the run source, sender, and background flag to the adapter", async () => {
     const run = scriptedAdapter([says(SHORT)]);
     await turn({ source: "web", background: false });
@@ -347,14 +347,14 @@ describe("chat-shape run isolation", () => {
   });
 
   it("gives a queued message its own turn: nudge, short mode, own rewrite", async () => {
-    const { chatShapeExtension } = await import("../chat-shape/index.js");
+    const { humanChatExtension } = await import("../human-chat/index.js");
     const queueMessage = vi.fn();
     const p = pause();
     const run = scriptedAdapter(
       [
         async (r) => {
           r.onSessionHandle?.({ name: "live handle" });
-          const [tool] = await chatShapeExtension.getAgentTools!(agent({ "chat-shape": {} }), humanHook);
+          const [tool] = await humanChatExtension.getAgentTools!(agent({ "human-chat": {} }), humanHook);
           await tool.execute({ mode: "long", type: "steps", note: "install steps for user" }, { agent: agent(), config: {}, sessionId: "s1" } as never);
           p.reached();
           await p.gate;
@@ -375,6 +375,6 @@ describe("chat-shape run isolation", () => {
     expect(run).toHaveBeenCalledTimes(3);
     expect(run.mock.calls[1][0].message).toBe("second");
     expect(run.mock.calls[1][0].nudge).toContain("Reply on one topic");
-    expect(run.mock.calls[2][0].message).toMatch(/^\[chat-shape\] /);
+    expect(run.mock.calls[2][0].message).toMatch(/^\[human-chat\] /);
   });
 });

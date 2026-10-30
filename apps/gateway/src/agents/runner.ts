@@ -59,7 +59,7 @@ import { maybeAutoTitleSession } from "../maintenance/session-auto-title.js";
 import { maybeGenerateToolLabel } from "../maintenance/tool-labels.js";
 import { notifyProviderQuota } from "./quota-notification.js";
 import { clearSessionHandle, getSession } from "./sessions.js";
-import { chatShapeEnabled, isShapingSession, startShapedTurn, topicsReply } from "../chat-shape/index.js";
+import { humanChatEnabled, isShapingSession, startShapedTurn, topicsReply } from "../human-chat/index.js";
 
 export type InternalRunAgentParams = SharedRunAgentParams & {
   userId?: string;
@@ -128,9 +128,9 @@ export async function runAgent(
     ? getContainerAdapter()
     : getSdkAdapter(sdkId);
   const capabilities = adapter.capabilities;
-  // chat-shape state is per turn. A message steered into a live run would share its declaration, nudge, and draft,
-  // so a chat-shape agent queues follow-ups for their own turn instead.
-  const queueCapabilities = chatShapeEnabled(agent) ? { ...capabilities, queueWhileStreaming: false } : capabilities;
+  // human-chat state is per turn. A message steered into a live run would share its declaration, nudge, and draft,
+  // so a human-chat agent queues follow-ups for their own turn instead.
+  const queueCapabilities = humanChatEnabled(agent) ? { ...capabilities, queueWhileStreaming: false } : capabilities;
 
   // Handle /abort command early - do NOT create new sessions or forward to model
   if (isAbortTrigger(params.message)) {
@@ -269,7 +269,7 @@ export async function runAgent(
     };
   }
 
-  // chat-shape: hold, lint, and rewrite replies of human turns (undefined when off or skipped).
+  // human-chat: hold, lint, and rewrite replies of human turns (undefined when off or skipped).
   const workspaceDir = resolveWorkspaceDir(agent.workspace);
   const shape = startShapedTurn(agent, params, sessionId, workspaceDir);
   if (shape && message.trim() === "/topics") {
@@ -545,7 +545,7 @@ export async function runAgent(
         clearSessionHandle(params.agentId, sessionId);
         result = await adapter.run({
           ...runParams,
-          message: `[chat-shape] ${verdict.hint}`,
+          message: `[human-chat] ${verdict.hint}`,
           nudge: undefined,
           thinkLevel: actualThinkLevel,
         });
@@ -705,7 +705,7 @@ export async function getFullSessionHistory(
   // One-time backfill from Pi session if canonical doesn't exist
   await backfillFromPiSession(agentId, sessionId, userId);
 
-  // The Pi transcript holds the draft that chat-shape rejected; show canonical history only.
+  // The Pi transcript holds the draft that human-chat rejected; show canonical history only.
   const shaping = isShapingSession(agentId, sessionId);
 
   // Try canonical history

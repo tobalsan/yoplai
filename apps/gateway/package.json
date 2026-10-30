@@ -13,7 +13,7 @@
     "start": "node dist/cli/index.js gateway"
   },
   "dependencies": {
-    "chat-shape": "file:/Users/thinh/code/agentropy/chat-shape",
+    "human-chat": "file:/Users/thinh/code/agentropy/human-chat",
     "@yoplai/extension-board": "workspace:*",
     "@yoplai/extension-discord": "workspace:*",
     "@yoplai/extension-irc": "workspace:*",
