@@ -6,10 +6,12 @@ import {
 } from "@yoplai/shared";
 import type { Hono } from "hono";
 import { z } from "zod";
+import { terminateRunningScripts } from "@yoplai/shared/node/script";
 import {
   registerWebhookRoutes,
   clearWebhooksRuntime,
   setWebhooksRuntime,
+  WEBHOOK_SCRIPT_OWNER,
 } from "./routes.js";
 import { ensureWebhookSecrets, webhookSecretKey } from "./secrets.js";
 
@@ -69,6 +71,7 @@ const webhooksExtension: Extension = {
     }
   },
   async stop() {
+    terminateRunningScripts(WEBHOOK_SCRIPT_OWNER);
     clearWebhooksRuntime();
   },
   capabilities() {

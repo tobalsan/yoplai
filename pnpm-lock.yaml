@@ -665,9 +665,16 @@ importers:
       hono:
         specifier: ^4.11.4
         version: 4.11.4
+      js-yaml:
+        specifier: ^4.1.1
+        version: 4.1.1
       zod:
         specifier: ^3.23.8
         version: 3.25.76
+    devDependencies:
+      '@types/js-yaml':
+        specifier: ^4.0.9
+        version: 4.0.9
 
   packages/shared:
     dependencies:

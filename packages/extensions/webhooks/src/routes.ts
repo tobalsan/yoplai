@@ -5,7 +5,18 @@ import type {
   WebhookConfig,
 } from "@yoplai/shared";
 import type { Hono } from "hono";
-import { interpolateWebhookPrompt, resolveWebhookPrompt } from "./prompt.js";
+import {
+  parseWakeAgent,
+  resolveScriptPath,
+  runScript,
+  ScriptExecutionError,
+  ScriptPathError,
+} from "@yoplai/shared/node/script";
+import {
+  interpolateWebhookPrompt,
+  resolveWebhookPrompt,
+  WebhookPromptError,
+} from "./prompt.js";
 import {
   getCachedWebhookSecrets,
   setCachedWebhookSecrets,
@@ -20,6 +31,7 @@ type WebhooksRuntime = {
 };
 
 let runtime: WebhooksRuntime | null = null;
+export const WEBHOOK_SCRIPT_OWNER = "webhooks";
 
 export function setWebhooksRuntime(next: WebhooksRuntime): void {
   setCachedWebhookSecrets(next.ctx.getDataDir(), next.secrets);
@@ -168,12 +180,68 @@ async function runWebhookAgent(params: {
 
   try {
     const workspaceDir = params.ctx.resolveWorkspaceDir(params.agent);
-    const prompt = await resolveWebhookPrompt(params.prompt, workspaceDir);
+    const { prompt, options } = await resolveWebhookPrompt(
+      params.prompt,
+      workspaceDir
+    );
+    let gateContext: string | undefined;
+    if (options.script) {
+      try {
+        await resolveScriptPath(workspaceDir, options.script);
+      } catch (err) {
+        if (err instanceof ScriptPathError)
+          throw new WebhookPromptError(params.prompt, err);
+        // A missing file is a gate failure; runScript supplies its spawn reason.
+      }
+      try {
+        const result = await runScript({
+          workspaceDir,
+          script: options.script,
+          timeoutMs: options.scriptTimeoutMs ?? 30_000,
+          owner: WEBHOOK_SCRIPT_OWNER,
+          stdin: params.payload,
+          env: {
+            WEBHOOK_AGENT_ID: params.agent.id,
+            WEBHOOK_NAME: params.webhookName,
+            WEBHOOK_REQUEST_ID: params.requestId,
+            WEBHOOK_ORIGIN_URL: params.originUrl,
+            WEBHOOK_HEADERS: JSON.stringify(params.headers),
+          },
+        });
+        const gate = parseWakeAgent(result.finalStdoutLine);
+        if (!gate.wake) {
+          params.ctx.logger.info(
+            `[webhooks] ${params.agent.id}/${params.webhookName} gate: skipped`
+          );
+          return;
+        }
+        gateContext = gate.context;
+      } catch (err) {
+        const reason =
+          err instanceof ScriptExecutionError ? err.reason : "spawn";
+        params.ctx.logger.error(
+          `[webhooks] ${params.agent.id}/${params.webhookName} gate: ${reason}`,
+          errorMessage(err).split("\n")[0],
+          {
+            reason,
+            stderrTail:
+              err instanceof ScriptExecutionError ? err.stderrTail : "",
+          }
+        );
+      }
+    }
     message = interpolateWebhookPrompt(prompt, {
       originUrl: params.originUrl,
       headers: params.headers,
       payload: params.payload,
+      gateContext,
     });
+    if (
+      gateContext !== undefined &&
+      !prompt.includes("$WEBHOOK_GATE_CONTEXT")
+    ) {
+      message += `\n\nGate context:\n${gateContext}`;
+    }
 
     await params.ctx.runAgent({
       agentId: params.agent.id,
@@ -181,11 +249,13 @@ async function runWebhookAgent(params: {
       sessionKey,
       source: "webhook",
       trace,
+      ...(options.model ? { model: options.model } : {}),
+      ...(options.reasoning ? { thinkLevel: options.reasoning } : {}),
     });
   } catch (err) {
     const messageText = errorMessage(err);
     params.ctx.logger.error(
-      `[webhooks] ${params.agent.id}/${params.webhookName} failed`,
+      `[webhooks] ${params.agent.id}/${params.webhookName} failed${err instanceof WebhookPromptError ? `: ${messageText.replace(/\s+/g, " ")}` : ""}`,
       err
     );
     if (!params.langfuseTracing) return;

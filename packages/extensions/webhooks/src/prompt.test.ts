@@ -8,7 +8,7 @@ describe("webhook prompts", () => {
   it("treats non-text-file prompts as inline strings", async () => {
     await expect(
       resolveWebhookPrompt("Handle $WEBHOOK_PAYLOAD", "/tmp")
-    ).resolves.toBe("Handle $WEBHOOK_PAYLOAD");
+    ).resolves.toEqual({ prompt: "Handle $WEBHOOK_PAYLOAD", options: {} });
   });
 
   it("reads md and txt prompts relative to workspace", async () => {
@@ -24,7 +24,7 @@ describe("webhook prompts", () => {
 
     await expect(
       resolveWebhookPrompt("./webhooks/notion.md", workspace)
-    ).resolves.toBe("Notion: $WEBHOOK_PAYLOAD");
+    ).resolves.toEqual({ prompt: "Notion: $WEBHOOK_PAYLOAD", options: {} });
   });
 
   it("rejects prompt files outside the workspace", async () => {
@@ -39,6 +39,49 @@ describe("webhook prompts", () => {
       resolveWebhookPrompt("../secret.md", workspace)
     ).rejects.toThrow("Webhook prompt path must stay within agent workspace");
   });
+
+  it.each([
+    ["empty block", "---\n---\nHello", "Hello", { scriptTimeoutMs: 30000 }],
+    [
+      "comments only",
+      "---\n# gate is optional\n---\nHello",
+      "Hello",
+      { scriptTimeoutMs: 30000 },
+    ],
+    [
+      "CRLF",
+      "---\r\nreasoning: high\r\n---\r\nHello\r\nworld",
+      "Hello\r\nworld",
+      { reasoning: "high", scriptTimeoutMs: 30000 },
+    ],
+    [
+      "unclosed block",
+      "---\nreasoning: high\nHello",
+      "---\nreasoning: high\nHello",
+      {},
+    ],
+    [
+      "horizontal rule",
+      "---\nA section\n--- decorated\nHello",
+      "---\nA section\n--- decorated\nHello",
+      {},
+    ],
+  ])(
+    "resolves %s in a prompt file",
+    async (_name, content, prompt, options) => {
+      const workspace = await fs.mkdtemp(
+        path.join(os.tmpdir(), "yoplai-webhook-prompt-")
+      );
+      try {
+        await fs.writeFile(path.join(workspace, "hook.txt"), content);
+        await expect(
+          resolveWebhookPrompt("hook.txt", workspace)
+        ).resolves.toEqual({ prompt, options });
+      } finally {
+        await fs.rm(workspace, { recursive: true, force: true });
+      }
+    }
+  );
 
   it("interpolates webhook variables", () => {
     const result = interpolateWebhookPrompt(
