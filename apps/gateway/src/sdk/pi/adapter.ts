@@ -141,8 +141,7 @@ async function createPiExtensionTools(
   const piTools: ToolDefinition[] = tools.map((tool): ToolDefinition => {
     const name = claimAgentToolName(tool.name, usedToolNames);
     if (tool.extensionId === "taskLifecycle") invisibleToolNames.add(name);
-    // reply_mode must stay visible: the agent calls it while it writes the reply.
-    descriptors.push({ ...tool, name, canonicalName: tool.name, ...(tool.extensionId === "human-chat" ? { core: true } : {}) });
+    descriptors.push({ ...tool, name, canonicalName: tool.name });
     return {
       name,
       label: tool.description,

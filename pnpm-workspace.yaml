@@ -4,6 +4,7 @@ packages:
   - "packages/*"
   - "packages/extensions/*"
 allowBuilds:
+  'human-chat@git+https://github.com/agentropie/human-chat.git': true
   '@google/genai': true
   better-sqlite3: true
   esbuild: true

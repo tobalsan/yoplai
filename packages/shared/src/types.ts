@@ -307,12 +307,12 @@ const AgentConfigBaseSchema = z.object({
   reflect: ReflectConfigSchema.optional(),
   webhooks: z.record(z.string(), WebhookConfigSchema).optional(),
   introMessage: z.string().optional(), // Custom intro for /new (default: "New conversation started.")
-  // A bare `human-chat:` key is null in YAML; it means an empty block (on).
+  // A bare extension key is null in YAML; it means an empty block (on).
   extensions: z
     .preprocess(
       (value) =>
-        value && typeof value === "object" && (value as Record<string, unknown>)["human-chat"] === null
-          ? { ...value, "human-chat": {} }
+        value && typeof value === "object" && !Array.isArray(value)
+          ? Object.fromEntries(Object.entries(value).map(([id, config]) => [id, config === null ? {} : config]))
           : value,
       z.record(z.string(), ExtensionBaseConfigSchema)
     )
@@ -1636,6 +1636,8 @@ export type ToolNamespace = z.infer<typeof ToolNamespaceSchema>;
 export type ExtensionAgentTool = {
   name: string;
   description: string;
+  /** Always declare this tool directly on the host Pi adapter. */
+  core?: boolean;
   namespace?: ToolNamespace;
   parameters: Record<string, unknown>;
   outputSchema?: Record<string, unknown>;
@@ -1676,6 +1678,31 @@ export type ExtensionHookContext = {
   sessionOwnerId?: string | null;
   requesterId?: string;
   resolveOAuth?: OAuthTokenResolver;
+};
+
+/** Context for commands and reply reviewers, resolved before a model turn starts. */
+export type ExtensionTurnContext = ExtensionHookContext & {
+  workspaceDir: string;
+  sessionId: string;
+};
+
+export type ExtensionChatCommand = {
+  /** Exact message text, matched after trimming the incoming message. */
+  command: string;
+  run(context: ExtensionTurnContext & { agent: AgentConfig }): string | Promise<string>;
+};
+
+export type ExtensionReplyReviewVerdict =
+  | { ok: true }
+  | { ok: false; rewriteHint: string };
+
+/** Creating a reviewer must be side-effect free; only begin/end own per-turn state. */
+export type ExtensionReplyReviewer = {
+  nudge?: string;
+  begin(): void;
+  review(draft: string): ExtensionReplyReviewVerdict | Promise<ExtensionReplyReviewVerdict>;
+  done?(verdict: ExtensionReplyReviewVerdict, info: { rewritten: boolean }): void | Promise<void>;
+  end(): void;
 };
 
 /**
@@ -1766,6 +1793,16 @@ export interface Extension {
     agent: AgentConfig,
     context?: ExtensionHookContext
   ): ExtensionAgentTool[] | Promise<ExtensionAgentTool[]>;
+  getChatCommands?(
+    agent: AgentConfig,
+    context: ExtensionTurnContext
+  ): ExtensionChatCommand[] | Promise<ExtensionChatCommand[]>;
+  /** Prevent native steering so every follow-up has its own review lifecycle. */
+  reviewsReplies?(agent: AgentConfig): boolean;
+  getReplyReviewer?(
+    agent: AgentConfig,
+    context: ExtensionTurnContext
+  ): ExtensionReplyReviewer | undefined | Promise<ExtensionReplyReviewer | undefined>;
   /**
    * Build descriptive tools with an empty config, for capability discovery.
    * This must never resolve secrets, OAuth, or start the extension.
@@ -1838,6 +1875,9 @@ export const ExtensionDefinitionSchema = z.object({
   capabilities: z.function().args().returns(z.array(z.string())),
   getSystemPromptContributions: z.function().optional(),
   getAgentTools: z.function().optional(),
+  getChatCommands: z.function().optional(),
+  reviewsReplies: z.function().optional(),
+  getReplyReviewer: z.function().optional(),
   getDiscoveryTools: z.function().optional(),
   validateAgentConfigs: z.function().optional(),
 });

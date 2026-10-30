@@ -20,6 +20,10 @@ Breaking changes are marked **⚠ BREAKING**.
 - Slack downloads full Markdown, text, CSV, JSON and code snippets as attachments, and accepts PowerPoint files. Web and gateway uploads now also accept JSON, legacy PowerPoint and `.markdown` files.
 - Add the `reflect` agent option. It adds a self-improvement prompt so the agent saves lessons to skills and `memory.md` in the same turn. Off by default.
 
+### Changed
+
+- Human-chat now lives in the optional `@yoplai/extension-human-chat` package, using the portable `github:agentropie/human-chat` dependency. Generic extension hooks own chat commands and reply review; existing agent configuration stays compatible. Missing human-chat packages or dependencies log an error for each enabled agent while gateway startup and config reload continue.
+
 ### Fixed
 
 - Guard gateway tool-call cleanup against retained abort listeners and timers after repeated successful calls.

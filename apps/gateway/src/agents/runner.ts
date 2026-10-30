@@ -59,7 +59,7 @@ import { maybeAutoTitleSession } from "../maintenance/session-auto-title.js";
 import { maybeGenerateToolLabel } from "../maintenance/tool-labels.js";
 import { notifyProviderQuota } from "./quota-notification.js";
 import { clearSessionHandle, getSession } from "./sessions.js";
-import { humanChatEnabled, isShapingSession, startShapedTurn, topicsReply } from "../human-chat/index.js";
+import { HeldReply, hasHeldReply } from "./reply-review.js";
 
 export type InternalRunAgentParams = SharedRunAgentParams & {
   userId?: string;
@@ -128,9 +128,8 @@ export async function runAgent(
     ? getContainerAdapter()
     : getSdkAdapter(sdkId);
   const capabilities = adapter.capabilities;
-  // human-chat state is per turn. A message steered into a live run would share its declaration, nudge, and draft,
-  // so a human-chat agent queues follow-ups for their own turn instead.
-  const queueCapabilities = humanChatEnabled(agent) ? { ...capabilities, queueWhileStreaming: false } : capabilities;
+  // Reply review state belongs to one turn; follow-ups must wait for their own review.
+  const queueCapabilities = extensionRuntime?.reviewsReplies(agent, actorConfig) ? { ...capabilities, queueWhileStreaming: false } : capabilities;
 
   // Handle /abort command early - do NOT create new sessions or forward to model
   if (isAbortTrigger(params.message)) {
@@ -269,11 +268,14 @@ export async function runAgent(
     };
   }
 
-  // human-chat: hold, lint, and rewrite replies of human turns (undefined when off or skipped).
+  // Create reviewers without registering turn state before command/queue early returns.
   const workspaceDir = resolveWorkspaceDir(agent.workspace);
-  const shape = startShapedTurn(agent, params, sessionId, workspaceDir);
-  if (shape && message.trim() === "/topics") {
-    const text = topicsReply(workspaceDir);
+  const reviewers = await extensionRuntime?.getReplyReviewers(agent, actorConfig, workspaceDir, sessionId, params.userId, params) ?? [];
+  const heldReply = reviewers.length ? new HeldReply(agent.id, sessionId, reviewers) : undefined;
+  const commands = await extensionRuntime?.getChatCommands(agent, actorConfig, workspaceDir, sessionId, params.userId, params) ?? [];
+  const command = commands.find((command) => command.command === message.trim());
+  if (command) {
+    const text = await command.run({ agent, config: actorConfig, workspaceDir, sessionId, run: { ...params, sessionId } });
     emit({ type: "text", data: text });
     emit({ type: "done", meta: { durationMs: 0 } });
     return { payloads: [{ text }], meta: { durationMs: 0, sessionId } };
@@ -424,9 +426,9 @@ export async function runAgent(
   let aborted = false;
   let answerPersisted = false;
   const holdback = createNoReplyHoldback(emit);
-  shape?.begin();
 
   try {
+    heldReply?.begin();
     const context = await new ProjectContextResolver().resolve({
       agentId: params.agentId, sessionId, userId: params.userId,
       projectId: params.projectId, context: params.context,
@@ -463,7 +465,7 @@ export async function runAgent(
       source: params.source,
       sender: params.sender,
       background: params.background,
-      nudge: shape?.nudge,
+      nudge: heldReply?.nudge,
       attachments: params.attachments,
       workspaceDir,
       model: params.model,
@@ -485,11 +487,11 @@ export async function runAgent(
             args: event.arguments,
           });
         }
-        if (shape?.holdEvent(event)) return;
+        if (heldReply?.holdEvent(event)) return;
         holdback.push(event);
       },
       onHistoryEvent: (event: HistoryEvent) =>
-        shape ? shape.holdHistory(event) : lifecycle.acceptHistoryEvent(event),
+        heldReply ? heldReply.holdHistory(event) : lifecycle.acceptHistoryEvent(event),
       onSessionHandle: (handle: unknown) => {
         lifecycle.acceptSessionHandle(handle, adapter, queueCapabilities);
       },
@@ -536,25 +538,26 @@ export async function runAgent(
     }
 
     let silent = isNoReply(result.text);
-    if (shape && !silent && !result.aborted) {
-      let verdict = shape.lint();
+    if (heldReply && !silent && !result.aborted) {
+      const verdict = await heldReply.review();
+      let rewritten = false;
       if (!verdict.ok) {
-        // A second run keeps the draft in the model's context only; the hint stays out of the stored chat.
-        shape.startRewrite();
-        // The first Pi session is disposed. Nothing may steer into it while the rewrite starts.
+        // Keep the rejected draft in the model context only; rewrite input stays out of stored history.
+        heldReply.startRewrite();
         clearSessionHandle(params.agentId, sessionId);
         result = await adapter.run({
           ...runParams,
-          message: `[human-chat] ${verdict.hint}`,
+          message: verdict.rewriteHint,
           nudge: undefined,
           thinkLevel: actualThinkLevel,
         });
+        rewritten = true;
         silent = isNoReply(result.text);
-        verdict = shape.lint();
+        await heldReply.review();
       }
-      if (!silent && !result.aborted) await shape.log(verdict);
+      if (!silent && !result.aborted) await heldReply.done(rewritten);
     }
-    shape?.flushText(emit);
+    heldReply?.flushText(emit);
     if (silent) {
       holdback.drop();
       logInfo("[agent] silent turn", { agentId: params.agentId, sessionId });
@@ -569,7 +572,7 @@ export async function runAgent(
 
     aborted = result.aborted ?? false;
 
-    shape?.release().forEach((event) => lifecycle.acceptHistoryEvent(event));
+    heldReply?.release().forEach((event) => lifecycle.acceptHistoryEvent(event));
     await lifecycle.flushTurns();
     answerPersisted = true;
 
@@ -591,8 +594,8 @@ export async function runAgent(
     const errMessage = err instanceof Error ? err.message : String(err);
     logError("[agent] run failed", err, { agentId: params.agentId, sessionId });
     holdback.finishSegment();
-    shape?.flushText(emit);
-    shape?.release().forEach((event) => lifecycle.acceptHistoryEvent(event));
+    heldReply?.flushText(emit);
+    heldReply?.release().forEach((event) => lifecycle.acceptHistoryEvent(event));
     if (!aborted && !abortController.signal.aborted && !(err instanceof Error && err.name === "AbortError")) {
       const kind = classifyRunFailure(err, errMessage);
       const text = runFailureMessage(kind, agent.language ?? "en");
@@ -610,7 +613,7 @@ export async function runAgent(
     }
     throw err;
   } finally {
-    shape?.end();
+    heldReply?.end();
     let completion: WebCompletion | undefined;
     try {
       if (answerPersisted && params.source === "web" && !aborted && !abortController.signal.aborted) {
@@ -682,7 +685,7 @@ export async function getSessionHistory(
   userId?: string
 ): Promise<SimpleHistoryMessage[]> {
   // One-time backfill from Pi session if canonical doesn't exist
-  await backfillFromPiSession(agentId, sessionId, userId);
+  if (!hasHeldReply(agentId, sessionId)) await backfillFromPiSession(agentId, sessionId, userId);
 
   // Try canonical history
   if (await hasCanonicalHistory(agentId, sessionId, userId)) {
@@ -702,17 +705,16 @@ export async function getFullSessionHistory(
   sessionId: string,
   userId?: string
 ): Promise<FullHistoryMessage[]> {
-  // One-time backfill from Pi session if canonical doesn't exist
-  await backfillFromPiSession(agentId, sessionId, userId);
-
-  // The Pi transcript holds the draft that human-chat rejected; show canonical history only.
-  const shaping = isShapingSession(agentId, sessionId);
+  // Held drafts must stay out of full history until their review finishes.
+  const holding = hasHeldReply(agentId, sessionId);
+  // Backfill reads the same SDK transcript, so it must wait for held delivery too.
+  if (!holding) await backfillFromPiSession(agentId, sessionId, userId);
 
   // Try canonical history
   if (await hasCanonicalHistory(agentId, sessionId, userId)) {
     const canonical = await getCanonicalFullHistory(agentId, sessionId, userId);
     // If canonical is incomplete (streaming in progress), fall back to Pi
-    if (canonical.length > 0 && !shaping) {
+    if (canonical.length > 0 && !holding) {
       const last = canonical[canonical.length - 1];
       if (last.role === "user") {
         // Turn hasn't flushed yet — canonical only has user message
@@ -728,6 +730,6 @@ export async function getFullSessionHistory(
   }
 
   // No canonical — try Pi session directly
-  if (shaping) return [];
+  if (holding) return [];
   return readPiSessionHistory(agentId, sessionId, userId);
 }

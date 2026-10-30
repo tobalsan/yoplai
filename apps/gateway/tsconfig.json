@@ -8,6 +8,7 @@
   "include": ["src"],
   "references": [
     { "path": "../../packages/shared" },
+    { "path": "../../packages/extensions/human-chat" },
     { "path": "../../packages/extensions/discord" },
     { "path": "../../packages/extensions/heartbeat" },
     { "path": "../../packages/extensions/irc" },

@@ -13,7 +13,7 @@
     "start": "node dist/cli/index.js gateway"
   },
   "dependencies": {
-    "human-chat": "file:/Users/thinh/code/agentropy/human-chat",
+    "@yoplai/extension-human-chat": "workspace:*",
     "@yoplai/extension-board": "workspace:*",
     "@yoplai/extension-discord": "workspace:*",
     "@yoplai/extension-irc": "workspace:*",
@@ -54,6 +54,9 @@
     "xlsx": "^0.18.5",
     "yaml": "^2.9.1",
     "zod": "^3.25.76"
+  },
+  "optionalDependencies": {
+    "human-chat": "github:agentropie/human-chat"
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.13",

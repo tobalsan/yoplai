@@ -2,13 +2,12 @@ import path from "node:path";
 import type { AgentConfig, Extension, GatewayConfig } from "@yoplai/shared";
 import { discoverExternalExtensions, readEnv } from "@yoplai/shared";
 import { CONFIG_DIR } from "../config/index.js";
-import { logWarn } from "../logging.js";
+import { logError, logWarn } from "../logging.js";
 import { ExtensionRuntime, registerExtensionOAuthProviders } from "./runtime.js";
 import { taskLifecycleExtension } from "../tasks/extension.js";
 import { capabilityDiscoveryExtension } from "../capabilities/extension.js";
 import { canvasExtension } from "../canvas/index.js";
 import { sessionHistoryExtension } from "../session-history/index.js";
-import { humanChatExtension } from "../human-chat/index.js";
 
 type ExtensionRegistration = {
   load: () => Promise<Extension>;
@@ -18,6 +17,7 @@ type ExtensionRegistration = {
   routePrefixes: string[];
   loadWhenDisabled?: boolean;
   allowRoutesWhenDisabled?: boolean;
+  optional?: boolean;
 };
 
 type ExtensionModule = Record<string, unknown>;
@@ -116,6 +116,19 @@ const EXTENSION_LOAD_PRIORITY: Record<string, number> = {
 };
 
 const EXTENSION_REGISTRY: Record<string, ExtensionRegistration> = {
+  "human-chat": {
+    packageName: "@yoplai/extension-human-chat",
+    load: () =>
+      import("@yoplai/extension-human-chat").then(
+        (module) => module.humanChatExtension
+      ),
+    getConfig: (config) =>
+      hasEnabledAgentExtensionConfig(config, "human-chat")
+        ? { _perAgent: true }
+        : undefined,
+    routePrefixes: [],
+    optional: true,
+  },
   irc: {
     packageName: "@yoplai/extension-irc",
     load: () =>
@@ -454,11 +467,8 @@ async function deriveExtensionsToLoad(
     canvasExtension,
     sessionHistoryExtension,
   ];
-  // Off unless an agent opts in with `extensions.human-chat`.
-  if (hasEnabledAgentExtensionConfig(config, humanChatExtension.id)) {
-    extensions.push(humanChatExtension);
-  }
   const rawConfigs = new Map<string, Record<string, unknown>>();
+  const unavailableOptionalExtensions = new Set<string>();
 
   const registrations = Object.entries(EXTENSION_REGISTRY).sort(
     ([leftId], [rightId]) =>
@@ -478,7 +488,26 @@ async function deriveExtensionsToLoad(
     // Skip extensions that have no config — must be opted in via config.extensions[id]
     if (!hasConfig) continue;
 
-    const extension = await registration.load();
+    let extension: Extension;
+    try {
+      extension = await registration.load();
+    } catch (error) {
+      if (!registration.optional || !isModuleNotFound(error)) throw error;
+      unavailableOptionalExtensions.add(id);
+      for (const agent of config.agents) {
+        if (
+          !agent.extensions ||
+          !(id in agent.extensions) ||
+          toRecord(agent.extensions[id]).enabled === false
+        ) continue;
+        logError(
+          `[extensions] agent "${agent.id}" cannot load optional extension "${id}" from "${registration.packageName}"`,
+          error,
+          { agentId: agent.id, extensionId: id, packageName: registration.packageName }
+        );
+      }
+      continue;
+    }
     const configToValidate = extensionConfig;
     const validation = extension.validateConfig(configToValidate);
     if (!validation.valid) {
@@ -557,7 +586,7 @@ async function deriveExtensionsToLoad(
     if (!agentExtensions) continue;
     for (const [id, value] of Object.entries(agentExtensions)) {
       if (toRecord(value).enabled === false) continue;
-      if (!loadedExtensionIds.has(id)) {
+      if (!loadedExtensionIds.has(id) && !unavailableOptionalExtensions.has(id)) {
         const key = JSON.stringify([agent.id, id]);
         if (!warnedUnknownExtensions.has(key)) {
           warnedUnknownExtensions.add(key);
