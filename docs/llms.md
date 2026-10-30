@@ -386,7 +386,15 @@ Extensions load through `extensions.<id>` unless documented auto-load compatibil
 | `slack`        | Slack Socket Mode transport, threads, files, proactive tools             | [README](../packages/extensions/slack/README.md)                     |
 | `subagents`    | Project-agnostic CLI subagent runtime                                    | [README](../packages/extensions/subagents/README.md)                 |
 | `telegram`     | Telegram transport and proactive delivery                                | [README](../packages/extensions/telegram/README.md)                  |
-| `webhooks`     | Signed inbound webhooks and isolated webhook sessions                    | [`packages/extensions/webhooks`](../packages/extensions/webhooks/)   |
+| `webhooks`     | Signed inbound webhooks, prompt-file model/reasoning and fail-open script gates, isolated sessions | [`packages/extensions/webhooks`](../packages/extensions/webhooks/)   |
+
+Webhook `.md`/`.txt` prompt files are read on each request and accept strict YAML
+frontmatter (`model`, `reasoning`, `script`, `scriptTimeoutMs`). Gates receive
+request stdin and metadata env; final-line `wakeAgent: false` skips without a
+session/trace, while execution failures wake the agent. Invalid frontmatter or
+workspace-escaping script paths reject the run. The Node-only shared script
+runner (`@yoplai/shared/node/script`) owns containment, output limits, timeouts,
+and owner-scoped shutdown for scheduler and webhook callers. See [webhooks](webhooks.md#frontmatter).
 
 Tool-style extensions use `packages/shared/src/tool-extension.ts`. Their `oauth` declaration accepts a static requirement or `(config: ResolvedToolExtensionConfig) => OAuthRequirement`, with agent settings overriding root defaults in `config.merged`. Catalog/connect links and tool execution resolve the matching scopes; missing granted scopes produce `insufficient_scope` with a scoped reconnect URL. Extensions may contribute routes, CLI commands, capabilities, services, system-prompt text, tools, delivery sinks, OAuth requirements, and web routes. Keep behavior with its owning package; core should depend only on extension contracts and optional imports.
 

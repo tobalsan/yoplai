@@ -63,6 +63,7 @@ Replaced in the prompt before the run:
 - `$WEBHOOK_PAYLOAD` — raw request body (not parsed)
 - `$WEBHOOK_HEADERS` — request headers as JSON
 - `$WEBHOOK_ORIGIN_URL` — full request URL
+- `$WEBHOOK_GATE_CONTEXT` — gate context as JSON, or empty when absent
 
 ```md
 <!-- agents/sales/prompts/github-webhook.md -->
@@ -75,6 +76,12 @@ Summarize the event and open follow-up tasks if a PR needs review.
 ```
 
 Ready-made templates: [`docs/examples/webhooks/`](../../../docs/examples/webhooks/).
+
+Prompt files support strict YAML frontmatter for `model`, `reasoning`, `script`,
+and `scriptTimeoutMs`. Gate scripts can skip a request or pass context to the
+agent; gate failures wake the agent. See [Frontmatter](../../../docs/webhooks.md#frontmatter)
+for the example, contract, and validation rules. File edits apply on the next
+request without a restart.
 
 ## Signatures
 

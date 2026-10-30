@@ -45,6 +45,11 @@
       "import": "./dist/node/system-files.js",
       "types": "./dist/node/system-files.d.ts"
     },
+    "./node/script": {
+      "development": "./src/node/script.ts",
+      "import": "./dist/node/script.js",
+      "types": "./dist/node/script.d.ts"
+    },
     "./node/sanitize-session": {
       "development": "./src/node/sanitize-session.ts",
       "import": "./dist/node/sanitize-session.js",
