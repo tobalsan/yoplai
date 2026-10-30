@@ -79,7 +79,7 @@ export class ContainerInputBuilder {
       userId: params.userId,
       actorUserId: params.actorUserId,
       actorKind: params.actorKind,
-      message: params.message,
+      message: params.nudge ? `${params.message}\n\n${params.nudge}` : params.message,
       attachments: remapAttachmentsToContainer(params.attachments),
       imageInputSupported,
       thinkLevel: params.thinkLevel,

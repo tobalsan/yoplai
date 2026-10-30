@@ -141,7 +141,8 @@ async function createPiExtensionTools(
   const piTools: ToolDefinition[] = tools.map((tool): ToolDefinition => {
     const name = claimAgentToolName(tool.name, usedToolNames);
     if (tool.extensionId === "taskLifecycle") invisibleToolNames.add(name);
-    descriptors.push({ ...tool, name, canonicalName: tool.name });
+    // reply_mode must stay visible: the agent calls it while it writes the reply.
+    descriptors.push({ ...tool, name, canonicalName: tool.name, ...(tool.extensionId === "chat-shape" ? { core: true } : {}) });
     return {
       name,
       label: tool.description,
@@ -705,7 +706,7 @@ export const piAdapter: SdkAdapter = {
         { includeUnextractedPath: true }
       );
       const messageWithAttachments = appendAttachmentContext(
-        params.message,
+        params.nudge ? `${params.message}\n\n${params.nudge}` : params.message,
         [attachmentContext, imageDescriptionContext]
           .filter(Boolean)
           .join("\n\n")

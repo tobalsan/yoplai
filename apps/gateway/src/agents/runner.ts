@@ -59,6 +59,7 @@ import { maybeAutoTitleSession } from "../maintenance/session-auto-title.js";
 import { maybeGenerateToolLabel } from "../maintenance/tool-labels.js";
 import { notifyProviderQuota } from "./quota-notification.js";
 import { getSession } from "./sessions.js";
+import { startShapedTurn, topicsReply } from "../chat-shape/index.js";
 
 export type InternalRunAgentParams = SharedRunAgentParams & {
   userId?: string;
@@ -265,6 +266,16 @@ export async function runAgent(
     };
   }
 
+  // chat-shape: hold, lint, and rewrite replies of human turns (undefined when off or skipped).
+  const workspaceDir = resolveWorkspaceDir(agent.workspace);
+  const shape = startShapedTurn(agent, params, sessionId, workspaceDir);
+  if (shape && message.trim() === "/topics") {
+    const text = topicsReply(workspaceDir);
+    emit({ type: "text", data: text });
+    emit({ type: "done", meta: { durationMs: 0 } });
+    return { payloads: [{ text }], meta: { durationMs: 0, sessionId } };
+  }
+
   // Resolve sessionKey for thinkLevel persistence (OAuth only)
   const resolvedSessionKey = sessionKey ?? DEFAULT_MAIN_KEY;
   const isOAuth = agent.auth?.mode === "oauth";
@@ -376,7 +387,6 @@ export async function runAgent(
   };
 
   await ensureSessionsDir();
-  const workspaceDir = resolveWorkspaceDir(agent.workspace);
 
   let abortController: AbortController | undefined;
   while (!abortController) {
@@ -411,6 +421,7 @@ export async function runAgent(
   let aborted = false;
   let answerPersisted = false;
   const holdback = createNoReplyHoldback(emit);
+  shape?.end(); // new turn: clear any stale declaration
 
   try {
     const context = await new ProjectContextResolver().resolve({
@@ -446,6 +457,7 @@ export async function runAgent(
       sessionId,
       sessionKey,
       message,
+      nudge: shape?.nudge,
       attachments: params.attachments,
       workspaceDir,
       model: params.model,
@@ -467,10 +479,11 @@ export async function runAgent(
             args: event.arguments,
           });
         }
+        if (shape?.holdEvent(event)) return;
         holdback.push(event);
       },
       onHistoryEvent: (event: HistoryEvent) =>
-        lifecycle.acceptHistoryEvent(event),
+        shape ? shape.holdHistory(event) : lifecycle.acceptHistoryEvent(event),
       onSessionHandle: (handle: unknown) => {
         lifecycle.acceptSessionHandle(handle, adapter, capabilities);
       },
@@ -516,7 +529,24 @@ export async function runAgent(
       }
     }
 
-    const silent = isNoReply(result.text);
+    let silent = isNoReply(result.text);
+    if (shape && !silent && !result.aborted) {
+      let verdict = shape.lint();
+      if (!verdict.ok) {
+        // A second run keeps the draft in the model's context only; the hint stays out of the stored chat.
+        shape.startRewrite();
+        result = await adapter.run({
+          ...runParams,
+          message: `[chat-shape] ${verdict.hint}`,
+          nudge: undefined,
+          thinkLevel: actualThinkLevel,
+        });
+        silent = isNoReply(result.text);
+        verdict = shape.lint();
+      }
+      if (!silent && !result.aborted) await shape.log(verdict);
+    }
+    shape?.flushText(emit);
     if (silent) {
       holdback.drop();
       logInfo("[agent] silent turn", { agentId: params.agentId, sessionId });
@@ -531,6 +561,7 @@ export async function runAgent(
 
     aborted = result.aborted ?? false;
 
+    shape?.release().forEach((event) => lifecycle.acceptHistoryEvent(event));
     await lifecycle.flushTurns();
     answerPersisted = true;
 
@@ -552,6 +583,8 @@ export async function runAgent(
     const errMessage = err instanceof Error ? err.message : String(err);
     logError("[agent] run failed", err, { agentId: params.agentId, sessionId });
     holdback.finishSegment();
+    shape?.flushText(emit);
+    shape?.release().forEach((event) => lifecycle.acceptHistoryEvent(event));
     if (!aborted && !abortController.signal.aborted && !(err instanceof Error && err.name === "AbortError")) {
       const kind = classifyRunFailure(err, errMessage);
       const text = runFailureMessage(kind, agent.language ?? "en");
@@ -569,6 +602,7 @@ export async function runAgent(
     }
     throw err;
   } finally {
+    shape?.end();
     let completion: WebCompletion | undefined;
     try {
       if (answerPersisted && params.source === "web" && !aborted && !abortController.signal.aborted) {

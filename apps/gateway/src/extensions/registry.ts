@@ -8,6 +8,7 @@ import { taskLifecycleExtension } from "../tasks/extension.js";
 import { capabilityDiscoveryExtension } from "../capabilities/extension.js";
 import { canvasExtension } from "../canvas/index.js";
 import { sessionHistoryExtension } from "../session-history/index.js";
+import { chatShapeExtension } from "../chat-shape/index.js";
 
 type ExtensionRegistration = {
   load: () => Promise<Extension>;
@@ -453,6 +454,10 @@ async function deriveExtensionsToLoad(
     canvasExtension,
     sessionHistoryExtension,
   ];
+  // Off unless an agent opts in with `extensions.chat-shape`.
+  if (hasEnabledAgentExtensionConfig(config, chatShapeExtension.id)) {
+    extensions.push(chatShapeExtension);
+  }
   const rawConfigs = new Map<string, Record<string, unknown>>();
 
   const registrations = Object.entries(EXTENSION_REGISTRY).sort(
