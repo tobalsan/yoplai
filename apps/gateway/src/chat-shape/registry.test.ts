@@ -22,4 +22,7 @@ describe("chat-shape registration", () => {
   it("loads when an agent has the block", async () => {
     expect(await loadedIds({ "chat-shape": {} })).toContain("chat-shape");
   });
+  it("loads for a bare `chat-shape:` key (null in YAML)", async () => {
+    expect(await loadedIds({ "chat-shape": null })).toContain("chat-shape");
+  });
 });

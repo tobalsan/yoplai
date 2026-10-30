@@ -78,6 +78,19 @@ describe("Mattermost config schemas", () => {
   });
 });
 
+describe("bare chat-shape extension key", () => {
+  it("parses `chat-shape:` (null) as an empty block", () => {
+    const parsed = AgentConfigSchema.parse({
+      id: "main",
+      name: "Main",
+      workspace: "~/main",
+      model: { provider: "anthropic", model: "claude" },
+      extensions: { "chat-shape": null },
+    });
+    expect(parsed.extensions).toEqual({ "chat-shape": {} });
+  });
+});
+
 describe("ScheduleSchema", () => {
   it("requires exactly one schedule kind", () => {
     expect(

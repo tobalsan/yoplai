@@ -307,7 +307,16 @@ const AgentConfigBaseSchema = z.object({
   reflect: ReflectConfigSchema.optional(),
   webhooks: z.record(z.string(), WebhookConfigSchema).optional(),
   introMessage: z.string().optional(), // Custom intro for /new (default: "New conversation started.")
-  extensions: z.record(z.string(), ExtensionBaseConfigSchema).optional(),
+  // A bare `chat-shape:` key is null in YAML; it means an empty block (on).
+  extensions: z
+    .preprocess(
+      (value) =>
+        value && typeof value === "object" && (value as Record<string, unknown>)["chat-shape"] === null
+          ? { ...value, "chat-shape": {} }
+          : value,
+      z.record(z.string(), ExtensionBaseConfigSchema)
+    )
+    .optional(),
   globalSkills: z.boolean().optional(), // Include ~/.agents/skills/ (default: false)
   codemode: z.boolean().optional(),
   codemodeLimits: CodemodeLimitsSchema.optional(),
@@ -1647,8 +1656,19 @@ export type OAuthTokenResolver = (
   userId?: string
 ) => Promise<import("./oauth/types.js").ResolvedOAuth>;
 
+/** Who started the run. Absent when the host does not know (such hooks must act as for a non-human run). */
+export type ExtensionRunInfo = {
+  source?: string;
+  sender?: { kind: string };
+  background?: boolean;
+  sessionId?: string;
+};
+
 export type ExtensionHookContext = {
   config: GatewayConfig;
+  run?: ExtensionRunInfo;
+  /** Set when the host looks up a tool that the model already called, not when it offers tools. */
+  execution?: boolean;
   env?: Record<string, string>;
   userId?: string;
   actorUserId?: string;

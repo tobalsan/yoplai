@@ -35,6 +35,10 @@ export type SdkRunParams = {
   sessionId: string;
   sessionKey?: string;
   message: string;
+  /** Run origin, for extension hooks that act on human turns only. */
+  source?: string;
+  sender?: { kind: string };
+  background?: boolean;
   /** Added to the message the model sees, not to stored history. */
   nudge?: string;
   attachments?: FileAttachment[]; // file attachments (paths from upload)

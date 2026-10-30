@@ -1,5 +1,5 @@
 import type { AgentConfig, GatewayConfig } from "@yoplai/shared";
-import type { ExtensionAgentToolContext } from "@yoplai/shared";
+import type { ExtensionAgentToolContext, ExtensionRunInfo } from "@yoplai/shared";
 import { loadConfig } from "../config/index.js";
 import { getExtensionRuntime } from "./registry.js";
 import type { ExtensionRuntime, LoadedExtensionAgentTool } from "./runtime.js";
@@ -9,7 +9,7 @@ export async function getExtensionAgentTools(
   config: GatewayConfig = loadConfig(),
   runtime: ExtensionRuntime = getExtensionRuntime(),
   userId?: string,
-  identity?: Pick<ExtensionAgentToolContext, "sessionOwnerId" | "requesterId" | "actorUserId" | "actorKind">
+  identity?: Pick<ExtensionAgentToolContext, "sessionOwnerId" | "requesterId" | "actorUserId" | "actorKind"> & ExtensionRunInfo
 ): Promise<LoadedExtensionAgentTool[]> {
   const tools = await runtime.getTools(agent, config, userId, identity);
   return tools.map((tool) => ({

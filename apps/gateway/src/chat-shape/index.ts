@@ -10,24 +10,45 @@ import {
   type LintResult,
   type ReplyMode,
 } from "chat-shape";
-import type { AgentConfig, Extension, StreamEvent } from "@yoplai/shared";
+import type { AgentConfig, Extension, ExtensionRunInfo, StreamEvent } from "@yoplai/shared";
 import type { HistoryEvent } from "../sdk/types.js";
 import { logWarn } from "../logging.js";
 import { isNoReply } from "../agents/no-reply.js";
 
-type RunParams = { source?: string; sender?: { kind: string }; background?: boolean };
+type RunParams = ExtensionRunInfo;
 
 const HUMAN_SOURCES = new Set(["web", "telegram", "discord", "slack", "mattermost", "irc"]);
 
-/** Declarations of `reply_mode`, for the current turn only. Key: agent + session. */
-const declared = new Map<string, ReplyMode>();
 const key = (agentId: string, sessionId: string) => `${agentId}\0${sessionId}`;
+/** The shaped turn that runs now, by agent + session. Holds the declaration of `reply_mode`. */
+const active = new Map<string, ShapedTurn>();
+
+/** An interactive human turn. Allowlist: no known source means skip. */
+export function isHumanTurn(run?: RunParams): boolean {
+  return (
+    HUMAN_SOURCES.has(run?.source ?? "") &&
+    run?.sender?.kind !== "agent" &&
+    !run?.background &&
+    !run?.sessionId?.startsWith("compact:")
+  );
+}
 
 function shapeConfig(agent: AgentConfig): Record<string, unknown> | undefined {
-  const value = (agent.extensions as Record<string, unknown> | undefined)?.["chat-shape"];
-  if (value === undefined || value === null) return undefined;
-  const config = value as Record<string, unknown>;
+  const extensions = agent.extensions as Record<string, unknown> | undefined;
+  if (!extensions || !("chat-shape" in extensions)) return undefined;
+  // A bare `chat-shape:` key is null: on, with no options.
+  const config = (extensions["chat-shape"] ?? {}) as Record<string, unknown>;
   return config.enabled === false ? undefined : config;
+}
+
+/** True when the agent has the adapter on, for any turn. */
+export function chatShapeEnabled(agent: AgentConfig): boolean {
+  return shapeConfig(agent) !== undefined;
+}
+
+/** True while a shaped turn of the session runs: its draft must not leave the gateway. */
+export function isShapingSession(agentId: string, sessionId: string): boolean {
+  return active.has(key(agentId, sessionId));
 }
 
 export const chatShapeExtension: Extension = {
@@ -43,9 +64,11 @@ export const chatShapeExtension: Extension = {
   async start() {},
   async stop() {},
   capabilities: () => [],
-  getSystemPromptContributions: (agent) => (shapeConfig(agent) ? RULES_TEXT : undefined),
-  getAgentTools(agent) {
-    if (!shapeConfig(agent)) return [];
+  getSystemPromptContributions: (agent, hook) =>
+    shapeConfig(agent) && isHumanTurn(hook?.run) ? RULES_TEXT : undefined,
+  getAgentTools(agent, hook) {
+    // The host looks up the tool for `execution` after the model called it, so the turn was human then.
+    if (!shapeConfig(agent) || (!hook?.execution && !isHumanTurn(hook?.run))) return [];
     return [
       {
         name: "reply_mode",
@@ -65,10 +88,13 @@ export const chatShapeExtension: Extension = {
           if (mode !== "long" || !(REASON_TYPES as readonly unknown[]).includes(type)) {
             throw new Error(`Invalid reply_mode. mode must be "long"; type must be one of: ${REASON_TYPES.join(", ")}`);
           }
-          declared.set(key(agent.id, context.sessionId ?? ""), {
+          if (typeof note !== "string" || note.trim().split(/\s+/).filter(Boolean).length < 3) {
+            throw new Error("Invalid reply_mode. note must be a short reason of at least 3 words.");
+          }
+          active.get(key(agent.id, context.sessionId ?? ""))?.declare({
             mode: "long",
             type: type as (typeof REASON_TYPES)[number],
-            note: String(note ?? ""),
+            note,
           });
           return "Long mode on for this reply.";
         },
@@ -100,12 +126,7 @@ export function startShapedTurn(
 ): ShapedTurn | undefined {
   const config = shapeConfig(agent);
   if (!config) return undefined;
-  const human =
-    HUMAN_SOURCES.has(params.source ?? "") &&
-    params.sender?.kind !== "agent" &&
-    !params.background &&
-    !sessionId.startsWith("compact:");
-  if (!human) return undefined;
+  if (!isHumanTurn({ ...params, sessionId })) return undefined;
   const log = typeof config.log === "string" ? config.log : path.join(workspaceDir, "data", "chat-shape", "long-mode.jsonl");
   return new ShapedTurn(agent.id, sessionId, log);
 }
@@ -115,12 +136,22 @@ export class ShapedTurn {
   private segments: string[] = [""];
   private held: HistoryEvent[] = [];
   private rewriting = false;
+  private declaration: ReplyMode | undefined;
 
   constructor(
     private readonly agentId: string,
     private readonly sessionId: string,
     private readonly logPath: string
   ) {}
+
+  /** Start the turn: from now until `end()` its state is the only turn state of the session. */
+  begin(): void {
+    active.set(key(this.agentId, this.sessionId), this);
+  }
+
+  declare(mode: ReplyMode): void {
+    this.declaration = mode;
+  }
 
   /** Returns true when the event is held. Tool events pass through and start a new text segment. */
   holdEvent(event: StreamEvent): boolean {
@@ -146,7 +177,7 @@ export class ShapedTurn {
 
   lint(): LintResult {
     const text = this.segments.filter((s) => s && !isNoReply(s)).join("\n\n");
-    return lint(text, { mode: declared.get(key(this.agentId, this.sessionId)) ?? { mode: "short" } });
+    return lint(text, { mode: this.declaration ?? { mode: "short" } });
   }
 
   /** Drop the draft (text and stored history). The rewrite run starts clean. */
@@ -180,6 +211,7 @@ export class ShapedTurn {
   }
 
   end(): void {
-    declared.delete(key(this.agentId, this.sessionId));
+    this.declaration = undefined;
+    if (active.get(key(this.agentId, this.sessionId)) === this) active.delete(key(this.agentId, this.sessionId));
   }
 }

@@ -4,6 +4,7 @@ import type {
   ExtensionAgentTool,
   ExtensionAgentToolContext,
   ExtensionHookContext,
+  ExtensionRunInfo,
   GatewayConfig,
   OAuthRequirement,
   ResolvedOAuth,
@@ -15,7 +16,7 @@ import { extensionSecretFields, resolveExtensionTokenConfig } from "../credentia
 import { getConversationFiles } from "../media/conversation-files.js";
 import { logWarn } from "../logging.js";
 
-type RunIdentity = Pick<ExtensionAgentToolContext, "sessionOwnerId" | "requesterId" | "conversationFiles" | "actorUserId" | "actorKind">;
+type RunIdentity = Pick<ExtensionAgentToolContext, "sessionOwnerId" | "requesterId" | "conversationFiles" | "actorUserId" | "actorKind"> & ExtensionRunInfo;
 
 export function resolveRunActor(config: GatewayConfig, userId?: string, identity?: RunIdentity): Pick<ExtensionAgentToolContext, "actorUserId" | "actorKind"> {
   if (identity?.actorKind === "eval") return { actorKind: "eval", actorUserId: identity.actorUserId };
@@ -39,10 +40,13 @@ function buildHookContext(
   agent: AgentConfig,
   config: GatewayConfig,
   userId?: string,
-  identity?: RunIdentity
+  identity?: RunIdentity,
+  execution?: boolean
 ): ExtensionHookContext {
   return {
     config,
+    run: identity && { source: identity.source, sender: identity.sender, background: identity.background, sessionId: identity.sessionId },
+    ...(execution ? { execution } : {}),
     env: resolveAgentEnv(agent, config),
     userId,
     ...resolveRunActor(config, userId, identity),
@@ -252,13 +256,14 @@ export class ExtensionRuntime {
     agent: AgentConfig,
     config: GatewayConfig,
     userId?: string,
-    identity?: RunIdentity
+    identity?: RunIdentity,
+    execution?: boolean
   ): Promise<LoadedExtensionAgentTool[]> {
     const groups = await Promise.all(
       this.#extensions.map(async (extension) => {
         try {
           const scoped = resolveExtensionTokenConfig(extension, agent, config, userId);
-          const hookContext = buildHookContext(scoped.agent, scoped.config, userId, identity);
+          const hookContext = buildHookContext(scoped.agent, scoped.config, userId, identity, execution);
           const tools =
             (await extension.getAgentTools?.(scoped.agent, hookContext)) ?? [];
           return tools.map((tool) => ({
@@ -299,7 +304,7 @@ export class ExtensionRuntime {
     userId?: string,
     identity?: RunIdentity
   ): Promise<LoadedExtensionAgentTool | undefined> {
-    return (await this.getTools(agent, config, userId, identity)).find(
+    return (await this.getTools(agent, config, userId, identity, true)).find(
       (tool) => tool.name === toolName
     );
   }

@@ -13,6 +13,7 @@ Breaking changes are marked **⚠ BREAKING**.
 
 - Webhook prompt-file frontmatter selects model and reasoning and runs optional fail-open gate scripts with request stdin, metadata, and agent context; edits apply on the next request.
 - Add the opt-in `chat-shape` agent extension (`extensions.chat-shape: {}` in `agent.yaml`). For human turns it holds the reply, lints it for short one-topic replies, and asks the agent for one hidden rewrite when it breaks the rules. A `reply_mode` tool declares long mode, and `/topics` lists open topic plans. Off by default.
+- `chat-shape` agents now queue a follow-up message for its own turn instead of steering it into the live run, so each turn gets its own nudge, mode, and rewrite.
 - Refresh saved MCP server icons from user server details and the admin catalog, with inline results and immediate icon updates. Timeouts and failed saves show as errors, never as "Icon updated" or "No new icon", and a successful retry clears the Unreachable status.
 - Mattermost bot channel with threaded conversations, direct messages, files, proactive tools and scheduler delivery.
 - Slack downloads full Markdown, text, CSV, JSON and code snippets as attachments, and accepts PowerPoint files. Web and gateway uploads now also accept JSON, legacy PowerPoint and `.markdown` files.

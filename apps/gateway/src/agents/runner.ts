@@ -58,8 +58,8 @@ import {
 import { maybeAutoTitleSession } from "../maintenance/session-auto-title.js";
 import { maybeGenerateToolLabel } from "../maintenance/tool-labels.js";
 import { notifyProviderQuota } from "./quota-notification.js";
-import { getSession } from "./sessions.js";
-import { startShapedTurn, topicsReply } from "../chat-shape/index.js";
+import { clearSessionHandle, getSession } from "./sessions.js";
+import { chatShapeEnabled, isShapingSession, startShapedTurn, topicsReply } from "../chat-shape/index.js";
 
 export type InternalRunAgentParams = SharedRunAgentParams & {
   userId?: string;
@@ -128,6 +128,9 @@ export async function runAgent(
     ? getContainerAdapter()
     : getSdkAdapter(sdkId);
   const capabilities = adapter.capabilities;
+  // chat-shape state is per turn. A message steered into a live run would share its declaration, nudge, and draft,
+  // so a chat-shape agent queues follow-ups for their own turn instead.
+  const queueCapabilities = chatShapeEnabled(agent) ? { ...capabilities, queueWhileStreaming: false } : capabilities;
 
   // Handle /abort command early - do NOT create new sessions or forward to model
   if (isAbortTrigger(params.message)) {
@@ -379,7 +382,7 @@ export async function runAgent(
   const activeTask = await getTask(params.agentId, sessionId, sessionOwnerId);
   const joinPolicy = {
     queueMode: activeTask?.status === "active" ? "queue" : agent.queueMode ?? "queue",
-    capabilities,
+    capabilities: queueCapabilities,
     adapter,
     message,
     sender: params.sender,
@@ -421,7 +424,7 @@ export async function runAgent(
   let aborted = false;
   let answerPersisted = false;
   const holdback = createNoReplyHoldback(emit);
-  shape?.end(); // new turn: clear any stale declaration
+  shape?.begin();
 
   try {
     const context = await new ProjectContextResolver().resolve({
@@ -457,6 +460,9 @@ export async function runAgent(
       sessionId,
       sessionKey,
       message,
+      source: params.source,
+      sender: params.sender,
+      background: params.background,
       nudge: shape?.nudge,
       attachments: params.attachments,
       workspaceDir,
@@ -485,7 +491,7 @@ export async function runAgent(
       onHistoryEvent: (event: HistoryEvent) =>
         shape ? shape.holdHistory(event) : lifecycle.acceptHistoryEvent(event),
       onSessionHandle: (handle: unknown) => {
-        lifecycle.acceptSessionHandle(handle, adapter, capabilities);
+        lifecycle.acceptSessionHandle(handle, adapter, queueCapabilities);
       },
       abortSignal: abortController.signal,
     };
@@ -535,6 +541,8 @@ export async function runAgent(
       if (!verdict.ok) {
         // A second run keeps the draft in the model's context only; the hint stays out of the stored chat.
         shape.startRewrite();
+        // The first Pi session is disposed. Nothing may steer into it while the rewrite starts.
+        clearSessionHandle(params.agentId, sessionId);
         result = await adapter.run({
           ...runParams,
           message: `[chat-shape] ${verdict.hint}`,
@@ -697,11 +705,14 @@ export async function getFullSessionHistory(
   // One-time backfill from Pi session if canonical doesn't exist
   await backfillFromPiSession(agentId, sessionId, userId);
 
+  // The Pi transcript holds the draft that chat-shape rejected; show canonical history only.
+  const shaping = isShapingSession(agentId, sessionId);
+
   // Try canonical history
   if (await hasCanonicalHistory(agentId, sessionId, userId)) {
     const canonical = await getCanonicalFullHistory(agentId, sessionId, userId);
     // If canonical is incomplete (streaming in progress), fall back to Pi
-    if (canonical.length > 0) {
+    if (canonical.length > 0 && !shaping) {
       const last = canonical[canonical.length - 1];
       if (last.role === "user") {
         // Turn hasn't flushed yet — canonical only has user message
@@ -717,5 +728,6 @@ export async function getFullSessionHistory(
   }
 
   // No canonical — try Pi session directly
+  if (shaping) return [];
   return readPiSessionHistory(agentId, sessionId, userId);
 }
