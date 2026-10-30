@@ -8,20 +8,20 @@ Yoplai keeps configuration, conversations, and project data on your machine. Sta
 
 ## What you get
 
-- Web chat with streaming, tool calls, files, and session history. Pi compaction preserves the transcript and adds collapsed summaries in Simple and Full views; use **Load earlier messages** to reach older messages.
+- Web chat with streaming, tool calls, files, and session history. Compaction preserves the transcript and adds collapsed summaries in Simple and Full views; use **Load earlier messages** to reach older messages.
 - Multiple configurable agents and external CLI subagents
 - Optional Discord, Slack, Telegram, Mattermost, IRC, and webhook entry points
 - Slack credential refusals offer [one personal connection link](docs/slack-credential-connect.md) for pairing plus Google OAuth, extension tokens, or extension-owned OAuth, with a confirmation in the original thread.
 - Slack `!pair` links an existing web account for personal credentials; [setup and email requirements](packages/extensions/slack/README.md#account-pairing).
 - Scheduled jobs, project boards, slices, and orchestration
 - Private-by-default Canvas dashboards with selected-user or platform-wide read/write sharing, independent of agent/team access. Find owned/shared pages in **Dashboards**, where owners manage access even after leaving an agent. Readers see published HTML; writers see live drafts and publish through an accessible agent. Legacy dashboards remain live and agent-gated until claimed privately. SQLite data and workspace drafts remain shared.
-- **Skills**, below Agents in the sidebar, manages private, shared and legacy agent skills. Upload a folder or zip, create through chat, or import from another assistant with a revocable 24-hour token. Enable a skill for your next Pi turn on any agent; other users' turns keep their own selection. Share with people (read/write) or everyone (read), inspect files before enabling, and restore one of ten saved versions. Superadmins inspect all skills, including the always-on system skills, in **Admin → Skills** and can disable/delete platform-wide skills; OpenClaw is unchanged.
+- **Skills**, below Agents in the sidebar, manages private, shared and legacy agent skills. Upload a folder or zip, create through chat, or import from another assistant with a revocable 24-hour token. Enable a skill for your next turn on any agent; other users' turns keep their own selection. Share with people (read/write) or everyone (read), inspect files before enabling, and restore one of ten saved versions. Superadmins inspect all skills, including the always-on system skills, in **Admin → Skills** and can disable/delete platform-wide skills; OpenClaw is unchanged.
 - OAuth extension scopes follow root settings and agent overrides; a connection missing required permissions prompts reconnection with those scopes.
 - File-based runtime data by default; SQLite only for optional features such as multi-user auth
 
 ## Quick start
 
-This guide creates one local Pi agent authenticated with Anthropic OAuth. No Docker, database, messaging app, or public server is required.
+This guide creates one local agent authenticated with Anthropic OAuth. No Docker, database, messaging app, or public server is required.
 
 ### 1. Prerequisites
 
@@ -93,7 +93,7 @@ Set `language` to `en` (the default) or `fr` to localize fixed messages shown wh
 
 Yoplai creates missing workspace prompt files (`AGENTS.md`, `SOUL.md`, and `USER.md`) on first run. You can edit them later to customize agent behavior.
 
-In-process Pi preserves stored OAuth credentials when `auth.mode: oauth` is set or `auth.mode` is omitted (automatic selection), including per-run model overrides and fallback models. Use `auth.mode: api_key` to require an API key instead of stored OAuth for the agent's configured model.
+Agents preserve stored OAuth credentials when `auth.mode: oauth` is set or `auth.mode` is omitted (automatic selection), including per-run model overrides and fallback models. Use `auth.mode: api_key` to require an API key instead of stored OAuth for the agent's configured model.
 
 ### 5. Build and authenticate
 
@@ -106,9 +106,9 @@ pnpm yoplai auth login anthropic
 pnpm yoplai auth status
 ```
 
-Follow OAuth instructions printed in terminal. Credentials are stored under `$YOPLAI_HOME`; do not commit that directory. `auth login` only lists OAuth providers (e.g. `anthropic`, `openai-codex`). Every other Pi provider is API-key based and needs no login: set the provider's env var (`<PROVIDER>_API_KEY`, e.g. `OPENCODE_API_KEY` for `opencode-go`, `OPENROUTER_API_KEY` for `openrouter`; see the [Pi provider table](https://pi.dev/docs/latest/providers#api-keys)) in your shell or `$YOPLAI_HOME/.env`, and reference it with `$env:NAME`—never put plaintext secrets in tracked configuration.
+Follow OAuth instructions printed in terminal. Credentials are stored under `$YOPLAI_HOME`; do not commit that directory. `auth login` only lists OAuth providers (e.g. `anthropic`, `openai-codex`). Every other provider is API-key based and needs no login: set the provider's env var (`<PROVIDER>_API_KEY`, e.g. `OPENCODE_API_KEY` for `opencode-go`, `OPENROUTER_API_KEY` for `openrouter`; see the [provider table](https://pi.dev/docs/latest/providers#api-keys)) in your shell or `$YOPLAI_HOME/.env`, and reference it with `$env:NAME`—never put plaintext secrets in tracked configuration.
 
-If a newly released Pi model is missing from Yoplai's bundled catalog, run `pnpm yoplai models refresh` to update `$YOPLAI_HOME/models-store.json`, then restart the gateway.
+If a newly released model is missing from Yoplai's bundled catalog, run `pnpm yoplai models refresh` to update `$YOPLAI_HOME/models-store.json`, then restart the gateway.
 
 ### 6. Start Yoplai
 
@@ -144,7 +144,7 @@ Once foreground startup works, see [Self-hosting](docs/self-hosting.md) for back
 
 Choose a **main agent** on your first home visit: home then opens a fresh chat with that agent, ready for your first message. With only one available agent, this happens automatically. Change your choice from the star button in the chat header or the star on an agent's card on the **Agents** page (with a confirmation); the main agent is listed first and highlighted there, and the chat header's cog opens that agent's settings; all other agents remain available there. The preference is personal and survives logout, browser changes, and gateway restarts in both single-user and multi-user installs. Opening a blank chat creates no saved session until you send a message.
 
-Manage Pi skills from **Skills** below Agents: uploads and imports start private and off, while **Create skill** opens a new chat with your main Pi agent (or an agent picker) and fills in the interview prompt for you to send; the agent saves with `skill_save`. In multi-user mode, a superadmin can mark an agent workspace skill as **System** on **Admin → Skills**. This hides the skill from the **Skills** page. Agents still load it. Operators curate defaults in `$YOPLAI_HOME/skill-library/default/<name>/SKILL.md`, optionally adding `.yoplai.json` with `{ "agents": ["hr"] }`; user content, enable settings, sharing, import-token hashes and the last ten versions live under `skill-library/`. Existing agent workspace `skills/` folders keep loading unchanged and appear read-only; defaults and the `dashboard` and `skill-creator` built-ins are always on and appear only in **Admin → Skills**, and OpenClaw ignores this page in v1. See [Skill sources](docs/models-and-skills.md#skill-sources) for all sources and their load order.
+Manage skills from **Skills** below Agents: uploads and imports start private and off, while **Create skill** opens a new chat with your main agent (or an agent picker) and fills in the interview prompt for you to send; the agent saves with `skill_save`. In multi-user mode, a superadmin can mark an agent workspace skill as **System** on **Admin → Skills**. This hides the skill from the **Skills** page. Agents still load it. Operators curate defaults in `$YOPLAI_HOME/skill-library/default/<name>/SKILL.md`, optionally adding `.yoplai.json` with `{ "agents": ["hr"] }`; user content, enable settings, sharing, import-token hashes and the last ten versions live under `skill-library/`. Existing agent workspace `skills/` folders keep loading unchanged and appear read-only; defaults and the `dashboard` and `skill-creator` built-ins are always on and appear only in **Admin → Skills**, and OpenClaw ignores this page in v1. See [Skill sources](docs/models-and-skills.md#skill-sources) for all sources and their load order.
 
 Edit `$YOPLAI_HOME/agents/my-agent/agent.yaml` to change model or agent settings. Edit prompt files in the same folder to define identity and instructions.
 
