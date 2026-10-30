@@ -2,11 +2,12 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { z } from "zod";
 import {
-  NUDGE_TEXT,
   REASON_TYPES,
-  RULES_TEXT,
   lint,
   listOpenPlans,
+  nudgeText,
+  rulesText,
+  type Limits,
   type LintResult,
   type ReplyMode,
 } from "human-chat";
@@ -41,6 +42,16 @@ function shapeConfig(agent: AgentConfig): Record<string, unknown> | undefined {
   return config.enabled === false ? undefined : config;
 }
 
+/** Reads the limit keys. The core drops missing or invalid values and fills its defaults. */
+export function limitsFromConfig(config: Record<string, unknown>): Partial<Limits> {
+  return {
+    maxSentences: config.max_sentences as number | undefined,
+    sentenceLeeway: config.sentence_leeway as number | undefined,
+    maxSentenceWords: config.max_sentence_words as number | undefined,
+    wordLeeway: config.word_leeway as number | undefined,
+  };
+}
+
 /** True when the agent has the adapter on, for any turn. */
 export function humanChatEnabled(agent: AgentConfig): boolean {
   return shapeConfig(agent) !== undefined;
@@ -64,8 +75,10 @@ export const humanChatExtension: Extension = {
   async start() {},
   async stop() {},
   capabilities: () => [],
-  getSystemPromptContributions: (agent, hook) =>
-    shapeConfig(agent) && isHumanTurn(hook?.run) ? RULES_TEXT : undefined,
+  getSystemPromptContributions(agent, hook) {
+    const config = shapeConfig(agent);
+    return config && isHumanTurn(hook?.run) ? rulesText(limitsFromConfig(config)) : undefined;
+  },
   getAgentTools(agent, hook) {
     // The host looks up the tool for `execution` after the model called it, so the turn was human then.
     if (!shapeConfig(agent) || (!hook?.execution && !isHumanTurn(hook?.run))) return [];
@@ -128,11 +141,11 @@ export function startShapedTurn(
   if (!config) return undefined;
   if (!isHumanTurn({ ...params, sessionId })) return undefined;
   const log = typeof config.log === "string" ? config.log : path.join(workspaceDir, "data", "human-chat", "long-mode.jsonl");
-  return new ShapedTurn(agent.id, sessionId, log);
+  return new ShapedTurn(agent.id, sessionId, log, limitsFromConfig(config));
 }
 
 export class ShapedTurn {
-  readonly nudge = NUDGE_TEXT;
+  readonly nudge: string;
   private segments: string[] = [""];
   private held: HistoryEvent[] = [];
   private rewriting = false;
@@ -141,8 +154,11 @@ export class ShapedTurn {
   constructor(
     private readonly agentId: string,
     private readonly sessionId: string,
-    private readonly logPath: string
-  ) {}
+    private readonly logPath: string,
+    private readonly limits: Partial<Limits> = {}
+  ) {
+    this.nudge = nudgeText(limits);
+  }
 
   /** Start the turn: from now until `end()` its state is the only turn state of the session. */
   begin(): void {
@@ -177,7 +193,7 @@ export class ShapedTurn {
 
   lint(): LintResult {
     const text = this.segments.filter((s) => s && !isNoReply(s)).join("\n\n");
-    return lint(text, { mode: this.declaration ?? { mode: "short" } });
+    return lint(text, { mode: this.declaration ?? { mode: "short" }, limits: this.limits });
   }
 
   /** Drop the draft (text and stored history). The rewrite run starts clean. */

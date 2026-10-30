@@ -50,6 +50,10 @@ extensions:
   human-chat: {}        # or a bare `human-chat:` key. `enabled: false` turns it off
   # human-chat:
   #   log: data/human-chat/long-mode.jsonl   # default, relative to the workspace
+  #   max_sentences: 5       # limits: all optional. The core sets the defaults shown here
+  #   sentence_leeway: 0     # extra sentences allowed before the lint fails
+  #   max_sentence_words: 25
+  #   word_leeway: 5         # extra words allowed in a sentence before the lint fails
 ```
 
 When on, replies to a human follow the human-chat rules: one topic, 1-5 sentences, at most one question. Human sources are web, Telegram, Discord, Slack, Mattermost, and IRC. The agent gets the rules in its system prompt, a nudge on each human turn, and a `reply_mode` tool to declare long mode. The gateway holds the reply until the turn ends and lints it. On a failure, it asks the agent for one hidden rewrite. Live streaming stops for these turns, and a follow-up message waits for its own turn. The gateway does not shape scheduler, heartbeat, webhook, agent-sender, or background runs. A message that is exactly `/topics` lists the open topic plans in `<workspace>/topics/`. Internals: [llms.md](llms.md).
