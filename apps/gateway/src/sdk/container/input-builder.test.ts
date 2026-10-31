@@ -19,7 +19,6 @@ describe("container input builder", () => {
       const workspaceDir = path.join(root, "workspace");
       await fs.mkdir(inbound, { recursive: true });
       await fs.mkdir(workspaceDir);
-      await fs.writeFile(path.join(workspaceDir, "SOUL.md"), "Document test guidance");
       const text = `  heading\n\n${"row,full text\n".repeat(2000)}FINAL-ROW  `;
       const presentation = Buffer.from([0x50, 0x4b, 3, 4, 0, 255]);
       const attachments = [
@@ -57,7 +56,6 @@ describe("container input builder", () => {
   it("preserves the selected managed skills directory through the runner input schema", async () => {
     const workspaceDir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-managed-input-"));
     try {
-      await fs.writeFile(path.join(workspaceDir, "SOUL.md"), "test soul");
       const builder = new ContainerInputBuilder({ buildSystemPrompts: async () => [], buildTools: async () => [] });
       const params = {
         agentId: "test", sessionId: "session", message: "hello", workspaceDir,
@@ -72,7 +70,6 @@ describe("container input builder", () => {
   it("transports resolved deferral settings and extension namespace capabilities through JSON", async () => {
     const workspaceDir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-deferral-input-"));
     try {
-      await fs.writeFile(path.join(workspaceDir, "SOUL.md"), "Deferral fixture guidance");
       const runtime = new ExtensionRuntime();
       runtime.load([{
         id: "mcp", displayName: "MCP", description: "Connected services", dependencies: [],
@@ -112,7 +109,6 @@ describe("container input builder", () => {
   it.each([true, false, undefined])("transports codemode %s and limits to the runner", async (codemode) => {
     const workspaceDir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-codemode-input-"));
     try {
-      await fs.writeFile(path.join(workspaceDir, "SOUL.md"), "test soul");
       const builder = new ContainerInputBuilder({ buildSystemPrompts: async () => [], buildTools: async () => [] });
       const params = {
         agentId: "test", sessionId: "session", message: "hello", workspaceDir,
@@ -133,7 +129,6 @@ describe("container input builder", () => {
     const workspaceDir = await fs.mkdtemp(
       path.join(os.tmpdir(), "yoplai-container-input-")
     );
-    await fs.writeFile(path.join(workspaceDir, "SOUL.md"), "soul");
     const builder = new ContainerInputBuilder({
       buildSystemPrompts: async () => ["extra prompt"],
       buildTools: async () => [
@@ -209,7 +204,6 @@ describe("container input builder", () => {
 
   it.each(["opener", null, undefined])("uses owner %s for session storage while preserving requester identity", async (sessionOwnerId) => {
     const workspaceDir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-container-owner-"));
-    await fs.writeFile(path.join(workspaceDir, "SOUL.md"), "soul");
     const builder = new ContainerInputBuilder({ buildSystemPrompts: async () => [], buildTools: async () => [] });
     const params = {
       agentId: "cloud", sessionId: "thread", userId: "requester", sessionOwnerId,
@@ -227,7 +221,6 @@ describe("container input builder", () => {
     const workspaceDir = await fs.mkdtemp(
       path.join(os.tmpdir(), "yoplai-container-input-")
     );
-    await fs.writeFile(path.join(workspaceDir, "SOUL.md"), "soul");
     const builder = new ContainerInputBuilder({
       buildSystemPrompts: async () => [],
       buildTools: async () => [],
@@ -254,7 +247,6 @@ describe("container input builder", () => {
     const workspaceDir = await fs.mkdtemp(
       path.join(os.tmpdir(), "yoplai-container-input-")
     );
-    await fs.writeFile(path.join(workspaceDir, "SOUL.md"), "soul");
     const builder = new ContainerInputBuilder({
       buildSystemPrompts: async () => [],
       buildTools: async () => [],
@@ -284,7 +276,6 @@ describe("container input builder", () => {
     const workspaceDir = await fs.mkdtemp(
       path.join(os.tmpdir(), "yoplai-container-input-")
     );
-    await fs.writeFile(path.join(workspaceDir, "SOUL.md"), "soul");
     const builder = new ContainerInputBuilder({
       buildSystemPrompts: async () => [],
       buildTools: async () => [],
@@ -321,7 +312,6 @@ describe("container input builder", () => {
     const workspaceDir = await fs.mkdtemp(
       path.join(os.tmpdir(), "yoplai-container-input-")
     );
-    await fs.writeFile(path.join(workspaceDir, "SOUL.md"), "soul");
     const builder = new ContainerInputBuilder({
       buildSystemPrompts: async () => [],
       buildTools: async () => [],
@@ -347,7 +337,6 @@ describe("container input builder", () => {
     const workspaceDir = await fs.mkdtemp(
       path.join(os.tmpdir(), "yoplai-container-input-")
     );
-    await fs.writeFile(path.join(workspaceDir, "SOUL.md"), "soul");
     const builder = new ContainerInputBuilder({
       buildSystemPrompts: async () => ["extension prompt"],
       buildTools: async () => [],
@@ -381,7 +370,6 @@ describe("container input builder", () => {
     const workspaceDir = await fs.mkdtemp(
       path.join(os.tmpdir(), "yoplai-container-input-")
     );
-    await fs.writeFile(path.join(workspaceDir, "SOUL.md"), "soul");
     const builder = new ContainerInputBuilder({
       buildSystemPrompts: async () => [],
       buildTools: async () => [],
@@ -425,7 +413,7 @@ describe("container input builder", () => {
     );
     const sharedFile = path.join(sharedDir, "HOUSE.md");
     await fs.writeFile(path.join(workspaceDir, "AGENTS.md"), "agents");
-    await fs.writeFile(path.join(workspaceDir, "SOUL.md"), "soul");
+    await fs.writeFile(path.join(workspaceDir, "PERSONA.md"), "persona");
     await fs.writeFile(sharedFile, "house rules");
 
     const builder = new ContainerInputBuilder({
@@ -440,7 +428,7 @@ describe("container input builder", () => {
       agent: {
         id: "cloud",
         model: { provider: "anthropic", model: "claude-sonnet" },
-        system_files: ["SOUL.md", sharedFile],
+        system_files: ["PERSONA.md", sharedFile],
       },
     } as SdkRunParams;
     const config = { agents: [params.agent], extensions: {} } as GatewayConfig;
@@ -449,7 +437,7 @@ describe("container input builder", () => {
 
     expect(input.systemFiles).toEqual([
       { path: "AGENTS.md", content: "agents" },
-      { path: "SOUL.md", content: "soul" },
+      { path: "PERSONA.md", content: "persona" },
       { path: sharedFile, content: "house rules" },
     ]);
   });
@@ -457,7 +445,6 @@ describe("container input builder", () => {
     const workspaceDir = await fs.mkdtemp(
       path.join(os.tmpdir(), "yoplai-container-input-")
     );
-    await fs.writeFile(path.join(workspaceDir, "SOUL.md"), "soul");
     const builder = new ContainerInputBuilder({
       buildSystemPrompts: async () => [],
       buildTools: async () => [],

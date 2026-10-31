@@ -380,6 +380,36 @@ describe("pi adapter transient provider retry", () => {
   );
 
   it.each([
+    ["opencode-go", "OPENCODE_API_KEY"],
+    ["opencode", "OPENCODE_API_KEY"],
+    ["github-copilot", "COPILOT_GITHUB_TOKEN"],
+    ["google", "GEMINI_API_KEY"],
+    ["huggingface", "HF_TOKEN"],
+    ["moonshotai", "MOONSHOT_API_KEY"],
+    ["moonshotai-cn", "MOONSHOT_API_KEY"],
+    ["kimi-coding", "KIMI_API_KEY"],
+    ["vercel-ai-gateway", "AI_GATEWAY_API_KEY"],
+    ["azure", "AZURE_OPENAI_API_KEY"],
+    ["cloudflare-workers-ai", "CLOUDFLARE_API_KEY"],
+    ["cloudflare-ai-gateway", "CLOUDFLARE_API_KEY"],
+    ["openai", "OPENAI_API_KEY"],
+    ["custom-provider", "CUSTOM_PROVIDER_API_KEY"],
+  ])("names the %s provider's API-key variable", async (provider, envVar) => {
+    const agent = makeAgent({
+      auth: { mode: "api_key" },
+      model: { provider, model: "test-model" },
+    });
+    setLoadedConfig({ agents: [agent] } as GatewayConfig);
+    mockGetEnvApiKey.mockReturnValue(undefined);
+    const { piAdapter } = await import("../adapter.js");
+
+    await expect(piAdapter.run(makeRunParams(agent))).rejects.toThrow(
+      `No API key for provider: ${provider}. Set ${envVar} env var.`
+    );
+    expect(mockCreateAgentSession).not.toHaveBeenCalled();
+  });
+
+  it.each([
     "missing-oauth",
     "invalid-oauth",
     "missing-api-key",

@@ -70,7 +70,7 @@ const workspace = path.join(setup.home, "workspace");
 let sessionNumber = 0;
 beforeEach(async () => {
   await fs.mkdir(workspace, { recursive: true });
-  for (const name of ["AGENTS.md", "SOUL.md", "USER.md"])
+  for (const name of ["AGENTS.md", "USER.md"])
     await fs.writeFile(
       path.join(workspace, name),
       "Synthetic project context. ".repeat(300)

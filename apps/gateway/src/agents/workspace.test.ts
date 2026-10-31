@@ -26,13 +26,13 @@ describe("agent workspace files", () => {
     const entries = await fs.readdir(tmpDir);
 
     expect(isFirstRun).toBe(true);
-    expect(entries.sort()).toEqual(["AGENTS.md", "SOUL.md", "USER.md"]);
+    expect(entries.sort()).toEqual(["AGENTS.md", "USER.md"]);
   });
 
   it("does not inject old workspace files even if they remain", async () => {
     tmpDir = await makeTempDir();
     await fs.writeFile(path.join(tmpDir, "AGENTS.md"), "agents");
-    await fs.writeFile(path.join(tmpDir, "SOUL.md"), "soul");
+    await fs.writeFile(path.join(tmpDir, "PERSONA.md"), "persona");
     await fs.writeFile(path.join(tmpDir, "USER.md"), "user");
     await fs.writeFile(path.join(tmpDir, "BOOTSTRAP.md"), "bootstrap");
     await fs.writeFile(path.join(tmpDir, "IDENTITY.md"), "identity");
@@ -43,7 +43,6 @@ describe("agent workspace files", () => {
 
     expect(contextFiles.map((file) => file.path).sort()).toEqual([
       "AGENTS.md",
-      "SOUL.md",
       "USER.md",
     ]);
   });
@@ -66,9 +65,9 @@ describe("agent workspace files", () => {
 
   it("restores a missing AGENTS.md in an existing workspace", async () => {
     tmpDir = await makeTempDir();
-    await fs.writeFile(path.join(tmpDir, "SOUL.md"), "existing");
+    await fs.writeFile(path.join(tmpDir, "USER.md"), "existing");
 
     await expect(ensureWorkspaceFiles(tmpDir)).resolves.toBe(false);
-    expect((await fs.readdir(tmpDir)).sort()).toEqual(["AGENTS.md", "SOUL.md"]);
+    expect((await fs.readdir(tmpDir)).sort()).toEqual(["AGENTS.md", "USER.md"]);
   });
 });

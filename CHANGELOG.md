@@ -22,10 +22,12 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Changed
 
+- **⚠ BREAKING** `SOUL.md` is no longer created, loaded by default, or detected by legacy agent migration. Existing agents stop including it unless the operator explicitly adds `system_files: [SOUL.md]` to `agent.yaml`; use `system_files: [{ path: SOUL.md, required: true }]` to require it.
 - Human-chat now lives in the optional `@yoplai/extension-human-chat` package, using the portable `github:agentropie/human-chat` dependency. Generic extension hooks own chat commands and reply review; existing agent configuration stays compatible. Missing human-chat packages or dependencies log an error for each enabled agent while gateway startup and config reload continue.
 
 ### Fixed
 
+- Missing API-key errors name the provider's actual environment variable, including `OPENCODE_API_KEY` for both OpenCode providers, with the existing derived hint retained for unknown providers.
 - Guard gateway tool-call cleanup against retained abort listeners and timers after repeated successful calls.
 - Size and align the sidebar New project button, keep row menu triggers inside the sidebar, and show complete project/chat menus within the viewport, including mobile drawers and scrolled lists.
 - Gateway access log redacts OAuth codes, state and other secret query parameters.

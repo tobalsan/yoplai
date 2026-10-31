@@ -31,29 +31,28 @@ describe("resolveSystemFiles", () => {
   it("prepends AGENTS and default system files", async () => {
     dir = await tempDir();
     await fs.writeFile(path.join(dir, "AGENTS.md"), "agents");
-    await fs.writeFile(path.join(dir, "SOUL.md"), "soul");
+    await fs.writeFile(path.join(dir, "PERSONA.md"), "persona");
     await fs.writeFile(path.join(dir, "USER.md"), "user");
     const files = await resolveSystemFiles({ workspaceDir: dir });
-    expect(files.map((f) => f.path)).toEqual(["AGENTS.md", "SOUL.md", "USER.md"]);
+    expect(files.map((f) => f.path)).toEqual(["AGENTS.md", "USER.md"]);
   });
 
-  it("requires default SOUL and skips missing USER with warning", async () => {
+  it("accepts only AGENTS and skips missing USER with warning", async () => {
     dir = await tempDir();
+    await fs.writeFile(path.join(dir, "AGENTS.md"), "agents");
     const warnings: string[] = [];
-    await expect(resolveSystemFiles({ workspaceDir: dir, warn: (m) => warnings.push(m) })).rejects.toThrow("Required system file not found: SOUL.md");
-    await fs.writeFile(path.join(dir, "SOUL.md"), "soul");
     const files = await resolveSystemFiles({ workspaceDir: dir, warn: (m) => warnings.push(m) });
-    expect(files.map((f) => f.path)).toEqual(["SOUL.md"]);
+    expect(files.map((f) => f.path)).toEqual(["AGENTS.md"]);
     expect(warnings.some((m) => m.includes("USER.md"))).toBe(true);
   });
 
   it("dedupes AGENTS when listed", async () => {
     dir = await tempDir();
     await fs.writeFile(path.join(dir, "AGENTS.md"), "agents");
-    await fs.writeFile(path.join(dir, "SOUL.md"), "soul");
+    await fs.writeFile(path.join(dir, "PERSONA.md"), "persona");
     const warnings: string[] = [];
-    const files = await resolveSystemFiles({ workspaceDir: dir, systemFiles: ["AGENTS.md", "SOUL.md"], warn: (m) => warnings.push(m) });
-    expect(files.map((f) => f.path)).toEqual(["AGENTS.md", "SOUL.md"]);
+    const files = await resolveSystemFiles({ workspaceDir: dir, systemFiles: ["AGENTS.md", "PERSONA.md"], warn: (m) => warnings.push(m) });
+    expect(files.map((f) => f.path)).toEqual(["AGENTS.md", "PERSONA.md"]);
     expect(warnings.some((m) => m.includes("auto-included"))).toBe(true);
   });
 
@@ -66,6 +65,27 @@ describe("resolveSystemFiles", () => {
     const files = await resolveSystemFiles({ workspaceDir: agent, systemFiles: ["../shared.md"] });
     expect(files).toHaveLength(1);
     expect(files[0].content).toBe("shared");
+  });
+
+  it("rejects a missing explicitly required file", async () => {
+    dir = await tempDir();
+    await expect(resolveSystemFiles({
+      workspaceDir: dir,
+      systemFiles: [{ path: "PERSONA.md", required: true }],
+    })).rejects.toThrow("Required system file not found: PERSONA.md");
+  });
+
+  it("warns and continues for a missing plain-string file", async () => {
+    dir = await tempDir();
+    await fs.writeFile(path.join(dir, "AGENTS.md"), "agents");
+    const warnings: string[] = [];
+    const files = await resolveSystemFiles({
+      workspaceDir: dir,
+      systemFiles: ["PERSONA.md"],
+      warn: (message) => warnings.push(message),
+    });
+    expect(files.map((file) => file.path)).toEqual(["AGENTS.md"]);
+    expect(warnings).toEqual(["[system_files] optional file not found: PERSONA.md"]);
   });
 
   it("resolves $YOPLAI_HOME to default ~/.yoplai when env is absent", async () => {

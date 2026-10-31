@@ -26,7 +26,7 @@ function writePoolAgent(id: string): PoolAgentRef {
     path.join(dir, "agent.yaml"),
     `id: ${id}\nname: ${id}\nmodel:\n  provider: anthropic\n  model: claude\n`
   );
-  fs.writeFileSync(path.join(dir, "SOUL.md"), "pool soul\n");
+  fs.writeFileSync(path.join(dir, "PERSONA.md"), "pool persona\n");
   // Excluded runtime artifacts that must NOT be copied into a fork.
   fs.writeFileSync(path.join(dir, ".env"), "SECRET=1\n");
   fs.writeFileSync(path.join(dir, "data", "state.json"), "{}\n");
@@ -101,8 +101,8 @@ describe("fork store", () => {
     const forkFolder = path.join(forksDir, forkId);
     expect(fs.existsSync(forkFolder)).toBe(true);
     // Copied content.
-    expect(fs.readFileSync(path.join(forkFolder, "SOUL.md"), "utf8")).toBe(
-      "pool soul\n"
+    expect(fs.readFileSync(path.join(forkFolder, "PERSONA.md"), "utf8")).toBe(
+      "pool persona\n"
     );
     // agent.yaml id matches the fork folder basename.
     const yaml = fs.readFileSync(path.join(forkFolder, "agent.yaml"), "utf8");

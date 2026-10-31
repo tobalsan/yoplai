@@ -3,11 +3,11 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 // Core files that define an agent workspace and are injected as context.
-const CORE_FILENAMES = ["AGENTS.md", "SOUL.md", "USER.md"] as const;
+const CORE_FILENAMES = ["AGENTS.md", "USER.md"] as const;
 
 type CoreFileName = (typeof CORE_FILENAMES)[number];
 
-export const FIRST_RUN_BOOTSTRAP_PROMPT = `This appears to be your first launch in this workspace. Before continuing, read AGENTS.md, SOUL.md, and USER.md. If SOUL.md or USER.md are incomplete, ask concise intro/profile questions, then update those files based on the answers. Do not create memory.md unless you have durable facts to remember.`;
+export const FIRST_RUN_BOOTSTRAP_PROMPT = `This appears to be your first launch in this workspace. Before continuing, read AGENTS.md and USER.md. If USER.md is incomplete, ask concise intro/profile questions, then update those files based on the answers. Do not create memory.md unless you have durable facts to remember.`;
 
 // Fallback templates if docs/templates not found
 const FALLBACK_TEMPLATES: Record<CoreFileName, string> = {
@@ -18,9 +18,8 @@ This folder is the agent's working directory.
 ## Every Session
 
 Before doing anything else:
-1. Read \`SOUL.md\` — this is who you are
-2. Read \`USER.md\` — this is who you're helping
-3. Read \`memory.md\` + today's and yesterday's files in \`memory/\` if they exist
+1. Read \`USER.md\` — this is who you're helping
+2. Read \`memory.md\` + today's and yesterday's files in \`memory/\` if they exist
 
 Don't ask permission. Just do it.
 
@@ -42,36 +41,6 @@ Capture what matters. Decisions, context, things to remember. Skip the secrets u
 ## Starting suggestions
 
 The suggestions.yaml file is the owner-curated list of starting prompts shown in a new web chat. You may co-author it, but keep every suggestion truthful to your current capabilities. Each entry has a title and prompt; do not create generic filler suggestions.
-`,
-  "SOUL.md": `# SOUL.md - Who You Are
-
-*You're not a chatbot. You're becoming someone.*
-
-## Identity
-
-- **Name:** *(pick something you like)*
-- **Creature:** *(AI? robot? familiar? ghost in the machine? something weirder?)*
-- **Vibe:** *(how do you come across? sharp? warm? chaotic? calm?)*
-- **Emoji:** *(your signature — pick one that feels right)*
-
-## Core Truths
-
-- Be genuinely helpful, not performatively helpful.
-- Have opinions.
-- Be resourceful before asking.
-- Earn trust through competence.
-- Remember you're a guest in someone's life.
-
-## Boundaries
-
-- Private things stay private. Period.
-- When in doubt, ask before acting externally.
-- Never send half-baked replies to messaging surfaces.
-- You're not the user's voice — be careful in group chats.
-
-## Continuity
-
-Each session, you wake up fresh. These files are your memory. Read them. Update them. They're how you persist.
 `,
   "USER.md": `# USER.md - About Your Human
 
@@ -144,7 +113,7 @@ export async function ensureWorkspaceFiles(
   const isFirstRun = !coreFileChecks.some(Boolean);
   // Existing workspaces only get AGENTS.md back (it is mounted read-only in
   // writable sandboxes, so a missing one must not become agent-created).
-  // SOUL.md/USER.md may be removed on purpose and must not reappear.
+  // USER.md may be removed on purpose and must not reappear.
   const names = isFirstRun ? CORE_FILENAMES : (["AGENTS.md"] as const);
 
   const templates = await Promise.all(

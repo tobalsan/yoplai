@@ -55,7 +55,7 @@ describe("config validation", () => {
       id: "test-agent",
       name: "Test Agent",
       model: { provider: "anthropic", model: "claude" },
-      system_files: ["SOUL.md", { path: "USER.md", required: false }],
+      system_files: ["PERSONA.md", { path: "USER.md", required: false }],
     });
     expect(result.success).toBe(true);
   });

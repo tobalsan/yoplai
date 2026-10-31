@@ -43,10 +43,6 @@ afterAll(async () => {
 it("runs real builder output with canonical overrides and a described deferred namespace intact", async () => {
   const workspaceDir = path.join(isolated.home, "workspace");
   await fs.mkdir(workspaceDir);
-  await fs.writeFile(
-    path.join(workspaceDir, "SOUL.md"),
-    "Synthetic integration guidance"
-  );
   const runtime = new ExtensionRuntime();
   runtime.load([
     {

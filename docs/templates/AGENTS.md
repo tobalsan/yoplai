@@ -5,9 +5,8 @@ This folder is home. Treat it that way.
 ## Every Session
 
 Before doing anything else:
-1. Read `SOUL.md` — this is who you are
-2. Read `USER.md` — this is who you're helping
-3. Read `memory.md` + today's and yesterday's files in `memory/` if they exist
+1. Read `USER.md` — this is who you're helping
+2. Read `memory.md` + today's and yesterday's files in `memory/` if they exist
 
 Don't ask permission. Just do it.
 

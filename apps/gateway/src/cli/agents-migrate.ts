@@ -9,7 +9,6 @@ import { expandHomePlaceholder, resolveConfigPath, resolveHomeDir } from "@yopla
 import { logError } from "../logging.js";
 
 const LEGACY_SYSTEM_FILE_ORDER = [
-  "SOUL.md",
   "TOOLS.md",
   "IDENTITY.md",
   "USER.md",

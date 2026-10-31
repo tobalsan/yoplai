@@ -113,7 +113,7 @@ beforeEach(async () => {
   sessionId = `startup-${++sessionNumber}`;
   recovered = false;
   await fs.mkdir(agent.workspace, { recursive: true });
-  for (const name of ["AGENTS.md", "SOUL.md", "USER.md"]) {
+  for (const name of ["AGENTS.md", "USER.md"]) {
     await fs.writeFile(path.join(agent.workspace, name), "Startup test workspace.");
   }
   setLoadedConfig(GatewayConfigSchema.parse({ agents: [agent], extensions: {} }));

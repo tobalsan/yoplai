@@ -59,7 +59,6 @@ Agent `reasoning` values: `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, `m
 Yoplai creates missing:
 
 - `AGENTS.md` — primary operational instructions
-- `SOUL.md` — identity/persona
 - `USER.md` — user context
 
 Existing files are never overwritten. `AGENTS.md` is implicitly prepended; `system_files` controls remaining order.
