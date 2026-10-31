@@ -48,6 +48,7 @@ Important seams:
 - `RunAgentParams.userId` remains the requester for credentials and identity; `sessionOwnerId` selects persisted history/session storage (`undefined` defaults to requester, `null` means shared). Trusted `requesterId` distinguishes unpaired transport senders; different requesters queue separate turns with their own context, attachments, callbacks, and delivery target.
 - `normalizeRunRequest()` is the shared REST/WebSocket input normalization path.
 - `ExtensionRuntime` is the source of loaded routes, tools, prompt contributions, capabilities, and lifecycle state.
+- `getExtensionAgentTools()` strips patterns, then checks extension parameters against JSON Schema 2020-12 for both Pi and container runtimes. Valid schemas stay unchanged; only invalid schemas receive mechanical legacy repairs. Ambiguous or still-invalid tools are omitted with an agent/extension/tool/error warning, without logging schemas. Runtime-built and gateway-appended tools bypass this check; direct execution is unchanged.
 - Extension logging uses `ctx.logger.info/warn(message, fields)` and `ctx.logger.error(message, error, fields)` for top-level structured fields. Pass a short error string when full diagnostics belong only in persisted run/output artifacts. Thrown tool errors with integer HTTP status 400–499 or explicit `code: "invalid_input"` log at warning; unmarked validation errors remain errors.
 
 ### `apps/web`
