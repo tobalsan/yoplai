@@ -29,6 +29,7 @@ Breaking changes are marked **⚠ BREAKING**.
 ### Fixed
 
 - Validate extension tool parameters against JSON Schema 2020-12, repair unambiguous legacy forms, and warn and omit only invalid tools so sibling tools remain available.
+- Preserve Pi tool schemas through compaction persistence; add `scripts/repair-session-tools.ts` to dry-run or restore poisoned sessions with backups.
 - Missing API-key errors name the provider's actual environment variable, including `OPENCODE_API_KEY` for both OpenCode providers, with the existing derived hint retained for unknown providers.
 - Guard gateway tool-call cleanup against retained abort listeners and timers after repeated successful calls.
 - Size and align the sidebar New project button, keep row menu triggers inside the sidebar, and show complete project/chat menus within the viewport, including mobile drawers and scrolled lists.

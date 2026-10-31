@@ -248,6 +248,8 @@ Unless noted, paths are under `$YOPLAI_HOME`:
 
 Canonical history drives history APIs, web UI, Langfuse, compaction, channel context, and media blocks. Pi session files are SDK-owned runtime state; code may use them only for resume/backfill/fallback behavior. Session sanitization must preserve assistant text-block `textSignature` replay metadata (OpenAI Responses item ID/phase) verbatim; this session-only exception must not exempt credential fields from general storage redaction.
 
+Pi system-message `toolsAdded`/`toolsRemoved` declarations stay verbatim in both `message.message` and `compaction.systemMessage`; prompt text, summaries and other fields still undergo storage redaction. After deploying this fix, operators can inspect existing sessions with `pnpm exec tsx scripts/repair-session-tools.ts <sessions-directory>` (recursive, including per-user copies). Add `--write` only after reviewing the dry run: it restores whole redacted compaction declarations from the latest earlier clean declaration of the same name in that file, backs up each changed file to `.bak`, and refuses to overwrite an existing backup. Any missing source leaves the whole file untouched and is reported for operator reset; clean files are untouched. Invalid JSON lines and original line endings are preserved. Deploy before repair so subsequent persistence keeps repaired schemas intact.
+
 Multi-user mode scopes session maps and canonical history beneath `sessions/users/<userId>/`. There is no automatic migration from existing single-user history into user ownership.
 
 ## Agent runtime flow
