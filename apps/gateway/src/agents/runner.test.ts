@@ -433,16 +433,26 @@ describe("runAgent control commands", () => {
     getAgent.mockReturnValue(createAgent({}));
     isAbortTrigger.mockReturnValue(true);
     const { setSessionStreaming } = await import("./sessions.js");
-    setSessionStreaming("alpha", "session-1", true);
+    const controller = new AbortController();
+    controller.signal.addEventListener("abort", () => setSessionStreaming("alpha", "session-1", false), { once: true });
+    setSessionStreaming("alpha", "session-1", true, controller);
+    const onEvent = vi.fn();
 
     const { runAgent } = await import("./runner.js");
-    await runAgent({
+    const result = await runAgent({
       agentId: "alpha",
       message: "/abort",
       sessionId: "session-1",
       userId: "user-1",
+      onEvent,
     });
 
+    expect(controller.signal.aborted).toBe(true);
+    expect(result).toMatchObject({ payloads: [{ text: "Run aborted." }], meta: { aborted: true } });
+    expect(onEvent.mock.calls).toEqual([
+      [{ type: "text", data: "Run aborted." }],
+      [{ type: "done", meta: { durationMs: 0, aborted: true } }],
+    ]);
     expect(pauseTaskForControlCommand).toHaveBeenCalledWith(
       "alpha",
       "session-1",

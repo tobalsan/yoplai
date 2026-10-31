@@ -11,6 +11,7 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Added
 
+- Webhook gates can return `sessionScope` to preserve conversation context and `abort: true` to stop that session before an optional wake; extensions can silently stop mapped runs with `ExtensionContext.abortRun`.
 - Webhook prompt-file frontmatter selects model and reasoning and runs optional fail-open gate scripts with request stdin, metadata, and agent context; edits apply on the next request.
 - `human-chat`: optional `max_sentences`, `sentence_leeway`, `max_sentence_words`, `word_leeway` keys set the reply limits.
 - Add the opt-in `human-chat` agent extension (`extensions.human-chat: {}` in `agent.yaml`). For human turns it holds the reply, lints it for short one-topic replies, and asks the agent for one hidden rewrite when it breaks the rules. A `reply_mode` tool declares long mode, and `/topics` lists open topic plans. Off by default.

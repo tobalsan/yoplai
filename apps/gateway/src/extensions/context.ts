@@ -30,7 +30,7 @@ import {
 } from "../sessions/index.js";
 import { deleteSession } from "../agents/sessions.js";
 import { getFullHistory, invalidateResolvedHistoryFile, snapshotTurnBuffer } from "../history/store.js";
-import { getSessionHistory } from "../agents/runner.js";
+import { abortAgentRun, getSessionHistory } from "../agents/runner.js";
 import { ensureSession, hasSession, resetSession } from "../sessions/persistence.js";
 import { logError, logInfo, logWarn } from "../logging.js";
 import { saveUploadedFile } from "../media/upload.js";
@@ -126,6 +126,10 @@ export function createExtensionContext(
       // The run may settle or be replaced during the ledger read.
       if (!session.isStreaming || session.streamStartedAt !== startedAt) return undefined;
       return { startedAt, ...(task?.status === "active" ? { taskTitle: task.title } : {}) };
+    },
+    abortRun: async (agentId, sessionKey, sessionOwnerId) => {
+      const entry = await getSessionEntry(agentId, sessionKey, sessionOwnerId ?? undefined);
+      return entry ? abortAgentRun(agentId, entry.sessionId) : false;
     },
     resolveWorkspaceDir: (agent) => resolveWorkspaceDir(agent.workspace),
     runAgent,

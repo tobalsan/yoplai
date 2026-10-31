@@ -267,6 +267,54 @@ describe("resolveScriptPath containment", () => {
 });
 
 describe("parseWakeAgent", () => {
+  it("preserves a nonempty session scope verbatim", () => {
+    expect(parseWakeAgent('{"sessionScope":" external:42 "}')).toEqual({
+      wake: true,
+      context: undefined,
+      sessionScope: " external:42 ",
+    });
+  });
+
+  it("carries a scoped abort even when the gate suppresses the wake", () => {
+    expect(
+      parseWakeAgent('{"wakeAgent":false,"sessionScope":"conversation-42","abort":true,"context":"ignored"}')
+    ).toEqual({ wake: false, sessionScope: "conversation-42", abort: true });
+  });
+
+  it("carries scope, abort and context for a stop wake", () => {
+    expect(
+      parseWakeAgent('{"wakeAgent":true,"sessionScope":"conversation-42","abort":true,"context":{"signal":"stop"}}')
+    ).toEqual({
+      wake: true,
+      context: '{"signal":"stop"}',
+      sessionScope: "conversation-42",
+      abort: true,
+    });
+  });
+
+  it.each([undefined, null, 42, false, "", " \t\n"])(
+    "ignores an abort with invalid scope %j",
+    (sessionScope) => {
+      expect(parseWakeAgent(JSON.stringify({ sessionScope, abort: true })))
+        .toEqual({ wake: true, context: undefined });
+    }
+  );
+
+  it.each([undefined, false, "true", 1, null])(
+    "ignores abort values other than exactly true: %j",
+    (abort) => {
+      expect(parseWakeAgent(JSON.stringify({ sessionScope: "conversation-42", abort })))
+        .toEqual({ wake: true, context: undefined, sessionScope: "conversation-42" });
+    }
+  );
+
+  it.each(["", " ", "null", "true", "42", '"stop"'])(
+    "fails open without scope or abort for non-object output %j",
+    (output) => {
+      expect(parseWakeAgent(output)).toEqual({ wake: true });
+    }
+  );
+
   it("wakeAgent: false suppresses the wake", () => {
     expect(parseWakeAgent('{"wakeAgent":false}')).toEqual({ wake: false });
   });

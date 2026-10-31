@@ -106,6 +106,18 @@ function resolveAgentThinkLevel(agent: { reasoning?: ThinkLevel; thinkLevel?: Th
   return agent.reasoning ?? agent.thinkLevel;
 }
 
+/** Interrupt a session's active run silently, including the bounded streaming wait. */
+export async function abortAgentRun(agentId: string, sessionId: string): Promise<boolean> {
+  const session = getSession(agentId, sessionId);
+  if (!session?.isStreaming || !session.abortController) return false;
+  const agent = getAgent(agentId);
+  if (!agent) throw new Error(`Agent not found: ${agentId}`);
+  const adapter = agent.sandbox?.enabled
+    ? getContainerAdapter()
+    : getSdkAdapter((agent.sdk ?? getDefaultSdkId()) as SdkId);
+  return new SessionRunLifecycle({ agentId, sessionId }).abortActiveRun(adapter, adapter.capabilities);
+}
+
 export async function runAgent(
   params: InternalRunAgentParams
 ): Promise<InternalRunAgentResult> {
@@ -179,7 +191,7 @@ export async function runAgent(
       trace: params.trace,
       onEvent: params.onEvent,
     });
-    const aborted = await lifecycle.abortActiveRun(adapter, capabilities);
+    const aborted = await abortAgentRun(params.agentId, sessionId);
 
     // Only explicit gateway controls may alter task ownership without an agent
     // lifecycle-tool call. Preserve the task so its work can be resumed, even

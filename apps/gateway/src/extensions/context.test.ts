@@ -177,6 +177,129 @@ describe("createExtensionContext media helpers", () => {
     }
   });
 
+  it("does not create a session when aborting an unknown key or an idle session", async () => {
+    const { writeTestV3Config } = await import("../test-utils/v3-config.js");
+    await writeTestV3Config(tmpDir, { agents: [{ id: "alpha" }] });
+    const { createExtensionContext } = await import("./context.js");
+    const ctx = createExtensionContext({} as GatewayConfig);
+
+    expect(await ctx.abortRun!("alpha", "webhook:alpha:events:unknown")).toBe(false);
+    expect(await ctx.getSessionEntry("alpha", "webhook:alpha:events:unknown")).toBeUndefined();
+    const idle = await ctx.ensureSession!("alpha", "webhook:alpha:events:idle");
+    expect(await ctx.abortRun!("alpha", "webhook:alpha:events:idle")).toBe(false);
+    expect((await ctx.getSessionEntry("alpha", "webhook:alpha:events:idle"))?.sessionId).toBe(idle.sessionId);
+    expect(await ctx.getActiveRun!("alpha", idle.sessionId)).toBeUndefined();
+  });
+
+  it("silently interrupts only the mapped run and waits for streaming to end without pausing its task", async () => {
+    const { writeTestV3Config } = await import("../test-utils/v3-config.js");
+    await writeTestV3Config(tmpDir, { agents: [{ id: "alpha" }] });
+    const { createExtensionContext } = await import("./context.js");
+    const { SessionRunLifecycle } = await import("../agents/run-lifecycle.js");
+    const { setSessionHandle } = await import("../agents/sessions.js");
+    const { adoptTask, getTask } = await import("../tasks/store.js");
+    const ctx = createExtensionContext({} as GatewayConfig);
+    const target = await ctx.ensureSession!("alpha", "webhook:alpha:events:conversation");
+    const other = await ctx.ensureSession!("alpha", "webhook:alpha:events:other");
+    const lifecycle = new SessionRunLifecycle({ agentId: "alpha", sessionId: target.sessionId });
+    const unrelated = new SessionRunLifecycle({ agentId: "alpha", sessionId: other.sessionId });
+    const controller = lifecycle.beginRun();
+    const otherController = unrelated.beginRun();
+    const interrupt = vi.fn();
+    setSessionHandle("alpha", target.sessionId, { abort: interrupt });
+    await adoptTask("alpha", target.sessionId, "Finish external conversation");
+    const events: unknown[] = [];
+    const unsubscribe = ctx.subscribe("agent.stream", (event) => events.push(event));
+    let resolved = false;
+    const controllerAborted = new Promise<void>((resolve) => controller.signal.addEventListener("abort", () => resolve(), { once: true }));
+
+    try {
+      const stopping = ctx.abortRun!("alpha", "webhook:alpha:events:conversation").then((result) => {
+        resolved = true;
+        return result;
+      });
+      await controllerAborted;
+      expect(interrupt).toHaveBeenCalledOnce();
+      expect(resolved).toBe(false);
+      expect(await ctx.getActiveRun!("alpha", target.sessionId)).toMatchObject({ taskTitle: "Finish external conversation" });
+      expect(otherController.signal.aborted).toBe(false);
+      lifecycle.finishRun();
+      expect(await stopping).toBe(true);
+      expect(await ctx.getActiveRun!("alpha", target.sessionId)).toBeUndefined();
+      expect(await ctx.getActiveRun!("alpha", other.sessionId)).toBeDefined();
+      expect(await getTask("alpha", target.sessionId)).toMatchObject({ status: "active", title: "Finish external conversation" });
+      expect(events).toEqual([]);
+      expect(await ctx.abortRun!("alpha", "webhook:alpha:events:conversation")).toBe(false);
+    } finally {
+      unsubscribe();
+      lifecycle.finishRun();
+      unrelated.finishRun();
+    }
+  });
+
+  it("stops an owner-scoped run through its controller when the SDK cannot interrupt", async () => {
+    const { writeTestV3Config } = await import("../test-utils/v3-config.js");
+    await writeTestV3Config(tmpDir, { agents: [{ id: "alpha", extraYaml: "sdk: openclaw" }] });
+    const { createExtensionContext } = await import("./context.js");
+    const { SessionRunLifecycle } = await import("../agents/run-lifecycle.js");
+    const { setSessionHandle } = await import("../agents/sessions.js");
+    const ctx = createExtensionContext({} as GatewayConfig);
+    const alice = await ctx.ensureSession!("alpha", "conversation", "alice");
+    const bob = await ctx.ensureSession!("alpha", "conversation", "bob");
+    const lifecycle = new SessionRunLifecycle({ agentId: "alpha", sessionId: alice.sessionId, userId: "alice" });
+    const unrelated = new SessionRunLifecycle({ agentId: "alpha", sessionId: bob.sessionId, userId: "bob" });
+    const controller = lifecycle.beginRun();
+    const otherController = unrelated.beginRun();
+    const interrupt = vi.fn();
+    setSessionHandle("alpha", alice.sessionId, { abort: interrupt });
+    controller.signal.addEventListener("abort", () => lifecycle.finishRun(), { once: true });
+
+    try {
+      expect(await ctx.abortRun!("alpha", "conversation")).toBe(false);
+      expect(await ctx.abortRun!("alpha", "conversation", null)).toBe(false);
+      expect(controller.signal.aborted).toBe(false);
+      expect(await ctx.abortRun!("alpha", "conversation", "alice")).toBe(true);
+      expect(controller.signal.aborted).toBe(true);
+      expect(interrupt).not.toHaveBeenCalled();
+      expect(otherController.signal.aborted).toBe(false);
+      expect(await ctx.getActiveRun!("alpha", bob.sessionId, "bob")).toBeDefined();
+      expect(await ctx.getSessionEntry("alpha", "conversation")).toBeUndefined();
+    } finally {
+      lifecycle.finishRun();
+      unrelated.finishRun();
+    }
+  });
+
+  it("releases streaming after the bounded abort wait when the run does not finish", async () => {
+    const { writeTestV3Config } = await import("../test-utils/v3-config.js");
+    await writeTestV3Config(tmpDir, { agents: [{ id: "alpha" }] });
+    const { createExtensionContext } = await import("./context.js");
+    const { SessionRunLifecycle } = await import("../agents/run-lifecycle.js");
+    const ctx = createExtensionContext({} as GatewayConfig);
+    const target = await ctx.ensureSession!("alpha", "webhook:alpha:events:stuck");
+    const lifecycle = new SessionRunLifecycle({ agentId: "alpha", sessionId: target.sessionId });
+    const controller = lifecycle.beginRun();
+    let resolved = false;
+    vi.useFakeTimers();
+    try {
+      const stopping = ctx.abortRun!("alpha", "webhook:alpha:events:stuck").then((result) => {
+        resolved = true;
+        return result;
+      });
+      await vi.advanceTimersByTimeAsync(1999);
+      expect(controller.signal.aborted).toBe(true);
+      expect(resolved).toBe(false);
+      expect(await ctx.getActiveRun!("alpha", target.sessionId)).toBeDefined();
+      await vi.advanceTimersByTimeAsync(1);
+      expect(await stopping).toBe(true);
+      expect(await ctx.getActiveRun!("alpha", target.sessionId)).toBeUndefined();
+      expect(await ctx.abortRun!("alpha", "webhook:alpha:events:stuck")).toBe(false);
+    } finally {
+      vi.useRealTimers();
+      lifecycle.finishRun();
+    }
+  });
+
   it("reads canonical full history from the explicit owner or shared store", async () => {
     const { writeTestV3Config } = await import("../test-utils/v3-config.js");
     await writeTestV3Config(tmpDir);

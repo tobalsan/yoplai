@@ -120,9 +120,14 @@ describe("webhook prompt frontmatter", () => {
     const emit = vi.fn();
     ctx.emit = emit;
     const info = vi.fn();
+    const warn = vi.fn();
     const error = vi.fn();
     ctx.logger.info = info;
+    ctx.logger.warn = warn;
     ctx.logger.error = error;
+    const abortRun = vi.fn<NonNullable<ExtensionContext["abortRun"]>>()
+      .mockResolvedValue(false);
+    ctx.abortRun = abortRun;
     setWebhooksRuntime({ ctx, secrets: { "sales:notion": "secret" } });
     const app = createApp();
     const request = (payload = "{}") =>
@@ -133,7 +138,7 @@ describe("webhook prompt frontmatter", () => {
           headers: { "content-type": "application/json" },
         })
       );
-    return { workspace, agent, app, request, runAgent, info, error, emit };
+    return { workspace, agent, app, request, ctx, runAgent, abortRun, info, warn, error, emit };
   }
 
   it("strips frontmatter and forwards model and reasoning without an auth override", async () => {
@@ -198,6 +203,165 @@ describe("webhook prompt frontmatter", () => {
     expect(hook.runAgent).not.toHaveBeenCalled();
     expect(hook.error).not.toHaveBeenCalled();
     expect(hook.emit).not.toHaveBeenCalled();
+  });
+
+  it("reuses the gate scope while retaining fresh request ids and gate env", async () => {
+    const hook = fixture("---\nscript: gate.sh\n---\nContext=$WEBHOOK_GATE_CONTEXT", {
+      "gate.sh": `printf '{"sessionScope":" external:42 ","context":"%s"}\\n' "$WEBHOOK_REQUEST_ID"\n`,
+    });
+    const first = await (await hook.request()).json() as { ok: boolean; requestId: string };
+    const second = await (await hook.request()).json() as { ok: boolean; requestId: string };
+    await vi.waitFor(() => expect(hook.runAgent).toHaveBeenCalledTimes(2));
+    expect(first).toEqual({ ok: true, requestId: expect.stringMatching(/^[0-9a-f-]{36}$/) });
+    expect(second).toEqual({ ok: true, requestId: expect.stringMatching(/^[0-9a-f-]{36}$/) });
+    expect(first.requestId).not.toBe(second.requestId);
+    expect(hook.runAgent.mock.calls.map(([params]) => params.sessionKey)).toEqual([
+      "webhook:sales:notion: external:42 ",
+      "webhook:sales:notion: external:42 ",
+    ]);
+    expect(hook.runAgent.mock.calls.map(([params]) => params.message)).toEqual(
+      expect.arrayContaining([`Context="${first.requestId}"`, `Context="${second.requestId}"`])
+    );
+    expect(hook.abortRun).not.toHaveBeenCalled();
+  });
+
+  it("waits for only the scoped abort before waking in the same session", async () => {
+    const hook = fixture("---\nscript: gate.sh\n---\nHandle stop", {
+      "gate.sh": 'echo \'{"sessionScope":"conversation-42","abort":true,"context":{"signal":"stop"}}\'\n',
+    });
+    let finishAbort!: (stopped: boolean) => void;
+    hook.abortRun.mockReturnValue(new Promise((resolve) => { finishAbort = resolve; }));
+    const response = await hook.request();
+    expect(response.status).toBe(200);
+    await vi.waitFor(() => expect(hook.abortRun).toHaveBeenCalledOnce());
+    expect(hook.abortRun).toHaveBeenCalledWith("sales", "webhook:sales:notion:conversation-42");
+    expect(hook.runAgent).not.toHaveBeenCalled();
+    finishAbort(true);
+    await vi.waitFor(() => expect(hook.runAgent).toHaveBeenCalledOnce());
+    expect(hook.runAgent.mock.calls[0]![0]).toMatchObject({
+      sessionKey: "webhook:sales:notion:conversation-42",
+      message: 'Handle stop\n\nGate context:\n{"signal":"stop"}',
+    });
+    expect(hook.info).toHaveBeenCalledOnce();
+    expect(hook.info).toHaveBeenCalledWith("[webhooks] sales/notion gate: abort", {
+      agentId: "sales", webhookName: "notion", sessionScope: "conversation-42", stopped: true,
+    });
+  });
+
+  it("aborts silently before honoring a skipped wake", async () => {
+    const hook = fixture("---\nscript: gate.sh\n---\nHandle stop", {
+      "gate.sh": 'echo \'{"sessionScope":"conversation-42","abort":true,"wakeAgent":false}\'\n',
+    });
+    hook.abortRun.mockResolvedValue(true);
+    await hook.request();
+    await vi.waitFor(() => expect(hook.info).toHaveBeenCalledWith("[webhooks] sales/notion gate: skipped"));
+    expect(hook.abortRun.mock.calls).toEqual([["sales", "webhook:sales:notion:conversation-42"]]);
+    expect(hook.runAgent).not.toHaveBeenCalled();
+    expect(hook.emit).not.toHaveBeenCalled();
+    expect(hook.info.mock.calls).toEqual([
+      ["[webhooks] sales/notion gate: abort", {
+        agentId: "sales", webhookName: "notion", sessionScope: "conversation-42", stopped: true,
+      }],
+      ["[webhooks] sales/notion gate: skipped"],
+    ]);
+  });
+
+  it("still wakes when the scoped abort finds no active run", async () => {
+    const hook = fixture("---\nscript: gate.sh\n---\nHandle stop", {
+      "gate.sh": 'echo \'{"sessionScope":"conversation-42","abort":true}\'\n',
+    });
+    await hook.request();
+    await vi.waitFor(() => expect(hook.runAgent).toHaveBeenCalledOnce());
+    expect(hook.abortRun.mock.calls).toEqual([["sales", "webhook:sales:notion:conversation-42"]]);
+    expect(hook.runAgent.mock.calls[0]![0].sessionKey).toBe("webhook:sales:notion:conversation-42");
+    expect(hook.info).toHaveBeenCalledWith("[webhooks] sales/notion gate: abort", {
+      agentId: "sales", webhookName: "notion", sessionScope: "conversation-42", stopped: false,
+    });
+  });
+
+  it.each(["missing", "rejected"])("logs a %s abort method and still wakes in scope", async (failure) => {
+    const hook = fixture("---\nscript: gate.sh\n---\nHandle stop", {
+      "gate.sh": 'echo \'{"sessionScope":"conversation-42","abort":true}\'\n',
+    });
+    if (failure === "missing") delete hook.ctx.abortRun;
+    else hook.abortRun.mockRejectedValue(new Error("stop failed"));
+    await hook.request();
+    await vi.waitFor(() => expect(hook.runAgent).toHaveBeenCalledOnce());
+    expect(hook.runAgent.mock.calls[0]![0].sessionKey).toBe("webhook:sales:notion:conversation-42");
+    if (failure === "missing") {
+      expect(hook.warn).toHaveBeenCalledWith("[webhooks] sales/notion gate: abortRun unavailable");
+    } else {
+      expect(hook.error).toHaveBeenCalledWith("[webhooks] sales/notion gate: abort failed", "stop failed");
+    }
+  });
+
+  it.each([undefined, null, 42, false, "", " \t\n"])(
+    "uses the request id and ignores abort for invalid scope %j",
+    async (sessionScope) => {
+      const hook = fixture("---\nscript: gate.sh\n---\nHandle alert", {
+        "gate.sh": `echo '${JSON.stringify({ sessionScope, abort: true })}'\n`,
+      });
+      const { requestId } = await (await hook.request()).json() as { requestId: string };
+      await vi.waitFor(() => expect(hook.runAgent).toHaveBeenCalledOnce());
+      expect(hook.runAgent.mock.calls[0]![0].sessionKey).toBe(`webhook:sales:notion:${requestId}`);
+      expect(hook.abortRun).not.toHaveBeenCalled();
+    }
+  );
+
+  it("isolates the same scope across webhook names and agents", async () => {
+    const hook = fixture("---\nscript: gate.sh\n---\nHandle stop", {
+      "gate.sh": 'echo \'{"sessionScope":"conversation-42","abort":true}\'\n',
+    });
+    hook.agent.webhooks!.github = { ...hook.agent.webhooks!.notion! };
+    const support = AgentConfigSchema.parse({ ...hook.agent, id: "support", name: "Support" });
+    hook.ctx.getAgent = (id) => [hook.agent, support].find((agent) => agent.id === id);
+    hook.ctx.isAgentActive = () => true;
+    setWebhooksRuntime({ ctx: hook.ctx, secrets: {
+      "sales:notion": "secret", "sales:github": "secret", "support:notion": "secret",
+    } });
+    await hook.request();
+    await hook.app.fetch(new Request("http://localhost/hooks/sales/github/secret", { method: "POST", body: "{}" }));
+    await hook.app.fetch(new Request("http://localhost/hooks/support/notion/secret", { method: "POST", body: "{}" }));
+    await vi.waitFor(() => expect(hook.runAgent).toHaveBeenCalledTimes(3));
+    expect(hook.runAgent.mock.calls.map(([params]) => params.sessionKey).sort()).toEqual([
+      "webhook:sales:github:conversation-42",
+      "webhook:sales:notion:conversation-42",
+      "webhook:support:notion:conversation-42",
+    ]);
+    expect(hook.abortRun.mock.calls.sort()).toEqual([
+      ["sales", "webhook:sales:github:conversation-42"],
+      ["sales", "webhook:sales:notion:conversation-42"],
+      ["support", "webhook:support:notion:conversation-42"],
+    ]);
+  });
+
+  it.each([
+    ["crash", 'echo \'{"sessionScope":"conversation-42","abort":true}\'\nexit 3\n'],
+    ["timeout", 'echo \'{"sessionScope":"conversation-42","abort":true}\'\nsleep 10\n'],
+    ["non-JSON", 'echo \'{"sessionScope":"conversation-42","abort":true}\'\necho invalid\n'],
+  ])("keeps the per-request session and never aborts after a gate %s", async (_reason, script) => {
+    const hook = fixture("---\nscript: gate.sh\nscriptTimeoutMs: 30\n---\nHandle alert", { "gate.sh": script });
+    const { requestId } = await (await hook.request()).json() as { requestId: string };
+    await vi.waitFor(() => expect(hook.runAgent).toHaveBeenCalledOnce());
+    expect(hook.runAgent.mock.calls[0]![0].sessionKey).toBe(`webhook:sales:notion:${requestId}`);
+    expect(hook.abortRun).not.toHaveBeenCalled();
+  });
+
+  it("uses the scoped session for failed-run lookup and trace events", async () => {
+    const hook = fixture("---\nscript: gate.sh\n---\nHandle alert", {
+      "gate.sh": 'echo \'{"sessionScope":"conversation-42"}\'\n',
+    });
+    hook.agent.webhooks!.notion!.langfuseTracing = true;
+    hook.runAgent.mockRejectedValue(new Error("agent failed"));
+    const getSessionEntry = vi.fn<ExtensionContext["getSessionEntry"]>()
+      .mockResolvedValue({ sessionId: "scoped-session", updatedAt: 0 });
+    hook.ctx.getSessionEntry = getSessionEntry;
+    await hook.request();
+    await vi.waitFor(() => expect(hook.emit).toHaveBeenCalledWith("agent.stream", expect.objectContaining({ type: "error" })));
+    expect(getSessionEntry.mock.calls).toEqual([["sales", "webhook:sales:notion:conversation-42"]]);
+    for (const [, event] of hook.emit.mock.calls) {
+      expect(event).toMatchObject({ sessionId: "scoped-session", sessionKey: "webhook:sales:notion:conversation-42" });
+    }
   });
 
   it("passes body and metadata to the gate and interpolates its structured context once", async () => {

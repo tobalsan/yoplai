@@ -1528,6 +1528,15 @@ export interface ExtensionContext {
     sessionId: string,
     sessionOwnerId?: string | null
   ): Promise<{ startedAt: number; taskTitle?: string } | undefined>;
+  /**
+   * Silently stop the mapped session's active run and wait boundedly for it to
+   * end. Returns false if idle or unknown; never creates a session or pauses a task.
+   */
+  abortRun?(
+    agentId: string,
+    sessionKey: string,
+    sessionOwnerId?: string | null
+  ): Promise<boolean>;
   resolveWorkspaceDir(agent: AgentConfig): string;
 
   // Agent execution

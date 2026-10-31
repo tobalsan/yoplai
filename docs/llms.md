@@ -319,6 +319,7 @@ In multi-user mode, a superadmin marks an agent workspace skill as System with `
 - queue mode buffers/follows active work; interrupt mode aborts current run then starts the new turn.
 - explicit `/abort` and `/stop` pause active durable tasks; ordinary durable-task follow-ups are forced to queue.
 - Optional `ExtensionContext.getActiveRun(agentId, sessionId, sessionOwnerId?)` exposes the streaming session's `startedAt` and only an active ledger task's title. Slack uses it after `meta.queued` to reply once per conversation/run, then add hourglass reactions; proactive DM replies omit the disabled `!stop` hint.
+- Optional `ExtensionContext.abortRun(agentId, sessionKey, sessionOwnerId?)` looks up the existing mapped session without creating one and returns whether an active run was stopped. It shares the `/abort` SDK interrupt, controller abort, and bounded streaming wait (force-clearing on timeout), but emits no acknowledgement/done events and does not pause durable tasks. Webhook callers pass no owner.
 - Session pins are append-only `meta` entries (`key: "pinned"`, value: timestamp or `null`); summaries read the latest value and expose `pinned: number | null`, without changing message recency. `PATCH /api/agents/:agentId/sessions/:sessionId` accepts `pinned: boolean` independently of `title`. The sidebar polls pins into Pinned above Recent (pins excluded from Recent), with the existing recency groups; its row menu offers Pin/Unpin, Move to project, Rename, Archive, and Delete (with icons and separator before Delete). Session and project row menus close on outside click, Escape, or item click; opening one menu closes any other open menu. Both menus share a body portal with fixed, viewport-clamped placement (8px inset, flipping above the trigger near the bottom), including transformed mobile drawers. They close on list scroll, window resize, or drawer close; a hover-expanded sidebar stays expanded while its menu is open.
 - Session archiving is an append-only `meta` entry (`key: "archived"`, value: timestamp or `null`); summaries read the latest value and expose `archived: number | null`. `PATCH /api/agents/:agentId/sessions/:sessionId` accepts `archived: boolean`; attempting to archive the MAIN session returns 400 `{ error: "Main session cannot be archived" }`. `GET /api/agents/sessions` excludes archived sessions by default; pass `?includeArchived=1` to include them (summaries still carry `archived`). Archiving does not modify `pinned` or `project` meta; restoring returns the chat to its prior sidebar location. `/archive` page (linked from sidebar footer in single-user or account menu in multi-user) lists archived sessions with Open, Restore, and Delete actions. Opening an archived session shows a banner "This chat is archived. Sending a message will restore it." with a Restore button; the banner disappears on restore. Sending a message to an archived session automatically unarchives it before the message is sent; if unarchiving fails, an error is shown and the message is not sent.
 - Sidebar account panel (multi-user only): the user's avatar/name/email row in the sidebar footer is a toggle button that opens a popover menu above the row with items: Account connections (`/account/connections`, icon `fa-plug`), Archive (`/archive`, icon `fa-box-archive`), separator, and Logout (icon `fa-right-from-bracket`). The menu closes on outside click, Escape, route change, or item click. Single-user mode has no account panel; the Archive link appears in the sidebar footer (below the theme toggle) in single-user mode, while multi-user accesses it via the account menu.
@@ -386,12 +387,19 @@ Extensions load through `extensions.<id>` unless documented auto-load compatibil
 | `slack`        | Slack Socket Mode transport, threads, files, proactive tools             | [README](../packages/extensions/slack/README.md)                     |
 | `subagents`    | Project-agnostic CLI subagent runtime                                    | [README](../packages/extensions/subagents/README.md)                 |
 | `telegram`     | Telegram transport and proactive delivery                                | [README](../packages/extensions/telegram/README.md)                  |
-| `webhooks`     | Signed inbound webhooks, prompt-file model/reasoning and fail-open script gates, isolated sessions | [`packages/extensions/webhooks`](../packages/extensions/webhooks/)   |
+| `webhooks`     | Signed inbound webhooks, prompt-file model/reasoning and fail-open gates, optional scoped sessions and aborts | [`packages/extensions/webhooks`](../packages/extensions/webhooks/)   |
 
 Webhook `.md`/`.txt` prompt files are read on each request and accept strict YAML
 frontmatter (`model`, `reasoning`, `script`, `scriptTimeoutMs`). Gates receive
 request stdin and metadata env; final-line `wakeAgent: false` skips without a
-session/trace, while execution failures wake the agent. Invalid frontmatter or
+new session/trace. A non-empty-after-trimming string `sessionScope` is used
+verbatim in `webhook:<agentId>:<name>:<scope>`; absent or invalid scope keeps the
+fresh request-id key. Exact `abort: true` with a valid scope calls optional
+`ExtensionContext.abortRun` before skipping or waking in that session. Abort
+errors or missing host support log and allow the wake; execution failures,
+empty output and non-JSON output wake with a per-request key and no abort.
+Scoped follow-ups use the configured queue policy (active durable tasks force
+queue). Invalid frontmatter or
 workspace-escaping script paths reject the run. The Node-only shared script
 runner (`@yoplai/shared/node/script`) owns containment, output limits, timeouts,
 and owner-scoped shutdown for scheduler and webhook callers. See [webhooks](webhooks.md#frontmatter).
