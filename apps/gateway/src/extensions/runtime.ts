@@ -5,6 +5,8 @@ import type {
   ExtensionAgentToolContext,
   ExtensionHookContext,
   ExtensionRunInfo,
+  ExtensionChatCommand,
+  ExtensionReplyReviewer,
   GatewayConfig,
   OAuthRequirement,
   ResolvedOAuth,
@@ -105,6 +107,8 @@ export type LoadedExtensionAgentTool = ExtensionAgentTool & {
   extensionId: string;
   extensionDescription?: string;
 };
+
+export type LoadedReplyReviewer = { extensionId: string; reviewer: ExtensionReplyReviewer };
 
 export type ExtensionRouteMetadata = {
   id: string;
@@ -307,6 +311,47 @@ export class ExtensionRuntime {
     return (await this.getTools(agent, config, userId, identity, true)).find(
       (tool) => tool.name === toolName
     );
+  }
+
+  reviewsReplies(agent: AgentConfig, config?: GatewayConfig): boolean {
+    return this.#extensions.some((extension) =>
+      this.isEnabled(extension.id, config) &&
+      agent.extensions?.[extension.id]?.enabled !== false &&
+      extension.reviewsReplies?.(agent) === true
+    );
+  }
+
+  async getReplyReviewers(
+    agent: AgentConfig, config: GatewayConfig, workspaceDir: string, sessionId: string,
+    userId?: string, identity?: RunIdentity
+  ): Promise<LoadedReplyReviewer[]> {
+    const reviewers: LoadedReplyReviewer[] = [];
+    for (const extension of this.#extensions) {
+      if (!extension.getReplyReviewer || !this.isEnabled(extension.id, config) || agent.extensions?.[extension.id]?.enabled === false) continue;
+      const scoped = resolveExtensionTokenConfig(extension, agent, config, userId);
+      const reviewer = await extension.getReplyReviewer(scoped.agent, {
+        ...buildHookContext(scoped.agent, scoped.config, userId, { ...identity, sessionId }),
+        workspaceDir, sessionId,
+      });
+      if (reviewer) reviewers.push({ extensionId: extension.id, reviewer });
+    }
+    return reviewers;
+  }
+
+  async getChatCommands(
+    agent: AgentConfig, config: GatewayConfig, workspaceDir: string, sessionId: string,
+    userId?: string, identity?: RunIdentity
+  ): Promise<ExtensionChatCommand[]> {
+    const commands: ExtensionChatCommand[] = [];
+    for (const extension of this.#extensions) {
+      if (!extension.getChatCommands || !this.isEnabled(extension.id, config) || agent.extensions?.[extension.id]?.enabled === false) continue;
+      const scoped = resolveExtensionTokenConfig(extension, agent, config, userId);
+      commands.push(...await extension.getChatCommands(scoped.agent, {
+        ...buildHookContext(scoped.agent, scoped.config, userId, { ...identity, sessionId }),
+        workspaceDir, sessionId,
+      }));
+    }
+    return commands;
   }
 
   async executeTool(

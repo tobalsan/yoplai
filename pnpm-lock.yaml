@@ -185,6 +185,9 @@ importers:
       '@yoplai/extension-heartbeat':
         specifier: workspace:*
         version: link:../../packages/extensions/heartbeat
+      '@yoplai/extension-human-chat':
+        specifier: workspace:*
+        version: link:../../packages/extensions/human-chat
       '@yoplai/extension-irc':
         specifier: workspace:*
         version: link:../../packages/extensions/irc
@@ -242,9 +245,6 @@ importers:
       hono:
         specifier: ^4.11.4
         version: 4.11.4
-      human-chat:
-        specifier: file:/Users/thinh/code/agentropy/human-chat
-        version: file:../../code/agentropy/human-chat
       js-yaml:
         specifier: ^4.1.1
         version: 4.1.1
@@ -297,6 +297,10 @@ importers:
       tsx:
         specifier: ^4.21.0
         version: 4.21.0
+    optionalDependencies:
+      human-chat:
+        specifier: github:agentropie/human-chat
+        version: https://codeload.github.com/agentropie/human-chat/tar.gz/35c936de48ded48f663db73037b7c028c60d80fb
 
   apps/web:
     dependencies:
@@ -432,6 +436,19 @@ importers:
       hono:
         specifier: ^4.11.4
         version: 4.11.4
+
+  packages/extensions/human-chat:
+    dependencies:
+      '@yoplai/shared':
+        specifier: workspace:*
+        version: link:../../shared
+      zod:
+        specifier: ^3.25.76
+        version: 3.25.76
+    optionalDependencies:
+      human-chat:
+        specifier: github:agentropie/human-chat
+        version: https://codeload.github.com/agentropie/human-chat/tar.gz/35c936de48ded48f663db73037b7c028c60d80fb
 
   packages/extensions/irc:
     dependencies:
@@ -3390,8 +3407,9 @@ packages:
     resolution: {integrity: sha512-ag87y7cJJ9/3+GxFr8Oy4O5faDsGRGnBGsJj/YjOSsSx/5eadKLYTMPlzuR6obgoCDDm0abAAZitXXQkMOPSpA==}
     engines: {node: '>= 20'}
 
-  human-chat@file:../../code/agentropy/human-chat:
-    resolution: {directory: ../../code/agentropy/human-chat, type: directory}
+  human-chat@https://codeload.github.com/agentropie/human-chat/tar.gz/35c936de48ded48f663db73037b7c028c60d80fb:
+    resolution: {gitHosted: true, integrity: sha512-2zmGrADhz0/i99EcYdrahRwyJ7RpyhyOZMoibDzFTwvUvll0tlP6edOFKrVLdOiaSgds1rJuo9ld2Zx6CkfiBA==, tarball: https://codeload.github.com/agentropie/human-chat/tar.gz/35c936de48ded48f663db73037b7c028c60d80fb}
+    version: 0.1.0
     engines: {node: '>=22'}
     hasBin: true
 
@@ -7612,7 +7630,8 @@ snapshots:
       - kerberos
       - supports-color
 
-  human-chat@file:../../code/agentropy/human-chat: {}
+  human-chat@https://codeload.github.com/agentropie/human-chat/tar.gz/35c936de48ded48f663db73037b7c028c60d80fb:
+    optional: true
 
   iconv-lite@0.7.2:
     dependencies:

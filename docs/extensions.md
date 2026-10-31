@@ -27,6 +27,7 @@ Some messaging transports retain supported per-agent compatibility config. Webho
 | `board`        | Board shell, projections, scratchpad       | [package README](../packages/extensions/board/README.md)                                    |
 | `discord`      | Discord guild/DM/forum transport           | [Discord guide](discord.md) / [package README](../packages/extensions/discord/README.md)    |
 | `heartbeat`    | Periodic check-ins, scheduler-gated        | [Scheduling](scheduling.md)                                                                 |
+| `human-chat`   | Short replies with one hidden rewrite     | [Short chat replies](#short-chat-replies-human-chat)                                         |
 | `irc`          | IRC transport                              | [package README](../packages/extensions/irc/README.md)                                      |
 | `langfuse`     | Agent tracing and observations             | package source/config schema                                                                |
 | `mattermost`   | Mattermost channel/thread/DM transport     | [Messaging channels](channels.md#mattermost) / [package README](../packages/extensions/mattermost/README.md) |
@@ -42,21 +43,23 @@ Some messaging transports retain supported per-agent compatibility config. Webho
 
 ## Short chat replies (`human-chat`)
 
-Opt-in for each agent, off by default:
+The optional `@yoplai/extension-human-chat` package provides this feature, using the `human-chat` library from `github:agentropie/human-chat`. Opt-in for each agent, off by default:
 
 ```yaml
 # agent.yaml
 extensions:
   human-chat: {}        # or a bare `human-chat:` key. `enabled: false` turns it off
   # human-chat:
-  #   log: data/human-chat/long-mode.jsonl   # default, relative to the workspace
-  #   max_sentences: 5       # limits: all optional. The core sets the defaults shown here
+  #   log: /path/to/long-mode.jsonl  # default: <workspace>/data/human-chat/long-mode.jsonl
+  #   max_sentences: 5       # limits: all optional. The human-chat library sets these defaults
   #   sentence_leeway: 0     # extra sentences allowed before the lint fails
   #   max_sentence_words: 25
   #   word_leeway: 5         # extra words allowed in a sentence before the lint fails
 ```
 
-When on, replies to a human follow the human-chat rules: one topic, 1-5 sentences, at most one question. Human sources are web, Telegram, Discord, Slack, Mattermost, and IRC. The agent gets the rules in its system prompt, a nudge on each human turn, and a `reply_mode` tool to declare long mode. The gateway holds the reply until the turn ends and lints it. On a failure, it asks the agent for one hidden rewrite. Live streaming stops for these turns, and a follow-up message waits for its own turn. The gateway does not shape scheduler, heartbeat, webhook, agent-sender, or background runs. A message that is exactly `/topics` lists the open topic plans in `<workspace>/topics/`. Internals: [llms.md](llms.md).
+When on, replies to a human follow the human-chat rules: one topic, 1-5 sentences, at most one question. Human sources are web, Telegram, Discord, Slack, Mattermost, and IRC. The agent gets the rules in its system prompt, a nudge on each human turn, and a `reply_mode` tool to declare long mode. The extension reviews the held reply when the turn ends; on failure, the gateway asks for one hidden rewrite and delivers that rewrite even if it fails review again. Live streaming stops for these turns, and a follow-up message waits for its own turn. Scheduler, heartbeat, webhook, agent-sender, background, and compaction runs keep their normal behavior. A message that is exactly `/topics` after trimming lists the open topic plans in `<workspace>/topics/` without calling the model. Internals: [llms.md](llms.md).
+
+The gateway imports the package only when an agent opts in. If the package or one of its dependencies is missing, startup and config reload continue with human-chat unavailable; each enabled agent gets an error identifying the agent, extension, package, and underlying import failure. Other extension failures retain their existing behavior.
 
 ## External extensions
 
@@ -65,6 +68,14 @@ External extensions load from `extensionsPath`, or `$YOPLAI_HOME/extensions` by 
 Extensions can contribute routes, services, lifecycle hooks, capabilities, CLI commands, web routes, prompt text, tools, delivery sinks, and OAuth requirements. Tool bundles use `packages/shared/src/tool-extension.ts` and object-shaped Zod parameter schemas.
 
 Secrets resolve before extension validation. Missing IDs and invalid config fail or warn at startup according to extension contract. Missing tool-extension tokens remain configurable at runtime: affected calls return a configuration link while unrelated tools keep working. Agent-local `.env` lets two agents reuse names such as `SLACK_TOKEN` without sharing values.
+
+### Chat commands and reply review
+
+Extensions can implement `getChatCommands(agent, context)` to return commands matched against the complete, trimmed incoming message. Each command's `run(context)` returns its reply without a model turn. `ExtensionTurnContext` extends the normal hook context with the resolved `workspaceDir` and `sessionId`.
+
+For reply review, `reviewsReplies(agent)` prevents follow-ups from steering into an active turn, while `getReplyReviewer(agent, context)` selects the turns to review. Creating a reviewer must have no side effects: `begin()` and `end()` own its per-turn state. A reviewer may provide a `nudge`; `review(draft)` returns `{ ok: true }` or `{ ok: false, rewriteHint }`; optional `done(verdict, { rewritten })` observes its final verdict. The gateway holds reply text and history, combines all failing reviewers' hints into one hidden rewrite, reviews the rewrite once, then delivers it. Silent and aborted replies do not call `done`.
+
+These hooks are optional; extensions without them keep their existing behavior. `ExtensionAgentTool.core: true` keeps a tool directly declared on the host Pi adapter when deferred tool loading is enabled.
 
 ### Tool result schemas
 

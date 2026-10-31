@@ -1,0 +1,22 @@
+{
+  "name": "@yoplai/extension-human-chat",
+  "version": "0.1.0",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "development": "./src/index.ts",
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "scripts": { "build": "tsc" },
+  "dependencies": {
+    "@yoplai/shared": "workspace:*",
+    "zod": "^3.25.76"
+  },
+  "optionalDependencies": {
+    "human-chat": "github:agentropie/human-chat"
+  }
+}

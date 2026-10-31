@@ -1,17 +1,22 @@
-import { mkdtemp } from "node:fs/promises";
+import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { GatewayConfigSchema } from "@yoplai/shared";
-import { loadExtensions } from "../extensions/registry.js";
+import { loadExtensions } from "./registry.js";
 
 async function loadedIds(extensions?: Record<string, unknown>) {
+  const extensionsPath = await mkdtemp(path.join(tmpdir(), "yoplai-empty-extensions-"));
   const config = GatewayConfigSchema.parse({
     version: 2,
-    extensionsPath: await mkdtemp(path.join(tmpdir(), "yoplai-empty-extensions-")),
+    extensionsPath,
     agents: [{ id: "main", name: "Main", workspace: "~/agents/main", model: { provider: "anthropic", model: "claude" }, extensions }],
   });
-  return (await loadExtensions(config)).map((e) => e.id);
+  try {
+    return (await loadExtensions(config)).map((e) => e.id);
+  } finally {
+    await rm(extensionsPath, { recursive: true, force: true });
+  }
 }
 
 describe("human-chat registration", () => {

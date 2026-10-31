@@ -27,6 +27,7 @@ export default defineConfig({
       },
       { find: "@yoplai/shared", replacement: sharedSrc },
       // Extension aliases — keep vitest using src/ to avoid dist/ singleton splits
+      { find: "@yoplai/extension-human-chat", replacement: extSrc("human-chat") },
       { find: "@yoplai/extension-heartbeat", replacement: extSrc("heartbeat") },
       { find: "@yoplai/extension-scheduler", replacement: extSrc("scheduler") },
       { find: "@yoplai/extension-langfuse", replacement: extSrc("langfuse") },

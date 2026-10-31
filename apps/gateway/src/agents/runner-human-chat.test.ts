@@ -2,18 +2,21 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import type { AgentConfig, StreamEvent } from "@yoplai/shared";
+import { z } from "zod";
+import { ExtensionRuntime } from "../extensions/runtime.js";
+import type { AgentConfig, Extension, StreamEvent } from "@yoplai/shared";
 import type { SdkRunParams } from "../sdk/types.js";
 
-const getAgent = vi.fn();
-const getSdkAdapter = vi.fn();
-const emitHistoryEvent = vi.fn();
+const { getAgent, getSdkAdapter, emitHistoryEvent } = vi.hoisted(() => ({
+  getAgent: vi.fn(), getSdkAdapter: vi.fn(), emitHistoryEvent: vi.fn(),
+}));
 
 vi.mock("../config/index.js", () => ({
   CONFIG_DIR: "/tmp/yoplai-human-chat-test",
   getAgent,
   loadConfig: vi.fn(() => ({ agents: [], extensions: {}, sessions: {} })),
   resolveWorkspaceDir: (workspace: string) => workspace,
+  resolveAgentEnv: () => ({}),
 }));
 vi.mock("./quota-notification.js", () => ({ notifyProviderQuota: vi.fn() }));
 vi.mock("../sdk/registry.js", () => ({ getSdkAdapter, getDefaultSdkId: () => "pi" }));
@@ -51,7 +54,25 @@ const LONG = "One. Two. Three. Four. Five. Six sentences in total.";
 const SHORT = "Here is the short answer.";
 
 let dir: string;
-let log: string;
+const review = vi.fn();
+const done = vi.fn();
+const begin = vi.fn();
+const end = vi.fn();
+let runtime: ExtensionRuntime;
+
+const fakeExtension: Extension = {
+  id: "short-replies", displayName: "Short replies", description: "Test reply reviewer",
+  dependencies: [], routePrefixes: [], configSchema: z.object({}),
+  validateConfig: () => ({ valid: true, errors: [] }), registerRoutes() {},
+  async start() {}, async stop() {}, capabilities: () => [],
+  reviewsReplies: (agent) => Boolean(agent.extensions?.["short-replies"]),
+  getReplyReviewer(agent) {
+    if (!agent.extensions?.["short-replies"]) return;
+    return { nudge: "Reply on one topic.", begin, review, done, end };
+  },
+  getChatCommands: (agent) => agent.extensions?.["short-replies"]
+    ? [{ command: "/status", run: () => "Ready." }] : [],
+};
 
 function agent(extensions?: Record<string, unknown>): AgentConfig {
   return {
@@ -82,7 +103,6 @@ function scriptedAdapter(
   return run;
 }
 
-const humanHook = { config: {}, run: { source: "web", sessionId: "s1" } } as never;
 
 function pause() {
   let release!: () => void;
@@ -107,6 +127,7 @@ async function turn(over: Record<string, unknown> = {}, tap?: (e: StreamEvent) =
     message: "hi",
     sessionId: "s1",
     source: "web",
+    extensionRuntime: runtime,
     ...over,
     onEvent: (e: StreamEvent) => {
       events.push(e);
@@ -116,17 +137,17 @@ async function turn(over: Record<string, unknown> = {}, tap?: (e: StreamEvent) =
   return { events, result, text: events.filter((e) => e.type === "text").map((e) => (e as { data: string }).data) };
 }
 
-const readLog = async () =>
-  (await fs.readFile(log, "utf8").catch(() => "")).split("\n").filter(Boolean).map((l) => JSON.parse(l));
-
 beforeEach(async () => {
   vi.clearAllMocks();
-  dir = await fs.mkdtemp(path.join(os.tmpdir(), "human-chat-"));
-  log = path.join(dir, "long.jsonl");
-  getAgent.mockImplementation(() => agent({ "human-chat": { log } }));
+  review.mockReset().mockImplementation((draft: string) => draft.includes("Six sentences")
+    ? { ok: false, rewriteHint: "Shorten the reply." } : { ok: true });
+  dir = await fs.mkdtemp(path.join(os.tmpdir(), "reply-review-"));
+  runtime = new ExtensionRuntime();
+  runtime.load([fakeExtension]);
+  getAgent.mockImplementation(() => agent({ "short-replies": {} }));
 });
 
-describe("human-chat adapter in runAgent", () => {
+describe("extension reply review in runAgent", () => {
   it("off: streams deltas as before and adds no nudge", async () => {
     getAgent.mockImplementation(() => agent());
     const seen: number[] = [];
@@ -160,14 +181,15 @@ describe("human-chat adapter in runAgent", () => {
     expect(text).toEqual([SHORT]);
     expect(result.payloads).toEqual([{ text: SHORT }]);
     expect(run.mock.calls[0][0].nudge).toContain("Reply on one topic");
-    expect(await readLog()).toEqual([]);
+    expect(review).toHaveBeenCalledWith(SHORT);
+    expect(done).toHaveBeenCalledWith({ ok: true }, { rewritten: false });
   });
 
   it("fail: one hidden rewrite; user sees only the rewrite; history drops the draft", async () => {
     const run = scriptedAdapter([says(LONG), says(SHORT)]);
     const { text, result } = await turn();
     expect(run).toHaveBeenCalledTimes(2);
-    expect(run.mock.calls[1][0].message).toMatch(/^\[human-chat\] /);
+    expect(run.mock.calls[1][0].message).toMatch(/^\[short-replies\] /);
     expect(run.mock.calls[1][0].nudge).toBeUndefined();
     expect(text).toEqual([SHORT]);
     expect(result.payloads).toEqual([{ text: SHORT }]);
@@ -176,48 +198,12 @@ describe("human-chat adapter in runAgent", () => {
     expect(history).toContain(SHORT);
   });
 
-  it("fail twice: sends the rewrite, logs rewrite_failed, rewrites once", async () => {
+  it("fail twice: sends the rewrite, reports the verdict, rewrites once", async () => {
     const run = scriptedAdapter([says(LONG), says(`${LONG} Again.`)]);
     const { text } = await turn();
     expect(run).toHaveBeenCalledTimes(2);
     expect(text).toEqual([`${LONG} Again.`]);
-    const [line] = await readLog();
-    expect(line).toMatchObject({ agent: "alpha", session: "s1", event: "rewrite_failed", rules: ["too_many_sentences"] });
-  });
-
-  it("long mode via reply_mode tool: passes and logs without reply text", async () => {
-    const { humanChatExtension } = await import("../human-chat/index.js");
-    const run = scriptedAdapter([
-      async (p) => {
-        const [tool] = await humanChatExtension.getAgentTools!(agent({ "human-chat": {} }), humanHook);
-        await tool.execute(
-          { mode: "long", type: "steps", note: "install steps for user" },
-          { agent: agent(), config: {}, sessionId: "s1" } as never
-        );
-        return says(LONG)(p);
-      },
-    ]);
-    const { text } = await turn();
-    expect(run).toHaveBeenCalledTimes(1);
-    expect(text).toEqual([LONG]);
-    const [line] = await readLog();
-    expect(line).toMatchObject({ agent: "alpha", session: "s1", type: "steps", note: "install steps for user" });
-    expect(typeof line.words).toBe("number");
-    expect(JSON.stringify(line)).not.toContain("Six sentences");
-  });
-
-  it.each([
-    ["scheduler source", { source: "scheduler" }],
-    ["agent sender", { sender: { kind: "agent", agentId: "beta" } }],
-    ["background", { background: true }],
-    ["no source", { source: undefined }],
-    ["compaction session", { sessionId: "compact:1" }],
-  ])("skips: %s", async (_name, over) => {
-    const run = scriptedAdapter([says(LONG)]);
-    const { text } = await turn(over);
-    expect(run).toHaveBeenCalledTimes(1);
-    expect(run.mock.calls[0][0].nudge).toBeUndefined();
-    expect(text.length).toBeGreaterThan(1);
+    expect(done).toHaveBeenCalledWith({ ok: false, rewriteHint: "Shorten the reply." }, { rewritten: true });
   });
 
   it("NO_REPLY is never linted or rewritten", async () => {
@@ -225,83 +211,110 @@ describe("human-chat adapter in runAgent", () => {
     const { text } = await turn();
     expect(run).toHaveBeenCalledTimes(1);
     expect(text).toEqual([]);
+    expect(review).not.toHaveBeenCalled();
+    expect(done).not.toHaveBeenCalled();
   });
 
-  it("/topics lists open topics without a model call", async () => {
-    await fs.mkdir(path.join(dir, "topics"));
-    await fs.writeFile(
-      path.join(dir, "topics", "plan.md"),
-      `---\ntitle: Delivery\nupdated: ${new Date().toISOString()}\n---\n\n## [ ] First\nx\n\n## [ ] Second\ny\n\n## [x] Done\nz\n`
-    );
+  it("reviews a silent rewrite but does not report it as delivered", async () => {
+    const run = scriptedAdapter([says(LONG), says("NO_REPLY")]);
+    const { text, result } = await turn();
+    expect(run).toHaveBeenCalledTimes(2);
+    expect(review.mock.calls).toEqual([[LONG], [""]]);
+    expect(done).not.toHaveBeenCalled();
+    expect(text).toEqual([]);
+    expect(result.meta.silent).toBe(true);
+    expect(end).toHaveBeenCalledTimes(1);
+  });
+
+  it("ends review and releases held text/history when the adapter fails", async () => {
+    const emitted: StreamEvent[] = [];
+    scriptedAdapter([(params) => { says(SHORT)(params); throw new Error("provider failed"); }]);
+    await expect(turn({}, (event) => emitted.push(event))).rejects.toThrow("provider failed");
+    expect(end).toHaveBeenCalledTimes(1);
+    expect(review).not.toHaveBeenCalled();
+    expect(done).not.toHaveBeenCalled();
+    expect(emitted).toContainEqual({ type: "text", data: SHORT });
+    expect(JSON.stringify(emitHistoryEvent.mock.calls)).toContain(SHORT);
+  });
+
+  it("ends review without reviewing or logging an aborted result", async () => {
     const run = scriptedAdapter([]);
-    const { text } = await turn({ message: "/topics" });
+    run.mockImplementationOnce(async (params) => ({ text: says(SHORT)(params), aborted: true }));
+    const { result } = await turn();
+    expect(result.meta.aborted).toBe(true);
+    expect(begin).toHaveBeenCalledTimes(1);
+    expect(end).toHaveBeenCalledTimes(1);
+    expect(review).not.toHaveBeenCalled();
+    expect(done).not.toHaveBeenCalled();
+  });
+
+  it("releases the session and review state when begin fails", async () => {
+    begin.mockImplementationOnce(() => { throw new Error("review setup failed"); });
+    const run = scriptedAdapter([says(SHORT)]);
+    await expect(turn()).rejects.toThrow("review setup failed");
+    expect(end).toHaveBeenCalledTimes(1);
+    const next = await turn();
+    expect(next.result.meta.queued).not.toBe(true);
+    expect(next.text).toEqual([SHORT]);
+    expect(run).toHaveBeenCalledTimes(1);
+  });
+
+  it("settles every begun reviewer and the session when end fails", async () => {
+    const secondEnd = vi.fn();
+    runtime.load([fakeExtension, {
+      ...fakeExtension, id: "second-reviewer",
+      getReplyReviewer: () => ({ begin() {}, review: () => ({ ok: true }), end: secondEnd }),
+    }]);
+    end.mockImplementationOnce(() => { throw new Error("review cleanup failed"); });
+    scriptedAdapter([says(SHORT), says(SHORT)]);
+    const first = await turn();
+    expect(first.text).toEqual([SHORT]);
+    expect(secondEnd).toHaveBeenCalledTimes(1);
+    const next = await turn();
+    expect(next.result.meta.queued).not.toBe(true);
+    expect(next.text).toEqual([SHORT]);
+    expect(secondEnd).toHaveBeenCalledTimes(2);
+  });
+
+  it("runs every reviewer, joins failing hints, and still rewrites only once", async () => {
+    const secondReview = vi.fn().mockReturnValue({ ok: false, rewriteHint: "Use plain words." });
+    const secondDone = vi.fn();
+    const secondEnd = vi.fn();
+    runtime.load([fakeExtension, {
+      ...fakeExtension, id: "plain-words",
+      getReplyReviewer: () => ({ nudge: "Use familiar words.", begin() {}, review: secondReview, done: secondDone, end: secondEnd }),
+    }]);
+    const run = scriptedAdapter([says(LONG), says(SHORT)]);
+    const { text } = await turn();
+    expect(run).toHaveBeenCalledTimes(2);
+    expect(run.mock.calls[0][0].nudge).toBe("Reply on one topic.\n\nUse familiar words.");
+    expect(run.mock.calls[1][0].message).toBe("[short-replies] Shorten the reply.\n\n[plain-words] Use plain words.");
+    expect(review.mock.calls).toEqual([[LONG], [SHORT]]);
+    expect(secondReview.mock.calls).toEqual([[LONG], [SHORT]]);
+    expect(done).toHaveBeenCalledWith({ ok: true }, { rewritten: true });
+    expect(secondDone).toHaveBeenCalledWith({ ok: false, rewriteHint: "Use plain words." }, { rewritten: true });
+    expect(secondEnd).toHaveBeenCalledTimes(1);
+    expect(text).toEqual([SHORT]);
+  });
+
+  it("a chat command answers without a model call or a begun reviewer", async () => {
+    const run = scriptedAdapter([]);
+    const { text, events, result } = await turn({ message: "  /status  " });
     expect(run).not.toHaveBeenCalled();
-    expect(text).toEqual(["Delivery\n> First\n  Second"]);
-  });
-
-  it("/topics with no plans", async () => {
-    scriptedAdapter([]);
-    expect((await turn({ message: "/topics" })).text).toEqual(["No open topics."]);
-  });
-});
-
-describe("human-chat extension", () => {
-  it("is off without agent config: no tool, no rules", async () => {
-    const { humanChatExtension } = await import("../human-chat/index.js");
-    expect(await humanChatExtension.getAgentTools!(agent(), humanHook)).toEqual([]);
-    expect(await humanChatExtension.getSystemPromptContributions!(agent(), humanHook)).toBeUndefined();
-    expect(await humanChatExtension.getAgentTools!(agent({ "human-chat": { enabled: false } }), humanHook)).toEqual([]);
-  });
-
-  it("on: adds the rules and reply_mode; bad type lists the valid types", async () => {
-    const { humanChatExtension } = await import("../human-chat/index.js");
-    const on = agent({ "human-chat": {} });
-    expect(await humanChatExtension.getSystemPromptContributions!(on, humanHook)).toContain("## Chat replies");
-    const [tool] = await humanChatExtension.getAgentTools!(on, humanHook);
-    const ctx = { agent: on, config: {}, sessionId: "s9" } as never;
-    expect(await tool.execute({ mode: "long", type: "reference", note: "a b c" }, ctx)).toBe("Long mode on for this reply.");
-    expect(() => tool.execute({ mode: "long", type: "bogus", note: "a b c" }, ctx)).toThrow(/user_asked, comparison/);
-  });
-
-  it("rejects an invalid note, so the agent can fix it before the lint", async () => {
-    const { humanChatExtension } = await import("../human-chat/index.js");
-    const on = agent({ "human-chat": {} });
-    const [tool] = await humanChatExtension.getAgentTools!(on, humanHook);
-    const ctx = { agent: on, config: {}, sessionId: "s9" } as never;
-    for (const note of ["", "two words", undefined, 5]) {
-      expect(() => tool.execute({ mode: "long", type: "steps", note }, ctx)).toThrow(/note/);
-    }
-  });
-
-  it("a bare human-chat key (null) turns the adapter on", async () => {
-    const { humanChatExtension } = await import("../human-chat/index.js");
-    const on = agent({ "human-chat": null as never });
-    expect(await humanChatExtension.getSystemPromptContributions!(on, humanHook)).toContain("## Chat replies");
-    expect(await humanChatExtension.getAgentTools!(on, humanHook)).toHaveLength(1);
-  });
-
-  it.each([
-    ["scheduler source", { source: "scheduler" }],
-    ["agent sender", { source: "web", sender: { kind: "agent" } }],
-    ["background", { source: "web", background: true }],
-    ["no source", {}],
-    ["compaction session", { source: "web", sessionId: "compact:1" }],
-  ])("skipped turn (%s) gets no rules and no reply_mode tool", async (_name, run) => {
-    const { humanChatExtension } = await import("../human-chat/index.js");
-    const on = agent({ "human-chat": {} });
-    const hook = { config: {}, run: { sessionId: "s1", ...run } } as never;
-    expect(await humanChatExtension.getSystemPromptContributions!(on, hook)).toBeUndefined();
-    expect(await humanChatExtension.getAgentTools!(on, hook)).toEqual([]);
-    expect(await humanChatExtension.getAgentTools!(on)).toEqual([]);
+    expect(text).toEqual(["Ready."]);
+    expect(events.map((event) => event.type)).toEqual(["text", "done"]);
+    expect(result).toEqual({ payloads: [{ text: "Ready." }], meta: { durationMs: 0, sessionId: "s1" } });
+    expect(begin).not.toHaveBeenCalled();
+    expect(end).not.toHaveBeenCalled();
   });
 });
 
-describe("human-chat run isolation", () => {
+describe("reviewed turn isolation", () => {
   it("passes the run source, sender, and background flag to the adapter", async () => {
     const run = scriptedAdapter([says(SHORT)]);
     await turn({ source: "web", background: false });
     expect(run.mock.calls[0][0]).toMatchObject({ source: "web", background: false });
-    const skipped = scriptedAdapter([says(LONG)]);
+    const skipped = scriptedAdapter([says(SHORT)]);
     await turn({ source: "scheduler", sender: { kind: "agent", agentId: "b" } });
     expect(skipped.mock.calls[0][0]).toMatchObject({ source: "scheduler", sender: { kind: "agent" } });
   });
@@ -346,16 +359,14 @@ describe("human-chat run isolation", () => {
     expect(run.mock.calls[2][0].message).toBe("second");
   });
 
-  it("gives a queued message its own turn: nudge, short mode, own rewrite", async () => {
-    const { humanChatExtension } = await import("../human-chat/index.js");
+  it("gives a queued message its own turn: nudge, review, own rewrite", async () => {
+    review.mockReturnValueOnce({ ok: true });
     const queueMessage = vi.fn();
     const p = pause();
     const run = scriptedAdapter(
       [
         async (r) => {
           r.onSessionHandle?.({ name: "live handle" });
-          const [tool] = await humanChatExtension.getAgentTools!(agent({ "human-chat": {} }), humanHook);
-          await tool.execute({ mode: "long", type: "steps", note: "install steps for user" }, { agent: agent(), config: {}, sessionId: "s1" } as never);
           p.reached();
           await p.gate;
           return says(LONG)(r);
@@ -375,6 +386,6 @@ describe("human-chat run isolation", () => {
     expect(run).toHaveBeenCalledTimes(3);
     expect(run.mock.calls[1][0].message).toBe("second");
     expect(run.mock.calls[1][0].nudge).toContain("Reply on one topic");
-    expect(run.mock.calls[2][0].message).toMatch(/^\[human-chat\] /);
+    expect(run.mock.calls[2][0].message).toMatch(/^\[short-replies\] /);
   });
 });
