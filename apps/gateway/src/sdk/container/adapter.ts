@@ -2,6 +2,7 @@ import * as childProcess from "node:child_process";
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+import { createInterface } from "node:readline";
 import type {
   AgentConfig,
   ContainerDeliveryContext,
@@ -384,13 +385,34 @@ export function getContainerAdapter(): SdkAdapter {
           stdio: ["pipe", "pipe", "pipe"],
         });
         child.stderr?.on("data", (chunk: Buffer | string) => {
-          const text = chunk.toString();
-          stderr += text;
-          logInfo("[container] stderr", {
-            agentId: params.agentId,
-            message: text.trimEnd(),
-          });
+          stderr += chunk.toString();
         });
+        if (child.stderr) {
+          // readline buffers partial chunks, including split UTF-8 characters.
+          createInterface({ input: child.stderr, crlfDelay: Infinity }).on("line", (line) => {
+            logInfo("[container] stderr", {
+              agentId: params.agentId,
+              message: line.trimEnd(),
+            });
+            let event: unknown;
+            try {
+              event = JSON.parse(line);
+            } catch {
+              return;
+            }
+            if (
+              event && typeof event === "object" &&
+              "event" in event && event.event === "model_fallback" &&
+              "primaryFailureCategory" in event && event.primaryFailureCategory === "invalid_request" &&
+              "primaryFailure" in event && typeof event.primaryFailure === "string"
+            ) {
+              logError("[container] primary invalid request; fallback model attempted", event.primaryFailure, {
+                agentId: params.agentId,
+                primaryFailureCategory: "invalid_request",
+              });
+            }
+          });
+        }
         const extraNetwork = config.onecli?.sandbox?.network;
         if (extraNetwork) {
           await attachExtraNetwork(

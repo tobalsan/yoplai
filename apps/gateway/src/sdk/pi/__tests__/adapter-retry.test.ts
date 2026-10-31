@@ -535,7 +535,79 @@ describe("pi adapter transient provider retry", () => {
     });
   });
 
-  it("reports both failures when the fallback fails", async () => {
+  it("answers through the fallback after one tagged 400 attempt and logs the primary at error", async () => {
+    const agent = makeAgent({
+      retryMaxAttempts: 3,
+      fallback_model: { provider: "openai", model: "gpt-5" },
+    });
+    setLoadedConfig({ agents: [agent] } as GatewayConfig);
+    const session = makeSession();
+    const primaryFailure = '400 {"type":"error","error":{"type":"invalid_request_error","message":"invalid timeout parameter"}}';
+    session.prompt.mockImplementationOnce(async () => {
+      session.agent.state.messages.push(
+        { role: "user", content: [{ type: "text", text: "Say hi" }] },
+        erroredTurn(primaryFailure)
+      );
+    });
+    session.agent.continue.mockImplementationOnce(async () => {
+      session.agent.state.messages.push(successTurn("fallback answer"));
+    });
+    mockCreateAgentSession.mockResolvedValue({ session });
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    // Observe severity and message before the fallback provider starts.
+    session.setModel.mockImplementationOnce(async () => {
+      expect(error.mock.calls.map(([line]) => JSON.parse(String(line)))).toContainEqual(
+        expect.objectContaining({ level: "error", agentId: "pi-agent", message: primaryFailure })
+      );
+    });
+
+    const { piAdapter } = await import("../adapter.js");
+    await expect(piAdapter.run(makeRunParams(agent))).resolves.toEqual({
+      text: "fallback answer", aborted: false,
+    });
+    expect(session.setModel).toHaveBeenCalledWith({ provider: "openai", model: "gpt-5" });
+    expect(session.agent.continue).toHaveBeenCalledTimes(1);
+    expect(retryWarnings(warn)).toEqual([]);
+    const warnings = warn.mock.calls.map(([line]) => JSON.parse(String(line)));
+    expect(warnings.filter((entry) => entry.msg === "[agent] primary model attempt completed")).toHaveLength(1);
+    expect(warnings).toContainEqual(expect.objectContaining({
+      level: "warn",
+      msg: "[agent] fallback model attempt completed",
+      primaryFailure,
+      primaryFailureCategory: "invalid_request",
+      fallbackOutcome: "success",
+    }));
+  });
+
+  it("does not fall back on a 400 without the invalid-request tag", async () => {
+    const agent = makeAgent({
+      retryMaxAttempts: 3,
+      fallback_model: { provider: "openai", model: "gpt-5" },
+    });
+    setLoadedConfig({ agents: [agent] } as GatewayConfig);
+    const session = makeSession();
+    session.prompt.mockImplementationOnce(async () => {
+      session.agent.state.messages.push(
+        { role: "user", content: [{ type: "text", text: "Say hi" }] },
+        erroredTurn("400 Invalid request: mock fatal")
+      );
+    });
+    mockCreateAgentSession.mockResolvedValue({ session });
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    vi.spyOn(console, "error").mockImplementation(() => {});
+
+    const { piAdapter } = await import("../adapter.js");
+    await expect(piAdapter.run(makeRunParams(agent))).rejects.toThrow("400 Invalid request: mock fatal");
+    expect(session.setModel).not.toHaveBeenCalled();
+    expect(session.agent.continue).not.toHaveBeenCalled();
+    expect(retryWarnings(warn)).toEqual([]);
+  });
+
+  it.each([
+    "HTTP 503 Service Unavailable",
+    "400 invalid_request_error: invalid timeout parameter",
+  ])("reports both failures when the fallback fails after %s", async (primaryFailure) => {
     const agent = makeAgent({
       retryMaxAttempts: 1,
       fallback_model: { provider: "openai", model: "gpt-5" },
@@ -545,7 +617,7 @@ describe("pi adapter transient provider retry", () => {
     session.prompt.mockImplementationOnce(async () => {
       session.agent.state.messages.push(
         { role: "user", content: [{ type: "text", text: "Say hi" }] },
-        erroredTurn("HTTP 503 Service Unavailable")
+        erroredTurn(primaryFailure)
       );
     });
     session.agent.continue.mockRejectedValueOnce(new Error("fallback timed out"));
@@ -554,7 +626,7 @@ describe("pi adapter transient provider retry", () => {
     const { piAdapter } = await import("../adapter.js");
     const run = piAdapter.run(makeRunParams(agent));
     await expect(run).rejects.toThrow(
-      "Primary anthropic/claude-3-5-sonnet-20241022 failed: HTTP 503 Service Unavailable; fallback openai/gpt-5 failed: fallback timed out"
+      `Primary anthropic/claude-3-5-sonnet-20241022 failed: ${primaryFailure}; fallback openai/gpt-5 failed: fallback timed out`
     );
     await expect(run).rejects.toMatchObject({ kind: "generic" });
   });
@@ -673,14 +745,17 @@ describe("pi adapter transient provider retry", () => {
     ).toHaveLength(1);
   });
 
-  it("does not retry a non-transient failure", async () => {
+  it.each([
+    "Invalid request: mock fatal",
+    "400 invalid_request_error: invalid timeout parameter",
+  ])("does not retry a non-transient failure without a fallback: %s", async (primaryFailure) => {
     const agent = makeAgent();
     setLoadedConfig({ agents: [agent] } as GatewayConfig);
     const session = makeSession();
     session.prompt.mockImplementationOnce(async () => {
       session.agent.state.messages.push(
         { role: "user", content: [{ type: "text", text: "Say hi" }] },
-        erroredTurn("Invalid request: mock fatal")
+        erroredTurn(primaryFailure)
       );
     });
     mockCreateAgentSession.mockResolvedValue({ session });
@@ -690,7 +765,7 @@ describe("pi adapter transient provider retry", () => {
     const { piAdapter } = await import("../adapter.js");
 
     await expect(piAdapter.run(makeRunParams(agent))).rejects.toThrow(
-      "Agent error: Invalid request: mock fatal"
+      `Agent error: ${primaryFailure}`
     );
     expect(session.prompt).toHaveBeenCalledTimes(1);
     expect(session.agent.continue).not.toHaveBeenCalled();

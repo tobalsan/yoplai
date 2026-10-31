@@ -28,6 +28,7 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Fixed
 
+- Pi agents try their configured fallback once on HTTP 400 `invalid_request_error` without retrying the primary, preserving an error-level primary failure log on host and sandbox runs.
 - Validate extension tool parameters against JSON Schema 2020-12, repair unambiguous legacy forms, and warn and omit only invalid tools so sibling tools remain available.
 - Preserve Pi tool schemas through compaction persistence; add `scripts/repair-session-tools.ts` to dry-run or restore poisoned sessions with backups.
 - Missing API-key errors name the provider's actual environment variable, including `OPENCODE_API_KEY` for both OpenCode providers, with the existing derived hint retained for unknown providers.

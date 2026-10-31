@@ -154,10 +154,28 @@ export async function resumeAfterFailedTurn<M extends RetryableTurnMessage>(
   await session.agent.continue();
 }
 
+export function isInvalidRequestError(
+  error: unknown,
+  message: string
+): boolean {
+  return (
+    (getErrorStatus(error) === 400 || /\b400\b/.test(message)) &&
+    message.includes("invalid_request_error")
+  );
+}
+
+export function isFallbackEligibleError(
+  error: unknown,
+  message: string
+): boolean {
+  return isRetryableProviderError(error, message) || isInvalidRequestError(error, message);
+}
+
 export function isRetryableProviderError(
   error: unknown,
   message: string
 ): boolean {
+  if (isInvalidRequestError(error, message)) return false;
   const status = getErrorStatus(error);
   if (
     status === 408 ||
@@ -175,7 +193,8 @@ export function isRetryableProviderError(
 export function getProviderErrorCategory(
   error: unknown,
   message: string
-): "rate_limit" | "timeout" | "network" | "unavailable" | undefined {
+): "invalid_request" | "rate_limit" | "timeout" | "network" | "unavailable" | undefined {
+  if (isInvalidRequestError(error, message)) return "invalid_request";
   const status = getErrorStatus(error);
   if (status === 429 || /rate limit|too many requests|quota/i.test(message)) return "rate_limit";
   if (status === 408 || /timeout|timed out|etimedout/i.test(message)) return "timeout";
