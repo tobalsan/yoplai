@@ -4,7 +4,8 @@ import path from "node:path";
 import { sanitizeForStorage, sanitizeSensitiveText } from "../sanitize.js";
 
 /**
- * Pi replays system-message tool declarations (`toolsAdded`/`toolsRemoved`) as
+ * Pi replays system-message tool declarations (`toolsAdded`/`toolsRemoved`),
+ * including the system message captured by a compaction entry, as
  * the provider tool list, so they must stay verbatim: redacting schema keys
  * such as `assignee` (matches `sig`) makes the provider reject the tool schema.
  * They are model-facing declarations, not credentials.
@@ -12,13 +13,16 @@ import { sanitizeForStorage, sanitizeSensitiveText } from "../sanitize.js";
 function sanitizeSessionEntry(entry: unknown): unknown {
   const sanitized = sanitizeForStorage(entry);
   if (!isRecord(entry) || !isRecord(sanitized)) return sanitized;
-  const message = entry.message;
-  const sanitizedMessage = sanitized.message;
-  if (
-    entry.type !== "message" ||
-    !isRecord(message) ||
-    !isRecord(sanitizedMessage)
-  ) {
+  const holder =
+    entry.type === "message"
+      ? "message"
+      : entry.type === "compaction"
+        ? "systemMessage"
+        : undefined;
+  if (!holder) return sanitized;
+  const message = entry[holder];
+  const sanitizedMessage = sanitized[holder];
+  if (!isRecord(message) || !isRecord(sanitizedMessage)) {
     return sanitized;
   }
   if (message.role === "system") {
@@ -29,6 +33,7 @@ function sanitizeSessionEntry(entry: unknown): unknown {
   // OpenAI Responses text signatures carry replay item IDs and phases, not
   // credentials. Preserve only the SDK's assistant text-block metadata.
   if (
+    entry.type === "message" &&
     message.role === "assistant" &&
     Array.isArray(message.content) &&
     Array.isArray(sanitizedMessage.content)

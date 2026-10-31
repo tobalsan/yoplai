@@ -97,6 +97,54 @@ describe("sanitizeSessionFile", () => {
     expect(storedUser.message.content).toBe("Use Bearer [REDACTED]");
   });
 
+  it("keeps compaction tool declarations verbatim while redacting its other content", async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-sanitize-"));
+    tempDirs.push(dir);
+    const file = path.join(dir, "session.jsonl");
+    const canary = "disposable-compaction-canary";
+    const toolsAdded = [
+      {
+        name: "scheduler_create_job",
+        description: "Create a job",
+        parameters: {
+          type: "object",
+          properties: {
+            credentialMode: { type: "string", enum: ["owner", "team"] },
+            pageToken: { type: "string" },
+            assignee: { type: "string" },
+            signature: { type: "string" },
+          },
+        },
+      },
+    ];
+    const toolsRemoved = [{ name: "design_signoff" }];
+    await fs.writeFile(
+      file,
+      JSON.stringify({
+        type: "compaction",
+        systemMessage: {
+          role: "system",
+          content: `apiKey=${canary}`,
+          toolsAdded,
+          toolsRemoved,
+        },
+        summary: `Use Bearer ${canary}`,
+        extra: { accessToken: canary },
+      })
+    );
+
+    await sanitizeSessionFile(file);
+
+    const stored = await fs.readFile(file, "utf8");
+    const entry = JSON.parse(stored);
+    expect(entry.systemMessage.toolsAdded).toEqual(toolsAdded);
+    expect(entry.systemMessage.toolsRemoved).toEqual(toolsRemoved);
+    expect(entry.systemMessage.content).toBe("apiKey=[REDACTED]");
+    expect(entry.summary).toBe("Use Bearer [REDACTED]");
+    expect(entry.extra.accessToken).toBe("[REDACTED]");
+    expect(stored).not.toContain(canary);
+  });
+
   it("exempts only assistant text-block replay metadata, not credentials", async () => {
     const dir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-sanitize-"));
     tempDirs.push(dir);

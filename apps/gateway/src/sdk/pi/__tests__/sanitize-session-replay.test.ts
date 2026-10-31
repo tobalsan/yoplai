@@ -16,6 +16,60 @@ import {
 import { createRuntimeSessionFile } from "@yoplai/shared/node/sanitize-session";
 
 describe("sanitize-session replay", () => {
+  it("replays compaction tools unchanged after durable persistence", async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-replay-"));
+    try {
+      const toolsAdded = [
+        {
+          name: "scheduler_create_job",
+          description: "Create a job",
+          parameters: {
+            type: "object",
+            properties: {
+              credentialMode: { type: "string", enum: ["owner", "team"] },
+              pageToken: { type: "string" },
+              assignee: { type: "string" },
+              signature: { type: "string" },
+            },
+          },
+        },
+      ];
+      const session = SessionManager.create(dir, path.join(dir, "runtime"));
+      session.appendMessage({
+        role: "system",
+        content: "Test prompt",
+        toolsAdded,
+        timestamp: 1,
+      });
+      const kept = session.appendMessage({
+        role: "user",
+        content: "Keep this turn",
+        timestamp: 2,
+      });
+      session.appendCompaction("Earlier conversation summarized", kept, 1000);
+      const persistentFile = path.join(dir, "durable", "session.jsonl");
+      const runtime = await createRuntimeSessionFile(persistentFile);
+      await fs.copyFile(session.getSessionFile()!, runtime.file);
+      await runtime.persist();
+
+      const messages =
+        SessionManager.open(persistentFile).buildSessionContext().messages;
+      const leading = messages[0];
+      expect(leading?.role).toBe("system");
+      if (leading?.role !== "system") throw new Error("Missing system message");
+      expect(leading.toolsAdded).toEqual(toolsAdded);
+      const context = normalizeContext({ messages: convertToLlm(messages) });
+      const normalized = context.messages[0];
+      expect(normalized?.role).toBe("system");
+      if (normalized?.role !== "system")
+        throw new Error("Missing normalized system message");
+      expect(normalized.toolsAdded).toEqual(toolsAdded);
+      expect(JSON.stringify(context)).not.toContain("[REDACTED]");
+    } finally {
+      await fs.rm(dir, { recursive: true, force: true });
+    }
+  });
+
   it("persists and reloads assistant text signatures for the next Responses turn", async () => {
     const dir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-replay-"));
     try {
