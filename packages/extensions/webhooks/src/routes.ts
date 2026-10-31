@@ -174,7 +174,7 @@ async function runWebhookAgent(params: {
   langfuseTracing: boolean;
   timestamp: string;
 }): Promise<void> {
-  const sessionKey = `webhook:${params.agent.id}:${params.webhookName}:${params.requestId}`;
+  let sessionKey = `webhook:${params.agent.id}:${params.webhookName}:${params.requestId}`;
   const trace = getTraceContext(params);
   let message: string | undefined;
 
@@ -209,6 +209,32 @@ async function runWebhookAgent(params: {
           },
         });
         const gate = parseWakeAgent(result.finalStdoutLine);
+        sessionKey = `webhook:${params.agent.id}:${params.webhookName}:${gate.sessionScope ?? params.requestId}`;
+        if (gate.abort) {
+          if (params.ctx.abortRun) {
+            try {
+              const stopped = await params.ctx.abortRun(params.agent.id, sessionKey);
+              params.ctx.logger.info(
+                `[webhooks] ${params.agent.id}/${params.webhookName} gate: abort`,
+                {
+                  agentId: params.agent.id,
+                  webhookName: params.webhookName,
+                  sessionScope: gate.sessionScope,
+                  stopped,
+                }
+              );
+            } catch (err) {
+              params.ctx.logger.error(
+                `[webhooks] ${params.agent.id}/${params.webhookName} gate: abort failed`,
+                errorMessage(err).split("\n")[0]
+              );
+            }
+          } else {
+            params.ctx.logger.warn(
+              `[webhooks] ${params.agent.id}/${params.webhookName} gate: abortRun unavailable`
+            );
+          }
+        }
         if (!gate.wake) {
           params.ctx.logger.info(
             `[webhooks] ${params.agent.id}/${params.webhookName} gate: skipped`

@@ -1300,8 +1300,9 @@ describe("SchedulerService script jobs", () => {
       sessions: { idleMinutes: 360 },
       agentFab: false,
     };
-    setSchedulerContext(context(config, runAgent));
-    return { scheduler: new SchedulerService(), runAgent, workspace };
+    const ctx = context(config, runAgent);
+    setSchedulerContext(ctx);
+    return { scheduler: new SchedulerService(), runAgent, workspace, ctx };
   }
 
   type JobState = {
@@ -1357,6 +1358,33 @@ describe("SchedulerService script jobs", () => {
 
     const [after] = (await scheduler.list("alpha")) as JobState[];
     expect(after?.state?.lastRunKind).toBe("silent_tick");
+  });
+
+  it.each([true, false])("ignores webhook session controls while honoring wakeAgent=%s", async (wakeAgent) => {
+    const runAgent = vi.fn().mockResolvedValue({
+      payloads: [], meta: { durationMs: 0, sessionId: "scheduled-session" },
+    });
+    const { scheduler, ctx } = await setup(
+      `echo '${JSON.stringify({ wakeAgent, sessionScope: "external-session", abort: true, context: { count: 2 } })}'\n`,
+      runAgent
+    );
+    const abortRun = vi.fn().mockResolvedValue(true);
+    ctx.abortRun = abortRun;
+    const job = await scheduler.add("alpha", {
+      name: "Gate",
+      schedule: { cron: "0 8 * * *", tz: "UTC" },
+      payload: jobPayload({ script: "bin/gate.sh", message: "Digest", sessionId: "scheduled-session" }),
+    });
+    expect((await scheduler.runNow("alpha", job.id)).status).toBe("ok");
+    expect(abortRun).not.toHaveBeenCalled();
+    if (wakeAgent) {
+      expect(runAgent).toHaveBeenCalledOnce();
+      expect(runAgent).toHaveBeenCalledWith(expect.objectContaining({
+        sessionId: "scheduled-session", message: 'Digest\n\nGate context:\n{"count":2}',
+      }));
+    } else {
+      expect(runAgent).not.toHaveBeenCalled();
+    }
   });
 
   it("wakes the agent with the gate context appended to the message", async () => {

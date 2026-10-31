@@ -46,6 +46,8 @@ export class ScriptExecutionError extends Error {
 export type WakeAgentResult = {
   wake: boolean;
   context?: string;
+  sessionScope?: string;
+  abort?: boolean;
 };
 
 /** Invalid containment, distinct from a missing or unlaunchable script. */
@@ -281,7 +283,8 @@ async function drainStdio(
  * Parses a script's final stdout line as the wakeAgent gate signal.
  * `{"wakeAgent": false}` silences the tick; anything else (including
  * missing/non-JSON/empty input) defaults to waking the agent, carrying the
- * serialized `context` value along when present.
+ * serialized `context` value along when present. A nonblank string scope is
+ * preserved verbatim; only a scoped, exactly-true `abort` requests a stop.
  */
 export function parseWakeAgent(
   finalLine: string | undefined
@@ -299,12 +302,21 @@ export function parseWakeAgent(
     value !== null && typeof value === "object"
       ? (value as Record<string, unknown>)
       : undefined;
-  if (obj?.wakeAgent === false) return { wake: false };
+  const sessionScope =
+    typeof obj?.sessionScope === "string" && obj.sessionScope.trim()
+      ? obj.sessionScope
+      : undefined;
+  const sessionControl = {
+    ...(sessionScope !== undefined ? { sessionScope } : {}),
+    ...(sessionScope !== undefined && obj?.abort === true ? { abort: true } : {}),
+  };
+  if (obj?.wakeAgent === false) return { wake: false, ...sessionControl };
 
   const context = obj?.context;
   return {
     wake: true,
     context: context !== undefined ? JSON.stringify(context) : undefined,
+    ...sessionControl,
   };
 }
 

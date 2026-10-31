@@ -1,6 +1,6 @@
 # Webhooks
 
-Agent webhooks expose secret URLs that start isolated agent runs from external HTTP events.
+Agent webhooks expose secret URLs that start agent runs from external HTTP events, with per-request sessions by default and optional gate-controlled conversation sessions.
 
 ## Configure
 
@@ -40,7 +40,7 @@ Available interpolation:
 - `$WEBHOOK_PAYLOAD`
 - `$WEBHOOK_GATE_CONTEXT` — gate context serialized as JSON, or empty when absent
 
-Each request uses fresh `webhook:<agentId>:<name>:<requestId>` session. Langfuse uses `webhook` surface unless `langfuseTracing: false`.
+Each request uses a fresh `webhook:<agentId>:<name>:<requestId>` session unless its gate returns a valid `sessionScope`. Langfuse uses `webhook` surface unless `langfuseTracing: false`.
 
 ## Frontmatter
 
@@ -72,7 +72,16 @@ raw POST body, or the serialized query string for GET. The inherited environment
 is supplemented with `WEBHOOK_AGENT_ID`, `WEBHOOK_NAME`, `WEBHOOK_REQUEST_ID`,
 `WEBHOOK_ORIGIN_URL`, and `WEBHOOK_HEADERS` (JSON).
 
-The last non-empty stdout line decides whether the agent runs:
+The last non-empty stdout line can return these JSON fields:
+
+| Field | Meaning |
+| --- | --- |
+| `wakeAgent` | Only `false` skips the agent; otherwise it wakes. |
+| `context` | Serialized into `$WEBHOOK_GATE_CONTEXT`, or appended to the prompt when that variable is absent. |
+| `sessionScope` | A string that is non-empty after trimming selects `webhook:<agentId>:<name>:<sessionScope>`. The value is used verbatim, without character or length limits. Missing, non-string, empty, or whitespace-only values keep the per-request session. |
+| `abort` | Only exact `true` with a valid `sessionScope` stops that session's active run, before deciding whether to wake. Without a valid scope it is ignored. |
+
+A gate can skip a request:
 
 ```json
 {"wakeAgent": false}
@@ -91,10 +100,34 @@ Context is serialized into `$WEBHOOK_GATE_CONTEXT`. If the template does not
 use that variable, context is appended as `\n\nGate context:\n<context>`.
 Request payloads and substituted values are never interpolated a second time.
 
+Return the same scope for follow-ups in one external conversation. Agent and
+webhook name remain part of the key, so scopes are isolated across agents and
+webhooks. Follow-ups during an active run use the agent's configured queue
+policy: default `queue` queues the turn, `interrupt` stops the current run, and
+an active durable task forces `queue`. Normal session idle reset still applies.
+
+For a stop signal that wakes the agent to post its final response:
+
+```json
+{"wakeAgent": true, "sessionScope": "<external-session-id>", "abort": true, "context": {"signal": "stop"}}
+```
+
+The abort waits for streaming to end, bounded by the existing abort timeout;
+after that timeout, streaming state is cleared so the wake can proceed. This
+is best effort, not a guarantee that provider execution has settled. It emits
+no acknowledgement and does not pause the session's durable task; the woken
+agent can pause it itself. Use `wakeAgent: false` with the scope and abort to
+stop silently (leaving any durable task active). Unknown or idle sessions are
+a harmless no-op and abort-only requests create no session. If the host lacks
+abort support or an abort fails, the error is logged and the wake still proceeds.
+
 Gate failures **fail open**: missing files, spawn errors, non-zero exits,
 signals, and timeouts log an error with agent, webhook, reason and stderr tail,
-then run the agent. Gates are killed when the webhooks extension stops.
-The HTTP response stays immediate and unchanged: `{ ok, requestId }`.
+then run the agent with the per-request session and no abort. Empty or non-JSON
+output also wakes with no scope or abort. Gates are killed when the webhooks
+extension stops. The HTTP response stays immediate and unchanged:
+`{ ok, requestId }`; `requestId` and the gate's `WEBHOOK_REQUEST_ID` remain fresh
+UUIDs for every request, including scoped requests.
 
 Invalid YAML, unknown keys, invalid values, or a script path escaping the
 workspace log an error naming the prompt file and do **not** run the agent.
