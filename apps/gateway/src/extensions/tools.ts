@@ -1,8 +1,10 @@
 import type { AgentConfig, GatewayConfig } from "@yoplai/shared";
 import type { ExtensionAgentToolContext, ExtensionRunInfo } from "@yoplai/shared";
 import { loadConfig } from "../config/index.js";
+import { logWarn } from "../logging.js";
 import { getExtensionRuntime } from "./registry.js";
 import type { ExtensionRuntime, LoadedExtensionAgentTool } from "./runtime.js";
+import { validateToolParameters } from "./tool-schema.js";
 
 export async function getExtensionAgentTools(
   agent: AgentConfig,
@@ -12,10 +14,17 @@ export async function getExtensionAgentTools(
   identity?: Pick<ExtensionAgentToolContext, "sessionOwnerId" | "requesterId" | "actorUserId" | "actorKind"> & ExtensionRunInfo
 ): Promise<LoadedExtensionAgentTool[]> {
   const tools = await runtime.getTools(agent, config, userId, identity);
-  return tools.map((tool) => ({
-    ...tool,
-    parameters: stripSchemaPatterns(tool.parameters) as Record<string, unknown>,
-  }));
+  return tools.flatMap((tool) => {
+    const result = validateToolParameters(stripSchemaPatterns(tool.parameters) as Record<string, unknown>);
+    if (result.ok) return [{ ...tool, parameters: result.schema }];
+    logWarn("Dropping extension tool with invalid parameters", {
+      agentId: agent.id,
+      extensionId: tool.extensionId,
+      toolName: tool.name,
+      reason: result.reason,
+    });
+    return [];
+  });
 }
 
 // Some providers (e.g. opencode-go) reject lookaround regexes such as the one
