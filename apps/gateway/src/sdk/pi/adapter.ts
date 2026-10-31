@@ -73,6 +73,21 @@ function runFailureError(message: string): Error {
 }
 
 const SESSIONS_DIR = path.join(CONFIG_DIR, "sessions");
+// Provider names whose Pi API-key environment variable differs from the id.
+const PROVIDER_API_KEY_ENV_VARS = new Map([
+  ["opencode", "OPENCODE_API_KEY"],
+  ["opencode-go", "OPENCODE_API_KEY"],
+  ["github-copilot", "COPILOT_GITHUB_TOKEN"],
+  ["google", "GEMINI_API_KEY"],
+  ["huggingface", "HF_TOKEN"],
+  ["moonshotai", "MOONSHOT_API_KEY"],
+  ["moonshotai-cn", "MOONSHOT_API_KEY"],
+  ["kimi-coding", "KIMI_API_KEY"],
+  ["vercel-ai-gateway", "AI_GATEWAY_API_KEY"],
+  ["azure", "AZURE_OPENAI_API_KEY"],
+  ["cloudflare-workers-ai", "CLOUDFLARE_API_KEY"],
+  ["cloudflare-ai-gateway", "CLOUDFLARE_API_KEY"],
+]);
 let piEnvLock: Promise<void> = Promise.resolve();
 
 async function ensureSessionsDir() {
@@ -440,8 +455,8 @@ export const piAdapter: SdkAdapter = {
           apiKey = getEnvApiKey(model.provider) ?? null;
         }
         if (!apiKey) {
-          // Format env var name: github-copilot -> GITHUB_COPILOT_API_KEY
-          const envVar = `${model.provider.toUpperCase().replace(/-/g, "_")}_API_KEY`;
+          const envVar = PROVIDER_API_KEY_ENV_VARS.get(model.provider)
+            ?? `${model.provider.toUpperCase().replace(/-/g, "_")}_API_KEY`;
           throw new Error(
             `No API key for provider: ${model.provider}. Set ${envVar} env var.`
           );

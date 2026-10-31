@@ -39,7 +39,7 @@ auth:
 reasoning: medium
 queueMode: queue
 system_files:
-  - SOUL.md
+  - PERSONA.md
   - USER.md
 extensions:
   scheduler:
@@ -76,7 +76,7 @@ Common fields:
 | `sandbox`                             | Per-agent Docker isolation settings                         |
 | `onecliToken`                         | Per-agent OneCLI proxy token, usually `$env:...`            |
 
-On first run Yoplai creates missing `AGENTS.md`, `SOUL.md`, and `USER.md` without overwriting existing files.
+On first run Yoplai creates missing `AGENTS.md` and `USER.md` without overwriting existing files. Custom prompt files such as `PERSONA.md` in the example above must be created explicitly and listed in `system_files`.
 
 Pi turns that fail on a transient provider error (rate limit, 5xx, queue/backpressure hint, connection reset) are retried in place, on the host and inside the sandbox alike. Retry delays double after each attempt unless the provider supplies a `Retry-After` hint. Eligibility is per turn, not per run: only the failed assistant turn is dropped from the model context, then the run resumes in place, so tool calls and results from earlier turns are preserved and the user message is never re-sent. Partial text streamed by the failed turn is discarded with it. The dropped turn stays in the session transcript for history.
 

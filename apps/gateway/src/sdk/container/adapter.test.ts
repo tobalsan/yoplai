@@ -51,17 +51,15 @@ vi.mock("../../media/describe.js", () => ({
 }));
 
 vi.mock("@yoplai/shared/node/system-files", () => ({
-  resolveSystemFiles: vi.fn(async () => [{ path: "SOUL.md", content: "soul" }]),
+  resolveSystemFiles: vi.fn(async () => [{ path: "USER.md", content: "user" }]),
 }));
 
 vi.mock("../../agents/workspace.js", async () => {
   const fs = await import("node:fs");
-  const path = await import("node:path");
   return {
     FIRST_RUN_BOOTSTRAP_PROMPT: "first run bootstrap",
     ensureWorkspaceFiles: vi.fn(async (workspaceDir: string) => {
       fs.mkdirSync(workspaceDir, { recursive: true });
-      fs.writeFileSync(path.join(workspaceDir, "SOUL.md"), "soul");
       return false;
     }),
   };
@@ -138,7 +136,6 @@ function createAgent(
 ): AgentConfig {
   const workspace = path.join(root, "workspace");
   fs.mkdirSync(workspace, { recursive: true });
-  fs.writeFileSync(path.join(workspace, "SOUL.md"), "soul");
   return AgentConfigSchema.parse({
     id: "cloud",
     name: "Cloud",

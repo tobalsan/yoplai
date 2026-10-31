@@ -91,7 +91,7 @@ YAML
 
 Set `language` to `en` (the default) or `fr` to localize fixed messages shown when a run fails. The optional `notifications.adminChannel` points to a named entry under `notifications.channels`; quota failures notify that channel at most once per provider/model per hour. For example, the config above sends to the Slack channel configured as `ops`.
 
-Yoplai creates missing workspace prompt files (`AGENTS.md`, `SOUL.md`, and `USER.md`) on first run. You can edit them later to customize agent behavior.
+Yoplai creates missing workspace prompt files (`AGENTS.md` and `USER.md`) on first run. You can edit them later to customize agent behavior.
 
 Agents preserve stored OAuth credentials when `auth.mode: oauth` is set or `auth.mode` is omitted (automatic selection), including per-run model overrides and fallback models. Use `auth.mode: api_key` to require an API key instead of stored OAuth for the agent's configured model.
 

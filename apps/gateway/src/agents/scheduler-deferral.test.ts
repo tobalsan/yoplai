@@ -83,7 +83,7 @@ describe("scheduled Pi tool discovery", () => {
   it("searches and executes a deferred integration while preserving history and Langfuse tool observations", async () => {
     const workspace = path.join(setup.home, "workspace");
     await fs.mkdir(workspace, { recursive: true });
-    for (const name of ["AGENTS.md", "SOUL.md", "USER.md"]) {
+    for (const name of ["AGENTS.md", "USER.md"]) {
       await fs.writeFile(
         path.join(workspace, name),
         "Offline scheduled integration fixture."

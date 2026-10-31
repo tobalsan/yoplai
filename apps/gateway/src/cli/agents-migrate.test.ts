@@ -48,10 +48,10 @@ describe("agents migrate", () => {
     await fs.mkdir(alphaDir, { recursive: true });
     await fs.mkdir(betaDir, { recursive: true });
     await fs.writeFile(path.join(alphaDir, "AGENTS.md"), "prime");
-    await fs.writeFile(path.join(alphaDir, "SOUL.md"), "soul");
+    await fs.writeFile(path.join(alphaDir, "PERSONA.md"), "persona");
     await fs.writeFile(path.join(alphaDir, "USER.md"), "user");
     await fs.writeFile(path.join(alphaDir, "BOOTSTRAP.md"), "bootstrap");
-    await fs.writeFile(path.join(betaDir, "SOUL.md"), "soul");
+    await fs.writeFile(path.join(betaDir, "TOOLS.md"), "tools");
 
     const configPath = path.join(tmpDir, "yoplai.json");
     await fs.writeFile(
@@ -159,7 +159,7 @@ describe("agents migrate", () => {
       id: "alpha",
       name: "Alpha",
       heartbeat: { every: "30m", ackMaxChars: 100 },
-      system_files: ["SOUL.md", "USER.md", "BOOTSTRAP.md"],
+      system_files: ["USER.md", "BOOTSTRAP.md"],
     });
     expect(alphaYaml.system_files).not.toContain("AGENTS.md");
 

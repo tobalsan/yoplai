@@ -7,7 +7,6 @@ import type { SystemFileEntry } from "../types.js";
 export type ResolvedSystemFile = { path: string; absolutePath: string; content: string };
 
 export const DEFAULT_SYSTEM_FILES: Array<{ path: string; required: boolean }> = [
-  { path: "SOUL.md", required: true },
   { path: "USER.md", required: false },
 ];
 
