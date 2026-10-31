@@ -48,6 +48,7 @@ Important seams:
 - `RunAgentParams.userId` remains the requester for credentials and identity; `sessionOwnerId` selects persisted history/session storage (`undefined` defaults to requester, `null` means shared). Trusted `requesterId` distinguishes unpaired transport senders; different requesters queue separate turns with their own context, attachments, callbacks, and delivery target.
 - `normalizeRunRequest()` is the shared REST/WebSocket input normalization path.
 - `ExtensionRuntime` is the source of loaded routes, tools, prompt contributions, capabilities, and lifecycle state.
+- `getExtensionAgentTools()` strips patterns, then checks extension parameters against JSON Schema 2020-12 for both Pi and container runtimes. Valid schemas stay unchanged; only invalid schemas receive mechanical legacy repairs. Ambiguous or still-invalid tools are omitted with an agent/extension/tool/error warning, without logging schemas. Runtime-built and gateway-appended tools bypass this check; direct execution is unchanged.
 - Extension logging uses `ctx.logger.info/warn(message, fields)` and `ctx.logger.error(message, error, fields)` for top-level structured fields. Pass a short error string when full diagnostics belong only in persisted run/output artifacts. Thrown tool errors with integer HTTP status 400–499 or explicit `code: "invalid_input"` log at warning; unmarked validation errors remain errors.
 
 ### `apps/web`
@@ -246,6 +247,8 @@ Unless noted, paths are under `$YOPLAI_HOME`:
 | `tool-labels.json`                 | Maintenance-model-generated friendly tool-call label templates (`GET /api/tool-labels`) |
 
 Canonical history drives history APIs, web UI, Langfuse, compaction, channel context, and media blocks. Pi session files are SDK-owned runtime state; code may use them only for resume/backfill/fallback behavior. Session sanitization must preserve assistant text-block `textSignature` replay metadata (OpenAI Responses item ID/phase) verbatim; this session-only exception must not exempt credential fields from general storage redaction.
+
+Pi system-message `toolsAdded`/`toolsRemoved` declarations stay verbatim in both `message.message` and `compaction.systemMessage`; prompt text, summaries and other fields still undergo storage redaction. After deploying this fix, operators can inspect existing sessions with `pnpm exec tsx scripts/repair-session-tools.ts <sessions-directory>` (recursive, including per-user copies). Add `--write` only after reviewing the dry run: it restores whole redacted compaction declarations from the latest earlier clean declaration of the same name in that file, backs up each changed file to `.bak`, and refuses to overwrite an existing backup. Any missing source leaves the whole file untouched and is reported for operator reset; clean files are untouched. Invalid JSON lines and original line endings are preserved. Deploy before repair so subsequent persistence keeps repaired schemas intact.
 
 Multi-user mode scopes session maps and canonical history beneath `sessions/users/<userId>/`. There is no automatic migration from existing single-user history into user ownership.
 
