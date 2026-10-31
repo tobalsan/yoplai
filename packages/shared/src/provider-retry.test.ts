@@ -5,6 +5,8 @@ import {
   isReplayableFailedTurn,
   getRetryDelaySeconds,
   isRetryableProviderError,
+  isInvalidRequestError,
+  isFallbackEligibleError,
   resumeAfterFailedTurn,
   runTurnWithProviderRetry,
   type RetryableTurnMessage,
@@ -12,6 +14,48 @@ import {
 
 const RELACE_ERROR =
   "Upstream error from Relace: Queued past the 0.2s queue-time bound. Retry after 2s.";
+
+const INVALID_REQUEST_ERROR =
+  '400 {"type":"error","error":{"type":"invalid_request_error","message":"tools.4.custom.input_schema: JSON schema is invalid"}}';
+
+describe("invalid-request fallback eligibility", () => {
+  it("recognizes a structured HTTP 400 with the tag in the message", () => {
+    expect(isInvalidRequestError({ status: 400 }, "invalid_request_error: bad schema")).toBe(true);
+    expect(isFallbackEligibleError({ status: 400 }, "invalid_request_error: bad schema")).toBe(true);
+  });
+
+  it.each([
+    [{ status: 400 }, "Invalid request: mock fatal"],
+    [undefined, "invalid_request_error: unknown parameter 'temperatur'"],
+    [{ status: 401 }, "401 authentication_error: invalid x-api-key"],
+    [{ status: 403 }, "403 permission_error: access denied"],
+    [{ status: 404 }, "404 not_found_error: model not found"],
+    [{ status: 413 }, "413 request too large"],
+    [undefined, "context_length_exceeded"],
+    [undefined, "1400 invalid_request_error: bad schema"],
+  ])("does not add fallback eligibility for %j and %s", (source, message) => {
+    expect(isInvalidRequestError(source, message)).toBe(false);
+    expect(isFallbackEligibleError(source, message)).toBe(false);
+    expect(getProviderErrorCategory(source, message)).toBeUndefined();
+  });
+
+  it("keeps transient fallback eligibility", () => {
+    expect(isFallbackEligibleError({ status: 429 }, "rate limited")).toBe(true);
+    expect(isFallbackEligibleError(undefined, RELACE_ERROR)).toBe(true);
+  });
+
+  it("falls back without retrying a tagged HTTP 400, even with a timeout keyword", () => {
+    for (const message of [
+      INVALID_REQUEST_ERROR,
+      "400 invalid_request_error: invalid timeout parameter",
+    ]) {
+      expect(isInvalidRequestError(undefined, message)).toBe(true);
+      expect(isFallbackEligibleError(undefined, message)).toBe(true);
+      expect(isRetryableProviderError(undefined, message)).toBe(false);
+      expect(getProviderErrorCategory(undefined, message)).toBe("invalid_request");
+    }
+  });
+});
 
 function erroredTurn(errorMessage = RELACE_ERROR): RetryableTurnMessage {
   return { role: "assistant", stopReason: "error", errorMessage };

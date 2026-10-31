@@ -20,7 +20,8 @@ import {
   formatImageDescriptionBlocks,
   getProviderErrorCategory,
   isReplayableFailedTurn,
-  isRetryableProviderError,
+  isFallbackEligibleError,
+  isInvalidRequestError,
   modelSupportsImages,
   renderAgentContext,
   resumeAfterFailedTurn,
@@ -944,9 +945,15 @@ export const piAdapter: SdkAdapter = {
         primaryFailure &&
         params.agent.fallback_model &&
         isReplayableFailedTurn(agentSession.messages) &&
-        isRetryableProviderError(primaryFailure.source, primaryFailure.message)
+        isFallbackEligibleError(primaryFailure.source, primaryFailure.message)
       ) {
         const fallbackStartedAt = Date.now();
+        if (isInvalidRequestError(primaryFailure.source, primaryFailure.message)) {
+          logError("[agent] primary invalid request; trying fallback model", primaryFailure.message, {
+            agentId: params.agent.id,
+            primaryFailureCategory: "invalid_request",
+          });
+        }
         const logFallback = (outcome: "success" | "failure", fallbackFailure?: string) =>
           logWarn("[agent] fallback model attempt completed", {
             agentId: params.agent.id,

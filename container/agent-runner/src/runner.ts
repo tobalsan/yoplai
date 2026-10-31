@@ -35,7 +35,7 @@ import {
   findFailedTurn,
   getProviderErrorCategory,
   isReplayableFailedTurn,
-  isRetryableProviderError,
+  isFallbackEligibleError,
   renderAgentContext,
   resumeAfterFailedTurn,
   runTurnWithProviderRetry,
@@ -646,7 +646,7 @@ export async function runAgent(
         primaryFailure &&
         fallbackConfig &&
         isReplayableFailedTurn(session.messages) &&
-        (isRetryableProviderError(
+        (isFallbackEligibleError(
           primaryFailure.source,
           primaryFailure.message
         ) ||

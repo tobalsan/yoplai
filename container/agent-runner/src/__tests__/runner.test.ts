@@ -300,6 +300,89 @@ describe("Pi runner", () => {
     await fs.rm(tempDir, { recursive: true, force: true });
   });
 
+  it("falls back once without retrying a tagged 400 invalid request", async () => {
+    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-runner-"));
+    const workspaceDir = path.join(tempDir, "workspace");
+    const sessionDir = path.join(tempDir, "sessions");
+    await fs.mkdir(workspaceDir, { recursive: true });
+    await fs.mkdir(sessionDir, { recursive: true });
+    const primaryFailure = '400 {"type":"error","error":{"type":"invalid_request_error","message":"invalid timeout parameter"}}';
+    const fallback = { provider: "openai", model: "gpt-5", id: "gpt-5" };
+    piMock.session.prompt.mockImplementationOnce(async () => {
+      const runtime = await vi.mocked(ModelRuntime.create).mock.results.at(-1)!.value;
+      vi.mocked(runtime.getModel).mockReturnValue(fallback as ReturnType<typeof runtime.getModel>);
+      piMock.session.messages.push(
+        { role: "user", content: [{ type: "text", text: "Say hi" }] },
+        { role: "assistant", content: [], stopReason: "error", errorMessage: primaryFailure }
+      );
+    });
+    piMock.agent.continue.mockImplementationOnce(async () => {
+      piMock.session.messages.push({
+        role: "assistant",
+        content: [{ type: "text", text: "fallback answer" }],
+        stopReason: "end_turn",
+      });
+    });
+    const stderr = vi.spyOn(console, "error").mockImplementation(() => {});
+    const onStreamEvent = vi.fn();
+
+    const output = await runAgent(
+      createInput({
+        workspaceDir,
+        sessionDir,
+        retry: { maxAttempts: 3, baseDelaySeconds: 0 },
+        fallbackModel: { provider: "openai", model: "gpt-5" },
+      }),
+      onStreamEvent
+    );
+
+    expect(output).toMatchObject({ text: "fallback answer" });
+    expect(piMock.session.setModel).toHaveBeenCalledTimes(1);
+    expect(piMock.session.setModel).toHaveBeenCalledWith(fallback);
+    expect(piMock.agent.continue).toHaveBeenCalledTimes(1);
+    expect(onStreamEvent).not.toHaveBeenCalledWith(expect.objectContaining({ type: "retry" }));
+    const events = stderr.mock.calls
+      .map(([entry]) => String(entry))
+      .filter((entry) => entry.startsWith("{"))
+      .map((entry) => JSON.parse(entry));
+    expect(events.filter((entry) => entry.event === "model_primary_attempt")).toHaveLength(1);
+    expect(events.find((entry) => entry.event === "model_fallback")).toMatchObject({
+      primaryFailure,
+      primaryFailureCategory: "invalid_request",
+      fallbackOutcome: "success",
+    });
+    await fs.rm(tempDir, { recursive: true, force: true });
+  });
+
+  it.each([
+    [{ type: "text", text: "partial" }],
+    [{ type: "toolCall", id: "tool-1" }],
+  ])("does not replay a tagged 400 after visible output: %j", async (...content) => {
+    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-runner-"));
+    const workspaceDir = path.join(tempDir, "workspace");
+    const sessionDir = path.join(tempDir, "sessions");
+    await fs.mkdir(workspaceDir, { recursive: true });
+    await fs.mkdir(sessionDir, { recursive: true });
+    const primaryFailure = "400 invalid_request_error: invalid timeout parameter";
+    piMock.session.prompt.mockImplementationOnce(async () => {
+      piMock.session.messages.push(
+        { role: "user", content: [{ type: "text", text: "Say hi" }] },
+        { role: "assistant", content, stopReason: "error", errorMessage: primaryFailure }
+      );
+    });
+    vi.spyOn(console, "error").mockImplementation(() => {});
+
+    await expect(runAgent(createInput({
+      workspaceDir,
+      sessionDir,
+      retry: { maxAttempts: 3, baseDelaySeconds: 0 },
+      fallbackModel: { provider: "openai", model: "gpt-5" },
+    }))).rejects.toThrow(`Agent error: ${primaryFailure}`);
+    expect(piMock.session.setModel).not.toHaveBeenCalled();
+    expect(piMock.agent.continue).not.toHaveBeenCalled();
+    await fs.rm(tempDir, { recursive: true, force: true });
+  });
+
   it("uses the fallback when only an earlier completed turn ran a tool", async () => {
     const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-runner-"));
     const workspaceDir = path.join(tempDir, "workspace");

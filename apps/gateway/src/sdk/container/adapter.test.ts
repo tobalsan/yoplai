@@ -286,6 +286,49 @@ afterEach(() => {
 });
 
 describe("container adapter", () => {
+  it("logs invalid-request fallbacks at error across stderr chunk boundaries", async () => {
+    const root = tempDir();
+    process.env.YOPLAI_HOME = path.join(root, "yoplai");
+    const agent = createAgent(root);
+    setConfig(agent, root);
+    const { processes } = mockSpawn();
+    mockExecFile();
+    const info = vi.spyOn(console, "log").mockImplementation(() => {});
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    const run = getContainerAdapter().run(createParams(agent));
+    await tick();
+    const primaryFailure = '400 {"error":{"type":"invalid_request_error","message":"tools.4.custom.input_schema: JSON schema is invalid"}}';
+    const fallbackLine = JSON.stringify({
+      event: "model_fallback",
+      primaryFailureCategory: "invalid_request",
+      primaryFailure,
+      fallbackOutcome: "success",
+    });
+    const middle = Math.floor(fallbackLine.length / 2);
+    processes[0].stderr.write(fallbackLine.slice(0, middle));
+    expect(error).not.toHaveBeenCalled();
+    // Finish a split line and deliver another full line in the same chunk.
+    processes[0].stderr.write(`${fallbackLine.slice(middle)}\nordinary stderr\n`);
+    processes[0].stderr.write(`${fallbackLine}\n${JSON.stringify({
+      event: "model_fallback", primaryFailureCategory: "rate_limit", primaryFailure: "429",
+    })}\nnull\n`);
+    processes[0].emitOutput({ text: "fallback answer" });
+    processes[0].finish(0);
+    await expect(run).resolves.toMatchObject({ text: "fallback answer" });
+
+    const errors = error.mock.calls.map(([line]) => JSON.parse(String(line)));
+    expect(errors).toHaveLength(2);
+    for (const entry of errors) {
+      expect(entry).toMatchObject({
+        level: "error", agentId: "cloud", message: primaryFailure,
+        primaryFailureCategory: "invalid_request",
+      });
+    }
+    expect(info.mock.calls.map(([line]) => JSON.parse(String(line)))).toContainEqual(
+      expect.objectContaining({ level: "info", msg: "[container] stderr", message: "ordinary stderr" })
+    );
+  });
+
   // Startup seams approved by Thinh on ALG-492 (2026-10-17).
   it.each(["setup", "publication", "runner startup"])("honors cancellation during %s and accepts a later run", async (phase) => {
     const root = tempDir();
