@@ -84,7 +84,7 @@ describe("MCP Apps gateway views", () => {
     const response = await fetch(gatewayUrl + route + "/view", { method: "POST", headers: { Origin: "http://localhost:3000" } });
     expect(response.status).toBe(200);
     expect(await response.json()).toMatchObject({
-      available: true, appsOrigin: `http://yoplai-apps.localhost:${appsPort}`, server: "boards", toolName: "create_board",
+      available: true, appsOrigin: `http://127.0.0.1:${appsPort}`, server: "boards", toolName: "create_board",
       args: { title: "Roadmap" }, result: rawResult,
     });
     expect(reads).toEqual([{ ctx: { agentId: "main", signal: expect.any(AbortSignal) }, server: "boards", uri: "ui://boards/editor" }]);
@@ -339,6 +339,8 @@ describe("MCP Apps gateway views", () => {
       return fetch(gatewayUrl + route + "/view", { method: "POST", headers: { ...(origin ? { Origin: origin } : {}), "X-Forwarded-Host": "chat.example.test" } });
     }
     try {
+      setLoadedConfig({ ...original, apps: { port: appsPort } });
+      expect((await (await post("http://127.0.0.1:3000")).json()).appsOrigin).toBe(`http://localhost:${appsPort}`);
       setLoadedConfig({ ...original, web: { baseUrl: "https://chat.example.test" } });
       expect((await (await post("https://chat.example.test")).json()).available).toBe(false);
       expect((await post("https://attacker.example.test")).status).toBe(403);

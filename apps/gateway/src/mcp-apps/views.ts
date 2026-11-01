@@ -105,7 +105,11 @@ function bootstrapPage(ticket: Ticket, id: string): string {
 function appsOrigin(config: GatewayConfig, chatOrigin: string): string | undefined {
   const chat = new URL(chatOrigin);
   const loopback = (hostname: string) => ["localhost", "127.0.0.1", "[::1]"].includes(hostname);
-  const candidate = config.apps?.origin ?? (loopback(chat.hostname) ? `http://yoplai-apps.localhost:${config.apps?.port ?? 4001}` : undefined);
+  // Local default: the other loopback host, as Dar does. tldraw treats `*.localhost` as production and stops rendering without a license.
+  const port = config.apps?.port ?? 4001;
+  const localDefault = chat.hostname === "localhost" || chat.hostname.endsWith(".localhost") ? `http://127.0.0.1:${port}`
+    : ["127.0.0.1", "[::1]"].includes(chat.hostname) ? `http://localhost:${port}` : undefined;
+  const candidate = config.apps?.origin ?? localDefault;
   if (!candidate || !/^https?:\/\/[^/?#]+$/i.test(candidate)) return undefined;
   try {
     const url = new URL(candidate);

@@ -198,7 +198,7 @@ Prefer `loopback` until authentication and a secure access path are configured. 
 
 The gateway captures MCP view results and provides isolated view routes. Web chat remains text-only until the inline view host is installed (artifacts slice 1c).
 
-`apps.port` defaults to `4001` and binds on the gateway's interface. For trusted chat origins on `localhost`, `127.0.0.1` or `[::1]`, the view origin defaults to `http://yoplai-apps.localhost:<apps.port>`; Chromium resolves this hostname to loopback without DNS setup. If that port is taken, the gateway continues with views unavailable. `pnpm dev` does not probe the apps port: choose another `apps.port` when needed.
+`apps.port` defaults to `4001` and binds on the gateway's interface. For trusted local chat origins, the view origin defaults to the other loopback host, as in Dar: chat on `localhost` or a `*.localhost` name gets `http://127.0.0.1:<apps.port>`, and chat on `127.0.0.1` or `[::1]` gets `http://localhost:<apps.port>`. Apps such as tldraw treat `*.localhost` as production and stop rendering without a license. If that port is taken, the gateway continues with views unavailable. `pnpm dev` does not probe the apps port: choose another `apps.port` when needed.
 
 For a proxied deployment:
 
