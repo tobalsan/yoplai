@@ -9,6 +9,7 @@ const agent = {
 };
 
 const commonSettings = {
+  modelRouting: { mode: "off" },
   defaultProjectManager: "pom",
   sandbox: { sharedDir: "/shared" },
   maintenance: { provider: "anthropic", model: "claude-haiku" },
