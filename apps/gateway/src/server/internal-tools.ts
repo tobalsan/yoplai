@@ -382,7 +382,8 @@ export function createInternalTools(
       if (parsed.data.tool !== "__register_file_output") {
         const fields = { tool: parsed.data.tool, agentId: context.agentId };
         // Validation is caller-caused only when its producer explicitly marks it.
-        const invalidInput = (error as { code?: unknown } | null)?.code === "invalid_input";
+        const code = (error as { code?: unknown } | null)?.code;
+        const invalidInput = code === "invalid_input" || code === -32602;
         if (invalidInput || (typeof status === "number" && Number.isInteger(status) && status >= 400 && status <= 499)) {
           logWarn("[internal-tools] tool execution failed", {
             ...fields,
