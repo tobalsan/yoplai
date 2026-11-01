@@ -38,6 +38,53 @@ export const RequiredModelConfigSchema = z.object({
 });
 export type RequiredModelConfig = z.infer<typeof RequiredModelConfigSchema>;
 
+const ModelRoutingCategoryIdSchema = z.string().regex(/^[a-z][a-z0-9_]*$/);
+
+export const ModelRoutingPickSchema = z.object({
+  provider: z.string().trim().min(1),
+  model: z.string().trim().min(1),
+  effort: ThinkLevelSchema,
+}).strict();
+export type ModelRoutingPick = z.infer<typeof ModelRoutingPickSchema>;
+
+export const ModelRoutingRowSchema = z.object({
+  id: ModelRoutingCategoryIdSchema,
+  definition: z.string().trim().min(1),
+  examples: z.array(z.string().trim().min(1)).min(1),
+  claude: ModelRoutingPickSchema,
+  chatgpt: ModelRoutingPickSchema,
+  pool: z.enum(["either", "prefer_claude", "prefer_chatgpt"]),
+}).strict();
+export type ModelRoutingRow = z.infer<typeof ModelRoutingRowSchema>;
+
+export const ModelRoutingConfigSchema = z.object({
+  mode: z.enum(["off", "shadow", "enforce"]).default("off"),
+  version: z.string().default("unversioned"),
+  classifier: RequiredModelConfigSchema.strict().default({ provider: "openai", model: "gpt-6-luna" }),
+  thresholds: z.object({
+    score: z.number().positive().max(1).default(0.8),
+    pace: z.number().finite().positive().default(1.15),
+  }).default({}),
+  budgets: z.object({
+    predicateMs: z.number().int().positive().default(2000),
+    categoryMs: z.number().int().positive().default(4000),
+  }).default({}),
+  maxRetries: z.number().int().min(0).max(2).default(1),
+  floor: z.array(ModelRoutingCategoryIdSchema).default([
+    "customer_support_reply", "office_deliverable", "writing_marketing", "single_tool_call",
+  ]),
+  table: z.array(ModelRoutingRowSchema).default([]),
+}).strict().superRefine((value, ctx) => {
+  const ids = new Set<string>();
+  for (const [index, row] of value.table.entries()) {
+    if (ids.has(row.id)) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: `Duplicate model routing category "${row.id}"`, path: ["table", index, "id"] });
+    }
+    ids.add(row.id);
+  }
+});
+export type ModelRoutingConfig = z.infer<typeof ModelRoutingConfigSchema>;
+
 // Discord config
 export const DiscordConfigSchema = z.object({
   token: z.string().optional(),
@@ -315,11 +362,18 @@ const AgentConfigBaseSchema = z.object({
   codemode: z.boolean().optional(),
   codemodeLimits: CodemodeLimitsSchema.optional(),
   toolDeferral: ToolDeferralConfigSchema.optional(),
+  modelRouting: z.object({
+    enabled: z.boolean(),
+    categories: z.array(ModelRoutingCategoryIdSchema).optional(),
+  }).strict().optional(),
   onecliToken: z.string().optional(), // Per-agent OneCLI proxy token
   sandbox: AgentSandboxConfigSchema.optional(),
 });
 export const AgentConfigSchema = AgentConfigBaseSchema.superRefine(
   (value, ctx) => {
+    if (value.modelRouting?.enabled && value.sdk && value.sdk !== "pi") {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: "modelRouting is only supported by the Pi SDK", path: ["modelRouting", "enabled"] });
+    }
     if (value.sdk !== "openclaw" && !value.model) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
@@ -347,6 +401,9 @@ const AgentYamlConfigBaseSchema = AgentConfigBaseSchema.omit({
 });
 export const AgentYamlConfigSchema = AgentYamlConfigBaseSchema.superRefine(
   (value, ctx) => {
+    if (value.modelRouting?.enabled && value.sdk && value.sdk !== "pi") {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: "modelRouting is only supported by the Pi SDK", path: ["modelRouting", "enabled"] });
+    }
     if (value.sdk !== "openclaw" && !value.model) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
@@ -1241,6 +1298,7 @@ export const AgentDiscoveryConfigSchema = z.union([
 
 // Settings shared by the discovery (root) and resolved gateway schemas.
 const GatewayCommonFields = {
+  modelRouting: ModelRoutingConfigSchema.optional().default({}),
   apps: z.object({
     origin: z.string().optional(),
     port: z.number().int().min(0).max(65535).optional(),
@@ -1306,7 +1364,10 @@ export const GatewayRootConfigSchema = z.object({
   pool: AgentDiscoveryConfigSchema.optional(),
   ...GatewayCommonFields,
 });
-export type GatewayRootConfig = z.infer<typeof GatewayRootConfigSchema>;
+// Keep programmatic configs compatible; parsed configs receive routing defaults.
+export type GatewayRootConfig = Omit<z.infer<typeof GatewayRootConfigSchema>, "modelRouting"> & {
+  modelRouting?: ModelRoutingConfig;
+};
 
 // Gateway config
 export const GatewayConfigSchema = z.object({
@@ -1316,7 +1377,9 @@ export const GatewayConfigSchema = z.object({
   forkedAgents: z.boolean().optional(),
   ...GatewayCommonFields,
 });
-export type GatewayConfig = z.infer<typeof GatewayConfigSchema>;
+export type GatewayConfig = Omit<z.infer<typeof GatewayConfigSchema>, "modelRouting"> & {
+  modelRouting?: ModelRoutingConfig;
+};
 
 export type AgentTraceContext = {
   enabled?: boolean;
