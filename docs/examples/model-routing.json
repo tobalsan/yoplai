@@ -1,0 +1,350 @@
+{
+  "modelRouting": {
+    "mode": "off",
+    "version": "2026-11-01",
+    "classifier": {
+      "provider": "openai",
+      "model": "gpt-6-luna"
+    },
+    "thresholds": {
+      "score": 0.8,
+      "pace": 1.15
+    },
+    "budgets": {
+      "predicateMs": 2000,
+      "categoryMs": 4000
+    },
+    "maxRetries": 1,
+    "floor": [
+      "customer_support_reply",
+      "office_deliverable",
+      "writing_marketing",
+      "single_tool_call"
+    ],
+    "table": [
+      {
+        "id": "customer_support_reply",
+        "definition": "Technical customer support for Cloudi-Fi: a Zendesk ticket (link or #number: 'what to do here', give context, draft the reply), or troubleshooting a customer setup (tunnels, DHCP, RADIUS, WLC, Zscaler, logs, captive portal). Includes 'draft me a reply to the customer' when it is about a support case. FR: 'que faire sur ce ticket', 'un client a un souci'. NOT a plain data fetch with no diagnosis (e.g. 'list my tickets', 'what is the PSK of X') → single_tool_call. NOT generic how-to questions unrelated to a customer setup → general_assistant.",
+        "examples": [
+          "any idea why the device is rejected here ? it is IOT device full_message <13>2026-10-13T13:50:39+00:00 lx6-front-prod freeradius: Tue Oct 13 13:50:39",
+          "I received ticket https://cloudi-fi.zendesk.com/agent/tickets/28068 But couldn't find ITA_MIL_004S site under any Axa tenant Is there any past referen",
+          "How to apply MAB on Cisco WLC ?",
+          "I want you to rephrase this for me basically and draft it to me here Hello, The PSK key changed on DHCP tunnel is not reflected even though changing i",
+          "Hey, here are some infos we manage the Umbrella account/service for Servier -- access via login.umbrella.com some steps at the end of this ticket that",
+          "I have a kickoff deployment running with Uniper and they send me the following email I want you to tell me a draft that I can use to support my answer",
+          "what should be done here to open the connection ? https://cloudi-fi.zendesk.com/agent/tickets/27942",
+          "Morning everyone, random question, does anyone know what is the purpose of installing SSL certificate for http://login.cloudi-fi.net at customer WLC?"
+        ],
+        "claude": {
+          "provider": "anthropic",
+          "model": "claude-sonnet-5-5",
+          "effort": "medium"
+        },
+        "chatgpt": {
+          "provider": "openai-codex",
+          "model": "gpt-5.6-terra",
+          "effort": "low"
+        },
+        "pool": "prefer_chatgpt"
+      },
+      {
+        "id": "edit_agent_dashboard",
+        "definition": "Build, change, fix or share a dashboard, web page or app hosted on the agent platform (sales/SE/BDR/customer/OKR dashboards, canvas). Also who can access or edit a dashboard. FR: 'crée un dashboard', 'dans le SE dashboard, ajoute', 'arrange le tableau'. NOT a one-off spreadsheet, document or deck → office_deliverable. NOT just reading numbers from a tool → single_tool_call.",
+        "examples": [
+          "Create a simple dashboard that explains what you can do for me",
+          "Add this into Hutchinson customer page on the CS dashboard",
+          "replicate this onboarding journey https://cloudi-fi.slack.com/lists/T0GDADJ92/F0BRQRY530A",
+          "for personal dashboard, can you calculate individual KPI that impact the team's OKR? and then calculate the team OKR to company's OKR?",
+          "in okr individual dashboard, you check the PTO on notion and remove the contractor part for people who are note contractors( dont have name there)",
+          "Est ce que quel'un d'autre peut modifier mes dashboards",
+          "Peux tu créer un autre dashboard orienté BDR, inspire toi des mails weekly BDR et de ce que tu connais du contexte Cloudi-fi. Prends comme base de sty",
+          "Dans le filtre owner dans le salesDashboard, tri par ordre alphabetique, enleve no owner, Floriane et Damien",
+          "j'aimerai que tu ajoutes un dashboard sur notre base de client existant. =possibilité d'afficher par pays, secteur, ACV, produits consommé.",
+          "Premiere ligne, garde le nombre de POV, nb des tech win sur la fiscal, nb de tech loss, Winrate sur le eme carré par amount et nb, et nb de try and bu",
+          "Je souhaite travailler sur le SE dashboard",
+          "Arrange le tableau customer overusage pour que je n'ai pas a scrolle vers la droite, rends le plus lisibile"
+        ],
+        "claude": {
+          "provider": "anthropic",
+          "model": "claude-sonnet-5-5",
+          "effort": "high"
+        },
+        "chatgpt": {
+          "provider": "openai-codex",
+          "model": "gpt-6.1-sol",
+          "effort": "high"
+        },
+        "pool": "prefer_claude"
+      },
+      {
+        "id": "general_assistant",
+        "definition": "Catch-all: general questions and help about the agent itself, its skills, access and connections ('can I connect you to Slack', 'do you have Webflow access'), how-to questions about internal tools/IT, company facts, onboarding someone to the channel. FR: 'est-ce que tu as accès à', 'comment je fais pour'. Use only when no specific route fits; a Zendesk/customer issue → customer_support_reply; a file to produce → office_deliverable.",
+        "examples": [
+          "How to access alibaba SMS logs ? I don't see anything in https://sms.console.alibabacloud.com/",
+          "what is cloudi-fi support contact phne numbers?",
+          "Hello Connie, I'm Mathieu the Designer at Cloudi-Fi I'm mainly the Product Designer, but I also work on our brand and marketing Materials. I created s",
+          "please explain gary how to use this channel",
+          "What job that stays enable you are mentioning above please provide context of original request",
+          "Bonjour Connie est ce que tu as desormais acces a webflow?",
+          "I updated the slides and diagrams skill in Claude, i want you to update it as well I sent you an amil with the .skill files Update them so that everyo",
+          "can I connect you with slack",
+          "where should I submit a feature request?",
+          "tell me what you know about compliance ISO 27001 of Cloudi-Fi",
+          "est ce une obligation legale que d'afficher la TVA sur un devis pour une société francaise qui va vendre à une autre société francaise?",
+          "melissa said she has a cloudi-fi icon to the mcp service, how can i do that?",
+          "can you tell me what is the buesiness entity type for Cloudi-fi. I am enabling a feature on our SMS provided and this information is required?"
+        ],
+        "claude": {
+          "provider": "anthropic",
+          "model": "claude-sonnet-5-5",
+          "effort": "medium"
+        },
+        "chatgpt": {
+          "provider": "openai-codex",
+          "model": "gpt-5.6-terra",
+          "effort": "low"
+        },
+        "pool": "either"
+      },
+      {
+        "id": "hard_reasoning",
+        "definition": "Expert legal/HR/tax reasoning with consequences (French labour law, contracts) needing careful analysis. FR: 'en tant qu'expert en droit du travail'. NOT a simple factual company question → general_assistant.",
+        "examples": [
+          "En tant qu'expert en droit du travail français, que se passe t il si l'étudiant embauché perd son école ?"
+        ],
+        "claude": {
+          "provider": "anthropic",
+          "model": "claude-opus-5-5",
+          "effort": "high"
+        },
+        "chatgpt": {
+          "provider": "openai-codex",
+          "model": "gpt-6.1-sol",
+          "effort": "xhigh"
+        },
+        "pool": "prefer_claude"
+      },
+      {
+        "id": "lead_contact_lookup",
+        "definition": "Find a person's or lead's email, phone or LinkedIn contact, enrich a list of companies/titles with contacts, or pick leads to reactivate. Usually a LinkedIn URL + 'find email'. FR: 'trouve l'email de', 'numéro de téléphone'. NOT writing the outreach message itself → writing_marketing. NOT a CRM deal lookup → single_tool_call.",
+        "examples": [
+          "can you find email for https://www.linkedin.com/in/chriswollitz/?isSelfProfile=false",
+          "<@U0BCBQYMQ76> Please select another 10 cold lead to reactivate Please include CIVEO canada",
+          "here is the list of companies and titles for which you have to find matching contact details such as linkedin , full name. Attached document text: Fil",
+          "find every emails in this document Attached document text: File: scoring_comptes_cloudifi_FR - Google Sheets.pdf MIME type: application/pdf Contact Co",
+          "find tltphon number of https://www.linkedin.com/in/raphael-r-41b43011a/",
+          "find email id for this lead- https://www.linkedin.com/in/georgekutty-john-485300286/",
+          "also get the email for https://www.linkedin.com/in/srinivas-kp-a920271b4/",
+          "can you find me the email contact details for https://www.linkedin.com/in/dean-sellars-6a5784a/"
+        ],
+        "claude": {
+          "provider": "anthropic",
+          "model": "claude-haiku-5-5",
+          "effort": "medium"
+        },
+        "chatgpt": {
+          "provider": "openai-codex",
+          "model": "gpt-5.6-terra",
+          "effort": "low"
+        },
+        "pool": "either"
+      },
+      {
+        "id": "office_deliverable",
+        "definition": "Produce or rework a file: slide deck, Google Slides/Doc, Word/PDF, branded (Cloudi-Fi branding) document, exec summary or meeting-prep doc, spreadsheet, video script/storyboard. FR: 'fais moi une présentation', 'aux couleurs de Cloudi-Fi', 'rebrand', 'prépare un exec summary'. NOT a living dashboard on the platform → edit_agent_dashboard. NOT short marketing copy or a single message → writing_marketing. A simple list or Excel export of CRM records belongs to single_tool_call, even when it produces a file; authored reports and analytical spreadsheets remain office_deliverable.",
+        "examples": [
+          "You should now have full data available for Axa Go, finish the slides for the next QBR",
+          "Can you brand this word doc as per the attached PDF CFI template Attached document text: File: POL_Cloudi-Fi_walled_garden_v1.1.docx MIME type: applic",
+          "Moumita sent me this doc, reformat it using new branding elements I provided Attached document text: File: Cloudi-Fi_India_Partner_Brief.pdf MIME type",
+          "Its a CISO event happening in bangalore on 26 Nov. I need help in creating a 20 minute slide deck on Cloudi-fi and preparing for the delivery. need to",
+          "(300x150px, max 500KB, transparent background recommended). Cloudi-Fi logo",
+          "I'm about to work on a video for our youtube channel this video is about captive portal and its authentication methods How would you summarize this fe",
+          "Moumita sent me this doc, reformat it using new branding elements I provided then export as pdf Attached document text: File: Cloudi-Fi for REVA Unive",
+          "Nous avons besoin de faire évoluer la présentation suivante https://docs.google.com/presentation/d/1P9wcr4JBPyUOmC0-1yXQkVYas9eH8-bW/edit?usp=sharing&",
+          "Reformat this document with Cloudi-Fi branding https://docs.google.com/document/d/19bEzg4CckEm-wChPEzTmJ5_N8BDxQQ5SNhwo8-uIXWw/edit?tab=t.0",
+          "rebrand with Cloudi-Fi and add Aditya Birla Group's logo in these slides - https://docs.google.com/presentation/d/1_96zg3ixH8JiuaeY98BzCddM4icTJ8pZ/ed",
+          "J'aimerais cartographier tous les outils utilisés dans l'entreprise, par équipe et par activité",
+          "Draft a PRD in Confluence for test-PRD using our standard spec template.",
+          "Create slides around Regional high availability, consistent network state, and resilient authentication and Cloudi-Fi DHCP and NAC redundancy architec",
+          "peux tu me creer une page word aux couleurs/logo de Cloudi-fi?",
+          "fais moi un exec summary concernant REPLY.IT avec qui j'ai un call cet apres-midi et qui est un partenaire italien. indique moi aussi quels deals nous",
+          "find this slide deck : EVP Presentation Hermes_Sept 2026 v.AMA BB Fit and do a separate deck with just slides 21 to 25"
+        ],
+        "claude": {
+          "provider": "anthropic",
+          "model": "claude-sonnet-5-5",
+          "effort": "high"
+        },
+        "chatgpt": {
+          "provider": "openai-codex",
+          "model": "gpt-6.1-sol",
+          "effort": "high"
+        },
+        "pool": "prefer_claude"
+      },
+      {
+        "id": "orchestrate_long_task",
+        "definition": "Design and run a multi-step project or workflow over many turns (e.g. content production pipeline from customer insights to website and KB). NOT a single deliverable → office_deliverable or writing_marketing.",
+        "examples": [
+          "Thanks Based on the project objective above, help us define the first version together. Propose the workflow from customer insights to website and KB"
+        ],
+        "claude": {
+          "provider": "anthropic",
+          "model": "claude-opus-5-5",
+          "effort": "medium"
+        },
+        "chatgpt": {
+          "provider": "openai-codex",
+          "model": "gpt-6.1-sol",
+          "effort": "medium"
+        },
+        "pool": "prefer_claude"
+      },
+      {
+        "id": "saas_workflow",
+        "definition": "Multi-step work that writes in business tools: create a quote or invoice in Pennylane/Pipedrive (any 'create a (renewal) quote' is here), update CRM records, draft/send several emails from CRM data, set up a recurring job or notification, candidate pipeline actions. FR: 'crée un devis', 'crée un job pour me notifier', 'mets à jour Pipedrive'. NOT a read-only lookup → single_tool_call. NOT writing a single polished text → writing_marketing.",
+        "examples": [
+          "Hey Casey, Are you able to create an automation task that occurs every day from Monday to Friday each week. This task should give a to-do list of acti",
+          "Check and refresh the Cloudi-Fi OKR Dashboard canvas from its linked Slack Lists. Canvas: https://cloudi-fi.slack.com/docs/T0GDADJ92/F0C43U8S8HG 1. Re",
+          "j'ai supprimé les mails en brouillon que tu m'avais créé pour les profils que j'avais mis en rejected pour le poste de RSM Germany car ton mail était",
+          "Create a quote based on QU-01962",
+          "Pourrais-tu me créer un job pour m'envoyer une notification à chaque fois qu'un deal est créé pour lequel je suis assigné, Alexandre Thomason, en tant",
+          "Sais tu retrouver tous les Web Lead qui sont à mon nom et me dire pour chacun si j'ai bien envoyé un email de prise de contact?",
+          "Create a renewal quote based on invoice IN-1095 with 3% increase, without CLA, 1 year 2027",
+          "Create a renewal quote based on invoice IN-1097 without changes"
+        ],
+        "claude": {
+          "provider": "anthropic",
+          "model": "claude-sonnet-5-5",
+          "effort": "high"
+        },
+        "chatgpt": {
+          "provider": "openai-codex",
+          "model": "gpt-6.1-sol",
+          "effort": "medium"
+        },
+        "pool": "prefer_claude"
+      },
+      {
+        "id": "single_tool_call",
+        "definition": "One quick lookup or action in a connected tool that returns facts: CRM/Pipedrive deals, customer account or tenant info (Cloudi-Fi MCP, Zscaler tenant), calendar, mailbox or Slack search, find a document, list tickets, Jira lookup, rename a location. FR: 'donne moi', 'retrouve', 'regarde mes échanges', 'liste des clients'. NOT multi-step write workflows (quotes, CRM updates + emails, scheduled jobs) → saas_workflow. NOT diagnosing a customer issue → customer_support_reply. Simple lists or Excel exports of CRM records stay here, even when they produce a file. An authored report or analytical spreadsheet → office_deliverable.",
+        "examples": [
+          "can you tell me the zendesk tickets numbers that is assigned to me",
+          "What vendor use Arkema customer ?",
+          "est-ce qu'il y a déjà un ticket sur le fait que les admins ne puissent plus faire de SSO Vers Zscaler avec la migration vers OneAPI et/ou ZIdentity",
+          "hey check if you received my email",
+          "Give me all the Cisco WLC training documentation and any claap videos that may help - deployments or integrations (PSS)",
+          "Fais-moi un grave des authentification sur L’Oréal dans les 24 dernières heures",
+          "dans le tenant Pomona (ID_2035) pourrais tu changer le nom des location suivantes de SGS_CORE-guest-Quarantine-2035 SGS_CORE-guest-Whitelist-2035 SGS_",
+          "Using Cloudi-Fi MCP, give me the PSK of BEL_ANT_001S for AXA GO",
+          "peux tu me trouver nos sla et slo",
+          "Hello Connie, Can you please go through my email and highlight all emails where <@U0BR74Y8YSJ> has shared with me a powerpoint, document or any other",
+          "how many people are there in cloudi-fi? how many countries? how many cities?",
+          "peux tu vérifier dans me smails et messages slack avec Govind s'il a déjà utilisé ses 500£ de Work from home budget",
+          "Let's test something. Can you see the availability of Laurent next week?",
+          "donne moi l'environnement de Id-logistics ils otn quelle intégration ?",
+          "hELLO, PEUTX TU ME DONNER LA LISTE DES CLIENTS EN fRANCE",
+          "Es tu capable de récupérer tous les anniversaires des personnes de mon équipe",
+          "donne moi la visibilité des deals actuellement",
+          "Regarde les derniers ehcanges de L'oréal",
+          "Hi, A quelle heure CET correspond 12 IST?",
+          "what is the current usage of Total Energies ?"
+        ],
+        "claude": {
+          "provider": "anthropic",
+          "model": "claude-haiku-5-5",
+          "effort": "medium"
+        },
+        "chatgpt": {
+          "provider": "openai-codex",
+          "model": "gpt-5.6-terra",
+          "effort": "low"
+        },
+        "pool": "either"
+      },
+      {
+        "id": "summarize",
+        "definition": "Summarize a meeting or a transcript (Claap recording, pasted transcript) and extract actions. FR: 'analyse le claap de mon meeting', 'fais le rapport de'. NOT producing a formatted deck/document from it → office_deliverable.",
+        "examples": [
+          "Comme pour le rapport d'étonnement de Radovan, fais le même exercice pour Moumita : https://app.claap.io/cloudi-fi/astonishment-report-debrief-c-nc-8G",
+          "00:00 Saurabh Arora: We have Wi-fi portal and then we want to understand that how you see capital portals as different from the UH portals that are av",
+          "Analyse le claap de mon meeting SE, et prépare les actions a faire"
+        ],
+        "claude": {
+          "provider": "anthropic",
+          "model": "claude-haiku-5-5",
+          "effort": "medium"
+        },
+        "chatgpt": {
+          "provider": "openai-codex",
+          "model": "gpt-5.6-terra",
+          "effort": "medium"
+        },
+        "pool": "prefer_claude"
+      },
+      {
+        "id": "trivial_chat",
+        "definition": "Acknowledgements, FYIs and instructions about the agent's own behaviour that need no real work: 'good job', 'no need to follow up', 'stop mentioning me', 'pas besoin de m'envoyer un message'. NOT a question that needs a lookup → single_tool_call or general_assistant.",
+        "examples": [
+          "Good job. If it's a correction / important update, it's ok to post it as a follow up in the thread (but it seems you already did it).",
+          "No need for a followup here, stop mentioning me for a feedback, we’re in touch with Orange team to schedule next actions.",
+          "<@U01DJL47W9Y> FYI, I investigated, it's a temporary issue on the end of the data provider.",
+          "Pas besoin de m’envoyer un message sur slack quand tu crées des brouillons de mails"
+        ],
+        "claude": {
+          "provider": "anthropic",
+          "model": "claude-haiku-5-5",
+          "effort": "low"
+        },
+        "chatgpt": {
+          "provider": "openai-codex",
+          "model": "gpt-5.6-terra",
+          "effort": "off"
+        },
+        "pool": "either"
+      },
+      {
+        "id": "web_research",
+        "definition": "Research the public web on a topic, market, tender or regulation and synthesize it (NIS2, call for tender, partner landscape). FR: 'fais une recherche', 'prépare un exec summary sur l'appel d'offre'. NOT internal company facts → single_tool_call or general_assistant.",
+        "examples": [
+          "Hello Connie - can you research on NIS2 compliance and help me understand what is it and how it relates to Cloudi-fi",
+          "Hi, Prepare un exec summary en Francais sur l'Appel d'Offre CAIH. avec notamment les infos suivantes : - qui sont les titulaires actuels du marché - q"
+        ],
+        "claude": {
+          "provider": "anthropic",
+          "model": "claude-opus-5-5",
+          "effort": "medium"
+        },
+        "chatgpt": {
+          "provider": "openai-codex",
+          "model": "gpt-6.1-sol",
+          "effort": "medium"
+        },
+        "pool": "prefer_chatgpt"
+      },
+      {
+        "id": "writing_marketing",
+        "definition": "Write or improve text meant for other people: LinkedIn post or personalised LinkedIn message, marketing article, email draft for a prospect/partner, answers to a survey, video copy. FR: 'rédige', 'écris un message', 'améliore mon email'. NOT a support-ticket reply → customer_support_reply. NOT a formatted file/deck → office_deliverable. NOT emails generated in bulk from CRM records → saas_workflow.",
+        "examples": [
+          "connie, make this into a company linkedin post for me: \"My WFH daily routine centers around a clean space, excellent lighting, and a focused mind. I l",
+          "@Connie write a personlised linkedin message for this profile : https://www.linkedin.com/in/fulvio-cammarata-407a014a/",
+          "Merci Connie sur l'article 1 j'ai besoin de plus d'illustrations",
+          "https://docs.google.com/spreadsheets/d/1nl2OSaTlS5KZaaegkOmpvd9FMjPjbFCkLowhm9cXu5Q/edit?gid=1082609597#gid=1082609597 Hi Connie, can you create custo",
+          "Peux tu retrouver les messages que j'ai adressé aux 3 distributeurs allemands?",
+          "reply to : What you use Sally for by creating quotes and invoices, customers informations, legal informations, creating budget scenarios, reports. Cor"
+        ],
+        "claude": {
+          "provider": "anthropic",
+          "model": "claude-sonnet-5-5",
+          "effort": "high"
+        },
+        "chatgpt": {
+          "provider": "openai-codex",
+          "model": "gpt-6.1-sol",
+          "effort": "medium"
+        },
+        "pool": "prefer_claude"
+      }
+    ]
+  }
+}
