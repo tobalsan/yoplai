@@ -131,7 +131,9 @@ function viewPolicy(meta: unknown): { csp: Csp; policy: string; prefersBorder: b
     for (const value of values) {
       let approved: string | undefined;
       try {
-        if (typeof value === "string" && /^[a-z]+:\/\/[^/?#]+$/.test(value) && !/[\s*'";\\]/.test(value)) {
+        // Scheme sources for document-created resources (for example, tldraw imports its code from blob: URLs).
+        if (key === "resourceDomains" && (value === "blob:" || value === "data:")) approved = value;
+        else if (typeof value === "string" && /^[a-z]+:\/\/[^/?#]+$/.test(value) && !/[\s*'";\\]/.test(value)) {
           const url = new URL(value);
           const validProtocol = ["https:", "wss:"].includes(url.protocol) || (url.protocol === "http:" && ["localhost", "127.0.0.1"].includes(url.hostname) && /:[0-9]+$/.test(value));
           if (validProtocol && !url.username && !url.password && url.hostname) approved = value;

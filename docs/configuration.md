@@ -215,7 +215,7 @@ Use a different registrable domain from the chat for production. Add DNS and a p
 
 Remote chat origins, including Tailscale Serve, require an explicit `apps.origin`. Missing or invalid origins and listener startup failures leave chat working with text only. `POST view` accepts only configured trusted chat origins from its browser `Origin` header. `/api/capabilities` reports `apps.available` for listener readiness; eligibility is also checked for each view request.
 
-Views receive only declared CSP origins; wildcards and entries with paths are dropped. Camera, microphone and geolocation are disabled. Results larger than 5 MB are not captured; view HTML is limited to 5 MB. Tickets expire after one hour, and session deletion removes captured records and revokes tickets; archiving retains them. Replay re-reads the view resource without re-running the tool. See [the gateway contract](llms.md#mcp-apps-gateway) for routes and protocol details.
+Views receive only declared CSP origins; wildcards and entries with paths are dropped. `resourceDomains` also accepts the `blob:` and `data:` schemes. Camera, microphone and geolocation are disabled. Results larger than 5 MB are not captured; view HTML is limited to 5 MB. Tickets expire after one hour, and session deletion removes captured records and revokes tickets; archiving retains them. Replay re-reads the view resource without re-running the tool. See [the gateway contract](llms.md#mcp-apps-gateway) for routes and protocol details.
 
 ## Sessions
 

@@ -171,18 +171,18 @@ describe("MCP Apps gateway views", () => {
   it("maps the four declared CSP lists, returning only approved origins and the resource border preference", async () => {
     contents = [{ uri: "ui://boards/editor", mimeType: "text/html;profile=mcp-app", text: "<p>Policy</p>", _meta: { ui: {
       prefersBorder: true,
-      csp: { connectDomains: ["https://api.example.test", "wss://socket.example.test", "http://localhost:4170", "http://127.0.0.1:4171", "https://bad.test/path", "https://*.bad.test", "https://bad.test;script-src"], resourceDomains: ["https://cdn.example.test"], frameDomains: ["https://frame.example.test"], baseUriDomains: ["https://base.example.test"] },
+      csp: { connectDomains: ["https://api.example.test", "wss://socket.example.test", "http://localhost:4170", "http://127.0.0.1:4171", "https://bad.test/path", "https://*.bad.test", "https://bad.test;script-src"], resourceDomains: ["https://cdn.example.test", "blob:", "blob:x"], frameDomains: ["https://frame.example.test"], baseUriDomains: ["https://base.example.test"] },
     } } }];
     const warning = vi.spyOn(console, "warn");
     try {
       const response = await fetch(gatewayUrl + route + "/view", { method: "POST", headers: { Origin: "http://localhost:3000" } });
       const issued = await response.json();
       expect(issued).toMatchObject({ prefersBorder: true, csp: {
-        connectDomains: ["https://api.example.test", "wss://socket.example.test", "http://localhost:4170", "http://127.0.0.1:4171"], resourceDomains: ["https://cdn.example.test"], frameDomains: ["https://frame.example.test"], baseUriDomains: ["https://base.example.test"],
+        connectDomains: ["https://api.example.test", "wss://socket.example.test", "http://localhost:4170", "http://127.0.0.1:4171"], resourceDomains: ["https://cdn.example.test", "blob:"], frameDomains: ["https://frame.example.test"], baseUriDomains: ["https://base.example.test"],
       } });
       const content = await appGet(issued.sandboxUrl.replace("/sandbox/", "/content/"));
-      expect(content.headers.get("content-security-policy")).toBe(`default-src 'none'; script-src 'self' 'unsafe-inline' https://cdn.example.test; style-src 'self' 'unsafe-inline' https://cdn.example.test; img-src 'self' data: https://cdn.example.test; media-src 'self' data: https://cdn.example.test; font-src 'self' https://cdn.example.test; connect-src https://api.example.test wss://socket.example.test http://localhost:4170 http://127.0.0.1:4171; frame-src https://frame.example.test; base-uri https://base.example.test; object-src 'none'; frame-ancestors http://localhost:3000 ${issued.appsOrigin}`);
-      expect(warning.mock.calls.filter(([line]) => String(line).includes("MCP Apps invalid CSP origin"))).toHaveLength(3);
+      expect(content.headers.get("content-security-policy")).toBe(`default-src 'none'; script-src 'self' 'unsafe-inline' https://cdn.example.test blob:; style-src 'self' 'unsafe-inline' https://cdn.example.test blob:; img-src 'self' data: https://cdn.example.test blob:; media-src 'self' data: https://cdn.example.test blob:; font-src 'self' https://cdn.example.test blob:; connect-src https://api.example.test wss://socket.example.test http://localhost:4170 http://127.0.0.1:4171; frame-src https://frame.example.test; base-uri https://base.example.test; object-src 'none'; frame-ancestors http://localhost:3000 ${issued.appsOrigin}`);
+      expect(warning.mock.calls.filter(([line]) => String(line).includes("MCP Apps invalid CSP origin"))).toHaveLength(4);
     } finally { warning.mockRestore(); }
   });
 
