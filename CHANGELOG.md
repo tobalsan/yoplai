@@ -23,6 +23,7 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Changed
 
+- Log MCP invalid-params tool failures with numeric `code: -32602` at warning, preserving the error response and error severity for other failures.
 - `send_file` accepts regular files in conversation sub-folders and delivers them with their basename, while still rejecting escaping paths and symlinked directories or files.
 - **⚠ BREAKING** `SOUL.md` is no longer created, loaded by default, or detected by legacy agent migration. Existing agents stop including it unless the operator explicitly adds `system_files: [SOUL.md]` to `agent.yaml`; use `system_files: [{ path: SOUL.md, required: true }]` to require it.
 - Human-chat now lives in the optional `@yoplai/extension-human-chat` package, using the portable `github:agentropie/human-chat` dependency. Generic extension hooks own chat commands and reply review; existing agent configuration stays compatible. Missing human-chat packages or dependencies log an error for each enabled agent while gateway startup and config reload continue.

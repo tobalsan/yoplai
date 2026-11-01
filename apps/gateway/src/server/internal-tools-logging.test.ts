@@ -69,6 +69,43 @@ afterEach(() => {
 });
 
 describe("internal tool failure severity", () => {
+  it("warns for numeric MCP invalid params and preserves the response", async () => {
+    const lines = captureLogs();
+    const response = await requestFailure(failingTools(() => {
+      throw Object.assign(new Error('MCP error -32602: { "error": "custom prompts require a report_id" }'), {
+        code: -32602,
+      });
+    }));
+
+    expect(response.status).toBe(500);
+    expect(await response.json()).toEqual({ error: 'MCP error -32602: { "error": "custom prompts require a report_id" }' });
+    expect(lines).toHaveLength(1);
+    expect(lines[0].split("\n")).toHaveLength(1);
+    expect(JSON.parse(lines[0])).toEqual({
+      level: "warn", msg: "[internal-tools] tool execution failed",
+      tool: "fixture_failure", agentId: "agent-1",
+      message: 'MCP error -32602: { "error": "custom prompts require a report_id" }',
+    });
+  });
+
+  it.each([
+    ["MCP internal error", Object.assign(new Error("MCP error -32603: Internal error"), { code: -32603 }), "MCP error -32603: Internal error"],
+    ["message-only invalid params", new Error("MCP error -32602: Invalid params"), "MCP error -32602: Invalid params"],
+    ["string invalid-params code", Object.assign(new Error("MCP error -32602: Invalid params"), { code: "-32602" }), "MCP error -32602: Invalid params"],
+  ])("keeps %s at error with a stack and preserves the response", async (_label, error, message) => {
+    const lines = captureLogs();
+    const response = await requestFailure(failingTools(() => { throw error; }));
+
+    expect(response.status).toBe(500);
+    expect(await response.json()).toEqual({ error: message });
+    expect(lines).toHaveLength(1);
+    expect(lines[0].split("\n")).toHaveLength(1);
+    expect(JSON.parse(lines[0])).toMatchObject({
+      level: "error", msg: "[internal-tools] tool execution failed",
+      tool: "fixture_failure", agentId: "agent-1", message, stack: expect.any(String),
+    });
+  });
+
   it("warns for upstream 404 with sanitized top-level context and preserves the response", async () => {
     const lines = captureLogs();
     const response = await requestFailure(failingTools(() => {
