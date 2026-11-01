@@ -69,6 +69,57 @@ afterEach(async () => {
 });
 
 describe("dashboard registry and tool", () => {
+  it.each([false, true])(
+    "marks sharing an unavailable owned dashboard as invalid input (legacy: %s)",
+    async (legacy) => {
+      const id = legacy
+        ? (await registry.link("agent-1", "legacy.html")).id
+        : "missing";
+      await expect(registry.replaceShares(id, [])).rejects.toMatchObject({
+        message: "Dashboard not found",
+        code: "invalid_input",
+      });
+    }
+  );
+
+  it("marks publishing a missing dashboard as invalid input", async () => {
+    await expect(
+      registry.publish("missing", "<h1>Draft</h1>")
+    ).rejects.toMatchObject({
+      message: "Dashboard not found",
+      code: "invalid_input",
+    });
+  });
+
+  it("marks registering an already-owned slug as invalid input", async () => {
+    await registry.createOwned(
+      "agent-1",
+      "private.html",
+      "alice",
+      "<h1>Private</h1>"
+    );
+    await expect(
+      registry.createOwned(
+        "agent-1",
+        "private.html",
+        "bob",
+        "<h1>Replacement</h1>"
+      )
+    ).rejects.toMatchObject({
+      message: "Dashboard not found",
+      code: "invalid_input",
+    });
+  });
+
+  it("marks a vanished dashboard registration as invalid input", async () => {
+    await expect(
+      registry.withRegistration("missing", async () => "unreachable")
+    ).rejects.toMatchObject({
+      message: "Dashboard not found",
+      code: "invalid_input",
+    });
+  });
+
   it("lists dashboard titles, modified times, and stable viewer links", async () => {
     const file = path.join(workspace, "data", "dashboards", "sales.html");
     await fs.writeFile(
