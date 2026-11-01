@@ -934,7 +934,7 @@ export function AgentSidebar(props: AgentSidebarProps) {
           gap: 6px;
           width: 100%;
           min-width: 0;
-          padding: 8px 40px 8px 6px;
+          padding: 8px 6px;
           border: none;
           border-radius: 8px;
           background: transparent;
@@ -1006,8 +1006,8 @@ export function AgentSidebar(props: AgentSidebarProps) {
         .agent-sidebar {
           position: relative;
           z-index: 40;
-          width: 250px;
-          min-width: 250px;
+          width: 280px;
+          min-width: 280px;
           flex-shrink: 0;
           overflow: visible;
         }
@@ -1036,7 +1036,7 @@ export function AgentSidebar(props: AgentSidebarProps) {
         }
 
         .agent-sidebar.collapsed:is(:hover, .menu-open) .agent-sidebar-shell {
-          width: 250px;
+          width: 280px;
           box-shadow: 12px 0 24px var(--shadow-md);
         }
 
@@ -1191,7 +1191,7 @@ export function AgentSidebar(props: AgentSidebarProps) {
           display: flex;
           align-items: center;
           gap: 8px;
-          padding: 7px 40px 7px 6px;
+          padding: 7px 6px;
           border: none;
           border-radius: 8px;
           background: transparent;
@@ -1309,6 +1309,12 @@ export function AgentSidebar(props: AgentSidebarProps) {
           pointer-events: none;
           background: linear-gradient(to right, transparent, var(--bg-raised) 40%);
           border-radius: 0 8px 8px 0;
+        }
+
+        /* Reserve room for the menu button only while it shows, so titles use the full row otherwise. */
+        .session-row-wrap:is(:hover, :focus-within) :is(.session-row, .chat-project-header),
+        .session-row-wrap:has(> .session-actions[open]) :is(.session-row, .chat-project-header) {
+          padding-right: 40px;
         }
 
         .session-row-wrap:hover .session-actions,
@@ -1643,8 +1649,8 @@ export function AgentSidebar(props: AgentSidebarProps) {
             position: fixed;
             top: 0;
             left: 0;
-            width: 250px;
-            min-width: 250px;
+            width: 280px;
+            min-width: 280px;
             height: 100%;
             height: 100dvh;
             z-index: 850;
@@ -1658,8 +1664,8 @@ export function AgentSidebar(props: AgentSidebarProps) {
           }
 
           .agent-sidebar.collapsed {
-            width: 250px;
-            min-width: 250px;
+            width: 280px;
+            min-width: 280px;
             transform: translateX(-100%);
           }
 
