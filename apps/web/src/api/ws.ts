@@ -1,3 +1,4 @@
+import type { McpAppView, McpAppViewReference } from "@yoplai/shared/types";
 import type { ActiveTurn } from "./agents";
 import type { DoneMeta, StreamCallbacks } from "./chat";
 
@@ -34,6 +35,7 @@ export type WsStreamEvent =
       id: string;
       name: string;
       arguments: unknown;
+      view?: McpAppView;
       parentToolCallId?: string;
     }
   | {
@@ -43,6 +45,7 @@ export type WsStreamEvent =
       content: string;
       isError?: boolean;
       details?: { diff?: string };
+      view?: McpAppViewReference;
       parentToolCallId?: string;
     }
   | {
@@ -88,13 +91,7 @@ export type WsStreamEvent =
       startedAt: number;
       thinking: string;
       text: string;
-      toolCalls: Array<{
-        id: string;
-        name: string;
-        arguments: unknown;
-        parentToolCallId?: string;
-        status: "running" | "done" | "error";
-      }>;
+      toolCalls: ActiveTurn["toolCalls"];
       toolResults?: ActiveTurn["toolResults"];
     }
   | {
@@ -116,13 +113,19 @@ export function dispatchWsEvent(
       callbacks.onThinking?.(event.data);
       break;
     case "tool_call":
-      if (event.parentToolCallId) {
+      if (event.view) {
+        callbacks.onToolCall?.(event.id, event.name, event.arguments, event.parentToolCallId, event.view);
+      } else if (event.parentToolCallId) {
         callbacks.onToolCall?.(event.id, event.name, event.arguments, event.parentToolCallId);
       } else {
         callbacks.onToolCall?.(event.id, event.name, event.arguments);
       }
       break;
     case "tool_result":
+      if (event.view) {
+        callbacks.onToolResult?.(event.id, event.name, event.content, event.isError ?? false, event.details, event.parentToolCallId, event.view);
+        break;
+      }
       if (event.parentToolCallId) {
         callbacks.onToolResult?.(event.id, event.name, event.content, event.isError ?? false, event.details, event.parentToolCallId);
         break;

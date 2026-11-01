@@ -1,6 +1,7 @@
 import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
 import {
   fetchCapabilities,
+  fetchFullHistory,
   fetchProjects,
   fetchProjectBranches,
   fetchProjectChanges,
@@ -75,6 +76,26 @@ describe("api client (projects/subagents)", () => {
 
     expectFetchCall("/api/projects");
     expect(res.length).toBe(1);
+  });
+
+  it("forwards cancellation to a view session lookup", async () => {
+    fetchMock.mockResolvedValue({ ok: true, json: async () => ({ messages: [], sessionId: "session" }) });
+    const controller = new AbortController();
+    await fetchFullHistory("agent", "main", undefined, { limit: 1 }, controller.signal);
+    expectFetchCall("/api/agents/agent/history?view=full&sessionKey=main&limit=1", { signal: controller.signal });
+  });
+
+  it("preserves MCP App references in HTTP history and active-turn hydration", async () => {
+    fetchMock.mockResolvedValue({ ok: true, json: async () => ({
+      sessionId: "session", isStreaming: true,
+      messages: [{ role: "toolResult", toolCallId: "call", toolName: "draw", content: [{ type: "text", text: "saved" }], isError: false, timestamp: 1, view: { recordId: "record", server: "fixture", tool: "draw", resourceUri: "ui://drawing" } }],
+      activeTurn: { userText: "draw", userTimestamp: 1, startedAt: 2, thinking: "", text: "", toolCalls: [{ id: "call", name: "draw", arguments: {}, status: "done", view: { server: "fixture", tool: "draw", resourceUri: "ui://drawing" } }], toolResults: [{ id: "call", name: "draw", content: "saved", isError: false, view: { recordId: "record", server: "fixture", tool: "draw", resourceUri: "ui://drawing" } }] },
+    }) });
+    const history = await fetchFullHistory("agent", "main", "session");
+    expect(history.messages[0]).toMatchObject({ view: { recordId: "record", server: "fixture", tool: "draw", resourceUri: "ui://drawing" } });
+    expect(history.activeTurn?.toolCalls[0]).toMatchObject({ view: { server: "fixture", tool: "draw", resourceUri: "ui://drawing" } });
+    expect(history.activeTurn?.toolResults?.[0]).toMatchObject({ view: { recordId: "record" } });
+    expectFetchCall("/api/agents/agent/history?view=full&sessionId=session");
   });
 
   it("fetches capabilities", async () => {

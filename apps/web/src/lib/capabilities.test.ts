@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  appsAvailable,
   capabilities,
   capabilitiesReady,
   loadCapabilities,
@@ -25,6 +26,21 @@ describe("capabilities store", () => {
   afterEach(() => {
     vi.unstubAllGlobals();
     resetCapabilitiesForTests();
+  });
+
+  it("distinguishes loading, enabled and unavailable app views", async () => {
+    expect(appsAvailable()).toBeUndefined();
+    fetchMock.mockResolvedValue({ ok: true, status: 200, json: async () => ({ version: 2, extensions: {}, agents: [], multiUser: false, apps: { available: true } }) });
+    await loadCapabilities();
+    expect(appsAvailable()).toBe(true);
+    setCapabilitiesForTests({ apps: { available: false } });
+    expect(appsAvailable()).toBe(false);
+    setCapabilitiesForTests({ apps: { available: true } });
+    resetCapabilitiesForTests();
+    expect(appsAvailable()).toBeUndefined();
+    fetchMock.mockResolvedValue({ ok: true, status: 200, json: async () => ({ version: 2, extensions: {}, agents: [], multiUser: false }) });
+    await loadCapabilities();
+    expect(appsAvailable()).toBe(false);
   });
 
   it("loads capabilities normally", async () => {

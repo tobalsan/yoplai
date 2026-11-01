@@ -105,7 +105,11 @@ function bootstrapPage(ticket: Ticket, id: string): string {
 function appsOrigin(config: GatewayConfig, chatOrigin: string): string | undefined {
   const chat = new URL(chatOrigin);
   const loopback = (hostname: string) => ["localhost", "127.0.0.1", "[::1]"].includes(hostname);
-  const candidate = config.apps?.origin ?? (loopback(chat.hostname) ? `http://yoplai-apps.localhost:${config.apps?.port ?? 4001}` : undefined);
+  // Local default: the other loopback host, as Dar does. tldraw treats `*.localhost` as production and stops rendering without a license.
+  const port = config.apps?.port ?? 4001;
+  const localDefault = chat.hostname === "localhost" || chat.hostname.endsWith(".localhost") ? `http://127.0.0.1:${port}`
+    : ["127.0.0.1", "[::1]"].includes(chat.hostname) ? `http://localhost:${port}` : undefined;
+  const candidate = config.apps?.origin ?? localDefault;
   if (!candidate || !/^https?:\/\/[^/?#]+$/i.test(candidate)) return undefined;
   try {
     const url = new URL(candidate);
@@ -131,7 +135,9 @@ function viewPolicy(meta: unknown): { csp: Csp; policy: string; prefersBorder: b
     for (const value of values) {
       let approved: string | undefined;
       try {
-        if (typeof value === "string" && /^[a-z]+:\/\/[^/?#]+$/.test(value) && !/[\s*'";\\]/.test(value)) {
+        // Scheme sources for document-created resources (for example, tldraw imports its code from blob: URLs).
+        if (key === "resourceDomains" && (value === "blob:" || value === "data:")) approved = value;
+        else if (typeof value === "string" && /^[a-z]+:\/\/[^/?#]+$/.test(value) && !/[\s*'";\\]/.test(value)) {
           const url = new URL(value);
           const validProtocol = ["https:", "wss:"].includes(url.protocol) || (url.protocol === "http:" && ["localhost", "127.0.0.1"].includes(url.hostname) && /:[0-9]+$/.test(value));
           if (validProtocol && !url.username && !url.password && url.hostname) approved = value;
@@ -296,7 +302,7 @@ export function createMcpAppRoutes(deps: {
       } catch (error) { return unavailable(mcpError(error).reason); }
       const content = contents?.[0];
       if (!Array.isArray(contents) || contents.length !== 1 || content?.mimeType !== "text/html;profile=mcp-app") return unavailable("invalid_resource");
-      const maxHtmlBytes = 2 * 1024 * 1024;
+      const maxHtmlBytes = 5 * 1024 * 1024;
       let html = typeof content.text === "string" ? content.text : undefined;
       if (html === undefined && typeof content.blob === "string" && content.blob.length <= Math.ceil(maxHtmlBytes / 3) * 4 && content.blob.length % 4 === 0 && /^[A-Za-z0-9+/]*={0,2}$/.test(content.blob)) {
         const bytes = Buffer.from(content.blob, "base64");

@@ -198,7 +198,7 @@ Prefer `loopback` until authentication and a secure access path are configured. 
 
 The gateway captures MCP view results and provides isolated view routes. Web chat remains text-only until the inline view host is installed (artifacts slice 1c).
 
-`apps.port` defaults to `4001` and binds on the gateway's interface. For trusted chat origins on `localhost`, `127.0.0.1` or `[::1]`, the view origin defaults to `http://yoplai-apps.localhost:<apps.port>`; Chromium resolves this hostname to loopback without DNS setup. If that port is taken, the gateway continues with views unavailable. `pnpm dev` does not probe the apps port: choose another `apps.port` when needed.
+`apps.port` defaults to `4001` and binds on the gateway's interface. For trusted local chat origins, the view origin defaults to the other loopback host, as in Dar: chat on `localhost` or a `*.localhost` name gets `http://127.0.0.1:<apps.port>`, and chat on `127.0.0.1` or `[::1]` gets `http://localhost:<apps.port>`. Apps such as tldraw treat `*.localhost` as production and stop rendering without a license. If that port is taken, the gateway continues with views unavailable. `pnpm dev` does not probe the apps port: choose another `apps.port` when needed.
 
 For a proxied deployment:
 
@@ -215,7 +215,7 @@ Use a different registrable domain from the chat for production. Add DNS and a p
 
 Remote chat origins, including Tailscale Serve, require an explicit `apps.origin`. Missing or invalid origins and listener startup failures leave chat working with text only. `POST view` accepts only configured trusted chat origins from its browser `Origin` header. `/api/capabilities` reports `apps.available` for listener readiness; eligibility is also checked for each view request.
 
-Views receive only declared CSP origins; wildcards and entries with paths are dropped. Camera, microphone and geolocation are disabled. Results larger than 5 MB are not captured; view HTML is limited to 2 MB. Tickets expire after one hour, and session deletion removes captured records and revokes tickets; archiving retains them. Replay re-reads the view resource without re-running the tool. See [the gateway contract](llms.md#mcp-apps-gateway) for routes and protocol details.
+Views receive only declared CSP origins; wildcards and entries with paths are dropped. `resourceDomains` also accepts the `blob:` and `data:` schemes. Camera, microphone and geolocation are disabled. Results larger than 5 MB are not captured; view HTML is limited to 5 MB. Tickets expire after one hour, and session deletion removes captured records and revokes tickets; archiving retains them. Replay re-reads the view resource without re-running the tool. See [the gateway contract](llms.md#mcp-apps-gateway) for routes and protocol details.
 
 ## Sessions
 
