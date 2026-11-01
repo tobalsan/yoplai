@@ -23,8 +23,7 @@ The palette opens with a focused input and no recent-session list. Results show
 the chat label, agent, relative date and a highlighted content snippet. Title
 matches come first, newest first within each group, with at most 50 results.
 Use Up/Down and Enter, or click a result, to open the chat. Escape or clicking
-outside closes search. Cmd+K no longer starts a new embedded chat or opens the
-retired Board project palette.
+outside closes search.
 
 ## Chat
 
@@ -33,7 +32,7 @@ Core chat supports:
 - WebSocket streaming and background subscriptions
 - simple and full structured history views
 - Copy reply after the last agent bubble's timestamp copies all text in a completed turn, excluding tools, thinking, files and failure notices. Rich paste preserves structure while using the destination's font and colors; plain paste removes markdown formatting. Incomplete turns from paginated history cannot be copied until their beginning is loaded.
-- Copy code on each agent code block copies its raw text, including indentation and newlines. Both copy controls support keyboard/touch, remain visible on narrow screens, and show Copied or Copy failed. Clipboard access requires HTTPS or localhost; browsers without rich clipboard support fall back to plain text. These controls are limited to the main chat, excluding quick-chat and board chat.
+- Copy code on each agent code block copies its raw text, including indentation and newlines. Both copy controls support keyboard/touch, remain visible on narrow screens, and show Copied or Copy failed. Clipboard access requires HTTPS or localhost; browsers without rich clipboard support fall back to plain text. These controls are limited to the main chat.
 - thinking/tool/file blocks where authorized
 - file picker and drag-and-drop uploads
 - stop/abort with partial response preservation
@@ -47,13 +46,13 @@ Full tool/thinking/model view is restricted in multi-user mode. Canonical transc
 
 ## Projects and board
 
-Projects provide lifecycle views, editable pitch/spec documents, slice kanban, threads, activity, subagent runs, and Space integration. Board may provide split shell, lead-agent chat, scratchpad, project projections, and worktree status.
+Projects provide lifecycle views, editable pitch/spec documents, slice kanban, threads, activity, subagent runs, and Space integration. Board home provides a full-width canvas with local Scratchpad and Project lifecycle tabs, project projections, and worktree status.
 
 Project detail:
 
 - Pitch uses `PITCH.md`; legacy README body may be fallback.
 - Slice specs use `SPECS.md`; tasks, validation, and thread stay separate.
-- Agent tab combines scoped lead sessions and subagent runs.
+- Agent tab shows scoped subagent runs, their logs, and follow-up messages.
 - Changes tab displays Space queue, diffs, commits, rebase/conflict, and integration actions.
 
 See [Projects](projects.md).

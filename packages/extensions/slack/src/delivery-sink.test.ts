@@ -31,7 +31,6 @@ function config(): GatewayConfig {
     agents: [],
     extensions: undefined,
     sessions: { idleMinutes: 360 },
-    agentFab: false,
   } as unknown as GatewayConfig;
 }
 

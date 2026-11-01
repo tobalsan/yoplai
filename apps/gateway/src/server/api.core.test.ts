@@ -10,7 +10,6 @@ const isAgentActive = vi.fn();
 const resolveWorkspaceDir = vi.fn((workspace: string) => workspace);
 let loadConfigValue: Record<string, unknown> = {
   branding: undefined,
-  agentFab: false,
   agents: [],
 };
 
@@ -163,7 +162,6 @@ describe("api core session resolution", () => {
     getActiveAgents.mockReturnValue([]);
     loadConfigValue = {
       branding: undefined,
-      agentFab: false,
       agents: [],
     };
     isAgentActive.mockReturnValue(true);
@@ -281,7 +279,6 @@ describe("api core session resolution", () => {
     getActiveAgents.mockReturnValue(agents);
     loadConfigValue = {
       branding: undefined,
-      agentFab: false,
       agents,
       defaultProjectManager: "beta",
     };
@@ -314,7 +311,6 @@ describe("api core session resolution", () => {
     getActiveAgents.mockReturnValue(agents);
     loadConfigValue = {
       branding: undefined,
-      agentFab: false,
       agents,
     };
     multiUserState.loaded = true;
@@ -347,7 +343,6 @@ describe("api core session resolution", () => {
     getActiveAgents.mockReturnValue(agents);
     loadConfigValue = {
       branding: undefined,
-      agentFab: false,
       agents,
     };
     multiUserState.loaded = true;
@@ -379,7 +374,6 @@ describe("api core session resolution", () => {
     getActiveAgents.mockReturnValue([]);
     loadConfigValue = {
       branding: undefined,
-      agentFab: false,
       agents: [],
       pool,
       forkedAgents: true,

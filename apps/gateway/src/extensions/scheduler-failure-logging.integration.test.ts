@@ -29,7 +29,7 @@ describe("scheduler structured failures", () => {
     const config: GatewayConfig = {
       version: 3, agents: [alpha], enableCronMonitoring: monitoring,
       extensions: { scheduler: { enabled: true } },
-      sessions: { idleMinutes: 360 }, agentFab: false,
+      sessions: { idleMinutes: 360 },
     };
     const ctx: ExtensionContext = {
       ...createExtensionContext(config),

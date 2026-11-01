@@ -6,6 +6,5 @@ export * from "./board";
 export * from "./projects";
 export * from "./slices";
 export * from "./subagents";
-export * from "./lead-sessions";
 export * from "./space";
 export * from "./media";

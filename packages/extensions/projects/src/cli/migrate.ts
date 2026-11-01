@@ -382,7 +382,6 @@ async function loadGatewayConfig(): Promise<GatewayConfig> {
       agents: [],
       extensions: {},
       sessions: { idleMinutes: 360 },
-      agentFab: false,
     };
   }
 }
@@ -416,7 +415,6 @@ export async function runMigration(
         agents: [],
         extensions: {},
         sessions: { idleMinutes: 360 },
-        agentFab: false,
       };
     }
   } else {

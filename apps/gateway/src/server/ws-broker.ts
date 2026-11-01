@@ -294,15 +294,6 @@ export class WsBroker {
     this.disposers.push(() =>
       agentEventBus.off("subagent.changed", onSubagentChanged)
     );
-    const onLeadSessionChanged = (event: unknown) => {
-      for (const ws of this.connectedClients) {
-        this.send(ws, event as WsServerMessage);
-      }
-    };
-    agentEventBus.on("lead_session.changed", onLeadSessionChanged);
-    this.disposers.push(() =>
-      agentEventBus.off("lead_session.changed", onLeadSessionChanged)
-    );
     const onOrchestratorEvent = (event: unknown) => {
       for (const ws of this.connectedClients) {
         this.send(ws, event as WsServerMessage);

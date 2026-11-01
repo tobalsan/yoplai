@@ -6,11 +6,8 @@ import { readMigratedLocal } from "./local-storage";
 // must adopt on upgrade. Parameterised keys are listed with a concrete id.
 const RENAMED_KEYS: Array<[newKey: string, legacyKey: string]> = [
   ["yoplai-theme", "aihub-theme"],
-  ["yoplai:quick-chat-last-agent", "aihub:quick-chat-last-agent"],
   ["yoplai:context-panel:mode", "aihub:context-panel:mode"],
-  ["yoplai:context-panel:selected-agent", "aihub:context-panel:selected-agent"],
   ["yoplai:recent-project-views", "aihub:recent-project-views"],
-  ["yoplai:board:selected-agent", "aihub:board:selected-agent"],
   ["yoplai:projects:expanded-columns", "aihub:projects:expanded-columns"],
   ["yoplai:projects:create-form", "aihub:projects:create-form"],
   ["yoplai:projects:delete-success", "aihub:projects:delete-success"],

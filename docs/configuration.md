@@ -112,7 +112,6 @@ Core `yoplai.json` fields:
 | `sandbox`, `onecli`, `oauth`         | Isolation (incl. `sandbox.gatewayTransport`: `http`/`socket`), proxy, and host OAuth settings |
 | `maintenance`                        | Model for gateway-owned background LLM tasks                        |
 | `branding`                           | Optional organization name/logo/icon                                |
-| `agentFab`                           | Enable global quick-chat control                                    |
 | `notifications.channels`             | Named Discord/Slack delivery targets                                |
 | `dream`                              | Global nightly-consolidation prompt/timeout/window                  |
 | `env`                                | Lowest-precedence instance env values; prefer `.env` for secrets    |
@@ -148,20 +147,6 @@ Gateway-owned work such as core session titles uses `maintenance` when set:
 ```
 
 Both fields are required. The Pi model runtime resolves its credentials from an existing OAuth login, a stored API key, or the provider's host environment key; OneCLI is not used. When omitted, maintenance work uses the session agent's configured model.
-
-### Session auto-titles
-
-Set `extensions.sessions.autoTitleModel` to choose model used for lead-session titles:
-
-```json
-{
-  "extensions": {
-    "sessions": { "autoTitleModel": "anthropic/claude-haiku" }
-  }
-}
-```
-
-When omitted, gateway selects cheapest available Anthropic Haiku model and refuses Opus/thinking models for auto-title work.
 
 ### Notification channels
 

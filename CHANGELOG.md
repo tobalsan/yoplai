@@ -9,6 +9,10 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ## [Unreleased]
 
+### Removed
+
+- Remove quick chat and unused embedded chats from the context panel, projects board, board home and project lead sessions; keep the main chat and subagent run follow-ups.
+
 ### Added
 
 - Superadmins can view every scheduled job and its run history, trace, and output; other users' Mine jobs show their owner and keep management controls locked.

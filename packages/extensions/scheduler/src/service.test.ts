@@ -42,7 +42,7 @@ describe("SchedulerService run ledger", () => {
     const config: GatewayConfig = {
       version: 3, agents: [alpha], enableCronMonitoring: enabled,
       extensions: { scheduler: { enabled: true } },
-      sessions: { idleMinutes: 360 }, agentFab: false,
+      sessions: { idleMinutes: 360 },
     };
     setSchedulerContext(context(config, runAgent));
     scheduler = new SchedulerService();
@@ -372,7 +372,7 @@ describe("SchedulerService credential refusals", () => {
     const alpha = agent("alpha", path.join(tmpDir, "alpha"));
     const config: GatewayConfig = {
       version: 3, agents: [alpha], extensions: { scheduler: { enabled: true } },
-      sessions: { idleMinutes: 360 }, agentFab: false,
+      sessions: { idleMinutes: 360 },
     };
     const deliver = vi.fn(async () => {});
     setSchedulerContext(context(config, runAgent, { slack: deliver }));
@@ -550,7 +550,7 @@ describe("SchedulerService.runNow", () => {
     await fs.mkdir(path.join(alpha.workspace, "cron"), { recursive: true });
     await fs.writeFile(path.join(alpha.workspace, "mark.sh"), "#!/bin/bash\nprintf unauthorized > unauthorized.txt\n");
     await fs.writeFile(path.join(alpha.workspace, "cron/jobs.json"), JSON.stringify({ version: 1, jobs: [{ id: "missing-owner", name: "Missing owner", credentialMode: "owner", schedule: { cron: "0 8 * * *", tz: "UTC" }, payload: { script: "mark.sh", noAgent: true } }] }));
-    const config: GatewayConfig = { version: 3, agents: [alpha], extensions: { scheduler: { enabled: true } }, sessions: { idleMinutes: 360 }, agentFab: false };
+    const config: GatewayConfig = { version: 3, agents: [alpha], extensions: { scheduler: { enabled: true } }, sessions: { idleMinutes: 360 } };
     const runAgent = vi.fn();
     setSchedulerContext(context(config, runAgent));
     const scheduler = new SchedulerService();
@@ -563,7 +563,7 @@ describe("SchedulerService.runNow", () => {
   it("separates team ownership from the immutable creator across mode changes and reload", async () => {
     tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-scheduler-sharing-"));
     const alpha = agent("alpha", path.join(tmpDir, "alpha"));
-    const config: GatewayConfig = { version: 3, agents: [alpha], extensions: { scheduler: { enabled: true } }, sessions: { idleMinutes: 360 }, agentFab: false };
+    const config: GatewayConfig = { version: 3, agents: [alpha], extensions: { scheduler: { enabled: true } }, sessions: { idleMinutes: 360 } };
     setSchedulerContext(context(config));
     const scheduler = new SchedulerService();
     const input = { name: "Shared", schedule: { cron: "0 8 * * *", tz: "UTC" }, payload: jobPayload({ message: "Summary" }) };
@@ -592,7 +592,7 @@ describe("SchedulerService.runNow", () => {
     const alpha = agent("alpha", path.join(tmpDir, "alpha"));
     await fs.mkdir(path.join(alpha.workspace, "cron"), { recursive: true });
     await fs.writeFile(path.join(alpha.workspace, "cron/jobs.json"), JSON.stringify({ version: 1, jobs: [{ id: "legacy", name: "Legacy", schedule: { cron: "0 8 * * *", tz: "UTC" }, payload: { message: "Summary" } }] }));
-    const config: GatewayConfig = { version: 3, agents: [alpha], extensions: { scheduler: { enabled: true } }, sessions: { idleMinutes: 360 }, agentFab: false };
+    const config: GatewayConfig = { version: 3, agents: [alpha], extensions: { scheduler: { enabled: true } }, sessions: { idleMinutes: 360 } };
     setSchedulerContext(context(config));
     const scheduler = new SchedulerService();
     const [legacy] = await scheduler.list("alpha");
@@ -622,7 +622,7 @@ describe("SchedulerService.runNow", () => {
       params.onEvent?.({ type: "tool_result", id: "1", name: "gmail.send", content: JSON.stringify(refusal), isError: false });
       return { payloads: [{ text: "sent" }], meta: { durationMs: 1, sessionId: "session" } };
     });
-    const config: GatewayConfig = { version: 3, agents: [alpha], extensions: { scheduler: { enabled: true } }, sessions: { idleMinutes: 360 }, agentFab: false };
+    const config: GatewayConfig = { version: 3, agents: [alpha], extensions: { scheduler: { enabled: true } }, sessions: { idleMinutes: 360 } };
     const deliver = vi.fn();
     setSchedulerContext(context(config, runAgent, { slack: deliver }));
     const scheduler = new SchedulerService();
@@ -670,7 +670,6 @@ describe("SchedulerService.runNow", () => {
       agents: [alpha],
       extensions: { scheduler: { enabled: true } },
       sessions: { idleMinutes: 360 },
-      agentFab: false,
     };
     setSchedulerContext(context(config));
     const scheduler = new SchedulerService();
@@ -718,7 +717,6 @@ describe("SchedulerService.runNow", () => {
         agents: [alpha],
         extensions: { scheduler: { enabled: true } },
         sessions: { idleMinutes: 360 },
-        agentFab: false,
       };
       let signalStarted!: () => void;
       const started = new Promise<void>((resolve) => {
@@ -796,7 +794,6 @@ describe("SchedulerService.runNow", () => {
         agents: [alpha],
         extensions: { scheduler: { enabled: true } },
         sessions: { idleMinutes: 360 },
-        agentFab: false,
       };
       const ctx = context(config);
       setSchedulerContext(ctx);
@@ -848,7 +845,6 @@ describe("SchedulerService.runNow", () => {
       agents: [alpha],
       extensions: { scheduler: { enabled: true } },
       sessions: { idleMinutes: 360 },
-      agentFab: false,
     };
     setSchedulerContext(context(config, runAgent));
     const scheduler = new SchedulerService();
@@ -922,7 +918,6 @@ describe("SchedulerService.runNow", () => {
       agents: [alpha],
       extensions: { scheduler: { enabled: true } },
       sessions: { idleMinutes: 360 },
-      agentFab: false,
     };
     setSchedulerContext(context(config, runAgent));
     const scheduler = new SchedulerService();
@@ -958,7 +953,6 @@ describe("SchedulerService.runNow", () => {
         agents: [alpha],
         extensions: { scheduler: { enabled: true } },
         sessions: { idleMinutes: 360 },
-        agentFab: false,
       };
       setSchedulerContext(context(config, runAgent));
     });
@@ -1003,7 +997,6 @@ describe("SchedulerService.runNow", () => {
         agents: [alpha],
         extensions: { scheduler: { enabled: true } },
         sessions: { idleMinutes: 360 },
-        agentFab: false,
       };
       setSchedulerContext(context(config, runAgent));
     });
@@ -1060,7 +1053,6 @@ describe("SchedulerService persistence and lifecycle", () => {
       agents: [alpha],
       extensions: { scheduler: { enabled: true } },
       sessions: { idleMinutes: 360 },
-      agentFab: false,
     };
     setSchedulerContext(context(config));
     const scheduler = new SchedulerService();
@@ -1122,7 +1114,6 @@ describe("SchedulerService persistence and lifecycle", () => {
       agents: [alpha],
       extensions: { scheduler: { enabled: true } },
       sessions: { idleMinutes: 360 },
-      agentFab: false,
     };
     setSchedulerContext(context(config));
     const scheduler = new SchedulerService();
@@ -1164,7 +1155,7 @@ describe("SchedulerService distant deadlines", () => {
     }));
     setSchedulerContext(context({
       version: 3, agents: [alpha], extensions: { scheduler: { enabled: true } },
-      sessions: { idleMinutes: 360 }, agentFab: false,
+      sessions: { idleMinutes: 360 },
     }, runAgent));
     const scheduler = new SchedulerService();
     const deadline = Date.parse("2026-03-02T00:00:00.000Z");
@@ -1240,7 +1231,6 @@ describe("SchedulerService timeout and loop isolation", () => {
       agents: [alpha],
       extensions: { scheduler: { enabled: true, jobTimeoutMs: 500 } },
       sessions: { idleMinutes: 360 },
-      agentFab: false,
     };
     setSchedulerContext(context(config, runAgent));
     const scheduler = new SchedulerService();
@@ -1302,7 +1292,6 @@ describe("SchedulerService timeout and loop isolation", () => {
       agents: [alpha, beta],
       extensions: { scheduler: { enabled: true, jobTimeoutMs: 500 } },
       sessions: { idleMinutes: 360 },
-      agentFab: false,
     };
     setSchedulerContext(context(config, runAgent));
     const scheduler = new SchedulerService();
@@ -1358,7 +1347,6 @@ describe("SchedulerService timeout and loop isolation", () => {
       agents: [alpha],
       extensions: { scheduler: { enabled: true, jobTimeoutMs: 20 } },
       sessions: { idleMinutes: 360 },
-      agentFab: false,
     };
     setSchedulerContext(context(config, runAgent));
     const scheduler = new SchedulerService();
@@ -1403,7 +1391,6 @@ describe("SchedulerService timeout and loop isolation", () => {
       agents: [alpha],
       extensions: { scheduler: { enabled: true, jobTimeoutMs: 20 } },
       sessions: { idleMinutes: 360 },
-      agentFab: false,
     };
     setSchedulerContext(context(config, runAgent));
     const scheduler = new SchedulerService();
@@ -1476,7 +1463,6 @@ describe("SchedulerService script jobs", () => {
       agents: [agent("alpha", workspace)],
       extensions: { scheduler: { enabled: true } },
       sessions: { idleMinutes: 360 },
-      agentFab: false,
     };
     const ctx = context(config, runAgent);
     setSchedulerContext(ctx);
@@ -1716,7 +1702,6 @@ describe("SchedulerService delivery", () => {
       agents: [agent("alpha", workspace)],
       extensions: { scheduler: { enabled: true } },
       sessions: { idleMinutes: 360 },
-      agentFab: false,
     };
     const runAgent =
       options.runAgent ??
