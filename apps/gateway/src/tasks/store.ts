@@ -23,6 +23,10 @@ type State = {
 };
 const states = new Map<string, State>();
 
+function invalidInput(message: string): Error & { code: string } {
+  return Object.assign(new Error(message), { code: "invalid_input" });
+}
+
 function file(userId?: string) {
   return path.join(
     CONFIG_DIR,
@@ -118,7 +122,7 @@ export async function adoptTask(
     const taskKey = key(agentId, sessionId);
     const tasks = ledger[taskKey] ?? [];
     if (tasks.some((task) => task.status === "active"))
-      throw new Error("An unfinished task already exists for this session");
+      throw invalidInput("An unfinished task already exists for this session");
     const task: AgentTask = {
       id: crypto.randomUUID(),
       title,
@@ -144,7 +148,7 @@ export async function updateTask(
       update.status === "active" &&
       tasks.some((task) => task.status === "active")
     )
-      throw new Error("An active task already exists for this session");
+      throw invalidInput("An active task already exists for this session");
     const task = taskId
       ? tasks.find((candidate) => candidate.id === taskId)
       : tasks.find((candidate) =>
@@ -152,9 +156,9 @@ export async function updateTask(
             ? candidate.status === "paused"
             : candidate.status === "active"
         );
-    if (!task) throw new Error("No active task for this session");
+    if (!task) throw invalidInput("No active task for this session");
     if (update.status === "active" && task.status !== "paused")
-      throw new Error("Only a paused task can be resumed");
+      throw invalidInput("Only a paused task can be resumed");
     const updated = { ...task, ...update, updatedAt: Date.now() };
     return {
       ledger: {
@@ -194,7 +198,7 @@ export async function completeTask(
     const task = taskId
       ? tasks.find((candidate) => candidate.id === taskId)
       : tasks.find((candidate) => candidate.status === "active");
-    if (!task) throw new Error("No active task for this session");
+    if (!task) throw invalidInput("No active task for this session");
     const remaining = tasks.filter((candidate) => candidate.id !== task.id);
     const next = { ...ledger };
     if (remaining.length) next[taskKey] = remaining;

@@ -30,6 +30,10 @@ import {
 let extensionContext: ExtensionContext | undefined;
 let extensionRegistry: DashboardRegistry | undefined;
 
+function invalidInput(message: string): Error & { code: string } {
+  return Object.assign(new Error(message), { code: "invalid_input" });
+}
+
 function registry(): DashboardRegistry {
   if (!extensionRegistry) throw new Error("Canvas is not started");
   return extensionRegistry;
@@ -124,7 +128,7 @@ async function registeredDashboard(
   slug: string
 ): Promise<DashboardRegistration> {
   const entry = await registry().find(agent.id, slug);
-  if (!entry) throw new Error("Dashboard not found");
+  if (!entry) throw invalidInput("Dashboard not found");
   return entry;
 }
 
@@ -143,7 +147,7 @@ async function withAuthorizedDashboard<T>(
         ? dashboardAccessPolicy.canWrite(current, actor)
         : dashboardAccessPolicy.canManage(current, actor);
     if (!actor.hasAgentAccess || !allowed)
-      throw new Error("Dashboard not found");
+      throw invalidInput("Dashboard not found");
     return operation(current);
   });
 }
@@ -190,12 +194,12 @@ export const canvasExtension: Extension = {
             toolContext(context, hook!.config),
             agent.id
           );
-          if (!actor.hasAgentAccess) throw new Error("Dashboard not found");
+          if (!actor.hasAgentAccess) throw invalidInput("Dashboard not found");
           if (args.slug) {
             const slug = normalizeDashboardSlug(args.slug);
             const entry = await registeredDashboard(agent, slug);
             if (!dashboardAccessPolicy.canRead(entry, actor))
-              throw new Error("Dashboard not found");
+              throw invalidInput("Dashboard not found");
             return {
               slug,
               link: `${dashboardBaseUrl(hook!.config)}/d/${entry.id}`,
@@ -240,7 +244,7 @@ export const canvasExtension: Extension = {
               };
           }
           if (!actor.userId || !actor.eligible || !actor.hasAgentAccess)
-            throw new Error("Dashboard not found");
+            throw invalidInput("Dashboard not found");
           const file = await openDashboardFile(agent, slug);
           let html: string;
           try {
@@ -361,7 +365,7 @@ export const canvasExtension: Extension = {
               agent.id
             );
             if (!actor.eligible || !actor.hasAgentAccess)
-              throw new Error("Dashboard not found");
+              throw invalidInput("Dashboard not found");
             return {
               slug,
               removed: { file: false, registry: false, versions: false },

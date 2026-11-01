@@ -30,6 +30,7 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Fixed
 
+- Log task lifecycle, missing dashboard, and container document/image argument mistakes at warning with unchanged error responses.
 - Log `session_history` argument mistakes at warning with unchanged error responses, and clarify required search/read arguments in its tool descriptions.
 - Pause recurring scheduler jobs on credential refusals and tell owners to reconnect and re-enable the job, preventing repeated failures until credentials are restored.
 - Log caller-caused file-output rejections at warning; copy, stream, media-registration and event-emission failures remain errors.

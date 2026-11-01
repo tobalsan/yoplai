@@ -9,6 +9,19 @@ afterEach(async () => {
 });
 
 describe("task lifecycle tools", () => {
+  it("keeps missing gateway session context untagged", async () => {
+    const { taskLifecycleExtension } = await import("./extension.js");
+    const tools = await taskLifecycleExtension.getAgentTools!({
+      id: "agent",
+    } as never);
+    const error = await Promise.resolve(tools
+      .find((tool) => tool.name === "task.complete")!
+      .execute({}, {} as never))
+      .catch((error: unknown) => error);
+    expect(error).toMatchObject({ message: "Task tools require a session" });
+    expect(error).not.toHaveProperty("code");
+  });
+
   it.each(["opener", null])("keeps shared-thread tasks in owner store %s across requesters", async (sessionOwnerId) => {
     const { taskLifecycleExtension } = await import("./extension.js");
     const { getTasks } = await import("./store.js");

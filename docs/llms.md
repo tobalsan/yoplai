@@ -50,6 +50,7 @@ Important seams:
 - `ExtensionRuntime` is the source of loaded routes, tools, prompt contributions, capabilities, and lifecycle state.
 - `getExtensionAgentTools()` strips patterns, then checks extension parameters against JSON Schema 2020-12 for both Pi and container runtimes. Valid schemas stay unchanged; only invalid schemas receive mechanical legacy repairs. Ambiguous or still-invalid tools are omitted with an agent/extension/tool/error warning, without logging schemas. Runtime-built and gateway-appended tools bypass this check; direct execution is unchanged.
 - Extension logging uses `ctx.logger.info/warn(message, fields)` and `ctx.logger.error(message, error, fields)` for top-level structured fields. Pass a short error string when full diagnostics belong only in persisted run/output artifacts. Thrown tool errors with integer HTTP status 400–499, explicit `code: "invalid_input"`, or numeric `code: -32602` (MCP invalid params) log at warning; unmarked validation errors remain errors.
+- Task lifecycle caller mistakes, plain `Dashboard not found` errors (including masked access denials), and container document/image path or format errors carry `code: "invalid_input"` with unchanged messages and HTTP status. Missing task session context, unavailable Canvas, PDF extraction/image description faults, and suffixed dashboard-file `ENOENT` errors remain unmarked.
 
 ### `apps/web`
 

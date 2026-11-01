@@ -32,6 +32,10 @@ type Registry = { dashboards: DashboardRegistration[] };
 const pendingWrites = new Map<string, Promise<void>>();
 const pendingOperations = new Map<string, Promise<void>>();
 
+function invalidInput(message: string): Error & { code: string } {
+  return Object.assign(new Error(message), { code: "invalid_input" });
+}
+
 export class DashboardRegistry {
   constructor(private readonly file: string) {}
 
@@ -71,7 +75,7 @@ export class DashboardRegistry {
   ): Promise<T> {
     return serializeByKey(pendingOperations, `${this.file}:${id}`, async () => {
       const entry = await this.get(id);
-      if (!entry) throw new Error("Dashboard not found");
+      if (!entry) throw invalidInput("Dashboard not found");
       return operation(entry);
     });
   }
@@ -116,7 +120,7 @@ export class DashboardRegistry {
           (entry) => entry.agentId === agentId && entry.slug === slug
         )
       ) {
-        throw new Error("Dashboard not found");
+        throw invalidInput("Dashboard not found");
       }
       const entry: DashboardRegistration = {
         id: randomBytes(24).toString("base64url"),
@@ -146,7 +150,7 @@ export class DashboardRegistry {
     await this.mutate(async () => {
       const data = await this.read();
       const entry = data.dashboards.find((candidate) => candidate.id === id);
-      if (!entry) throw new Error("Dashboard not found");
+      if (!entry) throw invalidInput("Dashboard not found");
       await this.writePublication(entry, html);
       await this.write(data);
       await this.prunePublications(entry);
@@ -176,7 +180,7 @@ export class DashboardRegistry {
     await this.mutate(async () => {
       const data = await this.read();
       const entry = data.dashboards.find((candidate) => candidate.id === id);
-      if (!entry?.ownerUserId) throw new Error("Dashboard not found");
+      if (!entry?.ownerUserId) throw invalidInput("Dashboard not found");
       entry.shares = shares;
       await this.write(data);
     });

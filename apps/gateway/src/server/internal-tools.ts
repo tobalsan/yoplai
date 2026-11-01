@@ -72,6 +72,10 @@ const defaultDeps: InternalToolsDeps = {
 
 const warnedMissingSessionIdAgents = new Set<string>();
 
+function invalidInput(message: string): Error & { code: string } {
+  return Object.assign(new Error(message), { code: "invalid_input" });
+}
+
 function requestIdentityMatches(
   request: {
     agentId?: string;
@@ -101,10 +105,10 @@ function resolveDocumentPath(
   const mapping = mappings.find(([containerRoot]) =>
     requestedPath === containerRoot || requestedPath.startsWith(`${containerRoot}/`)
   );
-  if (!mapping) throw new Error("Document path is outside approved container roots");
+  if (!mapping) throw invalidInput("Document path is outside approved container roots");
   const relative = path.relative(mapping[0], requestedPath);
   if (relative.startsWith("..") || path.isAbsolute(relative)) {
-    throw new Error("Document path traversal is not allowed");
+    throw invalidInput("Document path traversal is not allowed");
   }
   return path.join(mapping[1], relative);
 }
@@ -116,16 +120,16 @@ async function extractDocument(
   signal: AbortSignal
 ): Promise<{ text: string }> {
   const parsed = z.object({ path: z.string().min(1) }).safeParse(args);
-  if (!parsed.success) throw new Error("extract_document requires a path");
+  if (!parsed.success) throw invalidInput("extract_document requires a path");
   if (path.extname(parsed.data.path).toLowerCase() !== ".pdf") {
-    throw new Error("extract_document supports PDF files only");
+    throw invalidInput("extract_document supports PDF files only");
   }
   const filePath = resolveDocumentPath(parsed.data.path, context.roots);
   let realPath: string;
   try {
     realPath = await fs.realpath(filePath);
   } catch {
-    throw new Error("Document was not found under an approved container root");
+    throw invalidInput("Document was not found under an approved container root");
   }
   const approvedRoots = await Promise.all(
     Object.values(context.roots).map(async (root) => {
@@ -141,20 +145,20 @@ async function extractDocument(
     const relative = path.relative(root, realPath);
     return !relative.startsWith("..") && !path.isAbsolute(relative);
   });
-  if (!approved) throw new Error("Document path is outside approved container roots");
+  if (!approved) throw invalidInput("Document path is outside approved container roots");
   signal.throwIfAborted();
   return { text: (await deps.extractText(realPath, "application/pdf", signal)) ?? "" };
 }
 
 async function describeContainerImage(deps: InternalToolsDeps, args: unknown, context: ContainerTokenContext, config: GatewayConfig, signal: AbortSignal): Promise<{ description: string }> {
   const parsed = z.object({ path: z.string().min(1), question: z.string().optional() }).safeParse(args);
-  if (!parsed.success) throw new Error("describe_image requires a path");
+  if (!parsed.success) throw invalidInput("describe_image requires a path");
   const filePath = resolveDocumentPath(parsed.data.path, context.roots);
   const mimeType = { ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".gif": "image/gif", ".webp": "image/webp", ".svg": "image/svg+xml" }[path.extname(filePath).toLowerCase()];
-  if (!mimeType) throw new Error("describe_image supports PNG, JPEG, GIF, WebP, and SVG files only");
-  const realPath = await fs.realpath(filePath).catch(() => { throw new Error("Image was not found under an approved container root"); });
+  if (!mimeType) throw invalidInput("describe_image supports PNG, JPEG, GIF, WebP, and SVG files only");
+  const realPath = await fs.realpath(filePath).catch(() => { throw invalidInput("Image was not found under an approved container root"); });
   const roots = await Promise.all(Object.values(context.roots).map((root) => fs.realpath(root).catch(() => undefined)));
-  if (!roots.some((root) => root && !path.relative(root, realPath).startsWith("..") && !path.isAbsolute(path.relative(root, realPath)))) throw new Error("Image path is outside approved container roots");
+  if (!roots.some((root) => root && !path.relative(root, realPath).startsWith("..") && !path.isAbsolute(path.relative(root, realPath)))) throw invalidInput("Image path is outside approved container roots");
   signal.throwIfAborted();
   return { description: await deps.describeImage(await fs.readFile(realPath, { signal }), mimeType, config, parsed.data.question, signal) };
 }

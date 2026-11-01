@@ -22,6 +22,51 @@ describe("task ledger", () => {
     vi.clearAllMocks();
     vi.mocked(fs.readFile).mockResolvedValue("{}");
   });
+  it("marks adopting over an unfinished task as invalid input", async () => {
+    const store = await import("./store.js");
+    await store.adoptTask("agent", "session", "Task A");
+    await expect(
+      store.adoptTask("agent", "session", "Task B")
+    ).rejects.toMatchObject({
+      message: "An unfinished task already exists for this session",
+      code: "invalid_input",
+    });
+  });
+  it("marks resuming while another task is active as invalid input", async () => {
+    const store = await import("./store.js");
+    const task = await store.adoptTask("agent", "session", "Task A");
+    await store.updateTask("agent", "session", undefined, { status: "paused" });
+    await store.adoptTask("agent", "session", "Task B");
+    await expect(
+      store.updateTask(
+        "agent",
+        "session",
+        undefined,
+        { status: "active" },
+        task.id
+      )
+    ).rejects.toMatchObject({
+      message: "An active task already exists for this session",
+      code: "invalid_input",
+    });
+  });
+  it("marks updating without an active task as invalid input", async () => {
+    const store = await import("./store.js");
+    await expect(
+      store.updateTask("agent", "session", undefined, { checkpoint: "progress" })
+    ).rejects.toMatchObject({
+      message: "No active task for this session",
+      code: "invalid_input",
+    });
+  });
+  it("marks completion without an active task as invalid input", async () => {
+    const store = await import("./store.js");
+    await expect(store.completeTask("agent", "session")).rejects.toMatchObject({
+      message: "No active task for this session",
+      code: "invalid_input",
+    });
+  });
+
   it("persists checkpoints and recovers them after a store restart", async () => {
     const store = await import("./store.js");
     await store.adoptTask("agent", "session", "Task A", "user");

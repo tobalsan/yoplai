@@ -33,6 +33,124 @@ afterEach(async () => {
   await fs.rm(root, { recursive: true, force: true });
 });
 
+it.each(["dashboard_link", "dashboard_update", "dashboard_versions"])(
+  "marks an unregistered dashboard requested through %s as invalid input",
+  async (name) => {
+    await expect(
+      tools
+        .find((tool) => tool.name === name)!
+        .execute({ slug: "missing.html" }, {} as never)
+    ).rejects.toMatchObject({
+      message: "Dashboard not found",
+      code: "invalid_input",
+    });
+  }
+);
+
+it.each(["dashboard_update", "dashboard_versions", "dashboard_delete"])(
+  "marks masked access denial through %s as invalid input",
+  async (name) => {
+    const registry = getDashboardRegistry(
+      path.join(root, "canvas", "registry.json")
+    );
+    await registry.createOwned(
+      "agent",
+      "private.html",
+      "alice",
+      "<h1>Private</h1>"
+    );
+    await expect(
+      tools
+        .find((tool) => tool.name === name)!
+        .execute({ slug: "private.html" }, {
+          actorKind: "eval",
+          actorUserId: "bob",
+        } as never)
+    ).rejects.toMatchObject({
+      message: "Dashboard not found",
+      code: "invalid_input",
+    });
+  }
+);
+
+it("marks a private dashboard link's masked access denial as invalid input", async () => {
+  const registry = getDashboardRegistry(
+    path.join(root, "canvas", "registry.json")
+  );
+  await registry.createOwned(
+    "agent",
+    "private.html",
+    "alice",
+    "<h1>Private</h1>"
+  );
+  await expect(
+    tools
+      .find((tool) => tool.name === "dashboard_link")!
+      .execute({ slug: "private.html" }, {
+        actorKind: "eval",
+        actorUserId: "bob",
+      } as never)
+  ).rejects.toMatchObject({
+    message: "Dashboard not found",
+    code: "invalid_input",
+  });
+});
+
+it("marks dashboard links without agent access as invalid input", async () => {
+  const restricted = await canvasExtension.getAgentTools!(agent, {
+    config: {
+      ...config,
+      extensions: { multiUser: { enabled: true } },
+    } as GatewayConfig,
+  });
+  await expect(
+    restricted
+      .find((tool) => tool.name === "dashboard_link")!
+      .execute({}, {
+        actorUserId: "unknown-user",
+      } as never)
+  ).rejects.toMatchObject({
+    message: "Dashboard not found",
+    code: "invalid_input",
+  });
+});
+
+it("marks dashboard creation without an eligible owner as invalid input", async () => {
+  await expect(
+    tools
+      .find((tool) => tool.name === "dashboard_create")!
+      .execute({ slug: "private.html" }, {
+        actorKind: "eval",
+      } as never)
+  ).rejects.toMatchObject({
+    message: "Dashboard not found",
+    code: "invalid_input",
+  });
+});
+
+it("marks deletion of a missing dashboard by an ineligible caller as invalid input", async () => {
+  await expect(
+    tools
+      .find((tool) => tool.name === "dashboard_delete")!
+      .execute({ slug: "missing.html" }, {
+        actorKind: "eval",
+      } as never)
+  ).rejects.toMatchObject({
+    message: "Dashboard not found",
+    code: "invalid_input",
+  });
+});
+
+it("keeps a stopped canvas untagged", async () => {
+  await canvasExtension.stop();
+  const error = await Promise.resolve(tools
+    .find((tool) => tool.name === "dashboard_update")!
+    .execute({ slug: "missing.html" }, {} as never))
+    .catch((error: unknown) => error);
+  expect(error).toMatchObject({ message: "Canvas is not started" });
+  expect(error).not.toHaveProperty("code");
+});
+
 it("creates a private owned publication once and link never publishes a later draft", async () => {
   const file = path.join(root, "data", "dashboards", "page.html");
   await fs.writeFile(file, "<h1>PUBLISHED-1</h1>");

@@ -1,13 +1,19 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
+import fs from "node:fs/promises";
 import { GatewayConfigSchema, type Extension } from "@yoplai/shared";
 import { ExtensionRuntime } from "../extensions/runtime.js";
 import { canvasExtension } from "../canvas/index.js";
 import { sessionHistoryExtension } from "../session-history/index.js";
+import { taskLifecycleExtension } from "../tasks/extension.js";
 import { registerContainerToken, removeContainerToken } from "../sdk/container/tokens.js";
 import { createInternalTools } from "./internal-tools.js";
 
-const fixtureHome = `${process.cwd()}/.alg-522-tool-home`;
+const fixtureHome = vi.hoisted(() => {
+  const home = `${process.cwd()}/.alg-522-tool-home`;
+  vi.stubEnv("YOPLAI_HOME", home);
+  return home;
+});
 const config = GatewayConfigSchema.parse({
   version: 2,
   agents: [{
@@ -35,7 +41,8 @@ function failingTools(execute: (args: unknown) => unknown): Extension {
 async function requestFailure(
   extension: Extension,
   tool = "fixture_failure",
-  args: unknown = {}
+  args: unknown = {},
+  overrides: Parameters<typeof createInternalTools>[0] = {}
 ) {
   const runtime = new ExtensionRuntime();
   runtime.load([extension]);
@@ -44,7 +51,7 @@ async function requestFailure(
     roots: { workspace: `${fixtureHome}/agent`, data: `${fixtureHome}/data`, uploads: `${fixtureHome}/uploads` },
     conversationFiles: { hostPath: `${fixtureHome}/files`, runtimePath: "/workspace/files" },
   });
-  const app = createInternalTools({ getConfig: () => config, getRuntime: () => runtime });
+  const app = createInternalTools({ getConfig: () => config, getRuntime: () => runtime, ...overrides });
   return app.request("/tools", {
     method: "POST",
     headers: { "content-type": "application/json", "X-Agent-Id": "agent-1", "X-Agent-Token": "alg-522-tool-fixture" },
@@ -63,13 +70,94 @@ beforeEach(() => {
   vi.stubEnv("YOPLAI_HOME", fixtureHome);
 });
 
-afterEach(() => {
+afterEach(async () => {
   removeContainerToken("alg-522-tool-fixture");
+  await fs.rm(fixtureHome, { recursive: true, force: true });
   vi.restoreAllMocks();
   vi.unstubAllEnvs();
 });
 
 describe("internal tool failure severity", () => {
+  it("warns for task.complete without an active task and preserves the response", async () => {
+    const lines = captureLogs();
+    const response = await requestFailure(taskLifecycleExtension, "task.complete");
+
+    expect(response.status).toBe(500);
+    expect(await response.json()).toEqual({ error: "No active task for this session" });
+    expect(lines).toHaveLength(1);
+    expect(lines[0].split("\n")).toHaveLength(1);
+    expect(JSON.parse(lines[0])).toEqual({
+      level: "warn", msg: "[internal-tools] tool execution failed",
+      tool: "task.complete", agentId: "agent-1", message: "No active task for this session",
+    });
+  });
+
+  it.each([
+    ["extract_document", "pdf", "PDF extraction failed"],
+    ["describe_image", "png", "Image description failed"],
+  ])("keeps actual %s failures at error", async (tool, extension, message) => {
+    await fs.mkdir(`${fixtureHome}/agent`, { recursive: true });
+    await fs.writeFile(`${fixtureHome}/agent/file.${extension}`, "fixture");
+    const lines = captureLogs();
+    const fail = async () => { throw new Error(message); };
+    const response = await requestFailure(failingTools(() => undefined), tool,
+      { path: `/workspace/file.${extension}` }, { extractText: fail, describeImage: fail });
+
+    expect(response.status).toBe(500);
+    expect(await response.json()).toEqual({ error: message });
+    expect(lines).toHaveLength(1);
+    expect(lines[0].split("\n")).toHaveLength(1);
+    expect(JSON.parse(lines[0])).toMatchObject({
+      level: "error", msg: "[internal-tools] tool execution failed",
+      tool, agentId: "agent-1", message, stack: expect.any(String),
+    });
+  });
+
+  it.each([
+    ["extract_document", { path: "/workspace/report.txt" }, "extract_document supports PDF files only", false],
+    ["extract_document", { path: "/etc/report.pdf" }, "Document path is outside approved container roots", false],
+    ["extract_document", { path: "/workspace/../report.pdf" }, "Document path traversal is not allowed", false],
+    ["extract_document", { path: "/workspace/missing.pdf" }, "Document was not found under an approved container root", false],
+    ["extract_document", { path: "/workspace/escape.pdf" }, "Document path is outside approved container roots", true],
+    ["describe_image", {}, "describe_image requires a path", false],
+    ["describe_image", { path: "/workspace/image.txt" }, "describe_image supports PNG, JPEG, GIF, WebP, and SVG files only", false],
+    ["describe_image", { path: "/workspace/missing.png" }, "Image was not found under an approved container root", false],
+    ["describe_image", { path: "/workspace/escape.png" }, "Image path is outside approved container roots", true],
+    ["describe_image", { path: "/etc/image.png" }, "Document path is outside approved container roots", false],
+    ["describe_image", { path: "/workspace/../image.png" }, "Document path traversal is not allowed", false],
+  ])("warns for caller input to %s: %s", async (tool, args, message, escape) => {
+    if (escape) {
+      await fs.mkdir(`${fixtureHome}/agent`, { recursive: true });
+      await fs.writeFile(`${fixtureHome}/outside`, "outside approved roots");
+      await fs.symlink(`${fixtureHome}/outside`, `${fixtureHome}/agent/escape.${tool === "extract_document" ? "pdf" : "png"}`);
+    }
+    const lines = captureLogs();
+    const response = await requestFailure(failingTools(() => undefined), tool, args);
+
+    expect(response.status).toBe(500);
+    expect(await response.json()).toEqual({ error: message });
+    expect(lines).toHaveLength(1);
+    expect(lines[0].split("\n")).toHaveLength(1);
+    expect(JSON.parse(lines[0])).toEqual({
+      level: "warn", msg: "[internal-tools] tool execution failed",
+      tool, agentId: "agent-1", message,
+    });
+  });
+
+  it("warns for extract_document without a path and preserves the response", async () => {
+    const lines = captureLogs();
+    const response = await requestFailure(failingTools(() => undefined), "extract_document");
+
+    expect(response.status).toBe(500);
+    expect(await response.json()).toEqual({ error: "extract_document requires a path" });
+    expect(lines).toHaveLength(1);
+    expect(lines[0].split("\n")).toHaveLength(1);
+    expect(JSON.parse(lines[0])).toEqual({
+      level: "warn", msg: "[internal-tools] tool execution failed",
+      tool: "extract_document", agentId: "agent-1", message: "extract_document requires a path",
+    });
+  });
+
   it("warns for numeric MCP invalid params and preserves the response", async () => {
     const lines = captureLogs();
     const response = await requestFailure(failingTools(() => {
