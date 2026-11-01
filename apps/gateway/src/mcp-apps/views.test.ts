@@ -311,11 +311,15 @@ describe("MCP Apps gateway views", () => {
     contents = [{ uri: "ui://boards/editor", mimeType: "text/html;profile=mcp-app", blob: "PHA+QmxvYjwvcD4=" }];
     const issued = await view();
     expect(await (await appGet(issued.sandboxUrl.replace("/sandbox/", "/content/"))).text()).toBe("<p>Blob</p>");
+    const large = "x".repeat(3 * 1024 * 1024);
+    contents = [{ uri: "ui://boards/editor", mimeType: "text/html;profile=mcp-app", text: large }];
+    const issuedLarge = await view();
+    expect((await (await appGet(issuedLarge.sandboxUrl.replace("/sandbox/", "/content/"))).text()).length).toBe(large.length);
     const cases: McpResourceContent[][] = [
       [],
       [{ uri: "ui://boards/editor", mimeType: "text/html", text: "<p>Wrong MIME</p>" }],
       [{ uri: "ui://boards/editor", mimeType: "text/html;profile=mcp-app", text: "one" }, { uri: "ui://boards/editor", mimeType: "text/html;profile=mcp-app", text: "two" }],
-      [{ uri: "ui://boards/editor", mimeType: "text/html;profile=mcp-app", text: "x".repeat(2 * 1024 * 1024 + 1) }],
+      [{ uri: "ui://boards/editor", mimeType: "text/html;profile=mcp-app", text: "x".repeat(5 * 1024 * 1024 + 1) }],
       [{ uri: "ui://boards/editor", mimeType: "text/html;profile=mcp-app", blob: "not base64!" }],
     ];
     for (const candidate of cases) {

@@ -296,7 +296,7 @@ export function createMcpAppRoutes(deps: {
       } catch (error) { return unavailable(mcpError(error).reason); }
       const content = contents?.[0];
       if (!Array.isArray(contents) || contents.length !== 1 || content?.mimeType !== "text/html;profile=mcp-app") return unavailable("invalid_resource");
-      const maxHtmlBytes = 2 * 1024 * 1024;
+      const maxHtmlBytes = 5 * 1024 * 1024;
       let html = typeof content.text === "string" ? content.text : undefined;
       if (html === undefined && typeof content.blob === "string" && content.blob.length <= Math.ceil(maxHtmlBytes / 3) * 4 && content.blob.length % 4 === 0 && /^[A-Za-z0-9+/]*={0,2}$/.test(content.blob)) {
         const bytes = Buffer.from(content.blob, "base64");
