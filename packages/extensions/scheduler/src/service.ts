@@ -92,6 +92,7 @@ type CompleteRunInput = {
   gateOutput?: string;
   error?: unknown;
   errorMessage?: string;
+  credentialRefused?: boolean;
 };
 
 let schedulerCtx: ExtensionContext | null = null;
@@ -860,10 +861,14 @@ export class SchedulerService {
     let response: string | undefined;
     let runError: string | undefined;
     let errorValue: unknown;
+    let credentialRefused = false;
 
     try {
       const result = await Promise.race([runPromise, timeoutPromise]);
-      if (missingCredentialError) throw new Error(missingCredentialError);
+      if (missingCredentialError) {
+        credentialRefused = true;
+        throw new Error(missingCredentialError);
+      }
 
       runSessionId = result.meta.sessionId;
       response = latestAssistantText(result.payloads);
@@ -907,6 +912,7 @@ export class SchedulerService {
         gateOutput,
         error: errorValue,
         errorMessage: runError,
+        credentialRefused,
       });
       if (detached) {
         const skippedScheduledFire = this.skippedScheduledFireKeys.delete(key);
@@ -959,6 +965,15 @@ export class SchedulerService {
     input: CompleteRunInput
   ): Promise<SchedulerRunResult> {
     const { job, firedAt, payload } = input;
+    const pauseForCredentials = input.credentialRefused && job.schedule.runAt === undefined;
+    if (pauseForCredentials) {
+      job.enabled = false;
+      // A refresh may have replaced the executing job while the run awaited.
+      const current = this.findJob(job.agentId, job.id);
+      if (current) current.enabled = false;
+      input.errorMessage += " The job was paused; re-enable it after reconnecting.";
+      input.error = new Error(input.errorMessage);
+    }
     job.state = job.state ?? {};
     job.state.lastStatus = input.status;
     job.state.lastError = input.errorMessage;
@@ -1053,6 +1068,12 @@ export class SchedulerService {
       this.disableCompletedOneShot(job, input.scheduledRunAt);
     } else {
       job.state.nextRunAtMs = computeNextRunAtMs(job.schedule, Date.now());
+    }
+    if (pauseForCredentials) {
+      job.enabled = false;
+      // Delivery/output awaits can let another refresh replace the job again.
+      const current = this.findJob(job.agentId, job.id);
+      if (current) current.enabled = false;
     }
     await this.saveAgent(job.agentId);
     return {
