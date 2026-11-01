@@ -3,6 +3,7 @@ import { z } from "zod";
 import { GatewayConfigSchema, type Extension } from "@yoplai/shared";
 import { ExtensionRuntime } from "../extensions/runtime.js";
 import { canvasExtension } from "../canvas/index.js";
+import { sessionHistoryExtension } from "../session-history/index.js";
 import { registerContainerToken, removeContainerToken } from "../sdk/container/tokens.js";
 import { createInternalTools } from "./internal-tools.js";
 
@@ -138,6 +139,21 @@ describe("internal tool failure severity", () => {
       level: "warn", msg: "[internal-tools] tool execution failed",
       tool: "dashboard_update", agentId: "agent-1",
       message: "Dashboard slug must be one .html filename, e.g. pto-team.html",
+    });
+  });
+
+  it("warns for a missing session_history search query without changing the response", async () => {
+    const lines = captureLogs();
+    const response = await requestFailure(sessionHistoryExtension, "session_history", { action: "search" });
+
+    expect(response.status).toBe(500);
+    expect(await response.json()).toEqual({ error: "search requires `query`" });
+    expect(lines).toHaveLength(1);
+    expect(lines[0].split("\n")).toHaveLength(1);
+    expect(JSON.parse(lines[0])).toEqual({
+      level: "warn", msg: "[internal-tools] tool execution failed",
+      tool: "session_history", agentId: "agent-1",
+      message: "search requires `query`",
     });
   });
 

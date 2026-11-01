@@ -13,8 +13,9 @@ vi.mock("../sessions/index.js", () => ({ getSessionEntry: async () => null }));
 vi.mock("../sessions/store.js", () => ({ getSessionCreatedAt: async () => 0 }));
 
 import type { AgentConfig } from "@yoplai/shared";
-import { runSessionHistory } from "./index.js";
+import { runSessionHistory, sessionHistoryExtension } from "./index.js";
 import { ChatProjectStore } from "../chat-projects/store.js";
+import * as historyStore from "../history/store.js";
 
 const agent = (id: string) => ({ id }) as AgentConfig;
 
@@ -41,6 +42,109 @@ describe("session_history tool", () => {
     await writeSession(userHist, "a1", "mine", ["widget for user one"], 1_800_000_000_000);
   });
   afterAll(() => fs.rm(home.dir, { recursive: true, force: true }));
+
+  it("marks a missing search query as invalid input without changing the message", async () => {
+    await expect(runSessionHistory({ action: "search" }, { agent: agent("a1") })).rejects.toMatchObject({
+      message: "search requires `query`", code: "invalid_input",
+    });
+  });
+
+  it("marks a missing read session as invalid input without changing the message", async () => {
+    await expect(runSessionHistory({ action: "read" }, { agent: agent("a1") })).rejects.toMatchObject({
+      message: "read requires `session`", code: "invalid_input",
+    });
+  });
+
+  it("marks an unparseable since date as invalid input without changing the message", async () => {
+    await expect(runSessionHistory({ action: "list", since: "not-a-date" }, { agent: agent("a1") })).rejects.toMatchObject({
+      message: "Invalid since date: not-a-date", code: "invalid_input",
+    });
+  });
+
+  it("marks an unparseable until date as invalid input without changing the message", async () => {
+    await expect(runSessionHistory({ action: "search", query: "widget", until: "not-a-date" }, { agent: agent("a1") })).rejects.toMatchObject({
+      message: "Invalid until date: not-a-date", code: "invalid_input",
+    });
+  });
+
+  it("marks an unknown action as invalid input with the original Zod message", async () => {
+    await expect(runSessionHistory({ action: "unknown" }, { agent: agent("a1") })).rejects.toMatchObject({
+      code: "invalid_input",
+      message: `[
+  {
+    "received": "unknown",
+    "code": "invalid_enum_value",
+    "options": [
+      "list",
+      "search",
+      "read"
+    ],
+    "path": [
+      "action"
+    ],
+    "message": "Invalid enum value. Expected 'list' | 'search' | 'read', received 'unknown'"
+  }
+]`,
+    });
+  });
+
+  it.each([
+    [0, `[
+  {
+    "code": "too_small",
+    "minimum": 1,
+    "type": "number",
+    "inclusive": true,
+    "exact": false,
+    "message": "Number must be greater than or equal to 1",
+    "path": [
+      "limit"
+    ]
+  }
+]`],
+    [100, `[
+  {
+    "code": "too_big",
+    "maximum": 50,
+    "type": "number",
+    "inclusive": true,
+    "exact": false,
+    "message": "Number must be less than or equal to 50",
+    "path": [
+      "limit"
+    ]
+  }
+]`],
+  ])("marks limit %i as invalid input with the original Zod message", async (limit, message) => {
+    await expect(runSessionHistory({ action: "list", limit }, { agent: agent("a1") })).rejects.toMatchObject({
+      message, code: "invalid_input",
+    });
+  });
+
+  it("leaves unexpected history failures untagged", async () => {
+    const read = vi.spyOn(historyStore, "getFullHistory").mockRejectedValueOnce(new Error("History unavailable"));
+    try {
+      const result = runSessionHistory({ action: "read", session: "old" }, { agent: agent("a1") });
+      await expect(result).rejects.toThrow("History unavailable");
+      await expect(result).rejects.not.toHaveProperty("code");
+    } finally {
+      read.mockRestore();
+    }
+  });
+
+  it("describes the required search and read arguments to the model", async () => {
+    const tools = await sessionHistoryExtension.getAgentTools?.(agent("a1"));
+    const tool = tools?.find((tool) => tool.name === "session_history");
+    expect(tool?.description).toMatch(/action=search:.*required.*query/i);
+    expect(tool?.description).toMatch(/action=read:.*required.*session/i);
+    expect(tool?.parameters).toMatchObject({
+      properties: {
+        query: { description: expect.stringMatching(/required/i) },
+        session: { description: expect.stringMatching(/required/i) },
+      },
+      required: ["action"],
+    });
+  });
 
   it("lists own sessions newest first and marks the current one", async () => {
     const out = await runSessionHistory({ action: "list" }, { agent: agent("a1"), sessionId: "cur" });

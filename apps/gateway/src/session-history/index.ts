@@ -44,10 +44,14 @@ const ArgsSchema = z.object({
 });
 type Args = z.infer<typeof ArgsSchema>;
 
+function invalidInput(message: string): Error & { code: string } {
+  return Object.assign(new Error(message), { code: "invalid_input" });
+}
+
 function parseDate(value: string | undefined, name: string): number | undefined {
   if (!value) return undefined;
   const time = Date.parse(value);
-  if (!Number.isFinite(time)) throw new Error(`Invalid ${name} date: ${value}`);
+  if (!Number.isFinite(time)) throw invalidInput(`Invalid ${name} date: ${value}`);
   return time;
 }
 
@@ -128,7 +132,7 @@ function messageMatches(
 }
 
 async function searchSessions(args: Args, scope: Scope): Promise<string> {
-  if (!args.query) throw new Error("search requires `query`");
+  if (!args.query) throw invalidInput("search requires `query`");
   const since = parseDate(args.since, "since");
   const until = parseDate(args.until, "until");
   const limit = args.limit ?? DEFAULT_SEARCH_LIMIT;
@@ -167,7 +171,7 @@ async function searchSessions(args: Args, scope: Scope): Promise<string> {
 }
 
 async function readSession(args: Args, scope: Scope): Promise<string> {
-  if (!args.session) throw new Error("read requires `session`");
+  if (!args.session) throw invalidInput("read requires `session`");
   const target = (await scopedSessions(scope)).find((s) =>
     matchesRef(s, args.session as string, scope)
   );
@@ -204,7 +208,13 @@ export async function runSessionHistory(
   raw: unknown,
   ctx: Pick<ExtensionAgentToolContext, "agent" | "userId" | "sessionId">
 ): Promise<string> {
-  const args = ArgsSchema.parse(raw);
+  let args: Args;
+  try {
+    args = ArgsSchema.parse(raw);
+  } catch (error) {
+    if (error instanceof z.ZodError) throw invalidInput(error.message);
+    throw error;
+  }
   const scope: Scope = {
     agentId: ctx.agent.id,
     userId: ctx.userId,
@@ -235,13 +245,13 @@ export const sessionHistoryExtension: Extension = {
       {
         name: "session_history",
         description:
-          "Look up your own past conversations (read-only); in a chat project also every agent's sessions in that project, listed as `agent/session` (pass that id to read/search `session`). action=list: recent sessions. action=search: case-insensitive substring `query` across sessions (filters: role, tool, since, session, limit). action=read: condensed transcript of `session` (from/to or around+n; role; full=<idx> expands one message). Output is compact text with #idx anchors; follow `more:` lines to continue.",
+          "Look up your own past conversations (read-only); in a chat project also every agent's sessions in that project, listed as `agent/session` (pass that id to read/search `session`). action=list: recent sessions. action=search: REQUIRED case-insensitive substring `query` across sessions (filters: role, tool, since, session, limit). action=read: REQUIRED `session` id for a condensed transcript (from/to or around+n; role; full=<idx> expands one message). Output is compact text with #idx anchors; follow `more:` lines to continue.",
         parameters: {
           type: "object",
           properties: {
             action: { type: "string", enum: ["list", "search", "read"] },
-            query: { type: "string", description: "search: substring to find" },
-            session: { type: "string", description: "read/search: session id" },
+            query: { type: "string", description: "search: REQUIRED substring to find" },
+            session: { type: "string", description: "read: REQUIRED session id; search: optional session id" },
             role: { type: "string", enum: ["user", "assistant", "system"] },
             tool: { type: "string", description: "search: only messages calling this tool" },
             since: { type: "string", description: "ISO date lower bound" },
