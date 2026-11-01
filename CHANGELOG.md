@@ -23,11 +23,13 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Changed
 
+- `send_file` accepts regular files in conversation sub-folders and delivers them with their basename, while still rejecting escaping paths and symlinked directories or files.
 - **⚠ BREAKING** `SOUL.md` is no longer created, loaded by default, or detected by legacy agent migration. Existing agents stop including it unless the operator explicitly adds `system_files: [SOUL.md]` to `agent.yaml`; use `system_files: [{ path: SOUL.md, required: true }]` to require it.
 - Human-chat now lives in the optional `@yoplai/extension-human-chat` package, using the portable `github:agentropie/human-chat` dependency. Generic extension hooks own chat commands and reply review; existing agent configuration stays compatible. Missing human-chat packages or dependencies log an error for each enabled agent while gateway startup and config reload continue.
 
 ### Fixed
 
+- Log caller-caused file-output rejections at warning; copy, stream, media-registration and event-emission failures remain errors.
 - Pi agents try their configured fallback once on HTTP 400 `invalid_request_error` without retrying the primary, preserving an error-level primary failure log on host and sandbox runs.
 - Validate extension tool parameters against JSON Schema 2020-12, repair unambiguous legacy forms, and warn and omit only invalid tools so sibling tools remain available.
 - Preserve Pi tool schemas through compaction persistence; add `scripts/repair-session-tools.ts` to dry-run or restore poisoned sessions with backups.

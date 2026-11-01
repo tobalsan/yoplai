@@ -31,7 +31,7 @@ export class ContainerFileOutputAdapter {
         ? conversationFiles
         : undefined;
     if (!files && !hostDataDir)
-      throw new Error(
+      throw new FileOutputRejectedError(
         "File path must be under the conversation files directory"
       );
     const source = resolveContainerDataFile(
@@ -39,31 +39,60 @@ export class ContainerFileOutputAdapter {
       event.path,
       files?.runtimePath
     );
-    const realDataDir = await fsPromises.realpath(
-      files?.hostPath ?? hostDataDir!
-    );
-    if (files && path.dirname(source) !== path.resolve(files.hostPath)) {
-      throw new Error(
-        "send_file requires a file directly in the conversation files directory; nested paths are not supported"
-      );
-    }
-    const realSource = files
-      ? path.join(realDataDir, path.basename(source))
-      : await fsPromises.realpath(source);
-    ensurePathWithinDir(realSource, realDataDir);
-
-    const sourceFile = files
-      ? await fsPromises.open(
-          realSource,
-          constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK
+    const realDataDir = await fsPromises
+      .realpath(files?.hostPath ?? hostDataDir!)
+      .catch(rethrowValidationError);
+    let realSource = files
+      ? path.join(
+          realDataDir,
+          path.relative(path.resolve(files.hostPath), source)
         )
+      : await fsPromises.realpath(source).catch(rethrowValidationError);
+    if (files) {
+      let parent = realDataDir;
+      const components = path.relative(realDataDir, realSource).split(path.sep);
+      for (const component of components.slice(0, -1)) {
+        parent = path.join(parent, component);
+        const stat = await fsPromises
+          .lstat(parent)
+          .catch(rethrowValidationError);
+        if (stat.isSymbolicLink() || !stat.isDirectory()) {
+          throw new FileOutputRejectedError(
+            `file_output path is not a file: ${event.path}`
+          );
+        }
+      }
+      const realParent = await fsPromises
+        .realpath(parent)
+        .catch(rethrowValidationError);
+      realSource = path.join(realParent, path.basename(realSource));
+    }
+    try {
+      ensurePathWithinDir(realSource, realDataDir);
+    } catch (error) {
+      throw new FileOutputRejectedError((error as Error).message, {
+        cause: error,
+      });
+    }
+
+    // Node has no openat: directory replacement can still race these checks.
+    // O_NOFOLLOW pins the leaf without following a final symlink.
+    const sourceFile = files
+      ? await fsPromises
+          .open(
+            realSource,
+            constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK
+          )
+          .catch(rethrowValidationError)
       : undefined;
     try {
       const stat = sourceFile
-        ? await sourceFile.stat()
-        : await fsPromises.stat(realSource);
+        ? await sourceFile.stat().catch(rethrowValidationError)
+        : await fsPromises.stat(realSource).catch(rethrowValidationError);
       if (!stat.isFile()) {
-        throw new Error(`file_output path is not a file: ${event.path}`);
+        throw new FileOutputRejectedError(
+          `file_output path is not a file: ${event.path}`
+        );
       }
 
       const filename = sanitizeFilename(
@@ -130,6 +159,27 @@ export class ContainerFileOutputAdapter {
   }
 }
 
+export class FileOutputRejectedError extends Error {
+  override name = "FileOutputRejectedError";
+}
+
+export function isFileOutputRejectedError(
+  error: unknown
+): error is FileOutputRejectedError {
+  return error instanceof FileOutputRejectedError;
+}
+
+function rethrowValidationError(error: unknown): never {
+  if (
+    error instanceof Error &&
+    "code" in error &&
+    ["ENOENT", "ELOOP", "ENOTDIR"].includes(String(error.code))
+  ) {
+    throw new FileOutputRejectedError(error.message, { cause: error });
+  }
+  throw error;
+}
+
 export function resolveContainerDataFile(
   hostDataDir: string,
   containerPath: string,
@@ -142,7 +192,9 @@ export function resolveContainerDataFile(
     relative.startsWith("..") ||
     path.posix.isAbsolute(relative)
   ) {
-    throw new Error(`file_output path must be under ${runtimeRoot}`);
+    throw new FileOutputRejectedError(
+      `file_output path must be under ${runtimeRoot}`
+    );
   }
   return path.join(hostDataDir, ...relative.split("/"));
 }

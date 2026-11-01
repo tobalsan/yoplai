@@ -208,6 +208,7 @@ it("sends a container conversation file and refuses a symlink to another convers
     path.join(home, "bob", "secret.txt"),
     path.join(hostPath, "escape.txt")
   );
+  await fs.symlink(path.join(home, "bob"), path.join(hostPath, "linked"));
   const events: Array<{ type: string; fileId?: string }> = [];
   const params: import("../sdk/types.js").SdkRunParams = {
     agentId: "files",
@@ -269,8 +270,14 @@ it("sends a container conversation file and refuses a symlink to another convers
     ).toBeGreaterThanOrEqual(400);
     expect(
       (await send("/workspace/files/nested/report.txt")).status
+    ).toBe(200);
+    const nestedMetadata = await getMediaFileMetadata(events[1].fileId!);
+    expect(nestedMetadata).toMatchObject({ filename: "report.txt", size: 13 });
+    expect(await fs.readFile(nestedMetadata!.path, "utf8")).toBe("Nested report");
+    expect(
+      (await send("/workspace/files/linked/secret.txt")).status
     ).toBeGreaterThanOrEqual(400);
-    expect(events).toHaveLength(1);
+    expect(events).toHaveLength(2);
   } finally {
     removeContainerToken("send-files-test");
   }

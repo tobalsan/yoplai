@@ -782,14 +782,15 @@ describe("container adapter", () => {
     });
   });
 
-  it("logs legacy file_output failure with run identity and path", async () => {
+  it("warns once for a missing legacy file_output and preserves the error event", async () => {
     const root = tempDir();
     process.env.YOPLAI_HOME = path.join(root, "yoplai");
     const agent = createAgent(root);
     setConfig(agent, root);
     const { processes } = mockSpawn();
     mockExecFile();
-    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    const log = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
     const params = createParams(agent);
     const run = getContainerAdapter().run(params);
     await tick();
@@ -800,18 +801,67 @@ describe("container adapter", () => {
     processes[0].emitOutput({ text: "done" });
     processes[0].finish(0);
     await expect(run).resolves.toEqual({ text: "done", aborted: undefined });
+    const message = `ENOENT: no such file or directory, realpath '${path.join(root, "yoplai", "agents", "cloud", "data", "missing.csv")}'`;
     expect(log).toHaveBeenCalledTimes(1);
-    expect(JSON.parse(String(log.mock.calls[0][0]))).toMatchObject({
+    expect(JSON.parse(String(log.mock.calls[0][0]))).toEqual({
+      level: "warn",
       msg: "[container] file_output failed",
       agentId: params.agentId,
       sessionId: params.sessionId,
       runId: expect.any(String),
       path: "/workspace/data/missing.csv",
+      message,
     });
+    expect(error).not.toHaveBeenCalled();
     expect(params.onEvent).toHaveBeenCalledWith({
       type: "error",
-      message: expect.any(String),
+      message,
     });
+    expect(params.onHistoryEvent).not.toHaveBeenCalledWith(
+      expect.objectContaining({ type: "assistant_file" })
+    );
+  });
+
+  it("logs one error for a legacy file_output outbound I/O failure", async () => {
+    const root = tempDir();
+    const homeDir = path.join(root, "yoplai");
+    process.env.YOPLAI_HOME = homeDir;
+    const agent = createAgent(root);
+    setConfig(agent, root);
+    const { processes } = mockSpawn();
+    mockExecFile();
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const params = createParams(agent);
+    const run = getContainerAdapter().run(params);
+    await tick();
+    fs.writeFileSync(path.join(homeDir, "agents", "cloud", "data", "report.csv"), "a,b\n1,2\n");
+    fs.mkdirSync(path.join(homeDir, "media"), { recursive: true });
+    const outboundPath = path.join(homeDir, "media", "outbound");
+    fs.writeFileSync(outboundPath, "blocks outbound directory");
+
+    processes[0].emitStreamEvent({
+      type: "file_output",
+      path: "/workspace/data/report.csv",
+    });
+    processes[0].emitOutput({ text: "done" });
+    processes[0].finish(0);
+
+    await expect(run).resolves.toEqual({ text: "done", aborted: undefined });
+    const message = `EEXIST: file already exists, mkdir '${outboundPath}'`;
+    expect(error).toHaveBeenCalledTimes(1);
+    expect(JSON.parse(String(error.mock.calls[0][0]))).toMatchObject({
+      level: "error",
+      msg: "[container] file_output failed",
+      agentId: params.agentId,
+      sessionId: params.sessionId,
+      runId: expect.any(String),
+      path: "/workspace/data/report.csv",
+      message,
+      stack: expect.any(String),
+    });
+    expect(warn).not.toHaveBeenCalled();
+    expect(params.onEvent).toHaveBeenCalledWith({ type: "error", message });
     expect(params.onHistoryEvent).not.toHaveBeenCalledWith(
       expect.objectContaining({ type: "assistant_file" })
     );

@@ -15,6 +15,7 @@ import { executeExtensionAgentTool } from "../extensions/tools.js";
 import { getExtensionRuntime } from "../extensions/registry.js";
 import type { ExtensionRuntime } from "../extensions/runtime.js";
 import { logError, logWarn } from "../logging.js";
+import { isFileOutputRejectedError } from "../sdk/container/file-output.js";
 import { resolveOAuthToken, type OAuthTokenLookup } from "../sdk/container/oauth-tokens.js";
 import {
   listDashboardSlugs,
@@ -345,12 +346,20 @@ export function createInternalTools(
     } catch (error) {
       if (parsed.data.tool === "__register_file_output") {
         const args = parsed.data.args as { path?: unknown } | null;
-        logError("[container] file_output failed", error, {
+        const fields = {
           agentId: context.agentId,
           sessionId: context.sessionId,
           runId: context.runId,
           path: args?.path,
-        });
+        };
+        if (isFileOutputRejectedError(error)) {
+          logWarn("[container] file_output failed", {
+            ...fields,
+            message: error.message,
+          });
+        } else {
+          logError("[container] file_output failed", error, fields);
+        }
       }
       if (runSignal.aborted) return c.json({ error: "run cancelled" }, 409);
       if (timeoutController.signal.aborted) {
