@@ -71,7 +71,7 @@ function isPollingOrHealthPath(path: string): boolean {
 export function accessLogger(): MiddlewareHandler {
   const normalLogger = logger((message) => {
     if (message.startsWith("<-- ")) return;
-    const safeMessage = stripAnsi(message).replace(
+    const safeMessage = stripAnsi(message).replace(/\/(sandbox|content)\/[^/?\s]+(?:\?[^\s]*)?/g, "/$1/[redacted]").replace(
       /^(--> \S+ )(\S+)/,
       (_, prefix: string, target: string) => prefix + redactQuery(target)
     );

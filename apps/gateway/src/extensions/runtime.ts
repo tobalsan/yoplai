@@ -17,8 +17,9 @@ import { getOAuthService } from "../oauth/service.js";
 import { extensionSecretFields, resolveExtensionTokenConfig } from "../credentials/extension-tokens.js";
 import { getConversationFiles } from "../media/conversation-files.js";
 import { logWarn } from "../logging.js";
+import { captureMcpApp } from "../mcp-apps/capture.js";
 
-type RunIdentity = Pick<ExtensionAgentToolContext, "sessionOwnerId" | "requesterId" | "conversationFiles" | "actorUserId" | "actorKind"> & ExtensionRunInfo;
+type RunIdentity = Pick<ExtensionAgentToolContext, "sessionOwnerId" | "requesterId" | "conversationFiles" | "actorUserId" | "actorKind" | "toolCallId"> & ExtensionRunInfo;
 
 export function resolveRunActor(config: GatewayConfig, userId?: string, identity?: RunIdentity): Pick<ExtensionAgentToolContext, "actorUserId" | "actorKind"> {
   if (identity?.actorKind === "eval") return { actorKind: "eval", actorUserId: identity.actorUserId };
@@ -277,7 +278,9 @@ export class ExtensionRuntime {
             // Rebuild at call time: credentials, and for OAuth the grant deciding personal vs team settings, may have changed.
             execute: async (args: unknown, context: ExtensionAgentToolContext) => {
               await requireActorExecution(context.agent.id, context.config, context.userId, context);
-              return withOAuthConnectLink(extension, needsCallTimeRebind(extension) ? rebindAtCallTime(extension, tool) : tool.execute)(args, context);
+              const result = await withOAuthConnectLink(extension, needsCallTimeRebind(extension) ? rebindAtCallTime(extension, tool) : tool.execute)(args, context);
+              await captureMcpApp(tool.mcp, context, args, result);
+              return result;
             },
           }));
         } catch (error) {
@@ -376,6 +379,7 @@ export class ExtensionRuntime {
         config,
         env,
         sessionId,
+        toolCallId: identity?.toolCallId,
         userId,
         ...resolveRunActor(config, userId, identity),
         sessionOwnerId: identity?.sessionOwnerId,

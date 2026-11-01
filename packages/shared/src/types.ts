@@ -1241,6 +1241,10 @@ export const AgentDiscoveryConfigSchema = z.union([
 
 // Settings shared by the discovery (root) and resolved gateway schemas.
 const GatewayCommonFields = {
+  apps: z.object({
+    origin: z.string().optional(),
+    port: z.number().int().min(0).max(65535).optional(),
+  }).optional(),
   defaultProjectManager: z.string().optional(),
   sandbox: GlobalSandboxConfigSchema.optional(),
   onecli: OnecliConfigSchema.optional(),
@@ -1603,6 +1607,8 @@ export type ExtensionAgentToolContext = {
   config: GatewayConfig;
   env?: Record<string, string>;
   sessionId?: string;
+  /** Trusted execution correlation, supplied by the gateway adapter. */
+  toolCallId?: string;
   userId?: string;
   actorUserId?: string;
   actorKind?: "user" | "service" | "local" | "eval";
@@ -1627,6 +1633,21 @@ export const ToolNamespaceSchema = z.object({
 });
 export type ToolNamespace = z.infer<typeof ToolNamespaceSchema>;
 
+export type McpToolMetadata = {
+  server: string;
+  tool: string;
+  ui?: { resourceUri: string; visibility: ("model" | "app")[] };
+};
+
+export type McpAppsContext = { agentId: string; userId?: string; signal?: AbortSignal };
+export type McpResourceContent = {
+  uri: string;
+  mimeType?: string;
+  text?: string;
+  blob?: string;
+  _meta?: Record<string, unknown>;
+};
+
 export type ExtensionAgentTool = {
   name: string;
   description: string;
@@ -1635,6 +1656,7 @@ export type ExtensionAgentTool = {
   namespace?: ToolNamespace;
   parameters: Record<string, unknown>;
   outputSchema?: Record<string, unknown>;
+  mcp?: McpToolMetadata;
   execute(
     args: unknown,
     context: ExtensionAgentToolContext
@@ -1802,6 +1824,10 @@ export interface Extension {
    * This must never resolve secrets, OAuth, or start the extension.
    */
   getDiscoveryTools?(): ExtensionAgentTool[] | Promise<ExtensionAgentTool[]>;
+  mcpApps?: {
+    readResource(ctx: McpAppsContext, server: string, uri: string): Promise<{ contents: McpResourceContent[] }>;
+    callTool(ctx: McpAppsContext, server: string, tool: string, args: Record<string, unknown>): Promise<Record<string, unknown>>;
+  };
   validateAgentConfigs?(config: GatewayConfig): ValidationResult;
   /** Validate this extension's config for one agent before it is enabled. */
   validateAgentConfig?(
@@ -1906,6 +1932,7 @@ const CapabilitiesUserSchema = z.object({
 
 export const CapabilitiesResponseSchema = z.object({
   version: z.number(),
+  apps: z.object({ available: z.boolean() }).optional(),
   extensions: z.record(z.string(), z.boolean()),
   agents: z.array(z.string()),
   multiUser: z.boolean(),
@@ -2143,6 +2170,15 @@ export const FileOutputEventSchema = z.object({
 });
 export type FileOutputEvent = z.infer<typeof FileOutputEventSchema>;
 
+export const McpAppViewSchema = z.object({
+  server: z.string(),
+  tool: z.string(),
+  resourceUri: z.string(),
+});
+export type McpAppView = z.infer<typeof McpAppViewSchema>;
+export const McpAppViewReferenceSchema = McpAppViewSchema.extend({ recordId: z.string() });
+export type McpAppViewReference = z.infer<typeof McpAppViewReferenceSchema>;
+
 export const StreamEventSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("text"), data: z.string() }),
   z.object({ type: z.literal("thinking"), data: z.string() }),
@@ -2152,6 +2188,7 @@ export const StreamEventSchema = z.discriminatedUnion("type", [
     parentToolCallId: z.string().optional(),
     name: z.string(),
     arguments: z.unknown(),
+    view: McpAppViewSchema.optional(),
   }),
   z.object({
     type: z.literal("tool_result"),
@@ -2161,6 +2198,7 @@ export const StreamEventSchema = z.discriminatedUnion("type", [
     content: z.string(),
     isError: z.boolean(),
     details: z.object({ diff: z.string().optional() }).optional(),
+    view: McpAppViewReferenceSchema.optional(),
   }),
   z.object({ type: z.literal("tool_start"), toolName: z.string() }),
   z.object({
@@ -2296,6 +2334,7 @@ export type WsActiveTurnSnapshot = {
     name: string;
     arguments: unknown;
     status: "running" | "done" | "error";
+    view?: McpAppView;
   }>;
   toolResults?: Array<{
     id: string;
@@ -2304,6 +2343,7 @@ export type WsActiveTurnSnapshot = {
     content: string;
     isError: boolean;
     details?: { diff?: string };
+    view?: McpAppViewReference;
   }>;
 };
 
@@ -2430,6 +2470,7 @@ export type FullHistoryMessage =
       content: ContentBlock[];
       isError: boolean;
       details?: { diff?: string };
+      view?: McpAppViewReference;
       timestamp: number;
     };
 
@@ -2717,6 +2758,7 @@ export const HistoryEventSchema = z.discriminatedUnion("type", [
     name: z.string(),
     args: z.unknown(),
     timestamp: z.number(),
+    view: McpAppViewSchema.optional(),
   }),
   z.object({
     type: z.literal("tool_result"),
@@ -2727,6 +2769,7 @@ export const HistoryEventSchema = z.discriminatedUnion("type", [
     isError: z.boolean(),
     details: z.object({ diff: z.string().optional() }).optional(),
     timestamp: z.number(),
+    view: McpAppViewReferenceSchema.optional(),
   }),
   z.object({ type: z.literal("turn_end"), timestamp: z.number() }),
   z.object({

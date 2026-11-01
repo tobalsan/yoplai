@@ -201,6 +201,7 @@ export class WsBroker {
         name: tc.name,
         arguments: tc.args,
         status: tc.status,
+        view: tc.view,
       })),
       toolResults: turn.toolResults,
     });

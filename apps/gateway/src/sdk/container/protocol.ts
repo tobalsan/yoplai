@@ -95,7 +95,15 @@ export function parseProtocolOutput(
   if (!lines.length) return undefined;
   const payload = lines.join("\n").trim();
   if (!payload) return undefined;
-  return ContainerOutputSchema.parse(JSON.parse(payload));
+  const output = JSON.parse(payload) as { history?: unknown } | null;
+  if (output && Array.isArray(output.history)) {
+    for (const event of output.history as unknown[]) {
+      if (!event || typeof event !== "object") continue;
+      const message = event as Record<string, unknown>;
+      if (message.type === "tool_call" || message.type === "tool_result") delete message.view;
+    }
+  }
+  return ContainerOutputSchema.parse(output);
 }
 
 export function getMeaningfulStderr(stderr: string): string {

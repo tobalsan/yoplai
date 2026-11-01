@@ -9,6 +9,7 @@ import type {
   ContainerDeliveryEnvelope,
   ContainerInput,
   ContainerOutput,
+  McpAppView,
 } from "@yoplai/shared";
 import {
   ContainerRunnerProtocolEventSchema,
@@ -47,6 +48,8 @@ import {
   prepareLaunchFilesystem,
 } from "./launch-spec.js";
 import { ContainerInputBuilder } from "./input-builder.js";
+import { ContainerToolBridge } from "./tool-bridge.js";
+import { clearMcpAppViews, getMcpAppView } from "../../mcp-apps/capture.js";
 import { getSkillContext } from "../../skills/context.js";
 import { resolveRunSkills } from "../../skills/resolver.js";
 import {
@@ -115,6 +118,22 @@ function writeCloseSentinel(ipcDir: string): void {
 const isHistoryEvent = (event: unknown): event is HistoryEvent =>
   HistoryEventSchema.safeParse(event).success;
 
+function trustedMcpAppEvent(params: SdkRunParams, event: HistoryEvent, views: Map<string, McpAppView>): HistoryEvent {
+  if (event.type === "tool_call") {
+    const trusted = { ...event };
+    delete trusted.view;
+    const view = views.get(event.name);
+    return view ? { ...trusted, view } : trusted;
+  }
+  if (event.type === "tool_result") {
+    const trusted = { ...event };
+    delete trusted.view;
+    const view = getMcpAppView(params, event.id);
+    return view ? { ...trusted, view } : trusted;
+  }
+  return event;
+}
+
 function forwardStreamEvent(
   params: SdkRunParams,
   event: HistoryEvent,
@@ -147,6 +166,7 @@ function forwardStreamEvent(
       parentToolCallId: event.parentToolCallId,
       name: event.name,
       arguments: event.args,
+      ...(event.view ? { view: event.view } : {}),
     });
     return;
   }
@@ -165,6 +185,7 @@ function forwardStreamEvent(
       content: event.content,
       isError: event.isError,
       details: event.details,
+      ...(event.view ? { view: event.view } : {}),
     });
     return;
   }
@@ -173,7 +194,8 @@ function forwardStreamEvent(
 function emitHistory(
   params: SdkRunParams,
   output: ContainerOutput,
-  invisibleToolNames: Set<string>
+  invisibleToolNames: Set<string>,
+  views: Map<string, McpAppView>
 ): void {
   if (output.history?.length) {
     for (const event of output.history) {
@@ -184,7 +206,7 @@ function emitHistory(
         !(event.type === "tool_call" && invisibleToolNames.has(event.name)) &&
         !(event.type === "tool_result" && invisibleToolNames.has(event.name))
       ) {
-        params.onHistoryEvent(event);
+        params.onHistoryEvent(trustedMcpAppEvent(params, event, views));
       }
     }
     return;
@@ -291,6 +313,7 @@ export function getContainerAdapter(): SdkAdapter {
       let child: childProcess.ChildProcess;
       let input: ContainerInput;
       let invisibleToolNames = new Set<string>();
+      const toolBridge = new ContainerToolBridge();
       try {
         agentToken = randomUUID();
         const attachmentContext = hasReadableDocumentAttachment(params)
@@ -359,7 +382,7 @@ export function getContainerAdapter(): SdkAdapter {
           emitProgress: (event) =>
             params.onEvent({ type: "progress", ...event }),
         });
-        input = await new ContainerInputBuilder().build(
+        input = await new ContainerInputBuilder(toolBridge).build(
           {
             ...params,
             message: appendAttachmentContext(
@@ -582,15 +605,16 @@ export function getContainerAdapter(): SdkAdapter {
           if (!rawEvent) return;
 
           try {
-            const event = ContainerRunnerProtocolEventSchema.parse(
-              JSON.parse(rawEvent)
-            );
-            if (event.type === "retry") {
+            const message = JSON.parse(rawEvent) as Record<string, unknown> | null;
+            if (message?.type === "tool_call" || message?.type === "tool_result") delete message.view;
+            const parsedEvent = ContainerRunnerProtocolEventSchema.parse(message);
+            if (parsedEvent.type === "retry") {
               logWarn(
-                `[agent] retrying transient provider error (attempt ${event.attempt}, delay ${event.delaySeconds}s): ${event.message}`
+                `[agent] retrying transient provider error (attempt ${parsedEvent.attempt}, delay ${parsedEvent.delaySeconds}s): ${parsedEvent.message}`
               );
               return;
             }
+            const event = parsedEvent.type === "file_output" ? parsedEvent : trustedMcpAppEvent(params, parsedEvent, toolBridge.mcpViews);
             if (event.type !== "file_output") {
               if (
                 !settled &&
@@ -701,7 +725,7 @@ export function getContainerAdapter(): SdkAdapter {
           }
 
           if (!sawStreamingHistory) {
-            emitHistory(params, output, invisibleToolNames);
+            emitHistory(params, output, invisibleToolNames, toolBridge.mcpViews);
             if (output.text) {
               params.onEvent({ type: "text", data: output.text });
             }
@@ -749,7 +773,7 @@ export function getContainerAdapter(): SdkAdapter {
         }
 
         child.stdin?.end(`${JSON.stringify(input)}\n`);
-      });
+      }).finally(() => clearMcpAppViews(params));
     },
     async queueMessage(
       handle: unknown,

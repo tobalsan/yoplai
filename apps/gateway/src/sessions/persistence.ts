@@ -3,6 +3,8 @@ import path from "node:path";
 import type { SessionEntry } from "@yoplai/shared";
 import { getUserHistoryDir } from "@yoplai/extension-multi-user/isolation";
 import { CONFIG_DIR } from "../config/index.js";
+import { deleteMcpAppRecords } from "../mcp-apps/capture.js";
+import { revokeMcpAppSession } from "../mcp-apps/views.js";
 import {
   abortSession,
   deleteSession,
@@ -122,6 +124,8 @@ export async function resetSession(
         clearTimeout(timeout);
       }
     }
+    const appsScope = { agentId, sessionId, ownerUserId: userId };
+    await deleteMcpAppRecords(appsScope);
     const createdAt = await getSessionCreatedAt(sessionId, userId);
     for (const dir of sessionDirs(userId)) {
       const file = await resolveSessionDataFile({
@@ -137,6 +141,7 @@ export async function resetSession(
       force: true,
     });
     await clearSessionEntriesById(agentId, sessionId, userId);
+    revokeMcpAppSession(appsScope);
     invalidateResolvedHistoryFile(agentId, sessionId, userId);
     for (const pending of popPendingMessages(agentId, sessionId)) {
       pending.params?.onEvent?.({

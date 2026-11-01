@@ -9,6 +9,8 @@ import type {
   FileAttachment,
   FileBlock,
   RunFailureKind,
+  McpAppView,
+  McpAppViewReference,
 } from "@yoplai/shared";
 import { sanitizeForStorage } from "@yoplai/shared";
 import type { HistoryEvent } from "../sdk/types.js";
@@ -119,6 +121,7 @@ type ToolResultHistoryEntry = {
   content: ContentBlock[];
   isError: boolean;
   details?: { diff?: string };
+  view?: McpAppViewReference;
 };
 
 type HistoryEntry =
@@ -331,6 +334,7 @@ export type TurnBuffer = {
     name: string;
     args: unknown;
     status: "running" | "done" | "error";
+    view?: McpAppView;
   }>;
   toolResults: Array<{
     id: string;
@@ -339,6 +343,7 @@ export type TurnBuffer = {
     content: string;
     isError: boolean;
     details?: { diff?: string };
+    view?: McpAppViewReference;
     timestamp: number;
   }>;
   meta?: {
@@ -387,7 +392,7 @@ export function snapshotTurnBuffer(buffer: TurnBuffer): FullHistoryMessage[] {
     role: "toolResult", toolCallId: result.id, toolName: result.name,
     parentToolCallId: result.parentToolCallId,
     content: [{ type: "text", text: result.content }], isError: result.isError,
-    details: result.details, timestamp: result.timestamp,
+    details: result.details, view: result.view, timestamp: result.timestamp,
   });
   return structuredClone(messages);
 }
@@ -486,6 +491,7 @@ export async function flushTurnBuffer(
         content: [{ type: "text", text: tr.content }],
         isError: tr.isError,
         details: tr.details,
+        view: tr.view,
         timestamp: tr.timestamp,
       },
       userId
@@ -619,6 +625,7 @@ export function bufferHistoryEvent(
         name: event.name,
         args: event.args,
         status: "running",
+        view: event.view,
       });
       buffer.assistantContent.push({
         type: "toolCall",
@@ -648,6 +655,7 @@ export function bufferHistoryEvent(
         content: event.content,
         isError: event.isError,
         details: event.details,
+        view: event.view,
         timestamp: event.timestamp,
       });
       break;
@@ -825,6 +833,7 @@ export async function getFullHistory(
             content: entry.content,
             isError: entry.isError,
             details: entry.details,
+            view: entry.view,
             timestamp: entry.timestamp,
           });
         }
