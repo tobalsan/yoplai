@@ -42,6 +42,7 @@ import { DashboardListActions, DashboardListRow, ownershipLabel } from "../compo
 import { DashboardAccessDialog } from "../components/DashboardAccessDialog";
 import { ConfirmDialog } from "../components/ui/ConfirmDialog";
 import { teamRemovalWarning } from "../lib/team-removal";
+import { usePrivateItemsVisibility, visibleDashboards } from "../lib/private-items";
 
 const DUPLICATE_MCP_MESSAGE = "This MCP server has already been added.";
 
@@ -217,6 +218,7 @@ export function EditAgent() {
     return typeof target === "string" && target.startsWith("/") && !target.startsWith("//") ? target : undefined;
   };
   const session = useSession();
+  const { showPrivateItems, togglePrivateItems } = usePrivateItemsVisibility();
   const isAdmin = createMemo(() =>
     hasAdminRole(
       (session().data?.user as { role?: string | string[] } | undefined)?.role
@@ -279,7 +281,12 @@ export function EditAgent() {
   const [accessDashboard, setAccessDashboard] = createSignal<AgentDashboard>();
   const [claimTarget, setClaimTarget] = createSignal<AgentDashboard>();
   const [claimError, setClaimError] = createSignal<string>();
-  const sections = createMemo(() => dashboardSections(dashboards.loading || dashboards.error ? [] : dashboards() ?? []));
+  const visibleAgentDashboards = createMemo(() => visibleDashboards(
+    dashboards.loading || dashboards.error ? [] : dashboards() ?? [],
+    isSuperadmin() ? session().data?.user.id : undefined,
+    showPrivateItems(),
+  ));
+  const sections = createMemo(() => dashboardSections(visibleAgentDashboards()));
   const openClaim = (dashboard: AgentDashboard) => { setClaimError(undefined); setClaimTarget(dashboard); };
 
   const [extensions, { refetch: refetchExtensions }] =
@@ -498,11 +505,23 @@ export function EditAgent() {
         </Show>
 
         <Show when={agent()}>
-          <div class="edit-agent-tabs" role="tablist" aria-label="Agent sections">
-            <button type="button" role="tab" aria-selected={tab() === "extensions"} onClick={() => setTab("extensions")}>Extensions</button>
-            <button type="button" role="tab" data-tour="tab-connections" aria-selected={tab() === "connections"} onClick={() => setTab("connections")}>My connections</button>
-            <Show when={dashboardAgentId()}><button type="button" role="tab" data-tour="tab-dashboards" aria-selected={tab() === "dashboards"} onClick={() => setTab("dashboards")}>Dashboards</button></Show>
-            <Show when={dashboardAgentId() && isExtensionEnabled("scheduler")}><button type="button" role="tab" aria-selected={tab() === "schedules"} onClick={() => setTab("schedules")}>Scheduled jobs</button></Show>
+          <div class="edit-agent-tabs-row">
+            <div class="edit-agent-tabs" role="tablist" aria-label="Agent sections">
+              <button type="button" role="tab" aria-selected={tab() === "extensions"} onClick={() => setTab("extensions")}>Extensions</button>
+              <button type="button" role="tab" data-tour="tab-connections" aria-selected={tab() === "connections"} onClick={() => setTab("connections")}>My connections</button>
+              <Show when={dashboardAgentId()}><button type="button" role="tab" data-tour="tab-dashboards" aria-selected={tab() === "dashboards"} onClick={() => setTab("dashboards")}>Dashboards</button></Show>
+              <Show when={dashboardAgentId() && isExtensionEnabled("scheduler")}><button type="button" role="tab" aria-selected={tab() === "schedules"} onClick={() => setTab("schedules")}>Scheduled jobs</button></Show>
+            </div>
+            <Show when={isSuperadmin() && (tab() === "dashboards" || tab() === "schedules")}>
+              <button
+                type="button"
+                class="edit-agent-private-toggle"
+                aria-label="Show other users’ private items"
+                aria-pressed={showPrivateItems()}
+                title={showPrivateItems() ? "Hide other users’ private items" : "Show other users’ private items"}
+                onClick={togglePrivateItems}
+              ><i class={showPrivateItems() ? "fa-solid fa-eye" : "fa-solid fa-eye-slash"} aria-hidden="true" /></button>
+            </Show>
           </div>
         </Show>
 
@@ -522,7 +541,7 @@ export function EditAgent() {
           <section class="edit-agent-dashboards" role="tabpanel" data-tour="panel-dashboards">
             <Show when={dashboards.loading}><p>Loading dashboards…</p></Show>
             <Show when={dashboards.error}><p>Failed to load dashboards.</p></Show>
-            <Show when={!dashboards.loading && !dashboards.error && dashboards()?.length === 0}>
+            <Show when={!dashboards.loading && !dashboards.error && visibleAgentDashboards().length === 0}>
               <p>No dashboards yet.</p>
             </Show>
             <Show when={!dashboards.error}>
@@ -711,11 +730,18 @@ export function EditAgent() {
           padding: 24px;
         }
 
-        .edit-agent-tabs {
+        .edit-agent-tabs-row {
           display: flex;
-          gap: 16px;
+          align-items: flex-end;
           margin-top: 28px;
           border-bottom: 1px solid var(--border-default);
+        }
+
+        .edit-agent-tabs {
+          display: flex;
+          flex: 1;
+          min-width: 0;
+          gap: 16px;
         }
 
         .edit-agent-tabs button {
@@ -731,6 +757,25 @@ export function EditAgent() {
           border-bottom-color: var(--accent, #3b82f6);
           color: var(--text-primary);
         }
+
+        .edit-agent-private-toggle {
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          flex-shrink: 0;
+          width: 40px;
+          height: 40px;
+          padding: 0;
+          border: 0;
+          border-radius: 6px;
+          background: transparent;
+          color: var(--text-muted);
+          font-size: 14px;
+          cursor: pointer;
+        }
+        .edit-agent-private-toggle:hover,
+        .edit-agent-private-toggle:active { background: var(--bg-raised); color: var(--text-secondary); }
+        .edit-agent-private-toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
         .edit-agent-dashboards {
           max-width: 800px;
