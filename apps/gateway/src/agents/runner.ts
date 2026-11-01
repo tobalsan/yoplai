@@ -60,11 +60,13 @@ import { maybeGenerateToolLabel } from "../maintenance/tool-labels.js";
 import { notifyProviderQuota } from "./quota-notification.js";
 import { clearSessionHandle, getSession } from "./sessions.js";
 import { HeldReply, hasHeldReply } from "./reply-review.js";
+import { routeSession, shouldDeferRouting, type SessionRoutingDependencies } from "../model-routing/session-router.js";
 
 export type InternalRunAgentParams = SharedRunAgentParams & {
   userId?: string;
   extensionRuntime?: ExtensionRuntime;
   deferredTurn?: boolean;
+  routingDependencies?: SessionRoutingDependencies;
   resolvedSession?: {
     sessionId: string;
     sessionKey?: string;
@@ -394,13 +396,17 @@ export async function runAgent(
   // durably active. It remains a conversational follow-up until the agent
   // explicitly changes the task through its lifecycle tools.
   const activeTask = await getTask(params.agentId, sessionId, sessionOwnerId);
+  const routingContext = () => ({
+    agent, config: loadConfig().modelRouting, sdk: sdkId, sessionId, sessionOwnerId,
+    message, source: params.source, sender: params.sender, background: params.background, model: params.model,
+  });
   const joinPolicy = {
     queueMode: activeTask?.status === "active" ? "queue" : agent.queueMode ?? "queue",
     capabilities: queueCapabilities,
     adapter,
     message,
     sender: params.sender,
-    params: { ...params, message, sessionOwnerId: sessionOwnerId ?? null },
+    params: { ...params, message, thinkLevel: params.thinkLevel ?? directiveThinkLevel, sessionOwnerId: sessionOwnerId ?? null },
   };
 
   await ensureSessionsDir();
@@ -416,7 +422,11 @@ export async function runAgent(
       }
     );
     if (abortController) break;
-    const join = await lifecycle.handleJoin(joinPolicy);
+    const deferRouting = await shouldDeferRouting(routingContext());
+    const join = await lifecycle.handleJoin({
+      ...joinPolicy,
+      capabilities: deferRouting ? { ...queueCapabilities, queueWhileStreaming: false } : queueCapabilities,
+    });
     if (join.handled) {
       lifecycle.emitQueuedAck(message, join.result.text, join.result.deferred);
       return {
@@ -438,6 +448,7 @@ export async function runAgent(
   let aborted = false;
   let answerPersisted = false;
   const holdback = createNoReplyHoldback(emit);
+  let effectiveModel = params.model;
 
   try {
     heldReply?.begin();
@@ -458,6 +469,13 @@ export async function runAgent(
       );
     }
 
+    const route = await routeSession({ ...routingContext(), signal: abortController.signal }, params.routingDependencies);
+    effectiveModel = route.model ?? params.model;
+    resolvedThinkLevel = params.thinkLevel ?? directiveThinkLevel ?? route.effort ?? resolveAgentThinkLevel(agent);
+    if (resolvedThinkLevel) lifecycle.setTraceMetadata({ thinkingLevel: resolvedThinkLevel });
+    const runAgentConfig = { ...agent };
+    if (route.suppressFallback) delete runAgentConfig.fallback_model;
+
     // Run with fallback retry for unsupported thinking levels
     let hasEmittedContent = false;
     let actualThinkLevel = resolvedThinkLevel;
@@ -465,7 +483,7 @@ export async function runAgent(
 
     const runParams = {
       agentId: params.agentId,
-      agent,
+      agent: runAgentConfig,
       userId: params.userId,
       actorUserId: params.actorUserId,
       actorKind: params.actorKind,
@@ -480,7 +498,7 @@ export async function runAgent(
       nudge: heldReply?.nudge,
       attachments: params.attachments,
       workspaceDir,
-      model: params.model,
+      model: effectiveModel,
       context,
       extensionRuntime,
       onEvent: (event: StreamEvent) => {
@@ -505,7 +523,8 @@ export async function runAgent(
       onHistoryEvent: (event: HistoryEvent) =>
         heldReply ? heldReply.holdHistory(event) : lifecycle.acceptHistoryEvent(event),
       onSessionHandle: (handle: unknown) => {
-        lifecycle.acceptSessionHandle(handle, adapter, queueCapabilities);
+        lifecycle.acceptSessionHandle(handle, adapter,
+          route.deferQueue ? { ...queueCapabilities, queueWhileStreaming: false } : queueCapabilities);
       },
       abortSignal: abortController.signal,
     };
@@ -615,7 +634,7 @@ export async function runAgent(
       answerPersisted = true;
       emit({ type: "error", message: errMessage, kind, userMessage: text });
       if (kind === "quota") {
-        void notifyProviderQuota(agent, params.model).catch((error) => {
+        void notifyProviderQuota(agent, effectiveModel).catch((error) => {
           logError("[agent] quota notification failed", error, { agentId: params.agentId });
         });
       }

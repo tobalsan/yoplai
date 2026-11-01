@@ -271,6 +271,30 @@ async function withSessionMetaWrite<T>(
   }
 }
 
+/** Read a session metadata value from canonical history. */
+export async function readSessionMeta(
+  agentId: string,
+  sessionId: string,
+  key: string,
+  userId?: string
+): Promise<unknown | undefined> {
+  const file = await resolveHistoryFile(agentId, sessionId, userId);
+  const content = await fs.readFile(file, "utf-8").catch((error: NodeJS.ErrnoException) => {
+    if (error.code === "ENOENT") return "";
+    throw error;
+  });
+  let value: unknown;
+  for (const line of content.split(/\r?\n/)) {
+    try {
+      const entry = JSON.parse(line) as Partial<MetaEntry> | null;
+      if (entry?.type === "meta" && entry.key === key) value = entry.value;
+    } catch {
+      // Ignore malformed history lines, as session summaries do.
+    }
+  }
+  return value;
+}
+
 /** Check whether a session has recorded a metadata key, including empty values. */
 export async function hasSessionMeta(
   agentId: string,

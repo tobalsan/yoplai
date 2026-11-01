@@ -243,6 +243,34 @@ describe("container input builder", () => {
     expect(input.sdkConfig.model).toEqual({ provider: "openai", model: "gpt-5" });
   });
 
+  // ALG-594 Testing Decisions approve this JSON input-builder seam: it catches
+  // model/effort/fallback transport, but not container model execution.
+  it("transports a locked model and effort without the configured fallback through JSON", async () => {
+    const workspaceDir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-routing-input-"));
+    try {
+      const configuredAgent = {
+        id: "cloud",
+        model: { provider: "anthropic", model: "claude-sonnet" },
+        fallback_model: { provider: "openai", model: "gpt-5" },
+      };
+      const params = {
+        agentId: "cloud", sessionId: "locked", message: "Complete the task", workspaceDir,
+        model: { provider: "openai-codex", model: "gpt-5.6" },
+        thinkLevel: "high",
+        agent: { ...configuredAgent, fallback_model: undefined },
+      } as SdkRunParams;
+      const builder = new ContainerInputBuilder({ buildSystemPrompts: async () => [], buildTools: async () => [] });
+      const input = await builder.build(params, { agents: [configuredAgent], extensions: {} } as GatewayConfig, "test-token");
+      const parsed = ContainerInputSchema.parse(JSON.parse(JSON.stringify(input)));
+
+      expect(parsed.sdkConfig.model).toEqual({ provider: "openai-codex", model: "gpt-5.6" });
+      expect(parsed.thinkLevel).toBe("high");
+      expect(parsed.sdkConfig.fallbackModel).toBeUndefined();
+    } finally {
+      await fs.rm(workspaceDir, { recursive: true, force: true });
+    }
+  });
+
   it("forwards the agent fallback model to the container", async () => {
     const workspaceDir = await fs.mkdtemp(
       path.join(os.tmpdir(), "yoplai-container-input-")
