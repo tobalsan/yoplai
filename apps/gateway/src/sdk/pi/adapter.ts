@@ -196,7 +196,7 @@ async function createPiExtensionTools(
   piTools.push({
     name: sendFileName,
     label: "Send file to user",
-    description: "Send a regular file directly in this conversation's files directory as a downloadable card in chat. Nested paths and symlinks are not supported. Finish writing the file first.",
+    description: "Send a regular file in this conversation's files directory (sub-folders allowed) as a downloadable card in chat. Symlinks are not supported. Finish writing the file first.",
     parameters: {
       type: "object",
       properties: { path: { type: "string", description: "Absolute path to the conversation file" } },

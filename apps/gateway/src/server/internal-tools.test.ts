@@ -11,6 +11,7 @@ import {
   getContainerTokenContext,
 } from "../sdk/container/tokens.js";
 import { createInternalTools } from "./internal-tools.js";
+import { FileOutputRejectedError } from "../sdk/container/file-output.js";
 
 const registeredTokens: string[] = [];
 
@@ -864,6 +865,35 @@ describe("container file registration", () => {
     expect(executeExtensionTool).not.toHaveBeenCalled();
   });
 
+  it("returns a typed file rejection unchanged and logs one warning", async () => {
+    registerToken("file-token");
+    const context = getContainerTokenContext("file-token")!;
+    context.registerFileOutput = vi.fn().mockRejectedValue(
+      new FileOutputRejectedError("file_output path must be under /workspace/data")
+    );
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    const { app } = createDeps();
+
+    const response = await postTool(app, request);
+
+    expect(response.status).toBe(500);
+    expect(await response.json()).toEqual({
+      error: "file_output path must be under /workspace/data",
+    });
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(JSON.parse(String(warn.mock.calls[0][0]))).toEqual({
+      level: "warn",
+      msg: "[container] file_output failed",
+      agentId: "agent-1",
+      sessionId: "session-1",
+      runId: "run-1",
+      path: "/workspace/data/report.csv",
+      message: "file_output path must be under /workspace/data",
+    });
+    expect(error).not.toHaveBeenCalled();
+  });
+
   it.each(["unavailable", "failure", "malformed", "cancelled"])(
     "fails and logs once for %s registration",
     async (kind) => {
@@ -884,11 +914,13 @@ describe("container file registration", () => {
       expect(await response.json()).toHaveProperty("error");
       expect(log).toHaveBeenCalledTimes(1);
       expect(JSON.parse(String(log.mock.calls[0][0]))).toMatchObject({
+        level: "error",
         msg: "[container] file_output failed",
         agentId: "agent-1",
         sessionId: "session-1",
         runId: "run-1",
         ...(kind === "malformed" ? {} : { path: "/workspace/data/report.csv" }),
+        ...(kind === "failure" ? { message: "registration failed", stack: expect.any(String) } : {}),
       });
     }
   );

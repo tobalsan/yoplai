@@ -3,7 +3,9 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AgentConfig, Extension, GatewayConfig } from "@yoplai/shared";
+import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import type { SdkRunParams } from "../../types.js";
+import { getConversationFiles } from "../../../media/conversation-files.js";
 import {
   clearConfigCacheForTests,
   setLoadedConfig,
@@ -145,6 +147,62 @@ describe("pi adapter onecli env wiring", () => {
         expect.objectContaining({ name: "project_notes_append", execute: expect.any(Function) }),
       ]),
     }));
+  });
+
+  it("describes sub-folder support and sends a nested conversation file", async () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "yoplai-pi-send-file-"));
+    tempDirs.push(home);
+    process.env.YOPLAI_HOME = home;
+    const agent = makeAgent();
+    setLoadedConfig({ agents: [agent] } as GatewayConfig);
+    const params = makeRunParams(agent);
+    const files = getConversationFiles(agent.id, params.sessionId);
+    const nestedPath = path.join(files.hostPath, "sub", "dir", "report.csv");
+    fs.mkdirSync(path.dirname(nestedPath), { recursive: true });
+    fs.writeFileSync(nestedPath, "a,b\n1,2\n");
+    let sendFile: ToolDefinition | undefined;
+    mockCreateAgentSession.mockImplementation(async (options) => {
+      sendFile = (options.customTools as ToolDefinition[]).find(
+        (tool) => tool.name === "send_file"
+      );
+      return {
+        session: {
+          messages: [{ role: "assistant", content: "done" }],
+          agent: { state: { messages: [] } },
+          setActiveToolsByName: vi.fn(),
+          subscribe: vi.fn(() => vi.fn()),
+          prompt: async () => {
+            await sendFile!.execute(
+              "send-nested",
+              { path: nestedPath },
+              params.abortSignal,
+              undefined,
+              {} as Parameters<ToolDefinition["execute"]>[4]
+            );
+          },
+          abort: vi.fn(),
+          dispose: vi.fn(),
+        },
+      };
+    });
+    const { piAdapter } = await import("../adapter.js");
+    await piAdapter.run(params);
+    expect(sendFile!.description).toContain("sub-folders allowed");
+    expect(sendFile!.description).not.toContain("Nested paths");
+    expect(params.onEvent).toHaveBeenCalledWith({
+      type: "file_output",
+      fileId: expect.any(String),
+      filename: "report.csv",
+      mimeType: "application/octet-stream",
+      size: 8,
+    });
+    expect(params.onHistoryEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: "assistant_file",
+        filename: "report.csv",
+        size: 8,
+      })
+    );
   });
 
   it("sets proxy env before session creation and restores it after the run", async () => {

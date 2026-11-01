@@ -54,7 +54,7 @@ import {
   describeImage,
 } from "../../media/describe.js";
 import { formatImageDescriptionBlocks } from "@yoplai/shared";
-import { ContainerFileOutputAdapter } from "./file-output.js";
+import { ContainerFileOutputAdapter, isFileOutputRejectedError } from "./file-output.js";
 import { ContainerProtocolDecoder, getMeaningfulStderr } from "./protocol.js";
 
 import { stopThenKill } from "./shutdown.js";
@@ -615,12 +615,20 @@ export function getContainerAdapter(): SdkAdapter {
             const task = fileOutputAdapter
               .handle(params, event, hostDataDir, params.abortSignal, launchSpec.conversationFiles)
               .catch((error) => {
-                logError("[container] file_output failed", error, {
+                const fields = {
                   agentId: params.agentId,
                   sessionId: params.sessionId,
                   runId,
                   path: event.path,
-                });
+                };
+                if (isFileOutputRejectedError(error)) {
+                  logWarn("[container] file_output failed", {
+                    ...fields,
+                    message: error.message,
+                  });
+                } else {
+                  logError("[container] file_output failed", error, fields);
+                }
                 const message =
                   error instanceof Error ? error.message : String(error);
                 params.onEvent({ type: "error", message });
