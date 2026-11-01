@@ -74,11 +74,93 @@ describe("scheduled-job agent access", () => {
     expect(await (await app.request("/api/schedules")).json()).toEqual([]);
   });
 
+  it.each([
+    ["root", "superadmin", ["Team task", "Member task", "Manager task"]],
+    ["foreign", "admin", ["Team task"]],
+    ["manager", "admin", ["Team task", "Manager task"]],
+    ["member", "user", ["Team task", "Member task"]],
+  ] as const)("lists foreign Mine jobs only for superadmins: %s", async (id, role, names) => {
+    getMultiUserRuntime()!.forks.setPublic("alpha", true);
+    const body = { credentialMode: "owner" as const, schedule: { cron: "0 8 * * *", tz: "UTC" }, payload: { message: "hello" } };
+    await getScheduler().add("alpha", { ...body, name: "Member task" }, "member");
+    await getScheduler().add("alpha", { ...body, name: "Manager task" }, "manager");
+    // The database role must win over a stale or forged request-context role.
+    actor = { user: { id, role: role === "superadmin" ? "user" : "superadmin", approved: true }, session: { id: "test", userId: id } };
+    for (const url of ["/api/schedules?agent=alpha", "/api/schedules"]) {
+      const response = await app.request(url);
+      expect(response.status).toBe(200);
+      const jobs = await response.json();
+      expect(jobs.map((job: { name: string }) => job.name).sort()).toEqual([...names].sort());
+      for (const job of jobs) {
+        if (id === "root" && job.name !== "Team task") {
+          expect(job.ownerDisplayName).toBe(job.name === "Member task" ? "member" : "manager");
+        } else {
+          expect(job).not.toHaveProperty("ownerDisplayName");
+        }
+      }
+      expect(jobs.find((job: { name: string }) => job.name === "Team task")).toMatchObject({ createdByDisplayName: "manager" });
+    }
+    const ctx = getSchedulerContext();
+    const agent = ctx.getAgent("alpha")!;
+    const tools = await schedulerExtension.getAgentTools!(agent);
+    const listed = await tools.find((tool) => tool.name === "scheduler.list_jobs")!.execute({}, { agent, config: ctx.getConfig(), userId: id });
+    expect(listed).toMatchObject({ jobs: expect.any(Array) });
+    expect((listed as { jobs: { name: string }[] }).jobs.map((job) => job.name).sort())
+      .toEqual(id === "root" ? ["Team task"] : [...names].sort());
+  });
+
   it.each(["create", "tail", "run", "update", "delete"])("refuses %s for a Private agent outside the caller's teams", async (operation) => {
     const url = operation === "create" ? "/api/schedules" : `/api/schedules/alpha/${jobId}${operation === "tail" || operation === "run" ? `/${operation}` : ""}`;
     const method = operation === "create" || operation === "run" ? "POST" : operation === "update" ? "PATCH" : operation === "delete" ? "DELETE" : "GET";
     const body = operation === "create" ? { agentId: "alpha", name: "Intrusion", schedule: { cron: "0 8 * * *", tz: "UTC" }, payload: { message: "hello" } } : operation === "update" ? { name: "Intrusion" } : undefined;
     expect((await app.request(url, { method, headers: { "content-type": "application/json" }, body: body ? JSON.stringify(body) : undefined })).status).toBe(403);
+  });
+
+  it("lets superadmins read foreign Mine runs, traces and output without managing or running the job", async () => {
+    getMultiUserRuntime()!.forks.setPublic("alpha", true);
+    const ctx = getSchedulerContext();
+    ctx.getConfig().enableCronMonitoring = true;
+    const workspace = ctx.getAgent("alpha")!.workspace;
+    await fs.mkdir(workspace, { recursive: true });
+    await fs.writeFile(path.join(workspace, "report.sh"), "#!/bin/sh\necho private-report\n", { mode: 0o755 });
+    const job = await getScheduler().add("alpha", {
+      name: "Private report", credentialMode: "owner", schedule: { cron: "0 8 * * *", tz: "UTC" },
+      payload: { script: "report.sh", noAgent: true },
+    }, "member");
+    actor = { user: { id: "member", role: "user", approved: true }, session: { id: "test", userId: "member" } };
+    const url = `/api/schedules/alpha/${job.id}`;
+    await getScheduler().runNow("alpha", job.id);
+    const before = await (await app.request("/api/schedules?agent=alpha")).json();
+    actor = { user: { id: "root", role: "user", approved: true }, session: { id: "test", userId: "root" } };
+    const historyResponse = await app.request(`${url}/runs`);
+    expect(historyResponse.status).toBe(200);
+    const history = await historyResponse.json();
+    expect(history).toMatchObject({ runs: [{ status: "ok" }] });
+    const traceUrl = `${url}/runs/${history.runs[0].id}/trace`;
+    const trace = await app.request(traceUrl);
+    expect(trace.status).toBe(200);
+    expect(await trace.json()).toMatchObject({ run: { status: "ok" }, messages: [] });
+    const tail = await app.request(`${url}/tail`);
+    expect(tail.status).toBe(200);
+    expect(await tail.json()).toMatchObject({ content: expect.stringContaining("private-report") });
+    for (const body of [{ enabled: false }, { enabled: true }, { credentialMode: "team" }]) {
+      const response = await app.request(url, { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+      expect(response.status).toBe(403);
+      expect(await response.json()).toEqual({ error: "Schedule owner access required" });
+    }
+    for (const [endpoint, method] of [[url, "DELETE"], [`${url}/run`, "POST"]]) {
+      expect((await app.request(endpoint!, { method })).status).toBe(403);
+    }
+    expect((await app.request("/api/schedules/alpha/missing/runs")).status).toBe(403);
+    for (const id of ["foreign", "manager"]) {
+      actor = { user: { id, role: "superadmin", approved: true }, session: { id: "test", userId: id } };
+      for (const endpoint of [`${url}/runs`, traceUrl, `${url}/tail`]) {
+        expect((await app.request(endpoint)).status).toBe(403);
+      }
+    }
+    actor = { user: { id: "member", role: "user", approved: true }, session: { id: "test", userId: "member" } };
+    expect(await (await app.request("/api/schedules?agent=alpha")).json()).toEqual(before);
+    expect(await (await app.request(`${url}/runs`)).json()).toEqual(history);
   });
 
   it.each([["foreign", "admin", false], ["member", "user", false], ["manager", "admin", true], ["root", "superadmin", true]] as const)("limits Public Team-job management for %s through REST and tools", async (id, role, allowed) => {
