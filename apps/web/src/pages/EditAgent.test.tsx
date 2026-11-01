@@ -156,7 +156,7 @@ function agent(partial: Partial<Agent> & { id: string }): Agent {
 function setSession(role: string | null) {
   useSessionMock.mockReturnValue(() => ({
     isPending: false,
-    data: role ? { user: { role } } : { user: {} },
+    data: role ? { user: { id: "alice", role } } : null,
   }));
 }
 
@@ -188,6 +188,7 @@ function openTab(label: string) {
 }
 
 beforeEach(() => {
+  localStorage.clear();
   assign = vi.fn();
   setCapabilitiesForTests({ forkedAgents: true });
   fetchPoolMock.mockReset();
@@ -215,6 +216,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  vi.useRealTimers();
   vi.restoreAllMocks();
   dispose?.();
   container.remove();
@@ -225,6 +227,160 @@ afterEach(() => {
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
 describe("EditAgent", () => {
+  it("keeps privacy filtering responsive through pending, failed and recovered job polls", async () => {
+    vi.useFakeTimers();
+    setCapabilitiesForTests({ forkedAgents: false, extensions: { scheduler: true }, enableCronMonitoring: true });
+    setSession("superadmin");
+    fetchAgentsMock.mockResolvedValue([agent({ id: "scribe" })]);
+    const jobs = [
+      { id: "private", agentId: "scribe", name: "Bob private job", credentialMode: "owner", ownerUserId: "bob", schedule: {}, payload: {} },
+      { id: "team", agentId: "scribe", name: "Team job", credentialMode: "team", schedule: {}, payload: {} },
+    ];
+    fetchSchedulesMock.mockResolvedValue(jobs);
+    useParamsMock.mockReturnValue({ agentId: "scribe" });
+    dispose = render(() => <EditAgent />, container);
+    await vi.advanceTimersByTimeAsync(0);
+    openTab("Scheduled jobs");
+    await vi.advanceTimersByTimeAsync(0);
+    const titles = () => Array.from(container.querySelectorAll(".schedule-title"), (row) => row.textContent);
+    expect(titles()).toEqual(["Team job"]);
+    let rejectPoll!: (error: Error) => void;
+    fetchSchedulesMock.mockImplementationOnce(() => new Promise((_resolve, reject) => { rejectPoll = reject; }));
+    await vi.advanceTimersByTimeAsync(2_000);
+    const toggle = container.querySelector<HTMLButtonElement>('[aria-label="Show other users’ private items"]')!;
+    toggle.click();
+    expect(titles()).toEqual(["Bob private job", "Team job"]);
+    toggle.click();
+    expect(titles()).toEqual(["Team job"]);
+    rejectPoll(new Error("Poll failed"));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(titles()).toEqual(["Team job"]);
+    expect(container.querySelector('[role="alert"]')?.textContent).toBe("Poll failed");
+    await vi.advanceTimersByTimeAsync(2_000);
+    expect(titles()).toEqual(["Team job"]);
+    expect(container.querySelector('[role="alert"]')).toBeNull();
+    dispose();
+    expect(vi.getTimerCount()).toBe(0);
+    vi.useRealTimers();
+  });
+  it.each([false, true])("keeps the toggle usable across tabs when storage writes fail (reads blocked: %s)", async (blockReads) => {
+    setCapabilitiesForTests({ forkedAgents: false, extensions: { scheduler: true } });
+    setSession("superadmin");
+    fetchAgentsMock.mockResolvedValue([agent({ id: "scribe" })]);
+    fetchSchedulesMock.mockResolvedValue([{
+      id: "private", agentId: "scribe", name: "Bob private job", credentialMode: "owner", ownerUserId: "bob", schedule: {}, payload: {},
+    }]);
+    await mountEdit("scribe");
+    if (blockReads) vi.spyOn(localStorage, "getItem").mockImplementation(() => { throw new Error("Storage blocked"); });
+    vi.spyOn(localStorage, "setItem").mockImplementation(() => { throw new Error("Storage blocked"); });
+    openTab("Dashboards");
+    container.querySelector<HTMLButtonElement>('[aria-label="Show other users’ private items"]')!.click();
+    openTab("Scheduled jobs");
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(container.querySelector(".schedule-title")?.textContent).toBe("Bob private job");
+    container.querySelector<HTMLButtonElement>('[aria-label="Show other users’ private items"]')!.click();
+    expect(container.querySelector(".schedules-note")?.textContent).toBe("No scheduled jobs yet.");
+    vi.restoreAllMocks();
+    container.querySelector<HTMLButtonElement>('[aria-label="Show other users’ private items"]')!.click();
+    expect(container.querySelector(".schedule-title")?.textContent).toBe("Bob private job");
+    container.querySelector<HTMLButtonElement>('[aria-label="Show other users’ private items"]')!.click();
+  });
+  it.each(["superadmin", "admin", "user", null])("keeps default empty states and limits the toggle to superadmins: %s", async (role) => {
+    setCapabilitiesForTests({ forkedAgents: false, extensions: { scheduler: true } });
+    setSession(role);
+    fetchAgentsMock.mockResolvedValue([agent({ id: "scribe" })]);
+    fetchAgentDashboardsMock.mockResolvedValue([{
+      id: "private", agentId: "scribe", agentName: "Scribe", title: "Bob private dashboard", slug: "private.html", link: "/d/private",
+      isOwner: false, legacy: false, shared: false, params: [], linksTo: [], updatedAt: null, publishedAt: null, ownerName: "Bob", mode: "read",
+    }]);
+    fetchSchedulesMock.mockResolvedValue([{
+      id: "private", agentId: "scribe", name: "Bob private job", credentialMode: "owner", ownerUserId: "bob", schedule: {}, payload: {},
+    }]);
+    await mountEdit("scribe");
+    openTab("Dashboards");
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(container.querySelector('[aria-label="Show other users’ private items"]') !== null).toBe(role === "superadmin");
+    if (role === "superadmin") {
+      expect(container.querySelector(".edit-agent-dashboards")?.textContent).toBe("No dashboards yet.");
+    } else {
+      expect(container.querySelector(".edit-agent-dashboards")?.textContent).toContain("Bob private dashboard");
+    }
+    openTab("Scheduled jobs");
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(container.querySelector('[aria-label="Show other users’ private items"]') !== null).toBe(role === "superadmin");
+    if (role === "superadmin") {
+      expect(container.querySelector(".schedules-note")?.textContent).toBe("No scheduled jobs yet.");
+      expect(container.querySelector(".schedule-list")).toBeNull();
+    } else {
+      expect(container.querySelector(".schedule-title")?.textContent).toBe("Bob private job");
+    }
+  });
+  it("shares the private-items toggle across tabs and remembers it on remount", async () => {
+    setCapabilitiesForTests({ forkedAgents: false, extensions: { scheduler: true } });
+    setSession("superadmin");
+    fetchAgentsMock.mockResolvedValue([agent({ id: "scribe" })]);
+    fetchAgentDashboardsMock.mockResolvedValue([{
+      id: "private", agentId: "scribe", agentName: "Scribe", title: "Bob private dashboard", slug: "private.html", link: "/d/private",
+      isOwner: false, legacy: false, shared: false, params: [], linksTo: [], updatedAt: null, publishedAt: null, ownerName: "Bob", mode: "read",
+    }]);
+    fetchSchedulesMock.mockResolvedValue([{
+      id: "private", agentId: "scribe", name: "Bob private job", credentialMode: "owner", ownerUserId: "bob", schedule: {}, payload: {},
+    }]);
+    localStorage.setItem("yoplai:show-private-items", "true");
+    await mountEdit("scribe");
+    expect(container.querySelector('[aria-label="Show other users’ private items"]')).toBeNull();
+    openTab("Dashboards");
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(container.querySelector(".edit-agent-dashboards")?.textContent).toContain("Bob private dashboard");
+    const toggle = () => container.querySelector<HTMLButtonElement>('[aria-label="Show other users’ private items"]')!;
+    expect(toggle().getAttribute("aria-pressed")).toBe("true");
+    expect(toggle().textContent).toBe("");
+    expect(toggle().title).toBe("Hide other users’ private items");
+    toggle().click();
+    expect(container.querySelector(".edit-agent-dashboards")?.textContent).toContain("No dashboards yet.");
+    expect(container.querySelector(".edit-agent-dashboards")?.textContent).not.toMatch(/Bob private|hidden/i);
+    openTab("Scheduled jobs");
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(container.querySelector(".schedules-note")?.textContent).toBe("No scheduled jobs yet.");
+    expect(container.querySelector(".schedule-list")).toBeNull();
+    toggle().click();
+    expect(container.querySelector(".schedule-title")?.textContent).toBe("Bob private job");
+    openTab("Dashboards");
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(container.querySelector(".edit-agent-dashboards")?.textContent).toContain("Bob private dashboard");
+    dispose();
+    await mountEdit("scribe");
+    openTab("Dashboards");
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(toggle().getAttribute("aria-pressed")).toBe("true");
+    expect(container.querySelector(".edit-agent-dashboards")?.textContent).toContain("Bob private dashboard");
+    toggle().click();
+    dispose();
+    await mountEdit("scribe");
+    openTab("Dashboards");
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(toggle().getAttribute("aria-pressed")).toBe("false");
+    expect(container.querySelector(".edit-agent-dashboards")?.textContent).toContain("No dashboards yet.");
+  });
+  it("hides foreign private dashboards before grouping, without naming a hidden parent", async () => {
+    setCapabilitiesForTests({ forkedAgents: false });
+    setSession("superadmin");
+    fetchAgentsMock.mockResolvedValue([agent({ id: "scribe" })]);
+    const row = { agentId: "scribe", agentName: "Scribe", publishedAt: null, updatedAt: null, mode: "read" as const, ownerName: "Bob", isOwner: false, legacy: false, shared: false, params: [], linksTo: [] };
+    fetchAgentDashboardsMock.mockResolvedValue([
+      { ...row, id: "private", title: "Bob private", slug: "private.html", link: "/d/private", linksTo: ["child.html"] },
+      { ...row, id: "own", title: "My dashboard", slug: "own.html", link: "/d/own", isOwner: true },
+      { ...row, id: "legacy", title: "Legacy dashboard", slug: "legacy.html", link: "/d/legacy", legacy: true },
+      { ...row, id: "shared", title: "Shared dashboard", slug: "shared.html", link: "/d/shared", shared: true },
+      { ...row, id: "child", title: "Shared child", slug: "child.html", link: "/d/child", params: ["id"], shared: true },
+    ]);
+    await mountEdit("scribe");
+    openTab("Dashboards");
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(container.textContent).not.toContain("Bob private");
+    for (const title of ["My dashboard", "Legacy dashboard", "Shared dashboard", "Shared child"]) expect(container.textContent).toContain(title);
+    expect(container.querySelector(".edit-agent-subpages")?.textContent).toContain("not linked from any top page");
+  });
   it("links back to the agents list by default", async () => {
     setSession("admin");
     fetchPoolMock.mockResolvedValue([agent({ id: "scribe", name: "Scribe" })]);

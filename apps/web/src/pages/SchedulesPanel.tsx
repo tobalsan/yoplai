@@ -1,11 +1,13 @@
 import cronstrue from "cronstrue";
 import { A } from "@solidjs/router";
-import { createEffect, createResource, createSignal, For, onCleanup, Show } from "solid-js";
+import { createEffect, createMemo, createResource, createSignal, For, onCleanup, Show } from "solid-js";
 import { createStore, reconcile } from "solid-js/store";
 import { deleteSchedule, fetchSchedules, updateSchedule, type ScheduleJob } from "../api/schedules";
 import { ScopeIcon } from "../components/CredentialScopeTabs";
 import { useSession } from "../auth/client";
 import { capabilities } from "../lib/capabilities";
+import { isSuperadmin } from "../lib/roles";
+import { isForeignMine, usePrivateItemsVisibility, visibleJobs } from "../lib/private-items";
 
 type CredentialMode = "owner" | "team";
 
@@ -53,6 +55,7 @@ function elapsedTime(ms: number): string {
 
 export function SchedulesPanel(props: { agentId: string; agentName: string }) {
   const session = useSession();
+  const { showPrivateItems } = usePrivateItemsVisibility();
   const [result, { refetch }] = createResource(
     () => props.agentId,
     async (agentId, { value }): Promise<{ jobs: ScheduleJob[]; error?: string }> => {
@@ -64,6 +67,8 @@ export function SchedulesPanel(props: { agentId: string; agentName: string }) {
     }
   );
   const [jobs, setJobs] = createStore<ScheduleJob[]>([]);
+  const visible = createMemo(() => visibleJobs(jobs, session().data?.user.id,
+    !isSuperadmin((session().data?.user as { role?: string | string[] } | undefined)?.role) || showPrivateItems()));
   createEffect(() => setJobs(reconcile(result.latest?.jobs ?? [])));
   createEffect(() => {
     if (capabilities.enableCronMonitoring !== true) return;
@@ -157,14 +162,14 @@ export function SchedulesPanel(props: { agentId: string; agentName: string }) {
       <Show when={error()}>{(text) => <p class="schedules-error" role="alert">{text()}</p>}</Show>
       <Show when={result.loading && !result.latest}><p class="schedules-note">Loading scheduled jobs…</p></Show>
       <Show when={result.latest?.error}>{(text) => <p class="schedules-error" role="alert">{text()}</p>}</Show>
-      <Show when={!result.loading && !result.latest?.error && jobs.length === 0}>
+      <Show when={!result.loading && !result.latest?.error && visible().length === 0}>
         <p class="schedules-note">No scheduled jobs yet.</p>
       </Show>
-      <Show when={jobs.length > 0}>
+      <Show when={visible().length > 0}>
         <ul class="schedule-list">
-          <For each={jobs}>{(job) => {
+          <For each={visible()}>{(job) => {
             const mode = () => job.credentialMode ?? "team";
-            const foreignMine = () => mode() === "owner" && !!job.ownerUserId && !!session().data?.user.id && job.ownerUserId !== session().data?.user.id;
+            const foreignMine = () => isForeignMine(job, session().data?.user.id);
             const ownerOnlyTitle = "Only the owner can change this job";
             const enabled = () => pending()[job.id] ?? job.enabled !== false;
             const canToggle = () => !foreignMine() && (mode() === "owner" || isAdmin());

@@ -56,6 +56,8 @@ Important seams:
 
 Solid.js SPA. It consumes `/api/capabilities` and loads optional extension routes only when enabled.
 
+Agent config Dashboard/Scheduled jobs tabs hide foreign private items for signed-in superadmins by default. `lib/private-items.ts` owns the client filters and shared `yoplai:show-private-items` browser preference; the muted eye toggle sits beside the tabs. Dashboards filter before parent grouping, jobs after polling reconciliation. Other roles and single-user mode are unchanged; this does not change server access.
+
 - `src/api/`: domain API clients and realtime client
 - `src/lib/chat-runtime.ts`: main chat attachment staging
 - `src/lib/web-route-registry.tsx`: optional extension route discovery

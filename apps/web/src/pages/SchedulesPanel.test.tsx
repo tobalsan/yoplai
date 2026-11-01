@@ -37,6 +37,7 @@ async function settle() {
 }
 
 beforeEach(() => {
+  localStorage.clear();
   resetCapabilitiesForTests();
   container = document.createElement("div");
   document.body.appendChild(container);
@@ -72,7 +73,23 @@ describe("describeSchedule", () => {
 });
 
 describe("SchedulesPanel", () => {
+  it.each(["superadmin", "admin", "user", null])("hides foreign Mine jobs only for superadmin by default: %s", async (role) => {
+    sessionUser.role = role ?? undefined;
+    sessionPresent.value = role !== null;
+    const job = { agentId: "scribe", schedule: {}, payload: {} };
+    fetchSchedulesMock.mockResolvedValue([
+      { ...job, id: "foreign", name: "Bob private", credentialMode: "owner", ownerUserId: "bob" },
+      { ...job, id: "own", name: "My digest", credentialMode: "owner", ownerUserId: "alice" },
+      { ...job, id: "team", name: "Team digest", credentialMode: "team" },
+      { ...job, id: "legacy", name: "Legacy digest" },
+    ]);
+    dispose = render(() => <SchedulesPanel agentId="scribe" agentName="Scribe" />, container);
+    await settle();
+    expect(Array.from(container.querySelectorAll(".schedule-title"), (row) => row.textContent))
+      .toEqual(role === "superadmin" ? ["My digest", "Team digest", "Legacy digest"] : ["Bob private", "My digest", "Team digest", "Legacy digest"]);
+  });
   it.each(["superadmin", "admin", "user"])("labels foreign Mine jobs and locks management independently of viewer role: %s", async (role) => {
+    localStorage.setItem("yoplai:show-private-items", "true");
     sessionUser.role = role;
     setCapabilitiesForTests({ enableCronMonitoring: true });
     const job = { agentId: "scribe", schedule: { cron: "0 8 * * *" }, payload: {} };

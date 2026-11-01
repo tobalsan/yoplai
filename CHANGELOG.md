@@ -30,6 +30,7 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Changed
 
+- Hide other users' private dashboards and Mine scheduled jobs by default on superadmin agent config tabs, with a discreet shared visibility toggle remembered in the browser.
 - Log MCP invalid-params tool failures with numeric `code: -32602` at warning, preserving the error response and error severity for other failures.
 - `send_file` accepts regular files in conversation sub-folders and delivers them with their basename, while still rejecting escaping paths and symlinked directories or files.
 - **⚠ BREAKING** `SOUL.md` is no longer created, loaded by default, or detected by legacy agent migration. Existing agents stop including it unless the operator explicitly adds `system_files: [SOUL.md]` to `agent.yaml`; use `system_files: [{ path: SOUL.md, required: true }]` to require it.
