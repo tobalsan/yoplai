@@ -119,6 +119,36 @@ describe("resolveOAuthTokens", () => {
     });
   });
 
+  // ALG-594 Testing Decisions approve the token-resolver seam: it catches
+  // provider credential access, but not a container's use of those tokens.
+  it("requests only the locked provider token when the agent copy has no fallback", async () => {
+    const configuredAgent = agent({
+      auth: { mode: "oauth" },
+      fallback_model: { provider: "openai", model: "gpt-5" },
+    });
+    const deps = makeDeps({
+      anthropic: { type: "oauth", access: "initial", expires: 1000 },
+      openai: { type: "oauth", access: "initial", expires: 2000 },
+      "openai-codex": { type: "oauth", access: "initial", expires: 3000 },
+    });
+    const readCredential = vi.fn(deps.readCredential);
+    const result = await resolveOAuthTokens(
+      { ...configuredAgent, fallback_model: undefined },
+      { provider: "openai-codex", model: "gpt-5.6" },
+      { ...deps, readCredential }
+    );
+
+    expect(result).toEqual({
+      "openai-codex": { accessToken: "openai-codex-fresh-token", expiresAt: 3000 },
+    });
+    expect(new Set(readCredential.mock.calls.map(([provider]) => provider)))
+      .toEqual(new Set(["openai-codex"]));
+    expect(deps.getAuth).toHaveBeenCalledWith("openai-codex", {
+      minOAuthValidityMs: TEN_MINUTES_MS,
+    });
+    expect(deps.getAuth).not.toHaveBeenCalledWith("openai", expect.anything());
+  });
+
   it("skips a provider whose stored credential is not oauth", async () => {
     const deps = makeDeps({ anthropic: { type: "api_key" } });
     const result = await resolveOAuthTokens(
