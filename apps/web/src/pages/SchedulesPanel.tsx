@@ -164,14 +164,16 @@ export function SchedulesPanel(props: { agentId: string; agentName: string }) {
         <ul class="schedule-list">
           <For each={jobs}>{(job) => {
             const mode = () => job.credentialMode ?? "team";
+            const foreignMine = () => mode() === "owner" && !!job.ownerUserId && !!session().data?.user.id && job.ownerUserId !== session().data?.user.id;
+            const ownerOnlyTitle = "Only the owner can change this job";
             const enabled = () => pending()[job.id] ?? job.enabled !== false;
-            const canToggle = () => mode() === "owner" || isAdmin();
-            const deleteTitle = () => canToggle() ? `Delete ${job.name}` : "Only admins can delete Team jobs";
-            const toggleTitle = () => canToggle()
+            const canToggle = () => !foreignMine() && (mode() === "owner" || isAdmin());
+            const deleteTitle = () => foreignMine() ? ownerOnlyTitle : canToggle() ? `Delete ${job.name}` : "Only admins can delete Team jobs";
+            const toggleTitle = () => foreignMine() ? ownerOnlyTitle : canToggle()
               ? (enabled() ? "Pause this job" : "Resume this job")
               : "Only admins can pause or resume Team jobs";
             return (
-              <li class="schedule" data-paused={enabled() ? undefined : ""}>
+              <li class="schedule" data-paused={enabled() ? undefined : ""} data-read-only={foreignMine() ? "" : undefined}>
                 <span class="schedule-mark" aria-hidden="true">
                   <svg viewBox="0 0 20 20"><circle cx="10" cy="10" r="7" /><path d="M10 6v4l2.5 1.75" /></svg>
                 </span>
@@ -195,6 +197,9 @@ export function SchedulesPanel(props: { agentId: string; agentName: string }) {
                   <Show when={mode() === "team" && job.createdByUserId && (job.createdByUserId === session().data?.user.id || job.createdByDisplayName)}>
                     <p class="schedule-prompt">Created by {job.createdByUserId === session().data?.user.id ? "you" : job.createdByDisplayName}</p>
                   </Show>
+                  <Show when={foreignMine()}>
+                    <p class="schedule-prompt">Owned by {job.ownerDisplayName || "another user"}</p>
+                  </Show>
                 </div>
                 <div class="schedule-mode">
                   <span class="schedule-mode-label">Runs with</span>
@@ -204,8 +209,8 @@ export function SchedulesPanel(props: { agentId: string; agentName: string }) {
                         type="button"
                         role="radio"
                         aria-checked={mode() === option.mode}
-                        title={option.title}
-                        disabled={busy() !== undefined}
+                        title={foreignMine() ? ownerOnlyTitle : option.title}
+                        disabled={foreignMine() || busy() !== undefined}
                         onClick={() => void changeMode(job, option.mode)}
                       >
                         <ScopeIcon scope={option.mode === "owner" ? "personal" : "team"} class="schedule-mode-icon" />
@@ -340,6 +345,7 @@ const SCHEDULES_STYLES = `
 }
 .schedule-mode-switch button:focus-visible { outline: 2px solid color-mix(in srgb, var(--accent, #1a73e8) 55%, transparent); outline-offset: 1px; }
 .schedule-mode-switch button:disabled { cursor: progress; }
+.schedule[data-read-only] .schedule-mode-switch button:disabled { cursor: not-allowed; opacity: .55; }
 .schedule-mode-icon { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; }
 .schedule-mode-switch button[aria-checked="true"] .schedule-mode-icon { color: var(--accent, #1a73e8); }
 .schedule[data-paused] .schedule-when, .schedule[data-paused] .schedule-prompt { opacity: .6; }
@@ -400,6 +406,7 @@ const SCHEDULES_STYLES = `
 @keyframes schedule-pop { from { opacity: 0; transform: translateY(6px) scale(.98); } }
 @media (max-width: 640px) {
   .schedule { flex-wrap: wrap; }
+  .schedule-main { flex-basis: calc(100% - 48px); }
   .schedule-mode { flex-direction: row; align-items: center; margin-left: 48px; }
   .schedule-toggle { flex-direction: row; padding-left: 0; border-left: 0; margin-left: auto; }
   .schedule-delete { margin-left: 0; }

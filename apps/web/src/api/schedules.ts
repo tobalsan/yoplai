@@ -1,7 +1,7 @@
 import type { ScheduleJob as StoredScheduleJob, ScheduleRun, ScheduleRunTrace } from "@yoplai/shared/types";
 import { API_BASE, apiFetch } from "./core";
 
-export type ScheduleJob = StoredScheduleJob & { createdByDisplayName?: string; state?: { runningForMs?: number } };
+export type ScheduleJob = StoredScheduleJob & { createdByDisplayName?: string; ownerDisplayName?: string; state?: { runningForMs?: number } };
 
 export async function fetchScheduleRunTrace(agentId: string, jobId: string, runId: string): Promise<ScheduleRunTrace> {
   const controller = new AbortController();

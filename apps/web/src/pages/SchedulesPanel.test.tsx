@@ -9,15 +9,16 @@ vi.mock("@solidjs/router", () => ({
   A: (props: { href: string; children?: JSX.Element }) => <a href={props.href}>{props.children}</a>,
 }));
 
-const { fetchSchedulesMock, updateScheduleMock, deleteScheduleMock, sessionUser } = vi.hoisted(() => ({
+const { fetchSchedulesMock, updateScheduleMock, deleteScheduleMock, sessionUser, sessionPresent } = vi.hoisted(() => ({
   fetchSchedulesMock: vi.fn(),
   deleteScheduleMock: vi.fn(),
   updateScheduleMock: vi.fn(),
   sessionUser: { id: "alice", role: "user" as string | undefined },
+  sessionPresent: { value: true },
 }));
 
 vi.mock("../auth/client", () => ({
-  useSession: () => () => ({ data: { user: sessionUser } }),
+  useSession: () => () => ({ data: sessionPresent.value ? { user: sessionUser } : null }),
 }));
 
 vi.mock("../api/schedules", () => ({
@@ -45,6 +46,7 @@ beforeEach(() => {
   }]);
   updateScheduleMock.mockReset().mockResolvedValue({});
   sessionUser.role = "user";
+  sessionPresent.value = true;
   deleteScheduleMock.mockReset().mockResolvedValue(undefined);
 });
 
@@ -70,6 +72,58 @@ describe("describeSchedule", () => {
 });
 
 describe("SchedulesPanel", () => {
+  it.each(["superadmin", "admin", "user"])("labels foreign Mine jobs and locks management independently of viewer role: %s", async (role) => {
+    sessionUser.role = role;
+    setCapabilitiesForTests({ enableCronMonitoring: true });
+    const job = { agentId: "scribe", schedule: { cron: "0 8 * * *" }, payload: {} };
+    fetchSchedulesMock.mockResolvedValue([
+      { ...job, id: "foreign", name: "Bob's digest", credentialMode: "owner", ownerUserId: "bob", ownerDisplayName: "Bob" },
+      { ...job, id: "unnamed", name: "Private reminder", credentialMode: "owner", ownerUserId: "charlie" },
+      { ...job, id: "mine", name: "My digest", credentialMode: "owner", ownerUserId: "alice" },
+      { ...job, id: "team", name: "Shared digest", credentialMode: "team", createdByUserId: "bob", createdByDisplayName: "Bob" },
+    ]);
+    dispose = render(() => <SchedulesPanel agentId="scribe" agentName="Scribe" />, container);
+    await settle();
+    const [foreign, unnamed, mine, team] = container.querySelectorAll(".schedule");
+    expect(foreign!.textContent).toContain("Owned by Bob");
+    expect(unnamed!.textContent).toContain("Owned by another user");
+    expect(mine!.textContent).not.toContain("Owned by");
+    expect(team!.textContent).toContain("Created by Bob");
+    expect(team!.textContent).not.toContain("Owned by");
+    expect(foreign!.querySelector(".schedule-title a")?.getAttribute("href")).toBe("/agents/scribe/schedules/foreign/runs");
+    for (const row of [foreign!, unnamed!]) {
+      expect(row.querySelector('[role="switch"]')).not.toBeNull();
+      expect(row.querySelector('.schedule-delete')).not.toBeNull();
+      expect(row.querySelectorAll('[role="radio"]')).toHaveLength(2);
+      for (const control of row.querySelectorAll<HTMLButtonElement>('button')) {
+        expect(control.disabled).toBe(true);
+        expect(control.title).toBe("Only the owner can change this job");
+        control.click();
+      }
+    }
+    expect(updateScheduleMock).not.toHaveBeenCalled();
+    expect(deleteScheduleMock).not.toHaveBeenCalled();
+    expect(container.querySelector('[role="alertdialog"]')).toBeNull();
+    for (const control of mine!.querySelectorAll<HTMLButtonElement>('button')) expect(control.disabled).toBe(false);
+    expect(team!.querySelector<HTMLButtonElement>('[role="switch"]')!.disabled).toBe(role === "user");
+    expect(team!.querySelector<HTMLButtonElement>('.schedule-delete')!.disabled).toBe(role === "user");
+    for (const control of team!.querySelectorAll<HTMLButtonElement>('[role="radio"]')) expect(control.disabled).toBe(false);
+  });
+
+  it("keeps all management controls available without a session", async () => {
+    sessionPresent.value = false;
+    fetchSchedulesMock.mockResolvedValue([
+      { id: "old-mine", agentId: "scribe", name: "Local reminder", credentialMode: "owner", ownerUserId: "bob", schedule: {}, payload: {} },
+      { id: "team", agentId: "scribe", name: "Shared digest", credentialMode: "team", schedule: {}, payload: {} },
+    ]);
+    dispose = render(() => <SchedulesPanel agentId="scribe" agentName="Scribe" />, container);
+    await settle();
+    expect(container.textContent).not.toContain("Owned by");
+    const controls = container.querySelectorAll<HTMLButtonElement>('.schedule button');
+    expect(controls).toHaveLength(8);
+    for (const control of controls) expect(control.disabled).toBe(false);
+  });
+
   it.each([0, 65_000])("shows elapsed time for a running job, including zero: %s", async (runningForMs) => {
     setCapabilitiesForTests({ enableCronMonitoring: true });
     fetchSchedulesMock.mockResolvedValue([{ id: "running", name: "Running job", schedule: {}, payload: {}, state: { runningForMs } }]);

@@ -11,6 +11,7 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Added
 
+- Superadmins can view every scheduled job and its run history, trace, and output; other users' Mine jobs show their owner and keep management controls locked.
 - Webhook gates can return `sessionScope` to preserve conversation context and `abort: true` to stop that session before an optional wake; extensions can silently stop mapped runs with `ExtensionContext.abortRun`.
 - Webhook prompt-file frontmatter selects model and reasoning and runs optional fail-open gate scripts with request stdin, metadata, and agent context; edits apply on the next request.
 - `human-chat`: optional `max_sentences`, `sentence_leeway`, `max_sentence_words`, `word_leeway` keys set the reply limits.

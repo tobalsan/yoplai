@@ -134,6 +134,22 @@ async function canManageJob(job: { ownerUserId?: string; agentId: string }, user
   }
 }
 
+async function isSuperadmin(userId?: string): Promise<boolean> {
+  if (!userId || !getSchedulerContext().getConfig().extensions?.multiUser?.enabled) return false;
+  try {
+    const { getMultiUserRuntime, getEligibleAccount } = await import("@yoplai/extension-multi-user");
+    const runtime = getMultiUserRuntime();
+    return !!runtime && getEligibleAccount(runtime.db, userId, { approvalBypass: "superadmin" })?.role === "superadmin";
+  } catch {
+    return false;
+  }
+}
+
+async function canReadJob(agentId: string, id: string, userId?: string): Promise<boolean> {
+  if (await canAccessJob(agentId, id, userId)) return true;
+  return await isSuperadmin(userId) && (await getScheduler().list(agentId)).some((job) => job.id === id);
+}
+
 function schedulerAgentTools(): ExtensionAgentTool[] {
   return [
     {
@@ -561,11 +577,15 @@ const schedulerExtension: Extension = {
       const agentId = c.req.query("agent") ?? undefined;
       if (agentId && !(await canAccessAgent(c, agentId))) return c.json({ error: "Agent access required" }, 403);
       const userId = requestUserId(c);
-      const ownedJobs = (await scheduler.list(agentId)).filter((job) => !job.ownerUserId || job.ownerUserId === userId);
+      const superadmin = await isSuperadmin(userId);
+      const ownedJobs = (await scheduler.list(agentId)).filter((job) => superadmin || !job.ownerUserId || job.ownerUserId === userId);
       const jobs = (await Promise.all(ownedJobs.map(async (job) =>
         await canAccessAgent(c, job.agentId) ? job : undefined
       ))).filter((job) => job !== undefined);
       return c.json(await Promise.all(jobs.map(async (job) => {
+        if (superadmin && job.ownerUserId && job.ownerUserId !== userId) {
+          return { ...job, ownerDisplayName: await creatorDisplayName(job.ownerUserId) };
+        }
         if (job.ownerUserId || !job.createdByUserId) return job;
         return { ...job, createdByDisplayName: await creatorDisplayName(job.createdByUserId) };
       })));
@@ -604,7 +624,7 @@ const schedulerExtension: Extension = {
       }
       const agentId = c.req.param("agentId");
       const id = c.req.param("id");
-      if (!(await canAccessJob(agentId, id, requestUserId(c)))) {
+      if (!(await canReadJob(agentId, id, requestUserId(c)))) {
         return c.json({ error: "Schedule owner access required" }, 403);
       }
       return c.json({ runs: await getScheduler().listRuns(agentId, id) });
@@ -616,7 +636,7 @@ const schedulerExtension: Extension = {
       }
       const agentId = c.req.param("agentId");
       const id = c.req.param("id");
-      if (!(await canAccessJob(agentId, id, requestUserId(c)))) {
+      if (!(await canReadJob(agentId, id, requestUserId(c)))) {
         return c.json({ error: "Schedule owner access required" }, 403);
       }
       const trace = await getScheduler().getRunTrace(agentId, id, c.req.param("runId"));
@@ -630,7 +650,7 @@ const schedulerExtension: Extension = {
     app.get("/schedules/:agentId/:id/tail", async (c) => {
       const agentId = c.req.param("agentId");
       const id = c.req.param("id");
-      if (!(await canAccessJob(agentId, id, requestUserId(c)))) return c.json({ error: "Schedule owner access required" }, 403);
+      if (!(await canReadJob(agentId, id, requestUserId(c)))) return c.json({ error: "Schedule owner access required" }, 403);
       const ctx = getSchedulerContext();
       const agent = ctx.getAgent(agentId);
       if (!agent) return c.json({ error: "Agent not found" }, 404);

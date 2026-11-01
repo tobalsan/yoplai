@@ -196,6 +196,11 @@ a pulsing Running badge with elapsed time from `runningForMs` until the run ends
 `GET /api/schedules/:agentId/:id/runs` returns `{ runs }` with running records
 first, then newest first; it returns 404 with the flag off. Authorization uses
 the job's current Mine/Team mode, so sharing a job also shares its past runs.
+Eligible DB-backed superadmins can also list foreign Mine jobs and read their
+runs, traces, and latest output, subject to agent access. List responses add
+`ownerDisplayName` for foreign Mine jobs; the panel shows their owner and locks
+management controls while retaining history links. Mutations and run-now stay
+owner-only, and `scheduler.list_jobs` keeps its owner filter.
 Records include effective prompt and original `storageOwnerId` (user ID for
 Mine, `null` for Team). Recording is latched at start; quiet-uneventful records
 are removed, and startup unconditionally marks leftover running records

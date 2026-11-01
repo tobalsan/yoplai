@@ -31,7 +31,7 @@ The list refreshes every two seconds, keeping running runs pinned at the top
 with a running indicator, so new runs appear without reloading.
 
 `GET /api/schedules/:agentId/:id/runs` returns `{ runs: [...] }`, running first,
-then newest first. It reuses job access checks: Mine history is owner-only;
+then newest first. Mine history is readable by its owner and eligible superadmins;
 Team history is visible to agent members. Access follows the job's current
 mode, so sharing a Mine job exposes its past runs. With the flag off the
 endpoint returns 404 and titles stay plain text.
@@ -120,6 +120,8 @@ Disk shape omits `agentId`; it is implied by the workspace:
 When an agent run completes with a credential refusal, its recurring job is paused immediately, including on run-now. The recorded error and configured deliveries tell the owner to reconnect and re-enable the job. Re-enable it with the existing `enabled` setting after reconnecting; its normal schedule resumes. Agent rejections and timeouts keep the job enabled, even if a refusal was seen before the rejection or timeout. One-shot jobs retain their existing completion behavior.
 
 `createdByUserId` records the authenticated creator and never changes when ownership changes. `GET /schedules` resolves `createdByDisplayName` server-side for Team jobs; their cards show "Created by <name>" or "Created by you". Legacy and hand-written jobs without a creator show no label.
+
+In multi-user mode, eligible superadmins also see other users' Mine jobs in `GET /schedules`, with `ownerDisplayName` and an "Owned by <name>" label ("another user" if unavailable). They can read run history, traces, and latest output, but cannot pause, resume, change mode, delete, or run those jobs. Agent access checks still apply. Admins, members, single-user mode, and the `scheduler.list_jobs` agent tool keep their existing visibility.
 
 Choose Team for channel delivery, "for the team"/"everyone", or shared routines; choose Mine for DM delivery, personal data ("my inbox", "my Drive"), or reminders. When unclear, ask "Private to you, or shared with the team?" After creation, say "Created as a private job" or "Shared with the team". Set `credentialMode` on create or update through the API or scheduler tools.
 
