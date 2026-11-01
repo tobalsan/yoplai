@@ -459,4 +459,27 @@ describe("ExtensionConfigForm", () => {
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(patchAgentExtensionMock).toHaveBeenCalledWith("scribe", "exa", { credentialScope: "team", enabled: true, config: {}, secrets: {} });
   });
+  it("saves a boolean turned back off on the same open form", async () => {
+    setSession("admin");
+    const schema = { type: "object", properties: { allowWrite: { type: "boolean" } } };
+    fetchAgentExtensionMock.mockResolvedValue(exaEntry({ configJsonSchema: schema, requiredSecrets: [], enabled: true }));
+    patchAgentExtensionMock
+      .mockResolvedValueOnce([exaEntry({ configJsonSchema: schema, requiredSecrets: [], enabled: true, configValues: { allowWrite: true } })])
+      .mockResolvedValueOnce([exaEntry({ configJsonSchema: schema, requiredSecrets: [], enabled: true, configValues: { allowWrite: false } })]);
+    await mount("scribe", "exa");
+
+    const toggleAndSave = async (checked: boolean) => {
+      const box = container.querySelector<HTMLInputElement>("#ext-field-allowWrite")!;
+      box.checked = checked;
+      box.dispatchEvent(new Event("change", { bubbles: true }));
+      container.querySelector("form")!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    };
+    await toggleAndSave(true);
+    await toggleAndSave(false);
+
+    expect(patchAgentExtensionMock).toHaveBeenNthCalledWith(1, "scribe", "exa", { enabled: true, config: { allowWrite: true }, secrets: {} });
+    expect(patchAgentExtensionMock).toHaveBeenNthCalledWith(2, "scribe", "exa", { enabled: true, config: { allowWrite: false }, secrets: {} });
+    expect(container.querySelector<HTMLInputElement>("#ext-field-allowWrite")!.checked).toBe(false);
+  });
 });

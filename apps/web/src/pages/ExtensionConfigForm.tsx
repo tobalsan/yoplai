@@ -301,7 +301,8 @@ export function ExtensionConfigForm(props: {
         secrets,
       });
       const refreshed = updated.find((extension) => extension.id === params.extensionId);
-      if (refreshed && (current.personalSecretFields !== undefined || oauthScoped())) setEntry(refreshed);
+      // Always refresh, so the team baseline follows the saved state.
+      if (refreshed) setEntry(refreshed);
       props.onSaved?.(updated);
       setValues((previous) => Object.fromEntries(Object.entries(previous).map(([name, value]) => [name, value !== "" && formFields.some((field) => field.name === name && field.secret) ? REDACTED_SECRET_VALUE : value])));
       setSavedValues(values());
