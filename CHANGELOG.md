@@ -15,6 +15,7 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Added
 
+- Track per-login subscription quota in memory from sanitized Claude response headers and opt-in host usage pollers (`modelQuota.enabled`), with freshness, error state and pure quota policy helpers.
 - Route opted-in Pi chat sessions once and persist their model/effort lock across restarts and compaction, with shadow evaluation, immediate off-mode rollback, and configured-model fallback when routing is unavailable.
 - Add opt-in model-routing configuration, offline table validation, and a bounded, fail-open OpenAI classifier with a documented 13-category seed.
 - Show MCP App views inline beneath their tool calls in simple and full web chat, with saved-data replay, isolated SDK handshake, own-server interactions, bounded loading and text fallback.

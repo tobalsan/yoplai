@@ -566,6 +566,7 @@ const gatewayCmd = program
         console.log("\nShutting down...");
         const { stopDreamTimers } = await import("../dream/service.js");
         stopDreamTimers();
+        (await import("../model-quota/runtime.js")).stopModelQuotaPollers();
         if (webProcess) stopWebUIProcess(webProcess);
         stopTailscaleServeRefresh();
         if (tailscaleServeEnabled && tailscaleServeResetOnExit) {
