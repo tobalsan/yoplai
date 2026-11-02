@@ -57,6 +57,8 @@ Important seams:
 
 Solid.js SPA. It consumes `/api/capabilities` and loads optional extension routes only when enabled.
 
+Admin Quota at `/admin/quota` reads `/api/admin/model-quota` every 20 seconds. Both require superadmin in multi-user mode and allow the local operator in single-user mode. The uncached route uses only the sanitized in-memory quota store and its policy helpers; viewing never polls a vendor. The page retains last readings on refresh errors and displays server freshness, missing windows and error-only logins honestly.
+
 Agent config Dashboard/Scheduled jobs tabs hide foreign private items for signed-in superadmins by default. `lib/private-items.ts` owns the client filters and shared `yoplai:show-private-items` browser preference; the muted eye toggle sits beside the tabs. Dashboards filter before parent grouping, jobs after polling reconciliation. Other roles and single-user mode are unchanged; this does not change server access.
 
 - `src/api/`: domain API clients and realtime client
@@ -166,7 +168,7 @@ extensions:
 Key rules:
 
 - `agent.yaml` may set `language: en | fr` for fixed run-failure notices; it defaults to `en`.
-- Root `modelQuota: { enabled: true }` opts into host-only OAuth subscription polling (restart required; off by default). `model-quota/` owns endpoint parsing, per-login in-memory observations, identity validation and pure policy helpers; shared quota types/header parsing live in `packages/shared/src/model-quota.ts`. Claude response hooks capture without polling on host and container; strict `quota` frames bypass history and streaming. Codex identity hashes the account claim of the request token, with current-credential validation on reads. Claude identity is host-local and only detects removal or switching away from OAuth, not an OAuth-to-OAuth account change. Missing, failed or expired readings are unknown; no HTTP quota route is provided here.
+- Root `modelQuota: { enabled: true }` opts into host-only OAuth subscription polling (restart required; off by default). `model-quota/` owns endpoint parsing, per-login in-memory observations, identity validation and pure policy helpers; shared quota types/header parsing live in `packages/shared/src/model-quota.ts`. Claude response hooks capture without polling on host and container; strict `quota` frames bypass history and streaming. Codex identity hashes the account claim of the request token, with current-credential validation on reads. Claude identity is host-local and only detects removal or switching away from OAuth, not an OAuth-to-OAuth account change. Missing, failed or expired readings are unknown. The read-only admin quota route exposes the sanitized view with the same policy helpers.
 - Optional root `notifications.adminChannel` names an entry in `notifications.channels`. Only provider quota failures notify it, at most once per provider/model per hour; rate limits and overloads do not.
 - A terminal run failure is persisted as a safe assistant history entry with `meta.stopReason: "error"` and `meta.failure.kind`. Its fixed user-facing text is localized by the agent language; raw provider errors remain diagnostic data and must not be shown as the notice.
 - Root `extensions.<id>` configures/loads an extension; agent `extensions.<id>` opts an agent into tool-style extensions unless `enabled: false`.
