@@ -66,6 +66,7 @@ Common fields:
 | `queueMode`                           | `queue` or `interrupt`                                      |
 | `retryMaxAttempts`                    | Attempts for a transient provider error; default 3          |
 | `fallback_model`                      | Optional fallback `{ provider, model }`                     |
+| `modelRouting`                        | Pi chat opt-in; defaults disabled, optional `categories`; see [routing guide](model-routing.md) |
 | `retryBaseDelay`                      | Initial retry delay in seconds; default 2                   |
 | `introMessage`                        | Custom message shown after `/new`                           |
 | `discord`, `slack`, `telegram`, `irc` | Supported per-agent transport config                        |
@@ -112,7 +113,8 @@ Core `yoplai.json` fields:
 | `extensionsPath`                     | External extension directory; defaults to `$YOPLAI_HOME/extensions` |
 | `sandbox`, `onecli`, `oauth`         | Isolation (incl. `sandbox.gatewayTransport`: `http`/`socket`), proxy, and host OAuth settings |
 | `maintenance`                        | Model for gateway-owned background LLM tasks                        |
-| `modelRouting`                       | Optional routing classifier/table configuration; defaults off       |
+| `modelRouting`                       | Session routing classifier/table; `mode` defaults `off`; see [routing guide](model-routing.md) |
+| `modelQuota`                         | Host subscription polling; `enabled` defaults `false` (restart required); see [quota ownership](model-routing.md#poller-ownership-per-host) |
 | `branding`                           | Optional organization name/logo/icon                                |
 | `notifications.channels`             | Named Discord/Slack delivery targets                                |
 | `dream`                              | Global nightly-consolidation prompt/timeout/window                  |
@@ -152,17 +154,17 @@ Both fields are required. The Pi model runtime resolves its credentials from an 
 
 ### Model routing
 
-Model routing currently provides configuration validation and a standalone classifier; the chat run path does not call it. `off`, `shadow`, and `enforce` are accepted configuration stages, with `off` the default. Chat integration, model switching, and quota-based pool selection are future work (ALG-594); changing the stage today does not switch a chat's model.
+Model routing chooses and durably locks a model for eligible chat sessions of opted-in Pi agents. `off` (the default) bypasses routing, `shadow` records a pick while keeping the usual model, and `enforce` applies enforce-mode locks. Shadow locks are never promoted. See the [routing guide](model-routing.md) for eligibility, quota policy, failure behavior, rollout and rollback.
 
 Merge the top-level `modelRouting` object from [the example configuration](examples/model-routing.json) into `yoplai.json`. It contains a versioned, global table of 13 categories. Each row has `id`, `definition`, `examples`, two `{ provider, model, effort }` picks (`claude` and `chatgpt`), and a `pool` preference: `either`, `prefer_claude`, or `prefer_chatgpt`. Picks use Pi provider/model identifiers and supported reasoning levels (`off` rather than `none`). Loading and hot reload check the structural schema, including duplicate category IDs. For active routing, startup additionally checks catalog models, supported efforts, floor and agent category references, and that each opted-in agent retains at least two categories; these cross-configuration checks do not run on hot reload.
 
 | Setting | Default | Meaning |
 | --- | --- | --- |
-| `mode` | `off` | Configuration stage: `off`, `shadow`, or `enforce` |
+| `mode` | `off` | Routing stage: `off`, `shadow`, or `enforce` |
 | `version` | `unversioned` | Operator-supplied table version |
 | `classifier` | `{ "provider": "openai", "model": "gpt-6-luna" }` | Pi classifier model, using OpenAI's classifier operation |
 | `thresholds.score` | `0.8` | Minimum confident category score |
-| `thresholds.pace` | `1.15` | Reserved pool pacing threshold |
+| `thresholds.pace` | `1.15` | Above this weekly pace, switch away from a preferred pool when both pools have known quota |
 | `budgets.predicateMs` | `2000` | Predicate deadline in milliseconds |
 | `budgets.categoryMs` | `4000` | Category deadline in milliseconds |
 | `maxRetries` | `1` | Bounded retry count, `0`–`2`, within the stage deadline |
@@ -177,11 +179,13 @@ modelRouting:
   categories: [office_deliverable, single_tool_call, web_research]
 ```
 
-Omitting `categories` uses the global table; an explicit list is combined with the floor. The agent flag is configuration for the future chat integration, and has no chat-routing effect yet.
+Omitting `categories` uses the global table; an explicit list is combined with the floor. Omitting the per-agent `modelRouting` object leaves routing disabled; when present, it requires an `enabled` boolean. Only opted-in Pi chat turns route; other agents and automation keep their configured model.
 
 The classifier requires `OPENAI_API_KEY` in the gateway process environment, including values loaded from `$YOPLAI_HOME/.env`. Agent-local credentials and ChatGPT/Codex subscription OAuth do not authenticate this classifier. Missing credentials, timeouts, invalid responses, and exhausted retries return an unavailable result so callers can retain the configured agent model; no vendor request is needed for table validation.
 
-Gateway callers create the standalone module with `createRoutingClassifier(config, { createRuntime?, getApiKey? })` from `src/model-routing/classifier.ts`, then call `checkWorkRequest({ agentId, text, signal? })` or `classifyCategory({ agentId, text, categories?, signal? })`. Category restrictions are combined with the floor; omitting them uses the full table. Successful results have `status: "ok"`: the predicate returns `isWorkRequest` and `probability`, while category classification returns `category`, `score`, and the full `probabilities` distribution for eligible categories. Failures have `status: "unavailable"` with a `reason`; callers decide whether to lock a category by checking `score >= config.thresholds.score` after a successful category result.
+Routing mode and agent opt-in changes apply to following turns after hot reload (default mtime polling interval: 5000 ms); running turns are not interrupted. Catalog/effort/category validation runs at startup only, so restart after table changes and for the first switch to `enforce`. `off` retains durable locks, and re-enabling enforcement resumes stored enforce locks.
+
+Root `modelQuota: { "enabled": true }` starts this host's OAuth subscription pollers at gateway startup; omitting it or setting `enabled: false` leaves polling off. Changing it requires restart. Passive Claude quota-header capture runs either way. The store is in memory and local to this gateway; see [poller ownership and host separation](model-routing.md#poller-ownership-per-host). On an `either` routing row, unknown/stale quota locks the usual model; a preferred row may keep its preference.
 
 The example merges Pom's per-agent definitions into one global definition per category and deduplicates examples across agents. Review these definitions before rollout: a CRM record list or a simple Excel export remains `single_tool_call`, while an authored report, analytical spreadsheet, or deck is `office_deliverable`. Gordon's base picks map to `anthropic`/`openai-codex`; the pinned offline Pi catalog lacks `gpt-6.1-terra`, so the example uses `gpt-5.6-terra`. `edit_agent_dashboard` copies the office picks with `prefer_claude`; `lead_contact_lookup` copies the single-tool picks with `either`.
 
