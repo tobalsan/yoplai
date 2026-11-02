@@ -44,6 +44,50 @@ describe("routing classifier deadlines", () => {
   });
   afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks(); });
 
+  it("times the public category call including runtime startup and both completed orders", async () => {
+    let calls = 0;
+    const classifier = createRoutingClassifier(categoryConfig(), {
+      getApiKey: () => "fixture-key",
+      createRuntime: async () => {
+        await new Promise((resolve) => setTimeout(resolve, 3));
+        return runtime(async () => {
+          await new Promise((resolve) => setTimeout(resolve, ++calls === 1 ? 7 : 15));
+          return response("category", { type: "choice", choice: "office_deliverable", confidence: 0.9,
+            probabilities: { office_deliverable: 0.9, single_tool_call: 0.1 } });
+        });
+      },
+    });
+    const pending = classifier.classifyCategory({ agentId: "casey", text: "Task" });
+    await vi.advanceTimersByTimeAsync(18);
+    await expect(pending).resolves.toEqual({ status: "ok", category: "office_deliverable", score: 0.9,
+      probabilities: { office_deliverable: 0.9, single_tool_call: 0.1 }, latencyMs: 18,
+      orders: [{ ms: 7, completed: true }, { ms: 15, completed: true }] });
+  });
+
+  it("snapshots completed and pending orders at the deadline without waiting for a late settle", async () => {
+    let release: (value: ClassifierResult) => void = () => {};
+    let calls = 0;
+    const classifier = createRoutingClassifier({ ...categoryConfig(), budgets: { predicateMs: 20, categoryMs: 40 } }, {
+      getApiKey: () => "fixture-key",
+      createRuntime: async () => runtime(async () => {
+        if (++calls === 1) {
+          await new Promise((resolve) => setTimeout(resolve, 12));
+          return response("category", { type: "choice", choice: "office_deliverable", confidence: 1, probabilities: { office_deliverable: 1 } });
+        }
+        return new Promise<ClassifierResult>((resolve) => { release = resolve; });
+      }),
+    });
+    const pending = classifier.classifyCategory({ agentId: "casey", text: "Task" });
+    await vi.advanceTimersByTimeAsync(40);
+    const result = await pending;
+    expect(result).toMatchObject({ status: "unavailable", reason: "timeout", latencyMs: 40,
+      orders: [{ ms: 12, completed: true }, { ms: 40, completed: false }] });
+    await vi.advanceTimersByTimeAsync(50);
+    release(response("category", { type: "choice", choice: "office_deliverable", confidence: 1, probabilities: { office_deliverable: 1 } }));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(result.orders).toEqual([{ ms: 12, completed: true }, { ms: 40, completed: false }]);
+  });
+
   it.each([
     ["predicate", "runtime", 20], ["predicate", "provider", 20],
     ["category", "runtime", 40], ["category", "provider", 40],
@@ -67,7 +111,9 @@ describe("routing classifier deadlines", () => {
     await vi.advanceTimersByTimeAsync(budget - 1);
     expect(result).toBeUndefined();
     await vi.advanceTimersByTimeAsync(1);
-    expect(result).toEqual({ status: "unavailable", reason: "timeout" });
+    expect(result).toMatchObject({ status: "unavailable", reason: "timeout", latencyMs: budget,
+      ...(method === "category" ? { orders: stage === "runtime" ? [null, null]
+        : [{ ms: 40, completed: false }, { ms: 40, completed: false }] } : {}) });
     expect(seenSignal?.aborted).toBe(true);
     await pending;
   });
@@ -89,7 +135,8 @@ describe("routing classifier deadlines", () => {
     await vi.advanceTimersByTimeAsync(1);
     controller.abort();
     await vi.advanceTimersByTimeAsync(0);
-    expect(result).toEqual({ status: "unavailable", reason: "aborted" });
+    expect(result).toMatchObject({ status: "unavailable", reason: "aborted", latencyMs: 1,
+      ...(method === "category" ? { orders: [{ ms: 1, completed: false }, { ms: 1, completed: false }] } : {}) });
     expect(receivedSignal?.aborted).toBe(true);
     await pending;
   });
@@ -107,8 +154,8 @@ describe("routing classifier deadlines", () => {
     const input = { agentId: "casey", text: "Task" };
     const first = classifier.checkWorkRequest(input);
     await vi.advanceTimersByTimeAsync(20);
-    await expect(first).resolves.toEqual({ status: "unavailable", reason: "timeout" });
-    await expect(classifier.checkWorkRequest(input)).resolves.toEqual({ status: "ok", isWorkRequest: true, probability: 0.9 });
+    await expect(first).resolves.toMatchObject({ status: "unavailable", reason: "timeout" });
+    await expect(classifier.checkWorkRequest(input)).resolves.toMatchObject({ status: "ok", isWorkRequest: true, probability: 0.9 });
     release(runtime(lateClassify));
     await vi.advanceTimersByTimeAsync(0);
     expect(lateClassify).not.toHaveBeenCalled();
@@ -116,6 +163,17 @@ describe("routing classifier deadlines", () => {
 });
 
 describe("routing classifier", () => {
+  it("reports wall time without starting category orders when no key exists", async () => {
+    const clock = vi.spyOn(Date, "now");
+    clock.mockReturnValueOnce(100).mockReturnValueOnce(107).mockReturnValueOnce(200).mockReturnValueOnce(211);
+    const classifier = createRoutingClassifier(categoryConfig(), { getApiKey: () => undefined });
+    await expect(classifier.checkWorkRequest({ agentId: "casey", text: "Task" }))
+      .resolves.toMatchObject({ status: "unavailable", reason: "no_key", latencyMs: 7 });
+    await expect(classifier.classifyCategory({ agentId: "casey", text: "Task" }))
+      .resolves.toMatchObject({ status: "unavailable", reason: "no_key", latencyMs: 11, orders: [null, null] });
+    clock.mockRestore();
+  });
+
   it("returns unavailable without constructing a runtime when the API key is blank", async () => {
     const createRuntime = vi.fn();
     const classifier = createRoutingClassifier(ModelRoutingConfigSchema.parse({}), {
@@ -124,9 +182,9 @@ describe("routing classifier", () => {
     });
 
     await expect(classifier.checkWorkRequest({ agentId: "casey", text: "Hi" }))
-      .resolves.toEqual({ status: "unavailable", reason: "no_key" });
+      .resolves.toMatchObject({ status: "unavailable", reason: "no_key" });
     await expect(classifier.classifyCategory({ agentId: "casey", text: "Hi" }))
-      .resolves.toEqual({ status: "unavailable", reason: "no_key" });
+      .resolves.toMatchObject({ status: "unavailable", reason: "no_key" });
     expect(createRuntime).not.toHaveBeenCalled();
   });
 
@@ -147,7 +205,7 @@ describe("routing classifier", () => {
       });
 
       await expect(classifier.checkWorkRequest({ agentId: "casey", text: "Please reply to this ticket" }))
-        .resolves.toEqual({ status: "ok", isWorkRequest: expected, probability });
+        .resolves.toMatchObject({ status: "ok", isWorkRequest: expected, probability });
     }
   );
 
@@ -168,7 +226,7 @@ describe("routing classifier", () => {
 
     const result = await classifier.classifyCategory({ agentId: "casey", text: "Make a slide deck" });
     expect(orders).toEqual([["office_deliverable", "single_tool_call"], ["single_tool_call", "office_deliverable"]]);
-    expect(result).toEqual({ status: "ok", category: "office_deliverable", score: expect.closeTo(0.6, 12),
+    expect(result).toMatchObject({ status: "ok", category: "office_deliverable", score: expect.closeTo(0.6, 12),
       probabilities: { office_deliverable: expect.closeTo(0.6, 12), single_tool_call: 0.4 } });
   });
 
@@ -190,9 +248,9 @@ describe("routing classifier", () => {
       })),
     });
     await expect(classifier.checkWorkRequest({ agentId: "casey", text: "Task" }))
-      .resolves.toEqual({ status: "unavailable", reason });
+      .resolves.toMatchObject({ status: "unavailable", reason });
     await expect(classifier.classifyCategory({ agentId: "casey", text: "Task" }))
-      .resolves.toEqual({ status: "unavailable", reason });
+      .resolves.toMatchObject({ status: "unavailable", reason });
   });
 
   it.each([
@@ -213,7 +271,7 @@ describe("routing classifier", () => {
       createRuntime: async () => runtime(async () => response("category", answer as ClassifierAnswer)),
     });
     await expect(classifier.classifyCategory({ agentId: "casey", text: "Task" }))
-      .resolves.toEqual({ status: "unavailable", reason: "malformed" });
+      .resolves.toMatchObject({ status: "unavailable", reason: "malformed" });
   });
 
   it("counts a missing category probability as zero even for an object-property name", async () => {
@@ -226,7 +284,7 @@ describe("routing classifier", () => {
       })),
     });
     await expect(classifier.classifyCategory({ agentId: "casey", text: "Task" }))
-      .resolves.toEqual({ status: "ok", category: "single_tool_call", score: 0.6,
+      .resolves.toMatchObject({ status: "ok", category: "single_tool_call", score: 0.6,
         probabilities: { constructor: 0, single_tool_call: 0.6 } });
   });
 
@@ -241,7 +299,7 @@ describe("routing classifier", () => {
       })),
     });
     const result = await classifier.classifyCategory({ agentId: "casey", text: "Task" });
-    expect(result).toEqual({ status: "ok", category: "office_deliverable", score: first,
+    expect(result).toMatchObject({ status: "ok", category: "office_deliverable", score: first,
       probabilities: { office_deliverable: first, single_tool_call: second } });
     if (result.status !== "ok") throw new Error("Expected a genuine score");
     expect(result.score >= 0.8).toBe(routes);
@@ -253,7 +311,7 @@ describe("routing classifier", () => {
       createRuntime: async () => runtime(async () => response("work_request", { type: "bool", probability })),
     });
     await expect(classifier.checkWorkRequest({ agentId: "casey", text: "Task" }))
-      .resolves.toEqual({ status: "unavailable", reason: "malformed" });
+      .resolves.toMatchObject({ status: "unavailable", reason: "malformed" });
   });
 
   it("treats a successful response without an answer map as malformed", async () => {
@@ -264,9 +322,9 @@ describe("routing classifier", () => {
       }) as unknown as ClassifierResult),
     });
     await expect(classifier.checkWorkRequest({ agentId: "casey", text: "Task" }))
-      .resolves.toEqual({ status: "unavailable", reason: "malformed" });
+      .resolves.toMatchObject({ status: "unavailable", reason: "malformed" });
     await expect(classifier.classifyCategory({ agentId: "casey", text: "Task" }))
-      .resolves.toEqual({ status: "unavailable", reason: "malformed" });
+      .resolves.toMatchObject({ status: "unavailable", reason: "malformed" });
   });
 
   it("returns unavailable if only the reversed order fails", async () => {
@@ -278,7 +336,7 @@ describe("routing classifier", () => {
         : { ...response("category", { type: "bool", probability: 0 }), answers: {}, stopReason: "error", errorMessage: "OpenAI Decisions refused to answer category" }),
     });
     await expect(classifier.classifyCategory({ agentId: "casey", text: "Task" }))
-      .resolves.toEqual({ status: "unavailable", reason: "refusal" });
+      .resolves.toMatchObject({ status: "unavailable", reason: "refusal" });
   });
 
   it("uses the configured classifier, truncates human text, and reads a fresh key on every call", async () => {
@@ -298,11 +356,11 @@ describe("routing classifier", () => {
       }),
     });
     const input = { agentId: "casey", text: "x".repeat(6010) };
-    await expect(classifier.checkWorkRequest(input)).resolves.toEqual({ status: "ok", isWorkRequest: true, probability: 0.9 });
+    await expect(classifier.checkWorkRequest(input)).resolves.toMatchObject({ status: "ok", isWorkRequest: true, probability: 0.9 });
     key = "";
-    await expect(classifier.checkWorkRequest(input)).resolves.toEqual({ status: "unavailable", reason: "no_key" });
+    await expect(classifier.checkWorkRequest(input)).resolves.toMatchObject({ status: "unavailable", reason: "no_key" });
     key = "second-fixture-key";
-    await expect(classifier.checkWorkRequest(input)).resolves.toEqual({ status: "ok", isWorkRequest: true, probability: 0.9 });
+    await expect(classifier.checkWorkRequest(input)).resolves.toMatchObject({ status: "ok", isWorkRequest: true, probability: 0.9 });
   });
 
   it("keeps floor categories when restricting choices and uses the whole table when omitted", async () => {
@@ -342,7 +400,7 @@ describe("routing classifier", () => {
       },
     });
     const expected = { status: "unavailable", reason: outcome === "aborted" ? "aborted" : "provider_error" };
-    await expect(classifier.checkWorkRequest({ agentId: "casey", text: "Task" })).resolves.toEqual(expected);
-    await expect(classifier.classifyCategory({ agentId: "casey", text: "Task" })).resolves.toEqual(expected);
+    await expect(classifier.checkWorkRequest({ agentId: "casey", text: "Task" })).resolves.toMatchObject(expected);
+    await expect(classifier.classifyCategory({ agentId: "casey", text: "Task" })).resolves.toMatchObject(expected);
   });
 });
