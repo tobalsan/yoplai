@@ -1484,6 +1484,13 @@ export interface ExtensionContext {
    * child starts or exits; pass an empty list when nothing runs.
    */
   setActiveWork?(extensionId: string, items: ActiveWorkItem[]): void;
+  /** Mint an agent-scoped bearer token for host-side tools; revoke when work settles. */
+  mintToolToken?(input: {
+    agentId: string;
+    userId?: string;
+    sessionId: string;
+    runId: string;
+  }): { token: string; gatewayUrl: string; revoke(): void };
   /**
    * Write an agent's per-agent extension config (secrets go to the agent
    * `.env`), then reload the gateway config. An extension can only write its

@@ -711,13 +711,44 @@ export class SchedulerService {
     // AbortController race below.
     if (payload.script) {
       let script: RunScriptResult;
+      let toolToken: ReturnType<NonNullable<ExtensionContext["mintToolToken"]>> | undefined;
+      const redact = (text: string) => toolToken ? text.replaceAll(toolToken.token, "[redacted]") : text;
       try {
-        script = await runScript({
-          workspaceDir,
-          script: payload.script,
-          timeoutMs,
+        const runId = crypto.randomUUID();
+        const scriptSessionId = `scheduler:${job.id}:${runId}`;
+        toolToken = ctx.mintToolToken?.({
+          agentId: agent.id,
+          userId: credentialMode === "owner" ? ownerUserId : undefined,
+          sessionId: scriptSessionId,
+          runId,
         });
-      } catch (err) {
+        try {
+          script = await runScript({
+            workspaceDir,
+            script: payload.script,
+            timeoutMs,
+            ...(toolToken && { env: {
+              YOPLAI_TOOL_URL: toolToken.gatewayUrl,
+              YOPLAI_TOOL_TOKEN: toolToken.token,
+              YOPLAI_AGENT_ID: agent.id,
+              YOPLAI_SESSION_ID: scriptSessionId,
+              YOPLAI_RUN_ID: runId,
+            } }),
+          });
+        } finally {
+          toolToken?.revoke();
+        }
+        script = {
+          stdout: redact(script.stdout),
+          stderr: redact(script.stderr),
+          finalStdoutLine: script.finalStdoutLine === undefined ? undefined : redact(script.finalStdoutLine),
+        };
+      } catch (error) {
+        // Rebuild the error so its stack, as well as its message and stderr
+        // metadata, cannot carry the bearer token into output or delivery.
+        const err = !toolToken ? error : error instanceof ScriptExecutionError
+          ? new ScriptExecutionError(redact(error.message), error.reason, redact(error.stderrTail), error.exitCode)
+          : new Error(redact(error instanceof Error ? error.message : String(error)));
         const message = err instanceof Error ? err.message : String(err);
         ctx.logger.error("[scheduler] job failed", message.split("\n")[0], {
           jobId: job.id,

@@ -18,9 +18,63 @@ describe("createExtensionContext media helpers", () => {
 
   afterEach(async () => {
     vi.restoreAllMocks();
+    vi.unstubAllEnvs();
     if (prevHomeDir === undefined) delete process.env.YOPLAI_HOME;
     else process.env.YOPLAI_HOME = prevHomeDir;
     await fs.rm(tmpDir, { recursive: true, force: true });
+  });
+
+  it("mints an agent-scoped owner tool token and revokes it idempotently", async () => {
+    const { writeTestV3Config } = await import("../test-utils/v3-config.js");
+    await writeTestV3Config(tmpDir, { agents: [{ id: "alpha" }] });
+    const { createExtensionContext, bindExtensionContext } = await import("./context.js");
+    const { loadConfig } = await import("../config/index.js");
+    const { validateContainerToken, getContainerTokenUserId, getContainerTokenContext } = await import("../sdk/container/tokens.js");
+    const ctx = bindExtensionContext(createExtensionContext(loadConfig()), "scheduler");
+    const minted = ctx.mintToolToken!({ agentId: "alpha", userId: "alice", sessionId: "scheduler:job:run", runId: "run" });
+    try {
+      expect(validateContainerToken(minted.token, "alpha")).toBe(true);
+      expect(validateContainerToken(minted.token, "other")).toBe(false);
+      expect(getContainerTokenUserId(minted.token, "alpha")).toBe("alice");
+      const entry = getContainerTokenContext(minted.token)!;
+      expect(entry).toMatchObject({ agentId: "alpha", userId: "alice", actorKind: "service", sessionId: "scheduler:job:run", runId: "run" });
+      expect(entry.actorUserId).toBeUndefined();
+      expect(entry.roots).toEqual({ workspace: path.join(tmpDir, "agents/alpha"), data: path.join(tmpDir, "agents/alpha"), uploads: path.join(tmpDir, "agents/alpha") });
+      expect(entry.registerFileOutput).toBeUndefined();
+      expect(entry.emitProgress).toBeUndefined();
+      expect(entry.oauthProviders).toBeUndefined();
+      minted.revoke();
+      expect(entry.abortController.signal.aborted).toBe(true);
+      expect(validateContainerToken(minted.token, "alpha")).toBe(false);
+      expect(getContainerTokenUserId(minted.token, "alpha")).toBeUndefined();
+      expect(() => minted.revoke()).not.toThrow();
+    } finally { minted.revoke(); }
+  });
+
+  it.each([
+    [{ bind: "lan", port: 4080 }, "4091", "http://127.0.0.1:4091"],
+    [{ host: "100.64.0.8", port: 4080 }, undefined, "http://100.64.0.8:4080"],
+    [{ host: "::1", port: 4080 }, undefined, "http://[::1]:4080"],
+    [{}, undefined, "http://127.0.0.1:4000"],
+  ])("mints team-only tokens with a host-reachable gateway URL (%j)", async (gateway, runningPort, expectedUrl) => {
+    vi.stubEnv("YOPLAI_GATEWAY_PORT", runningPort);
+    const { writeTestV3Config } = await import("../test-utils/v3-config.js");
+    await writeTestV3Config(tmpDir, { agents: [{ id: "alpha" }], extraConfig: { gateway } });
+    const { createExtensionContext } = await import("./context.js");
+    const { loadConfig } = await import("../config/index.js");
+    const { getContainerTokenUserId, validateContainerToken } = await import("../sdk/container/tokens.js");
+    const ctx = createExtensionContext(loadConfig());
+    const first = ctx.mintToolToken!({ agentId: "alpha", sessionId: "scheduler:job:run", runId: "run" });
+    const second = ctx.mintToolToken!({ agentId: "alpha", sessionId: "scheduler:job:run2", runId: "run2" });
+    try {
+      expect(first.gatewayUrl).toBe(expectedUrl);
+      expect(getContainerTokenUserId(first.token, "alpha")).toBeUndefined();
+      expect(validateContainerToken(first.token, "alpha")).toBe(true);
+      expect(second.token).not.toBe(first.token);
+      first.revoke();
+      expect(validateContainerToken(first.token, "alpha")).toBe(false);
+      expect(validateContainerToken(second.token, "alpha")).toBe(true);
+    } finally { first.revoke(); second.revoke(); }
   });
 
   it("emits extension fields at the top level on one physical JSON line", async () => {
