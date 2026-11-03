@@ -37,7 +37,7 @@ Core TypeScript/Node.js process. Main ownership:
 - `src/oauth/`: host-side per-agent OAuth connection framework
 - `src/tasks/`: durable task ledger
 - `src/evals/`: headless single-turn Harbor eval runner
-- `src/model-routing/`: global routing-table validation and standalone bounded classifier; not called by the chat run path (integration/model switching: ALG-594)
+- `src/model-routing/`: routing-table validation, bounded classifier, quota pool selection, and durable per-session routing behind `runAgent`
 
 Important seams:
 
@@ -171,7 +171,7 @@ Key rules:
 - Root `extensions.<id>` configures/loads an extension; agent `extensions.<id>` opts an agent into tool-style extensions unless `enabled: false`.
 - Agent folders may contain `.env`. `$env:NAME` resolves from agent-local env layered over `$YOPLAI_HOME/.env`, `yoplai.json` `env`, and `process.env`.
 - Agent-local resolved values are passed to extension hooks as `ctx.env`; do not assume they enter global `process.env` or sandbox env.
-- Root `modelRouting` defaults to `mode: off`; `off|shadow|enforce` are configuration stages only until ALG-594. The optional agent `modelRouting: { enabled: true, categories?: [...] }` selects global category IDs plus the configured floor. The standalone classifier uses Pi's classifier operation with gateway-process `OPENAI_API_KEY` (including root `.env`), never subscription OAuth. See [configuration](configuration.md#model-routing) and the [13-category seed](examples/model-routing.json) for provider IDs, merged definitions, copied picks, and the pinned-catalog Terra fallback.
+- Root `modelRouting` defaults to `mode: off`; `shadow` records a decision and `enforce` applies it (see [session model routing](#session-model-routing)). The optional agent `modelRouting: { enabled: true, categories?: [...] }` selects global category IDs plus the configured floor. The classifier uses Pi's classifier operation with gateway-process `OPENAI_API_KEY` (including root `.env`), never subscription OAuth. See [configuration](configuration.md#model-routing) and the [13-category seed](examples/model-routing.json) for provider IDs, merged definitions, copied picks, and the pinned-catalog Terra fallback.
 - Agent env files are read on every resolution; key names log once per content change per agent and absolute path. Reloads preserve this log state; empty/missing files stay silent and reset the observed content.
 - External extensions default to `$YOPLAI_HOME/extensions` or `extensionsPath`; directories and symlinked directories are supported.
 - Projects root is `extensions.projects.root`; top-level `projects.root` is deprecated fallback only.
@@ -279,6 +279,18 @@ Multi-user mode scopes session maps and canonical history beneath `sessions/user
    - Pi auth invariant: runtime-resolved OAuth/automatic credentials retain their SDK credential type, including model overrides and fallback models. Only explicit `api_key` selection installs a runtime API-key override; never reclassify an OAuth access token as an API key.
    - Provider retry/fallback policy lives in `packages/shared/src/provider-retry.ts`. HTTP 400 plus `invalid_request_error` permits one configured fallback, never an in-place primary retry (even with transient keywords). Fallback still requires no text/tool calls in the failed turn. Pi logs the primary invalid request at error when fallback starts; the container host elevates matching `model_fallback` stderr events to error with category `invalid_request`.
 7. Flush canonical history and settle lifecycle state; then drain queued non-native work.
+
+### Session model routing
+
+`runAgent` routes opted-in Pi agents on host and container after reserving the run and persisting the human message. Only `web`, `slack`, `discord`, `telegram`, `mattermost`, and `irc` human chat turns qualify. Explicit model overrides, agent-origin senders, background runs, non-Pi SDKs, empty messages, and `compact:`, `scheduler`, or `dream:` session IDs are excluded; scheduler, subagent, dream, heartbeat, webhook and other automation sources never route.
+
+A greeting uses the configured model and leaves the session unrouted. The first real work request classifies against the table: a confident pick locks its model and effort; a low score locks a snapshot of `agent.model` (`usual`). Canonical history stores the versioned `modelRoute` metadata under the session's history owner, agent and session, before a routed model runs. The lock survives restart and compaction; `/new` and reset start without it. Unlocked follow-ups wait for their own routing turn and retain explicit thinking directives.
+
+`shadow` stores the pick while retaining the configured model, effort and fallback. An old shadow lock is never promoted by switching to `enforce`. `off` or removing agent opt-in immediately restores configured behavior without reading locks; re-enabling enforcement resumes existing enforce locks.
+
+Effort precedence is explicit `thinkLevel` or an OAuth agent's `/think` directive, then route effort, then agent default. Every enforced lock suppresses `fallback_model`, including `usual` locks. After the locked model's normal retries fail, the existing failure notice is shown and the lock stays: retry uses that model, or `/new` starts fresh. A matching `usual` snapshot keeps the agent's normal authentication mode.
+
+Classifier unavailability and router, quota-reader or lock-write errors use the configured model without recording a new lock. Until ALG-595 supplies quota policy helpers, the injected reader reports unknown quota. Unknown/stale quota never causes a quota-based switch: a preferred pool follows the table; `either` without comparable weekly pace locks `usual` with a quota reason, without a hardcoded pool. Both known 5-hour windows exhausted leaves the session unrouted for a later retry. Routing logs contain decision metadata and latency, never message text or credentials.
 
 Workspace bootstrap creates missing `AGENTS.md` and `USER.md` from `docs/templates/` without overwriting existing files. `AGENTS.md` is implicitly prepended; `system_files` controls remaining prompt-file order.
 

@@ -496,10 +496,10 @@ export const piAdapter: SdkAdapter = {
       // Enable Pi's built-in coding tools plus extension custom tools for the run workspace.
       // Pi treats `tools` as an allowlist when provided, so custom tool names must be included.
       const builtInTools = ["read", "bash", "edit", "write"];
-      const configuredFallback = agent.fallback_model
+      const configuredFallback = params.agent.fallback_model
         ? modelRuntime.getModel(
-            agent.fallback_model.provider,
-            agent.fallback_model.model
+            params.agent.fallback_model.provider,
+            params.agent.fallback_model.model
           )
         : undefined;
       // Build the turn for the least capable configured model. A fallback must

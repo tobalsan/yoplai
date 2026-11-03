@@ -15,7 +15,8 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Added
 
-- Add opt-in model-routing configuration, offline table validation, and a bounded, fail-open OpenAI classifier with a documented 13-category seed; chat integration and model switching are deferred.
+- Route opted-in Pi chat sessions once and persist their model/effort lock across restarts and compaction, with shadow evaluation, immediate off-mode rollback, and configured-model fallback when routing is unavailable.
+- Add opt-in model-routing configuration, offline table validation, and a bounded, fail-open OpenAI classifier with a documented 13-category seed.
 - Show MCP App views inline beneath their tool calls in simple and full web chat, with saved-data replay, isolated SDK handshake, own-server interactions, bounded loading and text fallback.
 - Superadmins can view every scheduled job and its run history, trace, and output; other users' Mine jobs show their owner and keep management controls locked.
 - Webhook gates can return `sessionScope` to preserve conversation context and `abort: true` to stop that session before an optional wake; extensions can silently stop mapped runs with `ExtensionContext.abortRun`.
