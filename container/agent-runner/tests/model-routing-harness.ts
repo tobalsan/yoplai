@@ -1,11 +1,15 @@
 import fs from "node:fs/promises";
 import { execFile } from "node:child_process";
+import type { ChildProcess } from "node:child_process";
+import { EventEmitter } from "node:events";
+import { PassThrough, Writable } from "node:stream";
+import http from "node:http";
 import { promisify } from "node:util";
 import type { buildRoutingReport } from "../../../apps/gateway/src/model-routing/report.js";
 import path from "node:path";
 import { performance } from "node:perf_hooks";
-import { afterAll, vi } from "vitest";
-import { AgentConfigSchema, type RunAgentResult, type ThinkLevel, type ModelRoutingConfig, type FullHistoryMessage } from "@yoplai/shared";
+import { afterAll, expect, vi } from "vitest";
+import { AgentConfigSchema, type ContainerInput, type RunAgentResult, type ThinkLevel, type ModelRoutingConfig, type FullHistoryMessage } from "@yoplai/shared";
 import type { ClassifierModel, ClassifierResult, Message } from "@earendil-works/pi-ai";
 import { fauxAssistantMessage, type FauxResponseFactory } from "@earendil-works/pi-ai/providers/faux";
 import type { ClassifierRuntime } from "../../../apps/gateway/src/model-routing/classifier.js";
@@ -15,11 +19,12 @@ import { api } from "../../../apps/gateway/src/server/api.core.js";
 import { readSessionMeta } from "../../../apps/gateway/src/history/store.js";
 import { readRoutingSessions } from "../../../apps/gateway/src/model-routing/session-reader.js";
 import { agentEventBus, type AgentHistoryEvent } from "../../../apps/gateway/src/agents/events.js";
-import { deleteSession, isStreaming } from "../../../apps/gateway/src/agents/sessions.js";
+import { abortSession, deleteSession, isStreaming } from "../../../apps/gateway/src/agents/sessions.js";
 import { piAdapter } from "../../../apps/gateway/src/sdk/pi/adapter.js";
 import { modelQuotaStore } from "../../../apps/gateway/src/model-quota/runtime.js";
 import { resolveLoginIdentity } from "../../../apps/gateway/src/model-quota/identity.js";
 import { setSessionAutoTitleDepsForTests, resetSessionAutoTitleDepsForTests } from "../../../apps/gateway/src/maintenance/session-auto-title.js";
+import { runAgentRunner, writeProtocolOutput } from "../src/index.js";
 
 const setup = await vi.hoisted(async () => {
   const fs = await import("node:fs");
@@ -35,11 +40,71 @@ const setup = await vi.hoisted(async () => {
     providers: ["usual", "claude", "chatgpt", "fallback"].map((id) => fauxProvider({ provider: `route-${id}`, models: [{ id, reasoning: true }] })),
     classifier: undefined as ClassifierRuntime | undefined,
     classifierCreates: 0,
+    activeRuntime: undefined as string | undefined,
+    dockerErrors: [] as Error[],
+    spawnDocker: undefined as ((args: string[]) => ChildProcess) | undefined,
+    execDocker: undefined as ((args: string[]) => Promise<string>) | undefined,
   };
+});
+
+// Never let Docker escape to the host, even when production catches an error.
+vi.mock("node:child_process", async (importOriginal) => {
+  const original = await importOriginal<typeof import("node:child_process")>();
+  const { promisify } = await import("node:util");
+  function intercept(method: "spawn" | "execFile" | "execFileSync") {
+    const wrapped = (...args: unknown[]) => {
+      if (args[0] !== "docker") return Reflect.apply(original[method], original, args);
+      const command = args[1] as string[];
+      const allowed = method === "spawn" ? command[0] === "run"
+        : (command[0] === "network" && command[1] === "connect" && command.length === 4)
+          || (command[0] === "inspect" && command[1] === "--format" && command[2] === "{{.State.Running}}" && command.length === 4)
+          || (["stop", "kill"].includes(command[0]) && command.length === 2);
+      if (setup.activeRuntime !== "container" || !allowed) {
+        const error = new Error(`Unexpected Docker ${method}: ${command.join(" ")} (${setup.activeRuntime})`);
+        setup.dockerErrors.push(error);
+        throw error;
+      }
+      if (method === "spawn") return setup.spawnDocker!(command);
+      // No synchronous lifecycle operation is needed by this bridge.
+      if (method === "execFileSync") {
+        const error = new Error(`Unexpected synchronous Docker command: ${command.join(" ")}`);
+        setup.dockerErrors.push(error);
+        throw error;
+      }
+      const callback = args.at(-1) as (error: Error | null, stdout: string, stderr: string) => void;
+      void setup.execDocker!(command).then((stdout) => callback(null, stdout, ""), (error: Error) => callback(error, "", ""));
+      return new EventEmitter();
+    };
+    if (method === "execFile") Object.defineProperty(wrapped, promisify.custom, {
+      value: (...args: unknown[]) => new Promise((resolve, reject) => {
+        wrapped(...args, (error: Error | null, stdout: string, stderr: string) => error ? reject(error) : resolve({ stdout, stderr }));
+      }),
+    });
+    return wrapped;
+  }
+  return { ...original, spawn: intercept("spawn"), execFile: intercept("execFile"), execFileSync: intercept("execFileSync") };
 });
 
 // Real chat runtime; only its external providers are replaced.
 vi.mock("../../../apps/gateway/node_modules/@earendil-works/pi-coding-agent", async (importOriginal) => {
+  const sdk = await importOriginal<typeof import("@earendil-works/pi-coding-agent")>();
+  return {
+    ...sdk,
+    ModelRuntime: {
+      create: async (...args: Parameters<typeof sdk.ModelRuntime.create>) => {
+        const runtime = await sdk.ModelRuntime.create({ ...args[0], modelsPath: null, refreshOnCreate: false });
+        for (const faux of setup.providers) runtime.registerNativeProvider({
+          ...faux.provider,
+          auth: { apiKey: { name: "Synthetic", resolve: async () => ({ auth: { apiKey: "fixture-chat" } }) } },
+        });
+        return runtime;
+      },
+    },
+  };
+});
+
+// pnpm resolves a separate SDK for the runner; keep both real runtimes offline.
+vi.mock("../node_modules/@earendil-works/pi-coding-agent", async (importOriginal) => {
   const sdk = await importOriginal<typeof import("@earendil-works/pi-coding-agent")>();
   return {
     ...sdk,
@@ -79,7 +144,7 @@ afterAll(async () => {
   await fs.rm(setup.home, { recursive: true, force: true });
 });
 
-export const routingRuntimes = ["host"] as const;
+export const routingRuntimes = ["host", "container"] as const;
 export type RoutingRuntime = typeof routingRuntimes[number];
 export type ProviderCall = { provider: string; model: string; messages: Message[]; thinking: unknown };
 export type AdapterCall = { sessionId: string; model: { provider?: string; model?: string }; thinkLevel?: ThinkLevel; fallback: unknown };
@@ -119,7 +184,8 @@ export function barrier() {
 let serial = 0;
 export type RoutingHarness = Awaited<ReturnType<typeof createRoutingHarness>>;
 export async function createRoutingHarness(runtime: RoutingRuntime) {
-  if (runtime !== "host") throw new Error(`Unsupported runtime ${runtime}`);
+  setup.activeRuntime = runtime;
+  setup.dockerErrors = [];
   const id = `routing${++serial}`;
   const workspace = path.join(CONFIG_DIR, "agents", id);
   await fs.mkdir(workspace, { recursive: true });
@@ -127,6 +193,7 @@ export async function createRoutingHarness(runtime: RoutingRuntime) {
     id, name: "Routing E2E", sdk: "pi", workspace, model: { provider: "route-usual", model: "usual" },
     fallback_model: { provider: "route-fallback", model: "fallback" }, thinkLevel: "low", modelRouting: { enabled: true },
     retryMaxAttempts: 1, retryBaseDelay: 0.001,
+    ...(runtime === "container" ? { sandbox: { enabled: true } } : {}),
   });
   await fs.writeFile(path.join(workspace, "agent.yaml"), JSON.stringify(agent));
   for (const name of ["AGENTS.md", "USER.md"]) await fs.writeFile(path.join(workspace, name), "Isolated routing fixture.");
@@ -206,6 +273,91 @@ export async function createRoutingHarness(runtime: RoutingRuntime) {
   };
   const modelCalls: ProviderCall[] = [];
   const adapterCalls: AdapterCall[] = [];
+  const containerInputs: ContainerInput[] = [];
+  const children = new Map<string, { done: Promise<void>; running: boolean }>();
+  let runnerTail = Promise.resolve();
+  const bridgeErrors: Error[] = [];
+  const receivedFollowUps = new Set<string>();
+  const gateway = runtime === "container" ? http.createServer((_request, response) => {
+    bridgeErrors.push(new Error("Unexpected gateway call from chat fixture"));
+    response.writeHead(500).end();
+  }) : undefined;
+  if (gateway) await new Promise<void>((resolve) => gateway.listen(0, "127.0.0.1", resolve));
+  const address = gateway?.address();
+  const gatewayUrl = address && typeof address !== "string" ? `http://127.0.0.1:${address.port}` : "";
+  setup.spawnDocker = (args) => {
+    const mounts = args.flatMap((arg, index) => {
+      if (arg !== "--mount") return [];
+      const fields = Object.fromEntries(args[index + 1].split(",").map((field) => field.split("=")));
+      if (fields.type !== "bind" || !fields.source || !fields.target) throw new Error("Invalid bind mount");
+      const relative = path.relative(setup.home, fields.source);
+      if (relative.startsWith("..") || path.isAbsolute(relative)) throw new Error("Mount outside temporary HOME");
+      return [{ source: fields.source, target: fields.target }];
+    }).sort((a, b) => b.target.length - a.target.length);
+    const mapPath = (value: string) => {
+      const mount = mounts.find(({ target }) => value === target || value.startsWith(`${target}/`));
+      if (!mount) throw new Error(`Unmapped runner path: ${value}`);
+      return path.join(mount.source, value.slice(mount.target.length));
+    };
+    const child = Object.assign(new EventEmitter(), {
+      stdout: new PassThrough(), stderr: new PassThrough(), exitCode: null as number | null,
+    });
+    const name = args[args.indexOf("--name") + 1];
+    const state = { done: Promise.resolve(), running: true };
+    children.set(name, state);
+    let raw = "";
+    const stdin = new Writable({
+      write(chunk, _encoding, callback) { raw += chunk.toString(); callback(); },
+      final(callback) {
+        state.done = runnerTail.then(async () => {
+          const keys = ["YOPLAI_GATEWAY_URL", "YOPLAI_AGENT_TOKEN", "YOPLAI_DASHBOARD_URL_PREFIX", "ANTHROPIC_BASE_URL", "OPENAI_BASE_URL"];
+          const previous = keys.map((key) => [key, process.env[key]] as const);
+          try {
+            const input = JSON.parse(raw) as ContainerInput;
+            containerInputs.push(input);
+            adapterCalls.push({ sessionId: input.sessionId, model: input.sdkConfig.model, thinkLevel: input.thinkLevel, fallback: input.sdkConfig.fallbackModel });
+            const mapped = { ...input, workspaceDir: mapPath(input.workspaceDir), sessionDir: mapPath(input.sessionDir), ipcDir: mapPath(input.ipcDir), gatewayUrl };
+            await runAgentRunner({
+              readStdin: async () => JSON.stringify(mapped),
+              writeStdout: (chunk) => { child.stdout.write(chunk); },
+              writeStderr: (chunk) => {
+                if (chunk.startsWith("[agent-runner] Received follow-up IPC message")) receivedFollowUps.add(input.sessionId);
+                child.stderr.write(chunk);
+              },
+            }).catch((error: unknown) => {
+              // Match index.ts's executable-entry catch: fatal errors are frames.
+              writeProtocolOutput({ text: "", error: error instanceof Error ? error.message : String(error) }, (chunk) => { child.stdout.write(chunk); });
+              child.exitCode = 1;
+            });
+            child.exitCode ??= 0;
+          } catch (error) {
+            bridgeErrors.push(error instanceof Error ? error : new Error(String(error)));
+            child.exitCode = 1;
+          } finally {
+            for (const [key, value] of previous) {
+              if (value === undefined) delete process.env[key];
+              else process.env[key] = value;
+            }
+            state.running = false;
+          }
+        });
+        runnerTail = state.done;
+        void state.done.then(() => {
+          child.stdout.end(); child.stderr.end();
+          child.emit("close", child.exitCode);
+        });
+        callback();
+      },
+    });
+    return Object.assign(child, { stdin }) as unknown as ChildProcess;
+  };
+  setup.execDocker = async (args) => {
+    const child = children.get(args.at(-1)!);
+    if (!child) throw new Error("Unknown fake container");
+    if (args[0] === "inspect") return String(child.running);
+    if (args[0] !== "network") await bounded(child.done);
+    return "";
+  };
   const historyEvents: AgentHistoryEvent[] = [];
   const gates = new Map<string, ReturnType<typeof barrier>>();
   const failures = new Set<string>();
@@ -240,6 +392,16 @@ export async function createRoutingHarness(runtime: RoutingRuntime) {
   };
   return {
     runtime, id, agent, workspace, classifier, modelCalls, adapterCalls, historyEvents, bounded, waitIdle, attempts, failures, gates, seedQuota,
+    async waitForFollowUp() {
+      if (runtime === "container") await poll(() => receivedFollowUps.has(sessionId), Boolean);
+    },
+    assertContainerInput(expected: { model: string; thinkLevel: ThinkLevel; fallback: boolean }) {
+      if (runtime !== "container") return;
+      const input = containerInputs.filter((input) => input.sessionId === sessionId).at(-1);
+      expect(input).toMatchObject({ sdkConfig: { model: { provider: `route-${expected.model}`, model: expected.model } }, thinkLevel: expected.thinkLevel });
+      if (expected.fallback) expect(input?.sdkConfig.fallbackModel).toEqual({ provider: "route-fallback", model: "fallback" });
+      else expect(input?.sdkConfig).not.toHaveProperty("fallbackModel");
+    },
     failQuotaRead() { quotaReadFailure = vi.spyOn(modelQuotaStore, "get").mockImplementation(() => { throw new Error("Synthetic quota read unavailable"); }); },
     restoreQuotaRead() { quotaReadFailure?.mockRestore(); quotaReadFailure = undefined; },
     async changePool(pool: "either" | "prefer_chatgpt") {
@@ -295,12 +457,23 @@ export async function createRoutingHarness(runtime: RoutingRuntime) {
     async lock(session = sessionId) { return readSessionMeta(id, session, "modelRoute"); },
     async close() {
       clearInterval(hotReload);
+      for (const session of sessionIds) abortSession(id, session);
       for (const gate of gates.values()) gate.release();
       try {
         for (const session of sessionIds) { await waitIdle(session); deleteSession(id, session); }
       } finally {
-        quotaReadFailure?.mockRestore(); adapterSpy.mockRestore(); off(); clock.mockRestore(); resetSessionAutoTitleDepsForTests();
+        try {
+          await bounded(runnerTail);
+        } finally {
+          gateway?.closeAllConnections();
+          if (gateway) await new Promise<void>((resolve, reject) => gateway.close((error) => error ? reject(error) : resolve()));
+          setup.activeRuntime = undefined;
+          setup.spawnDocker = undefined; setup.execDocker = undefined;
+          quotaReadFailure?.mockRestore(); adapterSpy.mockRestore(); off(); clock.mockRestore(); resetSessionAutoTitleDepsForTests();
+        }
       }
+      const errors = [...setup.dockerErrors, ...bridgeErrors];
+      if (errors.length) throw new AggregateError(errors, errors.map((error) => error.message).join("; "));
     },
   };
 }
