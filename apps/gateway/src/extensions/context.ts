@@ -1,4 +1,6 @@
 import fs from "node:fs/promises";
+import { randomUUID } from "node:crypto";
+import { resolveBindHost } from "@yoplai/shared";
 import type {
   DeliverySink,
   Extension,
@@ -46,6 +48,7 @@ import { recordSettingsChange } from "../audit/store.js";
 import { updateAgentExtensionConfig } from "./agent-config-writer.js";
 import { reloadAfterExtensionWrite } from "./reload.js";
 import { getTask } from "../tasks/store.js";
+import { registerContainerToken, removeContainerToken } from "../sdk/container/tokens.js";
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   if (value === null || typeof value !== "object") return false;
@@ -84,6 +87,27 @@ export function createExtensionContext(
   const getCredentialStore = () => credentialStore ??= new CredentialStore();
 
   return {
+    mintToolToken: ({ agentId, userId, sessionId, runId }) => {
+      const agent = getAgent(agentId);
+      if (!agent) throw new Error(`Unknown agent: ${agentId}`);
+      const workspace = resolveWorkspaceDir(agent.workspaceDir ?? agent.workspace);
+      const config = loadConfig();
+      const bindHost = config.gateway?.host ?? resolveBindHost(config.gateway?.bind);
+      const host = bindHost === "0.0.0.0" || bindHost === "::" ? "127.0.0.1" : bindHost;
+      const port = process.env.YOPLAI_GATEWAY_PORT ?? config.gateway?.port ?? 4000;
+      const token = randomUUID();
+      registerContainerToken(token, {
+        agentId, userId, sessionId, runId,
+        actorKind: "service",
+        containerName: `host-script:${runId}`,
+        roots: { workspace, data: workspace, uploads: workspace },
+      });
+      return {
+        token,
+        gatewayUrl: `http://${host.includes(":") ? `[${host}]` : host}:${port}`,
+        revoke: () => removeContainerToken(token),
+      };
+    },
     updateAgentExtensionConfig: async (agentId, extensionId, patch) => {
       const agent = getAgent(agentId);
       if (!agent) throw new Error(`Unknown agent: ${agentId}`);

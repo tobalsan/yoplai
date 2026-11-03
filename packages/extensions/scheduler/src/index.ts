@@ -177,13 +177,15 @@ function schedulerAgentTools(): ExtensionAgentTool[] {
         "Create an enabled scheduled job for this agent. Set cron + tz for recurrence, or runAt for one shot (ISO 8601 or 'in 30m'/'in 2h'); exactly one of cron and runAt is required. Choose one of three payload shapes: " +
         "(1) message only — an agent job; the LLM runs every tick, use when the tick needs reasoning. " +
         "(2) script + noAgent: true — script-only; the scheduler runs the script as a subprocess and " +
-        "success/failure is decided by its exit code alone, never by an LLM self-report — no tokens, " +
+        "success/failure is decided by its exit code alone, never by an LLM self-report — no model tokens, " +
         "no agent loop. Use for deterministic recurring work like token rotation, watchdogs, or health " +
         "checks. (3) script + message (without noAgent) — gated; the script runs first as a cheap check " +
         "and only wakes the agent (with message) when its final stdout line is JSON with " +
         '{"wakeAgent": true}. Use for file-change gates, threshold alerts, or new-rows pollers that ' +
         "should stay silent most ticks. Set quietOutput: true on high-frequency script jobs to skip " +
         "writing an output file for uneventful runs (errors and woke-agent runs always write one). " +
+        "Scripts can POST {tool,args,agentId,agentToken,sessionId,runId} to YOPLAI_TOOL_URL/internal/tools using " +
+        "YOPLAI_TOOL_TOKEN, YOPLAI_AGENT_ID, YOPLAI_SESSION_ID and YOPLAI_RUN_ID from env. " +
         "Optional deliver pushes each run's result to comm-channel targets: this happens at the RUNTIME " +
         "level after the run resolves, not as an LLM action — do NOT call a *.send_message tool yourself " +
         "to report cron results, that would duplicate delivery and the agent is not trusted to self-report " +
@@ -295,7 +297,9 @@ function schedulerAgentTools(): ExtensionAgentTool[] {
         "mode rules as scheduler.create_job: message only = agent job; script + noAgent: true = " +
         "script-only (exit code decides success, the agent is never called); script + message = gated " +
         '(wakes the agent only when the script\'s final stdout line is JSON with {"wakeAgent": true}); ' +
-        "quietOutput: true skips the output file for uneventful script ticks. deliver replaces the job's " +
+        "quietOutput: true skips the output file for uneventful script ticks. " +
+        "Scripts can POST {tool,args,agentId,agentToken,sessionId,runId} to YOPLAI_TOOL_URL/internal/tools using " +
+        "YOPLAI_TOOL_TOKEN, YOPLAI_AGENT_ID, YOPLAI_SESSION_ID and YOPLAI_RUN_ID from env. deliver replaces the job's " +
         "whole delivery list when provided (pass [] to clear it, omit to leave it unchanged); results are " +
         "pushed by the RUNTIME after each run, so do NOT call a *.send_message tool yourself to report " +
         "cron results. Set timeoutMs to override the per-run timeout in milliseconds (default 30 minutes). " + credentialModeGuidance,

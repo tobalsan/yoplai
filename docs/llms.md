@@ -201,6 +201,15 @@ Key rules:
 
 ## Runtime data
 
+Scheduler script-only and gated jobs receive `YOPLAI_TOOL_URL`, `YOPLAI_TOOL_TOKEN`,
+`YOPLAI_AGENT_ID`, `YOPLAI_SESSION_ID`, and `YOPLAI_RUN_ID` through optional
+`ExtensionContext.mintToolToken`. They call `POST /internal/tools` with
+`{ tool, args, agentId, agentToken, sessionId, runId }`. Tokens use the job's agent,
+owner credential identity (Team has no user), service actor, and a synthetic
+scheduler session; revoke signals cancellation when the script runner settles.
+Scheduler output and errors redact the exact token before persistence, logging
+or delivery. See [script tool examples](../packages/extensions/scheduler/README.md#calling-agent-tools-from-a-script).
+
 Root `enableCronMonitoring` defaults off. When enabled, scheduler runs have
 atomic per-run records at `<workspace>/cron/runs/<jobId>/<runId>.json` and
 Scheduled jobs titles link to `/agents/:agentId/schedules/:jobId/runs`.

@@ -552,9 +552,12 @@ describe("SchedulerService.runNow", () => {
     await fs.writeFile(path.join(alpha.workspace, "cron/jobs.json"), JSON.stringify({ version: 1, jobs: [{ id: "missing-owner", name: "Missing owner", credentialMode: "owner", schedule: { cron: "0 8 * * *", tz: "UTC" }, payload: { script: "mark.sh", noAgent: true } }] }));
     const config: GatewayConfig = { version: 3, agents: [alpha], extensions: { scheduler: { enabled: true } }, sessions: { idleMinutes: 360 } };
     const runAgent = vi.fn();
-    setSchedulerContext(context(config, runAgent));
+    const ctx = context(config, runAgent);
+    ctx.mintToolToken = vi.fn();
+    setSchedulerContext(ctx);
     const scheduler = new SchedulerService();
     expect(await scheduler.runNow("alpha", "missing-owner")).toMatchObject({ status: "error", error: expect.stringContaining("owner is missing") });
+    expect(ctx.mintToolToken).not.toHaveBeenCalled();
     await expect(fs.stat(path.join(alpha.workspace, "unauthorized.txt"))).rejects.toMatchObject({ code: "ENOENT" });
     expect(runAgent).not.toHaveBeenCalled();
     await scheduler.stop();
@@ -1478,6 +1481,100 @@ describe("SchedulerService script jobs", () => {
       lastRunAtMs?: number;
     };
   };
+
+  it.each(["owner", "team"] as const)("gives %s scripts a fresh tool identity until the script settles without monitoring", async (credentialMode) => {
+    const { scheduler, ctx } = await setup("echo done\n");
+    const revoke = vi.fn();
+    ctx.mintToolToken = vi.fn(() => ({ token: "script-token", gatewayUrl: "http://127.0.0.1:4010", revoke }));
+    let finish!: (result: scriptRunner.RunScriptResult) => void;
+    const runner = vi.spyOn(scriptRunner, "runScript").mockImplementation(() => new Promise((resolve) => { finish = resolve; }));
+    const job = await scheduler.add("alpha", {
+      name: "Tool script", credentialMode,
+      schedule: { cron: "0 8 * * *", tz: "UTC" },
+      payload: jobPayload({ script: "bin/gate.sh", noAgent: true, sessionId: "pinned-real-session" }),
+    }, "alice");
+    const execution = scheduler.runNow("alpha", job.id);
+    await vi.waitFor(() => expect(runner).toHaveBeenCalledOnce());
+    const input = vi.mocked(ctx.mintToolToken).mock.calls[0]?.[0];
+    expect(input).toEqual({ agentId: "alpha", userId: credentialMode === "owner" ? "alice" : undefined,
+      sessionId: expect.stringMatching(new RegExp(`^scheduler:${job.id}:`)), runId: expect.any(String) });
+    expect(runner).toHaveBeenCalledWith(expect.objectContaining({ env: {
+      YOPLAI_TOOL_URL: "http://127.0.0.1:4010", YOPLAI_TOOL_TOKEN: "script-token", YOPLAI_AGENT_ID: "alpha",
+      YOPLAI_SESSION_ID: input!.sessionId, YOPLAI_RUN_ID: input!.runId,
+    } }));
+    expect(input!.sessionId).not.toBe("pinned-real-session");
+    expect(revoke).not.toHaveBeenCalled();
+    finish({ stdout: "done\n", stderr: "", finalStdoutLine: "done" });
+    expect((await execution).status).toBe("ok");
+    expect(revoke).toHaveBeenCalledOnce();
+    expect(await scheduler.listRuns("alpha", job.id)).toEqual([]);
+  });
+
+  it.each([0, 3])("redacts an echoed tool token from records, files, deliveries and logs on exit %s", async (exitCode) => {
+    const { scheduler, ctx } = await setup(`printf '%s %s\\n' "$YOPLAI_TOOL_TOKEN" "$YOPLAI_TOOL_TOKEN"\nprintf '%s\\n' "$YOPLAI_TOOL_TOKEN" >&2\nexit ${exitCode}\n`);
+    ctx.getConfig().enableCronMonitoring = true;
+    const revoke = vi.fn();
+    ctx.mintToolToken = vi.fn(() => ({ token: "echoed-secret-token", gatewayUrl: "http://127.0.0.1:4010", revoke }));
+    const sink = vi.fn(async () => {});
+    ctx.getDeliverySink = () => sink;
+    const job = await scheduler.add("alpha", {
+      name: "Echo", schedule: { cron: "0 8 * * *", tz: "UTC" },
+      payload: jobPayload({ script: "bin/gate.sh", noAgent: true }), deliver: [{ target: "fixture", channel: "test" }],
+    });
+    const result = await scheduler.runNow("alpha", job.id);
+    expect(result.status).toBe(exitCode === 0 ? "ok" : "error");
+    const [record] = await scheduler.listRuns("alpha", job.id);
+    expect(record?.gateOutput).toContain("[redacted] [redacted]");
+    const output = await fs.readFile(result.outputPath!, "utf8");
+    expect(output).toContain("[redacted] [redacted]");
+    expect(sink).toHaveBeenCalledWith(expect.objectContaining({ text: expect.stringContaining("[redacted] [redacted]") }));
+    const logs = [ctx.logger.info, ctx.logger.warn, ctx.logger.error].flatMap((logger) => vi.mocked(logger).mock.calls);
+    expect(JSON.stringify({ result, record, output, deliveries: sink.mock.calls, logs })).not.toContain("echoed-secret-token");
+    if (exitCode !== 0) {
+      expect(result.error).toContain("[redacted]");
+      expect(ctx.logger.error).toHaveBeenCalledWith("[scheduler] job failed", "script failed (exit 3)", expect.objectContaining({ stderrTail: "[redacted]" }));
+    }
+    expect(revoke).toHaveBeenCalledOnce();
+  });
+
+  it.each(["timeout", "spawn"] as const)("revokes script tokens on %s and lets the next run progress", async (reason) => {
+    const { scheduler, ctx } = await setup('echo "$YOPLAI_TOOL_TOKEN" >&2\nsleep 60\n');
+    ctx.getConfig().extensions!.scheduler!.jobTimeoutMs = 30;
+    const revoke = vi.fn();
+    ctx.mintToolToken = vi.fn(() => ({ token: "failed-script-token", gatewayUrl: "http://127.0.0.1:4010", revoke }));
+    const job = await scheduler.add("alpha", {
+      name: "Failure", schedule: { cron: "0 8 * * *", tz: "UTC" },
+      payload: jobPayload({ script: reason === "spawn" ? "missing.sh" : "bin/gate.sh", noAgent: true }),
+    });
+    const result = await scheduler.runNow("alpha", job.id);
+    expect(result.status).toBe("error");
+    expect(revoke).toHaveBeenCalledOnce();
+    expect(ctx.logger.error).toHaveBeenCalledWith("[scheduler] job failed", expect.any(String), expect.objectContaining({ reason }));
+    expect(JSON.stringify({ result, logs: vi.mocked(ctx.logger.error).mock.calls })).not.toContain("failed-script-token");
+    await scheduler.update("alpha", job.id, { payload: jobPayload({ script: "bin/gate.sh", noAgent: true }) });
+    await fs.writeFile(path.join(ctx.getAgent("alpha")!.workspace, "bin/gate.sh"), "echo recovered\n");
+    expect((await scheduler.runNow("alpha", job.id)).status).toBe("ok");
+    expect(revoke).toHaveBeenCalledTimes(2);
+  });
+
+  it("keeps the script env unchanged when the host offers no tool tokens", async () => {
+    const { scheduler } = await setup("echo done\n");
+    const runner = vi.spyOn(scriptRunner, "runScript");
+    const job = await scheduler.add("alpha", { name: "Legacy", schedule: { cron: "0 8 * * *", tz: "UTC" },
+      payload: jobPayload({ script: "bin/gate.sh", noAgent: true }) });
+    expect((await scheduler.runNow("alpha", job.id)).status).toBe("ok");
+    expect(runner.mock.calls[0]?.[0]).not.toHaveProperty("env");
+  });
+
+  it("redacts the final gate line before passing its context to the agent", async () => {
+    const runAgent = vi.fn(async () => ({ payloads: [], meta: { durationMs: 1, sessionId: "agent-session" } }));
+    const { scheduler, ctx } = await setup('printf \'{"wakeAgent":true,"context":"%s"}\\n\' "$YOPLAI_TOOL_TOKEN"\n', runAgent);
+    ctx.mintToolToken = () => ({ token: "gate-tool-token", gatewayUrl: "http://127.0.0.1:4010", revoke: vi.fn() });
+    const job = await scheduler.add("alpha", { name: "Gate", schedule: { cron: "0 8 * * *", tz: "UTC" },
+      payload: jobPayload({ script: "bin/gate.sh", message: "Check" }) });
+    expect((await scheduler.runNow("alpha", job.id)).status).toBe("ok");
+    expect(runAgent).toHaveBeenCalledWith(expect.objectContaining({ message: 'Check\n\nGate context:\n"[redacted]"' }));
+  });
 
   it("runs a script-only job to completion without ever calling runAgent", async () => {
     const { scheduler, runAgent } = await setup("echo rotated\n");

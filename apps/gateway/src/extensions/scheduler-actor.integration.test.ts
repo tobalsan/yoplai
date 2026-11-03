@@ -2,7 +2,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import Database from "better-sqlite3";
-import { expect, it } from "vitest";
+import { expect, it, vi } from "vitest";
 import type { AgentConfig, ExtensionContext, GatewayConfig } from "@yoplai/shared";
 import { ensureAgentForksTable, ensureTeamMembersTable, ensureTeamsTable } from "../../../../packages/extensions/multi-user/src/db.js";
 import { createForkStore } from "../../../../packages/extensions/multi-user/src/forks.js";
@@ -31,16 +31,21 @@ it("rechecks owner account and agent membership before every script-only schedul
     setMultiUserRuntime({ db, forks, membership, access: createAccessResolver({ membership, forks }), getPoolAgentIds: () => [] } as unknown as MultiUserRuntime);
     const agent = { id: "alpha", name: "Alpha", workspace: path.join(home, "agents", "alpha"), model: { provider: "test", model: "test" } } as AgentConfig;
     const config = { version: 3, agents: [agent], extensions: { multiUser: { enabled: true, sessionSecret: "test", emailAndPassword: { enabled: true } } } } as GatewayConfig;
+    const mintToolToken = vi.fn(() => ({ token: "fixture-tool-token", gatewayUrl: "http://127.0.0.1:4000", revoke: vi.fn() }));
     setSchedulerContext({
       getConfig: () => config, getAgent: () => agent, getAgents: () => [agent], getDataDir: () => home, isAgentActive: () => true,
       resolveWorkspaceDir: () => agent.workspace, getDeliverySink: () => undefined,
+      mintToolToken,
       logger: { info: () => {}, warn: () => {}, error: () => {} },
     } as unknown as ExtensionContext);
     scheduler = new SchedulerService();
     const job = await scheduler.add("alpha", { name: "Owner script", credentialMode: "owner", schedule: { cron: "0 8 * * *", tz: "UTC" }, payload: { script: "mark.sh", noAgent: true } }, "alice");
     expect((await scheduler.runNow("alpha", job.id)).status).toBe("ok");
+    expect(mintToolToken).toHaveBeenCalledOnce();
+    mintToolToken.mockClear();
     membership.setMembers("team", { mode: "list", userIds: [] }, "alice");
     expect(await scheduler.runNow("alpha", job.id)).toMatchObject({ status: "error", error: "Agent access denied" });
+    expect(mintToolToken).not.toHaveBeenCalled();
     expect(await fs.readFile(path.join(agent.workspace, "marker.txt"), "utf8")).toBe("fired");
     membership.setMembers("team", { mode: "list", userIds: ["alice"] }, "alice");
     db.prepare("UPDATE user SET banned = 1 WHERE id = 'alice'").run();
@@ -48,7 +53,9 @@ it("rechecks owner account and agent membership before every script-only schedul
     db.prepare("UPDATE user SET banned = 0, approved = 0, role = 'admin' WHERE id = 'alice'").run();
     expect((await scheduler.runNow("alpha", job.id)).status).toBe("error");
     db.prepare("UPDATE user SET role = 'superadmin' WHERE id = 'alice'").run();
+    expect(mintToolToken).not.toHaveBeenCalled();
     expect((await scheduler.runNow("alpha", job.id)).status).toBe("ok");
+    expect(mintToolToken).toHaveBeenCalledOnce();
     expect(await fs.readFile(path.join(agent.workspace, "marker.txt"), "utf8")).toBe("firedfired");
   } finally {
     await scheduler?.stop(); clearSchedulerContext(); setMultiUserRuntime(null);

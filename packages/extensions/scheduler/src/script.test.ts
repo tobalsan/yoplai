@@ -54,6 +54,16 @@ describe("runScript", () => {
     expect(result.finalStdoutLine).toBe("hello world");
   });
 
+  it("passes the documented tool env names to a real subprocess", async () => {
+    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-scheduler-script-"));
+    await writeScript(tmpDir, "env.sh", "env | cut -d= -f1 | sort | awk '/^YOPLAI_(TOOL_|AGENT_ID$|SESSION_ID$|RUN_ID$)/'\n");
+    const result = await runScript({ workspaceDir: tmpDir, script: "env.sh", timeoutMs: 5000, env: {
+      YOPLAI_TOOL_URL: "http://127.0.0.1:4010", YOPLAI_TOOL_TOKEN: "dummy-token",
+      YOPLAI_AGENT_ID: "alpha", YOPLAI_SESSION_ID: "scheduler:job:run", YOPLAI_RUN_ID: "run",
+    } });
+    expect(result.stdout).toBe("YOPLAI_AGENT_ID\nYOPLAI_RUN_ID\nYOPLAI_SESSION_ID\nYOPLAI_TOOL_TOKEN\nYOPLAI_TOOL_URL\n");
+  });
+
   it("non-zero exit throws an error message with the exit code", async () => {
     tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-scheduler-script-"));
     await writeScript(

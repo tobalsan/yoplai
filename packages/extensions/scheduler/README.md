@@ -200,6 +200,89 @@ Use this for a cheap, frequent check that should only spend tokens when somethin
 }
 ```
 
+## Calling agent tools from a script
+
+Script-only and gated jobs can call the agent's tools through the gateway while
+their script runs. Mine (`credentialMode: "owner"`) uses the owner's personal
+connection with team fallback; Team uses team credentials only. The scheduler
+checks the owner's agent access before starting an owner-mode script.
+
+The host provides these environment variables when it supports script tool tokens:
+
+| Variable | Value |
+| --- | --- |
+| `YOPLAI_TOOL_URL` | Gateway base URL reachable from the host subprocess |
+| `YOPLAI_TOOL_TOKEN` | Temporary bearer token scoped to this agent and script run |
+| `YOPLAI_AGENT_ID` | Job's agent ID |
+| `YOPLAI_SESSION_ID` | Synthetic `scheduler:<jobId>:<runId>` session, separate from any pinned agent session |
+| `YOPLAI_RUN_ID` | Unique script run ID, including when run monitoring is disabled |
+
+The scheduler adds no raw provider credentials. Scripts still inherit the gateway
+process environment. Older hosts without this capability keep their existing
+script environment.
+
+Send `POST <YOPLAI_TOOL_URL>/internal/tools` with JSON
+`{ tool, args, agentId, agentToken, sessionId, runId }`. Optional `X-Agent-Id`
+and `X-Agent-Token` headers must match the body when sent. These examples list
+scheduled jobs; replace `tool` and `args` with the agent tool you need.
+
+Shell script using curl and jq:
+
+```bash
+#!/bin/bash
+set -euo pipefail
+
+jq -n '{
+  tool: "scheduler.list_jobs",
+  args: {},
+  agentId: env.YOPLAI_AGENT_ID,
+  agentToken: env.YOPLAI_TOOL_TOKEN,
+  sessionId: env.YOPLAI_SESSION_ID,
+  runId: env.YOPLAI_RUN_ID
+}' | curl --silent --show-error --fail-with-body --max-time 30 \
+  -H 'Content-Type: application/json' \
+  --data-binary @- "$YOPLAI_TOOL_URL/internal/tools"
+
+# Gated jobs must finish with their wake decision.
+printf '\n{"wakeAgent": false}\n'
+```
+
+Node.js script using fetch (save as an executable `.mjs` file):
+
+```javascript
+#!/usr/bin/env node
+const env = process.env;
+const response = await fetch(`${env.YOPLAI_TOOL_URL}/internal/tools`, {
+  method: "POST",
+  headers: { "Content-Type": "application/json" },
+  signal: AbortSignal.timeout(30_000),
+  body: JSON.stringify({
+    tool: "scheduler.list_jobs",
+    args: {},
+    agentId: env.YOPLAI_AGENT_ID,
+    agentToken: env.YOPLAI_TOOL_TOKEN,
+    sessionId: env.YOPLAI_SESSION_ID,
+    runId: env.YOPLAI_RUN_ID,
+  }),
+});
+if (!response.ok) throw new Error(`Tool request failed (${response.status})`);
+console.log(await response.json());
+console.log(JSON.stringify({ wakeAgent: false }));
+```
+
+The token is revoked as soon as the script runner settles, including failures,
+spawn errors and timeouts. This can include a short stdio-drain or process-kill
+grace period. New calls then return 403; calls still in flight return 409
+`run cancelled`, and their late results are discarded. Cancellation is
+cooperative: it cannot guarantee an external side effect stops.
+
+Do not save or forward the token. The scheduler replaces its exact value with
+`[redacted]` in captured stdout, stderr and errors before recording, logging or
+delivery; encoded variants are not covered.
+
+The URL uses the running gateway port and configured bind host, with loopback
+for wildcard binds. A CLI `--host` override must agree with that configuration.
+
 ## The wakeAgent gate
 
 On a gated job (`script` + `message`) the scheduler runs the script first and parses its **final stdout line** (last non-empty trimmed line) as JSON:
