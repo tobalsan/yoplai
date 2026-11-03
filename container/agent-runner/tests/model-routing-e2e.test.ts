@@ -3,7 +3,8 @@ import { createRoutingHarness, routingRuntimes, barrier, poll, type RoutingHarne
 
 // ALG-598 Testing Decisions explicitly approves REST -> runAgent with real Pi,
 // the real classifier and quota reader/store. This catches integration wiring;
-// it does not establish live-vendor acceptance or the ALG-608 container bridge.
+// ALG-608 approves the same REST seam plus raw container JSON and real runner IPC;
+// neither runtime establishes real Docker or live-vendor acceptance.
 let harness: RoutingHarness | undefined;
 afterEach(async () => { await harness?.close(); harness = undefined; });
 
@@ -17,6 +18,7 @@ const scenarios: Array<{ name: string; run: (h: RoutingHarness) => Promise<void>
     h.classifier.predicate = true;
     const turn2Start = h.historyEvents.length;
     await expect(h.send("Build a report")).resolves.toMatchObject({ status: 200, body: { payloads: [{ text: "answer:chatgpt" }] } });
+    h.assertContainerInput({ model: "chatgpt", thinkLevel: "high", fallback: false });
     expect(await h.lock()).toEqual({
       version: 1, kind: "routed", mode: "enforce", provider: "route-chatgpt", model: "chatgpt", effort: "high",
       category: "work", score: 0.9, tableVersion: "e2e-v1", pool: "chatgpt", reason: "preference", decidedAt: expect.any(String),
@@ -62,6 +64,7 @@ const scenarios: Array<{ name: string; run: (h: RoutingHarness) => Promise<void>
     await h.bounded(routed.entered);
     expect(await h.lock()).toMatchObject({ kind: "routed", model: "chatgpt" });
     expect((await h.send("third queued detail")).body.meta).toMatchObject({ queued: true });
+    await h.waitForFollowUp();
     routed.release();
     await first;
     await poll(() => h.modelCalls.length, (value) => value === 3);
@@ -209,6 +212,7 @@ const scenarios: Array<{ name: string; run: (h: RoutingHarness) => Promise<void>
       const classifierBefore = h.classifier.calls.length;
       h.failures.add(model);
       expect((await h.send("continue with terminal failure")).status).toBe(500);
+      h.assertContainerInput({ model, thinkLevel: kind === "routed" ? "high" : "low", fallback: false });
       expect(await h.lock()).toEqual(lock);
       expect(h.modelCalls.some((call) => call.model === "fallback")).toBe(false);
       const history = await h.history();
@@ -226,12 +230,14 @@ const scenarios: Array<{ name: string; run: (h: RoutingHarness) => Promise<void>
     h.classifier.predicate = false;
     h.failures.add("usual");
     expect((await h.send("hi")).body.payloads).toEqual([{ text: "answer:fallback" }]);
+    h.assertContainerInput({ model: "usual", thinkLevel: "low", fallback: true });
     expect(await h.lock()).toBeUndefined();
     await h.changeMode("shadow");
     h.sessionId = `${h.id}-shadow-control`;
     h.classifier.predicate = true;
     h.classifier.score = 0.9;
     expect((await h.send("Build a report")).body.payloads).toEqual([{ text: "answer:fallback" }]);
+    h.assertContainerInput({ model: "usual", thinkLevel: "low", fallback: true });
     expect(await h.lock()).toMatchObject({ mode: "shadow", kind: "routed" });
     expect(h.adapterCalls.at(-1)).toMatchObject({ thinkLevel: "low", fallback: { provider: "route-fallback", model: "fallback" } });
     expect(h.modelCalls.filter((call) => call.model === "fallback")).toHaveLength(2);
@@ -244,6 +250,7 @@ const scenarios: Array<{ name: string; run: (h: RoutingHarness) => Promise<void>
     const shadowSession = h.sessionId;
     await h.send("Build a report");
     const shadowLock = await h.lock();
+    h.assertContainerInput({ model: "usual", thinkLevel: "low", fallback: true });
     expect(shadowLock).toMatchObject({ mode: "shadow", kind: "routed", effort: "high" });
     expect(h.modelCalls.at(-1)?.model).toBe("usual");
     expect(h.adapterCalls.at(-1)).toMatchObject({ thinkLevel: "low", fallback: { provider: "route-fallback", model: "fallback" } });
@@ -257,17 +264,20 @@ const scenarios: Array<{ name: string; run: (h: RoutingHarness) => Promise<void>
     await h.changeMode("enforce");
     h.sessionId = shadowSession;
     await h.send("continue after enforce");
+    h.assertContainerInput({ model: "usual", thinkLevel: "low", fallback: true });
     expect(h.modelCalls.at(-1)?.model).toBe("usual");
     expect(await h.lock()).toEqual(shadowLock);
     h.sessionId = waitingSession;
     h.classifier.predicate = true;
     await h.send("Build a report");
     expect(await h.lock()).toMatchObject({ mode: "enforce", model: "chatgpt" });
+    h.assertContainerInput({ model: "chatgpt", thinkLevel: "high", fallback: false });
     await h.attempts(2);
     const enforcedSession = `${h.id}-enforced`;
     h.sessionId = enforcedSession;
     await h.send("Build a report");
     const enforcedLock = await h.lock();
+    h.assertContainerInput({ model: "chatgpt", thinkLevel: "high", fallback: false });
     expect(enforcedLock).toMatchObject({ mode: "enforce", model: "chatgpt" });
     await h.attempts(1);
     const gate = barrier();
@@ -283,10 +293,12 @@ const scenarios: Array<{ name: string; run: (h: RoutingHarness) => Promise<void>
     for (const session of [shadowSession, waitingSession, enforcedSession]) {
       h.sessionId = session;
       await h.send("off turn");
+      h.assertContainerInput({ model: "usual", thinkLevel: "low", fallback: true });
       expect(h.modelCalls.at(-1)?.model).toBe("usual");
     }
     h.sessionId = `${h.id}-no-routing-records`;
     await h.send("off without records");
+    h.assertContainerInput({ model: "usual", thinkLevel: "low", fallback: true });
     expect(await h.attempts(0)).toEqual([]);
     expect(h.classifier.calls).toHaveLength(classified);
     expect(await h.attempts(1, shadowSession)).toHaveLength(1);
@@ -295,6 +307,7 @@ const scenarios: Array<{ name: string; run: (h: RoutingHarness) => Promise<void>
     await h.changeMode("enforce");
     h.sessionId = enforcedSession;
     await h.send("resume enforce lock");
+    h.assertContainerInput({ model: "chatgpt", thinkLevel: "high", fallback: false });
     expect(h.modelCalls.at(-1)?.model).toBe("chatgpt");
     expect(await h.lock()).toEqual(enforcedLock);
     h.sessionId = shadowSession;

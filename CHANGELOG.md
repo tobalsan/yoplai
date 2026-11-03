@@ -16,7 +16,7 @@ Breaking changes are marked **⚠ BREAKING**.
 ### Added
 
 - Scheduler scripts can call agent tools with temporary, agent-scoped tokens using owner or team credentials; tokens are revoked after each script and redacted from captured output.
-- Add a host model-routing integration E2E suite and an operator guide covering rollout, rollback, quota ownership and shadow reports; container E2E follows in ALG-608.
+- Add a host and container model-routing integration E2E suite and an operator guide covering rollout, rollback, quota ownership and shadow reports; all 11 routing rows pass on both runtimes, with container E2E verified in-process through a fake Docker bridge.
 - Record private-data-free model-routing attempts and trace metadata, and evaluate fresh shadow sessions with `yoplai model-routing report`.
 - Add a superadmin Quota tab with subscription usage, freshness and errors, refreshed from the local in-memory store without vendor requests.
 - Track per-login subscription quota in memory from sanitized Claude response headers and opt-in host usage pollers (`modelQuota.enabled`), with freshness, error state and pure quota policy helpers.
