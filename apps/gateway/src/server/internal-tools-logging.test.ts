@@ -118,6 +118,7 @@ describe("internal tool failure severity", () => {
     ["extract_document", { path: "/etc/report.pdf" }, "Document path is outside approved container roots", false],
     ["extract_document", { path: "/workspace/../report.pdf" }, "Document path traversal is not allowed", false],
     ["extract_document", { path: "/workspace/missing.pdf" }, "Document was not found under an approved container root", false],
+    ["extract_document", { path: "/workspace/files/missing.pdf" }, "Document was not found under an approved container root", false],
     ["extract_document", { path: "/workspace/escape.pdf" }, "Document path is outside approved container roots", true],
     ["describe_image", {}, "describe_image requires a path", false],
     ["describe_image", { path: "/workspace/image.txt" }, "describe_image supports PNG, JPEG, GIF, WebP, and SVG files only", false],

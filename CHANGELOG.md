@@ -45,6 +45,8 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Fixed
 
+- Allow container PDF extraction and image description from the current conversation's `/workspace/files` directory, preserving approved-root and session isolation checks.
+
 - Extension settings forms now save a setting changed back to its previous value without a reload; before, the save showed "Saved" but kept the old value (e.g. Pennylane write tools stayed on).
 - Log task lifecycle, missing dashboard, and container document/image argument mistakes at warning with unchanged error responses.
 - Log `session_history` argument mistakes at warning with unchanged error responses, and clarify required search/read arguments in its tool descriptions.

@@ -2,7 +2,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { getEventListeners } from "node:events";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { GatewayConfig } from "@yoplai/shared";
 import {
   registerContainerToken,
@@ -20,7 +20,8 @@ function registerToken(
   agentId = "agent-1",
   roots = { workspace: "/tmp/workspace", data: "/tmp/data", uploads: "/tmp/uploads" },
   emitProgress?: (event: { label: string; taskId?: string }) => void,
-  oauthProviders?: string[]
+  oauthProviders?: string[],
+  conversationFiles?: { hostPath: string; runtimePath: string }
 ): void {
   registerContainerToken(token, {
     agentId,
@@ -30,6 +31,7 @@ function registerToken(
     roots,
     emitProgress,
     oauthProviders,
+    conversationFiles,
   });
   registeredTokens.push(token);
 }
@@ -497,6 +499,196 @@ describe("internal tools", () => {
     } finally {
       await fs.rm(workspace, { recursive: true, force: true });
     }
+  });
+
+  describe("conversation file document tools", () => {
+    let fixture: string;
+    let roots: { workspace: string; data: string; uploads: string };
+    let conversationFiles: { hostPath: string; runtimePath: string };
+
+    beforeEach(async () => {
+      fixture = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-document-roots-"));
+      roots = {
+        workspace: path.join(fixture, "workspace"),
+        data: path.join(fixture, "data"),
+        uploads: path.join(fixture, "uploads"),
+      };
+      conversationFiles = { hostPath: path.join(fixture, "conversation-files"), runtimePath: "/workspace/files" };
+      for (const root of [...Object.values(roots), conversationFiles.hostPath]) {
+        await fs.mkdir(root);
+      }
+      registerToken("token-files", "agent-1", roots, undefined, undefined, conversationFiles);
+    });
+
+    afterEach(async () => {
+      await fs.rm(fixture, { recursive: true, force: true });
+    });
+
+    it("extracts a PDF from the token's conversation-files directory", async () => {
+      const { app } = createDeps();
+      await fs.writeFile(path.join(conversationFiles.hostPath, "report.pdf"), textPdf("Conversation report contains the complete approved purchase order"));
+      const response = await postTool(app, {
+        tool: "extract_document", args: { path: "/workspace/files/report.pdf" },
+        agentId: "agent-1", agentToken: "token-files", sessionId: "session-1",
+      });
+      expect(response.status).toBe(200);
+      expect(await response.json()).toEqual({ text: expect.stringContaining("Conversation report contains the complete approved purchase order") });
+    });
+    it("describes an image from the token's conversation-files directory", async () => {
+      const image = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aX1sAAAAASUVORK5CYII=", "base64");
+      await fs.writeFile(path.join(conversationFiles.hostPath, "image.png"), image);
+      const app = createInternalTools({
+        getConfig: () => ({ agents: [] }) as unknown as GatewayConfig,
+        describeImage: async (data) => {
+          if (!data.equals(image)) throw new Error("Unexpected image contents");
+          return "A single white pixel";
+        },
+      });
+      const response = await postTool(app, {
+        tool: "describe_image", args: { path: "/workspace/files/image.png" },
+        agentId: "agent-1", agentToken: "token-files", sessionId: "session-1",
+      });
+      expect(response.status).toBe(200);
+      expect(await response.json()).toEqual({ description: "A single white pixel" });
+    });
+
+    it("extracts a PDF from nested conversation folders", async () => {
+      await fs.mkdir(path.join(conversationFiles.hostPath, "sub", "dir"), { recursive: true });
+      await fs.writeFile(path.join(conversationFiles.hostPath, "sub", "dir", "report.pdf"), textPdf("Nested purchase order contains all the expected report details"));
+      const { app } = createDeps();
+      const response = await postTool(app, {
+        tool: "extract_document", args: { path: "/workspace/files/sub/dir/report.pdf" },
+        agentId: "agent-1", agentToken: "token-files", sessionId: "session-1",
+      });
+      expect(response.status).toBe(200);
+      expect(await response.json()).toEqual({ text: expect.stringContaining("Nested purchase order contains all the expected report details") });
+    });
+
+    it("rejects traversal out of conversation files", async () => {
+      const { app } = createDeps();
+      const response = await postTool(app, {
+        tool: "extract_document", args: { path: "/workspace/files/../report.pdf" },
+        agentId: "agent-1", agentToken: "token-files", sessionId: "session-1",
+      });
+      expect(response.status).toBe(500);
+      expect(await response.json()).toEqual({ error: "Document path traversal is not allowed" });
+    });
+
+    it("rejects extract_document symlinks outside every approved root", async () => {
+      await fs.writeFile(path.join(fixture, "outside.pdf"), "outside approved roots");
+      await fs.symlink(path.join(fixture, "outside.pdf"), path.join(conversationFiles.hostPath, "escape.pdf"));
+      const { app } = createDeps();
+      const response = await postTool(app, {
+        tool: "extract_document", args: { path: "/workspace/files/escape.pdf" },
+        agentId: "agent-1", agentToken: "token-files", sessionId: "session-1",
+      });
+      expect(response.status).toBe(500);
+      expect(await response.json()).toEqual({ error: "Document path is outside approved container roots" });
+    });
+
+    it("rejects describe_image symlinks outside every approved root", async () => {
+      await fs.writeFile(path.join(fixture, "outside.png"), "outside approved roots");
+      await fs.symlink(path.join(fixture, "outside.png"), path.join(conversationFiles.hostPath, "escape.png"));
+      const { app } = createDeps();
+      const response = await postTool(app, {
+        tool: "describe_image", args: { path: "/workspace/files/escape.png" },
+        agentId: "agent-1", agentToken: "token-files", sessionId: "session-1",
+      });
+      expect(response.status).toBe(500);
+      expect(await response.json()).toEqual({ error: "Image path is outside approved container roots" });
+    });
+
+    it("isolates conversation files by the registered token", async () => {
+      const otherFiles = { hostPath: path.join(fixture, "other-conversation"), runtimePath: "/workspace/files" };
+      await fs.mkdir(otherFiles.hostPath);
+      await fs.writeFile(path.join(otherFiles.hostPath, "report.pdf"), textPdf("Other conversation purchase order must remain private to its token"));
+      registerToken("token-other-files", "agent-1", roots, undefined, undefined, otherFiles);
+      const { app } = createDeps();
+      const ownResponse = await postTool(app, {
+        tool: "extract_document", args: { path: "/workspace/files/report.pdf" },
+        agentId: "agent-1", agentToken: "token-files", sessionId: "session-1",
+      });
+      expect(ownResponse.status).toBe(500);
+      expect(await ownResponse.json()).toEqual({ error: "Document was not found under an approved container root" });
+      const otherResponse = await postTool(app, {
+        tool: "extract_document", args: { path: "/workspace/files/report.pdf" },
+        agentId: "agent-1", agentToken: "token-other-files", sessionId: "session-1",
+      });
+      expect(otherResponse.status).toBe(200);
+      expect(await otherResponse.json()).toEqual({ text: expect.stringContaining("Other conversation purchase order must remain private to its token") });
+    });
+
+    it("extracts a PDF from the uploads mount", async () => {
+      await fs.writeFile(path.join(roots.uploads, "report.pdf"), textPdf("Existing mount purchase order remains readable without copying"));
+      const { app } = createDeps();
+      const response = await postTool(app, {
+        tool: "extract_document", args: { path: "/workspace/uploads/report.pdf" },
+        agentId: "agent-1", agentToken: "token-files", sessionId: "session-1",
+      });
+      expect(response.status).toBe(200);
+      expect(await response.json()).toEqual({ text: expect.stringContaining("Existing mount purchase order remains readable without copying") });
+    });
+
+    it("extracts a PDF from the data mount", async () => {
+      await fs.writeFile(path.join(roots.data, "report.pdf"), textPdf("Existing mount purchase order remains readable without copying"));
+      const { app } = createDeps();
+      const response = await postTool(app, {
+        tool: "extract_document", args: { path: "/workspace/data/report.pdf" },
+        agentId: "agent-1", agentToken: "token-files", sessionId: "session-1",
+      });
+      expect(response.status).toBe(200);
+      expect(await response.json()).toEqual({ text: expect.stringContaining("Existing mount purchase order remains readable without copying") });
+    });
+
+    it("rejects conversation files when the token has no conversation directory", async () => {
+      await fs.mkdir(path.join(roots.workspace, "files"));
+      await fs.writeFile(path.join(roots.workspace, "files", "report.pdf"), textPdf("Workspace placeholder document must not be read as conversation files"));
+      registerToken("token-no-files", "agent-1", roots);
+      const { app } = createDeps();
+      const response = await postTool(app, {
+        tool: "extract_document", args: { path: "/workspace/files/report.pdf" },
+        agentId: "agent-1", agentToken: "token-no-files", sessionId: "session-1",
+      });
+      expect(response.status).toBe(500);
+      expect(await response.json()).toEqual({ error: "Document was not found under an approved container root" });
+    });
+
+    it("allows conversation symlinks into another approved root", async () => {
+      await fs.writeFile(path.join(roots.data, "report.pdf"), textPdf("Approved root symlink preserves the purchase order text"));
+      await fs.symlink(path.join(roots.data, "report.pdf"), path.join(conversationFiles.hostPath, "report.pdf"));
+      const { app } = createDeps();
+      const response = await postTool(app, {
+        tool: "extract_document", args: { path: "/workspace/files/report.pdf" },
+        agentId: "agent-1", agentToken: "token-files", sessionId: "session-1",
+      });
+      expect(response.status).toBe(200);
+      expect(await response.json()).toEqual({ text: expect.stringContaining("Approved root symlink preserves the purchase order text") });
+    });
+
+    it("does not read the workspace files placeholder", async () => {
+      await fs.mkdir(path.join(roots.workspace, "files"));
+      await fs.writeFile(path.join(roots.workspace, "files", "report.pdf"), textPdf("Workspace placeholder is not the conversation directory"));
+      const { app } = createDeps();
+      const response = await postTool(app, {
+        tool: "extract_document", args: { path: "/workspace/files/report.pdf" },
+        agentId: "agent-1", agentToken: "token-files", sessionId: "session-1",
+      });
+      expect(response.status).toBe(500);
+      expect(await response.json()).toEqual({ error: "Document was not found under an approved container root" });
+    });
+
+    it("preserves the image not-found error without a conversation directory", async () => {
+      await fs.mkdir(path.join(roots.workspace, "files"));
+      await fs.writeFile(path.join(roots.workspace, "files", "image.png"), "workspace placeholder");
+      registerToken("token-no-files", "agent-1", roots);
+      const { app } = createDeps();
+      const response = await postTool(app, {
+        tool: "describe_image", args: { path: "/workspace/files/image.png" },
+        agentId: "agent-1", agentToken: "token-no-files", sessionId: "session-1",
+      });
+      expect(response.status).toBe(500);
+      expect(await response.json()).toEqual({ error: "Image was not found under an approved container root" });
+    });
   });
 
   it("dispatches tools through enabled extensions", async () => {
