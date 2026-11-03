@@ -37,6 +37,7 @@ Core TypeScript/Node.js process. Main ownership:
 - `src/oauth/`: host-side per-agent OAuth connection framework
 - `src/tasks/`: durable task ledger
 - `src/evals/`: headless single-turn Harbor eval runner
+- `src/model-routing/`: global routing-table validation and standalone bounded classifier; not called by the chat run path (integration/model switching: ALG-594)
 
 Important seams:
 
@@ -170,6 +171,7 @@ Key rules:
 - Root `extensions.<id>` configures/loads an extension; agent `extensions.<id>` opts an agent into tool-style extensions unless `enabled: false`.
 - Agent folders may contain `.env`. `$env:NAME` resolves from agent-local env layered over `$YOPLAI_HOME/.env`, `yoplai.json` `env`, and `process.env`.
 - Agent-local resolved values are passed to extension hooks as `ctx.env`; do not assume they enter global `process.env` or sandbox env.
+- Root `modelRouting` defaults to `mode: off`; `off|shadow|enforce` are configuration stages only until ALG-594. The optional agent `modelRouting: { enabled: true, categories?: [...] }` selects global category IDs plus the configured floor. The standalone classifier uses Pi's classifier operation with gateway-process `OPENAI_API_KEY` (including root `.env`), never subscription OAuth. See [configuration](configuration.md#model-routing) and the [13-category seed](examples/model-routing.json) for provider IDs, merged definitions, copied picks, and the pinned-catalog Terra fallback.
 - Agent env files are read on every resolution; key names log once per content change per agent and absolute path. Reloads preserve this log state; empty/missing files stay silent and reset the observed content.
 - External extensions default to `$YOPLAI_HOME/extensions` or `extensionsPath`; directories and symlinked directories are supported.
 - Projects root is `extensions.projects.root`; top-level `projects.root` is deprecated fallback only.
