@@ -7,6 +7,7 @@ import { resolveAgentEnv } from "./index.js";
 import { resolveConfigSecrets } from "./secrets.js";
 import { logError } from "../logging.js";
 import { extensionSecretFields, resolveExtensionTokenConfig } from "../credentials/extension-tokens.js";
+import { createModelRoutingCatalog, validateModelRouting } from "../model-routing/validate.js";
 
 function uniqueAgentIdValidation(config: GatewayConfig): ValidationResult {
   const seen = new Set<string>();
@@ -146,6 +147,9 @@ export async function prepareStartupConfig(
     validateComponentConfigs(resolvedConfig, extensions),
     validateComponentAgentReferences(resolvedConfig),
   ];
+  if (resolvedConfig.modelRouting && resolvedConfig.modelRouting.mode !== "off") {
+    checks.push(validateModelRouting(resolvedConfig, await createModelRoutingCatalog()));
+  }
 
   const errors = checks.flatMap((check) => check.errors);
   if (errors.length > 0) {

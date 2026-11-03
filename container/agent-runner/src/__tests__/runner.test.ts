@@ -4,12 +4,14 @@ import path from "node:path";
 import { ModelRuntime } from "@earendil-works/pi-coding-agent";
 import { ModelsError } from "@earendil-works/pi-ai";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { ContainerInput } from "@yoplai/shared";
+import type { ContainerInput, ContainerRunnerProtocolEvent } from "@yoplai/shared";
 import { runAgent, sendFollowUpMessage } from "../runner.js";
 
 const proxyFetchMock = vi.hoisted(() => vi.fn());
 
 const piMock = vi.hoisted(() => {
+  type ResponseHook = (event: { status: number; headers: Record<string, string> }, ctx: { model?: { provider: string } }) => unknown;
+  const providerResponseHooks: ResponseHook[] = [];
   const subscribers: Array<(event: unknown) => void> = [];
   const setRuntimeApiKey = vi.fn();
   const sessionManagerOpen = vi.fn(() => ({ buildSessionContext: () => ({ messages: agent.state.messages }) }));
@@ -46,6 +48,8 @@ const piMock = vi.hoisted(() => {
   };
 
   return {
+    providerResponseHooks,
+    runExtensionFactories: false,
     subscribers,
     setRuntimeApiKey,
     sessionManagerOpen,
@@ -55,6 +59,8 @@ const piMock = vi.hoisted(() => {
     createAgentSession: vi.fn(async (_options: unknown) => ({ session })),
     resourceReload: vi.fn(async () => undefined),
     reset() {
+      this.runExtensionFactories = false;
+      providerResponseHooks.length = 0;
       subscribers.length = 0;
       agent.state.messages = [];
       agent.continue.mockReset();
@@ -121,10 +127,17 @@ vi.mock("@earendil-works/pi-coding-agent", async (importOriginal) => ({
       reload: () => Promise<void>;
       options?: unknown;
     },
-    options: unknown
+    options: { extensionFactories?: Array<(pi: { on: (event: string, hook: (event: { status: number; headers: Record<string, string> }, ctx: { model?: { provider: string } }) => unknown) => void }) => unknown> }
   ) {
     this.reload = piMock.resourceReload;
     this.options = options;
+    if (piMock.runExtensionFactories) {
+      for (const factory of options.extensionFactories ?? []) factory({
+        on: (event, hook) => {
+          if (event === "after_provider_response") piMock.providerResponseHooks.push(hook);
+        },
+      });
+    }
   }),
   createAgentSession: piMock.createAgentSession,
 }));
@@ -142,6 +155,74 @@ function startAgentRun(): void {
 }
 
 describe("Pi runner", () => {
+  // ALG-595 runAgent/event seam approved by Thinh, comment 959e9e2b.
+  // Exercises frame emission and history isolation with fake Pi, not Docker.
+  it("emits sanitized quota for the response's current provider outside history", async () => {
+    const tempDir = await fs.mkdtemp(path.join(process.cwd(), ".runner-quota-"));
+    try {
+      const workspaceDir = path.join(tempDir, "workspace");
+      await fs.mkdir(workspaceDir);
+      piMock.runExtensionFactories = true;
+      vi.spyOn(Date, "now").mockReturnValue(1793650000000);
+      piMock.session.prompt.mockImplementationOnce(async () => {
+        for (const hook of piMock.providerResponseHooks) await hook({ status: 200, headers: {
+          "anthropic-ratelimit-unified-5h-utilization": "0.25",
+          "anthropic-ratelimit-unified-5h-reset": "2000000000",
+          authorization: "RAW_RUNNER_HEADER_SENTINEL_595",
+        } }, { model: { provider: "anthropic" } });
+        piMock.session.messages.push({ role: "assistant", content: [{ type: "text", text: "done" }] });
+      });
+      const input = createInput({ workspaceDir, sessionDir: path.join(tempDir, "sessions") });
+      input.sdkConfig.model.provider = "openai-codex";
+      input.toolDeferral = { enabled: false, alwaysOnTools: [], alwaysOnExtensions: [] };
+      const events: ContainerRunnerProtocolEvent[] = [];
+      const output = await runAgent(input, event => events.push(event));
+      expect(events.filter(event => event.type === "quota")).toEqual([{
+        type: "quota", provider: "anthropic", observedAt: 1793650000,
+        windows: [{ kind: "five-hour", windowSeconds: 18000, usedPercent: 25, resetAt: 2000000000 }],
+      }]);
+      expect(output.history).not.toContainEqual(expect.objectContaining({ type: "quota" }));
+      expect(JSON.stringify([events, output])).not.toContain("RAW_RUNNER_HEADER_SENTINEL_595");
+    } finally {
+      await fs.rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it.each(["no quota headers", "invalid quota", "other provider", "missing model", "frame emitter failure"] as const)(
+    "keeps runner chat working with %s",
+    async (scenario) => {
+      const tempDir = await fs.mkdtemp(path.join(process.cwd(), ".runner-quota-"));
+      try {
+        const workspaceDir = path.join(tempDir, "workspace");
+        await fs.mkdir(workspaceDir);
+        piMock.runExtensionFactories = true;
+        const headers: Record<string, string> = scenario === "no quota headers" ? {} : {
+          "anthropic-ratelimit-unified-5h-utilization": scenario === "invalid quota" ? "1.5" : "0.25",
+          "anthropic-ratelimit-unified-5h-reset": "2000000000",
+          authorization: "RAW_RUNNER_HEADER_SENTINEL_595",
+        };
+        piMock.session.prompt.mockImplementationOnce(async () => {
+          for (const hook of piMock.providerResponseHooks) await hook({ status: 200, headers }, {
+            model: scenario === "missing model" ? undefined : { provider: scenario === "other provider" ? "openai-codex" : "anthropic" },
+          });
+          piMock.session.messages.push({ role: "assistant", content: [{ type: "text", text: "done" }] });
+        });
+        const input = createInput({ workspaceDir, sessionDir: path.join(tempDir, "sessions") });
+        input.toolDeferral = { enabled: false, alwaysOnTools: [], alwaysOnExtensions: [] };
+        const events: ContainerRunnerProtocolEvent[] = [];
+        const output = await runAgent(input, event => {
+          if (scenario === "frame emitter failure" && event.type === "quota") throw new Error("fixture transport failure");
+          events.push(event);
+        });
+        expect(output.text).toBe("done");
+        expect(events.filter(event => event.type === "quota")).toEqual([]);
+        expect(output.history).not.toContainEqual(expect.objectContaining({ type: "quota" }));
+        expect(JSON.stringify([events, output])).not.toContain("RAW_RUNNER_HEADER_SENTINEL_595");
+      } finally {
+        await fs.rm(tempDir, { recursive: true, force: true });
+      }
+    },
+  );
   it("loads global custom model definitions while keeping user runtime state scoped", async () => {
     const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-runner-scoped-"));
     try {

@@ -1,0 +1,350 @@
+{
+  "modelRouting": {
+    "mode": "off",
+    "version": "2026-11-01",
+    "classifier": {
+      "provider": "openai",
+      "model": "gpt-6-luna"
+    },
+    "thresholds": {
+      "score": 0.8,
+      "pace": 1.15
+    },
+    "budgets": {
+      "predicateMs": 2000,
+      "categoryMs": 4000
+    },
+    "maxRetries": 1,
+    "floor": [
+      "customer_support_reply",
+      "office_deliverable",
+      "writing_marketing",
+      "single_tool_call"
+    ],
+    "table": [
+      {
+        "id": "customer_support_reply",
+        "definition": "Technical customer support for the company's product: a support ticket (link or #number: 'what to do here', give context, draft the reply), or troubleshooting a customer setup (tunnels, DHCP, RADIUS, WLC, Zscaler, logs, captive portal). Includes 'draft me a reply to the customer' when it is about a support case. FR: 'que faire sur ce ticket', 'un client a un souci'. NOT a plain data fetch with no diagnosis (e.g. 'list my tickets', 'what is the Wi-Fi key of X') → single_tool_call. NOT generic how-to questions unrelated to a customer setup → general_assistant.",
+        "examples": [
+          "any idea why this sensor is rejected ? it's an IoT device, log line <13>2026-09-02T08:14:22+00:00 radius-eu-1 freeradius: Wed Sep 2 08:14:22 Auth: Logi",
+          "I got ticket https://support.example.com/tickets/10423 but I can't find site NW_LYO_012 under any Northwind tenant, do we have a past case for this?",
+          "How do I configure MAC authentication bypass on an Aruba controller ?",
+          "Can you rephrase this and draft it here for me: Hello, the change we made to the guest VLAN on the tunnel is not applied even after restarting the ga",
+          "Hi, some context: we run the DNS filtering service for Contoso, admin access via portal.example.com, the steps are listed at the end of this ticket th",
+          "I'm in a deployment kickoff with Fabrikam and they sent me the email below, can you draft an answer I can use to support my reply on the RADIUS setup",
+          "what needs to change here so the connection opens ? https://support.example.com/tickets/10377",
+          "Quick question all: why do we need to install an SSL certificate for https://portal.example.com on the customer's wireless controller?"
+        ],
+        "claude": {
+          "provider": "anthropic",
+          "model": "claude-sonnet-5-5",
+          "effort": "medium"
+        },
+        "chatgpt": {
+          "provider": "openai-codex",
+          "model": "gpt-5.6-terra",
+          "effort": "low"
+        },
+        "pool": "prefer_chatgpt"
+      },
+      {
+        "id": "edit_agent_dashboard",
+        "definition": "Build, change, fix or share a dashboard, web page or app hosted on the agent platform (sales/SE/BDR/customer/OKR dashboards, canvas). Also who can access or edit a dashboard. FR: 'crée un dashboard', 'dans le SE dashboard, ajoute', 'arrange le tableau'. NOT a one-off spreadsheet, document or deck → office_deliverable. NOT just reading numbers from a tool → single_tool_call.",
+        "examples": [
+          "Build a simple dashboard showing what you can help me with",
+          "Add this to the Contoso account page on the CS dashboard",
+          "recreate this onboarding checklist https://lists.example.com/onboarding/ABC123",
+          "on the personal dashboard, can you compute each person's KPIs that feed the team OKR, then roll the team OKR up to the company OKR?",
+          "in the individual OKR dashboard, check time off in the HR tool and hide the contractor column for people who are not contractors",
+          "Est-ce que quelqu'un d'autre peut modifier mes dashboards ?",
+          "Peux-tu créer un nouveau dashboard pour l'équipe BDR, en t'inspirant des mails hebdo BDR et du contexte de l'entreprise. Garde le même style que le",
+          "Dans le filtre owner du sales dashboard, trie par ordre alphabétique, retire 'no owner', Jean Dupont et Marie Martin",
+          "j'aimerais que tu ajoutes un dashboard sur notre base clients actuelle, avec un affichage par pays, secteur, ACV et produits utilisés.",
+          "Sur la première ligne, garde le nombre de POC, le nombre de tech wins sur l'année fiscale, les tech losses, le winrate en montant et en nombre, et",
+          "Je veux travailler sur le dashboard des SE",
+          "Réorganise le tableau de dépassement d'usage client pour éviter le scroll horizontal, rends-le plus lisible"
+        ],
+        "claude": {
+          "provider": "anthropic",
+          "model": "claude-sonnet-5-5",
+          "effort": "high"
+        },
+        "chatgpt": {
+          "provider": "openai-codex",
+          "model": "gpt-6.1-sol",
+          "effort": "high"
+        },
+        "pool": "prefer_claude"
+      },
+      {
+        "id": "general_assistant",
+        "definition": "Catch-all: general questions and help about the agent itself, its skills, access and connections ('can I connect you to Slack', 'do you have Webflow access'), how-to questions about internal tools/IT, company facts, onboarding someone to the channel. FR: 'est-ce que tu as accès à', 'comment je fais pour'. Use only when no specific route fits; a support ticket/customer issue → customer_support_reply; a file to produce → office_deliverable.",
+        "examples": [
+          "How can I see the SMS delivery logs ? Nothing shows up in https://console.example.com/sms",
+          "what's the phone number for our support line?",
+          "Hi Alex, I'm Sam, the product designer at Acme. I also handle our brand and marketing materials. I made a few templates and wanted to know if you",
+          "please explain to Jordan how this channel works",
+          "Which job that is still enabled were you referring to above? please give the context of the original request",
+          "Bonjour, est-ce que tu as maintenant accès à notre CMS ?",
+          "I updated the presentation skill on my side, please update yours too. I emailed you the new skill files, apply them so everyone on the team gets t",
+          "can I connect you to slack",
+          "where do I send a feature request?",
+          "what do you know about our ISO 27001 compliance status?",
+          "est-ce obligatoire d'afficher la TVA sur un devis entre deux sociétés françaises ?",
+          "Taylor says she has our company icon on the MCP connector, how do I set that up?",
+          "what is our company's legal entity type? I'm turning on a feature with our SMS provider and they ask for it"
+        ],
+        "claude": {
+          "provider": "anthropic",
+          "model": "claude-sonnet-5-5",
+          "effort": "medium"
+        },
+        "chatgpt": {
+          "provider": "openai-codex",
+          "model": "gpt-5.6-terra",
+          "effort": "low"
+        },
+        "pool": "either"
+      },
+      {
+        "id": "hard_reasoning",
+        "definition": "Expert legal/HR/tax reasoning with consequences (French labour law, contracts) needing careful analysis. FR: 'en tant qu'expert en droit du travail'. NOT a simple factual company question → general_assistant.",
+        "examples": [
+          "En tant qu'expert en droit du travail français, que se passe-t-il si un alternant perd son inscription en école en cours de contrat ?"
+        ],
+        "claude": {
+          "provider": "anthropic",
+          "model": "claude-opus-5-5",
+          "effort": "high"
+        },
+        "chatgpt": {
+          "provider": "openai-codex",
+          "model": "gpt-6.1-sol",
+          "effort": "xhigh"
+        },
+        "pool": "prefer_claude"
+      },
+      {
+        "id": "lead_contact_lookup",
+        "definition": "Find a person's or lead's email, phone or LinkedIn contact, enrich a list of companies/titles with contacts, or pick leads to reactivate. Usually a LinkedIn URL + 'find email'. FR: 'trouve l'email de', 'numéro de téléphone'. NOT writing the outreach message itself → writing_marketing. NOT a CRM deal lookup → single_tool_call.",
+        "examples": [
+          "can you find the email for https://www.linkedin.com/in/example-jane-doe/",
+          "Please pick 10 more cold leads to reactivate, and include Northwind Canada",
+          "here is a list of companies and job titles, find matching contacts with full name and LinkedIn. Attached document text: File: target_accounts.xlsx",
+          "find every email address in this document Attached document text: File: account_scoring_FR.pdf MIME type: application/pdf Contact Company Title",
+          "find the phone number of https://www.linkedin.com/in/example-john-smith/",
+          "find the email for this lead - https://www.linkedin.com/in/example-alex-lee/",
+          "also get the email for https://www.linkedin.com/in/example-priya-k/",
+          "can you get me the email contact for https://www.linkedin.com/in/example-chris-brown/"
+        ],
+        "claude": {
+          "provider": "anthropic",
+          "model": "claude-haiku-5-5",
+          "effort": "medium"
+        },
+        "chatgpt": {
+          "provider": "openai-codex",
+          "model": "gpt-5.6-terra",
+          "effort": "low"
+        },
+        "pool": "either"
+      },
+      {
+        "id": "office_deliverable",
+        "definition": "Produce or rework a file: slide deck, Google Slides/Doc, Word/PDF, branded (company branding) document, exec summary or meeting-prep doc, spreadsheet, video script/storyboard. FR: 'fais moi une présentation', 'aux couleurs de l'entreprise', 'rebrand', 'prépare un exec summary'. NOT a living dashboard on the platform → edit_agent_dashboard. NOT short marketing copy or a single message → writing_marketing. A simple list or Excel export of CRM records belongs to single_tool_call, even when it produces a file; authored reports and analytical spreadsheets remain office_deliverable.",
+        "examples": [
+          "You should have the full data for Contoso now, please finish the slides for next week's QBR",
+          "Can you format this Word doc following the attached PDF template Attached document text: File: Acme_security_policy_v2.docx MIME type: applic",
+          "Sam sent me this doc, reformat it with the new branding elements I shared Attached document text: File: Acme_Partner_Brief.pdf MIME type",
+          "There's a security leaders event in Lyon next month. I need a 20 minute slide deck about our product and help preparing the talk, need to cover",
+          "(300x150px, max 500KB, transparent background recommended). Company logo",
+          "I'm preparing a video for our youtube channel about guest wifi login methods, how would you summarize these features in a short script",
+          "Sam sent me this doc, reformat it with the new branding then export it as pdf Attached document text: File: Acme for Example University.pdf MIME type",
+          "Nous devons faire évoluer la présentation suivante https://docs.example.com/presentation/placeholder-1/edit",
+          "Reformat this document with our company branding https://docs.example.com/document/placeholder-2/edit",
+          "rebrand these slides with our branding and add Northwind's logo - https://docs.example.com/presentation/placeholder-3/edit",
+          "J'aimerais cartographier tous les outils utilisés dans l'entreprise, par équipe et par activité",
+          "Draft a PRD in Confluence for test-PRD using our standard spec template.",
+          "Create slides on regional high availability, consistent network state, resilient authentication and our DHCP and NAC redundancy architecture",
+          "peux-tu me créer une page Word aux couleurs et au logo de l'entreprise ?",
+          "fais-moi un exec summary sur Fabrikam, un partenaire italien avec qui j'ai un call cet après-midi, et indique-moi les deals en cours avec eux",
+          "find the deck 'Partner Kickoff Q3 2026 v2' and make a separate deck with only slides 21 to 25"
+        ],
+        "claude": {
+          "provider": "anthropic",
+          "model": "claude-sonnet-5-5",
+          "effort": "high"
+        },
+        "chatgpt": {
+          "provider": "openai-codex",
+          "model": "gpt-6.1-sol",
+          "effort": "high"
+        },
+        "pool": "prefer_claude"
+      },
+      {
+        "id": "orchestrate_long_task",
+        "definition": "Design and run a multi-step project or workflow over many turns (e.g. content production pipeline from customer insights to website and KB). NOT a single deliverable → office_deliverable or writing_marketing.",
+        "examples": [
+          "Thanks. Based on the project goal above, let's define a first version together. Propose the workflow from customer insights to website and KB"
+        ],
+        "claude": {
+          "provider": "anthropic",
+          "model": "claude-opus-5-5",
+          "effort": "medium"
+        },
+        "chatgpt": {
+          "provider": "openai-codex",
+          "model": "gpt-6.1-sol",
+          "effort": "medium"
+        },
+        "pool": "prefer_claude"
+      },
+      {
+        "id": "saas_workflow",
+        "definition": "Multi-step work that writes in business tools: create a quote or invoice in Pennylane/Pipedrive (any 'create a (renewal) quote' is here), update CRM records, draft/send several emails from CRM data, set up a recurring job or notification, candidate pipeline actions. FR: 'crée un devis', 'crée un job pour me notifier', 'mets à jour Pipedrive'. NOT a read-only lookup → single_tool_call. NOT writing a single polished text → writing_marketing.",
+        "examples": [
+          "Hi, can you set up an automated task every weekday morning that sends me a to-do list of follow-ups from my open deals in the CRM",
+          "Check and refresh the team OKR canvas from its linked lists. Canvas: https://docs.example.com/canvas/placeholder-4 1. Read each list 2. Update",
+          "j'ai supprimé les brouillons de mails que tu avais créés pour les candidats rejetés sur le poste de Sales Manager, ton mail n'était pas adapté",
+          "Create a quote based on QU-00001",
+          "Peux-tu me créer un job qui m'envoie une notification à chaque fois qu'un deal est créé avec moi, Jean Dupont, comme owner ?",
+          "Peux-tu retrouver tous les web leads à mon nom et me dire pour chacun si j'ai bien envoyé un email de premier contact ?",
+          "Create a renewal quote based on invoice IN-0001 with a 3% increase, 1 year, 2027",
+          "Create a renewal quote based on invoice IN-0002 without changes"
+        ],
+        "claude": {
+          "provider": "anthropic",
+          "model": "claude-sonnet-5-5",
+          "effort": "high"
+        },
+        "chatgpt": {
+          "provider": "openai-codex",
+          "model": "gpt-6.1-sol",
+          "effort": "medium"
+        },
+        "pool": "prefer_claude"
+      },
+      {
+        "id": "single_tool_call",
+        "definition": "One quick lookup or action in a connected tool that returns facts: CRM/Pipedrive deals, customer account or tenant info (product admin MCP, Zscaler tenant), calendar, mailbox or Slack search, find a document, list tickets, Jira lookup, rename a location. FR: 'donne moi', 'retrouve', 'regarde mes échanges', 'liste des clients'. NOT multi-step write workflows (quotes, CRM updates + emails, scheduled jobs) → saas_workflow. NOT diagnosing a customer issue → customer_support_reply. Simple lists or Excel exports of CRM records stay here, even when they produce a file. An authored report or analytical spreadsheet → office_deliverable.",
+        "examples": [
+          "can you list the support ticket numbers assigned to me",
+          "Which vendor does Contoso use ?",
+          "est-ce qu'il existe déjà un ticket sur le fait que les admins ne peuvent plus se connecter en SSO après la migration de l'identity provider ?",
+          "hey check if you got my email",
+          "Give me all the wireless controller training docs and any recorded videos about deployments or integrations",
+          "Fais-moi un graphe des authentifications chez Fabrikam sur les dernières 24 heures",
+          "dans le tenant Northwind (ID_0001) peux-tu renommer les locations suivantes : NW-guest-Quarantine-0001, NW-guest-Allowlist-0001, NW-guest-",
+          "Using the admin MCP, give me the guest network settings of site NW_PAR_001 for Northwind",
+          "peux-tu me trouver nos SLA et SLO",
+          "Hi, can you go through my email and highlight every message where Jordan shared a presentation, document or any other file with me",
+          "how many employees do we have? in how many countries and cities?",
+          "peux-tu vérifier dans mes mails et messages slack avec Alex s'il a déjà utilisé son budget télétravail de 500€",
+          "Let's test something. Can you check Taylor's availability next week?",
+          "donne-moi l'environnement de Contoso, ils ont quelle intégration ?",
+          "BONJOUR, PEUX-TU ME DONNER LA LISTE DES CLIENTS EN FRANCE",
+          "Es-tu capable de récupérer les anniversaires des personnes de mon équipe ?",
+          "donne-moi la visibilité sur les deals en cours",
+          "Regarde les derniers échanges avec Fabrikam",
+          "Salut, à quelle heure CET correspond 12h IST ?",
+          "what is Northwind's current usage ?"
+        ],
+        "claude": {
+          "provider": "anthropic",
+          "model": "claude-haiku-5-5",
+          "effort": "medium"
+        },
+        "chatgpt": {
+          "provider": "openai-codex",
+          "model": "gpt-5.6-terra",
+          "effort": "low"
+        },
+        "pool": "either"
+      },
+      {
+        "id": "summarize",
+        "definition": "Summarize a meeting or a transcript (meeting recording, pasted transcript) and extract actions. FR: 'analyse l'enregistrement de mon meeting', 'fais le rapport de'. NOT producing a formatted deck/document from it → office_deliverable.",
+        "examples": [
+          "Comme pour le rapport d'étonnement de Sam, fais le même exercice pour Jordan : https://recordings.example.com/meeting/placeholder-5",
+          "00:00 Alex Doe: We already have a guest wifi portal and we want to understand how you see captive portals as different from the other portals that are",
+          "Analyse l'enregistrement de mon meeting SE et prépare les actions à faire"
+        ],
+        "claude": {
+          "provider": "anthropic",
+          "model": "claude-haiku-5-5",
+          "effort": "medium"
+        },
+        "chatgpt": {
+          "provider": "openai-codex",
+          "model": "gpt-5.6-terra",
+          "effort": "medium"
+        },
+        "pool": "prefer_claude"
+      },
+      {
+        "id": "trivial_chat",
+        "definition": "Acknowledgements, FYIs and instructions about the agent's own behaviour that need no real work: 'good job', 'no need to follow up', 'stop mentioning me', 'pas besoin de m'envoyer un message'. NOT a question that needs a lookup → single_tool_call or general_assistant.",
+        "examples": [
+          "Good job. If it's a correction or an important update, you can post it as a follow-up in the thread (looks like you already did).",
+          "No need to follow up here, stop mentioning me for feedback, we're already in touch with the Contoso team about next steps.",
+          "FYI, I looked into it, it was a temporary issue on the data provider's side.",
+          "Pas besoin de m'envoyer un message sur slack quand tu crées des brouillons de mails"
+        ],
+        "claude": {
+          "provider": "anthropic",
+          "model": "claude-haiku-5-5",
+          "effort": "low"
+        },
+        "chatgpt": {
+          "provider": "openai-codex",
+          "model": "gpt-5.6-terra",
+          "effort": "off"
+        },
+        "pool": "either"
+      },
+      {
+        "id": "web_research",
+        "definition": "Research the public web on a topic, market, tender or regulation and synthesize it (NIS2, call for tender, partner landscape). FR: 'fais une recherche', 'prépare un exec summary sur l'appel d'offre'. NOT internal company facts → single_tool_call or general_assistant.",
+        "examples": [
+          "Hi - can you research NIS2 compliance and help me understand what it is and how it applies to our company",
+          "Salut, prépare un exec summary en français sur l'appel d'offres EXAMPLE-2026, avec notamment : - qui sont les titulaires actuels du marché - quel"
+        ],
+        "claude": {
+          "provider": "anthropic",
+          "model": "claude-opus-5-5",
+          "effort": "medium"
+        },
+        "chatgpt": {
+          "provider": "openai-codex",
+          "model": "gpt-6.1-sol",
+          "effort": "medium"
+        },
+        "pool": "prefer_chatgpt"
+      },
+      {
+        "id": "writing_marketing",
+        "definition": "Write or improve text meant for other people: LinkedIn post or personalised LinkedIn message, marketing article, email draft for a prospect/partner, answers to a survey, video copy. FR: 'rédige', 'écris un message', 'améliore mon email'. NOT a support-ticket reply → customer_support_reply. NOT a formatted file/deck → office_deliverable. NOT emails generated in bulk from CRM records → saas_workflow.",
+        "examples": [
+          "make this into a company linkedin post for me: \"My work-from-home routine starts with a tidy desk, good light and a clear plan for the day. I li",
+          "write a personalised linkedin message for this profile: https://www.linkedin.com/in/example-sam-taylor/",
+          "Merci, pour l'article 1 j'ai besoin de plus d'illustrations",
+          "https://docs.example.com/spreadsheet/placeholder-6 Hi, can you write custom outreach messages for each contact in this sheet based on their",
+          "Peux-tu retrouver les messages que j'ai envoyés aux 3 distributeurs allemands ?",
+          "reply to: What do you use the assistant for — creating quotes and invoices, customer information, legal information, budget scenarios, reports. Co"
+        ],
+        "claude": {
+          "provider": "anthropic",
+          "model": "claude-sonnet-5-5",
+          "effort": "high"
+        },
+        "chatgpt": {
+          "provider": "openai-codex",
+          "model": "gpt-6.1-sol",
+          "effort": "medium"
+        },
+        "pool": "prefer_claude"
+      }
+    ]
+  }
+}

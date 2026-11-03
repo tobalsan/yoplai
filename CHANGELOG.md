@@ -16,6 +16,12 @@ Breaking changes are marked **⚠ BREAKING**.
 ### Added
 
 - Scheduler scripts can call agent tools with temporary, agent-scoped tokens using owner or team credentials; tokens are revoked after each script and redacted from captured output.
+- Add a host model-routing integration E2E suite and an operator guide covering rollout, rollback, quota ownership and shadow reports; container E2E follows in ALG-608.
+- Record private-data-free model-routing attempts and trace metadata, and evaluate fresh shadow sessions with `yoplai model-routing report`.
+- Add a superadmin Quota tab with subscription usage, freshness and errors, refreshed from the local in-memory store without vendor requests.
+- Track per-login subscription quota in memory from sanitized Claude response headers and opt-in host usage pollers (`modelQuota.enabled`), with freshness, error state and pure quota policy helpers.
+- Route opted-in Pi chat sessions once and persist their model/effort lock across restarts and compaction, with shadow evaluation, immediate off-mode rollback, and configured-model fallback when routing is unavailable.
+- Add opt-in model-routing configuration, offline table validation, and a bounded, fail-open OpenAI classifier with a documented 13-category seed.
 - Show MCP App views inline beneath their tool calls in simple and full web chat, with saved-data replay, isolated SDK handshake, own-server interactions, bounded loading and text fallback.
 - Superadmins can view every scheduled job and its run history, trace, and output; other users' Mine jobs show their owner and keep management controls locked.
 - Webhook gates can return `sessionScope` to preserve conversation context and `abort: true` to stop that session before an optional wake; extensions can silently stop mapped runs with `ExtensionContext.abortRun`.

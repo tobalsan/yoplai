@@ -9,6 +9,7 @@ const agent = {
 };
 
 const commonSettings = {
+  modelRouting: { mode: "off" },
   defaultProjectManager: "pom",
   sandbox: { sharedDir: "/shared" },
   maintenance: { provider: "anthropic", model: "claude-haiku" },
@@ -28,6 +29,14 @@ const commonSettings = {
 };
 
 describe("gateway root and resolved config schemas", () => {
+  it("keeps quota polling opt-in in both root and resolved configs", () => {
+    for (const schema of [GatewayRootConfigSchema, GatewayConfigSchema]) {
+      expect(schema.parse({ agents: [] }).modelQuota?.enabled ?? false).toBe(false);
+      expect(schema.parse({ agents: [], modelQuota: { enabled: true } }).modelQuota).toEqual({ enabled: true });
+      expect(schema.safeParse({ agents: [], modelQuota: { enabled: "true" } }).success).toBe(false);
+    }
+  });
+
   it("parse shared settings identically, including key order", () => {
     const root = GatewayRootConfigSchema.parse({
       version: 3,

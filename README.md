@@ -10,6 +10,7 @@ Yoplai keeps configuration, conversations, and project data on your machine. Sta
 
 - Web chat with streaming, tool calls, files, and session history. Compaction preserves the transcript and adds collapsed summaries in Simple and Full views; use **Load earlier messages** to reach older messages.
 - Multiple configurable agents and external CLI subagents
+- Opt-in [session model routing](docs/model-routing.md) for Pi chat, with durable model locks, subscription quota selection, shadow rollout and off-mode rollback.
 - Optional Discord, Slack, Telegram, Mattermost, IRC, and webhook entry points
 - Slack credential refusals offer [one personal connection link](docs/slack-credential-connect.md) for pairing plus Google OAuth, extension tokens, or extension-owned OAuth, with a confirmation in the original thread.
 - Slack `!pair` links an existing web account for personal credentials; [setup and email requirements](packages/extensions/slack/README.md#account-pairing).
@@ -205,6 +206,7 @@ Enable `enableCronMonitoring` to see running jobs and elapsed time in the automa
 and open finished traces at the final output; see [scheduler run monitoring](packages/extensions/scheduler/README.md#run-monitoring-experimental).
 
 - [Configuration](docs/configuration.md) — root config, agents, environment, network, UI
+- [Session model routing](docs/model-routing.md) — quota ownership, rollout, rollback and shadow reports
 - [Self-hosting](docs/self-hosting.md) — services, remote access, upgrades, backups
 - [Extensions](docs/extensions.md) — optional feature catalog and enablement
 - [Webhooks](docs/webhooks.md) — HTTP-triggered agent runs

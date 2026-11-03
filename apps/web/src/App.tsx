@@ -55,6 +55,7 @@ const LazyLoginPage = lazy(() => import("./pages/Login"));
 const LazyAdminUsersPage = lazy(() => import("./pages/admin/Users"));
 const LazyAdminExtensionsPage = lazy(() => import("./pages/admin/Extensions"));
 const LazyAdminMcpServersPage = lazy(() => import("./pages/admin/McpServers"));
+const LazyAdminQuotaPage = lazy(() => import("./pages/admin/Quota"));
 const LazyAdminSkillsPage = lazy(() => import("./pages/admin/Skills"));
 
 function Layout(props: { children?: JSX.Element }) {
@@ -286,6 +287,7 @@ export default function App() {
       />
       <Route path={["/skills", "/skills/:id"]} component={() => <GuardedRoute><LeftNavShell><Skills /></LeftNavShell></GuardedRoute>} />
       <Route path="/admin/skills" component={() => <GuardedRoute><LeftNavShell><Suspense><LazyAdminSkillsPage /></Suspense></LeftNavShell></GuardedRoute>} />
+      <Route path="/admin/quota" component={() => <GuardedRoute><LeftNavShell><Suspense><LazyAdminQuotaPage /></Suspense></LeftNavShell></GuardedRoute>} />
       <Route
         path="/teams"
         component={() => (

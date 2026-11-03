@@ -23,6 +23,7 @@ import { registerWebhookCommands } from "./webhooks.js";
 import { registerUserTokenCommands } from "./user-token.js";
 import { registerNotifyCommand } from "./notify.js";
 import { registerModelCommands } from "./models.js";
+import { registerModelRoutingCommands } from "./model-routing.js";
 import { registerAgentsMigrateCommands } from "./agents-migrate.js";
 import { registerGatewayServiceCommands } from "./service.js";
 import { registerSchedulerCommands } from "@yoplai/extension-scheduler";
@@ -566,6 +567,7 @@ const gatewayCmd = program
         console.log("\nShutting down...");
         const { stopDreamTimers } = await import("../dream/service.js");
         stopDreamTimers();
+        (await import("../model-quota/runtime.js")).stopModelQuotaPollers();
         if (webProcess) stopWebUIProcess(webProcess);
         stopTailscaleServeRefresh();
         if (tailscaleServeEnabled && tailscaleServeResetOnExit) {
@@ -714,6 +716,7 @@ registerWebhookCommands(program);
 registerUserTokenCommands(program);
 registerNotifyCommand(program);
 registerModelCommands(program);
+registerModelRoutingCommands(program);
 await registerOptionalProjectsCli(program);
 registerSchedulerCommands(
   program

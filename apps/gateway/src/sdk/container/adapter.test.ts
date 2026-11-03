@@ -27,11 +27,18 @@ import { getContainerAdapter } from "./adapter.js";
 import { isRunSettledError } from "../run-settled.js";
 import { getContainerTokenContext } from "./tokens.js";
 import type { SdkRunParams } from "../types.js";
+import { modelQuotaStore } from "../../model-quota/runtime.js";
 
 const mockGetExtensionAgentTools = vi.hoisted(() =>
   vi.fn<(agent: unknown) => unknown[]>(() => [])
 );
 const mockResolveOAuthTokens = vi.hoisted(() => vi.fn());
+const mockReadQuotaCredential = vi.hoisted(() => vi.fn<() => { type: "oauth"; access: string; expires: number } | { type: "api_key"; key: string } | undefined>(() => undefined));
+
+vi.mock("@earendil-works/pi-coding-agent", async (importOriginal) => ({
+  ...await importOriginal<typeof import("@earendil-works/pi-coding-agent")>(),
+  readStoredCredential: mockReadQuotaCredential,
+}));
 
 vi.mock("../../extensions/tools.js", () => ({
   getExtensionAgentTools: mockGetExtensionAgentTools,
@@ -272,6 +279,8 @@ beforeEach(() => {
   vi.clearAllMocks();
   mockGetExtensionAgentTools.mockReturnValue([]);
   mockResolveOAuthTokens.mockResolvedValue(undefined);
+  mockReadQuotaCredential.mockReturnValue(undefined);
+  modelQuotaStore.list();
   delete process.env.YOPLAI_HOME;
 });
 
@@ -286,6 +295,75 @@ afterEach(() => {
 });
 
 describe("container adapter", () => {
+  // ALG-595 run/frame seam approved by Thinh, comment 959e9e2b.
+  // Exercises recording and callback isolation through fake Docker, not image deployment.
+  it("records an authorized quota frame without forwarding it into chat", async () => {
+    const root = tempDir();
+    process.env.YOPLAI_HOME = path.join(root, "yoplai");
+    const agent = createAgent(root);
+    setConfig(agent, root);
+    mockResolveOAuthTokens.mockResolvedValue({ anthropic: { accessToken: "fixture-access", expiresAt: Date.now() + 3600000 } });
+    mockReadQuotaCredential.mockReturnValue({ type: "oauth", access: "fixture-access", expires: Date.now() + 3600000 });
+    const { processes } = mockSpawn();
+    mockExecFile();
+    const params = createParams(agent);
+    const run = getContainerAdapter().run(params);
+    await tick();
+    const historyBefore = vi.mocked(params.onHistoryEvent).mock.calls.slice();
+    const streamBefore = vi.mocked(params.onEvent).mock.calls.slice();
+    processes[0].emitStreamEvent({
+      type: "quota", provider: "anthropic", observedAt: Date.now() / 1000,
+      windows: [{ kind: "five-hour", windowSeconds: 18000, usedPercent: 25, resetAt: 2000000000 }],
+    });
+    const historyAfter = vi.mocked(params.onHistoryEvent).mock.calls.slice();
+    const streamAfter = vi.mocked(params.onEvent).mock.calls.slice();
+    processes[0].emitOutput({ text: "chat still works" });
+    processes[0].finish(0);
+    await expect(run).resolves.toMatchObject({ text: "chat still works" });
+    expect(modelQuotaStore.list()).toContainEqual(expect.objectContaining({
+      provider: "anthropic", accountRef: "host", source: "headers",
+      windows: [{ kind: "five-hour", windowSeconds: 18000, usedPercent: 25, resetAt: 2000000000 }],
+    }));
+    expect(historyAfter).toEqual(historyBefore);
+    expect(streamAfter).toEqual(streamBefore);
+  });
+
+  it.each(["no run OAuth token", "different run OAuth provider", "removed login", "API-key login", "credential read failure", "extra headers"] as const)(
+    "drops quota frames for %s while chat continues",
+    async (scenario) => {
+      const root = tempDir();
+      process.env.YOPLAI_HOME = path.join(root, "yoplai");
+      const agent = createAgent(root);
+      setConfig(agent, root);
+      const token = { accessToken: "fixture-access", expiresAt: Date.now() + 3600000 };
+      mockResolveOAuthTokens.mockResolvedValue(scenario === "no run OAuth token" ? undefined
+        : scenario === "different run OAuth provider" ? { "openai-codex": token } : { anthropic: token });
+      mockReadQuotaCredential.mockReturnValue({ type: "oauth", access: token.accessToken, expires: token.expiresAt });
+      const { processes } = mockSpawn();
+      mockExecFile();
+      const params = createParams(agent);
+      const run = getContainerAdapter().run(params);
+      await tick();
+      if (scenario === "removed login") mockReadQuotaCredential.mockReturnValue(undefined);
+      if (scenario === "API-key login") mockReadQuotaCredential.mockReturnValue({ type: "api_key", key: "fixture-key" });
+      if (scenario === "credential read failure") mockReadQuotaCredential.mockImplementation(() => { throw new Error("fixture credential failure"); });
+      const historyBefore = vi.mocked(params.onHistoryEvent).mock.calls.slice();
+      const streamBefore = vi.mocked(params.onEvent).mock.calls.slice();
+      processes[0].emitStreamEvent({
+        type: "quota", provider: "anthropic", observedAt: Date.now() / 1000,
+        windows: [{ kind: "five-hour", windowSeconds: 18000, usedPercent: 25, resetAt: 2000000000 }],
+        ...(scenario === "extra headers" ? { headers: { authorization: "RAW_QUOTA_FRAME_SENTINEL_595" } } : {}),
+      });
+      const historyAfter = vi.mocked(params.onHistoryEvent).mock.calls.slice();
+      const streamAfter = vi.mocked(params.onEvent).mock.calls.slice();
+      processes[0].emitOutput({ text: "chat still works" });
+      processes[0].finish(0);
+      await expect(run).resolves.toMatchObject({ text: "chat still works" });
+      expect(modelQuotaStore.list()).toEqual([]);
+      expect(historyAfter).toEqual(historyBefore);
+      expect(streamAfter).toEqual(streamBefore);
+    },
+  );
   it("logs invalid-request fallbacks at error across stderr chunk boundaries", async () => {
     const root = tempDir();
     process.env.YOPLAI_HOME = path.join(root, "yoplai");

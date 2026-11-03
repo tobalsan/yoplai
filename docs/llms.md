@@ -37,6 +37,7 @@ Core TypeScript/Node.js process. Main ownership:
 - `src/oauth/`: host-side per-agent OAuth connection framework
 - `src/tasks/`: durable task ledger
 - `src/evals/`: headless single-turn Harbor eval runner
+- `src/model-routing/`: routing-table validation, bounded classifier, quota pool selection, durable per-session routing behind `runAgent`, and local shadow reports; operator steps are in [session model routing](model-routing.md)
 
 Important seams:
 
@@ -55,6 +56,8 @@ Important seams:
 ### `apps/web`
 
 Solid.js SPA. It consumes `/api/capabilities` and loads optional extension routes only when enabled.
+
+Admin Quota at `/admin/quota` reads `/api/admin/model-quota` every 20 seconds. Both require superadmin in multi-user mode and allow the local operator in single-user mode. The uncached route uses only the sanitized in-memory quota store and its policy helpers; viewing never polls a vendor. The page retains last readings on refresh errors and displays server freshness, missing windows and error-only logins honestly.
 
 Agent config Dashboard/Scheduled jobs tabs hide foreign private items for signed-in superadmins by default. `lib/private-items.ts` owns the client filters and shared `yoplai:show-private-items` browser preference; the muted eye toggle sits beside the tabs. Dashboards filter before parent grouping, jobs after polling reconciliation. Other roles and single-user mode are unchanged; this does not change server access.
 
@@ -165,11 +168,13 @@ extensions:
 Key rules:
 
 - `agent.yaml` may set `language: en | fr` for fixed run-failure notices; it defaults to `en`.
+- Root `modelQuota: { enabled: true }` opts into host-only OAuth subscription polling (restart required; off by default). `model-quota/` owns endpoint parsing, per-login in-memory observations, identity validation and pure policy helpers; shared quota types/header parsing live in `packages/shared/src/model-quota.ts`. Claude response hooks capture without polling on host and container; strict `quota` frames bypass history and streaming. Codex identity hashes the account claim of the request token, with current-credential validation on reads. Claude identity is host-local and only detects removal or switching away from OAuth, not an OAuth-to-OAuth account change. Missing, failed or expired readings are unknown. The read-only admin quota route exposes the sanitized view with the same policy helpers.
 - Optional root `notifications.adminChannel` names an entry in `notifications.channels`. Only provider quota failures notify it, at most once per provider/model per hour; rate limits and overloads do not.
 - A terminal run failure is persisted as a safe assistant history entry with `meta.stopReason: "error"` and `meta.failure.kind`. Its fixed user-facing text is localized by the agent language; raw provider errors remain diagnostic data and must not be shown as the notice.
 - Root `extensions.<id>` configures/loads an extension; agent `extensions.<id>` opts an agent into tool-style extensions unless `enabled: false`.
 - Agent folders may contain `.env`. `$env:NAME` resolves from agent-local env layered over `$YOPLAI_HOME/.env`, `yoplai.json` `env`, and `process.env`.
 - Agent-local resolved values are passed to extension hooks as `ctx.env`; do not assume they enter global `process.env` or sandbox env.
+- Root `modelRouting` defaults to `mode: off`; `shadow` records a decision and `enforce` applies it (see [session model routing](#session-model-routing)). The optional agent `modelRouting: { enabled: true, categories?: [...] }` selects global category IDs plus the configured floor. The classifier uses Pi's classifier operation with gateway-process `OPENAI_API_KEY` (including root `.env`), never subscription OAuth. See [configuration](configuration.md#model-routing) and the [13-category seed](examples/model-routing.json) for provider IDs, merged definitions, copied picks, and the pinned-catalog Terra fallback.
 - Agent env files are read on every resolution; key names log once per content change per agent and absolute path. Reloads preserve this log state; empty/missing files stay silent and reset the observed content.
 - External extensions default to `$YOPLAI_HOME/extensions` or `extensionsPath`; directories and symlinked directories are supported.
 - Projects root is `extensions.projects.root`; top-level `projects.root` is deprecated fallback only.
@@ -286,6 +291,24 @@ Multi-user mode scopes session maps and canonical history beneath `sessions/user
    - Pi auth invariant: runtime-resolved OAuth/automatic credentials retain their SDK credential type, including model overrides and fallback models. Only explicit `api_key` selection installs a runtime API-key override; never reclassify an OAuth access token as an API key.
    - Provider retry/fallback policy lives in `packages/shared/src/provider-retry.ts`. HTTP 400 plus `invalid_request_error` permits one configured fallback, never an in-place primary retry (even with transient keywords). Fallback still requires no text/tool calls in the failed turn. Pi logs the primary invalid request at error when fallback starts; the container host elevates matching `model_fallback` stderr events to error with category `invalid_request`.
 7. Flush canonical history and settle lifecycle state; then drain queued non-native work.
+
+### Session model routing
+
+`runAgent` routes opted-in Pi agents on host and container after reserving the run and persisting the human message. Only `web`, `slack`, `discord`, `telegram`, `mattermost`, and `irc` human chat turns qualify. Explicit model overrides, agent-origin senders, background runs, non-Pi SDKs, empty messages, and `compact:`, `scheduler`, or `dream:` session IDs are excluded; scheduler, subagent, dream, heartbeat, webhook and other automation sources never route.
+
+A predicate `no` (such as a greeting) uses the configured model and leaves the session unrouted. The first detected work request classifies against the table: a confident pick locks its model and effort; a low score locks a snapshot of `agent.model` (`usual`). Canonical history stores the versioned `modelRoute` metadata under the session's history owner, agent and session, before a routed model runs. The lock survives restart and compaction; `/new` with a session key and no explicit session ID rotates to an unlocked session while retaining the old lock, and session deletion through `resetSession` removes it. Unlocked follow-ups wait for their own routing turn and retain explicit thinking directives.
+
+`shadow` stores the pick while retaining the configured model, effort and fallback. An old shadow lock is never promoted by switching to `enforce`. After hot reload, `off` or removing agent opt-in restores configured behavior on following turns without reading locks; running turns are not interrupted, and re-enabling enforcement resumes existing enforce locks. The default reload interval is 5000 ms. Table catalog validation and quota-poller activation require startup; see the [rollout and rollback guide](model-routing.md#rollout).
+
+Effort precedence is explicit `thinkLevel` or an OAuth agent's `/think` directive, then route effort, then agent default. Every enforced lock suppresses `fallback_model`, including `usual` locks. After the locked model's normal retries fail, the existing failure notice is shown and the lock stays: retry uses that model, or `/new` starts fresh. A matching `usual` snapshot keeps the agent's normal authentication mode.
+
+Classifier unavailability and router, quota-reader or lock-write errors use the configured model without recording a new lock. The default quota reader uses host credentials and the local quota store, without refreshing credentials, polling or vendor calls; an injected reader still wins. Unknown/stale quota never causes a quota-based switch: a preferred pool follows the table; `either` without comparable weekly pace locks `usual` with a quota reason, without a hardcoded pool. Both known 5-hour windows exhausted leaves the session unrouted for a later retry. Routing logs contain decision metadata and latency, never message text or credentials.
+
+#### Routing telemetry and reports
+
+Each eligible unlocked classifier invocation appends a versioned `modelRouteAttempt` metadata entry alongside the existing `modelRoute` lock. Attempts project only routing facts: human-entry timestamp, predicate/category results and timings, threshold/table version, selected versus actual model, quota age/state/pace and pool reason. They contain no message text, prompts, tokens or account identifiers. Appends are best effort and never alter the routing result. Optional trace metadata uses `routingMode`, `routingTableVersion`, `routingState`, `routingActual`, and locked `routingProposed`, `routingCategory`, `routingScore`, `routingPool`; local history works without Langfuse.
+
+`yoplai model-routing report --since 2026-11-02` reads root and every user's canonical histories, validates routing records, and reports fresh sessions with attempts or a lock; sessions with neither never count. Options: `--until <ISO-date>`, repeatable `--agent <id>`, `--json` (includes per-session rows), `--out <file>`. Shadow metrics include denominators, detection proxies, nearest-rank percentiles, quota freshness, would-be splits and execution mismatch flags; mixed/enforced sessions are counted separately. A shadow lock without a uniquely matching lock attempt stays in population/outcome counts under `outcomes.lockAttemptMissing` but is excluded from usable-session detection, score, quota and proposed-model splits; its recorded attempts still count in `detection.unavailableAttempts`. The seven-day warning uses earliest-to-latest included routing records, not the requested date interval; human-label scoring remains ALG-604. See the [operator report guidance](model-routing.md#telemetry-and-the-shadow-report).
 
 Workspace bootstrap creates missing `AGENTS.md` and `USER.md` from `docs/templates/` without overwriting existing files. `AGENTS.md` is implicitly prepended; `system_files` controls remaining prompt-file order.
 
