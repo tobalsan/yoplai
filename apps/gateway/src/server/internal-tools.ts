@@ -95,12 +95,14 @@ function requestIdentityMatches(
 
 function resolveDocumentPath(
   requestedPath: string,
-  roots: ContainerTokenContext["roots"]
+  context: ContainerTokenContext,
+  kind: "Document" | "Image" = "Document"
 ): string {
   const mappings = [
-    ["/workspace/uploads", roots.uploads],
-    ["/workspace/data", roots.data],
-    ["/workspace", roots.workspace],
+    ["/workspace/uploads", context.roots.uploads],
+    ["/workspace/data", context.roots.data],
+    ["/workspace/files", context.conversationFiles?.hostPath],
+    ["/workspace", context.roots.workspace],
   ] as const;
   const mapping = mappings.find(([containerRoot]) =>
     requestedPath === containerRoot || requestedPath.startsWith(`${containerRoot}/`)
@@ -110,7 +112,26 @@ function resolveDocumentPath(
   if (relative.startsWith("..") || path.isAbsolute(relative)) {
     throw invalidInput("Document path traversal is not allowed");
   }
+  if (!mapping[1]) throw invalidInput(`${kind} was not found under an approved container root`);
   return path.join(mapping[1], relative);
+}
+
+async function isApprovedDocumentPath(realPath: string, context: ContainerTokenContext): Promise<boolean> {
+  const approvedRoots = await Promise.all(
+    [...Object.values(context.roots), context.conversationFiles?.hostPath].map(async (root) => {
+      if (!root) return undefined;
+      try {
+        return await fs.realpath(root);
+      } catch {
+        return undefined;
+      }
+    })
+  );
+  return approvedRoots.some((root) => {
+    if (!root) return false;
+    const relative = path.relative(root, realPath);
+    return !relative.startsWith("..") && !path.isAbsolute(relative);
+  });
 }
 
 async function extractDocument(
@@ -124,28 +145,14 @@ async function extractDocument(
   if (path.extname(parsed.data.path).toLowerCase() !== ".pdf") {
     throw invalidInput("extract_document supports PDF files only");
   }
-  const filePath = resolveDocumentPath(parsed.data.path, context.roots);
+  const filePath = resolveDocumentPath(parsed.data.path, context);
   let realPath: string;
   try {
     realPath = await fs.realpath(filePath);
   } catch {
     throw invalidInput("Document was not found under an approved container root");
   }
-  const approvedRoots = await Promise.all(
-    Object.values(context.roots).map(async (root) => {
-      try {
-        return await fs.realpath(root);
-      } catch {
-        return undefined;
-      }
-    })
-  );
-  const approved = approvedRoots.some((root) => {
-    if (!root) return false;
-    const relative = path.relative(root, realPath);
-    return !relative.startsWith("..") && !path.isAbsolute(relative);
-  });
-  if (!approved) throw invalidInput("Document path is outside approved container roots");
+  if (!await isApprovedDocumentPath(realPath, context)) throw invalidInput("Document path is outside approved container roots");
   signal.throwIfAborted();
   return { text: (await deps.extractText(realPath, "application/pdf", signal)) ?? "" };
 }
@@ -153,12 +160,11 @@ async function extractDocument(
 async function describeContainerImage(deps: InternalToolsDeps, args: unknown, context: ContainerTokenContext, config: GatewayConfig, signal: AbortSignal): Promise<{ description: string }> {
   const parsed = z.object({ path: z.string().min(1), question: z.string().optional() }).safeParse(args);
   if (!parsed.success) throw invalidInput("describe_image requires a path");
-  const filePath = resolveDocumentPath(parsed.data.path, context.roots);
+  const filePath = resolveDocumentPath(parsed.data.path, context, "Image");
   const mimeType = { ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".gif": "image/gif", ".webp": "image/webp", ".svg": "image/svg+xml" }[path.extname(filePath).toLowerCase()];
   if (!mimeType) throw invalidInput("describe_image supports PNG, JPEG, GIF, WebP, and SVG files only");
   const realPath = await fs.realpath(filePath).catch(() => { throw invalidInput("Image was not found under an approved container root"); });
-  const roots = await Promise.all(Object.values(context.roots).map((root) => fs.realpath(root).catch(() => undefined)));
-  if (!roots.some((root) => root && !path.relative(root, realPath).startsWith("..") && !path.isAbsolute(path.relative(root, realPath)))) throw invalidInput("Image path is outside approved container roots");
+  if (!await isApprovedDocumentPath(realPath, context)) throw invalidInput("Image path is outside approved container roots");
   signal.throwIfAborted();
   return { description: await deps.describeImage(await fs.readFile(realPath, { signal }), mimeType, config, parsed.data.question, signal) };
 }
