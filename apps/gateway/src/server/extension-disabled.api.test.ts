@@ -84,6 +84,19 @@ describe("extension-disabled API responses", () => {
     expect((await app.request("/api/admin/users")).status).toBe(404);
   });
 
+  it("exempts only the exact core model quota path when multi-user is disabled", async () => {
+    const { app } = await import("./index.js");
+    const response = await app.request("/api/admin/model-quota");
+    expect(response.status).toBe(200);
+    expect(response.headers.get("cache-control")).toBe("no-store");
+    expect(await response.json()).toMatchObject({ pollingEnabled: false, logins: [] });
+    for (const url of ["/api/admin/model-quota/extra", "/api/admin/model-quota-other", "/api/admin/users"]) {
+      const blocked = await app.request(url);
+      expect(blocked.status).toBe(404);
+      expect(await blocked.json()).toEqual({ error: "extension_disabled", extension: "multiUser" });
+    }
+  });
+
   it("gates routes loaded from an external extension", async () => {
     const { getExtensionRuntime } = await import("../extensions/registry.js");
     getExtensionRuntime().load([

@@ -98,6 +98,8 @@ import { DashboardPinStore } from "../canvas/pins.js";
 import { resolveDashboardHttpActor, listDashboardRecipients, dashboardOwnerName } from "../canvas/http-auth.js";
 import { getAuditActor, listSettingsChanges, recordSettingsChange } from "../audit/store.js";
 import { diffSettings } from "../audit/diff.js";
+import { modelQuotaStore } from "../model-quota/runtime.js";
+import { fiveHourState, pace } from "../model-quota/policy.js";
 
 const api = new Hono();
 // Hono fetch creates a fresh context. Carry only the outer host’s authenticated
@@ -236,6 +238,37 @@ async function isSuperadminRequest(c: Context): Promise<boolean> {
 }
 
 api.get("/top-extensions", (c) => c.json(readTopExtensions()));
+
+api.get("/admin/model-quota", async (c) => {
+  c.header("Cache-Control", "no-store");
+  try {
+    if (!(await isSuperadminRequest(c))) return c.json({ error: "forbidden" }, 403);
+    const generatedAt = Math.floor(Date.now() / 1000);
+    const logins = modelQuotaStore.list().map((snapshot) => {
+      const window = (kind: "five-hour" | "weekly") => {
+        const value = snapshot.windows.find((entry) => entry.kind === kind);
+        return value ? { usedPercent: value.usedPercent, resetAt: value.resetAt } : null;
+      };
+      const weeklyPace = pace(snapshot, "weekly", generatedAt);
+      return {
+        provider: snapshot.provider,
+        accountRef: snapshot.accountRef,
+        ...(snapshot.planLabel === undefined ? {} : { plan: snapshot.planLabel }),
+        source: snapshot.source ?? null,
+        updatedAt: snapshot.updatedAt ?? null,
+        stale: snapshot.stale,
+        error: snapshot.errorKind ?? null,
+        fiveHour: window("five-hour"),
+        weekly: window("weekly"),
+        weeklyPace: weeklyPace === "unknown" ? null : weeklyPace,
+        fiveHourState: fiveHourState(snapshot, generatedAt),
+      };
+    });
+    return c.json({ generatedAt, pollingEnabled: loadConfig().modelQuota?.enabled === true, logins });
+  } catch {
+    return c.json({ error: "Failed to read model quota" }, 500);
+  }
+});
 
 async function listTopExtensionCandidates() {
   const config = loadConfig();

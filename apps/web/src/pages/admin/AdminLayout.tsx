@@ -20,6 +20,7 @@ function adminTabs() {
       visible: !capabilities.multiUser || isSuperadmin(capabilities.user?.role),
     },
     { href: "/admin/skills", label: "Skills", visible: !capabilities.multiUser || isSuperadmin(capabilities.user?.role) },
+    { href: "/admin/quota", label: "Quota", visible: !capabilities.multiUser || isSuperadmin(capabilities.user?.role) },
   ].filter((tab) => tab.visible);
 }
 
@@ -127,8 +128,10 @@ export default function AdminLayout(props: {
 
         @media (max-width: 720px) {
           .admin-page {
-            padding: 20px 16px 24px;
+            padding: 56px 16px 24px;
           }
+
+          .admin-tabs { flex-wrap: wrap; }
 
           .admin-page-header {
             flex-direction: column;

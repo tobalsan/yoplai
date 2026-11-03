@@ -3,8 +3,11 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { z } from "zod";
 import { defineToolExtension } from "@yoplai/shared";
+import type { QuotaSnapshot } from "@yoplai/shared";
 
 const getAgent = vi.fn();
+const quota = vi.hoisted(() => ({ list: vi.fn<() => QuotaSnapshot[]>(() => []), poll: vi.fn(), token: vi.fn() }));
+vi.mock("../model-quota/runtime.js", () => ({ modelQuotaStore: { list: quota.list }, startModelQuotaPollers: quota.poll, readQuotaCredential: quota.token }));
 const getActiveAgents = vi.fn();
 const isAgentActive = vi.fn();
 const resolveWorkspaceDir = vi.fn((workspace: string) => workspace);
@@ -221,6 +224,101 @@ describe("api core session resolution", () => {
     const expected = { extensions: ["webhooks"], mcp: ["https://a.test/mcp"], system: { extensions: ["webhooks"], mcp: ["https://a.test/mcp"] } };
     expect(await response.json()).toEqual(expected);
     expect(await (await api.request("/top-extensions")).json()).toEqual(expected);
+  });
+
+  it("allows only the owner or superadmin to read quota without caching", async () => {
+    quota.list.mockReturnValue([]);
+    const { api } = await import("./api.core.js");
+    const owner = await api.request("/admin/model-quota");
+    expect(owner.status).toBe(200);
+    expect(owner.headers.get("cache-control")).toBe("no-store");
+    expect(await owner.json()).toMatchObject({ pollingEnabled: false, logins: [] });
+    multiUserState.loaded = true;
+    for (const role of [null, "user", "admin", ["user", "admin"]]) {
+      multiUserState.authContext = role === null ? null : { user: { id: "u", role }, session: { id: "s", userId: "u" } };
+      const denied = await api.request("/admin/model-quota");
+      expect(denied.status).toBe(403);
+      expect(denied.headers.get("cache-control")).toBe("no-store");
+    }
+    for (const role of ["superadmin", ["user", "superadmin"]]) {
+      multiUserState.authContext = { user: { id: "u", role }, session: { id: "s", userId: "u" } };
+      expect((await api.request("/admin/model-quota")).status).toBe(200);
+    }
+    expect(quota.list).toHaveBeenCalledTimes(3);
+    expect(quota.poll).not.toHaveBeenCalled();
+    expect(quota.token).not.toHaveBeenCalled();
+  });
+
+  it("returns sanitized stored windows and real pace while retaining stale readings", async () => {
+    const now = 1_800_000_000;
+    const clock = vi.spyOn(Date, "now").mockReturnValue(now * 1000);
+    const vendor = vi.spyOn(globalThis, "fetch");
+    loadConfigValue.modelQuota = { enabled: true };
+    const reading = { provider: "openai-codex", accountRef: "hash", status: "known" as const, stale: false, planLabel: "Plus", source: "wham-usage" as const, updatedAt: now, windows: [
+      { kind: "five-hour" as const, usedPercent: 25, resetAt: now + 9000, windowSeconds: 18000 },
+      { kind: "weekly" as const, usedPercent: 40, resetAt: now + 302400, windowSeconds: 604800 },
+    ], accessToken: "must-not-leak", accountId: "raw-account-must-not-leak", headers: { authorization: "Bearer must-not-leak" } };
+    quota.list.mockReturnValue([reading, { ...reading, accountRef: "stale", stale: true, errorKind: "network" }, { provider: "anthropic", accountRef: "error-only", status: "unknown", stale: true, errorKind: "invalid_payload", windows: [] }]);
+    try {
+      const { api } = await import("./api.core.js");
+      for (let i = 0; i < 2; i++) {
+        const response = await api.request("/admin/model-quota");
+        expect(response.status).toBe(200);
+        expect(await response.json()).toEqual({ generatedAt: now, pollingEnabled: true, logins: [
+          { provider: "openai-codex", accountRef: "hash", plan: "Plus", source: "wham-usage", updatedAt: now, stale: false, error: null, fiveHour: { usedPercent: 25, resetAt: now + 9000 }, weekly: { usedPercent: 40, resetAt: now + 302400 }, weeklyPace: 0.8, fiveHourState: "ok" },
+          { provider: "openai-codex", accountRef: "stale", plan: "Plus", source: "wham-usage", updatedAt: now, stale: true, error: "network", fiveHour: { usedPercent: 25, resetAt: now + 9000 }, weekly: { usedPercent: 40, resetAt: now + 302400 }, weeklyPace: null, fiveHourState: "unknown" },
+          { provider: "anthropic", accountRef: "error-only", source: null, updatedAt: null, stale: true, error: "invalid_payload", fiveHour: null, weekly: null, weeklyPace: null, fiveHourState: "unknown" },
+        ] });
+      }
+      expect(vendor).not.toHaveBeenCalled();
+      expect(quota.poll).not.toHaveBeenCalled();
+      expect(quota.token).not.toHaveBeenCalled();
+    } finally { clock.mockRestore(); vendor.mockRestore(); }
+  });
+
+  it("reports Pro absence, reset uncertainty and exhausted limits without refreshing providers", async () => {
+    const now = 1_800_000_000;
+    const clock = vi.spyOn(Date, "now").mockReturnValue(now * 1000);
+    const vendor = vi.spyOn(globalThis, "fetch");
+    const oauthTokens = await import("../sdk/container/oauth-tokens.js");
+    const token = vi.spyOn(oauthTokens, "resolveOAuthToken");
+    const base = { provider: "openai-codex", status: "known" as const, stale: false, source: "wham-usage" as const, updatedAt: now };
+    const weekly = { kind: "weekly" as const, usedPercent: 40, resetAt: now + 302400, windowSeconds: 604800 };
+    try {
+      const { api } = await import("./api.core.js");
+      quota.list.mockReturnValue([]);
+      for (let i = 0; i < 2; i++) {
+        expect(await (await api.request("/admin/model-quota")).json()).toEqual({ generatedAt: now, pollingEnabled: false, logins: [] });
+      }
+      quota.list.mockReturnValue([
+        { ...base, accountRef: "pro", planLabel: "Pro", windows: [weekly] },
+        { ...base, accountRef: "reset", windows: [{ ...weekly, resetAt: now }] },
+        { ...base, accountRef: "limited", windows: [weekly, { kind: "five-hour", usedPercent: 10, resetAt: now + 9000, windowSeconds: 18000, status: "limited" }] },
+        { ...base, accountRef: "stale", stale: true, errorKind: "timeout", windows: [weekly] },
+      ]);
+      for (let i = 0; i < 2; i++) {
+        const response = await api.request("/admin/model-quota");
+        const { logins } = await response.json();
+        expect(logins).toEqual([
+          { provider: "openai-codex", accountRef: "pro", plan: "Pro", source: "wham-usage", updatedAt: now, stale: false, error: null, fiveHour: null, weekly: { usedPercent: 40, resetAt: now + 302400 }, weeklyPace: 0.8, fiveHourState: "absent" },
+          { provider: "openai-codex", accountRef: "reset", source: "wham-usage", updatedAt: now, stale: false, error: null, fiveHour: null, weekly: { usedPercent: 40, resetAt: now }, weeklyPace: null, fiveHourState: "unknown" },
+          { provider: "openai-codex", accountRef: "limited", source: "wham-usage", updatedAt: now, stale: false, error: null, fiveHour: { usedPercent: 10, resetAt: now + 9000 }, weekly: { usedPercent: 40, resetAt: now + 302400 }, weeklyPace: 0.8, fiveHourState: "exhausted" },
+          { provider: "openai-codex", accountRef: "stale", source: "wham-usage", updatedAt: now, stale: true, error: "timeout", fiveHour: null, weekly: { usedPercent: 40, resetAt: now + 302400 }, weeklyPace: null, fiveHourState: "unknown" },
+        ]);
+      }
+      expect(vendor).not.toHaveBeenCalled();
+      expect(token).not.toHaveBeenCalled();
+      expect(quota.poll).not.toHaveBeenCalled();
+    } finally { clock.mockRestore(); vendor.mockRestore(); token.mockRestore(); }
+  });
+
+  it("returns a generic uncached error when quota storage fails", async () => {
+    quota.list.mockImplementationOnce(() => { throw new Error("sensitive credential detail"); });
+    const { api } = await import("./api.core.js");
+    const response = await api.request("/admin/model-quota");
+    expect(response.status).toBe(500);
+    expect(response.headers.get("cache-control")).toBe("no-store");
+    expect(await response.json()).toEqual({ error: "Failed to read model quota" });
   });
 
   it("returns an empty agent list without default resolution errors", async () => {
