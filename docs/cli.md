@@ -23,6 +23,7 @@ yoplai agents migrate       migrate centralized v2 agents to v3 folders
 yoplai send ...             send agent message
 yoplai notify ...           send configured channel notification
 yoplai models refresh       refresh Pi's cached model catalogs
+yoplai model-routing report --since <ISO-date>  evaluate fresh local shadow sessions (`--until`, repeatable `--agent`, `--json`, `--out`)
 yoplai auth ...             provider OAuth login/status/logout
 yoplai user token ...       multi-user bearer token management
 yoplai scheduler ...        cron job management

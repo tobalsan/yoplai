@@ -15,6 +15,7 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Added
 
+- Record private-data-free model-routing attempts and trace metadata, and evaluate fresh shadow sessions with `yoplai model-routing report`.
 - Add a superadmin Quota tab with subscription usage, freshness and errors, refreshed from the local in-memory store without vendor requests.
 - Track per-login subscription quota in memory from sanitized Claude response headers and opt-in host usage pollers (`modelQuota.enabled`), with freshness, error state and pure quota policy helpers.
 - Route opted-in Pi chat sessions once and persist their model/effort lock across restarts and compaction, with shadow evaluation, immediate off-mode rollback, and configured-model fallback when routing is unavailable.

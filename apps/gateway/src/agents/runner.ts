@@ -461,15 +461,16 @@ export async function runAgent(
     // Persist the user message before the adapter runs so a failure before
     // the model starts (model resolution, auth, ...) cannot lose it. Must be
     // awaited: a persistence error aborts the run via the normal catch path.
+    const userMessageAt = Date.now();
     if (message.trim()) {
       await lifecycle.beginUserTurn(
         message,
-        Date.now(),
+        userMessageAt,
         params.attachments
       );
     }
 
-    const route = await routeSession({ ...routingContext(), signal: abortController.signal }, params.routingDependencies);
+    const route = await routeSession({ ...routingContext(), userMessageAt, onTraceMetadata: (metadata) => lifecycle.setTraceMetadata(metadata), signal: abortController.signal }, params.routingDependencies);
     effectiveModel = route.model ?? params.model;
     resolvedThinkLevel = params.thinkLevel ?? directiveThinkLevel ?? route.effort ?? resolveAgentThinkLevel(agent);
     if (resolvedThinkLevel) lifecycle.setTraceMetadata({ thinkingLevel: resolvedThinkLevel });
