@@ -17,6 +17,9 @@ const mockReadStoredCredential = vi.fn<
   (provider: string) => MockStoredCredential
 >(() => undefined);
 const mockSetRuntimeApiKey = vi.fn(async () => undefined);
+type ResponseHook = (event: { status: number; headers: Record<string, string> }, ctx: { model?: { provider: string } }) => unknown;
+const providerResponseHooks: ResponseHook[] = [];
+let runExtensionFactories = false;
 const mockRuntime = {
   getModel: mockGetModel,
   getAuth: mockGetAuth,
@@ -73,6 +76,15 @@ vi.mock("@earendil-works/pi-coding-agent", async (importOriginal) => ({
     create: mockCreateModelRuntime,
   },
   DefaultResourceLoader: class {
+    constructor(options: { extensionFactories?: Array<(pi: { on: (event: string, hook: ResponseHook) => void }) => unknown> }) {
+      if (runExtensionFactories) {
+        for (const factory of options.extensionFactories ?? []) factory({
+          on: (event, hook) => {
+            if (event === "after_provider_response") providerResponseHooks.push(hook);
+          },
+        });
+      }
+    }
     async reload() {
       return undefined;
     }
@@ -179,6 +191,8 @@ function retryWarnings(
 describe("pi adapter transient provider retry", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    providerResponseHooks.length = 0;
+    runExtensionFactories = false;
     mockReadStoredCredential.mockReturnValue(undefined);
     mockGetEnvApiKey.mockReturnValue("env-api-key");
     mockGetAuth.mockResolvedValue({ auth: { apiKey: "runtime-key" } });
@@ -186,6 +200,81 @@ describe("pi adapter transient provider retry", () => {
     mockGetLoadedExtensions.mockReturnValue([]);
     mockGetExtensionAgentTools.mockResolvedValue([]);
     mockGetModel.mockClear();
+  });
+
+  // ALG-595 seams approved by Thinh, comment 959e9e2b-98a9-48ff-8077-6325cc5713ab.
+  // Public run + fake Pi response event catches capture/auth/output wiring, not live HTTP.
+  it("captures OAuth quota with automatic auth without leaking headers into chat", async () => {
+    const { modelQuotaStore } = await import("../../../model-quota/runtime.js");
+    modelQuotaStore.list();
+    mockReadStoredCredential.mockReturnValue({ type: "oauth", access: "fixture-access", expires: Date.now() + 3600000 });
+    runExtensionFactories = true;
+    const agent = makeAgent({ toolDeferral: { enabled: false, alwaysOnTools: [], alwaysOnExtensions: [] } });
+    setLoadedConfig({ agents: [agent] } as GatewayConfig);
+    const params = makeRunParams(agent);
+    const session = makeSession();
+    session.prompt.mockImplementationOnce(async () => {
+      for (const hook of providerResponseHooks) await hook({ status: 200, headers: {
+        "anthropic-ratelimit-unified-5h-utilization": "0.25",
+        "anthropic-ratelimit-unified-5h-reset": "2000000000",
+        "authorization": "RAW_HEADER_SENTINEL_595",
+      } }, { model: { provider: "anthropic" } });
+      session.agent.state.messages.push(successTurn());
+    });
+    mockCreateAgentSession.mockResolvedValue({ session });
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const { piAdapter } = await import("../adapter.js");
+      await expect(piAdapter.run(params)).resolves.toMatchObject({ text: "recovered" });
+      expect(modelQuotaStore.list()).toContainEqual(expect.objectContaining({
+        provider: "anthropic", accountRef: "host", source: "headers",
+        windows: [{ kind: "five-hour", windowSeconds: 18000, usedPercent: 25, resetAt: 2000000000 }],
+      }));
+      expect(JSON.stringify([vi.mocked(params.onEvent).mock.calls, vi.mocked(params.onHistoryEvent).mock.calls, log.mock.calls, warn.mock.calls])).not.toContain("RAW_HEADER_SENTINEL_595");
+    } finally {
+      log.mockRestore();
+      warn.mockRestore();
+    }
+  });
+
+  it.each([
+    { name: "explicit API-key mode", mode: "api_key", initial: "anthropic", current: "anthropic", credential: "oauth", tracked: false },
+    { name: "stored API-key login", initial: "anthropic", current: "anthropic", credential: "api_key", tracked: false },
+    { name: "fallback into Claude", initial: "openai-codex", current: "anthropic", credential: "oauth", tracked: true },
+    { name: "fallback away from Claude", initial: "anthropic", current: "openai-codex", credential: "oauth", tracked: false },
+    { name: "missing current model", initial: "anthropic", current: undefined, credential: "oauth", tracked: false },
+    { name: "credential removed during the run", initial: "anthropic", current: "anthropic", credential: "missing", tracked: false },
+    { name: "credential read failure", initial: "anthropic", current: "anthropic", credential: "throw", tracked: false },
+  ] as const)("keeps chat working and respects $name during response capture", async (fixture) => {
+    const { modelQuotaStore } = await import("../../../model-quota/runtime.js");
+    modelQuotaStore.list();
+    const oauth = { type: "oauth", access: "fixture-access", expires: Date.now() + 3600000 } as const;
+    mockReadStoredCredential.mockReturnValue(oauth);
+    runExtensionFactories = true;
+    const agent = makeAgent({
+      model: { provider: fixture.initial, model: "fixture-model" },
+      auth: "mode" in fixture ? { mode: fixture.mode } : undefined,
+      toolDeferral: { enabled: false, alwaysOnTools: [], alwaysOnExtensions: [] },
+    });
+    setLoadedConfig({ agents: [agent] } as GatewayConfig);
+    const session = makeSession();
+    session.prompt.mockImplementationOnce(async () => {
+      mockReadStoredCredential.mockImplementation(() => {
+        if (fixture.credential === "throw") throw new Error("fixture credential error");
+        if (fixture.credential === "missing") return undefined;
+        return fixture.credential === "api_key" ? { type: "api_key", key: "fixture-key" } : oauth;
+      });
+      for (const hook of providerResponseHooks) await hook({ status: 200, headers: {
+        "anthropic-ratelimit-unified-5h-utilization": "0.25",
+        "anthropic-ratelimit-unified-5h-reset": "2000000000",
+      } }, { model: fixture.current ? { provider: fixture.current } : undefined });
+      session.agent.state.messages.push(successTurn());
+    });
+    mockCreateAgentSession.mockResolvedValue({ session });
+    const { piAdapter } = await import("../adapter.js");
+    await expect(piAdapter.run(makeRunParams(agent))).resolves.toMatchObject({ text: "recovered" });
+    expect(modelQuotaStore.list()).toHaveLength(fixture.tracked ? 1 : 0);
   });
 
   it("logs successful primary attempts at info and failed primary attempts at warn", async () => {

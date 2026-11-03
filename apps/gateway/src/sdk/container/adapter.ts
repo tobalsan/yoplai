@@ -27,6 +27,7 @@ import {
 import { getDefaultSdkId, getSdkAdapter } from "../registry.js";
 import { abortContainerRun, registerContainerToken, removeContainerToken } from "./tokens.js";
 import { resolveOAuthTokens } from "./oauth-tokens.js";
+import { recordContainerQuota } from "../../model-quota/runtime.js";
 import {
   appendAttachmentContext,
   buildDocumentAttachmentContext,
@@ -608,6 +609,10 @@ export function getContainerAdapter(): SdkAdapter {
             const message = JSON.parse(rawEvent) as Record<string, unknown> | null;
             if (message?.type === "tool_call" || message?.type === "tool_result") delete message.view;
             const parsedEvent = ContainerRunnerProtocolEventSchema.parse(message);
+            if (parsedEvent.type === "quota") {
+              recordContainerQuota(parsedEvent, Object.keys(input.oauthTokens ?? {}));
+              return;
+            }
             if (parsedEvent.type === "retry") {
               logWarn(
                 `[agent] retrying transient provider error (attempt ${parsedEvent.attempt}, delay ${parsedEvent.delaySeconds}s): ${parsedEvent.message}`

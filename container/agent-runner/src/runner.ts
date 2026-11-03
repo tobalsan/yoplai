@@ -31,6 +31,7 @@ import {
   DEFAULT_RETRY_MAX_ATTEMPTS,
   PI_SYSTEM_PROMPT,
   codemodeGuidance,
+  parseClaudeQuotaHeaders,
   resolveCodemodeLimits,
   findFailedTurn,
   getProviderErrorCategory,
@@ -472,6 +473,22 @@ export async function runAgent(
       agentDir: input.sessionDir,
       settingsManager,
       extensionFactories: [
+        (pi) => {
+          pi.on("after_provider_response", (event, ctx) => {
+            try {
+              if (ctx.model?.provider !== "anthropic") return;
+              const parsed = parseClaudeQuotaHeaders(event.headers);
+              if (parsed.ok && parsed.windows.length) {
+                onStreamEvent?.({
+                  type: "quota", provider: "anthropic", windows: parsed.windows,
+                  observedAt: Date.now() / 1000,
+                });
+              }
+            } catch {
+              // Quota tracking must never interrupt the model response.
+            }
+          });
+        },
         ...(toolDeferral.enabled ? [createToolSearchExtension()] : []),
         ...(input.codemode === true
           ? [createCodemodeExtension({ mode: "on", inlineBudget: 1000, models: false })]

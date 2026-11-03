@@ -35,6 +35,7 @@ import type {
 } from "../types.js";
 import { CONFIG_DIR, loadConfig, resolveAgentEnv } from "../../config/index.js";
 import { logError, logInfo, logWarn } from "../../logging.js";
+import { captureClaudeQuota } from "../../model-quota/runtime.js";
 import { buildOnecliEnv } from "../../config/onecli.js";
 import { resolveSystemFiles } from "@yoplai/shared/node/system-files";
 import { createRuntimeSessionFile } from "@yoplai/shared/node/sanitize-session";
@@ -582,6 +583,11 @@ export const piAdapter: SdkAdapter = {
         agentDir: CONFIG_DIR,
         settingsManager,
         extensionFactories: [
+          (pi) => {
+            pi.on("after_provider_response", (event, ctx) => {
+              captureClaudeQuota(ctx.model?.provider ?? "", event.headers, authMode);
+            });
+          },
           ...(agent.toolDeferral?.enabled !== false
             ? [createToolSearchExtension()]
             : []),

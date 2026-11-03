@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { QuotaWindowSchema } from "./model-quota.js";
 import { RunFailureKindSchema, type RunFailureKind } from "./run-failure.js";
 import type { Hono } from "hono";
 import type { CredentialScope } from "./oauth/types.js";
@@ -1298,6 +1299,7 @@ export const AgentDiscoveryConfigSchema = z.union([
 
 // Settings shared by the discovery (root) and resolved gateway schemas.
 const GatewayCommonFields = {
+  modelQuota: z.object({ enabled: z.boolean().default(false) }).optional(),
   modelRouting: ModelRoutingConfigSchema.optional().default({}),
   apps: z.object({
     origin: z.string().optional(),
@@ -2868,6 +2870,12 @@ export type ContainerFileOutputRequest = z.infer<
 export const ContainerRunnerProtocolEventSchema = z.discriminatedUnion("type", [
   ...HistoryEventSchema.options,
   ContainerFileOutputRequestSchema,
+  z.object({
+    type: z.literal("quota"),
+    provider: z.literal("anthropic"),
+    windows: z.array(QuotaWindowSchema),
+    observedAt: z.number().finite().nonnegative(),
+  }).strict(),
   z.object({
     type: z.literal("retry"),
     attempt: z.number().int().positive(),

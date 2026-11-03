@@ -1,0 +1,6 @@
+export const QUOTA_MAX_AGE_SECONDS = 20 * 60;
+export const QUOTA_POLL_INTERVAL_SECONDS = 5 * 60;
+export const CLAUDE_HEADER_IDLE_SECONDS = 10 * 60;
+export const QUOTA_REQUEST_TIMEOUT_MS = 10_000;
+export const QUOTA_MAX_BACKOFF_SECONDS = 60 * 60;
+export const QUOTA_PACE_FLOOR = 0.05;
