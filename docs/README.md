@@ -5,6 +5,7 @@
 ## Operate Yoplai
 
 - [Configuration](configuration.md) — v3 instance and agent settings, environment, networking
+- [Session model routing](model-routing.md) — locks, quota ownership, shadow rollout, enforcement and rollback
 - [Self-hosting](self-hosting.md) — background service, server exposure, upgrades, backups
 - [Container isolation](container-isolation.md) — Docker sandboxes and OneCLI
 - [Data layout](data-layout.md) — config, credentials, sessions, history, media, project files

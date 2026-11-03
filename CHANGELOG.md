@@ -15,6 +15,7 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Added
 
+- Add a host model-routing integration E2E suite and an operator guide covering rollout, rollback, quota ownership and shadow reports; container E2E follows in ALG-608.
 - Record private-data-free model-routing attempts and trace metadata, and evaluate fresh shadow sessions with `yoplai model-routing report`.
 - Add a superadmin Quota tab with subscription usage, freshness and errors, refreshed from the local in-memory store without vendor requests.
 - Track per-login subscription quota in memory from sanitized Claude response headers and opt-in host usage pollers (`modelQuota.enabled`), with freshness, error state and pure quota policy helpers.
