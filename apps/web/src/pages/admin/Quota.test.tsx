@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { render } from "solid-js/web";
+import { getByRole, queryByRole, queryByText } from "@testing-library/dom";
 const m = vi.hoisted(() => ({ fetchModelQuota: vi.fn() }));
 vi.mock("../../api/model-quota", () => m);
 vi.mock("@solidjs/router", () => ({ A: (props: Record<string, unknown>) => <a {...props} />, useLocation: () => ({ pathname: "/admin/quota" }) }));
@@ -19,7 +20,13 @@ describe("Quota", () => {
   it("loads and displays a local reading for the operator", async () => {
     m.fetchModelQuota.mockResolvedValue({ generatedAt: 1800000000, pollingEnabled: true, logins: [{ provider: "openai-codex", accountRef: "ab12", plan: "Plus", source: "wham-usage", updatedAt: 1799999940, stale: false, error: null, fiveHour: { usedPercent: 42, resetAt: 1800003600 }, weekly: { usedPercent: 25, resetAt: 1800086400 }, weeklyPace: 0.5, fiveHourState: "ok" }] });
     const container = mount(); await flush();
-    for (const text of ["ChatGPT", "ab12", "Plus", "42%", "25%", "0.50×", "resets in 1h", "1m ago", "ChatGPT usage endpoint", "Fresh"]) expect(container.textContent).toContain(text);
+    for (const text of ["ChatGPT · Plus", "ab12", "42% used", "25% used", "Pace 0.50×", "Resets in 1h 0m", "(1m ago) · Source: ChatGPT usage endpoint", "Updated", "Fresh"]) expect(container.textContent).toContain(text);
+    for (const [label, percent] of [["5-hour window", "42"], ["Weekly window", "25"]]) {
+      const bar = getByRole(container, "progressbar", { name: label });
+      expect(bar.getAttribute("aria-valuenow")).toBe(percent);
+      expect(bar.getAttribute("aria-valuemin")).toBe("0");
+      expect(bar.getAttribute("aria-valuemax")).toBe("100");
+    }
     expect(container.querySelector("time[title]")).not.toBeNull();
   });
   it("distinguishes absent, exhausted and unknown windows while retaining stale readings", async () => {
@@ -32,11 +39,65 @@ describe("Quota", () => {
     ] });
     const container = mount({ multiUser: true, user: { role: "superadmin" } }); await flush();
     const rows = container.querySelectorAll("article");
-    expect(rows[0].textContent).toContain("none"); expect(rows[0].querySelectorAll("dd")[1].textContent).toBe("none");
+    expect(rows[0].textContent).toContain("none");
+    expect(queryByRole(rows[0] as HTMLElement, "progressbar", { name: "5-hour window" })).toBeNull();
+    expect(queryByText(rows[0] as HTMLElement, "0% used")).toBeNull();
     expect(rows[1].textContent).toContain("Exhausted");
     for (const text of ["Stale", "Error: timeout", "Last known:", "42%", "—", "Claude response headers"]) expect(rows[2].textContent).toContain(text);
     expect(rows[2].querySelector(".quota-numbers--stale")).not.toBeNull();
+    expect(getByRole(rows[2] as HTMLElement, "progressbar", { name: "Weekly window" }).getAttribute("data-dimmed")).toBe("true");
+    expect(queryByRole(rows[2] as HTMLElement, "progressbar", { name: "5-hour window" })).toBeNull();
+    expect(rows[2].textContent).toContain("Pace —");
     expect(rows[3].textContent).toContain("Error: invalid_payload"); expect(rows[3].textContent).not.toContain("Fresh");
+    expect(queryByRole(rows[3] as HTMLElement, "progressbar")).toBeNull();
+    expect(rows[3].textContent).not.toContain("Pace");
+    expect(rows[3].textContent).toContain("Updated — · Source: —");
+  });
+  it("uses raw usage for warning and critical thresholds, rounding only the displayed value", async () => {
+    const base = { provider: "anthropic", source: "headers", updatedAt: 1800000000, stale: false, error: null, weekly: null, weeklyPace: null, fiveHourState: "ok" };
+    m.fetchModelQuota.mockResolvedValue({ generatedAt: 1800000000, pollingEnabled: true, logins: [74, 75, 89, 90, 74.6, 89.6].map((usedPercent) => ({ ...base, accountRef: `usage-${usedPercent}`, fiveHour: { usedPercent, resetAt: 1800003600 } })) });
+    const container = mount(); await flush();
+    const cards = container.querySelectorAll("article");
+    for (const [index, tone, rounded] of [[0, "normal", "74"], [1, "warning", "75"], [2, "warning", "89"], [3, "critical", "90"], [4, "normal", "75"], [5, "warning", "90"]] as const) {
+      const bar = getByRole(cards[index] as HTMLElement, "progressbar", { name: "5-hour window" });
+      expect(bar.getAttribute("data-tone")).toBe(tone);
+      expect(bar.getAttribute("aria-valuenow")).toBe(rounded);
+      expect(cards[index].textContent).toContain(`${rounded}% used`);
+      expect(queryByRole(cards[index] as HTMLElement, "progressbar", { name: "Weekly window" })).toBeNull();
+      expect(cards[index].textContent).not.toContain("Pace");
+    }
+  });
+  it("shows reset minutes, hours and days, and distinguishes due resets", async () => {
+    const base = { provider: "anthropic", source: "headers", updatedAt: null, stale: false, error: null, weekly: null, weeklyPace: null, fiveHourState: "ok" };
+    m.fetchModelQuota.mockResolvedValue({ generatedAt: 1800000000, pollingEnabled: true, logins: [1800000040, 1800001800, 1800016800, 1800003600, 1800183600, 1799999999, 1800000000].map((resetAt) => ({ ...base, accountRef: `reset-${resetAt}`, fiveHour: { usedPercent: 42, resetAt } })) });
+    const container = mount(); await flush();
+    const cards = container.querySelectorAll("article");
+    for (const [index, expected] of ["Resets in <1m", "Resets in 30m", "Resets in 4h 40m", "Resets in 1h 0m", "Resets in 2d 3h", "Reset due", "Reset due"].entries()) {
+      const time = cards[index].querySelector("time[title]")!;
+      expect(time.textContent).toBe(expected);
+      expect(time.getAttribute("title")).toBeTruthy();
+      expect(time.getAttribute("dateTime")).toBeTruthy();
+    }
+  });
+  it("keeps exhausted usage critical below 100 and dims both stale windows", async () => {
+    const base = { provider: "anthropic", source: "headers", updatedAt: 1800000000, stale: true, error: "limited", weekly: { usedPercent: 75, resetAt: 1800086400 }, weeklyPace: 2.48, fiveHourState: "exhausted" };
+    m.fetchModelQuota.mockResolvedValue({ generatedAt: 1800000000, pollingEnabled: true, logins: [
+      { ...base, accountRef: "limited", fiveHour: { usedPercent: 50, resetAt: 1800003600 } },
+      { ...base, accountRef: "full", fiveHour: { usedPercent: 100, resetAt: 1800003600 } },
+    ] });
+    const container = mount(); await flush();
+    const cards = container.querySelectorAll("article");
+    for (const [index, percent] of ["50", "100"].entries()) {
+      const fiveHour = getByRole(cards[index] as HTMLElement, "progressbar", { name: "5-hour window" });
+      const weekly = getByRole(cards[index] as HTMLElement, "progressbar", { name: "Weekly window" });
+      expect(fiveHour.getAttribute("data-tone")).toBe("critical");
+      expect(fiveHour.getAttribute("aria-valuenow")).toBe(percent);
+      expect(weekly.getAttribute("data-tone")).toBe("warning");
+      for (const bar of [fiveHour, weekly]) expect(bar.getAttribute("data-dimmed")).toBe("true");
+      expect(cards[index].textContent).toContain("Exhausted");
+      expect(cards[index].textContent).toContain("Pace 2.48×");
+      expect(cards[index].textContent).not.toContain("Claude ·");
+    }
   });
   it("explains initial loading and an empty store with polling disabled or enabled", async () => {
     let resolve!: (value: unknown) => void;
