@@ -95,8 +95,41 @@ new data for a reused view has a 32-second deadline: failure or timeout logs a
 warning and keeps the last delivered data. Newer updates cancel older fetches,
 and late responses cannot replace newer data.
 
-UI messages and model-context updates remain unsupported (`-32601`). No device
-permissions are granted. The apps origin must have a different hostname from the
+Views can send text-only `ui/message` requests directly as normal user messages
+of the signed-in viewer. Text blocks are joined with a blank line. Messages must
+be nonempty after trimming, at most 4000 characters, and cannot start with `/`.
+Each app view may reserve one send every 2 seconds and at most 10 in 10 minutes.
+The limit survives expand/collapse and transcript remounts, resets on session
+change, and is not shared across tabs or persisted across reloads. Refusals return
+`-32000` with a short reason; malformed or non-text content returns `-32602`.
+Hosts without a message callback omit the capability and return `-32601`.
+
+A view message queues while the agent streams in queue mode; other busy modes
+refuse it without interrupting the run. History loading, uploads, impersonation,
+or another send preparing also refuse it. The host checks again after restoring
+an archived chat or compacting context, including whether the session changed.
+Success means local send handoff; a later transport failure uses the chat's usual
+error display. Audit logs record outcome and length, never message text.
+
+`ui/update-model-context` replaces the latest context of that session's app view.
+Text blocks and optional structured JSON are supported; other valid content
+blocks are ignored. Empty context clears the selection. Each update is limited
+to 16 KiB of UTF-8 text and JSON; an invalid or oversized replacement keeps the
+previous value. The gateway keeps at most 8 views per session and 1000 entries
+overall, evicting the least recently updated. Context is memory-only and lost on
+gateway restart or session deletion. Audit logs record size and outcome only.
+
+The next newly started Pi or container run receives one marked context block per
+view as model input, outside the transcript and canonical stored user message.
+It is consumed only after the initial run succeeds without an abort; failures
+keep it for a later run. Updates arriving during that run survive consumption.
+Messages joining an active run do not inject or consume context. Thinking-level
+retries reuse the same snapshot, and reviewer rewrites do not receive a new
+context nudge. OpenClaw does not consume this context. Model SDK session files
+may retain the injected prompt, and the agent may quote it: consuming context
+does not make the model forget it.
+
+No device permissions are granted. The apps origin must have a different hostname from the
 chat; a different port alone is insufficient. All servers' views share one apps
 origin and its storage, separate from chat storage/cookies. CSP uses approved
 origin lists and drops wildcards; see [configuration](configuration.md#mcp-apps).

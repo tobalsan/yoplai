@@ -168,7 +168,7 @@ function SimpleToolBlock(props: { name: string; arguments?: unknown }) {
   );
 }
 
-export function McpAppToolRow(props: { agentId: string; sessionId?: string | null; toolCallId: string; name: string; arguments?: unknown; result?: FullToolResultMessage; appViews: AppViews }) {
+export function McpAppToolRow(props: { agentId: string; sessionId?: string | null; toolCallId: string; name: string; arguments?: unknown; result?: FullToolResultMessage; appViews: AppViews; onUserMessage?: (viewKey: string, text: string) => Promise<void> }) {
   const view = () => props.appViews.viewOf(props.toolCallId);
   const role = () => props.appViews.roleOf(props.toolCallId);
   const captured = () => !!view()?.calls.find((call) => call.id === props.toolCallId)?.result?.view;
@@ -194,7 +194,7 @@ export function McpAppToolRow(props: { agentId: string; sessionId?: string | nul
       <Match when={settled() && appsAvailable() !== undefined && (appsAvailable() === false || !captured() || props.sessionId !== undefined)}>
         <Show when={captured() && appsAvailable() === true && !!props.sessionId}
           fallback={<><pre class="tool-code">{getToolResultText(props.result)}</pre><p role="status">View unavailable</p></>}>
-          <McpAppView agentId={props.agentId} sessionId={props.sessionId!} viewKey={view()!.key} callId={() => view()!.latest.id} text={view()?.latest.text ?? getToolResultText(props.result)} mode="inline" onDisplayMode={(mode) => { if (mode === "fullscreen") props.appViews.open(view()!.key); }} />
+          <McpAppView agentId={props.agentId} sessionId={props.sessionId!} viewKey={view()!.key} callId={() => view()!.latest.id} text={view()?.latest.text ?? getToolResultText(props.result)} mode="inline" onDisplayMode={(mode) => { if (mode === "fullscreen") props.appViews.open(view()!.key); }} onUserMessage={props.onUserMessage ? (text) => props.onUserMessage!(view()!.key, text) : undefined} />
         </Show>
       </Match>
     </Switch>

@@ -1,3 +1,4 @@
+import * as viewContext from "./view-context.js";
 import { randomBytes } from "node:crypto";
 import { serve } from "@hono/node-server";
 import { Hono, type Context } from "hono";
@@ -21,6 +22,7 @@ export function appsAvailable(): boolean {
 }
 
 export function revokeMcpAppSession(scope: SessionScope): void {
+  viewContext.clearSession(scope);
   for (const pending of pendingViews) {
     if (pending.agentId === scope.agentId && pending.sessionId === scope.sessionId && (pending.ownerUserId ?? null) === (scope.ownerUserId ?? null)) pending.revoked = true;
   }
@@ -229,7 +231,7 @@ export function createMcpAppRoutes(deps: {
     try {
       const userId = await deps.getUserId(c);
       audit.viewer = userId ?? null;
-      if (operation === "view") {
+      if (operation === "view" || operation === "rpc") {
         pending = { agentId, sessionId, ownerUserId: userId, revoked: false };
         pendingViews.add(pending);
       }
@@ -267,6 +269,38 @@ export function createMcpAppRoutes(deps: {
             if (typeof request.id === "string" || typeof request.id === "number" || request.id === null) id = request.id;
             if (Array.isArray(body) || request.jsonrpc !== "2.0" || !("id" in request) || (request.id !== null && typeof request.id !== "string" && typeof request.id !== "number") || typeof request.method !== "string") return response(-32600, "Invalid Request", "invalid_request");
             audit.method = request.method;
+            if (request.method === "ui/update-model-context") {
+              audit.size = 0;
+              const params = object(request.params);
+              if (params !== request.params || (params.content !== undefined && !Array.isArray(params.content)) || (params.structuredContent !== undefined && object(params.structuredContent) !== params.structuredContent)) return response(-32602, "Invalid params", "invalid_params");
+              const text: string[] = [];
+              for (const block of params.content as unknown[] ?? []) {
+                const content = object(block);
+                if (typeof content.type !== "string" || (content.type === "text" && typeof content.text !== "string")) return response(-32602, "Invalid params", "invalid_params");
+                if (content.type === "text") {
+                  if (typeof content.text === "string" && content.text.trim()) text.push(content.text.trim());
+                  continue;
+                }
+                const resource = object(content.resource);
+                const valid = ((content.type === "image" || content.type === "audio") && typeof content.data === "string" && typeof content.mimeType === "string") ||
+                  (content.type === "resource_link" && typeof content.uri === "string" && typeof content.name === "string") ||
+                  (content.type === "resource" && typeof resource.uri === "string" && (typeof resource.text === "string" || typeof resource.blob === "string"));
+                if (!valid) return response(-32602, "Invalid params", "invalid_params");
+              }
+              if (params.structuredContent) text.push(JSON.stringify(params.structuredContent));
+              const value = text.join("\n\n");
+              const size = Buffer.byteLength(value, "utf8");
+              audit.size = size;
+              if (size > 16 * 1024) return response(-32602, "Context exceeds 16 KiB", "too_large");
+              const scope = { agentId, sessionId, ownerUserId: userId };
+              const viewKey = record.server + "\n" + record.resourceUri;
+              if (pending?.revoked) return response(-32000, "Session deleted", "session_deleted");
+              signal.throwIfAborted();
+              if (value) viewContext.set(scope, viewKey, value);
+              else viewContext.clear(scope, viewKey);
+              Object.assign(audit, { size, outcome: value ? "set" : "cleared" });
+              return c.json({ jsonrpc: "2.0", id, result: {} });
+            }
             if (!["tools/call", "resources/read"].includes(request.method)) return response(-32601, "Method not found", "method_not_found");
             const params = object(request.params);
             if (request.method === "tools/call" && (typeof params.name !== "string" || !params.name || (params.arguments !== undefined && (params.arguments === null || typeof params.arguments !== "object" || Array.isArray(params.arguments))))) return response(-32602, "Invalid params", "invalid_params");

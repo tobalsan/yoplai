@@ -20,6 +20,13 @@ const state = {
   arguments: {} as unknown,
   toolResult: {} as unknown,
   lastHostContext: {} as unknown,
+  messagesAccepted: 0,
+  resetRefused: false,
+  spamAccepted: 0,
+  spamRefused: 0,
+  contextUpdates: 0,
+  messageToken: "ALG600-message-2b-a7f3",
+  contextToken: "ALG600-context-2b-c91e",
 };
 
 function render() {
@@ -106,6 +113,35 @@ button("fullscreen", async () => {
 });
 button("inline", async () => {
   await app.requestDisplayMode({ mode: "inline" });
+});
+button("send-message", async () => {
+  const result = await app.sendMessage({ role: "user", content: [{ type: "text", text: `Reply with exactly ${state.messageToken}` }] });
+  if (result.isError) throw new Error("Host refused message");
+  state.messagesAccepted++;
+  render();
+});
+button("send-reset", async () => {
+  try {
+    const result = await app.sendMessage({ role: "user", content: [{ type: "text", text: "/reset" }] });
+    state.resetRefused = result.isError === true;
+  } catch (error: unknown) {
+    state.resetRefused = true;
+    state.lastError = error instanceof Error ? error.message : String(error);
+  }
+  render();
+});
+button("spam", async () => {
+  const results = await Promise.allSettled(Array.from({ length: 20 }, (_, index) => app.sendMessage({
+    role: "user", content: [{ type: "text", text: `Acknowledge ALG600-spam-${index} briefly.` }],
+  })));
+  state.spamAccepted = results.filter((result) => result.status === "fulfilled" && !result.value.isError).length;
+  state.spamRefused = 20 - state.spamAccepted;
+  render();
+});
+button("set-context", async () => {
+  await app.updateModelContext({ content: [{ type: "text", text: `App-selected token: ${state.contextToken}` }] });
+  state.contextUpdates++;
+  render();
 });
 
 async function connect() {

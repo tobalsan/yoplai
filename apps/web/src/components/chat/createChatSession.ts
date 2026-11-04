@@ -89,6 +89,8 @@ type ChatSessionInput = {
   viewMode: Accessor<HistoryViewMode>;
   projectId: Accessor<string | undefined>;
   isArchived: Accessor<boolean>;
+  isImpersonating: Accessor<boolean>;
+  isUploading: Accessor<boolean>;
   uploadPending: (pendingFiles: readonly PendingFile[]) => Promise<{ attachments?: FileAttachment[]; inboundFiles: FileBlock[] } | "failed">;
   onArchiveRestored: () => void;
   onSessionReset: (newSessionId: string) => void;
@@ -178,6 +180,7 @@ export function createChatSession(input: ChatSessionInput) {
   let subscriptionCleanup: (() => void) | null = null;
   let aborted = false;
   let skipNextHistoryRefresh = false;
+  let preparingSend = false;
 
   const noAnimIds = new Set<string>();
 
@@ -1160,11 +1163,13 @@ export function createChatSession(input: ChatSessionInput) {
   const performSend = async (
     { text, pendingFiles }: SendRequest,
     resolve: (result: SendResult) => void,
+    beforeSubmit?: () => void,
   ): Promise<void> => {
     if (input.isArchived() && !(await restoreSession("Failed to restore session. Try again.")).ok) {
       resolve({ kind: "blocked" });
       return;
     }
+    beforeSubmit?.();
     const isResetCommand =
       text === "/new" ||
       text.startsWith("/new ") ||
@@ -1179,6 +1184,7 @@ export function createChatSession(input: ChatSessionInput) {
         return;
       }
     }
+    beforeSubmit?.();
 
     let attachments: FileAttachment[] | undefined;
     let inboundFiles: FileBlock[] = [];
@@ -1190,6 +1196,7 @@ export function createChatSession(input: ChatSessionInput) {
       }
       ({ attachments, inboundFiles } = uploaded);
     }
+    beforeSubmit?.();
 
     const messageText = text || "Attached file(s).";
     const levelToSend = pendingThinkLevel() ?? thinkingLevel();
@@ -1717,10 +1724,25 @@ export function createChatSession(input: ChatSessionInput) {
     );
   };
 
-  const send = (request: SendRequest): Promise<SendResult> =>
+  const startSend = (request: SendRequest, beforeSubmit?: () => void): Promise<SendResult> =>
     new Promise((resolve, reject) => {
-      void performSend(request, resolve).catch(reject);
+      if (preparingSend) { resolve({ kind: "blocked" }); return; }
+      preparingSend = true;
+      let preparing = true;
+      const release = () => {
+        if (!preparing) return;
+        preparing = false;
+        preparingSend = false;
+      };
+      void performSend(request, (result) => {
+        release();
+        resolve(result);
+      }, beforeSubmit).catch((error: unknown) => {
+        release();
+        reject(error);
+      });
     });
+  const send = (request: SendRequest) => startSend(request);
   const stop = async (): Promise<{ error?: string }> => {
     if (stopping() || !isStreaming() || !input.agentId()) return {};
     setStopping(true);
@@ -1762,6 +1784,26 @@ export function createChatSession(input: ChatSessionInput) {
       resetStreamingState();
     });
   };
+  const assertViewSend = (text: string) => {
+    if (input.isImpersonating()) throw new Error("Cannot send while impersonating");
+    if (input.isUploading()) throw new Error("An upload is in progress");
+    if (loading()) throw new Error("History is loading");
+    if (text.trim().startsWith("/")) throw new Error("Slash commands are not allowed from views");
+    if (isStreaming() && (agent()?.queueMode ?? "queue") !== "queue") throw new Error("Agent is busy; wait for the response");
+  };
+  const sendFromView = async (text: string): Promise<void> => {
+    flushFinished();
+    assertViewSend(text);
+    if (preparingSend) throw new Error("Another message is preparing");
+    const requestedScope = currentSession();
+    const requestedSession = resolvedSessionId();
+    const result = await startSend({ text: text.trim(), pendingFiles: [] }, () => {
+      if (requestedScope !== currentSession() || requestedSession !== resolvedSessionId()) throw new Error("Chat session changed");
+      flushFinished();
+      assertViewSend(text);
+    });
+    if (result.kind === "blocked") throw new Error("Message could not be sent");
+  };
   const copyTurnFor = (message: SimpleViewMessage | ContentBlock): string[] | undefined =>
     "role" in message ? simpleCopyReplies().get(message) : fullCopyReplies().get(message);
   const shouldAnimate = (id: string) => !noAnimIds.delete(id);
@@ -1783,7 +1825,7 @@ export function createChatSession(input: ChatSessionInput) {
     copyTurnFor, shouldAnimate,
     thinkingLevel: () => pendingThinkLevel() ?? thinkingLevel(),
     selectThinking: (level: ThinkLevel | null) => setPendingThinkLevel(level),
-    flushFinished, send, stop, compact: compactCurrentSession,
+    flushFinished, send, sendFromView, stop, compact: compactCurrentSession,
     loadEarlierHistory, restoreArchived, startNewChat,
   };
 }
