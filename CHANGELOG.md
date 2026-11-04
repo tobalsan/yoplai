@@ -37,6 +37,7 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Changed
 
+- Show admin quota windows as accessible usage bars with warning/critical colours, precise reset times, and compact pace and provenance details.
 - Hide other users' private dashboards and Mine scheduled jobs by default on superadmin agent config tabs, with a discreet shared visibility toggle remembered in the browser.
 - Log MCP invalid-params tool failures with numeric `code: -32602` at warning, preserving the error response and error severity for other failures.
 - `send_file` accepts regular files in conversation sub-folders and delivers them with their basename, while still rejecting escaping paths and symlinked directories or files.
