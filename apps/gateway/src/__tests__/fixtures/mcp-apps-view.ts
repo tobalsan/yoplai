@@ -19,6 +19,7 @@ const state = {
   lastError: "",
   arguments: {} as unknown,
   toolResult: {} as unknown,
+  lastHostContext: {} as unknown,
 };
 
 function render() {
@@ -36,7 +37,13 @@ window.addEventListener("message", (event) => {
   }
 });
 
-const app = new App({ name: "Yoplai SDK fixture", version: "1" }, {}, { autoResize: false });
+const app = new App({ name: "Yoplai SDK fixture", version: "1" }, {
+  availableDisplayModes: ["inline", "fullscreen"],
+}, { autoResize: false });
+app.addEventListener("hostcontextchanged", () => {
+  state.lastHostContext = app.getHostContext();
+  render();
+});
 app.addEventListener("toolinput", (params) => {
   state.input++;
   state.events.push("input");
@@ -94,6 +101,12 @@ button("resize", async () => {
 button("hang", async () => {
   await app.readServerResource({ uri: "ui://drawing/hang" });
 });
+button("fullscreen", async () => {
+  await app.requestDisplayMode({ mode: "fullscreen" });
+});
+button("inline", async () => {
+  await app.requestDisplayMode({ mode: "inline" });
+});
 
 async function connect() {
   localStorage.setItem("mcp-fixture-storage", "apps-origin-value");
@@ -101,6 +114,7 @@ async function connect() {
   try { void window.top!.localStorage; } catch { state.chatStorageBlocked = true; }
   try { void window.top!.document.cookie; } catch { state.chatCookiesBlocked = true; }
   await app.connect();
+  state.lastHostContext = app.getHostContext();
   await app.sendSizeChanged({ height: 240 });
   render();
   try {

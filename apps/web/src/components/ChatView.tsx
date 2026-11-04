@@ -1,5 +1,8 @@
 import { createChatSession } from "./chat/createChatSession";
 import { ChatTranscript } from "./chat/ChatTranscript";
+import { createAppViews, chatAppViewCalls } from "./chat/appViews";
+import { ChatSidePanel } from "./chat/ChatSidePanel";
+import { McpAppView } from "./chat/McpAppView";
 import chatViewStyles from "./chat/ChatView.css?inline";
 import {
   createSignal,
@@ -10,7 +13,6 @@ import {
   onCleanup,
   Show,
   on,
-  type JSX,
 } from "solid-js";
 
 import { useParams, useNavigate, useSearchParams, useLocation, A } from "@solidjs/router";
@@ -273,6 +275,8 @@ export function ChatView() {
     contextUsageDisplay, isContextUsageDanger, contextWarning, thinkingLevel,
     compactStatusForCurrentSession,
   } = session;
+  const appViews = createAppViews(() => `${params.agentId}\n${session.appSessionId() ?? ""}`, () => chatAppViewCalls(session, viewMode()));
+  onCleanup(appViews.close);
   let focusedHomeSession: string | null = null;
   createEffect(on(session.historyLoaded, (loaded) => {
     if (!loaded || !location.state?.mainAgentHome || loaded.sessionId || !loaded.empty || focusedHomeSession === loaded.scope) return;
@@ -593,6 +597,7 @@ export function ChatView() {
   });
 
   const startFreshChat = (agentId: string) => {
+    appViews.close();
     session.startNewChat(agentId);
     clearPendingFiles();
     setInput("");
@@ -610,8 +615,6 @@ export function ChatView() {
     prefillSuggestion(message);
   });
 
-  const sidePanel: JSX.Element | undefined = undefined;
-
   return (
     <div
       ref={chatViewRef}
@@ -623,6 +626,7 @@ export function ChatView() {
         "hero-sent": heroPhase() === "exiting" || heroPhase() === "off",
       }}
     >
+      <div class="chat-main">
       <header class="header">
         <A
           href={projectId() ? `/p/${projectId()}` : "/agents"}
@@ -843,7 +847,7 @@ export function ChatView() {
             "drop-target": isFileDragActive() && activeDropZone() === "history",
           }}
         >
-          <ChatTranscript agentId={params.agentId} session={session} viewMode={viewMode} />
+          <ChatTranscript agentId={params.agentId} session={session} viewMode={viewMode} appViews={appViews} />
         </div>
 
         <div class="composer-zone">
@@ -1022,8 +1026,6 @@ export function ChatView() {
         <div class="hero-spacer hero-spacer-bottom" />
       </div>
 
-      <Show when={sidePanel}>{(panel) => panel()}</Show>
-
       <Show when={contextUsageDisplay()}>
         {(display) => (
           <div
@@ -1039,6 +1041,12 @@ export function ChatView() {
       </Show>
       <Show when={contextWarning()}>
         {(warning) => <div class="context-warning">{warning()}</div>}
+      </Show>
+      </div>
+      <Show when={!!appViews.panel()}>
+        <ChatSidePanel>
+          <McpAppView agentId={params.agentId} sessionId={session.appSessionId()!} viewKey={appViews.panel()!.key} callId={() => appViews.panel()!.latest.id} text={appViews.panel()!.latest.text ?? ""} mode="panel" onDisplayMode={(mode) => { if (mode === "inline") appViews.close(); }} />
+        </ChatSidePanel>
       </Show>
 
       <style>{chatViewStyles}</style>

@@ -1,12 +1,12 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { getByText, getByTitle, queryByText, queryByTitle } from "@testing-library/dom";
+import { getByRole, getByText, getByTitle, queryByRole, queryByText, queryByTitle } from "@testing-library/dom";
 import { render } from "solid-js/web";
 import { createSignal } from "solid-js";
 import { McpAppView } from "./McpAppView";
 
-const { loadView, relay, log } = vi.hoisted(() => ({ loadView: vi.fn(), relay: vi.fn(), log: vi.fn() }));
-vi.mock("../../api/mcp-apps", () => ({ loadMcpAppView: loadView, relayMcpAppRequest: relay, logMcpAppEvent: log }));
+const { loadView, loadData, relay, log } = vi.hoisted(() => ({ loadView: vi.fn(), loadData: vi.fn(), relay: vi.fn(), log: vi.fn() }));
+vi.mock("../../api/mcp-apps", () => ({ loadMcpAppView: loadView, loadMcpAppData: loadData, relayMcpAppRequest: relay, logMcpAppEvent: log }));
 
 const origin = "https://apps.example.test";
 const view = {
@@ -31,20 +31,21 @@ function initialize(frame: HTMLIFrameElement) {
   send(frame, { jsonrpc: "2.0", id: 1, method: "ui/initialize", params: { protocolVersion: "2026-01-26" } });
   send(frame, { jsonrpc: "2.0", method: "ui/notifications/initialized" });
 }
-function mount(callId: () => string = () => "call-1", text: () => string = () => "Board created", agentId: () => string = () => "agent", sessionId: () => string = () => "chat") {
+function mount(callId: () => string = () => "call-1", text: () => string = () => "Board created", agentId: () => string = () => "agent", sessionId: () => string = () => "chat", options: { mode?: "inline" | "panel"; viewKey?: () => string; onDisplayMode?: (mode: "inline" | "fullscreen") => void } = {}) {
   container = document.createElement("div");
   document.body.append(container);
-  dispose = render(() => <McpAppView agentId={agentId()} sessionId={sessionId()} toolCallId={callId()} text={text()} />, container);
+  dispose = render(() => <McpAppView agentId={agentId()} sessionId={sessionId()} viewKey={options.viewKey?.() ?? "boards\nui://boards/view"} callId={callId} mode={options.mode ?? "inline"} onDisplayMode={options.onDisplayMode} text={text()} />, container);
 }
 
 describe("MCP App view host", () => {
   beforeEach(() => {
     vi.useFakeTimers();
     loadView.mockReset().mockResolvedValue(view);
-    relay.mockReset();
+    loadData.mockReset().mockResolvedValue({ args: { title: "Updated roadmap" }, result: { content: [{ type: "text", text: "Box added" }] } });
+    relay.mockReset().mockResolvedValue({ jsonrpc: "2.0", id: 28, result: {} });
     log.mockReset().mockResolvedValue(undefined);
   });
-  afterEach(() => { dispose?.(); container?.remove(); vi.useRealTimers(); vi.restoreAllMocks(); });
+  afterEach(() => { dispose?.(); container?.remove(); vi.useRealTimers(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
   it("labels the isolated frame with its server and applies its restrictive outer frame attributes", async () => {
     mount();
@@ -80,7 +81,7 @@ describe("MCP App view host", () => {
           openLinks: {}, serverTools: {}, serverResources: {}, logging: {},
           sandbox: { permissions: {}, csp: { connectDomains: [], resourceDomains: [] } },
         },
-        hostContext: { displayMode: "inline", availableDisplayModes: ["inline"], containerDimensions: { width: expect.any(Number), maxHeight: 800 } },
+        hostContext: { displayMode: "inline", availableDisplayModes: ["inline", "fullscreen"], containerDimensions: { width: expect.any(Number), maxHeight: 800 } },
       },
     }, origin]);
     expect(post).toHaveBeenCalledTimes(2);
@@ -90,6 +91,286 @@ describe("MCP App view host", () => {
       [{ jsonrpc: "2.0", method: "ui/notifications/tool-result", params: { content: [{ type: "text", text: "Board created" }], structuredContent: { board: 7 } } }, origin],
     ]);
     expect(queryByText(container, "Loading view…")).toBeNull();
+  });
+  it("initializes a panel in fullscreen with the frame box dimensions", async () => {
+    mount(undefined, undefined, undefined, undefined, { mode: "panel" });
+    await settle();
+    const frame = getByTitle(container, "boards MCP App") as HTMLIFrameElement;
+    vi.spyOn(frame, "getBoundingClientRect").mockReturnValue({ width: 640, height: 900 } as DOMRect);
+    const post = vi.spyOn(frame.contentWindow!, "postMessage");
+    initialize(frame);
+    expect(post.mock.calls[1][0].result.hostContext).toEqual({
+      displayMode: "fullscreen", availableDisplayModes: ["inline", "fullscreen"], containerDimensions: { width: 640, height: 900 },
+    });
+  });
+  it.each([["fullscreen"], ["pip"]])("refuses inline initialization when the app declares only %s", async (mode) => {
+    const changeMode = vi.fn();
+    mount(undefined, undefined, undefined, undefined, { onDisplayMode: changeMode });
+    await settle();
+    const frame = getByTitle(container, "boards MCP App") as HTMLIFrameElement;
+    const post = vi.spyOn(frame.contentWindow!, "postMessage");
+    send(frame, { jsonrpc: "2.0", method: "ui/notifications/sandbox-proxy-ready" });
+    post.mockClear();
+    send(frame, { jsonrpc: "2.0", id: 1, method: "ui/initialize", params: { appCapabilities: { availableDisplayModes: [mode] } } });
+    expect(getByText(container, "View unavailable")).toBeTruthy();
+    expect(post).not.toHaveBeenCalled();
+    expect(changeMode).not.toHaveBeenCalled();
+  });
+  it.each([
+    ["request", "inline", "fullscreen"],
+    ["Expand", "inline", "fullscreen"],
+    ["Collapse", "panel", "inline"],
+  ] as const)("switches via %s only after replying, notifying and retiring the old host", async (trigger, mode, target) => {
+    const changeMode = vi.fn();
+    mount(undefined, undefined, undefined, undefined, { mode, onDisplayMode: changeMode });
+    await settle();
+    const frame = getByTitle(container, "boards MCP App") as HTMLIFrameElement;
+    initialize(frame);
+    const post = vi.spyOn(frame.contentWindow!, "postMessage");
+    if (trigger === "request") send(frame, { jsonrpc: "2.0", id: 8, method: "ui/request-display-mode", params: { mode: "fullscreen" } });
+    else getByRole(container, "button", { name: trigger }).click();
+    const messages = post.mock.calls.map(([message]) => message);
+    if (trigger === "request") expect(messages.shift()).toEqual({ jsonrpc: "2.0", id: 8, result: { mode: "fullscreen" } });
+    expect(messages).toEqual([
+      { jsonrpc: "2.0", method: "ui/notifications/host-context-changed", params: { displayMode: target } },
+      { jsonrpc: "2.0", id: expect.any(String), method: "ui/resource-teardown", params: {} },
+    ]);
+    expect(frame.isConnected).toBe(true);
+    expect(changeMode).not.toHaveBeenCalled();
+    send(frame, { jsonrpc: "2.0", id: 9, method: "tools/call", params: { name: "draw" } });
+    expect(relay).not.toHaveBeenCalled();
+    send(frame, { jsonrpc: "2.0", id: messages[1].id, result: {} });
+    expect(frame.isConnected).toBe(false);
+    expect(changeMode.mock.calls).toEqual([[target]]);
+  });
+  it("delivers a later call's input then result to the same initialized frame and keeps the anchor for RPC", async () => {
+    const [callId, setCallId] = createSignal("call-1");
+    mount(callId);
+    await settle();
+    const frame = getByTitle(container, "boards MCP App") as HTMLIFrameElement;
+    initialize(frame);
+    const post = vi.spyOn(frame.contentWindow!, "postMessage");
+    setCallId("call-2");
+    await settle();
+    expect(loadData.mock.calls.map((call) => call.slice(0, 3))).toEqual([["agent", "chat", "call-2"]]);
+    expect(post.mock.calls).toEqual([
+      [{ jsonrpc: "2.0", method: "ui/notifications/tool-input", params: { arguments: { title: "Updated roadmap" } } }, origin],
+      [{ jsonrpc: "2.0", method: "ui/notifications/tool-result", params: { content: [{ type: "text", text: "Box added" }] } }, origin],
+    ]);
+    expect(loadView).toHaveBeenCalledTimes(1);
+    expect(getByTitle(container, "boards MCP App")).toBe(frame);
+    send(frame, { jsonrpc: "2.0", id: 28, method: "tools/call", params: { name: "edit_in_view", arguments: {} } });
+    expect(relay.mock.calls[0].slice(0, 3)).toEqual(["agent", "chat", "call-1"]);
+  });
+  it("drops a superseded data response even if it arrives after the newest response", async () => {
+    let answerB!: (data: unknown) => void;
+    let answerC!: (data: unknown) => void;
+    loadData.mockImplementationOnce(() => new Promise((resolve) => { answerB = resolve; }));
+    loadData.mockImplementationOnce(() => new Promise((resolve) => { answerC = resolve; }));
+    const [callId, setCallId] = createSignal("call-1");
+    mount(callId);
+    await settle();
+    const frame = getByTitle(container, "boards MCP App") as HTMLIFrameElement;
+    initialize(frame);
+    const post = vi.spyOn(frame.contentWindow!, "postMessage");
+    setCallId("call-B");
+    setCallId("call-C");
+    expect(loadData.mock.calls[0][3].aborted).toBe(true);
+    answerC({ args: { box: "C" }, result: { structuredContent: { box: "C" } } });
+    await settle();
+    answerB({ args: { box: "B" }, result: { structuredContent: { box: "B" } } });
+    await settle();
+    expect(post.mock.calls.map(([message]) => message)).toEqual([
+      { jsonrpc: "2.0", method: "ui/notifications/tool-input", params: { arguments: { box: "C" } } },
+      { jsonrpc: "2.0", method: "ui/notifications/tool-result", params: { structuredContent: { box: "C" } } },
+    ]);
+    expect(getByTitle(container, "boards MCP App")).toBe(frame);
+  });
+  it("times out a data fetch without losing the view and permits a newer call", async () => {
+    let late!: (data: unknown) => void;
+    loadData.mockImplementationOnce(() => new Promise((resolve) => { late = resolve; }));
+    const [callId, setCallId] = createSignal("call-1");
+    mount(callId);
+    await settle();
+    const frame = getByTitle(container, "boards MCP App") as HTMLIFrameElement;
+    initialize(frame);
+    const post = vi.spyOn(frame.contentWindow!, "postMessage");
+    setCallId("call-B");
+    await vi.advanceTimersByTimeAsync(32000);
+    expect(loadData.mock.calls[0][3].aborted).toBe(true);
+    expect(queryByText(container, "View unavailable")).toBeNull();
+    expect(log.mock.calls[0].slice(0, 4)).toEqual(["agent", "chat", "call-1", { level: "warning", message: "MCP App update timed out; keeping the previous view data" }]);
+    late({ args: { box: "late" }, result: { structuredContent: { box: "late" } } });
+    await settle();
+    expect(post).not.toHaveBeenCalled();
+    setCallId("call-C");
+    await settle();
+    expect(post.mock.calls.map(([message]) => message.method)).toEqual(["ui/notifications/tool-input", "ui/notifications/tool-result"]);
+    expect(getByTitle(container, "boards MCP App")).toBe(frame);
+  });
+  it("fills the panel and ignores app-requested heights", async () => {
+    mount(undefined, undefined, undefined, undefined, { mode: "panel" });
+    await settle();
+    const frame = getByTitle(container, "boards MCP App") as HTMLIFrameElement;
+    initialize(frame);
+    expect(frame.style.height).toBe("100%");
+    send(frame, { jsonrpc: "2.0", method: "ui/notifications/size-changed", params: { height: 40 } });
+    expect(frame.style.height).toBe("100%");
+  });
+  it("reports changed frame dimensions once per animation frame after initialization", async () => {
+    let resize!: () => void;
+    vi.stubGlobal("ResizeObserver", class {
+      constructor(callback: () => void) { resize = callback; }
+      observe() {}
+      disconnect() {}
+    });
+    mount(undefined, undefined, undefined, undefined, { mode: "panel" });
+    await settle();
+    const frame = getByTitle(container, "boards MCP App") as HTMLIFrameElement;
+    let box = { width: 640, height: 900 };
+    vi.spyOn(frame, "getBoundingClientRect").mockImplementation(() => box as DOMRect);
+    const post = vi.spyOn(frame.contentWindow!, "postMessage");
+    resize();
+    await vi.advanceTimersByTimeAsync(16);
+    expect(post).not.toHaveBeenCalled();
+    initialize(frame);
+    post.mockClear();
+    box = { width: 720, height: 880 };
+    resize();
+    resize();
+    expect(post).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(16);
+    expect(post.mock.calls).toEqual([[{ jsonrpc: "2.0", method: "ui/notifications/host-context-changed", params: { containerDimensions: { width: 720, height: 880 } } }, origin]]);
+    dispose();
+    resize();
+    await vi.advanceTimersByTimeAsync(16);
+    expect(post).toHaveBeenCalledTimes(2);
+  });
+  it.each(["loading", "failed"])("keeps panel Collapse usable while its view is %s", async (state) => {
+    const changeMode = vi.fn();
+    if (state === "loading") loadView.mockImplementationOnce(() => new Promise(() => {}));
+    else loadView.mockRejectedValueOnce(new Error("offline"));
+    mount(undefined, undefined, undefined, undefined, { mode: "panel", onDisplayMode: changeMode });
+    await settle();
+    getByRole(container, "button", { name: "Collapse" }).click();
+    expect(changeMode.mock.calls).toEqual([["inline"]]);
+    expect(loadView.mock.calls[0][3].aborted).toBe(true);
+  });
+  it("does not redeliver the same latest call when transcript text changes", async () => {
+    const [call, setCall] = createSignal({ id: "call-1", text: "Created" });
+    mount(() => call().id, () => call().text);
+    await settle();
+    const frame = getByTitle(container, "boards MCP App") as HTMLIFrameElement;
+    initialize(frame);
+    setCall({ id: "call-B", text: "Box added" });
+    await settle();
+    const post = vi.spyOn(frame.contentWindow!, "postMessage");
+    setCall({ id: "call-B", text: "Box added with updated label" });
+    await settle();
+    expect(loadData).toHaveBeenCalledTimes(1);
+    expect(post).not.toHaveBeenCalled();
+  });
+  it("coalesces pre-initialization call changes after the anchor input and result", async () => {
+    const [callId, setCallId] = createSignal("call-1");
+    mount(callId);
+    await settle();
+    const frame = getByTitle(container, "boards MCP App") as HTMLIFrameElement;
+    const post = vi.spyOn(frame.contentWindow!, "postMessage");
+    setCallId("call-B");
+    setCallId("call-C");
+    expect(loadData).not.toHaveBeenCalled();
+    initialize(frame);
+    await settle();
+    expect(loadData.mock.calls.map((call) => call.slice(0, 3))).toEqual([["agent", "chat", "call-C"]]);
+    expect(post.mock.calls.slice(2).map(([message]) => message)).toEqual([
+      { jsonrpc: "2.0", method: "ui/notifications/tool-input", params: { arguments: { title: "Roadmap" } } },
+      { jsonrpc: "2.0", method: "ui/notifications/tool-result", params: { content: [{ type: "text", text: "Board created" }], structuredContent: { board: 7 } } },
+      { jsonrpc: "2.0", method: "ui/notifications/tool-input", params: { arguments: { title: "Updated roadmap" } } },
+      { jsonrpc: "2.0", method: "ui/notifications/tool-result", params: { content: [{ type: "text", text: "Box added" }] } },
+    ]);
+  });
+  it("keeps the initialized view usable after a failed data fetch", async () => {
+    loadData.mockRejectedValueOnce(new Error("offline"));
+    const [callId, setCallId] = createSignal("call-1");
+    mount(callId);
+    await settle();
+    const frame = getByTitle(container, "boards MCP App") as HTMLIFrameElement;
+    initialize(frame);
+    const post = vi.spyOn(frame.contentWindow!, "postMessage");
+    setCallId("call-B");
+    await settle();
+    expect(post).not.toHaveBeenCalled();
+    expect(queryByText(container, "View unavailable")).toBeNull();
+    expect(getByTitle(container, "boards MCP App")).toBe(frame);
+    expect(log.mock.calls[0].slice(0, 4)).toEqual(["agent", "chat", "call-1", { level: "warning", message: "MCP App update failed; keeping the previous view data" }]);
+    send(frame, { jsonrpc: "2.0", id: 44, method: "ping" });
+    expect(post.mock.calls).toEqual([[{ jsonrpc: "2.0", id: 44, result: {} }, origin]]);
+  });
+  it("aborts data loading on disposal and ignores its late result", async () => {
+    let answer!: (data: unknown) => void;
+    loadData.mockImplementationOnce(() => new Promise((resolve) => { answer = resolve; }));
+    const [callId, setCallId] = createSignal("call-1");
+    mount(callId);
+    await settle();
+    const frame = getByTitle(container, "boards MCP App") as HTMLIFrameElement;
+    initialize(frame);
+    const post = vi.spyOn(frame.contentWindow!, "postMessage");
+    setCallId("call-B");
+    dispose();
+    expect(loadData.mock.calls[0][3].aborted).toBe(true);
+    post.mockClear();
+    answer({ args: { box: "late" }, result: { structuredContent: { box: "late" } } });
+    await settle();
+    await vi.advanceTimersByTimeAsync(32000);
+    expect(post).not.toHaveBeenCalled();
+  });
+  it("hides Expand and declines fullscreen when the app declares inline only", async () => {
+    const changeMode = vi.fn();
+    mount(undefined, undefined, undefined, undefined, { onDisplayMode: changeMode });
+    await settle();
+    const frame = getByTitle(container, "boards MCP App") as HTMLIFrameElement;
+    send(frame, { jsonrpc: "2.0", method: "ui/notifications/sandbox-proxy-ready" });
+    send(frame, { jsonrpc: "2.0", id: 1, method: "ui/initialize", params: { appCapabilities: { availableDisplayModes: ["inline"] } } });
+    send(frame, { jsonrpc: "2.0", method: "ui/notifications/initialized" });
+    expect(queryByRole(container, "button", { name: "Expand" })).toBeNull();
+    const post = vi.spyOn(frame.contentWindow!, "postMessage");
+    send(frame, { jsonrpc: "2.0", id: 45, method: "ui/request-display-mode", params: { mode: "fullscreen" } });
+    expect(post.mock.calls).toEqual([[{ jsonrpc: "2.0", id: 45, result: { mode: "inline" } }, origin]]);
+    expect(changeMode).not.toHaveBeenCalled();
+  });
+  it("lets a newer call progress while an older data fetch never settles", async () => {
+    loadData.mockImplementationOnce(() => new Promise(() => {}));
+    const [callId, setCallId] = createSignal("call-1");
+    mount(callId);
+    await settle();
+    const frame = getByTitle(container, "boards MCP App") as HTMLIFrameElement;
+    initialize(frame);
+    const post = vi.spyOn(frame.contentWindow!, "postMessage");
+    setCallId("call-B");
+    await vi.advanceTimersByTimeAsync(100);
+    setCallId("call-C");
+    await settle();
+    expect(loadData.mock.calls[0][3].aborted).toBe(true);
+    expect(post.mock.calls.map(([message]) => message)).toEqual([
+      { jsonrpc: "2.0", method: "ui/notifications/tool-input", params: { arguments: { title: "Updated roadmap" } } },
+      { jsonrpc: "2.0", method: "ui/notifications/tool-result", params: { content: [{ type: "text", text: "Box added" }] } },
+    ]);
+    expect(getByTitle(container, "boards MCP App")).toBe(frame);
+  });
+  it.each(["timeout", "disposal"])("bounds mode retirement and suppresses callbacks on %s", async (outcome) => {
+    const changeMode = vi.fn();
+    mount(undefined, undefined, undefined, undefined, { onDisplayMode: changeMode });
+    await settle();
+    const frame = getByTitle(container, "boards MCP App") as HTMLIFrameElement;
+    initialize(frame);
+    getByRole(container, "button", { name: "Expand" }).click();
+    await vi.advanceTimersByTimeAsync(249);
+    expect(frame.isConnected).toBe(true);
+    expect(changeMode).not.toHaveBeenCalled();
+    if (outcome === "disposal") dispose();
+    await vi.advanceTimersByTimeAsync(1);
+    expect(frame.isConnected).toBe(false);
+    expect(changeMode.mock.calls).toEqual(outcome === "timeout" ? [["fullscreen"]] : []);
   });
   it.each(["unavailable", "failed request"])("shows the text result when loading is %s", async (outcome) => {
     if (outcome === "unavailable") loadView.mockResolvedValueOnce({ available: false, reason: "gone" });
@@ -131,6 +412,9 @@ describe("MCP App view host", () => {
   it.each([
     ["ping", {}, { result: {} }],
     ["ui/request-display-mode", { mode: "fullscreen" }, { result: { mode: "inline" } }],
+    ["ui/request-display-mode", { mode: "pip" }, { result: { mode: "inline" } }],
+    ["ui/request-display-mode", { mode: "unknown" }, { result: { mode: "inline" } }],
+    ["ui/request-display-mode", { mode: "inline" }, { result: { mode: "inline" } }],
     ["ui/message", { role: "user", content: [] }, { error: { code: -32601, message: "Method not found" } }],
     ["ui/update-model-context", { content: [] }, { error: { code: -32601, message: "Method not found" } }],
   ])("answers %s within the inline host's supported interface", async (method, params, response) => {
@@ -250,9 +534,9 @@ describe("MCP App view host", () => {
     await settle();
     expect(post).not.toHaveBeenCalled();
   });
-  it.each(["acknowledged", "unanswered"])("retires a connected initialized frame on call change with %s bounded teardown", async (reply) => {
+  it.each(["acknowledged", "unanswered"])("retires a connected initialized frame on view key change with %s bounded teardown", async (reply) => {
     const [callId, setCallId] = createSignal("call-1");
-    mount(callId);
+    mount(callId, undefined, undefined, undefined, { viewKey: callId });
     await settle();
     const frame = getByTitle(container, "boards MCP App") as HTMLIFrameElement;
     initialize(frame);
@@ -273,6 +557,58 @@ describe("MCP App view host", () => {
     expect(loadView.mock.calls.map((call) => call.slice(0, 3))).toEqual([["agent", "chat", "call-1"], ["agent", "chat", "call-2"]]);
     expect(getByTitle(container, "boards MCP App")).not.toBe(frame);
     expect(loadView.mock.calls[0][3].aborted).toBe(true);
+  });
+  it.each(["agent", "session"])("removes the old initialized frame immediately when %s identity changes", async (identity) => {
+    const [agentId, setAgentId] = createSignal("agent");
+    const [sessionId, setSessionId] = createSignal("chat");
+    mount(undefined, undefined, agentId, sessionId);
+    await settle();
+    const frame = getByTitle(container, "boards MCP App") as HTMLIFrameElement;
+    initialize(frame);
+    if (identity === "agent") setAgentId("other-agent");
+    else setSessionId("other-chat");
+    expect(frame.isConnected).toBe(false);
+    await settle();
+    expect(getByTitle(container, "boards MCP App")).not.toBe(frame);
+  });
+  it.each(["agent", "session", "view key"])("drops a data response from the previous %s identity", async (changed) => {
+    let answer!: (data: unknown) => void;
+    loadData.mockImplementationOnce(() => new Promise((resolve) => { answer = resolve; }));
+    const [identity, setIdentity] = createSignal("old");
+    const [callId, setCallId] = createSignal("call-1");
+    mount(callId, undefined, () => changed === "agent" ? identity() : "agent", () => changed === "session" ? identity() : "chat", { viewKey: () => changed === "view key" ? identity() : "boards\nui://boards/view" });
+    await settle();
+    const frame = getByTitle(container, "boards MCP App") as HTMLIFrameElement;
+    initialize(frame);
+    const oldPost = vi.spyOn(frame.contentWindow!, "postMessage");
+    setCallId("call-B");
+    setIdentity("new");
+    await settle();
+    await vi.advanceTimersByTimeAsync(250);
+    expect(loadData.mock.calls[0][3].aborted).toBe(true);
+    const replacement = getByTitle(container, "boards MCP App") as HTMLIFrameElement;
+    expect(replacement).not.toBe(frame);
+    initialize(replacement);
+    oldPost.mockClear();
+    const newPost = vi.spyOn(replacement.contentWindow!, "postMessage");
+    answer({ args: { box: "old" }, result: { structuredContent: { box: "old" } } });
+    await settle();
+    expect(oldPost).not.toHaveBeenCalled();
+    expect(newPost).not.toHaveBeenCalled();
+  });
+  it("removes a retiring frame immediately and cancels its mode callback when the session changes", async () => {
+    const [sessionId, setSessionId] = createSignal("chat");
+    const changeMode = vi.fn();
+    mount(undefined, undefined, undefined, sessionId, { onDisplayMode: changeMode });
+    await settle();
+    const frame = getByTitle(container, "boards MCP App") as HTMLIFrameElement;
+    initialize(frame);
+    getByRole(container, "button", { name: "Expand" }).click();
+    expect(frame.isConnected).toBe(true);
+    setSessionId("other-chat");
+    expect(frame.isConnected).toBe(false);
+    await vi.advanceTimersByTimeAsync(250);
+    expect(changeMode).not.toHaveBeenCalled();
   });
   it.each(["uninitialized disposal", "initialized disposal", "page hide"])("clears lifetime work immediately on %s", async (cause) => {
     mount();
