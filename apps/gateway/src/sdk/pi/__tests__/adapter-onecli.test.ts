@@ -193,13 +193,14 @@ describe("pi adapter onecli env wiring", () => {
       type: "file_output",
       fileId: expect.any(String),
       filename: "report.csv",
-      mimeType: "application/octet-stream",
+      mimeType: "text/csv",
       size: 8,
     });
     expect(params.onHistoryEvent).toHaveBeenCalledWith(
       expect.objectContaining({
         type: "assistant_file",
         filename: "report.csv",
+        mimeType: "text/csv",
         size: 8,
       })
     );

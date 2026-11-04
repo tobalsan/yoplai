@@ -7,6 +7,7 @@ import type {
   ContainerFileOutputRequest,
   ExtensionAgentToolContext,
 } from "@yoplai/shared";
+import { EXTENSION_TO_MIME_TYPES } from "@yoplai/shared/media-types";
 import { CONTAINER_DATA_DIR } from "../../agents/container.js";
 import {
   ensureMediaDirectories,
@@ -103,7 +104,7 @@ export class ContainerFileOutputAdapter {
       const fileId = randomUUID();
       const storedFilename = `${fileId}${ext}`;
       const target = path.join(getMediaOutboundDir(), storedFilename);
-      const mimeType = event.mimeType || "application/octet-stream";
+      const mimeType = event.mimeType || inferMimeType(filename);
 
       signal?.throwIfAborted();
       await ensureMediaDirectories();
@@ -157,6 +158,11 @@ export class ContainerFileOutputAdapter {
       await sourceFile?.close();
     }
   }
+}
+
+function inferMimeType(filename: string): string {
+  const extension = path.extname(filename).slice(1).toLowerCase();
+  return EXTENSION_TO_MIME_TYPES[extension]?.[0] ?? "application/octet-stream";
 }
 
 export class FileOutputRejectedError extends Error {

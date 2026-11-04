@@ -11,6 +11,7 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Added
 
+- Agent-sent PNG, JPEG, GIF and WebP files appear inline in web chat with an accessible lightbox and original downloads. New `send_file` outputs infer missing MIME types from their filenames; SVG and older generic files remain download cards.
 - MCP App views can send guarded text messages into web chat and set the latest per-view context for the next Pi or container run. Context stays out of canonical user history, is consumed after a successful run, and is lost on gateway restart; SDK sessions may retain it.
 - MCP App views in web chat can expand into one resizable side panel, including app-requested fullscreen, with a narrow-screen overlay and mode/size updates. Calls to the same server/resource URI update one view; replay uses the latest captured data without rerunning tools. Expand and collapse each reload the view once and may lose unsaved app state.
 

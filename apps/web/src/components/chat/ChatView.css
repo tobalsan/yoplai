@@ -1,5 +1,6 @@
 
-        .chat-view {
+        .chat-view,
+        .image-lightbox-backdrop {
           --accent: #2563eb;
           --accent-soft: color-mix(in srgb, var(--accent) 11%, transparent);
           --accent-glow: color-mix(in srgb, var(--accent) 18%, transparent);
@@ -18,7 +19,9 @@
           --radius-sm: 10px;
           --radius-md: 18px;
           --radius-lg: 28px;
+        }
 
+        .chat-view {
           height: 100%;
           display: flex;
           flex-direction: row;
@@ -736,6 +739,98 @@
         .file-card-body {
           min-width: 0;
           flex: 1;
+        }
+
+        .file-output {
+          min-width: 0;
+          max-width: 100%;
+        }
+
+        .file-image-preview {
+          display: block;
+          max-width: 100%;
+          margin-bottom: 8px;
+          padding: 0;
+          border: 0;
+          border-radius: var(--radius-sm);
+          background: transparent;
+          cursor: zoom-in;
+        }
+
+        .file-image-preview img {
+          display: block;
+          width: auto;
+          height: auto;
+          max-width: 100%;
+          max-height: 400px;
+          object-fit: contain;
+          border-radius: inherit;
+        }
+
+        .file-image-preview:hover {
+          outline: 1px solid var(--border-default);
+        }
+
+        .file-image-preview:focus-visible,
+        .image-lightbox .file-download:focus-visible {
+          outline: 2px solid var(--accent);
+          outline-offset: 3px;
+        }
+
+        .image-lightbox-backdrop {
+          position: fixed;
+          inset: 0;
+          z-index: 1300;
+          padding: 24px;
+          background: rgba(0, 0, 0, 0.8);
+        }
+
+        .image-lightbox {
+          display: grid;
+          grid-template-rows: auto minmax(0, 1fr);
+          gap: 16px;
+          height: 100%;
+          color: var(--text-primary);
+        }
+
+        .image-lightbox-toolbar {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          min-width: 0;
+          padding: 8px;
+          border-radius: var(--radius-sm);
+          background: var(--bg-surface);
+        }
+
+        .image-lightbox-name {
+          flex: 1;
+          min-width: 0;
+          overflow: hidden;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+          font-size: 13px;
+          font-weight: 600;
+        }
+
+        .image-lightbox-image {
+          align-self: center;
+          justify-self: center;
+          min-width: 0;
+          min-height: 0;
+          max-width: 100%;
+          max-height: 100%;
+          object-fit: contain;
+        }
+
+        .image-lightbox .file-download,
+        .image-lightbox .ui-button {
+          min-height: 44px;
+        }
+
+        .image-lightbox .file-download {
+          display: flex;
+          align-items: center;
         }
 
         .file-card-name {

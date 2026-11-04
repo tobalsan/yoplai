@@ -12,6 +12,7 @@ import { appsAvailable } from "../../lib/capabilities";
 import { groupActivityItems, lastFiveWords } from "../../lib/chat-activity";
 import type { AppViews } from "./appViews";
 import { Button } from "../ui/Button";
+import { ImageLightbox } from "./ImageLightbox";
 
 export function CompactionSummary(props: { text: string; timestamp: number }) {
   return (
@@ -546,26 +547,47 @@ export function FileAttachmentList(props: { files?: FileBlock[] }) {
   );
 }
 
+function isInlineImage(file: FileBlock): boolean {
+  return file.direction === "outbound" &&
+    ["image/png", "image/jpeg", "image/gif", "image/webp"].includes(file.mimeType.toLowerCase());
+}
+
 export function FileCard(props: { file: FileBlock }) {
   const href = () => `/api/media/download/${props.file.fileId}`;
+  const [imageFailed, setImageFailed] = createSignal(false);
+  const [lightboxOpen, setLightboxOpen] = createSignal(false);
+  createEffect(on(href, () => setImageFailed(false)));
   return (
-    <div class={`file-card ${props.file.direction}`}>
-      <span class="file-icon">{getFileIcon(props.file.mimeType)}</span>
-      <div class="file-card-body">
-        <div class="file-card-name" title={props.file.filename}>
-          {props.file.filename}
-        </div>
-        <div class="file-card-meta">
-          {[props.file.mimeType, formatFileSize(props.file.size)]
-            .filter(Boolean)
-            .join(" · ")}
-        </div>
-      </div>
-      <Show when={props.file.direction === "outbound"}>
-        <a class="file-download" href={href()} download="">
-          Download
-        </a>
+    <div class="file-output">
+      <Show when={isInlineImage(props.file) && !imageFailed()}>
+        <button type="button" class="file-image-preview" aria-label={`Open ${props.file.filename}`} onClick={(event) => {
+          event.currentTarget.focus();
+          setLightboxOpen(true);
+        }}>
+          <img src={href()} alt={props.file.filename} loading="lazy" onError={() => setImageFailed(true)} />
+        </button>
       </Show>
+      <Show when={lightboxOpen()}>
+        <ImageLightbox file={props.file} onClose={() => setLightboxOpen(false)} />
+      </Show>
+      <div class={`file-card ${props.file.direction}`}>
+        <span class="file-icon">{getFileIcon(props.file.mimeType)}</span>
+        <div class="file-card-body">
+          <div class="file-card-name" title={props.file.filename}>
+            {props.file.filename}
+          </div>
+          <div class="file-card-meta">
+            {[props.file.mimeType, formatFileSize(props.file.size)]
+              .filter(Boolean)
+              .join(" · ")}
+          </div>
+        </div>
+        <Show when={props.file.direction === "outbound"}>
+          <a class="file-download" href={href()} download="">
+            Download
+          </a>
+        </Show>
+      </div>
     </div>
   );
 }

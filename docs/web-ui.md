@@ -44,6 +44,15 @@ Core chat supports:
 
 Full tool/thinking/model view is restricted in multi-user mode. Canonical transcript lives in gateway history store; Pi runtime session files are not UI source of truth.
 
+Agent-sent PNG, JPEG, GIF and WebP files show lazy previews up to 400px high,
+above their original download cards, both live and after reload. Click a preview
+(or use Enter/Space) to open the image fitted to the viewport, with its filename
+and Download link. Escape, Close and clicking the backdrop dismiss the viewer;
+keyboard focus stays inside while open and returns to the preview on close.
+Failed previews fall back to the card. SVG, other formats, inbound uploads and
+older files stored with a generic MIME type keep their existing presentation.
+All previews and downloads use the existing authenticated media route.
+
 ## MCP App views
 
 MCP App tool calls appear as their own rows in the main chat, in simple and full

@@ -85,6 +85,65 @@ describe("container file output adapter", () => {
     }
   );
 
+  it.each([
+    ["diagram.png", undefined, "image/png"],
+    ["portrait.jpg", undefined, "image/jpeg"],
+    ["portrait.jpeg", undefined, "image/jpeg"],
+    ["animation.gif", undefined, "image/gif"],
+    ["preview.webp", undefined, "image/webp"],
+    ["vector.svg", undefined, "image/svg+xml"],
+    ["report.pdf", undefined, "application/pdf"],
+    ["table.csv", undefined, "text/csv"],
+    ["diagram.PNG", undefined, "image/png"],
+    ["archive.unknown", undefined, "application/octet-stream"],
+    ["download", undefined, "application/octet-stream"],
+    ["diagram.png", "application/custom", "application/custom"],
+    ["diagram.png", "", "image/png"],
+  ])(
+    "uses %s and optional MIME %s for outbound history and live media",
+    async (filename, mimeType, expectedMimeType) => {
+      const root = tempDir();
+      process.env.YOPLAI_HOME = root;
+      const data = path.join(root, "files");
+      fs.mkdirSync(data);
+      fs.writeFileSync(path.join(data, "output"), "fixture");
+      const params = {
+        agentId: "illustrator",
+        sessionId: "image-session",
+        onHistoryEvent: vi.fn(),
+        onEvent: vi.fn(),
+      } as unknown as SdkRunParams;
+
+      await new ContainerFileOutputAdapter().handle(
+        params,
+        {
+          type: "file_output",
+          path: "/conversation/files/output",
+          filename,
+          mimeType,
+        },
+        undefined,
+        undefined,
+        { hostPath: data, runtimePath: "/conversation/files" }
+      );
+
+      expect(params.onHistoryEvent).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: "assistant_file",
+          filename,
+          mimeType: expectedMimeType,
+        })
+      );
+      expect(params.onEvent).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: "file_output",
+          filename,
+          mimeType: expectedMimeType,
+        })
+      );
+    }
+  );
+
   it.each(["sub/dir/report.csv", "sub/dir/../dir/report.csv"])(
     "sends nested conversation file %s with its basename and original bytes",
     async (source) => {
