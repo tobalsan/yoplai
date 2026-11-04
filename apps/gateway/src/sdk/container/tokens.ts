@@ -1,4 +1,4 @@
-import type { ContainerFileOutputRequest, ExtensionAgentToolContext } from "@yoplai/shared";
+import type { ContainerFileOutputRequest, ExtensionAgentToolContext, McpAppFile } from "@yoplai/shared";
 
 const activeTokens = new Map<
   string,
@@ -28,7 +28,7 @@ export type ContainerTokenContext = {
   registerFileOutput?: (
     event: ContainerFileOutputRequest,
     signal: AbortSignal
-  ) => Promise<void>;
+  ) => Promise<McpAppFile>;
   createdAt: number;
   abortController: AbortController;
 };

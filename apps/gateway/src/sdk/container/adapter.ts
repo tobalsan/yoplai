@@ -461,7 +461,7 @@ export function getContainerAdapter(): SdkAdapter {
       let settled = false;
       const protocol = new ContainerProtocolDecoder();
       let sawStreamingHistory = false;
-      const pendingFileOutputs: Promise<void>[] = [];
+      const pendingFileOutputs: Promise<unknown>[] = [];
       const idleTimeoutSeconds =
         params.agent.sandbox?.idleTimeout ?? DEFAULT_IDLE_TIMEOUT_SECONDS;
       const maxRunTimeSeconds =

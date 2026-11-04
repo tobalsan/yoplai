@@ -5,6 +5,7 @@ import { Hono, type Context } from "hono";
 import type { GatewayConfig } from "@yoplai/shared";
 import { isSafeSessionId } from "../history/sessions.js";
 import { readMcpAppRecord } from "./capture.js";
+import { createFileAppProvider } from "./file-provider.js";
 import { logInfo, logWarn } from "../logging.js";
 import { accessLogger } from "../server/access-log.js";
 import type { ExtensionRuntime } from "../extensions/runtime.js";
@@ -187,7 +188,7 @@ async function readJson(request: Request, maxBytes: number, signal?: AbortSignal
 
 function mcpError(error: unknown): { reason: string; authorizeUrl?: string } {
   const shaped = object(error);
-  const reasons = ["unknown_agent", "unknown_server", "unknown_tool", "not_app_visible", "not_connected", "needs_reconnect", "timeout", "aborted", "upstream"];
+  const reasons = ["unknown_agent", "unknown_server", "unknown_tool", "not_app_visible", "not_connected", "needs_reconnect", "timeout", "aborted", "upstream", "too_large"];
   if (shaped.name === "McpAppsError" && typeof shaped.reason === "string" && reasons.includes(shaped.reason)) {
     return { reason: shaped.reason, ...(typeof shaped.authorizeUrl === "string" ? { authorizeUrl: shaped.authorizeUrl } : {}) };
   }
@@ -243,7 +244,8 @@ export function createMcpAppRoutes(deps: {
         audit.outcome = "ok";
         return c.json({ args: record.args, result: record.result });
       }
-      const mcpApps = deps.getRuntime().getLoadedExtensions().find((extension) => extension.mcpApps)?.mcpApps;
+      const mcpApps = record.server === "yoplai" ? createFileAppProvider(record)
+        : deps.getRuntime().getLoadedExtensions().find((extension) => extension.mcpApps)?.mcpApps;
       if (operation === "log") {
         let body: unknown;
         try { body = await deadline(c.req.raw.signal, (signal) => readJson(c.req.raw, 4096, signal)); }

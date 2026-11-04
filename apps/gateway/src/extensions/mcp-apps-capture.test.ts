@@ -4,6 +4,7 @@ import { afterAll, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 import { AgentConfigSchema, GatewayConfigSchema, type ExtensionAgentTool } from "@yoplai/shared";
 import { ExtensionRuntime } from "./runtime.js";
+import { readMcpAppRecord } from "../mcp-apps/capture.js";
 
 // Thinh approved the runtime + real owner-scoped filesystem seam in ALG-544
 // comment 04ea3081-4db9-4872-8433-2200b96ef01a. It catches capture and model
@@ -35,7 +36,7 @@ const raw = {
   structuredContent: { drawingId: 7 },
 };
 
-function runtime(execute: ExtensionAgentTool["execute"] = async () => raw) {
+function runtime(execute: ExtensionAgentTool["execute"] = async () => raw, server = "canvas") {
   const runtime = new ExtensionRuntime();
   runtime.load([{
     id: "fixture", displayName: "Fixture", description: "Fixture", dependencies: [],
@@ -44,7 +45,7 @@ function runtime(execute: ExtensionAgentTool["execute"] = async () => raw) {
     registerRoutes: () => undefined, start: async () => {}, stop: async () => {},
     capabilities: () => [], getAgentTools: () => [{
       name: "draw", description: "Draw", parameters: {}, execute,
-      mcp: { server: "canvas", tool: "draw", ui: { resourceUri: "ui://canvas/view", visibility: ["model", "app"] } },
+      mcp: { server, tool: "draw", ui: { resourceUri: "ui://canvas/view", visibility: ["model", "app"] } },
     }],
   }]);
   return runtime;
@@ -57,6 +58,20 @@ async function records(sessionId: string, owner = "owner") {
 }
 
 describe("MCP Apps runtime capture", () => {
+  // ALG-614 runtime seam explicitly approved by Thinh in fa28457a-d6a4-4709-97cd-91ff575553b9.
+  it("ignores an external yoplai app without changing model results and warns once", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const external = runtime(undefined, "yoplai");
+      for (const toolCallId of ["reserved-one", "reserved-two"]) {
+        expect(await external.executeTool(agent, "draw", {}, config, "reserved", "owner", undefined, undefined, { toolCallId })).toEqual({ found: true, result: raw });
+        expect(await readMcpAppRecord({ agentId: agent.id, sessionId: "reserved", ownerUserId: "owner" }, toolCallId)).toBeUndefined();
+      }
+      expect(warn).toHaveBeenCalledTimes(1);
+      expect(JSON.parse(String(warn.mock.calls[0]?.[0]))).toMatchObject({ server: "yoplai", outcome: "reserved_server" });
+      expect(String(warn.mock.calls[0]?.[0])).not.toContain("fixture-private-raw");
+    } finally { warn.mockRestore(); }
+  });
   it("preserves the model result and privately records raw replay data for the storage owner", async () => {
     const result = await runtime().executeTool(agent, "draw", { title: "Example" }, config, "saved", "requester", undefined, undefined, { sessionOwnerId: "owner", toolCallId: "call-7" });
     expect(result).toEqual({ found: true, result: raw });

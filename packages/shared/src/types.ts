@@ -2253,7 +2253,18 @@ export const McpAppViewSchema = z.object({
   resourceUri: z.string(),
 });
 export type McpAppView = z.infer<typeof McpAppViewSchema>;
-export const McpAppViewReferenceSchema = McpAppViewSchema.extend({ recordId: z.string() });
+export const McpAppFileSchema = z.object({
+  fileId: z.string(),
+  filename: z.string(),
+  mimeType: z.string(),
+  size: z.number(),
+  title: z.string().max(200).optional(),
+});
+export type McpAppFile = z.infer<typeof McpAppFileSchema>;
+export const McpAppViewReferenceSchema = McpAppViewSchema.extend({
+  recordId: z.string(),
+  file: McpAppFileSchema.optional(),
+});
 export type McpAppViewReference = z.infer<typeof McpAppViewReferenceSchema>;
 
 export const StreamEventSchema = z.discriminatedUnion("type", [
@@ -2871,6 +2882,7 @@ export type HistoryEvent = z.infer<typeof HistoryEventSchema>;
 export const ContainerFileOutputRequestSchema = z.object({
   type: z.literal("file_output"),
   path: z.string(),
+  title: z.string().max(200).optional(),
   filename: z.string().optional(),
   mimeType: z.string().optional(),
   size: z.number().optional(),

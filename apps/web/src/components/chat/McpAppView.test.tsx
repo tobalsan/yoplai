@@ -152,6 +152,36 @@ describe("MCP App view host", () => {
     expect(frame.isConnected).toBe(false);
     expect(changeMode.mock.calls).toEqual([[target]]);
   });
+  it("delivers a replacement file's URI and metadata to the same yoplai viewer", async () => {
+    loadView.mockResolvedValueOnce({
+      ...view, server: "yoplai", toolName: "send_file", args: { path: "report.html" },
+      result: { content: [{ type: "text", text: "File sent to user" }], structuredContent: { uri: "yoplai-file://first", fileId: "first", filename: "report.html", mimeType: "text/html", size: 120 } },
+    });
+    loadData.mockResolvedValueOnce({
+      args: { path: "report.html", title: "Revised report" },
+      result: { content: [{ type: "text", text: "File sent to user" }], structuredContent: { uri: "yoplai-file://second", fileId: "second", filename: "report.html", mimeType: "text/html", size: 180, title: "Revised report" } },
+    });
+    const [callId, setCallId] = createSignal("file-first");
+    mount(callId, () => "File sent to user", undefined, undefined, { viewKey: () => "yoplai\nui://yoplai/file-viewer\nreport.html" });
+    await settle();
+    const frame = getByTitle(container, "yoplai MCP App") as HTMLIFrameElement;
+    const post = vi.spyOn(frame.contentWindow!, "postMessage");
+    initialize(frame);
+    expect(post.mock.calls.at(-1)).toEqual([{ jsonrpc: "2.0", method: "ui/notifications/tool-result", params: { content: [{ type: "text", text: "File sent to user" }], structuredContent: { uri: "yoplai-file://first", fileId: "first", filename: "report.html", mimeType: "text/html", size: 120 } } }, origin]);
+    post.mockClear();
+    setCallId("file-second");
+    await settle();
+    expect(getByTitle(container, "yoplai MCP App")).toBe(frame);
+    expect(post.mock.calls).toEqual([
+      [{ jsonrpc: "2.0", method: "ui/notifications/tool-input", params: { arguments: { path: "report.html", title: "Revised report" } } }, origin],
+      [{ jsonrpc: "2.0", method: "ui/notifications/tool-result", params: { content: [{ type: "text", text: "File sent to user" }], structuredContent: { uri: "yoplai-file://second", fileId: "second", filename: "report.html", mimeType: "text/html", size: 180, title: "Revised report" } } }, origin],
+    ]);
+    loadData.mockImplementationOnce(() => new Promise(() => {}));
+    setCallId("file-third-pending");
+    await settle();
+    send(frame, { jsonrpc: "2.0", id: 32, method: "resources/read", params: { uri: "yoplai-file://second" } });
+    expect(relay.mock.calls[0].slice(0, 4)).toEqual(["agent", "chat", "file-second", { jsonrpc: "2.0", id: 32, method: "resources/read", params: { uri: "yoplai-file://second" } }]);
+  });
   it("delivers a later call's input then result to the same initialized frame and keeps the anchor for RPC", async () => {
     const [callId, setCallId] = createSignal("call-1");
     mount(callId);

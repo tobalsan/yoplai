@@ -43,6 +43,7 @@ export function McpAppView(props: { agentId: string; sessionId: string; viewKey:
     let initializing = false;
     let initialized = false;
     let latestCallId = toolCallId;
+    let deliveredCallId = toolCallId;
     let dataController: AbortController | undefined;
     let generation = 0;
     let dataTimer: ReturnType<typeof setTimeout> | undefined;
@@ -75,6 +76,7 @@ export function McpAppView(props: { agentId: string; sessionId: string; viewKey:
       dataTimer = timer;
       void loadMcpAppData(agentId, sessionId, callId, requestController.signal).then((result) => {
         if (!active || requestGeneration !== generation) return;
+        deliveredCallId = callId;
         post({ jsonrpc: "2.0", method: "ui/notifications/tool-input", params: { arguments: result.args } });
         post({ jsonrpc: "2.0", method: "ui/notifications/tool-result", params: result.result });
       }).catch(() => { if (active && requestGeneration === generation) log("warning", "MCP App update failed; keeping the previous view data"); }).finally(() => { clearTimeout(timer); });
@@ -182,7 +184,8 @@ export function McpAppView(props: { agentId: string; sessionId: string; viewKey:
         if (message.method === "tools/call" || message.method === "resources/read" || message.method === "ui/update-model-context") {
           const timer = setTimeout(fail, 32000);
           relayTimers.add(timer);
-          void relayMcpAppRequest(agentId, sessionId, toolCallId, message, controller.signal).then((response) => {
+          const relayCallId = data.server === "yoplai" && message.method === "resources/read" ? deliveredCallId : toolCallId;
+          void relayMcpAppRequest(agentId, sessionId, relayCallId, message, controller.signal).then((response) => {
             if (active) post({ ...response, id: message.id });
           }).catch(() => { if (active) fail(); }).finally(() => { clearTimeout(timer); relayTimers.delete(timer); });
         } else if (message.method === "ui/message") {

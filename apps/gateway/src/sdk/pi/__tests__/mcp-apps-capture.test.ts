@@ -10,6 +10,8 @@ import { bufferHistoryEvent, createTurnBuffer, getFullHistory } from "../../../h
 import { SessionRunLifecycle } from "../../../agents/run-lifecycle.js";
 import { agentEventBus, type AgentHistoryEvent } from "../../../agents/events.js";
 import { piAdapter } from "../adapter.js";
+import { getConversationFiles } from "../../../media/conversation-files.js";
+import { readMcpAppRecord } from "../../../mcp-apps/capture.js";
 
 // ALG-544's real Pi/external provider seam was approved by Thinh in comment
 // 04ea3081-4db9-4872-8433-2200b96ef01a. This observes declarations, execution,
@@ -49,6 +51,62 @@ afterAll(async () => {
 
 const raw = { content: [{ type: "text", text: "Created drawing 7" }], _meta: { access_token: "fixture-raw-private" } };
 const modelText = '{"content":[{"type":"text","text":"Created drawing 7"}],"_meta":{"access_token":"fixture-raw-private"}}';
+
+// ALG-614 real Pi/model seam explicitly approved in fa28457a-d6a4-4709-97cd-91ff575553b9.
+it("sends a file with unchanged model text and captures its title, metadata and call marker", async () => {
+  const run = await fixture();
+  run.params.sessionId = "send-file";
+  const files = getConversationFiles(run.params.agentId, run.params.sessionId, "alice");
+  await fs.mkdir(files.hostPath, { recursive: true });
+  const filename = path.join(files.hostPath, "report.html");
+  await fs.writeFile(filename, "<h1>Report</h1>");
+  let received: unknown;
+  setup.faux.setResponses([
+    fauxAssistantMessage(fauxToolCall("send_file", { path: filename, title: "Quarterly report" }, { id: "send-report" }), { stopReason: "toolUse" }),
+    context => {
+      received = context.messages.filter(message => message.role === "toolResult").at(-1)?.content;
+      return fauxAssistantMessage("Report ready");
+    },
+  ]);
+  await expect(piAdapter.run(run.params)).resolves.toMatchObject({ text: "Report ready" });
+  expect(received).toEqual([{ type: "text", text: "File sent to user" }]);
+  expect(run.events).toContainEqual(expect.objectContaining({ type: "tool_call", id: "send-report", name: "send_file", view: { server: "yoplai", tool: "send_file", resourceUri: "ui://yoplai/file-viewer" } }));
+  const sent = run.events.find(event => event.type === "file_output");
+  if (sent?.type !== "file_output") throw new Error("Expected sent file");
+  const file = { fileId: sent.fileId, filename: "report.html", mimeType: "application/octet-stream", size: 15, title: "Quarterly report" };
+  expect(run.events).toContainEqual(expect.objectContaining({ type: "tool_result", id: "send-report", content: "File sent to user", view: expect.objectContaining({ server: "yoplai", tool: "send_file", file }) }));
+  expect(await readMcpAppRecord({ agentId: run.params.agentId, sessionId: "send-file", ownerUserId: "owner" }, "send-report")).toMatchObject({
+    server: "yoplai", tool: "send_file", resourceUri: "ui://yoplai/file-viewer", args: { path: filename, title: "Quarterly report" },
+    result: { content: [{ type: "text", text: "File sent to user" }], structuredContent: { uri: `yoplai-file://${sent.fileId}`, ...file } },
+  });
+});
+
+it("keeps send_file usable without a title when replay storage fails", async () => {
+  const run = await fixture();
+  run.params.sessionId = "blocked-file";
+  const recordParent = path.join(setup.home, ".yoplai", "sessions", "users", "owner", "history", "mcp-apps", run.params.agentId);
+  await fs.mkdir(recordParent, { recursive: true });
+  await fs.writeFile(path.join(recordParent, "blocked-file"), "not a directory");
+  const files = getConversationFiles(run.params.agentId, run.params.sessionId, "alice");
+  await fs.mkdir(files.hostPath, { recursive: true });
+  const filename = path.join(files.hostPath, "notes.txt");
+  await fs.writeFile(filename, "Notes");
+  let received: unknown;
+  setup.faux.setResponses([
+    fauxAssistantMessage(fauxToolCall("send_file", { path: filename }, { id: "send-without-view" }), { stopReason: "toolUse" }),
+    context => {
+      received = context.messages.filter(message => message.role === "toolResult").at(-1)?.content;
+      return fauxAssistantMessage("Chat still progresses");
+    },
+  ]);
+  await expect(piAdapter.run(run.params)).resolves.toMatchObject({ text: "Chat still progresses" });
+  expect(received).toEqual([{ type: "text", text: "File sent to user" }]);
+  expect(run.events).toContainEqual(expect.objectContaining({ type: "file_output", filename: "notes.txt", mimeType: "text/plain", size: 5 }));
+  const result = run.events.find(event => event.type === "tool_result" && event.id === "send-without-view");
+  expect(result).toMatchObject({ content: "File sent to user", isError: false });
+  expect(result?.type === "tool_result" && result.view).toBeUndefined();
+  expect(await readMcpAppRecord({ agentId: run.params.agentId, sessionId: run.params.sessionId, ownerUserId: "owner" }, "send-without-view")).toBeUndefined();
+});
 
 async function fixture(execute: ExtensionAgentTool["execute"] = async () => raw) {
   const workspace = path.join(setup.home, "workspace");

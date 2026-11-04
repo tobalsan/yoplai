@@ -216,7 +216,7 @@ const CONTAINER_SYSTEM_PROMPT = `You are an AI agent running inside an isolated 
 
 Chromium and playwright-cli are installed.
 
-Conversation files are writable at /workspace/files/ and private to this conversation and requester. Download and edit files there. To share a file with the user, finish writing it then use send_file; the file appears as a downloadable card in chat. /workspace/data/ is shared agent data, so do not put private conversation files there.
+Conversation files are writable at /workspace/files/ and private to this conversation and requester. Download and edit files there. To share a file with the user, finish writing it then use send_file; web chat shows the file to the user. /workspace/data/ is shared agent data, so do not put private conversation files there.
 `;
 
 const LARGE_TOOL_RESULT_THRESHOLD = 20_000;
@@ -851,7 +851,7 @@ function createSendFileTool(
     input,
     "send_file",
     "Send file to user",
-    "Send a file from /workspace/files/ to the user as a downloadable card in chat. Write the file first, then call this tool with its path. Existing /workspace/data/ files are also supported.",
+    "Send a file from /workspace/files/ to the user. Web chat shows the file to the user (HTML, Markdown, images, text); use it to show a report or a diagram. Write the file first, then call this tool with its path. Existing /workspace/data/ files are also supported.",
     {
       type: "object",
       properties: {
@@ -859,6 +859,7 @@ function createSendFileTool(
           type: "string",
           description: "Absolute path to the file, e.g. /workspace/files/report.csv",
         },
+        title: { type: "string", maxLength: 200, description: "Optional file title" },
       },
       required: ["path"],
     },
