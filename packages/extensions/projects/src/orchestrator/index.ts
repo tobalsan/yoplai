@@ -45,9 +45,11 @@ export function startOrchestratorDaemon(
             config: config.notifications,
             channel: hitlChannel,
             message,
-            surface: "both",
+            surface: "all",
             discordToken: config.extensions?.discord?.token,
             slackToken: config.extensions?.slack?.token,
+            mattermostUrl: config.extensions?.mattermost?.url,
+            mattermostToken: config.extensions?.mattermost?.token,
           });
           if (!summary.ok) {
             throw new Error("all notification surfaces failed");

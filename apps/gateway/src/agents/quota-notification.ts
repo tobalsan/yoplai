@@ -24,12 +24,17 @@ export async function notifyProviderQuota(
   const env = resolveAgentEnv(agent, config);
   const discordToken = agent.discord?.token ?? config.extensions?.discord?.token;
   const slackToken = agent.slack?.token ?? config.extensions?.slack?.token;
+  const mattermost = config.notifications?.channels?.[channel]?.mattermost
+    ? agent.mattermost ?? config.extensions?.mattermost
+    : undefined;
   const summary = await notify({
     config: config.notifications,
     channel,
     message: `Provider quota exhausted for ${provider}/${model} (agent ${agent.id})`,
     discordToken: discordToken ? await resolveSecretValue(discordToken, env) : undefined,
     slackToken: slackToken ? await resolveSecretValue(slackToken, env) : undefined,
+    mattermostUrl: mattermost?.url ? await resolveSecretValue(mattermost.url, env) : undefined,
+    mattermostToken: mattermost?.token ? await resolveSecretValue(mattermost.token, env) : undefined,
     fetchImpl: (input, init) => fetch(input, { ...init, signal: AbortSignal.timeout(10_000) }),
   });
   if (!summary.ok) {

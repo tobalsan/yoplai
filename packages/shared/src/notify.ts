@@ -1,6 +1,6 @@
 import type { NotificationsConfig } from "./types.js";
 
-export type NotifySurface = "discord" | "slack" | "both";
+export type NotifySurface = "discord" | "slack" | "mattermost" | "all" | "both";
 
 export type FetchLike = (
   input: RequestInfo | URL,
@@ -15,12 +15,14 @@ export type NotifyOptions = {
   mention?: string;
   discordToken?: string;
   slackToken?: string;
+  mattermostToken?: string;
+  mattermostUrl?: string;
   fetchImpl?: FetchLike;
   adapters?: Partial<NotifyAdapters>;
 };
 
 export type NotifyResult = {
-  surface: Exclude<NotifySurface, "both">;
+  surface: ConcreteSurface;
   ok: boolean;
   channelId: string;
   error?: string;
@@ -34,6 +36,7 @@ export type NotifySummary = {
 export type NotifyAdapters = {
   discord: (params: NotifyAdapterParams) => Promise<void>;
   slack: (params: NotifyAdapterParams) => Promise<void>;
+  mattermost: (params: NotifyAdapterParams) => Promise<void>;
 };
 
 export type NotifyAdapterParams = {
@@ -41,11 +44,12 @@ export type NotifyAdapterParams = {
   text: string;
   token: string;
   fetchImpl: FetchLike;
+  baseUrl?: string;
 };
 
-type ConcreteSurface = Exclude<NotifySurface, "both">;
+type ConcreteSurface = Exclude<NotifySurface, "all" | "both">;
 
-const VALID_SURFACES = new Set(["discord", "slack", "both"]);
+const VALID_SURFACES = new Set(["discord", "slack", "mattermost", "all", "both"]);
 
 export function isNotifySurface(value: string): value is NotifySurface {
   return VALID_SURFACES.has(value);
@@ -53,6 +57,7 @@ export function isNotifySurface(value: string): value is NotifySurface {
 
 function withMention(surface: ConcreteSurface, message: string, mention?: string): string {
   if (!mention) return message;
+  if (surface === "mattermost") return `@${mention.replace(/^@/, "")} ${message}`;
   return `<@${mention}> ${message}`;
 }
 
@@ -114,8 +119,30 @@ async function postSlack({
   }
 }
 
+async function postMattermost({
+  channelId,
+  text,
+  token,
+  fetchImpl,
+  baseUrl,
+}: NotifyAdapterParams): Promise<void> {
+  const url = baseUrl?.trim().replace(/\/+$/, "").replace(/\/api\/v4$/, "");
+  const response = await fetchImpl(`${url}/api/v4/posts`, {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${token}`,
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({ channel_id: channelId, message: text }),
+  });
+  if (!response.ok) {
+    const body = (await response.text()).split(token).join("[redacted]").slice(0, 500);
+    throw new Error(`Mattermost API returned ${response.status}: ${body}`);
+  }
+}
+
 function resolveSurfaces(surface: string | undefined): NotifySurface {
-  const requested = surface ?? "both";
+  const requested = surface ?? "all";
   if (!isNotifySurface(requested)) {
     throw new Error(`Invalid notify surface "${requested}"`);
   }
@@ -130,7 +157,9 @@ export async function notify(options: NotifyOptions): Promise<NotifySummary> {
   }
 
   const surfaces: ConcreteSurface[] =
-    requestedSurface === "both" ? ["discord", "slack"] : [requestedSurface];
+    requestedSurface === "all" || requestedSurface === "both"
+      ? ["discord", "slack", "mattermost"]
+      : [requestedSurface];
   const targets = surfaces.filter((surface) => Boolean(channel[surface]));
   if (targets.length === 0) {
     throw new Error(
@@ -141,12 +170,15 @@ export async function notify(options: NotifyOptions): Promise<NotifySummary> {
   const adapters: NotifyAdapters = {
     discord: options.adapters?.discord ?? postDiscord,
     slack: options.adapters?.slack ?? postSlack,
+    mattermost: options.adapters?.mattermost ?? postMattermost,
   };
   const fetchImpl = options.fetchImpl ?? fetch;
   const results: NotifyResult[] = [];
 
   for (const surface of targets) {
-    const token = surface === "discord" ? options.discordToken : options.slackToken;
+    const token = surface === "discord"
+      ? options.discordToken
+      : surface === "slack" ? options.slackToken : options.mattermostToken;
     const channelId = channel[surface];
     if (!channelId) continue;
     if (!token) {
@@ -158,6 +190,10 @@ export async function notify(options: NotifyOptions): Promise<NotifySummary> {
       });
       continue;
     }
+    if (surface === "mattermost" && !options.mattermostUrl) {
+      results.push({ surface, channelId, ok: false, error: "Missing mattermost url" });
+      continue;
+    }
 
     try {
       await adapters[surface]({
@@ -165,14 +201,16 @@ export async function notify(options: NotifyOptions): Promise<NotifySummary> {
         token,
         fetchImpl,
         text: withMention(surface, options.message, options.mention),
+        ...(surface === "mattermost" ? { baseUrl: options.mattermostUrl } : {}),
       });
       results.push({ surface, channelId, ok: true });
     } catch (err) {
+      const error = err instanceof Error ? err.message : String(err);
       results.push({
         surface,
         channelId,
         ok: false,
-        error: err instanceof Error ? err.message : String(err),
+        error: surface === "mattermost" ? error.split(token).join("[redacted]") : error,
       });
     }
   }
