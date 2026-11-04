@@ -26,6 +26,7 @@ Opt-in model routing picks a model and effort per chat session with a bounded cl
 - **Sandbox and Harbor eval images now use Node 24 LTS.** Rebuild custom images that start `FROM yoplai-agent:latest`. The gateway still supports Node 22.19+.
 - **`yoplai gateway restart` refuses while work is running.** Check with `yoplai gateway idle`, or pass `--force`.
 - **Human-chat moved to the `@yoplai/extension-human-chat` package.** Existing `extensions.human-chat` config keeps working; install the package where it is enabled.
+- **Google Drive write mode now needs full Drive access.** Add the `drive`, `spreadsheets` and `presentations` scopes to the OAuth consent screen (see `docs/oauth-google-drive-setup.md`). Users with writing already on must reconnect Google once.
 - **Poisoned Pi sessions** (tools lost after compaction) can be dry-run and repaired with backups using `scripts/repair-session-tools.ts`.
 
 ### Added
@@ -64,6 +65,7 @@ Opt-in model routing picks a model and effort per chat session with a bounded cl
 - Optional `human-chat` extension (`extensions.human-chat: {}`): lints human-turn replies for short, one-topic answers, asks for one hidden rewrite when needed, adds a `reply_mode` tool and `/topics`, and queues follow-ups as their own turns. Limits are configurable (`max_sentences`, `sentence_leeway`, `max_sentence_words`, `word_leeway`).
 - `reflect` agent option adds a self-improvement prompt so the agent saves lessons to skills and `memory.md` in the same turn. Off by default.
 - `yoplai gateway idle` reports running agent turns, subagents and orchestrator workers (exit 1 when busy).
+- Google Drive write mode (`allowWrite`) can update existing files the user can edit, in place and in their original format, instead of making copies. No new setting: the existing write checkbox covers it.
 
 ### Changed
 
@@ -102,6 +104,7 @@ Opt-in model routing picks a model and effort per chat session with a bounded cl
 - Queued chat messages keep tool activity in place without duplicate pills.
 - Slack acknowledges queued messages once per run, then uses hourglass reactions.
 - Mattermost threads keep their owner across replies and restarts, recover from silent disconnects, and bound stalled calls.
+- Mattermost `url` accepts an `$env:` reference.
 - Threadit items that failed can run again after a board Retry.
 - Google profile photos refresh on sign-in and show across user lists, with initials as fallback.
 
