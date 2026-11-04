@@ -1061,7 +1061,7 @@ export function ChatView() {
       </div>
       <Show when={!!appViews.panel()}>
         <ChatSidePanel>
-          <McpAppView agentId={params.agentId} sessionId={session.appSessionId()!} viewKey={appViews.panel()!.key} callId={() => appViews.panel()!.latest.id} text={appViews.panel()!.latest.text ?? ""} mode="panel" onDisplayMode={(mode) => { if (mode === "inline") appViews.close(); }} onUserMessage={(text) => handleViewMessage(appViews.panel()!.key, text)} />
+          <McpAppView agentId={params.agentId} sessionId={session.appSessionId()!} viewKey={appViews.panel()!.key} callId={() => appViews.panel()!.latest.id} text={appViews.panel()!.latest.text ?? ""} mode="panel" fileOf={appViews.fileOf} onShown={(callId) => { const key = appViews.panel()?.key; if (key) appViews.reportShown(key, callId); }} onDisplayMode={(mode) => { if (mode === "inline") appViews.close(); }} onUserMessage={(text) => handleViewMessage(appViews.panel()!.key, text)} />
         </ChatSidePanel>
       </Show>
 

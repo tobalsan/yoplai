@@ -6,7 +6,7 @@ import type { CompactStatus } from "./createChatSession";
 import { formatTimestamp } from "../../lib/format";
 import { extractBlockText } from "../../lib/history";
 import { renderMarkdown } from "../../lib/markdown";
-import { formatFileSize } from "../../lib/attachments";
+import { formatFileSize, getFileIcon } from "../../lib/attachments";
 import { McpAppView } from "./McpAppView";
 import { appsAvailable } from "../../lib/capabilities";
 import { groupActivityItems, lastFiveWords } from "../../lib/chat-activity";
@@ -37,17 +37,6 @@ export function CompactStatusView(props: { status: CompactStatus | undefined }) 
       )}
     </Show>
   );
-}
-
-function getFileIcon(mimeType: string): string {
-  if (mimeType.startsWith("image/")) return "IMG";
-  if (mimeType === "application/pdf") return "PDF";
-  if (mimeType.includes("word")) return "DOC";
-  if (mimeType.includes("excel") || mimeType.includes("spreadsheet"))
-    return "XLS";
-  if (mimeType === "text/csv") return "CSV";
-  if (mimeType === "text/markdown") return "MD";
-  return "FILE";
 }
 
 function formatJson(args: unknown): string {
@@ -171,6 +160,10 @@ function SimpleToolBlock(props: { name: string; arguments?: unknown }) {
 
 export function McpAppToolRow(props: { agentId: string; sessionId?: string | null; toolCallId: string; name: string; arguments?: unknown; result?: FullToolResultMessage; appViews: AppViews; onUserMessage?: (viewKey: string, text: string) => Promise<void> }) {
   const view = () => props.appViews.viewOf(props.toolCallId);
+  const file = () => {
+    const current = view();
+    return current ? props.appViews.shownFileOf(current.key) ?? current.latest.result?.view?.file : undefined;
+  };
   const role = () => props.appViews.roleOf(props.toolCallId);
   const captured = () => !!view()?.calls.find((call) => call.id === props.toolCallId)?.result?.view;
   const settled = () => !!props.result || captured();
@@ -185,7 +178,7 @@ export function McpAppToolRow(props: { agentId: string; sessionId?: string | nul
     <SimpleToolBlock name={props.name} arguments={props.arguments} />
     <Switch fallback={<p role="status">Loading view…</p>}>
       <Match when={role() === "panel-card"}>
-        <div class="mcp-app-panel-card">{view()?.latest.result?.view?.server} · shown in the side panel</div>
+        <div class="mcp-app-panel-card">{file()?.title ?? file()?.filename ?? view()?.latest.result?.view?.server} · shown in the side panel</div>
       </Match>
       <Match when={role() === "link" && (!settled() || captured())}>
         <Show when={settled()} fallback={<p role="status">Updating view…</p>}>
@@ -195,7 +188,7 @@ export function McpAppToolRow(props: { agentId: string; sessionId?: string | nul
       <Match when={settled() && appsAvailable() !== undefined && (appsAvailable() === false || !captured() || props.sessionId !== undefined)}>
         <Show when={captured() && appsAvailable() === true && !!props.sessionId}
           fallback={<><pre class="tool-code">{getToolResultText(props.result)}</pre><p role="status">View unavailable</p></>}>
-          <McpAppView agentId={props.agentId} sessionId={props.sessionId!} viewKey={view()!.key} callId={() => view()!.latest.id} text={view()?.latest.text ?? getToolResultText(props.result)} mode="inline" onDisplayMode={(mode) => { if (mode === "fullscreen") props.appViews.open(view()!.key); }} onUserMessage={props.onUserMessage ? (text) => props.onUserMessage!(view()!.key, text) : undefined} />
+          <McpAppView agentId={props.agentId} sessionId={props.sessionId!} viewKey={view()!.key} callId={() => view()!.latest.id} text={view()?.latest.text ?? getToolResultText(props.result)} mode="inline" fileOf={props.appViews.fileOf} onShown={(callId) => { const key = view()?.key; if (key) props.appViews.reportShown(key, callId); }} onDisplayMode={(mode) => { if (mode === "fullscreen") props.appViews.open(view()!.key); }} onUserMessage={props.onUserMessage ? (text) => props.onUserMessage!(view()!.key, text) : undefined} />
         </Show>
       </Match>
     </Switch>
@@ -478,6 +471,7 @@ export function ContentBlocks(props: {
   blocks: ContentBlock[];
   timestamp?: number;
   toolResultsMap?: Map<string, FullToolResultMessage>;
+  hidesFileCard?: (fileId: string) => boolean;
 }) {
   const segments = () =>
     groupActivityItems(
@@ -517,7 +511,7 @@ export function ContentBlocks(props: {
             return (
               <AssistantText class="block-text markdown-content" text={block.text} />
             );
-          if (block.type === "file") return <FileCard file={block} />;
+          if (block.type === "file") return <TranscriptFileCard file={block} hidesFileCard={props.hidesFileCard} />;
           return null;
         }}
       </For>
@@ -550,6 +544,10 @@ export function FileAttachmentList(props: { files?: FileBlock[] }) {
 function isInlineImage(file: FileBlock): boolean {
   return file.direction === "outbound" &&
     ["image/png", "image/jpeg", "image/gif", "image/webp"].includes(file.mimeType.toLowerCase());
+}
+
+export function TranscriptFileCard(props: { file: FileBlock; hidesFileCard?: (fileId: string) => boolean }) {
+  return <Show when={props.file.direction !== "outbound" || !props.hidesFileCard?.(props.file.fileId)}><FileCard file={props.file} /></Show>;
 }
 
 export function FileCard(props: { file: FileBlock }) {

@@ -1,5 +1,7 @@
 import { createEffect, createSignal, on, onCleanup, Show } from "solid-js";
+import type { McpAppFile } from "@yoplai/shared/types";
 import { Button } from "../ui/Button";
+import { formatFileSize, getFileIcon } from "../../lib/attachments";
 import { version } from "../../../package.json";
 import { loadMcpAppView, loadMcpAppData, relayMcpAppRequest, logMcpAppEvent, type McpAppViewData } from "../../api/mcp-apps";
 
@@ -17,8 +19,17 @@ function isRpcMessage(value: unknown): value is RpcMessage {
   return !!error && typeof error === "object" && !Array.isArray(error) && Number.isInteger(error.code) && typeof error.message === "string";
 }
 
-export function McpAppView(props: { agentId: string; sessionId: string; viewKey: string; callId: () => string; text: string; mode: "inline" | "panel"; onDisplayMode?: (mode: "inline" | "fullscreen") => void; onUserMessage?: (text: string) => Promise<void> }) {
+export function McpAppView(props: { agentId: string; sessionId: string; viewKey: string; callId: () => string; text: string; mode: "inline" | "panel"; onDisplayMode?: (mode: "inline" | "fullscreen") => void; onUserMessage?: (text: string) => Promise<void>; fileOf?: (callId: string) => McpAppFile | undefined; onShown?: (callId: string | undefined) => void }) {
   const [view, setView] = createSignal<McpAppViewData>();
+  const [shownCallId, setShownCallId] = createSignal(props.callId());
+  const file = () => props.fileOf?.(shownCallId());
+  const fileName = () => file()?.title ?? file()?.filename;
+  const fileDescription = () => {
+    const current = file();
+    if (!current) return "";
+    const type = current.filename.match(/\.([^.]+)$/)?.[1] || current.mimeType.split("/")[1]?.split(";")[0] || "FILE";
+    return [type.toUpperCase(), formatFileSize(current.size)].filter(Boolean).join(" · ");
+  };
   const [ready, setReady] = createSignal(false);
   const [failed, setFailed] = createSignal(false);
   const [allowedModes, setAllowedModes] = createSignal<string[]>(["inline", "fullscreen"]);
@@ -55,6 +66,12 @@ export function McpAppView(props: { agentId: string; sessionId: string; viewKey:
     function post(message: unknown) {
       if (data) frame?.contentWindow?.postMessage(message, data.appsOrigin);
     }
+    function reportShown(callId: string) {
+      deliveredCallId = callId;
+      setShownCallId(callId);
+      if (frame) frame.title = fileName() ? `${fileName()} file view` : `${data!.server} MCP App`;
+      props.onShown?.(callId);
+    }
     function log(level: string, message: string) {
       void logMcpAppEvent(agentId, sessionId, toolCallId, { level, message: message.slice(0, 500) }, controller.signal).catch(() => {});
     }
@@ -76,9 +93,9 @@ export function McpAppView(props: { agentId: string; sessionId: string; viewKey:
       dataTimer = timer;
       void loadMcpAppData(agentId, sessionId, callId, requestController.signal).then((result) => {
         if (!active || requestGeneration !== generation) return;
-        deliveredCallId = callId;
         post({ jsonrpc: "2.0", method: "ui/notifications/tool-input", params: { arguments: result.args } });
         post({ jsonrpc: "2.0", method: "ui/notifications/tool-result", params: result.result });
+        reportShown(callId);
       }).catch(() => { if (active && requestGeneration === generation) log("warning", "MCP App update failed; keeping the previous view data"); }).finally(() => { clearTimeout(timer); });
     }
     updateCurrent = update;
@@ -138,6 +155,7 @@ export function McpAppView(props: { agentId: string; sessionId: string; viewKey:
       stop(true);
       setView(undefined);
       setFailed(true);
+      props.onShown?.(undefined);
     }
     function receive(event: MessageEvent) {
       if (!active || !data) return;
@@ -171,6 +189,7 @@ export function McpAppView(props: { agentId: string; sessionId: string; viewKey:
         setReady(true);
         post({ jsonrpc: "2.0", method: "ui/notifications/tool-input", params: { arguments: data.args } });
         post({ jsonrpc: "2.0", method: "ui/notifications/tool-result", params: data.result });
+        reportShown(toolCallId);
         update(latestCallId, true);
       } else if (initialized && notification && message.method === "ui/notifications/size-changed") {
         if (displayMode === "inline" && frame && typeof params?.height === "number" && Number.isFinite(params.height)) frame.style.height = Math.max(40, Math.min(800, params.height)) + "px";
@@ -234,7 +253,7 @@ export function McpAppView(props: { agentId: string; sessionId: string; viewKey:
       if (!["http:", "https:"].includes(apps.protocol) || apps.origin !== response.appsOrigin || apps.hostname === location.hostname || new URL(response.sandboxUrl).origin !== apps.origin) { fail(); return; }
       data = response;
       frame = document.createElement("iframe");
-      frame.title = `${data.server} MCP App`;
+      frame.title = fileName() ? `${fileName()} file view` : `${data.server} MCP App`;
       frame.setAttribute("sandbox", "allow-scripts allow-same-origin");
       frame.setAttribute("allow", "");
       frame.setAttribute("referrerpolicy", "no-referrer");
@@ -267,6 +286,7 @@ export function McpAppView(props: { agentId: string; sessionId: string; viewKey:
     setView(undefined);
     setReady(false);
     setFailed(false);
+    setShownCallId(props.callId());
     stopCurrent = start(agentId, sessionId, props.callId());
   }));
   createEffect(() => { updateCurrent?.(props.callId()); });
@@ -276,6 +296,7 @@ export function McpAppView(props: { agentId: string; sessionId: string; viewKey:
     for (const remove of retiring) remove();
     setView(undefined);
     setFailed(true);
+    props.onShown?.(undefined);
   }
   window.addEventListener("pagehide", pageHide);
   onCleanup(() => {
@@ -285,7 +306,17 @@ export function McpAppView(props: { agentId: string; sessionId: string; viewKey:
     window.removeEventListener("pagehide", pageHide);
   });
   return <section class="mcp-app-view" style={{ display: "flex", "flex-direction": "column", height: props.mode === "panel" ? "100%" : undefined, "min-height": "0", "min-width": "0", overflow: "hidden", border: view()?.prefersBorder ? "1px solid var(--border-subtle)" : "none", "border-radius": "8px" }}>
-    <Show when={!!view() || props.mode === "panel"}><header style={{ display: "flex", gap: "8px", padding: "8px", "font-size": "0.75rem", color: "var(--text-secondary)" }}><strong>{view()?.server ?? props.viewKey.split("\n")[0]}</strong><span style={{ flex: "1" }}>MCP App</span><Show when={!!props.onDisplayMode && (props.mode === "panel" || (ready() && allowedModes().includes("fullscreen")))}><Button variant="ghost" onClick={() => switchCurrent?.(props.mode === "panel" ? "inline" : "fullscreen")}>{props.mode === "panel" ? "Collapse" : "Expand"}</Button></Show></header></Show>
+    <Show when={!!view() || props.mode === "panel"}><header class="mcp-app-view-header" classList={{ "mcp-app-file-header": !!file() }} style={{ display: "flex", "align-items": "center", gap: "8px", "font-size": "0.75rem", color: "var(--text-secondary)" }}>
+      <Show when={!!file()} fallback={<><strong>{view()?.server ?? props.viewKey.split("\n")[0]}</strong><span style={{ flex: "1" }}>MCP App</span></>}>
+        <span class="file-icon" aria-hidden="true">{getFileIcon(file()!.mimeType)}</span>
+        <div style={{ flex: "1", "min-width": "0" }}>
+          <strong title={fileName()} style={{ display: "block", overflow: "hidden", "text-overflow": "ellipsis", "white-space": "nowrap", color: "var(--text-primary)" }}>{fileName()}</strong>
+          <span>{fileDescription()}</span>
+        </div>
+        <a class="file-download" href={`/api/media/download/${file()!.fileId}`} download="">Download</a>
+      </Show>
+      <Show when={!!props.onDisplayMode && (props.mode === "panel" || (ready() && allowedModes().includes("fullscreen")))}><Button variant="ghost" onClick={() => switchCurrent?.(props.mode === "panel" ? "inline" : "fullscreen")}>{props.mode === "panel" ? "Collapse" : "Expand"}</Button></Show>
+    </header></Show>
     <Show when={failed()}><p role="status">View unavailable</p><pre style={{ "white-space": "pre-wrap", "overflow-wrap": "anywhere" }}>{props.text}</pre></Show>
     <Show when={!ready() && !failed()}><p role="status">Loading view…</p></Show>
     <div ref={frameContainer} style={{ flex: props.mode === "panel" ? "1" : undefined, "min-height": "0" }} />

@@ -55,6 +55,17 @@ export function formatFileSize(size: number): string {
   return `${mb.toFixed(mb >= 10 ? 0 : 1)} MB`;
 }
 
+export function getFileIcon(mimeType: string): string {
+  if (mimeType.startsWith("image/")) return "IMG";
+  if (mimeType === "application/pdf") return "PDF";
+  if (mimeType.includes("word")) return "DOC";
+  if (mimeType.includes("excel") || mimeType.includes("spreadsheet"))
+    return "XLS";
+  if (mimeType === "text/csv") return "CSV";
+  if (mimeType === "text/markdown") return "MD";
+  return "FILE";
+}
+
 function getAttachmentFileId(attachment: FileAttachment): string {
   const name = attachment.path.split(/[\\/]/).pop() ?? attachment.path;
   return name.replace(/\.[^.]+$/, "");

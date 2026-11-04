@@ -6,8 +6,131 @@ const drawing = { server: "fixture", tool: "draw", resourceUri: "ui://drawing" }
 const call = (id: string, ref = true): AppViewCall => ({
   id, timestamp: 1, view: drawing, result: ref ? { view: { ...drawing, recordId: id } } : undefined,
 });
+const fileView = { server: "yoplai", tool: "send_file", resourceUri: "ui://yoplai/file-viewer" };
+const fileCall = (id: string, filename: string): AppViewCall => ({
+  id, timestamp: 1, view: fileView,
+  result: { view: { ...fileView, recordId: id, file: { fileId: id, filename, mimeType: "text/markdown", size: 957 } } },
+});
 
 describe("app views", () => {
+  it("separates filenames and reuses an exact filename without changing non-file keys", () => {
+    createRoot((dispose) => {
+      const a = fileCall("a-v1", "a.md");
+      const b = fileCall("b-v1", "b.md");
+      const aAgain = fileCall("a-v2", "a.md");
+      const views = createAppViews(() => "session", () => [a, b, aAgain]);
+      expect(viewKey(a.result!.view!)).toBe("yoplai\nui://yoplai/file-viewer\na.md");
+      expect(viewKey(b.result!.view!)).toBe("yoplai\nui://yoplai/file-viewer\nb.md");
+      expect(viewKey(drawing)).toBe("fixture\nui://drawing");
+      expect([views.roleOf("a-v1"), views.roleOf("b-v1"), views.roleOf("a-v2")]).toEqual(["host", "host", "link"]);
+      expect(views.viewOf("a-v1")?.latest.id).toBe("a-v2");
+      views.open("yoplai\nui://yoplai/file-viewer\nb.md");
+      expect(views.panel()?.latest.id).toBe("b-v1");
+      expect(views.roleOf("a-v1")).toBe("host");
+      dispose();
+    });
+  });
+  it("hides only the delivered file and restores superseded or failed view cards", () => {
+    createRoot((dispose) => {
+      const first = fileCall("a-v1", "a.md");
+      const [calls, setCalls] = createSignal([first]);
+      const views = createAppViews(() => "session", calls);
+      const key = "yoplai\nui://yoplai/file-viewer\na.md";
+      expect(views.hidesFileCard("a-v1")).toBe(false);
+      expect(views.shownFileOf(key)).toBeUndefined();
+      expect(views.fileOf("a-v1")).toEqual({ fileId: "a-v1", filename: "a.md", mimeType: "text/markdown", size: 957 });
+      views.reportShown(key, "a-v1");
+      expect(views.hidesFileCard("a-v1")).toBe(true);
+      expect(views.shownFileOf(key)?.fileId).toBe("a-v1");
+      setCalls([first, fileCall("a-v2", "a.md")]);
+      expect(views.hidesFileCard("a-v1")).toBe(true);
+      expect(views.hidesFileCard("a-v2")).toBe(false);
+      views.reportShown(key, "a-v2");
+      expect(views.hidesFileCard("a-v1")).toBe(false);
+      expect(views.hidesFileCard("a-v2")).toBe(true);
+      expect(views.shownFileOf(key)?.fileId).toBe("a-v2");
+      expect(views.hidesFileCard("unknown")).toBe(false);
+      views.reportShown(key, undefined);
+      expect(views.hidesFileCard("a-v2")).toBe(false);
+      expect(views.shownFileOf(key)).toBeUndefined();
+      dispose();
+    });
+  });
+  it("resets shown files on a session change even when call ids are reused", () => {
+    createRoot((dispose) => {
+      const [session, setSession] = createSignal("one");
+      const views = createAppViews(session, () => [fileCall("report", "report.md")]);
+      const key = "yoplai\nui://yoplai/file-viewer\nreport.md";
+      views.reportShown(key, "report");
+      expect(views.hidesFileCard("report")).toBe(true);
+      setSession("two");
+      expect(views.hidesFileCard("report")).toBe(false);
+      expect(views.shownFileOf(key)).toBeUndefined();
+      setSession("one");
+      expect(views.hidesFileCard("report")).toBe(false);
+      dispose();
+    });
+  });
+  it("retains shown metadata and the panel's current file through empty or stale history", () => {
+    createRoot((dispose) => {
+      const first = fileCall("a-v1", "a.md");
+      const second = fileCall("a-v2", "a.md");
+      const [calls, setCalls] = createSignal([first, second]);
+      const views = createAppViews(() => "session", calls);
+      const key = "yoplai\nui://yoplai/file-viewer\na.md";
+      views.open(key);
+      views.reportShown(key, "a-v1");
+      setCalls([]);
+      expect(views.fileOf("a-v1")?.fileId).toBe("a-v1");
+      expect(views.fileOf("a-v2")?.fileId).toBe("a-v2");
+      expect(views.hidesFileCard("a-v1")).toBe(true);
+      views.reportShown(key, "a-v2");
+      expect(views.hidesFileCard("a-v1")).toBe(false);
+      expect(views.hidesFileCard("a-v2")).toBe(true);
+      setCalls([first]);
+      expect(views.shownFileOf(key)?.fileId).toBe("a-v2");
+      expect(views.fileOf("a-v2")?.fileId).toBe("a-v2");
+      views.reportShown(key, "a-v2");
+      expect(views.hidesFileCard("a-v2")).toBe(true);
+      views.close();
+      expect(views.fileOf("a-v2")?.fileId).toBe("a-v2");
+      dispose();
+    });
+  });
+  it("deduplicates captured history/live sends while pending and failed sends stay outside file views", () => {
+    createRoot((dispose) => {
+      const pending = { id: "pending", timestamp: 1, view: fileView };
+      const failed = { id: "failed", timestamp: 1, view: fileView, result: {} };
+      const views = createAppViews(() => "session", () => [
+        { ...fileCall("a-v1", "a.md"), history: true },
+        { ...pending, id: "a-v1" },
+        fileCall("b-v1", "b.md"),
+        pending, failed,
+        fileCall("a-v2", "a.md"),
+        { ...pending, id: "a-v2" },
+      ]);
+      expect(views.isLiveDuplicate("a-v1")).toBe(true);
+      expect(views.viewOf("a-v1")?.calls.map((item) => item.id)).toEqual(["a-v1", "a-v2"]);
+      expect([views.roleOf("pending"), views.roleOf("failed")]).toEqual(["none", "none"]);
+      expect(views.fileOf("a-v1")?.fileId).toBe("a-v1");
+      views.open("yoplai\nui://yoplai/file-viewer");
+      expect(views.panel()).toBeUndefined();
+      const aKey = "yoplai\nui://yoplai/file-viewer\na.md";
+      const bKey = "yoplai\nui://yoplai/file-viewer\nb.md";
+      views.reportShown(aKey, "a-v1");
+      views.reportShown(bKey, "b-v1");
+      expect(views.hidesFileCard("a-v1")).toBe(true);
+      expect(views.hidesFileCard("b-v1")).toBe(true);
+      views.reportShown(aKey, "a-v2");
+      expect(views.hidesFileCard("a-v1")).toBe(false);
+      expect(views.hidesFileCard("a-v2")).toBe(true);
+      expect(views.hidesFileCard("b-v1")).toBe(true);
+      views.reportShown(aKey, undefined);
+      expect(views.hidesFileCard("a-v2")).toBe(false);
+      expect(views.hidesFileCard("b-v1")).toBe(true);
+      dispose();
+    });
+  });
   it("does not restore a panel when returning to a previous session", () => {
     createRoot((dispose) => {
       const [session, setSession] = createSignal("one");
