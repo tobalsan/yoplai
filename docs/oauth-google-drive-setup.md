@@ -52,9 +52,10 @@ APIs is unnecessary and widens the blast radius of a leaked grant.
    https://www.googleapis.com/auth/drive.readonly
    ```
 
-   Do **not** add broad Drive scopes (`.../auth/drive`) — read-only is all the
-   Drive consumer needs, and requesting less keeps user consent (and Google
-   verification) simpler.
+   Read-only mode needs only `drive.readonly` for Drive access. Write mode
+   (`allowWrite`) also needs `https://www.googleapis.com/auth/drive`,
+   `https://www.googleapis.com/auth/spreadsheets` and
+   `https://www.googleapis.com/auth/presentations` on the consent screen.
 5. Save.
 
 ---
