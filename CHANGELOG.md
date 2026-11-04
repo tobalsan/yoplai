@@ -9,84 +9,101 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ## [Unreleased]
 
-### Removed
+## v0.27.0 — Model routing, MCP App views + Mattermost
 
-- Remove quick chat and unused embedded chats from the context panel, projects board, board home and project lead sessions; keep the main chat and subagent run follow-ups.
+_Released 2026-11-04._
+
+Opt-in model routing picks a model and effort per chat session with a bounded classifier, locks it for the session, and can run in shadow mode first; superadmins get a Quota tab with per-login subscription usage. MCP App views now render inline in web chat. Scheduler scripts can call agent tools with short-lived tokens, and superadmins can read every scheduled job. Mattermost joins Slack as a bot channel. Webhooks gain prompt frontmatter and gate scripts, and the new optional `human-chat` extension keeps replies short. Quick chat and embedded chats are gone, and `SOUL.md` is no longer loaded by default.
+
+### Upgrade notes
+
+- **⚠ BREAKING — `SOUL.md` is no longer loaded.** It is not created, loaded by default, or picked up by agent migration. To keep it, add `system_files: [SOUL.md]` to `agent.yaml` (or `system_files: [{ path: SOUL.md, required: true }]` to require it).
+- **Quick chat is removed.** Embedded chats in the context panel, projects board, board home and project lead sessions are gone. Use the main chat; subagent run follow-ups still work.
+- **Model routing is opt-in and off by default.** Turn it on per agent, start in shadow mode, and check `yoplai model-routing report` before enforcing. Setting it back to off rolls back immediately. The classifier needs an OpenAI API key; without one, or on any classifier failure, sessions use the configured model. See the model-routing operator guide.
+- **Subscription quota tracking is opt-in** via `modelQuota.enabled`. Without it the Quota tab has no poller data.
+- **MCP App views need `apps.origin` and `apps.port`.** Views run on a separate, isolated listener; set both so browsers can reach it. Without them tool results fall back to text.
+- **Codemode limits.** Sandboxed scripts are capped at 200 nested tool calls and 10 concurrent gateway calls by default; raise them with `codemodeLimits`.
+- **Sandbox and Harbor eval images now use Node 24 LTS.** Rebuild custom images that start `FROM yoplai-agent:latest`. The gateway still supports Node 22.19+.
+- **`yoplai gateway restart` refuses while work is running.** Check with `yoplai gateway idle`, or pass `--force`.
+- **Human-chat moved to the `@yoplai/extension-human-chat` package.** Existing `extensions.human-chat` config keeps working; install the package where it is enabled.
+- **Poisoned Pi sessions** (tools lost after compaction) can be dry-run and repaired with backups using `scripts/repair-session-tools.ts`.
 
 ### Added
 
-- Scheduler scripts can call agent tools with temporary, agent-scoped tokens using owner or team credentials; tokens are revoked after each script and redacted from captured output.
-- Add a host and container model-routing integration E2E suite and an operator guide covering rollout, rollback, quota ownership and shadow reports; all 11 routing rows pass on both runtimes, with container E2E verified in-process through a fake Docker bridge.
-- Record private-data-free model-routing attempts and trace metadata, and evaluate fresh shadow sessions with `yoplai model-routing report`.
-- Add a superadmin Quota tab with subscription usage, freshness and errors, refreshed from the local in-memory store without vendor requests.
-- Track per-login subscription quota in memory from sanitized Claude response headers and opt-in host usage pollers (`modelQuota.enabled`), with freshness, error state and pure quota policy helpers.
-- Route opted-in Pi chat sessions once and persist their model/effort lock across restarts and compaction, with shadow evaluation, immediate off-mode rollback, and configured-model fallback when routing is unavailable.
-- Add opt-in model-routing configuration, offline table validation, and a bounded, fail-open OpenAI classifier with a documented 13-category seed.
-- Show MCP App views inline beneath their tool calls in simple and full web chat, with saved-data replay, isolated SDK handshake, own-server interactions, bounded loading and text fallback.
-- Superadmins can view every scheduled job and its run history, trace, and output; other users' Mine jobs show their owner and keep management controls locked.
-- Webhook gates can return `sessionScope` to preserve conversation context and `abort: true` to stop that session before an optional wake; extensions can silently stop mapped runs with `ExtensionContext.abortRun`.
-- Webhook prompt-file frontmatter selects model and reasoning and runs optional fail-open gate scripts with request stdin, metadata, and agent context; edits apply on the next request.
-- `human-chat`: optional `max_sentences`, `sentence_leeway`, `max_sentence_words`, `word_leeway` keys set the reply limits.
-- Add the opt-in `human-chat` agent extension (`extensions.human-chat: {}` in `agent.yaml`). For human turns it holds the reply, lints it for short one-topic replies, and asks the agent for one hidden rewrite when it breaks the rules. A `reply_mode` tool declares long mode, and `/topics` lists open topic plans. Off by default.
-- `human-chat` agents now queue a follow-up message for its own turn instead of steering it into the live run, so each turn gets its own nudge, mode, and rewrite.
-- Refresh saved MCP server icons from user server details and the admin catalog, with inline results and immediate icon updates. Timeouts and failed saves show as errors, never as "Icon updated" or "No new icon", and a successful retry clears the Unreachable status.
-- Capture MCP Apps results for replay, expose owner-scoped view/RPC routes and an isolated view listener configured by `apps.origin`/`apps.port`; app-only tools stay out of capability discovery.
-- Mattermost bot channel with threaded conversations, direct messages, files, proactive tools and scheduler delivery.
-- Slack downloads full Markdown, text, CSV, JSON and code snippets as attachments, and accepts PowerPoint files. Web and gateway uploads now also accept JSON, legacy PowerPoint and `.markdown` files.
-- Add the `reflect` agent option. It adds a self-improvement prompt so the agent saves lessons to skills and `memory.md` in the same turn. Off by default.
+#### Model routing and quota
+
+- Opt-in model routing for Pi chat sessions: a bounded, fail-open OpenAI classifier with a 13-category seed picks model and effort once per session, and the choice survives restarts and compaction.
+- Routing modes off, shadow and on, with offline table validation and fallback to the configured model when routing is unavailable.
+- Shadow evaluation: private-data-free routing records and trace metadata, reported with `yoplai model-routing report`.
+- Per-login subscription quota tracking from Claude response headers and opt-in usage pollers (`modelQuota.enabled`).
+- Superadmin **Quota** tab with usage bars, reset times, pace, freshness and errors.
+- Host and container routing E2E suite and an operator guide for rollout, rollback, quota ownership and shadow reports.
+
+#### Chat and MCP Apps
+
+- MCP App views render inline under their tool calls in simple and full chat, with saved-data replay, an isolated view listener (`apps.origin`/`apps.port`) and text fallback. App-only tools stay out of capability discovery.
+- Unread chat dots, a turn-finished chime across browser tabs, and a sound toggle beside the chat avatar.
+- Refresh saved MCP server icons from server details and the admin catalog.
+- MCP server instructions from the initialize handshake reach the agent as namespace instructions.
+- Deferred tool summaries list every tool name per group and how to load it.
+
+#### Scheduler
+
+- Scheduler scripts can call agent tools with temporary agent-scoped tokens (owner or team credentials), revoked after each script and redacted from output.
+- Superadmins can view every scheduled job with its run history, trace and output; other users' jobs show their owner and stay read-only.
+
+#### Channels and webhooks
+
+- Mattermost bot channel with threads, direct messages, files, proactive tools and scheduler delivery.
+- Slack delivers full Markdown, text, CSV, JSON and code snippets as attachments and accepts PowerPoint files. Web and gateway uploads accept JSON, legacy PowerPoint and `.markdown`.
+- Webhook prompt-file frontmatter sets model and reasoning and can run fail-open gate scripts; edits apply on the next request.
+- Webhook gates can return `sessionScope` to keep conversation context and `abort: true` to stop a session; extensions can stop runs with `ExtensionContext.abortRun`.
+
+#### Agent runtime and extensions
+
+- Optional `human-chat` extension (`extensions.human-chat: {}`): lints human-turn replies for short, one-topic answers, asks for one hidden rewrite when needed, adds a `reply_mode` tool and `/topics`, and queues follow-ups as their own turns. Limits are configurable (`max_sentences`, `sentence_leeway`, `max_sentence_words`, `word_leeway`).
+- `reflect` agent option adds a self-improvement prompt so the agent saves lessons to skills and `memory.md` in the same turn. Off by default.
+- `yoplai gateway idle` reports running agent turns, subagents and orchestrator workers (exit 1 when busy).
 
 ### Changed
 
-- Show admin quota windows as accessible usage bars with warning/critical colours, precise reset times, and compact pace and provenance details.
-- Hide other users' private dashboards and Mine scheduled jobs by default on superadmin agent config tabs, with a discreet shared visibility toggle remembered in the browser.
-- Log MCP invalid-params tool failures with numeric `code: -32602` at warning, preserving the error response and error severity for other failures.
-- `send_file` accepts regular files in conversation sub-folders and delivers them with their basename, while still rejecting escaping paths and symlinked directories or files.
-- **⚠ BREAKING** `SOUL.md` is no longer created, loaded by default, or detected by legacy agent migration. Existing agents stop including it unless the operator explicitly adds `system_files: [SOUL.md]` to `agent.yaml`; use `system_files: [{ path: SOUL.md, required: true }]` to require it.
-- Human-chat now lives in the optional `@yoplai/extension-human-chat` package, using the portable `github:agentropie/human-chat` dependency. Generic extension hooks own chat commands and reply review; existing agent configuration stays compatible. Missing human-chat packages or dependencies log an error for each enabled agent while gateway startup and config reload continue.
+- Superadmin agent config tabs hide other users' private dashboards and Mine jobs by default, with a remembered toggle.
+- Sidebar chats fit on one line with full titles on hover or focus; click a project folder or name to toggle its chats, and open the project page from its row menu.
+- `send_file` accepts files in conversation sub-folders and sends them by basename.
+- `yoplai gateway restart` refuses while work is running unless `--force` is passed.
+- Agents may create workspace skills when the user asks explicitly.
+- Human-chat now ships as the optional `@yoplai/extension-human-chat` package behind generic extension hooks; a missing package logs an error without blocking startup.
+- Sandbox and Harbor eval images run on Node 24 LTS.
+- Caller mistakes (MCP invalid params, `session_history`, tasks, dashboards, document tools, file output) log at warning instead of error; responses are unchanged.
+- Quieter, structured gateway logs: one access line per request, fewer repeated lines, and job/session context on scheduler and channel failures.
+
+### Removed
+
+- **⚠ BREAKING** `SOUL.md` is no longer created or loaded by default (see Upgrade notes).
+- Quick chat and unused embedded chats from the context panel, projects board, board home and project lead sessions.
 
 ### Fixed
 
-- Allow container PDF extraction and image description from the current conversation's `/workspace/files` directory, preserving approved-root and session isolation checks.
-
-- Extension settings forms now save a setting changed back to its previous value without a reload; before, the save showed "Saved" but kept the old value (e.g. Pennylane write tools stayed on).
-- Log task lifecycle, missing dashboard, and container document/image argument mistakes at warning with unchanged error responses.
-- Log `session_history` argument mistakes at warning with unchanged error responses, and clarify required search/read arguments in its tool descriptions.
-- Pause recurring scheduler jobs on credential refusals and tell owners to reconnect and re-enable the job, preventing repeated failures until credentials are restored.
-- Log caller-caused file-output rejections at warning; copy, stream, media-registration and event-emission failures remain errors.
-- Pi agents try their configured fallback once on HTTP 400 `invalid_request_error` without retrying the primary, preserving an error-level primary failure log on host and sandbox runs.
-- Validate extension tool parameters against JSON Schema 2020-12, repair unambiguous legacy forms, and warn and omit only invalid tools so sibling tools remain available.
-- Preserve Pi tool schemas through compaction persistence; add `scripts/repair-session-tools.ts` to dry-run or restore poisoned sessions with backups.
-- Missing API-key errors name the provider's actual environment variable, including `OPENCODE_API_KEY` for both OpenCode providers, with the existing derived hint retained for unknown providers.
-- Guard gateway tool-call cleanup against retained abort listeners and timers after repeated successful calls.
-- Size and align the sidebar New project button, keep row menu triggers inside the sidebar, and show complete project/chat menus within the viewport, including mobile drawers and scrolled lists.
-- Gateway access log redacts OAuth codes, state and other secret query parameters.
-- Keep queued chat tool activity in its current group without duplicate legacy tool pills.
-- Slack acknowledges queued messages once per conversation/run with the running task, elapsed time and `!stop` hint, then uses hourglass reactions for further messages; proactive DM replies omit the unavailable cancel command.
-- Stop sandboxed codemode scripts when their run is cancelled, cap each script at 200 nested tool calls and 10 concurrent gateway calls by default (configurable with `codemodeLimits`), and give codemode agents guidance for long jobs.
-- Allow failed Threadit items to run again after a board Retry without restarting the gateway.
-- Keep extension and MCP server details readable on phones, with clear back navigation, stacked headers and scope tabs that fit the screen.
-- Mattermost threads retain their session owner across replies, resets and restarts; reconnect recovery honors username allowlists and covers silent disconnects. REST deadlines and tool cancellation bound stalled calls, while reaction and typing failures no longer delay answers.
-- Show MCP cards and connection settings before live discovery completes, keep their initial Top/name order during status refreshes, and retry unreachable servers individually without treating outages as lost OAuth grants.
-- Connect OAuth extensions from settings in the same tab, return with an immediate result, and load only the selected MCP server on its details page; chat connect prompts keep popups.
-- Refresh Google profile photos on every sign-in without replacing local names or emails, and show photos across user lists and sharing with initials for missing or broken images.
-- Cap scheduler waits for distant jobs, log successful primary model attempts at info, and warn only once per unknown agent-extension pair per process.
-- Pause sidebar chat and project refreshes while the tab is hidden, and refresh both lists when it becomes visible or focused again.
-- Reduce gateway log noise: log agent env key names once per content change, emit one access completion line, and quiet fast successful GETs for chat projects, skills and static assets while retaining errors, redirects and slow requests.
-- Emit structured scheduler and channel failures with job/session context, preserve full scheduler diagnostics on disk, and classify upstream tool 4xx and explicitly marked input errors as warnings.
-- Gateway restarts reclaim stale same-repo Vite previews, preserve foreign UI port listeners, and report early web UI exits with structured startup errors.
-
-### Added
-
-- Unread chat dots, a turn-finished chime across browser tabs, and a persistent sound toggle beside the chat avatar.
-- MCP server instructions from the initialize handshake now reach the agent as namespace instructions. A deferred MCP group without a description uses the first instructions line as its summary.
-- `yoplai gateway idle` tells you if any agent turn, subagent, or orchestrator worker is running. It exits 1 and lists them when busy.
-- `yoplai gateway restart` now refuses while work is running. Use `--force` to restart anyway.
-
-### Changed
-
-- Toggle project chats by clicking the folder or project name; open project pages from the first item in their row menu.
-- Sandbox and Harbor eval images now run on Node 24 LTS instead of Node 22, which only receives security fixes. Rebuild custom images that start `FROM yoplai-agent:latest`. The gateway still supports Node 22.19+.
-- Sidebar chats now fit on one line, with full titles and chat details available on hover or keyboard focus.
+- Pi agents try their configured fallback once on HTTP 400 `invalid_request_error`.
+- Extension tool schemas are validated against JSON Schema 2020-12; legacy forms are repaired and only invalid tools are dropped.
+- Pi tool schemas survive compaction.
+- Recurring scheduler jobs pause on credential refusals and tell owners to reconnect; scheduler waits for distant jobs are capped.
+- Codemode scripts stop when their run is cancelled and have bounded tool fan-out.
+- Container PDF extraction and image description read files from the current conversation.
+- Missing API-key errors name the right environment variable (e.g. `OPENCODE_API_KEY`).
+- Gateway access logs redact OAuth codes, state and other secret query parameters.
+- Tool-call cleanup no longer leaks abort listeners and timers.
+- Gateway restarts reclaim stale same-repo Vite previews and report early web UI exits.
+- Extension settings save a value changed back to its previous state.
+- MCP cards show before live discovery finishes, keep their order, and retry unreachable servers individually; icon refresh timeouts and failed saves show as errors.
+- OAuth extension connects from settings stay in the same tab.
+- Extension and MCP server details are readable on phones.
+- Sidebar project buttons and row menus stay aligned and within the viewport; sidebar refreshes pause in hidden tabs.
+- Queued chat messages keep tool activity in place without duplicate pills.
+- Slack acknowledges queued messages once per run, then uses hourglass reactions.
+- Mattermost threads keep their owner across replies and restarts, recover from silent disconnects, and bound stalled calls.
+- Threadit items that failed can run again after a board Retry.
+- Google profile photos refresh on sign-in and show across user lists, with initials as fallback.
 
 ## v0.26.0 — Chat projects, Skills directory + owned dashboards
 
