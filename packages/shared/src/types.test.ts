@@ -59,6 +59,22 @@ describe("Mattermost config schemas", () => {
     expect(config.agents[0].mattermost?.dm?.allowFrom).toEqual(["alice"]);
   });
 
+  it("accepts an $env: ref for url", () => {
+    const parsed = GatewayConfigSchema.safeParse({
+      version: 2,
+      agents: [
+        {
+          ...agent,
+          mattermost: { url: "$env:MATTERMOST_URL", token: "$env:MATTERMOST_BOT_TOKEN" },
+        },
+      ],
+      extensions: {
+        mattermost: { url: "$env:MATTERMOST_URL", token: "$env:MATTERMOST_BOT_TOKEN" },
+      },
+    });
+    expect(parsed.success).toBe(true);
+  });
+
   it("rejects a non-http url and a channel without an agent", () => {
     const base = { version: 2, agents: [agent] };
     expect(

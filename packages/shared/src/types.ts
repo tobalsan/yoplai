@@ -977,12 +977,17 @@ export type TelegramAgentConfig = z.infer<typeof TelegramAgentConfigSchema>;
 
 // Mattermost. Channels are an allowlist keyed by channel ID: posts in any other
 // channel are ignored. Allowlist entries elsewhere are user IDs or usernames.
-const MattermostUrlSchema = z
-  .string()
-  .url()
-  .refine((value) => /^https?:\/\//i.test(value), {
-    message: "Mattermost url must start with http:// or https://",
-  });
+// Either a literal http(s) URL or an `$env:NAME` ref (resolved by the host
+// after validation, like `token`).
+const MattermostUrlSchema = z.union([
+  z.string().regex(/^\$env:[A-Za-z_][A-Za-z0-9_]*$/),
+  z
+    .string()
+    .url()
+    .refine((value) => /^https?:\/\//i.test(value), {
+      message: "Mattermost url must start with http:// or https://",
+    }),
+]);
 
 export const MattermostExtensionChannelConfigSchema = z.object({
   agent: z.string().min(1),
