@@ -4,6 +4,7 @@ import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AgentConfig, ExtensionContext, GatewayConfig, SchedulePayload } from "@yoplai/shared";
 import { createExtensionContext } from "./context.js";
+import { clearConfigCacheForTests, setLoadedConfig } from "../config/index.js";
 import { SchedulerService, clearSchedulerContext, setSchedulerContext } from "../../../../packages/extensions/scheduler/src/service.js";
 
 describe("scheduler structured failures", () => {
@@ -13,6 +14,7 @@ describe("scheduler structured failures", () => {
   afterEach(async () => {
     await scheduler?.stop();
     clearSchedulerContext();
+    clearConfigCacheForTests();
     vi.restoreAllMocks();
     if (home) await fs.rm(home, { recursive: true, force: true });
   });
@@ -31,6 +33,7 @@ describe("scheduler structured failures", () => {
       extensions: { scheduler: { enabled: true } },
       sessions: { idleMinutes: 360 },
     };
+    setLoadedConfig(config);
     const ctx: ExtensionContext = {
       ...createExtensionContext(config),
       getConfig: () => config,

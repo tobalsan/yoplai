@@ -9,6 +9,10 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ## [Unreleased]
 
+### Fixed
+
+- Claude quota polling accepts a missing idle window, logs safe HTTP/payload diagnostics, and emits one error alert per login outage after 30 minutes without a good quota reading.
+
 ## v0.27.0 — Model routing, MCP App views + Mattermost
 
 _Released 2026-11-04._

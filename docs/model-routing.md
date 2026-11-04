@@ -59,6 +59,26 @@ These are the intended host assignments, not a live subscription audit. No login
 
 Open **Admin → Quota** or `/admin/quota` to inspect the host's sanitized store. In multi-user mode, only superadmins can see the tab, page data, or `GET /api/admin/model-quota`; admin/user direct visits show `Superadmin access required.` and the API returns `403 {"error":"forbidden"}`. Single-user mode allows the local operator (API `200`). An empty store shows the `modelQuota.enabled` hint only when polling is off; viewing the page never calls a vendor.
 
+Claude usage responses may omit either `five_hour` or `seven_day`, or set it to null. The remaining valid window keeps the reading fresh; no 5-hour window means no known 5-hour exhaustion, and no weekly window means weekly pace is unknown. Both windows missing/null, or any present but malformed window, is `invalid_payload`. Percentages still require 0–100 and reset timestamps require an ISO datetime with an offset.
+
+Poll failures emit warning-level `[model-quota]` events with `provider`, `source`, `outcome` and `errorKind`. Any failure after an HTTP response includes `httpStatus`:
+
+| Poller error kind | Meaning / next check |
+| --- | --- |
+| `invalid_payload` | A successful response could not be parsed: `reason: "not_json"` means JSON decoding failed; `reason: "shape"` means schema validation failed. |
+| `http_error` | Non-OK response other than 429; inspect `httpStatus` for authentication, proxy or upstream failure. |
+| `rate_limited` | HTTP 429; honors `Retry-After`, otherwise backs off 5, 10, 20, 40, then 60 minutes. Success resets back-off. The body is not parsed. |
+| `timeout` | Token resolution or the usage request exceeded the 10-second deadline. |
+| `token_error` | OAuth token resolution failed. |
+| `no_account` | A Codex token lacked its required account claim; no usage request was sent. |
+| `network` | The usage request failed before a usable response. |
+
+For a parsed invalid body, `shape` describes its top-level type, safe top-level key names mapped to type names, and validation issue paths/codes. Keys must match a conservative identifier pattern, with bounded lengths/counts; unsafe keys are omitted. Arrays/null have distinct type names. No body values, raw bodies, tokens, account identifiers or validator messages are included. A non-JSON body has no shape descriptor. These diagnostics distinguish schema changes from HTML/error pages without logging their contents.
+
+After a poll tick, quota older than **30 minutes** emits one error-level `[model-quota] stale` event per login episode, including `provider`, `ageSeconds` and the last `errorKind`, without an account identifier. Age uses the latest good observation from any source, or time since the poller first saw a login that has never succeeded. Checks continue during back-off. Fresh data from polling or headers re-arms the alert. Alert state is in memory and resets on restart; the routing freshness limit remains 20 minutes. Configure SigNoz against this error event separately and verify stderr shipping after deployment.
+
+Pi 1.3.0 invokes Claude's response hook only after successful SDK calls, so model-call 429 headers currently do not reach either host or container quota capture. A supported error-response hook is tracked in [ALG-626](https://linear.app/algodyn/issue/ALG-626/model-quota-expose-anthropic-model-call-429-headers-through-pi); usage polling remains the fallback. Null-window tolerance addresses a plausible idle-response shape; the production cause remains unconfirmed until the new diagnostics are inspected.
+
 Source: [quota runtime](../apps/gateway/src/model-quota/runtime.ts), [pollers](../apps/gateway/src/model-quota/pollers.ts), [container token handling](../apps/gateway/src/sdk/container/oauth-tokens.ts), [quota page](../apps/web/src/pages/admin/Quota.tsx).
 
 ## Rollout

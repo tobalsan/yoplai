@@ -5,7 +5,7 @@ import {
   type ContainerRunnerProtocolEvent,
 } from "@yoplai/shared";
 import { CONFIG_DIR } from "../config/index.js";
-import { logInfo, logWarn } from "../logging.js";
+import { logError, logInfo, logWarn } from "../logging.js";
 import { resolveOAuthToken } from "../sdk/container/oauth-tokens.js";
 import { resolveLoginIdentity } from "./identity.js";
 import { createQuotaPollers } from "./pollers.js";
@@ -42,9 +42,11 @@ export function startModelQuotaPollers(enabled: boolean): void {
     fetch: globalThis.fetch,
     now: () => Date.now() / 1000,
     log: (event) =>
-      event.outcome === "error"
-        ? logWarn("[model-quota]", event)
-        : logInfo("[model-quota]", event),
+      event.outcome === "stale"
+        ? logError("[model-quota] stale", "quota stale", event)
+        : event.outcome === "error"
+          ? logWarn("[model-quota]", event)
+          : logInfo("[model-quota]", event),
   });
   void pollers.start(true);
 }
