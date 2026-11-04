@@ -1,26 +1,71 @@
-import type { QuotaSource } from "@yoplai/shared";
+import type { LoginIdentity, QuotaSource } from "@yoplai/shared";
 import type { OAuthTokenLookup } from "../sdk/container/oauth-tokens.js";
 import {
   CLAUDE_HEADER_IDLE_SECONDS,
   QUOTA_MAX_BACKOFF_SECONDS,
   QUOTA_POLL_INTERVAL_SECONDS,
   QUOTA_REQUEST_TIMEOUT_MS,
+  QUOTA_STALE_ALERT_SECONDS,
 } from "./constants.js";
 import {
   extractCodexAccountId,
   resolveLoginIdentity,
   type QuotaCredential,
 } from "./identity.js";
-import { parseClaudeUsage, parseWhamUsage } from "./parsers.js";
+import {
+  parseClaudeUsage,
+  parseWhamUsage,
+  type UsageValidationIssue,
+} from "./parsers.js";
 import type { QuotaStore } from "./store.js";
 
 type Provider = "anthropic" | "openai-codex";
 type QuotaLogEvent = {
   provider: Provider;
   source: QuotaSource;
-  outcome: "success" | "error";
+  outcome: "success" | "error" | "stale";
+  level?: "error";
+  ageSeconds?: number;
   errorKind?: string;
+  httpStatus?: number;
+  reason?: "not_json" | "shape";
+  shape?: {
+    type: string;
+    keys?: Record<string, string>;
+    issues: UsageValidationIssue[];
+  };
 };
+
+function payloadShape(
+  payload: unknown,
+  issues: UsageValidationIssue[]
+): NonNullable<QuotaLogEvent["shape"]> {
+  const typeOf = (value: unknown): string =>
+    value === null ? "null" : Array.isArray(value) ? "array" : typeof value;
+  return {
+    type: typeOf(payload),
+    ...(payload !== null &&
+    typeof payload === "object" &&
+    !Array.isArray(payload)
+      ? {
+          keys: Object.fromEntries(
+            Object.keys(payload)
+              .filter(
+                (key) =>
+                  /^[A-Za-z_][A-Za-z0-9_]{0,63}$/.test(key) &&
+                  !["__proto__", "constructor", "prototype"].includes(key)
+              )
+              .slice(0, 20)
+              .map((key) => [
+                key,
+                typeOf((payload as Record<string, unknown>)[key]),
+              ])
+          ),
+        }
+      : {}),
+    issues,
+  };
+}
 type PollerDeps = {
   store: QuotaStore;
   readCredential: (provider: string) => QuotaCredential | undefined;
@@ -38,23 +83,62 @@ export function createQuotaPollers(deps: PollerDeps) {
   const notBefore = new Map<Provider, number>();
   const backoff = new Map<Provider, number>();
   const controllers = new Map<Provider, AbortController>();
+  const staleEpisodes = new Map<
+    string,
+    { firstSeen: number; alerted: boolean }
+  >();
+  function episode(identity: LoginIdentity) {
+    const key = JSON.stringify([identity.provider, identity.accountRef]);
+    let state = staleEpisodes.get(key);
+    if (!state) {
+      state = { firstSeen: deps.now(), alerted: false };
+      staleEpisodes.set(key, state);
+    }
+    return state;
+  }
+  function checkStale(
+    identity: LoginIdentity,
+    provider: Provider,
+    source: QuotaSource
+  ) {
+    if (!timer) return;
+    const state = episode(identity);
+    const snapshot = deps.store.get(identity);
+    if (snapshot.status === "known") state.alerted = false;
+    const ageSeconds = Math.max(
+      0,
+      deps.now() - (snapshot.updatedAt ?? state.firstSeen)
+    );
+    if (ageSeconds > QUOTA_STALE_ALERT_SECONDS && !state.alerted) {
+      state.alerted = true;
+      deps.log({
+        level: "error",
+        provider,
+        source,
+        outcome: "stale",
+        ageSeconds,
+        errorKind: snapshot.errorKind ?? "never_seen",
+      });
+    }
+  }
   async function poll(provider: Provider): Promise<void> {
-    if (
-      controllers.has(provider) ||
-      deps.now() < (notBefore.get(provider) ?? 0)
-    )
-      return;
+    if (controllers.has(provider)) return;
     const source: QuotaSource =
       provider === "anthropic" ? "usage-endpoint" : "wham-usage";
-    let identity;
+    let identity: LoginIdentity | undefined;
     let timeout: ReturnType<typeof setTimeout> | undefined;
     let errorKind = "network";
+    let httpStatus: number | undefined;
+    let reason: QuotaLogEvent["reason"];
+    let shape: QuotaLogEvent["shape"];
     const controller = new AbortController();
     controllers.set(provider, controller);
     try {
       const credential = deps.readCredential(provider);
       if (credential?.type !== "oauth") return;
       identity = resolveLoginIdentity(provider, credential);
+      if (identity) episode(identity);
+      if (deps.now() < (notBefore.get(provider) ?? 0)) return;
       if (provider === "anthropic" && identity) {
         const headerAt = deps.store.latestHeaderAt(identity);
         if (
@@ -80,6 +164,7 @@ export function createQuotaPollers(deps: PollerDeps) {
           type: "oauth",
           access: token.accessToken,
         });
+        if (identity) episode(identity);
         if (!identity) {
           deps.log({
             provider,
@@ -111,6 +196,7 @@ export function createQuotaPollers(deps: PollerDeps) {
           }
         );
         if (controller.signal.aborted) return undefined;
+        httpStatus = response.status;
         if (response.status === 429) {
           errorKind = "rate_limited";
           const retry = response.headers.get("Retry-After");
@@ -134,12 +220,16 @@ export function createQuotaPollers(deps: PollerDeps) {
           throw new Error("http_error");
         }
         errorKind = "invalid_payload";
+        reason = "not_json";
         const payload: unknown = await response.json();
+        reason = "shape";
+        const parsed =
+          provider === "anthropic"
+            ? parseClaudeUsage(payload)
+            : parseWhamUsage(payload);
+        if (!parsed.ok) shape = payloadShape(payload, parsed.issues ?? []);
         return {
-          parsed:
-            provider === "anthropic"
-              ? parseClaudeUsage(payload)
-              : parseWhamUsage(payload),
+          parsed,
           observedAt,
         };
       };
@@ -162,10 +252,20 @@ export function createQuotaPollers(deps: PollerDeps) {
       if (!timer) return;
       if (controller.signal.aborted) errorKind = "timeout";
       if (identity) deps.store.markError(identity, source, errorKind);
-      deps.log({ provider, source, outcome: "error", errorKind });
+      deps.log({
+        provider,
+        source,
+        outcome: "error",
+        errorKind,
+        ...(httpStatus === undefined ? {} : { httpStatus }),
+        ...(errorKind === "invalid_payload"
+          ? { reason, ...(shape ? { shape } : {}) }
+          : {}),
+      });
     } finally {
       if (timeout) clearTimeout(timeout);
       controllers.delete(provider);
+      if (identity) checkStale(identity, provider, source);
     }
   }
   return {

@@ -18,6 +18,14 @@ const usage = {
     secondary_window: null,
   },
 };
+const claudeRateLimitBody = JSON.stringify({
+  type: "error",
+  error: { type: "rate_limit_error", message: "RAW_RESPONSE_TOKEN_SENTINEL" },
+});
+const claudeWeeklyOnlyUsage = {
+  five_hour: null,
+  seven_day: { utilization: 50, resets_at: "2026-11-03T06:00:00Z" },
+};
 
 function setup() {
   vi.useFakeTimers();
@@ -50,6 +58,251 @@ function setup() {
 afterEach(() => vi.useRealTimers());
 
 describe("host quota polling lifecycle", () => {
+  it.each([401, 403, 503])(
+    "logs HTTP %s without response body values",
+    async (httpStatus) => {
+      const { fetcher, pollers, log } = setup();
+      fetcher.mockResolvedValue(
+        new Response("RAW_RESPONSE_TOKEN_SENTINEL", { status: httpStatus })
+      );
+      await pollers.start(true);
+      expect(log).toHaveBeenCalledWith({
+        provider: "openai-codex",
+        source: "wham-usage",
+        outcome: "error",
+        errorKind: "http_error",
+        httpStatus,
+      });
+      expect(JSON.stringify(log.mock.calls)).not.toContain(
+        "RAW_RESPONSE_TOKEN_SENTINEL"
+      );
+      pollers.stop();
+    }
+  );
+
+  it("bounds shape keys and excludes long or prototype names", async () => {
+    const { fetcher, pollers, log } = setup();
+    const payload = Object.fromEntries([
+      ["__proto__", "RAW_RESPONSE_TOKEN_SENTINEL"],
+      ["constructor", "RAW_RESPONSE_TOKEN_SENTINEL"],
+      ["prototype", "RAW_RESPONSE_TOKEN_SENTINEL"],
+      ["a".repeat(65), "RAW_RESPONSE_TOKEN_SENTINEL"],
+      ...Array.from({ length: 25 }, (_, i) => [
+        `field${i}`,
+        "RAW_RESPONSE_TOKEN_SENTINEL",
+      ]),
+    ]);
+    fetcher.mockResolvedValue(new Response(JSON.stringify(payload)));
+    await pollers.start(true);
+    const event = log.mock.calls[0][0];
+    expect(event).toMatchObject({
+      httpStatus: 200,
+      reason: "shape",
+      shape: { type: "object", keys: { field0: "string", field19: "string" } },
+    });
+    expect(Object.keys(event.shape.keys)).toHaveLength(20);
+    expect(Object.keys(event.shape.keys)).not.toContain("field20");
+    expect(JSON.stringify(event)).not.toContain("RAW_RESPONSE_TOKEN_SENTINEL");
+    expect(JSON.stringify(event)).not.toContain("__proto__");
+    expect(JSON.stringify(event)).not.toContain("a".repeat(65));
+    pollers.stop();
+  });
+
+  it("keeps Claude quota fresh with a null five-hour window on repeated polls", async () => {
+    const { store, readCredential, fetcher, pollers } = setup();
+    readCredential.mockImplementation((provider) =>
+      provider === "anthropic" ? { type: "oauth", access } : undefined
+    );
+    fetcher.mockImplementation(
+      async () => new Response(JSON.stringify(claudeWeeklyOnlyUsage))
+    );
+    await pollers.start(true);
+    await vi.advanceTimersByTimeAsync(2400000);
+    expect(store.list()).toEqual([
+      expect.objectContaining({
+        provider: "anthropic",
+        status: "known",
+        stale: false,
+        updatedAt: 1790002400,
+        windows: [
+          {
+            kind: "weekly",
+            usedPercent: 50,
+            resetAt: 1793685600,
+            windowSeconds: 604800,
+          },
+        ],
+      }),
+    ]);
+    pollers.stop();
+  });
+
+  it("uses prior header observations for stale age and re-arms from fresh headers during back-off", async () => {
+    const { store, readCredential, fetcher, pollers, log } = setup();
+    const identity = { provider: "anthropic", accountRef: "host" };
+    const windows = [
+      {
+        kind: "weekly" as const,
+        usedPercent: 50,
+        resetAt: 1800000000,
+        windowSeconds: 604800,
+      },
+    ];
+    store.record(identity, "headers", windows, 1789996400);
+    readCredential.mockImplementation((provider) =>
+      provider === "anthropic" ? { type: "oauth", access } : undefined
+    );
+    fetcher.mockImplementation(
+      async () =>
+        new Response(claudeRateLimitBody, {
+          status: 429,
+          headers: { "Retry-After": "3600" },
+        })
+    );
+    await pollers.start(true);
+    expect(log.mock.calls.filter(([event]) => event.level === "error")).toEqual(
+      [
+        [
+          expect.objectContaining({
+            provider: "anthropic",
+            ageSeconds: 3600,
+            errorKind: "rate_limited",
+          }),
+        ],
+      ]
+    );
+    store.record(identity, "headers", windows, Date.now() / 1000);
+    await vi.advanceTimersByTimeAsync(1800000);
+    expect(
+      log.mock.calls.filter(([event]) => event.level === "error")
+    ).toHaveLength(1);
+    await vi.advanceTimersByTimeAsync(300000);
+    expect(log.mock.calls.filter(([event]) => event.level === "error")).toEqual(
+      [
+        [expect.objectContaining({ ageSeconds: 3600 })],
+        [
+          expect.objectContaining({
+            provider: "anthropic",
+            ageSeconds: 2100,
+            errorKind: "rate_limited",
+          }),
+        ],
+      ]
+    );
+    expect(JSON.stringify(log.mock.calls)).not.toContain("accountRef");
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    pollers.stop();
+  });
+
+  it("alerts once after thirty minutes without a reading, including during back-off, and re-arms after recovery", async () => {
+    const { store, fetcher, pollers, log } = setup();
+    fetcher.mockImplementation(
+      async () =>
+        new Response("ignored", {
+          status: 429,
+          headers: { "Retry-After": "3600" },
+        })
+    );
+    await pollers.start(true);
+    await vi.advanceTimersByTimeAsync(1800000);
+    expect(log.mock.calls.filter(([event]) => event.level === "error")).toEqual(
+      []
+    );
+    await vi.advanceTimersByTimeAsync(300000);
+    expect(log.mock.calls.filter(([event]) => event.level === "error")).toEqual(
+      [
+        [
+          {
+            level: "error",
+            provider: "openai-codex",
+            source: "wham-usage",
+            outcome: "stale",
+            ageSeconds: 2100,
+            errorKind: "rate_limited",
+          },
+        ],
+      ]
+    );
+    await vi.advanceTimersByTimeAsync(1200000);
+    expect(
+      log.mock.calls.filter(([event]) => event.level === "error")
+    ).toHaveLength(1);
+    fetcher.mockImplementation(async () => new Response(JSON.stringify(usage)));
+    await vi.advanceTimersByTimeAsync(300000);
+    expect(store.list()[0].status).toBe("known");
+    fetcher.mockImplementation(
+      async () => new Response("ignored", { status: 503 })
+    );
+    await vi.advanceTimersByTimeAsync(2100000);
+    expect(log.mock.calls.filter(([event]) => event.level === "error")).toEqual(
+      [
+        [
+          expect.objectContaining({
+            errorKind: "rate_limited",
+            ageSeconds: 2100,
+          }),
+        ],
+        [
+          expect.objectContaining({
+            errorKind: "http_error",
+            ageSeconds: 2100,
+          }),
+        ],
+      ]
+    );
+    expect(JSON.stringify(log.mock.calls)).not.toContain("fixture-account");
+    expect(JSON.stringify(log.mock.calls)).not.toContain(access);
+    pollers.stop();
+  });
+
+  it.each([
+    ["not_json", "RAW_RESPONSE_TOKEN_SENTINEL", undefined],
+    [
+      "shape",
+      JSON.stringify({
+        five_hour: {
+          utilization: "RAW_RESPONSE_TOKEN_SENTINEL",
+          resets_at: null,
+        },
+        seven_day: null,
+        extra_usage: "RAW_RESPONSE_TOKEN_SENTINEL",
+        "hostile-key-RAW_RESPONSE_TOKEN_SENTINEL": "ignored",
+      }),
+      {
+        type: "object",
+        keys: { five_hour: "object", seven_day: "null", extra_usage: "string" },
+        issues: [
+          { path: ["five_hour", "utilization"], code: "invalid_type" },
+          { path: ["five_hour", "resets_at"], code: "invalid_type" },
+        ],
+      },
+    ],
+  ])(
+    "logs safe %s diagnostics for a 200 Claude payload",
+    async (reason, body, shape) => {
+      const { readCredential, fetcher, pollers, log } = setup();
+      readCredential.mockImplementation((provider) =>
+        provider === "anthropic" ? { type: "oauth", access } : undefined
+      );
+      fetcher.mockResolvedValue(new Response(body));
+      await pollers.start(true);
+      expect(log).toHaveBeenCalledWith({
+        provider: "anthropic",
+        source: "usage-endpoint",
+        outcome: "error",
+        errorKind: "invalid_payload",
+        httpStatus: 200,
+        reason,
+        ...(shape ? { shape } : {}),
+      });
+      const logged = JSON.stringify(log.mock.calls);
+      expect(logged).not.toContain("RAW_RESPONSE_TOKEN_SENTINEL");
+      expect(logged).not.toContain(access);
+      expect(logged).not.toContain("fixture-account");
+      pollers.stop();
+    }
+  );
+
   it("ignores a late 429 from a request that timed out before a newer success", async () => {
     const { store, fetcher, pollers } = setup();
     let release!: (response: Response) => void;
@@ -142,7 +395,7 @@ describe("host quota polling lifecycle", () => {
     async (retryAfter) => {
       const { store, fetcher, pollers } = setup();
       fetcher.mockResolvedValueOnce(
-        new Response("not logged", {
+        new Response(claudeRateLimitBody, {
           status: 429,
           headers: { "Retry-After": retryAfter },
         })

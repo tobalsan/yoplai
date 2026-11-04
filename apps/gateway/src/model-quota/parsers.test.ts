@@ -1,6 +1,50 @@
 import { expect, it } from "vitest";
 import { parseClaudeUsage } from "./parsers.js";
 
+it.each([null, undefined])(
+  "keeps weekly usage when the five-hour window is %s",
+  (five_hour) => {
+    expect(
+      parseClaudeUsage({
+        five_hour,
+        seven_day: { utilization: 50, resets_at: "2026-11-03T06:00:00Z" },
+      })
+    ).toEqual({
+      ok: true,
+      windows: [
+        {
+          kind: "weekly",
+          usedPercent: 50,
+          resetAt: 1793685600,
+          windowSeconds: 604800,
+        },
+      ],
+    });
+  }
+);
+
+it.each([null, undefined])(
+  "keeps five-hour usage when the weekly window is %s",
+  (seven_day) => {
+    expect(
+      parseClaudeUsage({
+        five_hour: { utilization: 66, resets_at: "2026-11-01T19:00:00Z" },
+        seven_day,
+      })
+    ).toEqual({
+      ok: true,
+      windows: [
+        {
+          kind: "five-hour",
+          usedPercent: 66,
+          resetAt: 1793559600,
+          windowSeconds: 18000,
+        },
+      ],
+    });
+  }
+);
+
 it("normalizes endpoint percentages from the Claude probe without spend or model limits", () => {
   expect(
     parseClaudeUsage({
@@ -111,7 +155,13 @@ it.each([
 it.each([
   null,
   {},
-  { five_hour: { utilization: 66, resets_at: "2026-11-01T19:00:00Z" } },
+  { five_hour: null, seven_day: null },
+  { five_hour: null },
+  { seven_day: null },
+  {
+    five_hour: { utilization: 66, resets_at: null },
+    seven_day: { utilization: 50, resets_at: "2026-11-03T06:00:00Z" },
+  },
   {
     five_hour: { utilization: 101, resets_at: "2026-11-01T19:00:00Z" },
     seven_day: { utilization: 50, resets_at: "2026-11-03T06:00:00Z" },
@@ -127,7 +177,7 @@ it.each([
 ])(
   "rejects an invalid Claude payload rather than returning partial windows",
   (payload) => {
-    expect(parseClaudeUsage(payload)).toEqual({
+    expect(parseClaudeUsage(payload)).toMatchObject({
       ok: false,
       error: "invalid_payload",
     });
@@ -175,7 +225,7 @@ it.each([
     },
   })),
 ])("rejects malformed Wham payloads", (payload) => {
-  expect(parseWhamUsage(payload)).toEqual({
+  expect(parseWhamUsage(payload)).toMatchObject({
     ok: false,
     error: "invalid_payload",
   });
