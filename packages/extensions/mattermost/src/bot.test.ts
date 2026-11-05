@@ -680,6 +680,38 @@ describe("Mattermost bot", () => {
     }
   });
 
+  it.each(["shared", "per-agent"])(
+    "explains a team URL when the %s bot starts",
+    async (mode) => {
+      const settings = { url: `${URL_}/finance`, token: TOKEN };
+      const config =
+        mode === "shared"
+          ? gatewayConfig(settings)
+          : gatewayConfig(undefined, { mattermost: settings });
+      setMattermostContext(buildFakeContext({ config, dataDir }));
+      const options = {
+        fetch: async () =>
+          new Response(`<!doctype html><html>${TOKEN}</html>`, {
+            status: 200,
+            headers: { "content-type": "text/html; charset=utf-8" },
+          }),
+        createSocket: sockets.create,
+      };
+      bot =
+        mode === "shared"
+          ? createMattermostBot(
+              config.agents,
+              config.extensions!.mattermost!,
+              options
+            )
+          : createMattermostAgentBot(config.agents[0], options);
+      await expect(bot!.start()).rejects.toThrow(
+        "Mattermost url returned HTML, not the API. Use the server root (e.g. https://chat.example.com), not a team URL; the team comes from the bot's team membership and channel IDs."
+      );
+      expect(logs.join("\n")).not.toContain(TOKEN);
+    }
+  );
+
   it("never writes the token to the logs, even when everything fails", async () => {
     server.overrides.push({
       match: () => true,

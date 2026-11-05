@@ -26,6 +26,7 @@ Breaking changes are marked **⚠ BREAKING**.
 - Project subagents that exit immediately now persist their completion and release the project-space write lease, including resumed runs.
 - Canvas dashboard links can open new tabs without sandboxing the destination page.
 - Long text PDFs extract beyond 30 pages; OCR reads up to 30 scanned pages with a partial-text note, and project files show precise extraction failure reasons.
+- Mattermost reports a clear server-root URL error when a team URL returns HTML instead of the API.
 - Claude quota polling accepts a missing idle window, logs safe HTTP/payload diagnostics, and emits one error alert per login outage after 30 minutes without a good quota reading.
 
 ## v0.27.0 — Model routing, MCP App views + Mattermost

@@ -63,7 +63,7 @@ A per-agent bot answers DMs only when `dm` is present.
 
 | Key                            | Default                 | Meaning                                                                                 |
 | ------------------------------ | ----------------------- | --------------------------------------------------------------------------------------- |
-| `url`                          | required                | Server URL, `http://` or `https://`. A trailing `/api/v4` is ignored.                   |
+| `url`                          | required                | Server root, `http://` or `https://` (including any deployment subpath), never a team URL. A trailing `/api/v4` is ignored. |
 | `token`                        | required                | Bot access token. Always a `$env:` reference; never the literal token.                  |
 | `channels.<id>.agent`          | required (shared bot)   | Agent that answers in this channel.                                                     |
 | `channels.<id>.requireMention` | `true`                  | Answer only posts that mention the bot. With `false`, answer every post.                |
@@ -75,6 +75,8 @@ A per-agent bot answers DMs only when `dm` is present.
 | `acknowledgeMessages`          | `true`                  | 👀 on an accepted post, then ✅ or ❌.                                                  |
 | `attachmentsEnabled`           | `true`                  | Pass files attached to posts to the agent.                                              |
 | `allowBots`                    | `false`                 | Answer other bots (`true`, or a list of bot user IDs). They must still mention the bot. |
+
+Team scoping comes from the bot's team membership and channel IDs; DMs are cross-team, so there is no team setting.
 
 ## Behavior
 
