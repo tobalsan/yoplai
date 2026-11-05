@@ -221,12 +221,13 @@ export function areHeartbeatsEnabled(): boolean {
 }
 
 function maybeRestoreSessionUpdatedAt(
+  ctx: ExtensionContext,
   agentId: string,
   sessionKey: string,
   originalUpdatedAt: number | undefined
 ): void {
   if (originalUpdatedAt === undefined) return;
-  getContext().restoreSessionUpdatedAt(agentId, sessionKey, originalUpdatedAt);
+  ctx.restoreSessionUpdatedAt(agentId, sessionKey, originalUpdatedAt);
 }
 
 function isSchedulerRuntimeAvailable(): boolean {
@@ -248,7 +249,7 @@ function heartbeatResultStatus(
   return "ok";
 }
 
-async function writeHeartbeatOutput(input: {
+async function writeHeartbeatOutput(ctx: ExtensionContext, input: {
   agent: AgentConfig;
   sessionId: string;
   prompt: string;
@@ -259,7 +260,6 @@ async function writeHeartbeatOutput(input: {
   response?: string;
   error?: unknown;
 }): Promise<void> {
-  const ctx = getContext();
   try {
     await writeCronRunOutput({
       workspaceDir: ctx.resolveWorkspaceDir(input.agent),
@@ -346,7 +346,7 @@ export async function runHeartbeat(
 
   // Check if main session is streaming
   if (ctx.isAgentStreaming(agentId)) {
-    maybeRestoreSessionUpdatedAt(agentId, DEFAULT_MAIN_KEY, originalUpdatedAt);
+    maybeRestoreSessionUpdatedAt(ctx, agentId, DEFAULT_MAIN_KEY, originalUpdatedAt);
     const payload: HeartbeatEventPayload = {
       ts: startTs,
       agentId,
@@ -360,7 +360,7 @@ export async function runHeartbeat(
   // Check delivery target (Discord broadcastToChannel)
   const broadcastChannel = agent.discord?.broadcastToChannel;
   if (!broadcastChannel) {
-    maybeRestoreSessionUpdatedAt(agentId, DEFAULT_MAIN_KEY, originalUpdatedAt);
+    maybeRestoreSessionUpdatedAt(ctx, agentId, DEFAULT_MAIN_KEY, originalUpdatedAt);
     const payload: HeartbeatEventPayload = {
       ts: startTs,
       agentId,
@@ -401,7 +401,7 @@ export async function runHeartbeat(
     // Evaluate reply
     const evaluation = evaluateHeartbeatReply(replyText, ackMaxChars);
 
-    void writeHeartbeatOutput({
+    await writeHeartbeatOutput(ctx, {
       agent,
       sessionId: outputSessionId,
       prompt,
@@ -415,6 +415,7 @@ export async function runHeartbeat(
     // Restore updatedAt if not delivering
     if (!evaluation.shouldDeliver) {
       maybeRestoreSessionUpdatedAt(
+        ctx,
         agentId,
         DEFAULT_MAIN_KEY,
         originalUpdatedAt
@@ -433,8 +434,8 @@ export async function runHeartbeat(
     emitHeartbeatEvent(payload);
     return payload;
   } catch (err) {
-    maybeRestoreSessionUpdatedAt(agentId, DEFAULT_MAIN_KEY, originalUpdatedAt);
-    void writeHeartbeatOutput({
+    maybeRestoreSessionUpdatedAt(ctx, agentId, DEFAULT_MAIN_KEY, originalUpdatedAt);
+    await writeHeartbeatOutput(ctx, {
       agent,
       sessionId: outputSessionId,
       prompt,

@@ -11,6 +11,7 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Fixed
 
+- Heartbeat runs already in flight finish safely during extension shutdown, including their saved output.
 - Project subagents that exit immediately now persist their completion and release the project-space write lease, including resumed runs.
 - Claude quota polling accepts a missing idle window, logs safe HTTP/payload diagnostics, and emits one error alert per login outage after 30 minutes without a good quota reading.
 
