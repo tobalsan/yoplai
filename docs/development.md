@@ -37,6 +37,8 @@ Review generated config before running because it may include development fixtur
 
 ## Tests
 
+Run `pnpm build` before tests, including after source edits; subprocess tests execute compiled commands.
+
 Run scoped suites serially:
 
 ```bash
