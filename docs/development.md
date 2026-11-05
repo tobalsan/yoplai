@@ -49,6 +49,8 @@ pnpm exec vitest run path/to/exact.test.ts
 
 Do not use `pnpm test -- <path>` for one file. Run `pnpm install` when `node_modules` is missing. User-facing changes should follow [end-to-end validation](validation_e2e.md).
 
+Wait for observable subprocess readiness/completion with startup headroom; fake timers do not flush real filesystem I/O.
+
 ## Remote web development
 
 When UI runs on machine A and gateway/projects on machine B:

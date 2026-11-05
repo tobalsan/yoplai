@@ -1538,24 +1538,28 @@ describe("SchedulerService script jobs", () => {
   });
 
   it.each(["timeout", "spawn"] as const)("revokes script tokens on %s and lets the next run progress", async (reason) => {
-    const { scheduler, ctx } = await setup('echo "$YOPLAI_TOOL_TOKEN" >&2\nsleep 60\n');
-    ctx.getConfig().extensions!.scheduler!.jobTimeoutMs = 30;
+    const { scheduler, ctx } = await setup('echo ready > gate.ready\necho "$YOPLAI_TOOL_TOKEN" >&2\nsleep 60\n');
     const revoke = vi.fn();
     ctx.mintToolToken = vi.fn(() => ({ token: "failed-script-token", gatewayUrl: "http://127.0.0.1:4010", revoke }));
     const job = await scheduler.add("alpha", {
-      name: "Failure", schedule: { cron: "0 8 * * *", tz: "UTC" },
+      // Allow real shell startup under load before exercising its timeout.
+      name: "Failure", schedule: { cron: "0 8 * * *", tz: "UTC" }, timeoutMs: 2000,
       payload: jobPayload({ script: reason === "spawn" ? "missing.sh" : "bin/gate.sh", noAgent: true }),
     });
-    const result = await scheduler.runNow("alpha", job.id);
+    const execution = scheduler.runNow("alpha", job.id);
+    if (reason === "timeout") {
+      await vi.waitFor(async () => expect(await fs.readFile(path.join(ctx.getAgent("alpha")!.workspace, "gate.ready"), "utf8")).toBe("ready\n"), { timeout: 5000 });
+    }
+    const result = await execution;
     expect(result.status).toBe("error");
     expect(revoke).toHaveBeenCalledOnce();
     expect(ctx.logger.error).toHaveBeenCalledWith("[scheduler] job failed", expect.any(String), expect.objectContaining({ reason }));
     expect(JSON.stringify({ result, logs: vi.mocked(ctx.logger.error).mock.calls })).not.toContain("failed-script-token");
-    await scheduler.update("alpha", job.id, { payload: jobPayload({ script: "bin/gate.sh", noAgent: true }) });
+    await scheduler.update("alpha", job.id, { timeoutMs: 5000, payload: jobPayload({ script: "bin/gate.sh", noAgent: true }) });
     await fs.writeFile(path.join(ctx.getAgent("alpha")!.workspace, "bin/gate.sh"), "echo recovered\n");
     expect((await scheduler.runNow("alpha", job.id)).status).toBe("ok");
     expect(revoke).toHaveBeenCalledTimes(2);
-  });
+  }, 10_000);
 
   it("keeps the script env unchanged when the host offers no tool tokens", async () => {
     const { scheduler } = await setup("echo done\n");

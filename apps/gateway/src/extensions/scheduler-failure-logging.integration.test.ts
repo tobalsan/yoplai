@@ -186,14 +186,17 @@ describe("scheduler structured failures", () => {
 
   it("logs a script timeout without an exit code while another job completes", async () => {
     const { errors, alpha, ctx } = await setup();
-    await fs.writeFile(path.join(alpha.workspace, "hang.sh"), "echo timeout-diagnostic >&2\nsleep 30\n");
+    await fs.writeFile(path.join(alpha.workspace, "hang.sh"), "echo ready > timeout.ready\necho timeout-diagnostic >&2\nsleep 30\n");
     const hanging = await add({ script: "hang.sh", noAgent: true });
-    await scheduler.update("alpha", hanging.id, { timeoutMs: 100 });
+    // Preserve stderr only after allowing real shell startup under load.
+    await scheduler.update("alpha", hanging.id, { timeoutMs: 2000 });
     ctx.runAgent = async () => ({ payloads: [{ text: "healthy" }], meta: { sessionId: "healthy-session", durationMs: 1 } });
     const healthy = await add({ message: "Healthy" });
-    const [result, healthyResult] = await Promise.all([
+    const execution = Promise.all([
       scheduler.runNow("alpha", hanging.id), scheduler.runNow("alpha", healthy.id),
     ]);
+    await vi.waitFor(async () => expect(await fs.readFile(path.join(alpha.workspace, "timeout.ready"), "utf8")).toBe("ready\n"), { timeout: 5000 });
+    const [result, healthyResult] = await execution;
     expect(healthyResult.status).toBe("ok");
     expect(errors.mock.calls).toHaveLength(1);
     expect(errors.mock.calls[0]).toHaveLength(1);
@@ -202,14 +205,14 @@ describe("scheduler structured failures", () => {
     expect(JSON.parse(line)).toMatchObject({
       level: "error", jobId: hanging.id, jobName: "Digest", agentId: "alpha",
       kind: "script", phase: "script", reason: "timeout", stderrTail: "timeout-diagnostic",
-      message: "script exceeded the 100ms timeout and was killed",
+      message: "script exceeded the 2000ms timeout and was killed",
     });
     expect(JSON.parse(line)).not.toHaveProperty("exitCode");
     const [run] = await scheduler.listRuns("alpha", hanging.id);
     expect(JSON.parse(line).runId).toBe(run!.id);
-    expect(run!.error).toBe("script exceeded the 100ms timeout and was killed\nstderr:\ntimeout-diagnostic\n\nstdout:\n");
+    expect(run!.error).toBe("script exceeded the 2000ms timeout and was killed\nstderr:\ntimeout-diagnostic\n\nstdout:\n");
     expect(await fs.readFile(result.outputPath!, "utf8")).toContain(run!.error);
-  });
+  }, 10_000);
 
   it("keeps full Markdown diagnostics without creating run JSON when monitoring is off", async () => {
     const { errors, alpha } = await setup(false);
