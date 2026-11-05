@@ -796,23 +796,26 @@ async function spawnRunProcess(
     cwd: config.cwd,
     stdio: ["ignore", "pipe", "pipe"],
   });
-  activeChildren.set(runId, child);
-  await writeJson(paths.state, {
-    ...state,
-    pid: child.pid,
-    status: "running",
-  } satisfies StoredState);
-  liveRunsById.set(runId, {
-    runId,
-    label: config.label,
-    cli: config.cli,
-    cwd: config.cwd,
-    status: "running",
-    startedAt,
-    updatedAt: new Date().toISOString(),
+  // Capture completion before initialization yields; descendants may keep stdio open.
+  const completion = new Promise<
+    Pick<StoredState, "status" | "exitCode" | "signal" | "lastError">
+  >((resolve) => {
+    child.once("error", (error) => resolve({
+      status: "error",
+      exitCode: null,
+      signal: null,
+      lastError: error.message,
+    }));
+    child.once("exit", (exitCode, signal) => resolve({
+      status: exitCode === 0 ? "done" : "error",
+      exitCode,
+      signal,
+      lastError:
+        exitCode === 0
+          ? undefined
+          : `process exited (code ${exitCode ?? "null"})`,
+    }));
   });
-  reportActiveWork(options);
-  await notifyChanged(options, runId, "running");
 
   let outputNotifyAt = 0;
   const updateProgress = async (text: string): Promise<void> => {
@@ -832,58 +835,65 @@ async function spawnRunProcess(
       latestOutput: latestOutput?.slice(0, 500) ?? current?.latestOutput,
     } satisfies StoredProgress);
     const now = Date.now();
-    if (now - outputNotifyAt > 1000) {
+    if (currentLive?.status === "running" && now - outputNotifyAt > 1000) {
       outputNotifyAt = now;
       await notifyChanged(options, runId, "running");
     }
   };
 
+  let releasePersistence!: () => void;
+  let persistence = new Promise<void>((resolve) => {
+    releasePersistence = resolve;
+  });
+
   child.stdout.on("data", (chunk: Buffer) => {
-    const text = chunk.toString("utf8");
-    void fs
-      .appendFile(paths.logs, text, "utf8")
-      .then(() => updateProgress(text))
-      .catch((error: unknown) => {
-        console.warn(
-          `[subagents] failed to record stdout progress for ${runId}:`,
-          error
-        );
-      });
-    for (const line of text.split(/\r?\n/).filter(Boolean)) {
-      try {
-        const ev = JSON.parse(line) as {
-          type?: string;
-          thread_id?: string;
-          session_id?: string;
-          id?: string;
-        };
-        const nextSessionId =
-          config.cli === "codex" && ev.type === "thread.started"
-            ? ev.thread_id
-            : config.cli === "claude" && ev.type === "system"
-              ? ev.session_id
-              : config.cli === "pi" && ev.type === "session"
-                ? ev.id
-                : undefined;
-        if (nextSessionId) {
-          void readJson<StoredState>(paths.state)
-            .then((current) =>
-              writeJson(paths.state, {
-                ...(current ?? state),
-                cliSessionId: nextSessionId,
-              } satisfies StoredState)
-            )
-            .catch((error: unknown) => {
-              console.warn(
-                `[subagents] failed to record session id for ${runId}:`,
-                error
-              );
-            });
+    persistence = persistence.then(async () => {
+      const text = chunk.toString("utf8");
+      await fs
+        .appendFile(paths.logs, text, "utf8")
+        .then(() => updateProgress(text))
+        .catch((error: unknown) => {
+          console.warn(
+            `[subagents] failed to record stdout progress for ${runId}:`,
+            error
+          );
+        });
+      for (const line of text.split(/\r?\n/).filter(Boolean)) {
+        try {
+          const ev = JSON.parse(line) as {
+            type?: string;
+            thread_id?: string;
+            session_id?: string;
+            id?: string;
+          };
+          const nextSessionId =
+            config.cli === "codex" && ev.type === "thread.started"
+              ? ev.thread_id
+              : config.cli === "claude" && ev.type === "system"
+                ? ev.session_id
+                : config.cli === "pi" && ev.type === "session"
+                  ? ev.id
+                  : undefined;
+          if (nextSessionId) {
+            await readJson<StoredState>(paths.state)
+              .then((current) =>
+                writeJson(paths.state, {
+                  ...(current ?? state),
+                  cliSessionId: nextSessionId,
+                } satisfies StoredState)
+              )
+              .catch((error: unknown) => {
+                console.warn(
+                  `[subagents] failed to record session id for ${runId}:`,
+                  error
+                );
+              });
+          }
+        } catch {
+          // ignore non-json output
         }
-      } catch {
-        // ignore non-json output
       }
-    }
+    });
   });
 
   child.stderr.on("data", (chunk: Buffer) => {
@@ -894,7 +904,7 @@ async function spawnRunProcess(
       .map((line) => JSON.stringify({ type: "stderr", text: line }))
       .join("\n");
     if (!lines) return;
-    void fs
+    persistence = persistence.then(() => fs
       .appendFile(paths.logs, `${lines}\n`, "utf8")
       .then(() => updateProgress(text))
       .catch((error: unknown) => {
@@ -902,30 +912,37 @@ async function spawnRunProcess(
           `[subagents] failed to record stderr progress for ${runId}:`,
           error
         );
-      });
+      }));
   });
 
-  child.on("error", (error) => {
-    void finishRun(options, runId, {
-      status: "error",
-      exitCode: null,
-      signal: null,
-      lastError: error.message,
-    });
-  });
-
-  child.on("exit", (exitCode, signal) => {
+  void completion.then((patch) => {
     activeChildren.delete(runId);
-    void finishRun(options, runId, {
-      status: exitCode === 0 ? "done" : "error",
-      exitCode,
-      signal,
-      lastError:
-        exitCode === 0
-          ? undefined
-          : `process exited (code ${exitCode ?? "null"})`,
-    });
+    // Serialize final state with output writes, including data delivered after exit.
+    persistence = persistence.then(() => finishRun(options, runId, patch));
   });
+
+  // Node drains untouched pipes after exit, so install all handlers before yielding.
+  try {
+    activeChildren.set(runId, child);
+    await writeJson(paths.state, {
+      ...state,
+      pid: child.pid,
+      status: "running",
+    } satisfies StoredState);
+    liveRunsById.set(runId, {
+      runId,
+      label: config.label,
+      cli: config.cli,
+      cwd: config.cwd,
+      status: "running",
+      startedAt,
+      updatedAt: new Date().toISOString(),
+    });
+    reportActiveWork(options);
+    await notifyChanged(options, runId, "running");
+  } finally {
+    releasePersistence();
+  }
 }
 
 async function finishRun(
