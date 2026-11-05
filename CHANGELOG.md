@@ -11,6 +11,7 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Fixed
 
+- Long text PDFs extract beyond 30 pages; OCR reads up to 30 scanned pages with a partial-text note, and project files show precise extraction failure reasons.
 - Claude quota polling accepts a missing idle window, logs safe HTTP/payload diagnostics, and emits one error alert per login outage after 30 minutes without a good quota reading.
 
 ## v0.27.0 — Model routing, MCP App views + Mattermost

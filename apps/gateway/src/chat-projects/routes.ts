@@ -4,7 +4,8 @@ import path from "node:path";
 import { Hono, type Context } from "hono";
 import { getUserHistoryDir } from "@yoplai/extension-multi-user/isolation";
 import { CONFIG_DIR } from "../config/index.js";
-import { extractText } from "../media/extract.js";
+import { ExtractionError, extractTextDetails } from "../media/extract.js";
+import { logWarn } from "../logging.js";
 import { MAX_UPLOAD_SIZE_BYTES, resolveUploadMimeType, UploadTypeError } from "../media/upload.js";
 import { appendSessionMeta } from "../history/store.js";
 import { isSafeSessionId, parseSessionFileName } from "../history/sessions.js";
@@ -79,10 +80,14 @@ export function createChatProjectRoutes(deps: {
     const file = { id: crypto.randomUUID(), name: upload.name.split(/[\\/]/).pop()!.slice(0, 200), mimeType, size: upload.size, createdAt: Date.now() };
     await store.addFile(id, file, Buffer.from(await upload.arrayBuffer()));
     try {
-      const text = await extractText(path.join(store.filesDirectory(id), file.id), mimeType);
-      await store.updateFile(id, { ...file, ...(text ? { text: text.slice(0, 250_000) } : {}) });
-    } catch {
-      await store.updateFile(id, { ...file, extractionError: "Text extraction unavailable; the original file is retained." });
+      const { text, note } = await extractTextDetails(path.join(store.filesDirectory(id), file.id), mimeType);
+      await store.updateFile(id, { ...file, ...(text ? { text: text.slice(0, 250_000) } : {}), ...(note ? { extractionNote: note } : {}) });
+    } catch (error) {
+      const original = error instanceof ExtractionError && error.cause !== undefined ? error.cause : error;
+      logWarn("Project file text extraction failed", {
+        projectId: id, fileId: file.id, name: file.name, message: original instanceof Error ? original.message : String(original),
+      });
+      await store.updateFile(id, { ...file, extractionError: error instanceof ExtractionError ? error.message : "Text extraction failed" });
     }
     return c.json(file, 201);
   });

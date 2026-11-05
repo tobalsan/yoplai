@@ -39,7 +39,7 @@ export class ProjectContextResolver {
     for (const file of await store.listFiles(id)) {
       const entry = [file.name + " (" + file.id + ", " + file.size + " bytes)",
         file.text && file.text.length <= PROJECT_FILE_INLINE_LIMIT ? file.text : "",
-        file.extractionError ?? ""].filter(Boolean).join("\n");
+        file.extractionError ?? "", file.extractionNote ?? ""].filter(Boolean).join("\n");
       if (Buffer.byteLength(files + "\n" + entry + note, "utf8") > PROJECT_FILES_CONTEXT_BUDGET) {
         files += note;
         break;
