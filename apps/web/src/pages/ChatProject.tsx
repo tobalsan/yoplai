@@ -527,7 +527,10 @@ export function ChatProject() {
                             <div class="project-file-meta">
                               {formatBytes(file.size)}
                               <Show when={file.extractionError}>
-                                {" "}· <span class="project-file-error">Text unavailable</span>
+                                {" "}· <span class="project-file-status project-file-error" title={`Text unavailable: ${file.extractionError}`}>Text unavailable: {file.extractionError}</span>
+                              </Show>
+                              <Show when={!file.extractionError && file.extractionNote}>
+                                {" "}· <span class="project-file-status" title={file.extractionNote}>{file.extractionNote}</span>
                               </Show>
                             </div>
                           </div>
@@ -905,7 +908,7 @@ export function ChatProject() {
 
         @media (max-width: 900px) {
           .project-body {
-            grid-template-columns: 1fr;
+            grid-template-columns: minmax(0, 1fr);
           }
 
         }
@@ -1124,9 +1127,20 @@ export function ChatProject() {
         }
 
         .project-file-meta {
+          display: flex;
+          align-items: baseline;
+          gap: 4px;
           font-size: 12px;
           color: var(--text-secondary);
           margin-top: 2px;
+          white-space: nowrap;
+        }
+
+        .project-file-status {
+          min-width: 0;
+          overflow: hidden;
+          text-overflow: ellipsis;
+          white-space: nowrap;
         }
 
         .project-file-error {

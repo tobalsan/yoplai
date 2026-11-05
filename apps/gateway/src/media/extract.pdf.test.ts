@@ -1,6 +1,7 @@
 import fs from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { PDFParse } from "pdf-parse";
+import mupdf from "mupdf";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const { fork } = vi.hoisted(() => ({ fork: vi.fn() }));
@@ -16,6 +17,16 @@ const mixedFixture = fileURLToPath(new URL("./__fixtures__/mixed.pdf", import.me
 const scannedEnglishFixture = fileURLToPath(new URL("./__fixtures__/scanned-english.pdf", import.meta.url));
 const scannedFrenchFixture = fileURLToPath(new URL("./__fixtures__/scanned-french.pdf", import.meta.url));
 const textLayerFixture = fileURLToPath(new URL("./__fixtures__/text-layer.pdf", import.meta.url));
+
+function longTextPdf(): Buffer {
+  const document = new mupdf.PDFDocument();
+  const font = document.addSimpleFont(new mupdf.Font("Helvetica"));
+  for (let number = 1; number <= 35; number += 1) {
+    const content = "BT /F1 16 Tf 30 700 Td (HELLO OCR ENGLISH - Invented specification page " + number + ") Tj ET";
+    document.insertPage(-1, document.addPage([0, 0, 612, 792], 0, { Font: { F1: font } }, content));
+  }
+  return Buffer.from(document.saveToBuffer().asUint8Array());
+}
 
 describe("extractPdfBuffer fixtures", () => {
   beforeEach(() => {
@@ -36,12 +47,21 @@ describe("extractPdfBuffer fixtures", () => {
     expect(fork).not.toHaveBeenCalled();
   });
 
+  it("extracts all 35 real text-layer pages without OCR", async () => {
+    const text = await extractPdfBuffer(longTextPdf());
+    expect(text.match(/HELLO OCR ENGLISH - Invented specification page \d+/g)).toEqual(
+      [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35]
+        .map((number) => `HELLO OCR ENGLISH - Invented specification page ${number}`)
+    );
+    expect(fork).not.toHaveBeenCalled();
+  });
+
   it("rejects a real corrupt-xref PDF without starting an agent run", async () => {
     await expect(extractPdfBuffer(await fs.readFile(corruptFixture))).rejects.toThrow(/xref|PDF|Invalid/i);
   });
 
   it("rejects a real encrypted PDF with an actionable error", async () => {
-    await expect(extractPdfBuffer(await fs.readFile(encryptedFixture))).rejects.toThrow("PDF is encrypted and cannot be extracted");
+    await expect(extractPdfBuffer(await fs.readFile(encryptedFixture))).rejects.toThrow("PDF is password-protected");
   });
 
   it("contains a text-layer page followed by an image-only page", async () => {
@@ -54,6 +74,11 @@ describe("extractPdfBuffer fixtures", () => {
     } finally {
       await parser.destroy();
     }
+  });
+
+  it("OCRs a requested page in a real PDF longer than the OCR cap", async () => {
+    const pages = await ocrPdfPages({ data: new Uint8Array(longTextPdf()), pages: [35], maxPages: 30, maxOutput: 250_000 });
+    expect(pages).toEqual([{ number: 35, text: "HELLO OCR ENGLISH - Invented specification page 35" }]);
   });
 
   it("OCRs the image-only page in the mixed fixture", async () => {

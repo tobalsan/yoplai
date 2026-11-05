@@ -71,6 +71,38 @@ afterEach(() => {
 });
 
 describe("ChatProject file upload", () => {
+  it("shows the extraction failure reason and full status in a tooltip", async () => {
+    fetchChatProjectFilesMock.mockResolvedValue({ items: [{
+      id: "encrypted", name: "protected.pdf", size: 100, mimeType: "application/pdf",
+      extractionError: "PDF is password-protected",
+      extractionNote: "Partial text: 30 of 45 scanned pages read",
+    }] });
+    const { ChatProject } = await import("./ChatProject");
+    dispose = render(() => <ChatProject />, root);
+    await tick();
+
+    const status = root.querySelector<HTMLElement>(".project-file-error");
+    expect(status?.textContent).toBe("Text unavailable: PDF is password-protected");
+    expect(status?.title).toBe("Text unavailable: PDF is password-protected");
+    expect(root.textContent).not.toContain("Partial text:");
+  });
+
+  it("shows partial extraction as a neutral note with a full tooltip", async () => {
+    fetchChatProjectFilesMock.mockResolvedValue({ items: [{
+      id: "partial", name: "mixed.pdf", size: 200, mimeType: "application/pdf",
+      extractionNote: "Partial text: 30 of 45 scanned pages read",
+    }] });
+    const { ChatProject } = await import("./ChatProject");
+    dispose = render(() => <ChatProject />, root);
+    await tick();
+
+    const status = root.querySelector<HTMLElement>(".project-file-status");
+    expect(status?.textContent).toBe("Partial text: 30 of 45 scanned pages read");
+    expect(status?.title).toBe("Partial text: 30 of 45 scanned pages read");
+    expect(status?.classList.contains("project-file-error")).toBe(false);
+    expect(root.textContent).not.toContain("Text unavailable");
+  });
+
   it("clicking Upload button triggers file input click", async () => {
     const { ChatProject } = await import("./ChatProject");
     dispose = render(() => <ChatProject />, root);
