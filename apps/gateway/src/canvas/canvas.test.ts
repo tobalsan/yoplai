@@ -1384,16 +1384,20 @@ describe("dashboard SQL", () => {
       db.pragma("wal_checkpoint(PASSIVE)");
     }, 2);
     try {
-      const results = await Promise.all(
-        Array.from({ length: 12 }, () =>
-          runDashboardQuery(
-            path.dirname(databasePath),
-            path.basename(databasePath),
-            "select value from counter",
-            {}
+      const results: unknown[][] = [];
+      // Stress snapshots at pool capacity without assuming a cold-start queue rate.
+      for (let batch = 0; batch < 3; batch++) {
+        results.push(...await Promise.all(
+          Array.from({ length: DASHBOARD_WORKER_LIMIT }, () =>
+            runDashboardQuery(
+              path.dirname(databasePath),
+              path.basename(databasePath),
+              "select value from counter",
+              {}
+            )
           )
-        )
-      );
+        ));
+      }
       expect(results).toHaveLength(12);
       for (const rows of results) {
         expect(rows).toEqual([{ value: expect.any(Number) }]);
