@@ -594,7 +594,7 @@ describe("dashboard registry and tool", () => {
 
     await expect(
       tools.find((tool) => tool.name === "dashboard_delete")!.execute({ slug: "hello.html" }, {} as never)
-    ).rejects.toThrow("Dashboard not found");
+    ).rejects.toMatchObject({ code: "ENOENT" });
     expect(await fs.readFile(path.join(outside, "hello.html"), "utf8")).toBe(
       "outside"
     );
