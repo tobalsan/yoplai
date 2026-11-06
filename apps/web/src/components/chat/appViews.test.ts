@@ -13,6 +13,21 @@ const fileCall = (id: string, filename: string): AppViewCall => ({
 });
 
 describe("app views", () => {
+  it("updates the same preview URL while keeping different pages in their own views", () => {
+    createRoot((dispose) => {
+      const preview = { server: "yoplai", tool: "web_preview", resourceUri: "ui://yoplai/web-preview" };
+      const previewCall = (id: string, key: string): AppViewCall => ({ id, timestamp: 1, view: preview, result: { view: { ...preview, recordId: id, key, preview: { frameable: true } } } });
+      const [calls, setCalls] = createSignal([previewCall("first", "https://example.test/a"), previewCall("other", "https://example.test/b")]);
+      const views = createAppViews(() => "session", calls);
+      expect(viewKey(calls()[0].result!.view!)).toBe("yoplai\nui://yoplai/web-preview\nhttps://example.test/a");
+      views.open("yoplai\nui://yoplai/web-preview\nhttps://example.test/a");
+      setCalls((current) => [...current, previewCall("revised", "https://example.test/a")]);
+      expect(views.panel()?.latest.id).toBe("revised");
+      expect([views.roleOf("first"), views.roleOf("other"), views.roleOf("revised")]).toEqual(["panel-card", "host", "link"]);
+      expect(views.viewOf("other")?.latest.id).toBe("other");
+      dispose();
+    });
+  });
   it("separates filenames and reuses an exact filename without changing non-file keys", () => {
     createRoot((dispose) => {
       const a = fileCall("a-v1", "a.md");

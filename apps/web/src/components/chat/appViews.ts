@@ -40,8 +40,9 @@ export function chatAppViewCalls(session: ChatTranscriptSession, mode: HistoryVi
 
 export type AppViews = ReturnType<typeof createAppViews>;
 
-export function viewKey(view: Pick<McpAppViewReference, "server" | "resourceUri" | "file">): string {
-  return view.server + "\n" + view.resourceUri + (view.file ? "\n" + view.file.filename : "");
+export function viewKey(view: Pick<McpAppViewReference, "server" | "resourceUri" | "file" | "key">): string {
+  const key = view.key ?? view.file?.filename;
+  return view.server + "\n" + view.resourceUri + (key !== undefined ? "\n" + key : "");
 }
 
 export function createAppViews(sessionId: Accessor<string | null | undefined>, calls: Accessor<AppViewCall[]>) {

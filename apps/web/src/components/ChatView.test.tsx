@@ -2539,6 +2539,12 @@ describe("ChatView abort handling", () => {
     callbacks?.onToolResult?.(id, "send_file", "File sent to user", false, undefined, undefined, { ...marker, recordId: `record-${id}`, file });
   }
 
+  function sendPreview(callbacks: Partial<StreamCallbacks> | undefined, id: string, key: string, frameable = true) {
+    const marker = { server: "yoplai", tool: "web_preview", resourceUri: "ui://yoplai/web-preview" };
+    callbacks?.onToolCall?.(id, "web_preview", { url: key }, undefined, marker);
+    callbacks?.onToolResult?.(id, "web_preview", "Web preview shown", false, undefined, undefined, { ...marker, recordId: `record-${id}`, key, preview: { frameable } });
+  }
+
   function measureChatSpace(viewportWidth = 1280, rowWidth = 1000) {
     vi.stubGlobal("innerWidth", viewportWidth);
     const measure = HTMLElement.prototype.getBoundingClientRect;
@@ -2546,6 +2552,76 @@ describe("ChatView abort handling", () => {
       return this.classList.contains("chat-view") ? { width: rowWidth, right: rowWidth } as DOMRect : measure.call(this);
     });
   }
+
+  it("auto-opens a native live preview without the apps origin and labels its compact card by host", async () => {
+    const measure = measureChatSpace();
+    loadMcpAppDataMock.mockResolvedValue({ args: {}, result: { structuredContent: { url: "https://example.test/page", finalUrl: "https://example.test/page", title: "Live page", frameable: true, reason: null, status: 200 } } });
+    const { container, dispose, callbacks } = await startFullStream();
+    try {
+      const marker = { server: "yoplai", tool: "web_preview", resourceUri: "ui://yoplai/web-preview" };
+      callbacks()?.onToolCall?.("live-preview", "web_preview", { url: "https://example.test/page" }, undefined, marker);
+      callbacks()?.onToolResult?.("live-preview", "web_preview", "Web preview shown", false, undefined, undefined, { ...marker, recordId: "preview-record", key: "https://example.test/page", preview: { frameable: true } });
+      await waitFor(() => expect(queryByRole(container, "complementary", { name: "App view" })).not.toBeNull());
+      const panel = queryByRole(container, "complementary", { name: "App view" })!;
+      await waitFor(() => expect(queryByTitle(panel, "Live page web preview")).not.toBeNull());
+      const card = queryByRole(container, "button", { name: "example.test · shown in the side panel" });
+      expect(card).not.toBeNull();
+      expect(card!.querySelector(".fa-globe")).not.toBeNull();
+      card!.click();
+      expect(document.activeElement).toBe(panel);
+      queryByRole(panel, "button", { name: "Collapse" })!.click();
+      await waitFor(() => expect(queryByRole(container, "complementary")).toBeNull());
+      expect(queryByTitle(container, "Live page web preview")).not.toBeNull();
+    } finally { dispose(); measure.mockRestore(); }
+  });
+
+  it.each([
+    ["https://example.test/page", "https://chat.test", true, 1280, true],
+    ["http://localhost:5173", "http://localhost:3000", true, 1280, true],
+    ["http://localhost:5173", "https://chat.test", true, 1280, false],
+    ["https://chat.test/page", "https://chat.test", true, 1280, false],
+    ["https://example.test/deny", "https://chat.test", false, 1280, false],
+    ["http://localhost:5173/stopped", "http://localhost:3000", false, 1280, false],
+    ["https://example.test/page", "https://chat.test", true, 700, false],
+  ] as const)("opens preview %s on %s only if browser and split guards pass (%s, %i => %s)", async (key, chat, frameable, viewport, opens) => {
+    vi.stubGlobal("location", new URL(chat));
+    const measure = measureChatSpace(viewport);
+    loadMcpAppDataMock.mockResolvedValue({ args: {}, result: { structuredContent: { url: key, finalUrl: key, title: "Guarded page", frameable, reason: frameable ? null : "unreachable", status: frameable ? 200 : null } } });
+    const { container, dispose, callbacks } = await startFullStream();
+    try {
+      sendPreview(callbacks(), "guarded", key, frameable);
+      await waitFor(() => expect(queryByText(container, "Guarded page", { exact: true })).not.toBeNull());
+      expect(!!queryByRole(container, "complementary")).toBe(opens);
+    } finally { dispose(); measure.mockRestore(); }
+  });
+
+  it("opens a live subscription preview but keeps history and reconnect previews inline", async () => {
+    const measure = measureChatSpace();
+    let subscription: SubscriptionCallbacks = {};
+    subscribeToSessionMock.mockImplementation((_agent, _key, callbacks) => { subscription = callbacks; return () => {}; });
+    const marker = { server: "yoplai", tool: "web_preview", resourceUri: "ui://yoplai/web-preview" };
+    const reference = { ...marker, recordId: "saved-record", key: "https://example.test/saved", preview: { frameable: true } };
+    fetchFullHistoryMock.mockResolvedValue({ sessionId: "session-main", messages: [
+      { role: "assistant", timestamp: 1, content: [{ type: "toolCall", id: "saved-preview", name: "web_preview", arguments: {}, viewCall: true, view: marker }] },
+      { role: "toolResult", timestamp: 2, toolCallId: "saved-preview", toolName: "web_preview", content: [{ type: "text", text: "Web preview shown" }], view: reference },
+    ] });
+    loadMcpAppDataMock.mockImplementation(async (_agent, _session, id) => ({ args: {}, result: { structuredContent: { url: `https://example.test/${id}`, finalUrl: `https://example.test/${id}`, title: id, frameable: true, reason: null, status: 200 } } }));
+    const { container, dispose } = renderView();
+    try {
+      await waitFor(() => expect(queryByTitle(container, "saved-preview web preview")).not.toBeNull());
+      expect(queryByRole(container, "complementary")).toBeNull();
+      subscription.onActiveTurn?.({ userText: "Preview", userTimestamp: 3, startedAt: 3, thinking: "", text: "",
+        toolCalls: [{ id: "reconnect-preview", name: "web_preview", arguments: {}, status: "done", view: marker }],
+        toolResults: [{ id: "reconnect-preview", name: "web_preview", content: "Web preview shown", isError: false, view: { ...reference, recordId: "reconnected", key: "https://example.test/reconnect" } }],
+      });
+      await waitFor(() => expect(queryByTitle(container, "reconnect-preview web preview")).not.toBeNull());
+      expect(queryByRole(container, "complementary")).toBeNull();
+      sendPreview(subscription, "subscription-preview", "https://example.test/live");
+      await waitFor(() => expect(queryByRole(container, "complementary")).not.toBeNull());
+      const panel = queryByRole(container, "complementary")!;
+      await waitFor(() => expect(queryByTitle(panel, "subscription-preview web preview")).not.toBeNull());
+    } finally { dispose(); measure.mockRestore(); }
+  });
 
   it("opens the side panel for an HTML file sent in a live direct stream", async () => {
     enableAppViews();

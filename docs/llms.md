@@ -348,7 +348,7 @@ toolDeferral:
   alwaysOnExtensions: [calendar]
 ```
 
-Omitted settings resolve to `enabled: true`, `alwaysOnTools: []`, and `alwaysOnExtensions: []`. `alwaysOnTools` uses canonical extension tool names before Pi sanitization/collision resolution; `alwaysOnExtensions` uses owning extension IDs. Core tools are always direct: Pi `read`/`bash`/`edit`/`write`, all `taskLifecycle` and `scheduler` tools, runner `send_file`, gateway `describe_image`, `tool_search`, and enabled `codemode`. Core ownership takes precedence; either always-on list then selects additional direct tools. Overrides never authorize absent tools. `enabled: false` declares every permitted tool directly and omits the loader. The gateway sends the resolved policy and tool metadata in `ContainerInput`.
+Omitted settings resolve to `enabled: true`, `alwaysOnTools: []`, and `alwaysOnExtensions: []`. `alwaysOnTools` uses canonical extension tool names before Pi sanitization/collision resolution; `alwaysOnExtensions` uses owning extension IDs. Core tools are always direct: Pi `read`/`bash`/`edit`/`write`, all `taskLifecycle` and `scheduler` tools, runner `send_file`, gateway `web_preview` and `describe_image`, `tool_search`, and enabled `codemode`. Core ownership takes precedence; either always-on list then selects additional direct tools. Overrides never authorize absent tools. `enabled: false` declares every permitted tool directly and omits the loader. The gateway sends the resolved policy and tool metadata in `ContainerInput`.
 
 `tool_search` loads matching schemas for subsequent requests. Loaded tools persist on the current session branch, including a later host invocation/page reload, while still permitted and available; removed tools disappear and newly available tools start deferred. Reconciliation uses Pi's persisted branch declarations and never rewrites historical messages. Scheduler runs use the same discovery path without preloading integrations. Codemode's inline description excludes deferred signatures; loaded callable tools receive its normal script-call notes.
 
@@ -562,6 +562,47 @@ Multi-user mode guards `/api/*` and `/ws`. Cookie sessions and Better Auth API k
 
 ## MCP Apps gateway
 
+`web_preview({ url, title? })` is an always-loaded factory extension with a core
+tool, independent of Canvas and the apps origin. `mcp-apps/web-preview.ts` hides
+URL validation and framing checks behind `checkPreviewUrl(url, ctx)`. It accepts
+HTTPS, or HTTP on `localhost`, `127.0.0.1` and `[::1]`, at most 2048 characters,
+without credentials. Sandboxed agents cannot name loopback hosts, even over
+HTTPS. Trusted chat/auth origins, the configured apps origin and loopback
+UI/gateway/server/apps ports are refused. Refusals throw a tool error and create
+no record. LAN and tailnet HTTPS addresses are intentional; DNS resolution is
+not filtered, so public names resolving to private addresses remain an accepted
+limited status/header/reachability disclosure.
+
+The gateway sends a cookie/auth-free GET with `User-Agent: Yoplai-WebPreview/1`,
+a five-second deadline and the run's abort signal, follows at most five manual
+redirects with the same validation, then cancels the body. Any X-Frame-Options
+blocks framing. Every enforced CSP policy (including comma-separated policies)
+is checked: any `frame-ancestors` value other than `*` blocks framing;
+Report-Only is ignored. HTTP errors may frame; connection failure/timeout yields
+`unreachable`, null status and the last attempted URL.
+
+Built-in `captureYoplaiView` persists the `yoplai` / `web_preview` record at
+`ui://yoplai/web-preview`, with result `content: [{ type: "text", text }]` and
+`structuredContent: { url, finalUrl, title, frameable, reason, status }`.
+`reason` is null, `x-frame-options`, `frame-ancestors` or `unreachable`.
+The shared reference schema preserves optional `key` (normalized final URL
+without fragment) and `preview: { frameable }`. `captureMcpApp` silently skips
+this exact built-in tool, retaining the reserved-server warning for other
+`yoplai` tools. `send_file` uses the same built-in capture with file metadata.
+
+`FrameView.tsx` renders previews natively using saved `data`, bypassing the apps
+capability and ticket flow. Latest-call changes reload the data, not the gateway
+check. The frame uses `allow-scripts allow-same-origin allow-forms allow-popups
+allow-popups-to-escape-sandbox` and no referrer; pages load directly with their
+own origin, storage, cookies and WebSockets. Same-host loopback ports share
+cookies (accepted; chat session cookies are HttpOnly). Exported `frameBlock`
+guards schemes, the chat's own origin and loopback on remote chats; both
+rendering and live auto-open use it. Preview auto-open requires
+`preview.frameable === true`, a final URL passing `frameBlock`, and the existing
+split-space rule. Replay/snapshots never auto-open. Refused calls show their
+tool error text alone. Reuse keys append `key ?? file.filename` to the existing
+server/resource key; preview panel cards show that URL's host.
+
 `send_file` captures registered media metadata (no bytes) through the same record
 writer for Pi and container agents. Its optional `title` is capped at 200 characters;
 model text remains `File sent to user`. Both runners mark the call as the built-in
@@ -617,7 +658,7 @@ When building Pi/container run params, `runAgent` snapshots the session owner's 
 
 `ChatBlocks` renders fixed-classification view rows outside collapsible activity in both modes. Stable `Index` slots and reactive props preserve frames through live updates. The panel host survives turn completion, reconnect, simple/full switches and history reloads, retaining its last valid latest call through empty or stale projections; inline rows may remount. Session changes, new chat and page unmount close the panel. Expand/collapse each retire and reload the view once, so unsaved iframe state may be lost; app-owned saved state may restore. Only one panel is open and width is not persisted. The generic panel overlays chat at viewport widths <=768 px or insufficient split space (320 px panel + 400 px chat + 6 px handle).
 
-`createChatSession` calls optional `onLiveView` only after attaching results from the subscription and direct-stream live callbacks, for `yoplai` HTML/Markdown/PDF files. Snapshots and history do not call it. `ChatView` measures the shared chat row and opens `viewKey(view)` only when `canSplitPanel` permits it (viewport >768 px, row >=726 px), retrying once in a microtask if projection is pending. Later documents and same-filename re-sends reopen/replace the panel; images, text/data and external apps stay inline. The compact file-icon card is a button that reveals/focuses the panel.
+`createChatSession` calls optional `onLiveView` only after attaching results from the subscription and direct-stream live callbacks, for `yoplai` HTML/Markdown/PDF files and previews. Snapshots and history do not call it. `ChatView` measures the shared chat row and opens `viewKey(view)` only when `canSplitPanel` permits it (viewport >768 px, row >=726 px), retrying once in a microtask if projection is pending. Previews additionally require a frameable reference and `frameBlock` approval. Later documents and same-filename/URL re-sends reopen/replace the panel; images, text/data and external apps stay inline. The compact file/globe card is a button that reveals/focuses the panel.
 
 The host advertises `inline`/`fullscreen` and intersects any declared app modes; a disallowed initial mode fails without auto-opening the panel. Mode and size changes emit `ui/notifications/host-context-changed`; panel dimensions are actual width/height, inline dimensions are width/maxHeight 800. Two deliberate stable-spec extensions are `fullscreen` as a side panel and repeated `tool-input`/`tool-result` delivery during one lifetime (stable `tool-input` is once; [ext-apps #430](https://github.com/modelcontextprotocol/ext-apps/issues/430)). Payloads follow SDK 1.7.5; no per-server reuse opt-out or `pip` support exists. See [web UI](web-ui.md#mcp-app-views).
 

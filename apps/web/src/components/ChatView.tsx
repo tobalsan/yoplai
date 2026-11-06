@@ -3,6 +3,7 @@ import { ChatTranscript } from "./chat/ChatTranscript";
 import { createAppViews, chatAppViewCalls, viewKey } from "./chat/appViews";
 import { ChatSidePanel, canSplitPanel } from "./chat/ChatSidePanel";
 import { McpAppView } from "./chat/McpAppView";
+import { frameBlock, PreviewView } from "./chat/FrameView";
 import chatViewStyles from "./chat/ChatView.css?inline";
 import {
   createSignal,
@@ -231,6 +232,7 @@ export function ChatView() {
     isImpersonating: () => !!impersonationStatus()?.active,
     isUploading: uploadingFiles,
     onLiveView: (view) => {
+      if (view.server === "yoplai" && !view.file && (view.preview?.frameable !== true || !view.key || frameBlock(view.key, globalThis.location) !== null)) return;
       const row = chatViewRef?.querySelector(".chat-main")?.parentElement;
       if (!row || !canSplitPanel(row.getBoundingClientRect().width)) return;
       const key = viewKey(view);
@@ -1084,7 +1086,9 @@ export function ChatView() {
       </div>
       <Show when={!!appViews.panel()}>
         <ChatSidePanel>
-          <McpAppView agentId={params.agentId} sessionId={session.appSessionId()!} viewKey={appViews.panel()!.key} callId={() => appViews.panel()!.latest.id} text={appViews.panel()!.latest.text ?? ""} mode="panel" fileOf={appViews.fileOf} onShown={(callId) => { const key = appViews.panel()?.key; if (key) appViews.reportShown(key, callId); }} onDisplayMode={(mode) => { if (mode === "inline") appViews.close(); }} onUserMessage={(text) => handleViewMessage(appViews.panel()!.key, text)} />
+          <Show when={appViews.panel()!.latest.result?.view?.resourceUri === "ui://yoplai/web-preview"} fallback={<McpAppView agentId={params.agentId} sessionId={session.appSessionId()!} viewKey={appViews.panel()!.key} callId={() => appViews.panel()!.latest.id} text={appViews.panel()!.latest.text ?? ""} mode="panel" fileOf={appViews.fileOf} onShown={(callId) => { const key = appViews.panel()?.key; if (key) appViews.reportShown(key, callId); }} onDisplayMode={(mode) => { if (mode === "inline") appViews.close(); }} onUserMessage={(text) => handleViewMessage(appViews.panel()!.key, text)} />}>
+            <PreviewView agentId={params.agentId} sessionId={session.appSessionId()!} callId={() => appViews.panel()!.latest.id} mode="panel" onCollapse={appViews.close} />
+          </Show>
         </ChatSidePanel>
       </Show>
 

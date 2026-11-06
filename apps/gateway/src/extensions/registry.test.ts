@@ -157,6 +157,7 @@ describe("extension registry", () => {
       "taskLifecycle",
       "capabilityDiscovery",
       "canvas",
+      "webPreview",
       "sessionHistory",
       "scheduler",
       "heartbeat",
@@ -165,6 +166,7 @@ describe("extension registry", () => {
       "taskLifecycle",
       "capabilityDiscovery",
       "canvas",
+      "webPreview",
       "sessionHistory",
       "scheduler",
       "heartbeat",
@@ -277,6 +279,7 @@ describe("extension registry", () => {
       "taskLifecycle",
       "capabilityDiscovery",
       "canvas",
+      "webPreview",
       "sessionHistory",
       "multiUser",
     ]);
@@ -306,6 +309,7 @@ describe("extension registry", () => {
       "taskLifecycle",
       "capabilityDiscovery",
       "canvas",
+      "webPreview",
       "sessionHistory",
       "heartbeat",
     ]);
@@ -411,6 +415,7 @@ describe("extension registry", () => {
       "taskLifecycle",
       "capabilityDiscovery",
       "canvas",
+      "webPreview",
       "sessionHistory",
       "scheduler",
     ]);
@@ -440,6 +445,7 @@ describe("extension registry", () => {
       "taskLifecycle",
       "capabilityDiscovery",
       "canvas",
+      "webPreview",
       "sessionHistory",
       "scheduler",
       "heartbeat",
@@ -468,6 +474,7 @@ describe("extension registry", () => {
       "taskLifecycle",
       "capabilityDiscovery",
       "canvas",
+      "webPreview",
       "sessionHistory",
       "heartbeat",
     ]);

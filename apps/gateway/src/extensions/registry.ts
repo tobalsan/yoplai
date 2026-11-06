@@ -6,6 +6,7 @@ import { logError, logWarn } from "../logging.js";
 import { ExtensionRuntime, registerExtensionOAuthProviders } from "./runtime.js";
 import { taskLifecycleExtension } from "../tasks/extension.js";
 import { capabilityDiscoveryExtension } from "../capabilities/extension.js";
+import { webPreviewExtension } from "../mcp-apps/web-preview-extension.js";
 import { canvasExtension } from "../canvas/index.js";
 import { sessionHistoryExtension } from "../session-history/index.js";
 
@@ -465,6 +466,7 @@ async function deriveExtensionsToLoad(
     taskLifecycleExtension,
     capabilityDiscoveryExtension,
     canvasExtension,
+    webPreviewExtension,
     sessionHistoryExtension,
   ];
   const rawConfigs = new Map<string, Record<string, unknown>>();

@@ -55,6 +55,35 @@ All previews and downloads use the existing authenticated media route.
 
 ## MCP App views
 
+`web_preview({ url, title? })` shows a web page directly in chat, without an
+apps origin. HTTPS URLs are accepted; HTTP is limited to `localhost`,
+`127.0.0.1` and `[::1]`. Credentials, Yoplai's own origins/loopback ports and
+sandboxed agents' loopback URLs are refused. The URL must be reachable from
+the user's browser: a loopback page is shown live only when the chat itself
+runs on loopback. Remote users get a card asking for a tailnet or HTTPS URL.
+
+The gateway checks response headers with a five-second GET, follows at most
+five redirects with the same URL rules, and discards the body. Any
+`X-Frame-Options`, or a CSP `frame-ancestors` directive other than `*`, shows a
+link card explaining that the page refuses framing. Unreachable pages also
+show a card. Report-Only policies do not block previews. This is a preliminary
+check; the browser may still block a page. **Open** and **Reload** remain
+available above live frames.
+
+The browser loads the page directly: Yoplai does not proxy it. The native frame
+preserves the page's origin, cookies, storage, forms, popups and HMR WebSockets.
+It never frames the chat's own origin. Different ports on the same loopback
+hostname share cookies, unlike the separate apps hostname used for file views;
+this is accepted for local development servers, and the chat session cookie
+is HttpOnly. Use a trusted local server.
+
+Previews support **Expand**/**Collapse** and saved-data replay without another
+gateway check. The normalized final URL, without its fragment, identifies a
+view: repeated URLs update it, while different URLs have separate views.
+Live frameable previews automatically open the side panel when the split fits
+and browser guards permit the frame; cards and replay never auto-open.
+Other channels receive a short text result with the URL and framing outcome.
+
 `send_file` uses the built-in `yoplai` file viewer without requiring `mcp.json`.
 It displays HTML, sanitized Markdown, images (including SVG as an image), text
 and code, PDF pages, pretty JSON and CSV (first 500 rows). Unsupported formats and files

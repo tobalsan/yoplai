@@ -24,6 +24,8 @@ type RecordScope = { agentId: string; sessionId: string; ownerUserId?: string | 
 type CaptureIdentity = { agentId: string; sessionId: string; userId?: string; sessionOwnerId?: string | null };
 type CaptureContext = CaptureIdentity & { toolCallId?: string; signal?: AbortSignal };
 export const yoplaiFileView: McpAppView = { server: "yoplai", tool: "send_file", resourceUri: "ui://yoplai/file-viewer" };
+export const yoplaiPreviewView: McpAppView = { server: "yoplai", tool: "web_preview", resourceUri: "ui://yoplai/web-preview" };
+type ViewExtras = Pick<McpAppViewReference, "file" | "key" | "preview">;
 const referenceLifetime = 15 * 60 * 1000;
 const references = new Map<string, { scope: string; view: McpAppViewReference; createdAt: number }>();
 const recordFiles = new Map<string, Map<string, string>>();
@@ -106,6 +108,7 @@ export async function captureMcpApp(
   result: unknown
 ): Promise<void> {
   if (mcp?.server === "yoplai") {
+    if (mcp.tool === yoplaiPreviewView.tool && mcp.ui?.resourceUri === yoplaiPreviewView.resourceUri) return;
     if (!warnedReservedServers.has(mcp.server)) {
       warnedReservedServers.add(mcp.server);
       logWarn("[mcp-apps] external app server name is reserved", { server: mcp.server, outcome: "reserved_server" });
@@ -115,18 +118,18 @@ export async function captureMcpApp(
   if (!mcp?.ui?.resourceUri || !context.sessionId || !context.toolCallId || context.signal?.aborted ||
     !result || typeof result !== "object" || Array.isArray(result) ||
     !("content" in result) || !Array.isArray(result.content)) return;
-  await writeMcpAppRecord({ ...context, agentId: context.agent.id, sessionId: context.sessionId },
+  await captureYoplaiView({ ...context, agentId: context.agent.id, sessionId: context.sessionId },
     { server: mcp.server, tool: mcp.tool, resourceUri: mcp.ui.resourceUri }, args, result as Record<string, unknown>);
 }
 
 export async function captureSendFile(context: CaptureContext, args: unknown, file: McpAppFile): Promise<void> {
-  await writeMcpAppRecord(context, yoplaiFileView, args, {
+  await captureYoplaiView(context, yoplaiFileView, args, {
     content: [{ type: "text", text: "File sent to user" }],
     structuredContent: { uri: `yoplai-file://${file.fileId}`, ...file },
-  }, file);
+  }, { file });
 }
 
-async function writeMcpAppRecord(context: CaptureContext, view: McpAppView, args: unknown, result: Record<string, unknown>, file?: McpAppFile): Promise<void> {
+export async function captureYoplaiView(context: CaptureContext, view: McpAppView, args: unknown, result: Record<string, unknown>, extras: ViewExtras = {}): Promise<void> {
   if (!context.sessionId || !context.toolCallId || context.signal?.aborted) return;
   const ownerUserId = context.sessionOwnerId === undefined ? context.userId ?? null : context.sessionOwnerId;
   const record: McpAppRecord = {
@@ -157,7 +160,7 @@ async function writeMcpAppRecord(context: CaptureContext, view: McpAppView, args
     const scope = identityScope({ agentId: record.agentId, sessionId: record.sessionId, sessionOwnerId: ownerUserId });
     references.set(`${scope}:${record.toolCallId}`, { scope, createdAt: record.createdAt, view: {
       recordId: record.recordId, server: record.server, tool: record.tool, resourceUri: record.resourceUri,
-      ...(file ? { file } : {}),
+      ...extras,
     } });
   } catch {
     await fs.rm(temporary, { force: true }).catch(() => {});

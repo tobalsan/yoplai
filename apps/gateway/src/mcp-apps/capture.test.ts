@@ -89,3 +89,58 @@ it("deletes replay data and lets a recreated session return only its new capture
     args: { revision: 2 }, result: { content: [{ type: "text", text: "New drawing" }] },
   });
 });
+
+// Pom approved built-in capture -> public record/reference reads and schema
+// parsing in ALG-656 comment 77af29fb; browser consumption is covered separately.
+it("persists a built-in preview and preserves its reuse key and frameability through history parsing", async () => {
+  const capture = await import("./capture.js");
+  const { McpAppViewReferenceSchema, StreamEventSchema } = await import("@yoplai/shared");
+  const identity = { agentId: "artist", sessionId: "drawing" };
+  const result = {
+    content: [{ type: "text", text: "Web preview shown: https://example.test/page" }],
+    structuredContent: { url: "https://example.test/page#heading", finalUrl: "https://example.test/page#heading", title: "Example", frameable: true, reason: null, status: 200 },
+  };
+  await capture.captureYoplaiView({ ...identity, toolCallId: "preview-one" }, capture.yoplaiPreviewView,
+    { url: "https://example.test/page#heading", title: "Example" }, result,
+    { key: "https://example.test/page", preview: { frameable: true } });
+  const view = capture.getMcpAppView(identity, "preview-one");
+  expect(McpAppViewReferenceSchema.parse(view)).toMatchObject({
+    server: "yoplai", tool: "web_preview", resourceUri: "ui://yoplai/web-preview",
+    key: "https://example.test/page", preview: { frameable: true },
+  });
+  expect(StreamEventSchema.parse({ type: "tool_result", id: "preview-one", name: "web_preview", content: "Preview", isError: false, view })).toMatchObject({
+    view: { key: "https://example.test/page", preview: { frameable: true } },
+  });
+  capture.clearMcpAppViews(identity);
+  expect(await capture.readMcpAppRecord(identity, "preview-one")).toMatchObject({
+    server: "yoplai", tool: "web_preview", args: { url: "https://example.test/page#heading", title: "Example" }, result,
+  });
+});
+
+it("keeps send_file capture metadata and its legacy result unchanged", async () => {
+  const capture = await import("./capture.js");
+  const identity = { agentId: "artist", sessionId: "drawing" };
+  const file = { fileId: "example-file", filename: "report.html", title: "Example report", mimeType: "text/html", size: 24 };
+  await capture.captureSendFile({ ...identity, toolCallId: "file-one" }, { path: "report.html" }, file);
+  expect(capture.getMcpAppView(identity, "file-one")).toEqual({
+    recordId: expect.any(String), server: "yoplai", tool: "send_file", resourceUri: "ui://yoplai/file-viewer", file,
+  });
+  expect(await capture.readMcpAppRecord(identity, "file-one")).toMatchObject({ result: {
+    content: [{ type: "text", text: "File sent to user" }], structuredContent: { uri: "yoplai-file://example-file", ...file },
+  } });
+});
+
+it("silently skips only the exact built-in preview and still warns once for other reserved-server tools", async () => {
+  const capture = await import("./capture.js");
+  const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+  try {
+    const result = { content: [{ type: "text", text: "Example" }] };
+    await capture.captureMcpApp({ server: "yoplai", tool: "web_preview", ui: { resourceUri: "ui://yoplai/web-preview", visibility: ["model"] } }, context("builtin"), {}, result);
+    expect(warn).not.toHaveBeenCalled();
+    await capture.captureMcpApp({ server: "yoplai", tool: "web_preview", ui: { resourceUri: "ui://example.test/pretend", visibility: ["model"] } }, context("wrong-resource"), {}, result);
+    await capture.captureMcpApp({ server: "yoplai", tool: "other", ui: { resourceUri: "ui://yoplai/web-preview", visibility: ["model"] } }, context("other"), {}, result);
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(JSON.parse(String(warn.mock.calls[0]![0]))).toMatchObject({ server: "yoplai", outcome: "reserved_server" });
+    expect(await capture.readMcpAppRecord({ agentId: "artist", sessionId: "drawing" }, "other")).toBeUndefined();
+  } finally { warn.mockRestore(); }
+});

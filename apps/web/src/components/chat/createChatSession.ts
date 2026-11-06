@@ -723,7 +723,7 @@ export function createChatSession(input: ChatSessionInput) {
   };
 
   function notifyLiveView(view?: McpAppViewReference) {
-    if (view?.server === "yoplai" && view.file && ["html", "markdown", "pdf"].includes(classifyFile(view.file))) input.onLiveView?.(view);
+    if (view?.server === "yoplai" && (view.resourceUri === "ui://yoplai/web-preview" || (view.file && ["html", "markdown", "pdf"].includes(classifyFile(view.file))))) input.onLiveView?.(view);
   }
 
   const appendStreamingFileBlock = (
