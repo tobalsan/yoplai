@@ -65,7 +65,7 @@ function messageItem<T>(segment: ActivitySegment<T>): T | undefined {
 }
 
 
-export function ChatTranscript(props: { agentId: string; session: ChatTranscriptSession; viewMode: Accessor<HistoryViewMode>; appViews: AppViews }) {
+export function ChatTranscript(props: { agentId: string; session: ChatTranscriptSession; viewMode: Accessor<HistoryViewMode>; appViews: AppViews; onUserMessage?: (viewKey: string, text: string) => Promise<void> }) {
   const { simpleMessages, fullMessages, streamingBlocks: liveBlocks, streamingText, streamingThinking, streamingToolCalls, streamingFiles, streamingTextAt, streamingStartedAt, isStreaming, streamingFinished, showInterrupted, activeTools, historyCursor, loadingEarlier, historyError, compactStatusForCurrentSession, copyTurnFor, shouldAnimate, loadEarlierHistory } = props.session;
   const streamingBlocks = createMemo(() => liveBlocks().filter((block) => block.type !== "toolCall" || !block.view || !props.appViews.isLiveDuplicate(block.id)));
   const viewMode = props.viewMode;
@@ -172,7 +172,7 @@ export function ChatTranscript(props: { agentId: string; session: ChatTranscript
                     return (
                       <>
                         <Show when={row().role === "tool"}>
-                          <McpAppToolRow appViews={props.appViews} agentId={props.agentId} sessionId={props.session.appSessionId()} toolCallId={row().id} name={(row() as SimpleToolMessage).toolName} arguments={(row() as SimpleToolMessage).arguments} result={(row() as SimpleToolMessage).result} />
+                          <McpAppToolRow onUserMessage={props.onUserMessage} appViews={props.appViews} agentId={props.agentId} sessionId={props.session.appSessionId()} toolCallId={row().id} name={(row() as SimpleToolMessage).toolName} arguments={(row() as SimpleToolMessage).arguments} result={(row() as SimpleToolMessage).result} />
                         </Show>
                         <Show when={row().role === "compaction"}>
                           <CompactionSummary text={(row() as SimpleSummaryMessage).content} timestamp={row().timestamp} />
@@ -244,7 +244,7 @@ export function ChatTranscript(props: { agentId: string; session: ChatTranscript
                       <Match when={row().kind === "mcp-app"}>
                         {(() => {
                           const app = () => row() as Extract<FullDisplayRow, { kind: "mcp-app" }>;
-                          return <McpAppToolRow appViews={props.appViews} agentId={props.agentId} sessionId={props.session.appSessionId()} toolCallId={app().call.id} name={app().call.name} arguments={app().call.arguments} result={app().result} />;
+                          return <McpAppToolRow onUserMessage={props.onUserMessage} appViews={props.appViews} agentId={props.agentId} sessionId={props.session.appSessionId()} toolCallId={app().call.id} name={app().call.name} arguments={app().call.arguments} result={app().result} />;
                         })()}
                       </Match>
                       <Match when={row().kind === "assistant-content"}>
@@ -400,7 +400,7 @@ export function ChatTranscript(props: { agentId: string; session: ChatTranscript
                                 <AssistantText class="block-text markdown-content" text={(block() as { text: string }).text} options={{ copyCode: true }} />
                               </Match>
                               <Match when={block()?.type === "toolCall"}>
-                                <McpAppToolRow appViews={props.appViews} agentId={props.agentId} sessionId={props.session.appSessionId()} toolCallId={(block() as Extract<StreamingBlock, { type: "toolCall" }>).id} result={(block() as Extract<StreamingBlock, { type: "toolCall" }>).result} name={(block() as Extract<StreamingBlock, { type: "toolCall" }>).name} arguments={(block() as Extract<StreamingBlock, { type: "toolCall" }>).arguments} />
+                                <McpAppToolRow onUserMessage={props.onUserMessage} appViews={props.appViews} agentId={props.agentId} sessionId={props.session.appSessionId()} toolCallId={(block() as Extract<StreamingBlock, { type: "toolCall" }>).id} result={(block() as Extract<StreamingBlock, { type: "toolCall" }>).result} name={(block() as Extract<StreamingBlock, { type: "toolCall" }>).name} arguments={(block() as Extract<StreamingBlock, { type: "toolCall" }>).arguments} />
                               </Match>
                               <Match when={block()?.type === "file"}>
                                 <FileCard file={block() as FileBlock} />
@@ -497,7 +497,7 @@ export function ChatTranscript(props: { agentId: string; session: ChatTranscript
                               </div>
                             </Match>
                             <Match when={block()?.type === "toolCall"}>
-                                <McpAppToolRow appViews={props.appViews} agentId={props.agentId} sessionId={props.session.appSessionId()} toolCallId={(block() as Extract<StreamingBlock, { type: "toolCall" }>).id} result={(block() as Extract<StreamingBlock, { type: "toolCall" }>).result} name={(block() as Extract<StreamingBlock, { type: "toolCall" }>).name} arguments={(block() as Extract<StreamingBlock, { type: "toolCall" }>).arguments} />
+                                <McpAppToolRow onUserMessage={props.onUserMessage} appViews={props.appViews} agentId={props.agentId} sessionId={props.session.appSessionId()} toolCallId={(block() as Extract<StreamingBlock, { type: "toolCall" }>).id} result={(block() as Extract<StreamingBlock, { type: "toolCall" }>).result} name={(block() as Extract<StreamingBlock, { type: "toolCall" }>).name} arguments={(block() as Extract<StreamingBlock, { type: "toolCall" }>).arguments} />
                               </Match>
                               <Match when={block()?.type === "file"}>
                               <div class="message assistant">

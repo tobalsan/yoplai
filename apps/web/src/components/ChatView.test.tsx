@@ -5,6 +5,7 @@ import { createSignal } from "solid-js";
 import { delegateEvents, render } from "solid-js/web";
 import { ChatView, ThinkingLine } from "./ChatView";
 import { TurnNotifier } from "./TurnNotifier";
+import { setImpersonationStatus } from "./ImpersonationBanner";
 import type { SubscriptionCallbacks } from "../api/realtime";
 import type { StreamCallbacks } from "../api/chat";
 import type { FullHistoryMessage } from "../api/types";
@@ -265,6 +266,7 @@ describe("ChatView abort handling", () => {
 
   afterEach(() => {
     mountedViews.forEach((dispose) => dispose());
+    setImpersonationStatus(null);
     document.body.innerHTML = "";
     resetCapabilitiesForTests();
     vi.clearAllMocks();
@@ -2489,6 +2491,301 @@ describe("ChatView abort handling", () => {
     appMessage(frame, { jsonrpc: "2.0", id: 1, method: "ui/initialize", params: {} });
     appMessage(frame, { jsonrpc: "2.0", method: "ui/notifications/initialized" });
   }
+
+  // ALG-600's rendered host/chat seam approved in Linear comment
+  // 9de9b656-b0db-413c-8e8f-6707c6aece4d; transport is the external adapter.
+  async function openMessageApp(contextTokens = 0) {
+    enableAppViews();
+    fetchFullHistoryMock.mockResolvedValue({ sessionId: "session-main", messages: [
+      { role: "assistant", timestamp: 1, meta: { model: "gpt-5", usage: { input: contextTokens } }, content: [
+        { type: "toolCall", id: "message-app", name: "fixture_draw", arguments: {} },
+      ] },
+      { role: "toolResult", timestamp: 2, toolCallId: "message-app", toolName: "fixture_draw", content: [{ type: "text", text: "Saved drawing" }],
+        view: { server: "fixture", tool: "draw", resourceUri: "ui://fixture/view.html", recordId: "message-record" } },
+    ] });
+    const view = renderView();
+    await waitFor(() => expect(view.container.querySelector("iframe")).not.toBeNull());
+    const frame = view.container.querySelector("iframe")!;
+    initializeApp(frame);
+    const replies = vi.spyOn(frame.contentWindow!, "postMessage");
+    const send = (text: string, id = "view-message") => {
+      appMessage(frame, { jsonrpc: "2.0", id, method: "ui/message", params: { role: "user", content: [{ type: "text", text }] } });
+    };
+    return { ...view, frame, replies, send };
+  }
+
+  it("sends an MCP App message as a visible normal user message", async () => {
+    const { container, replies, send } = await openMessageApp();
+    send("Build the selected rectangle");
+    await waitFor(() => expect(streamMessageMock).toHaveBeenCalledTimes(1));
+    expect(streamMessageMock.mock.calls[0].slice(0, 3)).toEqual(["agent-1", "Build the selected rectangle", "main"]);
+    expect(container.querySelector(".message.user")?.textContent).toContain("Build the selected rectangle");
+    await waitFor(() => expect(replies).toHaveBeenCalledWith({ jsonrpc: "2.0", id: "view-message", result: {} }, "https://apps.test"));
+  });
+
+  it.each(["   ", "x".repeat(4001)])("refuses an empty or oversized MCP App message (%#)", async (text) => {
+    const { replies, send } = await openMessageApp();
+    send(text);
+    await waitFor(() => expect(replies).toHaveBeenCalledWith(expect.objectContaining({ id: "view-message", error: expect.objectContaining({ code: -32000 }) }), "https://apps.test"));
+    expect(streamMessageMock).not.toHaveBeenCalled();
+  });
+
+  it("reserves MCP App rate slots synchronously and allows another after two seconds", async () => {
+    let now = 1000000;
+    const clock = vi.spyOn(Date, "now").mockImplementation(() => now);
+    try {
+      const { replies, send } = await openMessageApp();
+      send("First selection", "first");
+      send("Parallel selection", "parallel");
+      await waitFor(() => expect(replies).toHaveBeenCalledWith(expect.objectContaining({ id: "parallel", error: expect.objectContaining({ code: -32000 }) }), "https://apps.test"));
+      expect(streamMessageMock).toHaveBeenCalledTimes(1);
+      now += 1999;
+      send("Too fast", "fast");
+      await waitFor(() => expect(replies).toHaveBeenCalledWith(expect.objectContaining({ id: "fast", error: expect.objectContaining({ code: -32000 }) }), "https://apps.test"));
+      now += 1;
+      send("Next selection", "next");
+      await waitFor(() => expect(streamMessageMock).toHaveBeenCalledTimes(2));
+    } finally { clock.mockRestore(); }
+  });
+
+  it("limits an MCP App to ten messages in ten minutes and then expires slots", async () => {
+    let now = 1000000;
+    const clock = vi.spyOn(Date, "now").mockImplementation(() => now);
+    try {
+      const { replies, send } = await openMessageApp();
+      for (let i = 0; i < 10; i++) {
+        send(`Selection ${i}`, `allowed-${i}`);
+        await waitFor(() => expect(streamMessageMock).toHaveBeenCalledTimes(i + 1));
+        now += 2000;
+      }
+      send("Eleventh selection", "eleventh");
+      await waitFor(() => expect(replies).toHaveBeenCalledWith(expect.objectContaining({ id: "eleventh", error: expect.objectContaining({ code: -32000 }) }), "https://apps.test"));
+      expect(streamMessageMock).toHaveBeenCalledTimes(10);
+      now = 1600000;
+      send("Expired window", "expired");
+      await waitFor(() => expect(streamMessageMock).toHaveBeenCalledTimes(11));
+    } finally { clock.mockRestore(); }
+  });
+
+  it("keeps rate reservations across panel remounts and drops them on session change", async () => {
+    const { container, frame, send } = await openMessageApp();
+    send("Initial selection");
+    await waitFor(() => expect(streamMessageMock).toHaveBeenCalledTimes(1));
+    const panel = await expandApp(container, frame);
+    initializeApp(panel);
+    const replies = vi.spyOn(panel.contentWindow!, "postMessage");
+    appMessage(panel, { jsonrpc: "2.0", id: "remounted", method: "ui/message", params: { role: "user", content: [{ type: "text", text: "Too soon after expand" }] } });
+    await waitFor(() => expect(replies).toHaveBeenCalledWith(expect.objectContaining({ id: "remounted", error: expect.objectContaining({ code: -32000 }) }), "https://apps.test"));
+    routeState.session = "session-next";
+    setRouteVersion((version) => version + 1);
+    await waitFor(() => expect(container.querySelector("iframe")).not.toBeNull());
+    await waitFor(() => expect(container.querySelector("iframe")).not.toBe(panel));
+    const next = container.querySelector("iframe")!;
+    initializeApp(next);
+    appMessage(next, { jsonrpc: "2.0", id: "new-session", method: "ui/message", params: { role: "user", content: [{ type: "text", text: "New session selection" }] } });
+    await waitFor(() => expect(streamMessageMock).toHaveBeenCalledTimes(2));
+  });
+
+  it("refuses slash commands from an MCP App without resetting the session", async () => {
+    routeState.session = "session-main";
+    const { replies, send } = await openMessageApp();
+    send("  /reset  ");
+    await waitFor(() => expect(replies).toHaveBeenCalledWith(expect.objectContaining({ id: "view-message", error: expect.objectContaining({ code: -32000 }) }), "https://apps.test"));
+    expect(streamMessageMock).not.toHaveBeenCalled();
+    expect(startNewChatMock).not.toHaveBeenCalled();
+    expect(routeState.session).toBe("session-main");
+  });
+
+  it("refuses MCP App messages during impersonation", async () => {
+    const { replies, send } = await openMessageApp();
+    setImpersonationStatus({ active: true, admin: { id: "admin" }, target: { id: "viewer", name: "Viewer", email: null } });
+    send("Impersonated selection");
+    await waitFor(() => expect(replies).toHaveBeenCalledWith(expect.objectContaining({ id: "view-message", error: expect.objectContaining({ code: -32000 }) }), "https://apps.test"));
+    expect(streamMessageMock).not.toHaveBeenCalled();
+  });
+
+  it("refuses MCP App messages while a composer upload is pending", async () => {
+    const { container, replies, send } = await openMessageApp();
+    let finishUpload!: (files: unknown[]) => void;
+    uploadFilesMock.mockImplementationOnce(() => new Promise((resolve) => { finishUpload = resolve; }));
+    container.querySelector("textarea")!.dispatchEvent(createFileDragEvent("drop", [new File(["draw"], "drawing.txt", { type: "text/plain" })]));
+    container.querySelector<HTMLButtonElement>(".send-btn")!.click();
+    await waitFor(() => expect(uploadFilesMock).toHaveBeenCalledTimes(1));
+    send("Selection during upload");
+    await waitFor(() => expect(replies).toHaveBeenCalledWith(expect.objectContaining({ id: "view-message", error: expect.objectContaining({ code: -32000 }) }), "https://apps.test"));
+    expect(streamMessageMock).not.toHaveBeenCalled();
+    finishUpload([]);
+    await waitFor(() => expect(streamMessageMock).toHaveBeenCalledTimes(1));
+  });
+
+  it.each(["queue", "interrupt"])("handles an MCP App message during %s streaming without interrupting", async (queueMode) => {
+    fetchAgentMock.mockResolvedValue({ id: "agent-1", name: "Agent", queueMode });
+    const cleanup = vi.fn();
+    streamMessageMock.mockReturnValue(cleanup);
+    const { container, replies, send } = await openMessageApp();
+    const input = container.querySelector("textarea")!;
+    input.value = "Current turn";
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    container.querySelector<HTMLButtonElement>(".send-btn")!.click();
+    await waitFor(() => expect(streamMessageMock).toHaveBeenCalledTimes(1));
+    send("Selected object");
+    if (queueMode === "queue") {
+      await waitFor(() => expect(replies).toHaveBeenCalledWith({ jsonrpc: "2.0", id: "view-message", result: {} }, "https://apps.test"));
+      expect(streamMessageMock).toHaveBeenCalledTimes(2);
+    } else {
+      await waitFor(() => expect(replies).toHaveBeenCalledWith(expect.objectContaining({ id: "view-message", error: expect.objectContaining({ code: -32000 }) }), "https://apps.test"));
+      expect(streamMessageMock).toHaveBeenCalledTimes(1);
+    }
+    expect(cleanup).not.toHaveBeenCalled();
+    expect(postAbortMock).not.toHaveBeenCalled();
+  });
+
+  it("refuses an MCP App message while the composer prepares an archived send", async () => {
+    routeState.session = "session-main";
+    fetchAgentSessionsMock.mockResolvedValue({ items: [{ agentId: "agent-1", sessionId: "session-main", archived: 1 }] });
+    let restored!: () => void;
+    archiveAgentSessionMock.mockImplementationOnce(() => new Promise<void>((resolve) => { restored = resolve; }));
+    const { container, replies, send } = await openMessageApp();
+    const input = container.querySelector("textarea")!;
+    input.value = "Composer restoring";
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    container.querySelector<HTMLButtonElement>(".send-btn")!.click();
+    await waitFor(() => expect(archiveAgentSessionMock).toHaveBeenCalledTimes(1));
+    send("View while preparing");
+    await waitFor(() => expect(replies).toHaveBeenCalledWith(expect.objectContaining({ id: "view-message", error: expect.objectContaining({ code: -32000 }) }), "https://apps.test"));
+    expect(archiveAgentSessionMock).toHaveBeenCalledTimes(1);
+    restored();
+    await waitFor(() => expect(streamMessageMock).toHaveBeenCalledTimes(1));
+    expect(streamMessageMock.mock.calls[0][1]).toBe("Composer restoring");
+  });
+
+  it("refuses panel messages while history is loading", async () => {
+    const { container, frame } = await openMessageApp();
+    const panel = await expandApp(container, frame);
+    initializeApp(panel);
+    const replies = vi.spyOn(panel.contentWindow!, "postMessage");
+    fetchFullHistoryMock.mockImplementationOnce(() => new Promise(() => {}));
+    routeState.view = "full";
+    setRouteVersion((version) => version + 1);
+    appMessage(panel, { jsonrpc: "2.0", id: "loading", method: "ui/message", params: { role: "user", content: [{ type: "text", text: "During history load" }] } });
+    await waitFor(() => expect(replies).toHaveBeenCalledWith(expect.objectContaining({ id: "loading", error: expect.objectContaining({ code: -32000 }) }), "https://apps.test"));
+    expect(streamMessageMock).not.toHaveBeenCalled();
+  });
+
+  it("does not submit a view message if the session switches during restore", async () => {
+    routeState.session = "session-main";
+    fetchAgentSessionsMock.mockResolvedValue({ items: [{ agentId: "agent-1", sessionId: "session-main", archived: 1 }] });
+    let restored!: () => void;
+    archiveAgentSessionMock.mockImplementationOnce(() => new Promise<void>((resolve) => { restored = resolve; }));
+    const { container, send } = await openMessageApp();
+    send("Old session selection");
+    await waitFor(() => expect(archiveAgentSessionMock).toHaveBeenCalledTimes(1));
+    routeState.session = "session-next";
+    setRouteVersion((version) => version + 1);
+    await tick();
+    restored();
+    await tick();
+    await tick();
+    expect(streamMessageMock).not.toHaveBeenCalled();
+    expect(container.querySelector(".messages")?.textContent).not.toContain("Old session selection");
+  });
+
+  it.each(["restore", "compact"])("rechecks impersonation after a view awaits %s", async (preparation) => {
+    routeState.session = "session-main";
+    let prepared!: () => void;
+    if (preparation === "restore") {
+      fetchAgentSessionsMock.mockResolvedValue({ items: [{ agentId: "agent-1", sessionId: "session-main", archived: 1 }] });
+      archiveAgentSessionMock.mockImplementationOnce(() => new Promise<void>((resolve) => { prepared = resolve; }));
+    } else {
+      postCompactMock.mockImplementationOnce(() => new Promise<void>((resolve) => { prepared = resolve; }));
+    }
+    const { container, frame } = await openMessageApp(preparation === "compact" ? 320000 : 0);
+    const panel = await expandApp(container, frame);
+    initializeApp(panel);
+    const replies = vi.spyOn(panel.contentWindow!, "postMessage");
+    appMessage(panel, { jsonrpc: "2.0", id: "late-guard", method: "ui/message", params: { role: "user", content: [{ type: "text", text: "Selection before impersonation" }] } });
+    await waitFor(() => expect(prepared).toBeTypeOf("function"));
+    setImpersonationStatus({ active: true, admin: { id: "admin" }, target: { id: "viewer", name: "Viewer", email: null } });
+    prepared();
+    await waitFor(() => expect(replies).toHaveBeenCalledWith(expect.objectContaining({ id: "late-guard", error: expect.objectContaining({ code: -32000 }) }), "https://apps.test"));
+    expect(streamMessageMock).not.toHaveBeenCalled();
+    expect(container.querySelector(".messages")?.textContent).not.toContain("Selection before impersonation");
+  });
+
+  it.each(["restore", "compact"])("refuses a newly busy interrupt agent after a view awaits %s", async (preparation) => {
+    routeState.session = "session-main";
+    fetchAgentMock.mockResolvedValue({ id: "agent-1", name: "Agent", queueMode: "interrupt" });
+    let subscription!: SubscriptionCallbacks;
+    subscribeToSessionMock.mockImplementation((_agent, _key, callbacks) => { subscription = callbacks; return () => {}; });
+    let prepared!: () => void;
+    if (preparation === "restore") {
+      fetchAgentSessionsMock.mockResolvedValue({ items: [{ agentId: "agent-1", sessionId: "session-main", archived: 1 }] });
+      archiveAgentSessionMock.mockImplementationOnce(() => new Promise<void>((resolve) => { prepared = resolve; }));
+    } else {
+      postCompactMock.mockImplementationOnce(() => new Promise<void>((resolve) => { prepared = resolve; }));
+    }
+    const { container, frame } = await openMessageApp(preparation === "compact" ? 320000 : 0);
+    const panel = await expandApp(container, frame);
+    initializeApp(panel);
+    const replies = vi.spyOn(panel.contentWindow!, "postMessage");
+    appMessage(panel, { jsonrpc: "2.0", id: "late-busy", method: "ui/message", params: { role: "user", content: [{ type: "text", text: "Selection before another run" }] } });
+    await waitFor(() => expect(prepared).toBeTypeOf("function"));
+    subscription.onText?.("Background run continues");
+    const history = await fetchFullHistoryMock.mock.results[0].value;
+    fetchFullHistoryMock.mockResolvedValue({ ...history, isStreaming: true, activeTurn: { userText: "Background question", userTimestamp: 3, text: "Background run continues", blocks: [] } });
+    prepared();
+    await waitFor(() => expect(replies).toHaveBeenCalledWith(expect.objectContaining({ id: "late-busy", error: expect.objectContaining({ code: -32000 }) }), "https://apps.test"));
+    expect(streamMessageMock).not.toHaveBeenCalled();
+    expect(postAbortMock).not.toHaveBeenCalled();
+    expect(container.querySelector(".messages")?.textContent).not.toContain("Selection before another run");
+  });
+
+  it.each(["restore", "compact"])("rejects an MCP App send when %s is blocked and releases preparation", async (preparation) => {
+    routeState.session = "session-main";
+    if (preparation === "restore") {
+      fetchAgentSessionsMock.mockResolvedValue({ items: [{ agentId: "agent-1", sessionId: "session-main", archived: 1 }] });
+      archiveAgentSessionMock.mockRejectedValueOnce(new Error("Restore unavailable"));
+    } else {
+      postCompactMock.mockRejectedValueOnce(new Error("Compaction unavailable"));
+    }
+    const { container, frame } = await openMessageApp(preparation === "compact" ? 320000 : 0);
+    const panel = await expandApp(container, frame);
+    initializeApp(panel);
+    const replies = vi.spyOn(panel.contentWindow!, "postMessage");
+    appMessage(panel, { jsonrpc: "2.0", id: "blocked", method: "ui/message", params: { role: "user", content: [{ type: "text", text: "Blocked selection" }] } });
+    await waitFor(() => expect(replies).toHaveBeenCalledWith(expect.objectContaining({ id: "blocked", error: expect.objectContaining({ code: -32000 }) }), "https://apps.test"));
+    expect(streamMessageMock).not.toHaveBeenCalled();
+    expect(container.querySelector(".messages")?.textContent).not.toContain("Blocked selection");
+    const input = container.querySelector("textarea")!;
+    input.value = "Composer retry";
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    container.querySelector<HTMLButtonElement>(".send-btn")!.click();
+    await waitFor(() => expect(streamMessageMock).toHaveBeenCalledTimes(1));
+    expect(streamMessageMock.mock.calls[0][1]).toBe("Composer retry");
+  });
+
+  it("keeps a finished assistant response visible when the view sends again", async () => {
+    routeState.view = "full";
+    const { container, send } = await openMessageApp();
+    const input = container.querySelector("textarea")!;
+    input.value = "First question";
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    container.querySelector<HTMLButtonElement>(".send-btn")!.click();
+    const first = streamMessageMock.mock.calls[0];
+    first[3]("Finished assistant response");
+    first[4]();
+    send("Next selection");
+    await waitFor(() => expect(streamMessageMock).toHaveBeenCalledTimes(2));
+    expect(container.querySelector(".messages")?.textContent).toContain("Finished assistant response");
+  });
+
+  it("acknowledges a local view send and shows later transport errors in chat", async () => {
+    const { container, replies, send } = await openMessageApp();
+    send("Transport selection");
+    await waitFor(() => expect(replies).toHaveBeenCalledWith({ jsonrpc: "2.0", id: "view-message", result: {} }, "https://apps.test"));
+    streamMessageMock.mock.calls[0][5]("Transport disconnected");
+    expect(container.querySelector(".messages")?.textContent).toContain("Transport disconnected");
+  });
 
   async function expandApp(container: HTMLElement, frame: HTMLIFrameElement) {
     const previousPanelFrame = queryByRole(container, "complementary")?.querySelector("iframe");

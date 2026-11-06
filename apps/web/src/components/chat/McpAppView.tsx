@@ -3,21 +3,21 @@ import { Button } from "../ui/Button";
 import { version } from "../../../package.json";
 import { loadMcpAppView, loadMcpAppData, relayMcpAppRequest, logMcpAppEvent, type McpAppViewData } from "../../api/mcp-apps";
 
-type RpcMessage = { jsonrpc: "2.0"; id?: string | number | null; method?: string; params?: Record<string, unknown> | unknown[]; result?: unknown; error?: { code: number; message: string; data?: unknown } };
+type RpcMessage = { jsonrpc: "2.0"; id?: string | number | null; method?: string; params?: unknown; result?: unknown; error?: { code: number; message: string; data?: unknown } };
 
 function isRpcMessage(value: unknown): value is RpcMessage {
   if (!value || typeof value !== "object" || Array.isArray(value)) return false;
   const message = value as Record<string, unknown>;
   if (message.jsonrpc !== "2.0") return false;
   if ("id" in message && message.id !== null && typeof message.id !== "string" && !(typeof message.id === "number" && Number.isFinite(message.id))) return false;
-  if (typeof message.method === "string") return !("result" in message) && !("error" in message) && (message.params === undefined || (message.params !== null && typeof message.params === "object"));
+  if (typeof message.method === "string") return !("result" in message) && !("error" in message) && (message.method === "ui/message" || message.method === "ui/update-model-context" || message.params === undefined || (message.params !== null && typeof message.params === "object"));
   if ("method" in message || !("id" in message) || ("result" in message) === ("error" in message)) return false;
   if ("result" in message) return true;
   const error = message.error as Record<string, unknown> | null;
   return !!error && typeof error === "object" && !Array.isArray(error) && Number.isInteger(error.code) && typeof error.message === "string";
 }
 
-export function McpAppView(props: { agentId: string; sessionId: string; viewKey: string; callId: () => string; text: string; mode: "inline" | "panel"; onDisplayMode?: (mode: "inline" | "fullscreen") => void }) {
+export function McpAppView(props: { agentId: string; sessionId: string; viewKey: string; callId: () => string; text: string; mode: "inline" | "panel"; onDisplayMode?: (mode: "inline" | "fullscreen") => void; onUserMessage?: (text: string) => Promise<void> }) {
   const [view, setView] = createSignal<McpAppViewData>();
   const [ready, setReady] = createSignal(false);
   const [failed, setFailed] = createSignal(false);
@@ -160,7 +160,7 @@ export function McpAppView(props: { agentId: string; sessionId: string; viewKey:
         reply({
           protocolVersion: "2026-01-26",
           hostInfo: { name: "Yoplai", version },
-          hostCapabilities: { openLinks: {}, serverTools: {}, serverResources: {}, logging: {}, sandbox: { permissions: {}, csp: data.csp } },
+          hostCapabilities: { openLinks: {}, serverTools: {}, serverResources: {}, logging: {}, ...(props.onUserMessage ? { message: { text: {} } } : {}), updateModelContext: { text: {}, structuredContent: {} }, sandbox: { permissions: {}, csp: data.csp } },
           hostContext: { displayMode, availableDisplayModes: ["inline", "fullscreen"], containerDimensions: dimensions() },
         });
       } else if (notification && message.method === "ui/notifications/initialized" && initializing && !initialized) {
@@ -179,12 +179,34 @@ export function McpAppView(props: { agentId: string; sessionId: string; viewKey:
         catch { return; }
         log(params.level, text);
       } else if (initialized && !notification && typeof message.method === "string") {
-        if (message.method === "tools/call" || message.method === "resources/read") {
+        if (message.method === "tools/call" || message.method === "resources/read" || message.method === "ui/update-model-context") {
           const timer = setTimeout(fail, 32000);
           relayTimers.add(timer);
           void relayMcpAppRequest(agentId, sessionId, toolCallId, message, controller.signal).then((response) => {
             if (active) post({ ...response, id: message.id });
           }).catch(() => { if (active) fail(); }).finally(() => { clearTimeout(timer); relayTimers.delete(timer); });
+        } else if (message.method === "ui/message") {
+          const content = Array.isArray(params?.content) ? params.content : [];
+          const text = content.filter((block) => block && typeof block === "object" && typeof block.text === "string").map((block) => block.text).join("\n\n");
+          const audit = (accepted: boolean) => {
+            void logMcpAppEvent(agentId, sessionId, toolCallId, {
+              level: accepted ? "info" : "warning",
+              message: `ui/message length=${text.length} outcome=${accepted ? "accepted" : "refused"}`,
+            }).catch(() => {});
+          };
+          if (!props.onUserMessage) { audit(false); error(-32601, "Method not found"); return; }
+          if (!params || Array.isArray(params) || params.role !== "user" || !Array.isArray(params.content) || !content.every((block) => block && typeof block === "object" && !Array.isArray(block) && block.type === "text" && typeof block.text === "string")) {
+            audit(false);
+            error(-32602, "Expected user message with text blocks");
+            return;
+          }
+          const refused = (reason: unknown) => {
+            audit(false);
+            if (active) error(-32000, reason instanceof Error ? reason.message.slice(0, 200) : "Message refused");
+          };
+          try {
+            void props.onUserMessage(text).then(() => { audit(true); if (active) reply({}); }).catch(refused);
+          } catch (reason) { refused(reason); }
         } else if (message.method === "ping") reply({});
         else if (message.method === "ui/request-display-mode") {
           if (params?.mode === "inline" || params?.mode === "fullscreen") switchMode(params.mode, reply);

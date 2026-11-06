@@ -31,10 +31,10 @@ function initialize(frame: HTMLIFrameElement) {
   send(frame, { jsonrpc: "2.0", id: 1, method: "ui/initialize", params: { protocolVersion: "2026-01-26" } });
   send(frame, { jsonrpc: "2.0", method: "ui/notifications/initialized" });
 }
-function mount(callId: () => string = () => "call-1", text: () => string = () => "Board created", agentId: () => string = () => "agent", sessionId: () => string = () => "chat", options: { mode?: "inline" | "panel"; viewKey?: () => string; onDisplayMode?: (mode: "inline" | "fullscreen") => void } = {}) {
+function mount(callId: () => string = () => "call-1", text: () => string = () => "Board created", agentId: () => string = () => "agent", sessionId: () => string = () => "chat", options: { mode?: "inline" | "panel"; viewKey?: () => string; onDisplayMode?: (mode: "inline" | "fullscreen") => void; onUserMessage?: (text: string) => Promise<void> } = {}) {
   container = document.createElement("div");
   document.body.append(container);
-  dispose = render(() => <McpAppView agentId={agentId()} sessionId={sessionId()} viewKey={options.viewKey?.() ?? "boards\nui://boards/view"} callId={callId} mode={options.mode ?? "inline"} onDisplayMode={options.onDisplayMode} text={text()} />, container);
+  dispose = render(() => <McpAppView agentId={agentId()} sessionId={sessionId()} viewKey={options.viewKey?.() ?? "boards\nui://boards/view"} callId={callId} mode={options.mode ?? "inline"} onDisplayMode={options.onDisplayMode} onUserMessage={options.onUserMessage} text={text()} />, container);
 }
 
 describe("MCP App view host", () => {
@@ -79,6 +79,7 @@ describe("MCP App view host", () => {
         hostInfo: { name: "Yoplai", version: "0.1.0" },
         hostCapabilities: {
           openLinks: {}, serverTools: {}, serverResources: {}, logging: {},
+          updateModelContext: { text: {}, structuredContent: {} },
           sandbox: { permissions: {}, csp: { connectDomains: [], resourceDomains: [] } },
         },
         hostContext: { displayMode: "inline", availableDisplayModes: ["inline", "fullscreen"], containerDimensions: { width: expect.any(Number), maxHeight: 800 } },
@@ -91,6 +92,14 @@ describe("MCP App view host", () => {
       [{ jsonrpc: "2.0", method: "ui/notifications/tool-result", params: { content: [{ type: "text", text: "Board created" }], structuredContent: { board: 7 } } }, origin],
     ]);
     expect(queryByText(container, "Loading view…")).toBeNull();
+  });
+  it("advertises user messages only when the conversation provides a send action", async () => {
+    mount(undefined, undefined, undefined, undefined, { onUserMessage: vi.fn().mockResolvedValue(undefined) });
+    await settle();
+    const frame = getByTitle(container, "boards MCP App") as HTMLIFrameElement;
+    const post = vi.spyOn(frame.contentWindow!, "postMessage");
+    initialize(frame);
+    expect(post.mock.calls[1][0].result.hostCapabilities.message).toEqual({ text: {} });
   });
   it("initializes a panel in fullscreen with the frame box dimensions", async () => {
     mount(undefined, undefined, undefined, undefined, { mode: "panel" });
@@ -416,7 +425,6 @@ describe("MCP App view host", () => {
     ["ui/request-display-mode", { mode: "unknown" }, { result: { mode: "inline" } }],
     ["ui/request-display-mode", { mode: "inline" }, { result: { mode: "inline" } }],
     ["ui/message", { role: "user", content: [] }, { error: { code: -32601, message: "Method not found" } }],
-    ["ui/update-model-context", { content: [] }, { error: { code: -32601, message: "Method not found" } }],
   ])("answers %s within the inline host's supported interface", async (method, params, response) => {
     mount();
     await settle();
@@ -426,6 +434,127 @@ describe("MCP App view host", () => {
     send(frame, { jsonrpc: "2.0", id: "request-7", method, params });
     expect(post.mock.calls).toEqual([[{ jsonrpc: "2.0", id: "request-7", ...response }, origin]]);
     expect(relay).not.toHaveBeenCalled();
+  });
+  it("returns invalid params for a message with null params", async () => {
+    const onUserMessage = vi.fn().mockResolvedValue(undefined);
+    mount(undefined, undefined, undefined, undefined, { onUserMessage });
+    await settle();
+    const frame = getByTitle(container, "boards MCP App") as HTMLIFrameElement;
+    initialize(frame);
+    const post = vi.spyOn(frame.contentWindow!, "postMessage");
+    send(frame, { jsonrpc: "2.0", id: 27, method: "ui/message", params: null });
+    expect(post.mock.calls).toEqual([[{ jsonrpc: "2.0", id: 27, error: { code: -32602, message: "Expected user message with text blocks" } }, origin]]);
+    expect(onUserMessage).not.toHaveBeenCalled();
+    expect(log.mock.calls).toEqual([["agent", "chat", "call-1", { level: "warning", message: "ui/message length=0 outcome=refused" }]]);
+  });
+  it("sends text blocks as one user message and acknowledges only after local handoff", async () => {
+    let handoff!: () => void;
+    const onUserMessage = vi.fn(() => new Promise<void>((resolve) => { handoff = resolve; }));
+    mount(undefined, undefined, undefined, undefined, { onUserMessage });
+    await settle();
+    const frame = getByTitle(container, "boards MCP App") as HTMLIFrameElement;
+    initialize(frame);
+    const post = vi.spyOn(frame.contentWindow!, "postMessage");
+    send(frame, { jsonrpc: "2.0", id: 28, method: "ui/message", params: { role: "user", content: [{ type: "text", text: "Build" }, { type: "text", text: "this" }] } });
+    expect(onUserMessage.mock.calls).toEqual([["Build\n\nthis"]]);
+    expect(post).not.toHaveBeenCalled();
+    handoff();
+    await settle();
+    expect(post.mock.calls).toEqual([[{ jsonrpc: "2.0", id: 28, result: {} }, origin]]);
+    expect(log.mock.calls).toEqual([["agent", "chat", "call-1", { level: "info", message: "ui/message length=11 outcome=accepted" }]]);
+  });
+  it.each([
+    undefined, 7, [], {}, { role: "assistant", content: [] }, { role: "user", content: "Build" },
+    { role: "user", content: [{ type: "image", data: "AA==", mimeType: "image/png" }] },
+    { role: "user", content: [{ type: "text", text: 7 }] },
+    { role: "user", content: [null] },
+    { role: "user", content: [{ type: "text", text: "Build" }, { type: "resource_link", uri: "file:///board" }] },
+  ])("refuses malformed or non-text user messages (%j)", async (params) => {
+    const onUserMessage = vi.fn().mockResolvedValue(undefined);
+    mount(undefined, undefined, undefined, undefined, { onUserMessage });
+    await settle();
+    const frame = getByTitle(container, "boards MCP App") as HTMLIFrameElement;
+    initialize(frame);
+    const post = vi.spyOn(frame.contentWindow!, "postMessage");
+    send(frame, { jsonrpc: "2.0", id: 26, method: "ui/message", params });
+    expect(post.mock.calls).toEqual([[{ jsonrpc: "2.0", id: 26, error: { code: -32602, message: "Expected user message with text blocks" } }, origin]]);
+    expect(onUserMessage).not.toHaveBeenCalled();
+    expect(log).toHaveBeenCalledTimes(1);
+    expect(log.mock.calls[0][3].message).toMatch(/^ui\/message length=\d+ outcome=refused$/);
+  });
+  it("returns the conversation's refusal without waiting for audit logging or disabling the view", async () => {
+    const onUserMessage = vi.fn().mockRejectedValueOnce(new Error("A send is preparing")).mockResolvedValue(undefined);
+    log.mockImplementation(() => new Promise(() => {}));
+    mount(undefined, undefined, undefined, undefined, { onUserMessage });
+    await settle();
+    const frame = getByTitle(container, "boards MCP App") as HTMLIFrameElement;
+    initialize(frame);
+    const post = vi.spyOn(frame.contentWindow!, "postMessage");
+    send(frame, { jsonrpc: "2.0", id: 24, method: "ui/message", params: { role: "user", content: [{ type: "text", text: "Build" }] } });
+    await settle();
+    expect(post.mock.calls).toEqual([[{ jsonrpc: "2.0", id: 24, error: { code: -32000, message: "A send is preparing" } }, origin]]);
+    expect(log.mock.calls[0][3]).toEqual({ level: "warning", message: "ui/message length=5 outcome=refused" });
+    send(frame, { jsonrpc: "2.0", id: 25, method: "ui/message", params: { role: "user", content: [{ type: "text", text: "Try again" }] } });
+    await settle();
+    expect(post.mock.calls[1]).toEqual([{ jsonrpc: "2.0", id: 25, result: {} }, origin]);
+    expect(log).toHaveBeenCalledTimes(2);
+    expect(queryByText(container, "View unavailable")).toBeNull();
+  });
+  it("does not handle conversation or context messages before initialized", async () => {
+    const onUserMessage = vi.fn().mockResolvedValue(undefined);
+    mount(undefined, undefined, undefined, undefined, { onUserMessage });
+    await settle();
+    const frame = getByTitle(container, "boards MCP App") as HTMLIFrameElement;
+    const post = vi.spyOn(frame.contentWindow!, "postMessage");
+    send(frame, { jsonrpc: "2.0", method: "ui/notifications/sandbox-proxy-ready" });
+    send(frame, { jsonrpc: "2.0", id: 1, method: "ui/initialize", params: {} });
+    post.mockClear();
+    send(frame, { jsonrpc: "2.0", id: 21, method: "ui/message", params: { role: "user", content: [{ type: "text", text: "Build" }] } });
+    send(frame, { jsonrpc: "2.0", id: 22, method: "ui/update-model-context", params: { content: [{ type: "text", text: "Selected" }] } });
+    await settle();
+    expect(post).not.toHaveBeenCalled();
+    expect(onUserMessage).not.toHaveBeenCalled();
+    expect(relay).not.toHaveBeenCalled();
+    expect(log).not.toHaveBeenCalled();
+  });
+  it("anchors message audit to the original record and drops a completion after session change", async () => {
+    const delivered: unknown[][] = [];
+    log.mockImplementation((...request: unknown[]) => {
+      if ((request[4] as AbortSignal | undefined)?.aborted) return Promise.reject(new DOMException("Aborted", "AbortError"));
+      delivered.push(request.slice(0, 4));
+      return Promise.resolve();
+    });
+    let handoff!: () => void;
+    const onUserMessage = vi.fn(() => new Promise<void>((resolve) => { handoff = resolve; }));
+    const [callId, setCallId] = createSignal("call-1");
+    const [sessionId, setSessionId] = createSignal("chat");
+    mount(callId, undefined, undefined, sessionId, { onUserMessage });
+    await settle();
+    const frame = getByTitle(container, "boards MCP App") as HTMLIFrameElement;
+    initialize(frame);
+    setCallId("call-2");
+    await settle();
+    const post = vi.spyOn(frame.contentWindow!, "postMessage");
+    send(frame, { jsonrpc: "2.0", id: 20, method: "ui/message", params: { role: "user", content: [{ type: "text", text: "Build" }] } });
+    setSessionId("other-chat");
+    post.mockClear();
+    handoff();
+    await settle();
+    expect(post).not.toHaveBeenCalled();
+    expect(delivered).toEqual([["agent", "chat", "call-1", { level: "info", message: "ui/message length=5 outcome=accepted" }]]);
+  });
+  it("relays a model context update unchanged and returns the gateway reply", async () => {
+    mount();
+    await settle();
+    const frame = getByTitle(container, "boards MCP App") as HTMLIFrameElement;
+    initialize(frame);
+    const post = vi.spyOn(frame.contentWindow!, "postMessage");
+    const request = { jsonrpc: "2.0", id: 29, method: "ui/update-model-context", params: { content: [{ type: "text", text: "Selected box 7" }], structuredContent: { selected: 7 } } };
+    relay.mockResolvedValueOnce({ jsonrpc: "2.0", id: 29, error: { code: -32602, message: "Context too large" } });
+    send(frame, request);
+    await settle();
+    expect(relay.mock.calls[0].slice(0, 4)).toEqual(["agent", "chat", "call-1", request]);
+    expect(post.mock.calls).toEqual([[{ jsonrpc: "2.0", id: 29, error: { code: -32602, message: "Context too large" } }, origin]]);
   });
   it("returns a server denial unchanged and allows another app call in the same frame", async () => {
     relay.mockResolvedValueOnce({ jsonrpc: "2.0", id: "denied", error: { code: -32000, message: "Refused", data: { reason: "model_only" } } });

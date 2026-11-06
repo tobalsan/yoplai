@@ -228,6 +228,8 @@ export function ChatView() {
     viewMode,
     projectId: () => searchParams.project ? String(searchParams.project) : undefined,
     isArchived: isSessionArchived,
+    isImpersonating: () => !!impersonationStatus()?.active,
+    isUploading: uploadingFiles,
     uploadPending: async (currentPendingFiles) => {
       if (currentPendingFiles.length === 0) return { inboundFiles: [] };
       setUploadingFiles(true);
@@ -277,6 +279,20 @@ export function ChatView() {
   } = session;
   const appViews = createAppViews(() => `${params.agentId}\n${session.appSessionId() ?? ""}`, () => chatAppViewCalls(session, viewMode()));
   onCleanup(appViews.close);
+  const viewMessageTimes = new Map<string, number[]>();
+  createEffect(on(() => `${params.agentId}\n${session.appSessionId() ?? currentSession()}`, () => viewMessageTimes.clear()));
+  const handleViewMessage = async (viewKey: string, text: string): Promise<void> => {
+    const trimmed = text.trim();
+    if (!trimmed) throw new Error("Message is empty");
+    if (trimmed.length > 4000) throw new Error("Message exceeds 4000 characters");
+    const now = Date.now();
+    const times = (viewMessageTimes.get(viewKey) ?? []).filter((time) => now - time < 10 * 60 * 1000);
+    if (times.length && now - times[times.length - 1] < 2000) throw new Error("Wait 2 seconds between messages");
+    if (times.length >= 10) throw new Error("Limit of 10 messages per 10 minutes");
+    times.push(now);
+    viewMessageTimes.set(viewKey, times);
+    await session.sendFromView(trimmed);
+  };
   let focusedHomeSession: string | null = null;
   createEffect(on(session.historyLoaded, (loaded) => {
     if (!loaded || !location.state?.mainAgentHome || loaded.sessionId || !loaded.empty || focusedHomeSession === loaded.scope) return;
@@ -847,7 +863,7 @@ export function ChatView() {
             "drop-target": isFileDragActive() && activeDropZone() === "history",
           }}
         >
-          <ChatTranscript agentId={params.agentId} session={session} viewMode={viewMode} appViews={appViews} />
+          <ChatTranscript agentId={params.agentId} session={session} viewMode={viewMode} appViews={appViews} onUserMessage={handleViewMessage} />
         </div>
 
         <div class="composer-zone">
@@ -1045,7 +1061,7 @@ export function ChatView() {
       </div>
       <Show when={!!appViews.panel()}>
         <ChatSidePanel>
-          <McpAppView agentId={params.agentId} sessionId={session.appSessionId()!} viewKey={appViews.panel()!.key} callId={() => appViews.panel()!.latest.id} text={appViews.panel()!.latest.text ?? ""} mode="panel" onDisplayMode={(mode) => { if (mode === "inline") appViews.close(); }} />
+          <McpAppView agentId={params.agentId} sessionId={session.appSessionId()!} viewKey={appViews.panel()!.key} callId={() => appViews.panel()!.latest.id} text={appViews.panel()!.latest.text ?? ""} mode="panel" onDisplayMode={(mode) => { if (mode === "inline") appViews.close(); }} onUserMessage={(text) => handleViewMessage(appViews.panel()!.key, text)} />
         </ChatSidePanel>
       </Show>
 

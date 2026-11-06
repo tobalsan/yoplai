@@ -40,7 +40,7 @@ export async function relayMcpAppRequest(agentId: string, sessionId: string, too
   return response.json();
 }
 
-export async function logMcpAppEvent(agentId: string, sessionId: string, toolCallId: string, event: { level: string; message: string }, signal: AbortSignal): Promise<void> {
+export async function logMcpAppEvent(agentId: string, sessionId: string, toolCallId: string, event: { level: string; message: string }, signal?: AbortSignal): Promise<void> {
   const response = await apiFetch(endpoint(agentId, sessionId, toolCallId, "log"), {
     method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(event), signal,
   });

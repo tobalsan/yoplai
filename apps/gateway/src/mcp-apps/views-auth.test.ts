@@ -3,6 +3,8 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import net, { type AddressInfo } from "node:net";
+import { request as httpRequest, type ClientRequest } from "node:http";
+import { setTimeout as delay } from "node:timers/promises";
 import { z } from "zod";
 import type { Extension, McpAppsContext } from "@yoplai/shared";
 import { writeTestV3Config } from "../test-utils/v3-config.js";
@@ -179,6 +181,109 @@ describe("MCP Apps authenticated ownership", () => {
     }
     expect(calls).toHaveLength(1);
     expect(await fs.readFile(path.join(home, "sessions", "users", alice.id, "history", "2026-10-24T12-00-00-000Z_main-owned-chat.jsonl"), "utf8")).toBe("");
+  });
+
+  // ALG-600 seam approval: 9de9b656-b0db-413c-8e8f-6707c6aece4d.
+  it("stores the latest normalized view context through authenticated RPC without changing user history", async () => {
+    const contexts = await import("./view-context.js");
+    const scope = { agentId: "main", sessionId: "owned-chat", ownerUserId: alice.id };
+    const response = await post(alice, route + "/rpc", { jsonrpc: "2.0", id: "context", method: "ui/update-model-context", params: { content: [{ type: "text", text: "  card 17  " }, { type: "text", text: "  " }, { type: "text", text: " detail " }, { type: "image", data: "AA==", mimeType: "image/png" }, { type: "audio", data: "AA==", mimeType: "audio/wav" }, { type: "resource_link", uri: "file:///note", name: "Note" }, { type: "resource", resource: { uri: "file:///note", text: "ignored resource" } }], structuredContent: { selected: 17 } } });
+    expect(await response.json()).toEqual({ jsonrpc: "2.0", id: "context", result: {} });
+    expect(contexts.snapshot(scope)).toEqual([{ viewKey: "private-boards\nui://boards/private", value: 'card 17\n\ndetail\n\n{"selected":17}' }]);
+    for (const viewer of [bob, admin]) expect((await post(viewer, route + "/rpc", { jsonrpc: "2.0", id: 9, method: "ui/update-model-context", params: {} })).status).toBe(404);
+    expect((await post(alice, route.replace("owned-chat", "wrong-owner") + "/rpc", { jsonrpc: "2.0", id: 9, method: "ui/update-model-context", params: {} })).status).toBe(404);
+    await post(alice, route + "/rpc", { jsonrpc: "2.0", id: 2, method: "ui/update-model-context", params: { content: [{ type: "text", text: "latest" }] } });
+    expect(contexts.snapshot(scope)).toEqual([{ viewKey: "private-boards\nui://boards/private", value: "latest" }]);
+    await post(alice, route + "/rpc", { jsonrpc: "2.0", id: 3, method: "ui/update-model-context", params: { content: [{ type: "text", text: " \n " }] } });
+    expect(contexts.snapshot(scope)).toEqual([]);
+    expect(await fs.readFile(path.join(home, "sessions", "users", alice.id, "history", "2026-10-24T12-00-00-000Z_main-owned-chat.jsonl"), "utf8")).toBe("");
+  });
+
+  it("rejects malformed context before replacing the previous selection", async () => {
+    const contexts = await import("./view-context.js");
+    const scope = { agentId: "main", sessionId: "owned-chat", ownerUserId: alice.id };
+    const key = "private-boards\nui://boards/private";
+    contexts.set(scope, key, "keep me");
+    for (const params of [null, [], "text", { content: {} }, { content: [null] }, { content: [{}] }, { content: [{ type: "image" }] }, { content: [{ type: "audio", data: 17, mimeType: "audio/wav" }] }, { content: [{ type: "resource", resource: null }] }, { content: [{ type: "resource_link", uri: "ui://foo" }] }, { content: [{ type: "unknown" }] }, { content: [{ type: "text" }] }, { content: [{ type: "text", text: 17 }] }, { structuredContent: null }, { structuredContent: [] }, { structuredContent: "text" }]) {
+      const reply = await (await post(alice, route + "/rpc", { jsonrpc: "2.0", id: 4, method: "ui/update-model-context", params })).json();
+      expect(reply).toEqual({ jsonrpc: "2.0", id: 4, error: { code: -32602, message: "Invalid params" } });
+      expect(contexts.snapshot(scope)).toEqual([{ viewKey: key, value: "keep me" }]);
+    }
+    contexts.clearSession(scope);
+  });
+
+  it("caps normalized UTF-8 context at 16 KiB and keeps the previous accepted value", async () => {
+    const contexts = await import("./view-context.js");
+    const scope = { agentId: "main", sessionId: "owned-chat", ownerUserId: alice.id };
+    const boundary = "é".repeat(8192);
+    const send = (text: string) => post(alice, route + "/rpc", { jsonrpc: "2.0", id: "bytes", method: "ui/update-model-context", params: { content: [{ type: "text", text }] } });
+    expect(await (await send(boundary)).json()).toEqual({ jsonrpc: "2.0", id: "bytes", result: {} });
+    expect(await (await send(boundary + "x")).json()).toEqual({ jsonrpc: "2.0", id: "bytes", error: { code: -32602, message: "Context exceeds 16 KiB" } });
+    expect(contexts.snapshot(scope)).toEqual([{ viewKey: "private-boards\nui://boards/private", value: boundary }]);
+    contexts.clearSession(scope);
+  });
+
+  it("clears model context when its authenticated session is deleted", async () => {
+    const contexts = await import("./view-context.js");
+    const sessionId = "delete-context";
+    await seed(alice.id, sessionId, alice.id);
+    const scope = { agentId: "main", sessionId, ownerUserId: alice.id };
+    await post(alice, route.replace("owned-chat", sessionId) + "/rpc", { jsonrpc: "2.0", id: 5, method: "ui/update-model-context", params: { content: [{ type: "text", text: "delete this selection" }] } });
+    expect(contexts.snapshot(scope)).toHaveLength(1);
+    const response = await fetch(gatewayUrl + "/api/agents/main/sessions/" + sessionId, { method: "DELETE", headers: { Cookie: alice.cookie, Origin: "http://localhost:3000" } });
+    expect(response.status).toBe(200);
+    expect(contexts.snapshot(scope)).toEqual([]);
+  });
+
+  it("cannot recreate model context when the session is deleted while its RPC body is arriving", async () => {
+    const contexts = await import("./view-context.js");
+    const sessionId = "delete-context-pending";
+    await seed(alice.id, sessionId, alice.id);
+    const scope = { agentId: "main", sessionId, ownerUserId: alice.id };
+    const body = JSON.stringify({ jsonrpc: "2.0", id: "late-context", method: "ui/update-model-context", params: { content: [{ type: "text", text: "must stay deleted" }] } });
+    let outgoing!: ClientRequest;
+    const pending = new Promise<unknown>((resolve, reject) => {
+      outgoing = httpRequest(gatewayUrl + route.replace("owned-chat", sessionId) + "/rpc", {
+        method: "POST", headers: { Cookie: alice.cookie, Origin: "http://localhost:3000", "content-type": "application/json" },
+      }, (response) => {
+        const chunks: Buffer[] = [];
+        response.on("data", (chunk: Buffer) => chunks.push(chunk));
+        response.on("error", reject);
+        response.on("end", () => {
+          try { resolve(JSON.parse(Buffer.concat(chunks).toString("utf8"))); }
+          catch (error) { reject(error); }
+        });
+      });
+      outgoing.on("error", reject);
+    });
+    try {
+      await new Promise<void>((resolve, reject) => outgoing.write(body.slice(0, -1), (error) => error ? reject(error) : resolve()));
+      // Leave the owned request waiting for its final JSON byte before deletion.
+      await delay(50);
+      const deleted = await fetch(gatewayUrl + "/api/agents/main/sessions/" + sessionId, { method: "DELETE", headers: { Cookie: alice.cookie, Origin: "http://localhost:3000" } });
+      expect(deleted.status).toBe(200);
+      outgoing.end(body.slice(-1));
+      const result = await pending;
+      expect(contexts.snapshot(scope)).toEqual([]);
+      expect(result).toEqual({ jsonrpc: "2.0", id: "late-context", error: { code: -32000, message: "Session deleted" } });
+    } finally { outgoing.destroy(); }
+  });
+
+  it("audits context byte size and outcome without recording its text", async () => {
+    const log = vi.spyOn(console, "log");
+    try {
+      for (const text of ["AUDIT-ONLY", "z".repeat(16385)]) await post(alice, route + "/rpc", { jsonrpc: "2.0", id: "audit", method: "ui/update-model-context", params: { content: [{ type: "text", text }] } });
+      const lines = log.mock.calls.flatMap(([line]) => typeof line === "string" && line.startsWith("{") ? [JSON.parse(line)] : []);
+      const audits = lines.filter((line) => line.msg === "MCP Apps operation" && line.method === "ui/update-model-context");
+      expect(audits).toEqual([
+        expect.objectContaining({ size: 10, outcome: "set" }),
+        expect.objectContaining({ size: 16385, outcome: "too_large" }),
+      ]);
+      expect(JSON.stringify(audits)).not.toContain("AUDIT-ONLY");
+      expect(JSON.stringify(audits)).not.toContain("zzzz");
+    } finally { log.mockRestore(); }
+    const contexts = await import("./view-context.js");
+    contexts.clearSession({ agentId: "main", sessionId: "owned-chat", ownerUserId: alice.id });
   });
 
   it("refuses view, data, RPC and log operations during real admin impersonation", async () => {
