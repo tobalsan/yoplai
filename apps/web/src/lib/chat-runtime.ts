@@ -30,7 +30,7 @@ export function createChatAttachmentRuntime() {
         continue;
       }
       if (file.size > MAX_UPLOAD_SIZE_BYTES) {
-        setUploadError(`File exceeds 25 MB: ${file.name}`);
+        setUploadError(`${file.name} is too large (${(file.size / 1024 / 1024).toFixed(1)} MB). The limit is 25 MB.`);
         continue;
       }
       next.push(createPendingFile(file));

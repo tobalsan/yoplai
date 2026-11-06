@@ -680,6 +680,44 @@ describe("ChatView abort handling", () => {
     dispose();
   });
 
+  function pasteFiles(target: HTMLElement, files: File[]) {
+    const event = new Event("paste", { bubbles: true, cancelable: true });
+    Object.defineProperty(event, "clipboardData", { value: { files, getData: () => "" } });
+    target.dispatchEvent(event);
+    return event;
+  }
+
+  it("attaches an image pasted in the composer", async () => {
+    const { container, dispose } = renderView();
+    await tick();
+    const textarea = container.querySelector("textarea") as HTMLTextAreaElement;
+    const event = pasteFiles(textarea, [new File(["png"], "image.png", { type: "image/png" })]);
+    await tick();
+    expect(event.defaultPrevented).toBe(true);
+    expect(container.textContent).toContain("image.png");
+    dispose();
+  });
+
+  it("rejects a pasted image over the upload limit with a clear error", async () => {
+    const { container, dispose } = renderView();
+    await tick();
+    const big = new File(["png"], "image.png", { type: "image/png" });
+    Object.defineProperty(big, "size", { value: 30 * 1024 * 1024 });
+    pasteFiles(container.querySelector("textarea") as HTMLTextAreaElement, [big]);
+    await tick();
+    expect(container.textContent).toContain("image.png is too large (30.0 MB). The limit is 25 MB.");
+    expect(container.querySelector("img.attachment-thumb")).toBeNull();
+    dispose();
+  });
+
+  it("keeps the default paste for text", async () => {
+    const { container, dispose } = renderView();
+    await tick();
+    const event = pasteFiles(container.querySelector("textarea") as HTMLTextAreaElement, []);
+    expect(event.defaultPrevented).toBe(false);
+    dispose();
+  });
+
   it("reconciles a direct stream notice with persisted history without duplicates", async () => {
     let onError: ((text: string) => void) | undefined;
     streamMessageMock.mockImplementation((_agentId, _message, _key, _onText, _onDone, callback) => {

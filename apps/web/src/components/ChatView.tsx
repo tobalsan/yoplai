@@ -590,6 +590,18 @@ export function ChatView() {
     }
   };
 
+  const handlePaste = (e: ClipboardEvent) => {
+    const images = Array.from(e.clipboardData?.files ?? []).filter((file) => file.type.startsWith("image/"));
+    if (images.length === 0) return;
+    e.preventDefault();
+    const pasteError = getFileDropError();
+    if (pasteError) {
+      setUploadError(pasteError);
+      return;
+    }
+    addPendingFiles(images);
+  };
+
   const handleKeyDown = (e: KeyboardEvent) => {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
@@ -965,6 +977,7 @@ export function ChatView() {
               resizeTextarea();
             }}
             onKeyDown={handleKeyDown}
+            onPaste={handlePaste}
             rows={1}
           />
           <Show
