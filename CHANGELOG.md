@@ -11,6 +11,7 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Fixed
 
+- Concurrent project subagent interrupts and CLI output preserve valid state, interruption requests, and session IDs.
 - Runtime subagents that exit immediately now persist their final status and CLI session for resume.
 - Heartbeat runs already in flight finish safely during extension shutdown, including their saved output.
 - Project subagents that exit immediately now persist their completion and release the project-space write lease, including resumed runs.

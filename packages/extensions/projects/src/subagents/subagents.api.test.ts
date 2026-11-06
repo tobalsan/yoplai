@@ -2188,6 +2188,91 @@ describe("subagents API", () => {
     process.env.PATH = prevPath;
   });
 
+  it("preserves state during concurrent interrupts and CLI output", async () => {
+    const createRes = await api.request("/projects", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ title: "Concurrent Interrupt Fixture" }),
+    });
+    expect(createRes.status).toBe(201);
+    const created = await createRes.json();
+    const sessionDir = path.join(projectsRoot, created.path, "sessions", "concurrent");
+    const statePath = path.join(sessionDir, "state.json");
+    const binDir = path.join(tmpDir, "bin-concurrent-interrupt");
+    await fs.mkdir(binDir);
+    await fs.writeFile(path.join(binDir, "codex"), [
+      "#!/usr/bin/env node",
+      "const fs = require('node:fs');",
+      `const dir = ${JSON.stringify(binDir)};`,
+      "let timer; let finishing = false; let count = 0;",
+      "process.on('SIGTERM', () => {});",
+      "fs.watch(dir, (_, file) => {",
+      "  if (file === 'go' && !timer) timer = setInterval(() => console.log(JSON.stringify({type: 'thread.started', thread_id: ++count % 2 ? 's2' : 'fictional-session-with-longer-id'})), 1);",
+      "  if (file === 'release' && !finishing) {",
+      "    finishing = true; clearInterval(timer);",
+      "    process.stdout.write(JSON.stringify({type: 'thread.started', thread_id: 'fictional-final-thread'}) + '\\n', () => process.exit(1));",
+      "  }",
+      "});",
+      "fs.writeFileSync(dir + '/ready', 'ready');",
+    ].join("\n"), { mode: 0o755 });
+    const prevPath = process.env.PATH;
+    process.env.PATH = `${binDir}:${prevPath ?? ""}`;
+    let spawned = false;
+    let restoreClock: (() => void) | undefined;
+    let interrupts: Promise<Response[]> | undefined;
+    try {
+      const spawnRes = await api.request(`/projects/${created.id}/subagents`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ slug: "concurrent", cli: "codex", prompt: "hi", mode: "none" }),
+      });
+      expect(spawnRes.status).toBe(201);
+      spawned = true;
+      await vi.waitFor(() => fs.stat(path.join(binDir, "ready")), { timeout: 5000 });
+      // Real timers and I/O continue while writes share the same clock tick.
+      restoreClock = vi.spyOn(Date, "now").mockReturnValue(1793956800000).mockRestore;
+      await fs.writeFile(path.join(binDir, "go"), "go");
+      await vi.waitFor(async () => {
+        expect(await fs.readFile(path.join(sessionDir, "logs.jsonl"), "utf8"))
+          .toContain('"thread_id":"s2"');
+      }, { timeout: 5000 });
+      let settled = false;
+      interrupts = (async () => {
+        const responses: Response[] = [];
+        for (let batch = 0; batch < 8; batch += 1) {
+          responses.push(...await Promise.all(Array.from({ length: 8 }, () =>
+            api.request(`/projects/${created.id}/subagents/concurrent/interrupt`, { method: "POST" })
+          )));
+        }
+        return responses;
+      })().finally(() => { settled = true; });
+      const observeState = async () => {
+        do {
+          JSON.parse(await fs.readFile(statePath, "utf8"));
+        } while (!settled);
+      };
+      const [responses] = await Promise.all([interrupts, observeState()]);
+      expect(responses.map((response) => response.status)).toEqual(Array(64).fill(200));
+    } finally {
+      try {
+        await interrupts;
+        if (spawned) {
+          await fs.writeFile(path.join(binDir, "release"), "release");
+          await vi.waitFor(async () => {
+            const state = JSON.parse(await fs.readFile(statePath, "utf8"));
+            expect(state.last_error).toBe("process exited (code 1)");
+            expect(state.session_id).toBe("fictional-final-thread");
+            expect(state.interrupt_requested_at).toEqual(expect.any(String));
+            expect(state.interrupt_requested_at.length).toBeGreaterThan(0);
+          }, { timeout: 5000 });
+        }
+      } finally {
+        restoreClock?.();
+        process.env.PATH = prevPath;
+      }
+    }
+  }, 15000);
+
   it("resumes when slug exists and resume is true", async () => {
     const createRes = await Promise.resolve(
       api.request("/projects", {

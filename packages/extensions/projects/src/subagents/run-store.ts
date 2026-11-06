@@ -1,4 +1,5 @@
 import { execSync } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import type { OrchestratorSource } from "@yoplai/shared";
@@ -125,7 +126,7 @@ export async function writeJsonFile(
   filePath: string,
   data: unknown
 ): Promise<void> {
-  const tempPath = `${filePath}.${process.pid}.${Date.now()}.tmp`;
+  const tempPath = `${filePath}.${process.pid}.${randomUUID()}.tmp`;
   try {
     await fs.writeFile(tempPath, JSON.stringify(data, null, 2), "utf8");
     await fs.rename(tempPath, filePath);
@@ -215,6 +216,8 @@ function summaryFromDetail(detail: SubagentRunDetail): SubagentRunSummary {
 }
 
 export class FileSystemSubagentRunStore implements SubagentRunStore {
+  private stateWrites = new Map<string, Promise<void>>();
+
   locate(projectDir: string, runId: string): string {
     return path.join(sessionsRoot(projectDir), runId);
   }
@@ -285,9 +288,20 @@ export class FileSystemSubagentRunStore implements SubagentRunStore {
     state: Record<string, unknown>
   ): Promise<void> {
     const statePath = path.join(this.locate(projectDir, runId), "state.json");
-    const current =
-      (await readJsonFile<Record<string, unknown>>(statePath)) ?? {};
-    await writeJsonFile(statePath, { ...current, ...state });
+    const previous = this.stateWrites.get(statePath) ?? Promise.resolve();
+    const operation = previous.then(async () => {
+      const current =
+        (await readJsonFile<Record<string, unknown>>(statePath)) ?? {};
+      await writeJsonFile(statePath, { ...current, ...state });
+    });
+    const settled = operation.catch(() => {});
+    this.stateWrites.set(statePath, settled);
+    void settled.then(() => {
+      if (this.stateWrites.get(statePath) === settled) {
+        this.stateWrites.delete(statePath);
+      }
+    });
+    await operation;
   }
 
   async archive(projectDir: string, runId: string): Promise<void> {
