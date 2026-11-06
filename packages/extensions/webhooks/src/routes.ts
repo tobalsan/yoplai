@@ -349,7 +349,12 @@ export function registerWebhookRoutes(app: Hono): void {
     const agent = current.ctx.getAgent(agentId);
     const webhookConfig = agent?.webhooks?.[webhookName];
 
-    if (!agent || !webhookConfig || !current.ctx.isAgentActive(agentId)) {
+    if (
+      !agent ||
+      !webhookConfig ||
+      webhookConfig.enabled === false ||
+      !current.ctx.isAgentActive(agentId)
+    ) {
       return c.json({ error: "Webhook not found" }, 404);
     }
 

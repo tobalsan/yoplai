@@ -713,6 +713,39 @@ describe("webhook routes", () => {
     ).toBe(404);
   });
 
+  it("returns 404 and starts no run for a disabled webhook, even with the right secret", async () => {
+    const agent = AgentConfigSchema.parse({
+      id: "sales",
+      name: "Sales",
+      workspace: "/tmp",
+      model: { model: "claude" },
+      webhooks: {
+        notion: {
+          prompt: "hello",
+          enabled: false,
+          verification: { location: "header", fieldName: "x-verification" },
+        },
+      },
+    });
+    const onRunAgent = vi.fn(async () => ({
+      payloads: [],
+      meta: { durationMs: 0, sessionId: "s1" },
+    }));
+    setWebhooksRuntime({
+      ctx: createContext({ agent, onRunAgent }),
+      secrets: { "sales:notion": "secret" },
+    });
+    const response = await createApp().fetch(
+      new Request("http://localhost/hooks/sales/notion/secret", {
+        method: "POST",
+        body: "{}",
+      })
+    );
+    expect(response.status).toBe(404);
+    expect(await response.json()).toEqual({ error: "Webhook not found" });
+    expect(onRunAgent).not.toHaveBeenCalled();
+  });
+
   it("accepts a valid webhook and runs the agent asynchronously", async () => {
     const agent = AgentConfigSchema.parse({
       id: "sales",

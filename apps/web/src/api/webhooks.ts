@@ -3,6 +3,8 @@ import { API_BASE, apiFetch } from "./core";
 export type WebhookCredentials = {
   name: string;
   credentialMode: "owner" | "team";
+  enabled: boolean;
+  url: string;
   ownerUserId?: string;
   ownerDisplayName?: string;
 };
@@ -31,7 +33,10 @@ export async function fetchWebhooks(
 export async function updateWebhook(
   agentId: string,
   name: string,
-  credentialMode: WebhookCredentials["credentialMode"]
+  patch: {
+    credentialMode?: WebhookCredentials["credentialMode"];
+    enabled?: boolean;
+  }
 ): Promise<WebhookCredentials> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 15_000);
@@ -41,7 +46,7 @@ export async function updateWebhook(
       {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ credentialMode }),
+        body: JSON.stringify(patch),
         signal: controller.signal,
       }
     );

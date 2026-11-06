@@ -13,7 +13,7 @@ import {
   ExtensionConfigValidationError,
   secretEnvName,
   updateAgentExtensionConfig,
-  updateAgentWebhookCredentials,
+  updateAgentWebhook,
 } from "./agent-config-writer.js";
 
 const BASE_AGENT = `id: sales
@@ -306,7 +306,7 @@ describe("updateAgentExtensionConfig", () => {
   });
 });
 
-describe("updateAgentWebhookCredentials", () => {
+describe("updateAgentWebhook", () => {
   it("assigns the requesting user as owner in agent.yaml", async () => {
     await writeFile(
       path.join(workspaceDir, "agent.yaml"),
@@ -317,12 +317,10 @@ describe("updateAgentWebhookCredentials", () => {
 `
     );
 
-    await updateAgentWebhookCredentials(
-      workspaceDir,
+    await updateAgentWebhook(workspaceDir,
       "triage",
-      "owner",
-      "alice"
-    );
+      { credentialMode: "owner" },
+      "alice");
 
     const persisted = yaml.load(
       await readFile(path.join(workspaceDir, "agent.yaml"), "utf8")
@@ -348,12 +346,10 @@ describe("updateAgentWebhookCredentials", () => {
     ownerUserId: alice
 `
     );
-    await updateAgentWebhookCredentials(
-      workspaceDir,
+    await updateAgentWebhook(workspaceDir,
       "triage",
-      "team",
-      "alice"
-    );
+      { credentialMode: "team" },
+      "alice");
     const persisted = yaml.load(
       await readFile(path.join(workspaceDir, "agent.yaml"), "utf8")
     );
@@ -379,7 +375,7 @@ describe("updateAgentWebhookCredentials", () => {
 `;
     await writeFile(path.join(workspaceDir, "agent.yaml"), original);
     await expect(
-      updateAgentWebhookCredentials(workspaceDir, "triage", "team", "bob")
+      updateAgentWebhook(workspaceDir, "triage", { credentialMode: "team" }, "bob")
     ).rejects.toMatchObject({ status: 403 });
     expect(await readFile(path.join(workspaceDir, "agent.yaml"), "utf8")).toBe(
       original
@@ -395,7 +391,7 @@ describe("updateAgentWebhookCredentials", () => {
 `;
     await writeFile(path.join(workspaceDir, "agent.yaml"), original);
     await expect(
-      updateAgentWebhookCredentials(workspaceDir, "triage", "owner")
+      updateAgentWebhook(workspaceDir, "triage", { credentialMode: "owner" })
     ).rejects.toMatchObject({
       status: 400,
       message: "Owner credentials require an authenticated user",
@@ -405,9 +401,60 @@ describe("updateAgentWebhookCredentials", () => {
     );
   });
 
+  it("writes enabled false and removes the key when re-enabled", async () => {
+    await writeFile(
+      path.join(workspaceDir, "agent.yaml"),
+      BASE_AGENT + "webhooks:\n  triage:\n    prompt: Triage this event\n"
+    );
+    const read = async () =>
+      (
+        yaml.load(
+          await readFile(path.join(workspaceDir, "agent.yaml"), "utf8")
+        ) as { webhooks: { triage: Record<string, unknown> } }
+      ).webhooks.triage;
+    await updateAgentWebhook(workspaceDir, "triage", { enabled: false });
+    expect(await read()).toMatchObject({ enabled: false });
+    await updateAgentWebhook(workspaceDir, "triage", { enabled: true });
+    expect(await read()).not.toHaveProperty("enabled");
+  });
+
+  it("applies enabled and credentialMode together in one write", async () => {
+    await writeFile(
+      path.join(workspaceDir, "agent.yaml"),
+      BASE_AGENT + "webhooks:\n  triage:\n    prompt: Triage this event\n"
+    );
+    await updateAgentWebhook(
+      workspaceDir,
+      "triage",
+      { credentialMode: "owner", enabled: false },
+      "alice"
+    );
+    const persisted = yaml.load(
+      await readFile(path.join(workspaceDir, "agent.yaml"), "utf8")
+    ) as { webhooks: { triage: Record<string, unknown> } };
+    expect(persisted.webhooks.triage).toMatchObject({
+      credentialMode: "owner",
+      ownerUserId: "alice",
+      enabled: false,
+    });
+  });
+
+  it("refuses an enabled-only change by a non-owner of an owner-mode webhook", async () => {
+    const original =
+      BASE_AGENT +
+      "webhooks:\n  triage:\n    prompt: Triage this event\n    credentialMode: owner\n    ownerUserId: alice\n";
+    await writeFile(path.join(workspaceDir, "agent.yaml"), original);
+    await expect(
+      updateAgentWebhook(workspaceDir, "triage", { enabled: false }, "bob")
+    ).rejects.toMatchObject({ status: 403 });
+    expect(await readFile(path.join(workspaceDir, "agent.yaml"), "utf8")).toBe(
+      original
+    );
+  });
+
   it("returns not found for an unknown webhook without creating it", async () => {
     await expect(
-      updateAgentWebhookCredentials(workspaceDir, "missing", "owner", "alice")
+      updateAgentWebhook(workspaceDir, "missing", { credentialMode: "owner" }, "alice")
     ).rejects.toMatchObject({ status: 404 });
     expect(await readFile(path.join(workspaceDir, "agent.yaml"), "utf8")).toBe(
       BASE_AGENT
@@ -424,7 +471,7 @@ describe("updateAgentWebhookCredentials", () => {
 `
     );
     await Promise.all([
-      updateAgentWebhookCredentials(workspaceDir, "triage", "owner", "alice"),
+      updateAgentWebhook(workspaceDir, "triage", { credentialMode: "owner" }, "alice"),
       updateAgentExtensionConfig(workspaceDir, "acme-crm", {
         enabled: true,
         secrets: { token: "fixture-value" },
@@ -454,8 +501,8 @@ describe("updateAgentWebhookCredentials", () => {
 `
     );
     const outcomes = await Promise.allSettled([
-      updateAgentWebhookCredentials(workspaceDir, "triage", "owner", "alice"),
-      updateAgentWebhookCredentials(workspaceDir, "triage", "owner", "bob"),
+      updateAgentWebhook(workspaceDir, "triage", { credentialMode: "owner" }, "alice"),
+      updateAgentWebhook(workspaceDir, "triage", { credentialMode: "owner" }, "bob"),
     ]);
     expect(
       outcomes.filter((outcome) => outcome.status === "fulfilled")
@@ -489,12 +536,10 @@ extensions:
     apiKey: "$env:ACME_KEY"
 `
     );
-    await updateAgentWebhookCredentials(
-      workspaceDir,
+    await updateAgentWebhook(workspaceDir,
       "triage",
-      "owner",
-      "alice"
-    );
+      { credentialMode: "owner" },
+      "alice");
     const raw = await readFile(path.join(workspaceDir, "agent.yaml"), "utf8");
     expect(raw).toContain("# receives the invented triage event");
     expect(raw).toContain("# prompt stays local");
@@ -521,7 +566,7 @@ extensions:
 `;
     await writeFile(path.join(workspaceDir, "agent.yaml"), invalid);
     await expect(
-      updateAgentWebhookCredentials(workspaceDir, "triage", "owner", "alice")
+      updateAgentWebhook(workspaceDir, "triage", { credentialMode: "owner" }, "alice")
     ).rejects.toThrow("agent.yaml would be invalid after update");
     expect(await readFile(path.join(workspaceDir, "agent.yaml"), "utf8")).toBe(
       invalid

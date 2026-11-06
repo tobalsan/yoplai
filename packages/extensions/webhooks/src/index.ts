@@ -3,6 +3,7 @@ import {
   resolveBindHost,
   type Extension,
   type ExtensionContext,
+  type GatewayConfig,
 } from "@yoplai/shared";
 import type { Hono } from "hono";
 import { z } from "zod";
@@ -22,18 +23,21 @@ const WebhooksExtensionConfigSchema = z
   })
   .passthrough();
 
-export function getGatewayBaseUrl(ctx: ExtensionContext): string {
-  const config = ctx.getConfig();
+export function resolveWebhookBaseUrl(config: GatewayConfig): string {
+  if (config.server?.baseUrl) return config.server.baseUrl.replace(/\/$/, "");
   if (readEnv("DEV") === "1") {
     const host = config.gateway?.host ?? resolveBindHost(config.gateway?.bind);
     const publicHost = host === "0.0.0.0" ? "127.0.0.1" : host;
     const port = readEnv("GATEWAY_PORT") ?? config.gateway?.port ?? 4000;
     return `http://${publicHost}:${port}`;
   }
-  if (config.server?.baseUrl) return config.server.baseUrl.replace(/\/$/, "");
   const host = config.gateway?.host ?? resolveBindHost(config.gateway?.bind);
   const port = config.gateway?.port ?? 4000;
   return `http://${host}:${port}`;
+}
+
+export function getGatewayBaseUrl(ctx: ExtensionContext): string {
+  return resolveWebhookBaseUrl(ctx.getConfig());
 }
 
 const webhooksExtension: Extension = {

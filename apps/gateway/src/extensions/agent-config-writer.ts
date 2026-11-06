@@ -235,12 +235,18 @@ export class WebhookConfigUpdateError extends Error {
   }
 }
 
-export async function updateAgentWebhookCredentials(
+export type WebhookPatch = {
+  credentialMode?: "owner" | "team";
+  enabled?: boolean;
+};
+
+export async function updateAgentWebhook(
   workspaceDir: string,
   webhookName: string,
-  credentialMode: "owner" | "team",
+  patch: WebhookPatch,
   userId?: string
 ): Promise<Record<string, unknown>> {
+  const { credentialMode, enabled } = patch;
   return updateAgentConfig(workspaceDir, (doc, parsed) => {
     if (credentialMode === "owner" && !userId) {
       throw new WebhookConfigUpdateError(
@@ -263,11 +269,18 @@ export async function updateAgentWebhookCredentials(
         "Only the webhook owner can change its credentials"
       );
     }
-    doc.setIn(["webhooks", webhookName, "credentialMode"], credentialMode);
-    if (credentialMode === "owner") {
-      doc.setIn(["webhooks", webhookName, "ownerUserId"], userId);
-    } else {
-      doc.deleteIn(["webhooks", webhookName, "ownerUserId"]);
+    if (credentialMode) {
+      doc.setIn(["webhooks", webhookName, "credentialMode"], credentialMode);
+      if (credentialMode === "owner") {
+        doc.setIn(["webhooks", webhookName, "ownerUserId"], userId);
+      } else {
+        doc.deleteIn(["webhooks", webhookName, "ownerUserId"]);
+      }
+    }
+    if (enabled === false) {
+      doc.setIn(["webhooks", webhookName, "enabled"], false);
+    } else if (enabled === true) {
+      doc.deleteIn(["webhooks", webhookName, "enabled"]);
     }
   });
 }

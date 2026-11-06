@@ -26,10 +26,11 @@ webhooks:
 | `maxPayloadSize`  | `1048576` | Bytes. Larger bodies get `413`.                                                      |
 | `langfuseTracing` | `true`    | Trace runs under the `webhook` surface.                                              |
 | `credentialMode`  | `team`    | `team` uses team connections; `owner` tries the owner's personal connections, then team. |
+| `enabled`         | `true`    | `false` makes the URL return `404` before secret checks; no run starts. |
 | `ownerUserId`     | —         | Non-empty owner id for `owner` mode; set from the authenticated session in the UI/API. |
 
-Choose **Team** or **Me** on the agent's **Webhooks** configuration page.
-Me requires multi-user mode and uses the signed-in user as owner; only that
+Choose **Mine** or **Team** on the agent's **Webhooks** configuration page.
+Mine requires multi-user mode and uses the signed-in user as owner; only that
 owner may change the setting afterward, including switching back to Team.
 Other users, including superadmins, see **Owned by <name>** without editing
 controls. If the owner leaves, an operator must edit `agent.yaml`.
@@ -70,7 +71,7 @@ The response returns immediately — the agent runs in the background, in a fres
 | ------ | ---------------------------------------------- |
 | `200`  | Accepted (or verification handshake answered). |
 | `401`  | Missing/wrong URL secret, or bad signature.    |
-| `404`  | Unknown agent/webhook, or agent inactive.      |
+| `404`  | Unknown or disabled webhook, or agent inactive. |
 | `409`  | Owner missing, or owner mode without multi-user enabled; no run starts. |
 | `413`  | Payload over `maxPayloadSize`.                 |
 

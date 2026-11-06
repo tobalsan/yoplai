@@ -47,21 +47,33 @@ import WebhooksConfigPage from "./WebhooksConfig";
 let container: HTMLElement;
 let dispose: (() => void) | undefined;
 const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
+const WEBHOOK_URL = "https://example.test/hooks/scribe/triage";
 const radio = (name: string) =>
   Array.from(
-    container.querySelectorAll<HTMLInputElement>('input[type="radio"]')
-  ).find((input) => input.closest("label")?.textContent === name)!;
+    container.querySelectorAll<HTMLButtonElement>('[role="radio"]')
+  ).find((button) => button.textContent === name)!;
+const checked = (name: string) =>
+  radio(name).getAttribute("aria-checked") === "true";
+const toggle = () =>
+  container.querySelector<HTMLButtonElement>('[role="switch"]')!;
 
 beforeEach(() => {
   container = document.createElement("div");
   document.body.append(container);
   session.user = { id: "alice", role: "user" };
   route.agentId = undefined;
-  fetchWebhooksMock
-    .mockReset()
-    .mockResolvedValue([{ name: "triage", credentialMode: "team" }]);
+  fetchWebhooksMock.mockReset().mockResolvedValue([
+    {
+      name: "triage",
+      enabled: true,
+      url: WEBHOOK_URL,
+      credentialMode: "team",
+    },
+  ]);
   updateWebhookMock.mockReset().mockResolvedValue({
     name: "triage",
+    enabled: true,
+    url: WEBHOOK_URL,
     credentialMode: "owner",
     ownerUserId: "alice",
   });
@@ -75,15 +87,17 @@ afterEach(() => {
 });
 
 describe("WebhooksConfigPage", () => {
-  it("lets a signed-in user run a Team webhook as Me", async () => {
+  it("lets a signed-in user run a Team webhook as Mine", async () => {
     dispose = render(() => <WebhooksConfigPage />, container);
     await settle();
     expect(container.querySelector("h1")?.textContent).toBe("Webhooks");
-    expect(radio("Team").checked).toBe(true);
-    radio("Me").click();
+    expect(checked("Team")).toBe(true);
+    radio("Mine").click();
     await settle();
-    expect(updateWebhookMock).toHaveBeenCalledWith("scribe", "triage", "owner");
-    expect(radio("Me").checked).toBe(true);
+    expect(updateWebhookMock).toHaveBeenCalledWith("scribe", "triage", {
+      credentialMode: "owner",
+    });
+    expect(checked("Mine")).toBe(true);
     expect(container.textContent).toContain("Owned by you");
   });
   it.each(["user", "superadmin"])(
@@ -93,6 +107,8 @@ describe("WebhooksConfigPage", () => {
       fetchWebhooksMock.mockResolvedValue([
         {
           name: "triage",
+          enabled: true,
+          url: WEBHOOK_URL,
           credentialMode: "owner",
           ownerUserId: "bob",
           ownerDisplayName: "Bob",
@@ -101,8 +117,8 @@ describe("WebhooksConfigPage", () => {
       dispose = render(() => <WebhooksConfigPage />, container);
       await settle();
       expect(container.textContent).toContain("Owned by Bob");
-      for (const control of container.querySelectorAll<HTMLInputElement>(
-        'input[type="radio"]'
+      for (const control of container.querySelectorAll<HTMLButtonElement>(
+        '[role="radio"]'
       )) {
         expect(control.disabled).toBe(true);
         control.click();
@@ -111,16 +127,89 @@ describe("WebhooksConfigPage", () => {
     }
   );
 
-  it("disables Me and explains why without an authenticated user", async () => {
+  it("shows the URL and a disabled switch on another owner's webhook", async () => {
+    fetchWebhooksMock.mockResolvedValue([
+      {
+        name: "triage",
+        enabled: true,
+        url: WEBHOOK_URL,
+        credentialMode: "owner",
+        ownerUserId: "bob",
+        ownerDisplayName: "Bob",
+      },
+    ]);
+    dispose = render(() => <WebhooksConfigPage />, container);
+    await settle();
+    expect(toggle().disabled).toBe(true);
+    expect(toggle().title).toBe("Only the owner can change this webhook");
+    toggle().click();
+    expect(updateWebhookMock).not.toHaveBeenCalled();
+    expect(
+      container.querySelector<HTMLInputElement>(
+        'input[aria-label="Webhook URL for triage"]'
+      )?.value
+    ).toBe(WEBHOOK_URL);
+  });
+
+  it("lists Mine before Team", async () => {
+    dispose = render(() => <WebhooksConfigPage />, container);
+    await settle();
+    const labels = Array.from(container.querySelectorAll('[role="radio"]')).map(
+      (button) => button.textContent
+    );
+    expect(labels).toEqual(["Mine", "Team"]);
+  });
+
+  it("turns a webhook off with the switch", async () => {
+    updateWebhookMock.mockResolvedValue({
+      name: "triage",
+      enabled: false,
+      url: WEBHOOK_URL,
+      credentialMode: "team",
+    });
+    dispose = render(() => <WebhooksConfigPage />, container);
+    await settle();
+    expect(toggle().getAttribute("aria-label")).toBe("Enable triage webhook");
+    expect(toggle().getAttribute("aria-checked")).toBe("true");
+    toggle().click();
+    await settle();
+    expect(updateWebhookMock).toHaveBeenCalledWith("scribe", "triage", {
+      enabled: false,
+    });
+    expect(toggle().getAttribute("aria-checked")).toBe("false");
+    expect(container.textContent).toContain("Disabled");
+  });
+
+  it("shows the URL and copies it", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    vi.stubGlobal("navigator", { clipboard: { writeText } });
+    dispose = render(() => <WebhooksConfigPage />, container);
+    await settle();
+    const input = container.querySelector<HTMLInputElement>(
+      'input[aria-label="Webhook URL for triage"]'
+    )!;
+    expect(input.value).toBe(WEBHOOK_URL);
+    expect(input.readOnly).toBe(true);
+    container
+      .querySelector<HTMLButtonElement>(
+        'button[aria-label="Copy URL for triage"]'
+      )!
+      .click();
+    await settle();
+    expect(writeText).toHaveBeenCalledWith(WEBHOOK_URL);
+    expect(container.textContent).toContain("Copied");
+  });
+
+  it("disables Mine and explains why without an authenticated user", async () => {
     session.user = null;
     dispose = render(() => <WebhooksConfigPage />, container);
     await settle();
-    expect(radio("Me").disabled).toBe(true);
+    expect(radio("Mine").disabled).toBe(true);
     expect(radio("Team").disabled).toBe(false);
     expect(container.textContent).toContain(
-      "Me requires an authenticated user in multi-user mode."
+      "Mine requires an authenticated user in multi-user mode."
     );
-    radio("Me").click();
+    radio("Mine").click();
     expect(updateWebhookMock).not.toHaveBeenCalled();
   });
 
@@ -134,20 +223,73 @@ describe("WebhooksConfigPage", () => {
     );
     dispose = render(() => <WebhooksConfigPage />, container);
     await settle();
-    radio("Me").click();
+    radio("Mine").click();
     await settle();
     expect(radio("Team").disabled).toBe(true);
-    expect(radio("Me").disabled).toBe(true);
-    expect(container.textContent).toContain("Saving…");
+    expect(radio("Mine").disabled).toBe(true);
     resolveUpdate({
       name: "triage",
+      enabled: true,
+      url: WEBHOOK_URL,
       credentialMode: "owner",
       ownerUserId: "alice",
     });
     await settle();
-    expect(radio("Me").disabled).toBe(false);
-    expect(radio("Me").checked).toBe(true);
-    expect(container.textContent).not.toContain("Saving…");
+    expect(radio("Mine").disabled).toBe(false);
+    expect(checked("Mine")).toBe(true);
+  });
+
+  it("blocks the switch while a mode save is in flight", async () => {
+    let resolveUpdate!: (value: unknown) => void;
+    updateWebhookMock.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveUpdate = resolve;
+        })
+    );
+    dispose = render(() => <WebhooksConfigPage />, container);
+    await settle();
+    radio("Mine").click();
+    await settle();
+    expect(toggle().disabled).toBe(true);
+    toggle().click();
+    expect(updateWebhookMock).toHaveBeenCalledTimes(1);
+    resolveUpdate({
+      name: "triage",
+      enabled: true,
+      url: WEBHOOK_URL,
+      credentialMode: "owner",
+      ownerUserId: "alice",
+    });
+    await settle();
+    expect(toggle().disabled).toBe(false);
+  });
+
+  it("blocks Runs with while a switch save is in flight", async () => {
+    let resolveUpdate!: (value: unknown) => void;
+    updateWebhookMock.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveUpdate = resolve;
+        })
+    );
+    dispose = render(() => <WebhooksConfigPage />, container);
+    await settle();
+    toggle().click();
+    await settle();
+    expect(radio("Mine").disabled).toBe(true);
+    expect(radio("Team").disabled).toBe(true);
+    radio("Mine").click();
+    expect(updateWebhookMock).toHaveBeenCalledTimes(1);
+    resolveUpdate({
+      name: "triage",
+      enabled: false,
+      url: WEBHOOK_URL,
+      credentialMode: "team",
+    });
+    await settle();
+    expect(radio("Mine").disabled).toBe(false);
+    expect(toggle().getAttribute("aria-checked")).toBe("false");
   });
 
   it("shows a failed save, keeps Team selected, and allows a retry", async () => {
@@ -156,17 +298,17 @@ describe("WebhooksConfigPage", () => {
     );
     dispose = render(() => <WebhooksConfigPage />, container);
     await settle();
-    radio("Me").click();
+    radio("Mine").click();
     await settle();
     expect(container.querySelector('[role="alert"]')?.textContent).toBe(
       "Connection lost. Try again."
     );
-    expect(radio("Team").checked).toBe(true);
-    expect(radio("Me").disabled).toBe(false);
-    radio("Me").click();
+    expect(checked("Team")).toBe(true);
+    expect(radio("Mine").disabled).toBe(false);
+    radio("Mine").click();
     await settle();
     expect(container.querySelector('[role="alert"]')).toBeNull();
-    expect(radio("Me").checked).toBe(true);
+    expect(checked("Mine")).toBe(true);
   });
 
   it("shows loading, reports a failed load, and reloads on Retry", async () => {
@@ -189,7 +331,7 @@ describe("WebhooksConfigPage", () => {
       .click();
     await settle();
     expect(container.querySelector('[role="alert"]')).toBeNull();
-    expect(radio("Team").checked).toBe(true);
+    expect(checked("Team")).toBe(true);
   });
 
   it("explains an empty webhook list", async () => {
@@ -199,7 +341,7 @@ describe("WebhooksConfigPage", () => {
     expect(container.textContent).toContain(
       "No webhooks configured for this agent."
     );
-    expect(container.querySelector('input[type="radio"]')).toBeNull();
+    expect(container.querySelector('[role="radio"]')).toBeNull();
   });
 
   it("releases a timed-out save and lets the user retry", async () => {
@@ -223,6 +365,8 @@ describe("WebhooksConfigPage", () => {
         new Response(
           JSON.stringify({
             name: "triage",
+            enabled: true,
+            url: WEBHOOK_URL,
             credentialMode: "owner",
             ownerUserId: "alice",
           })
@@ -231,15 +375,15 @@ describe("WebhooksConfigPage", () => {
     vi.stubGlobal("fetch", request);
     dispose = render(() => <WebhooksConfigPage />, container);
     await vi.advanceTimersByTimeAsync(0);
-    radio("Me").click();
+    radio("Mine").click();
     await vi.advanceTimersByTimeAsync(15_000);
     expect(container.querySelector('[role="alert"]')?.textContent).toBe(
       "Updating webhook timed out. Try again."
     );
-    expect(radio("Me").disabled).toBe(false);
-    radio("Me").click();
+    expect(radio("Mine").disabled).toBe(false);
+    radio("Mine").click();
     await vi.advanceTimersByTimeAsync(0);
-    expect(radio("Me").checked).toBe(true);
+    expect(checked("Mine")).toBe(true);
     expect(request).toHaveBeenLastCalledWith(
       "/api/agents/scribe/webhooks/triage",
       expect.objectContaining({
@@ -271,7 +415,14 @@ describe("WebhooksConfigPage", () => {
         )
         .mockResolvedValue(
           new Response(
-            JSON.stringify([{ name: "triage", credentialMode: "team" }])
+            JSON.stringify([
+              {
+                name: "triage",
+                enabled: true,
+                url: WEBHOOK_URL,
+                credentialMode: "team",
+              },
+            ])
           )
         )
     );
@@ -284,7 +435,7 @@ describe("WebhooksConfigPage", () => {
       .find((button) => button.textContent === "Retry")!
       .click();
     await vi.advanceTimersByTimeAsync(0);
-    expect(radio("Team").checked).toBe(true);
+    expect(checked("Team")).toBe(true);
     expect(container.querySelector('[role="alert"]')).toBeNull();
   });
 
@@ -299,10 +450,19 @@ describe("WebhooksConfigPage", () => {
         })
     );
     fetchWebhooksMock
-      .mockResolvedValueOnce([{ name: "triage", credentialMode: "team" }])
+      .mockResolvedValueOnce([
+        {
+          name: "triage",
+          enabled: true,
+          url: WEBHOOK_URL,
+          credentialMode: "team",
+        },
+      ])
       .mockResolvedValue([
         {
           name: "triage",
+          enabled: true,
+          url: WEBHOOK_URL,
           credentialMode: "owner",
           ownerUserId: "bob",
           ownerDisplayName: "Bob",
@@ -310,19 +470,21 @@ describe("WebhooksConfigPage", () => {
       ]);
     dispose = render(() => <WebhooksConfigPage />, container);
     await settle();
-    radio("Me").click();
+    radio("Mine").click();
     setAgentId("archive");
     await settle();
     expect(container.textContent).toContain("Owned by Bob");
     resolveUpdate({
       name: "triage",
+      enabled: true,
+      url: WEBHOOK_URL,
       credentialMode: "owner",
       ownerUserId: "alice",
     });
     await settle();
     expect(container.textContent).toContain("Owned by Bob");
     expect(container.textContent).not.toContain("Owned by you");
-    expect(radio("Me").disabled).toBe(true);
+    expect(radio("Mine").disabled).toBe(true);
     expect(container.querySelector("a")?.getAttribute("href")).toBe(
       "/agents/archive/edit"
     );
@@ -330,30 +492,45 @@ describe("WebhooksConfigPage", () => {
 
   it("lets the owner switch back to Team", async () => {
     fetchWebhooksMock.mockResolvedValue([
-      { name: "triage", credentialMode: "owner", ownerUserId: "alice" },
+      {
+        name: "triage",
+        enabled: true,
+        url: WEBHOOK_URL,
+        credentialMode: "owner",
+        ownerUserId: "alice",
+      },
     ]);
     updateWebhookMock.mockResolvedValue({
       name: "triage",
+      enabled: true,
+      url: WEBHOOK_URL,
       credentialMode: "team",
     });
     dispose = render(() => <WebhooksConfigPage />, container);
     await settle();
     radio("Team").click();
     await settle();
-    expect(updateWebhookMock).toHaveBeenCalledWith("scribe", "triage", "team");
-    expect(radio("Team").checked).toBe(true);
+    expect(updateWebhookMock).toHaveBeenCalledWith("scribe", "triage", {
+      credentialMode: "team",
+    });
+    expect(checked("Team")).toBe(true);
     expect(container.textContent).not.toContain("Owned by");
   });
   it("labels a missing owner without claiming anonymous ownership", async () => {
     session.user = null;
     fetchWebhooksMock.mockResolvedValue([
-      { name: "triage", credentialMode: "owner" },
+      {
+        name: "triage",
+        enabled: true,
+        url: WEBHOOK_URL,
+        credentialMode: "owner",
+      },
     ]);
     dispose = render(() => <WebhooksConfigPage />, container);
     await settle();
     expect(container.textContent).toContain("Owner missing");
     expect(container.textContent).not.toContain("Owned by you");
     expect(radio("Team").disabled).toBe(true);
-    expect(radio("Me").disabled).toBe(true);
+    expect(radio("Mine").disabled).toBe(true);
   });
 });

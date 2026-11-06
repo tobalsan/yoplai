@@ -1,5 +1,5 @@
 import { A, useParams } from "@solidjs/router";
-import { createResource, createSignal, For, Show } from "solid-js";
+import { createResource, createSignal, For, onCleanup, Show } from "solid-js";
 import {
   fetchWebhooks,
   updateWebhook,
@@ -8,17 +8,49 @@ import {
 import { useSession } from "../auth/client";
 import { LeftNavShell } from "../components/LeftNavShell";
 import { ScopeIcon } from "../components/CredentialScopeTabs";
+import { MODES, SCHEDULES_STYLES } from "./SchedulesPanel";
 
-const MODES = [
-  { mode: "team", label: "Team" },
-  { mode: "owner", label: "Me" },
-] as const;
+function WebhookUrl(props: { name: string; url: string }) {
+  const [copied, setCopied] = createSignal(false);
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  onCleanup(() => clearTimeout(timer));
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(props.url);
+      setCopied(true);
+      clearTimeout(timer);
+      timer = setTimeout(() => setCopied(false), 1500);
+    } catch {
+      setCopied(false);
+    }
+  };
+  return (
+    <div class="webhook-url">
+      <input
+        type="text"
+        readonly
+        value={props.url}
+        aria-label={`Webhook URL for ${props.name}`}
+        onFocus={(event) => event.currentTarget.select()}
+      />
+      <button
+        type="button"
+        aria-label={`Copy URL for ${props.name}`}
+        onClick={() => void copy()}
+      >
+        {copied() ? "Copied" : "Copy"}
+      </button>
+    </div>
+  );
+}
 
 export default function WebhooksConfigPage() {
   const params = useParams<{ agentId: string }>();
   const session = useSession();
   const [error, setError] = createSignal<string>();
   const [busy, setBusy] = createSignal<string[]>([]);
+  // Optimistic on/off state while a toggle request is in flight.
+  const [pending, setPending] = createSignal<Record<string, boolean>>({});
   const [loadError, setLoadError] = createSignal<string>();
   const [webhooks, { mutate, refetch }] = createResource(
     () => params.agentId,
@@ -26,6 +58,7 @@ export default function WebhooksConfigPage() {
       setLoadError(undefined);
       setError(undefined);
       setBusy([]);
+      setPending({});
       try {
         return await fetchWebhooks(agentId);
       } catch (cause) {
@@ -59,11 +92,9 @@ export default function WebhooksConfigPage() {
     setError(undefined);
     setBusy((current) => [...current, webhook.name]);
     try {
-      const updated = await updateWebhook(
-        agentId,
-        webhook.name,
-        credentialMode
-      );
+      const updated = await updateWebhook(agentId, webhook.name, {
+        credentialMode,
+      });
       if (params.agentId !== agentId) return;
       mutate((current) =>
         current?.map((item) => (item.name === webhook.name ? updated : item))
@@ -86,9 +117,45 @@ export default function WebhooksConfigPage() {
     }
   };
 
+  const toggleEnabled = async (
+    webhook: WebhookCredentials,
+    enabled: boolean
+  ) => {
+    if (
+      busy().includes(webhook.name) ||
+      webhook.name in pending() ||
+      isReadOnly(webhook)
+    )
+      return;
+    const agentId = params.agentId;
+    setError(undefined);
+    setBusy((current) => [...current, webhook.name]);
+    setPending((current) => ({ ...current, [webhook.name]: enabled }));
+    try {
+      const updated = await updateWebhook(agentId, webhook.name, { enabled });
+      if (params.agentId !== agentId) return;
+      mutate((current) =>
+        current?.map((item) => (item.name === webhook.name ? updated : item))
+      );
+    } catch (cause) {
+      if (params.agentId !== agentId) return;
+      setError(
+        cause instanceof Error
+          ? cause.message
+          : "Failed to update webhook. Try again."
+      );
+    } finally {
+      if (params.agentId === agentId) {
+        setPending(({ [webhook.name]: _done, ...rest }) => rest);
+        setBusy((current) => current.filter((name) => name !== webhook.name));
+      }
+    }
+  };
+
   return (
     <LeftNavShell>
       <main class="webhooks-config">
+        <style>{SCHEDULES_STYLES}</style>
         <style>{STYLES}</style>
         <A
           class="webhooks-back"
@@ -98,7 +165,7 @@ export default function WebhooksConfigPage() {
         </A>
         <h1>Webhooks</h1>
         <p class="webhooks-description">
-          Choose whose connections each webhook uses. Me uses your personal
+          Choose whose connections each webhook uses. Mine uses your personal
           connections, with team connections as a fallback.
         </p>
         <Show when={error()}>
@@ -110,7 +177,7 @@ export default function WebhooksConfigPage() {
         </Show>
         <Show when={!session().data?.user}>
           <p class="webhooks-note">
-            Me requires an authenticated user in multi-user mode.
+            Mine requires an authenticated user in multi-user mode.
           </p>
         </Show>
         <Show when={webhooks.loading}>
@@ -138,73 +205,119 @@ export default function WebhooksConfigPage() {
           <p class="webhooks-note">No webhooks configured for this agent.</p>
         </Show>
         <Show when={(webhooks()?.length ?? 0) > 0}>
-          <ul class="webhooks-list">
+          <ul class="schedule-list">
             <For each={webhooks()}>
-              {(webhook) => (
-                <li
-                  class="webhook-row"
-                  aria-busy={busy().includes(webhook.name)}
-                >
-                  <div class="webhook-info">
-                    <h2>{webhook.name}</h2>
-                    <Show when={webhook.credentialMode === "owner"}>
-                      <p>
-                        {webhook.ownerUserId
-                          ? `Owned by ${webhook.ownerUserId === session().data?.user.id ? "you" : webhook.ownerDisplayName || "another user"}`
-                          : "Owner missing"}
-                      </p>
-                    </Show>
-                  </div>
-                  <fieldset
-                    class="webhook-mode"
-                    aria-label={`Run as for ${webhook.name}`}
+              {(webhook) => {
+                const readOnly = () => isReadOnly(webhook);
+                const ownerOnlyTitle = "Only the owner can change this webhook";
+                const enabled = () =>
+                  pending()[webhook.name] ?? webhook.enabled;
+                return (
+                  <li
+                    class="schedule"
+                    data-paused={enabled() ? undefined : ""}
+                    data-read-only={readOnly() ? "" : undefined}
+                    aria-busy={busy().includes(webhook.name)}
                   >
-                    <legend>Run as</legend>
-                    <div class="webhook-mode-switch">
-                      <For each={MODES}>
-                        {(option) => (
-                          <label>
-                            <input
-                              type="radio"
-                              name={`run-as-${webhook.name}`}
-                              value={option.mode}
+                    <span class="schedule-mark" aria-hidden="true">
+                      <svg viewBox="0 0 20 20">
+                        <path d="M8 6h4M4 10h12M8 14h4M6 4L4 6l2 2M14 12l2 2-2 2" />
+                      </svg>
+                    </span>
+                    <div class="schedule-main">
+                      <div class="schedule-title">
+                        <strong>{webhook.name}</strong>
+                        <Show when={!enabled()}>
+                          <span class="schedule-paused">Disabled</span>
+                        </Show>
+                      </div>
+                      <WebhookUrl name={webhook.name} url={webhook.url} />
+                      <Show when={webhook.credentialMode === "owner"}>
+                        <p class="schedule-prompt">
+                          {webhook.ownerUserId
+                            ? `Owned by ${webhook.ownerUserId === session().data?.user.id ? "you" : webhook.ownerDisplayName || "another user"}`
+                            : "Owner missing"}
+                        </p>
+                      </Show>
+                    </div>
+                    <div class="schedule-mode">
+                      <span class="schedule-mode-label">Runs with</span>
+                      <div
+                        class="schedule-mode-switch"
+                        role="radiogroup"
+                        aria-label={`Credentials for ${webhook.name}`}
+                      >
+                        <For each={MODES}>
+                          {(option) => (
+                            <button
+                              type="button"
+                              role="radio"
+                              aria-checked={
+                                webhook.credentialMode === option.mode
+                              }
+                              title={readOnly() ? ownerOnlyTitle : option.title}
                               disabled={
                                 busy().includes(webhook.name) ||
-                                isReadOnly(webhook) ||
+                                readOnly() ||
                                 (option.mode === "owner" &&
                                   !session().data?.user)
                               }
-                              title={
-                                isReadOnly(webhook)
-                                  ? "Only the owner can change this webhook"
-                                  : undefined
-                              }
-                              checked={webhook.credentialMode === option.mode}
-                              onChange={() =>
+                              onClick={() =>
                                 void changeMode(webhook, option.mode)
                               }
-                            />
-                            <span>
+                            >
                               <ScopeIcon
                                 scope={
                                   option.mode === "owner" ? "personal" : "team"
                                 }
-                                class="webhook-mode-icon"
+                                class="schedule-mode-icon"
                               />
                               {option.label}
-                            </span>
-                          </label>
-                        )}
-                      </For>
+                            </button>
+                          )}
+                        </For>
+                      </div>
                     </div>
-                    <Show when={busy().includes(webhook.name)}>
-                      <p class="webhook-saving" role="status">
-                        Saving…
-                      </p>
-                    </Show>
-                  </fieldset>
-                </li>
-              )}
+                    <div class="schedule-toggle">
+                      <span class="schedule-mode-label" aria-hidden="true">
+                        {enabled() ? "On" : "Off"}
+                      </span>
+                      <button
+                        type="button"
+                        role="switch"
+                        class="schedule-switch"
+                        aria-checked={enabled()}
+                        aria-label={`Enable ${webhook.name} webhook`}
+                        title={
+                          readOnly()
+                            ? ownerOnlyTitle
+                            : enabled()
+                              ? "Disable this webhook"
+                              : "Enable this webhook"
+                        }
+                        disabled={readOnly() || busy().includes(webhook.name)}
+                        aria-busy={webhook.name in pending()}
+                        onClick={() => void toggleEnabled(webhook, !enabled())}
+                      >
+                        <span class="schedule-switch-thumb" aria-hidden="true">
+                          <Show when={readOnly()}>
+                            <svg viewBox="0 0 12 12">
+                              <rect
+                                x="3"
+                                y="5.5"
+                                width="6"
+                                height="4.5"
+                                rx="1"
+                              />
+                              <path d="M4.25 5.5V4a1.75 1.75 0 0 1 3.5 0v1.5" />
+                            </svg>
+                          </Show>
+                        </span>
+                      </button>
+                    </div>
+                  </li>
+                );
+              }}
             </For>
           </ul>
         </Show>
@@ -222,32 +335,15 @@ const STYLES = `
 .webhooks-error { margin: 0 0 16px; color: var(--tone-error); font-size: 13px; }
 .webhooks-retry { margin-left: 8px; padding: 8px 12px; border: 1px solid var(--border-default); border-radius: 8px; background: var(--bg-surface); color: var(--text-primary); font: inherit; cursor: pointer; }
 .webhooks-retry:hover { background: var(--bg-inset); }
-.webhooks-retry:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.webhooks-retry:focus-visible, .webhooks-back:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .webhooks-note { margin: 0 0 16px; color: var(--text-secondary); font-size: 13px; line-height: 1.5; }
-.webhooks-list { margin: 0; padding: 0; list-style: none; border: 1px solid var(--border-default); border-radius: 14px; background: var(--bg-surface); }
-.webhook-row { display: flex; align-items: center; justify-content: space-between; gap: 24px; padding: 16px 20px; }
-.webhook-row + .webhook-row { border-top: 1px solid var(--border-subtle, var(--border-default)); }
-.webhook-info { min-width: 0; }
-.webhook-info h2 { margin: 0; overflow-wrap: anywhere; color: var(--text-primary); font-size: 14px; font-weight: 600; }
-.webhook-info p { margin: 4px 0 0; color: var(--text-secondary); font-size: 12px; }
-.webhook-mode { flex: 0 0 auto; margin: 0; padding: 0; border: 0; }
-.webhook-mode legend { margin-bottom: 4px; padding: 0; color: var(--text-secondary); font-size: 12px; font-weight: 600; }
-.webhook-mode-switch { display: flex; gap: 2px; padding: 2px; border: 1px solid var(--border-subtle, var(--border-default)); border-radius: 9px; background: var(--bg-inset); }
-.webhook-mode-switch label { position: relative; cursor: pointer; }
-.webhook-mode-switch input { position: absolute; width: 1px; height: 1px; opacity: 0; }
-.webhook-mode-switch span { display: flex; align-items: center; justify-content: center; gap: 4px; min-height: 40px; padding: 0 12px; border-radius: 7px; color: var(--text-secondary); font-size: 12px; }
-.webhook-mode-switch input:checked + span { background: var(--bg-surface); color: var(--text-primary); font-weight: 600; }
-.webhook-mode-switch label:hover span { color: var(--text-primary); }
-.webhook-mode-switch input:focus-visible + span, .webhooks-back:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-.webhook-saving { margin: 4px 0 0; color: var(--text-secondary); font-size: 12px; }
-.webhook-mode-icon { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; }
-.webhook-mode-switch input:disabled + span { opacity: .55; cursor: not-allowed; }
-.webhook-mode-switch input:checked + span .webhook-mode-icon { color: var(--accent); }
+.webhook-url { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.webhook-url input { flex: 1; min-width: 0; padding: 3px 8px; border: 1px solid var(--border-subtle, var(--border-default)); border-radius: 6px; background: var(--bg-inset); color: var(--text-secondary); font: 12px ui-monospace, SFMono-Regular, Menlo, monospace; text-overflow: ellipsis; }
+.webhook-url button { flex: 0 0 auto; min-width: 56px; padding: 3px 10px; border: 1px solid var(--border-default); border-radius: 6px; background: var(--bg-surface); color: var(--text-primary); font: inherit; font-size: 12px; cursor: pointer; }
+.webhook-url button:hover { background: var(--bg-inset); }
+.webhook-url button:focus-visible, .webhook-url input:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.schedule[data-paused] .webhook-url { opacity: .6; }
 @media (max-width: 768px) {
   .webhooks-config { padding: 72px 16px 24px; }
-}
-@media (max-width: 480px) {
-  .webhook-row { flex-wrap: wrap; gap: 12px; padding: 16px; }
-  .webhook-info { flex-basis: 100%; }
 }
 `;

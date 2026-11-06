@@ -20,6 +20,11 @@ describe("WebhookConfigSchema", () => {
     expect(WebhookConfigSchema.parse({ prompt: "Handle event" }).credentialMode).toBe("team");
   });
 
+  it("enables webhooks by default and accepts enabled false", () => {
+    expect(WebhookConfigSchema.parse({ prompt: "Handle event" }).enabled).toBe(true);
+    expect(WebhookConfigSchema.parse({ prompt: "Handle event", enabled: false }).enabled).toBe(false);
+  });
+
   it("accepts the saved owner identity", () => {
     expect(WebhookConfigSchema.parse({
       prompt: "Handle event",

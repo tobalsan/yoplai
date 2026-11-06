@@ -1001,19 +1001,64 @@ describe("api core session resolution", () => {
       workspace = await fs.mkdtemp(path.join(os.tmpdir(), "webhook-api-"));
       await fs.writeFile(path.join(workspace, "agent.yaml"), "id: alpha\nname: Alpha\nmodel:\n  provider: openai\n  model: test\nwebhooks:\n  incoming:\n    prompt: private prompt\n    signingSecret: $env:INCOMING_SECRET\n");
       const agent = { ...parse(await fs.readFile(path.join(workspace, "agent.yaml"), "utf8")), workspaceDir: workspace, workspace: "/wrong/template" };
-      loadConfigValue = { agents: [agent], pool: [{ ...agent, workspaceDir: "/wrong/pool" }], extensions: { multiUser: { enabled: true } } };
+      loadConfigValue = { agents: [agent], pool: [{ ...agent, workspaceDir: "/wrong/pool" }], extensions: { multiUser: { enabled: true } }, server: { baseUrl: "https://hooks.example.com/" } };
       reloadConfig.mockImplementation(() => loadConfigValue);
+      await fs.mkdir("/tmp/yoplai-test", { recursive: true });
+      await fs.writeFile("/tmp/yoplai-test/webhook-secrets.json", JSON.stringify({ "alpha:incoming": "abc123" }));
       signIn("alice");
     });
     afterEach(async () => {
       await fs.rm(workspace, { recursive: true, force: true });
       reloadConfig.mockImplementation(() => loadConfigValue);
     });
-    it("lists only Run as metadata, omitting webhook secrets and prompts", async () => {
+    const URL_ALPHA = "https://hooks.example.com/hooks/alpha/incoming/abc123";
+    it("lists settings and the URL, omitting signing secrets and prompts", async () => {
       const { api } = await import("./api.core.js");
       const response = await api.request("/agents/alpha/webhooks");
       expect(response.status).toBe(200);
-      expect(await response.json()).toEqual([{ name: "incoming", credentialMode: "team" }]);
+      const text = await response.text();
+      expect(JSON.parse(text)).toEqual([{ name: "incoming", credentialMode: "team", enabled: true, url: URL_ALPHA }]);
+      expect(text).not.toContain("private prompt");
+      expect(text).not.toContain("INCOMING_SECRET");
+    });
+    it("falls back to the gateway host and port when no baseUrl is set", async () => {
+      loadConfigValue = { ...loadConfigValue, server: undefined, gateway: { host: "127.0.0.1", port: 4100 } };
+      const { api } = await import("./api.core.js");
+      const [item] = await (await api.request("/agents/alpha/webhooks")).json() as { url: string }[];
+      expect(item.url).toBe("http://127.0.0.1:4100/hooks/alpha/incoming/abc123");
+    });
+    it("persists enabled false and true and returns them", async () => {
+      reloadConfig.mockImplementation(() => {
+        loadConfigValue = { ...loadConfigValue, agents: [{ ...parse(readFileSync(path.join(workspace, "agent.yaml"), "utf8")), workspaceDir: workspace }] };
+        return loadConfigValue;
+      });
+      const { api } = await import("./api.core.js");
+      const patch = (body: unknown) => api.request("/agents/alpha/webhooks/incoming", { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+      const off = await patch({ enabled: false });
+      expect(off.status).toBe(200);
+      expect(await off.json()).toEqual({ name: "incoming", credentialMode: "team", enabled: false, url: URL_ALPHA });
+      expect(parse(await fs.readFile(path.join(workspace, "agent.yaml"), "utf8")).webhooks.incoming.enabled).toBe(false);
+      expect(await (await api.request("/agents/alpha/webhooks")).json()).toMatchObject([{ enabled: false }]);
+      const on = await patch({ enabled: true });
+      expect(await on.json()).toMatchObject({ enabled: true });
+      expect(parse(await fs.readFile(path.join(workspace, "agent.yaml"), "utf8")).webhooks.incoming).not.toHaveProperty("enabled");
+      const both = await patch({ enabled: false, credentialMode: "owner" });
+      expect(await both.json()).toMatchObject({ enabled: false, credentialMode: "owner", ownerUserId: "alice" });
+    });
+    it("rejects invalid or empty webhook patches", async () => {
+      const { api } = await import("./api.core.js");
+      for (const body of [{}, { enabled: "no" }, { credentialMode: "x" }, { enabled: true, prompt: "x" }]) {
+        const response = await api.request("/agents/alpha/webhooks/incoming", { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+        expect(response.status).toBe(400);
+      }
+    });
+    it("forbids non-owners from toggling an owned webhook", async () => {
+      await fs.appendFile(path.join(workspace, "agent.yaml"), "    credentialMode: owner\n    ownerUserId: alice\n");
+      signIn("bob", "superadmin");
+      const { api } = await import("./api.core.js");
+      const response = await api.request("/agents/alpha/webhooks/incoming", { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ enabled: false }) });
+      expect(response.status).toBe(403);
+      expect(parse(await fs.readFile(path.join(workspace, "agent.yaml"), "utf8")).webhooks.incoming).not.toHaveProperty("enabled");
     });
     it("claims the fork webhook for the authenticated session user and reloads it", async () => {
       reloadConfig.mockImplementation(() => {
@@ -1025,8 +1070,8 @@ describe("api core session resolution", () => {
         method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ credentialMode: "owner" }),
       });
       expect(response.status).toBe(200);
-      expect(await response.json()).toEqual({ name: "incoming", credentialMode: "owner", ownerUserId: "alice", ownerDisplayName: "Alice" });
-      expect(await (await api.request("/agents/alpha/webhooks")).json()).toEqual([{ name: "incoming", credentialMode: "owner", ownerUserId: "alice", ownerDisplayName: "Alice" }]);
+      expect(await response.json()).toEqual({ name: "incoming", credentialMode: "owner", enabled: true, url: URL_ALPHA, ownerUserId: "alice", ownerDisplayName: "Alice" });
+      expect(await (await api.request("/agents/alpha/webhooks")).json()).toEqual([{ name: "incoming", credentialMode: "owner", enabled: true, url: URL_ALPHA, ownerUserId: "alice", ownerDisplayName: "Alice" }]);
       expect(parse(await fs.readFile(path.join(workspace, "agent.yaml"), "utf8")).webhooks.incoming).toMatchObject({ credentialMode: "owner", ownerUserId: "alice" });
       expect(reloadExtensions).toHaveBeenCalledOnce();
     });
@@ -1076,7 +1121,7 @@ describe("api core session resolution", () => {
         method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ credentialMode: "team" }),
       });
       expect(response.status).toBe(200);
-      expect(await response.json()).toEqual({ name: "incoming", credentialMode: "team" });
+      expect(await response.json()).toEqual({ name: "incoming", credentialMode: "team", enabled: true, url: URL_ALPHA });
       expect(parse(await fs.readFile(path.join(workspace, "agent.yaml"), "utf8")).webhooks.incoming).toEqual({ prompt: "private prompt", signingSecret: "$env:INCOMING_SECRET", credentialMode: "team" });
     });
     it("requires agent configuration access on both endpoints", async () => {

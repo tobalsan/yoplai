@@ -440,15 +440,15 @@ Extensions load through `extensions.<id>` unless documented auto-load compatibil
 | `slack`        | Slack Socket Mode transport, threads, files, proactive tools             | [README](../packages/extensions/slack/README.md)                     |
 | `subagents`    | Project-agnostic CLI subagent runtime                                    | [README](../packages/extensions/subagents/README.md)                 |
 | `telegram`     | Telegram transport and proactive delivery                                | [README](../packages/extensions/telegram/README.md)                  |
-| `webhooks`     | Signed inbound webhooks, Team/Me credentials, prompt-file model/reasoning and fail-open gates, optional scoped sessions and aborts | [`packages/extensions/webhooks`](../packages/extensions/webhooks/)   |
+| `webhooks`     | Signed inbound webhooks, Mine/Team credentials, prompt-file model/reasoning and fail-open gates, optional scoped sessions and aborts | [`packages/extensions/webhooks`](../packages/extensions/webhooks/)   |
 
 Webhook `credentialMode` defaults to `team`; `owner` forwards `ownerUserId` as
 the run requester and session owner, with existing personal-then-team credential
 resolution. Missing owners or owner mode without multi-user enabled reject with
-409 after verification/signature checks. The bespoke Webhooks page uses metadata-only
-`GET /api/agents/:id/webhooks` and `PATCH /api/agents/:id/webhooks/:name` accepting
-only `credentialMode`; owner identity comes from the session and only the current
-owner can edit owner mode, without a superadmin override. The gateway's
+409 after verification/signature checks. `enabled: false` makes the hook route return 404 before secret verification (key removed when re-enabled). The bespoke Webhooks page uses
+`GET /api/agents/:id/webhooks` (`name`, `credentialMode`, `enabled`, `url` incl. the URL secret from the extension's secret store in `CONFIG_DIR` via `ensureWebhookSecrets`, base from `resolveWebhookBaseUrl`: `server.baseUrl` first, else DEV/gateway address; never prompts or signing secrets) and `PATCH /api/agents/:id/webhooks/:name` accepting
+`credentialMode` and/or `enabled` in one locked write (`updateAgentWebhook`); owner identity comes from the session and only the current
+owner can edit an owner-mode webhook (either field), without a superadmin override. The gateway's
 `extensions/agent-config-writer.ts` serializes both extension and webhook YAML
 read/check/mutate/write operations under the same directory lock, including env
 updates without nested locking, before config reload.
