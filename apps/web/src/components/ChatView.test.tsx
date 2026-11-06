@@ -680,6 +680,44 @@ describe("ChatView abort handling", () => {
     dispose();
   });
 
+  function pasteFiles(target: HTMLElement, files: File[]) {
+    const event = new Event("paste", { bubbles: true, cancelable: true });
+    Object.defineProperty(event, "clipboardData", { value: { files, getData: () => "" } });
+    target.dispatchEvent(event);
+    return event;
+  }
+
+  it("attaches an image pasted in the composer", async () => {
+    const { container, dispose } = renderView();
+    await tick();
+    const textarea = container.querySelector("textarea") as HTMLTextAreaElement;
+    const event = pasteFiles(textarea, [new File(["png"], "image.png", { type: "image/png" })]);
+    await tick();
+    expect(event.defaultPrevented).toBe(true);
+    expect(container.textContent).toContain("image.png");
+    dispose();
+  });
+
+  it("rejects a pasted image over the upload limit with a clear error", async () => {
+    const { container, dispose } = renderView();
+    await tick();
+    const big = new File(["png"], "image.png", { type: "image/png" });
+    Object.defineProperty(big, "size", { value: 30 * 1024 * 1024 });
+    pasteFiles(container.querySelector("textarea") as HTMLTextAreaElement, [big]);
+    await tick();
+    expect(container.textContent).toContain("image.png is too large (30.0 MB). The limit is 25 MB.");
+    expect(container.querySelector("img.attachment-thumb")).toBeNull();
+    dispose();
+  });
+
+  it("keeps the default paste for text", async () => {
+    const { container, dispose } = renderView();
+    await tick();
+    const event = pasteFiles(container.querySelector("textarea") as HTMLTextAreaElement, []);
+    expect(event.defaultPrevented).toBe(false);
+    dispose();
+  });
+
   it("reconciles a direct stream notice with persisted history without duplicates", async () => {
     let onError: ((text: string) => void) | undefined;
     streamMessageMock.mockImplementation((_agentId, _message, _key, _onText, _onDone, callback) => {
@@ -2932,7 +2970,9 @@ describe("ChatView abort handling", () => {
       { server: "fixture", tool: "draw", resourceUri: "ui://fixture/view.html" });
     await tick();
     expect(container.textContent).toContain("Loading view…");
-    expect(container.querySelector('[title="fixture_draw"]')?.closest(".activity-group")).toBeNull();
+    const row = container.querySelector("#mcp-app-app-a");
+    expect(row).not.toBeNull();
+    expect(row?.closest(".activity-group")).toBeNull();
     dispose();
   });
 
@@ -3016,7 +3056,7 @@ describe("ChatView abort handling", () => {
     sendViewFile(callbacks(), "a-second", { fileId: "a-v2", filename: "a.md", mimeType: "text/markdown", size: 2048, title: "Revised report A" });
     await waitFor(() => expect(queryByTitle(container, "Revised report A file view")).toBe(frameA));
     expect(frameB.isConnected).toBe(true);
-    expect(queryByRole(container, "button", { name: "View updated" })).not.toBeNull();
+    expect(queryByRole(container, "button", { name: "View updated. Click to see it" })).not.toBeNull();
     expect(queryByText(container, "a.md", { exact: true })).not.toBeNull();
     expect(queryByText(container, "b.md", { exact: true })).toBeNull();
     expect(queryByText(container, "MD · 2.0 KB", { exact: true })).not.toBeNull();
@@ -3202,9 +3242,9 @@ describe("ChatView abort handling", () => {
       callbacks()?.onToolResult?.(`app-${id}`, `fixture_draw_${id}`, `Drawing ${id}`, false, undefined, undefined, { ...marker, recordId: `record-${id}` });
     }
     await waitFor(() => expect(container.querySelectorAll("iframe")).toHaveLength(2));
-    const firstInline = queryByTitle(container, "fixture_draw_a")!.closest(".mcp-app-tool-row")!.querySelector("iframe")!;
+    const firstInline = container.querySelector("#mcp-app-app-a")!.querySelector("iframe")!;
     const panelA = await expandApp(container, firstInline);
-    const secondInline = queryByTitle(container, "fixture_draw_b")!.closest(".mcp-app-tool-row")!.querySelector("iframe")!;
+    const secondInline = container.querySelector("#mcp-app-app-b")!.querySelector("iframe")!;
     const panelB = await expandApp(container, secondInline);
     expect(panelB).not.toBe(panelA);
     expect(panelA.isConnected).toBe(false);
@@ -3237,7 +3277,7 @@ describe("ChatView abort handling", () => {
       [{ jsonrpc: "2.0", method: "ui/notifications/tool-input", params: { arguments: { shape: "box" } } }, "https://apps.test"],
       [{ jsonrpc: "2.0", method: "ui/notifications/tool-result", params: { content: [{ type: "text", text: "Box added" }] } }, "https://apps.test"],
     ]);
-    queryByRole(container, "button", { name: "View updated" })!.click();
+    queryByRole(container, "button", { name: "View updated. Click to see it" })!.click();
     expect(document.activeElement).toBe(frame.closest(".mcp-app-tool-row"));
     post.mockRestore();
     dispose();
@@ -3348,7 +3388,7 @@ describe("ChatView abort handling", () => {
       await waitFor(() => expect(container.querySelectorAll("iframe")).toHaveLength(1));
       const initialFrame = container.querySelector("iframe")!;
       expect(loadMcpAppViewMock.mock.calls[0].slice(0, 3)).toEqual(["agent-1", "session-main", "b-latest"]);
-      queryByRole(container, "button", { name: "View updated" })!.click();
+      queryByRole(container, "button", { name: "View updated. Click to see it" })!.click();
       expect(document.activeElement).toBe(initialFrame.closest(".mcp-app-tool-row"));
       const panelFrame = panelOpen ? await expandApp(container, initialFrame) : undefined;
       const markerA = { server: "fixture", tool: "draw_a", resourceUri: "ui://fixture/a.html" };
@@ -3357,9 +3397,9 @@ describe("ChatView abort handling", () => {
         { role: "toolResult", timestamp: 2, toolCallId: "a-older", toolName: "fixture_draw_a", content: [{ type: "text", text: "Older app" }], view: { ...markerA, recordId: "a-older-record" } },
       ] });
       queryByRole(container, "button", { name: "Load earlier messages" })!.click();
-      await waitFor(() => expect(queryByTitle(container, "fixture_draw_a")).not.toBeNull());
+      await waitFor(() => expect(container.querySelector("#mcp-app-a-older")).not.toBeNull());
       await waitFor(() => expect(container.querySelectorAll("iframe")).toHaveLength(2));
-      const olderFrame = queryByTitle(container, "fixture_draw_a")!.closest(".mcp-app-tool-row")!.querySelector("iframe")!;
+      const olderFrame = container.querySelector("#mcp-app-a-older")!.querySelector("iframe")!;
       expect(olderFrame).not.toBe(initialFrame);
       expect(olderFrame.isConnected).toBe(true);
       if (panelFrame) {
@@ -3391,7 +3431,7 @@ describe("ChatView abort handling", () => {
     } finally { dispose(); }
   });
 
-  it.each(["simple", "full"])("mounts a live MCP App result below its label in %s mode", async (mode) => {
+  it.each(["simple", "full"])("mounts a live MCP App result without its tool label in %s mode", async (mode) => {
     routeState.view = mode;
     fetchCapabilitiesMock.mockResolvedValue({ version: 2, extensions: {}, agents: [], apps: { available: true } });
     setCapabilitiesForTests({ apps: { available: true } });
@@ -3401,7 +3441,8 @@ describe("ChatView abort handling", () => {
     callbacks()?.onToolResult?.("app-a", "fixture_draw", "Drawn", false, undefined, undefined, { ...view, recordId: "record-a" });
     await waitFor(() => expect(container.querySelector('iframe[title="fixture MCP App"]')).not.toBeNull());
     const frame = container.querySelector('iframe[title="fixture MCP App"]')!;
-    expect(frame.closest(".mcp-app-tool-row")?.querySelector('[title="fixture_draw"]')).not.toBeNull();
+    expect(frame.closest(".mcp-app-tool-row")).not.toBeNull();
+    expect(queryByTitle(container, "fixture_draw")).toBeNull();
     expect(frame.closest(".activity-group")).toBeNull();
     expect(loadMcpAppViewMock.mock.calls[0]?.slice(0, 3)).toEqual(["agent-1", "session-main", "app-a"]);
     dispose();

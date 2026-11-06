@@ -93,6 +93,28 @@
           background: var(--tool-bg);
         }
 
+        .mcp-app-updated {
+          display: inline-flex;
+          align-items: center;
+          gap: 8px;
+          padding: 8px 14px;
+          border: 1px solid transparent;
+          border-radius: var(--radius-sm);
+          background: var(--bg-accent, var(--accent));
+          color: var(--text-on-accent, #fff);
+          font: inherit;
+          font-size: 13px;
+          font-weight: 600;
+          cursor: pointer;
+        }
+        .mcp-app-updated:hover {
+          background: color-mix(in srgb, var(--bg-accent, var(--accent)) 85%, var(--text-primary));
+        }
+        .mcp-app-updated:focus-visible {
+          outline: 2px solid var(--bg-accent, var(--accent));
+          outline-offset: 2px;
+        }
+
         .header {
           display: flex;
           align-items: center;
@@ -538,10 +560,10 @@
           touch-action: pan-y;
           position: absolute;
           inset: 0;
-          width: min(100%, var(--transcript-width));
+          /* scroll area spans the chat panel; padding keeps the transcript column centered */
+          width: 100%;
           box-sizing: border-box;
-          margin: 0 auto;
-          padding: 36px 18px 150px;
+          padding: 36px max(18px, calc((100% - var(--transcript-width)) / 2 + 18px)) 150px;
           display: flex;
           flex-direction: column;
           gap: 22px;

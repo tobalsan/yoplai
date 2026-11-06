@@ -256,6 +256,20 @@ describe("REST per-agent access gating (multi-user)", () => {
     expect(await get("/api/mcp/catalog", authHeader("alice"))).toBe(404);
   });
 
+  it("allows anonymous MCP client metadata GET without an agent and keeps the exemption exact", async () => {
+    const documentPath = "/api/mcp/oauth/client-metadata.json";
+    expect(await get(documentPath, {})).toBe(404);
+    for (const method of ["POST", "PUT", "PATCH", "DELETE", "HEAD"]) {
+      const response = await fetch(`http://127.0.0.1:${port}${documentPath}`, {
+        method,
+        headers: authHeader("alice"),
+      });
+      expect(response.status).toBe(400);
+    }
+    expect(await get(`${documentPath}/extra`, authHeader("alice"))).toBe(400);
+    expect(await get("/api/mcp/oauth/status", authHeader("alice"))).toBe(400);
+  });
+
   it("guards MCP server list, add, and remove routes by agent access", async () => {
     expect(await get("/api/mcp/servers?agent=allowed-agent", authHeader("mallory"))).toBe(403);
     expect(await get("/api/mcp/servers?agent=allowed-agent", authHeader("alice"))).toBe(404);
