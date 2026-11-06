@@ -2932,7 +2932,9 @@ describe("ChatView abort handling", () => {
       { server: "fixture", tool: "draw", resourceUri: "ui://fixture/view.html" });
     await tick();
     expect(container.textContent).toContain("Loading view…");
-    expect(container.querySelector('[title="fixture_draw"]')?.closest(".activity-group")).toBeNull();
+    const row = container.querySelector("#mcp-app-app-a");
+    expect(row).not.toBeNull();
+    expect(row?.closest(".activity-group")).toBeNull();
     dispose();
   });
 
@@ -3202,9 +3204,9 @@ describe("ChatView abort handling", () => {
       callbacks()?.onToolResult?.(`app-${id}`, `fixture_draw_${id}`, `Drawing ${id}`, false, undefined, undefined, { ...marker, recordId: `record-${id}` });
     }
     await waitFor(() => expect(container.querySelectorAll("iframe")).toHaveLength(2));
-    const firstInline = queryByTitle(container, "fixture_draw_a")!.closest(".mcp-app-tool-row")!.querySelector("iframe")!;
+    const firstInline = container.querySelector("#mcp-app-app-a")!.querySelector("iframe")!;
     const panelA = await expandApp(container, firstInline);
-    const secondInline = queryByTitle(container, "fixture_draw_b")!.closest(".mcp-app-tool-row")!.querySelector("iframe")!;
+    const secondInline = container.querySelector("#mcp-app-app-b")!.querySelector("iframe")!;
     const panelB = await expandApp(container, secondInline);
     expect(panelB).not.toBe(panelA);
     expect(panelA.isConnected).toBe(false);
@@ -3357,9 +3359,9 @@ describe("ChatView abort handling", () => {
         { role: "toolResult", timestamp: 2, toolCallId: "a-older", toolName: "fixture_draw_a", content: [{ type: "text", text: "Older app" }], view: { ...markerA, recordId: "a-older-record" } },
       ] });
       queryByRole(container, "button", { name: "Load earlier messages" })!.click();
-      await waitFor(() => expect(queryByTitle(container, "fixture_draw_a")).not.toBeNull());
+      await waitFor(() => expect(container.querySelector("#mcp-app-a-older")).not.toBeNull());
       await waitFor(() => expect(container.querySelectorAll("iframe")).toHaveLength(2));
-      const olderFrame = queryByTitle(container, "fixture_draw_a")!.closest(".mcp-app-tool-row")!.querySelector("iframe")!;
+      const olderFrame = container.querySelector("#mcp-app-a-older")!.querySelector("iframe")!;
       expect(olderFrame).not.toBe(initialFrame);
       expect(olderFrame.isConnected).toBe(true);
       if (panelFrame) {
@@ -3391,7 +3393,7 @@ describe("ChatView abort handling", () => {
     } finally { dispose(); }
   });
 
-  it.each(["simple", "full"])("mounts a live MCP App result below its label in %s mode", async (mode) => {
+  it.each(["simple", "full"])("mounts a live MCP App result without its tool label in %s mode", async (mode) => {
     routeState.view = mode;
     fetchCapabilitiesMock.mockResolvedValue({ version: 2, extensions: {}, agents: [], apps: { available: true } });
     setCapabilitiesForTests({ apps: { available: true } });
@@ -3401,7 +3403,8 @@ describe("ChatView abort handling", () => {
     callbacks()?.onToolResult?.("app-a", "fixture_draw", "Drawn", false, undefined, undefined, { ...view, recordId: "record-a" });
     await waitFor(() => expect(container.querySelector('iframe[title="fixture MCP App"]')).not.toBeNull());
     const frame = container.querySelector('iframe[title="fixture MCP App"]')!;
-    expect(frame.closest(".mcp-app-tool-row")?.querySelector('[title="fixture_draw"]')).not.toBeNull();
+    expect(frame.closest(".mcp-app-tool-row")).not.toBeNull();
+    expect(queryByTitle(container, "fixture_draw")).toBeNull();
     expect(frame.closest(".activity-group")).toBeNull();
     expect(loadMcpAppViewMock.mock.calls[0]?.slice(0, 3)).toEqual(["agent-1", "session-main", "app-a"]);
     dispose();

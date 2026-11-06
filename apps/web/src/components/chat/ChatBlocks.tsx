@@ -175,7 +175,6 @@ export function McpAppToolRow(props: { agentId: string; sessionId?: string | nul
     target?.focus();
   }
   return <div class="mcp-app-tool-row" id={`mcp-app-${props.toolCallId}`} tabIndex={-1}>
-    <SimpleToolBlock name={props.name} arguments={props.arguments} />
     <Switch fallback={<p role="status">Loading view…</p>}>
       <Match when={role() === "panel-card"}>
         <div class="mcp-app-panel-card">{file()?.title ?? file()?.filename ?? view()?.latest.result?.view?.server} · shown in the side panel</div>
