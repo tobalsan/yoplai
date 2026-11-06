@@ -25,6 +25,23 @@ afterEach(() => {
 });
 
 describe("multi-user middleware", () => {
+  it("allows only the exact MCP client metadata GET without a session", async () => {
+    setRuntime({ auth: { api: { getSession: vi.fn(async () => null) } } });
+    const { createAuthMiddleware } = await import("./middleware.js");
+    const app = new Hono();
+    app.use("/api/*", createAuthMiddleware());
+    app.all("/api/mcp/*", (c) => c.json({ ok: true }));
+
+    const documentPath = "/api/mcp/oauth/client-metadata.json";
+    expect((await app.request(documentPath)).status).toBe(200);
+    for (const method of ["POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"]) {
+      expect((await app.request(documentPath, { method })).status).toBe(401);
+    }
+    for (const url of [`${documentPath}/extra`, "/api/mcp/oauth/status", "/api/mcp/oauth/callback"]) {
+      expect((await app.request(url)).status).toBe(401);
+    }
+  });
+
   it("allows only the exact skill import POST without a session", async () => {
     setRuntime({ auth: { api: { getSession: vi.fn(async () => null) } } });
     const { createAuthMiddleware } = await import("./middleware.js");
