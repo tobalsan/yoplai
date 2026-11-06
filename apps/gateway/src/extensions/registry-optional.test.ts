@@ -38,7 +38,7 @@ describe("optional extension loading", () => {
       const extensions = await loadExtensions(config);
 
       expect(extensions.map((extension) => extension.id)).toEqual([
-        "taskLifecycle", "capabilityDiscovery", "canvas", "sessionHistory",
+        "taskLifecycle", "capabilityDiscovery", "canvas", "webPreview", "sessionHistory",
       ]);
       expect(error.mock.calls.map(([line]) => JSON.parse(String(line)))).toEqual([
         expect.objectContaining({
@@ -85,7 +85,7 @@ describe("optional extension loading", () => {
       const extensions = await reloadExtensions(config);
 
       expect(extensions.map((extension) => extension.id)).toEqual([
-        "taskLifecycle", "capabilityDiscovery", "canvas", "sessionHistory",
+        "taskLifecycle", "capabilityDiscovery", "canvas", "webPreview", "sessionHistory",
       ]);
       expect(error.mock.calls.map(([line]) => JSON.parse(String(line)))).toEqual([
         expect.objectContaining({

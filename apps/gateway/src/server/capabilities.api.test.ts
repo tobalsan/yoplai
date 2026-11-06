@@ -53,7 +53,7 @@ describe("/capabilities API", () => {
       version: 2,
       apps: { available: false },
       // only configured extensions load (heartbeat absent from config)
-      extensions: { canvas: true, sessionHistory: true, scheduler: true },
+      extensions: { canvas: true, webPreview: true, sessionHistory: true, scheduler: true },
       agents: ["main"],
       multiUser: false,
       forkedAgents: false,

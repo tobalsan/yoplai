@@ -507,7 +507,7 @@ describe("multi-user integration", () => {
       await expect(response.json()).resolves.toEqual({
         version: 2,
         apps: { available: false },
-        extensions: { canvas: true, sessionHistory: true },
+        extensions: { canvas: true, webPreview: true, sessionHistory: true },
         agents: ["main"],
         multiUser: false,
         enableCronMonitoring: false,
