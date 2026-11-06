@@ -5,6 +5,7 @@ import { registerNotifyCommand, runNotifyCommand } from "./notify.js";
 
 describe("notify CLI", () => {
   afterEach(() => {
+    vi.unstubAllEnvs();
     delete process.env.YOPLAI_AGENT_ID;
   });
 
@@ -20,6 +21,10 @@ describe("notify CLI", () => {
     expect(notifyCommand?.helpInformation()).toContain("--channel <channel>");
     expect(notifyCommand?.helpInformation()).toContain("--message <text>");
     expect(notifyCommand?.helpInformation()).toContain("--from <agentId>");
+    expect(notifyCommand?.helpInformation()).toContain("Send a Discord, Slack or Mattermost notification");
+    expect(notifyCommand?.helpInformation()).toContain("discord, slack, mattermost, or all (both is an alias)");
+    expect(notifyCommand?.helpInformation()).toContain('(default: "all")');
+    expect(notifyCommand?.helpInformation().replace(/\s+/g, " ")).toContain("Discord/Slack user id; Mattermost username");
   });
 
   it("passes invalid surfaces through runtime validation before adapters run", async () => {
@@ -273,5 +278,104 @@ describe("notify CLI", () => {
       )
     ).rejects.toThrow(/Unknown notify agent "pom"/);
     expect(notifyImpl).not.toHaveBeenCalled();
+  });
+
+  it("uses the notify agent's Mattermost url and token together", async () => {
+    const notifyImpl = vi.fn().mockResolvedValue({ ok: true, results: [] });
+    const config = GatewayConfigSchema.parse({
+      agents: [{
+        id: "notifier",
+        name: "Notifier",
+        workspace: "/nonexistent/notify-test-agent",
+        model: { provider: "anthropic", model: "claude" },
+        mattermost: {
+          url: "https://agent.mattermost.example.com",
+          token: "fake-agent-mattermost-token",
+        },
+      }],
+      extensions: {
+        mattermost: {
+          url: "https://root.mattermost.example.com",
+          token: "fake-root-mattermost-token",
+        },
+      },
+      notifications: { channels: { default: { mattermost: "fake-channel-id" } } },
+    });
+
+    await runNotifyCommand(
+      { from: "notifier", channel: "default", message: "hello", surface: "mattermost" },
+      { loadConfig: () => config, resolveConfig: async (value) => value, notifyImpl }
+    );
+
+    expect(notifyImpl).toHaveBeenCalledWith(expect.objectContaining({
+      mattermostUrl: "https://agent.mattermost.example.com",
+      mattermostToken: "fake-agent-mattermost-token",
+    }));
+  });
+
+  it.each([undefined, "notifier"])("uses the root Mattermost pair without an agent block (%s)", async (from) => {
+    const notifyImpl = vi.fn().mockResolvedValue({ ok: true, results: [] });
+    const config = GatewayConfigSchema.parse({
+      agents: [{
+        id: "notifier",
+        name: "Notifier",
+        workspace: "/nonexistent/notify-test-agent",
+        model: { provider: "anthropic", model: "claude" },
+      }],
+      extensions: {
+        mattermost: {
+          url: "https://root.mattermost.example.com",
+          token: "fake-root-mattermost-token",
+        },
+      },
+      notifications: { channels: { default: { mattermost: "fake-channel-id" } } },
+    });
+
+    await runNotifyCommand(
+      { from, channel: "default", message: "hello" },
+      { loadConfig: () => config, resolveConfig: async (value) => value, notifyImpl }
+    );
+
+    expect(notifyImpl).toHaveBeenCalledWith(expect.objectContaining({
+      mattermostUrl: "https://root.mattermost.example.com",
+      mattermostToken: "fake-root-mattermost-token",
+    }));
+  });
+
+  it.each([
+    { from: undefined, url: "https://root.mattermost.example.com", token: "fake-root-env-token" },
+    { from: "notifier", url: "https://agent.mattermost.example.com", token: "fake-agent-env-token" },
+  ])("resolves Mattermost env references through startup config ($from)", async ({ from, url, token }) => {
+    vi.stubEnv("HOME", "/nonexistent/notify-test-home");
+    vi.stubEnv("TEST_NOTIFY_MM_URL", "https://root.mattermost.example.com");
+    vi.stubEnv("TEST_NOTIFY_MM_TOKEN", "fake-root-env-token");
+    const notifyImpl = vi.fn().mockResolvedValue({ ok: true, results: [] });
+    const config = GatewayConfigSchema.parse({
+      agents: [{
+        id: "notifier",
+        name: "Notifier",
+        workspace: "/nonexistent/notify-test-agent",
+        model: { provider: "anthropic", model: "claude" },
+        mattermost: { url: "$env:TEST_NOTIFY_MM_URL", token: "$env:TEST_NOTIFY_MM_TOKEN" },
+      }],
+      env: {
+        TEST_NOTIFY_MM_URL: "https://agent.mattermost.example.com",
+        TEST_NOTIFY_MM_TOKEN: "fake-agent-env-token",
+      },
+      extensions: {
+        mattermost: { url: "$env:TEST_NOTIFY_MM_URL", token: "$env:TEST_NOTIFY_MM_TOKEN" },
+      },
+      notifications: { channels: { default: { mattermost: "fake-channel-id" } } },
+    });
+
+    await runNotifyCommand(
+      { from, channel: "default", message: "hello" },
+      { loadConfig: () => config, notifyImpl }
+    );
+
+    expect(notifyImpl).toHaveBeenCalledWith(expect.objectContaining({
+      mattermostUrl: url,
+      mattermostToken: token,
+    }));
   });
 });

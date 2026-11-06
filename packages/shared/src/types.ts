@@ -1051,6 +1051,7 @@ export type MattermostAgentConfig = z.infer<typeof MattermostAgentConfigSchema>;
 export const NotificationChannelConfigSchema = z.object({
   discord: z.string().min(1).optional(),
   slack: z.string().min(1).optional(),
+  mattermost: z.string().min(1).optional(),
 });
 export type NotificationChannelConfig = z.infer<
   typeof NotificationChannelConfigSchema

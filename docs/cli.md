@@ -21,7 +21,7 @@ yoplai gateway ...          run or manage gateway (`idle` checks for running wor
 yoplai agent list           list agents
 yoplai agents migrate       migrate centralized v2 agents to v3 folders
 yoplai send ...             send agent message
-yoplai notify ...           send configured channel notification
+yoplai notify ...           send Discord, Slack or Mattermost notification
 yoplai models refresh       refresh Pi's cached model catalogs
 yoplai model-routing report --since <ISO-date>  evaluate fresh local shadow sessions (`--until`, repeatable `--agent`, `--json`, `--out`)
 yoplai auth ...             provider OAuth login/status/logout
@@ -49,12 +49,15 @@ Use `--help` for current flags. Extension command details:
 pnpm yoplai agent list
 pnpm yoplai send -a my-agent -m "Hello"
 pnpm yoplai notify --channel default --message "Build finished"
+pnpm yoplai notify --from my-agent --channel default --surface mattermost --mention alex --message "Build finished"
 pnpm yoplai projects list --status active
 pnpm yoplai slices list --project PRO-1
 pnpm yoplai subagents profiles
 pnpm yoplai models refresh
 pnpm yoplai auth status
 ```
+
+`notify --surface` accepts `discord`, `slack`, `mattermost`, or `all` (the default). `all` sends to every surface configured on the channel key; `both` is a compatibility alias. For Mattermost, `--mention` takes a username, not a user ID: `alex` or `@alex` prefixes `@alex`. An ID is used as given and will not ping a user. Discord and Slack mentions still take user IDs. Mattermost credentials come as a pair from the `--from` agent's `mattermost` block, otherwise root `extensions.mattermost` (see [notification channels](configuration.md#notification-channels)).
 
 ## Remote gateway targeting
 

@@ -50,6 +50,7 @@ export async function runNotifyCommand(
   if (agentId && !agent) {
     throw new Error(`Unknown notify agent "${agentId}"`);
   }
+  const mattermost = agent?.mattermost ?? config.extensions?.mattermost;
 
   const summary = await (deps.notifyImpl ?? notify)({
     config: config.notifications,
@@ -59,6 +60,8 @@ export async function runNotifyCommand(
     mention: options.mention,
     discordToken: agent?.discord?.token ?? config.extensions?.discord?.token,
     slackToken: agent?.slack?.token ?? config.extensions?.slack?.token,
+    mattermostUrl: mattermost?.url,
+    mattermostToken: mattermost?.token,
   });
 
   printNotifyResults(summary);
@@ -71,11 +74,11 @@ export function registerNotifyCommand(
 ): Command {
   program
     .command("notify")
-    .description("Send a Discord or Slack notification")
+    .description("Send a Discord, Slack or Mattermost notification")
     .requiredOption("--channel <channel>", "Notification channel key")
     .requiredOption("--message <text>", "Message text")
-    .option("--surface <surface>", "discord, slack, or both", "both")
-    .option("--mention <userId>", "Mention user id")
+    .option("--surface <surface>", "discord, slack, mattermost, or all (both is an alias)", "all")
+    .option("--mention <username>", "Mention user (Discord/Slack user id; Mattermost username)")
     .option("--from <agentId>", "Resolve bot tokens from an agent config")
     .action(async (options: NotifyCommandOptions) => {
       try {

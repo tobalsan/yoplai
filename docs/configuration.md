@@ -116,7 +116,7 @@ Core `yoplai.json` fields:
 | `modelRouting`                       | Session routing classifier/table; `mode` defaults `off`; see [routing guide](model-routing.md) |
 | `modelQuota`                         | Host subscription polling; `enabled` defaults `false` (restart required); see [quota ownership](model-routing.md#poller-ownership-per-host) |
 | `branding`                           | Optional organization name/logo/icon                                |
-| `notifications.channels`             | Named Discord/Slack delivery targets                                |
+| `notifications.channels`             | Named Discord/Slack/Mattermost delivery targets                     |
 | `dream`                              | Global nightly-consolidation prompt/timeout/window                  |
 | `env`                                | Lowest-precedence instance env values; prefer `.env` for secrets    |
 | `taskboard`, `projects`, `subagents` | Legacy/compatibility config surfaces; prefer owning extensions      |
@@ -199,12 +199,22 @@ Named channels are referenced by scheduler, project orchestration, and `yoplai n
 {
   "notifications": {
     "channels": {
-      "default": { "slack": "C0123456789" },
+      "default": { "slack": "C0123456789", "mattermost": "abcdefghijklmnopqrstuvwxyz" },
       "alerts": { "discord": "1234567890" }
+    }
+  },
+  "extensions": {
+    "mattermost": {
+      "url": "$env:MATTERMOST_URL",
+      "token": "$env:MATTERMOST_BOT_TOKEN"
     }
   }
 }
 ```
+
+`mattermost` is a channel ID (normally 26 characters), not a channel name. For example, `MATTERMOST_URL` can be `https://mattermost.example.com`. Mattermost uses the `--from` agent's top-level `mattermost` block when present, otherwise root `extensions.mattermost`; its `url` and `token` always come from the same block. Both accept `$env:NAME` references, including agent-local env values.
+
+The default notify surface, `all`, sends to every surface with an ID on the channel key; `both` remains an alias of `all`. Explicit `discord`, `slack`, or `mattermost` selects only that surface. A configured surface with missing credentials returns a failed result; the overall notification succeeds if any surface succeeds. `notifications.adminChannel` can name a Mattermost channel key for provider-quota alerts, and orchestrator HITL channels use these same targets.
 
 ## Extensions
 

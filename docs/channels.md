@@ -85,6 +85,8 @@ Works with self-hosted Mattermost and Mattermost Cloud (tested on 12.0). The bot
 
 Only the channels listed under `channels` are served; posts anywhere else are ignored. Each channel exchange is threaded, and each thread is one durable agent session. A dedicated bot per agent goes in the agent's `agent.yaml` as `mattermost: { url, token, channels, dm }`.
 
+The same bot URL and token also serve `yoplai notify --surface mattermost`. Configure the destination channel ID under `notifications.channels.<key>.mattermost`; notify uses the `--from` agent's `mattermost` block, otherwise root `extensions.mattermost` (see [notification channels](configuration.md#notification-channels)).
+
 Server setup, as a system admin:
 
 1. **Allow bot accounts.** System Console › Integrations › Bot Accounts › _Enable Bot Account Creation_: true.
