@@ -272,6 +272,7 @@ export function createMcpAppRoutes(deps: {
             if (Array.isArray(body) || request.jsonrpc !== "2.0" || !("id" in request) || (request.id !== null && typeof request.id !== "string" && typeof request.id !== "number") || typeof request.method !== "string") return response(-32600, "Invalid Request", "invalid_request");
             audit.method = request.method;
             if (request.method === "ui/update-model-context") {
+              if (record.server === "yoplai") return response(-32601, "Method not found", "method_not_found");
               audit.size = 0;
               const params = object(request.params);
               if (params !== request.params || (params.content !== undefined && !Array.isArray(params.content)) || (params.structuredContent !== undefined && object(params.structuredContent) !== params.structuredContent)) return response(-32602, "Invalid params", "invalid_params");

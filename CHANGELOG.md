@@ -12,6 +12,7 @@ Breaking changes are marked **⚠ BREAKING**.
 ### Added
 
 - Anonymous GET access to the MCP OAuth client metadata document, without an agent query parameter, for Client ID Metadata Document authorization.
+- File views render PDF pages (first 50, including generic-typed `.pdf`) and Markdown Mermaid diagrams through pinned jsDelivr libraries in the opaque report frame. Invalid/protected PDFs or library failures keep the file card and Download; broken diagrams keep their source, and plain Markdown needs no CDN. File views refuse chat messages and model-context updates.
 - File views in web chat show their title, type, size and original Download, reuse each exact filename separately, and hide only the currently displayed file's duplicate card. Older versions and unavailable views keep their cards, including across reload and Expand/Collapse.
 - `send_file` displays HTML, sanitized Markdown, images (including SVG), text, JSON and CSV in a built-in web chat MCP App viewer, with replay, optional titles and file-scoped access. HTML reports run in an opaque sandbox with CDN scripts/fonts and no API connections; unsupported or oversized files remain cards.
 - Agent-sent PNG, JPEG, GIF and WebP files appear inline in web chat with an accessible lightbox and original downloads. New `send_file` outputs infer missing MIME types from their filenames; SVG and older generic files remain download cards.

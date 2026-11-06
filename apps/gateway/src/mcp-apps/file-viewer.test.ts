@@ -39,6 +39,62 @@ function viewer() {
 }
 
 describe("built-in file viewer", () => {
+  it.each([false, true])("loads Pele only for Markdown with a Mermaid fence (%s)", async (diagram) => {
+    const app = viewer();
+    await app.ready();
+    await app.result("diagram.md", "text/markdown", diagram ? "```mermaid\ngraph TD\nA --> B\n```" : "# Plain note\n\nAvailable offline.");
+    let frame!: HTMLIFrameElement;
+    await vi.waitFor(() => { frame = getByTitle(app.dom.window.document.body, "diagram.md") as HTMLIFrameElement; });
+    const report = new JSDOM(frame.srcdoc, { runScripts: "dangerously" });
+    windows.push(report);
+    expect(Array.from(report.window.document.querySelectorAll<HTMLScriptElement>("script[src]"), (script) => script.src)).toEqual(diagram ? ["https://cdn.jsdelivr.net/npm/pele@1.9.0/dist/pele.global.js"] : []);
+    expect(app.dom.window.document.querySelector("script[src]")).toBeNull();
+  });
+  it("accepts PDF fallback only from its current PDF frame and recovers on the next file", async () => {
+    const app = viewer();
+    await app.ready();
+    await app.result("damaged.pdf", "application/pdf", "JVBERg==", true);
+    let frame!: HTMLIFrameElement;
+    await vi.waitFor(() => { frame = getByTitle(app.dom.window.document.body, "damaged.pdf") as HTMLIFrameElement; });
+    const fallback = (source: Window | null) => app.dom.window.dispatchEvent(new app.dom.window.MessageEvent("message", { data: { type: "yoplai-file-fallback" }, source }));
+    fallback(app.host.window as unknown as Window);
+    expect(frame.isConnected).toBe(true);
+    fallback(frame.contentWindow);
+    expect(getByRole(app.dom.window.document.body, "main").textContent).toContain("damaged.pdf");
+    expect(frame.isConnected).toBe(false);
+    for (const [name, mime, text] of [["note.md", "text/markdown", "# Still readable"], ["report.html", "text/html", "<h1>Report</h1>"]]) {
+      await app.result(name, mime, text);
+      let next!: HTMLIFrameElement;
+      await vi.waitFor(() => { next = getByTitle(app.dom.window.document.body, name) as HTMLIFrameElement; });
+      fallback(frame.contentWindow);
+      fallback(next.contentWindow);
+      expect(next.isConnected).toBe(true);
+    }
+  });
+  it("keeps a PDF without binary content available as a file card", async () => {
+    const app = viewer();
+    await app.ready();
+    await app.result("missing.pdf", "application/pdf", "");
+    await vi.waitFor(() => expect(getByRole(app.dom.window.document.body, "main").textContent).toContain("missing.pdf"));
+    expect(app.dom.window.document.querySelector("iframe")).toBeNull();
+  });
+  it.each(["application/pdf", "application/octet-stream"])("opens a %s PDF in an opaque frame and transfers its bytes after load", async (mime) => {
+    const app = viewer();
+    await app.ready();
+    await app.result("sample.pdf", mime, "JVBERg==", true);
+    let frame!: HTMLIFrameElement;
+    await vi.waitFor(() => { frame = getByTitle(app.dom.window.document.body, "sample.pdf") as HTMLIFrameElement; });
+    expect(frame.getAttribute("sandbox")).toBe("allow-scripts");
+    const delivered = vi.fn<(message: { type: string; data: ArrayBuffer }, target: unknown, transfer?: Transferable[]) => void>();
+    vi.spyOn(frame.contentWindow!, "postMessage").mockImplementation(delivered);
+    frame.dispatchEvent(new app.dom.window.Event("load"));
+    expect(delivered).toHaveBeenCalledTimes(1);
+    const [message, target, transfer] = delivered.mock.calls[0];
+    expect(message.type).toBe("yoplai-file-pdf");
+    expect(Array.from(new Uint8Array(message.data))).toEqual([37, 80, 68, 70]);
+    expect(target).toBe("*");
+    expect(transfer).toEqual([message.data]);
+  });
   it("initializes the stable protocol and reads a tool result as visible text", async () => {
     const app = viewer();
     await app.ready();
@@ -50,9 +106,14 @@ describe("built-in file viewer", () => {
     const app = viewer();
     await app.ready();
     await app.result("notes.md", "text/markdown", '# Release notes\n\n| Status | Count |\n| --- | --- |\n| Ready | 3 |\n\n<script>window.reportRan = true</script><img alt="Unsafe image" src=x onerror="window.reportRan = true">');
-    await vi.waitFor(() => expect(getByRole(app.dom.window.document.body, "heading", { name: "Release notes" })).toBeDefined());
-    expect(getByRole(app.dom.window.document.body, "table").textContent).toContain("Ready");
-    getByRole(app.dom.window.document.body, "img", { name: "Unsafe image" }).dispatchEvent(new app.dom.window.Event("error"));
+    let frame!: HTMLIFrameElement;
+    await vi.waitFor(() => { frame = getByTitle(app.dom.window.document.body, "notes.md") as HTMLIFrameElement; });
+    const report = new JSDOM(frame.srcdoc, { runScripts: "dangerously" });
+    windows.push(report);
+    expect(getByRole(report.window.document.body, "heading", { name: "Release notes" })).toBeDefined();
+    expect(getByRole(report.window.document.body, "table").textContent).toContain("Ready");
+    getByRole(report.window.document.body, "img", { name: "Unsafe image" }).dispatchEvent(new report.window.Event("error"));
+    expect(Reflect.get(report.window, "reportRan")).toBeUndefined();
     expect(Reflect.get(app.dom.window, "reportRan")).toBeUndefined();
   });
 
@@ -98,17 +159,21 @@ describe("built-in file viewer", () => {
     await app.result("broken.json", "application/json", '{invalid');
     await vi.waitFor(() => expect(getByRole(app.dom.window.document.body, "main").textContent).toBe('{invalid'));
     await app.result("notes.MD", "", "# Readable notes");
-    await vi.waitFor(() => expect(getByRole(app.dom.window.document.body, "heading", { name: "Readable notes" })).toBeDefined());
+    let frame!: HTMLIFrameElement;
+    await vi.waitFor(() => { frame = getByTitle(app.dom.window.document.body, "notes.MD") as HTMLIFrameElement; });
+    const report = new JSDOM(frame.srcdoc);
+    windows.push(report);
+    expect(getByRole(report.window.document.body, "heading", { name: "Readable notes" })).toBeDefined();
   });
 
   it("shows unsupported files as name, MIME type and size cards", async () => {
     const app = viewer();
     await app.ready();
-    await app.result("invoice.pdf", "application/pdf", "UERG", true);
-    await vi.waitFor(() => expect(getByRole(app.dom.window.document.body, "main").textContent).toContain("invoice.pdf"));
-    expect(getByRole(app.dom.window.document.body, "main").textContent).toContain("application/pdf");
+    await app.result("archive.zip", "application/zip", "UEs=", true);
+    await vi.waitFor(() => expect(getByRole(app.dom.window.document.body, "main").textContent).toContain("archive.zip"));
+    expect(getByRole(app.dom.window.document.body, "main").textContent).toContain("application/zip");
     expect(getByRole(app.dom.window.document.body, "main").textContent).toContain("4 B");
-    expect(getByRole(app.dom.window.document.body, "main").textContent).not.toContain("UERG");
+    expect(getByRole(app.dom.window.document.body, "main").textContent).not.toContain("UEs=");
   });
 
   it("keeps oversized files readable as a metadata card after a too_large RPC error", async () => {
@@ -202,14 +267,26 @@ describe("built-in file viewer", () => {
   it("reports short content height and routes Markdown links through the host", async () => {
     const app = viewer();
     await app.ready();
-    await app.result("links.md", "text/markdown", "A short note.\n\n[Read more](http://example.test/read) [Email](mailto:hello@example.test)");
-    await vi.waitFor(() => expect(getByRole(app.dom.window.document.body, "link", { name: "Read more" })).toBeDefined());
-    expect(app.messages.filter((message) => message.method === "ui/notifications/size-changed").at(-1)).toMatchObject({ params: { height: 40 } });
-    getByRole(app.dom.window.document.body, "link", { name: "Read more" }).click();
+    await app.result("links.md", "text/markdown", 'A short note.\n\n[Read more](http://example.test/read) [Email](mailto:hello@example.test) [Inside](#section)\n\n<h2 id="section">Section</h2>');
+    let frame!: HTMLIFrameElement;
+    await vi.waitFor(() => { frame = getByTitle(app.dom.window.document.body, "links.md") as HTMLIFrameElement; });
+    const scroll = vi.fn();
+    const report = new JSDOM(frame.srcdoc, {
+      runScripts: "dangerously",
+      beforeParse(window) {
+        Object.defineProperty(window, "parent", { value: { postMessage: (data: unknown) => app.dom.window.dispatchEvent(new app.dom.window.MessageEvent("message", { data, source: frame.contentWindow })) } });
+        window.HTMLElement.prototype.scrollIntoView = scroll;
+      },
+    });
+    windows.push(report);
+    getByRole(report.window.document.body, "link", { name: "Read more" }).click();
     expect(app.messages.at(-1)).toMatchObject({ method: "ui/open-link", params: { url: "http://example.test/read" } });
     const before = app.messages.length;
-    getByRole(app.dom.window.document.body, "link", { name: "Email" }).click();
+    getByRole(report.window.document.body, "link", { name: "Email" }).click();
     expect(app.messages).toHaveLength(before);
+    getByRole(report.window.document.body, "link", { name: "Inside" }).click();
+    expect(scroll.mock.contexts).toEqual([getByRole(report.window.document.body, "heading", { name: "Section" })]);
+    await vi.waitFor(() => expect(app.messages.filter((message) => message.method === "ui/notifications/size-changed").at(-1)).toMatchObject({ params: { height: 40 } }));
   });
 
   it.each(["result", "error"])("keeps the latest file visible when an older read returns a late %s", async (outcome) => {

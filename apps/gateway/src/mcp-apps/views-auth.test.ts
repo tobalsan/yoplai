@@ -183,6 +183,25 @@ describe("MCP Apps authenticated ownership", () => {
     expect(await fs.readFile(path.join(home, "sessions", "users", alice.id, "history", "2026-10-24T12-00-00-000Z_main-owned-chat.jsonl"), "utf8")).toBe("");
   });
 
+  it("refuses model context from a yoplai file view and audits the refusal", async () => {
+    const sessionId = "file-chat";
+    await seed(alice.id, sessionId, alice.id);
+    const filename = path.join(home, "sessions", "users", alice.id, "history", "mcp-apps", "main", sessionId, "abcdef0123456789abcdef0123456789.json");
+    const record = JSON.parse(await fs.readFile(filename, "utf8"));
+    await fs.writeFile(filename, JSON.stringify({ ...record, server: "yoplai", resourceUri: "ui://yoplai/file-viewer" }));
+    const log = vi.spyOn(console, "log");
+    try {
+      const response = await post(alice, route.replace("owned-chat", sessionId) + "/rpc", { jsonrpc: "2.0", id: "file-context", method: "ui/update-model-context", params: { content: [{ type: "text", text: "Private file selection" }] } });
+      expect(response.status).toBe(200);
+      expect(await response.json()).toEqual({ jsonrpc: "2.0", id: "file-context", error: { code: -32601, message: "Method not found" } });
+      const lines = log.mock.calls.flatMap(([line]) => typeof line === "string" && line.startsWith("{") ? [JSON.parse(line)] : []);
+      expect(lines.filter((line) => line.msg === "MCP Apps operation" && line.session === sessionId)).toEqual([
+        expect.objectContaining({ server: "yoplai", method: "ui/update-model-context", outcome: "method_not_found" }),
+      ]);
+      expect(JSON.stringify(lines)).not.toContain("Private file selection");
+    } finally { log.mockRestore(); }
+  });
+
   // ALG-600 seam approval: 9de9b656-b0db-413c-8e8f-6707c6aece4d.
   it("stores the latest normalized view context through authenticated RPC without changing user history", async () => {
     const contexts = await import("./view-context.js");

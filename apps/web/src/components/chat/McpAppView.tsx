@@ -180,7 +180,7 @@ export function McpAppView(props: { agentId: string; sessionId: string; viewKey:
         reply({
           protocolVersion: "2026-01-26",
           hostInfo: { name: "Yoplai", version },
-          hostCapabilities: { openLinks: {}, serverTools: {}, serverResources: {}, logging: {}, ...(props.onUserMessage ? { message: { text: {} } } : {}), updateModelContext: { text: {}, structuredContent: {} }, sandbox: { permissions: {}, csp: data.csp } },
+          hostCapabilities: { openLinks: {}, serverTools: {}, serverResources: {}, logging: {}, ...(data.server !== "yoplai" && props.onUserMessage ? { message: { text: {} } } : {}), ...(data.server !== "yoplai" ? { updateModelContext: { text: {}, structuredContent: {} } } : {}), sandbox: { permissions: {}, csp: data.csp } },
           hostContext: { displayMode, availableDisplayModes: ["inline", "fullscreen"], containerDimensions: dimensions() },
         });
       } else if (notification && message.method === "ui/notifications/initialized" && initializing && !initialized) {
@@ -200,7 +200,9 @@ export function McpAppView(props: { agentId: string; sessionId: string; viewKey:
         catch { return; }
         log(params.level, text);
       } else if (initialized && !notification && typeof message.method === "string") {
-        if (message.method === "tools/call" || message.method === "resources/read" || message.method === "ui/update-model-context") {
+        if (data.server === "yoplai" && (message.method === "ui/message" || message.method === "ui/update-model-context")) {
+          error(-32601, "Method not found");
+        } else if (message.method === "tools/call" || message.method === "resources/read" || message.method === "ui/update-model-context") {
           const timer = setTimeout(fail, 32000);
           relayTimers.add(timer);
           const relayCallId = data.server === "yoplai" && message.method === "resources/read" ? deliveredCallId : toolCallId;

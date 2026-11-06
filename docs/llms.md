@@ -558,9 +558,20 @@ model text remains `File sent to user`. Both runners mark the call as the built-
 result reference. The reserved server name `yoplai` cannot capture external views.
 The built-in provider works without the MCP extension, reads only the captured
 file URI for that record's agent and caps reads at 10 MB. It refuses tools.
-The bundled viewer renders reports, Markdown, images, text and data; HTML runs
-in a nested opaque sandbox with no connections and an allowlist of CDN/font hosts.
-SVG remains an image, Markdown is sanitized, and unsupported/oversized files show cards.
+The bundled viewer renders reports, Markdown, PDF pages, images, text and data.
+HTML, sanitized Markdown and PDFs share a nested opaque script-only sandbox with
+no connections and the existing allowlist of CDN/font hosts. PDF.js 5.4.624 and
+Pele 1.9.0 load only in that frame from jsDelivr; plain Markdown loads no CDN script.
+Mermaid fences become accessible SVG diagrams; broken blocks stay code. PDFs
+(also generic MIME plus `.pdf`) draw accessible full-width pages at screen pixel
+density, including after resizing; only the first 50 pages render with a total
+and Download note. Invalid/protected PDFs, missing bytes and library failures
+(including a 10-second import timeout) show the card with the existing Download.
+No PDF search, zoom or text selection; connection-dependent fonts, CMaps and Wasm
+decoders are unavailable. SVG remains an image and unsupported/oversized files
+show cards. File views (`server: yoplai`) advertise neither message nor model
+context and refuse `ui/message` and `ui/update-model-context` with `-32601`;
+other servers retain their existing behavior.
 The viewer accepts repeated tool results; web `appViews` owns exact-filename
 reuse. Built-in resource RPC follows the last delivered result call;
 other app RPC retains its initial call identity. Media downloads use `nosniff`.
@@ -581,7 +592,7 @@ The second listener serves only `GET /sandbox/:ticket` and `GET /content/:ticket
 
 The bootstrap is a **private ticket-based variant** of the MCP Apps sandbox-proxy protocol: it posts `ui/notifications/sandbox-proxy-ready` to the ticket's trusted chat origin; on parent `ui/notifications/sandbox-resource-ready` it creates an inner iframe (`allow-scripts allow-same-origin allow-forms`) loading the ticket's content URL. Unlike the reference host, HTML comes from the ticket snapshot; the host message may send empty `html`. Slice 1c must use this variant. No `document.referrer` check is used because the chat sends no referrer. Every relay checks source and origin (parent/chat or inner frame/apps), preserves other JSON-RPC messages unchanged and consumes sandbox notifications without forwarding them from the child.
 
-Configuration: root `apps.origin` and `apps.port` (default 4001), with the main bind host. Trusted origins come from the auth origin resolver even in single-user mode; `POST view` uses `Origin`, never Host/forwarded headers. Only local chats get an automatic origin, the other loopback host (`localhost`/`*.localhost` chat gets `127.0.0.1`, loopback IP chat gets `localhost`); remote chats need explicit HTTPS apps origin on another hostname. Listener failure or ineligible origin yields text-only fallback. See [configuration](configuration.md#mcp-apps). Capability discovery advertises MCP Apps UI support and omits normalized app-only tools. The main chat hosts inline views or one resizable side panel; `ui/message` posts text as the viewer through the shared composer send path with slash-command, rate, preparation, loading, upload, impersonation and non-queue busy guards; its capability is present only with the host callback. `ui/update-model-context` always advertises text and structured content, validates before replacing, and keeps the latest per-view context in gateway memory (16 KiB UTF-8 per update, 8 views/session, 1000 entries globally, least-recently-updated eviction). Empty updates clear, invalid replacements retain the old value; session deletion and gateway restart clear it. Audit records lengths/sizes and outcomes without content.
+Configuration: root `apps.origin` and `apps.port` (default 4001), with the main bind host. Trusted origins come from the auth origin resolver even in single-user mode; `POST view` uses `Origin`, never Host/forwarded headers. Only local chats get an automatic origin, the other loopback host (`localhost`/`*.localhost` chat gets `127.0.0.1`, loopback IP chat gets `localhost`); remote chats need explicit HTTPS apps origin on another hostname. Listener failure or ineligible origin yields text-only fallback. See [configuration](configuration.md#mcp-apps). Capability discovery advertises MCP Apps UI support and omits normalized app-only tools. The main chat hosts inline views or one resizable side panel; `ui/message` posts text as the viewer through the shared composer send path with slash-command, rate, preparation, loading, upload, impersonation and non-queue busy guards; its capability is present only with the host callback. For non-file MCP Apps, `ui/update-model-context` advertises text and structured content, validates before replacing, and keeps the latest per-view context in gateway memory (16 KiB UTF-8 per update, 8 views/session, 1000 entries globally, least-recently-updated eviction). Empty updates clear, invalid replacements retain the old value; session deletion and gateway restart clear it. Audit records lengths/sizes and outcomes without content.
 
 The web host lives in `apps/web/src/components/chat/McpAppView.tsx`: one lifetime owns bootstrap/initialize ordering, viewer RPC/logging, origin/source/message checks, display modes, size, deadlines and teardown. Identity is agent/session/view key; its initial call anchors resource/RPC/log requests. `api/mcp-apps.ts` is the HTTP seam. `appViews` keys reuse by `server + "\n" + resourceUri`, appending `"\n" + file.filename` for file references, hosts the earliest loaded captured call, delivers the latest captured call, and gives later rows a "View updated" link ("Updating view…" while pending for non-file calls). Exact basename matches share a file view even across directories; pending file calls lack file metadata and do not join a successful filename group. Failed captures keep their text fallback and do not replace the live view. Reuse data fetches have abort/generation guards and a 32-second deadline; errors keep the last delivered data.
 
