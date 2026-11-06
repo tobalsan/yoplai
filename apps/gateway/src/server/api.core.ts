@@ -29,8 +29,12 @@ import {
 } from "../extensions/catalog.js";
 import {
   updateAgentExtensionConfig,
+  updateAgentWebhook,
+  WebhookConfigUpdateError,
   type ExtensionConfigPatch,
+  type WebhookPatch,
 } from "../extensions/agent-config-writer.js";
+import { ensureWebhookSecrets, resolveWebhookBaseUrl, webhookSecretKey } from "@yoplai/extension-webhooks";
 import {
   runAgent,
   getAllSessionsForAgent,
@@ -41,7 +45,7 @@ import {
   isStreaming,
 } from "../agents/index.js";
 import type { FullHistoryMessage, SimpleHistoryMessage, HistoryViewMode } from "@yoplai/shared";
-import type { AgentConfig, GatewayConfig } from "@yoplai/shared";
+import type { AgentConfig, GatewayConfig, WebhookConfig } from "@yoplai/shared";
 import {
   getSessionEntry,
   getSessionThinkLevel,
@@ -927,6 +931,54 @@ api.get("/agents/:id/extensions", async (c) => {
   }
   const extensions = await requesterExtensionCatalog(c, config, resolved.agent, resolved.configurable);
   return c.json({ agentId, extensions });
+});
+
+async function webhookSettings(agentId: string, name: string, webhook: WebhookConfig) {
+  const ownerUserId = webhook.credentialMode === "owner" ? webhook.ownerUserId : undefined;
+  let ownerDisplayName: string | undefined;
+  if (ownerUserId && isExtensionLoaded("multiUser")) {
+    const { getMultiUserRuntime } = await import("@yoplai/extension-multi-user");
+    const owner = getMultiUserRuntime()?.db.prepare("SELECT name FROM user WHERE id = ?").get(ownerUserId) as { name?: string } | undefined;
+    ownerDisplayName = owner?.name || "Unknown user";
+  }
+  // Same secret store as the webhooks extension; ensure so the URL is always present.
+  const secrets = ensureWebhookSecrets(CONFIG_DIR, [{ id: agentId, webhooks: { [name]: webhook } } as AgentConfig]).secrets;
+  const url = `${resolveWebhookBaseUrl(loadConfig())}/hooks/${agentId}/${name}/${secrets[webhookSecretKey(agentId, name)]}`;
+  return { name, credentialMode: webhook.credentialMode ?? "team", enabled: webhook.enabled !== false, url, ...(ownerUserId ? { ownerUserId } : {}), ...(ownerDisplayName ? { ownerDisplayName } : {}) };
+}
+
+api.get("/agents/:id/webhooks", async (c) => {
+  const agentId = c.req.param("id");
+  if (!(await canConfigureAgentExtensions(c, agentId))) return c.json({ error: "forbidden" }, 403);
+  const agent = findWritableExtensionAgent(loadConfig(), agentId);
+  if (!agent) return c.json({ error: "Agent not found" }, 404);
+  return c.json(await Promise.all(Object.entries(agent.webhooks ?? {}).map(([name, webhook]) => webhookSettings(agentId, name, webhook))));
+});
+
+api.patch("/agents/:id/webhooks/:name", async (c) => {
+  const agentId = c.req.param("id");
+  const auth = await getRequestAuthContext(c);
+  if (!(await canConfigureAgentExtensions(c, agentId))) {
+    return auth ? c.json({ error: "forbidden" }, 403) : c.json({ error: "Owner credentials require an authenticated user" }, 401);
+  }
+  const agent = findWritableExtensionAgent(loadConfig(), agentId);
+  if (!agent) return c.json({ error: "Agent not found" }, 404);
+  const body: unknown = await c.req.json().catch(() => null);
+  const keys = body && typeof body === "object" && !Array.isArray(body) ? Object.keys(body) : [];
+  const patch = body as { credentialMode?: unknown; enabled?: unknown };
+  if (!keys.length || keys.some((key) => key !== "credentialMode" && key !== "enabled") || ("credentialMode" in patch && patch.credentialMode !== "team" && patch.credentialMode !== "owner") || ("enabled" in patch && typeof patch.enabled !== "boolean")) {
+    return c.json({ error: "Only credentialMode (team or owner) and enabled (boolean) are accepted; owner identity is server-derived" }, 400);
+  }
+  if (patch.credentialMode === "owner" && !auth) return c.json({ error: "Owner credentials require an authenticated user" }, 401);
+  const name = c.req.param("name");
+  try {
+    const updated = await updateAgentWebhook(resolveWorkspaceDir(agent.workspaceDir ?? agent.workspace), name, patch as WebhookPatch, auth?.user.id);
+    await reloadAfterConfigWrite();
+    return c.json(await webhookSettings(agentId, name, (updated.webhooks as Record<string, WebhookConfig>)[name]));
+  } catch (error) {
+    if (error instanceof WebhookConfigUpdateError) return c.json({ error: error.message }, error.status);
+    throw error;
+  }
 });
 
 // PATCH /api/agents/:id/extensions/:extensionId - write extension config.

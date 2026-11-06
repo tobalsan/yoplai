@@ -338,6 +338,16 @@ describe("buildExtensionCatalog", () => {
     expect(noRootEntry).toMatchObject({ enabled: false, managedAtRoot: false });
   });
 
+  it("links root-managed webhooks to their bespoke configuration page", async () => {
+    const agent = makeAgent(undefined, { webhooks: { incoming: { prompt: "hello" } } });
+    const catalog = await buildExtensionCatalog(configWith(agent, root), agent);
+    expect(catalog.find((entry) => entry.id === "webhooks")).toMatchObject({
+      tier: "bespoke-route",
+      configRoutePath: "/agents/main/extensions/webhooks",
+      managedAtRoot: true,
+    });
+  });
+
   it("assigns tiers: bespoke-route > auto-form > toggle-only", async () => {
     // Self-registered agent-keyed config route → bespoke-route, even with a
     // schema. Backend routePrefixes (API routes) do NOT make it bespoke — only

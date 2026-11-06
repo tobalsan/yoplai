@@ -173,8 +173,10 @@ async function runWebhookAgent(params: {
   requestId: string;
   langfuseTracing: boolean;
   timestamp: string;
+  ownerUserId?: string;
 }): Promise<void> {
   let sessionKey = `webhook:${params.agent.id}:${params.webhookName}:${params.requestId}`;
+  const sessionOwner: [string?] = params.ownerUserId ? [params.ownerUserId] : [];
   const trace = getTraceContext(params);
   let message: string | undefined;
 
@@ -213,7 +215,7 @@ async function runWebhookAgent(params: {
         if (gate.abort) {
           if (params.ctx.abortRun) {
             try {
-              const stopped = await params.ctx.abortRun(params.agent.id, sessionKey);
+              const stopped = await params.ctx.abortRun(params.agent.id, sessionKey, ...sessionOwner);
               params.ctx.logger.info(
                 `[webhooks] ${params.agent.id}/${params.webhookName} gate: abort`,
                 {
@@ -275,6 +277,7 @@ async function runWebhookAgent(params: {
       sessionKey,
       source: "webhook",
       trace,
+      ...(params.ownerUserId ? { userId: params.ownerUserId } : {}),
       ...(options.model ? { model: options.model } : {}),
       ...(options.reasoning ? { thinkLevel: options.reasoning } : {}),
     });
@@ -289,7 +292,7 @@ async function runWebhookAgent(params: {
     let sessionId = sessionKey;
     try {
       sessionId =
-        (await params.ctx.getSessionEntry(params.agent.id, sessionKey))
+        (await params.ctx.getSessionEntry(params.agent.id, sessionKey, ...sessionOwner))
           ?.sessionId ?? sessionKey;
     } catch {
       sessionId = sessionKey;
@@ -346,7 +349,12 @@ export function registerWebhookRoutes(app: Hono): void {
     const agent = current.ctx.getAgent(agentId);
     const webhookConfig = agent?.webhooks?.[webhookName];
 
-    if (!agent || !webhookConfig || !current.ctx.isAgentActive(agentId)) {
+    if (
+      !agent ||
+      !webhookConfig ||
+      webhookConfig.enabled === false ||
+      !current.ctx.isAgentActive(agentId)
+    ) {
       return c.json({ error: "Webhook not found" }, 404);
     }
 
@@ -398,6 +406,20 @@ export function registerWebhookRoutes(app: Hono): void {
       return c.json({ error: "Unauthorized" }, 401);
     }
 
+    if (webhookConfig.credentialMode === "owner" && !webhookConfig.ownerUserId) {
+      const error = "Webhook owner is missing; assign an owner before running it";
+      current.ctx.logger.error(`[webhooks] ${agentId}/${webhookName}: ${error}`);
+      return c.json({ error }, 409);
+    }
+    if (
+      webhookConfig.credentialMode === "owner" &&
+      current.ctx.getConfig().extensions?.multiUser?.enabled !== true
+    ) {
+      const error = "Owner credentials require multi-user mode";
+      current.ctx.logger.error(`[webhooks] ${agentId}/${webhookName}: ${error}`);
+      return c.json({ error }, 409);
+    }
+
     const originUrl = c.req.url;
     const timestamp = new Date().toISOString();
 
@@ -412,6 +434,7 @@ export function registerWebhookRoutes(app: Hono): void {
       requestId,
       langfuseTracing: webhookConfig.langfuseTracing,
       timestamp,
+      ownerUserId: webhookConfig.credentialMode === "owner" ? webhookConfig.ownerUserId : undefined,
     });
 
     return c.json({ ok: true, requestId });

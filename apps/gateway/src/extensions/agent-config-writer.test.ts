@@ -13,6 +13,7 @@ import {
   ExtensionConfigValidationError,
   secretEnvName,
   updateAgentExtensionConfig,
+  updateAgentWebhook,
 } from "./agent-config-writer.js";
 
 const BASE_AGENT = `id: sales
@@ -301,6 +302,274 @@ describe("updateAgentExtensionConfig", () => {
     );
     expect(envRaw).toContain(
       `${secretEnvName("cloudifi-admin", "password")}=cloudifi-password`
+    );
+  });
+});
+
+describe("updateAgentWebhook", () => {
+  it("assigns the requesting user as owner in agent.yaml", async () => {
+    await writeFile(
+      path.join(workspaceDir, "agent.yaml"),
+      BASE_AGENT +
+        `webhooks:
+  triage:
+    prompt: Triage this event
+`
+    );
+
+    await updateAgentWebhook(workspaceDir,
+      "triage",
+      { credentialMode: "owner" },
+      "alice");
+
+    const persisted = yaml.load(
+      await readFile(path.join(workspaceDir, "agent.yaml"), "utf8")
+    );
+    expect(persisted).toMatchObject({
+      webhooks: {
+        triage: {
+          prompt: "Triage this event",
+          credentialMode: "owner",
+          ownerUserId: "alice",
+        },
+      },
+    });
+  });
+  it("clears ownership when its owner switches back to team", async () => {
+    await writeFile(
+      path.join(workspaceDir, "agent.yaml"),
+      BASE_AGENT +
+        `webhooks:
+  triage:
+    prompt: Triage this event
+    credentialMode: owner
+    ownerUserId: alice
+`
+    );
+    await updateAgentWebhook(workspaceDir,
+      "triage",
+      { credentialMode: "team" },
+      "alice");
+    const persisted = yaml.load(
+      await readFile(path.join(workspaceDir, "agent.yaml"), "utf8")
+    );
+    expect(persisted).toMatchObject({
+      webhooks: {
+        triage: { prompt: "Triage this event", credentialMode: "team" },
+      },
+    });
+    expect(
+      (persisted as { webhooks: { triage: Record<string, unknown> } }).webhooks
+        .triage
+    ).not.toHaveProperty("ownerUserId");
+  });
+
+  it("refuses another user's change to an owner-mode webhook without writing", async () => {
+    const original =
+      BASE_AGENT +
+      `webhooks:
+  triage:
+    prompt: Triage this event
+    credentialMode: owner
+    ownerUserId: alice
+`;
+    await writeFile(path.join(workspaceDir, "agent.yaml"), original);
+    await expect(
+      updateAgentWebhook(workspaceDir, "triage", { credentialMode: "team" }, "bob")
+    ).rejects.toMatchObject({ status: 403 });
+    expect(await readFile(path.join(workspaceDir, "agent.yaml"), "utf8")).toBe(
+      original
+    );
+  });
+
+  it("requires an authenticated user when selecting owner credentials", async () => {
+    const original =
+      BASE_AGENT +
+      `webhooks:
+  triage:
+    prompt: Triage this event
+`;
+    await writeFile(path.join(workspaceDir, "agent.yaml"), original);
+    await expect(
+      updateAgentWebhook(workspaceDir, "triage", { credentialMode: "owner" })
+    ).rejects.toMatchObject({
+      status: 400,
+      message: "Owner credentials require an authenticated user",
+    });
+    expect(await readFile(path.join(workspaceDir, "agent.yaml"), "utf8")).toBe(
+      original
+    );
+  });
+
+  it("writes enabled false and removes the key when re-enabled", async () => {
+    await writeFile(
+      path.join(workspaceDir, "agent.yaml"),
+      BASE_AGENT + "webhooks:\n  triage:\n    prompt: Triage this event\n"
+    );
+    const read = async () =>
+      (
+        yaml.load(
+          await readFile(path.join(workspaceDir, "agent.yaml"), "utf8")
+        ) as { webhooks: { triage: Record<string, unknown> } }
+      ).webhooks.triage;
+    await updateAgentWebhook(workspaceDir, "triage", { enabled: false });
+    expect(await read()).toMatchObject({ enabled: false });
+    await updateAgentWebhook(workspaceDir, "triage", { enabled: true });
+    expect(await read()).not.toHaveProperty("enabled");
+  });
+
+  it("applies enabled and credentialMode together in one write", async () => {
+    await writeFile(
+      path.join(workspaceDir, "agent.yaml"),
+      BASE_AGENT + "webhooks:\n  triage:\n    prompt: Triage this event\n"
+    );
+    await updateAgentWebhook(
+      workspaceDir,
+      "triage",
+      { credentialMode: "owner", enabled: false },
+      "alice"
+    );
+    const persisted = yaml.load(
+      await readFile(path.join(workspaceDir, "agent.yaml"), "utf8")
+    ) as { webhooks: { triage: Record<string, unknown> } };
+    expect(persisted.webhooks.triage).toMatchObject({
+      credentialMode: "owner",
+      ownerUserId: "alice",
+      enabled: false,
+    });
+  });
+
+  it("refuses an enabled-only change by a non-owner of an owner-mode webhook", async () => {
+    const original =
+      BASE_AGENT +
+      "webhooks:\n  triage:\n    prompt: Triage this event\n    credentialMode: owner\n    ownerUserId: alice\n";
+    await writeFile(path.join(workspaceDir, "agent.yaml"), original);
+    await expect(
+      updateAgentWebhook(workspaceDir, "triage", { enabled: false }, "bob")
+    ).rejects.toMatchObject({ status: 403 });
+    expect(await readFile(path.join(workspaceDir, "agent.yaml"), "utf8")).toBe(
+      original
+    );
+  });
+
+  it("returns not found for an unknown webhook without creating it", async () => {
+    await expect(
+      updateAgentWebhook(workspaceDir, "missing", { credentialMode: "owner" }, "alice")
+    ).rejects.toMatchObject({ status: 404 });
+    expect(await readFile(path.join(workspaceDir, "agent.yaml"), "utf8")).toBe(
+      BASE_AGENT
+    );
+  });
+
+  it("keeps a webhook claim and an extension update started concurrently", async () => {
+    await writeFile(
+      path.join(workspaceDir, "agent.yaml"),
+      BASE_AGENT +
+        `webhooks:
+  triage:
+    prompt: Triage this event
+`
+    );
+    await Promise.all([
+      updateAgentWebhook(workspaceDir, "triage", { credentialMode: "owner" }, "alice"),
+      updateAgentExtensionConfig(workspaceDir, "acme-crm", {
+        enabled: true,
+        secrets: { token: "fixture-value" },
+      }),
+    ]);
+    const persisted = yaml.load(
+      await readFile(path.join(workspaceDir, "agent.yaml"), "utf8")
+    );
+    expect(persisted).toMatchObject({
+      webhooks: { triage: { credentialMode: "owner", ownerUserId: "alice" } },
+      extensions: {
+        "acme-crm": { enabled: true, token: "$env:ACME_CRM_TOKEN" },
+      },
+    });
+    expect(await readFile(path.join(workspaceDir, ".env"), "utf8")).toBe(
+      "ACME_CRM_TOKEN=fixture-value\n"
+    );
+  });
+
+  it("allows exactly one of two concurrent users to claim the webhook", async () => {
+    await writeFile(
+      path.join(workspaceDir, "agent.yaml"),
+      BASE_AGENT +
+        `webhooks:
+  triage:
+    prompt: Triage this event
+`
+    );
+    const outcomes = await Promise.allSettled([
+      updateAgentWebhook(workspaceDir, "triage", { credentialMode: "owner" }, "alice"),
+      updateAgentWebhook(workspaceDir, "triage", { credentialMode: "owner" }, "bob"),
+    ]);
+    expect(
+      outcomes.filter((outcome) => outcome.status === "fulfilled")
+    ).toHaveLength(1);
+    const loser = outcomes.find((outcome) => outcome.status === "rejected");
+    expect(loser).toMatchObject({
+      status: "rejected",
+      reason: { status: 403 },
+    });
+    const persisted = yaml.load(
+      await readFile(path.join(workspaceDir, "agent.yaml"), "utf8")
+    ) as { webhooks: { triage: Record<string, unknown> } };
+    expect(persisted.webhooks.triage.credentialMode).toBe("owner");
+    expect(persisted.webhooks.triage.ownerUserId).toBe(
+      outcomes[0].status === "fulfilled" ? "alice" : "bob"
+    );
+  });
+
+  it("keeps webhook comments, blank lines, and unresolved env references", async () => {
+    await writeFile(
+      path.join(workspaceDir, "agent.yaml"),
+      BASE_AGENT +
+        `webhooks:
+  # receives the invented triage event
+  triage:
+    prompt: "$env:TRIAGE_PROMPT" # prompt stays local
+    signingSecret: "$env:TRIAGE_SIGNING_SECRET"
+
+extensions:
+  acme-crm:
+    apiKey: "$env:ACME_KEY"
+`
+    );
+    await updateAgentWebhook(workspaceDir,
+      "triage",
+      { credentialMode: "owner" },
+      "alice");
+    const raw = await readFile(path.join(workspaceDir, "agent.yaml"), "utf8");
+    expect(raw).toContain("# receives the invented triage event");
+    expect(raw).toContain("# prompt stays local");
+    expect(raw).toContain("\n\nextensions:");
+    const persisted = yaml.load(raw);
+    expect(persisted).toMatchObject({
+      webhooks: {
+        triage: {
+          prompt: "$env:TRIAGE_PROMPT",
+          signingSecret: "$env:TRIAGE_SIGNING_SECRET",
+          ownerUserId: "alice",
+        },
+      },
+      extensions: { "acme-crm": { apiKey: "$env:ACME_KEY" } },
+    });
+  });
+
+  it("rejects an invalid agent result before touching the file", async () => {
+    const invalid =
+      BASE_AGENT +
+      `webhooks:
+  triage:
+    prompt: 17
+`;
+    await writeFile(path.join(workspaceDir, "agent.yaml"), invalid);
+    await expect(
+      updateAgentWebhook(workspaceDir, "triage", { credentialMode: "owner" }, "alice")
+    ).rejects.toThrow("agent.yaml would be invalid after update");
+    expect(await readFile(path.join(workspaceDir, "agent.yaml"), "utf8")).toBe(
+      invalid
     );
   });
 });

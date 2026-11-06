@@ -11,6 +11,7 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Added
 
+- Webhooks have a Run as setting (Mine or Team) on their agent configuration page: Team keeps existing credentials, while Mine uses the signed-in owner's personal connections with team fallback and owner-only edits. Each webhook also has an ON/OFF switch (`enabled`); a disabled webhook returns 404 and starts no run. `GET /api/agents/:id/webhooks` now returns each webhook's `enabled` state and full `url` (including its secret; base is `server.baseUrl` when set, else the gateway address), and `PATCH` accepts `enabled` alongside `credentialMode`.
 - Anonymous GET access to the MCP OAuth client metadata document, without an agent query parameter, for Client ID Metadata Document authorization.
 - File views in web chat show their title, type, size and original Download, reuse each exact filename separately, and hide only the currently displayed file's duplicate card. Older versions and unavailable views keep their cards, including across reload and Expand/Collapse.
 - `send_file` displays HTML, sanitized Markdown, images (including SVG), text, JSON and CSV in a built-in web chat MCP App viewer, with replay, optional titles and file-scoped access. HTML reports run in an opaque sandbox with CDN scripts/fonts and no API connections; unsupported or oversized files remain cards.

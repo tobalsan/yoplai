@@ -11,7 +11,7 @@ import { isForeignMine, usePrivateItemsVisibility, visibleJobs } from "../lib/pr
 
 type CredentialMode = "owner" | "team";
 
-const MODES: { mode: CredentialMode; label: string; title: string }[] = [
+export const MODES: { mode: CredentialMode; label: string; title: string }[] = [
   { mode: "owner", label: "Mine", title: "Run with your own connections" },
   { mode: "team", label: "Team", title: "Run with team connections; visible to everyone on the agent" },
 ];
@@ -285,7 +285,7 @@ export function SchedulesPanel(props: { agentId: string; agentName: string }) {
   );
 }
 
-const SCHEDULES_STYLES = `
+export const SCHEDULES_STYLES = `
 .schedules { max-width: 860px; margin-top: 28px; }
 .schedules-head h2 { margin: 0 0 4px; color: var(--text-primary); font-size: 18px; font-weight: 650; letter-spacing: -0.01em; }
 .schedules-head p { margin: 0 0 18px; color: var(--text-secondary); font-size: 13px; line-height: 1.5; }

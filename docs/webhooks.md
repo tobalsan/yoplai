@@ -27,7 +27,65 @@ On startup Yoplai creates `$YOPLAI_HOME/webhook-secrets.json` with restrictive p
 [webhooks] sales/notion -> http://127.0.0.1:4000/hooks/sales/notion/<secret>
 ```
 
-Keep URL secret private and serve public webhooks over TLS.
+Keep URL secret private and serve public webhooks over TLS. The same URL is shown on the agent's **Webhooks** page.
+
+## Run as
+
+Open an agent's configuration, then **Webhooks**, to choose **Mine** or **Team**
+for each webhook. Team is the default for new and existing webhooks and uses
+only team connections. Mine uses the signed-in owner's personal OAuth/MCP
+connections first, with team fallback when no personal connection exists.
+Mine requires multi-user mode and an authenticated user.
+
+The setting is saved in `agent.yaml`:
+
+```yaml
+webhooks:
+  incoming:
+    prompt: "Review event: $WEBHOOK_PAYLOAD"
+    credentialMode: owner # team (default) or owner
+    ownerUserId: example-user-id
+```
+
+The UI and API derive `ownerUserId` from the authenticated session. Other
+users see **Owned by <name>** and cannot change the setting, including
+superadmins. Only the owner can switch back to Team, which clears the owner.
+If an owner leaves, an operator must edit `agent.yaml` to recover the webhook.
+An owner whose agent access has been revoked cannot start a run; the existing
+run error logging and trace stream report the access failure.
+
+After verification handshakes and signature checks, owner mode returns HTTP
+409 with `Webhook owner is missing; assign an owner before running it` when
+the owner is absent, or `Owner credentials require multi-user mode` when
+multi-user mode is disabled. No run starts in either case. URLs, signatures,
+and provider verification handshakes are unchanged.
+
+## Enabled
+
+Each webhook has an ON/OFF switch (`enabled`, default `true`). A disabled
+webhook returns `404 Webhook not found` (same as an unknown one) before secret
+checks or verification handshakes, and starts no run. Saved as
+`enabled: false`; turning it back on removes the key.
+
+```yaml
+webhooks:
+  incoming:
+    prompt: "Review event: $WEBHOOK_PAYLOAD"
+    enabled: false
+```
+
+## Settings API
+
+`GET /api/agents/:id/webhooks` returns, per webhook, `name`, `credentialMode`,
+`enabled`, `url`, and optional owner id/display name. `url` is the full secret
+URL (`<base>/hooks/<agentId>/<name>/<secret>`), so treat the response as
+sensitive. `<base>` is `server.baseUrl` when set (trailing slash removed); else
+the gateway's local address. Prompts and signing secrets are never returned.
+`PATCH /api/agents/:id/webhooks/:name` accepts `credentialMode` (`team` or
+`owner`) and/or `enabled` (boolean) in one request and returns the updated
+item; client-supplied owner ids are rejected. Both endpoints require permission
+to configure the agent's extensions; changing an owner-mode webhook (including
+`enabled`) also requires its owner.
 
 ## Prompts
 

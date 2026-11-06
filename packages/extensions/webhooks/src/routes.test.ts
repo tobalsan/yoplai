@@ -9,6 +9,7 @@ import type {
   ExtensionContext,
   RunAgentParams,
   RunAgentResult,
+  WebhookConfig,
 } from "@yoplai/shared";
 import { AgentConfigSchema, GatewayConfigSchema } from "@yoplai/shared";
 import {
@@ -23,12 +24,15 @@ function createContext(params: {
   dataDir?: string;
   onEmit?: (event: string, payload: unknown) => void;
   onRunAgent?: (params: RunAgentParams) => Promise<RunAgentResult>;
+  multiUser?: boolean;
 }): ExtensionContext {
   return {
     getConfig: () =>
       GatewayConfigSchema.parse({
         agents: params.agent ? [params.agent] : [],
-        extensions: {},
+        extensions: params.multiUser ? {
+          multiUser: { enabled: true, emailAndPassword: { enabled: true }, sessionSecret: "test-session-secret" },
+        } : {},
       }),
     getDataDir: () => params.dataDir ?? "/tmp",
     reloadConfig: () => undefined,
@@ -94,7 +98,12 @@ describe("webhook prompt frontmatter", () => {
     }
   });
 
-  function fixture(prompt: string, files: Record<string, string> = {}) {
+  function fixture(
+    prompt: string,
+    files: Record<string, string> = {},
+    webhook: Partial<WebhookConfig> = {},
+    multiUser = false
+  ) {
     const workspace = fs.mkdtempSync(
       path.join(os.tmpdir(), "yoplai-webhook-gate-")
     );
@@ -108,7 +117,7 @@ describe("webhook prompt frontmatter", () => {
       name: "Sales",
       workspace,
       model: { model: "default" },
-      webhooks: { notion: { prompt: "hook.md" } },
+      webhooks: { notion: { prompt: "hook.md", ...webhook } },
     });
     const runAgent = vi.fn(
       async (_params: RunAgentParams): Promise<RunAgentResult> => ({
@@ -116,7 +125,7 @@ describe("webhook prompt frontmatter", () => {
         meta: { durationMs: 0, sessionId: "s1" },
       })
     );
-    const ctx = createContext({ agent, onRunAgent: runAgent });
+    const ctx = createContext({ agent, onRunAgent: runAgent, multiUser });
     const emit = vi.fn();
     ctx.emit = emit;
     const info = vi.fn();
@@ -161,6 +170,39 @@ describe("webhook prompt frontmatter", () => {
     expect(params.thinkLevel).toBe("low");
     expect(params).not.toHaveProperty("mode");
     expect(params).not.toHaveProperty("auth");
+    expect(params).not.toHaveProperty("userId");
+  });
+
+  it("runs with the saved owner's credentials in owner mode", async () => {
+    const hook = fixture("Handle event", {}, {
+      credentialMode: "owner", ownerUserId: "user-alice",
+    }, true);
+    expect((await hook.request()).status).toBe(200);
+    await vi.waitFor(() => expect(hook.runAgent).toHaveBeenCalledOnce());
+    expect(hook.runAgent.mock.calls[0]![0].userId).toBe("user-alice");
+  });
+
+  it("rejects owner mode without an owner before starting a run", async () => {
+    const hook = fixture("Handle event", {}, { credentialMode: "owner" }, true);
+    const response = await hook.request();
+    expect(response.status).toBe(409);
+    expect(await response.json()).toEqual({
+      error: "Webhook owner is missing; assign an owner before running it",
+    });
+    expect(hook.runAgent).not.toHaveBeenCalled();
+    expect(hook.error).toHaveBeenCalledWith(
+      "[webhooks] sales/notion: Webhook owner is missing; assign an owner before running it"
+    );
+  });
+
+  it("rejects a hand-edited owner setting in single-user mode", async () => {
+    const hook = fixture("Handle event", {}, {
+      credentialMode: "owner", ownerUserId: "user-alice",
+    });
+    const response = await hook.request();
+    expect(response.status).toBe(409);
+    expect(await response.json()).toEqual({ error: "Owner credentials require multi-user mode" });
+    expect(hook.runAgent).not.toHaveBeenCalled();
   });
 
   it.each([
@@ -245,6 +287,20 @@ describe("webhook prompt frontmatter", () => {
     expect(hook.info).toHaveBeenCalledOnce();
     expect(hook.info).toHaveBeenCalledWith("[webhooks] sales/notion gate: abort", {
       agentId: "sales", webhookName: "notion", sessionScope: "conversation-42", stopped: true,
+    });
+  });
+
+  it("aborts the owner's scoped session before waking in owner mode", async () => {
+    const hook = fixture("---\nscript: gate.sh\n---\nHandle stop", {
+      "gate.sh": 'echo \'{"sessionScope":"conversation-42","abort":true}\'\n',
+    }, { credentialMode: "owner", ownerUserId: "user-alice" }, true);
+    expect((await hook.request()).status).toBe(200);
+    await vi.waitFor(() => expect(hook.runAgent).toHaveBeenCalledOnce());
+    expect(hook.abortRun.mock.calls).toEqual([
+      ["sales", "webhook:sales:notion:conversation-42", "user-alice"],
+    ]);
+    expect(hook.runAgent.mock.calls[0]![0]).toMatchObject({
+      userId: "user-alice", sessionKey: "webhook:sales:notion:conversation-42",
     });
   });
 
@@ -362,6 +418,25 @@ describe("webhook prompt frontmatter", () => {
     for (const [, event] of hook.emit.mock.calls) {
       expect(event).toMatchObject({ sessionId: "scoped-session", sessionKey: "webhook:sales:notion:conversation-42" });
     }
+  });
+
+  it("looks up the owner's session and visibly traces denied agent access", async () => {
+    const hook = fixture("---\nscript: gate.sh\n---\nHandle alert", {
+      "gate.sh": 'echo \'{"sessionScope":"conversation-42"}\'\n',
+    }, { credentialMode: "owner", ownerUserId: "user-alice" }, true);
+    const denial = new Error("Agent access denied");
+    hook.runAgent.mockRejectedValue(denial);
+    const getSessionEntry = vi.fn<ExtensionContext["getSessionEntry"]>()
+      .mockResolvedValue({ sessionId: "owner-session", updatedAt: 0 });
+    hook.ctx.getSessionEntry = getSessionEntry;
+    expect((await hook.request()).status).toBe(200);
+    await vi.waitFor(() => expect(hook.emit).toHaveBeenCalledWith("agent.stream", expect.objectContaining({
+      type: "error", message: "Agent access denied", sessionId: "owner-session",
+    })));
+    expect(getSessionEntry.mock.calls).toEqual([
+      ["sales", "webhook:sales:notion:conversation-42", "user-alice"],
+    ]);
+    expect(hook.error).toHaveBeenCalledWith("[webhooks] sales/notion failed", denial);
   });
 
   it("passes body and metadata to the gate and interpolates its structured context once", async () => {
@@ -638,6 +713,39 @@ describe("webhook routes", () => {
     ).toBe(404);
   });
 
+  it("returns 404 and starts no run for a disabled webhook, even with the right secret", async () => {
+    const agent = AgentConfigSchema.parse({
+      id: "sales",
+      name: "Sales",
+      workspace: "/tmp",
+      model: { model: "claude" },
+      webhooks: {
+        notion: {
+          prompt: "hello",
+          enabled: false,
+          verification: { location: "header", fieldName: "x-verification" },
+        },
+      },
+    });
+    const onRunAgent = vi.fn(async () => ({
+      payloads: [],
+      meta: { durationMs: 0, sessionId: "s1" },
+    }));
+    setWebhooksRuntime({
+      ctx: createContext({ agent, onRunAgent }),
+      secrets: { "sales:notion": "secret" },
+    });
+    const response = await createApp().fetch(
+      new Request("http://localhost/hooks/sales/notion/secret", {
+        method: "POST",
+        body: "{}",
+      })
+    );
+    expect(response.status).toBe(404);
+    expect(await response.json()).toEqual({ error: "Webhook not found" });
+    expect(onRunAgent).not.toHaveBeenCalled();
+  });
+
   it("accepts a valid webhook and runs the agent asynchronously", async () => {
     const agent = AgentConfigSchema.parse({
       id: "sales",
@@ -706,7 +814,7 @@ describe("webhook routes", () => {
     expect(captured?.message).toContain('BODY={"ticket":123}');
   });
 
-  it("returns verification success for a matching payload field", async () => {
+  it.each(["team", "owner"] as const)("returns verification success for a matching payload field in %s mode", async (credentialMode) => {
     const agent = AgentConfigSchema.parse({
       id: "sales",
       name: "Sales",
@@ -716,6 +824,7 @@ describe("webhook routes", () => {
         notion: {
           prompt: "hello",
           signingSecret: "secret",
+          credentialMode,
           verification: {
             location: "payload",
             fieldName: "verification_token",
@@ -749,7 +858,7 @@ describe("webhook routes", () => {
     expect(called).toBe(false);
   });
 
-  it("returns verification success for a matching header field", async () => {
+  it.each(["team", "owner"] as const)("returns verification success for a matching header field in %s mode", async (credentialMode) => {
     const agent = AgentConfigSchema.parse({
       id: "sales",
       name: "Sales",
@@ -759,6 +868,7 @@ describe("webhook routes", () => {
         notion: {
           prompt: "hello",
           signingSecret: "secret",
+          credentialMode,
           verification: {
             location: "header",
             fieldName: "X-Webhook-Verify",

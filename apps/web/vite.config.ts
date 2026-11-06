@@ -163,6 +163,9 @@ export default defineConfig({
         target: gatewayTarget,
         ws: true,
       },
+      "/hooks": {
+        target: gatewayTarget,
+      },
       "^/d(?:/|-assets/)": {
         target: gatewayTarget,
       },
