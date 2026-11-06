@@ -166,11 +166,12 @@ describe("projects store", () => {
 
     expect(results.every((result) => result.ok)).toBe(true);
     expect(
-      results.map((result) => (result.ok ? result.data.id : result.error))
+      results.map((result) => (result.ok ? result.data.id : result.error)).sort()
     ).toEqual(["PRO-8", "PRO-9"]);
-    await expect(
-      fs.readFile(path.join(tmpDir, ".yoplai", "projects.json"), "utf8")
-    ).resolves.toContain('"lastId": 9');
+    const persisted = JSON.parse(
+      await fs.readFile(path.join(tmpDir, ".yoplai", "projects.json"), "utf8")
+    ) as { lastId: number };
+    expect(persisted.lastId).toBe(9);
   });
 
   it("falls back to README body for missing PITCH and emits one hint", async () => {

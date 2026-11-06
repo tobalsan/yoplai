@@ -1,19 +1,28 @@
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
+import type { SubagentChangedEvent } from "@yoplai/shared";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   buildArgs,
   getSubagentLogs,
+  getSubagentRun,
   listSubagentRuns,
   startSubagentRun,
 } from "./runtime.js";
 
 let tempDir: string;
+const pendingRuns = new Set<string>();
 
 const runtimeOptions = () => ({
   dataDir: tempDir,
-  emit: () => undefined,
+  emit: (event: SubagentChangedEvent) => {
+    if (event.status === "running" || event.status === "starting") {
+      pendingRuns.add(event.runId);
+    } else {
+      pendingRuns.delete(event.runId);
+    }
+  },
 });
 
 async function writeRun(
@@ -65,6 +74,10 @@ describe("subagent runtime logs", () => {
   });
 
   afterEach(async () => {
+    // Active-work clearing precedes persistence; the terminal event settles it.
+    await vi.waitFor(() => expect([...pendingRuns]).toEqual([]), {
+      timeout: 5_000,
+    });
     await fs.rm(tempDir, { recursive: true, force: true });
   });
 
@@ -343,6 +356,91 @@ describe("subagent runtime logs", () => {
       process.env.PATH = originalPath;
     }
   });
+
+  it("persists completion of an instantly exiting worker", async () => {
+    const binDir = await fs.mkdtemp(path.join(tempDir, "bin-"));
+    await fs.symlink("/usr/bin/true", path.join(binDir, "codex"));
+    const originalPath = process.env.PATH;
+    process.env.PATH = `${binDir}${path.delimiter}${originalPath ?? ""}`;
+
+    try {
+      const options = runtimeOptions();
+      const run = await startSubagentRun(options, {
+        cli: "codex", cwd: tempDir, prompt: "test", label: "Instant worker",
+      });
+      await vi.waitFor(async () => {
+        expect(await getSubagentRun(options, run.id)).toMatchObject({
+          status: "done", exitCode: 0,
+        });
+      }, { timeout: 5_000 });
+    } finally {
+      process.env.PATH = originalPath;
+    }
+  }, 15_000);
+
+  it("persists the CLI session before reporting completion", async () => {
+    const binDir = await fs.mkdtemp(path.join(tempDir, "bin-"));
+    await fs.writeFile(path.join(binDir, "codex"), [
+      "#!/bin/sh",
+      'echo \'{"type":"thread.started","thread_id":"fictional-thread"}\'',
+      "exit 0",
+    ].join("\n"), { mode: 0o755 });
+    const originalPath = process.env.PATH;
+    process.env.PATH = `${binDir}${path.delimiter}${originalPath ?? ""}`;
+    const completed = new Set<string>();
+    const options = runtimeOptions();
+
+    try {
+      const run = await startSubagentRun({
+        ...options,
+        emit: (event) => {
+          options.emit(event);
+          if (event.status === "done") completed.add(event.runId);
+        },
+      }, { cli: "codex", cwd: tempDir, prompt: "test", label: "Session worker" });
+      await vi.waitFor(() => expect(completed.has(run.id)).toBe(true), {
+        timeout: 5_000,
+      });
+      expect(await getSubagentRun(options, run.id)).toMatchObject({
+        status: "done", exitCode: 0, cliSessionId: "fictional-thread",
+      });
+    } finally {
+      process.env.PATH = originalPath;
+    }
+  });
+
+  it("completes an exited harness while its descendant holds stdio open", async () => {
+    const binDir = await fs.mkdtemp(path.join(tempDir, "bin-"));
+    await fs.writeFile(path.join(binDir, "codex"),
+      "#!/bin/sh\nsleep 30 &\necho $! > descendant.pid\nexit 0\n",
+      { mode: 0o755 }
+    );
+    const originalPath = process.env.PATH;
+    process.env.PATH = `${binDir}${path.delimiter}${originalPath ?? ""}`;
+    let descendantPid: number | undefined;
+
+    try {
+      const options = runtimeOptions();
+      const run = await startSubagentRun(options, {
+        cli: "codex", cwd: tempDir, prompt: "test", label: "Background worker",
+      });
+      descendantPid = await vi.waitFor(async () => {
+        const pid = Number(await fs.readFile(path.join(tempDir, "descendant.pid"), "utf8"));
+        expect(pid).toBeGreaterThan(0);
+        return pid;
+      });
+      const pid = descendantPid;
+      await vi.waitFor(async () => {
+        expect(await getSubagentRun(options, run.id)).toMatchObject({
+          status: "done", exitCode: 0,
+        });
+      }, { timeout: 5_000 });
+      expect(() => process.kill(pid, 0)).not.toThrow();
+    } finally {
+      if (descendantPid) process.kill(descendantPid, "SIGTERM");
+      process.env.PATH = originalPath;
+    }
+  }, 15_000);
 
   it("normalizes Claude JSONL envelopes into displayable events", async () => {
     await writeRun("run-1", [

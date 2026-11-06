@@ -1,10 +1,15 @@
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import type { ActiveWorkItem, ExtensionContext, GatewayConfig } from "@yoplai/shared";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { spawnSubagent } from "./runner.js";
 import { clearProjectsContext, setProjectsContext } from "../context.js";
+import { getProjectSpaceWriteLease } from "../projects/space.js";
+
+const execFileAsync = promisify(execFile);
 
 describe("subagent runner repo resolution", () => {
   let tmpDir: string;
@@ -32,6 +37,7 @@ describe("subagent runner repo resolution", () => {
   });
 
   afterEach(async () => {
+    vi.unstubAllEnvs();
     process.env.PATH = previousPath;
     await fs.rm(tmpDir, { recursive: true, force: true });
   });
@@ -184,6 +190,50 @@ describe("subagent runner repo resolution", () => {
       expect(finished.outcome).toBe("done");
     });
   });
+
+  it("persists an instantly exiting worker and releases its space lease", async () => {
+    vi.stubEnv("YOPLAI_SPACE_WRITE_LEASE", "true");
+    // A native no-op avoids shell startup hiding the fast-child race.
+    await fs.unlink(path.join(binDir, "codex"));
+    await fs.symlink("/usr/bin/true", path.join(binDir, "codex"));
+    const projectRepo = await createRepo("instant-repo");
+    await execFileAsync("git", ["init", "-b", "main", projectRepo]);
+    await execFileAsync("git", [
+      "-C",
+      projectRepo,
+      "-c",
+      "user.name=CI Fixture",
+      "-c",
+      "user.email=ci@example.test",
+      "commit",
+      "--allow-empty",
+      "-m",
+      "fixture",
+    ]);
+    const { config, projectDir } = await createProject({ projectRepo });
+    await fs.writeFile(path.join(projectDir, "PITCH.md"), "Instant worker fixture.\n");
+
+    const result = await spawnSubagent(config, {
+      projectId: "PRO-1",
+      slug: "instant-worker",
+      cli: "codex",
+      prompt: "test",
+      mode: "main-run",
+    });
+
+    expect(result.ok).toBe(true);
+    await vi.waitFor(async () => {
+      const finished = JSON.parse(await fs.readFile(
+        path.join(projectDir, "sessions", "instant-worker", "state.json"),
+        "utf8"
+      )) as { outcome?: string };
+      expect(finished.outcome).toBe("done");
+      expect(await getProjectSpaceWriteLease(config, "PRO-1")).toEqual({
+        ok: true,
+        data: null,
+      });
+    }, { timeout: 5_000 });
+  }, 15_000);
 
   it("removes a new run record when workspace preparation fails", async () => {
     const invalidRepo = await createRepo("invalid-repo");

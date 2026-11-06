@@ -77,7 +77,7 @@ vi.mock("node:child_process", async (importOriginal) => {
     };
     if (method === "execFile") Object.defineProperty(wrapped, promisify.custom, {
       value: (...args: unknown[]) => new Promise((resolve, reject) => {
-        wrapped(...args, (error: Error | null, stdout: string, stderr: string) => error ? reject(error) : resolve({ stdout, stderr }));
+        wrapped(...args, (error: Error | null, stdout: string, stderr: string) => error ? reject(Object.assign(error, { stdout, stderr })) : resolve({ stdout, stderr }));
       }),
     });
     return wrapped;
@@ -421,10 +421,11 @@ export async function createRoutingHarness(runtime: RoutingRuntime) {
     },
     async report() {
       await waitIdle();
+      // Build before running routing tests so this real CLI uses current source.
       const { stdout } = await promisify(execFile)(process.execPath, [
-        "--import", "tsx", path.resolve("apps/gateway/src/cli/index.ts"),
+        path.resolve("apps/gateway/dist/cli/index.js"),
         "model-routing", "report", "--since", "2026-11-01", "--agent", id, "--json",
-      ], { env: { ...process.env, NODE_OPTIONS: "--conditions=development" }, timeout: 4000 });
+      ], { env: { ...process.env, NODE_OPTIONS: "" }, timeout: 4000 });
       return JSON.parse(stdout) as ReturnType<typeof buildRoutingReport>;
     },
     async changeMode(mode: "off" | "shadow" | "enforce") {
@@ -433,13 +434,16 @@ export async function createRoutingHarness(runtime: RoutingRuntime) {
         onReload: () => { pendingReload?.resolve(); pendingReload = undefined; },
         onError: (error) => { pendingReload?.reject(error); pendingReload = undefined; },
       });
-      const applied = new Promise<void>((resolve, reject) => { pendingReload = { resolve, reject }; });
       config = { ...config, modelRouting: { ...config.modelRouting, mode } };
       const file = path.join(CONFIG_DIR, "yoplai.json");
-      await fs.writeFile(file, JSON.stringify(config));
+      // Publish a complete config: the real watcher can tick during file I/O.
+      const replacement = `${file}.next`;
+      await fs.writeFile(replacement, JSON.stringify(config));
       mtimeTick += 10;
-      await fs.utimes(file, mtimeTick / 1000, mtimeTick / 1000);
-      await bounded(applied);
+      await fs.utimes(replacement, mtimeTick / 1000, mtimeTick / 1000);
+      const applied = new Promise<void>((resolve, reject) => { pendingReload = { resolve, reject }; });
+      // Observe rejection before the rename yields to the watcher.
+      await Promise.all([bounded(applied), fs.rename(replacement, file)]);
     },
     async history() {
       const response = await api.request(`/agents/${id}/history?sessionId=${sessionId}&view=full`);

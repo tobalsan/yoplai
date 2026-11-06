@@ -13,6 +13,8 @@ After a code update, make sure to keep documentation up to date, mainly:
 
 Tests: use scoped scripts for package-level runs: `pnpm test:web`, `pnpm test:gateway`, `pnpm test:shared`, `pnpm test:cli`. For single tests, use an exact file path: `pnpm exec vitest run <path-to-test-file>`. Avoid `pnpm test -- <path>` here; positional Vitest filters are unreliable in this repo. Run tests serially (one command at a time); parallel runs can cause transient `ENOENT` in subagent runner tests. Run `pnpm install` if `node_modules` is missing.
 
+CI runs build, lint, typecheck and test on PRs to `main` and pushes to `main`; the required check is `ci`.
+
 When implementing user-facing changes, and `./docs/validation_e2e.md` exists, follow the instructions in that file to perform an e2e test of your changes.
 
 ## Git Behavior

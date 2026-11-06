@@ -387,6 +387,14 @@ export async function spawnSubagent(
     cwd: worktreePath,
     stdio: ["ignore", "pipe", "pipe"],
   });
+  // Capture exit before initialization yields: a fast harness can finish while
+  // its run files are still being written. Process it after those writes settle.
+  const exited = new Promise<{
+    code: number | null;
+    signal: NodeJS.Signals | null;
+  }>((resolve) => {
+    child.once("exit", (code, signal) => resolve({ code, signal }));
+  });
   const liveKey = `${input.projectId}:${input.slug}:${child.pid ?? Date.now()}`;
   setLiveChild(liveKey, {
     kind: "subagent",
@@ -554,7 +562,7 @@ export async function spawnSubagent(
     },
   ]);
 
-  child.on("exit", async (code, signal) => {
+  void exited.then(async ({ code, signal }) => {
     await stdoutProcessing;
     const finishedAt = new Date().toISOString();
     const outcome: "replied" | "error" = code === 0 ? "replied" : "error";

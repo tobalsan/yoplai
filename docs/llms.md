@@ -509,6 +509,8 @@ Project IDs allocate through `projects.json`; slice IDs use per-project counters
 
 Subagent run modes are `clone`, `worktree`, `main-run`, and `none`. External harnesses are `codex`, `claude`, and `pi`. Project CLI details, Space queue/integration behavior, and orchestrator-specific slice automation belong in the [projects README](../packages/extensions/projects/README.md).
 
+Project subagent output, completion, and interrupt state patches serialize per run; atomic JSON writes use unique temporary paths.
+
 ### Tracker orchestrator
 
 `extensions.orchestrator` is separate from project slice automation. It polls tracker-scoped work from project `WORKFLOW.md` files and owns worker lifetime, state, logs, recovery, and protocol runners.

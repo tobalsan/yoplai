@@ -240,6 +240,7 @@ describe("main agent home", () => {
   it("keeps reverse Tab inside the picker after a failed save restores controls", async () => {
     agents = [{ id: "sage", name: "Sage" }, { id: "scout", name: "Scout" }];
     await mountHome();
+    await vi.waitFor(() => expect(document.activeElement).toBe(button("Make Sage my main agent")));
     hangSave = true;
     button("Make Sage my main agent").click();
     const dialog = container.querySelector('[role="dialog"]')!;

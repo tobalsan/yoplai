@@ -52,6 +52,7 @@ describe("dashboard starter templates", () => {
     });
   });
 
+  // This scenario runs 22 real child-process queries, each with a cold TS loader.
   it("runs every OKR template query with representative bindings", async () => {
     workspace = await fs.mkdtemp(path.join(os.tmpdir(), "dashboard-okr-"));
     await fs.mkdir(path.join(workspace, "data"));
@@ -227,7 +228,7 @@ describe("dashboard starter templates", () => {
       (row) => row.owner_email === reportWithNoItems
     );
     expect(noItemsRow?.items).toBe(0);
-  });
+  }, 30_000);
 
   it("falls back to the latest period and excludes small teams from the public OKR rollup", async () => {
     workspace = await fs.mkdtemp(path.join(os.tmpdir(), "dashboard-okr2-"));
@@ -290,6 +291,7 @@ describe("dashboard starter templates", () => {
     expect(company[0]?.headcount).toBe(9);
   });
 
+  // The wiki rebuild plus 17 real child-process queries exceeds 5s on busy CI.
   it("rebuilds the CS sample from wiki and runs clients to QBR queries", async () => {
     workspace = await fs.mkdtemp(path.join(os.tmpdir(), "dashboard-cs-"));
     await fs.mkdir(path.join(workspace, "data"));
@@ -351,7 +353,7 @@ describe("dashboard starter templates", () => {
         rendered.close();
       }
     }
-  });
+  }, 30_000);
 
   async function expectTemplatesToQuery(
     family: "hr" | "cs" | "okr",

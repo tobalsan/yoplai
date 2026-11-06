@@ -1,7 +1,7 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   parseWakeAgent,
   resolveScriptPath,
@@ -111,22 +111,20 @@ describe("runScript", () => {
       `#!/bin/bash\nsleep 30 &\necho $! > "${pidFile}"\nwait\n`
     );
 
-    await expect(
-      runScript({ workspaceDir: tmpDir, script: "sleep.sh", timeoutMs: 200 })
-    ).rejects.toThrow(/^script exceeded the 200ms timeout and was killed/);
+    // The timeout includes shell startup; allow a loaded host to reach the pid marker.
+    const execution = runScript({ workspaceDir: tmpDir, script: "sleep.sh", timeoutMs: 2000 })
+      .catch((error: unknown) => error);
+    const pid = await vi.waitFor(async () => {
+      const value = (await fs.readFile(pidFile, "utf8")).trim();
+      expect(value).toMatch(/^[1-9]\d*$/);
+      return Number(value);
+    }, { timeout: 5000 });
 
-    const pid = Number((await fs.readFile(pidFile, "utf8")).trim());
-    expect(Number.isInteger(pid)).toBe(true);
-
-    // Give the OS a brief moment to finish reaping the killed grandchild.
-    const deadline = Date.now() + 1000;
-    let alive = await isPidAlive(pid);
-    while (alive && Date.now() < deadline) {
-      await new Promise((resolve) => setTimeout(resolve, 20));
-      alive = await isPidAlive(pid);
-    }
-    expect(alive).toBe(false);
-  });
+    await expect(execution).resolves.toMatchObject({
+      reason: "timeout", message: expect.stringMatching(/^script exceeded the 2000ms timeout and was killed/),
+    });
+    await vi.waitFor(async () => expect(await isPidAlive(pid)).toBe(false), { timeout: 5000 });
+  }, 10_000);
 
   it("finishes when the script exits after backgrounding a process that holds stdout", async () => {
     tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-scheduler-script-"));

@@ -713,6 +713,38 @@ describe("runHeartbeat session preservation", () => {
     return module.runHeartbeat;
   }
 
+  it("finishes an in-flight run after shutdown clears its context", async () => {
+    const workspace = await fs.mkdtemp(path.join(os.tmpdir(), "heartbeat-shutdown-"));
+    const agent = {
+      id: "test-agent",
+      heartbeat: { every: "1m", prompt: "Check" },
+      discord: { broadcastToChannel: "fixture-channel" },
+      workspace,
+    };
+    mockGetAgent.mockReturnValue(agent);
+    mockResolveWorkspaceDir.mockReturnValue(workspace);
+    mockGetSessionEntry.mockResolvedValue({ sessionId: "existing", updatedAt: 1000 });
+    let finish!: (result: { payloads: { text: string }[] }) => void;
+    mockRunAgent.mockImplementation(() => new Promise((resolve) => { finish = resolve; }));
+    const module = await getRunnerModuleWithContext();
+    const execution = module.runHeartbeat("test-agent");
+    const completed = expect(execution).resolves.toMatchObject({ status: "ok-token" });
+    try {
+      await vi.waitFor(() => expect(mockRunAgent).toHaveBeenCalledOnce());
+      module.stopAllHeartbeats();
+      module.clearHeartbeatContext();
+      finish({ payloads: [{ text: "HEARTBEAT_OK" }] });
+      await completed;
+      expect(mockRestoreSessionUpdatedAt).toHaveBeenCalledWith("test-agent", "main", 1000);
+      const outputDir = path.join(workspace, "cron", "output", "__heartbeat__");
+      const files = await fs.readdir(outputDir);
+      expect(files).toHaveLength(1);
+      expect(await fs.readFile(path.join(outputDir, files[0]!), "utf8")).toContain("HEARTBEAT_OK");
+    } finally {
+      await fs.rm(workspace, { recursive: true, force: true });
+    }
+  });
+
   it("captures original updatedAt before attempting run", async () => {
     const originalUpdatedAt = 1000;
     mockGetAgent.mockReturnValue({
@@ -1058,6 +1090,13 @@ describe("heartbeat lifecycle", () => {
     return await getRunnerModuleWithContext();
   }
 
+  async function advanceHeartbeatTime(ms: number, completedEvents: number) {
+    await vi.advanceTimersByTimeAsync(ms);
+    await vi.waitFor(() => expect(mockEmit).toHaveBeenCalledTimes(completedEvents), { timeout: 5000 });
+    // The timer callback reschedules after the terminal event.
+    await vi.advanceTimersByTimeAsync(0);
+  }
+
   describe("startAllHeartbeats", () => {
     it("creates timers for enabled agents on startup", async () => {
       mockLoadConfig.mockReturnValue({
@@ -1238,7 +1277,7 @@ describe("heartbeat lifecycle", () => {
       expect(mockRunAgent).not.toHaveBeenCalled();
 
       // Advance past 5 minutes - heartbeat should fire
-      await vi.advanceTimersByTimeAsync(1 * 60 * 1000 + 100);
+      await advanceHeartbeatTime(1 * 60 * 1000 + 100, 1);
       expect(mockRunAgent).toHaveBeenCalledTimes(1);
 
       module.stopAllHeartbeats();
@@ -1350,7 +1389,7 @@ describe("heartbeat lifecycle", () => {
         payloads: [{ text: "HEARTBEAT_OK" }],
         meta: { sessionId: "test-session" },
       });
-      await vi.advanceTimersByTimeAsync(0);
+      await advanceHeartbeatTime(0, 1);
       await vi.advanceTimersByTimeAsync(2 * 60 * 1000);
 
       expect(mockRunAgent).toHaveBeenCalledTimes(1);
@@ -1375,7 +1414,7 @@ describe("heartbeat lifecycle", () => {
       module.startAllHeartbeats();
 
       // Let first heartbeat fire
-      await vi.advanceTimersByTimeAsync(60 * 1000 + 100);
+      await advanceHeartbeatTime(60 * 1000 + 100, 1);
       expect(mockRunAgent).toHaveBeenCalledTimes(1);
 
       // Stop before second heartbeat
@@ -1499,18 +1538,15 @@ describe("heartbeat lifecycle", () => {
       module.startAllHeartbeats();
 
       // First heartbeat at 1m - advance time and flush microtasks
-      await vi.advanceTimersByTimeAsync(60 * 1000);
-      await vi.advanceTimersByTimeAsync(0); // flush async callback
+      await advanceHeartbeatTime(60 * 1000, 1);
       expect(mockRunAgent).toHaveBeenCalledTimes(1);
 
       // Second heartbeat at 2m
-      await vi.advanceTimersByTimeAsync(60 * 1000);
-      await vi.advanceTimersByTimeAsync(0);
+      await advanceHeartbeatTime(60 * 1000, 2);
       expect(mockRunAgent).toHaveBeenCalledTimes(2);
 
       // Third heartbeat at 3m
-      await vi.advanceTimersByTimeAsync(60 * 1000);
-      await vi.advanceTimersByTimeAsync(0);
+      await advanceHeartbeatTime(60 * 1000, 3);
       expect(mockRunAgent).toHaveBeenCalledTimes(3);
 
       module.stopAllHeartbeats();
@@ -1539,18 +1575,15 @@ describe("heartbeat lifecycle", () => {
       module.startAllHeartbeats();
 
       // First heartbeat at 1m - throws error
-      await vi.advanceTimersByTimeAsync(60 * 1000);
-      await vi.advanceTimersByTimeAsync(0);
+      await advanceHeartbeatTime(60 * 1000, 1);
       expect(mockRunAgent).toHaveBeenCalledTimes(1);
 
       // Second heartbeat at 2m - timer should have rescheduled despite error
-      await vi.advanceTimersByTimeAsync(60 * 1000);
-      await vi.advanceTimersByTimeAsync(0);
+      await advanceHeartbeatTime(60 * 1000, 2);
       expect(mockRunAgent).toHaveBeenCalledTimes(2);
 
       // Third heartbeat at 3m - continues working
-      await vi.advanceTimersByTimeAsync(60 * 1000);
-      await vi.advanceTimersByTimeAsync(0);
+      await advanceHeartbeatTime(60 * 1000, 3);
       expect(mockRunAgent).toHaveBeenCalledTimes(3);
 
       module.stopAllHeartbeats();
@@ -1588,8 +1621,7 @@ describe("heartbeat lifecycle", () => {
       module.startAllHeartbeats();
 
       // First heartbeat fires
-      await vi.advanceTimersByTimeAsync(60 * 1000);
-      await vi.advanceTimersByTimeAsync(0);
+      await advanceHeartbeatTime(60 * 1000, 1);
       expect(mockRunAgent).toHaveBeenCalledTimes(1);
 
       // Now reschedule check sees disabled config - no more heartbeats
@@ -1623,16 +1655,14 @@ describe("heartbeat lifecycle", () => {
       module.setHeartbeatsEnabled(false);
 
       // Advance past interval
-      await vi.advanceTimersByTimeAsync(60 * 1000);
-      await vi.advanceTimersByTimeAsync(0);
+      await advanceHeartbeatTime(60 * 1000, 1);
 
       // runAgent should NOT have been called (disabled)
       expect(mockRunAgent).not.toHaveBeenCalled();
 
       // Re-enable and verify heartbeats work again
       module.setHeartbeatsEnabled(true);
-      await vi.advanceTimersByTimeAsync(60 * 1000);
-      await vi.advanceTimersByTimeAsync(0);
+      await advanceHeartbeatTime(60 * 1000, 2);
       expect(mockRunAgent).toHaveBeenCalledTimes(1);
 
       module.stopAllHeartbeats();
@@ -1666,17 +1696,17 @@ describe("heartbeat lifecycle", () => {
       module.startAllHeartbeats();
 
       // Let first heartbeat cycle run
-      await vi.advanceTimersByTimeAsync(60 * 1000 + 100);
+      await advanceHeartbeatTime(60 * 1000 + 100, 2);
       expect(mockRunAgent).toHaveBeenCalledTimes(2); // Both agents
 
       // Disable all
       module.setHeartbeatsEnabled(false);
-      await vi.advanceTimersByTimeAsync(60 * 1000 + 100);
+      await advanceHeartbeatTime(60 * 1000 + 100, 4);
       expect(mockRunAgent).toHaveBeenCalledTimes(2); // No additional calls
 
       // Re-enable
       module.setHeartbeatsEnabled(true);
-      await vi.advanceTimersByTimeAsync(60 * 1000 + 100);
+      await advanceHeartbeatTime(60 * 1000 + 100, 6);
       expect(mockRunAgent).toHaveBeenCalledTimes(4); // Both agents again
 
       module.stopAllHeartbeats();
