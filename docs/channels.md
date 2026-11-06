@@ -87,6 +87,8 @@ Only the channels listed under `channels` are served; posts anywhere else are ig
 
 The same bot URL and token also serve `yoplai notify --surface mattermost`. Configure the destination channel ID under `notifications.channels.<key>.mattermost`; notify uses the `--from` agent's `mattermost` block, otherwise root `extensions.mattermost` (see [notification channels](configuration.md#notification-channels)).
 
+Use the server root for `url` (e.g. `https://chat.example.com`, including any deployment subpath), never a team URL; team scoping comes from the bot's team membership and channel IDs, and DMs are cross-team.
+
 Server setup, as a system admin:
 
 1. **Allow bot accounts.** System Console › Integrations › Bot Accounts › _Enable Bot Account Creation_: true.

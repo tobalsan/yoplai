@@ -80,6 +80,15 @@ export class MattermostApiError extends Error {
   }
 }
 
+export class MattermostUrlError extends MattermostApiError {
+  constructor(status: number, method: string, path: string) {
+    super(status, method, path);
+    this.name = "MattermostUrlError";
+    this.message =
+      "Mattermost url returned HTML, not the API. Use the server root (e.g. https://chat.example.com), not a team URL; the team comes from the bot's team membership and channel IDs.";
+  }
+}
+
 /** Strip trailing slashes and any `/api/v4` suffix an operator may have pasted. */
 export function normalizeBaseUrl(url: string): string {
   return url
@@ -262,7 +271,17 @@ export class MattermostRestClient {
       timeoutMs,
       async (signal) => {
         const response = await this.sendWithRetries(method, path, body, signal);
-        return (await response.json()) as T;
+        if (response.headers.get("content-type")?.startsWith("text/html")) {
+          throw new MattermostUrlError(response.status, method, path);
+        }
+        try {
+          return (await response.json()) as T;
+        } catch (error) {
+          if (error instanceof SyntaxError) {
+            throw new MattermostUrlError(response.status, method, path);
+          }
+          throw error;
+        }
       }
     );
   }

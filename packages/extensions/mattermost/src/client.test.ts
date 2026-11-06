@@ -11,6 +11,53 @@ const URL_ = "https://chat.example.test";
 describe("MattermostRestClient", () => {
   afterEach(() => vi.useRealTimers());
 
+  it("explains a team URL returning HTML without exposing secrets", async () => {
+    const client = new MattermostRestClient(
+      `${URL_}/finance`,
+      TOKEN,
+      async () =>
+        new Response(`<!doctype html><html>${TOKEN}</html>`, {
+          status: 200,
+          headers: { "content-type": "text/html; charset=utf-8" },
+        })
+    );
+    const error = await client.getMe().catch((error: unknown) => error);
+    expect(error).toBeInstanceOf(MattermostApiError);
+    expect(error).toMatchObject({
+      status: 200,
+      name: "MattermostUrlError",
+      message:
+        "Mattermost url returned HTML, not the API. Use the server root (e.g. https://chat.example.com), not a team URL; the team comes from the bot's team membership and channel IDs.",
+    });
+    expect((error as Error).message).not.toContain(TOKEN);
+    expect(String(error)).not.toContain(TOKEN);
+    expect(String(error)).not.toContain(`${URL_}/finance`);
+  });
+
+  it.each(["application/json", undefined])(
+    "explains HTML even with content-type %s",
+    async (contentType) => {
+      const client = new MattermostRestClient(URL_, TOKEN, async () =>
+        new Response(
+          new TextEncoder().encode(`<!doctype html><html>${TOKEN}</html>`),
+          {
+            status: 200,
+            headers: contentType ? { "content-type": contentType } : {},
+          }
+        )
+      );
+      const error = await client.getMe().catch((error: unknown) => error);
+      expect(error).toMatchObject({
+        status: 200,
+        name: "MattermostUrlError",
+        message:
+          "Mattermost url returned HTML, not the API. Use the server root (e.g. https://chat.example.com), not a team URL; the team comes from the bot's team membership and channel IDs.",
+      });
+      expect((error as Error).message).not.toContain(TOKEN);
+      expect(String(error)).not.toContain(TOKEN);
+    }
+  );
+
   it("times out hung headers and aborts the request without exposing the token", async () => {
     vi.useFakeTimers();
     let requestSignal: AbortSignal | null | undefined;
