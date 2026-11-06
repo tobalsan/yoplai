@@ -30,7 +30,7 @@ export async function moveChatToProject(agentId: string, sessionId: string, proj
   if (!response.ok) throw new Error("Unable to move chat. Try again.");
 }
 
-export type ChatProjectFile = { id: string; name: string; size: number; mimeType: string; extracted?: boolean; extractionError?: string };
+export type ChatProjectFile = { id: string; name: string; size: number; mimeType: string; extracted?: boolean; extractionError?: string; extractionNote?: string };
 export const fetchChatProjectFiles = (id: string) => request<{ items: ChatProjectFile[] }>(`/${encodeURIComponent(id)}/files`);
 export const deleteChatProjectFile = (id: string, fileId: string) => request<unknown>(`/${encodeURIComponent(id)}/files/${encodeURIComponent(fileId)}`, { method: "DELETE" });
 export async function uploadChatProjectFile(id: string, file: File): Promise<void> {

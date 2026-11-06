@@ -6,11 +6,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const config = vi.hoisted(() => ({ dir: "" }));
 vi.mock("../config/index.js", () => ({ get CONFIG_DIR() { return config.dir; } }));
 vi.mock("../history/store.js", () => ({ appendSessionMeta: vi.fn() }));
+vi.mock("../logging.js", async (importOriginal) => ({ ...await importOriginal<typeof import("../logging.js")>(), logWarn: vi.fn() }));
+import { logWarn } from "../logging.js";
+import * as extraction from "../media/extract.js";
 import { createChatProjectRoutes } from "./routes.js";
 import { ChatProjectStore } from "./store.js";
 
-beforeEach(async () => { config.dir = await fs.mkdtemp(path.join(os.tmpdir(), "project-files-api-")); });
-afterEach(async () => { await fs.rm(config.dir, { recursive: true, force: true }); });
+beforeEach(async () => { vi.clearAllMocks(); config.dir = await fs.mkdtemp(path.join(os.tmpdir(), "project-files-api-")); });
+afterEach(async () => { vi.restoreAllMocks(); await fs.rm(config.dir, { recursive: true, force: true }); });
 
 describe("chat project files API", () => {
   it("uploads, extracts, lists and deletes originals with user isolation", async () => {
@@ -46,10 +49,14 @@ describe("chat project files API", () => {
     const upload = await routes.request(`/chat-projects/${project.id}/files`, { method: "POST", body });
     expect(upload.status).toBe(201);
     const file = await upload.json();
-    expect((await store.listFiles(project.id))[0]?.extractionError).toContain("original file is retained");
+    expect((await store.listFiles(project.id))[0]?.extractionError).toBe("Text extraction failed");
+    expect(logWarn).toHaveBeenCalledTimes(1);
+    expect(logWarn).toHaveBeenCalledWith("Project file text extraction failed", {
+      projectId: project.id, fileId: file.id, name: "broken.docx", message: expect.any(String),
+    });
     expect(await fs.readFile(path.join(store.filesDirectory(project.id), file.id), "utf8")).toBe("Invalid office document");
     const listed = await routes.request(`/chat-projects/${project.id}/files`);
-    expect(await listed.json()).toMatchObject({ items: [{ extracted: false, extractionError: expect.any(String) }] });
+    expect(await listed.json()).toMatchObject({ items: [{ extracted: false, extractionError: "Text extraction failed" }] });
   });
 
   it("rejects unsupported uploads without storing files", async () => {
@@ -60,6 +67,78 @@ describe("chat project files API", () => {
     body.append("file", new File(["code"], "script.exe", { type: "text/plain" }));
     expect((await routes.request(`/chat-projects/${project.id}/files`, { method: "POST", body })).status).toBe(400);
     expect(await store.listFiles(project.id)).toEqual([]);
+  });
+
+  it("stores the password-protected reason from a real encrypted PDF", async () => {
+    const store = new ChatProjectStore(config.dir);
+    const project = await store.create("Research");
+    const routes = createChatProjectRoutes({ getUserId: async () => undefined, getAgentIds: () => [] });
+    const body = new FormData();
+    body.append("file", new File([await fs.readFile(new URL("../media/__fixtures__/encrypted.pdf", import.meta.url))], "encrypted.pdf", { type: "application/pdf" }));
+    const upload = await routes.request(`/chat-projects/${project.id}/files`, { method: "POST", body });
+    expect(upload.status).toBe(201);
+    expect((await store.listFiles(project.id))[0]?.extractionError).toBe("PDF is password-protected");
+    expect(await (await routes.request(`/chat-projects/${project.id}/files`)).json()).toMatchObject({
+      items: [{ extracted: false, extractionError: "PDF is password-protected" }],
+    });
+    expect(logWarn).toHaveBeenCalledTimes(1);
+  });
+
+  it("stores an OCR cap reason and logs the original diagnostic once", async () => {
+    vi.spyOn(extraction, "extractTextDetails").mockRejectedValueOnce(new extraction.ExtractionError(
+      "Too many pages to OCR (45 scanned pages, max 30)", { cause: new Error("Empty OCR output from worker") },
+    ));
+    const store = new ChatProjectStore(config.dir);
+    const project = await store.create("Research");
+    const routes = createChatProjectRoutes({ getUserId: async () => undefined, getAgentIds: () => [] });
+    const body = new FormData();
+    body.append("file", new File(["scanned PDF"], "scan.pdf", { type: "application/pdf" }));
+    const upload = await routes.request(`/chat-projects/${project.id}/files`, { method: "POST", body });
+    expect(upload.status).toBe(201);
+    const file = await upload.json();
+    expect((await store.listFiles(project.id))[0]?.extractionError).toBe("Too many pages to OCR (45 scanned pages, max 30)");
+    expect(await (await routes.request(`/chat-projects/${project.id}/files`)).json()).toMatchObject({
+      items: [{ extracted: false, extractionError: "Too many pages to OCR (45 scanned pages, max 30)" }],
+    });
+    expect(logWarn).toHaveBeenCalledTimes(1);
+    expect(logWarn).toHaveBeenCalledWith("Project file text extraction failed", {
+      projectId: project.id, fileId: file.id, name: "scan.pdf", message: "Empty OCR output from worker",
+    });
+  });
+
+  it("stores the output limit reason", async () => {
+    vi.spyOn(extraction, "extractTextDetails").mockRejectedValueOnce(new extraction.ExtractionError("Text too long (over 250,000 characters)"));
+    const store = new ChatProjectStore(config.dir);
+    const project = await store.create("Research");
+    const routes = createChatProjectRoutes({ getUserId: async () => undefined, getAgentIds: () => [] });
+    const body = new FormData();
+    body.append("file", new File(["long PDF"], "long.pdf", { type: "application/pdf" }));
+    expect((await routes.request(`/chat-projects/${project.id}/files`, { method: "POST", body })).status).toBe(201);
+    expect((await store.listFiles(project.id))[0]?.extractionError).toBe("Text too long (over 250,000 characters)");
+    expect(await (await routes.request(`/chat-projects/${project.id}/files`)).json()).toMatchObject({
+      items: [{ extracted: false, extractionError: "Text too long (over 250,000 characters)" }],
+    });
+    expect(logWarn).toHaveBeenCalledTimes(1);
+  });
+
+  it("stores readable partial text and exposes its neutral extraction note", async () => {
+    vi.spyOn(extraction, "extractTextDetails").mockResolvedValueOnce({
+      text: "Readable text layer\n\nOCR page text", note: "Partial text: 30 of 45 scanned pages read",
+    });
+    const store = new ChatProjectStore(config.dir);
+    const project = await store.create("Research");
+    const routes = createChatProjectRoutes({ getUserId: async () => undefined, getAgentIds: () => [] });
+    const body = new FormData();
+    body.append("file", new File(["mixed PDF"], "mixed.pdf", { type: "application/pdf" }));
+    expect((await routes.request(`/chat-projects/${project.id}/files`, { method: "POST", body })).status).toBe(201);
+    expect((await store.listFiles(project.id))[0]).toMatchObject({
+      text: "Readable text layer\n\nOCR page text", extractionNote: "Partial text: 30 of 45 scanned pages read",
+    });
+    const listed = await (await routes.request(`/chat-projects/${project.id}/files`)).json();
+    expect(listed).toMatchObject({ items: [{ extracted: true, extractionNote: "Partial text: 30 of 45 scanned pages read" }] });
+    expect(listed.items[0].extractionError).toBeUndefined();
+    expect(listed.items[0].text).toBeUndefined();
+    expect(logWarn).not.toHaveBeenCalled();
   });
 });
 

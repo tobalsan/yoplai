@@ -3,7 +3,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { getUserSessionsPath } from "@yoplai/extension-multi-user/isolation";
 
-export type ChatProjectFile = { id: string; name: string; mimeType: string; size: number; createdAt: number; text?: string; extractionError?: string };
+export type ChatProjectFile = { id: string; name: string; mimeType: string; size: number; createdAt: number; text?: string; extractionError?: string; extractionNote?: string };
 
 export type ChatProjectReference = { id: string; title: string; description: string; path: string; createdAt: number };
 

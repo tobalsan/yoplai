@@ -96,8 +96,7 @@ export function assertRenderPixels(bounds: number[]): void {
 export async function ocrPdfPages(input: Input): Promise<Array<{ number: number; text: string }>> {
   const document = mupdf.Document.openDocument(input.data, "application/pdf");
   if (document.needsPassword()) throw new Error("PDF is encrypted and cannot be extracted");
-  const pages = document.countPages();
-  if (pages > input.maxPages) throw new Error(`PDF has ${pages} pages; limit is ${input.maxPages}`);
+  if (input.pages.length > input.maxPages) throw new Error(`PDF OCR requested ${input.pages.length} pages; limit is ${input.maxPages}`);
   let worker: Awaited<ReturnType<typeof createWorker>> | undefined;
   try {
     worker = await createWorker("eng+fra", 1, { langPath: await ensureTessdata(), gzip: eng.gzip, cacheMethod: "none" });
