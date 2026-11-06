@@ -7,6 +7,7 @@ const content = document.querySelector<HTMLElement>("main")!;
 const pending = new Map<number, { resolve: (value: unknown) => void; reject: (reason: unknown) => void; timer: ReturnType<typeof setTimeout> }>();
 let nextId = 0;
 let reportFrame: HTMLIFrameElement | undefined;
+let pdfFile: FileInfo | undefined;
 let lastHeight = 0;
 let renderGeneration = 0;
 let disposed = false;
@@ -60,7 +61,7 @@ function mimeType(file: FileInfo): string {
   const explicit = file.mimeType?.split(";")[0].trim().toLowerCase();
   if (explicit && explicit !== "application/octet-stream") return explicit;
   const ext = file.filename?.split(".").at(-1)?.toLowerCase() ?? "";
-  const types: Record<string, string> = { html: "text/html", htm: "text/html", md: "text/markdown", markdown: "text/markdown", json: "application/json", csv: "text/csv", svg: "image/svg+xml", png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", gif: "image/gif", webp: "image/webp" };
+  const types: Record<string, string> = { pdf: "application/pdf", html: "text/html", htm: "text/html", md: "text/markdown", markdown: "text/markdown", json: "application/json", csv: "text/csv", svg: "image/svg+xml", png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", gif: "image/gif", webp: "image/webp" };
   return types[ext] || (/^(txt|log|[cm]?[jt]sx?|py|rb|sh|bash|css|xml|ya?ml|toml|sql|rs|go|java|c|cpp|h)$/.test(ext) ? "text/plain" : explicit || "application/octet-stream");
 }
 function card(file: FileInfo, mime: string) {
@@ -108,8 +109,100 @@ function reportBridge() {
   window.addEventListener("load", height);
   window.addEventListener("resize", height);
 }
-function reportPage(html: string): string {
-  const page = new DOMParser().parseFromString(html, "text/html");
+function reportMermaid() {
+  const script = document.createElement("script");
+  script.src = "https://cdn.jsdelivr.net/npm/pele@1.9.0/dist/pele.global.js";
+  script.onload = () => {
+    const pele = (globalThis as unknown as { pele: { mount: (element: HTMLElement, source: string, options: { zoom: boolean; onError: () => void }) => { result: unknown; destroy: () => void } } }).pele;
+    for (const code of document.querySelectorAll("pre > code.language-mermaid")) {
+      const pre = code.parentElement!;
+      const mount = document.createElement("div");
+      pre.before(mount);
+      try {
+        const diagram = pele.mount(mount, code.textContent || "", { zoom: false, onError: () => {} });
+        const svg = mount.querySelector("svg");
+        if (!diagram.result || !svg) { diagram.destroy(); mount.remove(); continue; }
+        svg.setAttribute("role", "img");
+        svg.setAttribute("aria-label", "Mermaid diagram");
+        pre.remove();
+      } catch { mount.remove(); }
+    }
+  };
+  document.head.append(script);
+}
+async function reportPdf() {
+  const data = new Promise<Uint8Array>((resolve) => {
+    function receive(event: MessageEvent) {
+      if (event.source !== window.parent || event.data?.type !== "yoplai-file-pdf" || !(event.data.data instanceof ArrayBuffer)) return;
+      window.removeEventListener("message", receive);
+      resolve(new Uint8Array(event.data.data));
+    }
+    window.addEventListener("message", receive);
+  });
+  const fallback = () => window.parent.postMessage({ type: "yoplai-file-fallback" }, "*");
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const pdfjs = await Promise.race([
+      (async () => {
+        const workerUrl = "https://cdn.jsdelivr.net/npm/pdfjs-dist@5.4.624/build/pdf.worker.mjs";
+        const libraryUrl = "https://cdn.jsdelivr.net/npm/pdfjs-dist@5.4.624/build/pdf.mjs";
+        (globalThis as unknown as { pdfjsWorker: unknown }).pdfjsWorker = await import(workerUrl);
+        return import(libraryUrl);
+      })(),
+      new Promise<never>((_resolve, reject) => { timer = setTimeout(() => reject(new Error("PDF library timed out")), 10_000); }),
+    ]);
+    clearTimeout(timer);
+    const pdf = await pdfjs.getDocument({ data: await data, isEvalSupported: false, useWasm: false, useWorkerFetch: false, stopAtErrors: true }).promise;
+    if (pdf.numPages > 50) {
+      const note = document.createElement("p");
+      note.textContent = `Showing the first 50 of ${pdf.numPages} pages. Download the file for all pages.`;
+      document.body.append(note);
+    }
+    const pages = document.createElement("div");
+    document.body.append(pages);
+    let renderedWidth = 0;
+    let rendering = false;
+    async function renderPages() {
+      if (rendering) return;
+      rendering = true;
+      try {
+        while (renderedWidth !== document.documentElement.clientWidth) {
+          renderedWidth = document.documentElement.clientWidth;
+          for (const canvas of pages.querySelectorAll("canvas")) { canvas.width = 0; canvas.height = 0; }
+          pages.replaceChildren();
+          for (let number = 1; number <= Math.min(50, pdf.numPages); number++) {
+            const page = await pdf.getPage(number);
+            const viewport = page.getViewport({ scale: renderedWidth * devicePixelRatio / page.getViewport({ scale: 1 }).width });
+            const canvas = document.createElement("canvas");
+            canvas.width = Math.ceil(viewport.width);
+            canvas.height = Math.ceil(viewport.height);
+            canvas.style.cssText = "display:block;width:100%;height:auto;margin-bottom:12px";
+            canvas.setAttribute("role", "img");
+            canvas.setAttribute("aria-label", `Page ${number} of ${pdf.numPages}`);
+            pages.append(canvas);
+            await page.render({ canvas, viewport }).promise;
+            if (renderedWidth !== document.documentElement.clientWidth) break;
+          }
+        }
+      } catch { fallback(); }
+      finally { rendering = false; }
+    }
+    new ResizeObserver(() => { void renderPages(); }).observe(document.documentElement);
+    await renderPages();
+  } catch { clearTimeout(timer); fallback(); }
+}
+function reportPage(kind: "html" | "markdown" | "pdf", body: string): string {
+  const page = new DOMParser().parseFromString(kind === "html" ? body : '<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head><body></body></html>', "text/html");
+  if (kind !== "html") {
+    page.body.innerHTML = body;
+    const style = page.createElement("style");
+    style.textContent = `
+:root{color-scheme:light dark;--bg-surface:#fff;--text-primary:#111827;--text-secondary:#4b5563;--border-subtle:#e5e7eb;--link:#2563eb}
+@media(prefers-color-scheme:dark){:root{--bg-surface:#1a1a1a;--text-primary:#fff;--text-secondary:#b6b6b6;--border-subtle:#1f2937;--link:#93c5fd}}
+*{box-sizing:border-box}html,body{margin:0;min-width:0}body{padding:16px;font:14px/1.6 Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:var(--text-primary);background:var(--bg-surface);overflow-wrap:anywhere;-webkit-font-smoothing:antialiased}h1,h2,h3{line-height:1.25;text-wrap:balance;margin:1.5em 0 .5em}h1{font-size:24px}h2{font-size:20px}h3{font-size:16px}body>:first-child{margin-top:0}body>:last-child{margin-bottom:0}p{max-width:75ch}a{color:var(--link);text-underline-offset:3px}a:focus-visible{outline:2px solid var(--link);outline-offset:4px}pre,code{font-family:ui-monospace,SFMono-Regular,Consolas,monospace}pre{margin:0;white-space:pre-wrap;tab-size:4}img,svg{display:block;max-width:100%;height:auto}table{border-collapse:collapse;font-variant-numeric:tabular-nums;max-width:100%}th,td{padding:8px 12px;border-bottom:1px solid var(--border-subtle);text-align:left;white-space:pre-wrap}th{font-weight:600}small{color:var(--text-secondary)}::selection{background:var(--link);color:var(--bg-surface)}
+`;
+    page.head.append(style);
+  }
   const policy = page.createElement("meta");
   policy.httpEquiv = "Content-Security-Policy";
   const resources = "https://cdn.jsdelivr.net https://cdnjs.cloudflare.com https://unpkg.com https://fonts.googleapis.com https://fonts.gstatic.com";
@@ -117,6 +210,17 @@ function reportPage(html: string): string {
   const bridge = page.createElement("script");
   bridge.textContent = `(${reportBridge.toString()})()`;
   page.head.prepend(policy, bridge);
+  if (kind === "markdown" && page.querySelector("pre > code.language-mermaid")) {
+    const script = page.createElement("script");
+    script.textContent = `(${reportMermaid.toString()})()`;
+    page.body.append(script);
+  }
+  if (kind === "pdf") {
+    page.body.style.padding = "0";
+    const script = page.createElement("script");
+    script.textContent = `(${reportPdf.toString()})()`;
+    page.body.append(script);
+  }
   return "<!doctype html>" + page.documentElement.outerHTML;
 }
 async function render(value: unknown) {
@@ -124,20 +228,31 @@ async function render(value: unknown) {
   if (typeof file.uri !== "string") return;
   const generation = ++renderGeneration;
   reportFrame = undefined;
+  pdfFile = undefined;
   content.textContent = "Loading file…";
   try {
     const resource = object(await request("resources/read", { uri: file.uri }));
     if (generation !== renderGeneration) return;
     const item = object(Array.isArray(resource.contents) ? resource.contents[0] : undefined);
     const mime = mimeType(file);
+    if (mime === "application/pdf" && typeof item.blob !== "string") { card(file, mime); return; }
     const textType = mime.startsWith("text/") || /^(application\/(json|javascript|x-javascript|xml|yaml|x-yaml|sql|toml|x-sh|typescript))$/.test(mime) || /\+(json|xml)$/.test(mime);
-    if (!textType && !["image/png", "image/jpeg", "image/gif", "image/webp", "image/svg+xml"].includes(mime)) { card(file, mime); return; }
-    if (mime === "text/html" || mime === "application/xhtml+xml") {
+    if (!textType && !["application/pdf", "image/png", "image/jpeg", "image/gif", "image/webp", "image/svg+xml"].includes(mime)) { card(file, mime); return; }
+    if (mime === "text/html" || mime === "application/xhtml+xml" || mime === "application/pdf" || mime === "text/markdown") {
       const frame = document.createElement("iframe");
       frame.title = file.title || file.filename;
       frame.setAttribute("sandbox", "allow-scripts");
       frame.style.height = "40px";
-      frame.srcdoc = reportPage(String(item.text ?? ""));
+      if (mime === "application/pdf" && typeof item.blob === "string") {
+        pdfFile = file;
+        const data = Uint8Array.from(atob(item.blob), (char) => char.charCodeAt(0)).buffer;
+        frame.addEventListener("load", () => frame.contentWindow?.postMessage({ type: "yoplai-file-pdf", data }, "*", [data]), { once: true });
+      }
+      let kind: "html" | "markdown" | "pdf" = "html";
+      if (mime === "application/pdf") kind = "pdf";
+      else if (mime === "text/markdown") kind = "markdown";
+      const body = kind === "markdown" ? DOMPurify.sanitize(marked.parse(String(item.text ?? ""), { async: false })) : String(item.text ?? "");
+      frame.srcdoc = reportPage(kind, body);
       content.replaceChildren(frame);
       reportFrame = frame;
       return;
@@ -152,10 +267,6 @@ async function render(value: unknown) {
       const encoded = typeof item.blob === "string" ? item.blob : btoa(Array.from(new TextEncoder().encode(String(item.text ?? "")), (byte) => String.fromCharCode(byte)).join(""));
       image.src = `data:${mime};base64,${encoded}`;
       content.replaceChildren(image);
-      return;
-    }
-    if (mime === "text/markdown") {
-      content.innerHTML = DOMPurify.sanitize(marked.parse(String(item.text ?? ""), { async: false }));
       return;
     }
     const pre = document.createElement("pre");
@@ -178,15 +289,6 @@ function sizeChanged(measured = Math.max(content.scrollHeight, content.offsetHei
 }
 const sizeObserver = typeof ResizeObserver !== "undefined" ? new ResizeObserver(() => sizeChanged()) : undefined;
 sizeObserver?.observe(content);
-content.addEventListener("click", (event) => {
-  const link = event.target instanceof Element ? event.target.closest("a[href]") : null;
-  if (!link) return;
-  event.preventDefault();
-  const href = link.getAttribute("href") || "";
-  if (href.startsWith("#")) {
-    try { document.getElementById(decodeURIComponent(href.slice(1)))?.scrollIntoView(); } catch { /* Invalid fragments do nothing. */ }
-  } else openLink(href);
-});
 function openLink(raw: string) {
   if (disposed) return;
   try {
@@ -197,6 +299,12 @@ function openLink(raw: string) {
 window.addEventListener("message", (event: MessageEvent) => {
   if (!reportFrame || event.source !== reportFrame.contentWindow) return;
   const message = object(event.data);
+  if (message.type === "yoplai-file-fallback" && pdfFile) {
+    const file = pdfFile;
+    reportFrame = undefined; pdfFile = undefined;
+    card(file, mimeType(file)); sizeChanged();
+    return;
+  }
   if (message.type === "yoplai-file-height" && typeof message.height === "number" && Number.isFinite(message.height)) {
     const height = Math.max(40, Math.min(800, Math.ceil(message.height)));
     reportFrame.style.height = `${height}px`;

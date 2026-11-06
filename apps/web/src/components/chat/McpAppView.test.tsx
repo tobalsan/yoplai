@@ -226,6 +226,37 @@ describe("MCP App view host", () => {
     initialize(frame);
     expect(post.mock.calls[1][0].result.hostCapabilities.message).toEqual({ text: {} });
   });
+  it.each(["inline", "panel"] as const)("omits conversation capabilities for a yoplai file view in %s mode", async (mode) => {
+    loadView.mockResolvedValueOnce({ ...view, server: "yoplai" });
+    mount(undefined, undefined, undefined, undefined, { mode, onUserMessage: vi.fn().mockResolvedValue(undefined) });
+    await settle();
+    const frame = getByTitle(container, "yoplai MCP App") as HTMLIFrameElement;
+    const post = vi.spyOn(frame.contentWindow!, "postMessage");
+    initialize(frame);
+    const capabilities = post.mock.calls[1][0].result.hostCapabilities;
+    expect(capabilities).not.toHaveProperty("message");
+    expect(capabilities).not.toHaveProperty("updateModelContext");
+    expect(capabilities.serverResources).toEqual({});
+  });
+  it.each(["inline", "panel"] as const)("refuses file view messages and model context without relaying in %s mode", async (mode) => {
+    loadView.mockResolvedValueOnce({ ...view, server: "yoplai" });
+    const onUserMessage = vi.fn().mockResolvedValue(undefined);
+    mount(undefined, undefined, undefined, undefined, { mode, onUserMessage });
+    await settle();
+    const frame = getByTitle(container, "yoplai MCP App") as HTMLIFrameElement;
+    initialize(frame);
+    const post = vi.spyOn(frame.contentWindow!, "postMessage");
+    send(frame, { jsonrpc: "2.0", id: "message", method: "ui/message", params: { role: "user", content: [{ type: "text", text: "Post this" }] } });
+    send(frame, { jsonrpc: "2.0", id: "context", method: "ui/update-model-context", params: { content: [{ type: "text", text: "Remember this" }] } });
+    await settle();
+    expect(post.mock.calls).toEqual([
+      [{ jsonrpc: "2.0", id: "message", error: { code: -32601, message: "Method not found" } }, origin],
+      [{ jsonrpc: "2.0", id: "context", error: { code: -32601, message: "Method not found" } }, origin],
+    ]);
+    expect(onUserMessage).not.toHaveBeenCalled();
+    expect(relay).not.toHaveBeenCalled();
+    expect(queryByText(container, "View unavailable")).toBeNull();
+  });
   it("initializes a panel in fullscreen with the frame box dimensions", async () => {
     mount(undefined, undefined, undefined, undefined, { mode: "panel" });
     await settle();

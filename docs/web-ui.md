@@ -57,12 +57,29 @@ All previews and downloads use the existing authenticated media route.
 
 `send_file` uses the built-in `yoplai` file viewer without requiring `mcp.json`.
 It displays HTML, sanitized Markdown, images (including SVG as an image), text
-and code, pretty JSON and CSV (first 500 rows). Unsupported formats and files
+and code, PDF pages, pretty JSON and CSV (first 500 rows). Unsupported formats and files
 over 10 MB show name, type and size. An optional `title` accepts up to 200 characters.
 HTML runs in a nested opaque sandbox: scripts from jsDelivr, cdnjs and unpkg,
 plus Google Fonts are allowed; fetch, XHR and WebSocket connections are blocked.
 Anchors scroll inside reports; only HTTP(S) links open externally. A failed
 capture or unavailable apps origin preserves the existing file card.
+
+PDFs (including generic-typed `.pdf` files) render at the view width and screen
+pixel density, with accessible page names. Only the first 50 pages render; larger
+documents show the total and a reminder to download all pages. Invalid, damaged
+or password-protected PDFs, missing bytes, and PDF.js load failures (10-second
+deadline) fall back to the file card; the header's Download remains available.
+PDF search, zoom and text selection are not supported. External fonts, CMaps
+and Wasm decoders that require connections are unavailable under the sandbox CSP.
+
+Markdown Mermaid fences render as diagrams; broken blocks keep their source.
+PDF.js 5.4.624 and Pele 1.9.0 load from jsDelivr inside the opaque report frame,
+which also renders sanitized Markdown with the existing typography, anchors,
+links and height bridge. Plain Markdown loads no CDN script and works offline.
+Diagrams and PDF pages need CDN access; third-party code never runs in the
+bundled viewer frame. File views refuse `ui/message` and
+`ui/update-model-context` and advertise neither capability; other MCP Apps
+retain their existing message and context support.
 
 File views show the title (or filename), type, size and **Download** for the
 original file in their header, inline and in the side panel. Different filenames
