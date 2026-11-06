@@ -86,7 +86,7 @@ export function dashboardCsp(
   assetOrigin?: string
 ): string {
   const assets = `${assetOrigin ?? dashboardBaseUrl(config)}/d-assets/`;
-  return `sandbox allow-scripts allow-downloads allow-modals; default-src 'none'; script-src 'unsafe-inline' ${assets}; style-src 'unsafe-inline' ${assets}; img-src data: blob:; font-src data: ${assets}; connect-src 'none'`;
+  return `sandbox allow-scripts allow-downloads allow-modals allow-popups allow-popups-to-escape-sandbox; default-src 'none'; script-src 'unsafe-inline' ${assets}; style-src 'unsafe-inline' ${assets}; img-src data: blob:; font-src data: ${assets}; connect-src 'none'`;
 }
 
 export function createDashboardAssetRoutes(
