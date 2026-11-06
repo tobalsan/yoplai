@@ -18,15 +18,27 @@ import {
   SchedulerService,
   clearSchedulerContext,
   setSchedulerContext,
-  stopScheduler,
 } from "./service.js";
+
+// Each directly constructed scheduler owns timers that must stop before context teardown.
+const schedulers: SchedulerService[] = [];
+
+function createScheduler(): SchedulerService {
+  const scheduler = new SchedulerService();
+  schedulers.push(scheduler);
+  return scheduler;
+}
+
+async function stopTestSchedulers() {
+  for (const scheduler of schedulers.splice(0)) await scheduler.stop();
+}
 
 describe("SchedulerService run ledger", () => {
   let tmpDir: string;
   let scheduler: SchedulerService;
 
   afterEach(async () => {
-    await scheduler?.stop();
+    await stopTestSchedulers();
     clearSchedulerContext();
     vi.restoreAllMocks();
     if (tmpDir) await fs.rm(tmpDir, { recursive: true, force: true });
@@ -45,7 +57,7 @@ describe("SchedulerService run ledger", () => {
       sessions: { idleMinutes: 360 },
     };
     setSchedulerContext(context(config, runAgent));
-    scheduler = new SchedulerService();
+    scheduler = createScheduler();
     return { config, alpha, runAgent };
   }
 
@@ -359,7 +371,7 @@ describe("SchedulerService credential refusals", () => {
   let scheduler: SchedulerService;
 
   afterEach(async () => {
-    await scheduler?.stop();
+    await stopTestSchedulers();
     clearSchedulerContext();
     vi.restoreAllMocks();
     vi.useRealTimers();
@@ -376,7 +388,7 @@ describe("SchedulerService credential refusals", () => {
     };
     const deliver = vi.fn(async () => {});
     setSchedulerContext(context(config, runAgent, { slack: deliver }));
-    scheduler = new SchedulerService();
+    scheduler = createScheduler();
     const job = await scheduler.add("alpha", {
       name: "Calendar", schedule: { cron: "* * * * *", tz: "UTC" },
       payload: jobPayload({ message: "Sync PTO" }),
@@ -534,11 +546,7 @@ describe("SchedulerService.runNow", () => {
   let tmpDir: string | undefined;
 
   afterEach(async () => {
-    try {
-      await stopScheduler();
-    } catch {
-      // Tests create the service directly and may not start it.
-    }
+    await stopTestSchedulers();
     clearSchedulerContext();
     vi.restoreAllMocks();
     if (tmpDir) await fs.rm(tmpDir, { recursive: true, force: true });
@@ -555,7 +563,7 @@ describe("SchedulerService.runNow", () => {
     const ctx = context(config, runAgent);
     ctx.mintToolToken = vi.fn();
     setSchedulerContext(ctx);
-    const scheduler = new SchedulerService();
+    const scheduler = createScheduler();
     expect(await scheduler.runNow("alpha", "missing-owner")).toMatchObject({ status: "error", error: expect.stringContaining("owner is missing") });
     expect(ctx.mintToolToken).not.toHaveBeenCalled();
     await expect(fs.stat(path.join(alpha.workspace, "unauthorized.txt"))).rejects.toMatchObject({ code: "ENOENT" });
@@ -568,7 +576,7 @@ describe("SchedulerService.runNow", () => {
     const alpha = agent("alpha", path.join(tmpDir, "alpha"));
     const config: GatewayConfig = { version: 3, agents: [alpha], extensions: { scheduler: { enabled: true } }, sessions: { idleMinutes: 360 } };
     setSchedulerContext(context(config));
-    const scheduler = new SchedulerService();
+    const scheduler = createScheduler();
     const input = { name: "Shared", schedule: { cron: "0 8 * * *", tz: "UTC" }, payload: jobPayload({ message: "Summary" }) };
     const team = await scheduler.add("alpha", { ...input, credentialMode: "team" }, "alice");
     expect(team).toMatchObject({ credentialMode: "team", createdByUserId: "alice" });
@@ -597,7 +605,7 @@ describe("SchedulerService.runNow", () => {
     await fs.writeFile(path.join(alpha.workspace, "cron/jobs.json"), JSON.stringify({ version: 1, jobs: [{ id: "legacy", name: "Legacy", schedule: { cron: "0 8 * * *", tz: "UTC" }, payload: { message: "Summary" } }] }));
     const config: GatewayConfig = { version: 3, agents: [alpha], extensions: { scheduler: { enabled: true } }, sessions: { idleMinutes: 360 } };
     setSchedulerContext(context(config));
-    const scheduler = new SchedulerService();
+    const scheduler = createScheduler();
     const [legacy] = await scheduler.list("alpha");
     expect(legacy?.credentialMode).toBe("team");
     expect(legacy?.ownerUserId).toBeUndefined();
@@ -628,7 +636,7 @@ describe("SchedulerService.runNow", () => {
     const config: GatewayConfig = { version: 3, agents: [alpha], extensions: { scheduler: { enabled: true } }, sessions: { idleMinutes: 360 } };
     const deliver = vi.fn();
     setSchedulerContext(context(config, runAgent, { slack: deliver }));
-    const scheduler = new SchedulerService();
+    const scheduler = createScheduler();
     const owner = await scheduler.add("alpha", { name: "Owner", schedule: { cron: "0 8 * * *", tz: "UTC" }, payload: jobPayload({ message: "Send" }), deliver: [{ target: "slack", channel: "alerts" }] }, "alice");
     expect(owner).toMatchObject({ ownerUserId: "alice", credentialMode: "owner" });
     const failed = await scheduler.runNow("alpha", owner.id);
@@ -675,7 +683,7 @@ describe("SchedulerService.runNow", () => {
       sessions: { idleMinutes: 360 },
     };
     setSchedulerContext(context(config));
-    const scheduler = new SchedulerService();
+    const scheduler = createScheduler();
     await scheduler.start();
     for (let attempt = 0; attempt < 100; attempt++) {
       const [job] = await scheduler.list("alpha");
@@ -695,7 +703,7 @@ describe("SchedulerService.runNow", () => {
     );
     expect(outputs).toHaveLength(1);
     await scheduler.stop();
-    const restarted = new SchedulerService();
+    const restarted = createScheduler();
     await restarted.start();
     await new Promise((resolve) => setTimeout(resolve, 30));
     expect(
@@ -734,7 +742,7 @@ describe("SchedulerService.runNow", () => {
           })
       );
       setSchedulerContext(context(config, runAgent));
-      const scheduler = new SchedulerService();
+      const scheduler = createScheduler();
       const originalRunAt = new Date(Date.now() + 60_000).toISOString();
       const job = await scheduler.add("alpha", {
         name: "Once",
@@ -800,7 +808,7 @@ describe("SchedulerService.runNow", () => {
       };
       const ctx = context(config);
       setSchedulerContext(ctx);
-      const scheduler = new SchedulerService();
+      const scheduler = createScheduler();
       await scheduler.add("alpha", {
         name: "Once",
         schedule: { runAt: new Date(Date.now() + 60_000).toISOString() },
@@ -850,7 +858,7 @@ describe("SchedulerService.runNow", () => {
       sessions: { idleMinutes: 360 },
     };
     setSchedulerContext(context(config, runAgent));
-    const scheduler = new SchedulerService();
+    const scheduler = createScheduler();
     const job = await scheduler.add("alpha", {
       name: "Digest",
       schedule: { cron: "0 8 * * *", tz: "UTC" },
@@ -923,7 +931,7 @@ describe("SchedulerService.runNow", () => {
       sessions: { idleMinutes: 360 },
     };
     setSchedulerContext(context(config, runAgent));
-    const scheduler = new SchedulerService();
+    const scheduler = createScheduler();
 
     await scheduler.runNow("alpha", "job-1");
 
@@ -959,7 +967,7 @@ describe("SchedulerService.runNow", () => {
       };
       setSchedulerContext(context(config, runAgent));
     });
-    const scheduler = new SchedulerService();
+    const scheduler = createScheduler();
     const job = await scheduler.add("alpha", {
       name: "Digest",
       schedule: { cron: "0 8 * * *", tz: "UTC" },
@@ -1003,7 +1011,7 @@ describe("SchedulerService.runNow", () => {
       };
       setSchedulerContext(context(config, runAgent));
     });
-    const scheduler = new SchedulerService();
+    const scheduler = createScheduler();
     const job = await scheduler.add("alpha", {
       name: "Digest",
       schedule: { cron: "* * * * *", tz: "UTC" },
@@ -1038,11 +1046,7 @@ describe("SchedulerService persistence and lifecycle", () => {
   let tmpDir: string | undefined;
 
   afterEach(async () => {
-    try {
-      await stopScheduler();
-    } catch {
-      // Tests create the service directly and may not start it.
-    }
+    await stopTestSchedulers();
     clearSchedulerContext();
     vi.restoreAllMocks();
     if (tmpDir) await fs.rm(tmpDir, { recursive: true, force: true });
@@ -1058,7 +1062,7 @@ describe("SchedulerService persistence and lifecycle", () => {
       sessions: { idleMinutes: 360 },
     };
     setSchedulerContext(context(config));
-    const scheduler = new SchedulerService();
+    const scheduler = createScheduler();
     await scheduler.list();
 
     let releaseFirst!: () => void;
@@ -1119,7 +1123,7 @@ describe("SchedulerService persistence and lifecycle", () => {
       sessions: { idleMinutes: 360 },
     };
     setSchedulerContext(context(config));
-    const scheduler = new SchedulerService();
+    const scheduler = createScheduler();
     await scheduler.add("alpha", {
       name: "Future",
       schedule: { cron: "0 8 * * *", tz: "UTC" },
@@ -1160,7 +1164,7 @@ describe("SchedulerService distant deadlines", () => {
       version: 3, agents: [alpha], extensions: { scheduler: { enabled: true } },
       sessions: { idleMinutes: 360 },
     }, runAgent));
-    const scheduler = new SchedulerService();
+    const scheduler = createScheduler();
     const deadline = Date.parse("2026-03-02T00:00:00.000Z");
     try {
       await scheduler.add("alpha", {
@@ -1194,7 +1198,7 @@ describe("SchedulerService distant deadlines", () => {
       expect(runAgent).toHaveBeenCalledOnce();
       expect(timers.mock.calls.every(([, delay]) => Number(delay) <= 2_147_483_647)).toBe(true);
     } finally {
-      await scheduler.stop();
+      await stopTestSchedulers();
       clearSchedulerContext();
       vi.restoreAllMocks();
       vi.unstubAllGlobals();
@@ -1208,12 +1212,9 @@ describe("SchedulerService timeout and loop isolation", () => {
   let tmpDir: string | undefined;
 
   afterEach(async () => {
-    try {
-      await stopScheduler();
-    } catch {
-      // ignore
-    }
+    await stopTestSchedulers();
     clearSchedulerContext();
+    vi.useRealTimers();
     vi.restoreAllMocks();
     if (tmpDir) await fs.rm(tmpDir, { recursive: true, force: true });
   });
@@ -1236,7 +1237,7 @@ describe("SchedulerService timeout and loop isolation", () => {
       sessions: { idleMinutes: 360 },
     };
     setSchedulerContext(context(config, runAgent));
-    const scheduler = new SchedulerService();
+    const scheduler = createScheduler();
     await scheduler.add("alpha", {
       name: "Hung",
       schedule: { cron: "* * * * *", tz: "UTC" },
@@ -1266,8 +1267,6 @@ describe("SchedulerService timeout and loop isolation", () => {
     expect(after?.state?.lastStatus).toBe("error");
     expect(after?.state?.lastError).toMatch(/timed out/i);
     expect(after?.state?.nextRunAtMs).toBeGreaterThan(Date.now());
-
-    vi.useRealTimers();
   });
 
   it("a hung job does not block unrelated due jobs from running", async () => {
@@ -1297,7 +1296,7 @@ describe("SchedulerService timeout and loop isolation", () => {
       sessions: { idleMinutes: 360 },
     };
     setSchedulerContext(context(config, runAgent));
-    const scheduler = new SchedulerService();
+    const scheduler = createScheduler();
 
     // Add one job per agent, both due now
     await scheduler.add("alpha", {
@@ -1327,8 +1326,6 @@ describe("SchedulerService timeout and loop isolation", () => {
       state?: { lastStatus?: string };
     }>;
     expect(betaJob?.state?.lastStatus).toBe("ok");
-
-    vi.useRealTimers();
   });
 
   it("abort signal is fired on runAgent when job times out", async () => {
@@ -1352,7 +1349,7 @@ describe("SchedulerService timeout and loop isolation", () => {
       sessions: { idleMinutes: 360 },
     };
     setSchedulerContext(context(config, runAgent));
-    const scheduler = new SchedulerService();
+    const scheduler = createScheduler();
     await scheduler.add("alpha", {
       name: "Hung",
       schedule: { cron: "* * * * *", tz: "UTC" },
@@ -1396,7 +1393,7 @@ describe("SchedulerService timeout and loop isolation", () => {
       sessions: { idleMinutes: 360 },
     };
     setSchedulerContext(context(config, runAgent));
-    const scheduler = new SchedulerService();
+    const scheduler = createScheduler();
     await scheduler.add("alpha", {
       name: "Hung",
       schedule: { cron: "* * * * *", tz: "UTC" },
@@ -1442,11 +1439,7 @@ describe("SchedulerService script jobs", () => {
   let tmpDir: string | undefined;
 
   afterEach(async () => {
-    try {
-      await stopScheduler();
-    } catch {
-      // Tests create the service directly and may not start it.
-    }
+    await stopTestSchedulers();
     clearSchedulerContext();
     vi.restoreAllMocks();
     if (tmpDir) await fs.rm(tmpDir, { recursive: true, force: true });
@@ -1469,7 +1462,7 @@ describe("SchedulerService script jobs", () => {
     };
     const ctx = context(config, runAgent);
     setSchedulerContext(ctx);
-    return { scheduler: new SchedulerService(), runAgent, workspace, ctx };
+    return { scheduler: createScheduler(), runAgent, workspace, ctx };
   }
 
   type JobState = {
@@ -1761,11 +1754,7 @@ describe("SchedulerService delivery", () => {
   let tmpDir: string | undefined;
 
   afterEach(async () => {
-    try {
-      await stopScheduler();
-    } catch {
-      // Tests create the service directly and may not start it.
-    }
+    await stopTestSchedulers();
     clearSchedulerContext();
     vi.restoreAllMocks();
     if (tmpDir) await fs.rm(tmpDir, { recursive: true, force: true });
@@ -1811,7 +1800,7 @@ describe("SchedulerService delivery", () => {
         meta: { durationMs: 3, sessionId: "s" },
       });
     setSchedulerContext(context(config, runAgent, options.sinks));
-    return { scheduler: new SchedulerService(), runAgent };
+    return { scheduler: createScheduler(), runAgent };
   }
 
   type JobDeliveryState = {
