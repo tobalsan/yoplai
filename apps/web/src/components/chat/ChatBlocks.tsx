@@ -11,7 +11,6 @@ import { McpAppView } from "./McpAppView";
 import { appsAvailable } from "../../lib/capabilities";
 import { groupActivityItems, lastFiveWords } from "../../lib/chat-activity";
 import type { AppViews } from "./appViews";
-import { Button } from "../ui/Button";
 import { ImageLightbox } from "./ImageLightbox";
 
 export function CompactionSummary(props: { text: string; timestamp: number }) {
@@ -181,7 +180,7 @@ export function McpAppToolRow(props: { agentId: string; sessionId?: string | nul
       </Match>
       <Match when={role() === "link" && (!settled() || captured())}>
         <Show when={settled()} fallback={<p role="status">Updating view…</p>}>
-          <Button variant="ghost" onClick={reveal}>View updated</Button>
+          <button type="button" class="mcp-app-updated" onClick={reveal}><i class="fa-solid fa-eye" aria-hidden="true" />View updated. Click to see it</button>
         </Show>
       </Match>
       <Match when={settled() && appsAvailable() !== undefined && (appsAvailable() === false || !captured() || props.sessionId !== undefined)}>

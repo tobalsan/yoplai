@@ -3018,7 +3018,7 @@ describe("ChatView abort handling", () => {
     sendViewFile(callbacks(), "a-second", { fileId: "a-v2", filename: "a.md", mimeType: "text/markdown", size: 2048, title: "Revised report A" });
     await waitFor(() => expect(queryByTitle(container, "Revised report A file view")).toBe(frameA));
     expect(frameB.isConnected).toBe(true);
-    expect(queryByRole(container, "button", { name: "View updated" })).not.toBeNull();
+    expect(queryByRole(container, "button", { name: "View updated. Click to see it" })).not.toBeNull();
     expect(queryByText(container, "a.md", { exact: true })).not.toBeNull();
     expect(queryByText(container, "b.md", { exact: true })).toBeNull();
     expect(queryByText(container, "MD · 2.0 KB", { exact: true })).not.toBeNull();
@@ -3239,7 +3239,7 @@ describe("ChatView abort handling", () => {
       [{ jsonrpc: "2.0", method: "ui/notifications/tool-input", params: { arguments: { shape: "box" } } }, "https://apps.test"],
       [{ jsonrpc: "2.0", method: "ui/notifications/tool-result", params: { content: [{ type: "text", text: "Box added" }] } }, "https://apps.test"],
     ]);
-    queryByRole(container, "button", { name: "View updated" })!.click();
+    queryByRole(container, "button", { name: "View updated. Click to see it" })!.click();
     expect(document.activeElement).toBe(frame.closest(".mcp-app-tool-row"));
     post.mockRestore();
     dispose();
@@ -3350,7 +3350,7 @@ describe("ChatView abort handling", () => {
       await waitFor(() => expect(container.querySelectorAll("iframe")).toHaveLength(1));
       const initialFrame = container.querySelector("iframe")!;
       expect(loadMcpAppViewMock.mock.calls[0].slice(0, 3)).toEqual(["agent-1", "session-main", "b-latest"]);
-      queryByRole(container, "button", { name: "View updated" })!.click();
+      queryByRole(container, "button", { name: "View updated. Click to see it" })!.click();
       expect(document.activeElement).toBe(initialFrame.closest(".mcp-app-tool-row"));
       const panelFrame = panelOpen ? await expandApp(container, initialFrame) : undefined;
       const markerA = { server: "fixture", tool: "draw_a", resourceUri: "ui://fixture/a.html" };
