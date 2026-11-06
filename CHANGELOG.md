@@ -15,6 +15,7 @@ Breaking changes are marked **⚠ BREAKING**.
 - Runtime subagents that exit immediately now persist their final status and CLI session for resume.
 - Heartbeat runs already in flight finish safely during extension shutdown, including their saved output.
 - Project subagents that exit immediately now persist their completion and release the project-space write lease, including resumed runs.
+- Canvas dashboard links can open new tabs without sandboxing the destination page.
 - Long text PDFs extract beyond 30 pages; OCR reads up to 30 scanned pages with a partial-text note, and project files show precise extraction failure reasons.
 - Claude quota polling accepts a missing idle window, logs safe HTTP/payload diagnostics, and emits one error alert per login outage after 30 minutes without a good quota reading.
 
