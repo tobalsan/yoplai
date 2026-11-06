@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { queryAllByRole, queryByRole, queryByTitle } from "@testing-library/dom";
+import { queryAllByRole, queryByRole, queryByText, queryByTitle } from "@testing-library/dom";
 import { createSignal } from "solid-js";
 import { delegateEvents, render } from "solid-js/web";
 import { ChatView, ThinkingLine } from "./ChatView";
@@ -9,17 +9,18 @@ import { setImpersonationStatus } from "./ImpersonationBanner";
 import type { SubscriptionCallbacks } from "../api/realtime";
 import type { StreamCallbacks } from "../api/chat";
 import type { FullHistoryMessage } from "../api/types";
+import type { McpAppFile } from "@yoplai/shared/types";
 import { ToastHost } from "../lib/toast";
 import {
   resetCapabilitiesForTests,
   setCapabilitiesForTests,
 } from "../lib/capabilities";
 
-const { loadMcpAppViewMock, loadMcpAppDataMock } = vi.hoisted(() => ({ loadMcpAppViewMock: vi.fn(), loadMcpAppDataMock: vi.fn() }));
+const { loadMcpAppViewMock, loadMcpAppDataMock, relayMcpAppRequestMock } = vi.hoisted(() => ({ loadMcpAppViewMock: vi.fn(), loadMcpAppDataMock: vi.fn(), relayMcpAppRequestMock: vi.fn() }));
 vi.mock("../api/mcp-apps", () => ({
   loadMcpAppView: loadMcpAppViewMock,
   loadMcpAppData: loadMcpAppDataMock,
-  relayMcpAppRequest: vi.fn(),
+  relayMcpAppRequest: relayMcpAppRequestMock,
   logMcpAppEvent: vi.fn().mockResolvedValue(undefined),
 }));
 const navigateMock = vi.fn();
@@ -2492,6 +2493,13 @@ describe("ChatView abort handling", () => {
     appMessage(frame, { jsonrpc: "2.0", method: "ui/notifications/initialized" });
   }
 
+  function sendViewFile(callbacks: Partial<StreamCallbacks> | undefined, id: string, file: McpAppFile) {
+    const marker = { server: "yoplai", tool: "send_file", resourceUri: "ui://yoplai/file-viewer" };
+    callbacks?.onToolCall?.(id, "send_file", { path: file.filename }, undefined, marker);
+    callbacks?.onFileOutput?.(file);
+    callbacks?.onToolResult?.(id, "send_file", "File sent to user", false, undefined, undefined, { ...marker, recordId: `record-${id}`, file });
+  }
+
   // ALG-600's rendered host/chat seam approved in Linear comment
   // 9de9b656-b0db-413c-8e8f-6707c6aece4d; transport is the external adapter.
   async function openMessageApp(contextTokens = 0) {
@@ -2925,6 +2933,174 @@ describe("ChatView abort handling", () => {
     await tick();
     expect(container.textContent).toContain("Loading view…");
     expect(container.querySelector('[title="fixture_draw"]')?.closest(".activity-group")).toBeNull();
+    dispose();
+  });
+
+  // ALG-615's current prompt explicitly specifies the rendered ChatView seam
+  // with real transcript/state/panel/host and public stream/HTTP adapters.
+  it.each(["simple", "full"])("hides an outbound file card only after its %s view delivers the file", async (mode) => {
+    enableAppViews();
+    routeState.view = mode;
+    const { container, dispose, callbacks } = await startFullStream();
+    const marker = { server: "yoplai", tool: "send_file", resourceUri: "ui://yoplai/file-viewer" };
+    const file = { fileId: "report-v1", filename: "a.md", mimeType: "text/markdown", size: 957, title: "Report" };
+    callbacks()?.onToolCall?.("report-call", "send_file", { path: "a.md" }, undefined, marker);
+    callbacks()?.onFileOutput?.(file);
+    callbacks()?.onToolResult?.("report-call", "send_file", "File sent to user", false, undefined, undefined, { ...marker, recordId: "report-record", file });
+    await waitFor(() => expect(queryByTitle(container, "Report file view")).not.toBeNull());
+    expect(queryByText(container, "a.md", { exact: true })).not.toBeNull();
+    const frame = queryByTitle(container, "Report file view") as HTMLIFrameElement;
+    initializeApp(frame);
+    expect(queryByText(container, "a.md", { exact: true })).toBeNull();
+    const download = queryByRole(container, "link", { name: "Download" });
+    expect(download?.getAttribute("href")).toBe("/api/media/download/report-v1");
+    dispose();
+  });
+
+  it.each(["no apps origin", "unavailable", "load error", "capture failed"])("keeps the outbound image card when its view has %s", async (failure) => {
+    enableAppViews();
+    if (failure === "no apps origin") {
+      setCapabilitiesForTests({ apps: { available: false } });
+      fetchCapabilitiesMock.mockResolvedValue({ version: 2, extensions: {}, agents: [], apps: { available: false } });
+    } else if (failure === "unavailable") loadMcpAppViewMock.mockResolvedValueOnce({ available: false });
+    else if (failure === "load error") loadMcpAppViewMock.mockRejectedValueOnce(new Error("View fetch failed"));
+    const { container, dispose, callbacks } = await startFullStream();
+    const marker = { server: "yoplai", tool: "send_file", resourceUri: "ui://yoplai/file-viewer" };
+    const file = { fileId: "diagram-file", filename: "diagram.png", mimeType: "image/png", size: 68 };
+    callbacks()?.onToolCall?.("diagram-call", "send_file", { path: "diagram.png" }, undefined, marker);
+    callbacks()?.onFileOutput?.(file);
+    callbacks()?.onToolResult?.("diagram-call", "send_file", "File sent to user", false, undefined, undefined,
+      failure === "capture failed" ? undefined : { ...marker, recordId: "diagram-record", file });
+    await waitFor(() => expect(queryByText(container, "View unavailable")).not.toBeNull());
+    expect(queryByRole(container, "button", { name: "Open diagram.png" })).not.toBeNull();
+    expect(queryByText(container, "diagram.png", { exact: true })).not.toBeNull();
+    expect(queryByRole(container, "link", { name: "Download" })?.getAttribute("href")).toBe("/api/media/download/diagram-file");
+    dispose();
+  });
+
+  it.each(["simple", "full"])("replays %s history cards until delivery while retaining uploaded files", async (mode) => {
+    enableAppViews();
+    routeState.view = mode;
+    const marker = { server: "yoplai", tool: "send_file", resourceUri: "ui://yoplai/file-viewer" };
+    const file = { fileId: "saved-report", filename: "a.md", mimeType: "text/markdown", size: 957, title: "Saved report" };
+    fetchFullHistoryMock.mockResolvedValue({ sessionId: "session-main", messages: [
+      { role: "user", timestamp: 1, content: [{ type: "text", text: "Read my upload" }, { ...file, filename: "upload.md", type: "file", direction: "inbound" }] },
+      { role: "assistant", timestamp: 2, content: [{ type: "toolCall", id: "saved-call", name: "send_file", arguments: { path: "a.md" }, viewCall: true, view: marker }] },
+      { role: "toolResult", timestamp: 3, toolCallId: "saved-call", toolName: "send_file", content: [{ type: "text", text: "File sent to user" }], view: { ...marker, recordId: "saved-record", file } },
+      { role: "assistant", timestamp: 4, content: [{ ...file, type: "file", direction: "outbound" }] },
+    ] });
+    const { container, dispose } = renderView();
+    await waitFor(() => expect(queryByTitle(container, "Saved report file view")).not.toBeNull());
+    expect(queryByText(container, "a.md", { exact: true })).not.toBeNull();
+    expect(queryByText(container, "upload.md", { exact: true })).not.toBeNull();
+    initializeApp(queryByTitle(container, "Saved report file view") as HTMLIFrameElement);
+    expect(queryByText(container, "a.md", { exact: true })).toBeNull();
+    expect(queryByText(container, "upload.md", { exact: true })).not.toBeNull();
+    expect(queryAllByRole(container, "link", { name: "Download" })).toHaveLength(1);
+    dispose();
+  });
+
+  it.each(["simple", "full"])("keeps two filenames in separate %s views and restores the superseded version's card", async (mode) => {
+    enableAppViews();
+    routeState.view = mode;
+    const { container, dispose, callbacks } = await startFullStream();
+    sendViewFile(callbacks(), "a-first", { fileId: "a-v1", filename: "a.md", mimeType: "text/markdown", size: 957, title: "Report A" });
+    sendViewFile(callbacks(), "b-first", { fileId: "b-v1", filename: "b.md", mimeType: "text/markdown", size: 80, title: "Report B" });
+    await waitFor(() => expect(queryByTitle(container, "Report B file view")).not.toBeNull());
+    const frameA = queryByTitle(container, "Report A file view") as HTMLIFrameElement;
+    const frameB = queryByTitle(container, "Report B file view") as HTMLIFrameElement;
+    initializeApp(frameA);
+    initializeApp(frameB);
+    expect(queryByText(container, "a.md", { exact: true })).toBeNull();
+    expect(queryByText(container, "b.md", { exact: true })).toBeNull();
+    sendViewFile(callbacks(), "a-second", { fileId: "a-v2", filename: "a.md", mimeType: "text/markdown", size: 2048, title: "Revised report A" });
+    await waitFor(() => expect(queryByTitle(container, "Revised report A file view")).toBe(frameA));
+    expect(frameB.isConnected).toBe(true);
+    expect(queryByRole(container, "button", { name: "View updated" })).not.toBeNull();
+    expect(queryByText(container, "a.md", { exact: true })).not.toBeNull();
+    expect(queryByText(container, "b.md", { exact: true })).toBeNull();
+    expect(queryByText(container, "MD · 2.0 KB", { exact: true })).not.toBeNull();
+    expect(loadMcpAppViewMock).toHaveBeenCalledTimes(2);
+    expect(queryAllByRole(container, "link", { name: "Download" }).map((link) => link.getAttribute("href")).sort()).toEqual([
+      "/api/media/download/a-v1", "/api/media/download/a-v2", "/api/media/download/b-v1",
+    ]);
+    dispose();
+  });
+
+  it.each(["failed", "hung"])("keeps v1 shown and v2 downloadable after a %s update while chat progresses", async (outcome) => {
+    enableAppViews();
+    const { container, dispose, callbacks, onText } = await startFullStream();
+    sendViewFile(callbacks(), "first-version", { fileId: "version-one", filename: "report.md", mimeType: "text/markdown", size: 957, title: "Version one" });
+    await waitFor(() => expect(queryByTitle(container, "Version one file view")).not.toBeNull());
+    const frame = queryByTitle(container, "Version one file view") as HTMLIFrameElement;
+    initializeApp(frame);
+    if (outcome === "failed") loadMcpAppDataMock.mockRejectedValueOnce(new Error("Update fetch failed"));
+    else loadMcpAppDataMock.mockImplementationOnce(() => new Promise(() => {}));
+    sendViewFile(callbacks(), "second-version", { fileId: "version-two", filename: "report.md", mimeType: "text/markdown", size: 2048, title: "Version two" });
+    await waitFor(() => expect(loadMcpAppDataMock).toHaveBeenCalledTimes(1));
+    await tick();
+    expect(queryByTitle(container, "Version one file view")).toBe(frame);
+    expect(queryByTitle(container, "Version one")).not.toBeNull();
+    expect(queryByText(container, "MD · 957 B", { exact: true })).not.toBeNull();
+    expect(queryByTitle(container, "Version two")).toBeNull();
+    expect(queryByText(container, "report.md", { exact: true })).not.toBeNull();
+    expect(queryAllByRole(container, "link", { name: "Download" }).map((link) => link.getAttribute("href")).sort()).toEqual([
+      "/api/media/download/version-one", "/api/media/download/version-two",
+    ]);
+    onText("Chat continues after the update");
+    expect(queryByText(container, "Chat continues after the update")).not.toBeNull();
+    expect(queryByRole(container, "button", { name: "Stop agent" })).not.toBeNull();
+    dispose();
+  });
+
+  it.each(["simple", "full"])("preserves the %s file header and hidden card through Expand and Collapse remounts", async (mode) => {
+    enableAppViews();
+    routeState.view = mode;
+    const { container, dispose, callbacks } = await startFullStream();
+    sendViewFile(callbacks(), "expand-file", { fileId: "expand-report", filename: "report.md", mimeType: "text/markdown", size: 957, title: "Report" });
+    await waitFor(() => expect(queryByTitle(container, "Report file view")).not.toBeNull());
+    const inline = queryByTitle(container, "Report file view") as HTMLIFrameElement;
+    initializeApp(inline);
+    queryByRole(container, "button", { name: "Expand" })!.click();
+    expect(queryByText(container, "report.md", { exact: true })).toBeNull();
+    appMessage(inline, { jsonrpc: "2.0", id: "yoplai-resource-teardown", result: {} });
+    await waitFor(() => expect(queryByRole(container, "complementary")).not.toBeNull());
+    const panel = queryByRole(container, "complementary")!;
+    expect(queryByText(container, "Report · shown in the side panel", { exact: true })).not.toBeNull();
+    expect(queryByText(container, "report.md", { exact: true })).toBeNull();
+    expect(queryByTitle(panel, "Report")).not.toBeNull();
+    expect(queryByRole(panel, "link", { name: "Download" })?.getAttribute("href")).toBe("/api/media/download/expand-report");
+    await waitFor(() => expect(queryByTitle(panel, "Report file view")).not.toBeNull());
+    const expanded = queryByTitle(panel, "Report file view") as HTMLIFrameElement;
+    expect(expanded).not.toBe(inline);
+    initializeApp(expanded);
+    queryByRole(panel, "button", { name: "Collapse" })!.click();
+    expect(queryByText(container, "report.md", { exact: true })).toBeNull();
+    appMessage(expanded, { jsonrpc: "2.0", id: "yoplai-resource-teardown", result: {} });
+    await waitFor(() => expect(queryByRole(container, "complementary")).toBeNull());
+    await waitFor(() => expect(queryByTitle(container, "Report file view")).not.toBeNull());
+    expect(queryByText(container, "report.md", { exact: true })).toBeNull();
+    expect(queryByRole(container, "link", { name: "Download" })?.getAttribute("href")).toBe("/api/media/download/expand-report");
+    dispose();
+  });
+
+  it.each(["pagehide", "relay failure"])("restores a shown file's image card after %s", async (failure) => {
+    enableAppViews();
+    const { container, dispose, callbacks } = await startFullStream();
+    sendViewFile(callbacks(), "restore-file", { fileId: "restored-diagram", filename: "diagram.png", mimeType: "image/png", size: 68, title: "Diagram" });
+    await waitFor(() => expect(queryByTitle(container, "Diagram file view")).not.toBeNull());
+    const frame = queryByTitle(container, "Diagram file view") as HTMLIFrameElement;
+    initializeApp(frame);
+    expect(queryByRole(container, "button", { name: "Open diagram.png" })).toBeNull();
+    if (failure === "pagehide") window.dispatchEvent(new Event("pagehide"));
+    else {
+      relayMcpAppRequestMock.mockRejectedValueOnce(new Error("Read failed"));
+      appMessage(frame, { jsonrpc: "2.0", id: "read-file", method: "resources/read", params: { uri: "yoplai-file://restored-diagram" } });
+    }
+    await waitFor(() => expect(queryByText(container, "View unavailable")).not.toBeNull());
+    expect(queryByRole(container, "button", { name: "Open diagram.png" })).not.toBeNull();
+    expect(queryByText(container, "diagram.png", { exact: true })).not.toBeNull();
+    expect(queryByRole(container, "link", { name: "Download" })?.getAttribute("href")).toBe("/api/media/download/restored-diagram");
     dispose();
   });
 

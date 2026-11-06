@@ -40,12 +40,13 @@ export function chatAppViewCalls(session: ChatTranscriptSession, mode: HistoryVi
 
 export type AppViews = ReturnType<typeof createAppViews>;
 
-export function viewKey(view: McpAppView): string {
-  return view.server + "\n" + view.resourceUri;
+export function viewKey(view: Pick<McpAppViewReference, "server" | "resourceUri" | "file">): string {
+  return view.server + "\n" + view.resourceUri + (view.file ? "\n" + view.file.filename : "");
 }
 
 export function createAppViews(sessionId: Accessor<string | null | undefined>, calls: Accessor<AppViewCall[]>) {
   const source = createMemo(calls);
+  const [shown, setShown] = createSignal(new Map<string, AppViewCall>());
   const historyIds = createMemo(() => new Set(source().filter((call) => call.history).map((call) => call.id)));
   const projection = createMemo(() => {
     const groups = new Map<string, AppViewCall[]>();
@@ -78,7 +79,10 @@ export function createAppViews(sessionId: Accessor<string | null | undefined>, c
     order: AppViewCall[];
   }>();
   createComputed(on(sessionId, (current, previous) => {
-    if (current !== previous) setSelected(undefined);
+    if (current !== previous) {
+      setSelected(undefined);
+      setShown(new Map());
+    }
   }, { defer: true }));
   const panel = createMemo(() => {
     const selection = selected();
@@ -102,6 +106,23 @@ export function createAppViews(sessionId: Accessor<string | null | undefined>, c
   });
   return {
     isLiveDuplicate(id: string) { return historyIds().has(id); },
+    fileOf(id: string) {
+      return source().find((call) => call.id === id && call.result?.view?.file)?.result?.view?.file
+        ?? [...shown().values()].find((call) => call.id === id)?.result?.view?.file
+        ?? panel()?.calls.find((call) => call.id === id)?.result?.view?.file;
+    },
+    shownFileOf(key: string) { return shown().get(key)?.result?.view?.file; },
+    reportShown(key: string, id: string | undefined) {
+      const call = projection().get(key)?.calls.find((call) => call.id === id)
+        ?? (panel()?.key === key ? panel()?.calls.find((call) => call.id === id) : undefined);
+      setShown((current) => {
+        const next = new Map(current);
+        if (call) next.set(key, call);
+        else next.delete(key);
+        return next;
+      });
+    },
+    hidesFileCard(fileId: string) { return [...shown().values()].some((call) => call.result?.view?.file?.fileId === fileId); },
     panel,
     open(key: string) {
       const view = projection().get(key);

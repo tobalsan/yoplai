@@ -11,6 +11,7 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Added
 
+- File views in web chat show their title, type, size and original Download, reuse each exact filename separately, and hide only the currently displayed file's duplicate card. Older versions and unavailable views keep their cards, including across reload and Expand/Collapse.
 - `send_file` displays HTML, sanitized Markdown, images (including SVG), text, JSON and CSV in a built-in web chat MCP App viewer, with replay, optional titles and file-scoped access. HTML reports run in an opaque sandbox with CDN scripts/fonts and no API connections; unsupported or oversized files remain cards.
 - Agent-sent PNG, JPEG, GIF and WebP files appear inline in web chat with an accessible lightbox and original downloads. New `send_file` outputs infer missing MIME types from their filenames; SVG and older generic files remain download cards.
 - MCP App views can send guarded text messages into web chat and set the latest per-view context for the next Pi or container run. Context stays out of canonical user history, is consumed after a successful run, and is lost on gateway restart; SDK sessions may retain it.

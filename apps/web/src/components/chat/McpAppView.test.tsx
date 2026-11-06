@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { getByRole, getByText, getByTitle, queryByRole, queryByText, queryByTitle } from "@testing-library/dom";
 import { render } from "solid-js/web";
 import { createSignal } from "solid-js";
+import type { McpAppFile } from "@yoplai/shared/types";
 import { McpAppView } from "./McpAppView";
 
 const { loadView, loadData, relay, log } = vi.hoisted(() => ({ loadView: vi.fn(), loadData: vi.fn(), relay: vi.fn(), log: vi.fn() }));
@@ -31,10 +32,10 @@ function initialize(frame: HTMLIFrameElement) {
   send(frame, { jsonrpc: "2.0", id: 1, method: "ui/initialize", params: { protocolVersion: "2026-01-26" } });
   send(frame, { jsonrpc: "2.0", method: "ui/notifications/initialized" });
 }
-function mount(callId: () => string = () => "call-1", text: () => string = () => "Board created", agentId: () => string = () => "agent", sessionId: () => string = () => "chat", options: { mode?: "inline" | "panel"; viewKey?: () => string; onDisplayMode?: (mode: "inline" | "fullscreen") => void; onUserMessage?: (text: string) => Promise<void> } = {}) {
+function mount(callId: () => string = () => "call-1", text: () => string = () => "Board created", agentId: () => string = () => "agent", sessionId: () => string = () => "chat", options: { mode?: "inline" | "panel"; viewKey?: () => string; onDisplayMode?: (mode: "inline" | "fullscreen") => void; onUserMessage?: (text: string) => Promise<void>; fileOf?: (callId: string) => McpAppFile | undefined; onShown?: (callId: string | undefined) => void } = {}) {
   container = document.createElement("div");
   document.body.append(container);
-  dispose = render(() => <McpAppView agentId={agentId()} sessionId={sessionId()} viewKey={options.viewKey?.() ?? "boards\nui://boards/view"} callId={callId} mode={options.mode ?? "inline"} onDisplayMode={options.onDisplayMode} onUserMessage={options.onUserMessage} text={text()} />, container);
+  dispose = render(() => <McpAppView agentId={agentId()} sessionId={sessionId()} viewKey={options.viewKey?.() ?? "boards\nui://boards/view"} callId={callId} mode={options.mode ?? "inline"} onDisplayMode={options.onDisplayMode} onUserMessage={options.onUserMessage} fileOf={options.fileOf} onShown={options.onShown} text={text()} />, container);
 }
 
 describe("MCP App view host", () => {
@@ -46,6 +47,130 @@ describe("MCP App view host", () => {
     log.mockReset().mockResolvedValue(undefined);
   });
   afterEach(() => { dispose?.(); container?.remove(); vi.useRealTimers(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
+
+  it("describes the file and offers its original download before reporting initialized delivery", async () => {
+    const shown = vi.fn();
+    mount(undefined, undefined, undefined, undefined, {
+      fileOf: () => ({ fileId: "file-one", filename: "report.svg", mimeType: "image/svg+xml", size: 957, title: "Weekly report" }),
+      onShown: shown,
+    });
+    await settle();
+    expect(getByText(container, "Weekly report").getAttribute("title")).toBe("Weekly report");
+    expect(getByText(container, "SVG · 957 B")).toBeTruthy();
+    const download = getByRole(container, "link", { name: "Download" });
+    expect(download.getAttribute("href")).toBe("/api/media/download/file-one");
+    expect(download.hasAttribute("download")).toBe(true);
+    expect(queryByText(container, "MCP App")).toBeNull();
+    expect(shown).not.toHaveBeenCalled();
+    const frame = getByTitle(container, "Weekly report file view") as HTMLIFrameElement;
+    const post = vi.spyOn(frame.contentWindow!, "postMessage");
+    const deliveryMethods: string[] = [];
+    shown.mockImplementation(() => { deliveryMethods.push(post.mock.calls.at(-1)?.[0].method); });
+    initialize(frame);
+    expect(shown.mock.calls).toEqual([["call-1"]]);
+    expect(deliveryMethods).toEqual(["ui/notifications/tool-result"]);
+  });
+  it("changes the file header and shown report only after delivering the new result to the existing frame", async () => {
+    const files: Record<string, McpAppFile> = {
+      "call-1": { fileId: "first", filename: "report.md", mimeType: "text/markdown", size: 957, title: "First report" },
+      "call-2": { fileId: "second", filename: "report.md", mimeType: "text/markdown", size: 1200, title: "Revised report" },
+    };
+    let finish!: (value: unknown) => void;
+    loadData.mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
+    const shown = vi.fn();
+    const [callId, setCallId] = createSignal("call-1");
+    mount(callId, undefined, undefined, undefined, { fileOf: (id) => files[id], onShown: shown });
+    await settle();
+    const frame = getByTitle(container, "First report file view") as HTMLIFrameElement;
+    const post = vi.spyOn(frame.contentWindow!, "postMessage");
+    initialize(frame);
+    setCallId("call-2");
+    await settle();
+    expect(getByText(container, "First report")).toBeTruthy();
+    expect(getByRole(container, "link", { name: "Download" }).getAttribute("href")).toBe("/api/media/download/first");
+    expect(shown.mock.calls).toEqual([["call-1"]]);
+    const shownMessages: unknown[] = [];
+    shown.mockImplementation(() => { shownMessages.push(post.mock.calls.at(-1)?.[0]); });
+    finish({ args: { path: "report.md" }, result: { content: [{ type: "text", text: "New report" }] } });
+    await settle();
+    expect(getByText(container, "Revised report")).toBeTruthy();
+    expect(getByText(container, "MD · 1.2 KB")).toBeTruthy();
+    expect(getByRole(container, "link", { name: "Download" }).getAttribute("href")).toBe("/api/media/download/second");
+    expect(getByTitle(container, "Revised report file view")).toBe(frame);
+    expect(shown.mock.calls).toEqual([["call-1"], ["call-2"]]);
+    expect(shownMessages).toEqual([{ jsonrpc: "2.0", method: "ui/notifications/tool-result", params: { content: [{ type: "text", text: "New report" }] } }]);
+  });
+  it.each(["unavailable", "load error", "initialization timeout", "relay failure", "pagehide"])("restores the fallback card report on %s", async (failure) => {
+    if (failure === "unavailable") loadView.mockResolvedValueOnce({ available: false });
+    if (failure === "load error") loadView.mockRejectedValueOnce(new Error("Unavailable"));
+    const shown = vi.fn();
+    mount(undefined, undefined, undefined, undefined, { onShown: shown });
+    await settle();
+    if (failure === "initialization timeout") await vi.advanceTimersByTimeAsync(15000);
+    if (failure === "relay failure" || failure === "pagehide") {
+      const frame = getByTitle(container, "boards MCP App") as HTMLIFrameElement;
+      initialize(frame);
+      expect(shown.mock.calls).toEqual([["call-1"]]);
+      if (failure === "pagehide") window.dispatchEvent(new Event("pagehide"));
+      else {
+        relay.mockRejectedValueOnce(new Error("Unavailable"));
+        send(frame, { jsonrpc: "2.0", id: 41, method: "resources/read", params: { uri: "file://report" } });
+        await settle();
+      }
+    }
+    expect(getByText(container, "View unavailable")).toBeTruthy();
+    expect(shown.mock.calls.at(-1)).toEqual([undefined]);
+  });
+  it.each([
+    ["report.md", "text/markdown", 0, "MD"],
+    ["report", "text/plain", 12, "PLAIN · 12 B"],
+    ["report", "", 0, "FILE"],
+  ] as const)("uses filename and type fallbacks for %s (%s)", async (filename, mimeType, size, description) => {
+    mount(undefined, undefined, undefined, undefined, { mode: "panel", fileOf: () => ({ fileId: "original", filename, mimeType, size }) });
+    expect(getByText(container, filename)).toBeTruthy();
+    expect(getByText(container, description, { ignore: '[aria-hidden="true"]' })).toBeTruthy();
+    expect(getByRole(container, "link", { name: "Download" }).getAttribute("href")).toBe("/api/media/download/original");
+    await settle();
+    expect(getByTitle(container, `${filename} file view`)).toBeTruthy();
+  });
+  it.each(["fails", "hangs"])("keeps the shown file and download when an update %s, and accepts the next update", async (failure) => {
+    const first = { fileId: "first", filename: "report.md", mimeType: "text/markdown", size: 10, title: "Original report" };
+    const second = { ...first, fileId: "second", size: 20, title: "New report" };
+    if (failure === "fails") loadData.mockRejectedValueOnce(new Error("Unavailable"));
+    else loadData.mockImplementationOnce(() => new Promise(() => {}));
+    const shown = vi.fn();
+    const [callId, setCallId] = createSignal("call-1");
+    mount(callId, undefined, undefined, undefined, { fileOf: (id) => id === "call-1" ? first : second, onShown: shown });
+    await settle();
+    const frame = getByTitle(container, "Original report file view") as HTMLIFrameElement;
+    initialize(frame);
+    setCallId("call-2");
+    await settle();
+    if (failure === "hangs") await vi.advanceTimersByTimeAsync(32000);
+    expect(getByTitle(container, "Original report file view")).toBe(frame);
+    expect(getByText(container, "MD · 10 B")).toBeTruthy();
+    expect(getByRole(container, "link", { name: "Download" }).getAttribute("href")).toBe("/api/media/download/first");
+    expect(shown.mock.calls).toEqual([["call-1"]]);
+    setCallId("call-3");
+    await settle();
+    expect(getByTitle(container, "New report file view")).toBe(frame);
+    expect(getByRole(container, "link", { name: "Download" }).getAttribute("href")).toBe("/api/media/download/second");
+    expect(shown.mock.calls).toEqual([["call-1"], ["call-3"]]);
+  });
+  it("retains the shown report through normal teardown and remount", async () => {
+    const shown = vi.fn();
+    mount(undefined, undefined, undefined, undefined, { onShown: shown });
+    await settle();
+    initialize(getByTitle(container, "boards MCP App") as HTMLIFrameElement);
+    dispose();
+    container.remove();
+    expect(shown.mock.calls).toEqual([["call-1"]]);
+    mount(undefined, undefined, undefined, undefined, { onShown: shown });
+    await settle();
+    expect(shown.mock.calls).toEqual([["call-1"]]);
+    initialize(getByTitle(container, "boards MCP App") as HTMLIFrameElement);
+    expect(shown.mock.calls).toEqual([["call-1"], ["call-1"]]);
+  });
 
   it("labels the isolated frame with its server and applies its restrictive outer frame attributes", async () => {
     mount();

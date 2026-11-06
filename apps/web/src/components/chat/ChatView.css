@@ -79,6 +79,12 @@
 
         .chat-side-panel-overlay .chat-panel-resizer { display: none; }
 
+        .mcp-app-view-header { padding: 8px; }
+
+        @media (max-width: 768px) {
+          .chat-side-panel .mcp-app-file-header { padding-left: 64px; }
+        }
+
         .mcp-app-panel-card {
           padding: 12px;
           border: 1px solid var(--tool-border);

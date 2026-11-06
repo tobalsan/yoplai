@@ -9,7 +9,7 @@ import { formatTimestamp } from "../../lib/format";
 import { formatReplyClipboard } from "../../lib/reply-clipboard";
 import { writeReplyClipboard } from "../../lib/clipboard";
 import { CopyButton } from "../CopyButton";
-import { CompactionSummary, CompactStatusView, ActivityGroup, ContentBlocks, FileAttachmentList, FileCard, ModelMetaDisplay, ActiveToolIndicator, AssistantText, McpAppToolRow } from "./ChatBlocks";
+import { CompactionSummary, CompactStatusView, ActivityGroup, ContentBlocks, FileAttachmentList, TranscriptFileCard, ModelMetaDisplay, ActiveToolIndicator, AssistantText, McpAppToolRow } from "./ChatBlocks";
 import { userText, compactSummary, fullHistoryDisplayRows, type SimpleViewMessage, type SimpleToolMessage, type SimpleSummaryMessage, type FullDisplayRow } from "./chat-history";
 import type { AppViews } from "./appViews";
 
@@ -189,7 +189,7 @@ export function ChatTranscript(props: { agentId: string; session: ChatTranscript
                                     <AssistantText class="content markdown-content" text={item().content} options={{ copyCode: true }} />
                                   </Show>
                                   <For each={item().files ?? []}>
-                                    {(file) => <FileCard file={file} />}
+                                    {(file) => <TranscriptFileCard file={file} hidesFileCard={props.appViews.hidesFileCard} />}
                                   </For>
                                 </>
                               ) : (
@@ -259,8 +259,9 @@ export function ChatTranscript(props: { agentId: string; session: ChatTranscript
                               <Show
                                 when={assistantRow().block.type === "text"}
                                 fallback={
-                                  <FileCard
+                                  <TranscriptFileCard
                                     file={assistantRow().block as FileBlock}
+                                    hidesFileCard={props.appViews.hidesFileCard}
                                   />
                                 }
                               >
@@ -323,6 +324,7 @@ export function ChatTranscript(props: { agentId: string; session: ChatTranscript
                                     blocks={msg().content}
                                     timestamp={msg().timestamp}
                                     toolResultsMap={toolResultsMap()}
+                                    hidesFileCard={props.appViews.hidesFileCard}
                                   />
                                   <div class="message-time">
                                     {formatTimestamp(msg().timestamp)}
@@ -403,7 +405,7 @@ export function ChatTranscript(props: { agentId: string; session: ChatTranscript
                                 <McpAppToolRow onUserMessage={props.onUserMessage} appViews={props.appViews} agentId={props.agentId} sessionId={props.session.appSessionId()} toolCallId={(block() as Extract<StreamingBlock, { type: "toolCall" }>).id} result={(block() as Extract<StreamingBlock, { type: "toolCall" }>).result} name={(block() as Extract<StreamingBlock, { type: "toolCall" }>).name} arguments={(block() as Extract<StreamingBlock, { type: "toolCall" }>).arguments} />
                               </Match>
                               <Match when={block()?.type === "file"}>
-                                <FileCard file={block() as FileBlock} />
+                                <TranscriptFileCard file={block() as FileBlock} hidesFileCard={props.appViews.hidesFileCard} />
                               </Match>
                             </Switch>
                           );
@@ -501,7 +503,7 @@ export function ChatTranscript(props: { agentId: string; session: ChatTranscript
                               </Match>
                               <Match when={block()?.type === "file"}>
                               <div class="message assistant">
-                                <FileCard file={block() as FileBlock} />
+                                <TranscriptFileCard file={block() as FileBlock} hidesFileCard={props.appViews.hidesFileCard} />
                                 <div class="message-time">
                                   {formatTimestamp(block()!.timestamp)}
                                 </div>
@@ -516,7 +518,7 @@ export function ChatTranscript(props: { agentId: string; session: ChatTranscript
               </Index>
               <Show when={streamingBlocks().length === 0}>
                 <For each={streamingFiles()}>
-                  {(file) => <FileCard file={file} />}
+                  {(file) => <TranscriptFileCard file={file} hidesFileCard={props.appViews.hidesFileCard} />}
                 </For>
               </Show>
             </div>

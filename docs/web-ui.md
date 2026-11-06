@@ -63,11 +63,26 @@ HTML runs in a nested opaque sandbox: scripts from jsDelivr, cdnjs and unpkg,
 plus Google Fonts are allowed; fetch, XHR and WebSocket connections are blocked.
 Anchors scroll inside reports; only HTTP(S) links open externally. A failed
 capture or unavailable apps origin preserves the existing file card.
-Repeated tool results re-render the viewer; per-filename view reuse is a separate slice.
+
+File views show the title (or filename), type, size and **Download** for the
+original file in their header, inline and in the side panel. Different filenames
+get separate views; sending the exact same filename again updates its view and
+shows **View updated** on the later row. Filenames are basenames, so files with
+the same name in different directories share a view.
+
+An outbound file card hides only after its view delivers that file's data.
+Loading, failed capture, unavailable origin and view errors keep the card,
+including supported inline image previews. A successful update restores the
+older version's card and hides the newer version's card; a failed or timed-out
+update keeps the old content, header and Download while the newer card stays
+available. Expand/Collapse keeps the shown file's card hidden through remount.
+Reload and old sessions show cards first, then hide them as their views load.
+Uploaded files keep their existing cards. Production chats require a reachable
+HTTPS `apps.origin` on a separate hostname; without it all file cards remain.
 
 MCP App tool calls appear as their own rows in the main chat, in simple and full
 mode. The row starts with "Loading view…" and stays visible when surrounding
-activity collapses. Its header identifies the server and "MCP App". The view's
+activity collapses. Non-file headers identify the server and "MCP App". The view's
 inline height is clamped to 40–800 px. Ordinary tools keep their existing groups.
 
 Use **Expand** in the view header to open one side panel beside the chat; the
@@ -81,7 +96,8 @@ their own saved state, but unsaved iframe state can be lost.
 Views initialize with their saved arguments and raw result, including returned
 error results. Reloading, reopening a session or restarting the gateway replays
 the saved data without running the tool again. Within a session, calls sharing
-the same server and resource URI reuse one live view. The earliest loaded call
+the same server and resource URI reuse one live view (file views also match the
+exact filename). The earliest loaded call
 with a captured view hosts it; later calls show "Updating view…" while pending,
 then **View updated**, which takes you to the inline view or focuses its panel.
 Successful captures deliver the newest input and raw result to the same iframe.
