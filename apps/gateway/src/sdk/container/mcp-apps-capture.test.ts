@@ -11,6 +11,8 @@ import { setLoadedConfig } from "../../config/index.js";
 import { bufferHistoryEvent, createTurnBuffer, flushTurnBuffer, getFullHistory } from "../../history/store.js";
 import { createInternalTools } from "../../server/internal-tools.js";
 import { getContainerAdapter } from "./adapter.js";
+import { getConversationFiles } from "../../media/conversation-files.js";
+import { readMcpAppRecord } from "../../mcp-apps/capture.js";
 
 // Thinh approved real HTTP dispatch/runtime/adapter parsing with fake external
 // container stdio in ALG-544 comment 04ea3081-4db9-4872-8433-2200b96ef01a.
@@ -96,6 +98,58 @@ async function fixture(sessionId: string, execute: ExtensionAgentTool["execute"]
   const api = createInternalTools({ getConfig: () => config, getRuntime: () => runtime });
   return { agent, process, events, history, buffer, params, completion, input, api };
 }
+
+// ALG-614 HTTP + real container adapter seam approved in fa28457a-d6a4-4709-97cd-91ff575553b9.
+it("captures container send_file registration with title and marks the streamed call", async () => {
+  const run = await fixture("send-file");
+  const files = getConversationFiles(run.agent.id, run.params.sessionId, "alice", true);
+  await fs.mkdir(files.hostPath, { recursive: true });
+  await fs.writeFile(path.join(files.hostPath, "notes.md"), "# Notes\n");
+  run.process.event({ type: "tool_call", id: "send-notes", name: "send_file", args: { path: "/workspace/files/notes.md", title: "Meeting notes" }, timestamp: 1 });
+  const response = await run.api.request("/tools", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({
+    agentToken: run.input.agentToken, agentId: run.agent.id, sessionId: run.params.sessionId, runId: run.input.runId,
+    tool: "__register_file_output", toolCallId: "send-notes", args: { path: "/workspace/files/notes.md", title: "Meeting notes" },
+  }) });
+  expect(response.status).toBe(200);
+  expect(await response.json()).toEqual({ registered: true });
+  run.process.event({ type: "tool_result", id: "send-notes", name: "send_file", content: "File sent to user", isError: false, timestamp: 2 });
+  run.process.finish({ text: "Notes ready" });
+  await expect(run.completion).resolves.toMatchObject({ text: "Notes ready" });
+  expect(run.events).toContainEqual(expect.objectContaining({ type: "tool_call", id: "send-notes", view: { server: "yoplai", tool: "send_file", resourceUri: "ui://yoplai/file-viewer" } }));
+  const sent = run.events.find(event => event.type === "file_output");
+  if (sent?.type !== "file_output") throw new Error("Expected sent notes");
+  const file = { fileId: sent.fileId, filename: "notes.md", mimeType: "text/markdown", size: 8, title: "Meeting notes" };
+  expect(run.events).toContainEqual(expect.objectContaining({ type: "tool_result", id: "send-notes", content: "File sent to user", view: expect.objectContaining({ file, server: "yoplai" }) }));
+  expect(await readMcpAppRecord({ agentId: run.agent.id, sessionId: run.params.sessionId, ownerUserId: "owner" }, "send-notes")).toMatchObject({
+    args: { path: "/workspace/files/notes.md", title: "Meeting notes" },
+    result: { content: [{ type: "text", text: "File sent to user" }], structuredContent: { uri: `yoplai-file://${sent.fileId}`, ...file } },
+  });
+  await flushTurnBuffer(run.agent.id, run.params.sessionId, run.buffer, "owner");
+  expect(await getFullHistory(run.agent.id, run.params.sessionId, "owner")).toContainEqual(expect.objectContaining({ role: "toolResult", toolCallId: "send-notes", view: expect.objectContaining({ file }) }));
+});
+
+it("still registers and delivers a container file when replay capture fails", async () => {
+  const run = await fixture("blocked-file");
+  const recordParent = path.join(setup.home, ".yoplai", "sessions", "users", "owner", "history", "mcp-apps", run.agent.id);
+  await fs.mkdir(recordParent, { recursive: true });
+  await fs.writeFile(path.join(recordParent, "blocked-file"), "not a directory");
+  const files = getConversationFiles(run.agent.id, run.params.sessionId, "alice", true);
+  await fs.mkdir(files.hostPath, { recursive: true });
+  await fs.writeFile(path.join(files.hostPath, "notes.txt"), "Notes");
+  const response = await run.api.request("/tools", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({
+    agentToken: run.input.agentToken, sessionId: run.params.sessionId, tool: "__register_file_output", toolCallId: "send-without-view", args: { path: "/workspace/files/notes.txt" },
+  }) });
+  expect(response.status).toBe(200);
+  expect(await response.json()).toEqual({ registered: true });
+  run.process.event({ type: "tool_result", id: "send-without-view", name: "send_file", content: "File sent to user", isError: false, timestamp: 2 });
+  run.process.finish({ text: "Chat still progresses" });
+  await expect(run.completion).resolves.toMatchObject({ text: "Chat still progresses" });
+  expect(run.events).toContainEqual(expect.objectContaining({ type: "file_output", filename: "notes.txt", mimeType: "text/plain", size: 5 }));
+  const result = run.events.find(event => event.type === "tool_result" && event.id === "send-without-view");
+  expect(result).toMatchObject({ content: "File sent to user", isError: false });
+  expect(result?.type === "tool_result" && result.view).toBeUndefined();
+  expect(await readMcpAppRecord({ agentId: run.agent.id, sessionId: run.params.sessionId, ownerUserId: "owner" }, "send-without-view")).toBeUndefined();
+});
 
 it.each([["forged", forged], ["malformed", "runner-cannot-authorize"]])("captures internal HTTP execution and overwrites %s runner references before delivery", async (label, runnerView) => {
   const sessionId = `streamed-${label}`;

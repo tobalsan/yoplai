@@ -4,6 +4,7 @@ import { getExtensionAgentTools } from "../../extensions/tools.js";
 import type { SdkRunParams } from "../types.js";
 import { projectTools } from "../../chat-projects/tools.js";
 import { skillSaveTool } from "../../skills/tools.js";
+import { yoplaiFileView } from "../../mcp-apps/capture.js";
 
 export class ContainerToolBridge {
   readonly mcpViews = new Map<string, McpAppView>();
@@ -35,8 +36,9 @@ export class ContainerToolBridge {
     );
     // Match the runner's Pi inventory, including its send_file reservation.
     const usedToolNames = new Set(["read", "bash", "edit", "write", "tool_search", "codemode"]);
-    claimAgentToolName("send_file", usedToolNames);
+    const sendFileName = claimAgentToolName("send_file", usedToolNames);
     this.mcpViews.clear();
+    this.mcpViews.set(sendFileName, yoplaiFileView);
     for (const tool of tools) {
       const name = claimAgentToolName(tool.name, usedToolNames);
       if (tool.mcp?.ui?.resourceUri) this.mcpViews.set(name, {

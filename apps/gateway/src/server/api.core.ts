@@ -1558,6 +1558,7 @@ api.get("/media/download/:id", async (c) => {
 
     c.header("Content-Type", metadata.mimeType);
     c.header("Content-Length", String(stat.size));
+    c.header("X-Content-Type-Options", "nosniff");
     c.header(
       "Content-Disposition",
       `attachment; filename="${contentDispositionFilename(metadata.filename)}"`

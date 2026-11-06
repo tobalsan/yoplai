@@ -14,6 +14,7 @@ import {
   DEFAULT_RETRY_MAX_ATTEMPTS,
   PI_SYSTEM_PROMPT,
   claimAgentToolName,
+  ContainerFileOutputRequestSchema,
   classifyRunFailure,
   codemodeGuidance,
   findFailedTurn,
@@ -65,7 +66,7 @@ import { executeSkillSave, skillSaveTool } from "../../skills/tools.js";
 import { executeProjectTool, projectTools } from "../../chat-projects/tools.js";
 import { getConversationFiles } from "../../media/conversation-files.js";
 import { ContainerFileOutputAdapter } from "../container/file-output.js";
-import { clearMcpAppViews, getMcpAppView } from "../../mcp-apps/capture.js";
+import { captureSendFile, clearMcpAppViews, getMcpAppView, yoplaiFileView } from "../../mcp-apps/capture.js";
 
 type SignatureSchema = Parameters<typeof renderToolSignature>[0]["inputSchema"];
 
@@ -199,21 +200,24 @@ async function createPiExtensionTools(
     };
   });
   const sendFileName = claimAgentToolName("send_file", usedToolNames);
+  mcpViews.set(sendFileName, yoplaiFileView);
   descriptors.push({ name: sendFileName, extensionId: "core", core: true });
   piTools.push({
     name: sendFileName,
     label: "Send file to user",
-    description: "Send a regular file in this conversation's files directory (sub-folders allowed) as a downloadable card in chat. Symlinks are not supported. Finish writing the file first.",
+    description: "Send a regular file in this conversation's files directory (sub-folders allowed). Web chat shows the file to the user (HTML, Markdown, images, text); use it to show a report or a diagram. Symlinks are not supported. Finish writing the file first.",
     parameters: {
       type: "object",
-      properties: { path: { type: "string", description: "Absolute path to the conversation file" } },
+      properties: { path: { type: "string", description: "Absolute path to the conversation file" }, title: { type: "string", maxLength: 200, description: "Optional file title" } },
       required: ["path"],
     } as ToolDefinition["parameters"],
-    execute: async (_toolCallId, args, signal) => {
-      const input = args as { path?: unknown };
-      if (typeof input.path !== "string") throw new Error("send_file requires a path");
-      await new ContainerFileOutputAdapter().handle(params, { type: "file_output", path: input.path }, undefined,
-        signal ? AbortSignal.any([signal, params.abortSignal]) : params.abortSignal, conversationFiles);
+    execute: async (toolCallId, args, signal) => {
+      const input = ContainerFileOutputRequestSchema.parse({ ...(args as object), type: "file_output" });
+      const callSignal = signal ? AbortSignal.any([signal, params.abortSignal]) : params.abortSignal;
+      const metadata = await new ContainerFileOutputAdapter().handle(params, input, undefined, callSignal, conversationFiles);
+      const { fileId, filename, mimeType, size } = metadata;
+      await captureSendFile({ ...params, toolCallId, signal: callSignal }, args,
+        { fileId, filename, mimeType, size, ...(input.title === undefined ? {} : { title: input.title }) });
       return { content: [{ type: "text", text: "File sent to user" }], details: {} };
     },
   });

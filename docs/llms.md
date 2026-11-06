@@ -551,6 +551,22 @@ Multi-user mode guards `/api/*` and `/ws`. Cookie sessions and Better Auth API k
 
 ## MCP Apps gateway
 
+`send_file` captures registered media metadata (no bytes) through the same record
+writer for Pi and container agents. Its optional `title` is capped at 200 characters;
+model text remains `File sent to user`. Both runners mark the call as the built-in
+`yoplai` / `send_file` app at `ui://yoplai/file-viewer`, with file metadata on the
+result reference. The reserved server name `yoplai` cannot capture external views.
+The built-in provider works without the MCP extension, reads only the captured
+file URI for that record's agent and caps reads at 10 MB. It refuses tools.
+The bundled viewer renders reports, Markdown, images, text and data; HTML runs
+in a nested opaque sandbox with no connections and an allowlist of CDN/font hosts.
+SVG remains an image, Markdown is sanitized, and unsupported/oversized files show cards.
+The viewer accepts repeated tool results, but per-filename view reuse is not part
+of this slice. Built-in resource RPC follows the last delivered result call;
+other app RPC retains its initial call identity. Media downloads use `nosniff`.
+After editing `mcp-apps/file-viewer/client.ts`, regenerate its committed HTML with
+`node apps/gateway/src/mcp-apps/file-viewer/build-file-viewer.mjs` from the repo root.
+
 Three modules own this slice: `mcp-apps/view-context.ts` owns bounded, versioned, memory-only view context; `apps/gateway/src/mcp-apps/capture.ts` owns raw records, execution references and cleanup; `mcp-apps/views.ts` owns the isolated listener, origins, tickets, CSP, routes, bootstrap and audit. The MCP extension supplies tool `mcp` metadata and the plain optional `Extension.mcpApps` property (`readResource`, `callTool`); the gateway opens no additional MCP connection pool. Shared contracts live in `packages/shared/src/types.ts`.
 
 Runtime capture applies to returned MCP-shaped results (`content` array), including `isError: true`, with trusted tool-call correlation. Pi supplies the execution id; `/internal/tools` forwards it for container runs. Returned model results remain unchanged. Thrown errors, refusals, cancellation, timeout, oversized results and failed writes produce text-only behavior. Raw JSON (maximum 5 MB) is written atomically beneath the storage owner's history directory at `mcp-apps/<agent>/<session>/<random record id>.json`, outside sanitized history events and Langfuse. The requester chooses MCP credentials; `sessionOwnerId` chooses storage. References are keyed by agent, session, storage owner and call id, cleared at run end and swept after 15 minutes.

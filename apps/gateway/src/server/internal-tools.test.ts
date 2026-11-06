@@ -1032,8 +1032,8 @@ describe("container file registration", () => {
     let finish: () => void = () => {};
     context.registerFileOutput = vi.fn(
       () =>
-        new Promise<void>((resolve) => {
-          finish = resolve;
+        new Promise<{ fileId: string; filename: string; mimeType: string; size: number }>((resolve) => {
+          finish = () => resolve({ fileId: "file-1", filename: "report.csv", mimeType: "text/csv", size: 4 });
         })
     );
     const { app, executeExtensionTool } = createDeps();
@@ -1123,8 +1123,8 @@ describe("container file registration", () => {
     let complete: () => void = () => {};
     context.registerFileOutput = vi.fn(
       () =>
-        new Promise<void>((resolve) => {
-          complete = resolve;
+        new Promise<{ fileId: string; filename: string; mimeType: string; size: number }>((resolve) => {
+          complete = () => resolve({ fileId: "file-1", filename: "report.csv", mimeType: "text/csv", size: 4 });
         })
     );
     const log = vi.spyOn(console, "error").mockImplementation(() => {});

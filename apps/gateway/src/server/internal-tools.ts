@@ -25,6 +25,7 @@ import {
 import { dashboardCsp, renderDashboardHtml } from "../canvas/routes.js";
 import { executeProjectTool, projectTools } from "../chat-projects/tools.js";
 import { executeSkillSave } from "../skills/tools.js";
+import { captureSendFile } from "../mcp-apps/capture.js";
 
 const InternalToolRequestSchema = z.object({
   tool: z.string(),
@@ -328,7 +329,10 @@ export function createInternalTools(
             if (!context.registerFileOutput) {
               throw new Error("File registration is unavailable for this run");
             }
-            await context.registerFileOutput(event, signal);
+            const metadata = await context.registerFileOutput(event, signal);
+            const { fileId, filename, mimeType, size } = metadata;
+            await captureSendFile({ ...context, toolCallId: parsed.data.toolCallId, signal }, parsed.data.args,
+              { fileId, filename, mimeType, size, ...(event.title === undefined ? {} : { title: event.title }) });
             return { registered: true };
           })()
         : parsed.data.tool === "skill_save"

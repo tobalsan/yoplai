@@ -13,6 +13,7 @@ import {
   ensureMediaDirectories,
   getMediaOutboundDir,
   registerMediaFile,
+  type MediaFileMetadata,
 } from "../../media/metadata.js";
 import type { SdkRunParams } from "../types.js";
 import { ensurePathWithinDir, sanitizeFilename } from "./launch-spec.js";
@@ -24,7 +25,7 @@ export class ContainerFileOutputAdapter {
     hostDataDir: string | undefined,
     signal?: AbortSignal,
     conversationFiles?: ExtensionAgentToolContext["conversationFiles"]
-  ): Promise<void> {
+  ): Promise<MediaFileMetadata> {
     signal?.throwIfAborted();
     const files =
       conversationFiles &&
@@ -154,6 +155,7 @@ export class ContainerFileOutputAdapter {
         mimeType: metadata.mimeType,
         size: metadata.size,
       });
+      return metadata;
     } finally {
       await sourceFile?.close();
     }

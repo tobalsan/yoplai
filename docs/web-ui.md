@@ -55,6 +55,16 @@ All previews and downloads use the existing authenticated media route.
 
 ## MCP App views
 
+`send_file` uses the built-in `yoplai` file viewer without requiring `mcp.json`.
+It displays HTML, sanitized Markdown, images (including SVG as an image), text
+and code, pretty JSON and CSV (first 500 rows). Unsupported formats and files
+over 10 MB show name, type and size. An optional `title` accepts up to 200 characters.
+HTML runs in a nested opaque sandbox: scripts from jsDelivr, cdnjs and unpkg,
+plus Google Fonts are allowed; fetch, XHR and WebSocket connections are blocked.
+Anchors scroll inside reports; only HTTP(S) links open externally. A failed
+capture or unavailable apps origin preserves the existing file card.
+Repeated tool results re-render the viewer; per-filename view reuse is a separate slice.
+
 MCP App tool calls appear as their own rows in the main chat, in simple and full
 mode. The row starts with "Loading view…" and stays visible when surrounding
 activity collapses. Its header identifies the server and "MCP App". The view's
