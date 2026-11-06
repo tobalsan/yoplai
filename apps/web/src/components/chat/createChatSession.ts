@@ -39,7 +39,7 @@ import type {
 } from "../../api/types";
 import { refreshToolLabels } from "../../lib/tool-labels";
 import { registerViewedChat } from "../../lib/chat-notifications";
-import type { PendingFile } from "../../lib/attachments";
+import { classifyFile, type PendingFile } from "../../lib/attachments";
 import { fullMessagesToSimpleView, type SimpleViewMessage, type ChatContentBlock } from "./chat-history";
 
 export type StreamingBlock =
@@ -95,6 +95,7 @@ type ChatSessionInput = {
   onArchiveRestored: () => void;
   onSessionReset: (newSessionId: string) => void;
   preservePrependScroll: (prepend: () => void) => void;
+  onLiveView?: (view: McpAppViewReference) => void;
 };
 
 export function createChatSession(input: ChatSessionInput) {
@@ -721,6 +722,10 @@ export function createChatSession(input: ChatSessionInput) {
     );
   };
 
+  function notifyLiveView(view?: McpAppViewReference) {
+    if (view?.server === "yoplai" && view.file && ["html", "markdown", "pdf"].includes(classifyFile(view.file))) input.onLiveView?.(view);
+  }
+
   const appendStreamingFileBlock = (
     file: FileBlock,
     timestamp = Date.now()
@@ -847,6 +852,7 @@ export function createChatSession(input: ChatSessionInput) {
           if (!isCurrentSubscription()) return;
           if (ownsDisplayedDirectStream()) return;
           attachStreamingToolResult(id, name, content, isError, details, parentToolCallId, view);
+          notifyLiveView(view);
         },
         onFileOutput: (file) => {
           if (!isCurrentSubscription()) return;
@@ -1698,6 +1704,7 @@ export function createChatSession(input: ChatSessionInput) {
         onToolResult: (id, name, content, isError, details, parentToolCallId, view) => {
           if (!isCurrentDirectStream()) return;
           attachStreamingToolResult(id, name, content, isError, details, parentToolCallId, view);
+          notifyLiveView(view);
         },
         onFileOutput: (file) => {
           if (!isCurrentDirectStream()) return;

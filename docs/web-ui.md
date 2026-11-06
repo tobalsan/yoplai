@@ -87,6 +87,21 @@ get separate views; sending the exact same filename again updates its view and
 shows **View updated** on the later row. Filenames are basenames, so files with
 the same name in different directories share a view.
 
+Once a file view loads, **Open in browser** opens its currently shown file on
+the separate apps origin. HTML opens as a page, PDFs in the browser's PDF viewer,
+and PNG, JPEG, GIF, WebP and SVG as images. Text, code, JSON and CSV open as plain
+text. Markdown and unsupported formats have no Open button. Download stays
+available for every file. If a new tab is blocked, allow pop-ups and try again;
+request failures show a short status in the header.
+An open request times out after 15 seconds and closes its blank tab; the file
+view, Download and chat remain usable while it waits.
+
+An opened HTML report keeps the report's CDN rules and blocked fetch, XHR and
+WebSocket connections, in an opaque sandbox without access to apps storage.
+Its links and fragment anchors work natively; external links navigate that tab.
+Tabs have no opener or referrer. Their bearer URL expires after one hour and
+is invalidated when the session is deleted.
+
 An outbound file card hides only after its view delivers that file's data.
 Loading, failed capture, unavailable origin and view errors keep the card,
 including supported inline image previews. A successful update restores the
@@ -109,6 +124,13 @@ fit a 320 px panel, a 400 px chat and the 6 px handle. **Collapse** returns the 
 inline. Opening another app replaces the panel; width is not saved. Each expand
 or collapse reloads the view once with the latest saved data. Apps may restore
 their own saved state, but unsaved iframe state can be lost.
+
+HTML, Markdown and PDF files sent during a live turn automatically open the
+panel when the viewport is wider than 768 px and the chat row has at least
+726 px for the split. A later document replaces the panel, including a re-send
+of the same filename. Reload, history replay, reconnect and narrow layouts never
+auto-open; images, text, data and external MCP Apps stay inline. The compact
+file-icon card marked "shown in the side panel" is a button that focuses the panel.
 
 Views initialize with their saved arguments and raw result, including returned
 error results. Reloading, reopening a session or restarting the gateway replays

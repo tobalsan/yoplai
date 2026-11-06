@@ -5,6 +5,8 @@ import { getMediaFileMetadata, resolveMediaFilePath } from "../media/metadata.js
 import type { McpAppRecord } from "./capture.js";
 import { fileViewerHtml } from "./file-viewer-page.js";
 
+export const fileResourceDomains = ["https://cdn.jsdelivr.net", "https://cdnjs.cloudflare.com", "https://unpkg.com", "https://fonts.googleapis.com", "https://fonts.gstatic.com"];
+
 function unavailable(): never {
   throw Object.assign(new Error("File unavailable"), { name: "McpAppsError", reason: "not_app_visible" });
 }
@@ -14,7 +16,7 @@ export function createFileAppProvider(record: McpAppRecord): NonNullable<Extensi
     async readResource(context, _server, uri) {
       if (uri === "ui://yoplai/file-viewer") return { contents: [{ uri, mimeType: "text/html;profile=mcp-app", text: fileViewerHtml,
         _meta: { ui: { prefersBorder: true, csp: {
-          resourceDomains: ["https://cdn.jsdelivr.net", "https://cdnjs.cloudflare.com", "https://unpkg.com", "https://fonts.googleapis.com", "https://fonts.gstatic.com"],
+          resourceDomains: fileResourceDomains,
           connectDomains: [], frameDomains: [],
         } } },
       }] };

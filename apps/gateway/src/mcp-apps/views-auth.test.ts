@@ -149,6 +149,35 @@ describe("MCP Apps authenticated ownership", () => {
     expect((await fetch(gatewayUrl + route + "/view", { method: "POST", headers: { Origin: "http://localhost:3000" } })).status).toBe(401);
     expect(calls).toHaveLength(0);
   });
+
+  it("issues file tickets only in the owner's session and revokes them only when that owner deletes it", async () => {
+    const sessionId = "open-file-chat";
+    await seed(alice.id, sessionId, alice.id);
+    await seed(bob.id, sessionId, bob.id);
+    const { ensureMediaDirectories, getMediaOutboundDir, registerMediaFile } = await import("../media/metadata.js");
+    const { captureSendFile } = await import("./capture.js");
+    await ensureMediaDirectories();
+    const filename = "private-report.html";
+    const filePath = path.join(getMediaOutboundDir(), filename);
+    await fs.writeFile(filePath, "<h1>Private Riverstone report</h1>");
+    const metadata = await registerMediaFile({ direction: "outbound", filename, storedFilename: filename, path: filePath, mimeType: "text/html", size: 34, agentId: "main", userId: alice.id });
+    await captureSendFile({ agentId: "main", userId: alice.id, sessionId, toolCallId: "file-call" }, {}, { fileId: metadata.fileId, filename, mimeType: "text/html", size: 34 });
+    const endpoint = route.replace("owned-chat", sessionId).replace("call-one", "file-call") + "/open";
+    const response = await post(alice, endpoint);
+    expect(response.status).toBe(200);
+    const issued = await response.json();
+    expect(typeof issued.url).toBe("string");
+    expect(await (await fetch(issued.url)).text()).toBe("<h1>Private Riverstone report</h1>");
+    for (const viewer of [bob, admin]) expect((await post(viewer, endpoint)).status).toBe(404);
+    for (const otherSession of ["shared-only", "wrong-owner", "missing-session"]) expect((await post(alice, endpoint.replace(sessionId, otherSession))).status).toBe(404);
+    expect((await fetch(gatewayUrl + endpoint, { method: "POST", headers: { Origin: "http://localhost:3000" } })).status).toBe(401);
+    const deletedOther = await fetch(gatewayUrl + "/api/agents/main/sessions/" + sessionId, { method: "DELETE", headers: { Cookie: bob.cookie } });
+    expect(deletedOther.status).toBe(200);
+    expect((await fetch(issued.url)).status).toBe(200);
+    const deletedOwner = await fetch(gatewayUrl + "/api/agents/main/sessions/" + sessionId, { method: "DELETE", headers: { Cookie: alice.cookie } });
+    expect(deletedOwner.status).toBe(200);
+    expect((await fetch(issued.url)).status).toBe(404);
+  });
   it("fails closed if the auth runtime declares any Domain-scoped cookie policy", async () => {
     const { getMultiUserRuntime } = await import("@yoplai/extension-multi-user");
     const options = (getMultiUserRuntime()!.auth as unknown as { options: Record<string, unknown> }).options;
@@ -160,9 +189,11 @@ describe("MCP Apps authenticated ownership", () => {
         { cookies: { session_token: { attributes: { domain: ".example.test" } } } },
       ]) {
         options.advanced = advanced;
-        const result = await (await post(alice, route + "/view")).json();
-        expect(result.available).toBe(false);
-        expect(result.reason).toBe("unsafe_cookie_domain");
+        for (const operation of ["view", "open"]) {
+          const result = await (await post(alice, route + "/" + operation)).json();
+          expect(result.available).toBe(false);
+          expect(result.reason).toBe("unsafe_cookie_domain");
+        }
       }
     } finally { options.advanced = original; }
   });
@@ -305,12 +336,12 @@ describe("MCP Apps authenticated ownership", () => {
     contexts.clearSession({ agentId: "main", sessionId: "owned-chat", ownerUserId: alice.id });
   });
 
-  it("refuses view, data, RPC and log operations during real admin impersonation", async () => {
+  it("refuses view, open, data, RPC and log operations during real admin impersonation", async () => {
     const started = await post(admin, "/api/admin/impersonate/start", { targetUserId: alice.id });
     expect(started.status).toBe(204);
     const before = calls.length;
     try {
-      for (const operation of ["view", "data", "rpc", "log"]) {
+      for (const operation of ["view", "open", "data", "rpc", "log"]) {
         const response = await post(admin, route + "/" + operation, { jsonrpc: "2.0", id: 4, method: "tools/call", params: { name: "edit_board" } });
         expect(response.status).toBe(403);
         expect(await response.json()).toEqual({ error: "read_only_impersonation" });

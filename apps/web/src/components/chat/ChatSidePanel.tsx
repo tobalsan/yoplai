@@ -1,5 +1,9 @@
 import { createSignal, onCleanup, onMount, type JSX } from "solid-js";
 
+export function canSplitPanel(rowWidth: number): boolean {
+  return window.innerWidth > 768 && rowWidth >= 726;
+}
+
 export function ChatSidePanel(props: { children: JSX.Element }) {
   let panel!: HTMLElement;
   const [width, setWidth] = createSignal(0);
@@ -11,7 +15,7 @@ export function ChatSidePanel(props: { children: JSX.Element }) {
     const container = panel.parentElement!;
     function measure() {
       setAvailable(container.getBoundingClientRect().width);
-      setOverlay(window.innerWidth <= 768 || available() < 726);
+      setOverlay(!canSplitPanel(available()));
       setWidth(clamp(width() || available() * 0.45));
     }
     const observer = new ResizeObserver(measure);

@@ -108,6 +108,223 @@ describe("MCP Apps gateway views", () => {
     });
   }
 
+  async function fileRecord(filename: string, mimeType: string, body = "<h1>Riverstone report</h1>", sessionId = "file-chat", agentId = "main") {
+    const { registerMediaFile, getMediaOutboundDir, ensureMediaDirectories } = await import("../media/metadata.js");
+    const { captureSendFile } = await import("./capture.js");
+    await ensureMediaDirectories();
+    const filePath = path.join(getMediaOutboundDir(), filename);
+    await fs.writeFile(filePath, body);
+    const metadata = await registerMediaFile({ direction: "outbound", filename, storedFilename: filename, path: filePath, mimeType, size: Buffer.byteLength(body), agentId });
+    const toolCallId = "file-" + filename;
+    await fs.writeFile(path.join(home, "history", `2026-10-24T12-00-00-000Z_main-${sessionId}.jsonl`), "", { flag: "a" });
+    await captureSendFile({ agentId: "main", sessionId, toolCallId }, {}, { fileId: metadata.fileId, filename, mimeType, size: metadata.size });
+    return { endpoint: gatewayUrl + route.replace("chat-one", sessionId).replace("call-one", toolCallId), filePath, metadata };
+  }
+
+  // ALG-655 Testing Decisions (Thinh's Groom: GO b1d4129a): real HTTP and
+  // managed files catch ticket delivery/headers; browser CSP is covered in E2E.
+  it("opens a managed HTML file on the apps origin with report isolation", async () => {
+    const file = await fileRecord("riverstone.html", "text/html");
+    const response = await fetch(file.endpoint + "/open", { method: "POST", headers: { Origin: "http://localhost:3000" } });
+    expect(response.status).toBe(200);
+    const issued = await response.json();
+    expect(issued.url).toMatch(new RegExp(`^http://127\\.0\\.0\\.1:${appsPort}/open/[a-f0-9]{64}$`));
+    const opened = await appGet(issued.url);
+    expect(opened.status).toBe(200);
+    expect(await opened.text()).toBe("<h1>Riverstone report</h1>");
+    expect(opened.headers.get("content-type")).toBe("text/html");
+    expect(opened.headers.get("cache-control")).toBe("no-store");
+    expect(opened.headers.get("x-content-type-options")).toBe("nosniff");
+    expect(opened.headers.get("referrer-policy")).toBe("no-referrer");
+    expect(opened.headers.get("content-security-policy")).toBe("default-src 'none'; script-src 'unsafe-inline' https://cdn.jsdelivr.net https://cdnjs.cloudflare.com https://unpkg.com https://fonts.googleapis.com https://fonts.gstatic.com; style-src 'unsafe-inline' https://cdn.jsdelivr.net https://cdnjs.cloudflare.com https://unpkg.com https://fonts.googleapis.com https://fonts.gstatic.com; img-src data: https://cdn.jsdelivr.net https://cdnjs.cloudflare.com https://unpkg.com https://fonts.googleapis.com https://fonts.gstatic.com; font-src https://cdn.jsdelivr.net https://cdnjs.cloudflare.com https://unpkg.com https://fonts.googleapis.com https://fonts.gstatic.com; media-src data:; connect-src 'none'; frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'; sandbox allow-scripts allow-popups allow-popups-to-escape-sandbox");
+  });
+
+  it("redacts file tickets from successful and failed access logs", async () => {
+    const file = await fileRecord("log-report.html", "text/html");
+    const issued = await (await fetch(file.endpoint + "/open", { method: "POST", headers: { Origin: "http://localhost:3000" } })).json();
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    try {
+      await appGet(issued.url);
+      await appGet(`http://127.0.0.1:${appsPort}/open/not-a-ticket`);
+      const lines = log.mock.calls.map(([line]) => String(line));
+      expect(lines.some((line) => /^--> GET \/open\/\[redacted\] 200/.test(line))).toBe(true);
+      expect(lines.some((line) => /^--> GET \/open\/\[redacted\] 404/.test(line))).toBe(true);
+      expect(lines.join(" ")).not.toContain(new URL(issued.url).pathname.slice("/open/".length));
+    } finally { log.mockRestore(); }
+  });
+
+  it("opens a generic-MIME PDF inline with a restrictive PDF policy", async () => {
+    const file = await fileRecord("riverstone.pdf", "application/octet-stream", "%PDF-1.7\nRiverstone");
+    const issued = await (await fetch(file.endpoint + "/open", { method: "POST", headers: { Origin: "http://localhost:3000" } })).json();
+    expect(typeof issued.url).toBe("string");
+    const opened = await appGet(issued.url);
+    expect(opened.headers.get("content-type")).toBe("application/pdf");
+    expect(opened.headers.get("content-disposition")).toBe("inline");
+    expect(opened.headers.get("content-security-policy")).toBe("default-src 'none'; frame-ancestors 'none'; sandbox");
+    expect(await opened.text()).toBe("%PDF-1.7\nRiverstone");
+  });
+
+  it("opens supported raster images in their own media type", async () => {
+    for (const [filename, mimeType, expectedType] of [
+      ["riverstone.png", "application/octet-stream", "image/png"],
+      ["riverstone.jpeg", " IMAGE/JPEG ; quality=full", "image/jpeg"],
+      ["riverstone.gif", "image/gif", "image/gif"],
+      ["riverstone.webp", "image/webp", "image/webp"],
+    ]) {
+      const file = await fileRecord(filename, mimeType, "fixture-image-bytes");
+      const issued = await (await fetch(file.endpoint + "/open", { method: "POST", headers: { Origin: "http://localhost:3000" } })).json();
+      expect(typeof issued.url).toBe("string");
+      const opened = await appGet(issued.url);
+      expect(opened.headers.get("content-type")).toBe(expectedType);
+      expect(opened.headers.get("content-security-policy")).toBe("default-src 'none'; img-src 'self'");
+      expect(await opened.text()).toBe("fixture-image-bytes");
+    }
+  });
+
+  it("opens SVG with a scriptless opaque sandbox policy", async () => {
+    const file = await fileRecord("riverstone.svg", "application/octet-stream", '<svg xmlns="http://www.w3.org/2000/svg"/>');
+    const issued = await (await fetch(file.endpoint + "/open", { method: "POST", headers: { Origin: "http://localhost:3000" } })).json();
+    expect(typeof issued.url).toBe("string");
+    const opened = await appGet(issued.url);
+    expect(opened.headers.get("content-type")).toBe("image/svg+xml");
+    expect(opened.headers.get("content-security-policy")).toBe("default-src 'none'; style-src 'unsafe-inline'; sandbox");
+    expect(await opened.text()).toBe('<svg xmlns="http://www.w3.org/2000/svg"/>');
+  });
+
+  it("opens text and data as UTF-8 plain text while refusing Markdown and other files", async () => {
+    for (const [filename, mimeType] of [
+      ["riverstone.txt", "text/plain"], ["riverstone.csv", "text/csv"], ["riverstone.json", "application/json"],
+      ["riverstone.js", "application/javascript"], ["riverstone.custom", "application/vnd.riverstone+json"],
+      ["riverstone.py", "application/octet-stream"], ["explicit.html", "text/plain"],
+    ]) {
+      const file = await fileRecord(filename, mimeType, "<script>plain</script>\né");
+      const issued = await (await fetch(file.endpoint + "/open", { method: "POST", headers: { Origin: "http://localhost:3000" } })).json();
+      expect(typeof issued.url).toBe("string");
+      const opened = await appGet(issued.url);
+      expect(opened.headers.get("content-type")).toBe("text/plain; charset=utf-8");
+      expect(opened.headers.get("content-security-policy")).toBe("default-src 'none'");
+      expect(opened.headers.get("content-length")).toBe("25");
+      expect(await opened.text()).toBe("<script>plain</script>\né");
+    }
+    for (const [filename, mimeType] of [["notes.md", "text/markdown"], ["notes.markdown", "application/octet-stream"], ["archive.zip", "application/zip"], ["other.png", "image/bmp"]]) {
+      const file = await fileRecord(filename, mimeType);
+      const response = await fetch(file.endpoint + "/open", { method: "POST", headers: { Origin: "http://localhost:3000" } });
+      expect(await response.json()).toEqual({ available: false, reason: "unsupported_type" });
+    }
+  });
+
+  it("reports file unavailable when media metadata cannot be read", async () => {
+    const file = await fileRecord("unreadable-metadata.html", "text/html");
+    const metadataPath = path.join(home, "media", "metadata.json");
+    await fs.chmod(metadataPath, 0);
+    try {
+      const response = await fetch(file.endpoint + "/open", { method: "POST", headers: { Origin: "http://localhost:3000" } });
+      expect(response.status).toBe(200);
+      expect(await response.json()).toEqual({ available: false, reason: "file_unavailable" });
+    } finally { await fs.chmod(metadataPath, 0o600); }
+  });
+
+  it("keeps file and view tickets separate and refuses wrong hosts, expired tickets and non-GET file requests", async () => {
+    const file = await fileRecord("ticket-rules.html", "text/html");
+    const issued = await (await fetch(file.endpoint + "/open", { method: "POST", headers: { Origin: "http://localhost:3000" } })).json();
+    const viewed = await view();
+    expect((await appGet(issued.url.replace("/open/", "/content/"))).status).toBe(404);
+    expect((await appGet(issued.url.replace("/open/", "/sandbox/"))).status).toBe(404);
+    expect((await appGet(viewed.sandboxUrl.replace("/sandbox/", "/open/"))).status).toBe(404);
+    expect((await appGet(issued.url, "other.localhost:" + appsPort)).status).toBe(404);
+    for (const method of ["HEAD", "POST", "OPTIONS", "PUT", "DELETE"]) expect((await appGet(issued.url, undefined, method)).status).toBe(404);
+    expect((await appGet(issued.url)).status).toBe(200);
+    const clock = vi.spyOn(Date, "now").mockReturnValue(Date.now() + 3600_001);
+    try { expect((await appGet(issued.url)).status).toBe(404); }
+    finally { clock.mockRestore(); }
+  });
+
+  it("revalidates current media ownership, type and readability when a file ticket is used", async () => {
+    const file = await fileRecord("changing-file.html", "text/html");
+    const { registerMediaFile } = await import("../media/metadata.js");
+    const issue = () => fetch(file.endpoint + "/open", { method: "POST", headers: { Origin: "http://localhost:3000" } });
+    const issued = await (await issue()).json();
+    await registerMediaFile({ ...file.metadata, agentId: "other-agent" });
+    expect((await appGet(issued.url)).status).toBe(404);
+    expect(await (await issue()).json()).toEqual({ available: false, reason: "file_unavailable" });
+    await registerMediaFile({ ...file.metadata, mimeType: "application/zip" });
+    expect((await appGet(issued.url)).status).toBe(404);
+    await registerMediaFile(file.metadata);
+    await fs.chmod(file.filePath, 0);
+    try { expect((await appGet(issued.url)).status).toBe(404); }
+    finally { await fs.chmod(file.filePath, 0o600); }
+    await fs.rm(file.filePath);
+    expect((await appGet(issued.url)).status).toBe(404);
+    await fs.mkdir(file.filePath);
+    expect((await appGet(issued.url)).status).toBe(404);
+  });
+
+  it("streams a file larger than the in-chat viewer limit with its actual byte length", async () => {
+    const file = await fileRecord("large-report.txt", "text/plain", "start\n" + "x".repeat(10 * 1024 * 1024) + "\nend");
+    const issued = await (await fetch(file.endpoint + "/open", { method: "POST", headers: { Origin: "http://localhost:3000" } })).json();
+    const opened = await appGet(issued.url);
+    expect(opened.status).toBe(200);
+    expect(opened.headers.get("content-length")).toBe("10485770");
+    const body = await opened.text();
+    expect(body.length).toBe(10485770);
+    expect(body.slice(0, 6)).toBe("start\n");
+    expect(body.slice(-4)).toBe("\nend");
+  });
+
+  it("applies trusted-origin, apps-origin and captured-file checks before issuing file tickets", async () => {
+    const file = await fileRecord("origin-check.html", "text/html");
+    const post = (endpoint: string, origin?: string) => fetch(endpoint + "/open", { method: "POST", headers: origin ? { Origin: origin } : {} });
+    expect((await post(file.endpoint, "https://attacker.test")).status).toBe(403);
+    expect((await post(file.endpoint)).status).toBe(403);
+    expect((await post(file.endpoint.replace("file-chat", "other-session"), "http://localhost:3000")).status).toBe(404);
+    expect(await (await post(gatewayUrl + route, "http://localhost:3000")).json()).toEqual({ available: false, reason: "file_unavailable" });
+    const { loadConfig, setLoadedConfig } = await import("../config/index.js");
+    const original = loadConfig();
+    try {
+      setLoadedConfig({ ...original, web: { baseUrl: "https://chat.example.test" }, apps: { port: appsPort } });
+      expect(await (await post(file.endpoint, "https://chat.example.test")).json()).toEqual({ available: false, reason: "apps_unavailable" });
+    } finally { setLoadedConfig(original); }
+  });
+
+  it("cannot publish a file ticket when its session is deleted during metadata reading", async () => {
+    const sessionId = "delete-open-pending";
+    await seedSession(sessionId);
+    const file = await fileRecord("pending-report.html", "text/html", "<h1>Pending</h1>", sessionId);
+    let release = () => {};
+    let started = () => {};
+    const held = new Promise<void>((resolve) => { release = resolve; });
+    const reading = new Promise<void>((resolve) => { started = resolve; });
+    const read = fs.readFile.bind(fs);
+    const metadataPath = path.join(home, "media", "metadata.json");
+    // Delay the filesystem read without replacing the stored metadata or the
+    // owned route/provider behavior; deletion must win before publication.
+    const delayed = vi.spyOn(fs, "readFile").mockImplementation(async (...args) => {
+      const result = await read(...args);
+      if (String(args[0]) === metadataPath) { started(); await held; }
+      return result;
+    });
+    try {
+      const pending = fetch(file.endpoint + "/open", { method: "POST", headers: { Origin: "http://localhost:3000" } });
+      await reading;
+      const deleted = await fetch(gatewayUrl + "/api/agents/main/sessions/" + sessionId, { method: "DELETE" });
+      expect(deleted.status).toBe(200);
+      release();
+      expect(await (await pending).json()).toEqual({ available: false, reason: "session_deleted" });
+    } finally { release(); delayed.mockRestore(); }
+  });
+
+  it("shares the 512-ticket cap between file and view tickets", async () => {
+    const file = await fileRecord("oldest-ticket.html", "text/html");
+    const issued = await (await fetch(file.endpoint + "/open", { method: "POST", headers: { Origin: "http://localhost:3000" } })).json();
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    try {
+      let latest = await view();
+      for (let index = 1; index < 512; index++) latest = await view();
+      expect((await appGet(issued.url)).status).toBe(404);
+      expect((await appGet(latest.sandboxUrl)).status).toBe(200);
+    } finally { log.mockRestore(); }
+  }, 10_000);
+
   it("serves only ticket pages with isolated headers and the exact restrictive default CSP", async () => {
     const issued = await view();
     const sandbox = await appGet(issued.sandboxUrl);
@@ -449,8 +666,10 @@ describe("MCP Apps gateway views", () => {
       await vi.waitFor(() => expect(warning.mock.calls.some(([line]) => String(line).includes("MCP Apps listener unavailable"))).toBe(true));
       expect((await fetch(url + "/health")).status).toBe(200);
       expect((await (await fetch(url + "/api/capabilities")).json()).apps).toEqual({ available: false });
-      const response = await fetch(url + route + "/view", { method: "POST", headers: { Origin: "http://localhost:3000" } });
-      expect(await response.json()).toEqual({ available: false, reason: "apps_unavailable" });
+      for (const operation of ["view", "open"]) {
+        const response = await fetch(url + route + "/" + operation, { method: "POST", headers: { Origin: "http://localhost:3000" } });
+        expect(await response.json()).toEqual({ available: false, reason: "apps_unavailable" });
+      }
     } finally {
       await new Promise<void>((resolve) => second.close(() => resolve()));
       warning.mockRestore();
