@@ -100,7 +100,11 @@ type MockMessage = {
 
 function makeSession() {
   const state = { messages: [] as MockMessage[], systemPrompt: "You are Pi." };
-  const agent = { state, continue: vi.fn(async () => undefined) };
+  const agent = {
+    state, continue: vi.fn(async () => undefined),
+    streamFunction: (_model: { provider: string }, _context: unknown, options?: { fetch?: typeof fetch }) =>
+      (options?.fetch ?? globalThis.fetch)("https://vendor.invalid/messages"),
+  };
   const sessionManager = {
     appendContextEdit: vi.fn(),
     getLeafEntry: vi.fn(() => {
@@ -201,6 +205,84 @@ describe("pi adapter transient provider retry", () => {
     mockGetExtensionAgentTools.mockResolvedValue([]);
     mockGetModel.mockClear();
   });
+
+  // ALG-626 seams approved by Thinh's Groom: GO, 4915dc05.
+  it("captures rejected 429 quota immediately while the failed turn retries", async () => {
+    const { modelQuotaStore } = await import("../../../model-quota/runtime.js");
+    modelQuotaStore.list();
+    mockReadStoredCredential.mockReturnValue({ type: "oauth", access: "FAKE_OAUTH_626", expires: Date.now() + 3600000 });
+    const agent = makeAgent({ retryMaxAttempts: 2, retryBaseDelay: 0 });
+    setLoadedConfig({ agents: [agent] } as GatewayConfig);
+    const params = makeRunParams(agent);
+    const session = makeSession();
+    const response = new Response("invented body", { status: 429, headers: {
+      "anthropic-ratelimit-unified-5h-status": "rejected",
+      "anthropic-ratelimit-unified-5h-utilization": "1",
+      "anthropic-ratelimit-unified-5h-reset": "2000000000",
+      authorization: "FAKE_HEADER_TOKEN_626",
+    } });
+    session.prompt.mockImplementationOnce(async () => {
+      expect(await session.agent.streamFunction({ provider: "anthropic" }, {}, { fetch: async () => response })).toBe(response);
+      expect(response.bodyUsed).toBe(false);
+      expect(modelQuotaStore.list()).toContainEqual(expect.objectContaining({
+        provider: "anthropic", accountRef: "host", source: "headers", stale: false,
+        windows: [{ kind: "five-hour", windowSeconds: 18000, usedPercent: 100, resetAt: 2000000000, status: "rejected" }],
+      }));
+      session.agent.state.messages.push({ role: "user", content: [{ type: "text", text: "Say hi" }] }, erroredTurn("429 rate_limit_error"));
+    });
+    session.agent.continue.mockImplementationOnce(async () => {
+      session.agent.state.messages.push(successTurn());
+    });
+    mockCreateAgentSession.mockResolvedValue({ session });
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const { piAdapter } = await import("../adapter.js");
+      await expect(piAdapter.run(params)).resolves.toMatchObject({ text: "recovered" });
+      expect(session.prompt).toHaveBeenCalledTimes(1);
+      expect(session.agent.continue).toHaveBeenCalledTimes(1);
+      const visible = JSON.stringify([vi.mocked(params.onEvent).mock.calls, vi.mocked(params.onHistoryEvent).mock.calls, log.mock.calls, warn.mock.calls]);
+      for (const sentinel of ["FAKE_OAUTH_626", "FAKE_HEADER_TOKEN_626", "2000000000", "rejected"]) expect(visible).not.toContain(sentinel);
+    } finally {
+      log.mockRestore();
+      warn.mockRestore();
+    }
+  });
+
+  it.each(["API-key mode", "no unified headers", "sparse headers", "500 response", "other provider", "limited"] as const)(
+    "handles %s on the installed 429 capture without disturbing chat", async scenario => {
+      const { modelQuotaStore } = await import("../../../model-quota/runtime.js");
+      modelQuotaStore.list();
+      mockReadStoredCredential.mockReturnValue({ type: "oauth", access: "FAKE_OAUTH_626", expires: Date.now() + 3600000 });
+      const agent = makeAgent({ auth: scenario === "API-key mode" ? { mode: "api_key" } : undefined });
+      setLoadedConfig({ agents: [agent] } as GatewayConfig);
+      // A sparse 429 must preserve the last good observation, including freshness.
+      if (scenario === "sparse headers") modelQuotaStore.record({ provider: "anthropic", accountRef: "host" }, "headers", [
+        { kind: "five-hour", windowSeconds: 18000, usedPercent: 25, resetAt: 2000000000, status: "allowed" },
+      ], Date.now() / 1000);
+      const before = modelQuotaStore.list();
+      const session = makeSession();
+      session.prompt.mockImplementationOnce(async () => {
+        const headers: Record<string, string> = scenario === "no unified headers" ? {} : scenario === "sparse headers" ? {
+          "anthropic-ratelimit-unified-5h-status": "rejected",
+        } : {
+          "anthropic-ratelimit-unified-5h-status": "limited",
+          "anthropic-ratelimit-unified-5h-utilization": "0.9",
+          "anthropic-ratelimit-unified-5h-reset": "2000000000",
+        };
+        const response = new Response("fixture", { status: scenario === "500 response" ? 500 : 429, headers });
+        expect(await session.agent.streamFunction({ provider: scenario === "other provider" ? "openai" : "anthropic" }, {}, { fetch: async () => response })).toBe(response);
+        session.agent.state.messages.push(successTurn());
+      });
+      mockCreateAgentSession.mockResolvedValue({ session });
+      const { piAdapter } = await import("../adapter.js");
+      await expect(piAdapter.run(makeRunParams(agent))).resolves.toMatchObject({ text: "recovered" });
+      if (scenario === "limited") expect(modelQuotaStore.list()).toContainEqual(expect.objectContaining({ windows: [
+        { kind: "five-hour", windowSeconds: 18000, usedPercent: 90, resetAt: 2000000000, status: "limited" },
+      ] }));
+      else expect(modelQuotaStore.list()).toEqual(before);
+    },
+  );
 
   // ALG-595 seams approved by Thinh, comment 959e9e2b-98a9-48ff-8077-6325cc5713ab.
   // Public run + fake Pi response event catches capture/auth/output wiring, not live HTTP.

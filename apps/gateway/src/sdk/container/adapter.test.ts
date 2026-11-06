@@ -297,7 +297,7 @@ afterEach(() => {
 describe("container adapter", () => {
   // ALG-595 run/frame seam approved by Thinh, comment 959e9e2b.
   // Exercises recording and callback isolation through fake Docker, not image deployment.
-  it("records an authorized quota frame without forwarding it into chat", async () => {
+  it.each(["rejected", "limited"] as const)("records an authorized %s quota frame without forwarding it into chat", async status => {
     const root = tempDir();
     process.env.YOPLAI_HOME = path.join(root, "yoplai");
     const agent = createAgent(root);
@@ -313,7 +313,7 @@ describe("container adapter", () => {
     const streamBefore = vi.mocked(params.onEvent).mock.calls.slice();
     processes[0].emitStreamEvent({
       type: "quota", provider: "anthropic", observedAt: Date.now() / 1000,
-      windows: [{ kind: "five-hour", windowSeconds: 18000, usedPercent: 25, resetAt: 2000000000 }],
+      windows: [{ kind: "five-hour", windowSeconds: 18000, usedPercent: 100, resetAt: 2000000000, status }],
     });
     const historyAfter = vi.mocked(params.onHistoryEvent).mock.calls.slice();
     const streamAfter = vi.mocked(params.onEvent).mock.calls.slice();
@@ -322,7 +322,7 @@ describe("container adapter", () => {
     await expect(run).resolves.toMatchObject({ text: "chat still works" });
     expect(modelQuotaStore.list()).toContainEqual(expect.objectContaining({
       provider: "anthropic", accountRef: "host", source: "headers",
-      windows: [{ kind: "five-hour", windowSeconds: 18000, usedPercent: 25, resetAt: 2000000000 }],
+      windows: [{ kind: "five-hour", windowSeconds: 18000, usedPercent: 100, resetAt: 2000000000, status }],
     }));
     expect(historyAfter).toEqual(historyBefore);
     expect(streamAfter).toEqual(streamBefore);

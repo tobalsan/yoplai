@@ -20,7 +20,10 @@ const piMock = vi.hoisted(() => {
     id: "claude-sonnet-4-6",
     model: "claude-sonnet-4-6",
   };
+  const streamFunction = (_model: { provider: string }, _context: unknown, options?: { fetch?: typeof fetch }) =>
+    (options?.fetch ?? globalThis.fetch)("https://vendor.invalid/messages");
   const agent = {
+    streamFunction,
     state: {
       // Pi 0.87 fills agent state only after the first prompt; the session
       // getter exposes the effective prompt beforehand.
@@ -63,6 +66,7 @@ const piMock = vi.hoisted(() => {
       providerResponseHooks.length = 0;
       subscribers.length = 0;
       agent.state.messages = [];
+      agent.streamFunction = streamFunction;
       agent.continue.mockReset();
       agent.continue.mockResolvedValue(undefined);
       session.subscribe.mockClear();
@@ -155,6 +159,75 @@ function startAgentRun(): void {
 }
 
 describe("Pi runner", () => {
+  // ALG-626 Testing Decisions approved by Thinh's Groom: GO, 4915dc05.
+  it("emits rejected 429 quota immediately outside chat history", async () => {
+    const tempDir = await fs.mkdtemp(path.join(process.cwd(), ".runner-quota-"));
+    try {
+      const workspaceDir = path.join(tempDir, "workspace");
+      await fs.mkdir(workspaceDir);
+      vi.spyOn(Date, "now").mockReturnValue(1793650000000);
+      const response = new Response("invented body", { status: 429, headers: {
+        "anthropic-ratelimit-unified-5h-status": "rejected",
+        "anthropic-ratelimit-unified-5h-utilization": "1",
+        "anthropic-ratelimit-unified-5h-reset": "2000000000",
+        authorization: "FAKE_RUNNER_TOKEN_626",
+      } });
+      const events: ContainerRunnerProtocolEvent[] = [];
+      piMock.session.prompt.mockImplementationOnce(async () => {
+        expect(await piMock.agent.streamFunction({ provider: "anthropic" }, {}, { fetch: async () => response })).toBe(response);
+        expect(response.bodyUsed).toBe(false);
+        expect(events.filter(event => event.type === "quota")).toEqual([{
+          type: "quota", provider: "anthropic", observedAt: 1793650000,
+          windows: [{ kind: "five-hour", windowSeconds: 18000, usedPercent: 100, resetAt: 2000000000, status: "rejected" }],
+        }]);
+        piMock.session.messages.push({ role: "assistant", content: [{ type: "text", text: "done" }] });
+      });
+      const log = vi.spyOn(console, "log").mockImplementation(() => {});
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      const error = vi.spyOn(console, "error").mockImplementation(() => {});
+      const output = await runAgent(createInput({ workspaceDir, sessionDir: path.join(tempDir, "sessions") }), event => events.push(event));
+      expect(output.text).toBe("done");
+      const visible = JSON.stringify([output.history, log.mock.calls, warn.mock.calls, error.mock.calls]);
+      for (const sentinel of ["FAKE_RUNNER_TOKEN_626", "2000000000", "rejected"]) expect(visible).not.toContain(sentinel);
+      expect(JSON.stringify(events)).not.toContain("FAKE_RUNNER_TOKEN_626");
+    } finally {
+      await fs.rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it.each(["no headers", "invalid headers", "other provider", "throwing emitter", "200", "500"] as const)(
+    "keeps 429 capture invisible with %s", async scenario => {
+      const tempDir = await fs.mkdtemp(path.join(process.cwd(), ".runner-quota-"));
+      try {
+        const workspaceDir = path.join(tempDir, "workspace");
+        await fs.mkdir(workspaceDir);
+        const response = new Response("invented response", { status: scenario === "200" ? 200 : scenario === "500" ? 500 : 429, headers:
+          scenario === "no headers" ? {} : scenario === "invalid headers" ? {
+            "anthropic-ratelimit-unified-5h-status": "rejected",
+          } : {
+            "anthropic-ratelimit-unified-5h-status": "limited",
+            "anthropic-ratelimit-unified-5h-utilization": "0.9",
+            "anthropic-ratelimit-unified-5h-reset": "2000000000",
+          },
+        });
+        piMock.session.prompt.mockImplementationOnce(async () => {
+          expect(await piMock.agent.streamFunction({ provider: scenario === "other provider" ? "openai" : "anthropic" }, {}, { fetch: async () => response })).toBe(response);
+          piMock.session.messages.push({ role: "assistant", content: [{ type: "text", text: "done" }] });
+        });
+        const events: ContainerRunnerProtocolEvent[] = [];
+        const output = await runAgent(createInput({ workspaceDir, sessionDir: path.join(tempDir, "sessions") }), event => {
+          if (scenario === "throwing emitter" && event.type === "quota") throw new Error("fixture emitter failure");
+          events.push(event);
+        });
+        expect(output.text).toBe("done");
+        expect(events.filter(event => event.type === "quota")).toEqual([]);
+        expect(output.history).not.toContainEqual(expect.objectContaining({ type: "quota" }));
+      } finally {
+        await fs.rm(tempDir, { recursive: true, force: true });
+      }
+    },
+  );
+
   // ALG-595 runAgent/event seam approved by Thinh, comment 959e9e2b.
   // Exercises frame emission and history isolation with fake Pi, not Docker.
   it("emits sanitized quota for the response's current provider outside history", async () => {

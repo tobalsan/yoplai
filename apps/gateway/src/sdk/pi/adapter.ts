@@ -13,6 +13,8 @@ import {
   DEFAULT_RETRY_BASE_DELAY_SECONDS,
   DEFAULT_RETRY_MAX_ATTEMPTS,
   PI_SYSTEM_PROMPT,
+  captureAnthropicRateLimits,
+  parseClaudeQuotaHeaders,
   claimAgentToolName,
   ContainerFileOutputRequestSchema,
   classifyRunFailure,
@@ -643,6 +645,11 @@ export const piAdapter: SdkAdapter = {
         resourceLoader,
         sessionManager,
         settingsManager,
+      });
+
+      captureAnthropicRateLimits(agentSession.agent, (headers) => {
+        // Sparse 429s must leave the last good observation and poller fallback intact.
+        if (parseClaudeQuotaHeaders(headers).ok) captureClaudeQuota("anthropic", headers, authMode);
       });
 
       agentSession.setActiveToolsByName(

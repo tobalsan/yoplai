@@ -30,6 +30,7 @@ import {
   DEFAULT_RETRY_BASE_DELAY_SECONDS,
   DEFAULT_RETRY_MAX_ATTEMPTS,
   PI_SYSTEM_PROMPT,
+  captureAnthropicRateLimits,
   codemodeGuidance,
   parseClaudeQuotaHeaders,
   resolveCodemodeLimits,
@@ -468,6 +469,19 @@ export async function runAgent(
           })
         : undefined;
     };
+    const captureQuota = (headers: Record<string, string>) => {
+      try {
+        const parsed = parseClaudeQuotaHeaders(headers);
+        if (parsed.ok && parsed.windows.length) {
+          onStreamEvent?.({
+            type: "quota", provider: "anthropic", windows: parsed.windows,
+            observedAt: Date.now() / 1000,
+          });
+        }
+      } catch {
+        // Quota tracking must never interrupt the model response.
+      }
+    };
     const resourceLoader = new DefaultResourceLoader({
       cwd: input.workspaceDir,
       agentDir: input.sessionDir,
@@ -475,18 +489,7 @@ export async function runAgent(
       extensionFactories: [
         (pi) => {
           pi.on("after_provider_response", (event, ctx) => {
-            try {
-              if (ctx.model?.provider !== "anthropic") return;
-              const parsed = parseClaudeQuotaHeaders(event.headers);
-              if (parsed.ok && parsed.windows.length) {
-                onStreamEvent?.({
-                  type: "quota", provider: "anthropic", windows: parsed.windows,
-                  observedAt: Date.now() / 1000,
-                });
-              }
-            } catch {
-              // Quota tracking must never interrupt the model response.
-            }
+            if (ctx.model?.provider === "anthropic") captureQuota(event.headers);
           });
         },
         ...(toolDeferral.enabled ? [createToolSearchExtension()] : []),
@@ -549,6 +552,7 @@ export async function runAgent(
       sessionManager,
       settingsManager,
     });
+    captureAnthropicRateLimits(session.agent, captureQuota);
     session.setActiveToolsByName(catalog.activeToolNames(
       getCurrentTools(sessionManager.buildSessionContext().messages)
     ));

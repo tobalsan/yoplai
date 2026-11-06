@@ -20,6 +20,8 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Fixed
 
+- Claude subscription quota updates immediately from usable model-call 429 headers on host and container agents, preserving existing error and retry behavior.
+
 - Concurrent project subagent interrupts and CLI output preserve valid state, interruption requests, and session IDs.
 - Runtime subagents that exit immediately now persist their final status and CLI session for resume.
 - Heartbeat runs already in flight finish safely during extension shutdown, including their saved output.
