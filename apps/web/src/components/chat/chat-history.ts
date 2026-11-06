@@ -2,6 +2,7 @@ import type { Message, FullHistoryMessage, FullToolResultMessage, ContentBlock, 
 import { isNoReply } from "@yoplai/shared/no-reply";
 import { extractBlockText } from "../../lib/history";
 import type { ActivityItem } from "./ChatBlocks";
+import type { McpAppView } from "@yoplai/shared/types";
 
 export function userText(message: FullHistoryMessage): string {
   return message.content
@@ -12,13 +13,14 @@ export function userText(message: FullHistoryMessage): string {
 
 
 // Local completion keeps the append-time classification; persisted tool calls stay unchanged.
-export type ChatToolCall = Extract<ContentBlock, { type: "toolCall" }> & { viewCall?: boolean };
+export type ChatToolCall = Extract<ContentBlock, { type: "toolCall" }> & { viewCall?: boolean; view?: McpAppView };
 export type ChatContentBlock = Exclude<ContentBlock, { type: "toolCall" }> | ChatToolCall;
 
 export type SimpleToolMessage = {
   id: string;
   parentToolCallId?: string;
   viewCall?: boolean;
+  view?: McpAppView;
   result?: FullToolResultMessage;
   role: "tool";
   toolName: string;
@@ -191,6 +193,7 @@ export function fullMessagesToSimpleView(
           parentToolCallId: block.parentToolCallId,
           result: results.get(block.id),
           viewCall: (block as ChatToolCall).viewCall ?? !!results.get(block.id)?.view,
+          view: (block as ChatToolCall).view,
           role: "tool",
           toolName: block.name,
           arguments: block.arguments,

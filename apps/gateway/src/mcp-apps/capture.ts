@@ -24,6 +24,7 @@ type RecordScope = { agentId: string; sessionId: string; ownerUserId?: string | 
 type CaptureIdentity = { agentId: string; sessionId: string; userId?: string; sessionOwnerId?: string | null };
 const referenceLifetime = 15 * 60 * 1000;
 const references = new Map<string, { scope: string; view: McpAppViewReference; createdAt: number }>();
+const recordFiles = new Map<string, Map<string, string>>();
 
 function identityScope(identity: CaptureIdentity): string {
   return JSON.stringify([identity.agentId, identity.sessionId, identity.sessionOwnerId === undefined ? identity.userId ?? null : identity.sessionOwnerId]);
@@ -59,17 +60,31 @@ function recordDirectory(scope: RecordScope): string | undefined {
 export async function readMcpAppRecord(scope: RecordScope, toolCallId: string): Promise<McpAppRecord | undefined> {
   const dir = recordDirectory(scope);
   if (!dir) return;
-  const names = await fs.readdir(dir).catch(() => []);
-  for (const name of names) {
-    if (!/^[a-f0-9]{32,128}\.json$/.test(name)) continue;
+  const files = recordFiles.get(dir) ?? new Map<string, string>();
+  recordFiles.set(dir, files);
+  const read = async (name: string): Promise<McpAppRecord | undefined> => {
     try {
       const record = JSON.parse(await fs.readFile(path.join(dir, name), "utf8")) as McpAppRecord;
       if (record.recordId === name.slice(0, -5) && record.agentId === scope.agentId &&
         record.sessionId === scope.sessionId && record.ownerUserId === (scope.ownerUserId ?? null) &&
-        record.toolCallId === toolCallId && typeof record.server === "string" &&
+        typeof record.toolCallId === "string" && typeof record.server === "string" &&
         typeof record.tool === "string" && typeof record.resourceUri === "string" &&
         record.result && Array.isArray(record.result.content)) return record;
     } catch { /* An incomplete or unreadable record cannot authorize a view. */ }
+  };
+  const cached = files.get(toolCallId);
+  if (cached) {
+    const record = await read(cached);
+    if (record?.toolCallId === toolCallId) return record;
+    files.delete(toolCallId);
+  }
+  const names = await fs.readdir(dir).catch(() => []);
+  for (const name of names) {
+    if (!/^[a-f0-9]{32,128}\.json$/.test(name)) continue;
+    const record = await read(name);
+    if (!record) continue;
+    files.set(record.toolCallId, name);
+    if (record.toolCallId === toolCallId) return record;
   }
 }
 
@@ -77,6 +92,7 @@ export async function deleteMcpAppRecords(scope: RecordScope): Promise<void> {
   const dir = recordDirectory(scope);
   if (!dir) return;
   clearMcpAppViews({ agentId: scope.agentId, sessionId: scope.sessionId, sessionOwnerId: scope.ownerUserId ?? null });
+  recordFiles.delete(dir);
   await fs.rm(dir, { recursive: true, force: true });
 }
 
@@ -113,6 +129,9 @@ export async function captureMcpApp(
       await fs.rm(target, { force: true });
       return;
     }
+    const files = recordFiles.get(dir) ?? new Map<string, string>();
+    files.set(record.toolCallId, `${record.recordId}.json`);
+    recordFiles.set(dir, files);
     const scope = identityScope({ agentId: record.agentId, sessionId: record.sessionId, sessionOwnerId: ownerUserId });
     references.set(`${scope}:${record.toolCallId}`, { scope, createdAt: record.createdAt, view: {
       recordId: record.recordId, server: record.server, tool: record.tool, resourceUri: record.resourceUri,

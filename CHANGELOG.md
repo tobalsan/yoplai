@@ -9,6 +9,10 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ## [Unreleased]
 
+### Added
+
+- MCP App views in web chat can expand into one resizable side panel, including app-requested fullscreen, with a narrow-screen overlay and mode/size updates. Calls to the same server/resource URI update one view; replay uses the latest captured data without rerunning tools. Expand and collapse each reload the view once and may lose unsaved app state.
+
 ### Fixed
 
 - Concurrent project subagent interrupts and CLI output preserve valid state, interruption requests, and session IDs.

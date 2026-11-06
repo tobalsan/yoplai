@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { queryAllByRole, queryByRole } from "@testing-library/dom";
+import { queryAllByRole, queryByRole, queryByTitle } from "@testing-library/dom";
 import { createSignal } from "solid-js";
 import { delegateEvents, render } from "solid-js/web";
 import { ChatView, ThinkingLine } from "./ChatView";
@@ -14,14 +14,16 @@ import {
   setCapabilitiesForTests,
 } from "../lib/capabilities";
 
-const { loadMcpAppViewMock } = vi.hoisted(() => ({ loadMcpAppViewMock: vi.fn() }));
+const { loadMcpAppViewMock, loadMcpAppDataMock } = vi.hoisted(() => ({ loadMcpAppViewMock: vi.fn(), loadMcpAppDataMock: vi.fn() }));
 vi.mock("../api/mcp-apps", () => ({
   loadMcpAppView: loadMcpAppViewMock,
+  loadMcpAppData: loadMcpAppDataMock,
   relayMcpAppRequest: vi.fn(),
   logMcpAppEvent: vi.fn().mockResolvedValue(undefined),
 }));
 const navigateMock = vi.fn();
 const [routeVersion, setRouteVersion] = createSignal(0);
+const [routeAgentVersion, setRouteAgentVersion] = createSignal(0);
 const { archiveAgentSessionMock } = vi.hoisted(() => ({ archiveAgentSessionMock: vi.fn() }));
 
 const {
@@ -66,6 +68,7 @@ const {
   uploadFilesMock: vi.fn(),
   fetchChatProjectMock: vi.fn(),
   routeState: {
+    agentId: "agent-1",
     view: undefined as string | undefined,
     session: undefined as string | undefined,
     project: undefined as string | undefined,
@@ -76,7 +79,7 @@ vi.mock("@solidjs/router", () => ({
   A: (props: Record<string, unknown>) => <a {...props} />,
   useNavigate: () => navigateMock,
   useLocation: () => ({ state: null }),
-  useParams: () => ({ agentId: "agent-1", view: routeState.view }),
+  useParams: () => ({ get agentId() { routeAgentVersion(); return routeState.agentId; }, get view() { routeVersion(); return routeState.view; } }),
   useSearchParams: () => [
     {
       get project() { return routeState.project; },
@@ -184,10 +187,14 @@ function createFileDragEvent(
   return event;
 }
 
+const mountedViews = new Set<() => void>();
+
 function renderView() {
   const container = document.createElement("div");
   document.body.appendChild(container);
-  const dispose = render(() => <ChatView />, container);
+  const stop = render(() => <ChatView />, container);
+  const dispose = () => { mountedViews.delete(dispose); stop(); };
+  mountedViews.add(dispose);
   return { container, dispose };
 }
 
@@ -196,6 +203,7 @@ describe("ChatView abort handling", () => {
     localStorage.clear();
     delegateEvents(["click", "input", "keydown"]);
     Element.prototype.scrollIntoView = vi.fn();
+    vi.stubGlobal("ResizeObserver", class { observe() {} disconnect() {} });
     URL.createObjectURL = vi.fn(() => "blob:preview");
     URL.revokeObjectURL = vi.fn();
 
@@ -245,15 +253,18 @@ describe("ChatView abort handling", () => {
     uploadFilesMock.mockResolvedValue([]);
     archiveAgentSessionMock.mockResolvedValue(undefined);
     routeState.view = undefined;
+    routeState.agentId = "agent-1";
     routeState.session = undefined;
     routeState.project = undefined;
     fetchMainAgentPreferenceMock.mockResolvedValue({ mainAgentId: null, accessible: false, pickerDismissedAt: null });
     fetchMainAgentOptionsMock.mockResolvedValue({ preference: null, agents: [{ id: "agent-1", name: "Agent" }, { id: "agent-2", name: "Other" }] });
     fetchPoolActionsMock.mockResolvedValue([]);
     setRouteVersion(0);
+    setRouteAgentVersion(0);
   });
 
   afterEach(() => {
+    mountedViews.forEach((dispose) => dispose());
     document.body.innerHTML = "";
     resetCapabilitiesForTests();
     vi.clearAllMocks();
@@ -2463,6 +2474,36 @@ describe("ChatView abort handling", () => {
     };
   }
 
+  function enableAppViews() {
+    setCapabilitiesForTests({ apps: { available: true } });
+    fetchCapabilitiesMock.mockResolvedValue({ version: 2, extensions: {}, agents: [], apps: { available: true } });
+    loadMcpAppDataMock.mockResolvedValue({ args: { shape: "box" }, result: { content: [{ type: "text", text: "Box added" }] } });
+  }
+
+  function appMessage(frame: HTMLIFrameElement, message: unknown) {
+    window.dispatchEvent(new MessageEvent("message", { source: frame.contentWindow, origin: "https://apps.test", data: message }));
+  }
+
+  function initializeApp(frame: HTMLIFrameElement) {
+    appMessage(frame, { jsonrpc: "2.0", method: "ui/notifications/sandbox-proxy-ready" });
+    appMessage(frame, { jsonrpc: "2.0", id: 1, method: "ui/initialize", params: {} });
+    appMessage(frame, { jsonrpc: "2.0", method: "ui/notifications/initialized" });
+  }
+
+  async function expandApp(container: HTMLElement, frame: HTMLIFrameElement) {
+    const previousPanelFrame = queryByRole(container, "complementary")?.querySelector("iframe");
+    initializeApp(frame);
+    queryByRole(frame.closest(".mcp-app-view")!, "button", { name: "Expand" })!.click();
+    appMessage(frame, { jsonrpc: "2.0", id: "yoplai-resource-teardown", result: {} });
+    await waitFor(() => {
+      const panel = queryByRole(container, "complementary");
+      expect(panel).not.toBeNull();
+      expect(panel!.querySelector("iframe")).not.toBeNull();
+      expect(panel!.querySelector("iframe")).not.toBe(previousPanelFrame);
+    });
+    return queryByRole(container, "complementary")!.querySelector("iframe")!;
+  }
+
   it("does not offer copying a queued failure while history reload is delayed", async () => {
     const { container, dispose } = await startFullStream();
     let onError: ((text: string) => void) | undefined;
@@ -2590,6 +2631,293 @@ describe("ChatView abort handling", () => {
     dispose();
   });
 
+  it("expands a view beside the chat and leaves its host row as a panel card", async () => {
+    setCapabilitiesForTests({ apps: { available: true } });
+    fetchCapabilitiesMock.mockResolvedValue({ version: 2, extensions: {}, agents: [], apps: { available: true } });
+    const { container, dispose, callbacks } = await startFullStream();
+    expect(queryByRole(container, "complementary")).toBeNull();
+    const marker = { server: "fixture", tool: "draw", resourceUri: "ui://fixture/view.html" };
+    callbacks()?.onToolCall?.("panel-a", "fixture_draw", {}, undefined, marker);
+    callbacks()?.onToolResult?.("panel-a", "fixture_draw", "Saved drawing", false, undefined, undefined, { ...marker, recordId: "panel-record" });
+    await waitFor(() => expect(container.querySelector("iframe")).not.toBeNull());
+    const frame = container.querySelector("iframe")!;
+    const send = (message: unknown) => window.dispatchEvent(new MessageEvent("message", { source: frame.contentWindow, origin: "https://apps.test", data: message }));
+    send({ jsonrpc: "2.0", method: "ui/notifications/sandbox-proxy-ready" });
+    send({ jsonrpc: "2.0", id: 1, method: "ui/initialize", params: {} });
+    send({ jsonrpc: "2.0", method: "ui/notifications/initialized" });
+    queryByRole(container, "button", { name: "Expand" })!.click();
+    send({ jsonrpc: "2.0", id: "yoplai-resource-teardown", result: {} });
+    await waitFor(() => expect(queryByRole(container, "complementary")?.querySelector("iframe")).not.toBeNull());
+    expect(container.querySelector(".chat-main textarea")).not.toBeNull();
+    expect(container.textContent).toContain("fixture · shown in the side panel");
+    expect(container.querySelectorAll("iframe")).toHaveLength(1);
+    expect(queryByRole(container, "complementary")!.querySelector("iframe")).not.toBeNull();
+    dispose();
+  });
+
+  it("keeps a later pending call associated with its view when the turn becomes history", async () => {
+    setCapabilitiesForTests({ apps: { available: true } });
+    fetchCapabilitiesMock.mockResolvedValue({ version: 2, extensions: {}, agents: [], apps: { available: true } });
+    const { container, dispose, callbacks, onDone } = await startFullStream();
+    const marker = { server: "fixture", tool: "draw", resourceUri: "ui://fixture/view.html" };
+    callbacks()?.onToolCall?.("first", "fixture_draw", {}, undefined, marker);
+    callbacks()?.onToolResult?.("first", "fixture_draw", "Drawing", false, undefined, undefined, { ...marker, recordId: "first-record" });
+    callbacks()?.onToolCall?.("pending", "fixture_draw", {}, undefined, marker);
+    expect(container.textContent).toContain("Updating view…");
+    onDone();
+    await tick();
+    expect(container.textContent).toContain("Updating view…");
+    expect(container.querySelectorAll("iframe")).toHaveLength(1);
+    dispose();
+  });
+
+  // Thinh approved rendered ChatView with real transcript/state/panel/host in
+  // ALG-599 comment f0b31b16-5802-41d7-aa24-72d7e959dd59. These tests observe
+  // rows, wire delivery and frame lifetime; real browser geometry is covered E2E.
+  it("keeps the panel frame connected through completion, reconnect and simple/full history reloads", async () => {
+    enableAppViews();
+    const { container, dispose, callbacks, onDone } = await startFullStream();
+    const marker = { server: "fixture", tool: "draw", resourceUri: "ui://fixture/view.html" };
+    callbacks()?.onToolCall?.("persistent-app", "fixture_draw", {}, undefined, marker);
+    callbacks()?.onToolResult?.("persistent-app", "fixture_draw", "Saved drawing", false, undefined, undefined, { ...marker, recordId: "persistent-record" });
+    await waitFor(() => expect(container.querySelector("iframe")).not.toBeNull());
+    const panelFrame = await expandApp(container, container.querySelector("iframe")!);
+    initializeApp(panelFrame);
+    const viewLoads = loadMcpAppViewMock.mock.calls.length;
+    onDone();
+    await tick();
+    expect(panelFrame.isConnected).toBe(true);
+    const history: FullHistoryMessage[] = [
+      { role: "user", timestamp: 1, content: [{ type: "text", text: "Reloaded request" }] },
+      { role: "assistant", timestamp: 2, content: [{ type: "toolCall", id: "persistent-app", name: "fixture_draw", arguments: {} }] },
+      { role: "toolResult", timestamp: 3, toolCallId: "persistent-app", toolName: "fixture_draw", content: [{ type: "text", text: "Saved drawing" }], isError: false, view: { ...marker, recordId: "persistent-record" } },
+    ];
+    fetchFullHistoryMock.mockResolvedValue({ messages: history, sessionId: "session-main", isStreaming: false, activeTurn: null });
+    const reconnect = subscribeToRealtimeMock.mock.calls.map(([options]) => options).find((options) => options.onReconnect)?.onReconnect;
+    expect(reconnect).toBeTypeOf("function");
+    reconnect();
+    await waitFor(() => expect(container.textContent).toContain("Reloaded request"));
+    expect(panelFrame.isConnected).toBe(true);
+    const beforeFull = fetchFullHistoryMock.mock.calls.length;
+    queryByRole(container, "button", { name: "Full" })!.click();
+    expect(navigateMock).toHaveBeenLastCalledWith("/chat/agent-1/full", { replace: true });
+    routeState.view = "full";
+    setRouteVersion((version) => version + 1);
+    await waitFor(() => expect(fetchFullHistoryMock.mock.calls.length).toBeGreaterThan(beforeFull));
+    await tick();
+    expect(panelFrame.isConnected).toBe(true);
+    const beforeSimple = fetchFullHistoryMock.mock.calls.length;
+    queryByRole(container, "button", { name: "Simple" })!.click();
+    expect(navigateMock).toHaveBeenLastCalledWith("/chat/agent-1", { replace: true });
+    routeState.view = undefined;
+    setRouteVersion((version) => version + 1);
+    await waitFor(() => expect(fetchFullHistoryMock.mock.calls.length).toBeGreaterThan(beforeSimple));
+    await tick();
+    expect(panelFrame.isConnected).toBe(true);
+    expect(queryByRole(container, "complementary")!.querySelector("iframe")).toBe(panelFrame);
+    expect(container.querySelectorAll("iframe")).toHaveLength(1);
+    expect(loadMcpAppViewMock).toHaveBeenCalledTimes(viewLoads);
+    dispose();
+  });
+
+  it("replaces the panel iframe when the user expands a different app", async () => {
+    enableAppViews();
+    const { container, dispose, callbacks } = await startFullStream();
+    for (const id of ["a", "b"]) {
+      const marker = { server: "fixture", tool: `draw_${id}`, resourceUri: `ui://fixture/${id}.html` };
+      callbacks()?.onToolCall?.(`app-${id}`, `fixture_draw_${id}`, {}, undefined, marker);
+      callbacks()?.onToolResult?.(`app-${id}`, `fixture_draw_${id}`, `Drawing ${id}`, false, undefined, undefined, { ...marker, recordId: `record-${id}` });
+    }
+    await waitFor(() => expect(container.querySelectorAll("iframe")).toHaveLength(2));
+    const firstInline = queryByTitle(container, "fixture_draw_a")!.closest(".mcp-app-tool-row")!.querySelector("iframe")!;
+    const panelA = await expandApp(container, firstInline);
+    const secondInline = queryByTitle(container, "fixture_draw_b")!.closest(".mcp-app-tool-row")!.querySelector("iframe")!;
+    const panelB = await expandApp(container, secondInline);
+    expect(panelB).not.toBe(panelA);
+    expect(panelA.isConnected).toBe(false);
+    expect(panelB.isConnected).toBe(true);
+    expect(queryByRole(container, "complementary")!.querySelectorAll("iframe")).toHaveLength(1);
+    await waitFor(() => expect(container.querySelectorAll("iframe")).toHaveLength(2));
+    dispose();
+  });
+
+  it("updates the same iframe for a later call and links its row back to the host", async () => {
+    enableAppViews();
+    const { container, dispose, callbacks } = await startFullStream();
+    const marker = { server: "fixture", tool: "draw", resourceUri: "ui://fixture/view.html" };
+    callbacks()?.onToolCall?.("first", "fixture_draw", {}, undefined, marker);
+    callbacks()?.onToolResult?.("first", "fixture_draw", "Initial drawing", false, undefined, undefined, { ...marker, recordId: "first-record" });
+    await waitFor(() => expect(container.querySelector("iframe")).not.toBeNull());
+    const frame = container.querySelector("iframe")!;
+    initializeApp(frame);
+    const post = vi.spyOn(frame.contentWindow!, "postMessage");
+    callbacks()?.onToolCall?.("second", "fixture_draw", { shape: "box" }, undefined, marker);
+    expect(container.textContent).toContain("Updating view…");
+    callbacks()?.onToolResult?.("second", "fixture_draw", "Box added", false, undefined, undefined, { ...marker, recordId: "second-record" });
+    await waitFor(() => expect(loadMcpAppDataMock).toHaveBeenCalledTimes(1));
+    await tick();
+    expect(frame.isConnected).toBe(true);
+    expect(container.querySelectorAll("iframe")).toHaveLength(1);
+    expect(loadMcpAppViewMock).toHaveBeenCalledTimes(1);
+    expect(loadMcpAppDataMock.mock.calls[0].slice(0, 3)).toEqual(["agent-1", "session-main", "second"]);
+    expect(post.mock.calls).toEqual([
+      [{ jsonrpc: "2.0", method: "ui/notifications/tool-input", params: { arguments: { shape: "box" } } }, "https://apps.test"],
+      [{ jsonrpc: "2.0", method: "ui/notifications/tool-result", params: { content: [{ type: "text", text: "Box added" }] } }, "https://apps.test"],
+    ]);
+    queryByRole(container, "button", { name: "View updated" })!.click();
+    expect(document.activeElement).toBe(frame.closest(".mcp-app-tool-row"));
+    post.mockRestore();
+    dispose();
+  });
+
+  it("closes the panel when navigating to another agent with the same raw session id", async () => {
+    enableAppViews();
+    routeState.session = "shared-session";
+    const marker = { server: "fixture", tool: "draw", resourceUri: "ui://fixture/view.html" };
+    fetchFullHistoryMock.mockResolvedValue({ sessionId: "shared-session", messages: [
+      { role: "assistant", timestamp: 1, content: [{ type: "toolCall", id: "shared-call", name: "fixture_draw", arguments: {} }] },
+      { role: "toolResult", timestamp: 2, toolCallId: "shared-call", toolName: "fixture_draw", content: [{ type: "text", text: "Drawing" }], view: { ...marker, recordId: "shared-record" } },
+    ] });
+    const { container, dispose } = renderView();
+    await waitFor(() => expect(container.querySelector("iframe")).not.toBeNull());
+    const panelFrame = await expandApp(container, container.querySelector("iframe")!);
+    routeState.agentId = "agent-2";
+    setRouteAgentVersion((version) => version + 1);
+    await waitFor(() => expect(fetchAgentMock.mock.calls.some(([id]) => id === "agent-2")).toBe(true));
+    await waitFor(() => expect(queryByRole(container, "complementary")).toBeNull());
+    expect(panelFrame.isConnected).toBe(false);
+    dispose();
+  });
+
+  it("updates the accessible resize range and overlays narrow chat areas or viewports", async () => {
+    enableAppViews();
+    const stylesheet = document.createElement("style");
+    const fs = await import("node:fs/promises");
+    stylesheet.textContent = await fs.readFile("apps/web/src/components/chat/ChatView.css", "utf8");
+    document.head.appendChild(stylesheet);
+    vi.stubGlobal("innerWidth", 1280);
+    let availableWidth = 1200;
+    const measurements = HTMLElement.prototype.getBoundingClientRect;
+    const measure = vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement) {
+      return this.classList.contains("chat-view") ? { width: availableWidth, right: availableWidth } as DOMRect : measurements.call(this);
+    });
+    const resizeCallbacks: ResizeObserverCallback[] = [];
+    vi.stubGlobal("ResizeObserver", class {
+      constructor(callback: ResizeObserverCallback) { resizeCallbacks.push(callback); }
+      observe() {}
+      disconnect() {}
+    });
+    const { container, dispose, callbacks } = await startFullStream();
+    try {
+      const marker = { server: "fixture", tool: "draw", resourceUri: "ui://fixture/view.html" };
+      callbacks()?.onToolCall?.("responsive-app", "fixture_draw", {}, undefined, marker);
+      callbacks()?.onToolResult?.("responsive-app", "fixture_draw", "Drawing", false, undefined, undefined, { ...marker, recordId: "responsive-record" });
+      await waitFor(() => expect(container.querySelector("iframe")).not.toBeNull());
+      await expandApp(container, container.querySelector("iframe")!);
+      const panel = queryByRole(container, "complementary")!;
+      const separator = queryByRole(panel, "separator", { name: "Resize app view" })!;
+      expect(separator.getAttribute("aria-valuemax")).toBe("794");
+      expect(getComputedStyle(panel).position).toBe("relative");
+      availableWidth = 1000;
+      resizeCallbacks.forEach((callback) => callback([], {} as ResizeObserver));
+      expect(separator.getAttribute("aria-valuemax")).toBe("594");
+      separator.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowLeft", bubbles: true }));
+      expect(separator.getAttribute("aria-valuenow")).toBe("560");
+      availableWidth = 700;
+      resizeCallbacks.forEach((callback) => callback([], {} as ResizeObserver));
+      expect(getComputedStyle(panel).position).toBe("fixed");
+      expect(queryByRole(panel, "button", { name: "Collapse" })).not.toBeNull();
+      availableWidth = 1200;
+      vi.stubGlobal("innerWidth", 390);
+      window.dispatchEvent(new Event("resize"));
+      expect(getComputedStyle(panel).position).toBe("fixed");
+      expect(queryByRole(panel, "button", { name: "Collapse" })).not.toBeNull();
+    } finally { dispose(); measure.mockRestore(); stylesheet.remove(); }
+  });
+
+  it.each([
+    ["simple", "captured"], ["full", "captured"], ["simple", "pending"], ["full", "pending"],
+  ] as const)("deduplicates one call present in %s %s history and the active snapshot", async (mode, historyState) => {
+    enableAppViews();
+    routeState.view = mode;
+    const marker = { server: "fixture", tool: "draw", resourceUri: "ui://fixture/view.html" };
+    const view = { ...marker, recordId: "same-record" };
+    fetchFullHistoryMock.mockResolvedValue({ sessionId: "session-main", isStreaming: true, messages: [
+      { role: "assistant", timestamp: 1, content: [{ type: "toolCall", id: "same-call", name: "fixture_draw", arguments: {}, viewCall: true, view: marker }] },
+      ...(historyState === "captured" ? [{ role: "toolResult", timestamp: 2, toolCallId: "same-call", toolName: "fixture_draw", content: [{ type: "text", text: "Drawing" }], view }] : []),
+    ], activeTurn: {
+      userText: "Draw", userTimestamp: 1, startedAt: 2, thinking: "", text: "",
+      toolCalls: [{ id: "same-call", name: "fixture_draw", arguments: {}, status: "done", view: marker }],
+      toolResults: [{ id: "same-call", name: "fixture_draw", content: "Drawing", isError: false, view }],
+    } });
+    const { container, dispose } = renderView();
+    try {
+      await waitFor(() => expect(container.querySelectorAll("iframe")).toHaveLength(1));
+      expect(loadMcpAppViewMock).toHaveBeenCalledTimes(1);
+      if (historyState === "pending") {
+        await expandApp(container, container.querySelector("iframe")!);
+        expect(container.textContent).toContain("fixture · shown in the side panel");
+      }
+    } finally { dispose(); }
+  });
+
+  it.each([false, true])("replays latest data once and paginates another app with panel open=%s", async (panelOpen) => {
+    enableAppViews();
+    const markerB = { server: "fixture", tool: "draw_b", resourceUri: "ui://fixture/b.html" };
+    fetchFullHistoryMock.mockResolvedValueOnce({ sessionId: "session-main", nextCursor: "earlier", messages: [
+      { role: "assistant", timestamp: 10, content: [{ type: "toolCall", id: "b-first", name: "fixture_draw_b", arguments: {} }] },
+      { role: "toolResult", timestamp: 11, toolCallId: "b-first", toolName: "fixture_draw_b", content: [{ type: "text", text: "First drawing" }], view: { ...markerB, recordId: "b-first-record" } },
+      { role: "assistant", timestamp: 12, content: [{ type: "toolCall", id: "b-latest", name: "fixture_draw_b", arguments: {} }] },
+      { role: "toolResult", timestamp: 13, toolCallId: "b-latest", toolName: "fixture_draw_b", content: [{ type: "text", text: "Latest drawing" }], view: { ...markerB, recordId: "b-latest-record" } },
+    ] });
+    const { container, dispose } = renderView();
+    try {
+      await waitFor(() => expect(container.querySelectorAll("iframe")).toHaveLength(1));
+      const initialFrame = container.querySelector("iframe")!;
+      expect(loadMcpAppViewMock.mock.calls[0].slice(0, 3)).toEqual(["agent-1", "session-main", "b-latest"]);
+      queryByRole(container, "button", { name: "View updated" })!.click();
+      expect(document.activeElement).toBe(initialFrame.closest(".mcp-app-tool-row"));
+      const panelFrame = panelOpen ? await expandApp(container, initialFrame) : undefined;
+      const markerA = { server: "fixture", tool: "draw_a", resourceUri: "ui://fixture/a.html" };
+      fetchFullHistoryMock.mockResolvedValueOnce({ sessionId: "session-main", messages: [
+        { role: "assistant", timestamp: 1, content: [{ type: "toolCall", id: "a-older", name: "fixture_draw_a", arguments: {} }] },
+        { role: "toolResult", timestamp: 2, toolCallId: "a-older", toolName: "fixture_draw_a", content: [{ type: "text", text: "Older app" }], view: { ...markerA, recordId: "a-older-record" } },
+      ] });
+      queryByRole(container, "button", { name: "Load earlier messages" })!.click();
+      await waitFor(() => expect(queryByTitle(container, "fixture_draw_a")).not.toBeNull());
+      await waitFor(() => expect(container.querySelectorAll("iframe")).toHaveLength(2));
+      const olderFrame = queryByTitle(container, "fixture_draw_a")!.closest(".mcp-app-tool-row")!.querySelector("iframe")!;
+      expect(olderFrame).not.toBe(initialFrame);
+      expect(olderFrame.isConnected).toBe(true);
+      if (panelFrame) {
+        expect(panelFrame.isConnected).toBe(true);
+        expect(queryByRole(container, "complementary")!.querySelector("iframe")).toBe(panelFrame);
+      } else expect(initialFrame.isConnected).toBe(false);
+    } finally { dispose(); }
+  });
+
+  it.each(["session switch", "new chat"])("closes the panel on %s", async (action) => {
+    enableAppViews();
+    const { container, dispose, callbacks, onDone } = await startFullStream();
+    try {
+      const marker = { server: "fixture", tool: "draw", resourceUri: "ui://fixture/view.html" };
+      callbacks()?.onToolCall?.("closing-app", "fixture_draw", {}, undefined, marker);
+      callbacks()?.onToolResult?.("closing-app", "fixture_draw", "Drawing", false, undefined, undefined, { ...marker, recordId: "closing-record" });
+      await waitFor(() => expect(container.querySelector("iframe")).not.toBeNull());
+      const panelFrame = await expandApp(container, container.querySelector("iframe")!);
+      onDone();
+      await tick();
+      if (action === "new chat") queryByRole(container, "button", { name: "Start a new chat" })!.click();
+      else {
+        routeState.session = "other-session";
+        setRouteVersion((version) => version + 1);
+      }
+      await waitFor(() => expect(queryByRole(container, "complementary")).toBeNull());
+      expect(panelFrame.isConnected).toBe(false);
+      expect(queryByRole(container, "textbox")).not.toBeNull();
+    } finally { dispose(); }
+  });
+
   it.each(["simple", "full"])("mounts a live MCP App result below its label in %s mode", async (mode) => {
     routeState.view = mode;
     fetchCapabilitiesMock.mockResolvedValue({ version: 2, extensions: {}, agents: [], apps: { available: true } });
@@ -2633,7 +2961,7 @@ describe("ChatView abort handling", () => {
 
   it.each([
     ["simple", "success"], ["full", "success"], ["simple", "capture-failure"], ["full", "capture-failure"],
-  ] as const)("keeps a live MCP App frame connected through out-of-order %s updates and %s", async (mode, earlierResult) => {
+  ] as const)("keeps one live MCP App through out-of-order %s updates and %s", async (mode, earlierResult) => {
     routeState.view = mode;
     fetchCapabilitiesMock.mockResolvedValue({ version: 2, extensions: {}, agents: [], apps: { available: true } });
     setCapabilitiesForTests({ apps: { available: true } });
@@ -2645,27 +2973,36 @@ describe("ChatView abort handling", () => {
     callbacks()?.onToolResult?.("app-b", "fixture_draw", "B drawing", false, undefined, "ordinary-parent", { ...marker, recordId: "record-b" });
     await waitFor(() => expect(container.querySelectorAll('iframe[title="fixture MCP App"]')).toHaveLength(1));
     const frameB = container.querySelector('iframe[title="fixture MCP App"]')!;
-    const expectB = () => {
-      expect(frameB.isConnected).toBe(true);
-      expect(container.querySelectorAll('iframe[title="fixture MCP App"]')).toContain(frameB);
+    let currentFrame = frameB;
+    const expectCurrent = () => {
+      expect(currentFrame.isConnected).toBe(true);
+      expect(container.querySelectorAll('iframe[title="fixture MCP App"]')).toContain(currentFrame);
     };
     onText("Text keeps streaming");
-    await tick(); expectB();
+    await tick(); expectCurrent();
     callbacks()?.onToolCall?.("later-ordinary", "bash", { command: "pwd" });
-    await tick(); expectB();
+    await tick(); expectCurrent();
     callbacks()?.onToolResult?.("later-ordinary", "bash", "working directory", false, undefined, undefined, { ...marker, recordId: "not-marked" });
-    await tick(); expectB();
+    await tick(); expectCurrent();
     expect(container.querySelectorAll('iframe[title="fixture MCP App"]')).toHaveLength(1);
     callbacks()?.onToolResult?.("app-a", "fixture_draw", earlierResult === "success" ? "A drawing" : "Capture failed", false,
       undefined, undefined, earlierResult === "success" ? { ...marker, recordId: "record-a" } : undefined);
-    await tick(); expectB();
-    if (earlierResult === "capture-failure") expect(container.textContent).toContain("View unavailable");
+    await tick();
+    if (earlierResult === "success") {
+      // The newly captured earlier call becomes the inline host, with latest B's data.
+      expect(frameB.isConnected).toBe(false);
+      await waitFor(() => expect(container.querySelectorAll('iframe[title="fixture MCP App"]')).toHaveLength(1));
+      currentFrame = container.querySelector('iframe[title="fixture MCP App"]')!;
+      expect(currentFrame).not.toBe(frameB);
+      expect(loadMcpAppViewMock.mock.calls.at(-1)?.slice(0, 3)).toEqual(["agent-1", "session-main", "app-b"]);
+    } else expect(container.textContent).toContain("View unavailable");
+    expectCurrent();
     callbacks()?.onToolCall?.("app-c", "fixture_draw", {}, "app-b", marker);
     callbacks()?.onToolResult?.("app-c", "fixture_draw", "Nested drawing", false, undefined, "app-b", { ...marker, recordId: "record-c" });
-    await tick(); expectB();
+    await tick(); expectCurrent();
     const activity = queryAllByRole(container, "button", { name: /Worked.*1 tool call/ })[0];
     activity?.click();
-    expectB();
+    expectCurrent();
     dispose();
   });
 

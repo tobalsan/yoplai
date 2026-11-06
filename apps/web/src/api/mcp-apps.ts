@@ -22,6 +22,12 @@ export async function loadMcpAppView(agentId: string, sessionId: string, toolCal
   return response.json();
 }
 
+export async function loadMcpAppData(agentId: string, sessionId: string, toolCallId: string, signal: AbortSignal): Promise<Pick<McpAppViewData, "args" | "result">> {
+  const response = await apiFetch(endpoint(agentId, sessionId, toolCallId, "data"), { method: "POST", signal });
+  if (!response.ok) throw new Error("View update unavailable");
+  return response.json();
+}
+
 export type McpAppRpcResponse = { jsonrpc: "2.0"; id: string | number | null } & (
   { result: unknown; error?: never } | { error: { code: number; message: string; data?: unknown }; result?: never }
 );

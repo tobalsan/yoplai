@@ -237,6 +237,10 @@ export function createMcpAppRoutes(deps: {
       const record = await readMcpAppRecord({ agentId, sessionId, ownerUserId: userId }, toolCallId);
       if (!record) return c.json({ error: "not_found" }, 404);
       Object.assign(audit, { server: record.server, tool: record.tool, resource: record.resourceUri });
+      if (operation === "data") {
+        audit.outcome = "ok";
+        return c.json({ args: record.args, result: record.result });
+      }
       const mcpApps = deps.getRuntime().getLoadedExtensions().find((extension) => extension.mcpApps)?.mcpApps;
       if (operation === "log") {
         let body: unknown;

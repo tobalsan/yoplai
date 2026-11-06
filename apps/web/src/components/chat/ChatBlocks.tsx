@@ -10,6 +10,8 @@ import { formatFileSize } from "../../lib/attachments";
 import { McpAppView } from "./McpAppView";
 import { appsAvailable } from "../../lib/capabilities";
 import { groupActivityItems, lastFiveWords } from "../../lib/chat-activity";
+import type { AppViews } from "./appViews";
+import { Button } from "../ui/Button";
 
 export function CompactionSummary(props: { text: string; timestamp: number }) {
   return (
@@ -166,15 +168,36 @@ function SimpleToolBlock(props: { name: string; arguments?: unknown }) {
   );
 }
 
-export function McpAppToolRow(props: { agentId: string; sessionId?: string | null; toolCallId: string; name: string; arguments?: unknown; result?: FullToolResultMessage }) {
-  return <div class="mcp-app-tool-row">
+export function McpAppToolRow(props: { agentId: string; sessionId?: string | null; toolCallId: string; name: string; arguments?: unknown; result?: FullToolResultMessage; appViews: AppViews }) {
+  const view = () => props.appViews.viewOf(props.toolCallId);
+  const role = () => props.appViews.roleOf(props.toolCallId);
+  const captured = () => !!view()?.calls.find((call) => call.id === props.toolCallId)?.result?.view;
+  const settled = () => !!props.result || captured();
+  function reveal() {
+    const target = props.appViews.panel()?.key === view()?.key
+      ? document.querySelector<HTMLElement>(".chat-side-panel")
+      : document.getElementById(`mcp-app-${view()?.host.id}`);
+    target?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+    target?.focus();
+  }
+  return <div class="mcp-app-tool-row" id={`mcp-app-${props.toolCallId}`} tabIndex={-1}>
     <SimpleToolBlock name={props.name} arguments={props.arguments} />
-    <Show when={!!props.result && appsAvailable() !== undefined && (appsAvailable() === false || !props.result?.view || props.sessionId !== undefined)} fallback={<p role="status">Loading view…</p>}>
-      <Show when={!!props.result?.view && appsAvailable() === true && !!props.sessionId}
-        fallback={<><pre class="tool-code">{getToolResultText(props.result)}</pre><p role="status">View unavailable</p></>}>
-        <McpAppView agentId={props.agentId} sessionId={props.sessionId!} toolCallId={props.toolCallId} text={getToolResultText(props.result)} />
-      </Show>
-    </Show>
+    <Switch fallback={<p role="status">Loading view…</p>}>
+      <Match when={role() === "panel-card"}>
+        <div class="mcp-app-panel-card">{view()?.latest.result?.view?.server} · shown in the side panel</div>
+      </Match>
+      <Match when={role() === "link" && (!settled() || captured())}>
+        <Show when={settled()} fallback={<p role="status">Updating view…</p>}>
+          <Button variant="ghost" onClick={reveal}>View updated</Button>
+        </Show>
+      </Match>
+      <Match when={settled() && appsAvailable() !== undefined && (appsAvailable() === false || !captured() || props.sessionId !== undefined)}>
+        <Show when={captured() && appsAvailable() === true && !!props.sessionId}
+          fallback={<><pre class="tool-code">{getToolResultText(props.result)}</pre><p role="status">View unavailable</p></>}>
+          <McpAppView agentId={props.agentId} sessionId={props.sessionId!} viewKey={view()!.key} callId={() => view()!.latest.id} text={view()?.latest.text ?? getToolResultText(props.result)} mode="inline" onDisplayMode={(mode) => { if (mode === "fullscreen") props.appViews.open(view()!.key); }} />
+        </Show>
+      </Match>
+    </Switch>
   </div>;
 }
 

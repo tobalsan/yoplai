@@ -101,6 +101,38 @@ describe("MCP Apps authenticated ownership", () => {
     return fetch(gatewayUrl + endpoint, { method: "POST", headers: { Cookie: viewer.cookie, Origin: "http://localhost:3000", "content-type": "application/json" }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
   }
 
+  // Thinh approved this real HTTP/auth/record seam in ALG-599 comment
+  // f0b31b16-5802-41d7-aa24-72d7e959dd59. It catches viewer scope and replay
+  // fidelity; browser delivery and deployment configuration are covered elsewhere.
+  it("returns stored data only to its viewer without calling MCP or issuing a view", async () => {
+    const beforeReads = reads.length;
+    const beforeCalls = calls.length;
+    const response = await post(alice, route + "/data");
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({
+      args: { board: 17 },
+      result: { content: [{ type: "text", text: "Private result" }], _meta: { revision: 2 } },
+    });
+    for (const viewer of [bob, admin]) expect((await post(viewer, route + "/data")).status).toBe(404);
+    for (const session of ["shared-only", "wrong-owner", "missing-session"]) expect((await post(alice, route.replace("owned-chat", session) + "/data")).status).toBe(404);
+    expect((await post(alice, route.replace("call-one", "missing-call") + "/data")).status).toBe(404);
+    expect((await fetch(gatewayUrl + route + "/data", { method: "POST" })).status).toBe(401);
+    expect(reads).toHaveLength(beforeReads);
+    expect(calls).toHaveLength(beforeCalls);
+  });
+
+  it("refuses data from a record copied into a different session", async () => {
+    const history = path.join(home, "sessions", "users", alice.id, "history");
+    const filename = "abcdef0123456789abcdef0123456789.json";
+    const destination = path.join(history, "mcp-apps", "main", "copied-chat");
+    await fs.mkdir(destination, { recursive: true });
+    await fs.writeFile(path.join(history, "2026-10-24T12-00-00-000Z_main-copied-chat.jsonl"), "");
+    await fs.copyFile(path.join(history, "mcp-apps", "main", "owned-chat", filename), path.join(destination, filename));
+    const response = await post(alice, route.replace("owned-chat", "copied-chat") + "/data");
+    expect(response.status).toBe(404);
+    expect(await response.json()).toEqual({ error: "not_found" });
+  });
+
   it("loads only the authenticated viewer's own stored result, including against staff bypass and shared history", async () => {
     const response = await post(alice, route + "/view");
     expect(response.status).toBe(200);
@@ -149,12 +181,12 @@ describe("MCP Apps authenticated ownership", () => {
     expect(await fs.readFile(path.join(home, "sessions", "users", alice.id, "history", "2026-10-24T12-00-00-000Z_main-owned-chat.jsonl"), "utf8")).toBe("");
   });
 
-  it("refuses view, RPC and log operations during real admin impersonation", async () => {
+  it("refuses view, data, RPC and log operations during real admin impersonation", async () => {
     const started = await post(admin, "/api/admin/impersonate/start", { targetUserId: alice.id });
     expect(started.status).toBe(204);
     const before = calls.length;
     try {
-      for (const operation of ["view", "rpc", "log"]) {
+      for (const operation of ["view", "data", "rpc", "log"]) {
         const response = await post(admin, route + "/" + operation, { jsonrpc: "2.0", id: 4, method: "tools/call", params: { name: "edit_board" } });
         expect(response.status).toBe(403);
         expect(await response.json()).toEqual({ error: "read_only_impersonation" });

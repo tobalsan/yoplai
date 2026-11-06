@@ -238,7 +238,7 @@ Prefer `loopback` until authentication and a secure access path are configured. 
 
 ### MCP Apps
 
-The gateway captures MCP view results and provides isolated view routes. Web chat remains text-only until the inline view host is installed (artifacts slice 1c).
+The gateway captures MCP view results and provides isolated view routes. The main web chat displays views inline or in a resizable side panel and reuses one view per server/resource URI within a session. See [MCP App views](web-ui.md#mcp-app-views) for display modes, replay and state-loss limits; no extra configuration enables the panel or reuse.
 
 `apps.port` defaults to `4001` and binds on the gateway's interface. For trusted local chat origins, the view origin defaults to the other loopback host, as in Dar: chat on `localhost` or a `*.localhost` name gets `http://127.0.0.1:<apps.port>`, and chat on `127.0.0.1` or `[::1]` gets `http://localhost:<apps.port>`. Apps such as tldraw treat `*.localhost` as production and stop rendering without a license. If that port is taken, the gateway continues with views unavailable. `pnpm dev` does not probe the apps port: choose another `apps.port` when needed.
 

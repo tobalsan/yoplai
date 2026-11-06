@@ -21,13 +21,67 @@
 
           height: 100%;
           display: flex;
-          flex-direction: column;
+          flex-direction: row;
           background: var(--surface-0);
           font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI', system-ui, sans-serif;
         }
 
         .chat-view.drop-active {
           box-shadow: inset 0 0 0 1px var(--drop-border);
+        }
+
+        .chat-main {
+          display: flex;
+          flex-direction: column;
+          flex: 1;
+          min-width: 0;
+          min-height: 0;
+        }
+
+        .chat-side-panel {
+          position: relative;
+          display: flex;
+          flex-direction: column;
+          flex: none;
+          min-height: 0;
+          margin-left: 6px;
+          background: var(--surface-0);
+          border-left: 1px solid var(--border-default);
+        }
+
+        .chat-panel-resizer {
+          position: absolute;
+          top: 0;
+          bottom: 0;
+          left: -7px;
+          width: 6px;
+          cursor: col-resize;
+          touch-action: none;
+        }
+
+        .chat-panel-resizer:hover,
+        .chat-panel-resizer:focus-visible {
+          background: var(--accent-soft);
+          outline: 2px solid var(--accent);
+        }
+
+        .chat-side-panel-overlay {
+          position: fixed;
+          inset: 0;
+          width: auto !important;
+          z-index: 40;
+          margin: 0;
+          border: 0;
+        }
+
+        .chat-side-panel-overlay .chat-panel-resizer { display: none; }
+
+        .mcp-app-panel-card {
+          padding: 12px;
+          border: 1px solid var(--tool-border);
+          border-radius: var(--radius-sm);
+          color: var(--text-secondary);
+          background: var(--tool-bg);
         }
 
         .header {

@@ -181,11 +181,13 @@ export function createChatSession(input: ChatSessionInput) {
 
   const noAnimIds = new Set<string>();
 
-  createEffect(on([() => input.agentId(), sessionKey, explicitSessionId], () => {
+  createEffect(on([() => input.agentId(), sessionKey, explicitSessionId], (scope, previous) => {
+    if (previous && scope.every((value, index) => value === previous[index])) return;
     appSessionLookup?.abort();
     appSessionLookup = undefined;
     setAppSessionFailed(false);
-    setResolvedSessionId(pendingResetSession === currentSession() ? explicitSessionId() : undefined);
+    const followsResolved = previous && scope[0] === previous[0] && scope[1] === previous[1] && scope[2] === resolvedSessionId();
+    setResolvedSessionId(pendingResetSession === currentSession() || followsResolved ? explicitSessionId() : undefined);
   }));
   createEffect(() => {
     const sessionId = resolvedSessionId();
@@ -989,6 +991,7 @@ export function createChatSession(input: ChatSessionInput) {
                 id: block.id,
                 parentToolCallId: block.parentToolCallId,
                 viewCall: !!block.view,
+                view: block.view,
                 name: block.name,
                 arguments: block.arguments,
               };
@@ -1048,6 +1051,7 @@ export function createChatSession(input: ChatSessionInput) {
                   parentToolCallId: block.parentToolCallId,
                   result: block.result,
                   viewCall: !!block.view,
+                  view: block.view,
                   role: "tool",
                   toolName: block.name,
                   arguments: block.arguments,
@@ -1355,6 +1359,7 @@ export function createChatSession(input: ChatSessionInput) {
                       parentToolCallId: block.parentToolCallId,
                       result: queuedToolResults.find((result) => result.toolCallId === block.id),
                       viewCall: block.viewCall,
+                      view: block.view,
                       role: "tool",
                       toolName: block.name,
                       arguments: block.arguments,
@@ -1445,6 +1450,7 @@ export function createChatSession(input: ChatSessionInput) {
               name,
               arguments: args,
               viewCall: !!view,
+              view,
             });
           },
           onToolEnd: (toolName, isError) => {

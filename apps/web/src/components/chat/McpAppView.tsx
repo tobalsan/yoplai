@@ -1,6 +1,7 @@
 import { createEffect, createSignal, on, onCleanup, Show } from "solid-js";
+import { Button } from "../ui/Button";
 import { version } from "../../../package.json";
-import { loadMcpAppView, relayMcpAppRequest, logMcpAppEvent, type McpAppViewData } from "../../api/mcp-apps";
+import { loadMcpAppView, loadMcpAppData, relayMcpAppRequest, logMcpAppEvent, type McpAppViewData } from "../../api/mcp-apps";
 
 type RpcMessage = { jsonrpc: "2.0"; id?: string | number | null; method?: string; params?: Record<string, unknown> | unknown[]; result?: unknown; error?: { code: number; message: string; data?: unknown } };
 
@@ -16,15 +17,23 @@ function isRpcMessage(value: unknown): value is RpcMessage {
   return !!error && typeof error === "object" && !Array.isArray(error) && Number.isInteger(error.code) && typeof error.message === "string";
 }
 
-export function McpAppView(props: { agentId: string; sessionId: string; toolCallId: string; text: string }) {
+export function McpAppView(props: { agentId: string; sessionId: string; viewKey: string; callId: () => string; text: string; mode: "inline" | "panel"; onDisplayMode?: (mode: "inline" | "fullscreen") => void }) {
   const [view, setView] = createSignal<McpAppViewData>();
   const [ready, setReady] = createSignal(false);
   const [failed, setFailed] = createSignal(false);
+  const [allowedModes, setAllowedModes] = createSignal<string[]>(["inline", "fullscreen"]);
   const retiring = new Set<() => void>();
   let frameContainer!: HTMLDivElement;
-  let stopCurrent: ((wait: boolean) => void) | undefined;
+  let stopCurrent: ((wait: boolean, after?: () => void) => void) | undefined;
+  let updateCurrent: ((callId: string) => void) | undefined;
+  let switchCurrent: ((mode: "inline" | "fullscreen", reply?: (result: unknown) => void) => void) | undefined;
 
   function start(agentId: string, sessionId: string, toolCallId: string) {
+    const displayMode = props.mode === "panel" ? "fullscreen" : "inline";
+    function dimensions() {
+      const box = frame?.getBoundingClientRect();
+      return displayMode === "fullscreen" ? { width: box?.width ?? 0, height: box?.height ?? 0 } : { width: box?.width ?? 0, maxHeight: 800 };
+    }
     const controller = new AbortController();
     const relayTimers = new Set<ReturnType<typeof setTimeout>>();
     let data: McpAppViewData | undefined;
@@ -33,6 +42,12 @@ export function McpAppView(props: { agentId: string; sessionId: string; toolCall
     let bootstrapped = false;
     let initializing = false;
     let initialized = false;
+    let latestCallId = toolCallId;
+    let dataController: AbortController | undefined;
+    let generation = 0;
+    let dataTimer: ReturnType<typeof setTimeout> | undefined;
+    let resizeObserver: ResizeObserver | undefined;
+    let resizeFrame: number | undefined;
     let rejectedMessageLogged = false;
     const initTimer = setTimeout(fail, 15000);
 
@@ -42,15 +57,43 @@ export function McpAppView(props: { agentId: string; sessionId: string; toolCall
     function log(level: string, message: string) {
       void logMcpAppEvent(agentId, sessionId, toolCallId, { level, message: message.slice(0, 500) }, controller.signal).catch(() => {});
     }
-    function stop(wait: boolean) {
+    function update(callId: string, initial = false) {
+      if (callId === latestCallId && !initial) return;
+      latestCallId = callId;
+      const requestGeneration = ++generation;
+      dataController?.abort();
+      clearTimeout(dataTimer);
+      if (!active || !initialized || callId === toolCallId) return;
+      const requestController = new AbortController();
+      dataController = requestController;
+      const timer = setTimeout(() => {
+        if (!active || requestGeneration !== generation) return;
+        generation++;
+        requestController.abort();
+        log("warning", "MCP App update timed out; keeping the previous view data");
+      }, 32000);
+      dataTimer = timer;
+      void loadMcpAppData(agentId, sessionId, callId, requestController.signal).then((result) => {
+        if (!active || requestGeneration !== generation) return;
+        post({ jsonrpc: "2.0", method: "ui/notifications/tool-input", params: { arguments: result.args } });
+        post({ jsonrpc: "2.0", method: "ui/notifications/tool-result", params: result.result });
+      }).catch(() => { if (active && requestGeneration === generation) log("warning", "MCP App update failed; keeping the previous view data"); }).finally(() => { clearTimeout(timer); });
+    }
+    updateCurrent = update;
+    function stop(wait: boolean, after?: () => void) {
       if (!active) return;
       active = false;
       clearTimeout(initTimer);
       for (const timer of relayTimers) clearTimeout(timer);
       relayTimers.clear();
       controller.abort();
+      dataController?.abort();
+      generation++;
+      clearTimeout(dataTimer);
+      resizeObserver?.disconnect();
+      if (resizeFrame !== undefined) cancelAnimationFrame(resizeFrame);
       window.removeEventListener("message", receive);
-      if (!frame || !initialized || !frame.isConnected) { frame?.remove(); return; }
+      if (!frame || !initialized || !frame.isConnected) { frame?.remove(); after?.(); return; }
       const retiringFrame = frame;
       const origin = data!.appsOrigin;
       const id = "yoplai-resource-teardown";
@@ -66,6 +109,7 @@ export function McpAppView(props: { agentId: string; sessionId: string; toolCall
         window.removeEventListener("message", acknowledge);
         retiring.delete(remove);
         retiringFrame.remove();
+        after?.();
       }
       function acknowledge(event: MessageEvent) {
         if (event.source === retiringFrame.contentWindow && event.origin === origin && isRpcMessage(event.data) && event.data.method === undefined && event.data.id === id) remove();
@@ -74,6 +118,19 @@ export function McpAppView(props: { agentId: string; sessionId: string; toolCall
       window.addEventListener("message", acknowledge);
       post({ jsonrpc: "2.0", id, method: "ui/resource-teardown", params: {} });
     }
+    function switchMode(mode: "inline" | "fullscreen", reply?: (result: unknown) => void) {
+      if (displayMode === "fullscreen" && mode === "inline" && (!initialized || failed())) {
+        stop(false);
+        if (stopCurrent === stop) props.onDisplayMode?.(mode);
+        return;
+      }
+      if (!active || !initialized) return;
+      if (mode === displayMode || !allowedModes().includes(mode) || !props.onDisplayMode) { reply?.({ mode: displayMode }); return; }
+      reply?.({ mode });
+      post({ jsonrpc: "2.0", method: "ui/notifications/host-context-changed", params: { displayMode: mode } });
+      stop(true, () => { if (stopCurrent === stop) props.onDisplayMode?.(mode); });
+    }
+    switchCurrent = switchMode;
     function fail() {
       if (!active) return;
       stop(true);
@@ -95,12 +152,16 @@ export function McpAppView(props: { agentId: string; sessionId: string; toolCall
         bootstrapped = true;
         post({ jsonrpc: "2.0", method: "ui/notifications/sandbox-resource-ready", params: { html: "", sandbox: "allow-scripts allow-same-origin allow-forms", csp: data.csp } });
       } else if (message.method === "ui/initialize" && !notification && bootstrapped && !initializing) {
+        const appCapabilities = params?.appCapabilities as { availableDisplayModes?: unknown } | undefined;
+        const declaredModes = appCapabilities?.availableDisplayModes;
+        setAllowedModes(Array.isArray(declaredModes) ? ["inline", "fullscreen"].filter((mode) => declaredModes.includes(mode)) : ["inline", "fullscreen"]);
+        if (!allowedModes().includes(displayMode)) { fail(); return; }
         initializing = true;
         reply({
           protocolVersion: "2026-01-26",
           hostInfo: { name: "Yoplai", version },
           hostCapabilities: { openLinks: {}, serverTools: {}, serverResources: {}, logging: {}, sandbox: { permissions: {}, csp: data.csp } },
-          hostContext: { displayMode: "inline", availableDisplayModes: ["inline"], containerDimensions: { width: frame?.getBoundingClientRect().width ?? 0, maxHeight: 800 } },
+          hostContext: { displayMode, availableDisplayModes: ["inline", "fullscreen"], containerDimensions: dimensions() },
         });
       } else if (notification && message.method === "ui/notifications/initialized" && initializing && !initialized) {
         initialized = true;
@@ -108,8 +169,9 @@ export function McpAppView(props: { agentId: string; sessionId: string; toolCall
         setReady(true);
         post({ jsonrpc: "2.0", method: "ui/notifications/tool-input", params: { arguments: data.args } });
         post({ jsonrpc: "2.0", method: "ui/notifications/tool-result", params: data.result });
+        update(latestCallId, true);
       } else if (initialized && notification && message.method === "ui/notifications/size-changed") {
-        if (frame && typeof params?.height === "number" && Number.isFinite(params.height)) frame.style.height = Math.max(40, Math.min(800, params.height)) + "px";
+        if (displayMode === "inline" && frame && typeof params?.height === "number" && Number.isFinite(params.height)) frame.style.height = Math.max(40, Math.min(800, params.height)) + "px";
       } else if (initialized && notification && message.method === "notifications/message") {
         if (typeof params?.level !== "string" || !["debug", "info", "notice", "warning", "warn", "error", "critical", "alert", "emergency"].includes(params.level)) return;
         let text: string;
@@ -124,7 +186,10 @@ export function McpAppView(props: { agentId: string; sessionId: string; toolCall
             if (active) post({ ...response, id: message.id });
           }).catch(() => { if (active) fail(); }).finally(() => { clearTimeout(timer); relayTimers.delete(timer); });
         } else if (message.method === "ping") reply({});
-        else if (message.method === "ui/request-display-mode") reply({ mode: "inline" });
+        else if (message.method === "ui/request-display-mode") {
+          if (params?.mode === "inline" || params?.mode === "fullscreen") switchMode(params.mode, reply);
+          else reply({ mode: displayMode });
+        }
         else if (message.method === "ui/open-link") {
           try {
             const url = new URL(typeof params?.url === "string" ? params.url : "");
@@ -148,24 +213,41 @@ export function McpAppView(props: { agentId: string; sessionId: string; toolCall
       frame.setAttribute("sandbox", "allow-scripts allow-same-origin");
       frame.setAttribute("allow", "");
       frame.setAttribute("referrerpolicy", "no-referrer");
-      frame.style.cssText = "display:block;width:100%;height:300px;border:0";
+      frame.style.cssText = `display:block;width:100%;height:${displayMode === "fullscreen" ? "100%" : "300px"};border:0`;
       frame.src = data.sandboxUrl;
       frameContainer.append(frame);
+      if (typeof ResizeObserver !== "undefined") {
+        resizeObserver = new ResizeObserver(() => {
+          if (!active || !initialized || resizeFrame !== undefined) return;
+          resizeFrame = requestAnimationFrame(() => {
+            resizeFrame = undefined;
+            if (active && initialized) post({ jsonrpc: "2.0", method: "ui/notifications/host-context-changed", params: { containerDimensions: dimensions() } });
+          });
+        });
+        resizeObserver.observe(frame);
+      }
       setView(data);
     }).catch(() => { if (active) fail(); });
     return stop;
   }
 
-  createEffect(on(() => [props.agentId, props.sessionId, props.toolCallId] as const, ([agentId, sessionId, toolCallId], previous) => {
-    if (previous && previous[0] === agentId && previous[1] === sessionId && previous[2] === toolCallId) return;
-    stopCurrent?.(true);
+  createEffect(on(() => [props.agentId, props.sessionId, props.viewKey] as const, ([agentId, sessionId, viewKey], previous) => {
+    if (previous && previous[0] === agentId && previous[1] === sessionId && previous[2] === viewKey) return;
+    const sameConversation = !!previous && previous[0] === agentId && previous[1] === sessionId;
+    stopCurrent?.(sameConversation);
+    if (!sameConversation) {
+      stopCurrent = undefined;
+      for (const remove of retiring) remove();
+    }
     setView(undefined);
     setReady(false);
     setFailed(false);
-    stopCurrent = start(agentId, sessionId, toolCallId);
+    stopCurrent = start(agentId, sessionId, props.callId());
   }));
+  createEffect(() => { updateCurrent?.(props.callId()); });
   function pageHide() {
     stopCurrent?.(false);
+    stopCurrent = undefined;
     for (const remove of retiring) remove();
     setView(undefined);
     setFailed(true);
@@ -173,13 +255,14 @@ export function McpAppView(props: { agentId: string; sessionId: string; toolCall
   window.addEventListener("pagehide", pageHide);
   onCleanup(() => {
     stopCurrent?.(false);
+    stopCurrent = undefined;
     for (const remove of retiring) remove();
     window.removeEventListener("pagehide", pageHide);
   });
-  return <section class="mcp-app-view" style={{ "min-width": "0", overflow: "hidden", border: view()?.prefersBorder ? "1px solid var(--border-subtle)" : "none", "border-radius": "8px" }}>
-    <Show when={!!view()}><header style={{ display: "flex", gap: "8px", padding: "8px", "font-size": "0.75rem", color: "var(--text-secondary)" }}><strong>{view()?.server}</strong><span>MCP App</span></header></Show>
+  return <section class="mcp-app-view" style={{ display: "flex", "flex-direction": "column", height: props.mode === "panel" ? "100%" : undefined, "min-height": "0", "min-width": "0", overflow: "hidden", border: view()?.prefersBorder ? "1px solid var(--border-subtle)" : "none", "border-radius": "8px" }}>
+    <Show when={!!view() || props.mode === "panel"}><header style={{ display: "flex", gap: "8px", padding: "8px", "font-size": "0.75rem", color: "var(--text-secondary)" }}><strong>{view()?.server ?? props.viewKey.split("\n")[0]}</strong><span style={{ flex: "1" }}>MCP App</span><Show when={!!props.onDisplayMode && (props.mode === "panel" || (ready() && allowedModes().includes("fullscreen")))}><Button variant="ghost" onClick={() => switchCurrent?.(props.mode === "panel" ? "inline" : "fullscreen")}>{props.mode === "panel" ? "Collapse" : "Expand"}</Button></Show></header></Show>
     <Show when={failed()}><p role="status">View unavailable</p><pre style={{ "white-space": "pre-wrap", "overflow-wrap": "anywhere" }}>{props.text}</pre></Show>
     <Show when={!ready() && !failed()}><p role="status">Loading view…</p></Show>
-    <div ref={frameContainer} />
+    <div ref={frameContainer} style={{ flex: props.mode === "panel" ? "1" : undefined, "min-height": "0" }} />
   </section>;
 }

@@ -1,0 +1,117 @@
+import { createComputed, createMemo, createSignal, on, type Accessor } from "solid-js";
+import type { McpAppView, McpAppViewReference } from "@yoplai/shared/types";
+import type { HistoryViewMode, FullToolResultMessage } from "../../api/types";
+import type { ChatTranscriptSession } from "./ChatTranscript";
+import type { ChatToolCall } from "./chat-history";
+import { extractBlockText } from "../../lib/history";
+
+export type AppViewCall = {
+  id: string;
+  timestamp: number;
+  view?: McpAppView;
+  result?: { view?: McpAppViewReference };
+  text?: string;
+  history?: boolean;
+};
+
+type AppView = { key: string; calls: AppViewCall[]; host: AppViewCall; latest: AppViewCall };
+
+export function chatAppViewCalls(session: ChatTranscriptSession, mode: HistoryViewMode): AppViewCall[] {
+  const text = (result?: FullToolResultMessage) => (result?.content ?? [])
+    .filter((block) => block.type === "text")
+    .map((block) => extractBlockText((block as { text: unknown }).text)).join("\n");
+  let history: AppViewCall[];
+  if (mode === "simple") {
+    history = session.simpleMessages().flatMap((message) => message.role === "tool" && (message.viewCall ?? !!message.result?.view)
+      ? [{ id: message.id, timestamp: message.timestamp, view: message.view, result: message.result, text: text(message.result) }]
+      : []);
+  } else {
+    const results = new Map(session.fullMessages().filter((message) => message.role === "toolResult").map((message) => [message.toolCallId, message]));
+    history = session.fullMessages().flatMap((message) => message.role === "assistant"
+      ? message.content.flatMap((block) => block.type === "toolCall" && ((block as ChatToolCall).viewCall ?? !!results.get(block.id)?.view)
+        ? [{ id: block.id, timestamp: message.timestamp, view: (block as ChatToolCall).view, result: results.get(block.id), text: text(results.get(block.id)) }]
+        : [])
+      : []);
+  }
+  return [...history.map((call) => ({ ...call, history: true })), ...session.streamingBlocks().flatMap((block) => block.type === "toolCall" && block.view
+    ? [{ id: block.id, timestamp: block.timestamp, view: block.view, result: block.result, text: text(block.result) }]
+    : [])];
+}
+
+export type AppViews = ReturnType<typeof createAppViews>;
+
+export function viewKey(view: McpAppView): string {
+  return view.server + "\n" + view.resourceUri;
+}
+
+export function createAppViews(sessionId: Accessor<string | null | undefined>, calls: Accessor<AppViewCall[]>) {
+  const source = createMemo(calls);
+  const historyIds = createMemo(() => new Set(source().filter((call) => call.history).map((call) => call.id)));
+  const projection = createMemo(() => {
+    const groups = new Map<string, AppViewCall[]>();
+    const unique = new Map<string, AppViewCall>();
+    for (const call of source()) {
+      const previous = unique.get(call.id);
+      if (!previous || call.result?.view) unique.set(call.id, call);
+    }
+    for (const call of unique.values()) {
+      const ref = call.result?.view ?? call.view;
+      if (!ref) continue;
+      const key = viewKey(ref);
+      const group = groups.get(key) ?? [];
+      group.push(call);
+      groups.set(key, group);
+    }
+    const views = new Map<string, AppView>();
+    for (const [key, group] of groups) {
+      const successful = group.filter((call) => call.result?.view);
+      if (successful.length) views.set(key, { key, calls: group, host: successful[0], latest: successful[successful.length - 1] });
+    }
+    return views;
+  });
+  function viewOf(id: string) {
+    return [...projection().values()].find((view) => view.calls.some((call) => call.id === id));
+  }
+  const [selected, setSelected] = createSignal<{
+    session: string | null | undefined;
+    view: AppView;
+    order: AppViewCall[];
+  }>();
+  createComputed(on(sessionId, (current, previous) => {
+    if (current !== previous) setSelected(undefined);
+  }, { defer: true }));
+  const panel = createMemo(() => {
+    const selection = selected();
+    if (!selection || selection.session !== sessionId()) return undefined;
+    const current = projection().get(selection.view.key);
+    if (current) {
+      // Remember observed call order: an older reconnect snapshot must not roll back the panel.
+      const order = selection.order;
+      const includesLatest = current.calls.some((call) => call.id === selection.view.latest.id);
+      current.calls.forEach((call, index) => {
+        if (order.some((known) => known.id === call.id)) return;
+        const next = current.calls.slice(index + 1).find((item) => order.some((known) => known.id === item.id));
+        let before = next ? order.findIndex((known) => known.id === next.id) : order.findIndex((known) => known.timestamp > call.timestamp);
+        if (before < 0 && !includesLatest && call.timestamp <= selection.view.latest.timestamp) before = order.findIndex((known) => known.id === selection.view.latest.id);
+        order.splice(before < 0 ? order.length : before, 0, call);
+      });
+      const position = (id: string) => order.findIndex((call) => call.id === id);
+      if (position(current.latest.id) >= position(selection.view.latest.id)) selection.view = current;
+    }
+    return selection.view;
+  });
+  return {
+    isLiveDuplicate(id: string) { return historyIds().has(id); },
+    panel,
+    open(key: string) {
+      const view = projection().get(key);
+      if (view) setSelected({ session: sessionId(), view, order: [...view.calls] });
+    },
+    close() { setSelected(undefined); },
+    viewOf,
+    roleOf(id: string): "host" | "link" | "panel-card" | "none" {
+      const view = viewOf(id);
+      return !view ? "none" : view.host.id === id ? panel()?.key === view.key ? "panel-card" : "host" : "link";
+    },
+  };
+}

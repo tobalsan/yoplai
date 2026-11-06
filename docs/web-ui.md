@@ -49,13 +49,40 @@ Full tool/thinking/model view is restricted in multi-user mode. Canonical transc
 MCP App tool calls appear as their own rows in the main chat, in simple and full
 mode. The row starts with "Loading view…" and stays visible when surrounding
 activity collapses. Its header identifies the server and "MCP App". The view's
-reported height is clamped to 40–800 px. Ordinary tools keep their existing groups.
+inline height is clamped to 40–800 px. Ordinary tools keep their existing groups.
+
+Use **Expand** in the view header to open one side panel beside the chat; the
+composer stays usable. Drag the panel's left edge to resize the split. The panel
+covers the chat at viewport widths of 768 px or less, or when the chat area cannot
+fit a 320 px panel, a 400 px chat and the 6 px handle. **Collapse** returns the view
+inline. Opening another app replaces the panel; width is not saved. Each expand
+or collapse reloads the view once with the latest saved data. Apps may restore
+their own saved state, but unsaved iframe state can be lost.
 
 Views initialize with their saved arguments and raw result, including returned
 error results. Reloading, reopening a session or restarting the gateway replays
-the saved data without running the tool again. A view can reinitialize once when
-a live turn becomes history, and again on reconnect. During a live turn, later
-text, tool calls and out-of-order results keep the same frame.
+the saved data without running the tool again. Within a session, calls sharing
+the same server and resource URI reuse one live view. The earliest loaded call
+with a captured view hosts it; later calls show "Updating view…" while pending,
+then **View updated**, which takes you to the inline view or focuses its panel.
+Successful captures deliver the newest input and raw result to the same iframe.
+A later failed capture shows its text and "View unavailable" without replacing
+the live view. Reload shows one view per app with the latest captured data.
+
+The panel host lives outside the transcript and stays loaded through turn
+completion, reconnects, simple/full switches and history reloads. It retains its
+last valid latest call while history is temporarily empty or stale. Switching
+session, starting a new chat or leaving the page closes it. Inline views may
+reinitialize during those transcript transitions or when loading earlier history
+moves the host row to an older call.
+
+The host advertises `inline` and `fullscreen`; a view's own fullscreen request
+opens the side panel. If the app declares display modes, only modes it declares
+and the host supports are allowed. A view that disallows its initial mode shows
+"View unavailable"; it does not automatically open the panel. Mode and size
+changes send `ui/notifications/host-context-changed`. Inline dimensions include
+width and an 800 px maximum height; panel dimensions include its actual width
+and height, and the view fills that space. `pip` is unsupported.
 
 Views may call their own server's app-visible tools and read its resources as the
 signed-in viewer. HTTP(S) links open in a new tab; other schemes are refused.
@@ -63,10 +90,12 @@ Initialization has a 15-second deadline, including the view request. A relayed
 request with no response within 32 seconds removes the view. Loading failures,
 unavailable resources/origins and timeouts show the text result and "View
 unavailable"; view work does not block Stop or sending another message. A normal
-JSON-RPC error, such as a model-only tool refusal, stays inside the view.
+JSON-RPC error, such as a model-only tool refusal, stays inside the view. Fetching
+new data for a reused view has a 32-second deadline: failure or timeout logs a
+warning and keeps the last delivered data. Newer updates cancel older fetches,
+and late responses cannot replace newer data.
 
-This slice supports inline views only: no fullscreen, side panel, reuse across
-calls, display mode changes, UI messages or model-context updates. No device
+UI messages and model-context updates remain unsupported (`-32601`). No device
 permissions are granted. The apps origin must have a different hostname from the
 chat; a different port alone is insufficient. All servers' views share one apps
 origin and its storage, separate from chat storage/cookies. CSP uses approved
@@ -74,8 +103,13 @@ origin lists and drops wildcards; see [configuration](configuration.md#mcp-apps)
 
 The bootstrap uses a private ticket variant: the host sends
 `ui/notifications/sandbox-resource-ready` with empty HTML and the bootstrap loads
-the saved resource through its ticket. That one bootstrap message is not literal
-MCP Apps specification conformance; the inner view uses the official protocol.
+the saved resource through its ticket. That bootstrap message is not literal MCP
+Apps specification conformance. Two further deliberate extensions of the stable
+spec are that `fullscreen` uses a side panel instead of the full window, and
+reuse repeats `tool-input`/`tool-result` during one view lifetime (the stable spec
+sends `tool-input` once; see [ext-apps #430](https://github.com/modelcontextprotocol/ext-apps/issues/430)).
+Payload shapes follow SDK 1.7.5. Apps must handle repeated input and result events
+to support reuse; the host currently has no per-server opt-out.
 
 ## Projects and board
 
