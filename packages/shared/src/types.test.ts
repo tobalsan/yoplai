@@ -12,7 +12,30 @@ import {
   ProjectsOrchestratorConfigSchema,
   ScheduleSchema,
   StreamEventSchema,
+  WebhookConfigSchema,
 } from "./types.js";
+
+describe("WebhookConfigSchema", () => {
+  it("keeps existing webhooks on team credentials", () => {
+    expect(WebhookConfigSchema.parse({ prompt: "Handle event" }).credentialMode).toBe("team");
+  });
+
+  it("accepts the saved owner identity", () => {
+    expect(WebhookConfigSchema.parse({
+      prompt: "Handle event",
+      credentialMode: "owner",
+      ownerUserId: "user-alice",
+    })).toMatchObject({ credentialMode: "owner", ownerUserId: "user-alice" });
+  });
+
+  it("rejects an empty owner identity", () => {
+    expect(WebhookConfigSchema.safeParse({
+      prompt: "Handle event",
+      credentialMode: "owner",
+      ownerUserId: "",
+    }).success).toBe(false);
+  });
+});
 
 describe("multi-user legacy config compatibility", () => {
   it("loads the retired auto-join key without enabling enrollment", () => {

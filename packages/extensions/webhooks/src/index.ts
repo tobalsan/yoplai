@@ -42,6 +42,7 @@ const webhooksExtension: Extension = {
   description: "Route inbound HTTP webhooks to agents",
   dependencies: [],
   configSchema: WebhooksExtensionConfigSchema,
+  configRoute: { path: "/agents/:agentId/extensions/webhooks" },
   routePrefixes: ["/hooks"],
   validateConfig(raw) {
     const result = WebhooksExtensionConfigSchema.safeParse(raw);

@@ -1,6 +1,9 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import fs from "node:fs/promises";
+import { readFileSync } from "node:fs";
+import os from "node:os";
 import path from "node:path";
+import { parse } from "yaml";
 import { z } from "zod";
 import { defineToolExtension } from "@yoplai/shared";
 import type { QuotaSnapshot } from "@yoplai/shared";
@@ -73,6 +76,7 @@ vi.mock("../extensions/registry.js", () => ({
 }));
 
 vi.mock("@yoplai/extension-multi-user", () => ({
+  getMultiUserRuntime: () => ({ db: { prepare: () => ({ get: () => ({ name: "Alice" }) }) } }),
   getForwardedAuthContext: vi.fn(() => multiUserState.authContext),
   getAgentFilter: vi.fn(() => (agents: unknown[]) => agents),
   hasAgentAccess: vi.fn(async () => multiUserState.agentAccess),
@@ -112,7 +116,8 @@ vi.mock("../credentials/store.js", () => ({
   },
 }));
 
-vi.mock("../extensions/agent-config-writer.js", () => ({
+vi.mock("../extensions/agent-config-writer.js", async (importOriginal) => ({
+  ...await importOriginal<typeof import("../extensions/agent-config-writer.js")>(),
   updateAgentExtensionConfig,
 }));
 
@@ -983,6 +988,114 @@ describe("api core session resolution", () => {
       sessionId: "resolved-1",
       summary: "Compacted summary",
       keptMessages: 8,
+    });
+  });
+
+  describe("webhook credential settings", () => {
+    let workspace: string;
+    const signIn = (id: string, role = "user") => {
+      multiUserState.loaded = true;
+      multiUserState.authContext = { user: { id, name: id, role }, session: { id: `session-${id}`, userId: id } };
+    };
+    beforeEach(async () => {
+      workspace = await fs.mkdtemp(path.join(os.tmpdir(), "webhook-api-"));
+      await fs.writeFile(path.join(workspace, "agent.yaml"), "id: alpha\nname: Alpha\nmodel:\n  provider: openai\n  model: test\nwebhooks:\n  incoming:\n    prompt: private prompt\n    signingSecret: $env:INCOMING_SECRET\n");
+      const agent = { ...parse(await fs.readFile(path.join(workspace, "agent.yaml"), "utf8")), workspaceDir: workspace, workspace: "/wrong/template" };
+      loadConfigValue = { agents: [agent], pool: [{ ...agent, workspaceDir: "/wrong/pool" }], extensions: { multiUser: { enabled: true } } };
+      reloadConfig.mockImplementation(() => loadConfigValue);
+      signIn("alice");
+    });
+    afterEach(async () => {
+      await fs.rm(workspace, { recursive: true, force: true });
+      reloadConfig.mockImplementation(() => loadConfigValue);
+    });
+    it("lists only Run as metadata, omitting webhook secrets and prompts", async () => {
+      const { api } = await import("./api.core.js");
+      const response = await api.request("/agents/alpha/webhooks");
+      expect(response.status).toBe(200);
+      expect(await response.json()).toEqual([{ name: "incoming", credentialMode: "team" }]);
+    });
+    it("claims the fork webhook for the authenticated session user and reloads it", async () => {
+      reloadConfig.mockImplementation(() => {
+        loadConfigValue = { ...loadConfigValue, agents: [{ ...parse(readFileSync(path.join(workspace, "agent.yaml"), "utf8")), workspaceDir: workspace }] };
+        return loadConfigValue;
+      });
+      const { api } = await import("./api.core.js");
+      const response = await api.request("/agents/alpha/webhooks/incoming", {
+        method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ credentialMode: "owner" }),
+      });
+      expect(response.status).toBe(200);
+      expect(await response.json()).toEqual({ name: "incoming", credentialMode: "owner", ownerUserId: "alice", ownerDisplayName: "Alice" });
+      expect(await (await api.request("/agents/alpha/webhooks")).json()).toEqual([{ name: "incoming", credentialMode: "owner", ownerUserId: "alice", ownerDisplayName: "Alice" }]);
+      expect(parse(await fs.readFile(path.join(workspace, "agent.yaml"), "utf8")).webhooks.incoming).toMatchObject({ credentialMode: "owner", ownerUserId: "alice" });
+      expect(reloadExtensions).toHaveBeenCalledOnce();
+    });
+    it("rejects owner requests without an authenticated user in either install mode", async () => {
+      const { api } = await import("./api.core.js");
+      multiUserState.authContext = null;
+      for (const loaded of [true, false]) {
+        multiUserState.loaded = loaded;
+        const response = await api.request("/agents/alpha/webhooks/incoming", {
+          method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ credentialMode: "owner" }),
+        });
+        expect(response.status).toBe(401);
+        expect(await response.json()).toEqual({ error: "Owner credentials require an authenticated user" });
+      }
+      expect(parse(await fs.readFile(path.join(workspace, "agent.yaml"), "utf8")).webhooks.incoming.ownerUserId).toBeUndefined();
+    });
+    it("rejects a client-supplied owner without changing the webhook", async () => {
+      const original = await fs.readFile(path.join(workspace, "agent.yaml"), "utf8");
+      const { api } = await import("./api.core.js");
+      const response = await api.request("/agents/alpha/webhooks/incoming", {
+        method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ credentialMode: "owner", ownerUserId: "bob" }),
+      });
+      expect(response.status).toBe(400);
+      expect(await fs.readFile(path.join(workspace, "agent.yaml"), "utf8")).toBe(original);
+      expect(reloadConfig).not.toHaveBeenCalled();
+    });
+    it("forbids non-owners including superadmins from changing or taking over an owned webhook", async () => {
+      await fs.appendFile(path.join(workspace, "agent.yaml"), "    credentialMode: owner\n    ownerUserId: alice\n");
+      const original = await fs.readFile(path.join(workspace, "agent.yaml"), "utf8");
+      const { api } = await import("./api.core.js");
+      for (const role of ["user", "superadmin"]) {
+        signIn("bob", role);
+        for (const credentialMode of ["team", "owner"]) {
+          const response = await api.request("/agents/alpha/webhooks/incoming", {
+            method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ credentialMode }),
+          });
+          expect(response.status).toBe(403);
+          expect(await response.json()).toEqual({ error: "Only the webhook owner can change its credentials" });
+        }
+      }
+      expect(await fs.readFile(path.join(workspace, "agent.yaml"), "utf8")).toBe(original);
+    });
+    it("lets the owner restore Team credentials and clears the persisted owner", async () => {
+      await fs.appendFile(path.join(workspace, "agent.yaml"), "    credentialMode: owner\n    ownerUserId: alice\n");
+      const { api } = await import("./api.core.js");
+      const response = await api.request("/agents/alpha/webhooks/incoming", {
+        method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ credentialMode: "team" }),
+      });
+      expect(response.status).toBe(200);
+      expect(await response.json()).toEqual({ name: "incoming", credentialMode: "team" });
+      expect(parse(await fs.readFile(path.join(workspace, "agent.yaml"), "utf8")).webhooks.incoming).toEqual({ prompt: "private prompt", signingSecret: "$env:INCOMING_SECRET", credentialMode: "team" });
+    });
+    it("requires agent configuration access on both endpoints", async () => {
+      multiUserState.agentAccess = false;
+      const { api } = await import("./api.core.js");
+      expect((await api.request("/agents/alpha/webhooks")).status).toBe(403);
+      expect((await api.request("/agents/alpha/webhooks/incoming", {
+        method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ credentialMode: "owner" }),
+      })).status).toBe(403);
+      expect(reloadConfig).not.toHaveBeenCalled();
+    });
+    it("returns 404 for unknown agents and webhooks", async () => {
+      const { api } = await import("./api.core.js");
+      expect((await api.request("/agents/unknown/webhooks")).status).toBe(404);
+      for (const url of ["/agents/unknown/webhooks/incoming", "/agents/alpha/webhooks/unknown"]) {
+        expect((await api.request(url, {
+          method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ credentialMode: "team" }),
+        })).status).toBe(404);
+      }
     });
   });
 

@@ -276,6 +276,8 @@ export type AgentSandboxConfig = z.infer<typeof AgentSandboxConfigSchema>;
 
 export const WebhookConfigSchema = z.object({
   prompt: z.string(),
+  credentialMode: z.enum(["owner", "team"]).default("team"),
+  ownerUserId: z.string().min(1).optional(),
   langfuseTracing: z.boolean().default(true),
   signingSecret: z.string().optional(),
   verification: z

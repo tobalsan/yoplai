@@ -1,12 +1,12 @@
 import fs from "node:fs/promises";
 import path from "node:path";
-import { parseDocument } from "yaml";
+import { parseDocument, type Document } from "yaml";
 import { AgentYamlConfigSchema } from "@yoplai/shared";
 import type { ExtensionConfigPatch } from "@yoplai/shared";
 
 /**
- * Write path for an agent's `config.extensions`. Runtime agent config is
- * read-only today; this is the only place that mutates an agent's `agent.yaml`.
+ * Write path for an agent's extension config and webhook credentials.
+ * Mutations preserve the raw agent.yaml and serialize under its directory lock.
  *
  * The change is applied to the raw parsed YAML (not the runtime-resolved
  * config) so we preserve `$env:NAME` sentinels and any fields the schema passes
@@ -49,24 +49,57 @@ export function secretEnvName(extensionId: string, field: string): string {
   return `${toEnvSegment(extensionId)}_${toEnvSegment(field)}`;
 }
 
-async function writeLocked(filePath: string, content: string): Promise<void> {
-  await fs.mkdir(path.dirname(filePath), { recursive: true });
-  // Imported lazily: `proper-lockfile` registers SIGTERM/SIGINT handlers at
-  // import time, and this module is on the gateway server import graph. A
-  // top-level import would register those handlers before the gateway's own
-  // graceful-shutdown handler, shadowing it.
+async function writeAtomic(filePath: string, content: string): Promise<void> {
+  const tmpPath = path.join(
+    path.dirname(filePath),
+    `.${path.basename(filePath)}.${process.pid}.${Date.now()}.tmp`
+  );
+  await fs.writeFile(tmpPath, content, "utf8");
+  await fs.rename(tmpPath, filePath);
+}
+
+/** Keep ownership checks and all agent config reads/writes in one transaction. */
+async function updateAgentConfig(
+  workspaceDir: string,
+  mutate: (
+    doc: Document,
+    parsed: Record<string, unknown>
+  ) => {
+    envVars?: Record<string, string>;
+    staleEnv?: string[];
+  } | void,
+  validate?: ExtensionConfigValidator
+): Promise<Record<string, unknown>> {
+  // Imported lazily so proper-lockfile's signal handlers do not shadow the
+  // gateway's graceful-shutdown handler during server module initialization.
   const { default: lockfile } = await import("proper-lockfile");
-  const release = await lockfile.lock(path.dirname(filePath), {
+  const release = await lockfile.lock(workspaceDir, {
     retries: { retries: 5, minTimeout: 20, maxTimeout: 100 },
     realpath: false,
   });
   try {
-    const tmpPath = path.join(
-      path.dirname(filePath),
-      `.${path.basename(filePath)}.${process.pid}.${Date.now()}.tmp`
-    );
-    await fs.writeFile(tmpPath, content, "utf8");
-    await fs.rename(tmpPath, filePath);
+    const agentPath = path.join(workspaceDir, "agent.yaml");
+    const doc = parseDocument(await fs.readFile(agentPath, "utf8"));
+    const parsed = doc.toJS() as unknown;
+    if (!isRecord(parsed))
+      throw new Error(`Malformed agent.yaml at ${agentPath}`);
+    const { envVars = {}, staleEnv = [] } = mutate(doc, parsed) ?? {};
+    const nextConfig = doc.toJS() as Record<string, unknown>;
+    const validation = AgentYamlConfigSchema.safeParse(nextConfig);
+    if (!validation.success) {
+      throw new Error(
+        `agent.yaml would be invalid after update: ${validation.error.message}`
+      );
+    }
+    validate?.(nextConfig, envVars);
+
+    // Secrets land before their references; removed values leave only once
+    // agent.yaml no longer references them. These helpers share this lock.
+    const envPath = path.join(workspaceDir, ".env");
+    if (Object.keys(envVars).length > 0) await upsertEnvVars(envPath, envVars);
+    await writeAtomic(agentPath, doc.toString());
+    if (staleEnv.length > 0) await removeEnvVars(envPath, staleEnv);
+    return nextConfig;
   } finally {
     await release();
   }
@@ -117,7 +150,7 @@ async function upsertEnvVars(
     next.push(`${key}=${formatEnvValue(value)}`);
   }
 
-  await writeLocked(envPath, `${next.join("\n")}\n`);
+  await writeAtomic(envPath, `${next.join("\n")}\n`);
 }
 
 /** Remove `KEY=value` lines from an env file, preserving every other line. */
@@ -130,7 +163,7 @@ async function removeEnvVars(envPath: string, keys: string[]): Promise<void> {
   }
   const lines = existing.split("\n");
   const next = lines.filter((line) => !keys.includes(/^([A-Za-z_][A-Za-z0-9_]*)=/.exec(line)?.[1] ?? ""));
-  if (next.length !== lines.length) await writeLocked(envPath, next.join("\n"));
+  if (next.length !== lines.length) await writeAtomic(envPath, next.join("\n"));
 }
 
 /**
@@ -148,75 +181,93 @@ export async function updateAgentExtensionConfig(
   patch: ExtensionConfigPatch,
   validate?: ExtensionConfigValidator
 ): Promise<Record<string, unknown>> {
-  const agentPath = path.join(workspaceDir, "agent.yaml");
-  const raw = await fs.readFile(agentPath, "utf8");
-  const doc = parseDocument(raw);
-  const parsed = doc.toJS() as unknown;
-  if (!isRecord(parsed)) {
-    throw new Error(`Malformed agent.yaml at ${agentPath}`);
-  }
+  return updateAgentConfig(
+    workspaceDir,
+    (doc, parsed) => {
+      const extensions = isRecord(parsed.extensions)
+        ? { ...parsed.extensions }
+        : {};
+      const current = isRecord(extensions[extensionId])
+        ? { ...(extensions[extensionId] as Record<string, unknown>) }
+        : {};
 
-  const extensions = isRecord(parsed.extensions)
-    ? { ...parsed.extensions }
-    : {};
-  const current = isRecord(extensions[extensionId])
-    ? { ...(extensions[extensionId] as Record<string, unknown>) }
-    : {};
+      if (patch.enabled !== undefined) {
+        current.enabled = patch.enabled;
+      }
+      if (patch.config) {
+        for (const [key, value] of Object.entries(patch.config)) {
+          current[key] = value;
+        }
+      }
 
-  if (patch.enabled !== undefined) {
-    current.enabled = patch.enabled;
+      // Secrets: write $env:NAME sentinels into the yaml and collect the real
+      // values for the env file. Never write the concrete value into agent.yaml.
+      const envVars: Record<string, string> = {};
+      if (patch.secrets) {
+        for (const [field, value] of Object.entries(patch.secrets)) {
+          const envName = secretEnvName(extensionId, field);
+          current[field] = `$env:${envName}`;
+          envVars[envName] = value;
+        }
+      }
+
+      const staleEnv: string[] = [];
+      for (const field of patch.removeSecrets ?? []) {
+        const envName = secretEnvName(extensionId, field);
+        if (current[field] === `$env:${envName}`) staleEnv.push(envName);
+        delete current[field];
+      }
+
+      // Mutate the raw YAML document to retain comments and unresolved env refs.
+      doc.setIn(["extensions", extensionId], current);
+      return { envVars, staleEnv };
+    },
+    validate
+  );
+}
+
+export class WebhookConfigUpdateError extends Error {
+  constructor(
+    readonly status: 400 | 403 | 404,
+    message: string
+  ) {
+    super(message);
   }
-  if (patch.config) {
-    for (const [key, value] of Object.entries(patch.config)) {
-      current[key] = value;
+}
+
+export async function updateAgentWebhookCredentials(
+  workspaceDir: string,
+  webhookName: string,
+  credentialMode: "owner" | "team",
+  userId?: string
+): Promise<Record<string, unknown>> {
+  return updateAgentConfig(workspaceDir, (doc, parsed) => {
+    if (credentialMode === "owner" && !userId) {
+      throw new WebhookConfigUpdateError(
+        400,
+        "Owner credentials require an authenticated user"
+      );
     }
-  }
-
-  // Secrets: write $env:NAME sentinels into the yaml and collect the real
-  // values for the env file. Never write the concrete value into agent.yaml.
-  const envVars: Record<string, string> = {};
-  if (patch.secrets) {
-    for (const [field, value] of Object.entries(patch.secrets)) {
-      const envName = secretEnvName(extensionId, field);
-      current[field] = `$env:${envName}`;
-      envVars[envName] = value;
+    const current = isRecord(parsed.webhooks)
+      ? parsed.webhooks[webhookName]
+      : undefined;
+    if (!isRecord(current)) {
+      throw new WebhookConfigUpdateError(404, "Webhook not found");
     }
-  }
-
-  const staleEnv: string[] = [];
-  for (const field of patch.removeSecrets ?? []) {
-    const envName = secretEnvName(extensionId, field);
-    if (current[field] === `$env:${envName}`) staleEnv.push(envName);
-    delete current[field];
-  }
-
-  extensions[extensionId] = current;
-  const nextConfig = { ...parsed, extensions };
-
-  // Re-validate against the schema before persisting anything. `$env:NAME`
-  // sentinels are plain strings, so they pass validation without needing the
-  // env var to be set.
-  const validation = AgentYamlConfigSchema.safeParse(nextConfig);
-  if (!validation.success) {
-    throw new Error(
-      `agent.yaml would be invalid after update: ${validation.error.message}`
-    );
-  }
-
-  // Validate the prospective yaml and env map before either file is touched.
-  validate?.(nextConfig, envVars);
-
-  // Write secrets first so a mid-write crash can't leave a $env ref pointing at
-  // a missing value.
-  if (Object.keys(envVars).length > 0) {
-    await upsertEnvVars(path.join(workspaceDir, ".env"), envVars);
-  }
-
-  // Mutate the parsed document in place so comments and blank lines survive.
-  doc.setIn(["extensions", extensionId], current);
-  await writeLocked(agentPath, doc.toString());
-  // Drop unset secret values only once agent.yaml no longer references them.
-  if (staleEnv.length > 0) await removeEnvVars(path.join(workspaceDir, ".env"), staleEnv);
-
-  return nextConfig;
+    if (
+      current.credentialMode === "owner" &&
+      (!userId || current.ownerUserId !== userId)
+    ) {
+      throw new WebhookConfigUpdateError(
+        403,
+        "Only the webhook owner can change its credentials"
+      );
+    }
+    doc.setIn(["webhooks", webhookName, "credentialMode"], credentialMode);
+    if (credentialMode === "owner") {
+      doc.setIn(["webhooks", webhookName, "ownerUserId"], userId);
+    } else {
+      doc.deleteIn(["webhooks", webhookName, "ownerUserId"]);
+    }
+  });
 }

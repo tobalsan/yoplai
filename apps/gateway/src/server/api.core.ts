@@ -29,6 +29,8 @@ import {
 } from "../extensions/catalog.js";
 import {
   updateAgentExtensionConfig,
+  updateAgentWebhookCredentials,
+  WebhookConfigUpdateError,
   type ExtensionConfigPatch,
 } from "../extensions/agent-config-writer.js";
 import {
@@ -41,7 +43,7 @@ import {
   isStreaming,
 } from "../agents/index.js";
 import type { FullHistoryMessage, SimpleHistoryMessage, HistoryViewMode } from "@yoplai/shared";
-import type { AgentConfig, GatewayConfig } from "@yoplai/shared";
+import type { AgentConfig, GatewayConfig, WebhookConfig } from "@yoplai/shared";
 import {
   getSessionEntry,
   getSessionThinkLevel,
@@ -927,6 +929,49 @@ api.get("/agents/:id/extensions", async (c) => {
   }
   const extensions = await requesterExtensionCatalog(c, config, resolved.agent, resolved.configurable);
   return c.json({ agentId, extensions });
+});
+
+async function webhookSettings(name: string, webhook: WebhookConfig) {
+  const ownerUserId = webhook.credentialMode === "owner" ? webhook.ownerUserId : undefined;
+  let ownerDisplayName: string | undefined;
+  if (ownerUserId && isExtensionLoaded("multiUser")) {
+    const { getMultiUserRuntime } = await import("@yoplai/extension-multi-user");
+    const owner = getMultiUserRuntime()?.db.prepare("SELECT name FROM user WHERE id = ?").get(ownerUserId) as { name?: string } | undefined;
+    ownerDisplayName = owner?.name || "Unknown user";
+  }
+  return { name, credentialMode: webhook.credentialMode ?? "team", ...(ownerUserId ? { ownerUserId } : {}), ...(ownerDisplayName ? { ownerDisplayName } : {}) };
+}
+
+api.get("/agents/:id/webhooks", async (c) => {
+  const agentId = c.req.param("id");
+  if (!(await canConfigureAgentExtensions(c, agentId))) return c.json({ error: "forbidden" }, 403);
+  const agent = findWritableExtensionAgent(loadConfig(), agentId);
+  if (!agent) return c.json({ error: "Agent not found" }, 404);
+  return c.json(await Promise.all(Object.entries(agent.webhooks ?? {}).map(([name, webhook]) => webhookSettings(name, webhook))));
+});
+
+api.patch("/agents/:id/webhooks/:name", async (c) => {
+  const agentId = c.req.param("id");
+  const auth = await getRequestAuthContext(c);
+  if (!(await canConfigureAgentExtensions(c, agentId))) {
+    return auth ? c.json({ error: "forbidden" }, 403) : c.json({ error: "Owner credentials require an authenticated user" }, 401);
+  }
+  const agent = findWritableExtensionAgent(loadConfig(), agentId);
+  if (!agent) return c.json({ error: "Agent not found" }, 404);
+  const body: unknown = await c.req.json().catch(() => null);
+  if (!body || typeof body !== "object" || Array.isArray(body) || Object.keys(body).some((key) => key !== "credentialMode") || !("credentialMode" in body) || (body.credentialMode !== "team" && body.credentialMode !== "owner")) {
+    return c.json({ error: "Only credentialMode (team or owner) is accepted; owner identity is server-derived" }, 400);
+  }
+  if (body.credentialMode === "owner" && !auth) return c.json({ error: "Owner credentials require an authenticated user" }, 401);
+  const name = c.req.param("name");
+  try {
+    const updated = await updateAgentWebhookCredentials(resolveWorkspaceDir(agent.workspaceDir ?? agent.workspace), name, body.credentialMode, auth?.user.id);
+    await reloadAfterConfigWrite();
+    return c.json(await webhookSettings(name, (updated.webhooks as Record<string, WebhookConfig>)[name]));
+  } catch (error) {
+    if (error instanceof WebhookConfigUpdateError) return c.json({ error: error.message }, error.status);
+    throw error;
+  }
 });
 
 // PATCH /api/agents/:id/extensions/:extensionId - write extension config.

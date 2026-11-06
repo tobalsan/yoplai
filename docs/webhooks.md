@@ -29,6 +29,44 @@ On startup Yoplai creates `$YOPLAI_HOME/webhook-secrets.json` with restrictive p
 
 Keep URL secret private and serve public webhooks over TLS.
 
+## Run as
+
+Open an agent's configuration, then **Webhooks**, to choose **Team** or **Me**
+for each webhook. Team is the default for new and existing webhooks and uses
+only team connections. Me uses the signed-in owner's personal OAuth/MCP
+connections first, with team fallback when no personal connection exists.
+Me requires multi-user mode and an authenticated user.
+
+The setting is saved in `agent.yaml`:
+
+```yaml
+webhooks:
+  incoming:
+    prompt: "Review event: $WEBHOOK_PAYLOAD"
+    credentialMode: owner # team (default) or owner
+    ownerUserId: example-user-id
+```
+
+The UI and API derive `ownerUserId` from the authenticated session. Other
+users see **Owned by <name>** and cannot change the setting, including
+superadmins. Only the owner can switch back to Team, which clears the owner.
+If an owner leaves, an operator must edit `agent.yaml` to recover the webhook.
+An owner whose agent access has been revoked cannot start a run; the existing
+run error logging and trace stream report the access failure.
+
+After verification handshakes and signature checks, owner mode returns HTTP
+409 with `Webhook owner is missing; assign an owner before running it` when
+the owner is absent, or `Owner credentials require multi-user mode` when
+multi-user mode is disabled. No run starts in either case. URLs, signatures,
+and provider verification handshakes are unchanged.
+
+`GET /api/agents/:id/webhooks` returns only each webhook's name, credential
+mode, and optional owner id/display name. It never returns prompts or secrets.
+`PATCH /api/agents/:id/webhooks/:name` accepts only
+`{"credentialMode":"owner"}` or `{"credentialMode":"team"}`; client-supplied
+owner ids are rejected. Both endpoints require permission to configure the
+agent's extensions; changing an owner-mode webhook also requires its owner.
+
 ## Prompts
 
 `prompt` can be inline text or workspace-relative `.md`/`.txt` file. Paths outside workspace are rejected.

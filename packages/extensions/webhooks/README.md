@@ -25,6 +25,23 @@ webhooks:
 | `verification`    | —         | `{ location: header \| payload, fieldName }` for provider setup handshakes.          |
 | `maxPayloadSize`  | `1048576` | Bytes. Larger bodies get `413`.                                                      |
 | `langfuseTracing` | `true`    | Trace runs under the `webhook` surface.                                              |
+| `credentialMode`  | `team`    | `team` uses team connections; `owner` tries the owner's personal connections, then team. |
+| `ownerUserId`     | —         | Non-empty owner id for `owner` mode; set from the authenticated session in the UI/API. |
+
+Choose **Team** or **Me** on the agent's **Webhooks** configuration page.
+Me requires multi-user mode and uses the signed-in user as owner; only that
+owner may change the setting afterward, including switching back to Team.
+Other users, including superadmins, see **Owned by <name>** without editing
+controls. If the owner leaves, an operator must edit `agent.yaml`.
+Revoked agent access fails through the normal run error logging/trace path.
+
+```yaml
+webhooks:
+  incoming:
+    prompt: "Review event: $WEBHOOK_PAYLOAD"
+    credentialMode: owner
+    ownerUserId: example-user-id
+```
 
 ## URL
 
@@ -54,7 +71,12 @@ The response returns immediately — the agent runs in the background, in a fres
 | `200`  | Accepted (or verification handshake answered). |
 | `401`  | Missing/wrong URL secret, or bad signature.    |
 | `404`  | Unknown agent/webhook, or agent inactive.      |
+| `409`  | Owner missing, or owner mode without multi-user enabled; no run starts. |
 | `413`  | Payload over `maxPayloadSize`.                 |
+
+The 409 error is `Webhook owner is missing; assign an owner before running it`
+or `Owner credentials require multi-user mode`. Verification handshakes and
+signature checks run first and keep their existing behavior.
 
 ## Prompt variables
 
