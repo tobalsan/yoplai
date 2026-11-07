@@ -208,6 +208,8 @@ export class SchedulerService {
     // them running with no timeout left to enforce and a second copy spawning
     // when the gateway comes back.
     terminateRunningScripts();
+    // Finish pending persistence before a restart can load the job files.
+    await Promise.all(this.agentSaveChains.values());
     console.log("[scheduler] Stopped");
   }
 
