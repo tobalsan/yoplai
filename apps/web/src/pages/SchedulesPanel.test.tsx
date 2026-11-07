@@ -204,6 +204,27 @@ describe("SchedulesPanel", () => {
     expect(container.querySelector('[role="alert"]')).toBeNull();
   });
 
+  it("keeps the hint and empty note visible during a pending poll", async () => {
+    vi.useFakeTimers();
+    setCapabilitiesForTests({ enableCronMonitoring: true });
+    dispose = render(() => <SchedulesPanel agentId="scribe" agentName="Scribe" />, container);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(container.textContent).toContain("just ask Scribe!");
+    fetchSchedulesMock.mockImplementationOnce(() => new Promise(() => {}));
+    await vi.advanceTimersByTimeAsync(2_000);
+    expect(fetchSchedulesMock).toHaveBeenCalledTimes(2);
+    expect(container.textContent).toContain("just ask Scribe!");
+
+    dispose();
+    fetchSchedulesMock.mockReset().mockResolvedValueOnce([]).mockImplementationOnce(() => new Promise(() => {}));
+    dispose = render(() => <SchedulesPanel agentId="scribe" agentName="Scribe" />, container);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(container.textContent).toContain("No scheduled jobs yet.");
+    await vi.advanceTimersByTimeAsync(2_000);
+    expect(fetchSchedulesMock).toHaveBeenCalledTimes(2);
+    expect(container.textContent).toContain("No scheduled jobs yet.");
+  });
+
   it("stops polling and hides the badge when monitoring is disabled while mounted", async () => {
     vi.useFakeTimers();
     setCapabilitiesForTests({ enableCronMonitoring: true });

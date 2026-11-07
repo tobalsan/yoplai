@@ -162,7 +162,7 @@ export function SchedulesPanel(props: { agentId: string; agentName: string }) {
       <Show when={error()}>{(text) => <p class="schedules-error" role="alert">{text()}</p>}</Show>
       <Show when={result.loading && !result.latest}><p class="schedules-note">Loading scheduled jobs…</p></Show>
       <Show when={result.latest?.error}>{(text) => <p class="schedules-error" role="alert">{text()}</p>}</Show>
-      <Show when={!result.loading && !result.latest?.error && visible().length === 0}>
+      <Show when={result.latest !== undefined && !result.latest.error && visible().length === 0}>
         <p class="schedules-note">No scheduled jobs yet.</p>
       </Show>
       <Show when={visible().length > 0}>
@@ -278,7 +278,7 @@ export function SchedulesPanel(props: { agentId: string; agentName: string }) {
           </div>
         </div>
       )}</Show>
-      <Show when={!result.loading && !result.latest?.error}>
+      <Show when={result.latest !== undefined && !result.latest.error}>
         <p class="schedules-hint">If you want to add a new job, just ask {props.agentName}!</p>
       </Show>
     </section>
