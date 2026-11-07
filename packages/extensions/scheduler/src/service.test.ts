@@ -408,12 +408,63 @@ describe("SchedulerService credential refusals", () => {
     });
   }
 
+  it("counts consecutive refusals and pauses only the third completed recurring run", async () => {
+    const { job, deliver } = await setup(refusingRun());
+    for (const [count, error] of [
+      [1, "Reconnect google credentials (refusal 1 of 3; the job pauses after 3 in a row)."],
+      [2, "Reconnect google credentials (refusal 2 of 3; the job pauses after 3 in a row)."],
+      [3, "Reconnect google credentials before this scheduled job can run. The job was paused; re-enable it after reconnecting."],
+    ] as const) {
+      const result = await scheduler.runNow("alpha", job.id);
+      expect(result).toMatchObject({ status: "error", error, job: { enabled: count < 3, credentialRefusals: count, state: { lastError: error } } });
+      if (count < 3) {
+        expect(result.job.pausedReason).toBeUndefined();
+        expect(deliver).toHaveBeenLastCalledWith(expect.objectContaining({ text: `Cron job "Calendar" failed:\n${error}` }));
+      }
+    }
+  });
+
+  it("preserves the streak through restart and resets it on re-enable", async () => {
+    const { job } = await setup(refusingRun());
+    await scheduler.runNow("alpha", job.id);
+    await scheduler.stop();
+    scheduler = createScheduler();
+    expect((await scheduler.list("alpha"))[0]?.credentialRefusals).toBe(1);
+    expect((await scheduler.runNow("alpha", job.id)).job).toMatchObject({ enabled: true, credentialRefusals: 2 });
+    expect((await scheduler.runNow("alpha", job.id)).job).toMatchObject({ enabled: false, credentialRefusals: 3 });
+    await scheduler.update("alpha", job.id, { enabled: true });
+    await scheduler.refreshFromDisk();
+    expect((await scheduler.list("alpha"))[0]).not.toHaveProperty("credentialRefusals");
+    expect((await scheduler.runNow("alpha", job.id)).job).toMatchObject({ enabled: true, credentialRefusals: 1 });
+  });
+
+  it.each(["success", "rejection", "timeout"])("clears an existing refusal streak after %s", async (outcome) => {
+    const runAgent = refusingRun();
+    const { job } = await setup(runAgent);
+    await scheduler.runNow("alpha", job.id);
+    await scheduler.runNow("alpha", job.id);
+    let finish: (() => void) | undefined;
+    runAgent.mockImplementationOnce(async () => {
+      if (outcome === "rejection") throw new Error("Agent failed");
+      if (outcome === "timeout") await new Promise<void>((resolve) => { finish = resolve; });
+      return { payloads: [{ text: "Synced" }], meta: { durationMs: 1, sessionId: "session" } };
+    });
+    if (outcome === "timeout") await scheduler.update("alpha", job.id, { timeoutMs: 10 });
+    expect((await scheduler.runNow("alpha", job.id)).job).not.toHaveProperty("credentialRefusals");
+    finish?.();
+    await scheduler.refreshFromDisk();
+    expect((await scheduler.list("alpha"))[0]).not.toHaveProperty("credentialRefusals");
+    expect((await scheduler.runNow("alpha", job.id)).job).toMatchObject({ enabled: true, credentialRefusals: 1 });
+  });
+
   it("notifies a private owner once with an actionable integration link and persists the pause", async () => {
     const runAgent = vi.fn(async (params: Parameters<ExtensionContext["runAgent"]>[0]) => {
       params.onEvent?.({ type: "tool_result", id: "1", name: "google_calendar", content: '{"error":"oauth_connection_required","provider":"google"}', isError: false });
       return { payloads: [{ text: "Done" }], meta: { durationMs: 1, sessionId: "session" } };
     });
     const { job, ctx, deliver } = await setup(runAgent);
+    await scheduler.runNow("alpha", job.id);
+    await scheduler.runNow("alpha", job.id);
     const notify = vi.fn(async () => "sent" as const);
     ctx.getUserNotifiers = () => new Map([["slack", notify]]);
     ctx.resolveConnectPath = async () => "/agents/alpha/extensions/calendar";
@@ -425,12 +476,14 @@ describe("SchedulerService credential refusals", () => {
       agent: ctx.getAgent("alpha"), userId: "alice",
       text: 'Cron job "Calendar" failed:\nJob "Calendar" on alpha is paused: reconnect google at http://localhost:3000/agents/alpha/extensions/calendar, then resume the job in the agent\'s Schedules tab.',
     }]]);
-    expect(deliver).not.toHaveBeenCalled();
+    expect(deliver).toHaveBeenCalledTimes(2);
     expect(failed).toMatchObject({ status: "error", job: { enabled: false, pausedReason: { kind: "credentials", integration: "google", connectPath: "/agents/alpha/extensions/calendar" } } });
   });
 
   it("warns on a failed owner notifier without changing the run or blocking another channel", async () => {
     const { job, ctx } = await setup(refusingRun());
+    await scheduler.runNow("alpha", job.id);
+    await scheduler.runNow("alpha", job.id);
     ctx.getConfig().enableCronMonitoring = true;
     const sent: string[] = [];
     ctx.getUserNotifiers = () => new Map<string, UserNotifier>([
@@ -442,13 +495,15 @@ describe("SchedulerService credential refusals", () => {
     const result = await scheduler.runNow("alpha", job.id);
 
     expect(result).toMatchObject({ status: "error", job: { enabled: false, pausedReason: { kind: "credentials" } } });
-    expect((await scheduler.listRuns("alpha", job.id))).toEqual([expect.objectContaining({ status: "error", error: expect.stringContaining("reconnect google") })]);
+    expect((await scheduler.listRuns("alpha", job.id))).toEqual([expect.objectContaining({ status: "error", error: expect.stringContaining("Reconnect google") })]);
     expect(ctx.logger.warn).toHaveBeenCalledWith(expect.stringContaining("offline channel"));
     expect(sent).toHaveLength(1);
   });
 
   it("bounds a hanging notifier and continues the remaining notifications and scheduler work", async () => {
     const { job, ctx } = await setup(refusingRun());
+    await scheduler.runNow("alpha", job.id);
+    await scheduler.runNow("alpha", job.id);
     const hanging = vi.fn(() => new Promise<"sent">(() => {}));
     const sent = vi.fn(async () => "sent" as const);
     ctx.getUserNotifiers = () => new Map([["hung", hanging], ["working", sent]]);
@@ -470,6 +525,8 @@ describe("SchedulerService credential refusals", () => {
   it("clears the persisted credential reason when the owner resumes the job", async () => {
     const { job } = await setup(refusingRun());
     await scheduler.runNow("alpha", job.id);
+    await scheduler.runNow("alpha", job.id);
+    await scheduler.runNow("alpha", job.id);
     expect((await scheduler.update("alpha", job.id, { enabled: true })).pausedReason).toBeUndefined();
     await scheduler.refreshFromDisk();
     expect((await scheduler.list("alpha"))[0]).toMatchObject({ enabled: true });
@@ -484,9 +541,11 @@ describe("SchedulerService credential refusals", () => {
     }), "atlas_search"));
     ctx.resolveConnectPath = async (_id, hints) => hints.toolName === "atlas_search" && hints.displayName === "Atlas Desk"
       ? "/agents/alpha/extensions/atlas/config" : undefined;
+    await scheduler.runNow("alpha", job.id);
+    await scheduler.runNow("alpha", job.id);
     const result = await scheduler.runNow("alpha", job.id);
     expect(result.job.pausedReason).toMatchObject({ integration: "Atlas Desk", connectPath: "/agents/alpha/extensions/atlas/config" });
-    expect(result.error).toContain("http://localhost:3000/agents/alpha/extensions/atlas/config");
+    expect(result.error).toBe("Reconnect Atlas Desk credentials before this scheduled job can run. The job was paused; re-enable it after reconnecting.");
     expect(result.error).not.toContain("unsafe.test");
     expect(result.error).not.toContain("slack-pair-link");
   });
@@ -495,27 +554,33 @@ describe("SchedulerService credential refusals", () => {
     const { job, ctx } = await setup(refusingRun('{"connected":false,"provider":"mcp","server":"atlas","reason":"needs_reconnect","authorizeUrl":"https://unsafe.test/once"}', "mcp__atlas__search"));
     ctx.resolveConnectPath = async (_id, hints) => hints.toolName === "mcp__atlas__search"
       ? "/agents/alpha/mcp-servers/atlas" : undefined;
+    await scheduler.runNow("alpha", job.id);
+    await scheduler.runNow("alpha", job.id);
     const result = await scheduler.runNow("alpha", job.id);
     expect(result.job.pausedReason).toMatchObject({ integration: "atlas", connectPath: "/agents/alpha/mcp-servers/atlas" });
-    expect(result.error).toContain("reconnect atlas at http://localhost:3000/agents/alpha/mcp-servers/atlas");
+    expect(result.error).toBe("Reconnect atlas credentials before this scheduled job can run. The job was paused; re-enable it after reconnecting.");
     expect(result.error).not.toContain("unsafe.test");
   });
 
   it("keeps an unreachable owner channel silent while persisting the credential pause", async () => {
     const { job, ctx } = await setup(refusingRun());
+    await scheduler.runNow("alpha", job.id);
+    await scheduler.runNow("alpha", job.id);
     const unavailable = vi.fn(async () => "unavailable" as const);
     ctx.getUserNotifiers = () => new Map([["slack", unavailable]]);
     await scheduler.update("alpha", job.id, { deliver: [] });
     await scheduler.runNow("alpha", job.id);
     expect(unavailable).toHaveBeenCalledOnce();
     expect(ctx.logger.warn).not.toHaveBeenCalled();
-    expect(ctx.logger.error).toHaveBeenCalledOnce();
+    expect(ctx.logger.error).toHaveBeenCalledTimes(3);
     await scheduler.refreshFromDisk();
     expect((await scheduler.list("alpha"))[0]).toMatchObject({ enabled: false, pausedReason: { integration: "google" } });
   });
 
   it("never notifies a private owner channel for a team job", async () => {
     const { job, ctx } = await setup(refusingRun());
+    await scheduler.runNow("alpha", job.id);
+    await scheduler.runNow("alpha", job.id);
     const notify = vi.fn(async () => "sent" as const);
     ctx.getUserNotifiers = () => new Map([["slack", notify]]);
     await scheduler.update("alpha", job.id, { deliver: [], credentialMode: "team" });
@@ -526,6 +591,8 @@ describe("SchedulerService credential refusals", () => {
 
   it("delivers actionable text to explicit targets without an extra owner notification", async () => {
     const { job, ctx, deliver } = await setup(refusingRun());
+    await scheduler.runNow("alpha", job.id);
+    await scheduler.runNow("alpha", job.id);
     const notify = vi.fn(async () => "sent" as const);
     ctx.getUserNotifiers = () => new Map([["slack", notify]]);
     const result = await scheduler.runNow("alpha", job.id);
@@ -536,6 +603,8 @@ describe("SchedulerService credential refusals", () => {
 
   it("does not notify the owner again on a refused manual run of an already-paused job", async () => {
     const { job, ctx } = await setup(refusingRun());
+    await scheduler.runNow("alpha", job.id);
+    await scheduler.runNow("alpha", job.id);
     const notify = vi.fn(async () => "sent" as const);
     ctx.getUserNotifiers = () => new Map([["slack", notify]]);
     await scheduler.update("alpha", job.id, { deliver: [] });
@@ -549,6 +618,8 @@ describe("SchedulerService credential refusals", () => {
   it("derives an OAuth integration from the personal-account refusal without reusing its URL", async () => {
     const { job, ctx } = await setup(refusingRun('{"error":"oauth_connection_required","authorizeUrl":"<slack-pair-link>","message":"Connect your personal google account at <slack-pair-link>, then try again."}', "calendar.list_events"));
     ctx.resolveConnectPath = async (_id, hints) => hints.toolName === "calendar.list_events" ? "/agents/alpha/extensions/calendar" : undefined;
+    await scheduler.runNow("alpha", job.id);
+    await scheduler.runNow("alpha", job.id);
     const result = await scheduler.runNow("alpha", job.id);
     expect(result.job.pausedReason).toMatchObject({ integration: "google", connectPath: "/agents/alpha/extensions/calendar" });
     expect(result.error).not.toContain("slack-pair-link");
@@ -558,6 +629,8 @@ describe("SchedulerService credential refusals", () => {
     const { job, ctx } = await setup(refusingRun(JSON.stringify({ connected: false, reason, provider: "atlas", displayName: "Atlas Calendar", authorizeUrl: "https://unsafe.test/once" }), "atlas_list_events"));
     ctx.resolveConnectPath = async (_id, hints) => hints.provider === "atlas" && hints.displayName === "Atlas Calendar" && hints.toolName === "atlas_list_events"
       ? "/agents/alpha/extensions/atlas" : undefined;
+    await scheduler.runNow("alpha", job.id);
+    await scheduler.runNow("alpha", job.id);
     const result = await scheduler.runNow("alpha", job.id);
     expect(result.job.pausedReason).toMatchObject({ integration: "Atlas Calendar", connectPath: "/agents/alpha/extensions/atlas" });
     expect(result.error).not.toContain("unsafe.test");
@@ -573,12 +646,16 @@ describe("SchedulerService credential refusals", () => {
     const { job, deliver } = await setup(runAgent);
     const execution = scheduler.runNow("alpha", job.id);
     await vi.waitFor(() => expect(runAgent).toHaveBeenCalledOnce());
+    const jobsPath = path.join(tmpDir, "alpha/cron/jobs.json");
+    const disk = JSON.parse(await fs.readFile(jobsPath, "utf8"));
+    disk.jobs[0].credentialRefusals = 2;
+    await fs.writeFile(jobsPath, JSON.stringify(disk));
     await scheduler.refreshFromDisk();
     finish();
     const failed = await execution;
     expect(failed).toMatchObject({
       status: "error", job: { enabled: false, pausedReason: { kind: "credentials", integration: "google", connectPath: "/agents/alpha/edit", at: expect.any(String) } },
-      error: "Job \"Calendar\" on alpha is paused: reconnect google at http://localhost:3000/agents/alpha/edit, then resume the job in the agent's Schedules tab.",
+      error: "Reconnect google credentials before this scheduled job can run. The job was paused; re-enable it after reconnecting.",
     });
     expect(deliver).toHaveBeenCalledWith(expect.objectContaining({
       text: 'Cron job "Calendar" failed:\nJob "Calendar" on alpha is paused: reconnect google at http://localhost:3000/agents/alpha/edit, then resume the job in the agent\'s Schedules tab.',
@@ -587,12 +664,14 @@ describe("SchedulerService credential refusals", () => {
     expect((await scheduler.list("alpha"))[0]).toMatchObject({ enabled: false, pausedReason: failed.job.pausedReason });
   });
 
-  it("persists a credential pause when disk refresh replaces the job during delivery", async () => {
+  it.each([1, 2, 3])("persists refusal %s when disk refresh replaces the job during delivery", async (count) => {
     const runAgent = vi.fn(async (params: Parameters<ExtensionContext["runAgent"]>[0]) => {
       params.onEvent?.({ type: "tool_result", id: "1", name: "google.calendar", content: '{"error":"oauth_connection_required","provider":"google"}', isError: false });
       return { payloads: [{ text: "Done" }], meta: { durationMs: 1, sessionId: "session" } };
     });
     const { job, deliver } = await setup(runAgent);
+    for (let prior = 1; prior < count; prior++) await scheduler.runNow("alpha", job.id);
+    deliver.mockClear();
     let finishDelivery!: () => void;
     deliver.mockImplementationOnce(() => new Promise<void>((resolve) => { finishDelivery = resolve; }));
     const execution = scheduler.runNow("alpha", job.id);
@@ -601,7 +680,7 @@ describe("SchedulerService credential refusals", () => {
     finishDelivery();
     await execution;
     await scheduler.refreshFromDisk();
-    expect((await scheduler.list("alpha"))[0]?.enabled).toBe(false);
+    expect((await scheduler.list("alpha"))[0]).toMatchObject({ enabled: count < 3, credentialRefusals: count });
   });
 
   it("keeps a manual refusal paused past its restored deadline and resumes on the normal schedule", async () => {
@@ -610,11 +689,15 @@ describe("SchedulerService credential refusals", () => {
     const runAgent = vi.fn(async (_params: Parameters<ExtensionContext["runAgent"]>[0]) => ({
       payloads: [{ text: "Synced" }], meta: { durationMs: 1, sessionId: "session" },
     }));
+    const { job } = await setup(runAgent);
+    runAgent.mockImplementationOnce(refusingRun()).mockImplementationOnce(refusingRun());
+    await scheduler.runNow("alpha", job.id);
+    await scheduler.runNow("alpha", job.id);
+    runAgent.mockClear();
     runAgent.mockImplementationOnce(async (params) => {
       params.onEvent?.({ type: "tool_result", id: "1", name: "google.calendar", content: '{"error":"extension_credentials_required","provider":"google"}', isError: false });
       return { payloads: [{ text: "Done" }], meta: { durationMs: 1, sessionId: "session" } };
     });
-    const { job } = await setup(runAgent);
     await scheduler.start();
     const failed = await scheduler.runNow("alpha", job.id);
     expect(failed.job).toMatchObject({ enabled: false, state: { nextRunAtMs: Date.parse("2026-11-02T08:00:00.000Z") } });
@@ -683,7 +766,23 @@ describe("SchedulerService credential refusals", () => {
     expect((await scheduler.list("alpha"))[0]).toMatchObject({ enabled: false });
   });
 
-  it("pauses a timer-fired Team job on its first refusal without firing again", async () => {
+  it("leaves an existing refusal count untouched for a one-shot completion", async () => {
+    const runAgent = vi.fn(async (params: Parameters<ExtensionContext["runAgent"]>[0]) => {
+      params.onEvent?.({ type: "tool_result", id: "1", name: "google.calendar", content: '{"error":"oauth_connection_required","provider":"google"}', isError: false });
+      return { payloads: [{ text: "Done" }], meta: { durationMs: 1, sessionId: "session" } };
+    });
+    const { job, deliver } = await setup(runAgent);
+    await scheduler.runNow("alpha", job.id);
+    await scheduler.runNow("alpha", job.id);
+    await scheduler.update("alpha", job.id, { schedule: { runAt: new Date(Date.now() + 60_000).toISOString() } });
+    const failed = await scheduler.runNow("alpha", job.id);
+    expect(failed).toMatchObject({ status: "error", error: "Reconnect google credentials before this scheduled job can run.", job: { enabled: false, credentialRefusals: 2 } });
+    expect(deliver).toHaveBeenCalledWith(expect.objectContaining({ text: 'Cron job "Calendar" failed:\nReconnect google credentials before this scheduled job can run.' }));
+    await scheduler.refreshFromDisk();
+    expect((await scheduler.list("alpha"))[0]).toMatchObject({ enabled: false, credentialRefusals: 2 });
+  });
+
+  it("pauses a timer-fired Team job on its third refusal without firing again", async () => {
     vi.useFakeTimers({ toFake: ["Date", "setTimeout", "clearTimeout"] });
     vi.setSystemTime(new Date("2026-11-02T07:59:00.000Z"));
     const runAgent = vi.fn(async (params: Parameters<ExtensionContext["runAgent"]>[0]) => {
@@ -693,7 +792,14 @@ describe("SchedulerService credential refusals", () => {
     const { job } = await setup(runAgent);
     await scheduler.update("alpha", job.id, { credentialMode: "team" });
     await scheduler.start();
-    await vi.advanceTimersByTimeAsync(60_000);
+    for (const count of [1, 2, 3]) {
+      await vi.advanceTimersByTimeAsync(60_000);
+      await vi.waitFor(async () => {
+        const finished = (await scheduler.list("alpha"))[0];
+        expect(finished?.credentialRefusals).toBe(count);
+        expect(finished).not.toHaveProperty("state.runningForMs");
+      }, { interval: 0 });
+    }
     await vi.waitFor(async () => {
       const finished = (await scheduler.list("alpha"))[0];
       expect(finished).toMatchObject({
@@ -703,7 +809,7 @@ describe("SchedulerService credential refusals", () => {
       expect(finished).not.toHaveProperty("state.runningForMs");
     }, { interval: 0 });
     await vi.advanceTimersByTimeAsync(120_000);
-    expect(runAgent).toHaveBeenCalledOnce();
+    expect(runAgent).toHaveBeenCalledTimes(3);
     expect(runAgent).toHaveBeenCalledWith(expect.objectContaining({ userId: undefined }));
   });
 });
@@ -805,9 +911,11 @@ describe("SchedulerService.runNow", () => {
     const scheduler = createScheduler();
     const owner = await scheduler.add("alpha", { name: "Owner", schedule: { cron: "0 8 * * *", tz: "UTC" }, payload: jobPayload({ message: "Send" }), deliver: [{ target: "slack", channel: "alerts" }] }, "alice");
     expect(owner).toMatchObject({ ownerUserId: "alice", credentialMode: "owner" });
+    await scheduler.runNow("alpha", owner.id);
+    await scheduler.runNow("alpha", owner.id);
     const failed = await scheduler.runNow("alpha", owner.id);
     expect(failed.status).toBe("error");
-    expect(failed.error).toBe('Job "Owner" on alpha is paused: reconnect gmail at http://localhost:3000/agents/alpha/edit, then resume the job in the agent\'s Schedules tab.');
+    expect(failed.error).toBe("Reconnect gmail credentials before this scheduled job can run. The job was paused; re-enable it after reconnecting.");
     expect(failed.job.enabled).toBe(false);
     expect(deliver).toHaveBeenCalledWith(expect.objectContaining({ text: expect.stringContaining("reconnect gmail") }));
     expect(runAgent).toHaveBeenCalledWith(expect.objectContaining({ userId: "alice" }));

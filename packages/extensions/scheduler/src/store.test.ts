@@ -246,6 +246,26 @@ describe("PerAgentScheduleStore", () => {
     expect(warn).toHaveBeenCalled();
   });
 
+  it("roundtrips refusal counts without runtime state and loads legacy jobs", async () => {
+    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-scheduler-store-"));
+    const a = agent("alpha", path.join(tmpDir, "alpha"));
+    const store = new PerAgentScheduleStore([a], (candidate) => candidate.workspace);
+    const job: ScheduleJob & { state: { lastError: string } } = {
+      id: "counted", agentId: "alpha", name: "Calendar", enabled: true,
+      schedule: { cron: "* * * * *", tz: "UTC" }, payload: { message: "Sync" },
+      credentialRefusals: 2, state: { lastError: "runtime only" },
+    };
+    const legacy = { ...job };
+    delete legacy.credentialRefusals;
+    await store.saveAgentJobs("alpha", [job, { ...legacy, id: "legacy" }]);
+    const persisted = JSON.parse(await fs.readFile(path.join(a.workspace, "cron/jobs.json"), "utf8"));
+    expect(persisted.jobs[0]).toMatchObject({ credentialRefusals: 2 });
+    expect(persisted.jobs[0]).not.toHaveProperty("state");
+    const loaded = await store.load();
+    expect(loaded.jobs[0]?.credentialRefusals).toBe(2);
+    expect(loaded.jobs[1]?.credentialRefusals).toBeUndefined();
+  });
+
   it("writes only target agent jobs", async () => {
     tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-scheduler-store-"));
     const a = agent("alpha", path.join(tmpDir, "alpha"));
