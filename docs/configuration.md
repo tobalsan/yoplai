@@ -72,12 +72,14 @@ Common fields:
 | `discord`, `slack`, `telegram`, `irc` | Supported per-agent transport config                        |
 | `heartbeat`, `dream`, `webhooks`      | Periodic and webhook-triggered behavior                     |
 | `reflect`                             | `true` or `{ enabled, cadence, provider, model, timeoutMs }`. Adds a self-improvement prompt so the agent saves lessons in the same turn. Off by default. Only `enabled` has an effect now; the other fields are reserved |
-| `extensions`                          | Per-agent tool-extension opt-ins/overrides                  |
+| `extensions`                          | Per-agent extension opt-ins/overrides and channel settings |
 | `globalSkills`                        | Include global agent skills when true                       |
 | `sandbox`                             | Per-agent Docker isolation settings                         |
 | `onecliToken`                         | Per-agent OneCLI proxy token, usually `$env:...`            |
 
 On first run Yoplai creates missing `AGENTS.md` and `USER.md` without overwriting existing files. Custom prompt files such as `PERSONA.md` in the example above must be created explicitly and listed in `system_files`.
+
+Mattermost, Slack and Telegram settings may also live under `extensions.mattermost`, `extensions.slack` and `extensions.telegram` in `agent.yaml`. The loader validates these blocks and exposes them to the per-agent bots; an existing top-level channel block takes precedence. A nested `enabled: false` prevents that bot from starting after a restart, unless a top-level block exists. Incomplete settings leave the agent available and log only the invalid field paths. Tokens may remain `$env:NAME` references resolved from the agent's `.env`; no file migration is needed.
 
 Pi turns that fail on a transient provider error (rate limit, 5xx, queue/backpressure hint, connection reset) are retried in place, on the host and inside the sandbox alike. Retry delays double after each attempt unless the provider supplies a `Retry-After` hint. Eligibility is per turn, not per run: only the failed assistant turn is dropped from the model context, then the run resumes in place, so tool calls and results from earlier turns are preserved and the user message is never re-sent. Partial text streamed by the failed turn is discarded with it. The dropped turn stays in the session transcript for history.
 
