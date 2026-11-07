@@ -1,6 +1,7 @@
 import type {
   AgentConfig,
   DeliveryDestination,
+  DeliveryOffer,
   DeliverySink,
   ExtensionAgentTool,
   ExtensionContext,
@@ -92,6 +93,23 @@ export function checkTarget(
   return route.agent === agent.id
     ? undefined
     : "Mattermost channel is routed to a different agent.";
+}
+
+export async function getMattermostDeliveryOffer(
+  agent: AgentConfig,
+  config: GatewayConfig
+): Promise<Omit<DeliveryOffer, "target"> | undefined> {
+  let source: ResolvedBot["source"];
+  try {
+    ({ source } = resolveBot(agent));
+  } catch {
+    return undefined;
+  }
+  const channels = source === "agent"
+    ? agent.mattermost?.channels
+    : componentConfig(config)?.channels;
+  if (!Object.keys(channels ?? {}).some((channel) => !checkTarget(agent, config, source, { channel }))) return undefined;
+  return { label: "Mattermost", channel: true };
 }
 
 const MATTERMOST_ID = /^[a-z0-9]{26}$/;

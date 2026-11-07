@@ -19,6 +19,7 @@ import {
 } from "./bot-registry.js";
 import {
   createMattermostDeliverySink,
+  getMattermostDeliveryOffer,
   mattermostAgentTools,
 } from "./agent-tools.js";
 
@@ -126,7 +127,8 @@ const mattermostExtension: Extension = {
   async start(ctx) {
     unregisterDeliverySink = ctx.registerDeliverySink(
       "mattermost",
-      createMattermostDeliverySink(ctx)
+      createMattermostDeliverySink(ctx),
+      ({ agent }) => getMattermostDeliveryOffer(agent, ctx.getConfig())
     );
 
     const rawConfig = ctx.getConfig().extensions?.mattermost;

@@ -286,6 +286,155 @@ describe("Mattermost bot", () => {
     expect(ctx.runs).toHaveLength(3);
   });
 
+  it("answers untagged human replies under its own root with thread context and one session", async () => {
+    const ctx = await startComponent({
+      [CHANNEL]: { agent: "support", threadUnlock: true },
+    });
+    const root = server.addPost({
+      id: "report000000000000000000001",
+      channel_id: CHANNEL,
+      user_id: BOT.id,
+      message: "Scheduled report: seven requests resolved.",
+      create_at: 1_700_000_000_000,
+    });
+    sockets.last().posted(userPost("Which requests?", { root_id: root.id }), 1);
+    await flush();
+
+    expect(ctx.runs).toHaveLength(1);
+    expect(ctx.runs[0]).toMatchObject({
+      agentId: "support",
+      message: "Which requests?",
+      sessionKey:
+        "mattermost:chan00000000000000000000001:report000000000000000000001",
+    });
+    expect(ctx.runs[0].context).toMatchObject({
+      kind: "mattermost",
+      blocks: expect.arrayContaining([
+        {
+          type: "thread_starter",
+          author: "@yoplai",
+          content: "Scheduled report: seven requests resolved.",
+          timestamp: 1_700_000_000_000,
+        },
+      ]),
+    });
+    expect(server.created()).toEqual([
+      { channel_id: CHANNEL, message: "agent-ok", root_id: root.id },
+    ]);
+
+    sockets.last().posted(userPost("And next week?", { root_id: root.id }), 2);
+    await flush();
+    expect(ctx.runs.map((run) => run.message)).toEqual([
+      "Which requests?",
+      "And next week?",
+    ]);
+    expect(ctx.runs[1].sessionId).toBe(ctx.runs[0].sessionId);
+    expect(server.created().map((post) => post.root_id)).toEqual([
+      root.id,
+      root.id,
+    ]);
+  });
+
+  it.each([false, undefined])(
+    "requires a mention under its own root when threadUnlock is %s",
+    async (threadUnlock) => {
+      const ctx = await startComponent({
+        [CHANNEL]: { agent: "support", threadUnlock },
+      });
+      const root = userPost("Agent report", { user_id: BOT.id });
+      sockets.last().posted(userPost("Follow-up", { root_id: root.id }), 1);
+      await flush();
+      expect(ctx.runs).toHaveLength(0);
+      expect(server.created()).toHaveLength(0);
+    }
+  );
+
+  it.each([
+    { user_id: ALICE.id, props: {} },
+    { user_id: "otherbot000000000000000001", props: { from_bot: "true" } },
+  ])(
+    "requires a mention under another author's root ($user_id)",
+    async (author) => {
+      const ctx = await startComponent({
+        [CHANNEL]: { agent: "support", threadUnlock: true },
+      });
+      const root = userPost("Another author's report", author);
+      sockets.last().posted(userPost("Follow-up", { root_id: root.id }), 1);
+      await flush();
+      expect(ctx.runs).toHaveLength(0);
+      expect(server.created()).toHaveLength(0);
+    }
+  );
+
+  it("requires bots to mention even under its own root with threadUnlock", async () => {
+    const ctx = await startComponent(
+      { [CHANNEL]: { agent: "support", threadUnlock: true } },
+      { allowBots: true }
+    );
+    const root = userPost("Agent report", { user_id: BOT.id });
+    sockets.last().posted(
+      userPost("Bot follow-up", {
+        root_id: root.id,
+        user_id: "otherbot000000000000000001",
+        props: { from_bot: "true" },
+      }),
+      1
+    );
+    await flush();
+    expect(ctx.runs).toHaveLength(0);
+    expect(server.created()).toHaveLength(0);
+  });
+
+  it("accepts replies to agent-created threads even with threadUnlock disabled", async () => {
+    const ctx = await startComponent({
+      [CHANNEL]: { agent: "support", threadUnlock: false },
+    });
+    const root = userPost("Agent-created thread", { user_id: BOT.id });
+    withThreadBindings(dataDir, (store) =>
+      store.setBinding({
+        channelId: CHANNEL,
+        rootId: root.id,
+        agentId: "support",
+        sessionId: "s-agent",
+        source: "agent",
+      })
+    );
+    sockets.last().posted(userPost("Follow-up", { root_id: root.id }), 1);
+    await flush();
+    expect(ctx.runs.map((run) => run.message)).toEqual(["Follow-up"]);
+    expect(server.created()).toEqual([
+      { channel_id: CHANNEL, message: "agent-ok", root_id: root.id },
+    ]);
+  });
+
+  it.each([404, 500])(
+    "fails closed on root fetch %s and still accepts a later mention",
+    async (status) => {
+      const ctx = await startComponent({
+        [CHANNEL]: { agent: "support", threadUnlock: true },
+      });
+      const root = userPost("Agent report", { user_id: BOT.id });
+      server.overrides.push({
+        match: (method, path) =>
+          method === "GET" && path === `/posts/${root.id}`,
+        reply: { status, body: { message: "Root unavailable" } },
+      });
+      sockets.last().posted(userPost("Follow-up", { root_id: root.id }), 1);
+      await flush();
+      expect(ctx.runs).toHaveLength(0);
+      expect(server.created()).toHaveLength(0);
+
+      sockets
+        .last()
+        .posted(userPost("@yoplai try again", { root_id: root.id }), 2);
+      await flush();
+      expect(ctx.runs.map((run) => run.message)).toEqual(["try again"]);
+      expect(server.created()).toEqual([
+        { channel_id: CHANNEL, message: "agent-ok", root_id: root.id },
+      ]);
+    }
+  );
+
   it("routes DMs to the dm agent's main session and replies flat", async () => {
     const ctx = await startComponent();
     const dm = server.addPost({
@@ -740,6 +889,46 @@ describe("Mattermost bot", () => {
     expect(ctx.runs.length).toBeLessThanOrEqual(1);
     expect(logs.length).toBeGreaterThan(0);
     expect(logs.join("\n")).not.toContain(TOKEN);
+  });
+
+  it("unlocks its own root posts with a per-agent bot account", async () => {
+    const agentBot = {
+      id: "supportbot00000000000000001",
+      username: "support-bot",
+    };
+    server.users.set(agentBot.id, agentBot);
+    server.overrides.push({
+      match: (method, path) => method === "GET" && path === "/users/me",
+      reply: { body: agentBot },
+    });
+    const config = gatewayConfig(undefined, {
+      mattermost: {
+        url: URL_,
+        token: TOKEN,
+        channels: { [CHANNEL]: { threadUnlock: true } },
+      },
+    });
+    const ctx = buildFakeContext({ config, dataDir });
+    setMattermostContext(ctx);
+    bot = createMattermostAgentBot(config.agents[0], {
+      fetch: server.fetch,
+      createSocket: sockets.create,
+    });
+    const started = bot!.start();
+    await flush();
+    sockets.last().open();
+    sockets.last().hello("conn-1");
+    await started;
+
+    const root = userPost("Per-agent report", { user_id: agentBot.id });
+    sockets.last().posted(userPost("Follow-up", { root_id: root.id }), 1);
+    await flush();
+    expect(ctx.runs.map((run) => [run.agentId, run.message])).toEqual([
+      ["support", "Follow-up"],
+    ]);
+    expect(server.created()).toEqual([
+      { channel_id: CHANNEL, message: "agent-ok", root_id: root.id },
+    ]);
   });
 
   it("serves only the agent's own channels with a per-agent bot", async () => {

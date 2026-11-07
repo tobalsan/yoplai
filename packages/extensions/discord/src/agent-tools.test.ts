@@ -3,9 +3,11 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AgentConfig, GatewayConfig } from "@yoplai/shared";
+import { DiscordConfigSchema } from "@yoplai/shared";
 import {
   clearDiscordClientCache,
   discordAgentTools,
+  getDiscordDeliveryOffer,
   sendDiscordDelivery,
 } from "./agent-tools.js";
 import { clearActiveBots, registerActiveBot } from "./bot-registry.js";
@@ -18,7 +20,7 @@ type MockRest = {
   post: ReturnType<typeof vi.fn>;
 };
 
-function agent(id: string, discord?: AgentConfig["discord"]): AgentConfig {
+function agent(id: string, discord?: Partial<AgentConfig["discord"]>): AgentConfig {
   return {
     id,
     name: id,
@@ -26,7 +28,7 @@ function agent(id: string, discord?: AgentConfig["discord"]): AgentConfig {
     workspaceDir: `/tmp/${id}`,
     model: { provider: "test", model: "test" },
     queueMode: "queue",
-    discord,
+    discord: discord ? DiscordConfigSchema.parse(discord) : undefined,
   };
 }
 
@@ -63,6 +65,24 @@ describe("discord agent tools", () => {
     clearDiscordContext();
     vi.unstubAllGlobals();
     vi.clearAllMocks();
+  });
+
+  it("offers channel delivery only when the agent can resolve an eligible client", async () => {
+    expect(await getDiscordDeliveryOffer(agent("alpha"), config())).toBeUndefined();
+    const rest = { get: vi.fn(), post: vi.fn() };
+    registerMockBot("discord", rest);
+    expect(await getDiscordDeliveryOffer(agent("alpha"), config())).toBeUndefined();
+    registerMockBot("alpha", rest);
+    expect(await getDiscordDeliveryOffer(agent("alpha"), config())).toEqual({ label: "Discord", channel: true });
+  });
+
+  it("offers a shared Discord client only with a channel accepted by its routing rules", async () => {
+    const shared = config({ token: "fake-shared-token", channels: { "channel-own": { agent: "alpha" }, "channel-other": { agent: "beta" } } });
+    expect(await getDiscordDeliveryOffer(agent("alpha"), shared)).toEqual({ label: "Discord", channel: true });
+    expect(await getDiscordDeliveryOffer(agent("gamma"), shared)).toBeUndefined();
+    expect(await getDiscordDeliveryOffer(agent("gamma", { channelId: "channel-other" }), shared)).toBeUndefined();
+    expect(await getDiscordDeliveryOffer(agent("gamma", { broadcastToChannel: "channel-broadcast" }), shared)).toEqual({ label: "Discord", channel: true });
+    expect(await getDiscordDeliveryOffer(agent("gamma", { token: "fake-agent-token" }), config())).toEqual({ label: "Discord", channel: true });
   });
 
   it("exposes create_forum_thread, send_message, list_channels, and list_users", () => {

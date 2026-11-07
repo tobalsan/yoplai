@@ -1,11 +1,13 @@
 import fs from "node:fs/promises";
 import { randomUUID } from "node:crypto";
+import { clearTimeout, setTimeout } from "node:timers";
 import { resolveAgentConfigRoute, resolveBindHost, sanitizeAgentToolName } from "@yoplai/shared";
 import type {
   DeliverySink,
   UserNotifier,
   AgentConfig,
   ExtensionAgentTool,
+  DeliveryOfferProvider,
   Extension,
   ExtensionContext,
   AgentStreamEvent,
@@ -86,7 +88,8 @@ export function createExtensionContext(
   // Host-owned delivery sink registry. Extensions register in `start` and drop
   // their entry in `stop` via the returned unregister, so a restart re-registers
   // cleanly instead of leaving a stale sink behind.
-  const deliverySinks = new Map<string, DeliverySink>();
+  const deliverySinks = new Map<string, { sink: DeliverySink }>();
+  const deliveryOffers = new Map<string, DeliveryOfferProvider>();
   const userNotifiers = new Map<string, UserNotifier>();
   let credentialStore: CredentialStore | undefined;
   const getCredentialStore = () => credentialStore ??= new CredentialStore();
@@ -235,18 +238,23 @@ export function createExtensionContext(
         size: metadata.size,
       };
     },
-    registerDeliverySink: (id: string, sink: DeliverySink) => {
+    registerDeliverySink: (id: string, sink: DeliverySink, offer?: DeliveryOfferProvider) => {
       if (deliverySinks.has(id)) {
         console.warn(`Delivery sink "${id}" already registered; replacing it`);
       }
-      deliverySinks.set(id, sink);
+      const entry = { sink };
+      deliverySinks.set(id, entry);
+      if (offer) deliveryOffers.set(id, offer);
+      else deliveryOffers.delete(id);
       return () => {
         // Only drop our own entry: a replacement registration must survive the
         // replaced extension's `stop`.
-        if (deliverySinks.get(id) === sink) deliverySinks.delete(id);
+        if (deliverySinks.get(id) === entry) {
+          deliverySinks.delete(id);
+          deliveryOffers.delete(id);
+        }
       };
     },
-    getDeliverySink: (id: string) => deliverySinks.get(id),
     registerUserNotifier: (id, notifier) => {
       if (userNotifiers.has(id)) {
         console.warn(`User notifier "${id}" already registered; replacing it`);
@@ -280,6 +288,28 @@ export function createExtensionContext(
       );
       if (!matched) return undefined;
       return resolveAgentConfigRoute(matched.configRoute, agentId) ?? `/agents/${encodeURIComponent(agentId)}/extensions/${encodeURIComponent(matched.id)}${matched.oauth ? "" : "/config"}`;
+    },
+    getDeliverySink: (id: string) => deliverySinks.get(id)?.sink,
+    getDeliveryOffers: async (agent, { userId }) => {
+      const config = loadConfig();
+      const offers = await Promise.all([...deliveryOffers].map(async ([target, offer]) => {
+        const extensionConfig = config.extensions?.[target];
+        if (agent.extensions?.[target]?.enabled === false ||
+          (isPlainObject(extensionConfig) && extensionConfig.enabled === false)) return undefined;
+        let timeout: ReturnType<typeof setTimeout> | undefined;
+        try {
+          const result = await Promise.race([
+            offer({ agent, userId }),
+            new Promise<undefined>((resolve) => { timeout = setTimeout(() => resolve(undefined), 250); }),
+          ]);
+          return result ? { ...result, target } : undefined;
+        } catch {
+          return undefined;
+        } finally {
+          clearTimeout(timeout);
+        }
+      }));
+      return offers.filter((offer) => offer !== undefined);
     },
     subscribe: (event: string, handler: (payload: unknown) => void) => {
       switch (event) {

@@ -1,6 +1,7 @@
 import type {
   AgentConfig,
   DeliveryDestination,
+  DeliveryOffer,
   DiscordComponentConfig,
   ExtensionAgentTool,
   GatewayConfig,
@@ -240,6 +241,18 @@ function resolveDiscordClient(
 
 export function clearDiscordClientCache(): void {
   clientCache.clear();
+}
+
+export async function getDiscordDeliveryOffer(
+  agent: AgentConfig,
+  config: GatewayConfig
+): Promise<Omit<DeliveryOffer, "target"> | undefined> {
+  const resolved = resolveDiscordClient(agent, config);
+  if (!resolved) return undefined;
+  if (resolved.source === "component" && !configuredChannelIds(agent, config).some(
+    (channel) => !validateComponentSendTarget(agent, config, { channel, text: "" })
+  )) return undefined;
+  return { label: "Discord", channel: true };
 }
 
 function isMessageChannel(type: number | undefined): boolean {

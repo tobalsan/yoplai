@@ -21,6 +21,7 @@ import {
   clearSlackClientCache,
   createSlackDeliverySink,
   createSlackUserNotifier,
+  getSlackDeliveryOffer,
   slackAgentTools,
 } from "./agent-tools.js";
 import {
@@ -165,7 +166,8 @@ const slackExtension: Extension = {
     unregisterUserNotifier = ctx.registerUserNotifier("slack", createSlackUserNotifier(ctx));
     unregisterDeliverySink = ctx.registerDeliverySink(
       "slack",
-      createSlackDeliverySink(ctx)
+      createSlackDeliverySink(ctx),
+      ({ agent, userId }) => getSlackDeliveryOffer(agent, ctx.getConfig(), userId)
     );
   },
   async stop() {

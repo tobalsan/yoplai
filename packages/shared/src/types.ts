@@ -1009,8 +1009,8 @@ const MattermostUrlSchema = z.union([
 export const MattermostExtensionChannelConfigSchema = z.object({
   agent: z.string().min(1),
   requireMention: z.boolean().optional(),
-  // Once the bot has answered in a thread, later replies in that thread reach
-  // it without a mention. Off by default, like Slack's threadUnlock.
+  // Human replies need no mention in threads the bot has answered in or whose
+  // root it authored (job deliveries, send_message, notify). Off by default.
   threadUnlock: z.boolean().optional(),
   users: z.array(z.string()).optional(),
 });
@@ -1505,6 +1505,19 @@ export type CredentialConnectHints = {
   displayName?: string;
 };
 
+/** Destinations a sink can offer to this agent's requester without a network lookup. */
+export type DeliveryOffer = {
+  target: string;
+  label: string;
+  dm?: { user: string; label?: string };
+  channel?: boolean;
+};
+
+export type DeliveryOfferProvider = (input: {
+  agent: AgentConfig;
+  userId?: string;
+}) => Promise<Omit<DeliveryOffer, "target"> | undefined>;
+
 export interface CredentialKey {
   agentId: string;
   integration: string;
@@ -1698,11 +1711,12 @@ export interface ExtensionContext {
 
   // Delivery sinks (host-owned registry; comm extensions register in `start`
   // and unregister in `stop` with the returned function)
-  registerDeliverySink(id: string, sink: DeliverySink): () => void;
+  registerDeliverySink(id: string, sink: DeliverySink, offer?: DeliveryOfferProvider): () => void;
   getDeliverySink(id: string): DeliverySink | undefined;
   registerUserNotifier(id: string, notifier: UserNotifier): () => void;
   getUserNotifiers(): Map<string, UserNotifier>;
   resolveConnectPath?(agentId: string, hints: CredentialConnectHints): Promise<string | undefined>;
+  getDeliveryOffers?(agent: AgentConfig, requester: { userId?: string }): Promise<DeliveryOffer[]>;
 
   // Events
   subscribe(event: string, handler: (payload: unknown) => void): () => void;

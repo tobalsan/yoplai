@@ -203,6 +203,8 @@ Key rules:
 
 ## Runtime data
 
+Scheduler delivery offers are rebuilt per run through optional `registerDeliverySink(id, sink, offer)` / `getDeliveryOffers(agent, { userId })`. The gateway skips disabled, failing or slow providers. Scheduler prompt guidance offers requester-paired Slack DMs for owner jobs and configured channel targets for team jobs; no compatible offer means no question. Offers use active bots/config credentials without remote API calls or agent tool env. They do not validate job destinations server-side.
+
 Scheduler script-only and gated jobs receive `YOPLAI_TOOL_URL`, `YOPLAI_TOOL_TOKEN`,
 `YOPLAI_AGENT_ID`, `YOPLAI_SESSION_ID`, and `YOPLAI_RUN_ID` through optional
 `ExtensionContext.mintToolToken`. They call `POST /internal/tools` with

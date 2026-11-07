@@ -8,6 +8,7 @@ import {
   type ExtensionAgentTool,
   type ExtensionContext,
   type ScheduleAlert,
+  type DeliveryOffer,
 } from "@yoplai/shared";
 import { z } from "zod";
 import type { Context, Hono } from "hono";
@@ -111,6 +112,24 @@ const credentialModeGuidance =
   'Mine (owner) is private to its owner and uses personal credentials with team fallback; Team (team) is visible and editable by everyone with agent access and uses team credentials only. ' +
   'Choose team for channel delivery, "for the team"/"everyone", or shared routines; choose owner for DM delivery, personal data ("my inbox", "my Drive"), or reminders. ' +
   'When unclear, ask: "Private to you, or shared with the team?" After creation say "Created as a private job" or "Shared with the team". Defaults to owner when signed in; never share by accident.';
+
+export function buildDeliveryGuidance(offers: DeliveryOffer[]): string | undefined {
+  const owner = offers.flatMap((offer) => offer.dm
+    ? [`- DM to you on ${offer.label}: \`${JSON.stringify({ target: offer.target, user: offer.dm.user })}\``]
+    : []);
+  const team = offers.filter((offer) => offer.channel).map((offer) =>
+    `- Team channel on ${offer.label}: target \`${offer.target}\`; ask the user which channel, never guess an id.`);
+  if (!owner.length && !team.length) return undefined;
+  return [
+    'Before creating a job with no deliver, ask once "Do you want the results posted somewhere?" unless the user already named a destination or already declined. Do not ask again in this conversation after a decline; create without deliver.',
+    "For update_job, apply the same single ask only when the job has no deliver and the change affects payload, schedule or credentialMode; not for name or enabled changes alone.",
+    "Only ask when an option fits the job's credentialMode: owner (private) jobs may use DM options only; team jobs may use channel options only. Never change the credentialMode to make a destination fit.",
+    owner.length ? `Owner (private) options:\n${owner.join("\n")}` : "Owner (private) options: none; do not ask, create without deliver.",
+    team.length ? `Team options:\n${team.join("\n")}` : "Team options: none; do not ask, create without deliver.",
+    "A delivery target receives every run's result, not only errors (a silent tick or empty script stdout delivers nothing; errors always deliver).",
+    "Offer nothing outside this list. If no option fits the job's credentialMode, do not ask; proceed without deliver.",
+  ].join("\n");
+}
 
 async function creatorDisplayName(userId: string): Promise<string | undefined> {
   try {
@@ -233,7 +252,7 @@ function schedulerAgentTools(): ExtensionAgentTool[] {
                 target: {
                   type: "string",
                   description:
-                    'Delivery sink id, e.g. "slack", "telegram", "discord", "mattermost".',
+                    "Delivery sink id from the offered list in the system prompt.",
                 },
                 channel: { type: "string" },
                 user: { type: "string" },
@@ -241,7 +260,7 @@ function schedulerAgentTools(): ExtensionAgentTool[] {
               required: ["target"],
             },
             description:
-              "Destinations the runtime pushes this job's result to after each run: agent job or woke " +
+              "Destinations receive every run's result, not only errors: agent job or woke " +
               "gated run delivers the response, script-only delivers trimmed stdout (nothing when empty), " +
               "a silent tick delivers nothing, and any error always delivers an alert. Each entry needs " +
               "target and exactly one of channel or user.",
@@ -349,7 +368,7 @@ function schedulerAgentTools(): ExtensionAgentTool[] {
                 target: {
                   type: "string",
                   description:
-                    'Delivery sink id, e.g. "slack", "telegram", "discord", "mattermost".',
+                    "Delivery sink id from the offered list in the system prompt.",
                 },
                 channel: { type: "string" },
                 user: { type: "string" },
@@ -358,7 +377,8 @@ function schedulerAgentTools(): ExtensionAgentTool[] {
             },
             description:
               "Replaces the job's whole delivery list. Pass an empty array to clear all delivery targets; " +
-              "omit this field to leave the current list unchanged. Each entry needs target and exactly " +
+              "omit this field to leave the current list unchanged. Targets receive every run's result, not only errors " +
+              "(a silent tick or empty script stdout delivers nothing; errors always deliver). Each entry needs target and exactly " +
               "one of channel or user.",
           },
           model: {
@@ -568,9 +588,13 @@ const schedulerExtension: Extension = {
     if (context?.config.extensions?.scheduler?.enabled === false) return [];
     return schedulerAgentTools();
   },
-  getSystemPromptContributions(_agent, context) {
+  async getSystemPromptContributions(agent, context) {
     if (context?.config.extensions?.scheduler?.enabled === false) return undefined;
-    return "Scheduled jobs: " + credentialModeGuidance;
+    const prompt = "Scheduled jobs: " + credentialModeGuidance;
+    if (!context || !hasSchedulerContext()) return prompt;
+    const offers = await getSchedulerContext().getDeliveryOffers?.(agent, { userId: context.userId }) ?? [];
+    const guidance = buildDeliveryGuidance(offers);
+    return guidance ? `${prompt}\n\n${guidance}` : prompt;
   },
   registerRoutes(app: Hono) {
     app.get("/schedule-alerts", async (c) => {

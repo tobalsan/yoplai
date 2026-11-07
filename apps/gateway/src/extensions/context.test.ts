@@ -578,6 +578,97 @@ describe("createExtensionContext delivery sink registry", () => {
   });
 });
 
+describe("createExtensionContext delivery offers", () => {
+  let tmpDir: string;
+  let previousHome: string | undefined;
+
+  beforeEach(async () => {
+    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-offers-"));
+    previousHome = process.env.YOPLAI_HOME;
+    process.env.YOPLAI_HOME = tmpDir;
+    vi.resetModules();
+    const { writeTestV3Config } = await import("../test-utils/v3-config.js");
+    await writeTestV3Config(tmpDir, { agents: [{ id: "delivery-agent" }] });
+  });
+
+  afterEach(async () => {
+    vi.restoreAllMocks();
+    if (previousHome === undefined) delete process.env.YOPLAI_HOME;
+    else process.env.YOPLAI_HOME = previousHome;
+    await fs.rm(tmpDir, { recursive: true, force: true });
+  });
+
+  async function context() {
+    const { createExtensionContext } = await import("./context.js");
+    const { loadConfig } = await import("../config/index.js");
+    const config = loadConfig();
+    return { ctx: createExtensionContext(config), agent: config.agents[0]! };
+  }
+
+  it("returns requester-specific offers and omits sinks without an offer", async () => {
+    const { ctx, agent } = await context();
+    ctx.registerDeliverySink("unadvertised", async () => {});
+    ctx.registerDeliverySink("slack", async () => {}, async ({ agent, userId }) => ({
+      label: agent.id === "delivery-agent" ? "Slack" : "Other",
+      dm: userId === "user-fixture" ? { user: "U_FIXTURE" } : undefined,
+      channel: true,
+    }));
+
+    expect(await ctx.getDeliveryOffers!(agent, { userId: "user-fixture" })).toEqual([
+      { target: "slack", label: "Slack", dm: { user: "U_FIXTURE" }, channel: true },
+    ]);
+  });
+
+  it("keeps usable offers when another provider throws or returns nothing", async () => {
+    const { ctx, agent } = await context();
+    ctx.registerDeliverySink("broken", async () => {}, async () => { throw new Error("Unavailable"); });
+    ctx.registerDeliverySink("unreachable", async () => {}, async () => undefined);
+    ctx.registerDeliverySink("telegram", async () => {}, async () => ({ label: "Telegram", channel: true }));
+
+    expect(await ctx.getDeliveryOffers!(agent, {})).toEqual([
+      { target: "telegram", label: "Telegram", channel: true },
+    ]);
+  });
+
+  it("returns usable offers even when another provider never settles", async () => {
+    const { ctx, agent } = await context();
+    ctx.registerDeliverySink("hung", async () => {}, () => new Promise(() => {}));
+    ctx.registerDeliverySink("telegram", async () => {}, async () => ({ label: "Telegram", channel: true }));
+
+    expect(await ctx.getDeliveryOffers!(agent, {})).toEqual([
+      { target: "telegram", label: "Telegram", channel: true },
+    ]);
+  }, 1000);
+
+  it.each(["agent", "gateway"])("omits extensions explicitly disabled for the %s", async (scope) => {
+    const { writeTestV3Config } = await import("../test-utils/v3-config.js");
+    await writeTestV3Config(tmpDir, {
+      agents: [{ id: "delivery-agent", extraYaml: scope === "agent" ? "extensions:\n  slack:\n    enabled: false" : undefined }],
+      extensions: scope === "gateway" ? { slack: { enabled: false, token: "fixture-token", appToken: "fixture-app" } } : undefined,
+    });
+    const { ctx, agent } = await context();
+    ctx.registerDeliverySink("slack", async () => {}, async () => ({ label: "Slack", channel: true }));
+
+    expect(await ctx.getDeliveryOffers!(agent, {})).toEqual([]);
+  });
+
+  it("keeps a replacement offer after old unregister and removes it with its own unregister", async () => {
+    const { ctx, agent } = await context();
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    const sink = async () => {};
+    const unregisterOld = ctx.registerDeliverySink("slack", sink, async () => ({ label: "Old", channel: true }));
+    const unregisterCurrent = ctx.registerDeliverySink("slack", sink, async () => ({ label: "Slack", dm: { user: "U_NEW" } }));
+    unregisterOld();
+    expect(await ctx.getDeliveryOffers!(agent, {})).toEqual([
+      { target: "slack", label: "Slack", dm: { user: "U_NEW" } },
+    ]);
+    expect(ctx.getDeliverySink("slack")).toBe(sink);
+    unregisterCurrent();
+    expect(await ctx.getDeliveryOffers!(agent, {})).toEqual([]);
+    expect(ctx.getDeliverySink("slack")).toBeUndefined();
+  });
+});
+
 describe("updateAgentExtensionConfig host API", () => {
   afterEach(() => {
     vi.resetModules();

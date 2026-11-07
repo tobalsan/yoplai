@@ -1,5 +1,6 @@
 import type {
   AgentConfig,
+  DeliveryOffer,
   ExtensionAgentTool,
   GatewayConfig,
   TelegramAgentConfig,
@@ -38,6 +39,14 @@ function resolveTelegramToken(
     | TelegramComponentConfig
     | undefined;
   return component?.token ?? env?.TELEGRAM_TOKEN;
+}
+
+export async function getTelegramDeliveryOffer(
+  agent: AgentConfig
+): Promise<Omit<DeliveryOffer, "target"> | undefined> {
+  return getActiveBot(agent.id) ?? getActiveBot("telegram")
+    ? { label: "Telegram", channel: true }
+    : undefined;
 }
 
 /**

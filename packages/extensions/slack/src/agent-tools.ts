@@ -1,6 +1,7 @@
 import { WebClient } from "@slack/web-api";
 import type {
   AgentConfig,
+  DeliveryOffer,
   DeliverySink,
   UserNotifier,
   ExtensionAgentTool,
@@ -13,7 +14,7 @@ import { z } from "zod";
 import { getActiveBot } from "./bot-registry.js";
 import { getSlackContextIfInitialized } from "./context.js";
 import { getSlackPairingService, SlackPairingError } from "./pairing.js";
-import { findSlackSender, getSlackWorkspace, SLACK_PAIR_LINK_PLACEHOLDER } from "./requester.js";
+import { findSlackSender, getCachedSlackWorkspace, getSlackWorkspace, SLACK_PAIR_LINK_PLACEHOLDER } from "./requester.js";
 import { withProactiveDmNotes, withThreadBindings } from "./store-scope.js";
 import { markdownToMrkdwn } from "./utils/mrkdwn.js";
 import { splitMessage } from "./utils/chunk.js";
@@ -420,6 +421,20 @@ function resolveSlackClient(
 
 export function clearSlackClientCache(): void {
   clientCache.clear();
+}
+
+export async function getSlackDeliveryOffer(
+  agent: AgentConfig,
+  config: GatewayConfig,
+  userId?: string
+): Promise<Omit<DeliveryOffer, "target"> | undefined> {
+  const client = resolveSlackClient(agent, config);
+  if (!client) return undefined;
+  const workspace = getCachedSlackWorkspace(client);
+  const pairing = userId && workspace
+    ? getSlackPairingService()?.list(userId).find((entry) => entry.workspaceId === workspace)
+    : undefined;
+  return { label: "Slack", channel: true, ...(pairing ? { dm: { user: pairing.slackUserId } } : {}) };
 }
 
 /**

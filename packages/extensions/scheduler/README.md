@@ -367,6 +367,8 @@ A script gets its own process group (POSIX `detached: true`); on timeout the sch
 
 ## Delivery (`deliver`)
 
+When creating a job without a destination, the agent asks once whether to post results, offering only destinations available to that agent and requester. Private (owner) jobs get paired Slack DM options only; team jobs get channel options and require you to name the channel. The same offer applies when changing a job's payload, schedule or credential mode, but not when renaming or pausing/resuming it. Already naming a destination or declining avoids another question; no compatible destination means no question. A destination receives every run's result, not only errors (silent ticks and empty script output send nothing; errors always send).
+
 A job may optionally push its result to comm-channel extensions, in addition to (never instead of) the
 `cron/output/<job_id>/<ts>.md` file, which stays the default and canonical record. `deliver` is a **job-level**
 field — a sibling of `payload`, not inside it — and delivery happens at the runtime level after a run resolves,

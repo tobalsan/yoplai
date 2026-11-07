@@ -67,7 +67,7 @@ A per-agent bot answers DMs only when `dm` is present.
 | `token`                        | required                | Bot access token. Always a `$env:` reference; never the literal token.                  |
 | `channels.<id>.agent`          | required (shared bot)   | Agent that answers in this channel.                                                     |
 | `channels.<id>.requireMention` | `true`                  | Answer only posts that mention the bot. With `false`, answer every post.                |
-| `channels.<id>.threadUnlock`   | `false`                 | Once the bot has answered in a thread, later replies there need no mention.             |
+| `channels.<id>.threadUnlock`   | `false`                 | Human replies need no mention in threads the bot has answered in or rooted on its own post (job deliveries, `send_message`, `notify`). |
 | `channels.<id>.users`          | everyone                | Only these senders (user IDs or usernames).                                             |
 | `dm.enabled`                   | `true` when `dm` is set | Answer direct messages.                                                                 |
 | `dm.agent`                     | —                       | Shared bot: the agent that answers DMs. Without it, DMs are ignored.                    |

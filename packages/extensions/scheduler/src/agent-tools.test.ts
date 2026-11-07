@@ -64,6 +64,51 @@ describe("scheduler agent tools", () => {
     if (tmpDir) await fs.rm(tmpDir, { recursive: true, force: true });
   });
 
+  it("offers the requester's paired Slack destination in the run prompt", async () => {
+    const alpha = agent("alpha", "/tmp/fixture-agent");
+    const config: GatewayConfig = { version: 3, agents: [alpha], sessions: { idleMinutes: 360 } };
+    setSchedulerContext({
+      ...context(config),
+      getDeliveryOffers: async (_agent, { userId }) => userId === "requester-1"
+        ? [{ target: "slack", label: "Slack", dm: { user: "U_FIXTURE_1" }, channel: true }]
+        : [],
+    });
+
+    const prompt = await schedulerExtension.getSystemPromptContributions!(alpha, { config, userId: "requester-1" });
+
+    expect(prompt).toContain('Do you want the results posted somewhere?');
+    expect(prompt).toContain('DM to you on Slack');
+    expect(prompt).toContain('"user":"U_FIXTURE_1"');
+    expect(prompt).not.toContain("discord");
+    expect(await schedulerExtension.getSystemPromptContributions!(alpha, { config, userId: "requester-2" }))
+      .not.toContain("Do you want the results posted somewhere?");
+  });
+
+  it("describes offered targets and every-run delivery in create and update tools", async () => {
+    const alpha = agent("alpha", "/tmp/fixture-agent");
+    const tools = await schedulerExtension.getAgentTools!(alpha);
+    for (const name of ["scheduler.create_job", "scheduler.update_job"]) {
+      const parameters = tools.find((tool) => tool.name === name)!.parameters;
+      expect(parameters).toMatchObject({ properties: { deliver: {
+        description: expect.stringContaining("every run's result, not only errors"),
+        items: { properties: { target: { description: "Delivery sink id from the offered list in the system prompt." } } },
+      } } });
+    }
+  });
+
+  it("preserves credential guidance during discovery and when no delivery options exist", async () => {
+    const alpha = agent("alpha", "/tmp/fixture-agent");
+    const config: GatewayConfig = { version: 3, agents: [alpha], sessions: { idleMinutes: 360 } };
+    const original = await schedulerExtension.getSystemPromptContributions!(alpha);
+    expect(original).toContain("Scheduled jobs: Mine (owner)");
+    expect(await schedulerExtension.getSystemPromptContributions!(alpha, { config })).toBe(original);
+    setSchedulerContext({ ...context(config), getDeliveryOffers: async () => [] });
+    expect(await schedulerExtension.getSystemPromptContributions!(alpha, { config })).toBe(original);
+    expect(await schedulerExtension.getSystemPromptContributions!(alpha)).toBe(original);
+    setSchedulerContext(context(config));
+    expect(await schedulerExtension.getSystemPromptContributions!(alpha, { config })).toBe(original);
+  });
+
   it("hides tools when scheduler is disabled", async () => {
     tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-scheduler-tools-"));
     const alpha = agent("alpha", path.join(tmpDir, "alpha"));
