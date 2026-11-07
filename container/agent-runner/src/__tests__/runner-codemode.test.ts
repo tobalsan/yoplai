@@ -212,6 +212,111 @@ describe("Container Pi codemode", () => {
     expect(events).toContainEqual(expect.objectContaining({ type: "tool_result", id: "codemode-parent", content: expect.stringContaining("2 tool calls in one script; cap 2") }));
   });
 
+  // ALG-602 Testing Decisions (groomed GO by Thinh, comment 7f8c870e): the
+  // real runner/Pi/bridge shows the model-visible result of the script budget
+  // and that the run survives; it misses the gateway watchdog and Docker stop.
+  describe("script time budget", () => {
+    const hang = (response: http.ServerResponse) => new Promise((resolve) => response.once("close", resolve));
+    const codemodeResult = (events: ContainerRunnerProtocolEvent[]) => {
+      const result = events.find((event) => event.type === "tool_result" && event.id === "codemode-parent");
+      if (result?.type !== "tool_result") throw new Error("Missing codemode result");
+      return result;
+    };
+    const reduced = (events: ContainerRunnerProtocolEvent[]) => {
+      return codemodeResult(events).content.match(/timeout reduced to ([\d.]+)s: turn time limit/)?.[1];
+    };
+
+    it("gives a script without options 300 seconds: trimmed only when the turn has less left", async () => {
+      const { run, respond, events } = await fixture();
+      respond([script('text("quick");'), fauxAssistantMessage("done")]);
+      await expect(run({ turnDeadlineAt: Date.now() + 303_000 })).resolves.toMatchObject({ text: "done" });
+      expect(reduced(events)).toBeUndefined();
+      events.length = 0;
+      respond([script('text("quick");'), fauxAssistantMessage("done")]);
+      await expect(run({ turnDeadlineAt: Date.now() + 299_000 })).resolves.toMatchObject({ text: "done" });
+      expect(Number(reduced(events))).toBeGreaterThan(296);
+      expect(Number(reduced(events))).toBeLessThan(298.01);
+    });
+
+    it("stops a script at the remaining turn time, notes the reduction, and continues the run", async () => {
+      const { run, respond, events } = await fixture(hang);
+      respond([script('text("batch 1 saved"); await tools.fixture_count({}); text("never");'), fauxAssistantMessage("done")]);
+      await expect(run({ turnDeadlineAt: Date.now() + 2_000 })).resolves.toMatchObject({ text: "done", aborted: false });
+      const result = codemodeResult(events);
+      expect(result).toMatchObject({ isError: true });
+      expect(result.content).toContain("Script timed out");
+      expect(result.content).toContain("batch 1 saved");
+      expect(result.content).toContain("Tool calls made before the failure (they are not undone): fixture_count (");
+      expect(result.content).not.toContain("never");
+      expect(Number(reduced(events))).toBeGreaterThan(0.5);
+      expect(Number(reduced(events))).toBeLessThan(1.01);
+    });
+
+    it("fails only the script at its own timeout_ms with the partial output and calls made", async () => {
+      const { run, respond, events } = await fixture(hang);
+      let nextRequest = "";
+      respond([
+        script('// @options: {"timeout_ms": 200}\ntext("lead 1 found"); await tools.fixture_count({}); text("never");'),
+        (context) => { nextRequest = JSON.stringify(context.messages); return fauxAssistantMessage("done"); },
+      ]);
+      await expect(run()).resolves.toMatchObject({ text: "done", aborted: false });
+      const result = codemodeResult(events);
+      expect(result).toMatchObject({ isError: true });
+      expect(result.content).toContain("Script timed out: Execution timed out after 200 ms");
+      expect(result.content).toContain("lead 1 found");
+      expect(result.content).toContain("Tool calls made before the failure (they are not undone): fixture_count (cancelled)");
+      expect(result.content).not.toContain("never");
+      expect(reduced(events)).toBeUndefined();
+      expect(nextRequest).toContain("lead 1 found");
+    });
+
+    it("keeps the script's other options when it sets the budget", async () => {
+      const { run, respond, events } = await fixture();
+      respond([script('// @options: {"max_output_tokens": 10}\ntext("row ".repeat(500));'), fauxAssistantMessage("done")]);
+      await expect(run()).resolves.toMatchObject({ text: "done" });
+      expect(codemodeResult(events).content).not.toContain("row ".repeat(500));
+    });
+
+    it("loses store() writes of a timed-out script while printed output survives", async () => {
+      const { run, respond, events } = await fixture(hang);
+      respond([
+        script('// @options: {"timeout_ms": 200}\nstore("batch", 1); text("printed batch 1"); await tools.fixture_count({});'),
+        script('text(`stored=${load("batch")}`);', "next-script"),
+        fauxAssistantMessage("done"),
+      ]);
+      await expect(run()).resolves.toMatchObject({ text: "done" });
+      expect(codemodeResult(events).content).toContain("printed batch 1");
+      expect(events).toContainEqual(expect.objectContaining({
+        type: "tool_result", id: "next-script", isError: false, content: expect.stringContaining("stored=undefined"),
+      }));
+    });
+
+    it("blocks a script when the turn has no time left", async () => {
+      const { run, respond, events, requests } = await fixture();
+      respond([script('await tools.fixture_count({}); text("ran");'), fauxAssistantMessage("done")]);
+      await expect(run({ turnDeadlineAt: Date.now() + 500 })).resolves.toMatchObject({ text: "done" });
+      expect(codemodeResult(events)).toMatchObject({ isError: true, content: "timeout reduced to 0s: turn time limit" });
+      expect(requests).toHaveLength(0);
+    });
+
+    it.each([
+      ['// @options: {timeout_ms: 200}', "@options must be valid JSON"],
+      ['// @options: {"timeout_ms": 200, "retries": 2}', "@options only supports `max_output_tokens` and `timeout_ms`; got `retries`"],
+      ['// @options: {"timeout_ms": 0}', "@options field `timeout_ms` must be a positive integer up to 2147483647"],
+      ['// @options: {"timeout_ms": 2147483648}', "@options field `timeout_ms` must be a positive integer up to 2147483647"],
+    ])("returns Pi's own source error for %s and runs nothing", async (options, error) => {
+      const { run, respond, events, requests } = await fixture();
+      respond([script(`${options}\nawait tools.fixture_count({}); text("ran");`), fauxAssistantMessage("done")]);
+      await expect(run({ turnDeadlineAt: Date.now() + 60_000 })).resolves.toMatchObject({ text: "done" });
+      const result = codemodeResult(events);
+      expect(result).toMatchObject({ isError: true });
+      expect(result.content).toContain(error);
+      expect(result.content).not.toContain("ran");
+      expect(reduced(events)).toBeUndefined();
+      expect(requests).toHaveLength(0);
+    });
+  });
+
   it.each([true, false])("sends long-job guidance only with codemode enabled, without requiring deferral (%s)", async (codemode) => {
     const { run, respond } = await fixture();
     let request = "";
@@ -226,8 +331,12 @@ describe("Container Pi codemode", () => {
       "Stop the loop on a 409, or after 3 failures in a row. Do not hide errors with an empty `.catch()`.",
       "Before a job that takes more than about 1 minute, tell the user the plan, the call count, and the time.",
       "Per script: at most 17 tool calls and 2 concurrent gateway tool calls.",
+      'Each script stops after 300 seconds by default. To raise it, make the first line `// @options: {"timeout_ms": N}` (N in milliseconds); it is cut to the time left in the turn.',
+      "A script that times out stops and its running tool calls are cancelled. Only output from `text()`, `console.log` or `image()` and files written by nested tools survive; `store()` writes are lost when a script fails.",
+      "So print or write the results after each batch, and size batches from the measured small batch.",
     ]) {
-      expect(request.includes(rule)).toBe(codemode);
+      // The request is serialized JSON, so quotes in a rule are escaped there.
+      expect(request.includes(JSON.stringify(rule).slice(1, -1))).toBe(codemode);
     }
   });
 

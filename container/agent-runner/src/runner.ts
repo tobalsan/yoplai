@@ -25,6 +25,7 @@ import { getBuiltInSkillsDir } from "./skills.js";
 import { createDeadlineBashTool } from "./bash-deadline.js";
 import { gatewayTool, type GatewayToolControls } from "./gateway-tool.js";
 import { CodemodeLimiter } from "./codemode-limiter.js";
+import { createCodemodeDeadlineExtension } from "./codemode-deadline.js";
 import {
   ContainerDeliveryEnvelopeSchema,
   DEFAULT_RETRY_BASE_DELAY_SECONDS,
@@ -491,7 +492,10 @@ export async function runAgent(
         },
         ...(toolDeferral.enabled ? [createToolSearchExtension()] : []),
         ...(input.codemode === true
-          ? [createCodemodeExtension({ mode: "on", inlineBudget: 1000, models: false })]
+          ? [
+              createCodemodeExtension({ mode: "on", inlineBudget: 1000, models: false }),
+              createCodemodeDeadlineExtension(input.turnDeadlineAt),
+            ]
           : []),
         (pi) => {
           pi.on("tool_call", (event) => {

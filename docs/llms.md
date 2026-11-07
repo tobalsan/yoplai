@@ -132,6 +132,18 @@ The same call deadlines, correlation IDs, and cancellation apply over HTTP
 and Unix-socket gateway transport. Browser CLI commands use the Bash deadline
 wrapper; terminal watchdog timeouts retain their localized failure notices.
 
+Container codemode scripts have no `timeout` argument. Their budget is the
+shared `codemodeScriptBudget(code)` rule: a valid first-line
+`// @options: {"timeout_ms": N}` (Pi's own limit, up to 2147483647 ms, no
+policy cap), else 300 seconds. The runner's `codemode-deadline.ts` `tool_call`
+handler rewrites that line's `timeout_ms` to the budget trimmed to the turn
+deadline minus one second (keeping `max_output_tokens`, reporting
+`timeout reduced to Ns: turn time limit`, blocking at 0s); invalid sources stay
+untouched so Pi returns its own source error. Pi then stops only that script
+with "Script timed out", its printed output and the nested calls made, and the
+run continues. The gateway watchdog applies the same rule plus 15 seconds as
+the run-wide backstop and ignores a top-level `timeout` for `codemode`.
+
 ## Configuration invariants
 
 Yoplai uses v3 configuration. Default config is `$YOPLAI_HOME/yoplai.json`, where `YOPLAI_HOME` defaults to `~/.yoplai`. `yoplai.json` is required; runtime does not create it automatically.
@@ -333,8 +345,11 @@ script to split work into more codemode calls and save/resume progress.
 Whenever codemode is enabled, host and container prompts advise a measured small
 batch, timeout-sized calls with saved progress, stopping on 409 or three consecutive
 failures, and telling the user the plan/count/time before jobs over about a minute.
-Container guidance includes its resolved caps. Host Pi has guidance only and
-enforces neither of these per-script caps.
+Container guidance includes its resolved caps and the script time budget
+(300 seconds by default, raised with `@options` `timeout_ms`, trimmed to the
+turn), and says that only printed output and files written by nested tools
+survive a failed script while `store()` writes are lost. Host Pi has guidance
+only, without the budget text, and enforces neither these caps nor the budget.
 
 Scripts call registered tools as `await tools.<sanitized_name>(args)` and print only the final selection with `text(...)`. Deferred tools remain callable before loading; scripts discover them with `searchTools()`. Our extension/MCP bridge tools return text: parse a known JSON text response with `JSON.parse` before accessing its fields. Raw child results remain inspectable in display history, but Pi keeps them out of the next model request. Script calls retain tool validation, handlers, cancellation and the existing invisible-tool policy. Classifier/image models are not enabled.
 

@@ -1,3 +1,4 @@
+import { codemodeScriptBudget } from "@yoplai/shared";
 import type { HistoryEvent } from "../types.js";
 
 export type ToolDeadline = {
@@ -18,18 +19,20 @@ export class ToolDeadlines {
         if (this.seen.has(id)) return;
         this.seen.add(id);
       }
-      const timeout =
-        typeof event.args === "object" &&
-        event.args !== null &&
-        "timeout" in event.args
-          ? event.args.timeout
-          : undefined;
+      const args =
+        typeof event.args === "object" && event.args !== null
+          ? (event.args as Record<string, unknown>)
+          : {};
+      const timeout = args.timeout;
+      // codemode has no `timeout` argument: its budget is the script's own @options line.
       const budget =
-        typeof timeout === "number" &&
-        Number.isFinite(timeout) &&
-        timeout > 0
-          ? timeout
-          : 300;
+        event.name === "codemode"
+          ? codemodeScriptBudget(typeof args.code === "string" ? args.code : "")
+          : typeof timeout === "number" &&
+              Number.isFinite(timeout) &&
+              timeout > 0
+            ? timeout
+            : 300;
       const startedAt = Date.now();
       this.calls.set(id, {
         name: event.name,
