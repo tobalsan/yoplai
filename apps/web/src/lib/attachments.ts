@@ -66,6 +66,22 @@ export function getFileIcon(mimeType: string): string {
   return "FILE";
 }
 
+export function classifyFile(file: { filename: string; mimeType: string }): "html" | "markdown" | "pdf" | "image" | "svg" | "text" | "other" {
+  let mime = file.mimeType?.split(";")[0].trim().toLowerCase();
+  if (!mime || mime === "application/octet-stream") {
+    const ext = file.filename.split(".").at(-1)?.toLowerCase() ?? "";
+    const types: Record<string, string> = { pdf: "application/pdf", html: "text/html", htm: "text/html", md: "text/markdown", markdown: "text/markdown", json: "application/json", csv: "text/csv", svg: "image/svg+xml", png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", gif: "image/gif", webp: "image/webp" };
+    mime = types[ext] || (/^(txt|log|[cm]?[jt]sx?|py|rb|sh|bash|css|xml|ya?ml|toml|sql|rs|go|java|c|cpp|h)$/.test(ext) ? "text/plain" : "application/octet-stream");
+  }
+  if (mime === "text/html" || mime === "application/xhtml+xml") return "html";
+  if (mime === "text/markdown") return "markdown";
+  if (mime === "application/pdf") return "pdf";
+  if (mime === "image/svg+xml") return "svg";
+  if (/^image\/(png|jpeg|gif|webp)$/.test(mime)) return "image";
+  if (mime.startsWith("text/") || /^(application\/(json|javascript|x-javascript|xml|yaml|x-yaml|sql|toml|x-sh|typescript))$/.test(mime) || /\+(json|xml)$/.test(mime)) return "text";
+  return "other";
+}
+
 function getAttachmentFileId(attachment: FileAttachment): string {
   const name = attachment.path.split(/[\\/]/).pop() ?? attachment.path;
   return name.replace(/\.[^.]+$/, "");

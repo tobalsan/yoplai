@@ -6,8 +6,8 @@ import { createSignal } from "solid-js";
 import type { McpAppFile } from "@yoplai/shared/types";
 import { McpAppView } from "./McpAppView";
 
-const { loadView, loadData, relay, log } = vi.hoisted(() => ({ loadView: vi.fn(), loadData: vi.fn(), relay: vi.fn(), log: vi.fn() }));
-vi.mock("../../api/mcp-apps", () => ({ loadMcpAppView: loadView, loadMcpAppData: loadData, relayMcpAppRequest: relay, logMcpAppEvent: log }));
+const { loadView, loadData, openFile, relay, log } = vi.hoisted(() => ({ loadView: vi.fn(), loadData: vi.fn(), openFile: vi.fn(), relay: vi.fn(), log: vi.fn() }));
+vi.mock("../../api/mcp-apps", () => ({ loadMcpAppView: loadView, loadMcpAppData: loadData, openMcpAppFile: openFile, relayMcpAppRequest: relay, logMcpAppEvent: log }));
 
 const origin = "https://apps.example.test";
 const view = {
@@ -32,6 +32,17 @@ function initialize(frame: HTMLIFrameElement) {
   send(frame, { jsonrpc: "2.0", id: 1, method: "ui/initialize", params: { protocolVersion: "2026-01-26" } });
   send(frame, { jsonrpc: "2.0", method: "ui/notifications/initialized" });
 }
+function blankTab() {
+  const document = window.document.implementation.createHTMLDocument();
+  const navigations: { url: string; referrerPolicy: string }[] = [];
+  document.addEventListener("click", (event) => {
+    if (event.target instanceof HTMLAnchorElement) {
+      event.preventDefault();
+      navigations.push({ url: event.target.href, referrerPolicy: event.target.referrerPolicy });
+    }
+  });
+  return { opener: window, document, navigations, location: { href: "about:blank" }, close: vi.fn() };
+}
 function mount(callId: () => string = () => "call-1", text: () => string = () => "Board created", agentId: () => string = () => "agent", sessionId: () => string = () => "chat", options: { mode?: "inline" | "panel"; viewKey?: () => string; onDisplayMode?: (mode: "inline" | "fullscreen") => void; onUserMessage?: (text: string) => Promise<void>; fileOf?: (callId: string) => McpAppFile | undefined; onShown?: (callId: string | undefined) => void } = {}) {
   container = document.createElement("div");
   document.body.append(container);
@@ -43,10 +54,138 @@ describe("MCP App view host", () => {
     vi.useFakeTimers();
     loadView.mockReset().mockResolvedValue(view);
     loadData.mockReset().mockResolvedValue({ args: { title: "Updated roadmap" }, result: { content: [{ type: "text", text: "Box added" }] } });
+    openFile.mockReset().mockResolvedValue({ url: `${origin}/open/file-ticket` });
     relay.mockReset().mockResolvedValue({ jsonrpc: "2.0", id: 28, result: {} });
     log.mockReset().mockResolvedValue(undefined);
   });
   afterEach(() => { dispose?.(); container?.remove(); vi.useRealTimers(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
+
+  it("opens a blank tab synchronously before requesting the shown file's browser URL", async () => {
+    const tab = blankTab();
+    const popup = vi.spyOn(window, "open").mockReturnValue(tab as unknown as Window);
+    openFile.mockImplementationOnce(async () => {
+      expect(popup).toHaveBeenCalledWith("about:blank");
+      expect(tab.opener).toBeNull();
+      return { url: `${origin}/open/file-ticket` };
+    });
+    loadView.mockResolvedValueOnce({ ...view, server: "yoplai" });
+    mount(undefined, undefined, undefined, undefined, { fileOf: () => ({ fileId: "report", filename: "report.html", mimeType: "text/html", size: 32 }) });
+    expect(queryByRole(container, "button", { name: "Open in browser" })).toBeNull();
+    await settle();
+    getByRole(container, "button", { name: "Open in browser" }).click();
+    await settle();
+    expect(openFile.mock.calls[0].slice(0, 3)).toEqual(["agent", "chat", "call-1"]);
+    expect(tab.navigations).toEqual([{ url: `${origin}/open/file-ticket`, referrerPolicy: "no-referrer" }]);
+    expect(tab.close).not.toHaveBeenCalled();
+  });
+
+  it("closes a hung browser request after 15 seconds while the file view remains usable", async () => {
+    let finish!: (value: { url: string }) => void;
+    openFile.mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
+    const tab = { opener: window, location: { href: "about:blank" }, close: vi.fn() };
+    vi.spyOn(window, "open").mockReturnValue(tab as unknown as Window);
+    loadView.mockResolvedValueOnce({ ...view, server: "yoplai" });
+    mount(undefined, undefined, undefined, undefined, { fileOf: () => ({ fileId: "report", filename: "report.html", mimeType: "text/html", size: 32 }) });
+    await settle();
+    const frame = getByTitle(container, "report.html file view") as HTMLIFrameElement;
+    initialize(frame);
+    const post = vi.spyOn(frame.contentWindow!, "postMessage");
+    getByRole(container, "button", { name: "Open in browser" }).click();
+    send(frame, { jsonrpc: "2.0", id: "still-alive", method: "ping" });
+    expect(post.mock.calls.at(-1)?.[0]).toEqual({ jsonrpc: "2.0", id: "still-alive", result: {} });
+    await vi.advanceTimersByTimeAsync(15000);
+    expect(tab.close).toHaveBeenCalledOnce();
+    expect(openFile.mock.calls[0][3].aborted).toBe(true);
+    expect(getByText(container, "Could not open the file")).toBeTruthy();
+    expect(getByRole(container, "link", { name: "Download" })).toBeTruthy();
+    expect(queryByText(container, "View unavailable")).toBeNull();
+    finish({ url: `${origin}/open/late-ticket` });
+    await settle();
+    expect(tab.location.href).toBe("about:blank");
+  });
+
+  it.each([
+    ["report.html", "text/html; charset=utf-8", true],
+    ["report.htm", "application/octet-stream", true],
+    ["notes.md", "application/octet-stream", false],
+    ["notes.markdown", "", false],
+    ["notes.txt", "text/markdown", false],
+    ["report.pdf", "application/octet-stream", true],
+    ["picture.png", "image/png", true],
+    ["picture.JPG", "", true],
+    ["picture.gif", "image/gif", true],
+    ["picture.webp", "image/webp", true],
+    ["diagram.svg", "image/svg+xml", true],
+    ["data.json", "application/json", true],
+    ["data.csv", "text/csv", true],
+    ["script.ts", "application/octet-stream", true],
+    ["report.html", "text/plain", true],
+    ["picture.png", "application/zip", false],
+    ["document.docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document", false],
+  ] as const)("offers Open in browser for supported %s (%s): %s", async (filename, mimeType, supported) => {
+    loadView.mockResolvedValueOnce({ ...view, server: "yoplai" });
+    mount(undefined, undefined, undefined, undefined, { mode: "panel", fileOf: () => ({ fileId: "file", filename, mimeType, size: 12 }) });
+    expect(queryByRole(container, "button", { name: "Open in browser" })).toBeNull();
+    await settle();
+    expect(!!queryByRole(container, "button", { name: "Open in browser" })).toBe(supported);
+  });
+  it.each(["external app", "unavailable view"])("hides Open in browser for an %s", async (state) => {
+    if (state === "unavailable view") loadView.mockResolvedValueOnce({ available: false, reason: "apps_unavailable" });
+    mount(undefined, undefined, undefined, undefined, { mode: "panel", fileOf: () => ({ fileId: "report", filename: "report.html", mimeType: "text/html", size: 12 }) });
+    await settle();
+    expect(queryByRole(container, "button", { name: "Open in browser" })).toBeNull();
+    expect(getByRole(container, "link", { name: "Download" })).toBeTruthy();
+  });
+  it("explains blocked pop-ups without requesting a file ticket", async () => {
+    vi.spyOn(window, "open").mockReturnValue(null);
+    loadView.mockResolvedValueOnce({ ...view, server: "yoplai" });
+    mount(undefined, undefined, undefined, undefined, { fileOf: () => ({ fileId: "report", filename: "report.pdf", mimeType: "application/pdf", size: 12 }) });
+    await settle();
+    getByRole(container, "button", { name: "Open in browser" }).click();
+    expect(getByText(container, "Allow pop-ups to open the file")).toBeTruthy();
+    expect(openFile).not.toHaveBeenCalled();
+  });
+  it.each(["request error", "unavailable file"])("closes the blank tab on %s and retains the file view", async (failure) => {
+    const tab = { opener: window, location: { href: "about:blank" }, close: vi.fn() };
+    vi.spyOn(window, "open").mockReturnValue(tab as unknown as Window);
+    if (failure === "request error") openFile.mockRejectedValueOnce(new Error("File unavailable"));
+    else openFile.mockResolvedValueOnce({ available: false, reason: "file_unavailable" });
+    loadView.mockResolvedValueOnce({ ...view, server: "yoplai" });
+    mount(undefined, undefined, undefined, undefined, { fileOf: () => ({ fileId: "report", filename: "report.pdf", mimeType: "application/pdf", size: 12 }) });
+    await settle();
+    getByRole(container, "button", { name: "Open in browser" }).click();
+    await settle();
+    expect(tab.close).toHaveBeenCalledOnce();
+    expect(tab.location.href).toBe("about:blank");
+    expect(getByText(container, "Could not open the file")).toBeTruthy();
+    expect(getByRole(container, "link", { name: "Download" })).toBeTruthy();
+    expect(queryByText(container, "View unavailable")).toBeNull();
+  });
+  it("requests the call whose file the header shows before and after a reused view updates", async () => {
+    const files: Record<string, McpAppFile> = {
+      "call-1": { fileId: "first", filename: "report.html", mimeType: "text/html", size: 12, title: "Original" },
+      "call-2": { fileId: "second", filename: "report.html", mimeType: "text/html", size: 24, title: "Revised" },
+    };
+    vi.spyOn(window, "open").mockImplementation(() => blankTab() as unknown as Window);
+    loadView.mockResolvedValueOnce({ ...view, server: "yoplai" });
+    let update!: (value: unknown) => void;
+    loadData.mockImplementationOnce(() => new Promise((resolve) => { update = resolve; }));
+    const [callId, setCallId] = createSignal("call-1");
+    mount(callId, undefined, undefined, undefined, { fileOf: (id) => files[id] });
+    await settle();
+    initialize(getByTitle(container, "Original file view") as HTMLIFrameElement);
+    setCallId("call-2");
+    await settle();
+    expect(getByText(container, "Original")).toBeTruthy();
+    getByRole(container, "button", { name: "Open in browser" }).click();
+    await settle();
+    update({ args: {}, result: { content: [{ type: "text", text: "Revised" }] } });
+    await settle();
+    expect(getByText(container, "Revised")).toBeTruthy();
+    getByRole(container, "button", { name: "Open in browser" }).click();
+    await settle();
+    expect(openFile.mock.calls.map((call) => call.slice(0, 3))).toEqual([["agent", "chat", "call-1"], ["agent", "chat", "call-2"]]);
+  });
 
   it("describes the file and offers its original download before reporting initialized delivery", async () => {
     const shown = vi.fn();

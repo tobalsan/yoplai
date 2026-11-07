@@ -1,7 +1,7 @@
 import { createChatSession } from "./chat/createChatSession";
 import { ChatTranscript } from "./chat/ChatTranscript";
-import { createAppViews, chatAppViewCalls } from "./chat/appViews";
-import { ChatSidePanel } from "./chat/ChatSidePanel";
+import { createAppViews, chatAppViewCalls, viewKey } from "./chat/appViews";
+import { ChatSidePanel, canSplitPanel } from "./chat/ChatSidePanel";
 import { McpAppView } from "./chat/McpAppView";
 import chatViewStyles from "./chat/ChatView.css?inline";
 import {
@@ -230,6 +230,16 @@ export function ChatView() {
     isArchived: isSessionArchived,
     isImpersonating: () => !!impersonationStatus()?.active,
     isUploading: uploadingFiles,
+    onLiveView: (view) => {
+      const row = chatViewRef?.querySelector(".chat-main")?.parentElement;
+      if (!row || !canSplitPanel(row.getBoundingClientRect().width)) return;
+      const key = viewKey(view);
+      const requestedSession = currentSession();
+      appViews.open(key);
+      if (appViews.panel()?.key !== key) queueMicrotask(() => {
+        if (currentSession() === requestedSession) appViews.open(key);
+      });
+    },
     uploadPending: async (currentPendingFiles) => {
       if (currentPendingFiles.length === 0) return { inboundFiles: [] };
       setUploadingFiles(true);

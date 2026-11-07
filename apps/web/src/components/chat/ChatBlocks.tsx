@@ -176,7 +176,10 @@ export function McpAppToolRow(props: { agentId: string; sessionId?: string | nul
   return <div class="mcp-app-tool-row" id={`mcp-app-${props.toolCallId}`} tabIndex={-1}>
     <Switch fallback={<p role="status">Loading view…</p>}>
       <Match when={role() === "panel-card"}>
-        <div class="mcp-app-panel-card">{file()?.title ?? file()?.filename ?? view()?.latest.result?.view?.server} · shown in the side panel</div>
+        <button type="button" class="mcp-app-panel-card" onClick={reveal}>
+          <Show when={file()}><span class="file-icon" aria-hidden="true">{getFileIcon(file()!.mimeType)}</span></Show>
+          <span>{file()?.title ?? file()?.filename ?? view()?.latest.result?.view?.server} · shown in the side panel</span>
+        </button>
       </Match>
       <Match when={role() === "link" && (!settled() || captured())}>
         <Show when={settled()} fallback={<p role="status">Updating view…</p>}>

@@ -80,18 +80,34 @@
         .chat-side-panel-overlay .chat-panel-resizer { display: none; }
 
         .mcp-app-view-header { padding: 8px; }
+        .mcp-app-file-header { flex-wrap: wrap; }
+        .mcp-app-file-header > .ui-button,
+        .mcp-app-file-header > .file-download {
+          flex-shrink: 0;
+          white-space: nowrap;
+        }
 
         @media (max-width: 768px) {
           .chat-side-panel .mcp-app-file-header { padding-left: 64px; }
         }
 
         .mcp-app-panel-card {
+          display: flex;
+          align-items: center;
+          gap: 12px;
+          width: 100%;
           padding: 12px;
           border: 1px solid var(--tool-border);
           border-radius: var(--radius-sm);
           color: var(--text-secondary);
           background: var(--tool-bg);
+          font: inherit;
+          text-align: left;
+          cursor: pointer;
         }
+
+        .mcp-app-panel-card:hover { border-color: var(--accent); }
+        .mcp-app-panel-card:active { background: var(--surface-1); }
 
         .mcp-app-updated {
           display: inline-flex;
@@ -163,6 +179,7 @@
         .stop-btn:focus-visible,
         .attachment-remove:focus-visible,
         .file-download:focus-visible,
+        .mcp-app-panel-card:focus-visible,
         .activity-group-header:focus-visible,
         .activity-line:focus-visible,
         .tool-header:focus-visible {

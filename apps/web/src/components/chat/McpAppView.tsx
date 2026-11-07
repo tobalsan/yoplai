@@ -1,9 +1,9 @@
 import { createEffect, createSignal, on, onCleanup, Show } from "solid-js";
 import type { McpAppFile } from "@yoplai/shared/types";
 import { Button } from "../ui/Button";
-import { formatFileSize, getFileIcon } from "../../lib/attachments";
+import { classifyFile, formatFileSize, getFileIcon } from "../../lib/attachments";
 import { version } from "../../../package.json";
-import { loadMcpAppView, loadMcpAppData, relayMcpAppRequest, logMcpAppEvent, type McpAppViewData } from "../../api/mcp-apps";
+import { loadMcpAppView, loadMcpAppData, openMcpAppFile, relayMcpAppRequest, logMcpAppEvent, type McpAppViewData } from "../../api/mcp-apps";
 
 type RpcMessage = { jsonrpc: "2.0"; id?: string | number | null; method?: string; params?: unknown; result?: unknown; error?: { code: number; message: string; data?: unknown } };
 
@@ -32,12 +32,44 @@ export function McpAppView(props: { agentId: string; sessionId: string; viewKey:
   };
   const [ready, setReady] = createSignal(false);
   const [failed, setFailed] = createSignal(false);
+  const [openStatus, setOpenStatus] = createSignal("");
   const [allowedModes, setAllowedModes] = createSignal<string[]>(["inline", "fullscreen"]);
   const retiring = new Set<() => void>();
+  const opening = new Set<() => void>();
   let frameContainer!: HTMLDivElement;
   let stopCurrent: ((wait: boolean, after?: () => void) => void) | undefined;
   let updateCurrent: ((callId: string) => void) | undefined;
   let switchCurrent: ((mode: "inline" | "fullscreen", reply?: (result: unknown) => void) => void) | undefined;
+
+  async function openInBrowser() {
+    const tab = window.open("about:blank");
+    if (!tab) { setOpenStatus("Allow pop-ups to open the file"); return; }
+    tab.opener = null;
+    setOpenStatus("");
+    const controller = new AbortController();
+    const cancel = () => { clearTimeout(timer); controller.abort(); tab.close(); };
+    const timer = setTimeout(() => {
+      cancel();
+      opening.delete(cancel);
+      setOpenStatus("Could not open the file");
+    }, 15000);
+    opening.add(cancel);
+    try {
+      const result = await openMcpAppFile(props.agentId, props.sessionId, shownCallId(), controller.signal);
+      if (controller.signal.aborted) return;
+      if (!("url" in result)) throw new Error("File unavailable");
+      const link = tab.document.createElement("a");
+      link.href = result.url;
+      link.referrerPolicy = "no-referrer";
+      tab.document.body.append(link);
+      link.click();
+    } catch {
+      if (!controller.signal.aborted) { tab.close(); setOpenStatus("Could not open the file"); }
+    } finally {
+      clearTimeout(timer);
+      opening.delete(cancel);
+    }
+  }
 
   function start(agentId: string, sessionId: string, toolCallId: string) {
     const displayMode = props.mode === "panel" ? "fullscreen" : "inline";
@@ -302,6 +334,8 @@ export function McpAppView(props: { agentId: string; sessionId: string; viewKey:
   }
   window.addEventListener("pagehide", pageHide);
   onCleanup(() => {
+    for (const cancel of opening) cancel();
+    opening.clear();
     stopCurrent?.(false);
     stopCurrent = undefined;
     for (const remove of retiring) remove();
@@ -311,11 +345,15 @@ export function McpAppView(props: { agentId: string; sessionId: string; viewKey:
     <Show when={!!view() || props.mode === "panel"}><header class="mcp-app-view-header" classList={{ "mcp-app-file-header": !!file() }} style={{ display: "flex", "align-items": "center", gap: "8px", "font-size": "0.75rem", color: "var(--text-secondary)" }}>
       <Show when={!!file()} fallback={<><strong>{view()?.server ?? props.viewKey.split("\n")[0]}</strong><span style={{ flex: "1" }}>MCP App</span></>}>
         <span class="file-icon" aria-hidden="true">{getFileIcon(file()!.mimeType)}</span>
-        <div style={{ flex: "1", "min-width": "0" }}>
+        <div style={{ flex: "1 1 100px", "min-width": "0" }}>
           <strong title={fileName()} style={{ display: "block", overflow: "hidden", "text-overflow": "ellipsis", "white-space": "nowrap", color: "var(--text-primary)" }}>{fileName()}</strong>
           <span>{fileDescription()}</span>
         </div>
         <a class="file-download" href={`/api/media/download/${file()!.fileId}`} download="">Download</a>
+        <Show when={!!view() && view()?.server === "yoplai" && !["markdown", "other"].includes(classifyFile(file()!))}>
+          <Button variant="ghost" onClick={openInBrowser}>Open in browser</Button>
+        </Show>
+        <Show when={openStatus()}><span role="status">{openStatus()}</span></Show>
       </Show>
       <Show when={!!props.onDisplayMode && (props.mode === "panel" || (ready() && allowedModes().includes("fullscreen")))}><Button variant="ghost" onClick={() => switchCurrent?.(props.mode === "panel" ? "inline" : "fullscreen")}>{props.mode === "panel" ? "Collapse" : "Expand"}</Button></Show>
     </header></Show>

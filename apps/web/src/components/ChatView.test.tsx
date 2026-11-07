@@ -22,6 +22,7 @@ vi.mock("../api/mcp-apps", () => ({
   loadMcpAppData: loadMcpAppDataMock,
   relayMcpAppRequest: relayMcpAppRequestMock,
   logMcpAppEvent: vi.fn().mockResolvedValue(undefined),
+  openMcpAppFile: vi.fn(),
 }));
 const navigateMock = vi.fn();
 const [routeVersion, setRouteVersion] = createSignal(0);
@@ -2537,6 +2538,133 @@ describe("ChatView abort handling", () => {
     callbacks?.onFileOutput?.(file);
     callbacks?.onToolResult?.(id, "send_file", "File sent to user", false, undefined, undefined, { ...marker, recordId: `record-${id}`, file });
   }
+
+  function measureChatSpace(viewportWidth = 1280, rowWidth = 1000) {
+    vi.stubGlobal("innerWidth", viewportWidth);
+    const measure = HTMLElement.prototype.getBoundingClientRect;
+    return vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement) {
+      return this.classList.contains("chat-view") ? { width: rowWidth, right: rowWidth } as DOMRect : measure.call(this);
+    });
+  }
+
+  it("opens the side panel for an HTML file sent in a live direct stream", async () => {
+    enableAppViews();
+    const measure = measureChatSpace();
+    const { container, dispose, callbacks } = await startFullStream();
+    try {
+      sendViewFile(callbacks(), "live-report", { fileId: "live-html", filename: "report.html", mimeType: "text/html", size: 64, title: "Live report" });
+      await waitFor(() => expect(queryByRole(container, "complementary", { name: "App view" })).not.toBeNull());
+      const panel = queryByRole(container, "complementary", { name: "App view" })!;
+      await waitFor(() => expect(queryByTitle(panel, "Live report file view")).not.toBeNull());
+      expect(queryByRole(panel, "link", { name: "Download" })?.getAttribute("href")).toBe("/api/media/download/live-html");
+    } finally { dispose(); measure.mockRestore(); }
+  });
+
+  it("shows the file icon on the compact panel button and focuses its panel", async () => {
+    enableAppViews();
+    const measure = measureChatSpace();
+    const { container, dispose, callbacks } = await startFullStream();
+    try {
+      sendViewFile(callbacks(), "panel-report", { fileId: "panel-pdf", filename: "report.pdf", mimeType: "application/pdf", size: 64, title: "Live report" });
+      await waitFor(() => expect(queryByRole(container, "complementary", { name: "App view" })).not.toBeNull());
+      const panel = queryByRole(container, "complementary", { name: "App view" })!;
+      const card = queryByRole(container, "button", { name: "Live report · shown in the side panel" });
+      expect(card).not.toBeNull();
+      expect(card!.textContent).toContain("PDF");
+      card!.click();
+      expect(document.activeElement).toBe(panel);
+    } finally { dispose(); measure.mockRestore(); }
+  });
+
+  it.each([
+    ["notes.md", "text/markdown", 1280, 1000, true],
+    ["report.pdf", "application/octet-stream", 1280, 1000, true],
+    ["report.htm", "application/octet-stream", 1280, 1000, true],
+    ["picture.png", "image/png", 1280, 1000, false],
+    ["notes.txt", "text/plain", 1280, 1000, false],
+    ["data.json", "application/json", 1280, 1000, false],
+    ["report.html", "application/zip", 1280, 1000, false],
+    ["report.html", "text/html", 769, 726, true],
+    ["report.html", "text/html", 768, 1000, false],
+    ["report.html", "text/html", 1280, 725, false],
+    ["report.html", "text/html", 700, 1000, false],
+  ] as const)("auto-opens live %s (%s), viewport %i, row %i: %s", async (filename, mimeType, viewport, row, opens) => {
+    enableAppViews();
+    const measure = measureChatSpace(viewport, row);
+    const { container, dispose, callbacks } = await startFullStream();
+    try {
+      sendViewFile(callbacks(), "live-file", { fileId: "file", filename, mimeType, size: 64, title: "Sent file" });
+      await waitFor(() => expect(queryByTitle(container, "Sent file file view")).not.toBeNull());
+      expect(!!queryByRole(container, "complementary", { name: "App view" })).toBe(opens);
+    } finally { dispose(); measure.mockRestore(); }
+  });
+
+  it("auto-opens a live subscription document while external app results stay inline", async () => {
+    enableAppViews();
+    const measure = measureChatSpace();
+    let subscription: SubscriptionCallbacks = {};
+    subscribeToSessionMock.mockImplementation((_agent, _key, callbacks) => { subscription = callbacks; return () => {}; });
+    const { container, dispose } = renderView();
+    try {
+      await tick();
+      await tick();
+      const marker = { server: "fixture", tool: "draw", resourceUri: "ui://fixture/drawing.html" };
+      subscription.onToolCall?.("external-view", "fixture_draw", {}, undefined, marker);
+      subscription.onToolResult?.("external-view", "fixture_draw", "Drawn", false, undefined, undefined, { ...marker, recordId: "external-record", file: { fileId: "external", filename: "external.html", mimeType: "text/html", size: 64 } });
+      await waitFor(() => expect(queryByTitle(container, "external.html file view")).not.toBeNull());
+      expect(queryByRole(container, "complementary")).toBeNull();
+      sendViewFile(subscription, "sub-report", { fileId: "subscription-html", filename: "report.html", mimeType: "text/html", size: 64 });
+      await waitFor(() => expect(queryByRole(container, "complementary")).not.toBeNull());
+      expect(queryByRole(queryByRole(container, "complementary")!, "link", { name: "Download" })?.getAttribute("href")).toBe("/api/media/download/subscription-html");
+    } finally { dispose(); measure.mockRestore(); }
+  });
+
+  it("keeps historical and reconnect documents inline on a wide screen", async () => {
+    enableAppViews();
+    const measure = measureChatSpace();
+    let subscription: SubscriptionCallbacks = {};
+    subscribeToSessionMock.mockImplementation((_agent, _key, callbacks) => { subscription = callbacks; return () => {}; });
+    const marker = { server: "yoplai", tool: "send_file", resourceUri: "ui://yoplai/file-viewer" };
+    const file = { fileId: "saved-html", filename: "saved.html", mimeType: "text/html", size: 64, title: "Saved report" };
+    fetchFullHistoryMock.mockResolvedValue({ sessionId: "session-main", messages: [
+      { role: "assistant", timestamp: 1, content: [{ type: "toolCall", id: "saved-call", name: "send_file", arguments: {}, viewCall: true, view: marker }] },
+      { role: "toolResult", timestamp: 2, toolCallId: "saved-call", toolName: "send_file", content: [{ type: "text", text: "File sent to user" }], view: { ...marker, recordId: "saved-record", file } },
+    ] });
+    const { container, dispose } = renderView();
+    try {
+      await waitFor(() => expect(queryByTitle(container, "Saved report file view")).not.toBeNull());
+      expect(queryByRole(container, "complementary")).toBeNull();
+      subscription.onActiveTurn?.({
+        userText: "Report", userTimestamp: 3, startedAt: 3, thinking: "", text: "",
+        toolCalls: [{ id: "reconnect-call", name: "send_file", arguments: {}, status: "done", view: marker }],
+        toolResults: [{ id: "reconnect-call", name: "send_file", content: "File sent to user", isError: false, view: { ...marker, recordId: "reconnect-record", file: { ...file, fileId: "reconnected", filename: "reconnected.html", title: "Reconnected report" } } }],
+      });
+      await waitFor(() => expect(queryByTitle(container, "Reconnected report file view")).not.toBeNull());
+      expect(queryByRole(container, "complementary")).toBeNull();
+    } finally { dispose(); measure.mockRestore(); }
+  });
+
+  it("replaces the panel with another live document and reopens a re-sent filename", async () => {
+    enableAppViews();
+    const measure = measureChatSpace();
+    const { container, dispose, callbacks } = await startFullStream();
+    try {
+      sendViewFile(callbacks(), "first-doc", { fileId: "report", filename: "report.html", mimeType: "text/html", size: 64, title: "Report" });
+      await waitFor(() => expect(queryByTitle(queryByRole(container, "complementary")!, "Report file view")).not.toBeNull());
+      const first = queryByTitle(container, "Report file view") as HTMLIFrameElement;
+      sendViewFile(callbacks(), "second-doc", { fileId: "plan", filename: "plan.md", mimeType: "text/markdown", size: 64, title: "Plan" });
+      await waitFor(() => expect(queryByTitle(queryByRole(container, "complementary")!, "Plan file view")).not.toBeNull());
+      expect(first.isConnected).toBe(false);
+      const second = queryByTitle(queryByRole(container, "complementary")!, "Plan file view") as HTMLIFrameElement;
+      initializeApp(second);
+      queryByRole(queryByRole(container, "complementary")!, "button", { name: "Collapse" })!.click();
+      appMessage(second, { jsonrpc: "2.0", id: "yoplai-resource-teardown", result: {} });
+      await waitFor(() => expect(queryByRole(container, "complementary")).toBeNull());
+      sendViewFile(callbacks(), "revised-doc", { fileId: "revised-plan", filename: "plan.md", mimeType: "text/markdown", size: 128, title: "Revised plan" });
+      await waitFor(() => expect(queryByTitle(queryByRole(container, "complementary")!, "Revised plan file view")).not.toBeNull());
+      expect(queryByRole(queryByRole(container, "complementary")!, "link", { name: "Download" })?.getAttribute("href")).toBe("/api/media/download/revised-plan");
+    } finally { dispose(); measure.mockRestore(); }
+  });
 
   // ALG-600's rendered host/chat seam approved in Linear comment
   // 9de9b656-b0db-413c-8e8f-6707c6aece4d; transport is the external adapter.

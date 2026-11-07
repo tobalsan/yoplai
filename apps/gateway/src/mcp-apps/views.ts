@@ -1,17 +1,22 @@
 import * as viewContext from "./view-context.js";
 import { randomBytes } from "node:crypto";
+import fs from "node:fs/promises";
+import { Readable } from "node:stream";
 import { serve } from "@hono/node-server";
 import { Hono, type Context } from "hono";
 import type { GatewayConfig } from "@yoplai/shared";
 import { isSafeSessionId } from "../history/sessions.js";
 import { readMcpAppRecord } from "./capture.js";
-import { createFileAppProvider } from "./file-provider.js";
+import { createFileAppProvider, fileResourceDomains } from "./file-provider.js";
+import { getMediaFileMetadata, resolveMediaFilePath } from "../media/metadata.js";
 import { logInfo, logWarn } from "../logging.js";
 import { accessLogger } from "../server/access-log.js";
 import type { ExtensionRuntime } from "../extensions/runtime.js";
 
 type SessionScope = { agentId: string; sessionId: string; ownerUserId?: string | null };
-type Ticket = SessionScope & { appsOrigin: string; chatOrigin: string; html: string; policy: string; expiresAt: number };
+type TicketScope = SessionScope & { appsOrigin: string; chatOrigin: string; expiresAt: number };
+type ViewTicket = TicketScope & { kind: "view"; html: string; policy: string };
+type Ticket = ViewTicket | (TicketScope & { kind: "file"; fileId: string });
 const tickets = new Map<string, Ticket>();
 const pendingViews = new Set<SessionScope & { revoked: boolean }>();
 let listener: ReturnType<typeof serve> | undefined;
@@ -39,7 +44,7 @@ export function startAppsListener(config: GatewayConfig, host: string): () => vo
   for (const kind of ["sandbox", "content"] as const) {
     app.get(`/${kind}/:ticket`, (c) => {
       const ticket = tickets.get(c.req.param("ticket"));
-      if (!ticket || ticket.expiresAt <= Date.now() || new URL(c.req.url).host !== new URL(ticket.appsOrigin).host) return c.notFound();
+      if (!ticket || ticket.kind !== "view" || ticket.expiresAt <= Date.now() || new URL(c.req.url).host !== new URL(ticket.appsOrigin).host) return c.notFound();
       c.header("Cache-Control", "no-store");
       c.header("X-Content-Type-Options", "nosniff");
       c.header("Referrer-Policy", "no-referrer");
@@ -53,6 +58,28 @@ export function startAppsListener(config: GatewayConfig, host: string): () => vo
       return c.body(bootstrapPage(ticket, c.req.param("ticket")));
     });
   }
+  app.get("/open/:ticket", async (c) => {
+    const ticket = tickets.get(c.req.param("ticket"));
+    if (!ticket || ticket.kind !== "file" || ticket.expiresAt <= Date.now() || new URL(c.req.url).host !== new URL(ticket.appsOrigin).host) return c.notFound();
+    let file;
+    try {
+      const metadata = await getMediaFileMetadata(ticket.fileId);
+      if (!metadata || metadata.agentId !== ticket.agentId) return c.notFound();
+      const response = fileResponse(metadata);
+      if (!response) return c.notFound();
+      file = await fs.open(await resolveMediaFilePath(metadata), "r");
+      const stat = await file.stat();
+      if (!stat.isFile()) { await file.close(); return c.notFound(); }
+      c.header("Content-Length", String(stat.size));
+      c.header("Content-Type", response.contentType);
+      c.header("Content-Security-Policy", response.policy);
+      if (response.contentType === "application/pdf") c.header("Content-Disposition", "inline");
+    } catch { await file?.close(); return c.notFound(); }
+    c.header("Cache-Control", "no-store");
+    c.header("X-Content-Type-Options", "nosniff");
+    c.header("Referrer-Policy", "no-referrer");
+    return c.body(Readable.toWeb(file.createReadStream()) as ReadableStream);
+  });
   const server = serve({
     fetch: (request) => request.method === "GET" ? app.fetch(request) : new Response("Not Found", { status: 404 }),
     hostname: host, port: config.apps?.port ?? 4001,
@@ -70,7 +97,7 @@ export function startAppsListener(config: GatewayConfig, host: string): () => vo
   };
 }
 
-function bootstrapPage(ticket: Ticket, id: string): string {
+function bootstrapPage(ticket: ViewTicket, id: string): string {
   const chatOrigin = JSON.stringify(ticket.chatOrigin).replaceAll("<", "\\u003c");
   const contentUrl = JSON.stringify(`${ticket.appsOrigin}/content/${id}`).replaceAll("<", "\\u003c");
   return `<!doctype html><html><head><meta charset="utf-8"><title>MCP App sandbox</title><style>html,body,iframe{width:100%;height:100%;border:0;margin:0;display:block}body{overflow:hidden}</style></head><body><script>
@@ -120,6 +147,43 @@ function appsOrigin(config: GatewayConfig, chatOrigin: string): string | undefin
     if (url.protocol !== "https:" && !loopback(url.hostname) && !url.hostname.endsWith(".localhost")) return undefined;
     return url.origin;
   } catch { return undefined; }
+}
+
+async function ticketOrigin(config: GatewayConfig, c: Context): Promise<{ chatOrigin: string; origin: string } | { reason: string; status: 200 | 403 }> {
+  const chatOrigin = c.req.header("Origin");
+  const { getTrustedOrigins, getMultiUserRuntime } = await import("@yoplai/extension-multi-user");
+  if (!chatOrigin || !getTrustedOrigins(config).includes(chatOrigin)) return { reason: "untrusted_origin", status: 403 };
+  const cookiePolicy = getMultiUserRuntime()?.auth.options?.advanced;
+  if (cookiePolicy?.crossSubDomainCookies?.enabled || cookiePolicy?.defaultCookieAttributes?.domain || Object.values(cookiePolicy?.cookies ?? {}).some((cookie) => cookie.attributes?.domain)) return { reason: "unsafe_cookie_domain", status: 200 };
+  const origin = appsOrigin(config, chatOrigin);
+  if (!origin || !appsAvailable()) return { reason: "apps_unavailable", status: 200 };
+  return { chatOrigin, origin };
+}
+
+function storeTicket(ticket: Ticket): string {
+  for (const [id, entry] of tickets) if (entry.expiresAt <= Date.now()) tickets.delete(id);
+  if (tickets.size >= 512) { const oldest = tickets.keys().next().value; if (oldest) tickets.delete(oldest); }
+  const id = randomBytes(32).toString("hex");
+  tickets.set(id, ticket);
+  return id;
+}
+
+function fileResponse(file: { filename: string; mimeType: string }): { contentType: string; policy: string } | undefined {
+  let mime = file.mimeType?.split(";")[0].trim().toLowerCase();
+  if (!mime || mime === "application/octet-stream") {
+    const ext = file.filename.split(".").at(-1)?.toLowerCase() ?? "";
+    const types: Record<string, string> = { pdf: "application/pdf", html: "text/html", htm: "text/html", md: "text/markdown", markdown: "text/markdown", json: "application/json", csv: "text/csv", svg: "image/svg+xml", png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", gif: "image/gif", webp: "image/webp" };
+    mime = types[ext] || (/^(txt|log|[cm]?[jt]sx?|py|rb|sh|bash|css|xml|ya?ml|toml|sql|rs|go|java|c|cpp|h)$/.test(ext) ? "text/plain" : "application/octet-stream");
+  }
+  if (mime === "text/html" || mime === "application/xhtml+xml") {
+    const resources = fileResourceDomains.join(" ");
+    return { contentType: "text/html", policy: `default-src 'none'; script-src 'unsafe-inline' ${resources}; style-src 'unsafe-inline' ${resources}; img-src data: ${resources}; font-src ${resources}; media-src data:; connect-src 'none'; frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'; sandbox allow-scripts allow-popups allow-popups-to-escape-sandbox` };
+  }
+  if (mime === "application/pdf") return { contentType: mime, policy: "default-src 'none'; frame-ancestors 'none'; sandbox" };
+  if (mime === "image/svg+xml") return { contentType: mime, policy: "default-src 'none'; style-src 'unsafe-inline'; sandbox" };
+  if (/^image\/(png|jpeg|gif|webp)$/.test(mime)) return { contentType: mime, policy: "default-src 'none'; img-src 'self'" };
+  if (mime === "text/markdown") return;
+  if (mime.startsWith("text/") || /^(application\/(json|javascript|x-javascript|xml|yaml|x-yaml|sql|toml|x-sh|typescript))$/.test(mime) || /\+(json|xml)$/.test(mime)) return { contentType: "text/plain; charset=utf-8", policy: "default-src 'none'" };
 }
 
 type Csp = { connectDomains: string[]; resourceDomains: string[]; frameDomains: string[]; baseUriDomains: string[] };
@@ -232,7 +296,7 @@ export function createMcpAppRoutes(deps: {
     try {
       const userId = await deps.getUserId(c);
       audit.viewer = userId ?? null;
-      if (operation === "view" || operation === "rpc") {
+      if (operation === "view" || operation === "open" || operation === "rpc") {
         pending = { agentId, sessionId, ownerUserId: userId, revoked: false };
         pendingViews.add(pending);
       }
@@ -326,16 +390,27 @@ export function createMcpAppRoutes(deps: {
           return c.json({ jsonrpc: "2.0", id, error: { code: -32000, message: "MCP Apps request failed", data } });
         }
       }
-      if (operation !== "view") return c.notFound();
+      if (operation !== "view" && operation !== "open") return c.notFound();
       const unavailable = (reason: string) => { audit.outcome = reason; return c.json({ available: false, reason }); };
-      const config = deps.getConfig();
-      const chatOrigin = c.req.header("Origin");
-      const { getTrustedOrigins, getMultiUserRuntime } = await import("@yoplai/extension-multi-user");
-      if (!chatOrigin || !getTrustedOrigins(config).includes(chatOrigin)) { audit.outcome = "untrusted_origin"; return c.json({ error: "untrusted_origin" }, 403); }
-      const cookiePolicy = getMultiUserRuntime()?.auth.options?.advanced;
-      if (cookiePolicy?.crossSubDomainCookies?.enabled || cookiePolicy?.defaultCookieAttributes?.domain || Object.values(cookiePolicy?.cookies ?? {}).some((cookie) => cookie.attributes?.domain)) return unavailable("unsafe_cookie_domain");
-      const origin = appsOrigin(config, chatOrigin);
-      if (!origin || !appsAvailable()) return unavailable("apps_unavailable");
+      const authorization = await ticketOrigin(deps.getConfig(), c);
+      if ("reason" in authorization) {
+        if (authorization.status === 403) { audit.outcome = authorization.reason; return c.json({ error: authorization.reason }, 403); }
+        return unavailable(authorization.reason);
+      }
+      const { chatOrigin, origin } = authorization;
+      if (operation === "open") {
+        const uri = object(record.result.structuredContent).uri;
+        if (record.server !== "yoplai" || typeof uri !== "string" || !/^yoplai-file:\/\/[^/]+$/.test(uri)) return unavailable("file_unavailable");
+        const fileId = uri.slice("yoplai-file://".length);
+        const metadata = await getMediaFileMetadata(fileId).catch(() => null);
+        if (!metadata || metadata.agentId !== record.agentId) return unavailable("file_unavailable");
+        if (!fileResponse(metadata)) return unavailable("unsupported_type");
+        if (pending?.revoked) return unavailable("session_deleted");
+        if (c.req.raw.signal.aborted) return unavailable("aborted");
+        const id = storeTicket({ kind: "file", agentId, sessionId, ownerUserId: userId, chatOrigin, appsOrigin: origin, fileId, expiresAt: Date.now() + 3600_000 });
+        audit.outcome = "ok";
+        return c.json({ url: `${origin}/open/${id}` });
+      }
       if (!mcpApps) return unavailable("not_connected");
       let contents;
       try {
@@ -353,10 +428,7 @@ export function createMcpAppRoutes(deps: {
       const { csp, policy, prefersBorder } = viewPolicy(content._meta);
       if (pending?.revoked) return unavailable("session_deleted");
       if (c.req.raw.signal.aborted) return unavailable("aborted");
-      for (const [id, ticket] of tickets) if (ticket.expiresAt <= Date.now()) tickets.delete(id);
-      if (tickets.size >= 512) { const oldest = tickets.keys().next().value; if (oldest) tickets.delete(oldest); }
-      const id = randomBytes(32).toString("hex");
-      tickets.set(id, { agentId, sessionId, ownerUserId: userId, chatOrigin, appsOrigin: origin, html, policy, expiresAt: Date.now() + 3600_000 });
+      const id = storeTicket({ kind: "view", agentId, sessionId, ownerUserId: userId, chatOrigin, appsOrigin: origin, html, policy, expiresAt: Date.now() + 3600_000 });
       audit.outcome = "ok";
       logInfo("MCP Apps CSP", { viewer: userId ?? null, agent: agentId, session: sessionId, toolCall: toolCallId, server: record.server, csp, policy });
       return c.json({ available: true, sandboxUrl: `${origin}/sandbox/${id}`, appsOrigin: origin, server: record.server, toolName: record.tool, args: record.args, result: record.result, csp, prefersBorder });
