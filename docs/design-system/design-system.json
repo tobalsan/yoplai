@@ -1,0 +1,25 @@
+{
+  "v": 3,
+  "assetGroups": {},
+  "blobs": {},
+  "createdOnFiles": {
+    "at": "2026-11-07T09:46:32.064Z",
+    "v": 1
+  },
+  "docs": {
+    "readme": "project/README.md",
+    "sections": []
+  },
+  "groups": [],
+  "layout": "files",
+  "libraries": [],
+  "namespace": "Yoplai",
+  "sections": {},
+  "title": "Yoplai",
+  "lastChange": {
+    "by": "Thinh Dinh",
+    "at": "2026-11-07T18:05:17Z",
+    "via": "Claude Code",
+    "note": "Side panel: true 50/50 — chat header and sheet fill the left half, panel full height beside the header"
+  }
+}

@@ -1,0 +1,43 @@
+<!-- @dsCard group="Navigation" height=720 -->
+<!doctype html><html><head><meta charset="utf-8"><title>Sidebar — preview</title><style>
+.sb { height: 100vh; min-height: 720px; padding: 12px; --aura-x: 20%; --aura-y: 0%; --aura-cool-x: 30%; --aura-cool-y: 100%; }
+.sb .yp-sidebar { height: 100%; }
+.sb__head { display: flex; align-items: center; justify-content: space-between; padding-right: var(--space-1); }
+.sb__head .yp-sidebar__brand { padding-bottom: var(--space-3); }
+.sb__head .yp-btn { margin-top: -6px; }
+.sb__sessions { flex: 1; min-height: 0; overflow: hidden; }
+.sb__foot { display: flex; align-items: center; gap: var(--space-3); margin: 0 calc(var(--space-3) * -1); padding: var(--space-3) var(--space-4) 0 var(--space-5); box-shadow: 0 -1px 0 var(--line); font: 500 13px/18px var(--font-sans); color: var(--ink); }
+.sb__foot > div { flex: 1; } .sb__foot span.sub { display: block; font: 400 12px/16px var(--font-sans); color: var(--ink-faint); }
+.sb .yp-tip { left: 290px; top: 354px; translate: 0 -50%; }
+</style></head><body>
+<div class="yp-ground sb">
+<div class="yp-sidebar">
+  <div class="sb__head">
+    <div class="yp-sidebar__brand">Yoplai</div>
+    <button class="yp-btn yp-btn--ghost yp-btn--icon yp-btn--sm" aria-label="Collapse sidebar"><svg viewBox="0 0 24 24" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M11 17l-5-5 5-5M18 17l-5-5 5-5"/></svg></button>
+  </div>
+  <a class="yp-nav" href="#"><svg viewBox="0 0 24 24" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>Search<span class="yp-kbd">&#8984;K</span></a>
+  <a class="yp-nav" href="#"><svg viewBox="0 0 24 24" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="8" width="16" height="12" rx="3"/><path d="M12 8V4M9 14h.01M15 14h.01"/></svg>Agents</a>
+  <a class="yp-nav" href="#"><svg viewBox="0 0 24 24" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8zM19 16l.7 2.3L22 19l-2.3.7L19 22l-.7-2.3L16 19l2.3-.7z"/></svg>Skills</a>
+  <a class="yp-nav" href="#"><svg viewBox="0 0 24 24" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="7" height="9" rx="1.5"/><rect x="14" y="3" width="7" height="5" rx="1.5"/><rect x="14" y="12" width="7" height="9" rx="1.5"/><rect x="3" y="16" width="7" height="5" rx="1.5"/></svg>Dashboards</a>
+  <a class="yp-nav" href="#"><svg viewBox="0 0 24 24" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20c0-3.6 2.9-6 6.5-6s6.5 2.4 6.5 6"/><path d="M16 4.6a3.5 3.5 0 0 1 0 6.8M18 14.4c2.2.6 3.5 2.5 3.5 5.6"/></svg>Teams</a>
+  <a class="yp-nav" href="#"><svg viewBox="0 0 24 24" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l8 3v6c0 4.5-3.2 7.8-8 9-4.8-1.2-8-4.5-8-9V6l8-3z"/></svg>Admin</a>
+  <div class="sb__sessions">
+    <div class="yp-label">Pinned</div>
+    <div class="yp-group">Today</div>
+    <div class="yp-session" tabindex="0" aria-current="page"><span class="yp-avatar">H</span><span class="yp-session__title">Reconcile PTO</span><button type="button" class="yp-btn yp-btn--ghost yp-btn--icon yp-btn--sm yp-session__more" aria-label="Session menu"><svg viewBox="0 0 24 24" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h.01M12 12h.01M19 12h.01"/></svg></button></div>
+    <div class="yp-label">Recent</div>
+    <div class="yp-group">Today</div>
+    <div class="yp-session" tabindex="0"><span class="yp-avatar">C</span><span class="yp-session__title">Adopt a task named ‘priority’</span><span class="yp-session__unread" aria-label="Unread"></span></div>
+    <div class="yp-group">Yesterday</div>
+    <div class="yp-session" tabindex="0"><span class="yp-avatar">C</span><span class="yp-session__title">Tool availability check</span></div>
+    <div class="yp-group">Earlier this week</div>
+    <div class="yp-session" tabindex="0"><span class="yp-avatar">R</span><span class="yp-session__title">Weekly vendor digest</span></div>
+    <div class="yp-group">June 2026</div>
+    <div class="yp-session" tabindex="0"><span class="yp-avatar">H</span><span class="yp-session__title">Circling back to Ramon</span></div>
+  </div>
+  <div class="sb__foot"><span class="yp-avatar">T</span><div>Thinh<span class="sub">Admin</span></div></div>
+</div>
+<div class="yp-tip yp-glass--strong" data-open role="tooltip"><b>Reconcile PTO</b><span>2m · henry</span><span>Pinned</span></div>
+</div>
+</body></html>

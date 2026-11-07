@@ -1,0 +1,50 @@
+<!-- @dsCard height=288 -->
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Yoplai</title>
+<style>
+  html, body { margin:0; height:100%; }
+  body { background:var(--canvas); color:var(--ink); font-family:var(--font-sans); overflow:hidden; }
+  .cover { position:relative; width:960px; height:288px; overflow:hidden; }
+  .art { position:absolute; top:0; left:480px; width:480px; height:288px; overflow:hidden; }
+  .art svg { display:block; width:480px; height:288px; }
+  .orange { fill:var(--accent); }
+  .ink { fill:var(--ink); }
+  .paper { fill:var(--surface); stroke:var(--line); stroke-width:1; }
+  .lg { rx:var(--radius-lg); }
+  .md { rx:var(--radius-md); }
+  .text { position:absolute; left:var(--space-6); bottom:var(--space-6); max-width:440px; }
+  .name { font-weight:600; font-size:120px; line-height:.92; letter-spacing:-0.045em; margin:0; }
+  .tag { margin:var(--space-3) 0 0; font-size:14px; line-height:20px; color:var(--ink-muted); }
+</style>
+</head>
+<body>
+<div class="cover">
+  <div class="art">
+    <!--
+      blocks: accent 168×232 slab (radius-lg) · ink 136×120 (radius-md) · surface 160×128 with its line hairline, bleeding right (radius-md)
+      arrangement: one tall orange slab bleeding off the top, a black and a white satellite stepped to either side
+      pattern: precise/minimal row ("Simplicity and focus"; a 4px grid) — a 5×4 ink dot grid at space-5 pitch, lower right
+      scales: gaps space-2 (8px), dot pitch space-5 (24px), radii radius-lg 14 / radius-md 10 / radius-full dots
+    -->
+    <svg viewBox="0 0 480 288" aria-hidden="true">
+      <rect class="orange lg" x="176" y="-16" width="168" height="232"/>
+      <rect class="ink md" x="32" y="104" width="136" height="120"/>
+      <rect class="paper md" x="352" y="40" width="160" height="128"/>
+      <g class="ink">
+        <circle cx="368" cy="192" r="2"/><circle cx="392" cy="192" r="2"/><circle cx="416" cy="192" r="2"/><circle cx="440" cy="192" r="2"/><circle cx="464" cy="192" r="2"/>
+        <circle cx="368" cy="216" r="2"/><circle cx="392" cy="216" r="2"/><circle cx="416" cy="216" r="2"/><circle cx="440" cy="216" r="2"/><circle cx="464" cy="216" r="2"/>
+        <circle cx="368" cy="240" r="2"/><circle cx="392" cy="240" r="2"/><circle cx="416" cy="240" r="2"/><circle cx="440" cy="240" r="2"/><circle cx="464" cy="240" r="2"/>
+        <circle cx="368" cy="264" r="2"/><circle cx="392" cy="264" r="2"/><circle cx="416" cy="264" r="2"/><circle cx="440" cy="264" r="2"/><circle cx="464" cy="264" r="2"/>
+      </g>
+    </svg>
+  </div>
+  <div class="text">
+    <h1 class="name">Yoplai</h1>
+    <p class="tag">A workroom for agents. Orange, black and white.</p>
+  </div>
+</div>
+</body>
+</html>

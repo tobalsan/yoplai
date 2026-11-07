@@ -1,0 +1,102 @@
+<!-- @dsCard group="Pages" height=620 subtitle="Your skills with on/off switches, and each agent's own skills, read-only" -->
+<!doctype html><html><head><meta charset="utf-8"><title>Skills — preview</title><style>
+.sk { padding: var(--space-6); height: 100vh; min-height: 620px; --aura-x: 80%; --aura-y: 0%; }
+.sk .yp-paper { position: relative; height: 100%; overflow-y: auto; padding: var(--space-7) var(--space-6); scrollbar-width: thin; }
+</style></head><body>
+<div class="yp-ground sk">
+  <div class="yp-paper">
+    <div class="yp-skills">
+      <header class="yp-skills__head">
+        <div><h2 class="yp-heading">Skills</h2><p class="yp-body">Skills enabled on this page become available to all your agents.</p></div>
+        <button type="button" class="yp-btn yp-btn--primary" id="add" aria-haspopup="menu" aria-expanded="false" aria-controls="menu-add"><svg viewBox="0 0 24 24" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>Add skill<svg viewBox="0 0 24 24" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg></button>
+      </header>
+      <label class="yp-skills__search"><svg viewBox="0 0 24 24" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg><input class="yp-input" type="search" id="q" placeholder="Search skills" aria-label="Search skills" autocomplete="off"></label>
+      <div class="yp-skills" id="body" style="gap:var(--space-7)"></div>
+    </div>
+  </div>
+</div>
+<div class="yp-menu" id="menu-add" popover role="menu" aria-label="Add skill">
+  <button class="yp-menu__item" type="button" role="menuitem"><svg viewBox="0 0 24 24" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 16V4M7 9l5-5 5 5M5 20h14"/></svg>Upload zip</button>
+  <button class="yp-menu__item" type="button" role="menuitem"><svg viewBox="0 0 24 24" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>Upload folder</button>
+  <button class="yp-menu__item" type="button" role="menuitem"><svg viewBox="0 0 24 24" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>Create skill</button>
+  <button class="yp-menu__item" type="button" role="menuitem"><svg viewBox="0 0 24 24" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 4h6v6M20 4l-9 9M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"/></svg>Import from Claude or ChatGPT</button>
+</div>
+<div class="yp-menu" id="menu-row" popover role="menu" aria-label="Skill actions">
+  <button class="yp-menu__item" type="button" role="menuitem"><svg viewBox="0 0 24 24" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M16 8a4 4 0 1 0-8 0 4 4 0 0 0 8 0zM4 20c0-3.3 3.6-5 8-5s8 1.7 8 5"/></svg>Share</button>
+  <button class="yp-menu__item" type="button" role="menuitem"><svg viewBox="0 0 24 24" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 16V4M7 9l5-5 5 5M5 20h14"/></svg>Update</button>
+  <button class="yp-menu__item" type="button" role="menuitem"><svg viewBox="0 0 24 24" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 7v5l3 2M3 12a9 9 0 1 0 3-6.7M3 4v4h4"/></svg>Versions</button>
+  <div class="yp-menu__sep" role="separator"></div>
+  <button class="yp-menu__item yp-menu__item--danger" type="button" role="menuitem"><svg viewBox="0 0 24 24" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 12a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1l1-12M9 7V4h6v3"/></svg>Delete</button>
+</div>
+<div class="yp-tip yp-glass--strong" id="tip" role="tooltip"></div>
+<script>
+  const SKILLS = {
+    mine: [
+      { id: 'bird', on: true, desc: 'X/Twitter CLI for reading, searching, posting, and engagement via cookies.' },
+      { id: 'frontend-design', on: true, desc: "Guidance for distinctive, intentional visual design when building new UI or reshaping an existing one. Helps with aesthetic direction, typography, and making choices that don't read as templated defaults." },
+      { id: 'demo-skill', on: false, desc: 'Demo skill for testing the skill system. Use when the user asks to "run the demo skill"… Replies with a short confirmation that the skill loaded, plus the current date. Not for real work.' },
+      { id: 'learn', on: true, desc: "Use this skill when the user wants intellectual understanding — learning how or why something works, not getting a task done or soliciting Claude's judgment." },
+    ],
+    agent: {
+      Casey: [['claap-meeting-search', 'Find Claap meeting recordings and transcripts reliably, by title, attendee or date.']],
+      Connie: [
+        ['content-automation-playbook', 'Run the recurring content pipeline from brief to scheduled post, with checkpoints for review.'],
+        ['content-topic-monitoring', 'Watch sources for new topics in our space and queue the ones worth an article.'],
+        ['lead-outreach-drafts', 'Draft short, personal first-touch emails for new leads from their profile and recent activity.'],
+        ['people-enrichment', 'Find and enrich people and companies with the People Enrich tools, then write the result back to the sheet.'],
+        ['webflow-blog-draft', 'Move one approved Google Doc article into the Webflow blog as an unpublished CMS draft, with fields mapped.'],
+        ['zendesk-kb-articles', 'Find, research, write and file Help Center articles in Zendesk from resolved tickets.'],
+      ],
+      Henry: [
+        ['pto-balance-reconcile', 'Reconcile PTO balances against the payroll export and list every mismatch with a proposed fix.'],
+        ['leave-policy-lookup', 'Answer leave and holiday questions from the current HR policy documents, with the clause cited.'],
+        ['onboarding-checklist', 'Build a first-two-weeks checklist for a new hire from their role and start date.'],
+      ],
+      Roddy: [['vendor-price-scan', 'Collect public pricing for a list of vendors into one comparable sheet and flag changes since last run.']],
+      Sally: [
+        ['pipeline-review', 'Summarise the pipeline by stage, flag slipped deals and compare with last quarter.'],
+        ['crm-deal-hygiene', 'Find deals with missing owners, stale stages or no next step, and propose the cleanup.'],
+        ['call-prep-brief', 'Prepare a one-page brief before a sales call: account history, open threads, likely objections.'],
+      ],
+    },
+  };
+  const INFO = { mine: 'Skills you upload, create or import.', agent: 'These skills are specific to each agent. They do not apply to all agents, only to the agent who owns the workspace they live in.' };
+  const esc = (s) => s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+  const mark = (t, ws) => ws.length ? esc(t).replace(new RegExp('(' + ws.map((w) => esc(w).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|') + ')', 'gi'), '<mark>$1</mark>') : esc(t);
+  const I_INFO = '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8h.01"/></svg>';
+  const I_MORE = '<svg viewBox="0 0 24 24" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/></svg>';
+  const body = document.getElementById('body'), q = document.getElementById('q'), tip = document.getElementById('tip');
+  let agent = 'Connie';
+  const row = (name, desc, ws, ctl) => `<li class="yp-skills__row"${ctl && !ctl.on ? ' data-off' : ''}><div class="yp-skills__copy"><span class="yp-skills__name">${mark(name, ws)}</span><p class="yp-skills__desc" title="${esc(desc)}">${mark(desc, ws)}</p></div>${ctl ? `<button type="button" class="yp-switch" role="switch" aria-checked="${ctl.on}" aria-label="Enable ${esc(name)}"><i></i></button><button type="button" class="yp-btn yp-btn--ghost yp-btn--icon yp-btn--sm" data-more aria-label="Actions for ${esc(name)}" aria-haspopup="menu">${I_MORE}</button>` : ''}</li>`;
+  const head = (id, t, n, info) => `<h3 class="yp-skills__label" id="${id}">${t}<span class="yp-skills__count">${n}</span><button type="button" class="yp-skills__info" data-info="${esc(info)}" aria-label="About ${esc(t.toLowerCase())}: ${esc(info)}">${I_INFO}</button></h3>`;
+  function render() {
+    const query = q.value.trim(), ws = query.toLowerCase().split(/\s+/).filter(Boolean);
+    const hit = (...f) => ws.every((w) => f.join(' ').toLowerCase().includes(w));
+    const mine = SKILLS.mine.filter((s) => hit(s.id, s.desc));
+    const by = Object.entries(SKILLS.agent).map(([a, l]) => [a, l.filter(([n, d]) => hit(n, d, a))]);
+    const total = by.reduce((n, [, l]) => n + l.length, 0);
+    if (!(by.find(([a]) => a === agent) || [0, []])[1].length) agent = (by.find(([, l]) => l.length) || [agent])[0];
+    const none = (m) => `<p class="yp-skills__empty">${query ? `No skills match “${esc(query)}”.` : m}</p>`;
+    const chips = by.map(([a, l]) => `<button type="button" class="yp-chip yp-skills__agent" aria-pressed="${a === agent}" data-agent="${a}"${l.length ? '' : ' disabled'}><span class="yp-avatar" aria-hidden="true">${a[0]}</span>${a}<span class="yp-skills__n">${l.length}</span></button>`).join('');
+    const cur = (by.find(([a]) => a === agent) || [0, []])[1];
+    body.innerHTML = `<section class="yp-skills__section" aria-labelledby="m">${head('m', 'Your skills', mine.length, INFO.mine)}${mine.length ? `<ul class="yp-skills__list">${mine.map((s) => row(s.id, s.desc, ws, s)).join('')}</ul>` : none('No skills yet.')}</section>
+      <section class="yp-skills__section" aria-labelledby="a">${head('a', 'Agent skills', total, INFO.agent)}${total ? `<div class="yp-skills__agents" role="group" aria-label="Agents">${chips}</div><ul class="yp-skills__list">${cur.map(([n, d]) => row(n, d, ws)).join('')}</ul>` : none('No agent workspace skills.')}</section>`;
+  }
+  render();
+  q.addEventListener('input', render);
+  body.addEventListener('click', (e) => {
+    const sw = e.target.closest('.yp-switch'), pick = e.target.closest('[data-agent]'), more = e.target.closest('[data-more]');
+    if (sw) { const on = sw.getAttribute('aria-checked') !== 'true'; sw.setAttribute('aria-checked', String(on)); sw.closest('.yp-skills__row').toggleAttribute('data-off', !on); }
+    else if (pick) { agent = pick.dataset.agent; render(); }
+    else if (more) { const r = more.getBoundingClientRect(), m = document.getElementById('menu-row'); m.style.top = r.bottom + 6 + 'px'; m.style.left = Math.max(8, r.right - 200) + 'px'; m.togglePopover(); }
+  });
+  const showTip = (b) => { tip.innerHTML = `<span>${esc(b.dataset.info)}</span>`; const r = b.getBoundingClientRect(); tip.style.left = Math.min(r.left, innerWidth - 276) + 'px'; tip.style.top = r.bottom + 8 + 'px'; tip.setAttribute('data-open', ''); };
+  const hideTip = () => tip.removeAttribute('data-open');
+  body.addEventListener('pointerover', (e) => { const b = e.target.closest('.yp-skills__info'); if (b) showTip(b); });
+  body.addEventListener('pointerout', (e) => { if (e.target.closest('.yp-skills__info')) hideTip(); });
+  body.addEventListener('focusin', (e) => { const b = e.target.closest('.yp-skills__info'); if (b) showTip(b); });
+  body.addEventListener('focusout', (e) => { if (e.target.closest('.yp-skills__info')) hideTip(); });
+  document.getElementById('add').addEventListener('click', (e) => { const r = e.currentTarget.getBoundingClientRect(), m = document.getElementById('menu-add'); m.style.top = r.bottom + 6 + 'px'; m.style.left = Math.max(8, r.right - 260) + 'px'; m.style.minWidth = '260px'; m.togglePopover(); });
+  document.querySelectorAll('.yp-menu').forEach((m) => m.addEventListener('click', (e) => { if (e.target.closest('.yp-menu__item')) m.hidePopover(); }));
+</script>
+</body></html>

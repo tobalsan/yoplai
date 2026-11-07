@@ -1,0 +1,124 @@
+<!-- @dsCard group="Pages" height=640 subtitle="The user-level dashboards list at scale: pinned, search, scope and agent filters, one date-grouped list" -->
+<!doctype html><html><head><meta charset="utf-8"><title>Dashboards — preview</title><style>
+.db { padding: var(--space-6); height: 100vh; min-height: 560px; --aura-x: 80%; --aura-y: 0%; }
+.db .yp-paper { position: relative; height: 100%; overflow-y: auto; padding: var(--space-7) var(--space-6); scrollbar-width: thin; }
+.db__state { display: flex; gap: var(--space-2); justify-content: center; margin-bottom: var(--space-6); }
+</style></head><body>
+<div class="yp-ground db">
+  <div class="yp-paper">
+    <div class="db__state" role="group" aria-label="Preview state"><button type="button" class="yp-chip" aria-pressed="true" data-state="full">Populated</button><button type="button" class="yp-chip" aria-pressed="false" data-state="empty">Empty</button></div>
+    <div class="yp-skills" id="body" style="gap:var(--space-6)">
+      <div class="yp-dash__toolbar" id="bar">
+        <div class="yp-dash__bar">
+          <label class="yp-skills__search"><svg viewBox="0 0 24 24" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg><input class="yp-input" type="search" id="q" placeholder="Search dashboards" aria-label="Search dashboards" autocomplete="off"></label>
+          <div class="yp-seg yp-seg--field" id="scope" role="radiogroup" aria-label="Show"><span class="yp-seg__thumb"></span>
+            <button class="yp-seg__item" role="radio" aria-checked="true" data-value="all">All<span class="yp-skills__n"></span></button><button class="yp-seg__item" role="radio" aria-checked="false" data-value="mine">Mine<span class="yp-skills__n"></span></button><button class="yp-seg__item" role="radio" aria-checked="false" data-value="shared">Shared<span class="yp-skills__n"></span></button></div>
+        </div>
+        <div class="yp-skills__agents" id="chips" role="group" aria-label="Agents"></div>
+      </div>
+      <div id="pinned"></div>
+      <div id="list"></div>
+    </div>
+  </div>
+</div>
+<div class="yp-menu" id="menu" popover role="menu" aria-label="Dashboard actions">
+  <button class="yp-menu__item" type="button" role="menuitem"><svg viewBox="0 0 24 24" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"/></svg>Copy link</button>
+  <button class="yp-menu__item" type="button" role="menuitem"><svg viewBox="0 0 24 24" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20c0-3.6 2.9-6 6.5-6s6.5 2.4 6.5 6M16 4.6a3.5 3.5 0 0 1 0 6.8M18 14.4c2.2.6 3.5 2.5 3.5 5.6"/></svg>Manage access</button>
+  <div class="yp-menu__sep" role="separator"></div>
+  <button class="yp-menu__item yp-menu__item--danger" type="button" role="menuitem"><svg viewBox="0 0 24 24" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 12a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1l1-12M9 7V4h6v3"/></svg>Delete</button>
+</div>
+<div class="yp-menu" id="agents-menu" popover role="menu" aria-label="More agents"></div>
+<div class="yp-tip yp-glass--strong" id="tip" role="tooltip"></div>
+<script>
+  const body = document.getElementById('body'), tip = document.getElementById('tip'), menu = document.getElementById('menu');
+  const esc = (s) => s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+  const I = (d) => `<svg viewBox="0 0 24 24" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${d}</svg>`;
+  const P = {
+    lock: '<rect x="4" y="11" width="16" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/>',
+    people: '<circle cx="9" cy="8" r="3.5"/><path d="M2.5 20c0-3.6 2.9-6 6.5-6s6.5 2.4 6.5 6M16 4.6a3.5 3.5 0 0 1 0 6.8M18 14.4c2.2.6 3.5 2.5 3.5 5.6"/>',
+    globe: '<circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c2.5 2.7 3.7 5.7 3.7 9s-1.2 6.3-3.7 9c-2.5-2.7-3.7-5.7-3.7-9S9.5 5.7 12 3z"/>',
+    eye: '<path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/>',
+    chat: '<path d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1.1-4.6A8 8 0 1 1 21 12z"/>',
+    pin: '<path d="M12 17v5M9 10.8a2 2 0 0 1-1.1 1.8l-1.8.9A2 2 0 0 0 5 15.2V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.8a2 2 0 0 0-1.1-1.7l-1.8-.9A2 2 0 0 1 15 10.8V7a1 1 0 0 1 1-1 2 2 0 0 0 0-4H8a2 2 0 0 0 0 4 1 1 0 0 1 1 1z"/>',
+    more: '<circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/>',
+    link: '<path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"/>',
+  };
+  let state = 'full', q = '', scope = 'all', shown = 10, seen = new Set();
+  const PAGE = 10, TODAY = new Date(2026, 10, 7), agentSel = new Set();
+  const m = (id, t, a, d, acc = ['lock', 'Private'], o = {}) => ({ id, t, a, d, own: 1, acc, ...o });
+  const sh = (id, t, a, d, by, edit) => ({ id, t, a, d, by, acc: edit ? ['pen', 'Can edit'] : ['eye', 'Can view'] });
+  const D0 = [
+    m(1, 'Content pipeline', 'Connie', '2026-11-07'), m(2, 'Six KPIs', 'Connie', '2026-11-07'), m(3, 'Team PTO overview', 'Henry', '2026-11-04', ['globe', 'Everyone'], { pin: 1 }),
+    m(4, 'Headcount by department', 'Henry', '2026-10-29', ['people', '3 people']), sh(5, 'ExxonMobil — Guest Wi-Fi Sessions', 'Sally', '2026-10-19', 'Thinh'),
+    m(6, 'Blog traffic by channel', 'Connie', '2026-11-06', ['people', '4 people']), m(7, 'Newsletter engagement', 'Connie', '2026-10-31', ['globe', 'Everyone']), m(8, 'Campaign ROI by channel', 'Connie', '2026-10-15'),
+    m(9, 'Open requisitions', 'Henry', '2026-11-06', ['people', '6 people']), m(10, 'Attrition by tenure', 'Henry', '2026-10-12'), m(11, 'Time to hire', 'Henry', '2026-09-18'),
+    m(12, 'Deals closing this month', 'Sally', '2026-11-05'), m(13, 'Win rate by segment', 'Sally', '2026-10-27'), m(14, 'Forecast vs quota', 'Sally', '2026-10-08', ['people', '5 people']),
+    sh(15, 'Regional quota attainment', 'Sally', '2026-10-21', 'Priya Nair', 1),
+    m(16, 'Ticket volume by category', 'Casey', '2026-11-03', ['people', '3 people']), m(17, 'First response time', 'Casey', '2026-10-28'), sh(18, 'Support backlog', 'Casey', '2026-10-02', 'Maya Chen', 1),
+    m(19, 'Monthly burn', 'Cira', '2026-11-06'), m(20, 'Cash runway', 'Cira', '2026-11-02'), m(21, 'Budget vs actuals', 'Cira', '2026-10-20'), sh(22, 'Q3 close checklist', 'Cira', '2026-09-30', 'Daniel Ruiz', 1),
+    m(23, 'Competitor pricing tracker', 'Roddy', '2026-11-04', ['people', '2 people']), m(24, 'User interview themes', 'Roddy', '2026-10-22'),
+    m(25, 'Paid acquisition CAC', 'Nora', '2026-11-05'), m(26, 'Landing page conversion', 'Nora', '2026-10-26'),
+  ];
+  let D = D0;
+  const hl = (t, ws) => ws.length ? esc(t).replace(new RegExp('(' + ws.map((w) => esc(w).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|') + ')', 'gi'), '<mark>$1</mark>') : esc(t);
+  const when = (s) => new Date(s + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+  const bucket = (s) => { const n = Math.round((TODAY - new Date(s + 'T00:00:00')) / 864e5); return n <= 0 ? 'Today' : n === 1 ? 'Yesterday' : n <= 7 ? 'This week' : n <= 30 ? 'This month' : 'Earlier'; };
+  const btn = (c, tip, ic, x = '') => `<button type="button" class="yp-btn yp-btn--ghost yp-btn--icon yp-btn--sm ${c}" data-tip="${tip}" aria-label="${tip}" ${x}>${I(P[ic])}</button>`;
+  const row = (d, ws) => `<li class="yp-skills__row" data-id="${d.id}"${seen.has(d.id) ? '' : ' data-new'}><span class="yp-avatar yp-dash__avatar" aria-hidden="true">${d.a[0]}</span><div class="yp-skills__copy"><button type="button" class="yp-dash__open yp-dash__title">${hl(d.t, ws)}</button><span class="yp-dash__meta">${hl(d.a, ws)} · ${d.own ? 'Owned by you' : 'Shared by ' + hl(d.by, ws)} · ${when(d.d)}</span></div>
+    <span class="yp-dash__access">${I(P[d.acc[0]])}${d.acc[1]}</span>
+    <div class="yp-dash__acts">${btn('yp-dash__chat', 'Chat about this dashboard', 'chat')}${btn('yp-dash__pin', d.pin ? 'Unpin' : 'Pin', 'pin', `data-pin aria-pressed="${!!d.pin}"`)}${d.own ? btn('yp-dash__more', 'More', 'more', 'data-more aria-haspopup="menu"') : btn('yp-dash__more', 'Copy link', 'link')}</div></li>`;
+  const head = (id, t, n) => `<h3 class="yp-skills__label" id="${id}">${t}<span class="yp-skills__count">${n}</span></h3>`;
+  const $ = (s) => document.querySelector(s), seg = $('#scope'), thumb = $('.yp-seg__thumb', seg);
+  const place = () => { const it = seg.querySelector('[aria-checked="true"]'); thumb.style.width = it.offsetWidth + 'px'; thumb.style.setProperty('--x', it.offsetLeft + 'px'); };
+  function render() {
+    const ws = q.trim().toLowerCase().split(/\s+/).filter(Boolean);
+    const names = [...new Set(D.map((d) => d.a))], tot = (a) => D.filter((d) => d.a === a).length;
+    names.sort((a, b) => tot(b) - tot(a) || a.localeCompare(b));
+    const bySearch = D.filter((d) => ws.every((w) => [d.t, d.a, d.own ? '' : d.by].join(' ').toLowerCase().includes(w)));
+    const inScope = (d) => scope === 'all' || (scope === 'mine') === !!d.own, inAg = (d) => !agentSel.size || agentSel.has(d.a);
+    const rows = bySearch.filter((d) => inScope(d) && inAg(d)), sc = { all: 0, mine: 0, shared: 0 };
+    bySearch.filter(inAg).forEach((d) => { sc.all++; sc[d.own ? 'mine' : 'shared']++; });
+    seg.querySelectorAll('.yp-seg__item').forEach((i) => { i.querySelector('.yp-skills__n').textContent = sc[i.dataset.value]; });
+    place();
+    const top = names.slice(0, 5), vis = names.filter((a) => names.length <= 6 || top.includes(a) || agentSel.has(a)), rest = names.filter((a) => !vis.includes(a));
+    const cnt = (a) => bySearch.filter((d) => inScope(d) && d.a === a).length;
+    $('#chips').innerHTML = vis.map((a) => `<button type="button" class="yp-chip yp-skills__agent" aria-pressed="${agentSel.has(a)}" data-agent="${a}"${!cnt(a) && !agentSel.has(a) ? ' disabled' : ''}><span class="yp-avatar" aria-hidden="true">${a[0]}</span>${a}<span class="yp-skills__n">${cnt(a)}</span></button>`).join('') + (rest.length ? `<button type="button" class="yp-chip" data-agents-more aria-haspopup="menu" aria-label="${rest.length} more agents">+${rest.length}</button>` : '');
+    $('#agents-menu').innerHTML = rest.map((a) => `<button class="yp-menu__item" type="button" role="menuitem" data-agent="${a}"><span class="yp-avatar yp-dash__avatar" aria-hidden="true">${a[0]}</span>${a}<span class="yp-skills__n">${cnt(a)}</span></button>`).join('');
+    const pin = rows.filter((d) => d.pin), list = rows.filter((d) => !d.pin).sort((a, b) => b.d.localeCompare(a.d)), cur = list.slice(0, shown);
+    $('#bar').hidden = !D.length; $('#pinned').hidden = !pin.length;
+    $('#pinned').innerHTML = pin.length ? `<section class="yp-skills__section" aria-labelledby="p">${head('p', 'Pinned', pin.length)}<ul class="yp-skills__list">${pin.map((d) => row(d, ws)).join('')}</ul></section>` : '';
+    let h = '';
+    if (!D.length) h = `<section class="yp-skills__section">${head('m', 'My dashboards', 0)}<p class="yp-skills__empty">You do not own any dashboards yet.</p></section><section class="yp-skills__section">${head('s', 'Shared with me', 0)}<p class="yp-skills__empty">No dashboards have been shared with you.</p></section>`;
+    else if (!rows.length) h = `<p class="yp-skills__empty">${q.trim() ? `No dashboards match “${esc(q.trim())}”.` : 'No dashboards match these filters.'} <button type="button" class="yp-dash__clear" data-clear>Clear filters</button></p>`;
+    else { let last = ''; cur.forEach((d, i) => { const b = bucket(d.d); if (b !== last) { if (i) h += '</ul>'; h += `<h4 class="yp-dash__date">${b}</h4><ul class="yp-skills__list">`; last = b; } h += row(d, ws); }); if (cur.length) h += '</ul>'; if (list.length > cur.length) h += `<button type="button" class="yp-dash__more-rows" data-rows>Show ${Math.min(PAGE, list.length - cur.length)} more</button>`; }
+    $('#list').innerHTML = h;
+    seen = new Set([...pin, ...cur].map((d) => d.id));
+  }
+  const reset = () => { shown = PAGE; render(); };
+  render();
+  $('#q').addEventListener('input', (e) => { q = e.target.value; reset(); });
+  seg.querySelectorAll('.yp-seg__item').forEach((i) => i.addEventListener('click', () => { seg.querySelectorAll('.yp-seg__item').forEach((x) => x.setAttribute('aria-checked', String(x === i))); scope = i.dataset.value; place(); reset(); }));
+  window.addEventListener('load', place);
+  document.querySelectorAll('[data-state]').forEach((c) => c.addEventListener('click', () => { state = c.dataset.state; D = state === 'full' ? D0 : []; document.querySelectorAll('[data-state]').forEach((x) => x.setAttribute('aria-pressed', String(x === c))); reset(); }));
+  const pick = (a) => { agentSel.has(a) ? agentSel.delete(a) : agentSel.add(a); reset(); (document.querySelector(`#chips [data-agent="${a}"]`) || document.querySelector('[data-agents-more]'))?.focus(); };
+  const amenu = $('#agents-menu');
+  amenu.addEventListener('click', (e) => { const it = e.target.closest('[data-agent]'); if (it) { amenu.hidePopover(); pick(it.dataset.agent); } });
+  body.addEventListener('click', (e) => {
+    const t = e.target.closest('button'); if (!t) return;
+    if (t.matches('[data-agent]')) return pick(t.dataset.agent);
+    if (t.matches('[data-agents-more]')) { const r = t.getBoundingClientRect(); amenu.style.top = r.bottom + 6 + 'px'; amenu.style.left = Math.max(8, r.left) + 'px'; amenu.style.minWidth = '200px'; tip.removeAttribute('data-open'); return amenu.togglePopover(); }
+    if (t.matches('[data-clear]')) { q = ''; $('#q').value = ''; scope = 'all'; agentSel.clear(); seg.querySelectorAll('.yp-seg__item').forEach((x) => x.setAttribute('aria-checked', String(x.dataset.value === 'all'))); return reset(); }
+    if (t.matches('[data-rows]')) { shown += PAGE; return render(); }
+    const pin = t.closest('[data-pin]'), more = t.closest('[data-more]');
+    if (pin) { const d = D.find((x) => x.id == pin.closest('[data-id]').dataset.id); d.pin = d.pin ? 0 : 1; render(); }
+    else if (more) { const r = more.getBoundingClientRect(); menu.style.top = r.bottom + 6 + 'px'; menu.style.left = Math.max(8, r.right - 200) + 'px'; tip.removeAttribute('data-open'); menu.togglePopover(); }
+  });
+  const showTip = (b) => { tip.innerHTML = `<span>${b.dataset.tip}</span>`; const r = b.getBoundingClientRect(); tip.style.left = r.left + r.width / 2 + 'px'; tip.style.top = r.bottom + 8 + 'px'; tip.style.translate = '-50% 0'; tip.setAttribute('data-open', ''); };
+  const hideTip = () => tip.removeAttribute('data-open');
+  body.addEventListener('pointerover', (e) => { const b = e.target.closest('[data-tip]'); if (b) showTip(b); });
+  body.addEventListener('pointerout', (e) => { if (e.target.closest('[data-tip]')) hideTip(); });
+  body.addEventListener('focusin', (e) => { const b = e.target.closest('[data-tip]'); if (b && b.matches(':focus-visible')) showTip(b); });
+  body.addEventListener('focusout', (e) => { if (e.target.closest('[data-tip]')) hideTip(); });
+  menu.addEventListener('click', (e) => { if (e.target.closest('.yp-menu__item')) menu.hidePopover(); });
+</script>
+</body></html>

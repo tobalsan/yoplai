@@ -1,0 +1,423 @@
+<!-- @dsCard group="Pages" height=640 subtitle="Teams: one flat list that opens a team sheet; staged membership edits, sticky save bar" -->
+<!doctype html><html><head><meta charset="utf-8"><title>Teams — preview</title><style>
+.tm { padding: var(--space-6); height: 100vh; min-height: 560px; --aura-x: 80%; --aura-y: 0%; }
+.tm__sheet { position: relative; height: 100%; overflow: hidden; }
+.tm__scroll { height: 100%; overflow-y: auto; padding: var(--space-7) var(--space-6); scrollbar-width: thin; scrollbar-color: var(--line-control) transparent; }
+.tm__scroll.is-in { animation: tm-in var(--dur-spring-smooth) var(--spring-smooth) both; }
+@keyframes tm-in { from { opacity: 0; translate: 0 8px; } }
+.tm__toasts { position: fixed; left: 0; right: 0; bottom: var(--space-5); margin: 0 auto; z-index: 3; width: 360px; display: flex; flex-direction: column; gap: var(--space-2); pointer-events: none; }
+.tm__toasts .yp-toast { transition: opacity var(--dur-base) var(--ease-out), transform var(--dur-spring-smooth) var(--spring-smooth); }
+@starting-style { .tm__toasts .yp-toast { opacity: 0; transform: translateY(8px); } }
+</style></head><body>
+<div class="yp-ground tm">
+  <div class="yp-paper tm__sheet">
+    <div class="tm__scroll" id="teams-scroll" tabindex="0" aria-label="Teams">
+          <div class="yp-skills" id="teams-list-page">
+            <header class="yp-skills__head">
+              <div><p class="yp-body">Organize agents and people into teams.</p></div>
+              <button type="button" class="yp-btn yp-btn--primary" id="teams-new"><svg viewBox="0 0 24 24" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>New team</button>
+            </header>
+            <div id="teams-list"></div>
+            <div id="teams-without"></div>
+          </div>
+          <div class="yp-teams__sheet" id="team-sheet" hidden>
+            <button type="button" class="yp-btn yp-btn--ghost yp-btn--sm yp-teams__back" id="team-back"><svg viewBox="0 0 24 24" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>Teams</button>
+            <div class="yp-settings">
+              <div class="yp-settings__id" id="team-id"></div>
+              <section class="yp-settings__section" aria-labelledby="team-mh">
+                <h3 class="yp-settings__label" id="team-mh">Members <span class="yp-skills__n" id="team-mn"></span></h3>
+                <div class="yp-teams__add">
+                  <label class="yp-skills__search"><svg viewBox="0 0 24 24" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg><input class="yp-input" type="search" id="team-q" role="combobox" aria-expanded="false" aria-controls="team-results" aria-autocomplete="list" aria-label="Add people" placeholder="Add people by name or email" autocomplete="off"></label>
+                  <div class="yp-menu yp-teams__results" id="team-results" role="listbox" aria-label="People" hidden></div>
+                </div>
+                <div id="team-members"></div>
+              </section>
+              <section class="yp-settings__section" aria-labelledby="team-eh">
+                <h3 class="yp-settings__label" id="team-eh">Everyone</h3>
+                <div class="yp-teams__switch"><div><strong id="team-all-l">All users</strong><p class="yp-settings__hint">Every user on the platform is a member, including new sign-ups.</p></div><button type="button" class="yp-switch" id="team-all" role="switch" aria-checked="false" aria-labelledby="team-all-l"><i></i></button></div>
+              </section>
+              <section class="yp-settings__section" aria-labelledby="team-ah">
+                <h3 class="yp-settings__label" id="team-ah">Agents <span class="yp-skills__n" id="team-an"></span></h3>
+                <div id="team-agents"></div>
+                <p class="yp-settings__hint">Assign agents from each agent's <button type="button" class="yp-teams__link">settings</button>.</p>
+              </section>
+            </div>
+          </div>
+    </div>
+        <div class="yp-settings__bar yp-glass" id="team-bar" role="region" aria-label="Unsaved changes" hidden>
+          <p aria-live="polite">Unsaved changes</p>
+          <div class="yp-settings__bar-actions"><button type="button" class="yp-btn" id="team-cancel">Cancel</button><button type="button" class="yp-btn yp-btn--primary" id="team-save">Save</button></div>
+        </div>
+  </div>
+</div>
+<div class="tm__toasts" id="toasts" aria-live="polite"></div>
+<div class="yp-menu" id="menu-team-row" popover role="menu" aria-label="Team actions">
+  <button class="yp-menu__item" type="button" role="menuitem" data-team-act="edit"><svg viewBox="0 0 24 24" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 20h4L19 9l-4-4L4 16v4zM13.5 6.5l4 4"/></svg>Edit details</button>
+  <div class="yp-menu__sep" role="separator"></div>
+  <button class="yp-menu__item yp-menu__item--danger" type="button" role="menuitem" data-team-act="delete"><svg viewBox="0 0 24 24" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 12a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1l1-12M9 7V4h6v3"/></svg>Delete team</button>
+</div>
+<dialog class="yp-modal" id="team-edit" aria-labelledby="team-edit-h">
+  <form id="team-edit-form" novalidate>
+    <h2 class="yp-modal__head" id="team-edit-h">Edit details</h2>
+    <div class="yp-modal__body yp-teams__form">
+      <div class="yp-teams__namerow">
+        <span class="yp-teams__glyph" id="te-prev" aria-hidden="true"></span>
+        <div class="yp-field"><label class="yp-field__label" for="te-name">Name</label><input class="yp-input" id="te-name" autocomplete="off" maxlength="60" aria-describedby="te-err"><span class="yp-field__error" id="te-err" role="alert"></span></div>
+      </div>
+      <div class="yp-field"><label class="yp-field__label" for="te-desc">Description</label><input class="yp-input" id="te-desc" autocomplete="off" maxlength="140"></div>
+      <div class="yp-field"><span class="yp-field__label" id="te-cl">Color</span><div class="yp-teams__swatches" id="te-colors" role="radiogroup" aria-labelledby="te-cl"></div></div>
+      <div class="yp-field"><span class="yp-field__label" id="te-il">Icon</span><div class="yp-teams__icons" id="te-icons" role="radiogroup" aria-labelledby="te-il"></div></div>
+    </div>
+    <div class="yp-modal__foot"><button type="button" class="yp-btn" data-te-cancel>Cancel</button><button type="submit" class="yp-btn yp-btn--primary" id="te-ok">Save details</button></div>
+  </form>
+</dialog>
+<dialog class="yp-modal" id="team-del" aria-labelledby="team-del-h" aria-describedby="team-del-b">
+  <form method="dialog">
+    <h2 class="yp-modal__head" id="team-del-h"></h2>
+    <div class="yp-modal__body yp-teams__body" id="team-del-b"></div>
+    <div class="yp-modal__foot"><button class="yp-btn" value="cancel" autofocus>Cancel</button><button class="yp-btn yp-btn--danger" value="delete">Delete team</button></div>
+  </form>
+</dialog>
+<dialog class="yp-modal" id="team-agent" aria-labelledby="team-agent-h" aria-describedby="team-agent-b">
+  <form method="dialog">
+    <h2 class="yp-modal__head" id="team-agent-h"></h2>
+    <p class="yp-modal__body" id="team-agent-b"></p>
+    <div class="yp-modal__foot"><button class="yp-btn" value="cancel" autofocus>Cancel</button><button class="yp-btn yp-btn--danger" value="remove">Remove</button></div>
+  </form>
+</dialog>
+<dialog class="yp-modal" id="team-discard" aria-labelledby="team-discard-h" aria-describedby="team-discard-b">
+  <form method="dialog">
+    <h2 class="yp-modal__head" id="team-discard-h">Discard unsaved changes?</h2>
+    <p class="yp-modal__body" id="team-discard-b"></p>
+    <div class="yp-modal__foot"><button class="yp-btn" value="keep" autofocus>Keep editing</button><button class="yp-btn yp-btn--danger" value="discard">Discard</button></div>
+  </form>
+</dialog>
+<script>
+(() => {
+  const $ = (s, r = document) => r.querySelector(s);
+  const $$ = (s, r = document) => Array.from(r.querySelectorAll(s));
+  const root = document.documentElement, app = root;
+  const ms = (n) => parseFloat(getComputedStyle(root).getPropertyValue(n)) || 200;
+  const reduced = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const esc = (s) => s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+  const I_MORE = '<svg viewBox="0 0 24 24" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/></svg>';
+  let mTrigger = null, mRowEl = null;
+  document.addEventListener('animationend', (e) => { if (e.target.classList) e.target.classList.remove('is-in'); });
+  function toast(title, detail) {
+    const el = document.createElement('div');
+    el.className = 'yp-toast yp-toast--success'; el.setAttribute('role', 'status');
+    el.innerHTML = '<div><strong>' + esc(title) + '</strong>' + esc(detail) + '</div>';
+    $('#toasts').appendChild(el);
+    setTimeout(() => el.remove(), 3200);
+  }
+  function openMenu(menu, btn) {
+    const r = btn.getBoundingClientRect();
+    menu.style.top = (r.bottom + 6) + 'px';
+    menu.style.left = Math.max(8, r.right - 200) + 'px';
+    menu.togglePopover();
+  }
+  function wireMenu(menu) {
+    const items = () => $$('[role^="menuitem"]', menu);
+    menu.addEventListener('toggle', (e) => {
+      const open = e.newState === 'open';
+      if (mTrigger) mTrigger.setAttribute('aria-expanded', String(open));
+      if (mRowEl) mRowEl.toggleAttribute('data-menu', open);
+      if (open) items()[0].focus(); else { if (mTrigger && mTrigger.isConnected) mTrigger.focus(); mRowEl = null; }
+    });
+    menu.addEventListener('keydown', (e) => {
+      const l = items(), i = l.indexOf(document.activeElement);
+      const to = { ArrowDown: (i + 1) % l.length, ArrowUp: (i + l.length - 1) % l.length, Home: 0, End: l.length - 1 }[e.key];
+      if (to !== undefined) { e.preventDefault(); l[to].focus(); } else if (e.key === 'Tab') menu.hidePopover();
+    });
+  }
+  /* ── Teams. One flat list; a row opens the team sheet. Membership/agent edits are staged and sent on Save (sticky bar); name, description, colour and icon save at once from the details dialog. Superadmin view: create and delete allowed. ── */
+  const TM_COLORS = ['#5B6B7F', '#3B6FD4', '#1F8A84', '#3F8F4F', '#C98A1B', '#D9622B', '#C8453F', '#C2478A', '#7A55C7', '#4A4A52'];
+  const TM_ICONS = {
+    users: '<circle cx="9" cy="8" r="3.5"/><path d="M2.5 20c0-3.6 2.9-6 6.5-6s6.5 2.4 6.5 6M16 4.6a3.5 3.5 0 0 1 0 6.8M18 14.4c2.2.6 3.5 2.5 3.5 5.6"/>',
+    briefcase: '<rect x="3" y="7" width="18" height="13" rx="2"/><path d="M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2M3 13h18"/>',
+    megaphone: '<path d="M3 10v4a1 1 0 0 0 1 1h3l8 4V5L7 9H4a1 1 0 0 0-1 1zM19 9a4 4 0 0 1 0 6"/>',
+    headset: '<path d="M4 14v-2a8 8 0 0 1 16 0v2"/><rect x="3" y="14" width="4" height="6" rx="1.5"/><rect x="17" y="14" width="4" height="6" rx="1.5"/><path d="M19 20c0 1-1.5 2-4 2h-2"/>',
+    heart: '<path d="M12 20s-8-4.6-8-10.5A4.5 4.5 0 0 1 12 7a4.5 4.5 0 0 1 8 2.5C20 15.4 12 20 12 20z"/>',
+    star: '<path d="M12 3l2.8 5.7 6.2.9-4.5 4.4 1.1 6.2L12 17.2 6.4 20.2l1.1-6.2L3 9.6l6.2-.9z"/>',
+    rocket: '<path d="M5 15c-1.5 1.3-2 5-2 5s3.7-.5 5-2M14 4c3-1 6-1 6-1s0 3-1 6l-6 6-4-4zM9 11l-4-1 2-3 4 1M13 15l1 4 3-2-1-4"/><circle cx="15.5" cy="8.5" r="1"/>',
+    bulb: '<path d="M9 18h6M10 21h4M12 3a6 6 0 0 0-3.5 10.9c.6.5 1 1.2 1 2.1h5c0-.9.4-1.6 1-2.1A6 6 0 0 0 12 3z"/>',
+    chart: '<path d="M5 20V11M12 20V4M19 20v-6M3 20h18"/>',
+    shield: '<path d="M12 3l8 3v6c0 4.5-3.2 7.8-8 9-4.8-1.2-8-4.5-8-9V6l8-3z"/>',
+    globe: '<circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c2.5 2.7 3.7 5.7 3.7 9s-1.2 6.3-3.7 9c-2.5-2.7-3.7-5.7-3.7-9S9.5 5.7 12 3z"/>',
+    book: '<path d="M4 5a2 2 0 0 1 2-2h13v16H6a2 2 0 0 0-2 2zM4 19V5M8 7h7"/>',
+    code: '<path d="M8 7l-5 5 5 5M16 7l5 5-5 5M14 4l-4 16"/>',
+    cart: '<circle cx="9" cy="20" r="1.3"/><circle cx="18" cy="20" r="1.3"/><path d="M2 3h3l2.5 12h11L21 7H6"/>',
+    coin: '<circle cx="12" cy="12" r="9"/><path d="M14.8 9.2c-.6-.9-1.6-1.4-2.8-1.4-1.6 0-2.8.8-2.8 2s1 1.7 2.8 2.2 2.8 1 2.8 2.2-1.2 2-2.8 2c-1.2 0-2.3-.5-2.9-1.5M12 6v1.8M12 16.2V18"/>',
+    wrench: '<path d="M14.7 6.3a4 4 0 0 1 5.4-3.6l-2.4 2.4.6 2.2 2.2.6 2.4-2.4a4 4 0 0 1-5.2 5.4L8.5 19.4a2 2 0 0 1-3-3z"/>',
+    flag: '<path d="M5 21V4M5 4h11l-2 4 2 4H5"/>',
+    chat: '<path d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1.1-4.6A8 8 0 1 1 21 12z"/>',
+  };
+  const tmSvg = (k) => `<svg viewBox="0 0 24 24" aria-hidden="true">${TM_ICONS[k] || TM_ICONS.users}</svg>`;
+  const TM_X = '<svg viewBox="0 0 24 24" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>';
+  const TM_PEOPLE = [
+    ['thinh', 'Thinh Dinh', 'thinh@yoplai.com'], ['nanaki', 'Nanaki FF', 'nanaki@yoplai.com'], ['ramon', 'Ramon Ortiz', 'ramon.ortiz@yoplai.com'],
+    ['cira', 'Cira Alvarez', 'cira.alvarez@yoplai.com'], ['casey', 'Casey Brooks', 'casey.brooks@yoplai.com'], ['lea', 'Lea Martin', 'lea.martin@yoplai.com'],
+    ['mei', 'Mei Tanaka', 'mei.tanaka@yoplai.com'], ['omar', 'Omar Haddad', 'omar.haddad@yoplai.com'], ['priya', 'Priya Nair', 'priya.nair@yoplai.com'],
+    ['jonas', 'Jonas Weber', 'jonas.weber@yoplai.com'], ['sofia', 'Sofia Reyes', 'sofia.reyes@yoplai.com'], ['dana', 'Dana Cho', 'dana.cho@yoplai.com'],
+    ['tomas', 'Tomas Silva', 'tomas.silva@yoplai.com'], ['ana', 'Ana Costa', 'ana.costa@yoplai.com'],
+  ].map(([id, name, email]) => ({ id, name, email }));
+  const tmP = Object.fromEntries(TM_PEOPLE.map((p) => [p.id, p]));
+  const tmByName = (a, b) => a.name.localeCompare(b.name);
+  const tmInit = (n) => n.split(' ').map((w) => w[0]).slice(0, 2).join('').toUpperCase();
+  const tmN = (n, w) => `${n} ${w}${n === 1 ? '' : 's'}`;
+  const tmAv = (p) => `<span class="yp-avatar" aria-hidden="true">${esc(tmInit(p.name))}</span>`;
+  const ag = (n, v) => ({ n, v });
+  let tmTeams = [
+    { id: 'content', name: 'Content', desc: 'Content Marketing Team', color: TM_COLORS[7], icon: 'megaphone', all: false, members: ['mei', 'omar', 'priya', 'thinh'], agents: [ag('Connie', 'Public')] },
+    { id: 'cic', name: 'Customer Issue Coordination', desc: 'A cross-department team to track Customer Issues.', color: TM_COLORS[6], icon: 'headset', all: false, members: ['cira', 'casey', 'nanaki'], agents: [ag('Cira', 'Private')] },
+    { id: 'cs', name: 'Customer Success', desc: 'Members of the customer success team', color: TM_COLORS[2], icon: 'heart', all: false, members: ['casey', 'dana'], agents: [ag('Casey', 'Public')] },
+    { id: 'everyone', name: 'Everyone', desc: 'Every user on the platform', color: TM_COLORS[0], icon: 'globe', all: true, members: ['thinh', 'nanaki'], agents: [ag('Roddy', 'Public')] },
+    { id: 'hr', name: 'Human Resources', desc: 'HR Team', color: TM_COLORS[8], icon: 'users', all: false, members: ['jonas'], agents: [ag('Henry', 'Private')] },
+    { id: 'product', name: 'Product', desc: 'Members of the Product team', color: TM_COLORS[1], icon: 'rocket', all: false, members: ['priya', 'sofia'], agents: [ag('Roddy', 'Public'), ag('Nora', 'Private')] },
+    { id: 'sales', name: 'Sales', desc: 'Members of the Sales team', color: TM_COLORS[3], icon: 'chart', all: false, members: ['cira', 'tomas', 'ana'], agents: [ag('Sally', 'Public')] },
+  ];
+  let tmWithout = [{ id: 'ramon', note: 'Pending' }, { id: 'lea' }];
+  const tmCur = () => tmTeams.find((t) => t.id === tmOpen);
+  const tmSorted = () => tmTeams.slice().sort(tmByName);
+  const tmList = $('#teams-list'), tmWo = $('#teams-without'), tmScroll = $('#teams-scroll'), tmSheet = $('#team-sheet'), tmListPage = $('#teams-list-page'), tmBar = $('#team-bar');
+  const tmGone = (el, fn) => { el.setAttribute('data-leaving', ''); setTimeout(fn, reduced() ? 0 : ms('--dur-base') + 40); };
+  const tmEnter = () => { tmScroll.scrollTop = 0; tmScroll.classList.remove('is-in'); void tmScroll.offsetWidth; if (!reduced()) tmScroll.classList.add('is-in'); };
+
+  /* List */
+  function tmRow(t, fresh) {
+    const stack = t.members.slice(0, 4).map((id) => tmAv(tmP[id])).join('') + (t.members.length > 4 ? `<span class="yp-avatar" aria-hidden="true">+${t.members.length - 4}</span>` : '');
+    const meta = `${t.all ? 'Everyone' : tmN(t.members.length, 'member')} · ${t.agents.length ? tmN(t.agents.length, 'agent') : 'No agents'}${t.desc ? ` · <span>${esc(t.desc)}</span>` : ''}`;
+    return `<li class="yp-skills__row yp-teams__row" data-team="${t.id}"${fresh ? ' data-new' : ''}><span class="yp-teams__glyph" style="--tc:${t.color}" aria-hidden="true">${tmSvg(t.icon)}</span>` +
+      `<div class="yp-skills__copy"><button type="button" class="yp-dash__open yp-dash__title" data-team-open>${esc(t.name)}</button><span class="yp-teams__meta">${meta}</span></div>` +
+      `<span class="yp-teams__stack" aria-hidden="true">${stack}</span>` +
+      `<div class="yp-dash__acts"><button type="button" class="yp-btn yp-btn--ghost yp-btn--icon yp-btn--sm yp-dash__more" data-team-more aria-label="Actions for ${esc(t.name)}" title="More" aria-haspopup="menu" aria-expanded="false">${I_MORE}</button></div></li>`;
+  }
+  function tmRenderList(freshId) {
+    tmList.innerHTML = tmTeams.length ? `<ul class="yp-skills__list">${tmSorted().map((t) => tmRow(t, t.id === freshId)).join('')}</ul>` : '<p class="yp-skills__empty">No teams yet. Create one to organize agents and people.</p>';
+  }
+  function tmRenderWithout() {
+    if (!tmWithout.length) { tmWo.innerHTML = '<p class="yp-skills__empty">Everyone is in a team.</p>'; return; }
+    const opts = tmSorted().map((t) => `<option value="${t.id}">${esc(t.name)}</option>`).join('');
+    tmWo.innerHTML = `<section class="yp-skills__section" aria-labelledby="tm-wo"><h3 class="yp-skills__label" id="tm-wo">Without a team<span class="yp-skills__count">${tmWithout.length}</span></h3><ul class="yp-skills__list">` +
+      tmWithout.map((u) => { const p = tmP[u.id]; return `<li class="yp-skills__row yp-teams__row yp-teams__person" data-user="${u.id}">${tmAv(p)}<div class="yp-teams__who"><b>${esc(p.name)}</b>${u.note ? `<em class="yp-badge">${esc(u.note)}</em>` : ''}<small>${esc(p.email)}</small></div>` +
+        `<select class="yp-input yp-teams__pick" aria-label="Add ${esc(p.name)} to a team"><option value="" selected disabled>Add to team…</option>${opts}</select></li>`; }).join('') + '</ul></section>';
+  }
+  tmWo.addEventListener('change', (e) => {
+    const sel = e.target.closest('.yp-teams__pick'); if (!sel) return;
+    const row = sel.closest('[data-user]'), u = tmWithout.find((x) => x.id === row.dataset.user), t = tmTeams.find((x) => x.id === sel.value);
+    t.members.push(u.id);
+    toast(`${tmP[u.id].name.split(' ')[0]} added to ${t.name}`, `${tmN(t.members.length, 'member')} now.`);
+    tmGone(row, () => { tmWithout = tmWithout.filter((x) => x !== u); tmRenderWithout(); tmRenderList(); });
+  });
+
+  /* Row menu */
+  const mTeam = $('#menu-team-row');
+  wireMenu(mTeam);
+  tmList.addEventListener('click', (e) => {
+    const more = e.target.closest('[data-team-more]');
+    const row = e.target.closest('[data-team]'); if (!row) return;
+    if (more) { mTrigger = more; mRowEl = row; mTeam.dataset.team = row.dataset.team; openMenu(mTeam, more); }
+    else if (e.target.closest('[data-team-open]')) tmOpenSheet(row.dataset.team);
+  });
+  mTeam.addEventListener('click', (e) => {
+    const it = e.target.closest('[data-team-act]'); if (!it) return;
+    const id = mTeam.dataset.team; mTeam.hidePopover();
+    if (it.dataset.teamAct === 'edit') tmEdit(id); else tmDelete(id);
+  });
+
+  /* Dialogs: resolves with the clicked button's value ('' on Esc) */
+  function tmAsk(dlg) {
+    app.classList.add('is-receded');
+    dlg.showModal();
+    return new Promise((res) => dlg.addEventListener('close', () => { app.classList.remove('is-receded'); const v = dlg.returnValue; dlg.returnValue = ''; res(v); }, { once: true }));
+  }
+  function tmDelete(id) {
+    const t = tmTeams.find((x) => x.id === id);
+    const others = new Set(tmTeams.filter((x) => x !== t).flatMap((x) => x.members));
+    const lone = t.members.filter((m) => !others.has(m));
+    $('#team-del-h').textContent = `Delete "${t.name}"?`;
+    $('#team-del-b').innerHTML = `<p>This permanently removes the team. Its ${tmN(t.members.length, 'member')} will be removed from it; anyone with no other team will be left teamless. This cannot be undone.</p>` +
+      (lone.length ? `<p>These users will have no team: <strong>${lone.map((m) => esc(tmP[m].name)).join(', ')}</strong>.</p>` : '');
+    tmAsk($('#team-del')).then((v) => {
+      if (v !== 'delete') return;
+      const row = tmList.querySelector(`[data-team="${id}"]`);
+      toast('Team deleted', t.name);
+      tmGone(row, () => {
+        tmTeams = tmTeams.filter((x) => x !== t);
+        lone.forEach((m) => { if (!tmWithout.some((u) => u.id === m)) tmWithout.push({ id: m }); });
+        tmRenderList(); tmRenderWithout();
+      });
+    });
+  }
+
+  /* Details dialog: create (id null) or edit */
+  const tmEd = $('#team-edit'), tmEdForm = $('#team-edit-form'), teName = $('#te-name'), teDesc = $('#te-desc'), teErr = $('#te-err');
+  let tmEdId = null, teColor = TM_COLORS[1], teIcon = 'users';
+  function tmRadios(group, onPick) {
+    const items = () => $$('[role="radio"]', group);
+    const mark = (el) => items().forEach((i) => { i.setAttribute('aria-checked', String(i === el)); i.tabIndex = i === el ? 0 : -1; });
+    const pick = (el, focus) => { mark(el); if (focus) el.focus(); onPick(el.dataset.value); };
+    group.addEventListener('click', (e) => { const el = e.target.closest('[role="radio"]'); if (el) pick(el); });
+    group.addEventListener('keydown', (e) => {
+      const l = items(), i = l.indexOf(document.activeElement), d = { ArrowRight: 1, ArrowDown: 1, ArrowLeft: -1, ArrowUp: -1 }[e.key];
+      if (i < 0 || !d) return;
+      e.preventDefault(); pick(l[(i + d + l.length) % l.length], true);
+    });
+    return (v) => mark(items().find((i) => i.dataset.value === v) || items()[0]);
+  }
+  const tmPrev = () => { const g = $('#te-prev'); g.style.setProperty('--tc', teColor); g.innerHTML = tmSvg(teIcon); };
+  $('#te-colors').innerHTML = TM_COLORS.map((c, i) => `<button type="button" class="yp-teams__swatch" role="radio" aria-checked="false" tabindex="-1" data-value="${c}" aria-label="Color ${i + 1}" style="--tc:${c}"></button>`).join('');
+  $('#te-icons').innerHTML = Object.keys(TM_ICONS).map((k) => `<button type="button" class="yp-teams__icon" role="radio" aria-checked="false" tabindex="-1" data-value="${k}" aria-label="${k}">${tmSvg(k)}</button>`).join('');
+  const setColor = tmRadios($('#te-colors'), (v) => { teColor = v; tmPrev(); });
+  const setIcon = tmRadios($('#te-icons'), (v) => { teIcon = v; tmPrev(); });
+  const teClear = () => { teErr.textContent = ''; teName.removeAttribute('aria-invalid'); };
+  teName.addEventListener('input', teClear);
+  $('[data-te-cancel]', tmEd).addEventListener('click', () => tmEd.close('cancel'));
+  tmEdForm.addEventListener('submit', (e) => {
+    e.preventDefault();
+    if (!teName.value.trim()) { teErr.textContent = 'Name is required.'; teName.setAttribute('aria-invalid', 'true'); teName.focus(); return; }
+    tmEd.close('save');
+  });
+  function tmEdit(id) {
+    const t = id ? tmTeams.find((x) => x.id === id) : null;
+    tmEdId = id;
+    $('#team-edit-h').textContent = t ? 'Edit details' : 'New team';
+    $('#te-ok').textContent = t ? 'Save details' : 'Create team';
+    teName.value = t ? t.name : ''; teDesc.value = t ? t.desc : ''; teClear();
+    teColor = t ? t.color : TM_COLORS[1]; teIcon = t ? t.icon : 'users';
+    setColor(teColor); setIcon(teIcon); tmPrev();
+    tmAsk(tmEd).then((v) => {
+      if (v !== 'save') return;
+      const f = { name: teName.value.trim(), desc: teDesc.value.trim(), color: teColor, icon: teIcon };
+      if (t) {
+        Object.assign(t, f);
+        tmRenderList(); tmRenderWithout(); if (tmOpen) tmRenderSheet();
+        toast('Team updated', t.name);
+      } else {
+        const n = { id: 't' + Date.now(), all: false, members: [], agents: [], ...f };
+        tmTeams.push(n); tmRenderList(n.id); tmRenderWithout();
+        const row = tmList.querySelector(`[data-team="${n.id}"]`); if (row) row.scrollIntoView({ block: 'nearest' });
+        toast('Team created', n.name);
+      }
+    });
+  }
+  $('#teams-new').addEventListener('click', () => tmEdit(null));
+
+  /* Team sheet (staged edits) */
+  let tmOpen = null, tmDraft = null, tmJust = null;
+  const tmFresh = (t) => ({ all: t.all, add: [], rm: new Set(), arm: new Set() });
+  const tmDirty = () => { const t = tmCur(); return !!t && (tmDraft.all !== t.all || tmDraft.add.length > 0 || tmDraft.rm.size > 0 || tmDraft.arm.size > 0); };
+  const tmEff = () => tmCur().members.filter((m) => !tmDraft.rm.has(m)).concat(tmDraft.add);
+  function tmPerson(p, state, fresh) {
+    const act = state === 'rm' ? `<button type="button" class="yp-btn yp-btn--ghost yp-btn--sm" data-undo>Undo</button>` : `<button type="button" class="yp-btn yp-btn--ghost yp-btn--icon yp-btn--sm yp-teams__x" data-remove aria-label="Remove ${esc(p.name)}">${TM_X}</button>`;
+    return `<li class="yp-skills__row yp-teams__person" data-person="${p.id}"${state === 'rm' ? ' data-removed' : ''}${fresh ? ' data-new' : ''}>${tmAv(p)}<div class="yp-teams__who"><b>${esc(p.name)}</b>${state === 'add' ? '<em class="yp-badge">New</em>' : ''}<small>${esc(p.email)}</small></div><div class="yp-teams__act">${act}</div></li>`;
+  }
+  function tmRenderSheet() {
+    const t = tmCur();
+    $('#team-id').innerHTML = `<span class="yp-teams__glyph yp-teams__glyph--lg" style="--tc:${t.color}" aria-hidden="true">${tmSvg(t.icon)}</span><div><h2 class="yp-settings__name">${esc(t.name)}</h2>${t.desc ? `<p class="yp-settings__role">${esc(t.desc)}</p>` : ''}</div><button type="button" class="yp-btn yp-btn--ghost yp-teams__edit" id="team-edit-btn">Edit details</button>`;
+    $('#team-edit-btn').addEventListener('click', () => tmEdit(tmOpen));
+    const saved = t.members.slice().sort((a, b) => tmByName(tmP[a], tmP[b]));
+    const rows = tmDraft.add.map((id) => tmPerson(tmP[id], 'add', id === tmJust)).concat(saved.map((id) => tmPerson(tmP[id], tmDraft.rm.has(id) ? 'rm' : '', false)));
+    $('#team-mn').textContent = tmEff().length;
+    $('#team-members').innerHTML = (tmDraft.all ? '<p class="yp-skills__empty">Everyone on the platform, including new sign-ups</p>' : '') +
+      (rows.length ? `<ul class="yp-skills__list">${rows.join('')}</ul>` : tmDraft.all ? '' : '<p class="yp-skills__empty">No one yet. Search above to add people.</p>');
+    $('#team-all').setAttribute('aria-checked', String(tmDraft.all));
+    $('#team-an').textContent = t.agents.length - tmDraft.arm.size;
+    $('#team-agents').innerHTML = t.agents.length ? `<ul class="yp-skills__list">${t.agents.map((a) => {
+      const rm = tmDraft.arm.has(a.n);
+      return `<li class="yp-skills__row yp-teams__person" data-agent="${esc(a.n)}"${rm ? ' data-removed' : ''}><span class="yp-avatar" aria-hidden="true">${esc(a.n[0])}</span><div class="yp-teams__who"><b>${esc(a.n)}</b><span class="yp-badge">${a.v}</span></div><div class="yp-teams__act">` +
+        (rm ? '<button type="button" class="yp-btn yp-btn--ghost yp-btn--sm" data-undo>Undo</button>' : `<button type="button" class="yp-btn yp-btn--ghost yp-btn--icon yp-btn--sm yp-teams__x" data-remove aria-label="Remove ${esc(a.n)}">${TM_X}</button>`) + '</div></li>';
+    }).join('')}</ul>` : '<p class="yp-skills__empty">No agents yet.</p>';
+    tmBar.hidden = !tmDirty();
+    tmJust = null;
+  }
+  const tmFocus = (sel) => { const n = tmSheet.querySelector(sel); if (n) n.focus(); };
+  function tmOpenSheet(id) {
+    tmOpen = id; tmDraft = tmFresh(tmCur());
+    tmQ.value = ''; tmHide();
+    tmListPage.hidden = true; tmSheet.hidden = false;
+    tmRenderSheet(); tmEnter();
+    $('#team-back').focus({ preventScroll: true });
+  }
+  function tmShowList() {
+    const id = tmOpen;
+    tmOpen = null; tmDraft = null; tmBar.hidden = true;
+    tmSheet.hidden = true; tmListPage.hidden = false;
+    tmRenderList(); tmEnter();
+    const b = tmList.querySelector(`[data-team="${id}"] [data-team-open]`); if (b) b.focus({ preventScroll: true });
+  }
+  function teamsBack() {
+    if (tmOpen === null) return;
+    if (!tmDirty()) return tmShowList();
+    $('#team-discard-b').textContent = `Your edits to ${tmCur().name} have not been saved.`;
+    tmAsk($('#team-discard')).then((v) => { if (v === 'discard') tmShowList(); });
+  }
+  $('#team-back').addEventListener('click', teamsBack);
+  $('#team-all').addEventListener('click', () => { tmDraft.all = !tmDraft.all; tmRenderSheet(); });
+  $('#team-cancel').addEventListener('click', () => { tmDraft = tmFresh(tmCur()); tmRenderSheet(); });
+  $('#team-save').addEventListener('click', () => {
+    const t = tmCur();
+    t.members = t.members.filter((m) => !tmDraft.rm.has(m)).concat(tmDraft.add.slice().reverse());
+    t.agents = t.agents.filter((a) => !tmDraft.arm.has(a.n));
+    t.all = tmDraft.all;
+    tmWithout = tmWithout.filter((u) => !t.members.includes(u.id));
+    tmDraft = tmFresh(t);
+    tmRenderSheet(); tmRenderList(); tmRenderWithout();
+    toast('Team saved', t.name);
+  });
+  tmSheet.addEventListener('click', (e) => {
+    const row = e.target.closest('[data-person], [data-agent]'); if (!row) return;
+    const person = row.dataset.person, agent = row.dataset.agent;
+    if (e.target.closest('[data-undo]')) {
+      (person ? tmDraft.rm : tmDraft.arm).delete(person || agent);
+      tmRenderSheet(); tmFocus(`[data-${person ? 'person' : 'agent'}="${CSS.escape(person || agent)}"] [data-remove]`);
+    } else if (e.target.closest('[data-remove]')) {
+      if (person) {
+        if (tmDraft.add.includes(person)) tmDraft.add = tmDraft.add.filter((x) => x !== person); else tmDraft.rm.add(person);
+        tmRenderSheet();
+        if (tmSheet.querySelector(`[data-person="${person}"]`)) tmFocus(`[data-person="${person}"] [data-undo]`); else tmQ.focus();
+      } else tmRemoveAgent(agent);
+    }
+  });
+  function tmRemoveAgent(name) {
+    const t = tmCur(), a = t.agents.find((x) => x.n === name);
+    const elsewhere = tmTeams.some((x) => x !== t && x.agents.some((y) => y.n === name));
+    $('#team-agent-h').textContent = `Remove ${name} from ${t.name}?`;
+    $('#team-agent-b').textContent = elsewhere ? 'This takes effect when you save.' : `${name} is in no other team.${a.v === 'Private' ? ' Private agents with no team are only visible to admins.' : ''}`;
+    tmAsk($('#team-agent')).then((v) => { if (v !== 'remove') return; tmDraft.arm.add(name); tmRenderSheet(); tmFocus(`[data-agent="${CSS.escape(name)}"] [data-undo]`); });
+  }
+
+  /* Add people: filter the directory; Enter or click stages a row */
+  const tmQ = $('#team-q'), tmRes = $('#team-results');
+  let tmHits = [], tmHi = 0;
+  function tmHide() { tmRes.hidden = true; tmQ.setAttribute('aria-expanded', 'false'); tmQ.removeAttribute('aria-activedescendant'); }
+  function tmPaint() {
+    tmRes.innerHTML = tmHits.length ? tmHits.map((p, i) => `<button type="button" tabindex="-1" class="yp-menu__item" role="option" id="tm-opt-${i}" aria-selected="${i === tmHi}" data-add="${p.id}">${tmAv(p)}<span>${esc(p.name)}</span><span style="margin-left:auto;color:var(--ink-faint);font-weight:400">${esc(p.email)}</span></button>`).join('')
+      : `<p class="yp-teams__results-none">No one matches “${esc(tmQ.value.trim())}”.</p>`;
+    tmQ.setAttribute('aria-activedescendant', tmHits.length ? 'tm-opt-' + tmHi : '');
+  }
+  function tmFind() {
+    const q = tmQ.value.trim().toLowerCase();
+    if (!q) return tmHide();
+    const cur = new Set(tmEff());
+    tmHits = TM_PEOPLE.filter((p) => !cur.has(p.id) && (p.name.toLowerCase().includes(q) || p.email.toLowerCase().includes(q))).slice(0, 6);
+    tmHi = 0; tmPaint(); tmRes.hidden = false; tmQ.setAttribute('aria-expanded', 'true');
+  }
+  function tmAdd(id) {
+    if (tmDraft.rm.has(id)) tmDraft.rm.delete(id); else if (!tmDraft.add.includes(id)) tmDraft.add.unshift(id);
+    tmJust = id; tmQ.value = ''; tmHide(); tmRenderSheet(); tmQ.focus();
+  }
+  tmQ.addEventListener('input', tmFind);
+  tmQ.addEventListener('blur', tmHide);
+  tmQ.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && !tmRes.hidden) { e.preventDefault(); tmHide(); }
+    else if (e.key === 'Enter') { e.preventDefault(); if (!tmRes.hidden && tmHits[tmHi]) tmAdd(tmHits[tmHi].id); }
+    else if ((e.key === 'ArrowDown' || e.key === 'ArrowUp') && tmHits.length && !tmRes.hidden) { e.preventDefault(); tmHi = (tmHi + (e.key === 'ArrowDown' ? 1 : tmHits.length - 1)) % tmHits.length; tmPaint(); }
+  });
+  tmRes.addEventListener('pointerdown', (e) => e.preventDefault());
+  tmRes.addEventListener('click', (e) => { const b = e.target.closest('[data-add]'); if (b) tmAdd(b.dataset.add); });
+
+  tmRenderList(); tmRenderWithout();
+})();
+</script>
+</body></html>

@@ -1,0 +1,169 @@
+<!-- @dsCard group="Foundations" height=1560 page subtitle="Ground, paper, glass" -->
+<!doctype html><html><head><meta charset="utf-8"><title>Materials — preview</title><style>
+.mt { min-height: 100vh; padding: var(--space-6); display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-5); align-content: start; --aura-x: 80%; --aura-y: 0%; }
+@media (max-width: 720px) { .mt { grid-template-columns: minmax(0, 1fr); } }
+.mt-wide { grid-column: 1 / -1; }
+.mt-tile { padding: var(--space-5); display: flex; flex-direction: column; gap: var(--space-4); min-width: 0; }
+.mt-head { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); min-height: var(--control-h-sm); }
+.mt-head .yp-label { padding: 0; }
+.mt-tile > p, .mt-note { margin: 0; font: 400 12px/16px var(--font-sans); color: var(--ink-faint); }
+.mt-intro { grid-column: 1 / -1; display: flex; flex-direction: column; gap: var(--space-2); padding-bottom: var(--space-2); }
+.mt-intro p { margin: 0; max-width: 64ch; font: 400 15px/22px var(--font-sans); color: var(--ink-muted); }
+
+/* 1. Glass over a moving, colorful backdrop */
+.mt-stage { position: relative; isolation: isolate; height: 340px; overflow: hidden; border-radius: var(--radius-md); background: var(--canvas); }
+.mt-blob { position: absolute; z-index: -1; width: 46%; aspect-ratio: 1; border-radius: var(--radius-full); translate: -50% -50%; pointer-events: none;
+  background: radial-gradient(closest-side, var(--aura), transparent 40%), radial-gradient(closest-side, var(--aura), transparent 70%), radial-gradient(closest-side, var(--aura), transparent);
+  will-change: transform; animation: mt-drift 17s var(--ease-in-out) infinite alternate; }
+.mt-blob--cool { background: radial-gradient(closest-side, var(--aura-cool), transparent 40%), radial-gradient(closest-side, var(--aura-cool), transparent 70%), radial-gradient(closest-side, var(--aura-cool), transparent); animation-duration: 21s; animation-direction: alternate-reverse; }
+.mt-blob--hot { width: 18%; background: radial-gradient(closest-side, var(--accent), transparent); opacity: 0.55; animation-duration: 13s; }
+@keyframes mt-drift { 0% { transform: translate(0, 0); } 50% { transform: translate(var(--dx, 120px), var(--dy, 40px)); } 100% { transform: translate(calc(var(--dx, 120px) * -0.6), calc(var(--dy, 40px) * 1.4)); } }
+.mt-feed { position: absolute; left: 24%; right: 24%; top: 0; z-index: -1; display: flex; flex-direction: column; gap: var(--space-3); will-change: transform; animation: mt-feed 24s linear infinite; }
+@keyframes mt-feed { to { transform: translateY(-50%); } }
+.mt-row { display: flex; align-items: center; gap: var(--space-3); padding: var(--space-3) var(--space-4); }
+.mt-row .yp-msg { font-size: 15px; line-height: 22px; }
+.mt-swatch { width: 40px; height: 40px; flex: none; border-radius: var(--radius-sm); background: var(--accent); }
+.mt-swatch--ink { background: var(--ink); }
+.mt-swatch--wash { background: var(--accent-wash); }
+.mt-panes { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; gap: var(--space-5); padding: var(--space-5); }
+.mt-pane { width: 220px; padding: var(--space-5); display: flex; flex-direction: column; gap: var(--space-2); }
+.mt-pane b { font: 600 15px/22px var(--font-sans); }
+.mt-pane span { font: 500 13px/18px var(--font-sans); color: var(--ink-muted); }
+.mt-press { padding: 0 var(--space-5); height: 44px; display: inline-flex; align-items: center; justify-content: center; border: 0; border-radius: var(--radius-full); font: 600 14px/20px var(--font-sans); color: var(--ink); cursor: pointer; -webkit-tap-highlight-color: transparent; --shine-size: 160px; }
+
+/* 2. Refraction */
+.mt-lensbox { position: relative; isolation: isolate; height: 220px; overflow: hidden; border-radius: var(--radius-md); background: var(--surface); }
+.mt-stripes { position: absolute; inset: -40px -200px; z-index: -1; will-change: transform; animation: mt-slide 14s linear infinite;
+  background: repeating-linear-gradient(90deg, var(--ink) 0 2px, transparent 2px 22px), repeating-linear-gradient(0deg, var(--accent) 0 3px, transparent 3px 30px); opacity: 0.85; }
+@keyframes mt-slide { to { transform: translateX(-200px); } }
+.mt-lensword { position: absolute; left: 50%; top: 50%; translate: -50% -50%; z-index: -1; font: 600 56px/60px var(--font-sans); letter-spacing: -0.035em; color: var(--ink); white-space: nowrap; }
+.mt-lens { background: var(--field); position: absolute; left: 50%; top: 50%; translate: -50% -50%; width: 260px; height: 120px; border-radius: var(--radius-full); --shine-size: 220px; }
+
+/* 5. Elevation ladder */
+.mt-ladder { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--space-4); padding: var(--space-5) var(--space-2) var(--space-6); }
+.mt-step { aspect-ratio: 1; border-radius: var(--radius-md); background: var(--surface); display: flex; flex-direction: column; justify-content: flex-end; padding: var(--space-3); }
+.mt-step b { font: 500 13px/18px var(--font-mono); }
+.mt-step span { font: 400 12px/16px var(--font-sans); color: var(--ink-muted); }
+
+/* 6. Tilt */
+.mt-cards { display: flex; gap: var(--space-5); justify-content: center; padding: var(--space-3) 0 var(--space-4); }
+.mt-cards .yp-agent { width: 176px; }
+
+/* 7. Recede */
+.mt-recede { display: flex; align-items: center; gap: var(--space-4); }
+</style></head><body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false">
+  <filter id="yp-liquid" x="0" y="0" width="100%" height="100%" color-interpolation-filters="sRGB">
+    <feTurbulence type="fractalNoise" baseFrequency="0.011 0.016" numOctaves="2" seed="4" result="n"/>
+    <feGaussianBlur in="n" stdDeviation="2.5" result="s"/>
+    <feDisplacementMap in="SourceGraphic" in2="s" scale="34" xChannelSelector="R" yChannelSelector="G"/>
+  </filter>
+</svg>
+<div class="yp-ground yp-recede mt" id="scene">
+
+  <div class="mt-intro">
+    <div class="yp-title">Ground, paper, glass</div>
+    <p>The page is a lit floor. Content is opaque paper lifted by light. Chrome floats above as liquid glass that blurs, saturates and bends what moves beneath it. Move your pointer over any glass to catch the light.</p>
+  </div>
+
+  <section class="yp-paper mt-tile mt-wide">
+    <div class="mt-head"><span class="yp-label">Glass over moving light</span><span class="mt-note">Hover a pane for the specular highlight. Hold the pill to squish it.</span></div>
+    <div class="mt-stage" id="stage">
+      <span class="mt-blob" style="left: 22%; top: 30%; --dx: 260px; --dy: 60px"></span>
+      <span class="mt-blob mt-blob--cool" style="left: 78%; top: 70%; --dx: -220px; --dy: -50px"></span>
+      <span class="mt-blob mt-blob--hot" style="left: 50%; top: 40%; --dx: 180px; --dy: 70px"></span>
+      <div class="mt-feed" aria-hidden="true" id="feed"></div>
+      <div class="mt-panes">
+        <div class="yp-glass mt-pane"><b>glass</b><span>blur-glass + glass-saturate, for chrome: sidebar, composer, toasts.</span></div>
+        <button class="yp-glass yp-squish mt-press" type="button">Hold me</button>
+        <div class="yp-glass--strong mt-pane"><b>glass-strong</b><span>Holds ink at 4.5:1 over anything: menus, dialogs.</span></div>
+      </div>
+    </div>
+  </section>
+
+  <section class="yp-paper mt-tile">
+    <div class="mt-head"><span class="yp-label">Refraction</span><button class="yp-btn yp-btn--sm" id="refract" aria-pressed="true">Refraction on</button></div>
+    <div class="mt-lensbox">
+      <div class="mt-stripes" aria-hidden="true"></div>
+      <div class="mt-lensword" aria-hidden="true">liquid</div>
+      <div class="yp-glass yp-glass--refract mt-lens" id="lens"></div>
+    </div>
+    <p>Chromium bends the backdrop with an SVG feDisplacementMap via backdrop-filter: url(#yp-liquid). Safari and Firefox keep blur + saturate. Never carries meaning.</p>
+  </section>
+
+  <section class="yp-paper mt-tile">
+    <div class="mt-head"><span class="yp-label">Paper lifts toward the pointer</span></div>
+    <div class="mt-cards yp-scene">
+      <a class="yp-agent" href="#"><span class="yp-agent__portrait yp-agent__portrait--blank" style="--lx: 26%; --ly: 16%"><span class="yp-agent__initial">C</span></span><span class="yp-agent__body"><span><span class="yp-agent__name">Casey</span><span class="yp-agent__role">Customer success</span></span></span></a>
+      <a class="yp-agent" href="#"><span class="yp-agent__portrait yp-agent__portrait--blank" style="--lx: 70%; --ly: 14%"><span class="yp-agent__initial">S</span></span><span class="yp-agent__body"><span><span class="yp-agent__name">Sally</span><span class="yp-agent__role">Sales operations</span></span></span></a>
+    </div>
+    <p>Rises 2px to elev-2 (a pre-shadowed layer fades in) and tilts at most 3°, one perspective for the group.</p>
+  </section>
+
+  <section class="mt-tile mt-wide" style="padding-left: 0; padding-right: 0">
+    <div class="mt-head"><span class="yp-label">Elevation, lit from above</span></div>
+    <div class="mt-ladder">
+      <div class="mt-step" style="box-shadow: var(--elev-1)"><b>elev-1</b><span>Paper at rest</span></div>
+      <div class="mt-step" style="box-shadow: var(--elev-2)"><b>elev-2</b><span>Lifted, sidebar, composer</span></div>
+      <div class="mt-step" style="box-shadow: var(--elev-3)"><b>elev-3</b><span>Menus, toasts</span></div>
+      <div class="mt-step" style="box-shadow: var(--elev-4)"><b>elev-4</b><span>Dialogs</span></div>
+    </div>
+  </section>
+
+  <section class="yp-paper mt-tile mt-wide">
+    <div class="mt-head"><span class="yp-label">Focus pushes the world back</span></div>
+    <div class="mt-recede"><button class="yp-btn" id="open">Open dialog</button><span class="mt-note">The page scales to 0.98 under the scrim; the glass-strong dialog rises on elev-4.</span></div>
+  </section>
+</div>
+
+<dialog class="yp-modal" id="dlg" aria-labelledby="dlg-t">
+  <div class="yp-modal__head" id="dlg-t">Delete this chat?</div>
+  <div class="yp-modal__body">This removes the history for “Reconcile PTO”. Henry keeps its memory.</div>
+  <div class="yp-modal__foot"><button class="yp-btn" id="dlg-cancel">Cancel</button><button class="yp-btn yp-btn--danger" id="dlg-ok">Delete chat</button></div>
+</dialog>
+
+<script>
+(function () {
+  var $ = function (id) { return document.getElementById(id); };
+  var reduced = function () { return matchMedia('(prefers-reduced-motion: reduce)').matches; };
+
+  /* Feed under the glass (duplicated so the loop is seamless) */
+  var ROWS = [['Reconcile PTO', 'Henry matched 412 rows against the July approvals.', ''], ['Q3 pipeline review', 'Sally flagged two deals that slipped to October.', 'mt-swatch--ink'],
+    ['NDA redlines for Acme', 'Connie accepted 11 of 14 changes.', 'mt-swatch--wash'], ['Weekly vendor digest', 'Roddy found three renewals due this month.', ''], ['Tool availability check', 'Cira restored the Gmail connector.', 'mt-swatch--ink']];
+  var html = ROWS.map(function (r) { return '<div class="yp-paper mt-row"><span class="mt-swatch ' + r[2] + '"></span><div class="yp-msg"><strong>' + r[0] + '</strong><br>' + r[1] + '</div></div>'; }).join('');
+  $('feed').innerHTML = html + html;
+
+  /* Refraction toggle */
+  $('refract').addEventListener('click', function () {
+    var on = this.getAttribute('aria-pressed') !== 'true';
+    this.setAttribute('aria-pressed', String(on));
+    this.textContent = on ? 'Refraction on' : 'Refraction off';
+    $('lens').classList.toggle('yp-glass--refract', on);
+  });
+
+  /* Pointer light on glass + card tilt: one rAF-batched handler writes CSS vars */
+  var GLASS = '.yp-glass, .yp-glass--strong, .yp-modal';
+  var ev = null, raf = 0, last = null;
+  function frame() {
+    raf = 0;
+    var t = ev && ev.target && ev.target.closest ? ev.target : null;
+    var g = t && t.closest(GLASS);
+    if (g) { var r = g.getBoundingClientRect(); g.style.setProperty('--mx', (ev.clientX - r.left) + 'px'); g.style.setProperty('--my', (ev.clientY - r.top) + 'px'); }
+    var c = t && !reduced() ? t.closest('.yp-agent') : null;
+    if (last && last !== c) { last.style.setProperty('--px', 0); last.style.setProperty('--py', 0); }
+    if (c) { var q = c.getBoundingClientRect(); c.style.setProperty('--px', (((ev.clientX - q.left) / q.width) * 2 - 1).toFixed(3)); c.style.setProperty('--py', (((ev.clientY - q.top) / q.height) * 2 - 1).toFixed(3)); }
+    last = c;
+  }
+  addEventListener('pointermove', function (e) { ev = e; if (!raf) raf = requestAnimationFrame(frame); }, { passive: true });
+  Array.prototype.forEach.call(document.querySelectorAll('.yp-agent'), function (a) { a.addEventListener('click', function (e) { e.preventDefault(); }); });
+
+  /* Recede */
+  var dlg = $('dlg'), scene = $('scene');
+  $('open').addEventListener('click', function () { dlg.showModal(); scene.setAttribute('data-receded', ''); });
+  dlg.addEventListener('close', function () { scene.removeAttribute('data-receded'); });
+  dlg.addEventListener('click', function (e) { if (e.target === dlg) dlg.close(); });
+  $('dlg-cancel').addEventListener('click', function () { dlg.close(); });
+  $('dlg-ok').addEventListener('click', function () { dlg.close(); });
+})();
+</script>
+</body></html>

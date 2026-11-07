@@ -1,0 +1,29 @@
+<!-- @dsCard group="Actions" height=236 -->
+<!doctype html><html><head><meta charset="utf-8"><title>Button — preview</title><style>
+.bt { padding: var(--space-6); display: flex; flex-direction: column; gap: var(--space-5); --aura-x: 86%; --aura-y: 0%; }
+.bt-row { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-3); }
+.bt-paper { padding: var(--space-5); }
+</style></head><body>
+<div class="yp-ground bt">
+  <div class="yp-paper bt-paper bt-row">
+    <button class="yp-btn yp-btn--primary">Send</button>
+    <button class="yp-btn">Save</button>
+    <button class="yp-btn yp-btn--ghost">Cancel</button>
+    <button class="yp-btn yp-btn--danger">Delete chat</button>
+    <button class="yp-btn yp-btn--sm">Chat</button>
+    <button class="yp-btn yp-btn--icon" aria-label="New session"><svg viewBox="0 0 24 24" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg></button>
+    <button class="yp-btn" disabled>Save</button>
+  </div>
+  <div class="bt-row">
+    <button class="yp-send" data-state="idle" aria-label="Send"><span class="yp-send__bar"></span><svg class="yp-send__icon" viewBox="0 0 24 24" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 19V5M5 12l7-7 7 7"/></svg><span class="yp-send__stop" aria-hidden="true"><svg viewBox="0 0 10 10"><rect width="10" height="10" rx="2"/></svg>Stop</span></button>
+    <span class="yp-small">Send: click to morph into Stop and back</span>
+  </div>
+</div>
+<script>
+document.querySelector('.yp-send').addEventListener('click', function () {
+  var on = this.dataset.state !== 'stop';
+  this.dataset.state = on ? 'stop' : 'idle';
+  this.setAttribute('aria-label', on ? 'Stop' : 'Send');
+});
+</script>
+</body></html>

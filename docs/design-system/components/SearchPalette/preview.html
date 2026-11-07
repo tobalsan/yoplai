@@ -1,0 +1,94 @@
+<!-- @dsCard group="Navigation" height=460 subtitle="Command-K chat search: type to filter, arrows to move, Enter to open" -->
+<!doctype html><html><head><meta charset="utf-8"><title>SearchPalette — preview</title><style>
+.sp { position: relative; height: 100vh; min-height: 460px; overflow: hidden; background: var(--surface-sunken); }
+.sp-scene { position: absolute; inset: 0; display: flex; gap: var(--space-4); padding: var(--space-3); transform: scale(0.98); }
+.sp-scene .yp-sidebar { width: 200px; }
+.sp-sheet { flex: 1; padding: var(--space-6); }
+.sp .yp-scrim { position: absolute; inset: 0; align-items: flex-start; padding: 36px var(--space-4) 0; }
+.sp .yp-search { width: min(640px, 100%); max-height: 400px; display: flex; flex-direction: column; }
+</style></head><body>
+<div class="sp">
+  <div class="yp-ground sp-scene" aria-hidden="true">
+    <div class="yp-sidebar"><div class="yp-sidebar__brand">Yoplai</div><span class="yp-nav" aria-current="page">Sessions</span><span class="yp-nav">Agents</span></div>
+    <div class="yp-paper sp-sheet yp-msg"><p>I matched 412 rows against the July approvals.</p></div>
+  </div>
+  <div class="yp-scrim">
+    <div class="yp-modal yp-search" role="dialog" aria-modal="true" aria-label="Search chats" id="search">
+      <div class="yp-search__field">
+        <svg viewBox="0 0 24 24" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>
+        <input class="yp-search__input" id="search-input" role="combobox" aria-label="Search chats" aria-autocomplete="list" aria-controls="search-list" aria-expanded="false" autocomplete="off" spellcheck="false" placeholder="Search titles and messages in your chats" value="pricing">
+        <span class="yp-kbd">esc</span>
+      </div>
+      <div class="yp-search__load" id="search-load" hidden></div>
+      <div class="yp-search__state" id="search-state" role="status" hidden></div>
+      <div class="yp-search__list" id="search-list" role="listbox" aria-label="Matching chats"><span class="yp-pill" id="search-pill"></span></div>
+      <div class="yp-search__foot"><span><span class="yp-kbd">&uarr;</span><span class="yp-kbd">&darr;</span> to move</span><span><span class="yp-kbd">&crarr;</span> to open</span><span><span class="yp-kbd">esc</span> to close</span></div>
+    </div>
+  </div>
+</div>
+<script>
+(() => {
+  const $ = (s) => document.querySelector(s);
+  const esc = (s) => s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+  const sd = $('#search');
+  const SEARCH = [
+    ['Henry', 'Reconcile PTO', 'I matched 412 rows against the July approvals. Eleven days are booked and two requests are still open.', '2m'],
+    ['Casey', 'Adopt a task named ‘priority’', 'Priority tasks now sort above everything else in your inbox.', '1h'],
+    ['Cira', 'Tool availability check', 'All six connectors respond. The calendar tool needs a fresh sign-in.', '23h'],
+    ['Roddy', 'Weekly vendor digest', 'Three vendors changed pricing this week. Northwind raised its seat price by 8%.', '3d'],
+    ['Sally', 'Q3 pipeline review', 'Pipeline is up 14% on Q2. Two large deals slipped into October.', '3d'],
+    ['Connie', 'NDA redlines for Acme', 'Acme struck the non-solicit clause. I proposed a 12-month term instead.', '9d'],
+    ['Henry', 'Circling back to Ramon', 'Ramon asked for one day back on his PTO balance. I drafted the correction.', '11d'],
+    ['Connie', 'Renewal terms for Northwind', 'The auto-renewal window closes on the 30th; I flagged the price escalator.', '2w'],
+    ['Roddy', 'Competitor pricing scan', 'Collected public pricing for five competitors into one sheet.', '3w'],
+    ['Sally', 'Onboarding checklist for new reps', 'Drafted a two-week checklist covering CRM access and call shadowing.', '1mo'],
+  ].map(([agent, title, snip, age]) => ({ agent, title, snip, age }));
+  const sIn = $('#search-input'), sList = $('#search-list'), sPill = $('#search-pill'), sState = $('#search-state'), sLoad = $('#search-load');
+  const hl = (t, ws) => ws.length ? esc(t).replace(new RegExp('(' + ws.map((w) => esc(w).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|') + ')', 'gi'), '<mark>$1</mark>') : esc(t);
+  function sPlace(smooth = true) {
+    const r = sList.children[sSel + 1];
+    sList.querySelectorAll('[aria-selected]').forEach((x, i) => x.setAttribute('aria-selected', i === sSel));
+    if (!r) return;
+    if (!smooth) sPill.style.transition = 'none';
+    sPill.style.setProperty('--y', r.offsetTop + 'px');
+    sPill.style.width = r.offsetWidth + 'px'; sPill.style.height = r.offsetHeight + 'px';
+    if (!smooth) { sPill.offsetWidth; sPill.style.transition = ''; }
+    sIn.setAttribute('aria-activedescendant', r.id);
+    r.scrollIntoView({ block: 'nearest' });
+  }
+  function sRender() {
+    const q = sIn.value.trim(), ws = q.split(/\s+/).filter(Boolean);
+    sLoad.hidden = true;
+    sIn.setAttribute('aria-expanded', !!sHits.length);
+    sList.hidden = !sHits.length;
+    sState.hidden = !!sHits.length;
+    if (!sHits.length) sState.textContent = q ? `No matches for “${q}”` : 'Search titles and messages in your chats.';
+    sList.querySelectorAll('.yp-search__row').forEach((x) => x.remove());
+    sHits.forEach((s, i) => {
+      const b = document.createElement('button');
+      b.className = 'yp-search__row'; b.type = 'button'; b.role = 'option'; b.id = 'sr-' + i; b.tabIndex = -1;
+      b.innerHTML = `<span class="yp-avatar">${esc(s.agent[0])}</span><span class="yp-search__copy"><span class="yp-search__title">${hl(s.title, ws)}</span><span class="yp-search__snip">${hl(s.snip, ws)}</span></span><span class="yp-search__meta">${esc(s.agent)} · ${s.age}</span>`;
+      b.addEventListener('pointermove', () => { if (sSel !== i) { sSel = i; sPlace(); } });
+      b.addEventListener('click', () => sPick(i));
+      sList.append(b);
+    });
+    sSel = 0; if (sHits.length) sPlace(false);
+  }
+  function sQuery() {
+    clearTimeout(sTimer);
+    const ws = sIn.value.toLowerCase().split(/\s+/).filter(Boolean);
+    if (!ws.length) { sHits = []; sRender(); return; }
+    sLoad.hidden = false;
+    sTimer = setTimeout(() => { sHits = SEARCH.filter((s) => ws.every((w) => (s.title + ' ' + s.snip).toLowerCase().includes(w))); sRender(); }, 180);
+  }
+  function sPick(i) { const s = sHits[i]; if (s) sIn.select(); }
+  sIn.addEventListener('input', sQuery);
+  sIn.addEventListener('keydown', (e) => {
+    if (!sHits.length) return;
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); sSel = (sSel + (e.key === 'ArrowDown' ? 1 : sHits.length - 1)) % sHits.length; sPlace(); }
+    else if (e.key === 'Enter') { e.preventDefault(); sPick(sSel); }
+  });
+  sQuery();
+})();
+</script>
+</body></html>

@@ -1,0 +1,48 @@
+<!-- @dsCard group="Navigation" height=230 -->
+<!doctype html><html><head><meta charset="utf-8"><title>Tabs — preview</title><style>
+.tb { padding: var(--space-6); display: flex; flex-direction: column; gap: var(--space-5); align-items: flex-start; --aura-x: 80%; --aura-y: 0%; }
+.tb .yp-paper { align-self: stretch; padding: var(--space-4) var(--space-5) 0; }
+</style></head><body>
+<div class="yp-ground tb">
+  <div class="yp-seg yp-squish" id="seg" role="tablist" aria-label="Henry views">
+    <span class="yp-seg__thumb"></span>
+    <button class="yp-seg__item" role="tab" aria-selected="true">Chat</button>
+    <button class="yp-seg__item" role="tab" aria-selected="false">Dashboards</button>
+    <button class="yp-seg__item" role="tab" aria-selected="false">Jobs</button>
+  </div>
+  <div class="yp-paper">
+    <nav class="yp-tabs" role="tablist">
+      <a class="yp-tab" role="tab" href="#" aria-selected="false">Overview</a>
+      <a class="yp-tab" role="tab" href="#" aria-selected="true">Dashboards</a>
+      <a class="yp-tab" role="tab" href="#" aria-selected="false">Scheduled jobs</a>
+      <a class="yp-tab" role="tab" href="#" aria-selected="false">Settings</a>
+    </nav>
+  </div>
+</div>
+<script>
+/* Segmented: the glass thumb slides on `translate` (spring-snappy) and stretches like a droplet */
+(function () {
+  var seg = document.getElementById('seg'), thumb = seg.querySelector('.yp-seg__thumb');
+  var items = Array.prototype.slice.call(seg.querySelectorAll('.yp-seg__item'));
+  var tok = function (n) { return getComputedStyle(document.documentElement).getPropertyValue(n).trim(); };
+  function place(it, animate) {
+    var x = it.offsetLeft, prev = thumb._x;
+    thumb.style.width = it.offsetWidth + 'px';
+    if (!animate) { thumb.style.transition = 'none'; thumb.style.setProperty('--x', x + 'px'); void thumb.offsetWidth; thumb.style.transition = ''; }
+    else {
+      thumb.style.setProperty('--x', x + 'px');
+      if (!matchMedia('(prefers-reduced-motion: reduce)').matches) {
+        var k = Math.min(Math.abs(x - prev) / it.offsetWidth, 4);
+        thumb.animate([{ scale: '1 1', easing: tok('--ease-out') }, { scale: (1 + 0.085 * k) + ' ' + (1 - 0.035 * k), offset: 0.28, easing: tok('--spring-snappy') }, { scale: '1 1' }], { duration: parseFloat(tok('--dur-spring-snappy')) * 1.2 });
+      }
+    }
+    thumb._x = x;
+  }
+  items.forEach(function (it) { it.addEventListener('click', function () { items.forEach(function (i) { i.setAttribute('aria-selected', String(i === it)); }); place(it, true); }); });
+  var cur = function () { return seg.querySelector('[aria-selected="true"]'); };
+  place(cur(), false);
+  if (document.fonts) document.fonts.ready.then(function () { place(cur(), false); });
+  document.querySelectorAll('.yp-tab').forEach(function (t) { t.addEventListener('click', function (e) { e.preventDefault(); }); });
+})();
+</script>
+</body></html>

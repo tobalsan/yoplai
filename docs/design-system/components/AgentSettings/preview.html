@@ -1,0 +1,51 @@
+<!-- @dsCard group="Agents" height=560 subtitle="Identity, visibility and teams: the only things that are settings" -->
+<!doctype html><html><head><meta charset="utf-8"><title>AgentSettings — preview</title><style>
+.as { padding: var(--space-6); height: 100vh; min-height: 560px; --aura-x: 80%; --aura-y: 0%; }
+.as .yp-paper { position: relative; height: 100%; overflow: hidden; padding: var(--space-7) var(--space-6); }
+</style></head><body>
+<div class="yp-ground as">
+  <div class="yp-paper">
+    <div class="yp-settings">
+      <div class="yp-settings__id">
+        <span class="yp-avatar yp-settings__avatar" aria-hidden="true">C</span>
+        <div><h2 class="yp-settings__name">Connie</h2><p class="yp-settings__role">Content</p></div>
+      </div>
+      <section class="yp-settings__section" aria-labelledby="v">
+        <h3 class="yp-settings__label" id="v">Visibility</h3>
+        <div class="yp-seg yp-seg--field" role="radiogroup" aria-labelledby="v">
+          <span class="yp-seg__thumb" style="width:calc(50% - 3px);--x:calc(50% - 1px)"></span>
+          <button class="yp-seg__item" role="radio" aria-checked="false">Private</button>
+          <button class="yp-seg__item" role="radio" aria-checked="true">Public</button>
+        </div>
+        <p class="yp-settings__hint">Every user can chat with this agent.</p>
+      </section>
+      <section class="yp-settings__section" aria-labelledby="t">
+        <h3 class="yp-settings__label" id="t">Teams</h3>
+        <div class="yp-settings__chips" id="chips">
+          <button class="yp-chip" aria-pressed="true">Content</button>
+          <button class="yp-chip" aria-pressed="false">Customer Issue Coordination</button>
+          <button class="yp-chip" aria-pressed="false">Customer Success</button>
+          <button class="yp-chip" aria-pressed="false">Human Resources</button>
+          <button class="yp-chip" aria-pressed="false">Product</button>
+          <button class="yp-chip" aria-pressed="false">Sales</button>
+        </div>
+        <p class="yp-settings__hint">Members of the selected teams can chat with this agent.</p>
+      </section>
+    </div>
+    <div class="yp-settings__bar yp-glass" id="bar" hidden>
+      <p>Unsaved team changes</p>
+      <div class="yp-settings__bar-actions"><button class="yp-btn" id="cancel">Cancel</button><button class="yp-btn yp-btn--primary">Save</button></div>
+    </div>
+  </div>
+</div>
+<script>
+(function () {
+  var chips = Array.prototype.slice.call(document.querySelectorAll('#chips .yp-chip')), bar = document.getElementById('bar');
+  var saved = chips.map(function (c) { return c.getAttribute('aria-pressed'); });
+  function sync() { bar.hidden = chips.every(function (c, i) { return c.getAttribute('aria-pressed') === saved[i]; }); }
+  chips.forEach(function (c) { c.addEventListener('click', function () { c.setAttribute('aria-pressed', String(c.getAttribute('aria-pressed') !== 'true')); sync(); }); });
+  document.getElementById('cancel').addEventListener('click', function () { chips.forEach(function (c, i) { c.setAttribute('aria-pressed', saved[i]); }); sync(); });
+  chips[2].click();
+})();
+</script>
+</body></html>

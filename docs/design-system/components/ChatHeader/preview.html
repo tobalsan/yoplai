@@ -1,0 +1,98 @@
+<!-- @dsCard group="Chat" height=260 subtitle="Back, identity, two tabs, New chat, and a cog menu for dashboards, jobs, sound, settings" -->
+<!doctype html><html><head><meta charset="utf-8"><title>ChatHeader — preview</title><style>
+.ch { min-height: 100vh; --aura-x: 40%; --aura-y: -10%; }
+.ch-panel { padding: var(--space-4) var(--space-7); font: 400 15px/24px var(--font-sans); color: var(--ink-muted); }
+.ch-back { margin: 0 0 var(--space-2) -8px; }
+.ch-panel.is-in { animation: ch-in var(--dur-spring-smooth) var(--spring-smooth) both; }
+@keyframes ch-in { from { opacity: 0; translate: 0 8px; } }
+</style></head><body>
+<div class="yp-ground ch">
+  <header class="yp-chathead">
+    <div class="yp-chathead__lead">
+      <button class="yp-btn yp-btn--ghost yp-btn--icon" aria-label="Back to agents"><svg viewBox="0 0 24 24" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M19 12H5M12 19l-7-7 7-7"/></svg></button>
+      <div class="yp-chathead__id">
+        <span class="yp-avatar yp-avatar--lg">H</span>
+        <div>
+          <div class="yp-chathead__name">Henry</div>
+          <div class="yp-chathead__status"><span class="yp-chathead__stat">online · HR assistant</span></div>
+        </div>
+      </div>
+    </div>
+    <div class="yp-seg yp-seg--field yp-squish yp-chathead__tabs" id="tabs" role="tablist" aria-label="Agent sections">
+      <span class="yp-seg__thumb"></span>
+      <button class="yp-seg__item" role="tab" aria-selected="true" tabindex="0" data-value="chat">Chat</button>
+      <button class="yp-seg__item" role="tab" aria-selected="false" tabindex="-1" data-value="extensions">Extensions</button>
+    </div>
+    <div class="yp-chathead__actions">
+      <button class="yp-btn yp-btn--ghost yp-chathead__new" aria-label="New chat"><svg viewBox="0 0 24 24" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg><span class="yp-chathead__label">New chat</span></button>
+      <button class="yp-btn yp-btn--ghost yp-btn--icon" id="cog" aria-label="Agent menu" aria-haspopup="menu" aria-expanded="false" aria-controls="menu-agent"><svg viewBox="0 0 24 24" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg></button>
+    </div>
+  </header>
+  <div class="ch-panel" id="panel" role="tabpanel">Chat: the conversation with Henry.</div>
+</div>
+<div class="yp-menu" id="menu-agent" popover role="menu" aria-label="Agent menu">
+  <button class="yp-menu__item" type="button" role="menuitem" data-act="dashboards"><svg viewBox="0 0 24 24" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="7" height="9" rx="1.5"/><rect x="14" y="3" width="7" height="5" rx="1.5"/><rect x="14" y="12" width="7" height="9" rx="1.5"/><rect x="3" y="16" width="7" height="5" rx="1.5"/></svg>Dashboards</button>
+  <button class="yp-menu__item" type="button" role="menuitem" data-act="jobs"><svg viewBox="0 0 24 24" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>Jobs</button>
+  <div class="yp-menu__sep" role="separator"></div>
+  <button class="yp-menu__item" type="button" role="menuitemcheckbox" aria-checked="true" data-act="sound"><span class="yp-menu__swap" aria-hidden="true"><span class="yp-menu__on"><svg viewBox="0 0 24 24" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg></span><span class="yp-menu__off"><svg viewBox="0 0 24 24" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8.7 3A6 6 0 0 1 18 8c0 2.6.4 4.5.9 5.8M6.3 6.3C6.1 6.8 6 7.4 6 8c0 7-3 9-3 9h14M10.3 21a1.94 1.94 0 0 0 3.4 0M2 2l20 20"/></svg></span></span><span class="yp-menu__swap"><span class="yp-menu__on">Sound on</span><span class="yp-menu__off" aria-hidden="true">Sound off</span></span></button>
+  <div class="yp-menu__sep" role="separator"></div>
+  <button class="yp-menu__item" type="button" role="menuitem" data-act="settings"><svg viewBox="0 0 24 24" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>Agent settings</button>
+</div>
+
+<script>
+  const seg = document.getElementById('tabs'), thumb = seg.querySelector('.yp-seg__thumb');
+  const tabs = [...seg.querySelectorAll('[role="tab"]')], panel = document.getElementById('panel');
+  const text = { chat: 'Chat: the conversation with Henry.', extensions: 'Extensions: tools and services Henry can use.', dashboards: 'Dashboards: live pages Henry built.', jobs: 'Jobs: scheduled work Henry runs.', settings: 'Agent settings: identity, teams and visibility.' };
+  const back = '<button type="button" class="yp-btn yp-btn--ghost yp-btn--sm ch-back" data-back><svg viewBox="0 0 24 24" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>Chat</button><div>';
+  const place = () => { const t = tabs.find((x) => x.getAttribute('aria-selected') === 'true') || tabs[0]; thumb.style.width = t.offsetWidth + 'px'; thumb.style.setProperty('--x', t.offsetLeft + 'px'); };
+  const show = (key, withBack) => {
+    panel.innerHTML = withBack ? back + text[key] + '</div>' : text[key];
+    panel.classList.remove('is-in'); void panel.offsetWidth; panel.classList.add('is-in');
+  };
+  const select = (t) => {
+    tabs.forEach((x) => { x.setAttribute('aria-selected', String(x === t)); x.tabIndex = x === t ? 0 : -1; });
+    place(); show(t.dataset.value);
+  };
+  tabs.forEach((t) => t.addEventListener('click', () => select(t)));
+  seg.addEventListener('keydown', (e) => {
+    const i = tabs.indexOf(document.activeElement), n = tabs.length;
+    const to = { ArrowRight: (i + 1) % n, ArrowLeft: (i + n - 1) % n, Home: 0, End: n - 1 }[e.key];
+    if (i < 0 || to === undefined) return;
+    e.preventDefault(); tabs[to].focus(); select(tabs[to]);
+  });
+  panel.addEventListener('click', (e) => { if (e.target.closest('[data-back]')) { select(tabs[0]); tabs[0].focus(); } });
+  place(); document.fonts && document.fonts.ready.then(place); addEventListener('resize', place);
+
+  /* Cog menu: Dashboards / Jobs open in the panel and clear the tab selection; Sound toggles in place and the menu stays open */
+  const cog = document.getElementById('cog'), menu = document.getElementById('menu-agent');
+  const items = () => [...menu.querySelectorAll('[role^="menuitem"]')];
+  cog.addEventListener('click', () => {
+    const r = cog.getBoundingClientRect();
+    menu.style.top = (r.bottom + 6) + 'px'; menu.style.right = (innerWidth - r.right) + 'px'; menu.style.left = 'auto'; menu.style.transformOrigin = 'top right';
+    menu.togglePopover();
+  });
+  menu.addEventListener('toggle', (e) => {
+    const open = e.newState === 'open';
+    cog.setAttribute('aria-expanded', String(open));
+    if (open) items()[0].focus();
+    else if (menu.dataset.moved) delete menu.dataset.moved; // a panel took focus
+    else cog.focus();
+  });
+  menu.addEventListener('keydown', (e) => {
+    const list = items(), i = list.indexOf(document.activeElement), n = list.length;
+    const to = { ArrowDown: (i + 1) % n, ArrowUp: (i + n - 1) % n, Home: 0, End: n - 1 }[e.key];
+    if (to !== undefined) { e.preventDefault(); list[to].focus(); } else if (e.key === 'Tab') menu.hidePopover();
+  });
+  menu.addEventListener('click', (e) => {
+    const it = e.target.closest('[data-act]');
+    if (!it) return;
+    const act = it.dataset.act;
+    if (act === 'sound') { it.setAttribute('aria-checked', String(it.getAttribute('aria-checked') !== 'true')); return; }
+    if (act !== 'settings') menu.dataset.moved = '1';
+    menu.hidePopover();
+    if (act === 'settings') { cog.focus(); panel.textContent = text.settings; return; }
+    tabs.forEach((x) => { x.setAttribute('aria-selected', 'false'); x.tabIndex = x === tabs[0] ? 0 : -1; });
+    show(act, true); panel.tabIndex = -1; panel.focus({ preventScroll: true });
+  });
+</script>
+</body></html>

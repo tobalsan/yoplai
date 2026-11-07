@@ -1,0 +1,18 @@
+<!-- @dsCard group="Feedback" height=280 -->
+<!doctype html><html><head><meta charset="utf-8"><title>Toast — preview</title><style>
+.ts { position: relative; height: 100vh; min-height: 280px; padding: var(--space-6); display: flex; flex-direction: column; justify-content: flex-end; align-items: center; gap: var(--space-2); --aura-x: 30%; --aura-y: 100%; }
+.ts-paper { position: absolute; inset: var(--space-5) 30% var(--space-5) var(--space-6); padding: var(--space-5); }
+.ts-paper p { margin: 0 0 var(--space-3); }
+</style></head><body>
+<div class="yp-ground ts">
+  <div class="yp-paper ts-paper yp-msg" aria-hidden="true"><p>I matched 412 rows against the July approvals. Eleven days are booked and two requests are still open.</p><p>The balance is off for three people.</p></div>
+  <div class="yp-toast yp-toast--success" role="status">
+    <svg class="yp-toast__icon yp-check" viewBox="0 0 24 24" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path pathLength="1" d="M20 6L9 17l-5-5"/></svg>
+    <div><strong>Session archived</strong>“Reconcile PTO” moved to Admin › Archive.</div>
+  </div>
+  <div class="yp-toast yp-toast--danger" role="alert">
+    <svg class="yp-toast__icon" viewBox="0 0 24 24" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 8v4M12 16h.01"/></svg>
+    <div><strong>Run failed</strong>Casey hit the model quota. Try again after 3:40 PM.</div>
+  </div>
+</div>
+</body></html>

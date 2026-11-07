@@ -1,0 +1,39 @@
+<!-- @dsCard group="Chat" height=420 subtitle="Type a long draft: the last turn stays 48px above" -->
+<!doctype html><html><head><meta charset="utf-8"><title>Composer — preview</title><style>
+.co { position: relative; height: 100vh; min-height: 420px; display: flex; justify-content: center; padding: var(--space-6) var(--space-6) 0; --aura-x: 50%; --aura-y: 110%; }
+.co-sheet { width: 100%; max-width: 800px; height: 100%; padding: var(--space-6) var(--space-7) 0; border-radius: var(--radius-lg) var(--radius-lg) 0 0; }
+.co-sheet p { margin: 0 0 var(--space-3); }
+.co .yp-composer { position: absolute; left: 0; right: 0; bottom: var(--space-5); margin: 0 auto; width: min(var(--prose-w), calc(100% - 96px)); }
+</style></head><body>
+<div class="yp-ground co">
+  <div class="yp-paper co-sheet yp-chat-scroll yp-msg" id="history">
+    <p>I matched 412 rows against the July approvals. Eleven days are booked and two requests are still open.</p>
+    <p>The balance in <code>pto_2026.xlsx</code> is off for three people: Ramon is short one day, Cira is up 1.5 and Casey is down 0.5.</p>
+    <p>Payroll receives the updated export at 5 PM. I left a note in the sheet so you can review the correction before then.</p>
+    <p>This last line always stays visible above the composer, however long your draft gets.</p>
+  </div>
+  <form class="yp-composer" id="composer" onsubmit="event.preventDefault()">
+    <textarea rows="2" placeholder="Message Henry…" aria-label="Message Henry"></textarea>
+    <div class="yp-composer__bar">
+      <div class="yp-composer__tools">
+        <button type="button" class="yp-btn yp-btn--ghost yp-btn--icon yp-btn--sm" aria-label="Attach file"><svg viewBox="0 0 24 24" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 11.5l-8.6 8.6a5.5 5.5 0 0 1-7.8-7.8l8.6-8.6a3.7 3.7 0 0 1 5.2 5.2l-8.6 8.6a1.8 1.8 0 0 1-2.6-2.6l7.9-7.9"/></svg></button>
+        <label class="yp-btn yp-btn--ghost yp-btn--sm yp-composer__think" title="Thinking level"><span>Think <b id="think-val">Default</b></span><svg viewBox="0 0 24 24" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg><select aria-label="Thinking level" onchange="document.getElementById('think-val').textContent = this.selectedOptions[0].textContent"><option value="">Default</option><option value="off">Off</option><option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option><option value="xhigh">XHigh</option></select></label>
+        <span class="yp-composer__meta">Enter to send · Shift + Enter for a new line</span>
+      </div>
+      <button type="submit" class="yp-send" data-state="idle" aria-label="Send" onclick="this.dataset.state = this.dataset.state === 'stop' ? 'idle' : 'stop'"><span class="yp-send__bar"></span><svg class="yp-send__icon" viewBox="0 0 24 24" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 19V5M5 12l7-7 7 7"/></svg><span class="yp-send__stop" aria-hidden="true"><svg viewBox="0 0 10 10"><rect width="10" height="10" rx="2"/></svg>Stop</span></button>
+    </div>
+  </form>
+</div>
+<script>
+  const scroll = document.getElementById('history'), composer = document.getElementById('composer');
+  const measureDock = () => {
+    const atEnd = scroll.scrollHeight - scroll.scrollTop - scroll.clientHeight < 8;
+    const overlap = scroll.getBoundingClientRect().bottom - composer.getBoundingClientRect().top;
+    scroll.style.setProperty('--dock-overlap', Math.max(0, overlap) + 'px');
+    if (atEnd) scroll.scrollTop = scroll.scrollHeight;
+  };
+  const ro = new ResizeObserver(measureDock); ro.observe(composer); ro.observe(scroll);
+  ['transitionend', 'animationend'].forEach((e) => document.addEventListener(e, measureDock));
+  requestAnimationFrame(() => { scroll.scrollTop = scroll.scrollHeight; });
+</script>
+</body></html>

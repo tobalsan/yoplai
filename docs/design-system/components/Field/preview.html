@@ -1,0 +1,29 @@
+<!-- @dsCard group="Forms" height=430 -->
+<!doctype html><html><head><meta charset="utf-8"><title>Field — preview</title><style>
+.fd { padding: var(--space-6); }
+.fd .yp-paper { padding: var(--space-6); display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: var(--space-5); }
+</style></head><body>
+<div class="yp-ground fd">
+  <div class="yp-paper">
+    <div class="yp-field">
+      <label class="yp-field__label" for="f1">Agent name</label>
+      <input class="yp-input" id="f1" value="Henry">
+      <span class="yp-field__hint">Shown in the sidebar and in chat.</span>
+    </div>
+    <div class="yp-field">
+      <label class="yp-field__label" for="f2">Search sessions</label>
+      <input class="yp-input" id="f2" placeholder="Search by title or agent" style="outline: 2px solid var(--focus); outline-offset: 2px">
+      <span class="yp-field__hint">Focus ring shown for reference.</span>
+    </div>
+    <div class="yp-field">
+      <label class="yp-field__label" for="f3">Schedule</label>
+      <input class="yp-input yp-input--invalid" id="f3" value="every blue moon" aria-invalid="true" aria-describedby="f3e">
+      <span class="yp-field__error" id="f3e">Enter a cron expression, such as 0 9 * * 1.</span>
+    </div>
+    <div class="yp-field">
+      <label class="yp-field__label" for="f4">Instructions</label>
+      <textarea class="yp-input" id="f4" placeholder="Tell Henry how to handle PTO requests"></textarea>
+    </div>
+  </div>
+</div>
+</body></html>

@@ -1,0 +1,519 @@
+<!-- @dsCard group="Pages" height=640 subtitle="Admin: five tabs (Users, Extensions, MCP servers, Skills, Quota) as rows, with a menu for rare actions" -->
+<!doctype html><html><head><meta charset="utf-8"><title>Admin — preview</title><style>
+.ad { padding: var(--space-6); height: 100vh; min-height: 560px; --aura-x: 80%; --aura-y: 0%; }
+.ad__sheet { position: relative; height: 100%; overflow: hidden; }
+.ad__scroll { height: 100%; overflow-y: auto; padding: var(--space-7) var(--space-6); scrollbar-gutter: stable; scrollbar-width: thin; scrollbar-color: var(--line-control) transparent; }
+.ad__toasts { position: fixed; left: 0; right: 0; bottom: var(--space-5); margin: 0 auto; z-index: 3; width: 360px; display: flex; flex-direction: column; gap: var(--space-2); pointer-events: none; }
+.ad__toasts .yp-toast { transition: opacity var(--dur-base) var(--ease-out), transform var(--dur-spring-smooth) var(--spring-smooth); }
+@starting-style { .ad__toasts .yp-toast { opacity: 0; transform: translateY(8px); } }
+</style></head><body>
+<div class="yp-ground ad">
+  <div class="yp-paper ad__sheet">
+    <div class="ad__scroll" id="admin-scroll" tabindex="0" aria-label="Admin">
+          <div class="yp-skills yp-admin" id="admin-body">
+            <header class="yp-admin__head">
+              <div class="yp-seg yp-seg--field yp-admin__tabs" id="admin-tabs" role="tablist" aria-label="Admin sections"></div>
+              <p class="yp-body yp-admin__desc" id="admin-desc"></p>
+            </header>
+            <div id="admin-panel" role="tabpanel" tabindex="-1"></div>
+          </div>
+    </div>
+  </div>
+</div>
+<div class="ad__toasts" id="toasts" aria-live="polite"></div>
+<script>
+(() => {
+  const $ = (s, r = document) => r.querySelector(s);
+  const $$ = (s, r = document) => Array.from(r.querySelectorAll(s));
+  const root = document.documentElement, app = root;
+  const ms = (n) => parseFloat(getComputedStyle(root).getPropertyValue(n)) || 200;
+  const reduced = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const esc = (s) => s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+  const I_MORE = '<svg viewBox="0 0 24 24" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/></svg>';
+  let mTrigger = null, mRowEl = null;
+  function toast(title, detail) {
+    const el = document.createElement('div');
+    el.className = 'yp-toast yp-toast--success'; el.setAttribute('role', 'status');
+    el.innerHTML = '<div><strong>' + esc(title) + '</strong>' + esc(detail) + '</div>';
+    $('#toasts').appendChild(el);
+    setTimeout(() => el.remove(), 3200);
+  }
+  function openMenu(menu, btn) {
+    const r = btn.getBoundingClientRect();
+    menu.style.top = (r.bottom + 6) + 'px';
+    menu.style.left = Math.max(8, r.right - 200) + 'px';
+    menu.togglePopover();
+  }
+  function wireMenu(menu) {
+    const items = () => $$('[role^="menuitem"]', menu);
+    menu.addEventListener('toggle', (e) => {
+      const open = e.newState === 'open';
+      if (mTrigger) mTrigger.setAttribute('aria-expanded', String(open));
+      if (mRowEl) mRowEl.toggleAttribute('data-menu', open);
+      if (open) items()[0].focus(); else { if (mTrigger && mTrigger.isConnected) mTrigger.focus(); mRowEl = null; }
+    });
+    menu.addEventListener('keydown', (e) => {
+      const l = items(), i = l.indexOf(document.activeElement);
+      const to = { ArrowDown: (i + 1) % l.length, ArrowUp: (i + l.length - 1) % l.length, Home: 0, End: l.length - 1 }[e.key];
+      if (to !== undefined) { e.preventDefault(); l[to].focus(); } else if (e.key === 'Tab') menu.hidePopover();
+    });
+  }
+  /* ── Admin. Five tabs in one sheet: Users · Extensions · MCP servers · Skills · Quota. One muted line per tab, no second title. Toolbars render once per tab and never re-render while filtering; only the list below them does. Accent: Approve (Users, pending rows) and Add server (MCP servers). Needs $, $$, esc, ms, reduced, toast, openMenu, wireMenu, I_MORE, app, and the shell (#admin-tabs #admin-desc #admin-panel #admin-scroll). ── */
+  const adSvg = (d) => `<svg viewBox="0 0 24 24" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${d}</svg>`;
+  const AD_IC = {
+    search: '<circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/>',
+    star: '<path d="M12 3l2.8 5.7 6.2.9-4.5 4.4 1.1 6.2L12 17.2 6.4 20.2l1.1-6.2L3 9.6l6.2-.9z"/>',
+    plus: '<path d="M12 5v14M5 12h14"/>',
+    eye: '<path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/>',
+    out: '<path d="M15 4h4a1 1 0 0 1 1 1v14a1 1 0 0 1-1 1h-4M10 8l-4 4 4 4M6 12h10"/>',
+    pencil: '<path d="M4 20h4L19 9l-4-4L4 16v4zM13.5 6.5l4 4"/>',
+    refresh: '<path d="M20 11a8 8 0 1 0-2.3 5.7M20 4v7h-7"/>',
+    trash: '<path d="M4 7h16M10 11v6M14 11v6M6 7l1 12a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1l1-12M9 7V4h6v3"/>',
+    swap: '<path d="M7 4L3 8l4 4M3 8h14M17 20l4-4-4-4M21 16H7"/>',
+    ban: '<circle cx="12" cy="12" r="9"/><path d="M5.6 5.6l12.8 12.8"/>',
+    undo: '<path d="M9 14L4 9l5-5M4 9h10a6 6 0 0 1 0 12h-3"/>',
+    share: '<circle cx="6" cy="12" r="2.5"/><circle cx="18" cy="6" r="2.5"/><circle cx="18" cy="18" r="2.5"/><path d="M8.2 10.8l7.6-3.6M8.2 13.2l7.6 3.6"/>',
+    server: '<rect x="3" y="4" width="18" height="6" rx="1.5"/><rect x="3" y="14" width="18" height="6" rx="1.5"/><path d="M7 7h.01M7 17h.01"/>',
+  };
+  const AD_TABS = [['users', 'Users'], ['extensions', 'Extensions'], ['mcp', 'MCP servers'], ['skills', 'Skills'], ['quota', 'Quota']];
+  const AD_DESC = {
+    users: 'Approve new users and choose who is an admin.',
+    extensions: 'Star extensions and MCP servers to promote them. System items are hidden from users and admins on agent configuration pages.',
+    mcp: 'Shared remote MCP servers every agent can enable. Users connect their own account; nothing is connected here.',
+    skills: 'Review every skill on the platform. Disable or delete the ones shared with everyone.',
+    quota: 'Subscription usage on this host. Claude updates after each call, ChatGPT readings can be 5–10 minutes old, and this page refreshes every 20 seconds.',
+  };
+
+  /* Fixtures. The viewer is the superadmin Thinh Dinh (thinh@cloudi-fi.com). */
+  const AD_ME = 'u-me';
+  const adUsers = [
+    { id: 'u-ramon', name: 'Ramon Ortiz', email: 'ramon.ortiz@tobal.fr', role: 'user', approved: false, at: '2026-11-06' },
+    { id: 'u-lea', name: 'Lea Martin', email: 'lea.martin@cloudi-fi.com', role: 'user', approved: false, at: '2026-11-05' },
+    { id: 'u-reg', name: 'Test reg', email: 'reg@tobal.fr', role: 'user', approved: true, at: '2026-11-06' },
+    { id: 'u-nan', name: 'Nanaki FF', email: 'nanakiff@gmail.com', role: 'user', approved: true, at: '2026-10-08' },
+    { id: 'u-tob', name: 'Thinh Dinh', email: 'tobalsan@gmail.com', role: 'user', approved: true, at: '2026-10-03' },
+    { id: 'u-adm', name: 'Thinh Dinh', email: 'thinh@tobal.fr', role: 'admin', approved: true, at: '2026-05-20' },
+    { id: AD_ME, name: 'Thinh Dinh', email: 'thinh@cloudi-fi.com', role: 'superadmin', approved: true, at: '2026-05-04' },
+  ];
+  const AD_EXT = [
+    ['cloudifi-admin', 'Cloudi-Fi Admin', 'Manage Cloudi-Fi tenants, locations, captive portals and access policies.'],
+    ['claap', 'Claap', 'Search meeting recordings, transcripts and summaries.'],
+    ['discord', 'Discord', 'Read and post messages in the servers and channels you belong to.'],
+    ['exa', 'Exa', 'Neural web search that returns clean, citable results.'],
+    ['firecrawl', 'Firecrawl', 'Scrape, crawl and extract content from any website.'],
+    ['gmail', 'Gmail', 'Search, read, draft and send email from your mailbox.'],
+    ['ga', 'Google Analytics', 'Query traffic, conversions and audience reports.'],
+    ['gcal', 'Google Calendar', 'Read your schedule, find free time and create events.'],
+    ['gdrive', 'Google Drive', 'Find, read and organize files and Docs, Sheets and Slides.'],
+    ['gsc', 'Google Search Console', 'Review search performance, indexing and sitemaps.'],
+    ['hiveage', 'Hiveage', 'Create invoices, track payments and manage clients.'],
+    ['linear', 'Linear', 'Triage issues, plan cycles and update projects.'],
+    ['notion', 'Notion', 'Read and edit pages and databases in your workspace.'],
+    ['pennylane', 'Pennylane', 'Review bookkeeping, invoices and bank transactions.'],
+    ['pipedrive', 'Pipedrive', 'Work deals, contacts and pipeline stages.'],
+    ['slack', 'Slack', 'Search channels and DMs, and post messages as you.'],
+    ['zendesk', 'Zendesk', 'Read tickets, reply to customers and update statuses.'],
+  ];
+  const adTop = new Set(['gmail', 'gcal', 'gdrive', 'mcp:notion']);
+  const adSys = new Set(['cloudifi-admin']);
+  const adMcp = [
+    { id: 'notion', url: 'https://mcp.notion.com/mcp', name: 'Notion MCP', desc: 'Gives your agent access to Notion pages and databases.', agents: 3 },
+    { id: 'atlassian', url: 'https://mcp.atlassian.com/v2/mcp', name: 'Atlassian MCP', desc: 'Provides seamless access to Confluence and Jira.', agents: 1 },
+    { id: 'cloudifi', url: 'https://mcp-sandbox.cloudi-fi.net/mcp/server', name: 'Cloudi-Fi MCP', desc: 'Customer tenant data: locations, captive portals, guests and sign-ups, access policies, VPN tunnels, subnets, access logs, Zendesk tickets.', agents: 5, signin: true },
+    { id: 'slack', url: 'https://mcp.slack.com/mcp', name: 'Slack MCP', desc: 'Search and read your own Slack messages, channels, DMs and threads, and post as you.', agents: 2 },
+  ];
+  const adSkills = [
+    { id: 'bird', desc: 'X/Twitter CLI for reading, searching, posting, and engagement via cookies.', owner: 'Thinh Dinh', active: true, shares: [], users: 0, at: '2026-10-20' },
+    { id: 'frontend-design', desc: 'Guidance for distinctive, intentional visual design when building new UI or reshaping an existing one.', owner: 'Thinh Dinh', active: true, shares: [], users: 0, at: '2026-10-20' },
+    { id: 'demo-skill', desc: 'Demo skill for testing the skill system. Use when the user asks to "run the demo skill".', owner: 'Thinh Dinh', active: true, shares: [], users: 0, at: '2026-10-20' },
+    { id: 'learn', desc: 'Use this skill when the user wants intellectual understanding — learning how or why something works.', owner: 'Thinh Dinh', active: true, shares: [], users: 0, at: '2026-10-20' },
+    { id: 'cloudi-fi-documents', desc: 'Write Cloudi-Fi customer documents, quotes and one-pagers in the house style, from a tenant brief.', owner: 'Unknown user', active: false, shares: [{ all: true }], users: 0, at: '2026-10-23' },
+    { id: 'cloudi-fi-slides', desc: 'Build Cloudi-Fi customer decks from a template: agenda, tenant metrics, roadmap and next steps.', owner: 'Unknown user', active: false, shares: [{ all: true }], users: 0, at: '2026-10-23' },
+    { id: 'weekly-digest', desc: 'Summarize the week across Slack, Linear and email into a short digest with decisions and open questions.', owner: 'Nanaki FF', active: true, shares: [{ all: true }], users: 4, at: '2026-10-14' },
+    { id: 'pipedrive-pipeline-review', desc: 'Review open deals, flag stalled stages and draft the follow-ups for each owner.', owner: 'Thinh Dinh', active: true, shares: [{ name: 'Nanaki FF', mode: 'write' }], users: 2, at: '2026-10-11' },
+    { id: 'nda-redlines', desc: 'Compare an NDA against the standard terms and list redlines with a suggested replacement for each clause.', owner: 'Test reg', active: true, shares: [], users: 0, at: '2026-10-09' },
+    { id: 'pdf', desc: 'Read, merge, split and annotate PDF files, and fill in forms.', owner: 'Test reg', active: true, shares: [], users: 0, at: '2026-10-02', collide: ['pdf'] },
+    { id: 'pennylane-export', desc: 'Export a month of Pennylane entries to a spreadsheet grouped by account and supplier.', owner: 'Thinh Dinh', active: true, shares: [], users: 0, at: '2026-09-22' },
+  ];
+  const adAgentSkills = [
+    { id: 'a-1', agent: 'Henry', name: 'reconcile-pto', desc: 'Match PTO requests against the payroll calendar and list the differences.', system: false },
+    { id: 'a-2', agent: 'Henry', name: 'vendor-digest', desc: 'Weekly digest of vendor invoices, due dates and anything that looks off.', system: true },
+    { id: 'a-3', agent: 'Casey', name: 'task-naming', desc: 'Adopt a task naming convention and rename tasks to match.', system: false },
+    { id: 'a-4', agent: 'Sally', name: 'pipeline-review', desc: 'Quarterly pipeline review with stage conversion and forecast gaps.', system: false },
+    { id: 'a-5', agent: 'Sally', name: 'crm-cleanup', desc: 'Merge duplicate contacts and fill missing owners in the CRM.', system: false },
+  ];
+  const adSystemSkills = [
+    { id: 's-1', name: 'pdf', desc: 'Read, merge, split and annotate PDF files, and fill in forms.', kind: 'builtin' },
+    { id: 's-2', name: 'docx', desc: 'Create and edit Word documents, including tracked changes and comments.', kind: 'builtin' },
+    { id: 's-3', name: 'xlsx', desc: 'Create, clean and analyze spreadsheets with formulas and charts.', kind: 'builtin' },
+    { id: 's-4', name: 'brand-voice', desc: 'Write in the company voice: plain, direct and specific.', kind: 'default' },
+    { id: 's-5', name: 'cloudi-fi-support', desc: 'Answer Cloudi-Fi support questions from the knowledge base and ticket history.', kind: 'default', agents: ['Henry', 'Casey'] },
+  ];
+  const AD_QUOTA = [
+    { name: 'Claude', sub: 'host', status: 'fresh', age: '4m', abs: '11/7/2026, 5:41:25 PM', src: 'Claude usage endpoint', five: { pct: 51, reset: '1h 14m' }, week: { pct: 50, reset: '2d 13h' }, pace: 0.79 },
+    { name: 'ChatGPT', sub: 'prolite 6ba773357db595b5', status: 'fresh', age: '6m', abs: '11/7/2026, 5:39:12 PM', src: 'ChatGPT usage endpoint', five: null, week: { pct: 33, reset: '5d 2h' }, pace: 1.21 },
+  ];
+
+  const adS = { tab: 'users', q: '', ext: 'all', agent: 'Henry' };
+  let adFresh = null;
+  const adEl = { tabs: $('#admin-tabs'), desc: $('#admin-desc'), panel: $('#admin-panel'), scroll: $('#admin-scroll') };
+  const adDate = (iso, year) => new Date(iso + 'T12:00:00').toLocaleDateString('en-US', year ? { month: 'short', day: 'numeric', year: 'numeric' } : { month: 'short', day: 'numeric' });
+  const adInit = (n) => n.split(/\s+/).map((w) => w[0]).slice(0, 2).join('').toUpperCase();
+  const adN = (n, w) => `${n} ${w}${n === 1 ? '' : 's'}`;
+  const adRole = { user: 'User', admin: 'Admin', superadmin: 'Superadmin' };
+  const adMark = (t) => { const q = adS.q.trim(); return q ? esc(t).replace(new RegExp('(' + esc(q).replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + ')', 'gi'), '<mark>$1</mark>') : esc(t); };
+  const adAv = (n) => `<span class="yp-avatar" aria-hidden="true">${esc(adInit(n))}</span>`;
+  const adHead = (id, t, n) => `<h3 class="yp-skills__label" id="${id}">${t}<span class="yp-skills__count">${n}</span></h3>`;
+  const adEmpty = (t) => `<p class="yp-skills__empty">${t}</p>`;
+  const adNone = () => adEmpty(`Nothing matches “${esc(adS.q.trim())}”.`);
+  const adMoreBtn = (name) => `<div class="yp-dash__acts"><button type="button" class="yp-btn yp-btn--ghost yp-btn--icon yp-btn--sm yp-dash__more" data-ad-more aria-label="Actions for ${esc(name)}" title="Actions" aria-haspopup="menu" aria-expanded="false">${I_MORE}</button></div>`;
+  const adSearch = (label) => `<label class="yp-skills__search">${adSvg(AD_IC.search)}<input class="yp-input" type="search" data-ad-q placeholder="${label}" aria-label="${label}" autocomplete="off" value="${esc(adS.q)}"></label>`;
+
+  /* Segmented control (thumb moves with translate only); re-placed whenever its size changes. */
+  function adSeg(seg, attr, onPick) {
+    const items = $$('.yp-seg__item', seg), thumb = $('.yp-seg__thumb', seg);
+    let first = true;
+    const place = () => {
+      const it = items.find((i) => i.getAttribute(attr) === 'true');
+      if (!it || !it.offsetWidth) return;
+      if (first) thumb.style.transition = 'none';
+      thumb.style.width = it.offsetWidth + 'px';
+      thumb.style.setProperty('--x', it.offsetLeft + 'px');
+      if (first) { void thumb.offsetWidth; thumb.style.transition = ''; first = false; }
+    };
+    const pick = (value, silent) => {
+      items.forEach((i) => i.setAttribute(attr, String(i.dataset.value === value)));
+      if (attr === 'aria-selected') items.forEach((i) => { i.tabIndex = i.dataset.value === value ? 0 : -1; });
+      place();
+      if (!silent) onPick(value);
+    };
+    items.forEach((i) => i.addEventListener('click', () => { if (i.getAttribute(attr) !== 'true') pick(i.dataset.value); }));
+    new ResizeObserver(place).observe(seg);
+    place();
+    seg._pick = pick; seg._place = place;
+    return seg;
+  }
+
+  /* Shared menu, dialogs. */
+  const adItem = (act, ic, label, danger) => `<button class="yp-menu__item${danger ? ' yp-menu__item--danger' : ''}" type="button" role="menuitem" data-ad-act="${act}">${adSvg(AD_IC[ic])}${label}</button>`;
+  const adSep = '<div class="yp-menu__sep" role="separator"></div>';
+  document.body.insertAdjacentHTML('beforeend', `
+<div class="yp-menu" id="ad-menu" popover role="menu" aria-label="Actions"></div>
+<dialog class="yp-modal" id="ad-confirm" aria-labelledby="ad-confirm-h" aria-describedby="ad-confirm-b">
+  <form method="dialog">
+    <h2 class="yp-modal__head" id="ad-confirm-h"></h2>
+    <p class="yp-modal__body" id="ad-confirm-b"></p>
+    <div class="yp-modal__foot"><button class="yp-btn" value="cancel" autofocus>Cancel</button><button class="yp-btn" value="ok" id="ad-confirm-ok"></button></div>
+  </form>
+</dialog>
+<dialog class="yp-modal" id="ad-mcp" aria-labelledby="ad-mcp-h">
+  <form id="ad-mcp-form" novalidate>
+    <h2 class="yp-modal__head" id="ad-mcp-h"></h2>
+    <div class="yp-modal__body yp-teams__form">
+      <div class="yp-field"><label class="yp-field__label" for="ad-mcp-url">URL</label><input class="yp-input" id="ad-mcp-url" type="url" inputmode="url" placeholder="https://mcp.example.com/mcp" autocomplete="off" aria-describedby="ad-mcp-err"><span class="yp-field__error" id="ad-mcp-err" role="alert"></span></div>
+      <div class="yp-field"><label class="yp-field__label" for="ad-mcp-name">Display name <span class="yp-field__hint">(optional)</span></label><input class="yp-input" id="ad-mcp-name" maxlength="100" placeholder="e.g. Atlassian" autocomplete="off"></div>
+      <div class="yp-field"><label class="yp-field__label" for="ad-mcp-desc">Description <span class="yp-field__hint">(optional)</span></label><input class="yp-input" id="ad-mcp-desc" maxlength="500" placeholder="What this server gives agents access to" autocomplete="off"></div>
+    </div>
+    <div class="yp-modal__foot"><button type="button" class="yp-btn" data-ad-cancel>Cancel</button><button type="submit" class="yp-btn yp-btn--primary" id="ad-mcp-ok"></button></div>
+  </form>
+</dialog>
+<dialog class="yp-modal" id="ad-transfer" aria-labelledby="ad-transfer-h" aria-describedby="ad-transfer-b">
+  <form id="ad-transfer-form" novalidate>
+    <h2 class="yp-modal__head" id="ad-transfer-h">Transfer skill</h2>
+    <div class="yp-modal__body yp-teams__form">
+      <p id="ad-transfer-b" style="margin:0"></p>
+      <div class="yp-field"><label class="yp-field__label" for="ad-owner">New owner</label><select class="yp-input" id="ad-owner" aria-describedby="ad-owner-err"></select><span class="yp-field__error" id="ad-owner-err" role="alert"></span></div>
+    </div>
+    <div class="yp-modal__foot"><button type="button" class="yp-btn" data-ad-cancel>Cancel</button><button type="submit" class="yp-btn" id="ad-transfer-ok">Transfer</button></div>
+  </form>
+</dialog>`);
+  const adMenu = $('#ad-menu'), adConfirm = $('#ad-confirm'), adMcpD = $('#ad-mcp'), adTrD = $('#ad-transfer');
+  wireMenu(adMenu);
+  [adConfirm, adMcpD, adTrD].forEach((d) => {
+    d.addEventListener('close', () => app.classList.remove('is-receded'));
+    $$('[data-ad-cancel]', d).forEach((b) => b.addEventListener('click', () => d.close('cancel')));
+  });
+  const adModal = (d) => { app.classList.add('is-receded'); d.returnValue = ''; d.showModal(); };
+  function adAsk({ title, body, ok, danger }) {
+    $('#ad-confirm-h').textContent = title; $('#ad-confirm-b').textContent = body;
+    const b = $('#ad-confirm-ok'); b.textContent = ok; b.className = 'yp-btn' + (danger ? ' yp-btn--danger' : '');
+    return new Promise((res) => { adConfirm.addEventListener('close', () => res(adConfirm.returnValue === 'ok'), { once: true }); adModal(adConfirm); });
+  }
+  function adOpenMenu(btn, items, ctx) {
+    mTrigger = btn; mRowEl = btn.closest('.yp-skills__row');
+    adMenu.innerHTML = items.join(''); adMenu.dataset.ctx = ctx;
+    openMenu(adMenu, btn);
+  }
+  function adGone(row, done) {
+    if (reduced()) return done();
+    row.classList.add('yp-teams__row'); row.setAttribute('data-leaving', '');
+    setTimeout(done, ms('--dur-base') + 40);
+  }
+
+  /* ── Users ── */
+  function adUserRow(u, pending) {
+    const me = u.id === AD_ME;
+    const who = `<div class="yp-teams__who"><b>${adMark(u.name)}</b>${me ? '<em class="yp-badge">You</em>' : ''}<small>${adMark(u.email)}</small></div>`;
+    if (pending) return `<li class="yp-skills__row yp-admin__person" data-user="${u.id}">${adAv(u.name)}${who}<span class="yp-admin__when">Asked ${adDate(u.at)}</span><div class="yp-admin__acts"><button type="button" class="yp-btn yp-btn--ghost yp-btn--sm" data-ad-reject aria-label="Reject ${esc(u.name)}">Reject</button><button type="button" class="yp-btn yp-btn--primary yp-btn--sm" data-ad-approve aria-label="Approve ${esc(u.name)}">Approve</button></div></li>`;
+    const opts = Object.entries(adRole).map(([v, l]) => `<option value="${v}"${u.role === v ? ' selected' : ''}>${l}</option>`).join('');
+    return `<li class="yp-skills__row yp-admin__person" data-user="${u.id}"${adFresh === u.id ? ' data-new' : ''}>${adAv(u.name)}${who}<span class="yp-admin__when" title="Joined ${adDate(u.at, true)}">${adDate(u.at, true)}</span>` +
+      `<select class="yp-input yp-admin__role" aria-label="Role for ${esc(u.name)}"${me ? ' disabled title="You cannot change your own role"' : ''}>${opts}</select>` +
+      (me ? '<div class="yp-dash__acts" aria-hidden="true"><span class="yp-btn yp-btn--icon yp-btn--sm" style="visibility:hidden"></span></div>' : adMoreBtn(u.name)) + '</li>';
+  }
+  function adUsersList() {
+    const q = adS.q.trim().toLowerCase(), hit = (u) => !q || (u.name + ' ' + u.email).toLowerCase().includes(q);
+    const pend = adUsers.filter((u) => !u.approved && hit(u)).sort((a, b) => b.at.localeCompare(a.at));
+    const mem = adUsers.filter((u) => u.approved && hit(u)).sort((a, b) => b.at.localeCompare(a.at));
+    if (!adUsers.length) return adEmpty('No users found.');
+    if (!pend.length && !mem.length) return adNone();
+    return (pend.length ? `<section class="yp-skills__section" aria-labelledby="ad-ph">${adHead('ad-ph', 'Waiting for approval', pend.length)}<ul class="yp-skills__list">${pend.map((u) => adUserRow(u, true)).join('')}</ul></section>` : '') +
+      (mem.length ? `<section class="yp-skills__section" aria-labelledby="ad-mh">${adHead('ad-mh', 'Members', mem.length)}<ul class="yp-skills__list">${mem.map((u) => adUserRow(u)).join('')}</ul></section>` : '');
+  }
+
+  /* ── Extensions ── */
+  const adExtItems = () => ({
+    ext: AD_EXT.map(([id, name, desc]) => ({ id, name, desc, logo: name[0] })),
+    mcp: adMcp.map((s) => ({ id: 'mcp:' + s.id, name: s.name, desc: s.desc, logo: 'mcp', meta: 'Used by ' + adN(s.agents, 'agent') })),
+  });
+  const adExtHit = (x) => { const q = adS.q.trim().toLowerCase(); return !q || (x.name + ' ' + x.desc).toLowerCase().includes(q); };
+  function adExtRow(x) {
+    const top = adTop.has(x.id), sys = adSys.has(x.id);
+    return `<li class="yp-skills__row" data-ext="${esc(x.id)}"><span class="yp-admin__logo" aria-hidden="true">${x.logo === 'mcp' ? adSvg(AD_IC.server) : esc(x.logo)}</span>` +
+      `<div class="yp-skills__copy"><div class="yp-admin__top"><span class="yp-dash__title">${adMark(x.name)}</span>${x.meta ? `<span class="yp-dash__meta">${x.meta}</span>` : ''}</div><p class="yp-admin__line" title="${esc(x.desc)}">${adMark(x.desc)}</p></div>` +
+      `<div class="yp-admin__tog"><button type="button" class="yp-btn yp-btn--ghost yp-btn--icon yp-btn--sm yp-dash__pin" data-ad-star aria-pressed="${top}" aria-label="Promote ${esc(x.name)} to Top" title="${top ? 'Top: shown first and prompted to users' : 'Promote to Top'}">${adSvg(AD_IC.star)}</button>` +
+      `<button type="button" class="yp-admin__sys" data-ad-sys aria-pressed="${sys}" aria-label="Mark ${esc(x.name)} as System" title="Hidden from users and admins on agent configuration pages"><span>System</span><span aria-hidden="true">System</span></button></div></li>`;
+  }
+  function adExtCounts() {
+    const all = adExtItems(), list = all.ext.concat(all.mcp).filter(adExtHit), seg = $('#ad-ext-seg');
+    if (!seg) return;
+    const n = { all: list.length, top: list.filter((x) => adTop.has(x.id)).length, system: list.filter((x) => adSys.has(x.id)).length };
+    $$('.yp-seg__item', seg).forEach((i) => { $('.yp-skills__n', i).textContent = n[i.dataset.value]; });
+  }
+  function adExtList() {
+    const all = adExtItems(), keep = (x) => adExtHit(x) && (adS.ext === 'all' || (adS.ext === 'top' ? adTop.has(x.id) : adSys.has(x.id)));
+    const ext = all.ext.filter(keep), mcp = all.mcp.filter(keep), f = adS.ext === 'all';
+    const sec = (id, t, l, none) => (l.length || (f && !adS.q.trim())) ? `<section class="yp-skills__section" aria-labelledby="${id}">${adHead(id, t, l.length)}${l.length ? `<ul class="yp-skills__list">${l.map(adExtRow).join('')}</ul>` : adEmpty(none)}</section>` : '';
+    if (!ext.length && !mcp.length) return adS.q.trim() ? adNone() : adEmpty(adS.ext === 'top' ? 'Nothing is Top yet. Star an extension to promote it.' : adS.ext === 'system' ? 'Nothing is marked System.' : 'No extensions.');
+    return sec('ad-eh', 'Extensions', ext, 'No extensions.') + sec('ad-mch', 'MCP servers', mcp, 'No HTTP MCP servers configured.');
+  }
+
+  /* ── MCP servers ── */
+  function adMcpRow(s) {
+    return `<li class="yp-skills__row" data-mcp="${s.id}"${adFresh === s.id ? ' data-new' : ''}><span class="yp-admin__logo" aria-hidden="true">${adSvg(AD_IC.server)}</span>` +
+      `<div class="yp-skills__copy"><span class="yp-dash__title">${adMark(s.name)}</span><span class="yp-admin__url">${adMark(s.url)}</span>${s.desc ? `<p class="yp-skills__desc" title="${esc(s.desc)}">${adMark(s.desc)}</p>` : ''}</div>${adMoreBtn(s.name)}</li>`;
+  }
+  function adMcpList() {
+    if (!adMcp.length) return adEmpty('No shared MCP servers yet.');
+    const q = adS.q.trim().toLowerCase(), l = adMcp.filter((s) => !q || (s.name + ' ' + s.url + ' ' + s.desc).toLowerCase().includes(q));
+    return l.length ? `<ul class="yp-skills__list">${l.map(adMcpRow).join('')}</ul>` : adNone();
+  }
+  function adMcpOpen(s) {
+    $('#ad-mcp-h').textContent = s ? 'Edit server' : 'Add server';
+    $('#ad-mcp-ok').textContent = s ? 'Save' : 'Add server';
+    const u = $('#ad-mcp-url'); u.value = s ? s.url : ''; u.readOnly = !!s; u.removeAttribute('aria-invalid');
+    $('#ad-mcp-name').value = s ? s.name : ''; $('#ad-mcp-desc').value = s ? s.desc : '';
+    $('#ad-mcp-err').textContent = ''; adMcpD.dataset.id = s ? s.id : '';
+    adModal(adMcpD); (s ? $('#ad-mcp-name') : u).focus();
+  }
+  $('#ad-mcp-form').addEventListener('submit', (e) => {
+    e.preventDefault();
+    const id = adMcpD.dataset.id, u = $('#ad-mcp-url'), err = $('#ad-mcp-err'), url = u.value.trim();
+    let bad = '';
+    if (!id) {
+      if (!url) bad = 'Enter the server URL.';
+      else { let p = null; try { p = new URL(url); } catch (x) { /* invalid */ } bad = !p ? 'Enter a valid URL.' : p.protocol !== 'https:' ? 'The URL must start with https://.' : ''; }
+    }
+    u.toggleAttribute('aria-invalid', !!bad); if (bad) u.setAttribute('aria-invalid', 'true');
+    err.textContent = bad; if (bad) return u.focus();
+    const name = $('#ad-mcp-name').value.trim(), desc = $('#ad-mcp-desc').value.trim();
+    if (id) {
+      const s = adMcp.find((x) => x.id === id); s.name = name || s.name; s.desc = desc;
+      toast('Server saved', s.name);
+    } else {
+      const host = new URL(url).hostname.replace(/^(mcp|www)\./, ''), s = { id: 'm' + Date.now(), url, name: name || host, desc, agents: 0 };
+      adMcp.unshift(s); adFresh = s.id; toast('Server added', 'Agents can now enable ' + s.name + '.');
+    }
+    adMcpD.close('ok');
+    if (adS.tab === 'mcp') adFill();
+  });
+
+  /* ── Skills ── */
+  const adAccess = (s) => s.shares.length ? s.shares.map((x) => x.all ? 'Everyone can view' : `Shared with ${esc(x.name)} (${x.mode === 'write' ? 'edit' : 'view'})`).join(', ') : 'Private';
+  const adWide = (s) => s.shares.some((x) => x.all);
+  function adSkillRow(s) {
+    const flags = (s.off ? '<span class="yp-badge">Disabled</span>' : '') + (s.collide && s.collide.length ? `<span class="yp-badge yp-badge--warning" title="A system skill with the same name takes precedence.">Same name as ${esc(s.collide.join(', '))}</span>` : '');
+    return `<li class="yp-skills__row"${s.off ? ' data-off' : ''} data-skill="${esc(s.id)}"><div class="yp-skills__copy"><div class="yp-admin__top"><span class="yp-skills__name">${adMark(s.id)}</span>${flags}</div><p class="yp-skills__desc" title="${esc(s.desc)}">${adMark(s.desc)}</p>` +
+      `<div class="yp-dash__meta yp-admin__meta"><span>${adMark(s.owner)}</span>${s.active ? '' : '<span class="yp-badge yp-badge--warning">Owner inactive</span>'}<span>${adAccess(s)}</span><span>${adN(s.users, 'user')}</span><span>${adDate(s.at)}</span></div></div>${adMoreBtn(s.id)}</li>`;
+  }
+  const adSkillHit = (s, q) => !q || (s.id + ' ' + s.desc + ' ' + (s.owner || '') + ' ' + (s.agent || '')).toLowerCase().includes(q);
+  function adSkillsList() {
+    const q = adS.q.trim().toLowerCase();
+    const user = adSkills.filter((s) => adSkillHit(s, q)), agentsAll = [...new Set(adAgentSkills.map((s) => s.agent))];
+    const ag = adAgentSkills.filter((s) => adSkillHit(s, q)), sys = adSystemSkills.filter((s) => adSkillHit(s, q));
+    const agentTab = agentsAll.includes(adS.agent) ? adS.agent : agentsAll[0], agCur = ag.filter((s) => s.agent === agentTab);
+    const sec = (id, t, n, sub, body) => `<section class="yp-skills__section" aria-labelledby="${id}">${adHead(id, t, n)}<p class="yp-admin__sub">${sub}</p>${body}</section>`;
+    const userBody = user.length ? `<ul class="yp-skills__list">${user.map(adSkillRow).join('')}</ul>` : adEmpty(q ? `No user skills match “${esc(adS.q.trim())}”.` : 'No user skills yet. They show here after someone uploads, creates or imports a skill.');
+    const agSeg = agentsAll.length > 1 ? `<div class="yp-seg yp-seg--field yp-admin__agents" id="ad-agent-seg" role="radiogroup" aria-label="Agent"><span class="yp-seg__thumb"></span>${agentsAll.map((a) => `<button type="button" class="yp-seg__item" role="radio" aria-checked="${a === agentTab}" data-value="${esc(a)}">${esc(a)}<span class="yp-skills__n">${ag.filter((s) => s.agent === a).length}</span></button>`).join('')}</div>` : '';
+    const agRow = (s) => `<li class="yp-skills__row" data-agent-skill="${s.id}"><div class="yp-skills__copy"><span class="yp-skills__name">${adMark(s.name)}</span><p class="yp-skills__desc" title="${esc(s.desc)}">${adMark(s.desc)}</p></div>` +
+      `<button type="button" class="yp-admin__sys" data-ad-asys aria-pressed="${s.system}" aria-label="Mark ${esc(s.name)} as System" title="Hide from the Skills page. The agent still uses it."><span>System</span><span aria-hidden="true">System</span></button>${adMoreBtn(s.name)}</li>`;
+    const agBody = adAgentSkills.length ? agSeg + (agCur.length ? `<ul class="yp-skills__list">${agCur.map(agRow).join('')}</ul>` : adEmpty(q ? `No agent skills match “${esc(adS.q.trim())}”.` : 'No agent workspace skills.')) : adEmpty('No agent workspace skills.');
+    const sysRow = (s) => `<li class="yp-skills__row"><div class="yp-skills__copy"><span class="yp-skills__name">${adMark(s.name)}</span><p class="yp-skills__desc" title="${esc(s.desc)}">${adMark(s.desc)}</p></div><div class="yp-admin__syskind"><span class="yp-badge">${s.kind === 'builtin' ? 'Built-in' : 'Default'}</span><span>${s.agents ? 'Agents: ' + esc(s.agents.join(', ')) : 'All agents'}</span></div></li>`;
+    const sysBody = sys.length ? `<ul class="yp-skills__list">${sys.map(sysRow).join('')}</ul>` : adEmpty(q ? `No system skills match “${esc(adS.q.trim())}”.` : 'No system skills.');
+    return sec('ad-us', 'User skills', adSkills.length, 'Skills that people upload, create or import. Each user turns them on for all the agents they can use.', userBody) +
+      sec('ad-as', 'Agent skills', adAgentSkills.length, 'Skills in agent workspaces. Only the agent that owns the workspace uses them. Mark one as System to hide it from the Skills page. Make default moves it to the default skills.', agBody) +
+      sec('ad-ss', 'System skills', adSystemSkills.length, 'Always on for every user. Move an agent skill here with Make default.', sysBody);
+  }
+  function adTransfer(s) {
+    $('#ad-transfer-b').textContent = `Give ${s.id} to another user. The new owner can edit, share and delete it. The current owner loses access unless it is shared with them.`;
+    $('#ad-owner').innerHTML = '<option value="" selected>Choose a user…</option>' + adUsers.filter((u) => u.approved && u.name !== s.owner).map((u) => `<option value="${u.id}">${esc(u.name)} (${esc(u.email)})</option>`).join('');
+    $('#ad-owner-err').textContent = ''; adTrD.dataset.id = s.id; adModal(adTrD); $('#ad-owner').focus();
+  }
+  $('#ad-transfer-form').addEventListener('submit', (e) => {
+    e.preventDefault();
+    const v = $('#ad-owner').value; if (!v) { $('#ad-owner-err').textContent = 'Choose a new owner.'; return $('#ad-owner').focus(); }
+    const s = adSkills.find((x) => x.id === adTrD.dataset.id), u = adUsers.find((x) => x.id === v);
+    s.owner = u.name; s.active = true; adTrD.close('ok');
+    toast('Skill transferred', `${s.id} now belongs to ${u.name}.`);
+    if (adS.tab === 'skills') adFill();
+  });
+
+  /* ── Quota ── */
+  function adWin(label, w, pace) {
+    if (!w) return `<div class="yp-admin__win yp-admin__win--none"><div class="yp-admin__win-head"><strong>${label}</strong><span>none</span></div></div>`;
+    const tone = w.pct >= 90 ? ' yp-progress--critical' : w.pct >= 75 ? ' yp-progress--warning' : '';
+    return `<div class="yp-progress yp-admin__win${tone}"><div class="yp-admin__win-head"><strong>${label}</strong><span>Resets in ${w.reset}</span><b>${w.pct}%</b></div>` +
+      `<div class="yp-progress__track" role="progressbar" aria-label="${label}" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${w.pct}"><div class="yp-progress__fill" style="--value:0" data-v="${w.pct / 100}"></div></div>` +
+      (pace == null ? '' : `<p class="yp-admin__pace"${pace > 1 ? ' data-hot title="Using the window faster than it refills"' : ''}>Pace ${pace.toFixed(2)}×</p>`) + '</div>';
+  }
+  function adQuota() {
+    if (!AD_QUOTA.length) return adEmpty('No quota readings yet.');
+    return '<div class="yp-admin__cards">' + AD_QUOTA.map((c) => `<section class="yp-admin__card" aria-label="${esc(c.name)} ${esc(c.sub)}"><header class="yp-admin__card-head"><h3>${esc(c.name)} <span>${esc(c.sub)}</span></h3>` +
+      (c.status === 'stale' ? '<span class="yp-badge yp-badge--warning">Stale</span>' : '<span class="yp-badge">Fresh</span>') + '</header>' +
+      adWin('5-hour window', c.five) + adWin('Weekly window', c.week, c.pace) +
+      `<footer class="yp-admin__card-foot"><time title="${esc(c.abs)}">Updated ${c.age} ago</time> · ${esc(c.src)}</footer></section>`).join('') + '</div>';
+  }
+
+  /* ── Shell ── */
+  const adList = () => $('#ad-list');
+  const AD_BAR = {
+    users: () => adSearch('Search name or email'),
+    extensions: () => adSearch('Search extensions') + '<div class="yp-seg yp-seg--field" id="ad-ext-seg" role="radiogroup" aria-label="Show"><span class="yp-seg__thumb"></span>' + [['all', 'All'], ['top', 'Top'], ['system', 'System']].map(([v, l]) => `<button type="button" class="yp-seg__item" role="radio" aria-checked="${adS.ext === v}" data-value="${v}">${l}<span class="yp-skills__n"></span></button>`).join('') + '</div>',
+    mcp: () => adSearch('Search servers') + `<button type="button" class="yp-btn yp-btn--primary" data-ad-add>${adSvg(AD_IC.plus)}Add server</button>`,
+    skills: () => adSearch('Search skills'),
+    quota: () => '',
+  };
+  const AD_LIST = { users: adUsersList, extensions: adExtList, mcp: adMcpList, skills: adSkillsList, quota: adQuota };
+  function adFill() {
+    adList().innerHTML = AD_LIST[adS.tab]();
+    if (adS.tab === 'extensions') adExtCounts();
+    if (adS.tab === 'skills') { const sg = $('#ad-agent-seg'); if (sg) adSeg(sg, 'aria-checked', (v) => { adS.agent = v; adFill(); const n = $('#ad-agent-seg [aria-checked="true"]'); if (n) n.focus(); }); }
+    if (adS.tab === 'quota') requestAnimationFrame(() => requestAnimationFrame(() => $$('.yp-progress__fill', adList()).forEach((f) => { f.style.setProperty('--value', f.dataset.v); })));
+    adFresh = null;
+  }
+  function adShow(tab) {
+    adS.tab = tab; adS.q = ''; adS.ext = 'all';
+    adEl.desc.textContent = AD_DESC[tab];
+    adEl.tabs._pick(tab, true);
+    adEl.panel.setAttribute('aria-labelledby', 'ad-tab-' + tab);
+    const bar = AD_BAR[tab](), p = document.createElement('div');
+    p.className = 'yp-admin__panel';
+    p.innerHTML = (bar ? `<div class="yp-dash__bar">${bar}</div>` : '') + '<div id="ad-list" class="yp-admin__list"></div>';
+    adEl.panel.replaceChildren(p);
+    const ex = $('#ad-ext-seg'); if (ex) adSeg(ex, 'aria-checked', (v) => { adS.ext = v; adFill(); });
+    adFill();
+  }
+  adEl.tabs.innerHTML = '<span class="yp-seg__thumb"></span>' + AD_TABS.map(([v, l]) => `<button type="button" class="yp-seg__item" role="tab" id="ad-tab-${v}" aria-controls="admin-panel" aria-selected="false" tabindex="-1" data-value="${v}">${l}</button>`).join('');
+  adSeg(adEl.tabs, 'aria-selected', (v) => { adShow(v); adEl.scroll.scrollTop = 0; });
+  adEl.tabs.addEventListener('keydown', (e) => {
+    const k = { ArrowRight: 1, ArrowLeft: -1 }[e.key]; if (!k && e.key !== 'Home' && e.key !== 'End') return;
+    e.preventDefault();
+    const i = AD_TABS.findIndex(([v]) => v === adS.tab), n = e.key === 'Home' ? 0 : e.key === 'End' ? AD_TABS.length - 1 : (i + k + AD_TABS.length) % AD_TABS.length;
+    adEl.tabs._pick(AD_TABS[n][0]); $('#ad-tab-' + AD_TABS[n][0]).focus();
+  });
+
+  adEl.panel.addEventListener('input', (e) => {
+    if (!e.target.matches('[data-ad-q]')) return;
+    adS.q = e.target.value; adFill();
+  });
+  adEl.panel.addEventListener('change', (e) => {
+    const sel = e.target.closest('.yp-admin__role'); if (!sel) return;
+    const u = adUsers.find((x) => x.id === sel.closest('[data-user]').dataset.user);
+    u.role = sel.value; toast(`${u.name} is now ${u.role === 'admin' ? 'an' : 'a'} ${adRole[u.role]}`, 'Role updated.');
+  });
+  adEl.panel.addEventListener('click', async (e) => {
+    const t = e.target.closest('button'); if (!t) return;
+    const row = t.closest('[data-user], [data-ext], [data-mcp], [data-skill], [data-agent-skill]');
+    if (t.matches('[data-ad-approve]')) {
+      const u = adUsers.find((x) => x.id === row.dataset.user);
+      adGone(row, () => { u.approved = true; adFresh = u.id; adFill(); toast(`${u.name} approved`, 'They can sign in now.'); });
+    } else if (t.matches('[data-ad-reject]')) {
+      const u = adUsers.find((x) => x.id === row.dataset.user);
+      adGone(row, () => { adUsers.splice(adUsers.indexOf(u), 1); adFill(); toast(`${u.name} rejected`, 'They stay locked out.'); });
+    } else if (t.matches('[data-ad-star]')) {
+      const id = row.dataset.ext, on = !adTop.has(id), name = $('.yp-dash__title', row).textContent;
+      on ? adTop.add(id) : adTop.delete(id);
+      t.setAttribute('aria-pressed', String(on)); t.title = on ? 'Top: shown first and prompted to users' : 'Promote to Top';
+      adExtCounts(); toast(on ? 'Promoted to Top' : 'Removed from Top', name);
+    } else if (t.matches('[data-ad-sys]')) {
+      const id = row.dataset.ext, on = !adSys.has(id), name = $('.yp-dash__title', row).textContent;
+      on ? adSys.add(id) : adSys.delete(id);
+      t.setAttribute('aria-pressed', String(on));
+      adExtCounts(); toast(on ? `${name} is now System` : `${name} is no longer System`, on ? 'Hidden from users and admins on agent configuration pages.' : 'Visible again on agent configuration pages.');
+    } else if (t.matches('[data-ad-asys]')) {
+      const s = adAgentSkills.find((x) => x.id === row.dataset.agentSkill); s.system = !s.system;
+      t.setAttribute('aria-pressed', String(s.system));
+      toast(s.system ? `${s.name} is now System` : `${s.name} is no longer System`, s.system ? 'Hidden from the Skills page. The agent still uses it.' : 'Shown on the Skills page again.');
+    } else if (t.matches('[data-ad-add]')) adMcpOpen();
+    else if (t.matches('[data-ad-more]')) {
+      if (row.dataset.user) {
+        const u = adUsers.find((x) => x.id === row.dataset.user);
+        adOpenMenu(t, [adItem('view', 'eye', 'View as'), adSep, adItem('remove', 'out', 'Remove access', true)], u.id);
+      } else if (row.dataset.mcp) {
+        adOpenMenu(t, [adItem('edit', 'pencil', 'Edit'), adItem('icon', 'refresh', 'Refresh icon'), adSep, adItem('remove', 'trash', 'Remove', true)], row.dataset.mcp);
+      } else if (row.dataset.skill) {
+        const s = adSkills.find((x) => x.id === row.dataset.skill), it = [adItem('transfer', 'swap', 'Transfer…')];
+        if (adWide(s) || s.off) it.push(adItem('toggle', s.off ? 'undo' : 'ban', s.off ? 'Enable' : 'Disable'));
+        if (adWide(s)) it.push(adSep, adItem('delete', 'trash', 'Delete', true));
+        adOpenMenu(t, it, s.id);
+      } else if (row.dataset.agentSkill) {
+        adOpenMenu(t, [adItem('default', 'share', 'Make default…')], row.dataset.agentSkill);
+      }
+    }
+  });
+  adMenu.addEventListener('click', async (e) => {
+    const b = e.target.closest('[data-ad-act]'); if (!b) return;
+    const act = b.dataset.adAct, id = adMenu.dataset.ctx; adMenu.hidePopover();
+    const redraw = () => { if (adList()) { const sc = adEl.scroll.scrollTop; adFill(); adEl.scroll.scrollTop = sc; } };
+    if (adS.tab === 'users') {
+      const u = adUsers.find((x) => x.id === id);
+      if (act === 'view') toast(`Viewing as ${u.name}`, 'Opens the workspace as this user.');
+      else if (await adAsk({ title: `Remove access for ${u.name}?`, body: `${u.name} loses access to Yoplai until you approve them again. Their agents and files are kept.`, ok: 'Remove access', danger: true })) {
+        u.approved = false; redraw(); toast('Access removed', `${u.name} is waiting for approval again.`);
+      }
+    } else if (adS.tab === 'mcp') {
+      const s = adMcp.find((x) => x.id === id);
+      if (act === 'edit') adMcpOpen(s);
+      else if (act === 'icon') { toast('Refreshing icon…', s.name); setTimeout(() => toast(s.signin ? 'Icon not refreshed' : 'Icon refreshed', s.signin ? 'This server needs sign-in; its own icon is captured the next time an agent connects.' : s.name), 700); }
+      else if (await adAsk({ title: `Remove ${s.name}?`, body: 'This removes the server for every agent. Users who connected their own account are disconnected.', ok: 'Remove', danger: true })) {
+        adMcp.splice(adMcp.indexOf(s), 1); adTop.delete('mcp:' + s.id); adSys.delete('mcp:' + s.id); redraw(); toast('Server removed', s.name);
+      }
+    } else if (adS.tab === 'skills') {
+      if (act === 'default') {
+        const s = adAgentSkills.find((x) => x.id === id);
+        if (await adAsk({ title: 'Make default skill', body: `Move ${s.name} from ${s.agent}'s workspace to the default skills? All agents and all users get it, always on. It is removed from the workspace.`, ok: 'Make default' })) {
+          adAgentSkills.splice(adAgentSkills.indexOf(s), 1); adSystemSkills.push({ id: 's-' + Date.now(), name: s.name, desc: s.desc, kind: 'default' }); redraw(); toast('Default skill added', `${s.name} is now on for everyone.`);
+        }
+        return;
+      }
+      const s = adSkills.find((x) => x.id === id);
+      if (act === 'transfer') adTransfer(s);
+      else if (act === 'toggle') { s.off = !s.off; redraw(); toast(s.off ? 'Skill disabled' : 'Skill enabled', s.off ? `${s.id} can no longer be turned on.` : `${s.id} can be turned on again.`); }
+      else if (await adAsk({ title: 'Delete platform-wide skill', body: `Delete ${s.id} for its owner and everyone it is shared with? This cannot be undone.`, ok: 'Delete', danger: true })) {
+        adSkills.splice(adSkills.indexOf(s), 1); redraw(); toast('Skill deleted', s.id);
+      }
+    }
+  });
+  adShow('users');
+})();
+</script>
+</body></html>

@@ -1,0 +1,26 @@
+<!-- @dsCard group="Overlays" height=380 -->
+<!doctype html><html><head><meta charset="utf-8"><title>Modal — preview</title><style>
+.md { position: relative; height: 100vh; min-height: 380px; overflow: hidden; background: var(--surface-sunken); }
+.md-scene { position: absolute; inset: 0; display: flex; gap: var(--space-4); padding: var(--space-3); transform: scale(0.98); }
+.md-scene .yp-sidebar { width: 200px; }
+.md-sheet { flex: 1; padding: var(--space-6); }
+.md-sheet p { margin: 0 0 var(--space-3); max-width: 52ch; }
+.md .yp-scrim { position: absolute; inset: 0; }
+</style></head><body>
+<div class="md">
+  <div class="yp-ground md-scene" aria-hidden="true">
+    <div class="yp-sidebar"><div class="yp-sidebar__brand">Yoplai</div><span class="yp-nav" aria-current="page">Sessions</span><span class="yp-nav">Agents</span></div>
+    <div class="yp-paper md-sheet yp-msg"><p>I matched 412 rows against the July approvals. Eleven days are booked and two requests are still open.</p><p>The balance in pto_2026.xlsx is off for three people.</p></div>
+  </div>
+  <div class="yp-scrim">
+    <div class="yp-modal" role="dialog" aria-modal="true" aria-labelledby="m-t">
+      <div class="yp-modal__head" id="m-t">Delete this chat?</div>
+      <div class="yp-modal__body">This removes the history for “Reconcile PTO”. Henry keeps its memory.</div>
+      <div class="yp-modal__foot">
+        <button class="yp-btn">Cancel</button>
+        <button class="yp-btn yp-btn--danger">Delete chat</button>
+      </div>
+    </div>
+  </div>
+</div>
+</body></html>

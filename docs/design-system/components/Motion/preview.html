@@ -1,0 +1,349 @@
+<!-- @dsCard group="Foundations" height=1420 page subtitle="Click, hover, replay" -->
+<!doctype html><html><head><meta charset="utf-8"><title>Motion — preview</title><style>
+.mo-ground { min-height: 100vh; }
+.mo { padding: var(--space-6);  display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-5); align-items: start; }
+@media (max-width: 640px) { .mo { grid-template-columns: minmax(0, 1fr); } }
+.mo-tile { display: flex; flex-direction: column; gap: var(--space-3); min-width: 0; }
+.mo-head { display: flex; align-items: center; justify-content: space-between; min-height: var(--control-h-sm); }
+.mo-head .yp-label { padding: 0; }
+.mo-row { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; }
+.mo-tile > p { margin: 0; font: 400 12px/16px var(--font-sans); color: var(--ink-faint); }
+
+/* Selection pill */
+.mo-nav { position: relative; display: flex; flex-direction: column; gap: var(--space-1); }
+.mo-nav .yp-nav { position: relative; }
+.mo-nav .yp-nav[aria-current="page"] { background: transparent; }
+.mo-nav .yp-nav:hover:not([aria-current="page"]) { background: transparent; }
+.yp-pill.mo-noanim, .yp-tabs__ink.mo-noanim { transition: none; }
+
+/* Tabs */
+.mo-tabs .yp-tab { cursor: pointer; }
+
+/* Streaming */
+.mo-stream { min-height: 168px; }
+.mo-stream .yp-msg { font-size: 15px; line-height: 24px; }
+
+/* Stagger */
+.mo-list { display: flex; flex-direction: column; gap: 2px; min-height: 230px; }
+
+/* Toast */
+.mo-toasts { height: 188px; display: flex; flex-direction: column; justify-content: flex-end; gap: var(--space-2); }
+.mo-toasts .yp-toast { width: 100%; max-width: 360px; flex: none; }
+
+/* Menu */
+.mo-menu-wrap { min-height: 150px; }
+
+
+/* Spring curves */
+.mo-spring { display: flex; flex-direction: column; gap: var(--space-1); }
+.mo-spring span { font: 400 12px/16px var(--font-sans); color: var(--ink-muted); }
+.mo-track { position: relative; width: 240px; max-width: 100%; height: 12px; border-radius: var(--radius-full); background: var(--surface-sunken); }
+.mo-dot { position: absolute; left: 0; top: 0; width: 12px; height: 12px; border-radius: var(--radius-full); background: var(--accent); }
+.mo-track.end .mo-dot { transform: translateX(228px); }
+.mo-dot[data-s="smooth"] { transition: transform var(--dur-spring-smooth) var(--spring-smooth); }
+.mo-dot[data-s="snappy"] { transition: transform var(--dur-spring-snappy) var(--spring-snappy); }
+.mo-dot[data-s="pop"] { transition: transform var(--dur-spring-pop) var(--spring-pop); }
+</style></head><body>
+<div class="yp-ground yp-recede mo-ground" id="scene">
+<div class="mo">
+
+  <section class="yp-card mo-tile">
+    <div class="mo-head"><span class="yp-label">Press</span></div>
+    <div class="mo-row">
+      <button class="yp-btn yp-btn--primary"><svg viewBox="0 0 24 24" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 19V5M5 12l7-7 7 7"/></svg>Send</button>
+      <button class="yp-btn"><svg viewBox="0 0 24 24" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 3h11l3 3v15H5z"/><path d="M8 3v6h7V3M8 21v-7h8v7"/></svg>Save</button>
+    </div>
+    <p>Hold to see scale(0.97) at dur-instant, released on spring-pop.</p>
+  </section>
+
+  <section class="yp-card mo-tile">
+    <div class="mo-head"><span class="yp-label">Selection pill</span></div>
+    <nav class="mo-nav" id="nav">
+      <div class="yp-pill" id="pill"></div>
+      <a class="yp-nav" href="#" aria-current="page"><svg viewBox="0 0 24 24" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20c0-3.6 2.9-6 6.5-6s6.5 2.4 6.5 6"/></svg>Agents</a>
+      <a class="yp-nav" href="#"><svg viewBox="0 0 24 24" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20c0-3.6 2.9-6 6.5-6s6.5 2.4 6.5 6"/><path d="M16 4.6a3.5 3.5 0 0 1 0 6.8M18 14.4c2.2.6 3.5 2.5 3.5 5.6"/></svg>Teams</a>
+      <a class="yp-nav" href="#"><svg viewBox="0 0 24 24" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>Sessions</a>
+      <a class="yp-nav" href="#"><svg viewBox="0 0 24 24" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l8 3v6c0 4.5-3.2 7.8-8 9-4.8-1.2-8-4.5-8-9V6l8-3z"/></svg>Admin</a>
+    </nav>
+  </section>
+
+  <section class="yp-card mo-tile">
+    <div class="mo-head"><span class="yp-label">Tabs underline</span></div>
+    <div class="yp-tabs mo-tabs" id="tabs" role="tablist">
+      <a class="yp-tab" role="tab" href="#" aria-selected="true">Overview</a>
+      <a class="yp-tab" role="tab" href="#" aria-selected="false">Runs</a>
+      <a class="yp-tab" role="tab" href="#" aria-selected="false">Memory</a>
+      <a class="yp-tab" role="tab" href="#" aria-selected="false">Settings</a>
+      <span class="yp-tabs__ink" id="ink"></span>
+    </div>
+    <p>The underline slides with translateX and stretches with scaleX.</p>
+  </section>
+
+  <section class="yp-card mo-tile">
+    <div class="mo-head"><span class="yp-label">Streaming reply</span><button class="yp-btn yp-btn--ghost yp-btn--sm" id="stream-replay">Replay</button></div>
+    <div class="mo-stream" id="stream"></div>
+  </section>
+
+  <section class="yp-card mo-tile">
+    <div class="mo-head"><span class="yp-label">List stagger</span><button class="yp-btn yp-btn--ghost yp-btn--sm" id="list-replay">Replay</button></div>
+    <div class="mo-list yp-stagger" id="list"></div>
+  </section>
+
+  <section class="yp-card mo-tile">
+    <div class="mo-head"><span class="yp-label">Progress</span><button class="yp-btn yp-btn--ghost yp-btn--sm" id="prog-replay">Replay</button></div>
+    <div class="yp-stack">
+      <div class="yp-progress" id="p1"><div class="yp-progress__head"><strong>5h window</strong><span></span></div><div class="yp-progress__track"><div class="yp-progress__fill" style="--value:0.42"></div></div></div>
+      <div class="yp-progress" id="p2"><div class="yp-progress__head"><strong>Weekly</strong><span></span></div><div class="yp-progress__track"><div class="yp-progress__fill" style="--value:0.78"></div></div></div>
+    </div>
+  </section>
+
+  <section class="yp-card mo-tile">
+    <div class="mo-head"><span class="yp-label">Toast</span><button class="yp-btn yp-btn--ghost yp-btn--sm" id="toast-add">Show toast</button></div>
+    <div class="mo-toasts" id="toasts"></div>
+  </section>
+
+  <section class="yp-card mo-tile mo-menu-wrap">
+    <div class="mo-head"><span class="yp-label">Menu</span></div>
+    <div class="mo-row">
+      <button class="yp-btn" id="menu-btn" popovertarget="menu">Casey <svg viewBox="0 0 24 24" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg></button>
+    </div>
+    <div class="yp-menu" id="menu" popover>
+      <button class="yp-menu__item" type="button">Switch to Henry</button>
+      <button class="yp-menu__item" type="button">Switch to Cira</button>
+      <button class="yp-menu__item" type="button">Agent settings</button>
+    </div>
+  </section>
+
+  <section class="yp-card mo-tile">
+    <div class="mo-head"><span class="yp-label">Modal</span></div>
+    <div class="mo-row"><button class="yp-btn" id="dlg-open">Open dialog</button></div>
+    <dialog class="yp-modal" id="dlg" aria-labelledby="dlg-t">
+      <div class="yp-modal__head" id="dlg-t">Delete this chat?</div>
+      <div class="yp-modal__body">This removes the history for "Reconcile PTO". Henry keeps its memory.</div>
+      <div class="yp-modal__foot">
+        <button class="yp-btn" id="dlg-cancel">Cancel</button>
+        <button class="yp-btn yp-btn--danger" id="dlg-delete">Delete chat</button>
+      </div>
+    </dialog>
+  </section>
+
+  <section class="yp-card mo-tile">
+    <div class="mo-head"><span class="yp-label">Spring curves</span><button class="yp-btn yp-btn--ghost yp-btn--sm" id="spring-all">Play all</button></div>
+    <div class="mo-spring"><span>spring-smooth</span><div class="mo-track"><div class="mo-dot" data-s="smooth"></div></div></div>
+    <div class="mo-spring"><span>spring-snappy</span><div class="mo-track"><div class="mo-dot" data-s="snappy"></div></div></div>
+    <div class="mo-spring"><span>spring-pop</span><div class="mo-track"><div class="mo-dot" data-s="pop"></div></div></div>
+  </section>
+
+</div>
+</div>
+<script>
+(function () {
+  var root = document.documentElement;
+  var tok = function (n) { return getComputedStyle(root).getPropertyValue(n).trim(); };
+  var reduced = function () { return matchMedia('(prefers-reduced-motion: reduce)').matches; };
+  var $ = function (id) { return document.getElementById(id); };
+  var frame2 = function (fn) { requestAnimationFrame(function () { requestAnimationFrame(fn); }); };
+  var noAnim = function (el, fn) { el.classList.add('mo-noanim'); fn(); void el.offsetWidth; el.classList.remove('mo-noanim'); };
+
+  /* 2. Selection pill */
+  var nav = $('nav'), pill = $('pill');
+  var rows = Array.prototype.slice.call(nav.querySelectorAll('.yp-nav'));
+  function movePill(row, instant) {
+    var apply = function () {
+      pill.style.width = row.offsetWidth + 'px';
+      pill.style.height = row.offsetHeight + 'px';
+      pill.style.setProperty('--y', row.offsetTop + 'px');
+    };
+    var prev = pill._y;
+    if (instant) noAnim(pill, apply); else apply();
+    pill._y = row.offsetTop;
+    /* droplet: stretch along the travel, then settle on spring-snappy */
+    if (instant || prev == null || reduced() || prev === row.offsetTop) return;
+    var k = Math.min(Math.abs(row.offsetTop - prev) / row.offsetHeight, 4);
+    if (pill._stretch) pill._stretch.cancel();
+    pill._stretch = pill.animate([
+      { scale: '1 1', easing: tok('--ease-out') },
+      { scale: (1 - 0.035 * k) + ' ' + (1 + 0.085 * k), offset: 0.28, easing: tok('--spring-snappy') },
+      { scale: '1 1' }
+    ], { duration: parseFloat(tok('--dur-spring-snappy')) * 1.2 });
+  }
+  rows.forEach(function (r) {
+    r.addEventListener('click', function (e) {
+      e.preventDefault();
+      rows.forEach(function (x) { x.removeAttribute('aria-current'); });
+      r.setAttribute('aria-current', 'page');
+      movePill(r, false);
+    });
+  });
+  var curRow = function () { return nav.querySelector('[aria-current]'); };
+
+  /* 3. Tabs ink */
+  var tabs = $('tabs'), ink = $('ink');
+  var tabEls = Array.prototype.slice.call(tabs.querySelectorAll('.yp-tab'));
+  function moveInk(tab, instant) {
+    var apply = function () {
+      ink.style.setProperty('--x', tab.offsetLeft + 'px');
+      ink.style.setProperty('--sx', tab.offsetWidth / 100);
+    };
+    if (instant) noAnim(ink, apply); else apply();
+  }
+  tabEls.forEach(function (t) {
+    t.addEventListener('click', function (e) {
+      e.preventDefault();
+      tabEls.forEach(function (x) { x.setAttribute('aria-selected', 'false'); });
+      t.setAttribute('aria-selected', 'true');
+      moveInk(t, false);
+    });
+  });
+  var curTab = function () { return tabs.querySelector('[aria-selected="true"]'); };
+
+  function place() { movePill(curRow(), true); moveInk(curTab(), true); }
+  place();
+  addEventListener('resize', place);
+  if (document.fonts && document.fonts.ready) document.fonts.ready.then(place);
+
+  /* 4. Streaming reply */
+  var TEXT = "I reconciled Henry's July PTO. Two balances differ from the payroll export: Cira is up 1.5 days and Casey is down 0.5. Want me to draft the correction?";
+  var stream = $('stream'), streamRun = 0, streamTimer = 0, sizes = [3, 2, 4, 3, 2, 4];
+  function playStream() {
+    var run = ++streamRun;
+    clearTimeout(streamTimer);
+    stream.textContent = '';
+    var msg = document.createElement('div');
+    msg.className = 'yp-msg';
+    msg.innerHTML = '<div class="yp-msg__who"><span class="yp-avatar">H</span>Henry</div><p></p>';
+    var p = msg.querySelector('p');
+    if (reduced()) { p.textContent = TEXT; stream.appendChild(msg); return; }
+    var think = document.createElement('div');
+    think.className = 'yp-thinking';
+    think.innerHTML = '<span class="yp-dot yp-dot--live"></span><span class="yp-thinking__text">Henry is thinking…</span>';
+    stream.appendChild(think);
+    var words = TEXT.split(' '), i = 0, k = 0;
+    function next() {
+      if (run !== streamRun) return;
+      if (i >= words.length) return;
+      var n = Math.min(sizes[k++ % sizes.length], words.length - i);
+      var span = document.createElement('span');
+      span.className = 'yp-chunk';
+      span.textContent = words.slice(i, i + n).join(' ') + (i + n < words.length ? ' ' : '');
+      p.appendChild(span);
+      i += n;
+      streamTimer = setTimeout(next, 45);
+    }
+    streamTimer = setTimeout(function () {
+      if (run !== streamRun) return;
+      stream.textContent = '';
+      stream.appendChild(msg);
+      next();
+    }, 900);
+  }
+  $('stream-replay').addEventListener('click', playStream);
+
+  /* 5. List stagger */
+  var list = $('list');
+  var SESSIONS = [['H', 'Reconcile PTO', '11d · henry'], ['C', 'Tool availability check', '9d · cira'], ['C', 'Adopt a task named ‘priority’', '23h · casey'],
+    ['H', 'Circling back to Ramon', '11d · henry'], ['C', 'Draft Q3 headcount memo', '2d · casey']];
+  var listTimer = 0;
+  function playList() {
+    clearTimeout(listTimer);
+    list.textContent = '';
+    SESSIONS.forEach(function (s, n) {
+      var a = document.createElement('a');
+      a.className = 'yp-session';
+      a.href = '#';
+      a.style.setProperty('--i', n);
+      a.innerHTML = '<span class="yp-avatar">' + s[0] + '</span><span class="yp-session__text"><span class="yp-session__title" style="display:block">' + s[1] + '</span><span class="yp-session__meta">' + s[2] + '</span></span>';
+      a.addEventListener('click', function (e) { e.preventDefault(); });
+      list.appendChild(a);
+    });
+    /* the stagger delay would also delay hover fills, so drop it once rows have landed */
+    listTimer = setTimeout(function () {
+      Array.prototype.forEach.call(list.children, function (c) { c.style.removeProperty('--i'); });
+    }, 1000);
+  }
+  $('list-replay').addEventListener('click', playList);
+
+  /* 6. Progress */
+  var bars = [$('p1'), $('p2')];
+  function setBar(el, v) {
+    el.classList.toggle('yp-progress--warning', v >= 0.75 && v < 0.9);
+    el.classList.toggle('yp-progress--critical', v >= 0.9);
+    el.querySelector('.yp-progress__fill').style.setProperty('--value', v);
+    el.querySelector('.yp-progress__head span').textContent = Math.round(v * 100) + '% · resets 3:40 PM';
+  }
+  function playProgress() {
+    bars.forEach(function (b) { noAnim(b.querySelector('.yp-progress__fill'), function () { b.querySelector('.yp-progress__fill').style.setProperty('--value', 0); }); });
+    frame2(function () { bars.forEach(function (b) { setBar(b, 0.3 + Math.random() * 0.65); }); });
+  }
+  $('prog-replay').addEventListener('click', playProgress);
+
+  /* 7. Toasts with FLIP */
+  var stack = $('toasts'), TOASTS = [['Session archived', 'You can restore it from Admin.'], ['PTO reconciled', 'Henry updated 2 balances.'], ['Draft saved', 'Casey kept your correction note.']], tn = 0;
+  function flip(mutate, skip) {
+    var before = new Map();
+    Array.prototype.forEach.call(stack.children, function (el) { before.set(el, el.getBoundingClientRect().top); });
+    mutate();
+    if (reduced()) return;
+    var dur = parseFloat(tok('--dur-spring-snappy')), ease = tok('--spring-snappy');
+    Array.prototype.forEach.call(stack.children, function (el) {
+      if (!before.has(el) || el === skip) return;
+      var dy = before.get(el) - el.getBoundingClientRect().top;
+      if (Math.abs(dy) < 0.5) return;
+      el.animate([{ transform: 'translateY(' + dy + 'px)' }, { transform: 'none' }], { duration: dur, easing: ease });
+    });
+  }
+  function leave(el) {
+    if (el.dataset.leaving !== undefined || !el.isConnected) return;
+    el.setAttribute('data-leaving', '');
+    var done = false;
+    var remove = function () {
+      if (done) return;
+      done = true;
+      flip(function () { el.remove(); });
+    };
+    el.addEventListener('transitionend', function (e) { if (e.target === el && e.propertyName === 'opacity') remove(); });
+    setTimeout(remove, parseFloat(tok('--dur-quick')) + 300);
+  }
+  function addToast() {
+    var live = Array.prototype.filter.call(stack.children, function (c) { return c.dataset.leaving === undefined; });
+    if (live.length >= 3) leave(live[0]);
+    var t = TOASTS[tn++ % TOASTS.length];
+    var el = document.createElement('div');
+    el.className = 'yp-toast yp-toast--success';
+    el.setAttribute('role', 'status');
+    el.innerHTML = '<svg class="yp-toast__icon yp-check" viewBox="0 0 24 24" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path pathLength="1" d="M20 6L9 17l-5-5"/></svg><div><strong>' + t[0] + '</strong>' + t[1] + '</div>';
+    flip(function () { stack.appendChild(el); }, el);
+    setTimeout(function () { leave(el); }, 2400);
+  }
+  $('toast-add').addEventListener('click', addToast);
+
+  /* 8. Menu: position under trigger (layout only); animation is CSS */
+  var menu = $('menu'), menuBtn = $('menu-btn');
+  menu.addEventListener('beforetoggle', function (e) {
+    if (e.newState !== 'open') return;
+    var r = menuBtn.getBoundingClientRect();
+    menu.style.top = (r.bottom + 4) + 'px';
+    menu.style.left = r.left + 'px';
+  });
+  Array.prototype.forEach.call(menu.querySelectorAll('.yp-menu__item'), function (b) { b.addEventListener('click', function () { menu.hidePopover(); }); });
+
+  /* 9. Modal */
+  var dlg = $('dlg');
+  $('dlg-open').addEventListener('click', function () { dlg.showModal(); $('scene').setAttribute('data-receded', ''); });
+  dlg.addEventListener('close', function () { $('scene').removeAttribute('data-receded'); });
+  $('dlg-cancel').addEventListener('click', function () { dlg.close(); });
+  $('dlg-delete').addEventListener('click', function () { dlg.close(); });
+  dlg.addEventListener('click', function (e) { if (e.target === dlg) dlg.close(); });
+
+  /* 10. Spring curves */
+  var tracks = Array.prototype.slice.call(document.querySelectorAll('.mo-track'));
+  tracks.forEach(function (t) { t.addEventListener('click', function () { t.classList.toggle('end'); }); });
+  $('spring-all').addEventListener('click', function () {
+    var toEnd = tracks.some(function (t) { return !t.classList.contains('end'); });
+    tracks.forEach(function (t) { t.classList.toggle('end', toEnd); });
+  });
+
+  playStream(); playList();
+})();
+</script>
+</body></html>

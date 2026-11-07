@@ -1,0 +1,41 @@
+<!-- @dsCard group="Agents" height=440 -->
+<!doctype html><html><head><meta charset="utf-8"><title>AgentCard — preview</title><style>
+.ac { padding: var(--space-6); min-height: 100vh; --aura-x: 70%; --aura-y: 10%; }
+.ac .yp-agent__name { display: flex; align-items: center; gap: var(--space-2); }
+</style></head><body>
+<div class="yp-ground yp-grid yp-scene ac">
+<div class="yp-roster" style="--cols: 3">
+  <a class="yp-agent" href="#">
+    <span class="yp-agent__portrait yp-agent__portrait--blank" style="--lx: 24%; --ly: 16%"><span class="yp-agent__initial">C</span></span>
+    <span class="yp-agent__body"><span><span class="yp-agent__name">Casey</span><span class="yp-agent__role">Customer success</span></span></span>
+  </a>
+  <a class="yp-agent" href="#">
+    <span class="yp-agent__portrait yp-agent__portrait--blank" style="--lx: 70%; --ly: 12%"><span class="yp-agent__initial">C</span></span>
+    <span class="yp-agent__body"><span><span class="yp-agent__name">Cira</span><span class="yp-agent__role">Customer issues</span></span></span>
+  </a>
+  <a class="yp-agent" href="#">
+    <span class="yp-agent__portrait yp-agent__portrait--blank" style="--lx: 30%; --ly: 18%"><span class="yp-agent__initial">H</span></span>
+    <span class="yp-agent__body"><span><span class="yp-agent__name">Henry <span class="yp-badge yp-badge--accent"><span class="yp-dot yp-dot--live"></span>Running</span></span><span class="yp-agent__role">Human resources</span></span></span>
+  </a>
+</div>
+</div>
+<script>
+/* Tilt: one rAF-batched pointermove writes --px/--py; CSS springs smooth them */
+(function () {
+  var ev = null, raf = 0, last = null;
+  function frame() {
+    raf = 0;
+    var c = ev && ev.target.closest ? ev.target.closest('.yp-agent') : null;
+    if (last && last !== c) { last.style.setProperty('--px', 0); last.style.setProperty('--py', 0); }
+    if (c && !matchMedia('(prefers-reduced-motion: reduce)').matches) {
+      var r = c.getBoundingClientRect();
+      c.style.setProperty('--px', (((ev.clientX - r.left) / r.width) * 2 - 1).toFixed(3));
+      c.style.setProperty('--py', (((ev.clientY - r.top) / r.height) * 2 - 1).toFixed(3));
+    }
+    last = c;
+  }
+  addEventListener('pointermove', function (e) { ev = e; if (!raf) raf = requestAnimationFrame(frame); }, { passive: true });
+  document.querySelectorAll('.yp-agent').forEach(function (a) { a.addEventListener('click', function (e) { e.preventDefault(); }); });
+})();
+</script>
+</body></html>
