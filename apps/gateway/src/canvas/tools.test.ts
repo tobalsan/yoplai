@@ -169,6 +169,7 @@ it("creates a private owned publication once and link never publishes a later dr
   expect(await registry.readPublished(entry.id)).toBe("<h1>PUBLISHED-1</h1>");
   await fs.writeFile(file, "<h1>DRAFT-2</h1>");
   expect(await link.execute({ slug: "page.html" }, {} as never)).toEqual({
+    id: entry.id,
     slug: "page.html",
     link: (created as { link: string }).link,
   });
@@ -448,4 +449,21 @@ it("enforces writer, reader and Team publication modes through actual tools", as
     ownerUserId: "local",
     shares: [{ kind: "all", mode: "write" }],
   });
+});
+
+// Pom approved tool execution + registry reads in ALG-657 comment ab217d93.
+// Catches durable provenance and tool results; misses runner transport/browser.
+it("keeps the creating local conversation through update and version restore", async () => {
+  const file = path.join(root, "data", "dashboards", "conversation.html");
+  await fs.writeFile(file, "<h1>Original</h1>");
+  const context = { agent, config, actorKind: "local", sessionId: "local-chat" } as const;
+  await tools.find((tool) => tool.name === "dashboard_create")!.execute({ slug: "conversation.html" }, context);
+  const registry = getDashboardRegistry(path.join(root, "canvas", "registry.json"));
+  const [entry] = await registry.list("agent");
+  expect(entry).toMatchObject({ createdIn: { sessionId: "local-chat", userId: "local" } });
+  const [original] = await registry.listVersions(entry.id);
+  await fs.writeFile(file, "<h1>Changed</h1>");
+  await tools.find((tool) => tool.name === "dashboard_update")!.execute({ slug: "conversation.html" }, { ...context, sessionId: "other-chat" });
+  await tools.find((tool) => tool.name === "dashboard_versions")!.execute({ slug: "conversation.html", restore: original.id }, context);
+  expect(await registry.get(entry.id)).toMatchObject({ createdIn: { sessionId: "local-chat", userId: "local" } });
 });

@@ -478,6 +478,41 @@ Sandbox visual previews use `GET /internal/dashboards/:slug/html?token=…&theme
 
 Canvas keeps separate durable, atomically replaced published HTML per owned registration, independent of optional history. Readers see published HTML/metadata; owners/writers see live drafts. Missing publication fails closed. Create/update/claim and retained-history restore publish; link/view/list/history reads do not. Managed history keeps 20 distinct publications; Git workspaces may report unmanaged history, but always have durable publication. Restore recreates missing working HTML and preserves current ACLs. SQLite remains live/shared.
 
+New registrations optionally retain `createdIn: { sessionId, userId }` only for
+non-eval, non-service actors creating in their own history. Multi-user runs require
+`sessionOwnerId === actor.userId`; single-user `local` requires no history owner.
+Owner jobs may qualify. Updates, claims and restores preserve this provenance;
+old rows are not backfilled. Canvas tool results include the registration `id`,
+including both `dashboard_link` forms.
+
+Create/update tools declare the built-in `yoplai` / `dashboard` view at
+`ui://yoplai/dashboard` and capture their own successful results through
+`captureYoplaiView`, with `key` equal to the dashboard id and structured content
+`{ id, agentId, slug, title, link }`. The HTML title falls back to the slug.
+Slack pairing/error returns create no view record. `captureMcpApp` silently skips
+this built-in triple, preserving warnings for other reserved-server tools.
+Web rows and panels load saved POST `data` without an apps origin and reuse by id;
+later captured updates reload the frame. Live wide-screen results can open the
+panel; history/snapshot replay cannot.
+
+Dashboard rows expose `chatHref: string | null` through the shared list builder,
+including dashboard home, agent tab, sharing and claim responses. Agent access is
+required even for creators. A creator's existing scoped session gives
+`/chat/<agentId>?session=<sessionId>&dashboard=<id>`; otherwise the link is
+`/chat/<agentId>?dashboard=<id>&new=1`. Single-user actor `local` maps to the
+unscoped history owner for the existence check. The same helper supplies the
+top-level dashboard page's new-tab Chat link, hidden when framed. Chat consumes
+and removes `dashboard`/`new`, retaining `session`, and opens one standalone
+dashboard selection. That selection survives the fresh chat's initial session-id
+assignment and reconciles to a matching captured view, but clears on deliberate
+agent/chat switches. No dashboard model context is added.
+
+Dashboard `FrameView` always uses relative `/d/<id>` with sandbox flags
+`allow-scripts allow-downloads allow-modals allow-popups allow-popups-to-escape-sandbox`,
+without `allow-same-origin`. Existing viewer access, sandbox CSP and publication
+rules still apply; `frame-ancestors 'self'` restricts embedding to the chat origin.
+The header offers title, Open and Expand/Collapse without a URL toolbar.
+
 Agents use `dashboard_delete` to remove a dashboard HTML file, its stable registry entry, and its managed versions. Deletion is idempotent, preserves `.db` files, invalidates the old viewer link, and lets a recreated slug receive a new link with fresh history.
 
 The web agent detail page has a Dashboards tab for accessible agents. `GET /api/agents/:id/dashboards` uses per-agent access middleware and lists registrations filtered by dashboard access, never auto-registering workspace drafts; it returns each dashboard's HTML title (or filename), slug, file modification time, viewer link, required `params`, and normalized `linksTo` slugs. Dashboards that require URL arguments declare `<meta name="yoplai:params" content="id">` (comma-separated names allowed); optional arguments do not need this meta. The API stays flat; the tab nests required-argument dashboards beneath every same-agent parent that calls `YOPLAI.link` to them, recursively with ancestor-cycle protection. These child rows have no Open action (they show the required params). Rows on the tab and on the Dashboards page share `DashboardListRow`; each row carries `shared` (true only for non-owner recipients, so superadmins see "Owned by <owner>" for dashboards not shared with them). `DashboardAccessDialog` is the Share dialog (people with access plus a General access select that maps to the `{kind:"all"}` share). Dashboards without required arguments stay top-level; unreachable required-argument dashboards appear under **Needs parameters**.
@@ -562,6 +597,12 @@ Multi-user mode guards `/api/*` and `/ws`. Cookie sessions and Better Auth API k
 
 ## MCP Apps gateway
 
+Built-in `captureYoplaiView` persists file and dashboard view records. The shared
+reference schema preserves optional `key`; reuse appends `key ?? file.filename`
+to the server/resource key. `FrameView.tsx` renders dashboard views natively from
+saved POST `data`, independent of the apps capability and ticket flow. Latest-call
+changes reload data with abort/generation guards; failures retain the last view.
+
 `send_file` captures registered media metadata (no bytes) through the same record
 writer for Pi and container agents. Its optional `title` is capped at 200 characters;
 model text remains `File sent to user`. Both runners mark the call as the built-in
@@ -617,7 +658,7 @@ When building Pi/container run params, `runAgent` snapshots the session owner's 
 
 `ChatBlocks` renders fixed-classification view rows outside collapsible activity in both modes. Stable `Index` slots and reactive props preserve frames through live updates. The panel host survives turn completion, reconnect, simple/full switches and history reloads, retaining its last valid latest call through empty or stale projections; inline rows may remount. Session changes, new chat and page unmount close the panel. Expand/collapse each retire and reload the view once, so unsaved iframe state may be lost; app-owned saved state may restore. Only one panel is open and width is not persisted. The generic panel overlays chat at viewport widths <=768 px or insufficient split space (320 px panel + 400 px chat + 6 px handle).
 
-`createChatSession` calls optional `onLiveView` only after attaching results from the subscription and direct-stream live callbacks, for `yoplai` HTML/Markdown/PDF files. Snapshots and history do not call it. `ChatView` measures the shared chat row and opens `viewKey(view)` only when `canSplitPanel` permits it (viewport >768 px, row >=726 px), retrying once in a microtask if projection is pending. Later documents and same-filename re-sends reopen/replace the panel; images, text/data and external apps stay inline. The compact file-icon card is a button that reveals/focuses the panel.
+`createChatSession` calls optional `onLiveView` only after attaching results from the subscription and direct-stream live callbacks, for `yoplai` HTML/Markdown/PDF files and dashboards. Snapshots and history do not call it. `ChatView` measures the shared chat row and opens `viewKey(view)` only when `canSplitPanel` permits it (viewport >768 px, row >=726 px), retrying once in a microtask if projection is pending. Later documents and same-file/dashboard re-sends reopen/replace the panel; images, text/data and external apps stay inline. The compact file/dashboard card is a button that reveals/focuses the panel.
 
 The host advertises `inline`/`fullscreen` and intersects any declared app modes; a disallowed initial mode fails without auto-opening the panel. Mode and size changes emit `ui/notifications/host-context-changed`; panel dimensions are actual width/height, inline dimensions are width/maxHeight 800. Two deliberate stable-spec extensions are `fullscreen` as a side panel and repeated `tool-input`/`tool-result` delivery during one lifetime (stable `tool-input` is once; [ext-apps #430](https://github.com/modelcontextprotocol/ext-apps/issues/430)). Payloads follow SDK 1.7.5; no per-server reuse opt-out or `pip` support exists. See [web UI](web-ui.md#mcp-app-views).
 

@@ -3,6 +3,7 @@ import { ChatTranscript } from "./chat/ChatTranscript";
 import { createAppViews, chatAppViewCalls, viewKey } from "./chat/appViews";
 import { ChatSidePanel, canSplitPanel } from "./chat/ChatSidePanel";
 import { McpAppView } from "./chat/McpAppView";
+import { FrameView, CapturedFrameView } from "./chat/FrameView";
 import chatViewStyles from "./chat/ChatView.css?inline";
 import {
   createSignal,
@@ -11,6 +12,7 @@ import {
   createMemo,
   For,
   onCleanup,
+  onMount,
   Show,
   on,
 } from "solid-js";
@@ -21,6 +23,7 @@ import { refreshToolLabels } from "../lib/tool-labels";
 import {
   uploadFiles,
   getSessionKey,
+  startNewChat,
   fetchAgent,
   fetchAgentSuggestions,
   fetchAgentSessions,
@@ -161,12 +164,14 @@ export function ChatView() {
   const [activeDropZone, setActiveDropZone] = createSignal<DropZone | null>(
     null
   );
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   const sessionKey = () => getSessionKey(params.agentId);
   const explicitSessionId = () =>
     typeof searchParams.session === "string" && searchParams.session.trim()
       ? searchParams.session
       : undefined;
+  const dashboardFromUrl = typeof searchParams.dashboard === "string" ? searchParams.dashboard : undefined;
+  if (dashboardFromUrl && searchParams.new === "1" && !explicitSessionId()) startNewChat(params.agentId);
   const [suggestions] = createResource(
     () => [params.agentId, explicitSessionId()] as const,
     ([agentId]) => fetchAgentSuggestions(agentId)
@@ -287,7 +292,7 @@ export function ChatView() {
     contextUsageDisplay, isContextUsageDanger, contextWarning, thinkingLevel,
     compactStatusForCurrentSession,
   } = session;
-  const appViews = createAppViews(() => `${params.agentId}\n${session.appSessionId() ?? ""}`, () => chatAppViewCalls(session, viewMode()));
+  const appViews = createAppViews(session.appSessionId, () => chatAppViewCalls(session, viewMode()), currentSession);
   onCleanup(appViews.close);
   const viewMessageTimes = new Map<string, number[]>();
   createEffect(on(() => `${params.agentId}\n${session.appSessionId() ?? currentSession()}`, () => viewMessageTimes.clear()));
@@ -642,6 +647,12 @@ export function ChatView() {
     navigate(`/chat/${encodeURIComponent(agentId)}`);
     requestAnimationFrame(() => textareaRef?.focus());
   };
+
+  onMount(() => {
+    if (!dashboardFromUrl) return;
+    appViews.openFrame({ kind: "dashboard", id: dashboardFromUrl, title: "Dashboard" });
+    setSearchParams({ dashboard: undefined, new: undefined }, { replace: true });
+  });
 
   let draftMessageUsed = false;
   createEffect(() => {
@@ -1082,9 +1093,15 @@ export function ChatView() {
         {(warning) => <div class="context-warning">{warning()}</div>}
       </Show>
       </div>
-      <Show when={!!appViews.panel()}>
+      <Show when={!!appViews.panel() || !!appViews.frame()}>
         <ChatSidePanel>
-          <McpAppView agentId={params.agentId} sessionId={session.appSessionId()!} viewKey={appViews.panel()!.key} callId={() => appViews.panel()!.latest.id} text={appViews.panel()!.latest.text ?? ""} mode="panel" fileOf={appViews.fileOf} onShown={(callId) => { const key = appViews.panel()?.key; if (key) appViews.reportShown(key, callId); }} onDisplayMode={(mode) => { if (mode === "inline") appViews.close(); }} onUserMessage={(text) => handleViewMessage(appViews.panel()!.key, text)} />
+          <Show when={appViews.frame()} fallback={
+          <Show when={appViews.panel()!.latest.result?.view?.resourceUri === "ui://yoplai/dashboard"} fallback={<McpAppView agentId={params.agentId} sessionId={session.appSessionId()!} viewKey={appViews.panel()!.key} callId={() => appViews.panel()!.latest.id} text={appViews.panel()!.latest.text ?? ""} mode="panel" fileOf={appViews.fileOf} onShown={(callId) => { const key = appViews.panel()?.key; if (key) appViews.reportShown(key, callId); }} onDisplayMode={(mode) => { if (mode === "inline") appViews.close(); }} onUserMessage={(text) => handleViewMessage(appViews.panel()!.key, text)} />}>
+            <CapturedFrameView kind="dashboard" agentId={params.agentId} sessionId={session.appSessionId()!} callId={() => appViews.panel()!.latest.id} mode="panel" onCollapse={appViews.close} />
+          </Show>
+          }>
+            {(target) => <FrameView target={target()} mode="panel" onCollapse={appViews.close} />}
+          </Show>
         </ChatSidePanel>
       </Show>
 

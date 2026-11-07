@@ -8,6 +8,7 @@ import { extractBlockText } from "../../lib/history";
 import { renderMarkdown } from "../../lib/markdown";
 import { formatFileSize, getFileIcon } from "../../lib/attachments";
 import { McpAppView } from "./McpAppView";
+import { CapturedFrameView } from "./FrameView";
 import { appsAvailable } from "../../lib/capabilities";
 import { groupActivityItems, lastFiveWords } from "../../lib/chat-activity";
 import type { AppViews } from "./appViews";
@@ -165,6 +166,7 @@ export function McpAppToolRow(props: { agentId: string; sessionId?: string | nul
   };
   const role = () => props.appViews.roleOf(props.toolCallId);
   const captured = () => !!view()?.calls.find((call) => call.id === props.toolCallId)?.result?.view;
+  const dashboard = () => view()?.latest.result?.view?.resourceUri === "ui://yoplai/dashboard";
   const settled = () => !!props.result || captured();
   function reveal() {
     const target = props.appViews.panel()?.key === view()?.key
@@ -175,16 +177,23 @@ export function McpAppToolRow(props: { agentId: string; sessionId?: string | nul
   }
   return <div class="mcp-app-tool-row" id={`mcp-app-${props.toolCallId}`} tabIndex={-1}>
     <Switch fallback={<p role="status">Loading view…</p>}>
+      <Match when={(props.name === "dashboard_create" || props.name === "dashboard_update") && settled() && !captured()}>
+        <pre class="tool-code">{getToolResultText(props.result)}</pre>
+      </Match>
       <Match when={role() === "panel-card"}>
         <button type="button" class="mcp-app-panel-card" onClick={reveal}>
           <Show when={file()}><span class="file-icon" aria-hidden="true">{getFileIcon(file()!.mimeType)}</span></Show>
-          <span>{file()?.title ?? file()?.filename ?? view()?.latest.result?.view?.server} · shown in the side panel</span>
+          <Show when={dashboard()}><i class="fa-solid fa-table-columns" aria-hidden="true" /></Show>
+          <span>{(dashboard() ? "Dashboard" : undefined) ?? file()?.title ?? file()?.filename ?? view()?.latest.result?.view?.server} · shown in the side panel</span>
         </button>
       </Match>
       <Match when={role() === "link" && (!settled() || captured())}>
         <Show when={settled()} fallback={<p role="status">Updating view…</p>}>
           <button type="button" class="mcp-app-updated" onClick={reveal}><i class="fa-solid fa-eye" aria-hidden="true" />View updated. Click to see it</button>
         </Show>
+      </Match>
+      <Match when={dashboard() && captured() && !!props.sessionId}>
+        <CapturedFrameView kind="dashboard" agentId={props.agentId} sessionId={props.sessionId!} callId={() => view()!.latest.id} mode="inline" onExpand={() => props.appViews.open(view()!.key)} />
       </Match>
       <Match when={settled() && appsAvailable() !== undefined && (appsAvailable() === false || !captured() || props.sessionId !== undefined)}>
         <Show when={captured() && appsAvailable() === true && !!props.sessionId}

@@ -13,6 +13,7 @@ export type DashboardRegistration = {
   agentId: string;
   slug: string;
   ownerUserId?: string;
+  createdIn?: { sessionId: string; userId: string };
   shares?: DashboardShare[];
   publishedAt?: string;
   publishedHash?: string;
@@ -111,7 +112,8 @@ export class DashboardRegistry {
     agentId: string,
     slug: string,
     ownerUserId: string,
-    html: string
+    html: string,
+    createdIn?: DashboardRegistration["createdIn"]
   ): Promise<DashboardRegistration> {
     return this.mutate(async () => {
       const data = await this.read();
@@ -127,6 +129,7 @@ export class DashboardRegistry {
         agentId,
         slug,
         ownerUserId,
+        ...(createdIn ? { createdIn } : {}),
         shares: [],
       };
       await this.writePublication(entry, html);

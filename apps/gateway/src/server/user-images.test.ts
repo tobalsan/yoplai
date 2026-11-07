@@ -115,7 +115,7 @@ it("dashboard recipient responses carry pictures and preserve account eligibilit
     registry: new DashboardRegistry(path.join(home, "canvas", "registry.json")),
     pins: new DashboardPinStore(path.join(home, "canvas", "pins.json")), authenticate: authenticateDashboardRequest,
     resolveActor: resolveDashboardHttpActor, listRecipients: listDashboardRecipients,
-    hasAgentAccess: async () => false,
+    hasAgentAccess: async () => false, sessionExists: async () => false,
   });
   const response = await routes.request("/recipients", { headers: { Cookie: cookie } });
   expect(response.status).toBe(200);

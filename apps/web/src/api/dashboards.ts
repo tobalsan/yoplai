@@ -11,6 +11,7 @@ export type DashboardRow = {
   title: string;
   slug: string;
   link: string;
+  chatHref: string | null;
   params: string[];
   linksTo: string[];
   updatedAt: string | null;

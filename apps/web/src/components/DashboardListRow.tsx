@@ -2,7 +2,7 @@ import { Show, createSignal, onCleanup } from "solid-js";
 import type { DashboardRow } from "../api/dashboards";
 
 type RowDashboard = Pick<DashboardRow,
-  "link" | "title" | "params" | "legacy" | "isOwner" | "ownerName" | "mode" | "updatedAt" | "publishedAt"
+  "link" | "chatHref" | "title" | "params" | "legacy" | "isOwner" | "ownerName" | "mode" | "updatedAt" | "publishedAt"
 > & Partial<Pick<DashboardRow, "shared" | "shares" | "agentName" | "pinned">>;
 
 export function ownershipLabel(dashboard: Pick<RowDashboard, "legacy" | "isOwner" | "shared" | "ownerName">) {
@@ -75,6 +75,13 @@ export function DashboardListActions(props: {
           </a>
         </Show>
       </span>
+      <span class="dashboard-slot dashboard-slot--chat" classList={{ "dashboard-slot--empty": !props.dashboard.chatHref }}>
+        <Show when={props.dashboard.chatHref}>
+          <a class="dashboard-action" href={props.dashboard.chatHref!}>
+            <i class="fa-solid fa-comment" aria-hidden="true" />Chat
+          </a>
+        </Show>
+      </span>
       <span class="dashboard-slot dashboard-slot--copy">
         <button type="button" class="dashboard-action" onClick={() => void copy()}>
           <i class={copied() ? "fa-solid fa-check" : "fa-solid fa-link"} aria-hidden="true" />
@@ -114,7 +121,7 @@ export function DashboardListActions(props: {
         .dashboard-access-pill--shared { border-color: color-mix(in srgb, var(--accent, #3b82f6) 35%, transparent); background: color-mix(in srgb, var(--accent, #3b82f6) 12%, transparent); color: color-mix(in srgb, var(--accent, #3b82f6) 75%, var(--text-primary)); }
         .dashboard-list-row__actions { display: flex; align-items: center; gap: 4px; }
         .dashboard-slot { display: flex; }
-        .dashboard-slot--open { width: 72px; }
+        .dashboard-slot--open, .dashboard-slot--chat { width: 72px; }
         .dashboard-slot--copy { width: 100px; }
         .dashboard-slot--manage { width: 140px; }
         .dashboard-slot--delete { width: 80px; }

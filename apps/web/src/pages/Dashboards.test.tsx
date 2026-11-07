@@ -11,7 +11,7 @@ afterEach(() => { dispose?.(); root.remove(); vi.unstubAllGlobals(); vi.restoreA
 
 const row = (id: string, isOwner: boolean): DashboardRow => ({
   id, title: id, agentId: "agent", agentName: "Agent", slug: `${id}.html`, link: `/d/${id}`,
-  params: [], linksTo: [], updatedAt: null, publishedAt: null, legacy: false,
+  chatHref: null, params: [], linksTo: [], updatedAt: null, publishedAt: null, legacy: false,
   isOwner, shared: !isOwner, ownerName: isOwner ? "Alice" : "Bob", mode: "read", pinned: false,
 });
 const section = (name: string) => Array.from(root.querySelectorAll("main > section")).find((element) => element.querySelector("h2")?.textContent === name);

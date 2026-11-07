@@ -25,6 +25,7 @@ vi.mock("../api/mcp-apps", () => ({
   openMcpAppFile: vi.fn(),
 }));
 const navigateMock = vi.fn();
+const setSearchParamsMock = vi.fn();
 const [routeVersion, setRouteVersion] = createSignal(0);
 const [routeAgentVersion, setRouteAgentVersion] = createSignal(0);
 const { archiveAgentSessionMock } = vi.hoisted(() => ({ archiveAgentSessionMock: vi.fn() }));
@@ -75,6 +76,8 @@ const {
     view: undefined as string | undefined,
     session: undefined as string | undefined,
     project: undefined as string | undefined,
+    dashboard: undefined as string | undefined,
+    new: undefined as string | undefined,
   },
 }));
 
@@ -86,12 +89,14 @@ vi.mock("@solidjs/router", () => ({
   useSearchParams: () => [
     {
       get project() { return routeState.project; },
+      get dashboard() { routeVersion(); return routeState.dashboard; },
+      get new() { routeVersion(); return routeState.new; },
       get session() {
         routeVersion();
         return routeState.session;
       },
     },
-    vi.fn(),
+    setSearchParamsMock,
   ],
 }));
 
@@ -259,6 +264,9 @@ describe("ChatView abort handling", () => {
     routeState.agentId = "agent-1";
     routeState.session = undefined;
     routeState.project = undefined;
+    routeState.dashboard = undefined;
+    routeState.new = undefined;
+    setSearchParamsMock.mockImplementation((changes) => { Object.assign(routeState, changes); setRouteVersion((value) => value + 1); });
     fetchMainAgentPreferenceMock.mockResolvedValue({ mainAgentId: null, accessible: false, pickerDismissedAt: null });
     fetchMainAgentOptionsMock.mockResolvedValue({ preference: null, agents: [{ id: "agent-1", name: "Agent" }, { id: "agent-2", name: "Other" }] });
     fetchPoolActionsMock.mockResolvedValue([]);
@@ -273,6 +281,50 @@ describe("ChatView abort handling", () => {
     resetCapabilitiesForTests();
     vi.clearAllMocks();
     vi.unstubAllGlobals();
+  });
+
+  it("starts fresh before opening a dashboard and keeps it through the first message and session resolution", async () => {
+    routeState.dashboard = "garden";
+    routeState.new = "1";
+    fetchSimpleHistoryMock.mockResolvedValue({ messages: [], isStreaming: false, activeTurn: null });
+    fetchFullHistoryMock.mockResolvedValue({ messages: [], isStreaming: false, activeTurn: null });
+    const view = await startFullStream();
+    try {
+      expect(startNewChatMock).toHaveBeenCalledOnce();
+      expect(queryByTitle(view.container, "Dashboard dashboard")).not.toBeNull();
+      expect(streamMessageMock.mock.calls.at(-1)?.[2]).toBe("fresh-key");
+      fetchFullHistoryMock.mockResolvedValue({ sessionId: "first-session", messages: [], isStreaming: false, activeTurn: null });
+      const marker = { server: "yoplai", tool: "dashboard", resourceUri: "ui://yoplai/dashboard" };
+      loadMcpAppDataMock.mockResolvedValue({ args: {}, result: { content: [], structuredContent: { id: "garden", title: "Garden overview" } } });
+      view.callbacks()?.onToolCall?.("first-dashboard", "dashboard_update", {}, undefined, marker);
+      view.callbacks()?.onToolResult?.("first-dashboard", "dashboard_update", "Updated", false, undefined, undefined, { ...marker, recordId: "record-1", key: "garden" });
+      view.onText("Garden is ready.");
+      await waitFor(() => expect(queryByTitle(view.container, "Garden overview dashboard")).not.toBeNull());
+      const panel = queryByRole(view.container, "complementary")!;
+      expect(queryByTitle(panel, "Garden overview dashboard")?.getAttribute("src")).toBe("/d/garden");
+      expect(loadMcpAppDataMock).toHaveBeenCalledWith("agent-1", "first-session", "first-dashboard", expect.any(AbortSignal));
+      expect(view.container.textContent).toContain("Garden is ready.");
+    } finally { view.dispose(); }
+  });
+
+  it("opens a linked dashboard once, preserving the requested session", async () => {
+    routeState.session = "origin-session";
+    routeState.dashboard = "garden";
+    routeState.new = "1";
+    const { container, dispose } = renderView();
+    try {
+      expect(setSearchParamsMock).toHaveBeenCalledOnce();
+      await waitFor(() => expect(queryByTitle(container, "Dashboard dashboard")).not.toBeNull());
+      const panel = queryByRole(container, "complementary")!;
+      expect(queryByTitle(panel, "Dashboard dashboard")?.getAttribute("src")).toBe("/d/garden");
+      expect(startNewChatMock).not.toHaveBeenCalled();
+      expect(setSearchParamsMock).toHaveBeenCalledOnce();
+      expect(setSearchParamsMock).toHaveBeenCalledWith({ dashboard: undefined, new: undefined }, { replace: true });
+      expect(routeState.session).toBe("origin-session");
+      queryByRole(panel, "button", { name: "Collapse" })!.click();
+      setRouteVersion((value) => value + 1);
+      expect(queryByRole(container, "complementary")).toBeNull();
+    } finally { dispose(); }
   });
 
   it("toggles notification sound beside the agent and follows other tabs", async () => {
@@ -2546,6 +2598,137 @@ describe("ChatView abort handling", () => {
       return this.classList.contains("chat-view") ? { width: rowWidth, right: rowWidth } as DOMRect : measure.call(this);
     });
   }
+
+  it.each([700, 1280])("keeps saved and reconnect dashboards inline, with live opening only on a wide viewport (%i)", async (viewport) => {
+    const measure = measureChatSpace(viewport);
+    let subscription: SubscriptionCallbacks = {};
+    subscribeToSessionMock.mockImplementation((_agent, _key, callbacks) => { subscription = callbacks; return () => {}; });
+    const marker = { server: "yoplai", tool: "dashboard", resourceUri: "ui://yoplai/dashboard" };
+    const reference = { ...marker, recordId: "saved-record", key: "garden" };
+    fetchFullHistoryMock.mockResolvedValue({ sessionId: "session-main", messages: [
+      { role: "assistant", timestamp: 1, content: [{ type: "toolCall", id: "saved-dashboard", name: "dashboard_create", arguments: {}, viewCall: true, view: marker }] },
+      { role: "toolResult", timestamp: 2, toolCallId: "saved-dashboard", toolName: "dashboard_create", content: [{ type: "text", text: "Created" }], view: reference },
+    ] });
+    loadMcpAppDataMock.mockImplementation(async (_agent, _session, id) => ({ args: {}, result: { content: [], structuredContent: { id: "garden", title: id } } }));
+    const view = renderView();
+    try {
+      await waitFor(() => expect(queryByTitle(view.container, "saved-dashboard dashboard")).not.toBeNull());
+      expect(queryByRole(view.container, "complementary")).toBeNull();
+      subscription.onActiveTurn?.({ userText: "Update", userTimestamp: 3, startedAt: 3, thinking: "", text: "",
+        toolCalls: [{ id: "reconnect-dashboard", name: "dashboard_update", arguments: {}, status: "done", view: marker }],
+        toolResults: [{ id: "reconnect-dashboard", name: "dashboard_update", content: "Updated", isError: false, view: { ...reference, recordId: "reconnect-record" } }],
+      });
+      await waitFor(() => expect(queryByTitle(view.container, "reconnect-dashboard dashboard")).not.toBeNull());
+      expect(queryByRole(view.container, "complementary")).toBeNull();
+      subscription.onToolCall?.("live-dashboard", "dashboard_update", {}, undefined, marker);
+      subscription.onToolResult?.("live-dashboard", "dashboard_update", "Updated", false, undefined, undefined, { ...reference, recordId: "live-record" });
+      await waitFor(() => expect(queryByTitle(view.container, "live-dashboard dashboard")).not.toBeNull());
+      expect(!!queryByRole(view.container, "complementary")).toBe(viewport > 768);
+    } finally { view.dispose(); measure.mockRestore(); }
+  });
+
+  it.each(["failure", "timeout"])("keeps chat progressing and the last dashboard visible after a data %s", async (failure) => {
+    const measure = measureChatSpace();
+    loadMcpAppDataMock.mockResolvedValue({ args: {}, result: { content: [], structuredContent: { id: "garden", title: "Garden overview" } } });
+    const view = await startFullStream();
+    const marker = { server: "yoplai", tool: "dashboard", resourceUri: "ui://yoplai/dashboard" };
+    let finish: ((data: unknown) => void) | undefined;
+    try {
+      view.callbacks()?.onToolCall?.("created-dashboard", "dashboard_create", {}, undefined, marker);
+      view.callbacks()?.onToolResult?.("created-dashboard", "dashboard_create", "Created", false, undefined, undefined, { ...marker, recordId: "created-record", key: "garden" });
+      await waitFor(() => expect(queryByTitle(view.container, "Garden overview dashboard")).not.toBeNull());
+      const frame = queryByTitle(view.container, "Garden overview dashboard");
+      if (failure === "timeout") {
+        vi.useFakeTimers();
+        loadMcpAppDataMock.mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
+      } else loadMcpAppDataMock.mockRejectedValueOnce(new Error("offline"));
+      view.callbacks()?.onToolCall?.("updated-dashboard", "dashboard_update", {}, undefined, marker);
+      view.callbacks()?.onToolResult?.("updated-dashboard", "dashboard_update", "Updated", false, undefined, undefined, { ...marker, recordId: "updated-record", key: "garden" });
+      view.onText("Chat keeps going.");
+      if (failure === "timeout") await vi.advanceTimersByTimeAsync(10000);
+      else await tick();
+      expect(queryByText(view.container, "Dashboard update unavailable")).not.toBeNull();
+      expect(queryByTitle(view.container, "Garden overview dashboard")).toBe(frame);
+      expect(view.container.textContent).toContain("Chat keeps going.");
+      finish?.({ args: {}, result: { content: [], structuredContent: { id: "garden", title: "Too late" } } });
+      if (failure === "timeout") await vi.advanceTimersByTimeAsync(0);
+      expect(queryByTitle(view.container, "Too late dashboard")).toBeNull();
+    } finally { vi.useRealTimers(); view.dispose(); measure.mockRestore(); }
+  });
+
+  it.each([false, undefined])("auto-opens a live dashboard with appsAvailable %s, then reloads its updated record", async (available) => {
+    if (available === undefined) {
+      resetCapabilitiesForTests();
+      fetchCapabilitiesMock.mockImplementation(() => new Promise(() => {}));
+    } else {
+      setCapabilitiesForTests({ apps: { available } });
+      fetchCapabilitiesMock.mockResolvedValue({ version: 2, extensions: {}, agents: [], apps: { available } });
+    }
+    const measure = measureChatSpace();
+    fetchSimpleHistoryMock.mockResolvedValue({ messages: [], isStreaming: false, activeTurn: null });
+    fetchFullHistoryMock.mockResolvedValue({ messages: [], isStreaming: false, activeTurn: null });
+    loadMcpAppDataMock.mockResolvedValue({ args: {}, result: { content: [], structuredContent: { id: "garden", title: "Garden overview" } } });
+    const view = await startFullStream();
+    fetchFullHistoryMock.mockResolvedValue({ sessionId: "first-session", messages: [], isStreaming: false, activeTurn: null });
+    const marker = { server: "yoplai", tool: "dashboard", resourceUri: "ui://yoplai/dashboard" };
+    try {
+      view.callbacks()?.onToolCall?.("created-dashboard", "dashboard_create", {}, undefined, marker);
+      view.callbacks()?.onToolResult?.("created-dashboard", "dashboard_create", "Created", false, undefined, undefined, { ...marker, recordId: "created-record", key: "garden" });
+      await waitFor(() => expect(queryByRole(view.container, "complementary")).not.toBeNull());
+      const panel = queryByRole(view.container, "complementary")!;
+      await waitFor(() => expect(queryByTitle(panel, "Garden overview dashboard")).not.toBeNull());
+      const frame = queryByTitle(panel, "Garden overview dashboard") as HTMLIFrameElement;
+      expect(frame.getAttribute("sandbox")).not.toContain("allow-same-origin");
+      expect(queryByRole(view.container, "button", { name: "Dashboard · shown in the side panel" })).not.toBeNull();
+      frame.src = "/d/garden?old=1";
+      loadMcpAppDataMock.mockResolvedValue({ args: {}, result: { content: [], structuredContent: { id: "garden", title: "Garden revised" } } });
+      view.callbacks()?.onToolCall?.("updated-dashboard", "dashboard_update", {}, undefined, marker);
+      view.callbacks()?.onToolResult?.("updated-dashboard", "dashboard_update", "Updated", false, undefined, undefined, { ...marker, recordId: "updated-record", key: "garden" });
+      await waitFor(() => expect(queryByTitle(panel, "Garden revised dashboard")).toBe(frame));
+      expect(frame.getAttribute("src")).toBe("/d/garden");
+    } finally { view.dispose(); measure.mockRestore(); }
+  });
+
+  it("labels the compact dashboard card and focuses its panel", async () => {
+    const measure = measureChatSpace();
+    loadMcpAppDataMock.mockResolvedValue({ args: {}, result: { content: [], structuredContent: { id: "garden", title: "Garden overview" } } });
+    const { container, dispose, callbacks } = await startFullStream();
+    try {
+      const marker = { server: "yoplai", tool: "dashboard", resourceUri: "ui://yoplai/dashboard" };
+      callbacks()?.onToolCall?.("live-dashboard", "dashboard_create", {}, undefined, marker);
+      callbacks()?.onToolResult?.("live-dashboard", "dashboard_create", "Dashboard created", false, undefined, undefined, { ...marker, recordId: "dashboard-record", key: "garden" });
+      await waitFor(() => expect(queryByRole(container, "complementary", { name: "App view" })).not.toBeNull());
+      const panel = queryByRole(container, "complementary", { name: "App view" })!;
+      await waitFor(() => expect(queryByTitle(panel, "Garden overview dashboard")).not.toBeNull());
+      const card = queryByRole(container, "button", { name: "Dashboard · shown in the side panel" });
+      expect(card).not.toBeNull();
+      expect(card!.querySelector(".fa-table-columns")).not.toBeNull();
+      card!.click();
+      expect(document.activeElement).toBe(panel);
+      queryByRole(panel, "button", { name: "Collapse" })!.click();
+      await waitFor(() => expect(queryByRole(container, "complementary")).toBeNull());
+      expect(queryByTitle(container, "Garden overview dashboard")).not.toBeNull();
+    } finally { dispose(); measure.mockRestore(); }
+  });
+
+  it.each([
+    [1280, 1000, true],
+    [769, 726, true],
+    [768, 1000, false],
+    [1280, 725, false],
+    [700, 1000, false],
+  ] as const)("opens live dashboards only when the split fits (%i, %i => %s)", async (viewport, row, opens) => {
+    const measure = measureChatSpace(viewport, row);
+    loadMcpAppDataMock.mockResolvedValue({ args: {}, result: { content: [], structuredContent: { id: "garden", title: "Garden overview" } } });
+    const { container, dispose, callbacks } = await startFullStream();
+    try {
+      const marker = { server: "yoplai", tool: "dashboard", resourceUri: "ui://yoplai/dashboard" };
+      callbacks()?.onToolCall?.("guarded", "dashboard_create", {}, undefined, marker);
+      callbacks()?.onToolResult?.("guarded", "dashboard_create", "Dashboard created", false, undefined, undefined, { ...marker, recordId: "guarded-record", key: "garden" });
+      await waitFor(() => expect(queryByTitle(container, "Garden overview dashboard")).not.toBeNull());
+      expect(!!queryByRole(container, "complementary")).toBe(opens);
+    } finally { dispose(); measure.mockRestore(); }
+  });
 
   it("opens the side panel for an HTML file sent in a live direct stream", async () => {
     enableAppViews();

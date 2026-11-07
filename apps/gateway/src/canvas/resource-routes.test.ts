@@ -2,6 +2,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, expect, it } from "vitest";
+import { JSDOM } from "jsdom";
 import type { AgentConfig, GatewayConfig } from "@yoplai/shared";
 import { createDashboardResourceRoutes, createDashboardRoutes } from "./routes.js";
 import { DashboardRegistry } from "./store.js";
@@ -29,7 +30,7 @@ it("users pin and unpin owned and shared dashboards idempotently without changin
     getConfig: () => config, getAgent: () => agent, registry, pins,
     authenticate: async (request) => ({ user: { id: request.headers.get("user") || "alice" } }),
     resolveActor: async (auth) => ({ userId: (auth as { user: { id: string } }).user.id, eligible: true }),
-    hasAgentAccess: async () => false,
+    hasAgentAccess: async () => false, sessionExists: async () => false,
   });
   expect(await (await resources.request("/")).json()).toMatchObject({
     owned: [{ id: owned.id, pinned: false }], shared: [{ id: shared.id, pinned: false }],
@@ -67,7 +68,7 @@ it("pin mutations conceal unavailable registrations and reject unauthenticated o
     getConfig: () => config, getAgent: () => agent, registry, pins,
     authenticate: async () => authenticated ? {} : null,
     resolveActor: async () => ({ userId, eligible, hasAgentAccess: true }),
-    hasAgentAccess: async () => true,
+    hasAgentAccess: async () => true, sessionExists: async () => false,
   });
   for (const method of ["PUT", "DELETE"]) {
     for (const id of ["unknown", legacy.id, privateEntry.id]) {
@@ -96,7 +97,7 @@ it("concurrent users retain personal pins across fresh registry and pin-store in
     pins: new DashboardPinStore(path.join(root, "canvas", "pins.json")),
     authenticate: async () => ({}),
     resolveActor: async () => ({ userId, eligible: true }),
-    hasAgentAccess: async () => false,
+    hasAgentAccess: async () => false, sessionExists: async () => false,
   });
   const responses = await Promise.all(["alice", "bob"].map((user) => resourcesFor(user).request(`/${entry.id}/pin`, { method: "PUT" })));
   expect(responses.map((response) => response.status)).toEqual([200, 200]);
@@ -117,7 +118,7 @@ it("single-user local actors pin dashboards and retain their preferences", async
     getConfig: () => config, getAgent: () => agent, registry, pins,
     authenticate: async () => ({}),
     resolveActor: async () => ({ userId: "local", eligible: true, hasAgentAccess: true }),
-    hasAgentAccess: async () => true,
+    hasAgentAccess: async () => true, sessionExists: async () => false,
   });
   expect(await (await resources.request(`/${entry.id}/pin`, { method: "PUT" })).json()).toEqual({ ok: true, pinned: true });
   expect(await (await resources.request("/")).json()).toMatchObject({ owned: [{ id: entry.id, pinned: true }], shared: [] });
@@ -133,7 +134,7 @@ it("a non-member recipient sees published HTML and filtered published metadata, 
     getConfig: () => config, getAgent: () => agent, registry, pins,
     authenticate: async () => ({ user: { id: userId, name: userId } }),
     resolveActor: async () => ({ userId, eligible: true, hasAgentAccess: false }),
-    hasAgentAccess: async () => false,
+    hasAgentAccess: async () => false, sessionExists: async () => false,
     listRecipients: async () => [], getOwnerName: async (id: string) => id,
   };
   const viewer = createDashboardRoutes(deps);
@@ -156,7 +157,7 @@ it("owners without agent access manage eligible recipients, deny invalid grants 
     getConfig: () => config, getAgent: () => agent, registry, pins,
     authenticate: async () => ({ user: { id: userId } }),
     resolveActor: async () => ({ userId, eligible: true, hasAgentAccess: false }),
-    hasAgentAccess: async () => false,
+    hasAgentAccess: async () => false, sessionExists: async () => false,
     listRecipients: async () => [{ id: "eve", name: "Eve", email: "eve@example.test" }],
   });
   expect(await (await resources.request("/recipients")).json()).toEqual({ users: [{ id: "eve", name: "Eve", email: "eve@example.test" }] });
@@ -182,12 +183,13 @@ it("legacy claim preserves its link, publishes privately, and concurrent claims 
     getConfig: () => config, getAgent: () => agent, registry, pins,
     authenticate: async (request) => ({ user: { id: request.headers.get("user") || "alice" } }),
     resolveActor: async (auth) => ({ userId: (auth as {user:{id:string}}).user.id, eligible: true, hasAgentAccess: true }),
-    hasAgentAccess: async () => true,
+    hasAgentAccess: async () => true, sessionExists: async () => false,
   });
   const claims = await Promise.all(["alice", "dave"].map((user) => resources.request(`/${entry.id}/claim`, { method: "POST", headers: { user } })));
   expect(claims.map((response) => response.status).sort()).toEqual([200, 404]);
   const winner = await claims.find((response) => response.status === 200)!.json();
-  expect(winner.dashboard).toMatchObject({ id: entry.id, isOwner: true, shares: [], legacy: false });
+  expect(winner.dashboard).toMatchObject({ id: entry.id, isOwner: true, shares: [], legacy: false, chatHref: `/chat/agent?dashboard=${entry.id}&new=1` });
+  expect(await registry.get(entry.id)).not.toHaveProperty("createdIn");
   expect(await registry.readPublished(entry.id)).toBe("<h1>LEGACY</h1>");
   const list = await (await resources.request("/", { headers: { user: winner.dashboard.ownerName === "alice" ? "dave" : "alice" } })).json();
   expect(list).toEqual({ owned: [], shared: [] });
@@ -205,7 +207,7 @@ it("non-member readers query live data with authenticated bindings, fail closed 
     getConfig: () => config, getAgent: () => agent, registry,
     authenticate: async () => ({ user: { id: "bob", email: "bob@example.test" } }),
     resolveActor: async () => ({ userId: "bob", eligible, hasAgentAccess: false }),
-    hasAgentAccess: async () => false,
+    hasAgentAccess: async () => false, sessionExists: async () => false,
   });
   const first = await (await viewer.request(`/${entry.id}?viewer_email=spoof@example.test`)).text();
   expect(first).toContain('"value":"ONE","email":"bob@example.test"');
@@ -231,7 +233,7 @@ it("reader listing fails when published metadata is missing instead of offering 
     getConfig: () => config, getAgent: () => agent, registry, pins,
     authenticate: async () => ({ user: { id: "bob" } }),
     resolveActor: async () => ({ userId: "bob", eligible: true, hasAgentAccess: false }),
-    hasAgentAccess: async () => false,
+    hasAgentAccess: async () => false, sessionExists: async () => false,
   });
   const before = await (await resources.request("/")).json();
   expect(before.shared).toEqual([expect.objectContaining({ title: "Published detail", params: ["id"] })]);
@@ -244,7 +246,7 @@ it("authenticated ineligible accounts receive explicit API denial without direct
     getConfig: () => config, getAgent: () => agent, registry, pins,
     authenticate: async () => ({ user: { id: "pending" } }),
     resolveActor: async () => ({ userId: "pending", eligible: false, hasAgentAccess: false }),
-    hasAgentAccess: async () => false,
+    hasAgentAccess: async () => false, sessionExists: async () => false,
     listRecipients: async () => [{ id: "alice", name: "Alice", email: "alice@example.test" }],
   });
   for (const target of ["/", "/recipients"]) {
@@ -252,4 +254,96 @@ it("authenticated ineligible accounts receive explicit API denial without direct
     expect(response.status).toBe(403);
     expect(await response.json()).toEqual({ error: "account_ineligible" });
   }
+});
+
+it("dashboard list resumes its creator's existing conversation and falls back after deletion", async () => {
+  const entry = await registry.createOwned("agent", "harbor.html", "alice", "HARBOR", { sessionId: "original", userId: "alice" });
+  const history = path.join(root, "history", "alice", "agent-original.jsonl");
+  await fs.mkdir(path.dirname(history), { recursive: true });
+  await fs.writeFile(history, "{}\n");
+  const resources = createDashboardResourceRoutes({
+    getConfig: () => config, getAgent: () => agent, registry, pins,
+    authenticate: async () => ({}),
+    resolveActor: async () => ({ userId: "alice", eligible: true, hasAgentAccess: true }),
+    hasAgentAccess: async () => true,
+    sessionExists: async (userId, agentId, sessionId) => {
+      try {
+        await fs.access(path.join(root, "history", userId, `${agentId}-${sessionId}.jsonl`));
+        return true;
+      } catch { return false; }
+    },
+  });
+  expect(await (await resources.request("/")).json()).toMatchObject({
+    owned: [{ id: entry.id, chatHref: `/chat/agent?session=original&dashboard=${entry.id}` }],
+  });
+  const sharing = await resources.request(`/${entry.id}/sharing`, {
+    method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ shares: [] }),
+  });
+  expect(await sharing.json()).toMatchObject({ dashboard: { chatHref: `/chat/agent?session=original&dashboard=${entry.id}` } });
+  await fs.rm(history);
+  expect(await (await resources.request("/")).json()).toMatchObject({
+    owned: [{ id: entry.id, chatHref: `/chat/agent?dashboard=${entry.id}&new=1` }],
+  });
+});
+
+it("dashboard pages allow only same-origin framing and expose Chat only at top level with agent access", async () => {
+  const html = "<!doctype html><html><head><title>Harbor</title></head><body><h1>Harbor</h1></body></html>";
+  const entry = await registry.createOwned("agent", "harbor.html", "alice", html, { sessionId: "original", userId: "alice" });
+  await fs.writeFile(path.join(root, "data", "dashboards", "harbor.html"), html);
+  let hasAgentAccess = true;
+  const viewer = createDashboardRoutes({
+    getConfig: () => config, getAgent: () => agent, registry,
+    authenticate: async () => ({}),
+    resolveActor: async () => ({ userId: "alice", eligible: true, hasAgentAccess }),
+    hasAgentAccess: async () => hasAgentAccess,
+    sessionExists: async () => true,
+  });
+  const response = await viewer.request(`/${entry.id}`);
+  expect(response.status).toBe(200);
+  expect(response.headers.get("Content-Security-Policy")!.split("; ")).toContain("frame-ancestors 'self'");
+  const rendered = await response.text();
+  const dom = new JSDOM(rendered, { url: `https://example.test/d/${entry.id}`, runScripts: "dangerously" });
+  await new Promise<void>((resolve) => dom.window.addEventListener("load", () => resolve(), { once: true }));
+  const chat = dom.window.document.querySelector("a");
+  expect(chat?.textContent).toBe("Chat");
+  expect(chat?.getAttribute("href")).toBe(`/chat/agent?session=original&dashboard=${entry.id}`);
+  expect(chat?.target).toBe("_blank");
+  expect(chat?.rel).toBe("noopener noreferrer");
+  const iframe = dom.window.document.createElement("iframe");
+  dom.window.document.body.append(iframe);
+  iframe.contentDocument!.open();
+  iframe.contentDocument!.write(rendered);
+  iframe.contentDocument!.close();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  expect(iframe.contentDocument!.querySelector("a")).toBeNull();
+  dom.window.close();
+  hasAgentAccess = false;
+  const withoutAccess = new JSDOM(await (await viewer.request(`/${entry.id}`)).text(), { runScripts: "dangerously" });
+  await new Promise<void>((resolve) => withoutAccess.window.addEventListener("load", () => resolve(), { once: true }));
+  expect(withoutAccess.window.document.querySelector("a")).toBeNull();
+  withoutAccess.window.close();
+});
+
+it("shared viewers get new chats only with agent access and lost-access creators get no Chat action", async () => {
+  const entry = await registry.createOwned("agent", "harbor.html", "alice", "HARBOR", { sessionId: "original", userId: "alice" });
+  await registry.replaceShares(entry.id, [{ kind: "all", mode: "read" }]);
+  let userId = "bob";
+  let hasAgentAccess = true;
+  const checks: string[][] = [];
+  const resources = createDashboardResourceRoutes({
+    getConfig: () => config, getAgent: () => agent, registry, pins,
+    authenticate: async () => ({}),
+    resolveActor: async () => ({ userId, eligible: true, hasAgentAccess }),
+    hasAgentAccess: async () => hasAgentAccess,
+    sessionExists: async (...ids) => { checks.push(ids); return true; },
+  });
+  expect(await (await resources.request("/")).json()).toMatchObject({
+    shared: [{ id: entry.id, chatHref: `/chat/agent?dashboard=${entry.id}&new=1` }],
+  });
+  expect(checks).toEqual([]);
+  hasAgentAccess = false;
+  expect(await (await resources.request("/")).json()).toMatchObject({ shared: [{ id: entry.id, chatHref: null }] });
+  userId = "alice";
+  expect(await (await resources.request("/")).json()).toMatchObject({ owned: [{ id: entry.id, chatHref: null }] });
+  expect(checks).toEqual([]);
 });

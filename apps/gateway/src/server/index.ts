@@ -6,7 +6,7 @@ import { logError } from "../logging.js";
 import { cors } from "hono/cors";
 import { readEnv, resolveBindHost, resolveHomeDir } from "@yoplai/shared";
 import type { GatewayBindMode, GatewayConfig } from "@yoplai/shared";
-import { api } from "./api.core.js";
+import { api, dashboardSessionExists } from "./api.core.js";
 import { internalTools } from "./internal-tools.js";
 import { startConfiguredInternalSocket } from "./internal-socket.js";
 import {
@@ -122,6 +122,7 @@ app.route(
     resolveActor: resolveDashboardHttpActor,
     listRecipients: listDashboardRecipients,
     getOwnerName: dashboardOwnerName,
+    sessionExists: dashboardSessionExists,
     registry: getDashboardRegistry(
       path.join(CONFIG_DIR, "canvas", "registry.json")
     ),
