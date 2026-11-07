@@ -535,6 +535,7 @@ export const ScheduleJobFileSchema = z.object({
   ownerUserId: z.string().min(1).optional(),
   createdByUserId: z.string().min(1).optional(),
   credentialMode: z.enum(["owner", "team"]).optional(),
+  credentialRefusals: z.number().int().nonnegative().optional(),
   pausedReason: z.object({
     kind: z.literal("credentials"),
     integration: z.string(),

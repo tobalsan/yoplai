@@ -27,6 +27,8 @@ import {
   type RunScriptResult,
 } from "./script.js";
 
+const CREDENTIAL_REFUSAL_PAUSE_THRESHOLD = 3;
+
 const DEFAULT_JOB_TIMEOUT_MS = 30 * 60 * 1000; // 30 minutes
 
 type CredentialRefusal = CredentialConnectHints & { integration: string };
@@ -332,6 +334,7 @@ export class SchedulerService {
     if (job.credentialMode === "owner" && !job.ownerUserId) job.ownerUserId = ownerUserId;
     if (patch.enabled !== undefined) {
       job.enabled = patch.enabled;
+      if (patch.enabled) delete job.credentialRefusals;
       delete job.pausedReason;
     }
     if (patch.schedule) job.schedule = patch.schedule;
@@ -1005,7 +1008,25 @@ export class SchedulerService {
     input: CompleteRunInput
   ): Promise<SchedulerRunResult> {
     const { job, firedAt, payload } = input;
-    const pauseForCredentials = input.credentialRefused && job.schedule.runAt === undefined;
+    const recurring = job.schedule.runAt === undefined;
+    if (recurring) {
+      const current = this.findJob(job.agentId, job.id) ?? job;
+      if (input.credentialRefused) {
+        job.credentialRefusals = (current.credentialRefusals ?? 0) + 1;
+        current.credentialRefusals = job.credentialRefusals;
+        const integration = input.credentialRefused.integration;
+        input.errorMessage = job.credentialRefusals >= CREDENTIAL_REFUSAL_PAUSE_THRESHOLD
+          ? `Reconnect ${integration} credentials before this scheduled job can run. The job was paused; re-enable it after reconnecting.`
+          : `Reconnect ${integration} credentials (refusal ${job.credentialRefusals} of ${CREDENTIAL_REFUSAL_PAUSE_THRESHOLD}; the job pauses after ${CREDENTIAL_REFUSAL_PAUSE_THRESHOLD} in a row).`;
+        input.error = new Error(input.errorMessage);
+      } else {
+        delete job.credentialRefusals;
+        delete current.credentialRefusals;
+      }
+    }
+    const pauseForCredentials = input.credentialRefused && recurring &&
+      (job.credentialRefusals ?? 0) >= CREDENTIAL_REFUSAL_PAUSE_THRESHOLD;
+    let deliveryErrorMessage = input.errorMessage;
     const newlyPaused = pauseForCredentials && job.enabled;
     if (pauseForCredentials) {
       const ctx = getSchedulerContext();
@@ -1019,8 +1040,7 @@ export class SchedulerService {
         current.enabled = false;
         current.pausedReason = job.pausedReason;
       }
-      input.errorMessage = `Job "${job.name}" on ${input.agent.name} is paused: reconnect ${refusal.integration} at ${resolveWebBaseUrl(ctx.getConfig())}${connectPath}, then resume the job in the agent's Schedules tab.`;
-      input.error = new Error(input.errorMessage);
+      deliveryErrorMessage = `Job "${job.name}" on ${input.agent.name} is paused: reconnect ${refusal.integration} at ${resolveWebBaseUrl(ctx.getConfig())}${connectPath}, then resume the job in the agent's Schedules tab.`;
     }
     job.state = job.state ?? {};
     job.state.lastStatus = input.status;
@@ -1039,14 +1059,14 @@ export class SchedulerService {
         status: input.status,
         silentTick: input.runKind === "silent_tick",
         response: input.response,
-        errorMessage: input.errorMessage,
+        errorMessage: deliveryErrorMessage,
       },
     });
     job.state.lastDelivery = delivery.length > 0 ? delivery : undefined;
 
     if (newlyPaused && !job.deliver?.length && job.ownerUserId) {
       const ctx = getSchedulerContext();
-      const text = deliveryText({ jobName: job.name, status: "error", errorMessage: input.errorMessage })!;
+      const text = deliveryText({ jobName: job.name, status: "error", errorMessage: deliveryErrorMessage })!;
       for (const [id, notifier] of ctx.getUserNotifiers()) {
         try {
           await withDeliveryTimeout(notifier({ agent: input.agent, userId: job.ownerUserId, text }));
@@ -1136,6 +1156,13 @@ export class SchedulerService {
       if (current) {
         current.enabled = false;
         current.pausedReason = job.pausedReason;
+      }
+    }
+    if (recurring) {
+      const current = this.findJob(job.agentId, job.id);
+      if (current) {
+        if (job.credentialRefusals === undefined) delete current.credentialRefusals;
+        else current.credentialRefusals = job.credentialRefusals;
       }
     }
     await this.saveAgent(job.agentId);

@@ -102,6 +102,7 @@ Opt-in model routing picks a model and effort per chat session with a bounded cl
 
 ### Changed
 
+- Recurring scheduled jobs pause after three consecutive credential refusals instead of the first; successful or other failed runs and explicit re-enabling reset the persisted streak.
 - Superadmin agent config tabs hide other users' private dashboards and Mine jobs by default, with a remembered toggle.
 - Sidebar chats fit on one line with full titles on hover or focus; click a project folder or name to toggle its chats, and open the project page from its row menu.
 - `send_file` accepts files in conversation sub-folders and sends them by basename.
