@@ -1305,6 +1305,30 @@ describe("api core session resolution", () => {
       });
     });
 
+    it("keeps prompting to grant permissions while a usable grant lacks requested scopes", async () => {
+      loadConfigValue = { agents: [{ id: "alpha", name: "Alpha" }], pool: [] };
+      buildExtensionCatalog.mockResolvedValue([{
+        ...catalog[0],
+        oauth: { provider: "google", scopes: ["drive.readonly", "drive", "email"], minimumScopes: ["drive.readonly", "email"] },
+      }]);
+      const { getOAuthService } = await import("../oauth/service.js");
+      const getConnection = vi.spyOn(getOAuthService(), "getConnection").mockReturnValue({
+        agentId: "alpha", provider: "google", scope: "team", accessToken: "t",
+        scopes: ["drive.readonly", "email", "drive.file"], connectedAt: 1, updatedAt: 1,
+      });
+      const { api } = await import("./api.core.js");
+
+      const oldGrant = await api.request(new Request("http://localhost/agents/alpha/extensions"));
+      expect((await oldGrant.json()).extensions[0]).toMatchObject({ oauthConnected: false });
+
+      getConnection.mockReturnValue({
+        agentId: "alpha", provider: "google", scope: "team", accessToken: "t",
+        scopes: ["drive.readonly", "drive", "email"], connectedAt: 1, updatedAt: 1,
+      });
+      const fullGrant = await api.request(new Request("http://localhost/agents/alpha/extensions"));
+      expect((await fullGrant.json()).extensions[0]).toMatchObject({ oauthConnected: true });
+    });
+
     it("403s for non-members in multi-user mode", async () => {
       loadConfigValue = { agents: [{ id: "alpha", name: "Alpha" }], pool: [] };
       multiUserState.loaded = true;

@@ -238,6 +238,31 @@ describe("OAuthService", () => {
     expect(await service.resolveToken("a1", { provider: "google", scopes: ["gmail"] }, userId)).toMatchObject({ connected: true });
   });
 
+  it("connects a grant that holds the minimum scopes but not every requested scope", async () => {
+    store.save({ ...scopedConnection("alice"), scopes: ["drive.readonly", "email", "drive.file"] });
+    const service = new OAuthService({ store, loadConfig: () => makeConfig() });
+    const result = await service.resolveToken("a1", {
+      provider: "google",
+      scopes: ["drive.readonly", "drive", "email"],
+      minimumScopes: ["drive.readonly", "email"],
+    }, "alice");
+    expect(result).toMatchObject({ connected: true, scopes: ["drive.readonly", "email", "drive.file"] });
+  });
+
+  it("refuses a grant missing a minimum scope and reconnects with every requested scope", async () => {
+    store.save({ ...scopedConnection("alice"), scopes: ["drive.readonly", "drive"] });
+    const service = new OAuthService({ store, loadConfig: () => makeConfig() });
+    const result = await service.resolveToken("a1", {
+      provider: "google",
+      scopes: ["drive.readonly", "drive", "email"],
+      minimumScopes: ["drive.readonly", "email"],
+    }, "alice");
+    expect(result).toMatchObject({ connected: false, reason: "insufficient_scope" });
+    if (!result.connected) {
+      expect(new URL(result.authorizeUrl!).searchParams.get("scopes")).toBe("drive.readonly drive email");
+    }
+  });
+
   it("resolveToken returns a fresh access token when connected", async () => {
     store.save({
       agentId: "a1",

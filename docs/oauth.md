@@ -67,6 +67,8 @@ configured authentication behavior.
 
 Host OAuth framework manages provider authorize/callback/status/disconnect routes per agent. Extensions declare required provider/scopes and receive refreshed access token through runtime context.
 
+An extension's `scopes` are requested on connect/reconnect and shown on the connection card. Optional `minimumScopes` lists the scopes a grant must hold to be usable at all (default: `scopes`). A grant holding `minimumScopes` but not every requested scope still resolves at tool calls, with its real granted `scopes`, so the extension can refuse only the features that need the missing ones; the card keeps asking to grant permissions until the full set is granted.
+
 In the web connection card, choose **Just me** to use your Google account only for your own requests, or **Whole team** to share it with everyone on that agent. In multi-user mode only admins can change **Whole team**; other users see it read-only, or a note that an admin must set it up. Personal connections require a signed-in Yoplai user (multi-user mode). At each tool call, the gateway selects that requester's personal connection, falls back to the team connection if none exists, or returns a connect link. It never uses another user's personal connection. A revoked personal grant requires reconnecting rather than silently switching accounts.
 
 The connection card shows and disconnects the selected scope. Google extensions on the same agent reuse that scoped Google connection. Existing agent-only connections are read as team connections and move to encrypted scoped records on their next save; current agents keep their access. Runs without a Yoplai user continue to use team credentials.
