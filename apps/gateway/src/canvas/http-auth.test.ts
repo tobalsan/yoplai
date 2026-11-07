@@ -33,7 +33,7 @@ it("a real authenticated pending session gets not found instead of being treated
     expect(session?.user.email).toBe("pending@example.test");
     const registry = new DashboardRegistry(path.join(root, "canvas", "registry.json"));
     const entry = await registry.createOwned("agent", "private.html", "owner", "PRIVATE");
-    const routes = createDashboardRoutes({ getConfig: () => config, getAgent: () => undefined, registry, authenticate: authenticateDashboardRequest, resolveActor: resolveDashboardHttpActor, hasAgentAccess: async () => false });
+    const routes = createDashboardRoutes({ getConfig: () => config, getAgent: () => undefined, registry, authenticate: authenticateDashboardRequest, resolveActor: resolveDashboardHttpActor, hasAgentAccess: async () => false, sessionExists: async () => false });
     const response = await routes.request(`/${entry.id}`, { headers: { Cookie: cookie } });
     expect(response.status).toBe(404);
     expect(response.headers.get("Location")).toBeNull();

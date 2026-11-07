@@ -53,6 +53,31 @@ Failed previews fall back to the card. SVG, other formats, inbound uploads and
 older files stored with a generic MIME type keep their existing presentation.
 All previews and downloads use the existing authenticated media route.
 
+## Dashboards in chat
+
+Successful `dashboard_create` and `dashboard_update` calls show the dashboard
+under the tool call. Use **Expand** to open it beside the conversation, **Collapse**
+to return it inline, or **Open** to view its page in a new tab. Live creates and
+updates automatically open the panel when the viewport is wider than 768 px and
+the chat row has at least 726 px for a split. Updates of the same dashboard reload
+its view; different dashboards keep separate views. Reload and old sessions replay
+saved views without automatically opening the panel. No apps origin is needed.
+
+The dashboard page, the **Dashboards** page rows, and the agent's **Dashboards**
+tab offer **Chat** only when you have access to the dashboard's agent. Creators
+return to the conversation recorded at creation if it still exists; everyone
+else starts a fresh chat with that agent. Missing original conversations and
+older dashboards also start fresh chats. The dashboard opens in the panel,
+including the overlay on narrow screens, and stays open after the first message.
+The dashboard page's Chat link opens a new tab and is hidden inside a chat frame.
+Shared dashboard access alone does not grant chat access; creators who lose agent
+access can still manage their dashboards but see no Chat action.
+
+Dashboard frames use their existing `/d/<id>` access checks and published/draft
+rules. Scripts run in an opaque sandbox without access to the chat's storage.
+Opening a chat from a dashboard does not tell the agent which dashboard you opened;
+name it in your message when asking about it.
+
 ## MCP App views
 
 `send_file` uses the built-in `yoplai` file viewer without requiring `mcp.json`.

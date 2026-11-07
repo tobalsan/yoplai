@@ -38,13 +38,16 @@ export function chatAppViewCalls(session: ChatTranscriptSession, mode: HistoryVi
     : [])];
 }
 
+export type DashboardFrame = { kind: "dashboard"; id: string; title: string };
+
 export type AppViews = ReturnType<typeof createAppViews>;
 
-export function viewKey(view: Pick<McpAppViewReference, "server" | "resourceUri" | "file">): string {
-  return view.server + "\n" + view.resourceUri + (view.file ? "\n" + view.file.filename : "");
+export function viewKey(view: Pick<McpAppViewReference, "server" | "resourceUri" | "file" | "key">): string {
+  const key = view.key ?? view.file?.filename;
+  return view.server + "\n" + view.resourceUri + (key !== undefined ? "\n" + key : "");
 }
 
-export function createAppViews(sessionId: Accessor<string | null | undefined>, calls: Accessor<AppViewCall[]>) {
+export function createAppViews(sessionId: Accessor<string | null | undefined>, calls: Accessor<AppViewCall[]>, chatScope?: Accessor<string>) {
   const source = createMemo(calls);
   const [shown, setShown] = createSignal(new Map<string, AppViewCall>());
   const historyIds = createMemo(() => new Set(source().filter((call) => call.history).map((call) => call.id)));
@@ -78,12 +81,35 @@ export function createAppViews(sessionId: Accessor<string | null | undefined>, c
     view: AppView;
     order: AppViewCall[];
   }>();
-  createComputed(on(sessionId, (current, previous) => {
+  const [standalone, setStandalone] = createSignal<DashboardFrame>();
+  let selectedScope: string | undefined;
+  function close() {
+    setSelected(undefined);
+    setStandalone(undefined);
+  }
+  if (chatScope) createComputed(on(chatScope, (current, previous) => {
     if (current !== previous) {
-      setSelected(undefined);
+      if (current !== selectedScope) close();
       setShown(new Map());
     }
-  }, { defer: true }));
+  }));
+  createComputed(on(sessionId, (current, previous) => {
+    if (current !== previous) {
+      if (!previous && current && (standalone() || selected())) {
+        setSelected((selection) => selection ? { ...selection, session: current } : undefined);
+      } else close();
+      setShown(new Map());
+    }
+  }));
+  createComputed(() => {
+    const frame = standalone();
+    if (!frame) return;
+    const view = projection().get(viewKey({ server: "yoplai", resourceUri: "ui://yoplai/dashboard", key: frame.id }));
+    if (view) {
+      setSelected({ session: sessionId(), view, order: [...view.calls] });
+      setStandalone(undefined);
+    }
+  });
   const panel = createMemo(() => {
     const selection = selected();
     if (!selection || selection.session !== sessionId()) return undefined;
@@ -124,11 +150,21 @@ export function createAppViews(sessionId: Accessor<string | null | undefined>, c
     },
     hidesFileCard(fileId: string) { return [...shown().values()].some((call) => call.result?.view?.file?.fileId === fileId); },
     panel,
+    frame: standalone,
+    openFrame(frame: DashboardFrame) {
+      selectedScope = chatScope?.();
+      setSelected(undefined);
+      setStandalone(frame);
+    },
     open(key: string) {
       const view = projection().get(key);
-      if (view) setSelected({ session: sessionId(), view, order: [...view.calls] });
+      if (view) {
+        selectedScope = chatScope?.();
+        setStandalone(undefined);
+        setSelected({ session: sessionId(), view, order: [...view.calls] });
+      }
     },
-    close() { setSelected(undefined); },
+    close,
     viewOf,
     roleOf(id: string): "host" | "link" | "panel-card" | "none" {
       const view = viewOf(id);

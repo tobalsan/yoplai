@@ -3,11 +3,28 @@ import { dashboardBaseUrl, normalizeDashboardSlug, openDashboardFile } from "./d
 import { attributes } from "./sql.js";
 import { DashboardRegistry, type DashboardRegistration } from "./store.js";
 import { dashboardAccessPolicy, type DashboardActor } from "./policy.js";
+import { dashboardTitle } from "./title.js";
 
 export type DashboardListContext = {
   actor: DashboardActor;
   ownerName?(id: string): Promise<string>;
+  sessionExists(userId: string, agentId: string, sessionId: string): Promise<boolean>;
 };
+
+export async function dashboardChatHref(
+  entry: DashboardRegistration,
+  actor: DashboardActor,
+  sessionExists: DashboardListContext["sessionExists"]
+): Promise<string | null> {
+  if (!actor.hasAgentAccess) return null;
+  const agent = encodeURIComponent(entry.agentId);
+  const dashboard = encodeURIComponent(entry.id);
+  if (entry.createdIn && entry.createdIn.userId === actor.userId &&
+    await sessionExists(entry.createdIn.userId, entry.agentId, entry.createdIn.sessionId)) {
+    return `/chat/${agent}?session=${encodeURIComponent(entry.createdIn.sessionId)}&dashboard=${dashboard}`;
+  }
+  return `/chat/${agent}?dashboard=${dashboard}&new=1`;
+}
 
 export async function dashboardHtml(
   agent: AgentConfig,
@@ -28,7 +45,7 @@ export async function listAgentDashboards(
   agent: AgentConfig,
   registry: DashboardRegistry,
   config: GatewayConfig,
-  context: DashboardListContext = { actor: { eligible: true, hasAgentAccess: true } }
+  context: DashboardListContext = { actor: { eligible: true, hasAgentAccess: true }, sessionExists: async () => false }
 ) {
   const entries = await registry.list(agent.id);
   const visible = dashboardAccessPolicy.filterVisible(entries, context.actor);
@@ -44,8 +61,7 @@ export async function listAgentDashboards(
         (entry.ownerUserId && !dashboardAccessPolicy.canWrite(entry, context.actor))) throw error;
       // A missing draft does not remove its durable registration.
     }
-    const title = html.match(/<title(?:\s[^>]*)?>([\s\S]*?)<\/title\s*>/i)?.[1]
-      ?.replace(/<[^>]*>/g, "").trim() || entry.slug;
+    const title = dashboardTitle(html, entry.slug);
     let params: string[] = [];
     for (const meta of html.matchAll(/<meta\b([^>]*)>/gi)) {
       const values = attributes(meta[1]);
@@ -65,6 +81,7 @@ export async function listAgentDashboards(
       id: entry.id, agentId: agent.id, agentName: agent.name,
       title, slug: entry.slug, params, linksTo: [...linksTo], updatedAt,
       link: `${dashboardBaseUrl(config)}/d/${entry.id}`,
+      chatHref: await dashboardChatHref(entry, context.actor, context.sessionExists),
       publishedAt: entry.publishedAt ?? null, legacy: !entry.ownerUserId, isOwner,
       shared: !!entry.ownerUserId && !isOwner && !!context.actor.userId &&
         !!entry.shares?.some((share) => share.kind === "all" || share.id === context.actor.userId),

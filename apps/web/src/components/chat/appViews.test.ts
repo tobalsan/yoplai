@@ -13,6 +13,57 @@ const fileCall = (id: string, filename: string): AppViewCall => ({
 });
 
 describe("app views", () => {
+  it("clears shown files when the agent/chat scope changes even with the same resolved session id", () => {
+    createRoot((dispose) => {
+      const [scope, setScope] = createSignal("agent-a:chat");
+      const views = createAppViews(() => "same-session-id", () => [fileCall("file", "report.md")], scope);
+      views.reportShown("yoplai\nui://yoplai/file-viewer\nreport.md", "file");
+      expect(views.hidesFileCard("file")).toBe(true);
+      setScope("agent-b:chat");
+      expect(views.hidesFileCard("file")).toBe(false);
+      dispose();
+    });
+  });
+  it("keeps a dashboard opened from a fresh chat through the first message, then clears on chat switches", () => {
+    createRoot((dispose) => {
+      const [session, setSession] = createSignal<string | undefined>(undefined);
+      const [scope, setScope] = createSignal("agent-a:fresh");
+      const [calls, setCalls] = createSignal<AppViewCall[]>([]);
+      const views = createAppViews(session, calls, scope);
+      views.openFrame({ kind: "dashboard", id: "garden", title: "Dashboard" });
+      expect(views.frame()).toEqual({ kind: "dashboard", id: "garden", title: "Dashboard" });
+      setSession("first-session");
+      expect(views.frame()?.id).toBe("garden");
+      const ref = { server: "yoplai", tool: "dashboard", resourceUri: "ui://yoplai/dashboard", key: "garden" };
+      setCalls([{ id: "created", timestamp: 1, view: ref, result: { view: { ...ref, recordId: "record-1" } } }]);
+      expect(views.frame()).toBeUndefined();
+      expect(views.panel()?.latest.id).toBe("created");
+      setCalls((current) => [...current, { id: "updated", timestamp: 2, view: ref, result: { view: { ...ref, recordId: "record-2" } } }]);
+      expect(views.panel()?.latest.id).toBe("updated");
+      setScope("agent-a:another-chat");
+      expect(views.panel()).toBeUndefined();
+      expect(views.frame()).toBeUndefined();
+      views.openFrame({ kind: "dashboard", id: "garden", title: "Dashboard" });
+      setScope("agent-b:fresh");
+      expect(views.frame()).toBeUndefined();
+      dispose();
+    });
+  });
+  it("updates the same dashboard key while keeping other dashboards in their own views", () => {
+    createRoot((dispose) => {
+      const dashboard = { server: "yoplai", tool: "dashboard", resourceUri: "ui://yoplai/dashboard" };
+      const dashboardCall = (id: string, key: string): AppViewCall => ({ id, timestamp: 1, view: dashboard, result: { view: { ...dashboard, recordId: id, key } } });
+      const [calls, setCalls] = createSignal([dashboardCall("first", "garden"), dashboardCall("other", "weather")]);
+      const views = createAppViews(() => "session", calls);
+      expect(viewKey(calls()[0].result!.view!)).toBe("yoplai\nui://yoplai/dashboard\ngarden");
+      views.open("yoplai\nui://yoplai/dashboard\ngarden");
+      setCalls((current) => [...current, dashboardCall("revised", "garden")]);
+      expect(views.panel()?.latest.id).toBe("revised");
+      expect([views.roleOf("first"), views.roleOf("other"), views.roleOf("revised")]).toEqual(["panel-card", "host", "link"]);
+      expect(views.viewOf("other")?.latest.id).toBe("other");
+      dispose();
+    });
+  });
   it("separates filenames and reuses an exact filename without changing non-file keys", () => {
     createRoot((dispose) => {
       const a = fileCall("a-v1", "a.md");

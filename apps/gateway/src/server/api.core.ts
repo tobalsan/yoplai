@@ -646,6 +646,10 @@ async function resolveExistingSessionHistoryFile(params: {
   return filePath ?? null;
 }
 
+export async function dashboardSessionExists(userId: string, agentId: string, sessionId: string): Promise<boolean> {
+  return !!await resolveExistingSessionHistoryFile({ userId: userId === "local" ? undefined : userId, agentId, sessionId });
+}
+
 api.route("/", createMcpAppRoutes({ getConfig: loadConfig, getRuntime: getExtensionRuntime, getUserId: getRequestUserId, resolveHistoryFile: resolveExistingSessionHistoryFile }));
 
 // GET /api/agents - list all agents (respects single-agent mode)
@@ -896,7 +900,7 @@ api.get("/agents/:id/dashboards", async (c) => {
   const registry = getDashboardRegistry(path.join(CONFIG_DIR, "canvas", "registry.json"));
   const auth = await getRequestAuthContext(c);
   const actor = await resolveDashboardHttpActor(auth, agentId);
-  return c.json(await listAgentDashboards(agent, registry, config, { actor, ownerName: dashboardOwnerName }));
+  return c.json(await listAgentDashboards(agent, registry, config, { actor, ownerName: dashboardOwnerName, sessionExists: dashboardSessionExists }));
 });
 
 // GET /api/agents/:id/suggestions - workspace-authored starting prompts.
@@ -1647,4 +1651,5 @@ api.route("/dashboards", createDashboardResourceRoutes({
   resolveActor: resolveDashboardHttpActor,
   listRecipients: listDashboardRecipients,
   getOwnerName: dashboardOwnerName,
+  sessionExists: dashboardSessionExists,
 }));

@@ -47,7 +47,7 @@ describe("dashboard file enumeration", () => {
     const entry = await registry.link("agent-1", "a.html");
     await registry.claim(entry.id, "owner-1", "<h1>a</h1>");
     await registry.replaceShares(entry.id, [{ kind: "user", id: "reader-1", mode: "read" }]);
-    const rows = (actor: object) => listAgentDashboards(agent(), registry, config, { actor: { eligible: true, ...actor } });
+    const rows = (actor: object) => listAgentDashboards(agent(), registry, config, { actor: { eligible: true, ...actor }, sessionExists: async () => false });
     expect((await rows({ userId: "reader-1" }))[0]!.shared).toBe(true);
     expect((await rows({ userId: "admin-1", superadmin: true }))[0]!.shared).toBe(false);
     expect((await rows({ userId: "owner-1" }))[0]!.shared).toBe(false);
@@ -87,7 +87,7 @@ describe("dashboard file enumeration", () => {
       getAgent: () => agent(),
       registry,
       authenticate: async () => ({ user: {} }),
-      hasAgentAccess: async () => true,
+      hasAgentAccess: async () => true, sessionExists: async () => false,
     });
     const html = await (await routes.request(`/${entry.id}`)).text();
     expect(html).toContain('"a.html":"/d/');

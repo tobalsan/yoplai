@@ -195,6 +195,34 @@ describe("api core session resolution", () => {
     });
   });
 
+  it("agent dashboard rows resume local history and fall back when that conversation is removed", async () => {
+    const workspace = await fs.mkdtemp(path.join(os.tmpdir(), "dashboard-chat-api-"));
+    const { getDashboardRegistry } = await import("../canvas/store.js");
+    const registry = getDashboardRegistry("/tmp/yoplai-test/canvas/registry.json");
+    const history = "/tmp/yoplai-test/history/alpha-alg657-local.jsonl";
+    const entry = await registry.createOwned("alpha", "alg657-harbor.html", "local", "HARBOR", { sessionId: "alg657-local", userId: "local" });
+    try {
+      await fs.mkdir(path.dirname(history), { recursive: true });
+      await fs.writeFile(history, "{}\n");
+      getAgent.mockReturnValue({ id: "alpha", name: "Alpha", workspace });
+      const { api } = await import("./api.core.js");
+      expect(await (await api.request("/agents/alpha/dashboards")).json()).toContainEqual(expect.objectContaining({
+        id: entry.id, chatHref: `/chat/alpha?session=alg657-local&dashboard=${entry.id}`,
+      }));
+      expect(await (await api.request("/dashboards")).json()).toMatchObject({ owned: [expect.objectContaining({
+        id: entry.id, chatHref: `/chat/alpha?session=alg657-local&dashboard=${entry.id}`,
+      })] });
+      await fs.rm(history);
+      expect(await (await api.request("/agents/alpha/dashboards")).json()).toContainEqual(expect.objectContaining({
+        id: entry.id, chatHref: `/chat/alpha?dashboard=${entry.id}&new=1`,
+      }));
+    } finally {
+      await registry.deleteId(entry.id);
+      await fs.rm(history, { force: true });
+      await fs.rm(workspace, { recursive: true, force: true });
+    }
+  });
+
   it("pages full history without dropping timestamp ties and reports active usage outside the archive", async () => {
     getAgent.mockReturnValue({ id: "alpha", name: "Alpha", workspace: "/tmp" });
     const originals = Array.from({ length: 250 }, (_, i) => ({ role: "user", timestamp: Math.floor(i / 3), content: [{ type: "text", text: `message ${i}` }] }));

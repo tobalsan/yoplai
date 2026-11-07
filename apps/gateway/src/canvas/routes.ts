@@ -13,7 +13,7 @@ import {
   normalizeDashboardSlug,
   openDashboardFile,
 } from "./dashboard-files.js";
-import { dashboardHtml, listAgentDashboards } from "./list.js";
+import { dashboardChatHref, dashboardHtml, listAgentDashboards, type DashboardListContext } from "./list.js";
 import { dashboardAccessPolicy, type DashboardActor } from "./policy.js";
 import { DashboardRegistry } from "./store.js";
 import { DashboardPinStore } from "./pins.js";
@@ -79,6 +79,7 @@ export type DashboardRouteDependencies = {
   resolveActor?(auth: unknown, agentId?: string): Promise<DashboardActor>;
   listRecipients?(): Promise<Array<{ id: string; name: string; email: string; image?: string | null }>>;
   getOwnerName?(id: string): Promise<string>;
+  sessionExists: DashboardListContext["sessionExists"];
 };
 
 export function dashboardCsp(
@@ -86,7 +87,7 @@ export function dashboardCsp(
   assetOrigin?: string
 ): string {
   const assets = `${assetOrigin ?? dashboardBaseUrl(config)}/d-assets/`;
-  return `sandbox allow-scripts allow-downloads allow-modals allow-popups allow-popups-to-escape-sandbox; default-src 'none'; script-src 'unsafe-inline' ${assets}; style-src 'unsafe-inline' ${assets}; img-src data: blob:; font-src data: ${assets}; connect-src 'none'`;
+  return `sandbox allow-scripts allow-downloads allow-modals allow-popups allow-popups-to-escape-sandbox; default-src 'none'; script-src 'unsafe-inline' ${assets}; style-src 'unsafe-inline' ${assets}; img-src data: blob:; font-src data: ${assets}; connect-src 'none'; frame-ancestors 'self'`;
 }
 
 export function createDashboardAssetRoutes(
@@ -174,7 +175,9 @@ export function createDashboardRoutes(deps: DashboardRouteDependencies): Hono {
         viewer,
         params,
         links,
-        parseThemeCookie(c.req.header("Cookie"))
+        parseThemeCookie(c.req.header("Cookie")),
+        undefined,
+        await dashboardChatHref(entry, actor, deps.sessionExists)
       );
       c.header("Content-Security-Policy", dashboardCsp(config));
       c.header("Cache-Control", "no-store");
@@ -215,7 +218,7 @@ export function createDashboardResourceRoutes(deps: DashboardRouteDependencies &
     for (const agentId of agentIds) {
       const agent = deps.getAgent(agentId);
       if (!agent) continue;
-      const rows = await listAgentDashboards(agent, deps.registry, deps.getConfig(), { actor: await routeActor(deps, auth, agentId), ownerName: deps.getOwnerName });
+      const rows = await listAgentDashboards(agent, deps.registry, deps.getConfig(), { actor: await routeActor(deps, auth, agentId), ownerName: deps.getOwnerName, sessionExists: deps.sessionExists });
       for (const row of rows) {
         if (row.legacy || !listedIds.has(row.id)) continue;
         const dashboard = { ...row, pinned: pins.has(row.id) };
@@ -269,7 +272,7 @@ export function createDashboardResourceRoutes(deps: DashboardRouteDependencies &
         await deps.registry.replaceShares(current.id, parsed.data.shares);
         const agent = deps.getAgent(current.agentId);
         if (!agent) return c.notFound();
-        const rows = await listAgentDashboards(agent, deps.registry, deps.getConfig(), { actor: await routeActor(deps, auth, current.agentId), ownerName: deps.getOwnerName });
+        const rows = await listAgentDashboards(agent, deps.registry, deps.getConfig(), { actor: await routeActor(deps, auth, current.agentId), ownerName: deps.getOwnerName, sessionExists: deps.sessionExists });
         return c.json({ dashboard: rows.find((row) => row.id === current.id) });
       });
     } catch (error) {
@@ -293,7 +296,7 @@ export function createDashboardResourceRoutes(deps: DashboardRouteDependencies &
         let html: string;
         try { html = await file.readFile("utf8"); } finally { await file.close(); }
         await deps.registry.claim(current.id, actor.userId, html);
-        const rows = await listAgentDashboards(agent, deps.registry, deps.getConfig(), { actor, ownerName: deps.getOwnerName });
+        const rows = await listAgentDashboards(agent, deps.registry, deps.getConfig(), { actor, ownerName: deps.getOwnerName, sessionExists: deps.sessionExists });
         return c.json({ dashboard: rows.find((row) => row.id === current.id) });
       });
     } catch (error) {
@@ -329,7 +332,8 @@ export async function renderDashboardHtml(
   params: Record<string, string>,
   links: Record<string, string>,
   theme?: "light" | "dark" | null,
-  protectedLinkParams?: Record<string, string>
+  protectedLinkParams?: Record<string, string>,
+  chatHref?: string | null
 ): Promise<string> {
   const bindings: Record<string, string | null> = {
     ...params,
@@ -347,6 +351,7 @@ export async function renderDashboardHtml(
       links,
       errors: result.errors,
       protectedLinkParams,
+      chatHref,
     },
     theme
   );
@@ -378,6 +383,7 @@ export function injectDashboardRuntime(
     links: Record<string, string>;
     errors: Array<{ name: string; error: string }>;
     protectedLinkParams?: Record<string, string>;
+    chatHref?: string | null;
   },
   themeCookie?: "light" | "dark" | null
 ): string {
@@ -397,11 +403,16 @@ export function injectDashboardRuntime(
   const theme = '<link rel="stylesheet" href="/d-assets/theme.css">';
   const hasClosingHead = /<\/head\s*>/i.test(html);
   if (hasClosingHead) html = html.replace(/<\/head\s*>/i, `${theme}</head>`);
-  const bootstrap = `<script>(function(r){const build=(base,p)=>{const u=new URL(base,location.origin);for(const [k,v] of Object.entries(p||{}))u.searchParams.set(k,String(v));return u.pathname+u.search};window.YOPLAI={data:r.data,viewer:r.viewer,params:r.params,link:(slug,p)=>{const base=r.links[slug];if(!base)throw new Error("Unknown dashboard: "+slug);return build(base,{...p,...r.protectedLinkParams})}};for(const e of r.errors)console.error("Dashboard query error ("+e.name+"): "+e.error)})(${safeJson(runtime)});</script>`;
+  const chatStyle = runtime.chatHref ? `<style>
+.yoplai-dashboard-chat{position:fixed;bottom:16px;right:16px;z-index:1000;display:inline-flex;align-items:center;box-sizing:border-box;min-height:40px;padding:8px 12px;border:1px solid var(--dk-border,var(--border-default,#ccc));border-radius:6px;background:var(--dk-surface,var(--bg-surface,#fff));color:var(--dk-text,var(--text-primary,#111));font:500 14px/20px sans-serif;text-decoration:none}
+.yoplai-dashboard-chat:hover{text-decoration:underline;text-underline-offset:3px}
+.yoplai-dashboard-chat:focus-visible{outline:2px solid var(--dk-accent,var(--bg-accent,currentColor));outline-offset:2px}
+</style>` : "";
+  const bootstrap = `<script>(function(r){const build=(base,p)=>{const u=new URL(base,location.origin);for(const [k,v] of Object.entries(p||{}))u.searchParams.set(k,String(v));return u.pathname+u.search};window.YOPLAI={data:r.data,viewer:r.viewer,params:r.params,link:(slug,p)=>{const base=r.links[slug];if(!base)throw new Error("Unknown dashboard: "+slug);return build(base,{...p,...r.protectedLinkParams})}};if(r.chatHref&&window.top===window){const showChat=()=>{const a=document.createElement("a");a.className="yoplai-dashboard-chat";a.href=r.chatHref;a.textContent="Chat";a.target="_blank";a.rel="noopener noreferrer";document.body.append(a)};if(document.readyState==="loading")document.addEventListener("DOMContentLoaded",showChat,{once:true});else showChat()}for(const e of r.errors)console.error("Dashboard query error ("+e.name+"): "+e.error)})(${safeJson(runtime)});</script>`;
   const errors = runtime.errors.length
     ? `<section role="alert" style="font:14px sans-serif;background:#fee;color:#900;border:1px solid #d88;padding:12px;margin:12px"><strong>Dashboard query error</strong>${runtime.errors.map((error) => `<div><code>${escapeHtml(error.name)}</code>: ${escapeHtml(error.error)}</div>`).join("")}</section>`
     : "";
-  const insertion = `${hasClosingHead ? "" : theme}${themeScript}${bootstrap}${errors}`;
+  const insertion = `${hasClosingHead ? "" : theme}${themeScript}${chatStyle}${bootstrap}${errors}`;
   const doctype = html.match(/^\s*<!doctype[^>]*>/i);
   return doctype
     ? `${html.slice(0, doctype[0].length)}${insertion}${html.slice(doctype[0].length)}`

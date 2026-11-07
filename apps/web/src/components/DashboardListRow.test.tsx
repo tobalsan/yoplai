@@ -12,13 +12,22 @@ afterEach(() => { dispose?.(); root.remove(); });
 
 const row = (overrides: Partial<DashboardRow>): DashboardRow => ({
   id: "d1", agentId: "a", agentName: "Agent", title: "Revenue", slug: "revenue.html", link: "/d/d1",
-  params: [], linksTo: [], updatedAt: "2026-10-19T09:21:20.000Z", publishedAt: null,
+  chatHref: null, params: [], linksTo: [], updatedAt: "2026-10-19T09:21:20.000Z", publishedAt: null,
   legacy: false, isOwner: false, shared: false, ownerName: "Alice", mode: "read", ...overrides,
 });
 const show = (dashboard: DashboardRow) => { dispose = render(() => <DashboardListRow dashboard={dashboard} onManage={() => {}} onClaim={() => {}} />, root); };
 const buttons = () => Array.from(root.querySelectorAll("button")).map((button) => button.textContent?.trim());
 
 describe("DashboardListRow ownership label", () => {
+  it("offers same-tab Chat only when the server supplies chatHref", () => {
+    const [chatHref, setChatHref] = createSignal<string | null>("/chat/a?session=origin&dashboard=d1");
+    dispose = render(() => <DashboardListRow dashboard={row({ chatHref: chatHref() })} />, root);
+    const chat = () => Array.from(root.querySelectorAll("a")).find((link) => link.textContent?.trim() === "Chat");
+    expect(chat()?.getAttribute("href")).toBe("/chat/a?session=origin&dashboard=d1");
+    expect(chat()?.getAttribute("target")).toBeNull();
+    setChatHref(null);
+    expect(chat()).toBeUndefined();
+  });
   it("exposes an accessible pin toggle only when a callback is supplied", () => {
     const onPin = vi.fn();
     const [pinned, setPinned] = createSignal(false);

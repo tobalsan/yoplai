@@ -89,3 +89,56 @@ it("deletes replay data and lets a recreated session return only its new capture
     args: { revision: 2 }, result: { content: [{ type: "text", text: "New drawing" }] },
   });
 });
+
+// Pom approved capture -> public record/reference reads and schema parsing in
+// ALG-657 comment ab217d93; browser consumption is covered separately.
+it("persists a built-in dashboard and preserves its reuse key through history parsing", async () => {
+  const capture = await import("./capture.js");
+  const { McpAppViewReferenceSchema, StreamEventSchema } = await import("@yoplai/shared");
+  const identity = { agentId: "artist", sessionId: "drawing" };
+  const result = {
+    content: [{ type: "text", text: "Dashboard created" }],
+    structuredContent: { id: "overview", agentId: "artist", slug: "overview.html", title: "Example overview", link: "https://example.test/d/overview" },
+  };
+  await capture.captureYoplaiView({ ...identity, toolCallId: "dashboard-one" }, capture.yoplaiDashboardView,
+    { slug: "overview.html" }, result, { key: "overview" });
+  const view = capture.getMcpAppView(identity, "dashboard-one");
+  expect(McpAppViewReferenceSchema.parse(view)).toMatchObject({
+    server: "yoplai", tool: "dashboard", resourceUri: "ui://yoplai/dashboard", key: "overview",
+  });
+  expect(StreamEventSchema.parse({ type: "tool_result", id: "dashboard-one", name: "dashboard_create", content: "Dashboard created", isError: false, view })).toMatchObject({
+    view: { key: "overview" },
+  });
+  capture.clearMcpAppViews(identity);
+  expect(await capture.readMcpAppRecord(identity, "dashboard-one")).toMatchObject({
+    server: "yoplai", tool: "dashboard", args: { slug: "overview.html" }, result,
+  });
+});
+
+it("keeps send_file capture metadata and its legacy result unchanged", async () => {
+  const capture = await import("./capture.js");
+  const identity = { agentId: "artist", sessionId: "drawing" };
+  const file = { fileId: "example-file", filename: "report.html", title: "Example report", mimeType: "text/html", size: 24 };
+  await capture.captureSendFile({ ...identity, toolCallId: "file-one" }, { path: "report.html" }, file);
+  expect(capture.getMcpAppView(identity, "file-one")).toEqual({
+    recordId: expect.any(String), server: "yoplai", tool: "send_file", resourceUri: "ui://yoplai/file-viewer", file,
+  });
+  expect(await capture.readMcpAppRecord(identity, "file-one")).toMatchObject({ result: {
+    content: [{ type: "text", text: "File sent to user" }], structuredContent: { uri: "yoplai-file://example-file", ...file },
+  } });
+});
+
+it("silently skips only the exact built-in dashboard and still warns once for other reserved-server tools", async () => {
+  const capture = await import("./capture.js");
+  const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+  try {
+    const result = { content: [{ type: "text", text: "Example" }] };
+    await capture.captureMcpApp({ server: "yoplai", tool: "dashboard", ui: { resourceUri: "ui://yoplai/dashboard", visibility: ["model"] } }, context("builtin"), {}, result);
+    expect(warn).not.toHaveBeenCalled();
+    await capture.captureMcpApp({ server: "yoplai", tool: "dashboard", ui: { resourceUri: "ui://example.test/pretend", visibility: ["model"] } }, context("wrong-resource"), {}, result);
+    await capture.captureMcpApp({ server: "yoplai", tool: "other", ui: { resourceUri: "ui://yoplai/dashboard", visibility: ["model"] } }, context("other"), {}, result);
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(JSON.parse(String(warn.mock.calls[0]![0]))).toMatchObject({ server: "yoplai", outcome: "reserved_server" });
+    expect(await capture.readMcpAppRecord({ agentId: "artist", sessionId: "drawing" }, "other")).toBeUndefined();
+  } finally { warn.mockRestore(); }
+});

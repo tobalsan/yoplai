@@ -563,8 +563,8 @@ describe("EditAgent", () => {
     expect(container.textContent).toContain("Loading dashboards…");
 
     resolveDashboards([
-      { id: "clients", agentId: "scribe", agentName: "Scribe", publishedAt: null, legacy: false, isOwner: false, shared: true, ownerName: "Alice", mode: "read", title: "Clients", slug: "clients.html", params: [], linksTo: ["client.html"], updatedAt: "2026-09-25T10:00:00.000Z", link: "/d/clients" },
-      { id: "client", agentId: "scribe", agentName: "Scribe", publishedAt: null, legacy: false, isOwner: false, shared: true, ownerName: "Alice", mode: "read", title: "Client", slug: "client.html", params: ["id"], linksTo: [], updatedAt: "2026-09-25T10:00:00.000Z", link: "/d/client" },
+      { id: "clients", agentId: "scribe", agentName: "Scribe", publishedAt: null, legacy: false, isOwner: false, shared: true, ownerName: "Alice", mode: "read", title: "Clients", slug: "clients.html", params: [], linksTo: ["client.html"], updatedAt: "2026-09-25T10:00:00.000Z", link: "/d/clients", chatHref: null },
+      { id: "client", agentId: "scribe", agentName: "Scribe", publishedAt: null, legacy: false, isOwner: false, shared: true, ownerName: "Alice", mode: "read", title: "Client", slug: "client.html", params: ["id"], linksTo: [], updatedAt: "2026-09-25T10:00:00.000Z", link: "/d/client", chatHref: null },
     ]);
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(container.textContent).not.toContain("Loading dashboards…");

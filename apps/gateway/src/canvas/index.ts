@@ -18,6 +18,8 @@ import { lintDashboardHtml } from "./lint.js";
 import { executeDashboardQueries } from "./sql.js";
 import { dashboardAccessPolicy } from "./policy.js";
 import { resolveDashboardActor } from "./actor.js";
+import { captureYoplaiView, yoplaiDashboardView } from "../mcp-apps/capture.js";
+import { dashboardTitle } from "./title.js";
 import {
   dashboardBaseUrl,
   dashboardDirectory,
@@ -106,6 +108,7 @@ async function dashboardInfo(
     const stat = await file.stat();
     const html = await file.readFile("utf8");
     return {
+      id: entry.id,
       slug: entry.slug,
       updatedAt: stat.mtime.toISOString(),
       link: `${dashboardBaseUrl(config)}/d/${entry.id}`,
@@ -121,6 +124,32 @@ function toolContext(
   config: GatewayConfig
 ): ExtensionAgentToolContext {
   return { ...context, config };
+}
+
+async function captureDashboard(
+  context: ExtensionAgentToolContext,
+  args: unknown,
+  entry: DashboardRegistration,
+  html: string,
+  result: Awaited<ReturnType<typeof dashboardInfo>>
+): Promise<void> {
+  if (!context.sessionId || !context.toolCallId) return;
+  await captureYoplaiView(
+    { ...context, agentId: context.agent.id, sessionId: context.sessionId },
+    yoplaiDashboardView,
+    args,
+    {
+      content: [{ type: "text", text: JSON.stringify(result) }],
+      structuredContent: {
+        id: entry.id,
+        agentId: entry.agentId,
+        slug: entry.slug,
+        title: dashboardTitle(html, entry.slug),
+        link: result.link,
+      },
+    },
+    { key: entry.id }
+  );
 }
 
 async function registeredDashboard(
@@ -201,6 +230,7 @@ export const canvasExtension: Extension = {
             if (!dashboardAccessPolicy.canRead(entry, actor))
               throw invalidInput("Dashboard not found");
             return {
+              id: entry.id,
               slug,
               link: `${dashboardBaseUrl(hook!.config)}/d/${entry.id}`,
             };
@@ -208,6 +238,7 @@ export const canvasExtension: Extension = {
           const dashboards = dashboardAccessPolicy
             .filterVisible(await registry().list(agent.id), actor)
             .map((entry) => ({
+              id: entry.id,
               slug: entry.slug,
               link: `${dashboardBaseUrl(hook!.config)}/d/${entry.id}`,
             }));
@@ -219,6 +250,11 @@ export const canvasExtension: Extension = {
       },
       {
         name: "dashboard_create",
+        mcp: {
+          server: yoplaiDashboardView.server,
+          tool: yoplaiDashboardView.tool,
+          ui: { resourceUri: yoplaiDashboardView.resourceUri, visibility: ["model"] },
+        },
         description:
           "Register an unregistered data/dashboards/<slug>.html as private, owned by the requester, and publish its initial HTML. Fix returned problems and queryErrors before sharing. Existing registrations cannot be taken over.",
         parameters: {
@@ -252,18 +288,35 @@ export const canvasExtension: Extension = {
           } finally {
             await file.close();
           }
+          const ownHistory =
+            actor.userId === "local"
+              ? context.sessionOwnerId == null
+              : context.sessionOwnerId === actor.userId;
           const entry = await registry().createOwned(
             agent.id,
             slug,
             actor.userId,
-            html
+            html,
+            ownHistory &&
+              context.actorKind !== "eval" &&
+              context.actorKind !== "service" &&
+              context.sessionId
+              ? { sessionId: context.sessionId, userId: actor.userId }
+              : undefined
           );
           await recordDashboardVersion(agent, entry, html);
-          return dashboardInfo(agent, entry, hook!.config);
+          const result = await dashboardInfo(agent, entry, hook!.config);
+          await captureDashboard(context, raw, entry, html, result);
+          return result;
         },
       },
       {
         name: "dashboard_update",
+        mcp: {
+          server: yoplaiDashboardView.server,
+          tool: yoplaiDashboardView.tool,
+          ui: { resourceUri: yoplaiDashboardView.resourceUri, visibility: ["model"] },
+        },
         description:
           "Publish the current working HTML of a registered dashboard you can write. Keeps its owner and shares; returns lint and query diagnostics. Writers see drafts live before publication, readers see this published copy.",
         parameters: {
@@ -289,7 +342,9 @@ export const canvasExtension: Extension = {
               }
               if (entry.ownerUserId) await registry().publish(entry.id, html);
               await recordDashboardVersion(agent, entry, html);
-              return dashboardInfo(agent, entry, hook!.config);
+              const result = await dashboardInfo(agent, entry, hook!.config);
+              await captureDashboard(context, raw, entry, html, result);
+              return result;
             }
           );
         },
