@@ -57,14 +57,38 @@ describe("ProjectContextResolver", () => {
     expect(result?.project?.files).not.toContain(large.text);
     expect(result?.project?.filesPath).toBe("/tmp/context-test/files");
     listFiles.mockResolvedValue(Array.from({ length: 100 }, (_, index) => ({ ...small, id: String(index), text: "z".repeat(4000) })));
-    expect((await resolver.resolve({ agentId: "alpha", sessionId: "chat" }))?.project?.files?.length).toBeLessThanOrEqual(12000);
+    const many = (await resolver.resolve({ agentId: "alpha", sessionId: "chat" }))?.project?.files ?? "";
+    expect(Buffer.byteLength(many, "utf8")).toBeLessThanOrEqual(12000);
+    expect(many).toContain("notes.txt (99, 12 bytes)");
+    expect(many.match(/notes\.txt \(/g)).toHaveLength(100);
+    expect(many).not.toContain("Additional files omitted");
     listFiles.mockResolvedValue(Array.from({ length: 20 }, (_, index) => ({ ...small, id: String(index), text: "😀".repeat(1900) })));
     const unicode = (await resolver.resolve({ agentId: "alpha", sessionId: "chat" }))?.project?.files ?? "";
     expect(Buffer.byteLength(unicode, "utf8")).toBeLessThanOrEqual(12000);
-    expect(unicode).toContain("Additional files omitted");
+    expect(unicode).toContain("notes.txt (0, 12 bytes)");
+    expect(unicode).toContain("notes.txt (19, 12 bytes)");
+    expect(unicode.match(/notes\.txt \(/g)).toHaveLength(20);
+    expect(unicode).toContain("😀");
+    expect(unicode).not.toContain("Additional files omitted");
     expect(unicode).not.toContain("�");
     listFiles.mockResolvedValue([]);
     expect((await resolver.resolve({ agentId: "alpha", sessionId: "chat" }))?.project?.files).toBe("");
+  });
+
+  it("omits files only when their headers alone exceed the byte budget", async () => {
+    resolveSessionProject.mockResolvedValue("work");
+    get.mockResolvedValue({ instructions: "Read files." });
+    listFiles.mockResolvedValue([
+      { id: "first", name: "first.txt", size: 3, text: "optional text" },
+      ...Array.from({ length: 100 }, (_, index) => ({ id: String(index), name: "x".repeat(196) + ".txt", size: 3 })),
+      { id: "last", name: "last.txt", size: 3 },
+    ]);
+    const files = (await new ProjectContextResolver().resolve({ agentId: "alpha", sessionId: "chat" }))?.project?.files ?? "";
+    expect(Buffer.byteLength(files, "utf8")).toBeLessThanOrEqual(12000);
+    expect(files).toContain("first.txt (first, 3 bytes)");
+    expect(files).toContain("Additional files omitted from context; inspect the project files directory.");
+    expect(files).not.toContain("last.txt (last, 3 bytes)");
+    expect(files).not.toContain("optional text");
   });
 
   it("refreshes shared references and the bounded notes tail across agents including reference paths", async () => {

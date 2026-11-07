@@ -34,17 +34,30 @@ export class ProjectContextResolver {
     if (!project) return context;
     const filesPath = store.filesDirectory(id);
     await fs.mkdir(filesPath, { recursive: true });
-    let files = "";
+    const projectFiles = await store.listFiles(id);
+    const entries = projectFiles.map((file) => file.name + " (" + file.id + ", " + file.size + " bytes)");
+    let files = entries.join("\n");
     const note = "\nAdditional files omitted from context; inspect the project files directory.";
-    for (const file of await store.listFiles(id)) {
-      const entry = [file.name + " (" + file.id + ", " + file.size + " bytes)",
-        file.text && file.text.length <= PROJECT_FILE_INLINE_LIMIT ? file.text : "",
-        file.extractionError ?? "", file.extractionNote ?? ""].filter(Boolean).join("\n");
-      if (Buffer.byteLength(files + "\n" + entry + note, "utf8") > PROJECT_FILES_CONTEXT_BUDGET) {
-        files += note;
-        break;
+    let remaining = PROJECT_FILES_CONTEXT_BUDGET - Buffer.byteLength(files, "utf8");
+    if (remaining < 0) {
+      files = "";
+      for (const entry of entries) {
+        const next = files + (files ? "\n" : "") + entry;
+        if (Buffer.byteLength(next + note, "utf8") > PROJECT_FILES_CONTEXT_BUDGET) break;
+        files = next;
       }
-      files += (files ? "\n" : "") + entry;
+      files += note;
+    } else {
+      projectFiles.forEach((file, index) => {
+        const details = [file.text && file.text.length <= PROJECT_FILE_INLINE_LIMIT ? file.text : "",
+          file.extractionError ?? "", file.extractionNote ?? ""].filter(Boolean).join("\n");
+        const size = Buffer.byteLength("\n" + details, "utf8");
+        if (details && size <= remaining) {
+          entries[index] += "\n" + details;
+          remaining -= size;
+        }
+      });
+      files = entries.join("\n");
     }
     let references = "";
     for (const reference of await store.listReferences(id)) {

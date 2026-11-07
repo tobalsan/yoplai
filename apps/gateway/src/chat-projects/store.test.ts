@@ -62,6 +62,67 @@ describe("ChatProjectStore", () => {
     expect(await store.listFiles(project.id)).toEqual([]);
   });
 
+  it("keeps one agent-added entry when the same sent name and bytes are repeated", async () => {
+    const store = new ChatProjectStore(dir);
+    const project = await store.create("Research");
+    const file = { id: "first", name: "report.txt", mimeType: "text/plain", size: 5, createdAt: 1 };
+    const first = await store.addFileDeduped(project.id, file, Buffer.from("Notes"));
+    const repeated = await store.addFileDeduped(project.id, { ...file, id: "second" }, Buffer.from("Notes"));
+    expect(first).toMatchObject({ status: "added", file: { id: "first", name: "report.txt", sourceName: "report.txt" } });
+    expect(repeated).toEqual({ status: "already_in_project", file: first.file });
+    expect(await store.listFiles(project.id)).toEqual([first.file]);
+    expect(await fs.readdir(store.filesDirectory(project.id))).toEqual(["first"]);
+    expect(await fs.readFile(path.join(store.filesDirectory(project.id), "first"), "utf8")).toBe("Notes");
+  });
+
+  it("keeps differing contents under free suffixed names and dedupes a resent version", async () => {
+    const store = new ChatProjectStore(dir);
+    const project = await store.create("Research");
+    const file = { id: "upload", name: "report.xlsx", mimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", size: 3, createdAt: 1 };
+    await store.addFile(project.id, file, Buffer.from("old"));
+    const second = await store.addFileDeduped(project.id, { ...file, id: "agent-2" }, Buffer.from("new"));
+    const third = await store.addFileDeduped(project.id, { ...file, id: "agent-3" }, Buffer.from("now"));
+    const resent = await store.addFileDeduped(project.id, { ...file, id: "agent-4" }, Buffer.from("new"));
+    expect(second).toMatchObject({ status: "added", file: { name: "report (2).xlsx", sourceName: "report.xlsx" } });
+    expect(third).toMatchObject({ status: "added", file: { name: "report (3).xlsx" } });
+    expect(resent).toEqual({ status: "already_in_project", file: second.file });
+    expect((await store.listFiles(project.id)).map((item) => item.name)).toEqual(["report.xlsx", "report (2).xlsx", "report (3).xlsx"]);
+    expect(await fs.readFile(path.join(store.filesDirectory(project.id), "upload"), "utf8")).toBe("old");
+    expect(await fs.readFile(path.join(store.filesDirectory(project.id), "agent-2"), "utf8")).toBe("new");
+  });
+
+  it("keeps suffixed names within 200 characters while preserving the extension", async () => {
+    const store = new ChatProjectStore(dir);
+    const project = await store.create("Research");
+    const file = { id: "first", name: "x".repeat(196) + ".txt", mimeType: "text/plain", size: 3, createdAt: 1 };
+    await store.addFileDeduped(project.id, file, Buffer.from("old"));
+    const result = await store.addFileDeduped(project.id, { ...file, id: "second" }, Buffer.from("new"));
+    expect(result.file.name).toBe("x".repeat(192) + " (2).txt");
+    expect(result.file.name).toHaveLength(200);
+  });
+
+  it("does not recreate a deleted project when an agent adds a file", async () => {
+    const store = new ChatProjectStore(dir);
+    const project = await store.create("Research");
+    await store.delete(project.id);
+    const file = { id: "late", name: "report.txt", mimeType: "text/plain", size: 3, createdAt: 1 };
+    await expect(store.addFileDeduped(project.id, file, Buffer.from("new"))).rejects.toThrow("Project not found");
+    expect(await store.get(project.id)).toBeNull();
+    await expect(fs.stat(path.dirname(store.filesDirectory(project.id)))).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("dedupes concurrent sends across store instances while leaving uploads separate", async () => {
+    const store = new ChatProjectStore(dir);
+    const project = await store.create("Research");
+    const file = { id: "uploaded", name: "report.txt", mimeType: "text/plain", size: 3, createdAt: 1 };
+    await store.addFile(project.id, file, Buffer.from("abc"));
+    const results = await Promise.all(["first", "second"].map((id) => new ChatProjectStore(dir).addFileDeduped(project.id, { ...file, id }, Buffer.from("abc"))));
+    expect(results.map((result) => result.status)).toEqual(["added", "already_in_project"]);
+    expect(results[0]!.file).toMatchObject({ name: "report (2).txt", sourceName: "report.txt", sha256: "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad" });
+    expect(await store.listFiles(project.id)).toHaveLength(2);
+    expect(results[1]!.file).toEqual(results[0]!.file);
+  });
+
   it("persists project references and notes with isolated, serialized mutations", async () => {
     const store = new ChatProjectStore(dir, "alice");
     const project = await store.create("Memory");

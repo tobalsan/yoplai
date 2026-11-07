@@ -1057,6 +1057,21 @@ describe("container file registration", () => {
     expect(executeExtensionTool).not.toHaveBeenCalled();
   });
 
+  it("passes the project outcome through with file registration", async () => {
+    registerToken("file-token");
+    const context = getContainerTokenContext("file-token")!;
+    const project = { status: "added" as const, name: "report (2).csv", extractionError: "Could not read text" };
+    context.registerFileOutput = async () => ({
+      fileId: "file-1", filename: "report.csv", mimeType: "text/csv", size: 4, project,
+    });
+    const { app } = createDeps();
+
+    const response = await postTool(app, request);
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ registered: true, project });
+  });
+
   it("returns a typed file rejection unchanged and logs one warning", async () => {
     registerToken("file-token");
     const context = getContainerTokenContext("file-token")!;

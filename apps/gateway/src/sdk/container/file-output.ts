@@ -9,6 +9,12 @@ import type {
 } from "@yoplai/shared";
 import { EXTENSION_TO_MIME_TYPES } from "@yoplai/shared/media-types";
 import { CONTAINER_DATA_DIR } from "../../agents/container.js";
+import { ChatProjectStore } from "../../chat-projects/store.js";
+import { extractProjectFile } from "../../chat-projects/extraction.js";
+import { CONFIG_DIR } from "../../config/index.js";
+import { resolveSessionProject } from "../../history/store.js";
+import { logWarn } from "../../logging.js";
+import { MAX_UPLOAD_SIZE_BYTES, resolveUploadMimeType } from "../../media/upload.js";
 import {
   ensureMediaDirectories,
   getMediaOutboundDir,
@@ -18,6 +24,15 @@ import {
 import type { SdkRunParams } from "../types.js";
 import { ensurePathWithinDir, sanitizeFilename } from "./launch-spec.js";
 
+export type FileOutputResult = MediaFileMetadata & {
+  project?: {
+    status: "added" | "already_in_project" | "not_added";
+    name?: string;
+    reason?: string;
+    extractionError?: string;
+  };
+};
+
 export class ContainerFileOutputAdapter {
   async handle(
     params: SdkRunParams,
@@ -25,7 +40,7 @@ export class ContainerFileOutputAdapter {
     hostDataDir: string | undefined,
     signal?: AbortSignal,
     conversationFiles?: ExtensionAgentToolContext["conversationFiles"]
-  ): Promise<MediaFileMetadata> {
+  ): Promise<FileOutputResult> {
     signal?.throwIfAborted();
     const files =
       conversationFiles &&
@@ -155,11 +170,43 @@ export class ContainerFileOutputAdapter {
         mimeType: metadata.mimeType,
         size: metadata.size,
       });
+      if (params.context?.project?.id) {
+        try {
+          return { ...metadata, project: await addToProject(params, metadata) };
+        } catch (error) {
+          const reason = error instanceof Error ? error.message : "Project file could not be added";
+          logWarn("Sent file was not added to project", {
+            projectId: params.context.project.id, fileId: metadata.fileId, reason,
+          });
+          return { ...metadata, project: { status: "not_added", reason } };
+        }
+      }
       return metadata;
     } finally {
       await sourceFile?.close();
     }
   }
+}
+
+async function addToProject(
+  params: SdkRunParams,
+  metadata: MediaFileMetadata
+): Promise<NonNullable<FileOutputResult["project"]>> {
+  const projectId = params.context!.project!.id;
+  if (await resolveSessionProject(params.agentId, params.sessionId, params.userId) !== projectId) {
+    throw new Error("project changed");
+  }
+  const store = new ChatProjectStore(CONFIG_DIR, params.userId);
+  if (!await store.get(projectId)) throw new Error("project not found");
+  const data = await fsPromises.readFile(metadata.path);
+  if (data.length > MAX_UPLOAD_SIZE_BYTES) throw new Error("File exceeds the 25MB upload limit");
+  const mimeType = resolveUploadMimeType(metadata.mimeType, metadata.filename);
+  const result = await store.addFileDeduped(projectId, {
+    id: randomUUID(), name: metadata.filename.slice(0, 200), mimeType, size: data.length, createdAt: Date.now(),
+  }, data);
+  if (result.status === "already_in_project") return { status: result.status, name: result.file.name };
+  const file = await extractProjectFile(store, projectId, result.file);
+  return { status: "added", name: file.name, ...(file.extractionError ? { extractionError: file.extractionError } : {}) };
 }
 
 function inferMimeType(filename: string): string {
