@@ -3,7 +3,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { getUserSessionsPath } from "@yoplai/extension-multi-user/isolation";
 
-export type ChatProjectFile = { id: string; name: string; mimeType: string; size: number; createdAt: number; text?: string; extractionError?: string; extractionNote?: string };
+export type ChatProjectFile = { id: string; name: string; mimeType: string; size: number; createdAt: number; text?: string; extractionError?: string; extractionNote?: string; sha256?: string; sourceName?: string };
 
 export type ChatProjectReference = { id: string; title: string; description: string; path: string; createdAt: number };
 
@@ -131,6 +131,29 @@ export class ChatProjectStore {
       await fs.mkdir(this.filesDirectory(id), { recursive: true });
       await fs.writeFile(path.join(this.filesDirectory(id), file.id), data);
       await this.writeFiles(id, [...await this.listFiles(id), file]);
+    });
+  }
+
+  async addFileDeduped(id: string, file: ChatProjectFile, data: Buffer): Promise<{ status: "added" | "already_in_project"; file: ChatProjectFile }> {
+    if (!isSafeChatProjectId(file.id)) throw new Error("Invalid file id");
+    return this.mutateFiles(id, async () => {
+      if (!await this.get(id)) throw new Error("Project not found");
+      const files = await this.listFiles(id);
+      const sha256 = crypto.createHash("sha256").update(data).digest("hex");
+      const existing = files.find((item) => item.sha256 === sha256 && item.sourceName === file.name);
+      if (existing) return { status: "already_in_project", file: existing };
+      let name = file.name;
+      const extension = path.extname(name);
+      const base = name.slice(0, name.length - extension.length);
+      for (let suffix = 2; files.some((item) => item.name === name); suffix++) {
+        const ending = " (" + suffix + ")" + extension;
+        name = base.slice(0, 200 - ending.length) + ending;
+      }
+      const added = { ...file, name, sha256, sourceName: file.name };
+      await fs.mkdir(this.filesDirectory(id), { recursive: true });
+      await fs.writeFile(path.join(this.filesDirectory(id), added.id), data);
+      await this.writeFiles(id, [...files, added]);
+      return { status: "added", file: added };
     });
   }
 

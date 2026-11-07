@@ -851,7 +851,7 @@ function createSendFileTool(
     input,
     "send_file",
     "Send file to user",
-    "Send a file from /workspace/files/ to the user. Web chat shows the file to the user (HTML, Markdown, images, text); use it to show a report or a diagram. Write the file first, then call this tool with its path. Existing /workspace/data/ files are also supported.",
+    "Send a file from /workspace/files/ to the user. Web chat shows the file to the user (HTML, Markdown, images, text); use it to show a report or a diagram. Write the file first, then call this tool with its path. Existing /workspace/data/ files are also supported. In a project chat, sent files are also saved to the project files.",
     {
       type: "object",
       properties: {
@@ -872,6 +872,19 @@ function createSendFileTool(
         result.registered !== true
       ) {
         throw new Error("Gateway did not confirm file registration");
+      }
+      const project = (result as {
+        project?: { status: "added" | "already_in_project" | "not_added"; name?: string; reason?: string; extractionError?: string };
+      }).project;
+      if (project?.status === "added") {
+        return `File sent to user. Added to the project files as "${project.name}".` +
+          (project.extractionError ? ` Text extraction failed: ${project.extractionError}.` : "");
+      }
+      if (project?.status === "already_in_project") {
+        return `File sent to user. Already in the project files as "${project.name}".`;
+      }
+      if (project?.status === "not_added") {
+        return `File sent to user. NOT added to the project files: ${project.reason}.`;
       }
       return "File sent to user";
     },

@@ -333,7 +333,7 @@ export function createInternalTools(
             const { fileId, filename, mimeType, size } = metadata;
             await captureSendFile({ ...context, toolCallId: parsed.data.toolCallId, signal }, parsed.data.args,
               { fileId, filename, mimeType, size, ...(event.title === undefined ? {} : { title: event.title }) });
-            return { registered: true };
+            return { registered: true, ...(metadata.project ? { project: metadata.project } : {}) };
           })()
         : parsed.data.tool === "skill_save"
         ? executeSkillSave(parsed.data.args, { userId: context.userId })

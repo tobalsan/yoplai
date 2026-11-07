@@ -1389,6 +1389,46 @@ describe("Pi runner", () => {
       content: [{ text: "File sent to user" }],
     });
 
+    fetchMock.mockResolvedValueOnce(Response.json({
+      registered: true,
+      project: { status: "added", name: "report.csv" },
+    }));
+    await expect(
+      sendFile?.execute("tool-project-added", { path: "/workspace/data/report.csv" })
+    ).resolves.toMatchObject({
+      content: [{ text: 'File sent to user. Added to the project files as "report.csv".' }],
+    });
+
+    fetchMock.mockResolvedValueOnce(Response.json({
+      registered: true,
+      project: { status: "already_in_project", name: "report (2).csv" },
+    }));
+    await expect(
+      sendFile?.execute("tool-project-existing", { path: "/workspace/data/report.csv" })
+    ).resolves.toMatchObject({
+      content: [{ text: 'File sent to user. Already in the project files as "report (2).csv".' }],
+    });
+
+    fetchMock.mockResolvedValueOnce(Response.json({
+      registered: true,
+      project: { status: "not_added", reason: "project changed" },
+    }));
+    await expect(
+      sendFile?.execute("tool-project-rejected", { path: "/workspace/data/report.csv" })
+    ).resolves.toMatchObject({
+      content: [{ text: "File sent to user. NOT added to the project files: project changed." }],
+    });
+
+    fetchMock.mockResolvedValueOnce(Response.json({
+      registered: true,
+      project: { status: "added", name: "report.pdf", extractionError: "Could not read PDF" },
+    }));
+    await expect(
+      sendFile?.execute("tool-project-extraction-failed", { path: "/workspace/data/report.pdf" })
+    ).resolves.toMatchObject({
+      content: [{ text: 'File sent to user. Added to the project files as "report.pdf". Text extraction failed: Could not read PDF.' }],
+    });
+
     fetchMock.mockResolvedValueOnce(
       Response.json({ error: "source missing" }, { status: 500 })
     );

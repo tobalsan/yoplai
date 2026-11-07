@@ -10,6 +10,13 @@ import {
   resolveContainerDataFile,
 } from "./file-output.js";
 import type { SdkRunParams } from "../types.js";
+import { ChatProjectStore } from "../../chat-projects/store.js";
+import { appendSessionMeta } from "../../history/store.js";
+
+vi.mock("../../config/index.js", async (importOriginal) => ({
+  ...await importOriginal<typeof import("../../config/index.js")>(),
+  get CONFIG_DIR() { return process.env.YOPLAI_HOME ?? "/tmp/file-output-import-only"; },
+}));
 
 const tempDirs: string[] = [];
 
@@ -17,6 +24,26 @@ function tempDir(): string {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "yoplai-file-output-"));
   tempDirs.push(dir);
   return dir;
+}
+
+async function projectFile(filename = "notes.txt", content = Buffer.from("Shared findings")) {
+  const root = tempDir();
+  process.env.YOPLAI_HOME = root;
+  const store = new ChatProjectStore(root, "writer");
+  const project = await store.create("Example research");
+  const data = path.join(root, "data");
+  fs.mkdirSync(data);
+  fs.writeFileSync(path.join(data, filename), content);
+  const params = {
+    agentId: "author", sessionId: project.id, userId: "writer",
+    context: { kind: "web", project: { id: project.id, instructions: "" } },
+    onHistoryEvent: vi.fn(), onEvent: vi.fn(),
+  } as unknown as SdkRunParams;
+  await appendSessionMeta(params.agentId, params.sessionId, "project", project.id, params.userId);
+  const send = () => new ContainerFileOutputAdapter().handle(params, {
+    type: "file_output", path: `/workspace/data/${filename}`,
+  }, data);
+  return { root, store, project, data, params, send };
 }
 
 afterEach(() => {
@@ -28,6 +55,109 @@ afterEach(() => {
 });
 
 describe("container file output adapter", () => {
+  it.each([
+    ["oversized.txt", Buffer.alloc(25 * 1024 * 1024 + 1), "File exceeds the 25MB upload limit"],
+    ["program.exe", Buffer.from("Unsupported sample"), "Unsupported file extension: .exe"],
+  ])("delivers %s to chat while refusing it in the project", async (filename, content, reason) => {
+    const run = await projectFile(filename, content);
+
+    const result = await run.send();
+
+    expect(result.project).toEqual({ status: "not_added", reason });
+    expect(await run.store.listFiles(run.project.id)).toEqual([]);
+    expect(run.params.onHistoryEvent).toHaveBeenCalledWith(expect.objectContaining({ type: "assistant_file", size: content.length }));
+    expect(run.params.onEvent).toHaveBeenCalledWith(expect.objectContaining({ type: "file_output", size: content.length }));
+    expect((await fsPromises.stat(result.path)).size).toBe(content.length);
+  });
+
+  it.each(["changed", "deleted", "store failure"])("keeps delivery successful after project %s", async (failure) => {
+    const run = await projectFile();
+    if (failure === "changed") await appendSessionMeta(run.params.agentId, run.params.sessionId, "project", null, "writer");
+    if (failure === "deleted") await run.store.delete(run.project.id);
+    if (failure === "store failure") fs.writeFileSync(path.join(run.store.filesDirectory(run.project.id), "..", "files.json"), "invalid json");
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    const result = await run.send();
+
+    expect(result.project).toMatchObject({ status: "not_added", reason: expect.any(String) });
+    if (failure !== "store failure") expect(result.project?.reason).toBe(failure === "changed" ? "project changed" : "project not found");
+    expect(run.params.onHistoryEvent).toHaveBeenCalledWith(expect.objectContaining({ type: "assistant_file" }));
+    expect(run.params.onEvent).toHaveBeenCalledWith(expect.objectContaining({ type: "file_output" }));
+    expect(await fsPromises.readFile(result.path, "utf8")).toBe("Shared findings");
+    expect(warn).toHaveBeenCalled();
+    run.params.context = undefined;
+    expect((await run.send()).project).toBeUndefined();
+    expect(run.params.onEvent).toHaveBeenCalledTimes(2);
+  });
+
+  it("keeps distinct versions and deduplicates a re-sent suffixed file", async () => {
+    const run = await projectFile();
+    expect((await run.send()).project).toEqual({ status: "added", name: "notes.txt" });
+    fs.writeFileSync(path.join(run.data, "notes.txt"), "Updated findings");
+    expect((await run.send()).project).toEqual({ status: "added", name: "notes (2).txt" });
+    expect((await run.send()).project).toEqual({ status: "already_in_project", name: "notes (2).txt" });
+    const files = await run.store.listFiles(run.project.id);
+    expect(files.map(file => file.name)).toEqual(["notes.txt", "notes (2).txt"]);
+    expect(await fsPromises.readFile(path.join(run.store.filesDirectory(run.project.id), files[0].id), "utf8")).toBe("Shared findings");
+    expect(await fsPromises.readFile(path.join(run.store.filesDirectory(run.project.id), files[1].id), "utf8")).toBe("Updated findings");
+  });
+
+  it.each([
+    ["broken.docx", Buffer.from("Invalid office document"), "Text extraction failed"],
+    ["encrypted.pdf", fs.readFileSync(new URL("../../media/__fixtures__/encrypted.pdf", import.meta.url)), "PDF is password-protected"],
+  ])("stores %s despite extraction failure and reports the reason", async (filename, content, extractionError) => {
+    const run = await projectFile(filename, content);
+    const result = await run.send();
+    expect(result.project).toEqual({ status: "added", name: filename, extractionError });
+    const files = await run.store.listFiles(run.project.id);
+    expect(files).toHaveLength(1);
+    expect(files[0]).toMatchObject({ name: filename, extractionError });
+    expect(await fsPromises.readFile(path.join(run.store.filesDirectory(run.project.id), files[0].id))).toEqual(content);
+    expect(run.params.onEvent).toHaveBeenCalledWith(expect.objectContaining({ type: "file_output" }));
+  });
+
+  it("accepts the 25MB boundary and caps extracted text like an upload", async () => {
+    const run = await projectFile("large.txt", Buffer.alloc(25 * 1024 * 1024, "x"));
+    expect((await run.send()).project).toEqual({ status: "added", name: "large.txt" });
+    const files = await run.store.listFiles(run.project.id);
+    expect(files[0].text).toBe("x".repeat(250_000));
+  });
+
+  it("delivers before adding the received bytes and extracted text to the user's project", async () => {
+    const root = tempDir();
+    process.env.YOPLAI_HOME = root;
+    const store = new ChatProjectStore(root, "writer");
+    const project = await store.create("Example research");
+    const data = path.join(root, "data");
+    fs.mkdirSync(data);
+    fs.writeFileSync(path.join(data, "notes.txt"), "Shared findings");
+    let filesAtDelivery: ReturnType<ChatProjectStore["listFiles"]> | undefined;
+    const params = {
+      agentId: "author", sessionId: project.id, userId: "writer",
+      context: { kind: "web", project: { id: project.id, instructions: "" } },
+      onHistoryEvent: vi.fn(),
+      onEvent: vi.fn(() => {
+        filesAtDelivery = store.listFiles(project.id);
+        fs.writeFileSync(path.join(data, "notes.txt"), "Changed after delivery");
+      }),
+    } as unknown as SdkRunParams;
+    await appendSessionMeta(params.agentId, params.sessionId, "project", project.id, params.userId);
+
+    const result = await new ContainerFileOutputAdapter().handle(params, {
+      type: "file_output", path: "/workspace/data/notes.txt", mimeType: "application/octet-stream",
+    }, data);
+
+    expect(result).toMatchObject({ project: { status: "added", name: "notes.txt" } });
+    expect(await filesAtDelivery).toEqual([]);
+    const files = await store.listFiles(project.id);
+    expect(files).toHaveLength(1);
+    expect(files[0]).toMatchObject({ name: "notes.txt", mimeType: "text/plain", text: "Shared findings" });
+    expect(await fsPromises.readFile(path.join(store.filesDirectory(project.id), files[0].id), "utf8")).toBe("Shared findings");
+    expect(params.onHistoryEvent).toHaveBeenCalledWith(expect.objectContaining({ type: "assistant_file" }));
+    expect(params.onEvent).toHaveBeenCalledWith(expect.objectContaining({ type: "file_output" }));
+    expect(await new ChatProjectStore(root, "other").list()).toEqual([]);
+  });
+
   it("resolves only files under the container data directory", () => {
     expect(
       resolveContainerDataFile("/host/data", "/workspace/data/a/b.txt")
@@ -55,7 +185,7 @@ describe("container file output adapter", () => {
         onEvent: vi.fn(),
       } as unknown as SdkRunParams;
 
-      await new ContainerFileOutputAdapter().handle(
+      const result = await new ContainerFileOutputAdapter().handle(
         params,
         {
           type: "file_output",
@@ -65,6 +195,9 @@ describe("container file output adapter", () => {
         },
         hostDataDir
       );
+
+      expect(result.project).toBeUndefined();
+      expect(await new ChatProjectStore(root).list()).toEqual([]);
 
       expect(params.onHistoryEvent).toHaveBeenCalledWith(
         expect.objectContaining({

@@ -205,7 +205,7 @@ async function createPiExtensionTools(
   piTools.push({
     name: sendFileName,
     label: "Send file to user",
-    description: "Send a regular file in this conversation's files directory (sub-folders allowed). Web chat shows the file to the user (HTML, Markdown, images, text); use it to show a report or a diagram. Symlinks are not supported. Finish writing the file first.",
+    description: "Send a regular file in this conversation's files directory (sub-folders allowed). Web chat shows the file to the user (HTML, Markdown, images, text); use it to show a report or a diagram. Symlinks are not supported. Finish writing the file first. In a project chat, sent files are also saved to the project files.",
     parameters: {
       type: "object",
       properties: { path: { type: "string", description: "Absolute path to the conversation file" }, title: { type: "string", maxLength: 200, description: "Optional file title" } },
@@ -218,7 +218,19 @@ async function createPiExtensionTools(
       const { fileId, filename, mimeType, size } = metadata;
       await captureSendFile({ ...params, toolCallId, signal: callSignal }, args,
         { fileId, filename, mimeType, size, ...(input.title === undefined ? {} : { title: input.title }) });
-      return { content: [{ type: "text", text: "File sent to user" }], details: {} };
+      const project = metadata.project;
+      let text = "File sent to user";
+      if (project?.status === "added") {
+        text = `File sent to user. Added to the project files as "${project.name}".` +
+          (project.extractionError ? ` Text extraction failed: ${project.extractionError}.` : "");
+      }
+      if (project?.status === "already_in_project") {
+        text = `File sent to user. Already in the project files as "${project.name}".`;
+      }
+      if (project?.status === "not_added") {
+        text = `File sent to user. NOT added to the project files: ${project.reason}.`;
+      }
+      return { content: [{ type: "text", text }], details: {} };
     },
   });
   const skillSaveName = claimAgentToolName(skillSaveTool.name, usedToolNames);

@@ -5,8 +5,9 @@ import { z } from "zod";
 import { AgentConfigSchema, GatewayConfigSchema, type ExtensionAgentTool, type HistoryEvent, type StreamEvent } from "@yoplai/shared";
 import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai/providers/faux";
 import { ExtensionRuntime } from "../../../extensions/runtime.js";
-import { setLoadedConfig } from "../../../config/index.js";
-import { bufferHistoryEvent, createTurnBuffer, getFullHistory } from "../../../history/store.js";
+import { CONFIG_DIR, setLoadedConfig } from "../../../config/index.js";
+import { ChatProjectStore } from "../../../chat-projects/store.js";
+import { appendSessionMeta, bufferHistoryEvent, createTurnBuffer, getFullHistory } from "../../../history/store.js";
 import { SessionRunLifecycle } from "../../../agents/run-lifecycle.js";
 import { agentEventBus, type AgentHistoryEvent } from "../../../agents/events.js";
 import { piAdapter } from "../adapter.js";
@@ -79,6 +80,42 @@ it("sends a file with unchanged model text and captures its title, metadata and 
     server: "yoplai", tool: "send_file", resourceUri: "ui://yoplai/file-viewer", args: { path: filename, title: "Quarterly report" },
     result: { content: [{ type: "text", text: "File sent to user" }], structuredContent: { uri: `yoplai-file://${sent.fileId}`, ...file } },
   });
+});
+
+it("reports project file outcomes to the Pi model while preserving delivered files", async () => {
+  const run = await fixture();
+  run.params.sessionId = "project-send-file";
+  const store = new ChatProjectStore(CONFIG_DIR, "alice");
+  const project = await store.create("Research notes");
+  await appendSessionMeta(run.params.agentId, run.params.sessionId, "project", project.id, "alice");
+  const files = getConversationFiles(run.params.agentId, run.params.sessionId, "alice");
+  await fs.mkdir(files.hostPath, { recursive: true });
+  const sends = [
+    { name: "notes.txt", data: "Shared findings", text: 'File sent to user. Added to the project files as "notes.txt".' },
+    { name: "notes.txt", data: "Shared findings", text: 'File sent to user. Already in the project files as "notes.txt".' },
+    { name: "program.exe", data: "Unsupported example", text: "File sent to user. NOT added to the project files: Unsupported file extension: .exe." },
+    { name: "broken.docx", data: "Invalid office document", text: 'File sent to user. Added to the project files as "broken.docx". Text extraction failed: Text extraction failed.' },
+  ];
+  for (const [index, send] of sends.entries()) {
+    const filename = path.join(files.hostPath, send.name);
+    await fs.writeFile(filename, send.data);
+    let received: unknown;
+    setup.faux.setResponses([
+      fauxAssistantMessage(fauxToolCall("send_file", { path: filename }, { id: `project-send-${index}` }), { stopReason: "toolUse" }),
+      context => {
+        received = context.messages.filter(message => message.role === "toolResult").at(-1)?.content;
+        return fauxAssistantMessage("Chat continues");
+      },
+    ]);
+    await expect(piAdapter.run({ ...run.params, context: { kind: "web", project: { id: project.id, instructions: "" } } }))
+      .resolves.toMatchObject({ text: "Chat continues" });
+    expect(received).toEqual([{ type: "text", text: send.text }]);
+    expect(run.events).toContainEqual(expect.objectContaining({ type: "file_output", filename: send.name }));
+  }
+  expect(await store.listFiles(project.id)).toMatchObject([
+    { name: "notes.txt", text: "Shared findings" },
+    { name: "broken.docx", extractionError: "Text extraction failed" },
+  ]);
 });
 
 it("keeps send_file usable without a title when replay storage fails", async () => {
