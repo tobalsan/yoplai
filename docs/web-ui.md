@@ -152,8 +152,17 @@ Switching tabs keeps inactive views mounted, preserving their iframe state.
 **Collapse** or a tab's close button closes only that view and returns it inline;
 closing the active tab selects its right neighbour, or its left neighbour when
 none is to the right. Closing the last tab closes the panel. Expand and Collapse
-reload that view once, so unsaved state can be lost. Tabs and panel width are not
-saved across page reloads.
+reload that view once, so unsaved state can be lost. Panel width and iframe-internal
+state are not saved across page reloads.
+
+Open tabs, their order and active selection are saved in sessionStorage for each
+agent and concrete chat session, separately in each browser tab. After history
+loads on a wide layout, saved tabs reopen in order; an explicitly linked dashboard
+stays active alongside them. Views absent from the loaded history are skipped: only
+the last 100 messages load initially, so older views are not restored and loading
+earlier messages does not reopen them later. Dashboard-link frame tabs need no
+history entry. Narrow layouts (viewport <=768 px or chat row <726 px) skip restore
+to keep the chat visible. Unavailable or invalid storage never blocks the chat.
 
 Use Left/Right arrows to switch tabs, or Home/End for the first/last tab.
 Ctrl+Shift+Left/Right moves the focused tab one place and keeps focus on it.
@@ -165,8 +174,9 @@ HTML, Markdown and PDF files sent during a live turn automatically open the
 panel when the viewport is wider than 768 px and the chat row has at least
 726 px for the split. A later document opens a new tab; a re-send of the same
 filename updates and activates its existing tab. Live dashboards follow the same
-rule. Reload, history replay, reconnect and narrow layouts never
-auto-open; images, text, data and external MCP Apps stay inline. The compact
+rule. History replay and reconnect do not auto-open new tabs; reload restores
+only saved tabs on wide layouts. Images, text, data and external MCP Apps stay
+inline unless explicitly expanded or restored. The compact
 file/dashboard card says "shown in the side panel" for the active view, or
 "open in a side panel tab" for an inactive one. Clicking it activates its tab
 and focuses the panel. Older update links show a disabled "Displayed in side
@@ -182,12 +192,16 @@ link to the inline view or its panel tab.
 Successful captures deliver the newest input and raw result to the same iframe.
 A later failed capture shows its text and "View unavailable" without replacing
 the live view. Failed or hung updates keep each tab's last good version, including
-inactive tabs. Reload shows one inline view per app with the latest captured data.
+inactive tabs. Reload replays the latest captured data in restored tabs or inline.
 
 The panel host lives outside the transcript and stays loaded through turn
 completion, reconnects, simple/full switches and history reloads. It retains its
 last valid latest call in every tab while history is temporarily empty or stale.
-Switching session, starting a new chat or leaving the page closes all tabs.
+Switching session, starting a new chat or leaving the page closes all tabs without
+erasing their saved entries. Switching back within the same page mount does not
+restore; leaving and returning to the chat page may restore on the new mount.
+Closing the last tab yourself removes its saved entry. Restored tabs all mount
+eagerly; lazy mounting inactive tabs is a possible follow-up for many dashboards.
 Inline views may
 reinitialize during those transcript transitions or when loading earlier history
 moves the host row to an older call.

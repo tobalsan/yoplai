@@ -11,6 +11,8 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Added
 
+- Web chat restores side panel tabs, their order and active selection after reload in the same browser tab, separately for each agent and chat; narrow layouts stay inline.
+
 - Web chat side panel tabs keep artifacts and dashboards open together, with per-tab close, state-preserving switching, drag and keyboard reorder, and chat cards showing active or inactive tab state.
 - Canvas dashboards appear in web chat and the side panel, refresh after later tool updates, and replay from saved sessions without an apps origin. Dashboard pages and rows offer Chat to users with agent access, returning creators to their original conversation when available or opening a fresh chat with the dashboard kept beside the first message.
 - File views offer Open in browser on the isolated apps origin for HTML, PDF, images and plain text. Live HTML, Markdown and PDF sends open the side panel when the split fits; replay and narrow layouts stay inline, and the compact file card focuses the panel.
