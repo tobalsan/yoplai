@@ -1,6 +1,7 @@
 import { createChatSession } from "./chat/createChatSession";
 import { ChatTranscript } from "./chat/ChatTranscript";
 import { createAppViews, chatAppViewCalls, viewKey } from "./chat/appViews";
+import { load as loadPanelTabs } from "./chat/appViewStorage";
 import { ChatSidePanel, canSplitPanel } from "./chat/ChatSidePanel";
 import { ChatPanelTabs } from "./chat/ChatPanelTabs";
 import chatViewStyles from "./chat/ChatView.css?inline";
@@ -291,7 +292,28 @@ export function ChatView() {
     contextUsageDisplay, isContextUsageDanger, contextWarning, thinkingLevel,
     compactStatusForCurrentSession,
   } = session;
-  const appViews = createAppViews(session.appSessionId, () => chatAppViewCalls(session, viewMode()), currentSession);
+  const [panelStorageReady, setPanelStorageReady] = createSignal(false);
+  const initialPanelScope = currentSession();
+  const appViews = createAppViews(session.appSessionId, () => chatAppViewCalls(session, viewMode()), currentSession, {
+    agentId: () => params.agentId,
+    ready: panelStorageReady,
+  });
+  createEffect(() => {
+    if (panelStorageReady()) return;
+    if (currentSession() !== initialPanelScope) {
+      setPanelStorageReady(true);
+      return;
+    }
+    const loaded = session.historyLoaded();
+    const sessionId = session.appSessionId();
+    if (!loaded || loaded.scope !== currentSession() || !sessionId) return;
+    const row = chatViewRef?.querySelector(".chat-main")?.parentElement;
+    if (row && canSplitPanel(row.getBoundingClientRect().width)) {
+      const saved = loadPanelTabs(params.agentId, sessionId);
+      if (saved) appViews.restore(saved);
+    }
+    setPanelStorageReady(true);
+  });
   onCleanup(appViews.close);
   const viewMessageTimes = new Map<string, number[]>();
   createEffect(on(() => `${params.agentId}\n${session.appSessionId() ?? currentSession()}`, () => viewMessageTimes.clear()));

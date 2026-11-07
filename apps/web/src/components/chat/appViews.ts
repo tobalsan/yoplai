@@ -4,6 +4,7 @@ import type { HistoryViewMode, FullToolResultMessage } from "../../api/types";
 import type { ChatTranscriptSession } from "./ChatTranscript";
 import type { ChatToolCall } from "./chat-history";
 import { extractBlockText } from "../../lib/history";
+import { save, type SavedAppViews } from "./appViewStorage";
 
 export type AppViewCall = {
   id: string;
@@ -48,7 +49,7 @@ export function viewKey(view: Pick<McpAppViewReference, "server" | "resourceUri"
   return view.server + "\n" + view.resourceUri + (key !== undefined ? "\n" + key : "");
 }
 
-export function createAppViews(sessionId: Accessor<string | null | undefined>, calls: Accessor<AppViewCall[]>, chatScope?: Accessor<string>) {
+export function createAppViews(sessionId: Accessor<string | null | undefined>, calls: Accessor<AppViewCall[]>, chatScope?: Accessor<string>, persistence?: { agentId: Accessor<string>; ready: Accessor<boolean> }) {
   const source = createMemo(calls);
   const [shown, setShown] = createSignal(new Map<string, AppViewCall>());
   const historyIds = createMemo(() => new Set(source().filter((call) => call.history).map((call) => call.id)));
@@ -85,7 +86,9 @@ export function createAppViews(sessionId: Accessor<string | null | undefined>, c
   }[]>([]);
   const [activeKey, setActiveKey] = createSignal<string>();
   let selectedScope: string | undefined;
+  let pendingSave = false;
   function close() {
+    pendingSave = false;
     setSelections([]);
     setActiveKey(undefined);
   }
@@ -99,6 +102,7 @@ export function createAppViews(sessionId: Accessor<string | null | undefined>, c
     if (current !== previous) {
       if (!previous && current && selections().length) {
         setSelections((currentTabs) => currentTabs.map((selection) => ({ ...selection, session: current })));
+        persist();
       } else close();
       setShown(new Map());
     }
@@ -125,6 +129,20 @@ export function createAppViews(sessionId: Accessor<string | null | undefined>, c
     }
     return selection.tab;
   }));
+  function persist() {
+    if (!persistence) return;
+    pendingSave = true;
+    const session = sessionId();
+    if (!session || !persistence.ready()) return;
+    pendingSave = false;
+    save(persistence.agentId(), session, {
+      tabs: tabs().map((tab) => ({ key: tab.key, ...("frame" in tab ? { frame: { id: tab.frame.id, title: tab.frame.title } } : {}) })),
+      active: activeKey(),
+    });
+  }
+  if (persistence) createComputed(on(persistence.ready, () => {
+    if (pendingSave) persist();
+  }));
   const panel = createMemo(() => {
     const tab = tabs().find((tab) => tab.key === activeKey());
     return tab && !("frame" in tab) ? tab : undefined;
@@ -134,7 +152,12 @@ export function createAppViews(sessionId: Accessor<string | null | undefined>, c
     return tab && "frame" in tab ? tab.frame : undefined;
   });
   function isTab(key: string) { return tabs().some((tab) => tab.key === key); }
-  function activate(key: string) { if (isTab(key)) setActiveKey(key); }
+  function activate(key: string) {
+    if (isTab(key)) {
+      setActiveKey(key);
+      persist();
+    }
+  }
   return {
     isLiveDuplicate(id: string) { return historyIds().has(id); },
     fileOf(id: string) {
@@ -162,6 +185,25 @@ export function createAppViews(sessionId: Accessor<string | null | undefined>, c
     activeKey,
     activate,
     isTab,
+    restore(saved: SavedAppViews | undefined) {
+      if (!saved) return;
+      selectedScope = chatScope?.();
+      const existing = selections();
+      const previousActive = activeKey();
+      const restored: ReturnType<typeof selections> = [];
+      for (const entry of saved.tabs) {
+        if (restored.some((selection) => selection.tab.key === entry.key)) continue;
+        const open = existing.find((selection) => selection.tab.key === entry.key);
+        const view = projection().get(entry.key);
+        if (open) restored.push(open);
+        else if (view) restored.push({ session: sessionId(), tab: view, order: [...view.calls] });
+        else if (entry.frame) restored.push({ session: sessionId(), tab: { key: entry.key, frame: { kind: "dashboard", ...entry.frame } }, order: [] });
+      }
+      restored.push(...existing.filter((selection) => !restored.some((item) => item.tab.key === selection.tab.key)));
+      setSelections(restored);
+      setActiveKey(existing.length ? previousActive : restored.find((selection) => selection.tab.key === saved.active)?.tab.key ?? restored[0]?.tab.key);
+      persist();
+    },
     move(key: string, index: number) {
       setSelections((current) => {
         const from = current.findIndex((selection) => selection.tab.key === key);
@@ -171,6 +213,7 @@ export function createAppViews(sessionId: Accessor<string | null | undefined>, c
         next.splice(Math.max(0, Math.min(index, next.length)), 0, selection);
         return next;
       });
+      persist();
     },
     closeTab(key: string) {
       const index = tabs().findIndex((tab) => tab.key === key);
@@ -178,12 +221,14 @@ export function createAppViews(sessionId: Accessor<string | null | undefined>, c
       const remaining = selections().filter((selection) => selection.tab.key !== key);
       setSelections(remaining);
       if (activeKey() === key) setActiveKey(remaining[index]?.tab.key ?? remaining[index - 1]?.tab.key);
+      persist();
     },
     openFrame(frame: DashboardFrame) {
       selectedScope = chatScope?.();
       const key = viewKey({ server: "yoplai", resourceUri: "ui://yoplai/dashboard", key: frame.id });
       if (!isTab(key)) setSelections((current) => [...current, { session: sessionId(), tab: { key, frame }, order: [] }]);
       setActiveKey(key);
+      persist();
     },
     open(key: string) {
       if (isTab(key)) {
@@ -196,6 +241,7 @@ export function createAppViews(sessionId: Accessor<string | null | undefined>, c
         selectedScope = chatScope?.();
         setSelections((current) => [...current, { session: sessionId(), tab: view, order: [...view.calls] }]);
         setActiveKey(key);
+        persist();
       }
     },
     close,

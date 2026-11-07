@@ -209,6 +209,7 @@ function renderView() {
 describe("ChatView abort handling", () => {
   beforeEach(() => {
     localStorage.clear();
+    sessionStorage.clear();
     delegateEvents(["click", "input", "keydown"]);
     Element.prototype.scrollIntoView = vi.fn();
     vi.stubGlobal("ResizeObserver", class { observe() {} disconnect() {} });
@@ -2598,6 +2599,115 @@ describe("ChatView abort handling", () => {
       return this.classList.contains("chat-view") ? { width: rowWidth, right: rowWidth } as DOMRect : measure.call(this);
     });
   }
+
+  function seedPanelHistory() {
+    const dashboard = { server: "yoplai", tool: "dashboard", resourceUri: "ui://yoplai/dashboard", key: "garden", title: "Garden overview", recordId: "garden-record" };
+    const file = { server: "yoplai", tool: "send_file", resourceUri: "ui://yoplai/file-viewer", recordId: "notes-record", file: { fileId: "notes-file", filename: "notes.md", mimeType: "text/markdown", size: 42 } };
+    fetchFullHistoryMock.mockResolvedValue({ sessionId: "session-main", messages: [
+      { role: "assistant", timestamp: 1, content: [
+        { type: "toolCall", id: "garden-call", name: "dashboard_create", arguments: {} },
+        { type: "toolCall", id: "notes-call", name: "send_file", arguments: {} },
+      ] },
+      { role: "toolResult", timestamp: 2, toolCallId: "garden-call", toolName: "dashboard_create", content: [{ type: "text", text: "Created garden" }], view: dashboard },
+      { role: "toolResult", timestamp: 3, toolCallId: "notes-call", toolName: "send_file", content: [{ type: "text", text: "Sent notes" }], view: file },
+    ] });
+    loadMcpAppDataMock.mockResolvedValue({ args: {}, result: { content: [], structuredContent: { id: "garden", title: "Garden overview" } } });
+    sessionStorage.setItem("yoplai.chat-panel-tabs.v1:agent-1:session-main", JSON.stringify({
+      tabs: [{ key: "yoplai\nui://yoplai/file-viewer\nnotes.md" }, { key: "yoplai\nui://yoplai/dashboard\ngarden" }],
+      active: "yoplai\nui://yoplai/file-viewer\nnotes.md",
+    }));
+  }
+
+  it("restores saved dashboard and file tabs after history with saved order and selection", async () => {
+    const measure = measureChatSpace();
+    enableAppViews();
+    seedPanelHistory();
+    const view = renderView();
+    try {
+      await waitFor(() => expect(queryAllByRole(view.container, "tab").map((tab) => tab.getAttribute("aria-label"))).toEqual(["notes.md", "Garden overview"]));
+      expect(queryByRole(view.container, "tab", { name: "notes.md" })?.getAttribute("aria-selected")).toBe("true");
+      expect(queryByTitle(queryByRole(view.container, "complementary")!, "Garden overview dashboard")).not.toBeNull();
+    } finally { view.dispose(); measure.mockRestore(); }
+  });
+
+  it("does not restore again on reconnect or a simple/full history reload", async () => {
+    const measure = measureChatSpace();
+    enableAppViews();
+    seedPanelHistory();
+    const view = renderView();
+    try {
+      await waitFor(() => expect(queryAllByRole(view.container, "tab")).toHaveLength(2));
+      queryByRole(view.container, "button", { name: "Close notes.md" })!.click();
+      sessionStorage.setItem("yoplai.chat-panel-tabs.v1:agent-1:session-main", JSON.stringify({ tabs: [{ key: "yoplai\nui://yoplai/file-viewer\nnotes.md" }] }));
+      const reconnect = subscribeToRealtimeMock.mock.calls.map(([options]) => options).find((options) => options.onReconnect)!.onReconnect;
+      const before = fetchFullHistoryMock.mock.calls.length;
+      reconnect();
+      await waitFor(() => expect(fetchFullHistoryMock.mock.calls.length).toBeGreaterThan(before));
+      await tick();
+      expect(queryAllByRole(view.container, "tab")).toHaveLength(0);
+      expect(queryByRole(view.container, "tabpanel", { name: "Garden overview" })).not.toBeNull();
+      routeState.view = "full";
+      setRouteVersion((version) => version + 1);
+      await tick();
+      await tick();
+      expect(queryByRole(view.container, "tabpanel", { name: "Garden overview" })).not.toBeNull();
+      expect(queryByRole(view.container, "tab", { name: "notes.md" })).toBeNull();
+    } finally { view.dispose(); measure.mockRestore(); }
+  });
+
+  it.each([[768, 1000], [1280, 725]])("skips restoration without erasing saved tabs when the layout cannot split (%i/%i)", async (viewport, row) => {
+    const measure = measureChatSpace(viewport, row);
+    enableAppViews();
+    seedPanelHistory();
+    const saved = sessionStorage.getItem("yoplai.chat-panel-tabs.v1:agent-1:session-main");
+    const view = renderView();
+    try {
+      await waitFor(() => expect(queryByTitle(view.container, "Garden overview dashboard")).not.toBeNull());
+      expect(queryByRole(view.container, "complementary")).toBeNull();
+      expect(sessionStorage.getItem("yoplai.chat-panel-tabs.v1:agent-1:session-main")).toBe(saved);
+    } finally { view.dispose(); measure.mockRestore(); }
+  });
+
+  it("restores dashboards while apps capability is unresolved", async () => {
+    const measure = measureChatSpace();
+    seedPanelHistory();
+    fetchCapabilitiesMock.mockReturnValue(new Promise(() => {}));
+    sessionStorage.setItem("yoplai.chat-panel-tabs.v1:agent-1:session-main", JSON.stringify({ tabs: [{ key: "yoplai\nui://yoplai/dashboard\ngarden" }] }));
+    const view = renderView();
+    try {
+      await waitFor(() => expect(queryByRole(view.container, "tabpanel", { name: "Garden overview" })).not.toBeNull());
+      expect(queryByTitle(queryByRole(view.container, "complementary")!, "Garden overview dashboard")).not.toBeNull();
+    } finally { view.dispose(); measure.mockRestore(); }
+  });
+
+  it("preserves both sessions' saved tabs without restoring during chat switches", async () => {
+    const measure = measureChatSpace();
+    enableAppViews();
+    seedPanelHistory();
+    const savedOther = JSON.stringify({ tabs: [{ key: "yoplai\nui://yoplai/dashboard\nweather", frame: { id: "weather", title: "Weather" } }] });
+    sessionStorage.setItem("yoplai.chat-panel-tabs.v1:agent-1:other-session", savedOther);
+    const view = renderView();
+    try {
+      await waitFor(() => expect(queryAllByRole(view.container, "tab")).toHaveLength(2));
+      const savedMain = sessionStorage.getItem("yoplai.chat-panel-tabs.v1:agent-1:session-main");
+      routeState.session = "other-session";
+      setRouteVersion((version) => version + 1);
+      await tick();
+      await tick();
+      expect(queryByRole(view.container, "complementary")).toBeNull();
+      expect(sessionStorage.getItem("yoplai.chat-panel-tabs.v1:agent-1:other-session")).toBe(savedOther);
+      expect(sessionStorage.getItem("yoplai.chat-panel-tabs.v1:agent-1:session-main")).toBe(savedMain);
+      routeState.session = undefined;
+      setRouteVersion((version) => version + 1);
+      await tick();
+      await tick();
+      expect(queryByRole(view.container, "complementary")).toBeNull();
+      view.dispose();
+      const remount = renderView();
+      try { await waitFor(() => expect(queryAllByRole(remount.container, "tab")).toHaveLength(2)); }
+      finally { remount.dispose(); }
+    } finally { view.dispose(); measure.mockRestore(); }
+  });
 
   it.each([700, 1280])("keeps saved and reconnect dashboards inline, with live opening only on a wide viewport (%i)", async (viewport) => {
     const measure = measureChatSpace(viewport);

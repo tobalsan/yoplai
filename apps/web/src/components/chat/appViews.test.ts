@@ -1,6 +1,8 @@
+// @vitest-environment jsdom
 import { createComputed, createRoot, createSignal } from "solid-js";
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 import { createAppViews, viewKey, type AppViewCall } from "./appViews";
+import { load, save } from "./appViewStorage";
 
 const drawing = { server: "fixture", tool: "draw", resourceUri: "ui://drawing" };
 const call = (id: string, ref = true): AppViewCall => ({
@@ -13,6 +15,201 @@ const fileCall = (id: string, filename: string): AppViewCall => ({
 });
 
 describe("app views", () => {
+  beforeEach(() => sessionStorage.clear());
+
+  it("restores available tabs in saved order, drops missing keys and chooses the saved active tab", () => {
+    createRoot((dispose) => {
+      const views = createAppViews(() => "session", () => [fileCall("a", "a.md"), fileCall("b", "b.md")]);
+      views.restore({ tabs: [
+        { key: "yoplai\nui://yoplai/file-viewer\nb.md" },
+        { key: "missing" },
+        { key: "yoplai\nui://yoplai/file-viewer\na.md" },
+        { key: "yoplai\nui://yoplai/file-viewer\nb.md" },
+      ], active: "yoplai\nui://yoplai/file-viewer\na.md" });
+      expect(views.tabs().map((tab) => tab.key)).toEqual([
+        "yoplai\nui://yoplai/file-viewer\nb.md",
+        "yoplai\nui://yoplai/file-viewer\na.md",
+      ]);
+      expect(views.activeKey()).toBe("yoplai\nui://yoplai/file-viewer\na.md");
+      expect(views.panel()?.latest.id).toBe("a");
+      dispose();
+    });
+  });
+
+  it("restores a standalone dashboard without history and converts it when the view arrives", () => {
+    createRoot((dispose) => {
+      const [calls, setCalls] = createSignal<AppViewCall[]>([]);
+      const [scope, setScope] = createSignal("maple:chat");
+      const views = createAppViews(() => "session", calls, scope);
+      views.restore({ tabs: [{ key: "yoplai\nui://yoplai/dashboard\ngarden", frame: { id: "garden", title: "Garden" } }], active: "missing" });
+      expect(views.frame()).toEqual({ kind: "dashboard", id: "garden", title: "Garden" });
+      expect(views.activeKey()).toBe("yoplai\nui://yoplai/dashboard\ngarden");
+      const view = { server: "yoplai", tool: "dashboard", resourceUri: "ui://yoplai/dashboard", key: "garden" };
+      setCalls([{ id: "garden-result", timestamp: 1, result: { view: { ...view, recordId: "garden-record" } } }]);
+      expect(views.frame()).toBeUndefined();
+      expect(views.panel()?.latest.id).toBe("garden-result");
+      setScope("maple:other-chat");
+      expect(views.tabs()).toEqual([]);
+      dispose();
+    });
+  });
+
+  it("merges saved tabs around a pre-open dashboard, keeps its active key and appends other open tabs", () => {
+    createRoot((dispose) => {
+      const [calls, setCalls] = createSignal([fileCall("a", "a.md"), fileCall("b", "b.md"), fileCall("c", "c.md")]);
+      const views = createAppViews(() => "session", calls);
+      const a = "yoplai\nui://yoplai/file-viewer\na.md";
+      const b = "yoplai\nui://yoplai/file-viewer\nb.md";
+      const c = "yoplai\nui://yoplai/file-viewer\nc.md";
+      const garden = "yoplai\nui://yoplai/dashboard\ngarden";
+      views.open(c);
+      views.open(a);
+      views.openFrame({ kind: "dashboard", id: "garden", title: "Linked garden" });
+      setCalls([fileCall("b", "b.md"), fileCall("c", "c.md")]);
+      views.restore({ tabs: [{ key: a }, { key: garden, frame: { id: "garden", title: "Old garden" } }, { key: b }, { key: a }], active: b });
+      expect(views.tabs().map((tab) => tab.key)).toEqual([a, garden, b, c]);
+      expect(views.activeKey()).toBe(garden);
+      expect(views.frame()?.title).toBe("Linked garden");
+      dispose();
+    });
+  });
+
+  it("saves opened views under the concrete agent and session", () => {
+    createRoot((dispose) => {
+      const views = createAppViews(() => "morning", () => [fileCall("a", "a.md")], undefined, { agentId: () => "maple", ready: () => true });
+      views.open("yoplai\nui://yoplai/file-viewer\na.md");
+      expect(load("maple", "morning")).toEqual({ tabs: [{ key: "yoplai\nui://yoplai/file-viewer\na.md" }], active: "yoplai\nui://yoplai/file-viewer\na.md" });
+      expect(load("birch", "morning")).toBeUndefined();
+      expect(load("maple", "evening")).toBeUndefined();
+      dispose();
+    });
+  });
+
+  it("saves dashboard links without view data", () => {
+    createRoot((dispose) => {
+      const views = createAppViews(() => "morning", () => [], undefined, { agentId: () => "maple", ready: () => true });
+      views.openFrame({ kind: "dashboard", id: "garden", title: "Garden" });
+      expect(load("maple", "morning")).toEqual({ tabs: [{ key: "yoplai\nui://yoplai/dashboard\ngarden", frame: { id: "garden", title: "Garden" } }], active: "yoplai\nui://yoplai/dashboard\ngarden" });
+      dispose();
+    });
+  });
+
+  it("saves activation of another open tab, including opening it again", () => {
+    createRoot((dispose) => {
+      const views = createAppViews(() => "morning", () => [fileCall("a", "a.md"), fileCall("b", "b.md")], undefined, { agentId: () => "maple", ready: () => true });
+      const a = "yoplai\nui://yoplai/file-viewer\na.md";
+      const b = "yoplai\nui://yoplai/file-viewer\nb.md";
+      views.open(a);
+      views.open(b);
+      views.activate(a);
+      expect(load("maple", "morning")?.active).toBe(a);
+      views.open(b);
+      expect(load("maple", "morning")).toEqual({ tabs: [{ key: a }, { key: b }], active: b });
+      dispose();
+    });
+  });
+
+  it("saves the user's reordered tabs while keeping the same active tab", () => {
+    createRoot((dispose) => {
+      const views = createAppViews(() => "morning", () => [fileCall("a", "a.md"), fileCall("b", "b.md")], undefined, { agentId: () => "maple", ready: () => true });
+      const a = "yoplai\nui://yoplai/file-viewer\na.md";
+      const b = "yoplai\nui://yoplai/file-viewer\nb.md";
+      views.open(a);
+      views.open(b);
+      views.move(b, 0);
+      expect(load("maple", "morning")).toEqual({ tabs: [{ key: b }, { key: a }], active: b });
+      dispose();
+    });
+  });
+
+  it("saves closed tabs and removes the saved entry when the user closes the last tab", () => {
+    createRoot((dispose) => {
+      const views = createAppViews(() => "morning", () => [fileCall("a", "a.md"), fileCall("b", "b.md")], undefined, { agentId: () => "maple", ready: () => true });
+      const a = "yoplai\nui://yoplai/file-viewer\na.md";
+      const b = "yoplai\nui://yoplai/file-viewer\nb.md";
+      views.open(a);
+      views.open(b);
+      views.closeTab(b);
+      expect(load("maple", "morning")).toEqual({ tabs: [{ key: a }], active: a });
+      views.closeTab(a);
+      expect(load("maple", "morning")).toBeUndefined();
+      expect(sessionStorage.getItem("yoplai.chat-panel-tabs.v1:maple:morning")).toBeNull();
+      dispose();
+    });
+  });
+
+  it("saves the restored state after missing history tabs are dropped", () => {
+    createRoot((dispose) => {
+      save("maple", "morning", { tabs: [{ key: "missing" }, { key: "yoplai\nui://yoplai/file-viewer\na.md" }], active: "missing" });
+      const views = createAppViews(() => "morning", () => [fileCall("a", "a.md")], undefined, { agentId: () => "maple", ready: () => true });
+      views.restore(load("maple", "morning"));
+      expect(load("maple", "morning")).toEqual({ tabs: [{ key: "yoplai\nui://yoplai/file-viewer\na.md" }], active: "yoplai\nui://yoplai/file-viewer\na.md" });
+      views.restore({ tabs: [{ key: "missing" }] });
+      expect(views.tabs()).toHaveLength(1);
+      dispose();
+    });
+  });
+
+  it("holds frame and restored-tab writes until the mount finishes restoring", () => {
+    createRoot((dispose) => {
+      const a = "yoplai\nui://yoplai/file-viewer\na.md";
+      const garden = "yoplai\nui://yoplai/dashboard\ngarden";
+      save("maple", "morning", { tabs: [{ key: a }], active: a });
+      const [ready, setReady] = createSignal(false);
+      const views = createAppViews(() => "morning", () => [fileCall("a", "a.md")], undefined, { agentId: () => "maple", ready });
+      views.openFrame({ kind: "dashboard", id: "garden", title: "Garden" });
+      expect(load("maple", "morning")).toEqual({ tabs: [{ key: a }], active: a });
+      views.restore(load("maple", "morning"));
+      expect(load("maple", "morning")).toEqual({ tabs: [{ key: a }], active: a });
+      setReady(true);
+      expect(load("maple", "morning")).toEqual({ tabs: [{ key: a }, { key: garden, frame: { id: "garden", title: "Garden" } }], active: garden });
+      dispose();
+    });
+  });
+
+  it.each([false, true])("saves a fresh-chat dashboard only after the concrete session and restore step are ready (%s)", (initialReady) => {
+    createRoot((dispose) => {
+      const [session, setSession] = createSignal<string>();
+      const [ready, setReady] = createSignal(initialReady);
+      const views = createAppViews(session, () => [], undefined, { agentId: () => "maple", ready });
+      views.openFrame({ kind: "dashboard", id: "garden", title: "Garden" });
+      expect(sessionStorage.length).toBe(0);
+      setSession("morning");
+      if (!initialReady) expect(load("maple", "morning")).toBeUndefined();
+      setReady(true);
+      expect(load("maple", "morning")).toEqual({ tabs: [{ key: "yoplai\nui://yoplai/dashboard\ngarden", frame: { id: "garden", title: "Garden" } }], active: "yoplai\nui://yoplai/dashboard\ngarden" });
+      dispose();
+    });
+  });
+
+  it("keeps saved chats intact through programmatic resets and discards held writes from the chat left", () => {
+    createRoot((dispose) => {
+      const [session, setSession] = createSignal("morning");
+      const [scope, setScope] = createSignal("maple:morning");
+      const [ready, setReady] = createSignal(true);
+      const views = createAppViews(session, () => [fileCall("a", "a.md")], scope, { agentId: () => "maple", ready });
+      const a = "yoplai\nui://yoplai/file-viewer\na.md";
+      views.open(a);
+      views.close();
+      expect(load("maple", "morning")).toEqual({ tabs: [{ key: a }], active: a });
+      views.open(a);
+      setScope("maple:evening");
+      expect(views.tabs()).toEqual([]);
+      expect(load("maple", "morning")).toEqual({ tabs: [{ key: a }], active: a });
+      save("maple", "evening", { tabs: [{ key: "evening-sketch" }] });
+      setReady(false);
+      views.openFrame({ kind: "dashboard", id: "garden", title: "Garden" });
+      setSession("evening");
+      setReady(true);
+      expect(load("maple", "evening")).toEqual({ tabs: [{ key: "evening-sketch" }] });
+      setSession("morning");
+      expect(views.tabs()).toEqual([]);
+      expect(load("maple", "morning")).toEqual({ tabs: [{ key: a }], active: a });
+      dispose();
+      expect(load("maple", "morning")).toEqual({ tabs: [{ key: a }], active: a });
+    });
+  });
+
   it("updates an inactive tab while retaining its latest call through empty and older reconnect snapshots", () => {
     createRoot((dispose) => {
       const [calls, setCalls] = createSignal([fileCall("a-first", "a.md"), fileCall("a-newest", "a.md"), fileCall("b", "b.md")]);

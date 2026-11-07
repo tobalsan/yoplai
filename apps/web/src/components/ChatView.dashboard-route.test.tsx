@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { getByRole, getByTitle } from "@testing-library/dom";
+import { getAllByRole, getByRole, getByTitle } from "@testing-library/dom";
 import { render } from "solid-js/web";
 import { Suspense } from "solid-js";
 import { Route, Router } from "@solidjs/router";
@@ -23,6 +23,7 @@ class Socket {
 }
 beforeEach(() => {
   localStorage.clear();
+  sessionStorage.clear();
   requests.length = 0;
   setCapabilitiesForTests({ multiUser: false });
   history.replaceState({}, "", "/dashboards");
@@ -37,7 +38,7 @@ beforeEach(() => {
     requests.push(path);
     if (path === "/api/agents/sage") return Response.json({ id: "sage", name: "Sage", model: { provider: "openai", model: "gpt-4o-mini" } });
     if (path === "/api/agents/sage/suggestions") return Response.json([]);
-    if (path === "/api/agents/sessions") return Response.json({ items: [] });
+    if (path.startsWith("/api/agents/sessions")) return Response.json({ items: [] });
     if (path === "/api/agents/status") return Response.json({ statuses: { sage: "idle" } });
     if (path.includes("/history?")) return Response.json({ messages: [], isStreaming: false, activeTurn: null });
     return Response.json({});
@@ -64,4 +65,25 @@ it("opens a dashboard Chat link through the real router with a usable fresh comp
   await vi.waitFor(() => expect((getByRole(root, "button", { name: "Send message" }) as HTMLButtonElement).disabled).toBe(false));
   expect((getByRole(root, "button", { name: "Attach files" }) as HTMLButtonElement).disabled).toBe(false);
   expect(requests.some((path) => path.includes("/history?") && path.includes("sessionKey=web-"))).toBe(true);
+});
+
+it("keeps a linked dashboard active beside saved frames through the real reload route", async () => {
+  vi.stubGlobal("innerWidth", 1280);
+  const measure = vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockReturnValue({ width: 1000, right: 1000 } as DOMRect);
+  history.replaceState({}, "", "/chat/sage?session=saved-session&dashboard=garden");
+  sessionStorage.setItem("yoplai.chat-panel-tabs.v1:sage:saved-session", JSON.stringify({
+    tabs: [
+      { key: "yoplai\nui://yoplai/dashboard\nweather", frame: { id: "weather", title: "Weather" } },
+      { key: "yoplai\nui://yoplai/dashboard\ngarden", frame: { id: "garden", title: "Garden" } },
+    ],
+    active: "yoplai\nui://yoplai/dashboard\nweather",
+  }));
+  try {
+    dispose = render(() => <Router><Route path="/chat/:agentId" component={() => <Suspense><ChatView /></Suspense>} /></Router>, root);
+    await vi.waitFor(() => expect(getByRole(root, "tab", { name: "Weather" })).toBeDefined());
+    expect(getByRole(root, "tab", { name: "Dashboard" }).getAttribute("aria-selected")).toBe("true");
+    expect(getAllByRole(root, "tab").map((tab) => tab.getAttribute("aria-label"))).toEqual(["Weather", "Dashboard"]);
+    expect(getByTitle(root, "Dashboard dashboard").getAttribute("src")).toBe("/d/garden");
+    expect(location.search).toBe("?session=saved-session");
+  } finally { measure.mockRestore(); }
 });
