@@ -52,6 +52,20 @@ describe("per-call deadlines", () => {
       expect(calls.earliest()?.deadline).toBe(315_000);
     }
   );
+  // ALG-602 Testing Decisions (groomed GO by Thinh, comment 7f8c870e): the
+  // watchdog backstop reads the codemode script budget, not a top-level timeout.
+  it.each([
+    ['text("x");', undefined, 315_000],
+    ['// @options: {"timeout_ms": 900000}\ntext("x");', undefined, 915_000],
+    ['text("x");', 900, 315_000],
+    ['// @options: {"timeout_ms": 900000}\ntext("x");', 10, 915_000],
+    ['// @options: {"timeout_ms": 0}\ntext("x");', undefined, 315_000],
+    ['// @options: {timeout_ms: 900000}\ntext("x");', undefined, 315_000],
+  ])("gives codemode %j with timeout %s a %s ms deadline", (code, timeout, deadline) => {
+    const calls = new ToolDeadlines();
+    calls.observe(start("a", "codemode", { code, timeout }));
+    expect(calls.earliest()?.deadline).toBe(deadline);
+  });
   it("keeps overlapping deadlines independent and remembers completed IDs", () => {
     const calls = new ToolDeadlines();
     calls.observe(start("long", "bash", { timeout: 400 }));

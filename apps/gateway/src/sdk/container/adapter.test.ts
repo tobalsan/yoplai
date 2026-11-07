@@ -1450,6 +1450,39 @@ describe("container adapter", () => {
     );
   });
 
+  // ALG-602 Testing Decisions (groomed GO by Thinh, comment 7f8c870e): the
+  // backstop follows the script's own budget, not the 300 s default.
+  it("lets a codemode script with timeout_ms run past 315s and stops it only at its own deadline", async () => {
+    vi.useFakeTimers();
+    const root = tempDir();
+    process.env.YOPLAI_HOME = path.join(root, "yoplai");
+    const agent = createAgent(root, { idleTimeout: 300, maxRunTime: 1800 });
+    setConfig(agent, root);
+    const { processes } = mockSpawn();
+    const execSpy = mockExecFile();
+    const run = getContainerAdapter().run(createParams(agent));
+    const rejection = expect(run).rejects.toMatchObject({
+      kind: "tool_deadline",
+      message: expect.stringContaining("codemode exceeded its deadline after 915s"),
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    processes[0].emitStreamEvent({
+      type: "tool_call",
+      id: "script",
+      name: "codemode",
+      args: { code: '// @options: {"timeout_ms": 900000}\nawait tools.lookup({});' },
+      timestamp: 0,
+    });
+    const signal = gatewayRunSignal(processes[0]);
+    await vi.advanceTimersByTimeAsync(914_999);
+    expect(signal.aborted).toBe(false);
+    expect(execSpy).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1);
+    expect(signal.aborted).toBe(true);
+    processes[0].finish(137);
+    await rejection;
+  });
+
   it("rejects non-zero exits without protocol output", async () => {
     const root = tempDir();
     process.env.YOPLAI_HOME = path.join(root, "yoplai");

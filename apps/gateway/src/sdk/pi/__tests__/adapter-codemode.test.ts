@@ -215,6 +215,8 @@ describe("Pi adapter codemode", () => {
     expect(prompt).not.toContain("2 concurrent");
     expect(prompt).not.toContain("200 tool calls");
     expect(prompt).not.toContain("10 concurrent");
+    expect(prompt).not.toContain("300 seconds");
+    expect(prompt).not.toContain("`store()` writes are lost");
   });
 
   it("appends the tool signature to the codemode result when a script hides a validation error", async () => {
