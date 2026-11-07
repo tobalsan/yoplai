@@ -562,6 +562,20 @@ describe("createExtensionContext delivery sink registry", () => {
     expect(ctx.getDeliverySink("slack")).toBe(second);
     warn.mockRestore();
   });
+
+  it("keeps a replacement owner notifier when the prior registration stops", async () => {
+    const ctx = await context();
+    const first = async () => "unavailable" as const;
+    const second = async () => "sent" as const;
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const unregisterFirst = ctx.registerUserNotifier("slack", first);
+    const unregisterSecond = ctx.registerUserNotifier("slack", second);
+    unregisterFirst();
+    expect(ctx.getUserNotifiers().get("slack")).toBe(second);
+    expect(warn).toHaveBeenCalledWith('User notifier "slack" already registered; replacing it');
+    unregisterSecond();
+    expect(ctx.getUserNotifiers().size).toBe(0);
+  });
 });
 
 describe("updateAgentExtensionConfig host API", () => {

@@ -26,3 +26,4 @@ export * from "./credential-connect.js";
 export * from "./mcp-url.js";
 export * from "./codemode.js";
 export * from "./model-quota.js";
+export * from "./web-url.js";

@@ -8,6 +8,7 @@ import { useSession } from "../auth/client";
 import { capabilities } from "../lib/capabilities";
 import { isSuperadmin } from "../lib/roles";
 import { isForeignMine, usePrivateItemsVisibility, visibleJobs } from "../lib/private-items";
+import { refreshScheduleAlerts } from "../lib/schedule-alerts";
 
 type CredentialMode = "owner" | "team";
 
@@ -107,6 +108,7 @@ export function SchedulesPanel(props: { agentId: string; agentName: string }) {
     setError(null);
     try {
       await updateSchedule(props.agentId, job.id, { enabled });
+      void refreshScheduleAlerts();
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Failed to update scheduled job.");
     } finally {
@@ -187,7 +189,7 @@ export function SchedulesPanel(props: { agentId: string; agentName: string }) {
                     <Show when={capabilities.enableCronMonitoring === true} fallback={<strong>{job.name}</strong>}>
                       <A href={`/agents/${encodeURIComponent(props.agentId)}/schedules/${encodeURIComponent(job.id)}/runs`}><strong>{job.name}</strong></A>
                     </Show>
-                    <Show when={!enabled()}><span class="schedule-paused">Paused</span></Show>
+                    <Show when={!enabled()}><span class="schedule-paused">{job.pausedReason?.kind === "credentials" ? "Paused: credentials" : "Paused"}</span></Show>
                     <Show when={capabilities.enableCronMonitoring === true && job.state?.runningForMs !== undefined}>
                       <span class="schedule-running">Running {elapsedTime(job.state?.runningForMs ?? 0)}</span>
                     </Show>

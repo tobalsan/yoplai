@@ -1,6 +1,7 @@
 import {
   GatewayConfigSchema,
   type DeliverySink,
+  type UserNotifier,
   type ExtensionContext,
 } from "@yoplai/shared";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -37,6 +38,7 @@ describe("slack extension", () => {
 
   function buildCtx(config: ReturnType<typeof GatewayConfigSchema.parse>) {
     const deliverySinks = new Map<string, DeliverySink>();
+    const userNotifiers = new Map<string, UserNotifier>();
     return {
       getConfig: () => config,
       getDataDir: () => "/tmp",
@@ -65,6 +67,11 @@ describe("slack extension", () => {
         };
       },
       getDeliverySink: (id: string) => deliverySinks.get(id),
+      registerUserNotifier: (id: string, notifier: UserNotifier) => {
+        userNotifiers.set(id, notifier);
+        return () => { userNotifiers.delete(id); };
+      },
+      getUserNotifiers: () => userNotifiers,
       subscribe: () => () => undefined,
       emit: () => undefined,
       logger: {
@@ -113,6 +120,16 @@ describe("slack extension", () => {
     expect(componentStart).toHaveBeenCalledOnce();
     expect(createSlackAgentBot).toHaveBeenCalledWith(config.agents[0]);
     expect(agentStart).toHaveBeenCalledOnce();
+  });
+
+  it("registers the owner notifier while started and unregisters it on stop", async () => {
+    const { slackExtension } = await import("./index.js");
+    const config = GatewayConfigSchema.parse({ version: 3, agents: [], extensions: {} });
+    const ctx = buildCtx(config);
+    await slackExtension.start(ctx);
+    expect(ctx.getUserNotifiers().get("slack")).toEqual(expect.any(Function));
+    await slackExtension.stop();
+    expect(ctx.getUserNotifiers().size).toBe(0);
   });
 
   it("stops active bots", async () => {

@@ -117,7 +117,7 @@ Disk shape omits `agentId`; it is implied by the workspace:
 
 `credentialMode` is `"owner"` (Mine) or `"team"` (Team). Mine jobs are private to their `ownerUserId` and use the owner's personal credentials, falling back to team credentials when absent. An expired or revoked personal credential fails with a reconnect error. Team jobs have no owner, are visible and editable by everyone with agent access, and use only team credentials. Authenticated creation defaults to Mine; legacy ownerless and userless jobs remain Team. Switching to Team clears the owner; switching to Mine claims the job for the requester.
 
-When an agent run completes with a credential refusal, its recurring job is paused immediately, including on run-now. The recorded error and configured deliveries tell the owner to reconnect and re-enable the job. Re-enable it with the existing `enabled` setting after reconnecting; its normal schedule resumes. Agent rejections and timeouts keep the job enabled, even if a refusal was seen before the rejection or timeout. One-shot jobs retain their existing completion behavior.
+When an agent run completes with a credential refusal, its recurring job is paused immediately, including on run-now. The top-level server-owned `pausedReason` stores the integration, connect-card path and pause timestamp across restarts. The recorded error and configured deliveries include an absolute reconnect link and the step to resume in the agent's Schedules tab. Owner jobs without delivery targets notify registered user channels once per pause; Slack DMs only the newest pairing in the agent bot's workspace. Missing pairings stay silent, and send failures or timeouts only log warnings. Team jobs never DM. The app shows a red Agents-link/card dot and chat banner only to the private owner or team-job managers with agent access, plus a "Paused: credentials" job badge. Resume clears the reason and alerts; any explicit `enabled` update clears the reason. Jobs paused before this feature are not backfilled. Re-enable it with the existing `enabled` setting after reconnecting; its normal schedule resumes. Agent rejections and timeouts keep the job enabled, even if a refusal was seen before the rejection or timeout. One-shot jobs retain their existing completion behavior.
 
 `createdByUserId` records the authenticated creator and never changes when ownership changes. `GET /schedules` resolves `createdByDisplayName` server-side for Team jobs; their cards show "Created by <name>" or "Created by you". Legacy and hand-written jobs without a creator show no label.
 
@@ -517,6 +517,7 @@ removed. Migration rewrites them to cron + timezone.
 ## HTTP API
 
 ```http
+GET    /api/schedule-alerts
 GET    /api/schedules?agent=<agent-id>
 POST   /api/schedules
 PATCH  /api/schedules/:agentId/:id

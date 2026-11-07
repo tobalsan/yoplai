@@ -36,6 +36,7 @@ describe("scheduled-job agent access", () => {
       clearSessionEntry: vi.fn(), restoreSessionUpdatedAt: vi.fn(), deleteSession: vi.fn(),
       invalidateHistoryCache: vi.fn(), getSessionHistory: vi.fn(), saveMediaFile: vi.fn(), readMediaFile: vi.fn(),
       registerDeliverySink: vi.fn(() => () => {}), getDeliverySink: () => undefined,
+      registerUserNotifier: () => () => {}, getUserNotifiers: () => new Map(),
       subscribe: vi.fn(() => () => {}), emit: vi.fn(),
       logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
     };
@@ -72,6 +73,117 @@ describe("scheduled-job agent access", () => {
 
   it("omits inaccessible agents from an agentless list", async () => {
     expect(await (await app.request("/api/schedules")).json()).toEqual([]);
+  });
+
+  it("returns an owner's credential pause as an actionable alert", async () => {
+    getMultiUserRuntime()!.forks.setPublic("alpha", true);
+    actor = { user: { id: "member", role: "user", approved: true }, session: { id: "test", userId: "member" } };
+    const job = await getScheduler().add("alpha", {
+      name: "Morning inbox", credentialMode: "owner",
+      schedule: { cron: "0 8 * * *", tz: "UTC" }, payload: { message: "hello" },
+    }, "member");
+    Object.assign(job, { enabled: false, pausedReason: {
+      kind: "credentials", integration: "Example Mail", connectPath: "/agents/alpha/extensions/example-mail",
+      at: "2026-11-01T08:00:00.000Z",
+    } });
+
+    const response = await app.request("/api/schedule-alerts");
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual([{
+      agentId: "alpha", jobId: job.id, jobName: "Morning inbox", mode: "owner",
+      pausedReason: {
+        kind: "credentials", integration: "Example Mail", connectPath: "/agents/alpha/extensions/example-mail",
+        at: "2026-11-01T08:00:00.000Z",
+      },
+    }]);
+  });
+
+  it.each([["member", "user"], ["root", "superadmin"]] as const)("hides another owner's pause alert from %s", async (id, role) => {
+    getMultiUserRuntime()!.forks.setPublic("alpha", true);
+    actor = { user: { id, role, approved: true }, session: { id: "test", userId: id } };
+    const job = await getScheduler().add("alpha", {
+      name: "Private inbox", credentialMode: "owner",
+      schedule: { cron: "0 8 * * *", tz: "UTC" }, payload: { message: "hello" },
+    }, "manager");
+    Object.assign(job, { enabled: false, pausedReason: {
+      kind: "credentials", integration: "Example Mail", at: "2026-11-01T08:00:00.000Z",
+    } });
+
+    const response = await app.request("/api/schedule-alerts");
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual([]);
+  });
+
+  it.each([
+    ["member", "user", false], ["foreign", "admin", false],
+    ["manager", "admin", true], ["root", "superadmin", true],
+  ] as const)("shows a Public Team-job pause only to managers: %s", async (id, role, allowed) => {
+    getMultiUserRuntime()!.forks.setPublic("alpha", true);
+    actor = { user: { id, role, approved: true }, session: { id: "test", userId: id } };
+    const job = (await getScheduler().list("alpha"))[0]!;
+    Object.assign(job, { enabled: false, pausedReason: {
+      kind: "credentials", integration: "Example Mail", at: "2026-11-01T08:00:00.000Z",
+    } });
+
+    const response = await app.request("/api/schedule-alerts");
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual(allowed ? [{
+      agentId: "alpha", jobId, jobName: "Team task", mode: "team",
+      pausedReason: { kind: "credentials", integration: "Example Mail", at: "2026-11-01T08:00:00.000Z" },
+    }] : []);
+  });
+
+  it("excludes an owner's pause after they lose access to its agent", async () => {
+    const job = await getScheduler().add("alpha", {
+      name: "Former owner's inbox", credentialMode: "owner",
+      schedule: { cron: "0 8 * * *", tz: "UTC" }, payload: { message: "hello" },
+    }, "foreign");
+    Object.assign(job, { enabled: false, pausedReason: {
+      kind: "credentials", integration: "Example Mail", at: "2026-11-01T08:00:00.000Z",
+    } });
+
+    const response = await app.request("/api/schedule-alerts");
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual([]);
+  });
+
+  it("shows local credential pauses without multi-user authorization", async () => {
+    const privateJob = await getScheduler().add("alpha", {
+      name: "Local inbox", credentialMode: "owner",
+      schedule: { cron: "0 8 * * *", tz: "UTC" }, payload: { message: "hello" },
+    }, "manager");
+    for (const job of await getScheduler().list("alpha")) {
+      Object.assign(job, { enabled: false, pausedReason: {
+        kind: "credentials", integration: "Example Mail", at: "2026-11-01T08:00:00.000Z",
+      } });
+    }
+    getSchedulerContext().getConfig().extensions!.multiUser!.enabled = false;
+
+    const response = await app.request("/api/schedule-alerts");
+
+    expect(response.status).toBe(200);
+    expect((await response.json()).map((alert: { jobId: string }) => alert.jobId)).toEqual([jobId, privateJob.id]);
+  });
+
+  it("omits manual pauses and enabled jobs with a stale credential reason", async () => {
+    actor = { user: { id: "root", role: "superadmin", approved: true }, session: { id: "test", userId: "root" } };
+    await getScheduler().update("alpha", jobId, { enabled: false });
+    const enabledJob = await getScheduler().add("alpha", {
+      name: "Enabled inbox", credentialMode: "team",
+      schedule: { cron: "0 8 * * *", tz: "UTC" }, payload: { message: "hello" },
+    });
+    Object.assign(enabledJob, { pausedReason: {
+      kind: "credentials", integration: "Example Mail", at: "2026-11-01T08:00:00.000Z",
+    } });
+
+    const response = await app.request("/api/schedule-alerts");
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual([]);
   });
 
   it.each([

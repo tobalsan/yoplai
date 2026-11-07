@@ -54,6 +54,8 @@ describe("discord extension", () => {
         };
       },
       getDeliverySink: (id: string) => deliverySinks.get(id),
+      registerUserNotifier: () => () => undefined,
+      getUserNotifiers: () => new Map(),
       subscribe: () => () => undefined,
       emit: () => undefined,
       logger: {

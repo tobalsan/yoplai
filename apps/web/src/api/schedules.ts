@@ -1,7 +1,19 @@
-import type { ScheduleJob as StoredScheduleJob, ScheduleRun, ScheduleRunTrace } from "@yoplai/shared/types";
+import type { ScheduleAlert, ScheduleJob as StoredScheduleJob, ScheduleRun, ScheduleRunTrace } from "@yoplai/shared/types";
 import { API_BASE, apiFetch } from "./core";
 
 export type ScheduleJob = StoredScheduleJob & { createdByDisplayName?: string; ownerDisplayName?: string; state?: { runningForMs?: number } };
+
+export async function fetchScheduleAlerts(): Promise<ScheduleAlert[]> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 15_000);
+  try {
+    const res = await apiFetch(`${API_BASE}/schedule-alerts`, { signal: controller.signal });
+    if (!res.ok) throw Object.assign(new Error("Failed to load schedule alerts."), { status: res.status });
+    return await res.json();
+  } finally {
+    clearTimeout(timeout);
+  }
+}
 
 export async function fetchScheduleRunTrace(agentId: string, jobId: string, runId: string): Promise<ScheduleRunTrace> {
   const controller = new AbortController();
@@ -60,16 +72,26 @@ export async function updateSchedule(
   jobId: string,
   patch: { credentialMode?: "owner" | "team"; enabled?: boolean }
 ): Promise<ScheduleJob> {
-  const res = await apiFetch(`${API_BASE}/schedules/${encodeURIComponent(agentId)}/${encodeURIComponent(jobId)}`, {
-    method: "PATCH",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(patch),
-  });
-  if (res.status === 403 && (await res.json().catch(() => ({}))).error === "team_requires_admin") {
-    throw new Error("Only admins can pause or resume Team jobs.");
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 15_000);
+  try {
+    const res = await apiFetch(`${API_BASE}/schedules/${encodeURIComponent(agentId)}/${encodeURIComponent(jobId)}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(patch),
+      signal: controller.signal,
+    });
+    if (res.status === 403 && (await res.json().catch(() => ({}))).error === "team_requires_admin") {
+      throw new Error("Only admins can pause or resume Team jobs.");
+    }
+    if (!res.ok) throw new Error("Failed to update scheduled job");
+    return await res.json();
+  } catch (error) {
+    if (controller.signal.aborted) throw new Error("Updating scheduled job timed out. Try again.");
+    throw error;
+  } finally {
+    clearTimeout(timeout);
   }
-  if (!res.ok) throw new Error("Failed to update scheduled job");
-  return res.json();
 }
 
 export async function deleteSchedule(agentId: string, jobId: string): Promise<void> {

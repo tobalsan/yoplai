@@ -60,6 +60,8 @@ function createContext(params: {
     getSessionHistory: async () => [],
     registerDeliverySink: () => () => undefined,
     getDeliverySink: () => undefined,
+    registerUserNotifier: () => () => undefined,
+    getUserNotifiers: () => new Map(),
     subscribe: () => () => undefined,
     emit: (event, payload) => params.onEmit?.(event, payload),
     logger: {

@@ -53,6 +53,8 @@ function context(config: GatewayConfig, runAgent = vi.fn()): ExtensionContext {
     readMediaFile: vi.fn(),
     registerDeliverySink: vi.fn(() => () => {}),
     getDeliverySink: vi.fn(() => undefined),
+    registerUserNotifier: () => () => {},
+    getUserNotifiers: () => new Map(),
     subscribe: vi.fn(() => () => {}),
     emit: vi.fn(),
     logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },

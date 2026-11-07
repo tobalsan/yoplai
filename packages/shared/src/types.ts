@@ -535,6 +535,12 @@ export const ScheduleJobFileSchema = z.object({
   ownerUserId: z.string().min(1).optional(),
   createdByUserId: z.string().min(1).optional(),
   credentialMode: z.enum(["owner", "team"]).optional(),
+  pausedReason: z.object({
+    kind: z.literal("credentials"),
+    integration: z.string(),
+    connectPath: z.string().optional(),
+    at: z.string().datetime(),
+  }).optional(),
   enabled: z.boolean().optional().default(true),
   schedule: ScheduleSchema,
   model: RequiredModelConfigSchema.optional(),
@@ -551,6 +557,14 @@ export const ScheduleJobSchema = ScheduleJobFileSchema.extend({
   agentId: z.string(),
 });
 export type ScheduleJob = z.infer<typeof ScheduleJobSchema>;
+
+export type ScheduleAlert = {
+  agentId: string;
+  jobId: string;
+  jobName: string;
+  mode: "owner" | "team";
+  pausedReason: NonNullable<ScheduleJob["pausedReason"]>;
+};
 
 export type ScheduleRun = {
   id: string;
@@ -1479,6 +1493,18 @@ export type DeliverySink = (input: {
   text: string;
 }) => Promise<void>;
 
+export type UserNotifier = (input: {
+  agent: AgentConfig;
+  userId: string;
+  text: string;
+}) => Promise<"sent" | "unavailable">;
+
+export type CredentialConnectHints = {
+  toolName: string;
+  provider?: string;
+  displayName?: string;
+};
+
 export interface CredentialKey {
   agentId: string;
   integration: string;
@@ -1674,6 +1700,9 @@ export interface ExtensionContext {
   // and unregister in `stop` with the returned function)
   registerDeliverySink(id: string, sink: DeliverySink): () => void;
   getDeliverySink(id: string): DeliverySink | undefined;
+  registerUserNotifier(id: string, notifier: UserNotifier): () => void;
+  getUserNotifiers(): Map<string, UserNotifier>;
+  resolveConnectPath?(agentId: string, hints: CredentialConnectHints): Promise<string | undefined>;
 
   // Events
   subscribe(event: string, handler: (payload: unknown) => void): () => void;

@@ -11,6 +11,8 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Added
 
+- Credential-paused schedules persist their reconnect reason, notify paired Slack owners once when no delivery target is configured, and show authorized agent red dots, chat reconnect/resume banners, and a credentials badge.
+
 - Web chat restores side panel tabs, their order and active selection after reload in the same browser tab, separately for each agent and chat; narrow layouts stay inline.
 
 - Web chat side panel tabs keep artifacts and dashboards open together, with per-tab close, state-preserving switching, drag and keyboard reorder, and chat cards showing active or inactive tab state.

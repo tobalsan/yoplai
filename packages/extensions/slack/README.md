@@ -274,6 +274,13 @@ same as a manual send for these purposes.
 "deliver": [{ "target": "slack", "channel": "C0123456789" }]
 ```
 
+When a private recurring job pauses for credentials and has no delivery targets,
+the scheduler can notify its owner through Slack's registered user notifier.
+It sends one DM to the owner's newest account pairing in the agent bot's
+workspace, using the same proactive-DM send path. No matching pairing, no bot
+client, or single-user mode means no DM. Team jobs and jobs with delivery
+targets use their existing delivery behavior; in-app pause alerts remain available.
+
 ### Client resolution
 
 When a tool runs, it resolves a Slack Web API client in this order:

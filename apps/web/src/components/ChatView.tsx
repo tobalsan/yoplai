@@ -19,6 +19,7 @@ import {
 
 import { useParams, useNavigate, useSearchParams, useLocation, A } from "@solidjs/router";
 import { ArchivedSessionBanner } from "./ArchivedSessionBanner";
+import { ScheduleAlertsBanner } from "./ScheduleAlertsBanner";
 import { refreshToolLabels } from "../lib/tool-labels";
 import {
   uploadFiles,
@@ -868,6 +869,8 @@ export function ChatView() {
         isArchived={isSessionArchived()}
         onRestore={async () => { await session.restoreArchived(); }}
       />
+
+      <ScheduleAlertsBanner agentId={params.agentId} schedulesAgentId={settingsAgentId() ?? undefined} />
 
       <div class="chat-body">
         <div class="hero-spacer hero-spacer-top" />

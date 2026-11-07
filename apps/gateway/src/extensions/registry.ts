@@ -230,7 +230,7 @@ const EXTENSION_REGISTRY: Record<string, ExtensionRegistration> = {
         (module) => module.schedulerExtension
       ),
     getConfig: (config) => config.extensions?.scheduler,
-    routePrefixes: ["/api/schedules"],
+    routePrefixes: ["/api/schedules", "/api/schedule-alerts"],
     loadWhenDisabled: true,
     allowRoutesWhenDisabled: true,
   },

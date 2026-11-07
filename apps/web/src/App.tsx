@@ -49,6 +49,7 @@ import {
 import { documentTitle } from "./lib/document-title";
 import { stripBase } from "./lib/path";
 import { ToastHost } from "./lib/toast";
+import { useScheduleAlerts } from "./lib/schedule-alerts";
 
 const LazyAuthGuard = lazy(() => import("./auth/AuthGuard"));
 const LazyLoginPage = lazy(() => import("./pages/Login"));
@@ -67,6 +68,7 @@ function Layout(props: { children?: JSX.Element }) {
     const match = stripBase(location.pathname).match(/^\/chat\/([^/]+)/);
     return match ? decodeURIComponent(match[1]) : null;
   });
+  useScheduleAlerts(() => !isLoginPage(), chatAgentId);
   const [chatAgents] = createResource(
     () =>
       chatAgentId() &&

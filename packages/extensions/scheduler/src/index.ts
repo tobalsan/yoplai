@@ -7,6 +7,7 @@ import {
   type Extension,
   type ExtensionAgentTool,
   type ExtensionContext,
+  type ScheduleAlert,
 } from "@yoplai/shared";
 import { z } from "zod";
 import type { Context, Hono } from "hono";
@@ -553,7 +554,7 @@ const schedulerExtension: Extension = {
   description: "Cron-like scheduled agent execution",
   dependencies: [],
   configSchema: SchedulerExtensionConfigSchema,
-  routePrefixes: ["/api/schedules"],
+  routePrefixes: ["/api/schedules", "/api/schedule-alerts"],
   validateConfig(raw) {
     const result = SchedulerExtensionConfigSchema.safeParse(raw);
     return {
@@ -572,6 +573,25 @@ const schedulerExtension: Extension = {
     return "Scheduled jobs: " + credentialModeGuidance;
   },
   registerRoutes(app: Hono) {
+    app.get("/schedule-alerts", async (c) => {
+      const userId = requestUserId(c);
+      const multiUser = getSchedulerContext().getConfig().extensions?.multiUser?.enabled;
+      const alerts: ScheduleAlert[] = [];
+      for (const job of await getScheduler().list()) {
+        if (job.enabled !== false || !job.pausedReason) continue;
+        if (!(await canAccessAgent(c, job.agentId))) continue;
+        if (multiUser && job.ownerUserId && job.ownerUserId !== userId) continue;
+        if (multiUser && !(await canManageJob(job, userId))) continue;
+        alerts.push({
+          agentId: job.agentId,
+          jobId: job.id,
+          jobName: job.name,
+          mode: job.credentialMode ?? "team",
+          pausedReason: job.pausedReason,
+        });
+      }
+      return c.json(alerts);
+    });
     app.use("/schedules/:agentId/*", async (c, next) => {
       if (!(await canAccessAgent(c, c.req.param("agentId")))) return c.json({ error: "Agent access required" }, 403);
       await next();

@@ -20,6 +20,7 @@ import {
 import {
   clearSlackClientCache,
   createSlackDeliverySink,
+  createSlackUserNotifier,
   slackAgentTools,
 } from "./agent-tools.js";
 import {
@@ -104,6 +105,7 @@ export {
 let unregisterConnectLinks: (() => void) | undefined;
 let unregisterPairingLinks: (() => void) | undefined;
 let unregisterDeliverySink: (() => void) | undefined;
+let unregisterUserNotifier: (() => void) | undefined;
 
 const slackExtension: Extension = {
   id: "slack",
@@ -160,6 +162,7 @@ const slackExtension: Extension = {
     }
 
     await startSlackBots(ctx);
+    unregisterUserNotifier = ctx.registerUserNotifier("slack", createSlackUserNotifier(ctx));
     unregisterDeliverySink = ctx.registerDeliverySink(
       "slack",
       createSlackDeliverySink(ctx)
@@ -172,6 +175,8 @@ const slackExtension: Extension = {
     unregisterConnectLinks = undefined;
     clearCredentialConnectRequests();
     await stopSlackBots();
+    unregisterUserNotifier?.();
+    unregisterUserNotifier = undefined;
     unregisterDeliverySink?.();
     unregisterDeliverySink = undefined;
     getSlackPairingService()?.close();
