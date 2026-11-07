@@ -2656,6 +2656,66 @@ describe("ChatView abort handling", () => {
     } finally { vi.useRealTimers(); view.dispose(); measure.mockRestore(); }
   });
 
+  it("keeps the panel's call after collapse, even when the next update fails", async () => {
+    const measure = measureChatSpace(700);
+    let subscription: SubscriptionCallbacks = {};
+    subscribeToSessionMock.mockImplementation((_agent, _key, callbacks) => { subscription = callbacks; return () => {}; });
+    const marker = { server: "yoplai", tool: "dashboard", resourceUri: "ui://yoplai/dashboard" };
+    const reference = { ...marker, recordId: "saved-record", key: "garden" };
+    fetchFullHistoryMock.mockResolvedValue({ sessionId: "session-main", messages: [
+      { role: "assistant", timestamp: 1, content: [{ type: "toolCall", id: "v1", name: "dashboard_create", arguments: {}, viewCall: true, view: marker }] },
+      { role: "toolResult", timestamp: 2, toolCallId: "v1", toolName: "dashboard_create", content: [{ type: "text", text: "Created" }], view: reference },
+    ] });
+    loadMcpAppDataMock.mockImplementation(async (_agent, _session, id) => {
+      if (id === "v3") throw new Error("offline");
+      return { args: {}, result: { content: [], structuredContent: { id: "garden", title: id } } };
+    });
+    const view = renderView();
+    try {
+      await waitFor(() => expect(queryByTitle(view.container, "v1 dashboard")).not.toBeNull());
+      queryByRole(view.container, "button", { name: "Expand" })!.click();
+      await waitFor(() => expect(queryByRole(view.container, "complementary")).not.toBeNull());
+      const panel = queryByRole(view.container, "complementary")!;
+      subscription.onToolCall?.("v2", "dashboard_update", {}, undefined, marker);
+      subscription.onToolResult?.("v2", "dashboard_update", "Updated", false, undefined, undefined, { ...reference, recordId: "v2-record" });
+      await waitFor(() => expect(queryByTitle(panel, "v2 dashboard")).not.toBeNull());
+      loadMcpAppDataMock.mockClear();
+      queryByRole(panel, "button", { name: "Collapse" })!.click();
+      await waitFor(() => expect(queryByTitle(view.container, "v2 dashboard")).not.toBeNull());
+      expect(loadMcpAppDataMock.mock.calls.map((call) => call[2])).not.toContain("v1");
+      subscription.onToolCall?.("v3", "dashboard_update", {}, undefined, marker);
+      subscription.onToolResult?.("v3", "dashboard_update", "Updated", false, undefined, undefined, { ...reference, recordId: "v3-record" });
+      await waitFor(() => expect(queryByText(view.container, "Dashboard update unavailable")).not.toBeNull());
+      expect(queryByTitle(view.container, "v2 dashboard")).not.toBeNull();
+    } finally { view.dispose(); measure.mockRestore(); }
+  });
+
+  it("expands the last good dashboard when the latest update failed", async () => {
+    const measure = measureChatSpace(700);
+    let subscription: SubscriptionCallbacks = {};
+    subscribeToSessionMock.mockImplementation((_agent, _key, callbacks) => { subscription = callbacks; return () => {}; });
+    const marker = { server: "yoplai", tool: "dashboard", resourceUri: "ui://yoplai/dashboard" };
+    const reference = { ...marker, recordId: "saved-record", key: "garden" };
+    fetchFullHistoryMock.mockResolvedValue({ sessionId: "session-main", messages: [
+      { role: "assistant", timestamp: 1, content: [{ type: "toolCall", id: "v1", name: "dashboard_create", arguments: {}, viewCall: true, view: marker }] },
+      { role: "toolResult", timestamp: 2, toolCallId: "v1", toolName: "dashboard_create", content: [{ type: "text", text: "Created" }], view: reference },
+    ] });
+    loadMcpAppDataMock.mockImplementation(async (_agent, _session, id) => {
+      if (id === "v2") throw new Error("offline");
+      return { args: {}, result: { content: [], structuredContent: { id: "garden", title: id } } };
+    });
+    const view = renderView();
+    try {
+      await waitFor(() => expect(queryByTitle(view.container, "v1 dashboard")).not.toBeNull());
+      subscription.onToolCall?.("v2", "dashboard_update", {}, undefined, marker);
+      subscription.onToolResult?.("v2", "dashboard_update", "Updated", false, undefined, undefined, { ...reference, recordId: "v2-record" });
+      await waitFor(() => expect(queryByText(view.container, "Dashboard update unavailable")).not.toBeNull());
+      queryByRole(view.container, "button", { name: "Expand" })!.click();
+      await waitFor(() => expect(queryByRole(view.container, "complementary")).not.toBeNull());
+      await waitFor(() => expect(queryByTitle(queryByRole(view.container, "complementary")!, "v1 dashboard")).not.toBeNull());
+    } finally { view.dispose(); measure.mockRestore(); }
+  });
+
   it.each([false, undefined])("auto-opens a live dashboard with appsAvailable %s, then reloads its updated record", async (available) => {
     if (available === undefined) {
       resetCapabilitiesForTests();
@@ -2844,6 +2904,9 @@ describe("ChatView abort handling", () => {
       appMessage(second, { jsonrpc: "2.0", id: "yoplai-resource-teardown", result: {} });
       await waitFor(() => expect(queryByRole(container, "complementary")).toBeNull());
       sendViewFile(callbacks(), "revised-doc", { fileId: "revised-plan", filename: "plan.md", mimeType: "text/markdown", size: 128, title: "Revised plan" });
+      // The reopened panel starts at the last shown version, then updates to the revision once connected.
+      await waitFor(() => expect(queryByTitle(queryByRole(container, "complementary")!, "Plan file view")).not.toBeNull());
+      initializeApp(queryByTitle(queryByRole(container, "complementary")!, "Plan file view") as HTMLIFrameElement);
       await waitFor(() => expect(queryByTitle(queryByRole(container, "complementary")!, "Revised plan file view")).not.toBeNull());
       expect(queryByRole(queryByRole(container, "complementary")!, "link", { name: "Download" })?.getAttribute("href")).toBe("/api/media/download/revised-plan");
     } finally { dispose(); measure.mockRestore(); }
@@ -3365,13 +3428,22 @@ describe("ChatView abort handling", () => {
     expect(queryByText(container, "a.md", { exact: true })).toBeNull();
     expect(queryByText(container, "b.md", { exact: true })).toBeNull();
     sendViewFile(callbacks(), "a-second", { fileId: "a-v2", filename: "a.md", mimeType: "text/markdown", size: 2048, title: "Revised report A" });
-    await waitFor(() => expect(queryByTitle(container, "Revised report A file view")).toBe(frameA));
+    // The new host starts at the shown v1, then updates in place to v2.
+    await waitFor(() => expect(queryByTitle(container, "Report A file view")).not.toBe(frameA));
+    const movedA = queryByTitle(container, "Report A file view") as HTMLIFrameElement;
+    expect(movedA).not.toBeNull();
+    expect(frameA.isConnected).toBe(false);
     expect(frameB.isConnected).toBe(true);
-    expect(queryByRole(container, "button", { name: "View updated. Click to see it" })).not.toBeNull();
-    expect(queryByText(container, "a.md", { exact: true })).not.toBeNull();
+    expect(queryByRole(container, "button", { name: "Revised report A updated. Click to see it" })).not.toBeNull();
     expect(queryByText(container, "b.md", { exact: true })).toBeNull();
-    expect(queryByText(container, "MD · 2.0 KB", { exact: true })).not.toBeNull();
-    expect(loadMcpAppViewMock).toHaveBeenCalledTimes(2);
+    expect(loadMcpAppViewMock).toHaveBeenCalledTimes(3);
+    expect(loadMcpAppViewMock.mock.calls[2].slice(0, 3)).toEqual(["agent-1", "session-main", "a-first"]);
+    // Once the view delivers its file, the superseded v1 card comes back.
+    initializeApp(movedA);
+    await waitFor(() => expect(loadMcpAppDataMock).toHaveBeenCalledTimes(1));
+    expect(queryByText(container, "a.md", { exact: true })).not.toBeNull();
+    expect(queryByText(container, "text/markdown · 957 B", { exact: true })).not.toBeNull();
+    expect(queryByText(container, "text/markdown · 2.0 KB", { exact: true })).toBeNull();
     expect(queryAllByRole(container, "link", { name: "Download" }).map((link) => link.getAttribute("href")).sort()).toEqual([
       "/api/media/download/a-v1", "/api/media/download/a-v2", "/api/media/download/b-v1",
     ]);
@@ -3388,9 +3460,14 @@ describe("ChatView abort handling", () => {
     if (outcome === "failed") loadMcpAppDataMock.mockRejectedValueOnce(new Error("Update fetch failed"));
     else loadMcpAppDataMock.mockImplementationOnce(() => new Promise(() => {}));
     sendViewFile(callbacks(), "second-version", { fileId: "version-two", filename: "report.md", mimeType: "text/markdown", size: 2048, title: "Version two" });
+    // The view moves to the newest row, starts at v1, then tries the update in place.
+    await waitFor(() => expect(queryByTitle(container, "Version one file view")).not.toBe(frame));
+    const moved = queryByTitle(container, "Version one file view") as HTMLIFrameElement;
+    expect(frame.isConnected).toBe(false);
+    initializeApp(moved);
     await waitFor(() => expect(loadMcpAppDataMock).toHaveBeenCalledTimes(1));
     await tick();
-    expect(queryByTitle(container, "Version one file view")).toBe(frame);
+    expect(queryByTitle(container, "Version one file view")).toBe(moved);
     expect(queryByTitle(container, "Version one")).not.toBeNull();
     expect(queryByText(container, "MD · 957 B", { exact: true })).not.toBeNull();
     expect(queryByTitle(container, "Version two")).toBeNull();
@@ -3565,7 +3642,7 @@ describe("ChatView abort handling", () => {
     dispose();
   });
 
-  it("updates the same iframe for a later call and links its row back to the host", async () => {
+  it("moves the iframe to the later call and links the earlier row", async () => {
     enableAppViews();
     const { container, dispose, callbacks } = await startFullStream();
     const marker = { server: "fixture", tool: "draw", resourceUri: "ui://fixture/view.html" };
@@ -3578,19 +3655,46 @@ describe("ChatView abort handling", () => {
     callbacks()?.onToolCall?.("second", "fixture_draw", { shape: "box" }, undefined, marker);
     expect(container.textContent).toContain("Updating view…");
     callbacks()?.onToolResult?.("second", "fixture_draw", "Box added", false, undefined, undefined, { ...marker, recordId: "second-record" });
-    await waitFor(() => expect(loadMcpAppDataMock).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(loadMcpAppViewMock).toHaveBeenCalledTimes(2));
     await tick();
-    expect(frame.isConnected).toBe(true);
+    expect(frame.isConnected).toBe(false);
     expect(container.querySelectorAll("iframe")).toHaveLength(1);
-    expect(loadMcpAppViewMock).toHaveBeenCalledTimes(1);
+    // The moved host starts at the shown call, then updates in place to the latest.
+    expect(loadMcpAppViewMock.mock.calls[1].slice(0, 3)).toEqual(["agent-1", "session-main", "first"]);
+    expect(post.mock.calls.some(([message]) => message.method !== "ui/resource-teardown")).toBe(false);
+    const moved = container.querySelector("iframe")!;
+    expect(moved).not.toBe(frame);
+    initializeApp(moved);
+    await waitFor(() => expect(loadMcpAppDataMock).toHaveBeenCalledTimes(1));
     expect(loadMcpAppDataMock.mock.calls[0].slice(0, 3)).toEqual(["agent-1", "session-main", "second"]);
-    expect(post.mock.calls).toEqual([
-      [{ jsonrpc: "2.0", method: "ui/notifications/tool-input", params: { arguments: { shape: "box" } } }, "https://apps.test"],
-      [{ jsonrpc: "2.0", method: "ui/notifications/tool-result", params: { content: [{ type: "text", text: "Box added" }] } }, "https://apps.test"],
-    ]);
-    queryByRole(container, "button", { name: "View updated. Click to see it" })!.click();
-    expect(document.activeElement).toBe(frame.closest(".mcp-app-tool-row"));
+    expect(loadMcpAppViewMock).toHaveBeenCalledTimes(2);
+    queryByRole(container, "button", { name: "fixture updated. Click to see it" })!.click();
+    expect(document.activeElement).toBe(moved.closest(".mcp-app-tool-row"));
     post.mockRestore();
+    dispose();
+  });
+
+  it("disables the updated link while the side panel shows that view", async () => {
+    enableAppViews();
+    const { container, dispose, callbacks } = await startFullStream();
+    const marker = { server: "fixture", tool: "draw", resourceUri: "ui://fixture/view.html" };
+    for (const id of ["first", "second"]) {
+      callbacks()?.onToolCall?.(id, "fixture_draw", {}, undefined, marker);
+      callbacks()?.onToolResult?.(id, "fixture_draw", `Drawing ${id}`, false, undefined, undefined, { ...marker, recordId: `${id}-record` });
+    }
+    await waitFor(() => expect(container.querySelectorAll("iframe")).toHaveLength(1));
+    const link = () => queryByRole(container, "button", { name: /updated\. (Click to see it|Displayed in side panel)$/ }) as HTMLButtonElement;
+    expect(link().textContent).toMatch(/updated\. Click to see it$/);
+    expect(link().disabled).toBe(false);
+    const panelFrame = await expandApp(container, container.querySelector("iframe")!);
+    await waitFor(() => expect(link().disabled).toBe(true));
+    expect(link().textContent).toMatch(/updated\. Displayed in side panel$/);
+    initializeApp(panelFrame);
+    queryByRole(queryByRole(container, "complementary")!, "button", { name: "Collapse" })!.click();
+    appMessage(panelFrame, { jsonrpc: "2.0", id: "yoplai-resource-teardown", result: {} });
+    await waitFor(() => expect(queryByRole(container, "complementary")).toBeNull());
+    expect(link().disabled).toBe(false);
+    expect(link().textContent).toMatch(/updated\. Click to see it$/);
     dispose();
   });
 
@@ -3702,7 +3806,7 @@ describe("ChatView abort handling", () => {
       await waitFor(() => expect(container.querySelectorAll("iframe")).toHaveLength(1));
       const initialFrame = container.querySelector("iframe")!;
       expect(loadMcpAppViewMock.mock.calls[0].slice(0, 3)).toEqual(["agent-1", "session-main", "b-latest"]);
-      queryByRole(container, "button", { name: "View updated. Click to see it" })!.click();
+      queryByRole(container, "button", { name: "fixture updated. Click to see it" })!.click();
       expect(document.activeElement).toBe(initialFrame.closest(".mcp-app-tool-row"));
       const panelFrame = panelOpen ? await expandApp(container, initialFrame) : undefined;
       const markerA = { server: "fixture", tool: "draw_a", resourceUri: "ui://fixture/a.html" };
@@ -3816,17 +3920,18 @@ describe("ChatView abort handling", () => {
     callbacks()?.onToolResult?.("app-a", "fixture_draw", earlierResult === "success" ? "A drawing" : "Capture failed", false,
       undefined, undefined, earlierResult === "success" ? { ...marker, recordId: "record-a" } : undefined);
     await tick();
-    if (earlierResult === "success") {
-      // The newly captured earlier call becomes the inline host, with latest B's data.
-      expect(frameB.isConnected).toBe(false);
-      await waitFor(() => expect(container.querySelectorAll('iframe[title="fixture MCP App"]')).toHaveLength(1));
-      currentFrame = container.querySelector('iframe[title="fixture MCP App"]')!;
-      expect(currentFrame).not.toBe(frameB);
-      expect(loadMcpAppViewMock.mock.calls.at(-1)?.slice(0, 3)).toEqual(["agent-1", "session-main", "app-b"]);
-    } else expect(container.textContent).toContain("View unavailable");
+    // B is still the newest successful call, so the late earlier result never moves or reloads the live view.
+    if (earlierResult !== "success") expect(container.textContent).toContain("View unavailable");
     expectCurrent();
+    expect(loadMcpAppViewMock).toHaveBeenCalledTimes(1);
     callbacks()?.onToolCall?.("app-c", "fixture_draw", {}, "app-b", marker);
     callbacks()?.onToolResult?.("app-c", "fixture_draw", "Nested drawing", false, undefined, "app-b", { ...marker, recordId: "record-c" });
+    // The newer nested call C takes over the inline view; the app stays single and live.
+    await waitFor(() => expect(frameB.isConnected).toBe(false));
+    await waitFor(() => expect(container.querySelectorAll('iframe[title="fixture MCP App"]')).toHaveLength(1));
+    currentFrame = container.querySelector('iframe[title="fixture MCP App"]')!;
+    expect(currentFrame).not.toBe(frameB);
+    expect(loadMcpAppViewMock.mock.calls.at(-1)?.slice(0, 3)).toEqual(["agent-1", "session-main", "app-c"]);
     await tick(); expectCurrent();
     const activity = queryAllByRole(container, "button", { name: /Worked.*1 tool call/ })[0];
     activity?.click();

@@ -19,9 +19,10 @@ function isRpcMessage(value: unknown): value is RpcMessage {
   return !!error && typeof error === "object" && !Array.isArray(error) && Number.isInteger(error.code) && typeof error.message === "string";
 }
 
-export function McpAppView(props: { agentId: string; sessionId: string; viewKey: string; callId: () => string; text: string; mode: "inline" | "panel"; onDisplayMode?: (mode: "inline" | "fullscreen") => void; onUserMessage?: (text: string) => Promise<void>; fileOf?: (callId: string) => McpAppFile | undefined; onShown?: (callId: string | undefined) => void }) {
+export function McpAppView(props: { agentId: string; sessionId: string; viewKey: string; callId: () => string; text: string; mode: "inline" | "panel"; onDisplayMode?: (mode: "inline" | "fullscreen") => void; onUserMessage?: (text: string) => Promise<void>; fileOf?: (callId: string) => McpAppFile | undefined; onShown?: (callId: string | undefined) => void; startCallId?: string }) {
   const [view, setView] = createSignal<McpAppViewData>();
-  const [shownCallId, setShownCallId] = createSignal(props.callId());
+  // A moved host starts at the last shown call, then updates in place, so a failed update keeps it.
+  const [shownCallId, setShownCallId] = createSignal(props.startCallId ?? props.callId());
   const file = () => props.fileOf?.(shownCallId());
   const fileName = () => file()?.title ?? file()?.filename;
   const fileDescription = () => {
@@ -186,6 +187,14 @@ export function McpAppView(props: { agentId: string; sessionId: string; viewKey:
       if (!active) return;
       stop(true);
       setView(undefined);
+      const latest = props.callId();
+      if (props.startCallId && toolCallId === props.startCallId && toolCallId !== latest) {
+        // The seed failed to load: fall through to the latest call.
+        setReady(false);
+        setShownCallId(latest);
+        stopCurrent = start(agentId, sessionId, latest);
+        return;
+      }
       setFailed(true);
       props.onShown?.(undefined);
     }
@@ -320,8 +329,9 @@ export function McpAppView(props: { agentId: string; sessionId: string; viewKey:
     setView(undefined);
     setReady(false);
     setFailed(false);
-    setShownCallId(props.callId());
-    stopCurrent = start(agentId, sessionId, props.callId());
+    const first = props.startCallId ?? props.callId();
+    setShownCallId(first);
+    stopCurrent = start(agentId, sessionId, first);
   }));
   createEffect(() => { updateCurrent?.(props.callId()); });
   function pageHide() {

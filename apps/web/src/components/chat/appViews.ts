@@ -69,7 +69,8 @@ export function createAppViews(sessionId: Accessor<string | null | undefined>, c
     const views = new Map<string, AppView>();
     for (const [key, group] of groups) {
       const successful = group.filter((call) => call.result?.view);
-      if (successful.length) views.set(key, { key, calls: group, host: successful[0], latest: successful[successful.length - 1] });
+      // The newest successful call hosts the inline view, so it follows the conversation.
+      if (successful.length) views.set(key, { key, calls: group, host: successful[successful.length - 1], latest: successful[successful.length - 1] });
     }
     return views;
   });
@@ -138,13 +139,14 @@ export function createAppViews(sessionId: Accessor<string | null | undefined>, c
         ?? panel()?.calls.find((call) => call.id === id)?.result?.view?.file;
     },
     shownFileOf(key: string) { return shown().get(key)?.result?.view?.file; },
+    shownCallOf(key: string) { return shown().get(key)?.id; },
     reportShown(key: string, id: string | undefined) {
       const call = projection().get(key)?.calls.find((call) => call.id === id)
         ?? (panel()?.key === key ? panel()?.calls.find((call) => call.id === id) : undefined);
       setShown((current) => {
         const next = new Map(current);
         if (call) next.set(key, call);
-        else next.delete(key);
+        else if (current.get(key)?.id !== id) next.delete(key);
         return next;
       });
     },

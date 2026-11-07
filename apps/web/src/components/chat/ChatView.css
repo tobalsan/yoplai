@@ -155,7 +155,12 @@
           font-weight: 600;
           cursor: pointer;
         }
-        .mcp-app-updated:hover {
+        .mcp-app-updated:disabled {
+          background: var(--bg-raised);
+          color: var(--text-secondary);
+          cursor: default;
+        }
+        .mcp-app-updated:hover:not(:disabled) {
           background: color-mix(in srgb, var(--bg-accent, var(--accent)) 85%, var(--text-primary));
         }
         .mcp-app-updated:focus-visible {

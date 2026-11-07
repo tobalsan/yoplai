@@ -1096,8 +1096,8 @@ export function ChatView() {
       <Show when={!!appViews.panel() || !!appViews.frame()}>
         <ChatSidePanel>
           <Show when={appViews.frame()} fallback={
-          <Show when={appViews.panel()!.latest.result?.view?.resourceUri === "ui://yoplai/dashboard"} fallback={<McpAppView agentId={params.agentId} sessionId={session.appSessionId()!} viewKey={appViews.panel()!.key} callId={() => appViews.panel()!.latest.id} text={appViews.panel()!.latest.text ?? ""} mode="panel" fileOf={appViews.fileOf} onShown={(callId) => { const key = appViews.panel()?.key; if (key) appViews.reportShown(key, callId); }} onDisplayMode={(mode) => { if (mode === "inline") appViews.close(); }} onUserMessage={(text) => handleViewMessage(appViews.panel()!.key, text)} />}>
-            <CapturedFrameView kind="dashboard" agentId={params.agentId} sessionId={session.appSessionId()!} callId={() => appViews.panel()!.latest.id} mode="panel" onCollapse={appViews.close} />
+          <Show when={appViews.panel()!.latest.result?.view?.resourceUri === "ui://yoplai/dashboard"} fallback={<McpAppView agentId={params.agentId} sessionId={session.appSessionId()!} viewKey={appViews.panel()!.key} callId={() => appViews.panel()!.latest.id} startCallId={appViews.shownCallOf(appViews.panel()!.key)} text={appViews.panel()!.latest.text ?? ""} mode="panel" fileOf={appViews.fileOf} onShown={(callId) => { const key = appViews.panel()?.key; if (key) appViews.reportShown(key, callId); }} onDisplayMode={(mode) => { if (mode === "inline") appViews.close(); }} onUserMessage={(text) => handleViewMessage(appViews.panel()!.key, text)} />}>
+            <CapturedFrameView kind="dashboard" agentId={params.agentId} sessionId={session.appSessionId()!} callId={() => appViews.panel()!.latest.id} startCallId={appViews.shownCallOf(appViews.panel()!.key)} mode="panel" onCollapse={appViews.close} onShown={(callId) => { const key = appViews.panel()?.key; if (key) appViews.reportShown(key, callId); }} />
           </Show>
           }>
             {(target) => <FrameView target={target()} mode="panel" onCollapse={appViews.close} />}

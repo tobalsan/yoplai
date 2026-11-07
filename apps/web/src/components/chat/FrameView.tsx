@@ -78,9 +78,13 @@ export function CapturedFrameView(props: {
   mode: "inline" | "panel";
   onExpand?: () => void;
   onCollapse?: () => void;
+  startCallId?: string;
+  onShown?: (callId: string) => void;
 }) {
   const [target, setTarget] = createSignal<DashboardFrame>();
-  const callId = createMemo(() => props.callId());
+  // A moved host starts at the last shown call, then loads the latest, so a failed update keeps it.
+  const [primed, setPrimed] = createSignal(!props.startCallId || props.startCallId === props.callId());
+  const callId = createMemo(() => (primed() ? props.callId() : props.startCallId!));
   const [failed, setFailed] = createSignal(false);
   let identity = "";
   createEffect(() => {
@@ -90,24 +94,31 @@ export function CapturedFrameView(props: {
     identity = nextIdentity;
     setFailed(false);
     const timer = setTimeout(() => {
-      setFailed(true);
+      if (!primed()) setPrimed(true);
+      else setFailed(true);
       controller.abort();
     }, 10000);
+    const id = callId();
     void loadMcpAppData(
       props.agentId,
       props.sessionId,
-      callId(),
+      id,
       controller.signal
     )
       .then((data) => {
-        if (!controller.signal.aborted)
-          setTarget({
-            ...(data.result.structuredContent as Omit<DashboardFrame, "kind">),
-            kind: props.kind,
-          });
+        if (controller.signal.aborted) return;
+        setTarget({
+          ...(data.result.structuredContent as Omit<DashboardFrame, "kind">),
+          kind: props.kind,
+        });
+        props.onShown?.(id);
+        if (!primed()) setPrimed(true);
       })
       .catch(() => {
-        if (!controller.signal.aborted) setFailed(true);
+        if (controller.signal.aborted) return;
+        // A failed seed falls through to the latest call.
+        if (!primed()) setPrimed(true);
+        else setFailed(true);
       })
       .finally(() => clearTimeout(timer));
     onCleanup(() => {

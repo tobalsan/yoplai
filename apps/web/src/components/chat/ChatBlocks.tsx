@@ -168,6 +168,11 @@ export function McpAppToolRow(props: { agentId: string; sessionId?: string | nul
   const captured = () => !!view()?.calls.find((call) => call.id === props.toolCallId)?.result?.view;
   const dashboard = () => view()?.latest.result?.view?.resourceUri === "ui://yoplai/dashboard";
   const settled = () => !!props.result || captured();
+  const inPanel = () => props.appViews.panel()?.key === view()?.key;
+  const title = () => {
+    const latest = view()?.latest.result?.view;
+    return latest?.title ?? latest?.file?.title ?? latest?.file?.filename ?? file()?.title ?? file()?.filename ?? (dashboard() ? "Dashboard" : latest?.server ?? "View");
+  };
   function reveal() {
     const target = props.appViews.panel()?.key === view()?.key
       ? document.querySelector<HTMLElement>(".chat-side-panel")
@@ -184,21 +189,21 @@ export function McpAppToolRow(props: { agentId: string; sessionId?: string | nul
         <button type="button" class="mcp-app-panel-card" onClick={reveal}>
           <Show when={file()}><span class="file-icon" aria-hidden="true">{getFileIcon(file()!.mimeType)}</span></Show>
           <Show when={dashboard()}><i class="fa-solid fa-table-columns" aria-hidden="true" /></Show>
-          <span>{(dashboard() ? "Dashboard" : undefined) ?? file()?.title ?? file()?.filename ?? view()?.latest.result?.view?.server} · shown in the side panel</span>
+          <span>{title()} · shown in the side panel</span>
         </button>
       </Match>
       <Match when={role() === "link" && (!settled() || captured())}>
         <Show when={settled()} fallback={<p role="status">Updating view…</p>}>
-          <button type="button" class="mcp-app-updated" onClick={reveal}><i class="fa-solid fa-eye" aria-hidden="true" />View updated. Click to see it</button>
+          <button type="button" class="mcp-app-updated" disabled={inPanel()} onClick={reveal}><i class="fa-solid fa-eye" aria-hidden="true" />{title()} updated. {inPanel() ? "Displayed in side panel" : "Click to see it"}</button>
         </Show>
       </Match>
       <Match when={dashboard() && captured() && !!props.sessionId}>
-        <CapturedFrameView kind="dashboard" agentId={props.agentId} sessionId={props.sessionId!} callId={() => view()!.latest.id} mode="inline" onExpand={() => props.appViews.open(view()!.key)} />
+        <CapturedFrameView kind="dashboard" agentId={props.agentId} sessionId={props.sessionId!} callId={() => view()!.latest.id} startCallId={props.appViews.shownCallOf(view()!.key)} onShown={(callId) => { const key = view()?.key; if (key) props.appViews.reportShown(key, callId); }} mode="inline" onExpand={() => props.appViews.open(view()!.key)} />
       </Match>
       <Match when={settled() && appsAvailable() !== undefined && (appsAvailable() === false || !captured() || props.sessionId !== undefined)}>
         <Show when={captured() && appsAvailable() === true && !!props.sessionId}
           fallback={<><pre class="tool-code">{getToolResultText(props.result)}</pre><p role="status">View unavailable</p></>}>
-          <McpAppView agentId={props.agentId} sessionId={props.sessionId!} viewKey={view()!.key} callId={() => view()!.latest.id} text={view()?.latest.text ?? getToolResultText(props.result)} mode="inline" fileOf={props.appViews.fileOf} onShown={(callId) => { const key = view()?.key; if (key) props.appViews.reportShown(key, callId); }} onDisplayMode={(mode) => { if (mode === "fullscreen") props.appViews.open(view()!.key); }} onUserMessage={props.onUserMessage ? (text) => props.onUserMessage!(view()!.key, text) : undefined} />
+          <McpAppView agentId={props.agentId} sessionId={props.sessionId!} viewKey={view()!.key} callId={() => view()!.latest.id} text={view()?.latest.text ?? getToolResultText(props.result)} mode="inline" startCallId={props.appViews.shownCallOf(view()!.key)} fileOf={props.appViews.fileOf} onShown={(callId) => { const key = view()?.key; if (key) props.appViews.reportShown(key, callId); }} onDisplayMode={(mode) => { if (mode === "fullscreen") props.appViews.open(view()!.key); }} onUserMessage={props.onUserMessage ? (text) => props.onUserMessage!(view()!.key, text) : undefined} />
         </Show>
       </Match>
     </Switch>

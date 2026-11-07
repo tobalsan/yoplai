@@ -59,7 +59,7 @@ describe("app views", () => {
       views.open("yoplai\nui://yoplai/dashboard\ngarden");
       setCalls((current) => [...current, dashboardCall("revised", "garden")]);
       expect(views.panel()?.latest.id).toBe("revised");
-      expect([views.roleOf("first"), views.roleOf("other"), views.roleOf("revised")]).toEqual(["panel-card", "host", "link"]);
+      expect([views.roleOf("first"), views.roleOf("other"), views.roleOf("revised")]).toEqual(["link", "host", "panel-card"]);
       expect(views.viewOf("other")?.latest.id).toBe("other");
       dispose();
     });
@@ -73,11 +73,23 @@ describe("app views", () => {
       expect(viewKey(a.result!.view!)).toBe("yoplai\nui://yoplai/file-viewer\na.md");
       expect(viewKey(b.result!.view!)).toBe("yoplai\nui://yoplai/file-viewer\nb.md");
       expect(viewKey(drawing)).toBe("fixture\nui://drawing");
-      expect([views.roleOf("a-v1"), views.roleOf("b-v1"), views.roleOf("a-v2")]).toEqual(["host", "host", "link"]);
+      expect([views.roleOf("a-v1"), views.roleOf("b-v1"), views.roleOf("a-v2")]).toEqual(["link", "host", "host"]);
       expect(views.viewOf("a-v1")?.latest.id).toBe("a-v2");
       views.open("yoplai\nui://yoplai/file-viewer\nb.md");
       expect(views.panel()?.latest.id).toBe("b-v1");
-      expect(views.roleOf("a-v1")).toBe("host");
+      expect(views.roleOf("a-v2")).toBe("host");
+      dispose();
+    });
+  });
+  it("moves the inline host to the updated call and shows the panel card there while the panel is open", () => {
+    createRoot((dispose) => {
+      const [calls, setCalls] = createSignal([call("old")]);
+      const views = createAppViews(() => "session", calls);
+      expect(views.roleOf("old")).toBe("host");
+      setCalls([call("old"), call("new")]);
+      expect([views.roleOf("old"), views.roleOf("new")]).toEqual(["link", "host"]);
+      views.open("fixture\nui://drawing");
+      expect([views.roleOf("old"), views.roleOf("new")]).toEqual(["link", "panel-card"]);
       dispose();
     });
   });
@@ -148,6 +160,19 @@ describe("app views", () => {
       dispose();
     });
   });
+  it("keeps the shown file when it is restored after leaving the projection", () => {
+    createRoot((dispose) => {
+      const [calls, setCalls] = createSignal([fileCall("a-v1", "a.md")]);
+      const views = createAppViews(() => "session", calls);
+      const key = "yoplai\nui://yoplai/file-viewer\na.md";
+      views.reportShown(key, "a-v1");
+      setCalls([fileCall("a-v2", "a.md")]);
+      views.reportShown(key, "a-v1");
+      expect(views.shownFileOf(key)?.filename).toBe("a.md");
+      expect(views.hidesFileCard("a-v1")).toBe(true);
+      dispose();
+    });
+  });
   it("deduplicates captured history/live sends while pending and failed sends stay outside file views", () => {
     createRoot((dispose) => {
       const pending = { id: "pending", timestamp: 1, view: fileView };
@@ -202,7 +227,8 @@ describe("app views", () => {
       const [calls, setCalls] = createSignal([call("a"), call("b")]);
       const views = createAppViews(session, calls);
       views.open("fixture\nui://drawing");
-      expect(views.roleOf("a")).toBe("panel-card");
+      expect(views.roleOf("a")).toBe("link");
+      expect(views.roleOf("b")).toBe("panel-card");
       expect(views.panel()?.latest.id).toBe("b");
       setCalls([]);
       expect(views.panel()?.latest.id).toBe("b");
@@ -215,11 +241,11 @@ describe("app views", () => {
       dispose();
     });
   });
-  it("hosts the first successful call and links later calls to its latest data", () => {
+  it("hosts the newest successful call and links earlier calls to its latest data", () => {
     createRoot((dispose) => {
       const views = createAppViews(() => "session", () => [call("a"), call("b"), call("c")]);
       expect(viewKey(drawing)).toBe("fixture\nui://drawing");
-      expect([views.roleOf("a"), views.roleOf("b"), views.roleOf("c")]).toEqual(["host", "link", "link"]);
+      expect([views.roleOf("a"), views.roleOf("b"), views.roleOf("c")]).toEqual(["link", "link", "host"]);
       expect(views.viewOf("a")?.latest.id).toBe("c");
       dispose();
     });
@@ -236,15 +262,16 @@ describe("app views", () => {
       views.open("fixture\nui://drawing");
       expect(delivered.at(-1)).toBe("b");
       setCalls([call("a"), call("b")]);
-      expect(views.roleOf("a")).toBe("panel-card");
-      expect(views.roleOf("b")).toBe("link");
+      expect(views.roleOf("a")).toBe("link");
+      expect(views.roleOf("b")).toBe("panel-card");
       expect(delivered.at(-1)).toBe("b");
       setCalls([call("a"), call("b"), call("c")]);
       expect(delivered.at(-1)).toBe("c");
       setCalls([call("a"), call("b")]);
       expect(views.panel()?.latest.id).toBe("c");
       views.close();
-      expect(views.roleOf("a")).toBe("host");
+      expect(views.roleOf("a")).toBe("link");
+      expect(views.roleOf("b")).toBe("host");
       expect(views.panel()).toBeUndefined();
       dispose();
     });
@@ -282,19 +309,19 @@ describe("app views", () => {
         result: { view: { ...drawing, server: "other", recordId: id } },
       });
       const views = createAppViews(() => "session", () => [call("a"), other("x"), call("b"), other("y")]);
-      expect([views.roleOf("a"), views.roleOf("x"), views.roleOf("b"), views.roleOf("y")]).toEqual(["host", "host", "link", "link"]);
+      expect([views.roleOf("a"), views.roleOf("x"), views.roleOf("b"), views.roleOf("y")]).toEqual(["link", "link", "host", "host"]);
       expect(views.viewOf("a")?.latest.id).toBe("b");
       expect(views.viewOf("x")?.latest.id).toBe("y");
       views.open("fixture\nui://drawing");
-      expect(views.roleOf("a")).toBe("panel-card");
-      expect(views.roleOf("x")).toBe("host");
+      expect(views.roleOf("b")).toBe("panel-card");
+      expect(views.roleOf("y")).toBe("host");
       views.open("other\nui://drawing");
       expect(views.panel()?.key).toBe("other\nui://drawing");
-      expect(views.roleOf("a")).toBe("host");
-      expect(views.roleOf("x")).toBe("panel-card");
+      expect(views.roleOf("b")).toBe("host");
+      expect(views.roleOf("y")).toBe("panel-card");
       views.close();
       expect(views.panel()).toBeUndefined();
-      expect(views.roleOf("x")).toBe("host");
+      expect(views.roleOf("y")).toBe("host");
       dispose();
     });
   });
@@ -312,7 +339,8 @@ describe("app views", () => {
       expect(views.viewOf("second")?.calls.map((item) => item.id)).toEqual(["failed", "second", "pending", "late-failure"]);
       expect(views.viewOf("pending")?.latest.id).toBe("second");
       setCalls([failed, call("second", false), call("second"), call("third")]);
-      expect(views.roleOf("second")).toBe("host");
+      expect(views.roleOf("second")).toBe("link");
+      expect(views.roleOf("third")).toBe("host");
       expect(views.viewOf("second")?.latest.id).toBe("third");
       dispose();
     });

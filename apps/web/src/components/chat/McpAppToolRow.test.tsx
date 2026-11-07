@@ -6,10 +6,10 @@ import {
   queryByText,
   waitFor,
 } from "@testing-library/dom";
-import { createSignal } from "solid-js";
+import { createSignal, For } from "solid-js";
 import { render } from "solid-js/web";
 import { McpAppToolRow } from "./ChatBlocks";
-import { createAppViews, type AppViewCall } from "./appViews";
+import { createAppViews, type AppViewCall, type AppViews } from "./appViews";
 import {
   resetCapabilitiesForTests,
   setCapabilitiesForTests,
@@ -75,6 +75,28 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
+// One row per call, like the transcript: the newest successful call hosts the view, earlier ones link to it.
+function renderRows(calls: () => AppViewCall[], onViews?: (views: AppViews) => void) {
+  return render(() => {
+    const appViews = createAppViews(() => "session", calls);
+    onViews?.(appViews);
+    return (
+      <For each={calls()}>
+        {(call) => (
+          <McpAppToolRow
+            agentId="agent"
+            sessionId="session"
+            toolCallId={call.id}
+            name="dashboard_create"
+            result={{ ...result, ...call.result }}
+            appViews={appViews}
+          />
+        )}
+      </For>
+    );
+  }, container);
+}
+
 describe("dashboard tool row", () => {
   it("renders and refreshes a dashboard without the apps origin", async () => {
     setCapabilitiesForTests({ apps: { available: false } });
@@ -84,19 +106,16 @@ describe("dashboard tool row", () => {
     const fetch = vi.fn().mockImplementation(async () => new Response(JSON.stringify(dashboardData)));
     vi.stubGlobal("fetch", fetch);
     const [calls, setCalls] = createSignal([created]);
-    dispose = render(() => {
-      const appViews = createAppViews(() => "session", calls);
-      return <McpAppToolRow agentId="agent" sessionId="session" toolCallId="first" name="dashboard_create" result={created.result} appViews={appViews} />;
-    }, container);
+    dispose = renderRows(calls);
     await waitFor(() => expect(getByTitle(container, "Garden overview dashboard")).toBeTruthy());
     const frame = getByTitle(container, "Garden overview dashboard") as HTMLIFrameElement;
     expect(frame.getAttribute("src")).toBe("/d/garden");
     expect(frame.getAttribute("sandbox")).not.toContain("allow-same-origin");
-    frame.src = "/d/garden?old=1";
     setCalls([created, { ...created, id: "updated", result: { ...created.result, toolCallId: "updated", view: { ...created.result.view, recordId: "updated-record" } } }]);
     await waitFor(() => expect(fetch.mock.calls.at(-1)?.[0]).toBe("/api/agents/agent/sessions/session/mcp-apps/updated/data"));
-    await waitFor(() => expect(frame.getAttribute("src")).toBe("/d/garden"));
-    expect(getByTitle(container, "Garden overview dashboard")).toBe(frame);
+    await waitFor(() => expect(getByTitle(container, "Garden overview dashboard").getAttribute("src")).toBe("/d/garden"));
+    expect(container.querySelectorAll("iframe")).toHaveLength(1);
+    expect(getByRole(container, "button", { name: "Dashboard updated. Click to see it" })).toBeTruthy();
     expect(getByRole(container, "button", { name: "Expand" })).toBeTruthy();
   });
   it("ignores an older response after a newer dashboard record arrives", async () => {
@@ -128,19 +147,7 @@ describe("dashboard tool row", () => {
         )
     );
     const [calls, setCalls] = createSignal([first]);
-    dispose = render(() => {
-      const appViews = createAppViews(() => "session", calls);
-      return (
-        <McpAppToolRow
-          agentId="agent"
-          sessionId="session"
-          toolCallId="first"
-          name="dashboard_create"
-          result={result}
-          appViews={appViews}
-        />
-      );
-    }, container);
+    dispose = renderRows(calls);
     await waitFor(() =>
       expect(getByTitle(container, "First page dashboard")).toBeTruthy()
     );
@@ -159,6 +166,7 @@ describe("dashboard tool row", () => {
     finishOlder(new Response(JSON.stringify(data)));
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(getByTitle(container, "Newest page dashboard")).toBeTruthy();
+    expect(container.querySelectorAll("iframe")).toHaveLength(1);
     expect(queryByText(container, "First page", { exact: true })).toBeNull();
   });
   it("ends a hung data load and ignores its late response without blocking the row", async () => {
@@ -200,10 +208,11 @@ describe("dashboard tool row", () => {
       vi.useRealTimers();
     }
   });
-  it("keeps the live iframe during an update, then reloads its requested URL and latest title", async () => {
+  it("moves the dashboard to the updated call, loads its latest title and links the earlier row", async () => {
     let finish!: (response: Response) => void;
     const fetch = vi
       .fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify(data)))
       .mockResolvedValueOnce(new Response(JSON.stringify(data)))
       .mockImplementationOnce(
         () =>
@@ -213,36 +222,21 @@ describe("dashboard tool row", () => {
       );
     vi.stubGlobal("fetch", fetch);
     const [calls, setCalls] = createSignal([first]);
-    dispose = render(() => {
-      const appViews = createAppViews(() => "session", calls);
-      return (
-        <McpAppToolRow
-          agentId="agent"
-          sessionId="session"
-          toolCallId="first"
-          name="dashboard_create"
-          result={result}
-          appViews={appViews}
-        />
-      );
-    }, container);
+    dispose = renderRows(calls);
     await waitFor(() =>
       expect(getByTitle(container, "First page dashboard")).toBeTruthy()
     );
-    const frame = getByTitle(
-      container,
-      "First page dashboard"
-    ) as HTMLIFrameElement;
-    frame.src = "/d/garden?old=1";
     setCalls([
       first,
       { ...first, id: "second", result: { ...result, toolCallId: "second" } },
     ]);
-    expect(getByTitle(container, "First page dashboard")).toBe(frame);
+    // The new host starts at the shown call, then loads the latest.
     await waitFor(() =>
-      expect(fetch.mock.calls[1]?.[0]).toBe(
-        "/api/agents/agent/sessions/session/mcp-apps/second/data"
-      )
+      expect(fetch.mock.calls.map((call) => call[0])).toEqual([
+        "/api/agents/agent/sessions/session/mcp-apps/first/data",
+        "/api/agents/agent/sessions/session/mcp-apps/first/data",
+        "/api/agents/agent/sessions/session/mcp-apps/second/data",
+      ])
     );
     finish(
       new Response(
@@ -259,9 +253,46 @@ describe("dashboard tool row", () => {
       )
     );
     await waitFor(() =>
-      expect(getByTitle(container, "Revised page dashboard")).toBe(frame)
+      expect(getByTitle(container, "Revised page dashboard")).toBeTruthy()
     );
-    expect(frame.getAttribute("src")).toBe("/d/garden");
+    expect(
+      getByTitle(container, "Revised page dashboard").getAttribute("src")
+    ).toBe("/d/garden");
+    expect(container.querySelectorAll("iframe")).toHaveLength(1);
+    expect(
+      getByRole(container, "button", { name: "Dashboard updated. Click to see it" })
+    ).toBeTruthy();
+  });
+  it("disables the link while the side panel shows the view and enables it otherwise", async () => {
+    const [calls, setCalls] = createSignal([first]);
+    let views!: AppViews;
+    dispose = renderRows(calls, (appViews) => { views = appViews; });
+    await waitFor(() =>
+      expect(getByTitle(container, "First page dashboard")).toBeTruthy()
+    );
+    setCalls([
+      first,
+      { ...first, id: "second", result: { ...result, toolCallId: "second" } },
+    ]);
+    const link = await waitFor(() =>
+      getByRole(container, "button", { name: "Dashboard updated. Click to see it" })
+    );
+    expect((link as HTMLButtonElement).disabled).toBe(false);
+    views.open("yoplai\nui://yoplai/dashboard\ngarden");
+    await waitFor(() =>
+      expect(
+        (getByRole(container, "button", { name: "Dashboard updated. Displayed in side panel" }) as HTMLButtonElement).disabled
+      ).toBe(true)
+    );
+    expect(
+      getByRole(container, "button", { name: "Dashboard · shown in the side panel" })
+    ).toBeTruthy();
+    views.close();
+    await waitFor(() =>
+      expect(
+        (getByRole(container, "button", { name: "Dashboard updated. Click to see it" }) as HTMLButtonElement).disabled
+      ).toBe(false)
+    );
   });
   it("keeps the last dashboard visible when a later record fails to load", async () => {
     vi.stubGlobal(
@@ -269,34 +300,45 @@ describe("dashboard tool row", () => {
       vi
         .fn()
         .mockResolvedValueOnce(new Response(JSON.stringify(data)))
+        .mockResolvedValueOnce(new Response(JSON.stringify(data)))
         .mockRejectedValueOnce(new Error("offline"))
     );
     const [calls, setCalls] = createSignal([first]);
-    dispose = render(() => {
-      const appViews = createAppViews(() => "session", calls);
-      return (
-        <McpAppToolRow
-          agentId="agent"
-          sessionId="session"
-          toolCallId="first"
-          name="dashboard_create"
-          result={result}
-          appViews={appViews}
-        />
-      );
-    }, container);
+    dispose = renderRows(calls);
     await waitFor(() =>
       expect(getByTitle(container, "First page dashboard")).toBeTruthy()
     );
-    const frame = getByTitle(container, "First page dashboard");
     setCalls([first, { ...first, id: "failed-update" }]);
     await waitFor(() =>
       expect(
         queryByText(container, "Dashboard update unavailable")
       ).not.toBeNull()
     );
-    expect(getByTitle(container, "First page dashboard")).toBe(frame);
+    // The view moved to the newest row and kept the last good version.
+    expect(getByTitle(container, "First page dashboard")).toBeTruthy();
+    expect(container.querySelectorAll("iframe")).toHaveLength(1);
     expect(getByRole(container, "button", { name: "Expand" })).toBeTruthy();
+  });
+  it("shows the latest dashboard when the moved host's seed load fails", async () => {
+    const titled = (title: string) => new Response(JSON.stringify({ ...data, result: { ...data.result, structuredContent: { ...data.result.structuredContent, title } } }));
+    vi.stubGlobal(
+      "fetch",
+      vi
+        .fn()
+        .mockResolvedValueOnce(titled("First page"))
+        .mockRejectedValueOnce(new Error("offline"))
+        .mockResolvedValueOnce(titled("Latest page"))
+    );
+    const [calls, setCalls] = createSignal([first]);
+    dispose = renderRows(calls);
+    await waitFor(() =>
+      expect(getByTitle(container, "First page dashboard")).toBeTruthy()
+    );
+    setCalls([first, { ...first, id: "second", result: { ...result, toolCallId: "second" } }]);
+    await waitFor(() =>
+      expect(getByTitle(container, "Latest page dashboard")).toBeTruthy()
+    );
+    expect(queryByText(container, "Dashboard unavailable")).toBeNull();
   });
   it("shows only a failed dashboard tool's error text before apps capabilities load", () => {
     const refused: FullToolResultMessage = {
