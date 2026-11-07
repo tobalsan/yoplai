@@ -227,6 +227,12 @@ scheduler session; revoke signals cancellation when the script runner settles.
 Scheduler output and errors redact the exact token before persistence, logging
 or delivery. See [script tool examples](../packages/extensions/scheduler/README.md#calling-agent-tools-from-a-script).
 
+The `scheduler.create_job`/`update_job` agent tools check a supplied `script` at save time with
+the runner's own `resolveScriptLaunch` (containment, existence, exec bit for non-`.sh`/`.bash`)
+against `ctx.resolveWorkspaceDir(agent)` and return `{ ok: false }` with a host-vs-container
+hint; updates without a new `script` skip the check. Scripts run on the gateway host, cwd =
+agent workspace root, so container paths such as `/workspace/files` do not apply.
+
 Root `enableCronMonitoring` defaults off. When enabled, scheduler runs have
 atomic per-run records at `<workspace>/cron/runs/<jobId>/<runId>.json` and
 Scheduled jobs titles link to `/agents/:agentId/schedules/:jobId/runs`.

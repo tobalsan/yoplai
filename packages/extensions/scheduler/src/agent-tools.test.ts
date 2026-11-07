@@ -17,6 +17,13 @@ function agent(id: string, workspace: string): AgentConfig {
   };
 }
 
+async function writeScript(workspace: string, script: string, mode = 0o644): Promise<void> {
+  const file = path.join(workspace, script);
+  await fs.mkdir(path.dirname(file), { recursive: true });
+  await fs.writeFile(file, "#!/usr/bin/env bash\necho ok\n", { mode });
+  await fs.chmod(file, mode);
+}
+
 function context(config: GatewayConfig): ExtensionContext {
   return {
     getConfig: () => config,
@@ -93,6 +100,20 @@ describe("scheduler agent tools", () => {
         description: expect.stringContaining("every run's result, not only errors"),
         items: { properties: { target: { description: "Delivery sink id from the offered list in the system prompt." } } },
       } } });
+    }
+  });
+
+  it("tells the agent in create and update tools that scripts run on the gateway host", async () => {
+    const alpha = agent("alpha", "/tmp/fixture-agent");
+    const tools = await schedulerExtension.getAgentTools!(alpha);
+    for (const name of ["scheduler.create_job", "scheduler.update_job"]) {
+      const tool = tools.find((candidate) => candidate.name === name)!;
+      const scriptParameter = (tool.parameters as { properties: { script: { description: string } } }).properties.script.description;
+      for (const text of [tool.description, scriptParameter]) {
+        expect(text).toContain("gateway host");
+        expect(text).toContain("/workspace/files");
+        expect(text).toContain("chmod +x");
+      }
     }
   });
 
@@ -224,6 +245,7 @@ describe("scheduler agent tools", () => {
     setSchedulerContext(context(config));
     const tools = await schedulerExtension.getAgentTools?.(alpha, { config });
     const create = tools!.find((tool) => tool.name === "scheduler.create_job")!;
+    await writeScript(alpha.workspace, "scripts/rotate.sh");
 
     const created = await create.execute(
       { name: "Rotate token", cron: "*/5 * * * *", tz: "UTC", script: "scripts/rotate.sh", noAgent: true },
@@ -242,6 +264,7 @@ describe("scheduler agent tools", () => {
     setSchedulerContext(context(config));
     const tools = await schedulerExtension.getAgentTools?.(alpha, { config });
     const create = tools!.find((tool) => tool.name === "scheduler.create_job")!;
+    await writeScript(alpha.workspace, "scripts/gate.sh");
 
     const created = await create.execute(
       { name: "File watch", cron: "*/5 * * * *", tz: "UTC", script: "scripts/gate.sh", message: "Investigate the change" },
@@ -256,6 +279,141 @@ describe("scheduler agent tools", () => {
     expect(created.job.payload.noAgent).toBeFalsy();
   });
 
+  it("rejects creating a job whose script is missing from the workspace and stores nothing", async () => {
+    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-scheduler-tools-"));
+    const alpha = agent("alpha", path.join(tmpDir, "alpha"));
+    await fs.mkdir(alpha.workspace, { recursive: true });
+    const config: GatewayConfig = { version: 3, agents: [alpha], extensions: { scheduler: { enabled: true } }, sessions: { idleMinutes: 360 } };
+    setSchedulerContext(context(config));
+    const tools = await schedulerExtension.getAgentTools?.(alpha, { config });
+    const byName = new Map(tools?.map((tool) => [tool.name, tool]));
+
+    const result = await byName.get("scheduler.create_job")!.execute(
+      { name: "Ticket gate", cron: "* * * * *", tz: "UTC", script: "files/ticket-monitor/monitor.py", message: "Draft a reply" },
+      { agent: alpha, config }
+    ) as { ok: boolean; error?: string };
+
+    expect(result.ok).toBe(false);
+    expect(result.error).toContain("script not found");
+    expect(result.error).toContain("run on the gateway host");
+    expect(result.error).toContain("/workspace/files");
+    const listed = await byName.get("scheduler.list_jobs")!.execute({}, { agent: alpha, config }) as { jobs: unknown[] };
+    expect(listed.jobs).toEqual([]);
+  });
+
+  it("rejects updating a job to a missing script and leaves the job unchanged", async () => {
+    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-scheduler-tools-"));
+    const alpha = agent("alpha", path.join(tmpDir, "alpha"));
+    const config: GatewayConfig = { version: 3, agents: [alpha], extensions: { scheduler: { enabled: true } }, sessions: { idleMinutes: 360 } };
+    setSchedulerContext(context(config));
+    const tools = await schedulerExtension.getAgentTools?.(alpha, { config });
+    const byName = new Map(tools?.map((tool) => [tool.name, tool]));
+    await writeScript(alpha.workspace, "data/ticket-monitor/gate.sh");
+    const created = await byName.get("scheduler.create_job")!.execute(
+      { name: "Ticket gate", cron: "* * * * *", tz: "UTC", script: "data/ticket-monitor/gate.sh", message: "Draft a reply" },
+      { agent: alpha, config }
+    ) as { ok: boolean; job: { id: string } };
+    expect(created.ok).toBe(true);
+
+    const result = await byName.get("scheduler.update_job")!.execute(
+      { jobId: created.job.id, script: "files/ticket-monitor/gate.sh", name: "Renamed gate" },
+      { agent: alpha, config }
+    ) as { ok: boolean; error?: string };
+
+    expect(result.ok).toBe(false);
+    expect(result.error).toContain("script not found");
+    expect(result.error).toContain("run on the gateway host");
+    const listed = await byName.get("scheduler.list_jobs")!.execute({}, { agent: alpha, config }) as { jobs: Array<{ name: string; payload: { script?: string } }> };
+    expect(listed.jobs).toMatchObject([{ name: "Ticket gate", payload: { script: "data/ticket-monitor/gate.sh" } }]);
+  });
+
+  it("adds the host/workspace hint when a container path or '..' is given as the script", async () => {
+    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-scheduler-tools-"));
+    const alpha = agent("alpha", path.join(tmpDir, "alpha"));
+    const config: GatewayConfig = { version: 3, agents: [alpha], extensions: { scheduler: { enabled: true } }, sessions: { idleMinutes: 360 } };
+    setSchedulerContext(context(config));
+    const tools = await schedulerExtension.getAgentTools?.(alpha, { config });
+    const byName = new Map(tools?.map((tool) => [tool.name, tool]));
+    await writeScript(alpha.workspace, "data/ticket-monitor/gate.sh");
+    const created = await byName.get("scheduler.create_job")!.execute(
+      { name: "Ticket gate", cron: "* * * * *", tz: "UTC", script: "data/ticket-monitor/gate.sh", noAgent: true },
+      { agent: alpha, config }
+    ) as { ok: boolean; job: { id: string } };
+    expect(created.ok).toBe(true);
+
+    for (const script of ["/workspace/files/ticket-monitor/monitor.py", "../shared/monitor.py"]) {
+      const onCreate = await byName.get("scheduler.create_job")!.execute(
+        { name: "Other gate", cron: "* * * * *", tz: "UTC", script, noAgent: true },
+        { agent: alpha, config }
+      ) as { ok: boolean; error?: string };
+      const onUpdate = await byName.get("scheduler.update_job")!.execute(
+        { jobId: created.job.id, script },
+        { agent: alpha, config }
+      ) as { ok: boolean; error?: string };
+      for (const result of [onCreate, onUpdate]) {
+        expect(result.ok).toBe(false);
+        expect(result.error).toContain("run on the gateway host");
+      }
+    }
+    const listed = await byName.get("scheduler.list_jobs")!.execute({}, { agent: alpha, config }) as { jobs: Array<{ payload: { script?: string } }> };
+    expect(listed.jobs).toMatchObject([{ payload: { script: "data/ticket-monitor/gate.sh" } }]);
+  });
+
+  it("still renames and pauses a job whose stored script has gone missing", async () => {
+    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-scheduler-tools-"));
+    const alpha = agent("alpha", path.join(tmpDir, "alpha"));
+    const config: GatewayConfig = { version: 3, agents: [alpha], extensions: { scheduler: { enabled: true } }, sessions: { idleMinutes: 360 } };
+    setSchedulerContext(context(config));
+    const tools = await schedulerExtension.getAgentTools?.(alpha, { config });
+    const byName = new Map(tools?.map((tool) => [tool.name, tool]));
+    await writeScript(alpha.workspace, "scripts/sweep.sh");
+    const created = await byName.get("scheduler.create_job")!.execute(
+      { name: "Sweep", cron: "0 * * * *", tz: "UTC", script: "scripts/sweep.sh", noAgent: true },
+      { agent: alpha, config }
+    ) as { ok: boolean; job: { id: string } };
+    expect(created.ok).toBe(true);
+    await fs.rm(path.join(alpha.workspace, "scripts/sweep.sh"));
+
+    const updated = await byName.get("scheduler.update_job")!.execute(
+      { jobId: created.job.id, name: "Sweep (paused)", enabled: false, quietOutput: true },
+      { agent: alpha, config }
+    );
+
+    expect(updated).toMatchObject({ ok: true, job: { name: "Sweep (paused)", enabled: false, payload: { script: "scripts/sweep.sh", quietOutput: true } } });
+  });
+
+  it("requires the exec bit for non-shell scripts on create and update, but not for .sh", async () => {
+    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-scheduler-tools-"));
+    const alpha = agent("alpha", path.join(tmpDir, "alpha"));
+    const config: GatewayConfig = { version: 3, agents: [alpha], extensions: { scheduler: { enabled: true } }, sessions: { idleMinutes: 360 } };
+    setSchedulerContext(context(config));
+    const tools = await schedulerExtension.getAgentTools?.(alpha, { config });
+    const byName = new Map(tools?.map((tool) => [tool.name, tool]));
+    const create = byName.get("scheduler.create_job")!;
+    const update = byName.get("scheduler.update_job")!;
+    await writeScript(alpha.workspace, "data/report/refresh.py", 0o644);
+    await writeScript(alpha.workspace, "data/report/refresh.sh", 0o644);
+    const job = { name: "Report refresh", cron: "0 7 * * 1-5", tz: "UTC", noAgent: true };
+
+    const rejected = await create.execute({ ...job, script: "data/report/refresh.py" }, { agent: alpha, config }) as { ok: boolean; error?: string };
+    expect(rejected.ok).toBe(false);
+    expect(rejected.error).toContain("is not executable");
+    expect(rejected.error).toContain("chmod +x");
+    expect(rejected.error).toContain("shebang");
+
+    const shell = await create.execute({ ...job, script: "data/report/refresh.sh" }, { agent: alpha, config }) as { ok: boolean; job: { id: string } };
+    expect(shell.ok).toBe(true);
+    const rejectedUpdate = await update.execute({ jobId: shell.job.id, script: "data/report/refresh.py" }, { agent: alpha, config }) as { ok: boolean; error?: string };
+    expect(rejectedUpdate.ok).toBe(false);
+    expect(rejectedUpdate.error).toContain("chmod +x");
+
+    await fs.chmod(path.join(alpha.workspace, "data/report/refresh.py"), 0o755);
+    expect(await update.execute({ jobId: shell.job.id, script: "data/report/refresh.py" }, { agent: alpha, config }))
+      .toMatchObject({ ok: true, job: { payload: { script: "data/report/refresh.py" } } });
+    expect(await create.execute({ ...job, script: "data/report/refresh.py" }, { agent: alpha, config }))
+      .toMatchObject({ ok: true, job: { payload: { script: "data/report/refresh.py" } } });
+  });
+
   it("rejects an invalid script/message combination with a readable error", async () => {
     tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-scheduler-tools-"));
     const alpha = agent("alpha", path.join(tmpDir, "alpha"));
@@ -263,6 +421,7 @@ describe("scheduler agent tools", () => {
     setSchedulerContext(context(config));
     const tools = await schedulerExtension.getAgentTools?.(alpha, { config });
     const create = tools!.find((tool) => tool.name === "scheduler.create_job")!;
+    await writeScript(alpha.workspace, "scripts/rotate.sh");
 
     const result = await create.execute(
       { name: "Bad", cron: "0 8 * * *", tz: "UTC", script: "scripts/rotate.sh", noAgent: true, message: "Run" },
@@ -280,6 +439,7 @@ describe("scheduler agent tools", () => {
     setSchedulerContext(context(config));
     const tools = await schedulerExtension.getAgentTools?.(alpha, { config });
     const byName = new Map(tools?.map((tool) => [tool.name, tool]));
+    await writeScript(alpha.workspace, "scripts/rotate.sh");
 
     const created = await byName.get("scheduler.create_job")!.execute(
       { name: "Digest", cron: "0 8 * * *", tz: "UTC", message: "existing message" },
@@ -304,6 +464,8 @@ describe("scheduler agent tools", () => {
     setSchedulerContext(context(config));
     const tools = await schedulerExtension.getAgentTools?.(alpha, { config });
     const byName = new Map(tools?.map((tool) => [tool.name, tool]));
+    await writeScript(alpha.workspace, "scripts/rotate.sh");
+    await writeScript(alpha.workspace, "scripts/rotate-v2.sh");
 
     const created = await byName.get("scheduler.create_job")!.execute(
       { name: "Rotate token", cron: "*/5 * * * *", tz: "UTC", script: "scripts/rotate.sh", noAgent: true },
