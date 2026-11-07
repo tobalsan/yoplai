@@ -32,6 +32,7 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Fixed
 
+- Per-agent Mattermost, Slack and Telegram settings saved under `extensions` now load on restart; nested disable toggles are respected, existing top-level settings win, and incomplete setup warns without exposing values.
 - Concurrent project subagent interrupts and CLI output preserve valid state, interruption requests, and session IDs.
 - Runtime subagents that exit immediately now persist their final status and CLI session for resume.
 - Heartbeat runs already in flight finish safely during extension shutdown, including their saved output.

@@ -15,6 +15,7 @@ import {
   type GatewayConfig,
   type SubagentConfig,
 } from "@yoplai/shared";
+import { projectChannelExtensionBlocks } from "./channel-extension-config.js";
 
 export const CONFIG_DIR = resolveHomeDir();
 export const SCHEDULES_PATH = path.join(CONFIG_DIR, "schedules.json");
@@ -105,7 +106,13 @@ function discoverAgents(
         );
       }
       seen.set(parsed.data.id, agentPath);
-      agents.push({ ...parsed.data, workspace: workspaceDir, workspaceDir });
+      agents.push(
+        projectChannelExtensionBlocks({
+          ...parsed.data,
+          workspace: workspaceDir,
+          workspaceDir,
+        })
+      );
     }
   }
 
