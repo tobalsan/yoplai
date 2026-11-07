@@ -1,6 +1,6 @@
 import type { AgentConfig, GatewayConfig } from "@yoplai/shared";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { telegramAgentTools } from "./agent-tools.js";
+import { getTelegramDeliveryOffer, telegramAgentTools } from "./agent-tools.js";
 import { clearActiveBots, registerActiveBot } from "./bot-registry.js";
 import type { TelegramBot } from "./bot.js";
 
@@ -48,6 +48,15 @@ describe("telegram agent tools", () => {
   afterEach(() => {
     clearActiveBots();
     vi.clearAllMocks();
+  });
+
+  it("offers only channel delivery through an active agent or shared bot", async () => {
+    expect(await getTelegramDeliveryOffer(agent("alpha", { token: "fake-token" }))).toBeUndefined();
+    registerMockBot("alpha", { sendMessage: vi.fn() });
+    expect(await getTelegramDeliveryOffer(agent("alpha"))).toEqual({ label: "Telegram", channel: true });
+    clearActiveBots();
+    registerMockBot("telegram", { sendMessage: vi.fn() });
+    expect(await getTelegramDeliveryOffer(agent("alpha"))).toEqual({ label: "Telegram", channel: true });
   });
 
   it("exposes send_message", () => {

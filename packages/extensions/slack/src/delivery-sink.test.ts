@@ -1,11 +1,15 @@
+import fs from "node:fs/promises";
+import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AgentConfig, ExtensionContext, GatewayConfig } from "@yoplai/shared";
-import { clearSlackClientCache, createSlackDeliverySink } from "./agent-tools.js";
+import { clearSlackClientCache, createSlackDeliverySink, getSlackDeliveryOffer } from "./agent-tools.js";
 import { clearActiveBots, registerActiveBot } from "./bot-registry.js";
 import { clearSlackContext, setSlackContext } from "./context.js";
 import { createProactiveDmNoteStore } from "./proactive-dm-notes.js";
 import type { SlackBot } from "./bot.js";
 import type { SlackWebClient } from "./types.js";
+import { SlackPairingService, setSlackPairingService } from "./pairing.js";
+import { getSlackWorkspace } from "./requester.js";
 
 vi.mock("./proactive-dm-notes.js", () => ({
   createProactiveDmNoteStore: vi.fn(() => ({
@@ -54,6 +58,55 @@ describe("slack delivery sink", () => {
     clearSlackContext();
     vi.clearAllMocks();
   });
+
+  it("offers channel delivery only with an active bot or configured token, excluding env-only tokens", async () => {
+    vi.stubEnv("SLACK_TOKEN", "fake-env-token");
+    try {
+      expect(await getSlackDeliveryOffer(agent("alpha"), config())).toBeUndefined();
+      expect(await getSlackDeliveryOffer({ ...agent("alpha"), slack: { token: "fake-agent-token", appToken: "fake-app-token" } }, config())).toEqual({ label: "Slack", channel: true });
+      expect(await getSlackDeliveryOffer(agent("alpha"), { ...config(), extensions: { slack: { token: "fake-component-token", appToken: "fake-app-token" } } })).toEqual({ label: "Slack", channel: true });
+      registerMockBot("slack", {});
+      expect(await getSlackDeliveryOffer(agent("alpha"), config())).toEqual({ label: "Slack", channel: true });
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it("offers only the requester's paired Slack ID in the client's known workspace", async () => {
+    const dataDir = await fs.mkdtemp(path.join(process.cwd(), ".slack-offer-test-"));
+    const pairing = new SlackPairingService(dataDir, "https://gateway.example.test");
+    const client = {
+      auth: { test: async () => ({ team_id: "T-agent" }) },
+      users: { info: async ({ user }: { user: string }) => ({ ok: true, user: { id: user, profile: { email: "requester@example.test" } } }) },
+    } as SlackWebClient;
+    const pair = async (workspace: string, slackUser: string, userId: string) => {
+      const link = await pairing.issue(workspace, slackUser, client);
+      await pairing.redeem(new URL(link).pathname.split("/").at(-1)!, { id: userId, email: "requester@example.test" });
+    };
+    setSlackPairingService(pairing);
+    try {
+      await pair("T-other", "U-wrong-workspace", "requester");
+      await pair("T-agent", "U-own", "requester");
+      await pair("T-agent", "U-other-requester", "someone-else");
+      await pair("T-other", "U-mismatched-only", "mismatched");
+      await getSlackWorkspace(client);
+      registerMockBot("alpha", client);
+
+      expect(await getSlackDeliveryOffer(agent("alpha"), config(), "requester")).toEqual({ label: "Slack", channel: true, dm: { user: "U-own" } });
+      expect(await getSlackDeliveryOffer(agent("alpha"), config(), "unpaired")).toEqual({ label: "Slack", channel: true });
+      expect(await getSlackDeliveryOffer(agent("alpha"), config(), "mismatched")).toEqual({ label: "Slack", channel: true });
+      expect(await getSlackDeliveryOffer(agent("alpha"), config())).toEqual({ label: "Slack", channel: true });
+      registerMockBot("alpha", { auth: { test: () => new Promise(() => {}) } });
+      expect(await getSlackDeliveryOffer(agent("alpha"), config(), "requester")).toEqual({ label: "Slack", channel: true });
+      registerMockBot("alpha", client);
+      setSlackPairingService(undefined);
+      expect(await getSlackDeliveryOffer(agent("alpha"), config(), "requester")).toEqual({ label: "Slack", channel: true });
+    } finally {
+      setSlackPairingService(undefined);
+      pairing.close();
+      await fs.rm(dataDir, { recursive: true, force: true });
+    }
+  }, 1000);
 
   it("sends to the channel ID for a channel destination", async () => {
     const postMessage = vi.fn().mockResolvedValue({ ts: "1.1" });

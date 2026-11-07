@@ -1479,6 +1479,19 @@ export type DeliverySink = (input: {
   text: string;
 }) => Promise<void>;
 
+/** Destinations a sink can offer to this agent's requester without a network lookup. */
+export type DeliveryOffer = {
+  target: string;
+  label: string;
+  dm?: { user: string; label?: string };
+  channel?: boolean;
+};
+
+export type DeliveryOfferProvider = (input: {
+  agent: AgentConfig;
+  userId?: string;
+}) => Promise<Omit<DeliveryOffer, "target"> | undefined>;
+
 export interface CredentialKey {
   agentId: string;
   integration: string;
@@ -1672,8 +1685,9 @@ export interface ExtensionContext {
 
   // Delivery sinks (host-owned registry; comm extensions register in `start`
   // and unregister in `stop` with the returned function)
-  registerDeliverySink(id: string, sink: DeliverySink): () => void;
+  registerDeliverySink(id: string, sink: DeliverySink, offer?: DeliveryOfferProvider): () => void;
   getDeliverySink(id: string): DeliverySink | undefined;
+  getDeliveryOffers?(agent: AgentConfig, requester: { userId?: string }): Promise<DeliveryOffer[]>;
 
   // Events
   subscribe(event: string, handler: (payload: unknown) => void): () => void;

@@ -11,6 +11,7 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Added
 
+- Scheduler agents offer configured delivery destinations once when creating or meaningfully editing jobs, with paired Slack DMs for private jobs and channels for team jobs.
 - Mattermost channels with `threadUnlock` enabled accept untagged human replies to the bot's own posts, including job deliveries, `send_message` and `notify`.
 - Web chat restores side panel tabs, their order and active selection after reload in the same browser tab, separately for each agent and chat; narrow layouts stay inline.
 
