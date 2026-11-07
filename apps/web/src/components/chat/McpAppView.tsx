@@ -349,13 +349,13 @@ export function McpAppView(props: { agentId: string; sessionId: string; viewKey:
           <strong title={fileName()} style={{ display: "block", overflow: "hidden", "text-overflow": "ellipsis", "white-space": "nowrap", color: "var(--text-primary)" }}>{fileName()}</strong>
           <span>{fileDescription()}</span>
         </div>
-        <a class="file-download" href={`/api/media/download/${file()!.fileId}`} download="">Download</a>
+        <a class="file-download" href={`/api/media/download/${file()!.fileId}`} download="" aria-label="Download" title="Download"><i class="fa-solid fa-download" aria-hidden="true" /></a>
         <Show when={!!view() && view()?.server === "yoplai" && !["markdown", "other"].includes(classifyFile(file()!))}>
-          <Button variant="ghost" onClick={openInBrowser}>Open in browser</Button>
+          <Button variant="ghost" icon="fa-solid fa-arrow-up-right-from-square" aria-label="Open in browser" title="Open in browser" onClick={openInBrowser}>{null}</Button>
         </Show>
         <Show when={openStatus()}><span role="status">{openStatus()}</span></Show>
       </Show>
-      <Show when={!!props.onDisplayMode && (props.mode === "panel" || (ready() && allowedModes().includes("fullscreen")))}><Button variant="ghost" onClick={() => switchCurrent?.(props.mode === "panel" ? "inline" : "fullscreen")}>{props.mode === "panel" ? "Collapse" : "Expand"}</Button></Show>
+      <Show when={!!props.onDisplayMode && (props.mode === "panel" || (ready() && allowedModes().includes("fullscreen")))}><Button variant="ghost" icon={props.mode === "panel" ? "fa-solid fa-down-left-and-up-right-to-center" : "fa-solid fa-up-right-and-down-left-from-center"} aria-label={props.mode === "panel" ? "Collapse" : "Expand"} title={props.mode === "panel" ? "Collapse" : "Expand"} onClick={() => switchCurrent?.(props.mode === "panel" ? "inline" : "fullscreen")}>{null}</Button></Show>
     </header></Show>
     <Show when={failed()}><p role="status">View unavailable</p><pre style={{ "white-space": "pre-wrap", "overflow-wrap": "anywhere" }}>{props.text}</pre></Show>
     <Show when={!ready() && !failed()}><p role="status">Loading view…</p></Show>

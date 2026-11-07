@@ -24,7 +24,7 @@ describe("dashboard frame", () => {
     expect(frame.getAttribute("src")).toBe("/d/garden");
     expect(frame.getAttribute("sandbox")).toBe("allow-scripts allow-downloads allow-modals allow-popups allow-popups-to-escape-sandbox");
     expect(frame.getAttribute("referrerpolicy")).toBe("no-referrer");
-    const open = getByRole(container, "link", { name: "Open" });
+    const open = getByRole(container, "link", { name: "Open in browser" });
     expect(open.getAttribute("href")).toBe("/d/garden");
     expect(open.getAttribute("target")).toBe("_blank");
     expect(open.getAttribute("rel")).toBe("noopener noreferrer");

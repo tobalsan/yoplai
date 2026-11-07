@@ -32,14 +32,25 @@
 .frame-view-header > i {
   color: var(--text-secondary);
 }
-.frame-view-open {
-  color: var(--text-secondary);
-  padding: 8px;
-  text-decoration: none;
+.frame-view-open,
+.frame-view-header > .ui-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  gap: 0;
+  border: 0;
   border-radius: 8px;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 14px;
+  text-decoration: none;
   flex-shrink: 0;
 }
-.frame-view-open:hover {
+.frame-view-open:hover,
+.frame-view-header > .ui-button:hover {
   color: var(--text-primary);
   background: var(--bg-raised);
 }

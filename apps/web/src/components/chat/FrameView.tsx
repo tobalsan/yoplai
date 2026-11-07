@@ -35,17 +35,26 @@ export function FrameView(props: {
           href={url()}
           target="_blank"
           rel="noopener noreferrer"
+          aria-label="Open in browser"
+          title="Open in browser"
         >
-          Open
+          <i class="fa-solid fa-arrow-up-right-from-square" aria-hidden="true" />
         </a>
         <Show when={props.mode === "panel" ? props.onCollapse : props.onExpand}>
           <Button
             variant="ghost"
+            icon={
+              props.mode === "panel"
+                ? "fa-solid fa-down-left-and-up-right-to-center"
+                : "fa-solid fa-up-right-and-down-left-from-center"
+            }
+            aria-label={props.mode === "panel" ? "Collapse" : "Expand"}
+            title={props.mode === "panel" ? "Collapse" : "Expand"}
             onClick={() =>
               props.mode === "panel" ? props.onCollapse?.() : props.onExpand?.()
             }
           >
-            {props.mode === "panel" ? "Collapse" : "Expand"}
+            {null}
           </Button>
         </Show>
       </header>
