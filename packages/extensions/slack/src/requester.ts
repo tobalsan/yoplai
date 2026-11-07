@@ -2,8 +2,19 @@ import { getSlackPairingService } from "./pairing.js";
 import type { SlackWebClient } from "./types.js";
 
 const workspaces = new WeakMap<SlackWebClient, Promise<string | undefined>>();
+const knownWorkspaces = new WeakMap<SlackWebClient, string>();
+
+export function getCachedSlackWorkspace(client: SlackWebClient): string | undefined {
+  return knownWorkspaces.get(client);
+}
+
+export function cacheSlackWorkspace(client: SlackWebClient, workspace: string): void {
+  knownWorkspaces.set(client, workspace);
+}
 
 export async function getSlackWorkspace(client: SlackWebClient): Promise<string | undefined> {
+  const known = getCachedSlackWorkspace(client);
+  if (known) return known;
   let workspace = workspaces.get(client);
   if (!workspace) {
     let timer: ReturnType<typeof setTimeout>;
@@ -17,7 +28,8 @@ export async function getSlackWorkspace(client: SlackWebClient): Promise<string 
     workspaces.set(client, workspace);
   }
   const id = await workspace;
-  if (!id) workspaces.delete(client);
+  if (id) cacheSlackWorkspace(client, id);
+  else workspaces.delete(client);
   return id;
 }
 

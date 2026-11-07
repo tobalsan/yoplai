@@ -11,6 +11,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   checkTarget,
   createMattermostDeliverySink,
+  getMattermostDeliveryOffer,
   mattermostAgentTools,
   parseDestination,
 } from "./agent-tools.js";
@@ -65,6 +66,21 @@ describe("checkTarget", () => {
   const config = makeConfig();
   const support = config.agents[0];
   const sales = config.agents[1];
+
+  it("offers only channel delivery backed by an active bot and an accepted route", async () => {
+    const bot = {} as MattermostBot;
+    try {
+      expect(await getMattermostDeliveryOffer(support, config)).toBeUndefined();
+      registerActiveBot("mattermost", bot);
+      expect(await getMattermostDeliveryOffer({ ...support, id: "unrouted" }, config)).toBeUndefined();
+      expect(await getMattermostDeliveryOffer(support, config)).toEqual({ label: "Mattermost", channel: true });
+      registerActiveBot(support.id, bot);
+      expect(await getMattermostDeliveryOffer(support, config)).toBeUndefined();
+      expect(await getMattermostDeliveryOffer({ ...support, mattermost: { url: "https://chat.example.test", token: "fake-token", channels: { [CHANNEL]: {} } } }, config)).toEqual({ label: "Mattermost", channel: true });
+    } finally {
+      clearActiveBots();
+    }
+  });
 
   it("lets a shared-bot agent post only in its own channels and routed DMs", () => {
     expect(

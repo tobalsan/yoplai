@@ -20,6 +20,7 @@ import {
 import {
   clearDiscordClientCache,
   discordAgentTools,
+  getDiscordDeliveryOffer,
   sendDiscordDelivery,
 } from "./agent-tools.js";
 
@@ -121,7 +122,8 @@ const discordExtension: Extension = {
   async start(ctx) {
     unregisterDeliverySink = ctx.registerDeliverySink(
       "discord",
-      createDiscordDeliverySink(ctx)
+      createDiscordDeliverySink(ctx),
+      ({ agent }) => getDiscordDeliveryOffer(agent, ctx.getConfig())
     );
 
     const rawConfig = ctx.getConfig().extensions?.discord;

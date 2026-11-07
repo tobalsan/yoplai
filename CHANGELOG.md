@@ -11,6 +11,8 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Added
 
+- Scheduler agents offer configured delivery destinations once when creating or meaningfully editing jobs, with paired Slack DMs for private jobs and channels for team jobs.
+
 - Web chat restores side panel tabs, their order and active selection after reload in the same browser tab, separately for each agent and chat; narrow layouts stay inline.
 
 - Web chat side panel tabs keep artifacts and dashboards open together, with per-tab close, state-preserving switching, drag and keyboard reorder, and chat cards showing active or inactive tab state.

@@ -1,4 +1,4 @@
-import type { AgentConfig, FileAttachment, SlackComponentConfig } from "@yoplai/shared";
+import { GatewayConfigSchema, type AgentConfig, type FileAttachment, type SlackComponentConfig } from "@yoplai/shared";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -91,6 +91,7 @@ const pairing = vi.hoisted(() => ({
   resolve: vi.fn(),
   issue: vi.fn(),
   registerClient: vi.fn(),
+  list: vi.fn(),
   enabled: false,
   baseUrl: "https://yoplai.test",
 }));
@@ -444,6 +445,23 @@ describe("createSlackBot", () => {
     expect(apps[0].client.auth.test).toHaveBeenCalledOnce();
     expect(apps[0].start).toHaveBeenCalledOnce();
     expect(apps[0].stop).toHaveBeenCalledOnce();
+  });
+
+  it("offers a paired requester's DM after startup has learned the Slack workspace", async () => {
+    const { createSlackBot } = await import("./bot.js");
+    const { getSlackDeliveryOffer } = await import("./agent-tools.js");
+    const bot = createSlackBot([agent], config)!;
+    pairing.enabled = true;
+    pairing.list.mockReturnValue([{ workspaceId: "T-known", slackUserId: "U-paired", pairedAt: 1 }]);
+    apps[0].client.auth.test.mockResolvedValue({ user_id: "Ubot", team_id: "T-known" });
+    await bot.start();
+    registerActiveBot(agent.id, bot);
+    try {
+      const gateway = GatewayConfigSchema.parse({ version: 2, agents: [], extensions: {} });
+      expect(await getSlackDeliveryOffer(agent, gateway, "requester")).toEqual({ label: "Slack", channel: true, dm: { user: "U-paired" } });
+    } finally {
+      await bot.stop();
+    }
   });
 
   it("does not subscribe to broadcasts when Socket Mode startup fails", async () => {

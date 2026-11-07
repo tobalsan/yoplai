@@ -75,6 +75,7 @@ import { createBusyNoticePolicy } from "./busy-notice.js";
 import { getSlackPairingService, SlackPairingError } from "./pairing.js";
 import {
   type ActiveSlackSender,
+  cacheSlackWorkspace,
   getSlackWorkspace,
   resolveSlackRequester,
   SLACK_PAIR_LINK_PLACEHOLDER,
@@ -1713,7 +1714,10 @@ function wireSlackBot(w: SlackBotWiring): SlackBot {
         const auth = await client.auth?.test();
         botUserId = auth?.user_id;
         botId = auth?.bot_id;
-        if (auth?.team_id) getSlackPairingService()?.registerClient(auth.team_id, client);
+        if (auth?.team_id) {
+          cacheSlackWorkspace(client, auth.team_id);
+          getSlackPairingService()?.registerClient(auth.team_id, client);
+        }
       } catch {
         botUserId = undefined;
         botId = undefined;

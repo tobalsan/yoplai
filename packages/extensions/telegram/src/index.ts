@@ -18,7 +18,7 @@ import {
   getActiveBots,
   registerActiveBot,
 } from "./bot-registry.js";
-import { sendTelegramMessage, telegramAgentTools } from "./agent-tools.js";
+import { getTelegramDeliveryOffer, sendTelegramMessage, telegramAgentTools } from "./agent-tools.js";
 
 let unregisterDeliverySink: (() => void) | undefined;
 
@@ -151,7 +151,8 @@ const telegramExtension: Extension = {
           chatId,
           text
         );
-      }
+      },
+      ({ agent }) => getTelegramDeliveryOffer(agent)
     );
   },
   async stop() {
