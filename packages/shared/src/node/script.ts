@@ -88,6 +88,32 @@ export async function resolveScriptPath(
 }
 
 /**
+ * Resolves `script` (see `resolveScriptPath`) and checks it can be launched:
+ * a regular file, run under `bash` when `.sh`/`.bash`, otherwise spawned
+ * directly and so required to be executable. Used both at spawn time and when
+ * a job is saved, so the two can't disagree on what is runnable.
+ */
+export async function resolveScriptLaunch(
+  workspaceDir: string,
+  script: string
+): Promise<{ command: string; args: string[] }> {
+  const scriptPath = await resolveScriptPath(workspaceDir, script);
+  const stat = await fs.stat(scriptPath);
+  if (!stat.isFile()) throw new Error(`script ${scriptPath} is not a file`);
+
+  const ext = path.extname(scriptPath);
+  if (ext === ".sh" || ext === ".bash") {
+    return { command: "bash", args: [scriptPath] };
+  }
+  if ((stat.mode & 0o111) === 0) {
+    throw new Error(
+      `script ${scriptPath} is not executable: add a shebang (e.g. #!/usr/bin/env python3) and chmod +x it`
+    );
+  }
+  return { command: scriptPath, args: [] };
+}
+
+/**
  * Runs a job script as a subprocess and captures its output. `.sh`/`.bash`
  * scripts run under `bash`; anything else must already be executable and is
  * spawned directly. Output is capped at 64 KiB per stream while streaming so
@@ -111,23 +137,7 @@ export async function runScript(
 
 async function executeScript(input: RunScriptInput): Promise<RunScriptResult> {
   const { workspaceDir, script, timeoutMs } = input;
-  const scriptPath = await resolveScriptPath(workspaceDir, script);
-  const stat = await fs.stat(scriptPath);
-  if (!stat.isFile()) throw new Error(`script ${scriptPath} is not a file`);
-
-  const ext = path.extname(scriptPath);
-  let command: string;
-  let args: string[];
-  if (ext === ".sh" || ext === ".bash") {
-    command = "bash";
-    args = [scriptPath];
-  } else {
-    if ((stat.mode & 0o111) === 0) {
-      throw new Error(`script ${scriptPath} is not executable`);
-    }
-    command = scriptPath;
-    args = [];
-  }
+  const { command, args } = await resolveScriptLaunch(workspaceDir, script);
 
   const child = spawn(command, args, {
     cwd: workspaceDir,

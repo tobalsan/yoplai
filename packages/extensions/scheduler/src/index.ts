@@ -4,6 +4,7 @@ import {
   ScheduleSchema,
   SchedulerExtensionConfigSchema,
   UpdateScheduleRequestSchema,
+  type AgentConfig,
   type Extension,
   type ExtensionAgentTool,
   type ExtensionContext,
@@ -24,6 +25,7 @@ import {
   stopScheduler,
 } from "./service.js";
 import { computeNextRunAtMs, parseRunAtInput } from "./schedule.js";
+import { resolveScriptLaunch } from "./script.js";
 import { getAgentJobsPath, readLatestOutputFile } from "./store.js";
 
 const scheduleInputSchema = z.object({
@@ -85,6 +87,29 @@ function toolError(error: unknown) {
     ok: false,
     error: error instanceof Error ? error.message : String(error),
   };
+}
+
+const SCRIPT_PATH_HINT =
+  "Job scripts run on the gateway host, not in your container, and the script path is relative to the agent workspace root. " +
+  "Inside a container, /workspace/files (the conversation folder) and /workspace/uploads are not under the workspace root, " +
+  "so keep job scripts under the workspace root (e.g. data/).";
+
+const SCRIPT_RUNTIME_GUIDANCE =
+  "Scripts run on the gateway host, not in your container, with cwd = the agent workspace root: use relative paths " +
+  "and never reference /workspace/... container paths inside the script. /workspace/files (the conversation folder) " +
+  "and /workspace/uploads are not part of the workspace root. Non-.sh/.bash scripts need a shebang and chmod +x.";
+
+/** Checks a job script now, so a bad path fails at save time, not at the first run. */
+async function scriptValidationError(
+  agent: AgentConfig,
+  script: string
+): Promise<string | undefined> {
+  try {
+    await resolveScriptLaunch(getSchedulerContext().resolveWorkspaceDir(agent), script);
+    return undefined;
+  } catch (error) {
+    return `${error instanceof Error ? error.message : String(error)}. ${SCRIPT_PATH_HINT}`;
+  }
 }
 
 function requestUserId(c: Context): string | undefined {
@@ -204,6 +229,7 @@ function schedulerAgentTools(): ExtensionAgentTool[] {
         '{"wakeAgent": true}. Use for file-change gates, threshold alerts, or new-rows pollers that ' +
         "should stay silent most ticks. Set quietOutput: true on high-frequency script jobs to skip " +
         "writing an output file for uneventful runs (errors and woke-agent runs always write one). " +
+        SCRIPT_RUNTIME_GUIDANCE + " " +
         "Scripts can POST {tool,args,agentId,agentToken,sessionId,runId} to YOPLAI_TOOL_URL/internal/tools using " +
         "YOPLAI_TOOL_TOKEN, YOPLAI_AGENT_ID, YOPLAI_SESSION_ID and YOPLAI_RUN_ID from env. " +
         "Optional deliver pushes each run's result to comm-channel targets: this happens at the RUNTIME " +
@@ -232,7 +258,8 @@ function schedulerAgentTools(): ExtensionAgentTool[] {
           script: {
             type: "string",
             description:
-              "Relative path (from the agent workspace root) to a script to run. Required for script-only and gated jobs.",
+              "Relative path (from the agent workspace root) to an existing script to run. Required for script-only and gated jobs. " +
+              SCRIPT_RUNTIME_GUIDANCE,
           },
           noAgent: {
             type: "boolean",
@@ -280,6 +307,12 @@ function schedulerAgentTools(): ExtensionAgentTool[] {
       async execute(args, { agent, userId }) {
         try {
           const input = createJobToolSchema.parse(args);
+          // Checked before the request schema so its relative-path rule also
+          // gets the host/workspace hint.
+          if (input.script !== undefined) {
+            const scriptError = await scriptValidationError(agent, input.script);
+            if (scriptError) return { ok: false, error: scriptError };
+          }
           const parsed = CreateScheduleRequestSchema.parse({
             agentId: agent.id,
             name: input.name,
@@ -318,6 +351,7 @@ function schedulerAgentTools(): ExtensionAgentTool[] {
         "script-only (exit code decides success, the agent is never called); script + message = gated " +
         '(wakes the agent only when the script\'s final stdout line is JSON with {"wakeAgent": true}); ' +
         "quietOutput: true skips the output file for uneventful script ticks. " +
+        SCRIPT_RUNTIME_GUIDANCE + " " +
         "Scripts can POST {tool,args,agentId,agentToken,sessionId,runId} to YOPLAI_TOOL_URL/internal/tools using " +
         "YOPLAI_TOOL_TOKEN, YOPLAI_AGENT_ID, YOPLAI_SESSION_ID and YOPLAI_RUN_ID from env. deliver replaces the job's " +
         "whole delivery list when provided (pass [] to clear it, omit to leave it unchanged); results are " +
@@ -348,7 +382,8 @@ function schedulerAgentTools(): ExtensionAgentTool[] {
           script: {
             anyOf: [{ type: "string" }, { type: "null" }],
             description:
-              "Relative path (from the agent workspace root) to a script to run. Required for script-only and gated jobs; pass null to drop it and go back to a plain agent job.",
+              "Relative path (from the agent workspace root) to an existing script to run. Required for script-only and gated jobs; pass null to drop it and go back to a plain agent job. " +
+              SCRIPT_RUNTIME_GUIDANCE,
           },
           noAgent: {
             type: "boolean",
@@ -403,6 +438,12 @@ function schedulerAgentTools(): ExtensionAgentTool[] {
           if (!(await canAccessJob(agent.id, input.jobId, userId))) return { ok: false, error: "Schedule owner access required" };
           if (input.enabled !== undefined && input.enabled !== existing.enabled && !(await canManageJob(existing, userId))) {
             return { ok: false, error: "Only admins can pause or resume Team jobs" };
+          }
+          // Only a newly supplied script is checked: renaming or pausing a job
+          // must keep working even if its current script has gone missing.
+          if (typeof input.script === "string") {
+            const scriptError = await scriptValidationError(agent, input.script);
+            if (scriptError) return { ok: false, error: scriptError };
           }
           const payload =
             input.message !== undefined ||

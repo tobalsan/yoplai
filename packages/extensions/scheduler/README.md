@@ -351,7 +351,7 @@ This runs under `bash` because of its `.sh` extension (see Interpreter policy be
 No shebang guessing — the extension picks the interpreter from the file extension alone:
 
 - `.sh` or `.bash` → spawned as `bash <script-path>`. The executable bit is not required.
-- Any other extension → spawned **directly** (`<script-path>` as the command). The file **must** have the executable bit set (`chmod +x`), or the run fails immediately with `script <path> is not executable`.
+- Any other extension → spawned **directly** (`<script-path>` as the command). The file **must** have the executable bit set (`chmod +x`), or the run fails immediately with `script <path> is not executable: add a shebang ... and chmod +x it`.
 
 `cwd` for the subprocess is always the agent's workspace directory. stdout/stderr are piped and captured; each stream is capped at 64 KiB while streaming (a `[output truncated]` marker is appended past the cap), so a chatty script can't buffer unbounded output in memory.
 
@@ -365,6 +365,8 @@ A script gets its own process group (POSIX `detached: true`); on timeout the sch
 - Paths containing a `..` segment are rejected at schema-validation time, same message.
 - At fire time the resolved path's **realpath** is checked against the workspace directory's realpath, so a symlink inside the workspace that points outside it is also rejected (`script path escapes workspace: <script>`) — schema validation alone can't catch that, since it only sees the literal string.
 - A script path that doesn't resolve to an existing file fails with `script not found: <path>`.
+
+The agent tools `scheduler.create_job` and `scheduler.update_job` apply the same containment, existence and executable-bit checks when a `script` is saved (create, or update with a new `script`), so a bad path is rejected immediately with a hint instead of failing at the first run. Updates that don't change `script` (rename, pause, schedule) skip the check. Scripts run on the gateway host, not in the agent container: inside a container, `/workspace/files` (the conversation folder) and `/workspace/uploads` are not under the workspace root, so job scripts must live under the workspace root and must not reference `/workspace/...` paths.
 
 ## Delivery (`deliver`)
 

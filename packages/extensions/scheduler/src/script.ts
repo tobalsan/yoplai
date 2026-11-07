@@ -1,5 +1,6 @@
 export {
   parseWakeAgent,
+  resolveScriptLaunch,
   resolveScriptPath,
   runScript,
   ScriptExecutionError,
