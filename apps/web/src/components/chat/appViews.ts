@@ -39,6 +39,7 @@ export function chatAppViewCalls(session: ChatTranscriptSession, mode: HistoryVi
 }
 
 export type DashboardFrame = { kind: "dashboard"; id: string; title: string };
+export type AppViewTab = AppView | { key: string; frame: DashboardFrame };
 
 export type AppViews = ReturnType<typeof createAppViews>;
 
@@ -77,16 +78,16 @@ export function createAppViews(sessionId: Accessor<string | null | undefined>, c
   function viewOf(id: string) {
     return [...projection().values()].find((view) => view.calls.some((call) => call.id === id));
   }
-  const [selected, setSelected] = createSignal<{
+  const [selections, setSelections] = createSignal<{
     session: string | null | undefined;
-    view: AppView;
+    tab: AppViewTab;
     order: AppViewCall[];
-  }>();
-  const [standalone, setStandalone] = createSignal<DashboardFrame>();
+  }[]>([]);
+  const [activeKey, setActiveKey] = createSignal<string>();
   let selectedScope: string | undefined;
   function close() {
-    setSelected(undefined);
-    setStandalone(undefined);
+    setSelections([]);
+    setActiveKey(undefined);
   }
   if (chatScope) createComputed(on(chatScope, (current, previous) => {
     if (current !== previous) {
@@ -96,53 +97,57 @@ export function createAppViews(sessionId: Accessor<string | null | undefined>, c
   }));
   createComputed(on(sessionId, (current, previous) => {
     if (current !== previous) {
-      if (!previous && current && (standalone() || selected())) {
-        setSelected((selection) => selection ? { ...selection, session: current } : undefined);
+      if (!previous && current && selections().length) {
+        setSelections((currentTabs) => currentTabs.map((selection) => ({ ...selection, session: current })));
       } else close();
       setShown(new Map());
     }
   }));
-  createComputed(() => {
-    const frame = standalone();
-    if (!frame) return;
-    const view = projection().get(viewKey({ server: "yoplai", resourceUri: "ui://yoplai/dashboard", key: frame.id }));
-    if (view) {
-      setSelected({ session: sessionId(), view, order: [...view.calls] });
-      setStandalone(undefined);
-    }
-  });
-  const panel = createMemo(() => {
-    const selection = selected();
-    if (!selection || selection.session !== sessionId()) return undefined;
-    const current = projection().get(selection.view.key);
-    if (current) {
+  const tabs = createMemo(() => selections().filter((selection) => selection.session === sessionId()).map((selection) => {
+    const current = projection().get(selection.tab.key);
+    if (current && "frame" in selection.tab) {
+      selection.tab = current;
+      selection.order = [...current.calls];
+    } else if (current && !("frame" in selection.tab)) {
+      const previous = selection.tab;
       // Remember observed call order: an older reconnect snapshot must not roll back the panel.
       const order = selection.order;
-      const includesLatest = current.calls.some((call) => call.id === selection.view.latest.id);
+      const includesLatest = current.calls.some((call) => call.id === previous.latest.id);
       current.calls.forEach((call, index) => {
         if (order.some((known) => known.id === call.id)) return;
         const next = current.calls.slice(index + 1).find((item) => order.some((known) => known.id === item.id));
         let before = next ? order.findIndex((known) => known.id === next.id) : order.findIndex((known) => known.timestamp > call.timestamp);
-        if (before < 0 && !includesLatest && call.timestamp <= selection.view.latest.timestamp) before = order.findIndex((known) => known.id === selection.view.latest.id);
+        if (before < 0 && !includesLatest && call.timestamp <= previous.latest.timestamp) before = order.findIndex((known) => known.id === previous.latest.id);
         order.splice(before < 0 ? order.length : before, 0, call);
       });
       const position = (id: string) => order.findIndex((call) => call.id === id);
-      if (position(current.latest.id) >= position(selection.view.latest.id)) selection.view = current;
+      if (position(current.latest.id) >= position(previous.latest.id)) selection.tab = current;
     }
-    return selection.view;
+    return selection.tab;
+  }));
+  const panel = createMemo(() => {
+    const tab = tabs().find((tab) => tab.key === activeKey());
+    return tab && !("frame" in tab) ? tab : undefined;
   });
+  const frame = createMemo(() => {
+    const tab = tabs().find((tab) => tab.key === activeKey());
+    return tab && "frame" in tab ? tab.frame : undefined;
+  });
+  function isTab(key: string) { return tabs().some((tab) => tab.key === key); }
+  function activate(key: string) { if (isTab(key)) setActiveKey(key); }
   return {
     isLiveDuplicate(id: string) { return historyIds().has(id); },
     fileOf(id: string) {
       return source().find((call) => call.id === id && call.result?.view?.file)?.result?.view?.file
         ?? [...shown().values()].find((call) => call.id === id)?.result?.view?.file
-        ?? panel()?.calls.find((call) => call.id === id)?.result?.view?.file;
+        ?? tabs().flatMap((tab) => "frame" in tab ? [] : tab.calls).find((call) => call.id === id)?.result?.view?.file;
     },
     shownFileOf(key: string) { return shown().get(key)?.result?.view?.file; },
     shownCallOf(key: string) { return shown().get(key)?.id; },
     reportShown(key: string, id: string | undefined) {
+      const tab = tabs().find((tab) => tab.key === key);
       const call = projection().get(key)?.calls.find((call) => call.id === id)
-        ?? (panel()?.key === key ? panel()?.calls.find((call) => call.id === id) : undefined);
+        ?? (tab && !("frame" in tab) ? tab.calls.find((call) => call.id === id) : undefined);
       setShown((current) => {
         const next = new Map(current);
         if (call) next.set(key, call);
@@ -152,25 +157,52 @@ export function createAppViews(sessionId: Accessor<string | null | undefined>, c
     },
     hidesFileCard(fileId: string) { return [...shown().values()].some((call) => call.result?.view?.file?.fileId === fileId); },
     panel,
-    frame: standalone,
+    frame,
+    tabs,
+    activeKey,
+    activate,
+    isTab,
+    move(key: string, index: number) {
+      setSelections((current) => {
+        const from = current.findIndex((selection) => selection.tab.key === key);
+        if (from < 0) return current;
+        const next = [...current];
+        const [selection] = next.splice(from, 1);
+        next.splice(Math.max(0, Math.min(index, next.length)), 0, selection);
+        return next;
+      });
+    },
+    closeTab(key: string) {
+      const index = tabs().findIndex((tab) => tab.key === key);
+      if (index < 0) return;
+      const remaining = selections().filter((selection) => selection.tab.key !== key);
+      setSelections(remaining);
+      if (activeKey() === key) setActiveKey(remaining[index]?.tab.key ?? remaining[index - 1]?.tab.key);
+    },
     openFrame(frame: DashboardFrame) {
       selectedScope = chatScope?.();
-      setSelected(undefined);
-      setStandalone(frame);
+      const key = viewKey({ server: "yoplai", resourceUri: "ui://yoplai/dashboard", key: frame.id });
+      if (!isTab(key)) setSelections((current) => [...current, { session: sessionId(), tab: { key, frame }, order: [] }]);
+      setActiveKey(key);
     },
     open(key: string) {
+      if (isTab(key)) {
+        selectedScope = chatScope?.();
+        activate(key);
+        return;
+      }
       const view = projection().get(key);
       if (view) {
         selectedScope = chatScope?.();
-        setStandalone(undefined);
-        setSelected({ session: sessionId(), view, order: [...view.calls] });
+        setSelections((current) => [...current, { session: sessionId(), tab: view, order: [...view.calls] }]);
+        setActiveKey(key);
       }
     },
     close,
     viewOf,
     roleOf(id: string): "host" | "link" | "panel-card" | "none" {
       const view = viewOf(id);
-      return !view ? "none" : view.host.id === id ? panel()?.key === view.key ? "panel-card" : "host" : "link";
+      return !view ? "none" : view.host.id === id ? isTab(view.key) ? "panel-card" : "host" : "link";
     },
   };
 }

@@ -263,7 +263,7 @@ describe("dashboard tool row", () => {
       getByRole(container, "button", { name: "Dashboard updated. Click to see it" })
     ).toBeTruthy();
   });
-  it("disables the link while the side panel shows the view and enables it otherwise", async () => {
+  it("labels active, inactive and closed panel views and activates an existing tab", async () => {
     const [calls, setCalls] = createSignal([first]);
     let views!: AppViews;
     dispose = renderRows(calls, (appViews) => { views = appViews; });
@@ -287,6 +287,16 @@ describe("dashboard tool row", () => {
     expect(
       getByRole(container, "button", { name: "Dashboard · shown in the side panel" })
     ).toBeTruthy();
+    setCalls((current) => [...current, { ...first, id: "meadow", result: { ...result, toolCallId: "meadow", view: { ...reference, key: "meadow", title: "Meadow map" } } }]);
+    views.open("yoplai\nui://yoplai/dashboard\nmeadow");
+    const inactive = getByRole(container, "button", { name: "Dashboard updated. Show in side panel" }) as HTMLButtonElement;
+    expect(inactive.disabled).toBe(false);
+    expect(getByRole(container, "button", { name: "Dashboard · open in a side panel tab" })).toBeTruthy();
+    inactive.click();
+    expect(views.activeKey()).toBe("yoplai\nui://yoplai/dashboard\ngarden");
+    expect(views.tabs()).toHaveLength(2);
+    getByRole(container, "button", { name: "Meadow map · open in a side panel tab" }).click();
+    expect(views.activeKey()).toBe("yoplai\nui://yoplai/dashboard\nmeadow");
     views.close();
     await waitFor(() =>
       expect(

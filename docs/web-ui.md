@@ -145,33 +145,50 @@ inline height is clamped to 40–800 px. Ordinary tools keep their existing grou
 Use **Expand** in the view header to open one side panel beside the chat; the
 composer stays usable. Drag the panel's left edge to resize the split. The panel
 covers the chat at viewport widths of 768 px or less, or when the chat area cannot
-fit a 320 px panel, a 400 px chat and the 6 px handle. **Collapse** returns the view
-inline. Opening another app replaces the panel; width is not saved. Each expand
-or collapse reloads the view once with the latest saved data. Apps may restore
-their own saved state, but unsaved iframe state can be lost.
+fit a 320 px panel, a 400 px chat and the 6 px handle. Opening another view adds
+and activates a tab; opening an existing view activates its tab. One open view
+has no tab bar. With two or more, tabs show the view icon, title and close button.
+Switching tabs keeps inactive views mounted, preserving their iframe state.
+**Collapse** or a tab's close button closes only that view and returns it inline;
+closing the active tab selects its right neighbour, or its left neighbour when
+none is to the right. Closing the last tab closes the panel. Expand and Collapse
+reload that view once, so unsaved state can be lost. Tabs and panel width are not
+saved across page reloads.
+
+Use Left/Right arrows to switch tabs, or Home/End for the first/last tab.
+Ctrl+Shift+Left/Right moves the focused tab one place and keeps focus on it.
+Drag a tab's title to reorder it; a marker shows the drop position. Reordering
+moves only the tab buttons, keeping every view mounted in place without reload.
+The tab bar scrolls horizontally when needed, including in the narrow overlay.
 
 HTML, Markdown and PDF files sent during a live turn automatically open the
 panel when the viewport is wider than 768 px and the chat row has at least
-726 px for the split. A later document replaces the panel, including a re-send
-of the same filename. Reload, history replay, reconnect and narrow layouts never
+726 px for the split. A later document opens a new tab; a re-send of the same
+filename updates and activates its existing tab. Live dashboards follow the same
+rule. Reload, history replay, reconnect and narrow layouts never
 auto-open; images, text, data and external MCP Apps stay inline. The compact
-file-icon card marked "shown in the side panel" is a button that focuses the panel.
+file/dashboard card says "shown in the side panel" for the active view, or
+"open in a side panel tab" for an inactive one. Clicking it activates its tab
+and focuses the panel. Older update links show a disabled "Displayed in side
+panel" for the active tab, or "Show in side panel" to activate an inactive tab;
+with no tab they retain "Click to see it" and scroll to the inline view.
 
 Views initialize with their saved arguments and raw result, including returned
 error results. Reloading, reopening a session or restarting the gateway replays
 the saved data without running the tool again. Within a session, calls sharing
 the same server and resource URI reuse one live view (file views also match the
-exact filename). The earliest loaded call
-with a captured view hosts it; later calls show "Updating view…" while pending,
-then **View updated**, which takes you to the inline view or focuses its panel.
+exact filename). The newest successful captured call hosts it; older calls
+link to the inline view or its panel tab.
 Successful captures deliver the newest input and raw result to the same iframe.
 A later failed capture shows its text and "View unavailable" without replacing
-the live view. Reload shows one view per app with the latest captured data.
+the live view. Failed or hung updates keep each tab's last good version, including
+inactive tabs. Reload shows one inline view per app with the latest captured data.
 
 The panel host lives outside the transcript and stays loaded through turn
 completion, reconnects, simple/full switches and history reloads. It retains its
-last valid latest call while history is temporarily empty or stale. Switching
-session, starting a new chat or leaving the page closes it. Inline views may
+last valid latest call in every tab while history is temporarily empty or stale.
+Switching session, starting a new chat or leaving the page closes all tabs.
+Inline views may
 reinitialize during those transcript transitions or when loading earlier history
 moves the host row to an older call.
 

@@ -13,6 +13,93 @@ const fileCall = (id: string, filename: string): AppViewCall => ({
 });
 
 describe("app views", () => {
+  it("updates an inactive tab while retaining its latest call through empty and older reconnect snapshots", () => {
+    createRoot((dispose) => {
+      const [calls, setCalls] = createSignal([fileCall("a-first", "a.md"), fileCall("a-newest", "a.md"), fileCall("b", "b.md")]);
+      const views = createAppViews(() => "session", calls);
+      const a = "yoplai\nui://yoplai/file-viewer\na.md";
+      const b = "yoplai\nui://yoplai/file-viewer\nb.md";
+      views.open(a);
+      views.open(b);
+      setCalls([]);
+      setCalls([fileCall("a-first", "a.md"), fileCall("a-older", "a.md")]);
+      views.activate(a);
+      expect(views.panel()?.latest.id).toBe("a-newest");
+      views.activate(b);
+      setCalls([fileCall("a-first", "a.md"), fileCall("a-newest", "a.md"), fileCall("a-update", "a.md")]);
+      expect(views.activeKey()).toBe(b);
+      views.activate(a);
+      expect(views.panel()?.latest.id).toBe("a-update");
+      views.open(a);
+      expect(views.panel()?.latest.id).toBe("a-update");
+      expect(views.tabs()).toHaveLength(2);
+      dispose();
+    });
+  });
+  it("resolves and reports delivered files from inactive tabs after history leaves the projection", () => {
+    createRoot((dispose) => {
+      const [calls, setCalls] = createSignal([fileCall("a", "a.md"), fileCall("b", "b.md")]);
+      const views = createAppViews(() => "session", calls);
+      const a = "yoplai\nui://yoplai/file-viewer\na.md";
+      const b = "yoplai\nui://yoplai/file-viewer\nb.md";
+      views.open(a);
+      views.open(b);
+      setCalls([]);
+      expect(views.fileOf("a")).toEqual({ fileId: "a", filename: "a.md", mimeType: "text/markdown", size: 957 });
+      views.reportShown(a, "a");
+      views.reportShown(b, "b");
+      expect(views.shownCallOf(a)).toBe("a");
+      expect(views.shownCallOf(b)).toBe("b");
+      expect(views.hidesFileCard("a")).toBe(true);
+      expect(views.hidesFileCard("b")).toBe(true);
+      expect(views.activeKey()).toBe(b);
+      dispose();
+    });
+  });
+  it("reorders tabs without switching the active view and closes to the neighbour in the new order", () => {
+    createRoot((dispose) => {
+      const views = createAppViews(() => "session", () => [fileCall("a", "a.md"), fileCall("b", "b.md"), fileCall("c", "c.md")]);
+      const a = "yoplai\nui://yoplai/file-viewer\na.md";
+      const b = "yoplai\nui://yoplai/file-viewer\nb.md";
+      const c = "yoplai\nui://yoplai/file-viewer\nc.md";
+      views.open(a);
+      views.open(b);
+      views.open(c);
+      views.activate(b);
+      views.move(b, 0);
+      expect(views.tabs().map((tab) => tab.key)).toEqual([b, a, c]);
+      expect(views.activeKey()).toBe(b);
+      expect(views.panel()?.latest.id).toBe("b");
+      views.closeTab(b);
+      expect(views.activeKey()).toBe(a);
+      views.closeTab(c);
+      expect(views.activeKey()).toBe(a);
+      dispose();
+    });
+  });
+  it("closes an active tab to its right neighbour, then left neighbour, then closes the panel", () => {
+    createRoot((dispose) => {
+      const views = createAppViews(() => "session", () => [fileCall("a", "a.md"), fileCall("b", "b.md"), fileCall("c", "c.md")]);
+      const a = "yoplai\nui://yoplai/file-viewer\na.md";
+      const b = "yoplai\nui://yoplai/file-viewer\nb.md";
+      const c = "yoplai\nui://yoplai/file-viewer\nc.md";
+      views.open(a);
+      views.open(b);
+      views.open(c);
+      views.activate(b);
+      views.closeTab(b);
+      expect(views.tabs().map((tab) => tab.key)).toEqual([a, c]);
+      expect(views.activeKey()).toBe(c);
+      views.closeTab(c);
+      expect(views.activeKey()).toBe(a);
+      expect(views.panel()?.latest.id).toBe("a");
+      views.closeTab(a);
+      expect(views.tabs()).toEqual([]);
+      expect(views.activeKey()).toBeUndefined();
+      expect(views.panel()).toBeUndefined();
+      dispose();
+    });
+  });
   it("clears shown files when the agent/chat scope changes even with the same resolved session id", () => {
     createRoot((dispose) => {
       const [scope, setScope] = createSignal("agent-a:chat");
@@ -28,21 +115,28 @@ describe("app views", () => {
     createRoot((dispose) => {
       const [session, setSession] = createSignal<string | undefined>(undefined);
       const [scope, setScope] = createSignal("agent-a:fresh");
-      const [calls, setCalls] = createSignal<AppViewCall[]>([]);
+      const [calls, setCalls] = createSignal<AppViewCall[]>([fileCall("notes", "notes.md")]);
       const views = createAppViews(session, calls, scope);
+      views.open("yoplai\nui://yoplai/file-viewer\nnotes.md");
       views.openFrame({ kind: "dashboard", id: "garden", title: "Dashboard" });
       expect(views.frame()).toEqual({ kind: "dashboard", id: "garden", title: "Dashboard" });
+      expect(views.tabs().map((tab) => tab.key)).toEqual(["yoplai\nui://yoplai/file-viewer\nnotes.md", "yoplai\nui://yoplai/dashboard\ngarden"]);
       setSession("first-session");
       expect(views.frame()?.id).toBe("garden");
+      expect(views.tabs()).toHaveLength(2);
       const ref = { server: "yoplai", tool: "dashboard", resourceUri: "ui://yoplai/dashboard", key: "garden" };
       setCalls([{ id: "created", timestamp: 1, view: ref, result: { view: { ...ref, recordId: "record-1" } } }]);
       expect(views.frame()).toBeUndefined();
+      expect(views.panel()?.latest.id).toBe("created");
+      views.openFrame({ kind: "dashboard", id: "garden", title: "Dashboard" });
+      expect(views.tabs()).toHaveLength(2);
       expect(views.panel()?.latest.id).toBe("created");
       setCalls((current) => [...current, { id: "updated", timestamp: 2, view: ref, result: { view: { ...ref, recordId: "record-2" } } }]);
       expect(views.panel()?.latest.id).toBe("updated");
       setScope("agent-a:another-chat");
       expect(views.panel()).toBeUndefined();
       expect(views.frame()).toBeUndefined();
+      expect(views.tabs()).toEqual([]);
       views.openFrame({ kind: "dashboard", id: "garden", title: "Dashboard" });
       setScope("agent-b:fresh");
       expect(views.frame()).toBeUndefined();
@@ -210,11 +304,15 @@ describe("app views", () => {
   it("does not restore a panel when returning to a previous session", () => {
     createRoot((dispose) => {
       const [session, setSession] = createSignal("one");
-      const views = createAppViews(session, () => [call("a")]);
+      const views = createAppViews(session, () => [call("a"), fileCall("notes", "notes.md")]);
+      views.open("yoplai\nui://yoplai/file-viewer\nnotes.md");
       views.open("fixture\nui://drawing");
       expect(views.panel()?.latest.id).toBe("a");
+      expect(views.tabs()).toHaveLength(2);
       setSession("two");
       expect(views.panel()).toBeUndefined();
+      expect(views.tabs()).toEqual([]);
+      expect(views.activeKey()).toBeUndefined();
       setSession("one");
       expect(views.panel()).toBeUndefined();
       expect(views.roleOf("a")).toBe("host");
@@ -301,7 +399,7 @@ describe("app views", () => {
       dispose();
     });
   });
-  it("keeps interleaved apps separate and replaces or closes the selected panel", () => {
+  it("opens interleaved apps in separate tabs and activates an existing tab without duplicating it", () => {
     createRoot((dispose) => {
       const other = (id: string): AppViewCall => ({
         ...call(id),
@@ -317,10 +415,17 @@ describe("app views", () => {
       expect(views.roleOf("y")).toBe("host");
       views.open("other\nui://drawing");
       expect(views.panel()?.key).toBe("other\nui://drawing");
-      expect(views.roleOf("b")).toBe("host");
+      expect(views.tabs().map((tab) => tab.key)).toEqual(["fixture\nui://drawing", "other\nui://drawing"]);
+      expect(views.activeKey()).toBe("other\nui://drawing");
+      expect(views.roleOf("b")).toBe("panel-card");
       expect(views.roleOf("y")).toBe("panel-card");
+      views.open("fixture\nui://drawing");
+      expect(views.tabs()).toHaveLength(2);
+      expect(views.activeKey()).toBe("fixture\nui://drawing");
+      expect(views.panel()?.latest.id).toBe("b");
       views.close();
       expect(views.panel()).toBeUndefined();
+      expect(views.tabs()).toEqual([]);
       expect(views.roleOf("y")).toBe("host");
       dispose();
     });

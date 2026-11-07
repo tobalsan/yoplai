@@ -168,13 +168,15 @@ export function McpAppToolRow(props: { agentId: string; sessionId?: string | nul
   const captured = () => !!view()?.calls.find((call) => call.id === props.toolCallId)?.result?.view;
   const dashboard = () => view()?.latest.result?.view?.resourceUri === "ui://yoplai/dashboard";
   const settled = () => !!props.result || captured();
-  const inPanel = () => props.appViews.panel()?.key === view()?.key;
+  const inPanel = () => props.appViews.activeKey() === view()?.key;
+  const hasTab = () => { const key = view()?.key; return !!key && props.appViews.isTab(key); };
   const title = () => {
     const latest = view()?.latest.result?.view;
     return latest?.title ?? latest?.file?.title ?? latest?.file?.filename ?? file()?.title ?? file()?.filename ?? (dashboard() ? "Dashboard" : latest?.server ?? "View");
   };
   function reveal() {
-    const target = props.appViews.panel()?.key === view()?.key
+    if (hasTab()) props.appViews.activate(view()!.key);
+    const target = hasTab()
       ? document.querySelector<HTMLElement>(".chat-side-panel")
       : document.getElementById(`mcp-app-${view()?.host.id}`);
     target?.scrollIntoView({ block: "nearest", behavior: "smooth" });
@@ -189,12 +191,12 @@ export function McpAppToolRow(props: { agentId: string; sessionId?: string | nul
         <button type="button" class="mcp-app-panel-card" onClick={reveal}>
           <Show when={file()}><span class="file-icon" aria-hidden="true">{getFileIcon(file()!.mimeType)}</span></Show>
           <Show when={dashboard()}><i class="fa-solid fa-table-columns" aria-hidden="true" /></Show>
-          <span>{title()} · shown in the side panel</span>
+          <span>{title()} · {inPanel() ? "shown in the side panel" : "open in a side panel tab"}</span>
         </button>
       </Match>
       <Match when={role() === "link" && (!settled() || captured())}>
         <Show when={settled()} fallback={<p role="status">Updating view…</p>}>
-          <button type="button" class="mcp-app-updated" disabled={inPanel()} onClick={reveal}><i class="fa-solid fa-eye" aria-hidden="true" />{title()} updated. {inPanel() ? "Displayed in side panel" : "Click to see it"}</button>
+          <button type="button" class="mcp-app-updated" disabled={inPanel()} onClick={reveal}><i class="fa-solid fa-eye" aria-hidden="true" />{title()} updated. {inPanel() ? "Displayed in side panel" : hasTab() ? "Show in side panel" : "Click to see it"}</button>
         </Show>
       </Match>
       <Match when={dashboard() && captured() && !!props.sessionId}>
