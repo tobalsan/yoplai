@@ -977,6 +977,12 @@ describe("SchedulerService.runNow", () => {
     );
     expect(outputs).toHaveLength(1);
     await scheduler.stop();
+    const persisted = JSON.parse(
+      await fs.readFile(path.join(alpha.workspace, "cron/jobs.json"), "utf8")
+    );
+    expect(persisted.jobs).toEqual([
+      expect.objectContaining({ id: "once", enabled: false }),
+    ]);
     const restarted = createScheduler();
     await restarted.start();
     await new Promise((resolve) => setTimeout(resolve, 30));

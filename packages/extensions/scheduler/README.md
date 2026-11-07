@@ -134,6 +134,7 @@ The API and `cron/jobs.json` accept an ISO 8601 timestamp with timezone. The CLI
 Malformed `cron/jobs.json` logs one warning and is treated as empty for that
 agent. In-process writes for one agent are serialized and atomically renamed,
 so concurrent API/tool/run-state updates cannot overwrite newer job snapshots.
+Scheduler shutdown waits for pending saves before returning, preserving completed one-shot jobs across restart.
 Gateway hot reload also refreshes manual file edits.
 
 ## Job shapes: agent, script-only, gated
