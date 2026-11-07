@@ -2,8 +2,7 @@ import { createChatSession } from "./chat/createChatSession";
 import { ChatTranscript } from "./chat/ChatTranscript";
 import { createAppViews, chatAppViewCalls, viewKey } from "./chat/appViews";
 import { ChatSidePanel, canSplitPanel } from "./chat/ChatSidePanel";
-import { McpAppView } from "./chat/McpAppView";
-import { FrameView, CapturedFrameView } from "./chat/FrameView";
+import { ChatPanelTabs } from "./chat/ChatPanelTabs";
 import chatViewStyles from "./chat/ChatView.css?inline";
 import {
   createSignal,
@@ -1093,15 +1092,9 @@ export function ChatView() {
         {(warning) => <div class="context-warning">{warning()}</div>}
       </Show>
       </div>
-      <Show when={!!appViews.panel() || !!appViews.frame()}>
+      <Show when={appViews.tabs().length > 0}>
         <ChatSidePanel>
-          <Show when={appViews.frame()} fallback={
-          <Show when={appViews.panel()!.latest.result?.view?.resourceUri === "ui://yoplai/dashboard"} fallback={<McpAppView agentId={params.agentId} sessionId={session.appSessionId()!} viewKey={appViews.panel()!.key} callId={() => appViews.panel()!.latest.id} startCallId={appViews.shownCallOf(appViews.panel()!.key)} text={appViews.panel()!.latest.text ?? ""} mode="panel" fileOf={appViews.fileOf} onShown={(callId) => { const key = appViews.panel()?.key; if (key) appViews.reportShown(key, callId); }} onDisplayMode={(mode) => { if (mode === "inline") appViews.close(); }} onUserMessage={(text) => handleViewMessage(appViews.panel()!.key, text)} />}>
-            <CapturedFrameView kind="dashboard" agentId={params.agentId} sessionId={session.appSessionId()!} callId={() => appViews.panel()!.latest.id} startCallId={appViews.shownCallOf(appViews.panel()!.key)} mode="panel" onCollapse={appViews.close} onShown={(callId) => { const key = appViews.panel()?.key; if (key) appViews.reportShown(key, callId); }} />
-          </Show>
-          }>
-            {(target) => <FrameView target={target()} mode="panel" onCollapse={appViews.close} />}
-          </Show>
+          <ChatPanelTabs appViews={appViews} agentId={params.agentId} sessionId={session.appSessionId()} onUserMessage={handleViewMessage} />
         </ChatSidePanel>
       </Show>
 

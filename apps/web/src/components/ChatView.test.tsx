@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { queryAllByRole, queryByRole, queryByText, queryByTitle } from "@testing-library/dom";
+import { fireEvent, queryAllByRole, queryByRole, queryByText, queryByTitle } from "@testing-library/dom";
 import { createSignal } from "solid-js";
 import { delegateEvents, render } from "solid-js/web";
 import { ChatView, ThinkingLine } from "./ChatView";
@@ -2887,7 +2887,7 @@ describe("ChatView abort handling", () => {
     } finally { dispose(); measure.mockRestore(); }
   });
 
-  it("replaces the panel with another live document and reopens a re-sent filename", async () => {
+  it("keeps live documents in tabs and collapses only the active tab", async () => {
     enableAppViews();
     const measure = measureChatSpace();
     const { container, dispose, callbacks } = await startFullStream();
@@ -2895,14 +2895,25 @@ describe("ChatView abort handling", () => {
       sendViewFile(callbacks(), "first-doc", { fileId: "report", filename: "report.html", mimeType: "text/html", size: 64, title: "Report" });
       await waitFor(() => expect(queryByTitle(queryByRole(container, "complementary")!, "Report file view")).not.toBeNull());
       const first = queryByTitle(container, "Report file view") as HTMLIFrameElement;
+      expect(queryByRole(container, "tablist")).toBeNull();
       sendViewFile(callbacks(), "second-doc", { fileId: "plan", filename: "plan.md", mimeType: "text/markdown", size: 64, title: "Plan" });
       await waitFor(() => expect(queryByTitle(queryByRole(container, "complementary")!, "Plan file view")).not.toBeNull());
-      expect(first.isConnected).toBe(false);
+      const panel = queryByRole(container, "complementary")!;
+      expect(first.isConnected).toBe(true);
+      expect(queryAllByRole(panel, "tab").map((tab) => tab.getAttribute("title"))).toEqual(["Report", "Plan"]);
+      expect(queryByRole(panel, "tab", { name: "Plan" })?.getAttribute("aria-selected")).toBe("true");
       const second = queryByTitle(queryByRole(container, "complementary")!, "Plan file view") as HTMLIFrameElement;
+      queryByRole(panel, "tab", { name: "Report" })!.click();
+      expect(queryByTitle(panel, "Report file view")).toBe(first);
+      expect(second.isConnected).toBe(true);
+      queryByRole(panel, "tab", { name: "Plan" })!.click();
       initializeApp(second);
       queryByRole(queryByRole(container, "complementary")!, "button", { name: "Collapse" })!.click();
       appMessage(second, { jsonrpc: "2.0", id: "yoplai-resource-teardown", result: {} });
-      await waitFor(() => expect(queryByRole(container, "complementary")).toBeNull());
+      await waitFor(() => expect(second.isConnected).toBe(false));
+      expect(queryByRole(container, "complementary")).toBe(panel);
+      expect(queryByTitle(panel, "Report file view")).toBe(first);
+      expect(queryByRole(panel, "tablist")).toBeNull();
       sendViewFile(callbacks(), "revised-doc", { fileId: "revised-plan", filename: "plan.md", mimeType: "text/markdown", size: 128, title: "Revised plan" });
       // The reopened panel starts at the last shown version, then updates to the revision once connected.
       await waitFor(() => expect(queryByTitle(queryByRole(container, "complementary")!, "Plan file view")).not.toBeNull());
@@ -2910,6 +2921,147 @@ describe("ChatView abort handling", () => {
       await waitFor(() => expect(queryByTitle(queryByRole(container, "complementary")!, "Revised plan file view")).not.toBeNull());
       expect(queryByRole(queryByRole(container, "complementary")!, "link", { name: "Download" })?.getAttribute("href")).toBe("/api/media/download/revised-plan");
     } finally { dispose(); measure.mockRestore(); }
+  });
+
+  it("navigates and reorders panel tabs with the keyboard without replacing their frames", async () => {
+    enableAppViews();
+    const measure = measureChatSpace();
+    const { container, dispose, callbacks } = await startFullStream();
+    try {
+      sendViewFile(callbacks(), "cedar", { fileId: "cedar", filename: "cedar.html", mimeType: "text/html", size: 64, title: "Cedar map" });
+      await waitFor(() => expect(queryByTitle(queryByRole(container, "complementary")!, "Cedar map file view")).not.toBeNull());
+      sendViewFile(callbacks(), "finch", { fileId: "finch", filename: "finch.md", mimeType: "text/markdown", size: 64, title: "Finch notes" });
+      const panel = queryByRole(container, "complementary")!;
+      await waitFor(() => expect(queryByTitle(panel, "Finch notes file view")).not.toBeNull());
+      const cedar = queryByTitle(panel, "Cedar map file view");
+      const finch = queryByTitle(panel, "Finch notes file view");
+      const finchTab = queryByRole(panel, "tab", { name: "Finch notes" })!;
+      finchTab.focus();
+      fireEvent.keyDown(finchTab, { key: "ArrowLeft" });
+      expect(queryByRole(panel, "tab", { name: "Cedar map" })?.getAttribute("aria-selected")).toBe("true");
+      expect(document.activeElement).toBe(queryByRole(panel, "tab", { name: "Cedar map" }));
+      fireEvent.keyDown(document.activeElement!, { key: "End" });
+      expect(document.activeElement).toBe(finchTab);
+      fireEvent.keyDown(finchTab, { key: "ArrowLeft", ctrlKey: true, shiftKey: true });
+      await tick();
+      expect(queryAllByRole(panel, "tab").map((tab) => tab.getAttribute("title"))).toEqual(["Finch notes", "Cedar map"]);
+      expect(finchTab.getAttribute("aria-selected")).toBe("true");
+      expect(document.activeElement).toBe(finchTab);
+      expect(queryByTitle(panel, "Cedar map file view")).toBe(cedar);
+      expect(queryByTitle(panel, "Finch notes file view")).toBe(finch);
+      queryByRole(panel, "button", { name: "Close Finch notes" })!.click();
+      expect(finch?.isConnected).toBe(false);
+      expect(queryByTitle(panel, "Cedar map file view")).toBe(cedar);
+      expect(queryByRole(panel, "tablist")).toBeNull();
+    } finally { dispose(); measure.mockRestore(); }
+  });
+
+  it("drags a tab to a new position while keeping both panel frames mounted", async () => {
+    enableAppViews();
+    const measure = measureChatSpace();
+    const { container, dispose, callbacks } = await startFullStream();
+    try {
+      sendViewFile(callbacks(), "map", { fileId: "map", filename: "map.html", mimeType: "text/html", size: 64, title: "Cedar map" });
+      await waitFor(() => expect(queryByTitle(queryByRole(container, "complementary")!, "Cedar map file view")).not.toBeNull());
+      sendViewFile(callbacks(), "notes", { fileId: "notes", filename: "notes.md", mimeType: "text/markdown", size: 64, title: "Finch notes" });
+      const panel = queryByRole(container, "complementary")!;
+      await waitFor(() => expect(queryByTitle(panel, "Finch notes file view")).not.toBeNull());
+      const cedar = queryByTitle(panel, "Cedar map file view");
+      const finch = queryByTitle(panel, "Finch notes file view");
+      const source = queryByRole(panel, "tab", { name: "Finch notes" })!;
+      const target = queryByRole(panel, "tab", { name: "Cedar map" })!;
+      vi.spyOn(target, "getBoundingClientRect").mockReturnValue({ left: 100, width: 100 } as DOMRect);
+      const transfer = new Map<string, string>();
+      const dataTransfer = { effectAllowed: "", dropEffect: "", setData: (type: string, value: string) => transfer.set(type, value), getData: (type: string) => transfer.get(type) ?? "" };
+      const dragAt = (type: string, element: HTMLElement, clientX: number) => {
+        const event = new MouseEvent(type, { bubbles: true, cancelable: true, clientX });
+        Object.defineProperty(event, "dataTransfer", { value: dataTransfer });
+        fireEvent(element, event);
+      };
+      fireEvent.dragStart(source, { dataTransfer });
+      dragAt("dragover", target, 110);
+      dragAt("drop", target, 110);
+      fireEvent.dragEnd(source, { dataTransfer });
+      expect(queryAllByRole(panel, "tab").map((tab) => tab.getAttribute("title"))).toEqual(["Finch notes", "Cedar map"]);
+      expect(source.getAttribute("aria-selected")).toBe("true");
+      expect(queryByTitle(panel, "Cedar map file view")).toBe(cedar);
+      expect(queryByTitle(panel, "Finch notes file view")).toBe(finch);
+      fireEvent.dragStart(source, { dataTransfer });
+      dragAt("dragover", target, 190);
+      dragAt("drop", target, 190);
+      fireEvent.dragEnd(source, { dataTransfer });
+      expect(queryAllByRole(panel, "tab").map((tab) => tab.getAttribute("title"))).toEqual(["Cedar map", "Finch notes"]);
+      expect(queryByTitle(panel, "Cedar map file view")).toBe(cedar);
+      expect(queryByTitle(panel, "Finch notes file view")).toBe(finch);
+    } finally { dispose(); measure.mockRestore(); }
+  });
+
+  it("delivers an update to its inactive tab and hides only that tab's delivered file card", async () => {
+    enableAppViews();
+    const measure = measureChatSpace();
+    const { container, dispose, callbacks } = await startFullStream();
+    try {
+      sendViewFile(callbacks(), "copper-v1", { fileId: "copper-v1", filename: "copper.html", mimeType: "text/html", size: 64, title: "Copper notes" });
+      await waitFor(() => expect(queryByTitle(queryByRole(container, "complementary")!, "Copper notes file view")).not.toBeNull());
+      const panel = queryByRole(container, "complementary")!;
+      const copper = queryByTitle(panel, "Copper notes file view") as HTMLIFrameElement;
+      initializeApp(copper);
+      sendViewFile(callbacks(), "cedar-v1", { fileId: "cedar-v1", filename: "cedar.md", mimeType: "text/markdown", size: 64, title: "Cedar brief" });
+      await waitFor(() => expect(queryByTitle(panel, "Cedar brief file view")).not.toBeNull());
+      const cedar = queryByTitle(panel, "Cedar brief file view") as HTMLIFrameElement;
+      initializeApp(cedar);
+      expect(queryByText(container, "copper.html", { exact: true })).toBeNull();
+      expect(queryByText(container, "cedar.md", { exact: true })).toBeNull();
+      let finish!: (data: { args: object; result: { content: never[] } }) => void;
+      loadMcpAppDataMock.mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
+      sendViewFile(callbacks(), "copper-v2", { fileId: "copper-v2", filename: "copper.html", mimeType: "text/html", size: 128, title: "Copper revision" });
+      queryByRole(panel, "tab", { name: "Cedar brief" })!.click();
+      await waitFor(() => expect(finish).toBeTypeOf("function"));
+      finish({ args: {}, result: { content: [] } });
+      await waitFor(() => expect(queryByTitle(panel, "Copper revision file view")).toBe(copper));
+      expect(queryByRole(panel, "tab", { name: "Cedar brief" })?.getAttribute("aria-selected")).toBe("true");
+      expect(queryByTitle(panel, "Cedar brief file view")).toBe(cedar);
+      expect(queryByRole(container, "button", { name: "Copper revision · open in a side panel tab" })).not.toBeNull();
+      expect(queryByText(container, "cedar.md", { exact: true })).toBeNull();
+      expect(queryAllByRole(container, "link", { name: "Download", hidden: true }).filter((link) => link.getAttribute("href") === "/api/media/download/copper-v2")).toHaveLength(1);
+      initializeApp(copper);
+      queryByRole(panel, "button", { name: "Close Copper revision" })!.click();
+      expect(copper.isConnected).toBe(false);
+      initializeApp(cedar);
+      queryByRole(queryByRole(panel, "tabpanel")!, "button", { name: "Collapse" })!.click();
+      appMessage(cedar, { jsonrpc: "2.0", id: "yoplai-resource-teardown", result: {} });
+      await waitFor(() => expect(queryByRole(container, "complementary")).toBeNull());
+    } finally { dispose(); measure.mockRestore(); }
+  });
+
+  it.each(["failed", "hung"])("keeps an inactive tab's last good version after a %s update while another tab and chat progress", async (outcome) => {
+    enableAppViews();
+    const measure = measureChatSpace();
+    const { container, dispose, callbacks, onText } = await startFullStream();
+    try {
+      sendViewFile(callbacks(), "stable", { fileId: "stable", filename: "copper.html", mimeType: "text/html", size: 64, title: "Copper notes" });
+      await waitFor(() => expect(queryByTitle(queryByRole(container, "complementary")!, "Copper notes file view")).not.toBeNull());
+      const panel = queryByRole(container, "complementary")!;
+      const copper = queryByTitle(panel, "Copper notes file view") as HTMLIFrameElement;
+      initializeApp(copper);
+      sendViewFile(callbacks(), "other", { fileId: "other", filename: "cedar.md", mimeType: "text/markdown", size: 64, title: "Cedar brief" });
+      await waitFor(() => expect(queryByTitle(panel, "Cedar brief file view")).not.toBeNull());
+      const cedar = queryByTitle(panel, "Cedar brief file view") as HTMLIFrameElement;
+      initializeApp(cedar);
+      if (outcome === "failed") loadMcpAppDataMock.mockRejectedValueOnce(new Error("offline"));
+      else loadMcpAppDataMock.mockImplementationOnce(() => new Promise(() => {}));
+      vi.useFakeTimers();
+      sendViewFile(callbacks(), "blocked", { fileId: "blocked", filename: "copper.html", mimeType: "text/html", size: 128, title: "Copper revision" });
+      queryByRole(panel, "tab", { name: "Cedar brief" })!.click();
+      onText("The garden plan is still progressing");
+      await vi.advanceTimersByTimeAsync(32001);
+      expect(queryByTitle(panel, "Copper notes file view")).toBe(copper);
+      expect(queryByTitle(panel, "Copper revision file view")).toBeNull();
+      expect(queryByTitle(panel, "Cedar brief file view")).toBe(cedar);
+      expect(queryByRole(panel, "tab", { name: "Cedar brief" })?.getAttribute("aria-selected")).toBe("true");
+      expect(queryByText(container, "The garden plan is still progressing")).not.toBeNull();
+      expect(queryAllByRole(panel, "link", { name: "Download", hidden: true }).map((link) => link.getAttribute("href"))).toEqual(["/api/media/download/stable", "/api/media/download/other"]);
+    } finally { dispose(); vi.useRealTimers(); measure.mockRestore(); }
   });
 
   // ALG-600's rendered host/chat seam approved in Linear comment
@@ -3208,17 +3360,18 @@ describe("ChatView abort handling", () => {
   });
 
   async function expandApp(container: HTMLElement, frame: HTMLIFrameElement) {
-    const previousPanelFrame = queryByRole(container, "complementary")?.querySelector("iframe");
+    const previousPanelFrame = queryByRole(container, "tabpanel") && queryByTitle(queryByRole(container, "tabpanel")!, frame.title);
     initializeApp(frame);
     queryByRole(frame.closest(".mcp-app-view")!, "button", { name: "Expand" })!.click();
     appMessage(frame, { jsonrpc: "2.0", id: "yoplai-resource-teardown", result: {} });
     await waitFor(() => {
       const panel = queryByRole(container, "complementary");
       expect(panel).not.toBeNull();
-      expect(panel!.querySelector("iframe")).not.toBeNull();
-      expect(panel!.querySelector("iframe")).not.toBe(previousPanelFrame);
+      const active = queryByRole(panel!, "tabpanel")!;
+      expect(queryByTitle(active, frame.title)).not.toBeNull();
+      expect(queryByTitle(active, frame.title)).not.toBe(previousPanelFrame);
     });
-    return queryByRole(container, "complementary")!.querySelector("iframe")!;
+    return queryByTitle(queryByRole(container, "tabpanel")!, frame.title) as HTMLIFrameElement;
   }
 
   it("does not offer copying a queued failure while history reload is delayed", async () => {
@@ -3621,24 +3774,30 @@ describe("ChatView abort handling", () => {
     dispose();
   });
 
-  it("replaces the panel iframe when the user expands a different app", async () => {
+  it("adds a panel tab when the user expands a different app", async () => {
     enableAppViews();
+    loadMcpAppViewMock.mockImplementation(async (_agent, _session, callId) => ({
+      available: true, sandboxUrl: "https://apps.test/sandbox", appsOrigin: "https://apps.test", server: callId,
+      toolName: "draw", args: {}, result: { content: [] }, csp: {}, prefersBorder: true,
+    }));
     const { container, dispose, callbacks } = await startFullStream();
     for (const id of ["a", "b"]) {
       const marker = { server: "fixture", tool: `draw_${id}`, resourceUri: `ui://fixture/${id}.html` };
       callbacks()?.onToolCall?.(`app-${id}`, `fixture_draw_${id}`, {}, undefined, marker);
       callbacks()?.onToolResult?.(`app-${id}`, `fixture_draw_${id}`, `Drawing ${id}`, false, undefined, undefined, { ...marker, recordId: `record-${id}` });
     }
-    await waitFor(() => expect(container.querySelectorAll("iframe")).toHaveLength(2));
-    const firstInline = container.querySelector("#mcp-app-app-a")!.querySelector("iframe")!;
+    await waitFor(() => expect(queryByTitle(container, "app-b MCP App")).not.toBeNull());
+    const firstInline = queryByTitle(container, "app-a MCP App") as HTMLIFrameElement;
     const panelA = await expandApp(container, firstInline);
-    const secondInline = container.querySelector("#mcp-app-app-b")!.querySelector("iframe")!;
+    const secondInline = queryByTitle(container, "app-b MCP App") as HTMLIFrameElement;
     const panelB = await expandApp(container, secondInline);
     expect(panelB).not.toBe(panelA);
-    expect(panelA.isConnected).toBe(false);
+    expect(panelA.isConnected).toBe(true);
     expect(panelB.isConnected).toBe(true);
-    expect(queryByRole(container, "complementary")!.querySelectorAll("iframe")).toHaveLength(1);
-    await waitFor(() => expect(container.querySelectorAll("iframe")).toHaveLength(2));
+    const panel = queryByRole(container, "complementary")!;
+    expect(queryAllByRole(panel, "tabpanel", { hidden: true })).toHaveLength(2);
+    expect(queryByTitle(panel, "app-a MCP App")).toBe(panelA);
+    expect(queryByTitle(panel, "app-b MCP App")).toBe(panelB);
     dispose();
   });
 
