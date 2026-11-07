@@ -50,7 +50,7 @@ const {
   patchAgentExtensionMock: vi.fn(),
   useSessionMock: vi.fn(),
   useParamsMock: vi.fn(),
-  useLocationMock: vi.fn((): { state?: { backTo?: string } } => ({ state: undefined })),
+  useLocationMock: vi.fn((): { state?: { backTo?: string }; search?: string } => ({ state: undefined })),
   navigateMock: vi.fn(),
   fetchTopExtensionsMock: vi.fn(),
 }));
@@ -227,6 +227,20 @@ afterEach(() => {
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
 describe("EditAgent", () => {
+  it("opens Scheduled jobs from the credential banner's Schedules link", async () => {
+    setCapabilitiesForTests({ forkedAgents: false, extensions: { scheduler: true } });
+    setSession("superadmin");
+    fetchAgentsMock.mockResolvedValue([agent({ id: "scribe" })]);
+    fetchSchedulesMock.mockResolvedValue([{ id: "digest", agentId: "scribe", name: "Morning digest", schedule: {}, payload: {} }]);
+    useParamsMock.mockReturnValue({ agentId: "scribe" });
+    useLocationMock.mockReturnValue({ state: undefined, search: "?tab=schedules" });
+    dispose = render(() => <EditAgent />, container);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(container.querySelector('[role="tab"][aria-selected="true"]')?.textContent).toBe("Scheduled jobs");
+    expect(container.querySelector(".schedule-title")?.textContent).toContain("Morning digest");
+  });
+
   it("keeps privacy filtering responsive through pending, failed and recovered job polls", async () => {
     vi.useFakeTimers();
     setCapabilitiesForTests({ forkedAgents: false, extensions: { scheduler: true }, enableCronMonitoring: true });

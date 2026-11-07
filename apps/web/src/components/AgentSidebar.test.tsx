@@ -80,6 +80,7 @@ vi.mock("@solidjs/router", async (importOriginal) => {
 });
 
 const { AgentSidebar, positionSidebarMenu } = await import("./AgentSidebar");
+const { refreshScheduleAlerts } = await import("../lib/schedule-alerts");
 const { Router, Route } = await import("@solidjs/router");
 const { SessionSearch } = await import("./SessionSearch");
 const { connectPromptRequest, clearConnectPromptRequest } = await import("../onboarding/state");
@@ -93,6 +94,27 @@ async function openSidebarMenu(container: HTMLElement, label = "Session menu") {
 }
 
 describe("AgentSidebar", () => {
+  it("marks Agents while any actionable credential pause remains", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify([{
+      agentId: "scribe", jobId: "digest", jobName: "Digest", mode: "owner",
+      pausedReason: { kind: "credentials", integration: "Acme Mail", at: "2026-11-07T12:00:00Z" },
+    }])));
+    await refreshScheduleAlerts();
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const dispose = render(() => <AgentSidebar collapsed={() => false} onToggleCollapse={() => {}} />, container);
+    try {
+      expect(container.querySelector('a[href="/agents"] [aria-label="Jobs paused for credentials"]')).not.toBeNull();
+      fetchMock.mockResolvedValue(new Response("[]"));
+      await refreshScheduleAlerts();
+      expect(container.querySelector('a[href="/agents"] [aria-label="Jobs paused for credentials"]')).toBeNull();
+    } finally {
+      dispose();
+      fetchMock.mockResolvedValue(new Response("[]"));
+      await refreshScheduleAlerts();
+    }
+  });
+
   afterEach(() => {
     actualRouter = false;
     document.body.innerHTML = "";

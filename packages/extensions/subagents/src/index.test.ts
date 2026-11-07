@@ -36,6 +36,8 @@ function context(
     getSessionHistory: async () => [],
     registerDeliverySink: () => () => undefined,
     getDeliverySink: () => undefined,
+    registerUserNotifier: () => () => undefined,
+    getUserNotifiers: () => new Map(),
     subscribe: () => () => undefined,
     emit: () => undefined,
     logger: {

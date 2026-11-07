@@ -1,9 +1,12 @@
 import fs from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { clearTimeout, setTimeout } from "node:timers";
-import { resolveBindHost } from "@yoplai/shared";
+import { resolveAgentConfigRoute, resolveBindHost, sanitizeAgentToolName } from "@yoplai/shared";
 import type {
   DeliverySink,
+  UserNotifier,
+  AgentConfig,
+  ExtensionAgentTool,
   DeliveryOfferProvider,
   Extension,
   ExtensionContext,
@@ -49,6 +52,7 @@ import { credentialConnectHost } from "../credentials/connect.js";
 import { recordSettingsChange } from "../audit/store.js";
 import { updateAgentExtensionConfig } from "./agent-config-writer.js";
 import { reloadAfterExtensionWrite } from "./reload.js";
+import { getLoadedExtensions } from "./registry.js";
 import { getTask } from "../tasks/store.js";
 import { registerContainerToken, removeContainerToken } from "../sdk/container/tokens.js";
 
@@ -86,6 +90,7 @@ export function createExtensionContext(
   // cleanly instead of leaving a stale sink behind.
   const deliverySinks = new Map<string, { sink: DeliverySink }>();
   const deliveryOffers = new Map<string, DeliveryOfferProvider>();
+  const userNotifiers = new Map<string, UserNotifier>();
   let credentialStore: CredentialStore | undefined;
   const getCredentialStore = () => credentialStore ??= new CredentialStore();
 
@@ -249,6 +254,40 @@ export function createExtensionContext(
           deliveryOffers.delete(id);
         }
       };
+    },
+    registerUserNotifier: (id, notifier) => {
+      if (userNotifiers.has(id)) {
+        console.warn(`User notifier "${id}" already registered; replacing it`);
+      }
+      userNotifiers.set(id, notifier);
+      return () => {
+        if (userNotifiers.get(id) === notifier) userNotifiers.delete(id);
+      };
+    },
+    getUserNotifiers: () => userNotifiers,
+    resolveConnectPath: async (agentId, hints) => {
+      const mcpServer = /^mcp__(.+?)__/.exec(hints.toolName)?.[1];
+      if (mcpServer) return `/agents/${encodeURIComponent(agentId)}/mcp-servers/${encodeURIComponent(mcpServer)}`;
+      const extensions = getLoadedExtensions().filter((entry) => !entry.factory && entry.id !== "mcp");
+      let matched: Extension | undefined;
+      for (const extension of extensions) {
+        let tools: ExtensionAgentTool[] = [];
+        try {
+          tools = extension.getDiscoveryTools ? await extension.getDiscoveryTools() :
+            await extension.getAgentTools?.({ id: "capability-discovery", extensions: { [extension.id]: { enabled: true } } } as AgentConfig,
+              { config: { version: 3, agents: [], extensions: {} } as unknown as GatewayConfig, env: {} }) ?? [];
+        } catch { continue; }
+        if (tools.some((tool) => tool.name === hints.toolName || sanitizeAgentToolName(tool.name) === hints.toolName)) {
+          matched = extension;
+          break;
+        }
+      }
+      matched ??= extensions.find((entry) =>
+        (typeof entry.oauth === "object" && entry.oauth.provider === hints.provider) ||
+        (hints.displayName !== undefined && entry.displayName.toLowerCase() === hints.displayName.toLowerCase())
+      );
+      if (!matched) return undefined;
+      return resolveAgentConfigRoute(matched.configRoute, agentId) ?? `/agents/${encodeURIComponent(agentId)}/extensions/${encodeURIComponent(matched.id)}${matched.oauth ? "" : "/config"}`;
     },
     getDeliverySink: (id: string) => deliverySinks.get(id)?.sink,
     getDeliveryOffers: async (agent, { userId }) => {

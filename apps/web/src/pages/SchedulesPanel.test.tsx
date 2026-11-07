@@ -4,6 +4,8 @@ import { render } from "solid-js/web";
 import { Suspense } from "solid-js";
 import type { JSX } from "solid-js";
 import { resetCapabilitiesForTests, setCapabilitiesForTests } from "../lib/capabilities";
+import { refreshScheduleAlerts } from "../lib/schedule-alerts";
+import { ScheduleAlertDot } from "../components/ScheduleAlertDot";
 
 vi.mock("@solidjs/router", () => ({
   A: (props: { href: string; children?: JSX.Element }) => <a href={props.href}>{props.children}</a>,
@@ -21,7 +23,8 @@ vi.mock("../auth/client", () => ({
   useSession: () => () => ({ data: sessionPresent.value ? { user: sessionUser } : null }),
 }));
 
-vi.mock("../api/schedules", () => ({
+vi.mock("../api/schedules", async (importOriginal) => ({
+  ...await importOriginal<typeof import("../api/schedules")>(),
   fetchSchedules: fetchSchedulesMock,
   updateSchedule: updateScheduleMock,
   deleteSchedule: deleteScheduleMock,
@@ -73,6 +76,40 @@ describe("describeSchedule", () => {
 });
 
 describe("SchedulesPanel", () => {
+  it("clears shared alert dots after resuming from Schedules", async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(new Response(JSON.stringify([{
+      agentId: "scribe", jobId: "job-1", jobName: "Digest", mode: "owner",
+      pausedReason: { kind: "credentials", integration: "Acme Mail", at: "2026-11-07T12:00:00Z" },
+    }]))).mockResolvedValue(new Response("[]"));
+    vi.stubGlobal("fetch", fetchMock);
+    try {
+      await refreshScheduleAlerts();
+      fetchSchedulesMock.mockResolvedValue([{ id: "job-1", agentId: "scribe", name: "Digest", enabled: false, credentialMode: "owner", ownerUserId: "alice", schedule: {}, payload: {} }]);
+      dispose = render(() => <><SchedulesPanel agentId="scribe" agentName="Scribe" /><ScheduleAlertDot /></>, container);
+      await settle();
+      expect(container.querySelector('[aria-label="Jobs paused for credentials"]')).not.toBeNull();
+      container.querySelector<HTMLButtonElement>('[role="switch"]')!.click();
+      await settle();
+      expect(container.querySelector('[aria-label="Jobs paused for credentials"]')).toBeNull();
+    } finally {
+      await refreshScheduleAlerts();
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("labels disabled credential pauses separately from ordinary pauses", async () => {
+    const base = { agentId: "scribe", schedule: {}, payload: {}, credentialMode: "owner", ownerUserId: "alice" };
+    const pausedReason = { kind: "credentials", integration: "Acme Mail", at: "2026-11-07T12:00:00Z" };
+    fetchSchedulesMock.mockResolvedValue([
+      { ...base, id: "credentials", name: "Credential pause", enabled: false, pausedReason },
+      { ...base, id: "manual", name: "Manual pause", enabled: false },
+      { ...base, id: "active", name: "Active", enabled: true, pausedReason },
+    ]);
+    dispose = render(() => <SchedulesPanel agentId="scribe" agentName="Scribe" />, container);
+    await settle();
+    expect(Array.from(container.querySelectorAll(".schedule-paused"), (badge) => badge.textContent)).toEqual(["Paused: credentials", "Paused"]);
+  });
+
   it.each(["superadmin", "admin", "user", null])("hides foreign Mine jobs only for superadmin by default: %s", async (role) => {
     sessionUser.role = role ?? undefined;
     sessionPresent.value = role !== null;

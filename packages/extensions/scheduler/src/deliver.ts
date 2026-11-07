@@ -72,7 +72,7 @@ export async function deliverRunResult(input: {
       continue;
     }
     try {
-      await withTimeout(
+      await withDeliveryTimeout(
         sink({
           agent: input.agent,
           destination: { channel: target.channel, user: target.user },
@@ -91,10 +91,10 @@ export async function deliverRunResult(input: {
   return outcomes;
 }
 
-async function withTimeout(pending: Promise<void>): Promise<void> {
+export async function withDeliveryTimeout<T>(pending: Promise<T>): Promise<T> {
   let timer: NodeJS.Timeout | undefined;
   try {
-    await Promise.race([
+    return await Promise.race([
       pending,
       new Promise<never>((_, reject) => {
         timer = setTimeout(

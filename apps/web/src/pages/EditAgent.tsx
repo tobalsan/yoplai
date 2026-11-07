@@ -274,6 +274,9 @@ export function EditAgent() {
       : params.agentId
   );
   const [tab, setTab] = createSignal<"extensions" | "connections" | "dashboards" | "schedules">("extensions");
+  createEffect(() => {
+    if (new URLSearchParams(location.search).get("tab") === "schedules") setTab("schedules");
+  });
   const [dashboards, { refetch: refetchDashboards }] = createResource(
     () => tab() === "dashboards" ? dashboardAgentId() : null,
     fetchAgentDashboards

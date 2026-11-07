@@ -8,8 +8,10 @@ import type {
   UpdateScheduleRequest,
   ExtensionContext,
   StreamEvent,
+  CredentialConnectHints,
 } from "@yoplai/shared";
-import { deliverRunResult, type DeliveryOutcome } from "./deliver.js";
+import { resolveWebBaseUrl } from "@yoplai/shared";
+import { deliverRunResult, deliveryText, withDeliveryTimeout, type DeliveryOutcome } from "./deliver.js";
 import { PerAgentScheduleStore, type ScheduleStore } from "./store.js";
 import { computeNextRunAtMs } from "./schedule.js";
 import {
@@ -27,16 +29,20 @@ import {
 
 const DEFAULT_JOB_TIMEOUT_MS = 30 * 60 * 1000; // 30 minutes
 
-function credentialError(event: StreamEvent): string | undefined {
+type CredentialRefusal = CredentialConnectHints & { integration: string };
+
+function credentialError(event: StreamEvent): CredentialRefusal | undefined {
   if (event.type !== "tool_result") return undefined;
   try {
-    const result = JSON.parse(event.content) as { error?: string; connected?: boolean; reason?: string; provider?: string; message?: string };
+    const result = JSON.parse(event.content) as { error?: string; connected?: boolean; reason?: string; provider?: string; message?: string; displayName?: string; server?: string };
     const refused = result.error === "oauth_connection_required" || result.error === "extension_credentials_required" ||
       (result.connected === false && ["needs_reconnect", "not_connected", "expired", "revoked", "wrong_account", "insufficient_scope", "provider_not_configured"].includes(result.reason ?? ""));
     if (!refused) return undefined;
-    const integration = result.provider ?? result.message?.match(/\[Configure ([^\]]+)\]/)?.[1] ??
-      result.message?.match(/personal ([\w-]+) account/)?.[1] ?? event.name.split(/[._]/)[0] ?? "integration";
-    return `Reconnect ${integration} credentials before this scheduled job can run.`;
+    const displayName = result.displayName ?? result.message?.match(/\[Configure ([^\]]+)\]/)?.[1];
+    const integration = displayName ?? (result.provider === "mcp" ? result.server : result.provider) ??
+      result.message?.match(/personal ([\w-]+) account/)?.[1] ??
+      event.name.match(/^mcp__(.+?)__/u)?.[1] ?? event.name.split(/[._]/)[0] ?? "integration";
+    return { integration, toolName: event.name, provider: result.provider, displayName };
   } catch {
     return undefined;
   }
@@ -92,7 +98,7 @@ type CompleteRunInput = {
   gateOutput?: string;
   error?: unknown;
   errorMessage?: string;
-  credentialRefused?: boolean;
+  credentialRefused?: CredentialRefusal;
 };
 
 let schedulerCtx: ExtensionContext | null = null;
@@ -324,7 +330,10 @@ export class SchedulerService {
     if (patch.credentialMode !== undefined) job.credentialMode = patch.credentialMode;
     if (patch.credentialMode === "team") delete job.ownerUserId;
     if (job.credentialMode === "owner" && !job.ownerUserId) job.ownerUserId = ownerUserId;
-    if (patch.enabled !== undefined) job.enabled = patch.enabled;
+    if (patch.enabled !== undefined) {
+      job.enabled = patch.enabled;
+      delete job.pausedReason;
+    }
     if (patch.schedule) job.schedule = patch.schedule;
     if (patch.model) job.model = patch.model;
     if (patch.payload) job.payload = patch.payload;
@@ -849,7 +858,7 @@ export class SchedulerService {
     // Start the underlying run. executingJobs stays populated until runPromise
     // actually settles — even if executeJob returns early due to timeout —
     // so the next scheduled fire cannot overlap with a still-aborting run.
-    let missingCredentialError: string | undefined;
+    let missingCredentialError: CredentialRefusal | undefined;
     const runPromise = ctx.runAgent({
       agentId: job.agentId,
       userId: credentialMode === "owner" ? ownerUserId : undefined,
@@ -892,13 +901,13 @@ export class SchedulerService {
     let response: string | undefined;
     let runError: string | undefined;
     let errorValue: unknown;
-    let credentialRefused = false;
+    let credentialRefused: CredentialRefusal | undefined;
 
     try {
       const result = await Promise.race([runPromise, timeoutPromise]);
       if (missingCredentialError) {
-        credentialRefused = true;
-        throw new Error(missingCredentialError);
+        credentialRefused = missingCredentialError;
+        throw new Error(`Reconnect ${missingCredentialError.integration} credentials before this scheduled job can run.`);
       }
 
       runSessionId = result.meta.sessionId;
@@ -997,12 +1006,20 @@ export class SchedulerService {
   ): Promise<SchedulerRunResult> {
     const { job, firedAt, payload } = input;
     const pauseForCredentials = input.credentialRefused && job.schedule.runAt === undefined;
+    const newlyPaused = pauseForCredentials && job.enabled;
     if (pauseForCredentials) {
+      const ctx = getSchedulerContext();
+      const refusal = input.credentialRefused!;
+      const connectPath = await ctx.resolveConnectPath?.(job.agentId, refusal) ?? `/agents/${encodeURIComponent(job.agentId)}/edit`;
+      job.pausedReason = { kind: "credentials", integration: refusal.integration, connectPath, at: new Date().toISOString() };
       job.enabled = false;
       // A refresh may have replaced the executing job while the run awaited.
       const current = this.findJob(job.agentId, job.id);
-      if (current) current.enabled = false;
-      input.errorMessage += " The job was paused; re-enable it after reconnecting.";
+      if (current) {
+        current.enabled = false;
+        current.pausedReason = job.pausedReason;
+      }
+      input.errorMessage = `Job "${job.name}" on ${input.agent.name} is paused: reconnect ${refusal.integration} at ${resolveWebBaseUrl(ctx.getConfig())}${connectPath}, then resume the job in the agent's Schedules tab.`;
       input.error = new Error(input.errorMessage);
     }
     job.state = job.state ?? {};
@@ -1026,6 +1043,18 @@ export class SchedulerService {
       },
     });
     job.state.lastDelivery = delivery.length > 0 ? delivery : undefined;
+
+    if (newlyPaused && !job.deliver?.length && job.ownerUserId) {
+      const ctx = getSchedulerContext();
+      const text = deliveryText({ jobName: job.name, status: "error", errorMessage: input.errorMessage })!;
+      for (const [id, notifier] of ctx.getUserNotifiers()) {
+        try {
+          await withDeliveryTimeout(notifier({ agent: input.agent, userId: job.ownerUserId, text }));
+        } catch (error) {
+          ctx.logger.warn(`[scheduler] Owner notification via ${id} failed: ${error instanceof Error ? error.message : String(error)}`);
+        }
+      }
+    }
 
     const uneventful =
       payload.quietOutput === true &&
@@ -1104,7 +1133,10 @@ export class SchedulerService {
       job.enabled = false;
       // Delivery/output awaits can let another refresh replace the job again.
       const current = this.findJob(job.agentId, job.id);
-      if (current) current.enabled = false;
+      if (current) {
+        current.enabled = false;
+        current.pausedReason = job.pausedReason;
+      }
     }
     await this.saveAgent(job.agentId);
     return {

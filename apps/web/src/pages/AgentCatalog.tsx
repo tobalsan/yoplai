@@ -13,6 +13,7 @@ import { hasStaffRole as hasAdminRole, isSuperadmin as hasSuperadminRole } from 
 import { fetchMainAgentPreference, saveMainAgentPreference } from "../api/main-agent";
 import { showToast } from "../lib/toast";
 import { ConfirmDialog } from "../components/ui/ConfirmDialog";
+import { ScheduleAlertDot } from "../components/ScheduleAlertDot";
 
 function isEmoji(str: string): boolean {
   return /^\p{Emoji}/u.test(str) && str.length <= 4;
@@ -189,7 +190,7 @@ export function AgentCatalog() {
                     </div>
                   )}
                 </Show>
-                <div class="catalog-name">{agent.name}</div>
+                <div class="catalog-name">{agent.name}<ScheduleAlertDot agentId={mainAgentIdFor(agent.id)} /></div>
                 <Show when={agent.role}>
                   <div class="catalog-role">{agent.role}</div>
                 </Show>

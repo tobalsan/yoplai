@@ -3,6 +3,7 @@ import type {
   AgentConfig,
   DeliveryOffer,
   DeliverySink,
+  UserNotifier,
   ExtensionAgentTool,
   ExtensionContext,
   GatewayConfig,
@@ -445,9 +446,10 @@ async function sendSlackMessage(
   agent: AgentConfig,
   config: GatewayConfig,
   env: Record<string, string> | undefined,
-  input: { channel: string; text: string; threadTs?: string }
+  input: { channel: string; text: string; threadTs?: string },
+  verifiedClient?: SlackWebClient
 ): Promise<{ channel: string; ts?: string }> {
-  const client = resolveSlackClient(agent, config, env);
+  const client = verifiedClient ?? resolveSlackClient(agent, config, env);
   if (!client) {
     throw new Error("No Slack token is configured for this agent.");
   }
@@ -513,6 +515,21 @@ export function createSlackDeliverySink(ctx: ExtensionContext): DeliverySink {
       throw new Error("Slack delivery requires a channel or user destination.");
     }
     await sendSlackMessage(agent, ctx.getConfig(), undefined, { channel, text });
+  };
+}
+
+export function createSlackUserNotifier(ctx: ExtensionContext): UserNotifier {
+  return async ({ agent, userId, text }) => {
+    const config = ctx.getConfig();
+    const pairing = getSlackPairingService();
+    if (!pairing) return "unavailable";
+    const client = resolveSlackClient(agent, config);
+    if (!client) return "unavailable";
+    const workspace = await getSlackWorkspace(client);
+    const recipient = pairing.list(userId).find((entry) => entry.workspaceId === workspace);
+    if (!recipient) return "unavailable";
+    await sendSlackMessage(agent, config, undefined, { channel: recipient.slackUserId, text }, client);
+    return "sent";
   };
 }
 

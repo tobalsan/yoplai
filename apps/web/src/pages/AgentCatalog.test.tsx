@@ -63,6 +63,7 @@ vi.mock("@solidjs/router", () => ({
 }));
 
 import { AgentCatalog } from "./AgentCatalog";
+import { refreshScheduleAlerts } from "../lib/schedule-alerts";
 import {
   resetCapabilitiesForTests,
   setCapabilitiesForTests,
@@ -130,6 +131,28 @@ afterEach(() => {
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
 describe("AgentCatalog action states", () => {
+  it("marks the pool card whose chat fork has a credential alert", async () => {
+    setSession("user");
+    fetchPoolMock.mockResolvedValue([agent("scribe"), agent("helper")]);
+    fetchPoolActionsMock.mockResolvedValue([entry("scribe", "chat", "scribe-fork"), entry("helper", "chat", "helper-fork")]);
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify([{
+      agentId: "scribe-fork", jobId: "digest", jobName: "Digest", mode: "owner",
+      pausedReason: { kind: "credentials", integration: "Acme Mail", at: "2026-11-07T12:00:00Z" },
+    }])));
+    vi.stubGlobal("fetch", fetchMock);
+    try {
+      await refreshScheduleAlerts();
+      await mountCatalog();
+      const cards = container.querySelectorAll(".catalog-card");
+      expect(cards[0]?.querySelector('[aria-label="Jobs paused for credentials"]')).not.toBeNull();
+      expect(cards[1]?.querySelector('[aria-label="Jobs paused for credentials"]')).toBeNull();
+    } finally {
+      fetchMock.mockResolvedValue(new Response("[]"));
+      await refreshScheduleAlerts();
+      vi.unstubAllGlobals();
+    }
+  });
+
   it("shows a Chat link routed to the fork agent id when action is chat", async () => {
     setSession("user");
     fetchPoolMock.mockResolvedValue([agent("scribe")]);
