@@ -995,8 +995,8 @@ const MattermostUrlSchema = z.union([
 export const MattermostExtensionChannelConfigSchema = z.object({
   agent: z.string().min(1),
   requireMention: z.boolean().optional(),
-  // Once the bot has answered in a thread, later replies in that thread reach
-  // it without a mention. Off by default, like Slack's threadUnlock.
+  // Human replies need no mention in threads the bot has answered in or whose
+  // root it authored (job deliveries, send_message, notify). Off by default.
   threadUnlock: z.boolean().optional(),
   users: z.array(z.string()).optional(),
 });

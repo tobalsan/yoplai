@@ -11,6 +11,7 @@ import {
 import { getMattermostContext } from "./context.js";
 import {
   handleMattermostPost,
+  isBotPost,
   processPost,
   type BotIdentity,
   type InboundPost,
@@ -137,6 +138,19 @@ function createBot(params: {
     return route.threadUnlock || binding.source === "agent";
   };
 
+  const rootIsOwnPost = async (
+    route: MattermostRoute,
+    rootId: string
+  ): Promise<boolean> => {
+    try {
+      const root = await rest.getPost(rootId);
+      return root.user_id === identity?.id;
+    } catch {
+      console.debug(`${route.logPrefix} Could not resolve thread root author`);
+      return false;
+    }
+  };
+
   const handleInbound = async (inbound: InboundPost): Promise<void> => {
     if (!identity) return;
     const { post } = inbound;
@@ -163,9 +177,23 @@ function createBot(params: {
       }
     }
 
-    const gate = processPost(inbound, route, identity, {
+    let gate = processPost(inbound, route, identity, {
       threadUnlocked: threadUnlocked(route, post),
     });
+    if (
+      !gate.shouldReply &&
+      gate.reason === "mention_required" &&
+      route.threadUnlock &&
+      !route.isDm &&
+      post.root_id &&
+      !isBotPost(post) &&
+      !withThreadBindings(getMattermostContext().getDataDir(), (store) =>
+        store.getBinding(post.root_id!, route.agent.id)
+      ) &&
+      (await rootIsOwnPost(route, post.root_id))
+    ) {
+      gate = processPost(inbound, route, identity, { threadUnlocked: true });
+    }
     if (!gate.shouldReply) {
       if (gate.reason !== "author_is_bot" && gate.reason !== "own_post") {
         console.debug(`${route.logPrefix} Ignored: ${gate.reason}`);
