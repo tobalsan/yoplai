@@ -38,6 +38,7 @@ import {
   getProviderErrorCategory,
   isReplayableFailedTurn,
   isFallbackEligibleError,
+  isUpstreamAuthFailure,
   renderAgentContext,
   resumeAfterFailedTurn,
   runTurnWithProviderRetry,
@@ -106,13 +107,13 @@ export async function seedOAuthCredentials(
 }
 
 /**
- * Fetches a new token and writes it into the store, unconditionally. Callers
+ * Fetches the gateway's current token and writes it into the store. Callers
  * for the same provider share one in-flight renewal via `renewalLocks`
  * instead of each independently reading the stale expiry and re-fetching, so
  * the check-and-refresh is effectively atomic per provider. Renewal failures
  * are logged and swallowed — the upcoming prompt will surface the auth error
  * instead of crashing the run before it tries — but the returned boolean
- * tells a caller (like `runWithOAuthRefreshRetry`) whether the token actually
+ * tells a caller (like `runWithOAuthRecovery`) whether the token actually
  * changed, so it can skip a retry it already knows will fail the same way.
  */
 export async function renewOAuthToken(
@@ -127,9 +128,14 @@ export async function renewOAuthToken(
   const task = (async () => {
     try {
       const token = await fetchToken(ctx.input, provider);
-      await ctx.store.modify(provider, async () => toOAuthCredential(token));
+      let changed = false;
+      await ctx.store.modify(provider, async (current) => {
+        changed =
+          current?.type !== "oauth" || current.access !== token.accessToken;
+        return toOAuthCredential(token);
+      });
       ctx.oauthExpiryByProvider.set(provider, token.expiresAt);
-      return true;
+      return changed;
     } catch (error) {
       console.error(
         `[agent-runner] Failed to renew OAuth token for provider ${provider}: ${
@@ -176,41 +182,89 @@ export function isOAuthRefreshError(error: unknown): boolean {
 }
 
 /**
- * Runs `attempt`; if it fails with the SDK's own oauth-refresh error for a
- * seeded provider, forces one renewal and, only if that renewal actually
- * replaced the token, retries once via `recover` before giving up (a failed
- * renewal would just fail the same way again, so there is no point retrying
- * — and the original error is more informative than a second identical one).
+ * True for an upstream 401 on a provider whose token the gateway seeded. The
+ * seeded token can die before its own expiry (another run rotated the shared
+ * login), so the gateway may hold a newer one. Placeholder-key providers
+ * (credentials injected by OneCLI) never match.
+ */
+function isSeededOAuthAuthFailure(
+  provider: string,
+  ctx: Pick<OAuthRenewalContext, "oauthExpiryByProvider">,
+  source: unknown,
+  message: string
+): boolean {
+  return (
+    ctx.oauthExpiryByProvider.has(provider) &&
+    isUpstreamAuthFailure(source, message)
+  );
+}
+
+/**
+ * Runs `attempt` and recovers once from an auth failure on a seeded OAuth
+ * provider: the SDK's own oauth self-refresh error (thrown), or an upstream
+ * 401, thrown or reported as an errored assistant message. It forces one
+ * gateway renewal and, only if that replaced the token, resumes once via
+ * `recover`. An unchanged or failed renewal would just fail the same way
+ * again, so the original failure is left as it was (rethrown, or the errored
+ * message kept) for the caller's fallback or error path. A second failure
+ * after the resume is final. A failed turn that already showed text or
+ * called a tool is never resumed, since resuming drops it.
  * `recover` defaults to `attempt`, which is only safe when `attempt` itself
  * never appends a fresh user message on a retry (e.g. it already goes
  * through `resumeAfterFailedTurn`); callers whose `attempt` can append one
  * (a raw `session.prompt` on the very first turn) must pass a `recover` that
  * resumes instead, so a retry does not duplicate that message in history.
  */
-async function runWithOAuthRefreshRetry<T>(
+async function runWithOAuthRecovery(
   provider: string,
   ctx: OAuthRenewalContext,
-  attempt: () => Promise<T>,
-  recover: () => Promise<T> = attempt
-): Promise<T> {
+  getMessages: () => AgentMessage[],
+  attempt: () => Promise<unknown>,
+  recover: () => Promise<unknown> = attempt
+): Promise<void> {
+  let thrown: { error: unknown } | undefined;
   try {
-    return await attempt();
+    await attempt();
   } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
     if (
-      !isOAuthRefreshError(error) ||
-      !ctx.oauthExpiryByProvider.has(provider)
+      !(isOAuthRefreshError(error) && ctx.oauthExpiryByProvider.has(provider)) &&
+      !isSeededOAuthAuthFailure(provider, ctx, error, message)
     ) {
       throw error;
     }
-    console.error(
-      `[agent-runner] SDK oauth self-refresh failed mid-turn for provider ${provider}; forcing a gateway renewal and retrying once`
-    );
-    const renewed = await renewOAuthToken(provider, ctx);
-    if (!renewed) {
-      throw error;
-    }
-    return recover();
+    thrown = { error };
   }
+  if (!thrown) {
+    const failed = findFailedTurn(getMessages());
+    if (
+      !failed ||
+      !isSeededOAuthAuthFailure(provider, ctx, failed.source, failed.message)
+    ) {
+      return;
+    }
+  }
+  // Resuming drops a trailing assistant message, thrown failure or not, so
+  // never resume one that already showed text or called a tool.
+  const messages = getMessages();
+  if (
+    messages[messages.length - 1]?.role === "assistant" &&
+    !isReplayableFailedTurn(messages)
+  ) {
+    if (thrown) throw thrown.error;
+    return;
+  }
+  console.error(
+    `[agent-runner] Auth failure mid-turn for seeded provider ${provider}; forcing a gateway renewal and resuming once if the token changed`
+  );
+  if (!(await renewOAuthToken(provider, ctx))) {
+    console.error(
+      `[agent-runner] Gateway renewal did not replace the ${provider} token; not resuming`
+    );
+    if (thrown) throw thrown.error;
+    return;
+  }
+  await recover();
 }
 
 const CONTAINER_SYSTEM_PROMPT = `You are an AI agent running inside an isolated Yoplai container. Use the mounted workspace as your working directory. Coding tools run inside this container. Orchestration tools call back to the gateway.
@@ -610,18 +664,19 @@ export async function runAgent(
             if (activeAbortRequested) {
               throw new DOMException("This operation was aborted", "AbortError");
             }
-            await runWithOAuthRefreshRetry(
+            await runWithOAuthRecovery(
               provider,
               oauthCtx,
+              () => session.messages,
               () =>
                 attempt === 1
                   ? session.prompt(promptText, promptOptions)
                   : resumeAfterFailedTurn(session, () =>
                       session.prompt(promptText, promptOptions)
                     ),
-              // A raw `session.prompt` (attempt 1) may have already appended
-              // the user message before the SDK's own oauth self-refresh
-              // threw, so the once-only retry must resume rather than
+              // A raw `session.prompt` (attempt 1) has already appended the
+              // user message before an auth failure (thrown or an errored
+              // turn), so the once-only retry must resume rather than
               // re-prompt, or it would duplicate that message in history.
               () =>
                 resumeAfterFailedTurn(session, () =>
@@ -671,7 +726,15 @@ export async function runAgent(
           primaryFailure.source,
           primaryFailure.message
         ) ||
-          isOAuthRefreshError(primaryFailure.source))
+          isOAuthRefreshError(primaryFailure.source) ||
+          // Forced renewal failed or returned the same token: the seeded
+          // login is dead for this run, so try the fallback model.
+          isSeededOAuthAuthFailure(
+            provider,
+            oauthCtx,
+            primaryFailure.source,
+            primaryFailure.message
+          ))
       ) {
         const fallbackStartedAt = Date.now();
         const logFallback = (
@@ -716,10 +779,14 @@ export async function runAgent(
           await session.setModel(fallback);
           activeOAuthContext = { ctx: oauthCtx, provider: fallback.provider };
           await ensureFreshOAuthToken(fallback.provider, oauthCtx);
-          await runWithOAuthRefreshRetry(fallback.provider, oauthCtx, () =>
-            resumeAfterFailedTurn(session, () =>
-              session.prompt(promptText, promptOptions)
-            )
+          await runWithOAuthRecovery(
+            fallback.provider,
+            oauthCtx,
+            () => session.messages,
+            () =>
+              resumeAfterFailedTurn(session, () =>
+                session.prompt(promptText, promptOptions)
+              )
           );
         } catch (error) {
           const message =

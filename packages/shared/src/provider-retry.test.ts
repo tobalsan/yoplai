@@ -7,6 +7,7 @@ import {
   isRetryableProviderError,
   isInvalidRequestError,
   isFallbackEligibleError,
+  isUpstreamAuthFailure,
   resumeAfterFailedTurn,
   runTurnWithProviderRetry,
   type RetryableTurnMessage,
@@ -27,7 +28,6 @@ describe("invalid-request fallback eligibility", () => {
   it.each([
     [{ status: 400 }, "Invalid request: mock fatal"],
     [undefined, "invalid_request_error: unknown parameter 'temperatur'"],
-    [{ status: 401 }, "401 authentication_error: invalid x-api-key"],
     [{ status: 403 }, "403 permission_error: access denied"],
     [{ status: 404 }, "404 not_found_error: model not found"],
     [{ status: 413 }, "413 request too large"],
@@ -54,6 +54,42 @@ describe("invalid-request fallback eligibility", () => {
       expect(isRetryableProviderError(undefined, message)).toBe(false);
       expect(getProviderErrorCategory(undefined, message)).toBe("invalid_request");
     }
+  });
+});
+
+// ALG-658: the incident text OneCLI returns for an upstream 401 (trimmed in
+// the log), plus an invented tail containing "connection", the word that made
+// the old classifier call it `network`.
+const ONECLI_401 = "401 No credentials configured for api.anthropic.com in OneCLI";
+const ONECLI_401_FULL = `${ONECLI_401}. Add a connection for this host in the OneCLI dashboard.`;
+
+describe("upstream auth failures", () => {
+  it("categorizes a 401 as auth, not network", () => {
+    expect(getProviderErrorCategory(undefined, ONECLI_401)).toBe("auth");
+    expect(getProviderErrorCategory(undefined, ONECLI_401_FULL)).toBe("auth");
+    expect(getProviderErrorCategory({ status: 401 }, "nope")).toBe("auth");
+    expect(
+      getProviderErrorCategory(
+        { status: 401 },
+        "401 authentication_error: invalid x-api-key"
+      )
+    ).toBe("auth");
+  });
+
+  it("recognizes a 401 by status or by its message", () => {
+    expect(isUpstreamAuthFailure(undefined, ONECLI_401_FULL)).toBe(true);
+    expect(isUpstreamAuthFailure(undefined, "HTTP 401 Unauthorized")).toBe(true);
+    expect(isUpstreamAuthFailure({ status: 401 }, "nope")).toBe(true);
+    expect(isUpstreamAuthFailure(undefined, "authentication_error: invalid x-api-key")).toBe(false);
+    expect(isUpstreamAuthFailure(undefined, "retry 4010 times")).toBe(false);
+    expect(isUpstreamAuthFailure({ status: 403 }, "403 forbidden")).toBe(false);
+  });
+
+  it("never retries or falls back on a 401, even with a transient keyword", () => {
+    expect(isRetryableProviderError(undefined, ONECLI_401_FULL)).toBe(false);
+    expect(isRetryableProviderError({ status: 401 }, "Connection error.")).toBe(false);
+    expect(isFallbackEligibleError(undefined, ONECLI_401_FULL)).toBe(false);
+    expect(isInvalidRequestError({ status: 401 }, "401 authentication_error: invalid x-api-key")).toBe(false);
   });
 });
 

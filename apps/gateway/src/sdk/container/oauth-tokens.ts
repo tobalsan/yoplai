@@ -1,7 +1,11 @@
 import path from "node:path";
-import type { AgentConfig, RequiredModelConfig } from "@yoplai/shared";
+import {
+  sanitizeSensitiveText,
+  type AgentConfig,
+  type RequiredModelConfig,
+} from "@yoplai/shared";
 import { CONFIG_DIR } from "../../config/index.js";
-import { logWarn } from "../../logging.js";
+import { logError, logWarn } from "../../logging.js";
 
 // SDK's own OAuth refresh runs inside a 5-min validity window; require more
 // than that here so the container never races the SDK's self-refresh (which
@@ -107,6 +111,49 @@ async function refreshOAuthToken(
 // single-use rotated refresh token can't be raced.
 const inFlightRefreshes = new Map<string, Promise<OAuthTokenEntry | undefined>>();
 
+// A refresh rejected with `invalid_grant` means the stored login is dead and
+// only a human re-auth fixes it. Say so loudly, once per (authPath, provider)
+// until a refresh succeeds again or an hour passes, so a burst of container
+// launches does not spam the log.
+const DEAD_LOGIN_LOG_COOLDOWN_MS = 60 * 60 * 1000;
+const deadLoginLoggedAt = new Map<string, number>();
+
+/**
+ * Log-safe text of a refresh failure. The pi SDK keeps the provider's response
+ * body in the error `cause` chain, so the chain is joined; that body can be
+ * JSON carrying tokens, which the generic sanitizer does not catch when the
+ * key is quoted, so quoted credential fields are redacted here as well.
+ */
+export function describeRefreshError(error: unknown): string {
+  const parts: string[] = [];
+  let current: unknown = error;
+  while (current !== undefined && current !== null && parts.length < 5) {
+    parts.push(current instanceof Error ? current.message : String(current));
+    current = current instanceof Error ? current.cause : undefined;
+  }
+  return sanitizeSensitiveText(parts.join(": "))
+    .replace(
+      /("[A-Za-z_-]*(?:token|secret|password|credential|api[-_]?key)[A-Za-z_-]*"\s*:\s*)"[^"]*"/gi,
+      '$1"[REDACTED]"'
+    )
+    .slice(0, 1000);
+}
+
+function reportDeadLogin(key: string, provider: string, error: unknown): void {
+  const refreshError = describeRefreshError(error);
+  if (!refreshError.includes("invalid_grant")) return;
+  const loggedAt = deadLoginLoggedAt.get(key);
+  if (loggedAt !== undefined && Date.now() - loggedAt < DEAD_LOGIN_LOG_COOLDOWN_MS) {
+    return;
+  }
+  deadLoginLoggedAt.set(key, Date.now());
+  // Log only the redacted text: the raw error's message and stack can carry
+  // the provider's response body.
+  logError(`[oauth-tokens] ${provider} login expired, re-auth needed`, refreshError, {
+    provider,
+  });
+}
+
 function refreshOAuthTokenDeduped(
   provider: string,
   deps: OAuthTokensDeps,
@@ -115,9 +162,20 @@ function refreshOAuthTokenDeduped(
   const key = `${deps.authPath}::${provider}`;
   const existing = inFlightRefreshes.get(key);
   if (existing) return existing;
-  const pending = refreshOAuthToken(provider, deps, runtime).finally(() => {
-    inFlightRefreshes.delete(key);
-  });
+  const pending = refreshOAuthToken(provider, deps, runtime)
+    .then(
+      (entry) => {
+        deadLoginLoggedAt.delete(key);
+        return entry;
+      },
+      (error: unknown) => {
+        reportDeadLogin(key, provider, error);
+        throw error;
+      }
+    )
+    .finally(() => {
+      inFlightRefreshes.delete(key);
+    });
   inFlightRefreshes.set(key, pending);
   return pending;
 }

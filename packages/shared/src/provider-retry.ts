@@ -164,6 +164,22 @@ export function isInvalidRequestError(
   );
 }
 
+/**
+ * True when the provider rejected the request's credentials with a 401, by
+ * status or by message. OneCLI rewrites an upstream 401 as
+ * `401 No credentials configured for <host> in OneCLI`, so that text counts
+ * too. Checked before every transient classifier: a 401 is never retried in
+ * the generic backoff loop, and a seeded OAuth token gets one forced renewal
+ * instead (see the sandboxed runner).
+ */
+export function isUpstreamAuthFailure(error: unknown, message: string): boolean {
+  if (getErrorStatus(error) === 401) return true;
+  return (
+    /\b401\b/.test(message) &&
+    /unauthori[sz]ed|authentication_error|no credentials configured for/i.test(message)
+  );
+}
+
 export function isFallbackEligibleError(
   error: unknown,
   message: string
@@ -175,6 +191,7 @@ export function isRetryableProviderError(
   error: unknown,
   message: string
 ): boolean {
+  if (isUpstreamAuthFailure(error, message)) return false;
   if (isInvalidRequestError(error, message)) return false;
   const status = getErrorStatus(error);
   if (
@@ -193,7 +210,8 @@ export function isRetryableProviderError(
 export function getProviderErrorCategory(
   error: unknown,
   message: string
-): "invalid_request" | "rate_limit" | "timeout" | "network" | "unavailable" | undefined {
+): "auth" | "invalid_request" | "rate_limit" | "timeout" | "network" | "unavailable" | undefined {
+  if (isUpstreamAuthFailure(error, message)) return "auth";
   if (isInvalidRequestError(error, message)) return "invalid_request";
   const status = getErrorStatus(error);
   if (status === 429 || /rate limit|too many requests|quota/i.test(message)) return "rate_limit";

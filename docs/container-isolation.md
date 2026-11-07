@@ -195,7 +195,12 @@ on the host (from `$YOPLAI_HOME/auth.json`) and passes only short-lived access
 tokens into the container via `ContainerInput.oauthTokens`; the runner renews
 only providers authorized for that run through `POST /internal/oauth-token`
 (with the same per-run identity checks as `/internal/tools`) when under 10
-minutes of validity remain. Refresh tokens never enter the sandbox. Do not add
+minutes of validity remain. If a model call on a seeded token gets an upstream
+401 (another run may have rotated the shared login), the runner forces one
+renewal and resumes the failed turn only when the gateway returns a different
+token; otherwise the 401 is final, or eligible for `fallback_model`. A host
+refresh rejected with `invalid_grant` logs one "<provider> login expired,
+re-auth needed" error. Refresh tokens never enter the sandbox. Do not add
 a OneCLI secret mapping for an OAuth provider's API host — the proxy would
 overwrite the injected Authorization header.
 
