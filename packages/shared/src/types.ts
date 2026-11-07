@@ -2269,6 +2269,7 @@ export const McpAppViewReferenceSchema = McpAppViewSchema.extend({
   recordId: z.string(),
   file: McpAppFileSchema.optional(),
   key: z.string().optional(),
+  title: z.string().max(200).optional(),
 });
 export type McpAppViewReference = z.infer<typeof McpAppViewReferenceSchema>;
 

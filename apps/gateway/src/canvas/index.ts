@@ -148,7 +148,7 @@ async function captureDashboard(
         link: result.link,
       },
     },
-    { key: entry.id }
+    { key: entry.id, title: dashboardTitle(html, entry.slug) }
   );
 }
 
