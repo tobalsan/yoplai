@@ -57,16 +57,29 @@
           top: 0;
           bottom: 0;
           left: -7px;
-          width: 6px;
+          width: 15px;
+          z-index: 1;
           cursor: col-resize;
           touch-action: none;
+          outline: none;
         }
 
-        .chat-panel-resizer:hover,
-        .chat-panel-resizer:focus-visible {
-          background: var(--accent-soft);
-          outline: 2px solid var(--accent);
+        .chat-panel-resizer::after {
+          content: "";
+          position: absolute;
+          top: 0;
+          bottom: 0;
+          left: 6px;
+          width: 3px;
+          border-radius: 2px;
+          background: var(--accent);
+          opacity: 0;
+          transition: opacity 150ms ease;
         }
+
+        .chat-panel-resizer:hover::after { opacity: 0.5; transition-delay: 100ms; }
+        .chat-panel-resizer:focus-visible::after,
+        .chat-panel-resizer-dragging::after { opacity: 1; transition-delay: 0ms; }
 
         .chat-side-panel-overlay {
           position: fixed;
@@ -86,19 +99,6 @@
           flex-shrink: 0;
           white-space: nowrap;
         }
-
-        @media (max-width: 768px) {
-          .chat-side-panel .mcp-app-file-header { padding-left: 64px; }
-        }
-
-        .mcp-app-panel-card {
-          display: flex;
-          align-items: center;
-          gap: 12px;
-          width: 100%;
-          padding: 12px;
-          border: 1px solid var(--tool-border);
-          border-radius: var(--radius-sm);
         .mcp-app-view-header > .ui-button,
         .mcp-app-view-header > .file-download {
           display: inline-flex;
@@ -118,6 +118,19 @@
           background: var(--bg-raised);
           color: var(--text-primary);
         }
+
+        @media (max-width: 768px) {
+          .chat-side-panel .mcp-app-file-header { padding-left: 64px; }
+        }
+
+        .mcp-app-panel-card {
+          display: flex;
+          align-items: center;
+          gap: 12px;
+          width: 100%;
+          padding: 12px;
+          border: 1px solid var(--tool-border);
+          border-radius: var(--radius-sm);
           color: var(--text-secondary);
           background: var(--tool-bg);
           font: inherit;

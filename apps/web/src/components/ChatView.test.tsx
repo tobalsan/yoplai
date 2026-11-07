@@ -3641,12 +3641,15 @@ describe("ChatView abort handling", () => {
       const panel = queryByRole(container, "complementary")!;
       const separator = queryByRole(panel, "separator", { name: "Resize app view" })!;
       expect(separator.getAttribute("aria-valuemax")).toBe("794");
+      expect(separator.getAttribute("aria-valuenow")).toBe("597");
       expect(getComputedStyle(panel).position).toBe("relative");
       availableWidth = 1000;
       resizeCallbacks.forEach((callback) => callback([], {} as ResizeObserver));
       expect(separator.getAttribute("aria-valuemax")).toBe("594");
       separator.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowLeft", bubbles: true }));
-      expect(separator.getAttribute("aria-valuenow")).toBe("560");
+      expect(separator.getAttribute("aria-valuenow")).toBe("517");
+      separator.dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
+      expect(separator.getAttribute("aria-valuenow")).toBe("497");
       availableWidth = 700;
       resizeCallbacks.forEach((callback) => callback([], {} as ResizeObserver));
       expect(getComputedStyle(panel).position).toBe("fixed");
