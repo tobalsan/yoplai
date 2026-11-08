@@ -1645,7 +1645,7 @@
           padding: 12px;
         }
         .compaction-summary summary { cursor: pointer; }
-        .compaction-summary-text { white-space: pre-wrap; margin-top: 12px; }
+        .compaction-summary-text { margin-top: 12px; }
         .load-earlier { align-self: center; margin: 12px; }
         .message.compact-status {
           text-align: center;
