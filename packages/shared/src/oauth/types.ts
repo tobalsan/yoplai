@@ -167,5 +167,8 @@ export type OAuthNotConnectedReason =
  */
 export interface OAuthRequirement {
   provider: string;
+  /** Scopes requested on connect/reconnect and shown on the connect card. */
   scopes?: string[];
+  /** Scopes a grant must hold to be usable at all. Defaults to `scopes`. */
+  minimumScopes?: string[];
 }

@@ -537,7 +537,8 @@ export class OAuthService {
       return needsReconnect;
     }
 
-    if (requirement.scopes?.some((scope) => !connection.scopes.includes(scope))) {
+    const required = requirement.minimumScopes ?? requirement.scopes;
+    if (required?.some((scope) => !connection.scopes.includes(scope))) {
       return {
         connected: false,
         provider: provider.id,
