@@ -74,7 +74,7 @@ it("sends a file with unchanged model text and captures its title, metadata and 
   expect(run.events).toContainEqual(expect.objectContaining({ type: "tool_call", id: "send-report", name: "send_file", view: { server: "yoplai", tool: "send_file", resourceUri: "ui://yoplai/file-viewer" } }));
   const sent = run.events.find(event => event.type === "file_output");
   if (sent?.type !== "file_output") throw new Error("Expected sent file");
-  const file = { fileId: sent.fileId, filename: "report.html", mimeType: "application/octet-stream", size: 15, title: "Quarterly report" };
+  const file = { fileId: sent.fileId, filename: "report.html", mimeType: "text/html", size: 15, title: "Quarterly report" };
   expect(run.events).toContainEqual(expect.objectContaining({ type: "tool_result", id: "send-report", content: "File sent to user", view: expect.objectContaining({ server: "yoplai", tool: "send_file", file }) }));
   expect(await readMcpAppRecord({ agentId: run.params.agentId, sessionId: "send-file", ownerUserId: "owner" }, "send-report")).toMatchObject({
     server: "yoplai", tool: "send_file", resourceUri: "ui://yoplai/file-viewer", args: { path: filename, title: "Quarterly report" },
