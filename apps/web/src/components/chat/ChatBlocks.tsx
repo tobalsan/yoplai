@@ -19,7 +19,7 @@ export function CompactionSummary(props: { text: string; timestamp: number }) {
     <div class="message compaction-summary">
       <details>
         <summary>Compaction summary</summary>
-        <div class="content compaction-summary-text">{props.text}</div>
+        <AssistantText class="content compaction-summary-text markdown-content" text={props.text} />
       </details>
       <div class="message-time">{formatTimestamp(props.timestamp)}</div>
     </div>
