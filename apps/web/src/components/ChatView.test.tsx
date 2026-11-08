@@ -1423,7 +1423,8 @@ describe("ChatView abort handling", () => {
     expect([...disclosures].every((element) => !element.hasAttribute("open"))).toBe(true);
     expect(disclosures[0].querySelector("summary")?.tagName).toBe("SUMMARY");
     disclosures[0].setAttribute("open", "");
-    expect(disclosures[0].textContent).toContain("First complete summary\nSecond line");
+    expect(disclosures[0].textContent).toContain("First complete summary");
+    expect(disclosures[0].textContent).toContain("Second line");
     view.dispose();
     view.container.remove();
     view = renderView();

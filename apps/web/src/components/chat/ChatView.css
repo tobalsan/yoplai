@@ -39,6 +39,9 @@
           flex: 1;
           min-width: 0;
           min-height: 0;
+          /* Header compaction follows the chat column width, not the viewport
+             (the left sidebar can take 280px). */
+          container: chat-main / inline-size;
         }
 
         .chat-side-panel {
@@ -271,7 +274,14 @@
           display: flex;
           flex-direction: column;
           gap: 2px;
-          min-width: 0;
+          min-width: 48px;
+          overflow: hidden;
+        }
+
+        /* Keep header controls at their natural size; only the name block shrinks. */
+        .header > *:not(.agent-info),
+        .agent-info > .notification-sound-btn {
+          flex-shrink: 0;
         }
 
         .agent-avatar {
@@ -348,6 +358,10 @@
           font-weight: 600;
           letter-spacing: -0.01em;
           color: var(--text-primary);
+          overflow: hidden;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+          min-width: 0;
         }
 
         .agent-status {
@@ -361,6 +375,7 @@
           height: 6px;
           background: color-mix(in srgb, var(--success) 78%, var(--text-muted));
           border-radius: 50%;
+          flex-shrink: 0;
         }
 
         .status-dot.active {
@@ -375,6 +390,7 @@
         .status-text {
           font-size: 12px;
           color: var(--text-muted);
+          white-space: nowrap;
         }
 
         .think-dropdown {
@@ -1629,7 +1645,7 @@
           padding: 12px;
         }
         .compaction-summary summary { cursor: pointer; }
-        .compaction-summary-text { white-space: pre-wrap; margin-top: 12px; }
+        .compaction-summary-text { margin-top: 12px; }
         .load-earlier { align-self: center; margin: 12px; }
         .message.compact-status {
           text-align: center;
@@ -1659,14 +1675,6 @@
 
           .chat-code-block pre {
             padding-top: 52px;
-          }
-          .header {
-            padding: 10px 12px;
-          }
-
-          .agent-description-inline,
-          .agent-description-sep {
-            display: none;
           }
 
           .messages {
@@ -1700,6 +1708,58 @@
           .stop-btn {
             width: 38px;
             height: 38px;
+          }
+        }
+
+        /* Narrow chat column: compact header controls. */
+        @container chat-main (max-width: 860px) {
+          .header {
+            padding: 10px 12px;
+          }
+
+          .agent-description-inline,
+          .agent-description-sep {
+            display: none;
+          }
+
+          .header {
+            gap: 8px;
+          }
+
+          /* Icon-only New chat; label stays in the DOM for a11y/tests. */
+          .new-chat-label {
+            position: absolute;
+            width: 1px;
+            height: 1px;
+            overflow: hidden;
+            clip: rect(0 0 0 0);
+            white-space: nowrap;
+          }
+
+          .new-chat-btn {
+            padding: 8px;
+          }
+        }
+
+        /* Very narrow chat column: move the controls onto a second header row. */
+        @container chat-main (max-width: 640px) {
+          .header {
+            flex-wrap: wrap;
+            justify-content: flex-end;
+            column-gap: 6px;
+            row-gap: 8px;
+          }
+
+          .think-dropdown {
+            padding: 7px 6px;
+          }
+
+          .toggle-btn {
+            padding-inline: 8px;
+          }
+
+          .agent-info {
+            flex-basis: calc(100% - 52px);
           }
         }
 
