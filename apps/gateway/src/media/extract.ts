@@ -9,6 +9,7 @@ import XLSX from "xlsx";
 const RAW_TEXT_MIME_TYPES = new Set([
   "application/json",
   "text/csv",
+  "text/html",
   "text/markdown",
   "text/plain",
 ]);

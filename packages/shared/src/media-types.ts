@@ -9,6 +9,8 @@ export const EXTENSION_TO_MIME_TYPES: Record<string, readonly string[]> = {
   pdf: ["application/pdf"],
   json: ["application/json", "text/plain"],
   txt: ["text/plain"],
+  html: ["text/html"],
+  htm: ["text/html"],
   md: ["text/markdown", "text/plain"],
   markdown: ["text/markdown", "text/plain"],
   csv: ["text/csv", "text/plain", "application/vnd.ms-excel"],

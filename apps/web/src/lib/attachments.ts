@@ -63,6 +63,7 @@ export function getFileIcon(mimeType: string): string {
     return "XLS";
   if (mimeType === "text/csv") return "CSV";
   if (mimeType === "text/markdown") return "MD";
+  if (mimeType === "text/html") return "HTML";
   return "FILE";
 }
 
