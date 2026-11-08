@@ -9,8 +9,21 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ## [Unreleased]
 
+## v0.28.0 — Artifacts in chat, side panel tabs + safer scheduled jobs
+
+_Released 2026-11-08._
+
+Files, images, HTML reports, PDFs and Canvas dashboards that agents send now show in web chat and in a side panel with reorderable tabs that survive reload; files can open in a full browser tab on the isolated apps origin. Agents' files in project chats are saved to the project. Scheduled jobs are safer: scripts are checked when a job is saved, jobs pause after repeated credential refusals and tell their owner, and agents offer a place to post results. Mattermost gains `yoplai notify` delivery and thread unlock for replies to the bot's own posts. Sandboxed runs recover from rotated OAuth logins, and container codemode scripts time out per call instead of stopping the run.
+
+### Upgrade notes
+
+- **Rebuild the agent runner image.** The 401 login recovery and per-call codemode timeouts live in the container runner; containers on an older image keep the old behavior.
+- **Update extensions with this release.** Google Drive grants from before v0.27.0 keep reading only with extensions that include ALG-632 (`minimumScopes`); deploy extensions main alongside this release.
+- **Open in browser and remote file views need `apps.origin`.** Without an HTTPS apps origin on a separate hostname, remote chats keep file cards and Download.
+
 ### Added
 
+- Web chat composer accepts pasted images (Cmd+V or Ctrl+V) with the same checks and 25 MB limit as drag and drop, and HTML files can be uploaded; agents receive the raw HTML text.
 - Credential-paused schedules persist their reconnect reason, notify paired Slack owners once when no delivery target is configured, and show authorized agent red dots, chat reconnect/resume banners, and a credentials badge.
 
 - Scheduler agents offer configured delivery destinations once when creating or meaningfully editing jobs, with paired Slack DMs for private jobs and channels for team jobs.
@@ -33,6 +46,7 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Fixed
 
+- Web chat scrolls from the side gutters, not only the center column, and the Schedules page no longer jumps while cron monitoring polls.
 - Web chat header no longer overlaps or clips controls when the chat column is narrow, including with the sidebar open (name truncates, New chat becomes icon-only, controls wrap to a second row); compaction summaries render as markdown.
 - Compaction summaries no longer show large blank gaps around headings and lists; their markdown spacing matches assistant messages.
 - A container codemode script that runs out of time now fails only that tool call with its printed output and the calls it made, instead of the whole run stopping at 315 seconds. Scripts get 300 seconds unless their first line sets `// @options: {"timeout_ms": N}`, trimmed to the turn time; container guidance states the limit and that `store()` writes are lost on failure.
