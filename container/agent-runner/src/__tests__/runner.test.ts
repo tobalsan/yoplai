@@ -1816,6 +1816,420 @@ describe("Pi runner", () => {
   });
 });
 
+// ALG-658 Testing Decisions (runner harness seam: session.prompt /
+// agent.continue calls, the gateway fetch, the thrown error and the JSON logs)
+// approved at grooming by Thinh ("Groom: GO" on the issue).
+describe("Pi runner: upstream 401 on a seeded OAuth token", () => {
+  const ONECLI_401 =
+    "401 No credentials configured for api.anthropic.com in OneCLI";
+  const tempDirs: string[] = [];
+
+  afterEach(async () => {
+    for (const dir of tempDirs.splice(0)) {
+      await fs.rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  async function makeDirs() {
+    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-runner-"));
+    tempDirs.push(tempDir);
+    const workspaceDir = path.join(tempDir, "workspace");
+    const sessionDir = path.join(tempDir, "sessions");
+    await fs.mkdir(workspaceDir, { recursive: true });
+    await fs.mkdir(sessionDir, { recursive: true });
+    return { workspaceDir, sessionDir };
+  }
+
+  function seededAnthropic(): ContainerInput["oauthTokens"] {
+    // Far above the 10-minute proactive threshold: any gateway call below can
+    // only come from the 401 recovery.
+    return {
+      anthropic: {
+        accessToken: "seeded-access",
+        expiresAt: Date.now() + 60 * 60 * 1000,
+      },
+    };
+  }
+
+  function gatewayToken(accessToken: string) {
+    return Response.json(
+      { accessToken, expiresAt: Date.now() + 8 * 60 * 60 * 1000 },
+      { status: 200 }
+    );
+  }
+
+  function erroredTurn(content: unknown[] = []) {
+    return {
+      role: "assistant",
+      content,
+      stopReason: "error",
+      errorMessage: ONECLI_401,
+    };
+  }
+
+  const userMessage = { role: "user", content: [{ type: "text", text: "hello" }] };
+
+  function answer(text: string) {
+    return {
+      role: "assistant",
+      content: [{ type: "text", text }],
+      stopReason: "end_turn",
+    };
+  }
+
+  function roles() {
+    return piMock.session.messages.map(
+      (message) => (message as { role: string }).role
+    );
+  }
+
+  it("resumes the failed turn once when the gateway holds a newer token", async () => {
+    const { workspaceDir, sessionDir } = await makeDirs();
+    const fetchMock = vi
+      .spyOn(global, "fetch")
+      .mockResolvedValueOnce(gatewayToken("rotated-access"));
+    piMock.session.prompt.mockImplementationOnce(async () => {
+      piMock.session.messages.push(userMessage, erroredTurn());
+    });
+    piMock.agent.continue.mockImplementationOnce(async () => {
+      piMock.session.messages.push(answer("recovered"));
+    });
+    vi.spyOn(console, "error").mockImplementation(() => {});
+
+    const output = await runAgent(
+      createInput({ workspaceDir, sessionDir, oauthTokens: seededAnthropic() })
+    );
+
+    expect(output).toMatchObject({ text: "recovered" });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        href: "http://gateway:3000/internal/oauth-token",
+      }),
+      expect.objectContaining({ method: "POST" })
+    );
+    expect(piMock.session.prompt).toHaveBeenCalledTimes(1);
+    expect(piMock.agent.continue).toHaveBeenCalledTimes(1);
+    expect(roles()).toEqual(["user", "assistant"]);
+  });
+
+  it("resumes from the last tool result when the 401 hits the first request after a long tool turn", async () => {
+    const { workspaceDir, sessionDir } = await makeDirs();
+    const fetchMock = vi
+      .spyOn(global, "fetch")
+      .mockResolvedValueOnce(gatewayToken("rotated-access"));
+    vi.useFakeTimers({ toFake: ["Date"] });
+    const startedAt = Date.now();
+    piMock.session.prompt.mockImplementationOnce(async () => {
+      piMock.session.messages.push(
+        userMessage,
+        {
+          role: "assistant",
+          content: [{ type: "toolCall", id: "call-1", name: "bash", arguments: {} }],
+          stopReason: "toolUse",
+        },
+        { role: "toolResult", toolCallId: "call-1", content: [{ type: "text", text: "ok" }] }
+      );
+      // A long generation: the next request goes out 11 minutes into the turn.
+      vi.setSystemTime(startedAt + 11 * 60 * 1000);
+      piMock.session.messages.push(erroredTurn());
+    });
+    piMock.agent.continue.mockImplementationOnce(async () => {
+      piMock.session.messages.push(answer("recovered"));
+    });
+    vi.spyOn(console, "error").mockImplementation(() => {});
+
+    let output;
+    try {
+      output = await runAgent(
+        createInput({ workspaceDir, sessionDir, oauthTokens: seededAnthropic() })
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+
+    expect(output).toMatchObject({ text: "recovered" });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(piMock.session.prompt).toHaveBeenCalledTimes(1);
+    expect(piMock.agent.continue).toHaveBeenCalledTimes(1);
+    expect(roles()).toEqual(["user", "assistant", "toolResult", "assistant"]);
+  });
+
+  const deadRenewals: Array<[string, () => Response]> = [
+    ["returns the same token", () => gatewayToken("seeded-access")],
+    [
+      "fails with 502",
+      () => Response.json({ error: "refresh failed" }, { status: 502 }),
+    ],
+  ];
+
+  it.each(deadRenewals)(
+    "uses the fallback model when the forced renewal %s",
+    async (_label, renewal) => {
+      const { workspaceDir, sessionDir } = await makeDirs();
+      const fetchMock = vi
+        .spyOn(global, "fetch")
+        .mockResolvedValueOnce(renewal());
+      const fallback = { provider: "openai", model: "gpt-5", id: "gpt-5" };
+      piMock.session.prompt.mockImplementationOnce(async () => {
+        const runtime = await vi.mocked(ModelRuntime.create).mock.results.at(-1)!
+          .value;
+        vi.mocked(runtime.getModel).mockReturnValue(
+          fallback as ReturnType<typeof runtime.getModel>
+        );
+        piMock.session.messages.push(userMessage, erroredTurn());
+      });
+      piMock.agent.continue.mockImplementationOnce(async () => {
+        piMock.session.messages.push(answer("fallback answer"));
+      });
+      const stderr = vi.spyOn(console, "error").mockImplementation(() => {});
+
+      const output = await runAgent(
+        createInput({
+          workspaceDir,
+          sessionDir,
+          oauthTokens: seededAnthropic(),
+          fallbackModel: { provider: "openai", model: "gpt-5" },
+        })
+      );
+
+      expect(output).toMatchObject({ text: "fallback answer" });
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      expect(piMock.session.setModel).toHaveBeenCalledWith(fallback);
+      expect(piMock.setRuntimeApiKey).toHaveBeenCalledWith(
+        "openai",
+        "onecli-proxy-managed"
+      );
+      expect(piMock.session.prompt).toHaveBeenCalledTimes(1);
+      expect(piMock.agent.continue).toHaveBeenCalledTimes(1);
+      const events = stderr.mock.calls
+        .map(([entry]) => String(entry))
+        .filter((entry) => entry.startsWith("{"))
+        .map((entry) => JSON.parse(entry));
+      expect(
+        events.find((entry) => entry.event === "model_primary_attempt")
+      ).toMatchObject({ outcome: "failure", failureCategory: "auth" });
+      expect(
+        events.find((entry) => entry.event === "model_fallback")
+      ).toMatchObject({
+        primaryFailureCategory: "auth",
+        primaryFailure: ONECLI_401,
+        fallbackOutcome: "success",
+      });
+    }
+  );
+
+  it.each(deadRenewals)(
+    "fails with the original 401 and no resume when the forced renewal %s and no fallback is set",
+    async (_label, renewal) => {
+      const { workspaceDir, sessionDir } = await makeDirs();
+      const fetchMock = vi
+        .spyOn(global, "fetch")
+        .mockResolvedValueOnce(renewal());
+      piMock.session.prompt.mockImplementationOnce(async () => {
+        piMock.session.messages.push(userMessage, erroredTurn());
+      });
+      vi.spyOn(console, "error").mockImplementation(() => {});
+
+      await expect(
+        runAgent(
+          createInput({ workspaceDir, sessionDir, oauthTokens: seededAnthropic() })
+        )
+      ).rejects.toThrow(`Agent error: ${ONECLI_401}`);
+
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      expect(piMock.session.prompt).toHaveBeenCalledTimes(1);
+      expect(piMock.agent.continue).not.toHaveBeenCalled();
+    }
+  );
+
+  it("fails after one renewal when the newer token also gets a 401", async () => {
+    const { workspaceDir, sessionDir } = await makeDirs();
+    const fetchMock = vi
+      .spyOn(global, "fetch")
+      .mockResolvedValueOnce(gatewayToken("rotated-access"))
+      .mockResolvedValueOnce(gatewayToken("rotated-again"));
+    piMock.session.prompt.mockImplementationOnce(async () => {
+      piMock.session.messages.push(userMessage, erroredTurn());
+    });
+    piMock.agent.continue.mockImplementation(async () => {
+      piMock.session.messages.push(erroredTurn());
+    });
+    vi.spyOn(console, "error").mockImplementation(() => {});
+
+    await expect(
+      runAgent(
+        createInput({ workspaceDir, sessionDir, oauthTokens: seededAnthropic() })
+      )
+    ).rejects.toThrow(`Agent error: ${ONECLI_401}`);
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(piMock.agent.continue).toHaveBeenCalledTimes(1);
+    expect(piMock.session.prompt).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps today's behavior for a provider the gateway did not seed", async () => {
+    const { workspaceDir, sessionDir } = await makeDirs();
+    const fetchMock = vi.spyOn(global, "fetch");
+    piMock.session.prompt.mockImplementationOnce(async () => {
+      piMock.session.messages.push(userMessage, erroredTurn());
+    });
+    vi.spyOn(console, "error").mockImplementation(() => {});
+
+    await expect(
+      runAgent(
+        createInput({
+          workspaceDir,
+          sessionDir,
+          retry: { maxAttempts: 3, baseDelaySeconds: 0 },
+          fallbackModel: { provider: "openai", model: "gpt-5" },
+        })
+      )
+    ).rejects.toThrow(`Agent error: ${ONECLI_401}`);
+
+    expect(piMock.setRuntimeApiKey).toHaveBeenCalledWith(
+      "anthropic",
+      "onecli-proxy-managed"
+    );
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(piMock.session.prompt).toHaveBeenCalledTimes(1);
+    expect(piMock.agent.continue).not.toHaveBeenCalled();
+    expect(piMock.session.setModel).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["partial text", [{ type: "text", text: "Working on it" }]],
+    ["a tool call", [{ type: "toolCall", id: "call-1", name: "bash", arguments: {} }]],
+  ])("does not resume a failed turn that showed %s", async (_label, content) => {
+    const { workspaceDir, sessionDir } = await makeDirs();
+    vi.spyOn(global, "fetch").mockResolvedValue(gatewayToken("rotated-access"));
+    piMock.session.prompt.mockImplementationOnce(async () => {
+      piMock.session.messages.push(userMessage, erroredTurn(content));
+    });
+    vi.spyOn(console, "error").mockImplementation(() => {});
+
+    await expect(
+      runAgent(
+        createInput({
+          workspaceDir,
+          sessionDir,
+          oauthTokens: seededAnthropic(),
+          fallbackModel: { provider: "openai", model: "gpt-5" },
+        })
+      )
+    ).rejects.toThrow(`Agent error: ${ONECLI_401}`);
+
+    expect(piMock.agent.continue).not.toHaveBeenCalled();
+    expect(piMock.session.setModel).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["partial text", [{ type: "text", text: "Working on it" }]],
+    ["a tool call", [{ type: "toolCall", id: "call-1", name: "bash", arguments: {} }]],
+  ])("does not resume after a thrown 401 when the turn showed %s", async (_label, content) => {
+    const { workspaceDir, sessionDir } = await makeDirs();
+    vi.spyOn(global, "fetch").mockResolvedValue(gatewayToken("rotated-access"));
+    piMock.session.prompt.mockImplementationOnce(async () => {
+      piMock.session.messages.push(userMessage, { role: "assistant", content });
+      throw Object.assign(new Error("Unauthorized"), { status: 401 });
+    });
+    vi.spyOn(console, "error").mockImplementation(() => {});
+
+    await expect(
+      runAgent(
+        createInput({ workspaceDir, sessionDir, oauthTokens: seededAnthropic() })
+      )
+    ).rejects.toThrow("Unauthorized");
+
+    expect(piMock.agent.continue).not.toHaveBeenCalled();
+    expect(roles()).toEqual(["user", "assistant"]);
+  });
+
+  it("recovers the same way from a thrown 401", async () => {
+    const { workspaceDir, sessionDir } = await makeDirs();
+    const fetchMock = vi
+      .spyOn(global, "fetch")
+      .mockResolvedValueOnce(gatewayToken("rotated-access"));
+    piMock.session.prompt.mockImplementationOnce(async () => {
+      piMock.session.messages.push(userMessage);
+      throw Object.assign(new Error("Unauthorized"), { status: 401 });
+    });
+    piMock.agent.continue.mockImplementationOnce(async () => {
+      piMock.session.messages.push(answer("recovered"));
+    });
+    vi.spyOn(console, "error").mockImplementation(() => {});
+
+    const output = await runAgent(
+      createInput({ workspaceDir, sessionDir, oauthTokens: seededAnthropic() })
+    );
+
+    expect(output).toMatchObject({ text: "recovered" });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(piMock.session.prompt).toHaveBeenCalledTimes(1);
+    expect(piMock.agent.continue).toHaveBeenCalledTimes(1);
+    expect(roles()).toEqual(["user", "assistant"]);
+  });
+
+  it("gives the fallback provider's own 401 the same single renewal", async () => {
+    const { workspaceDir, sessionDir } = await makeDirs();
+    const fetchMock = vi
+      .spyOn(global, "fetch")
+      .mockResolvedValueOnce(gatewayToken("codex-rotated"));
+    const fallback = { provider: "openai-codex", model: "gpt-5", id: "gpt-5" };
+    piMock.session.prompt.mockImplementationOnce(async () => {
+      const runtime = await vi.mocked(ModelRuntime.create).mock.results.at(-1)!
+        .value;
+      vi.mocked(runtime.getModel).mockReturnValue(
+        fallback as ReturnType<typeof runtime.getModel>
+      );
+      piMock.session.messages.push(userMessage, {
+        role: "assistant",
+        content: [],
+        stopReason: "error",
+        errorMessage: "HTTP 503 Service Unavailable",
+      });
+    });
+    piMock.agent.continue
+      .mockImplementationOnce(async () => {
+        piMock.session.messages.push({
+          ...erroredTurn(),
+          errorMessage: "401 No credentials configured for chatgpt.com in OneCLI",
+        });
+      })
+      .mockImplementationOnce(async () => {
+        piMock.session.messages.push(answer("fallback answer"));
+      });
+    vi.spyOn(console, "error").mockImplementation(() => {});
+
+    const output = await runAgent(
+      createInput({
+        workspaceDir,
+        sessionDir,
+        retry: { maxAttempts: 1, baseDelaySeconds: 0 },
+        fallbackModel: { provider: "openai-codex", model: "gpt-5" },
+        oauthTokens: {
+          ...seededAnthropic(),
+          "openai-codex": {
+            accessToken: "codex-seeded",
+            expiresAt: Date.now() + 60 * 60 * 1000,
+          },
+        },
+      })
+    );
+
+    expect(output).toMatchObject({ text: "fallback answer" });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        body: expect.stringContaining('"provider":"openai-codex"'),
+      })
+    );
+    expect(piMock.agent.continue).toHaveBeenCalledTimes(2);
+    expect(roles()).toEqual(["user", "assistant"]);
+  });
+});
+
 function createInput(paths: {
   workspaceDir: string;
   sessionDir: string;

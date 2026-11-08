@@ -1,5 +1,8 @@
 import type { LoginIdentity, QuotaSource } from "@yoplai/shared";
-import type { OAuthTokenLookup } from "../sdk/container/oauth-tokens.js";
+import {
+  describeRefreshError,
+  type OAuthTokenLookup,
+} from "../sdk/container/oauth-tokens.js";
 import {
   CLAUDE_HEADER_IDLE_SECONDS,
   QUOTA_MAX_BACKOFF_SECONDS,
@@ -27,6 +30,8 @@ type QuotaLogEvent = {
   level?: "error";
   ageSeconds?: number;
   errorKind?: string;
+  /** Sanitized refresh error text, only for `token_error`. */
+  error?: string;
   httpStatus?: number;
   reason?: "not_json" | "shape";
   shape?: {
@@ -248,7 +253,7 @@ export function createQuotaPollers(deps: PollerDeps) {
         );
         deps.log({ provider, source, outcome: "success" });
       }
-    } catch {
+    } catch (error) {
       if (!timer) return;
       if (controller.signal.aborted) errorKind = "timeout";
       if (identity) deps.store.markError(identity, source, errorKind);
@@ -257,6 +262,11 @@ export function createQuotaPollers(deps: PollerDeps) {
         source,
         outcome: "error",
         errorKind,
+        // A dead login (refresh `invalid_grant`) and a blip both surface as
+        // token_error; the refresh error text tells them apart.
+        ...(errorKind === "token_error"
+          ? { error: describeRefreshError(error) }
+          : {}),
         ...(httpStatus === undefined ? {} : { httpStatus }),
         ...(errorKind === "invalid_payload"
           ? { reason, ...(shape ? { shape } : {}) }

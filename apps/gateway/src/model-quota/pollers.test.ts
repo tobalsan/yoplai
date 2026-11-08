@@ -448,16 +448,13 @@ describe("host quota polling lifecycle", () => {
     ["http", "http_error"],
     ["json", "invalid_payload"],
     ["shape", "invalid_payload"],
-    ["token", "token_error"],
   ])(
     "keeps %s failures out of chat and logs while marking only quota stale",
     async (failure, errorKind) => {
-      const { store, fetcher, pollers, log, resolveToken } = setup();
+      const { store, fetcher, pollers, log } = setup();
       await pollers.start(true);
       const secret = "RAW_RESPONSE_TOKEN_SENTINEL";
       if (failure === "network") fetcher.mockRejectedValue(new Error(secret));
-      if (failure === "token")
-        resolveToken.mockRejectedValue(new Error(secret));
       if (failure === "http")
         fetcher.mockResolvedValue(new Response(secret, { status: 503 }));
       if (failure === "json") fetcher.mockResolvedValue(new Response(secret));
@@ -476,6 +473,35 @@ describe("host quota polling lifecycle", () => {
       pollers.stop();
     }
   );
+
+  // ALG-658: a token_error log carries the refresh error text (cause chain
+  // included) so a dead login is told apart from a blip, but never a token.
+  // Testing Decisions approved at grooming by Thinh ("Groom: GO").
+  it("logs the refresh error text, without tokens, on a token_error", async () => {
+    const { store, pollers, log, resolveToken } = setup();
+    await pollers.start(true);
+    resolveToken.mockRejectedValue(
+      new Error("OAuth refresh failed for openai-codex", {
+        cause: new Error(
+          `Token refresh failed. body={"error":"invalid_grant","access_token":"${access}","refresh_token":"fake-refresh-canary"}`
+        ),
+      })
+    );
+    await vi.advanceTimersByTimeAsync(300000);
+    expect(store.list()[0]).toMatchObject({ errorKind: "token_error" });
+    const event = log.mock.calls
+      .map(([entry]) => entry)
+      .find((entry) => entry.errorKind === "token_error");
+    expect(event).toMatchObject({
+      provider: "openai-codex",
+      outcome: "error",
+      error: expect.stringContaining("OAuth refresh failed for openai-codex"),
+    });
+    expect(event.error).toContain('"error":"invalid_grant"');
+    expect(JSON.stringify(log.mock.calls)).not.toContain(access);
+    expect(JSON.stringify(log.mock.calls)).not.toContain("fake-refresh-canary");
+    pollers.stop();
+  });
 
   it("polls Claude only without recent headers, using its OAuth usage headers", async () => {
     const { store, readCredential, fetcher, pollers } = setup();

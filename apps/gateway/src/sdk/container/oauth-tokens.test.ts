@@ -383,3 +383,145 @@ describe("resolveOAuthToken", () => {
     expect(deps.getAuth).toHaveBeenCalledTimes(1);
   });
 });
+
+// ALG-658 Testing Decisions (token-resolver seam with injected deps, emitted
+// log JSON) approved at grooming by Thinh ("Groom: GO" on the issue).
+describe("dead OAuth login logging", () => {
+  // Shape of the installed pi SDK error: the outer message is generic, the
+  // Anthropic response body with `invalid_grant` sits in the cause chain.
+  function invalidGrantError(): Error {
+    return new Error("OAuth refresh failed for anthropic", {
+      cause: new Error(
+        'Anthropic token refresh request failed. url=https://auth.example.test/token; details=Error: HTTP request failed. status=400; body={"error":"invalid_grant","error_description":"Refresh token not found or invalid","refresh_token":"fake-refresh-canary"}'
+      ),
+    });
+  }
+
+  function failingDeps(authPath: string, getAuthImpl: () => Promise<unknown>) {
+    return makeDeps(
+      { anthropic: { type: "oauth", access: "fake-access", expires: 5000 } },
+      { authPath, getAuthImpl }
+    );
+  }
+
+  function loudLogs(spy: ReturnType<typeof vi.spyOn>) {
+    return spy.mock.calls
+      .map(([line]) => JSON.parse(String(line)) as Record<string, unknown>)
+      .filter((entry) => String(entry.msg).includes("login expired, re-auth needed"));
+  }
+
+  it("logs one loud error with the refresh error text and rethrows", async () => {
+    const stderr = vi.spyOn(console, "error").mockImplementation(() => {});
+    const deps = failingDeps("/fake/dead-login.json", async () => {
+      throw invalidGrantError();
+    });
+
+    await expect(resolveOAuthToken("anthropic", ["anthropic"], deps)).rejects.toThrow(
+      "OAuth refresh failed for anthropic"
+    );
+    await expect(resolveOAuthToken("anthropic", ["anthropic"], deps)).rejects.toThrow(
+      "OAuth refresh failed for anthropic"
+    );
+
+    const logs = loudLogs(stderr);
+    expect(logs).toHaveLength(1);
+    expect(logs[0]).toMatchObject({
+      level: "error",
+      msg: "[oauth-tokens] anthropic login expired, re-auth needed",
+      provider: "anthropic",
+    });
+    expect(String(logs[0].message)).toContain("OAuth refresh failed for anthropic");
+    expect(String(logs[0].message)).toContain('"error":"invalid_grant"');
+    expect(JSON.stringify(logs)).not.toContain("fake-access");
+    expect(JSON.stringify(logs)).not.toContain("fake-refresh-canary");
+    stderr.mockRestore();
+  });
+
+  it("keeps tokens out of the log when the outer error itself carries the body", async () => {
+    const stderr = vi.spyOn(console, "error").mockImplementation(() => {});
+    const deps = failingDeps("/fake/dead-login-top-level.json", async () => {
+      throw new Error(
+        'Token refresh failed. body={"error":"invalid_grant","refresh_token":"fake-refresh-canary"}'
+      );
+    });
+
+    await expect(resolveOAuthToken("anthropic", ["anthropic"], deps)).rejects.toThrow(
+      "fake-refresh-canary"
+    );
+
+    expect(loudLogs(stderr)).toHaveLength(1);
+    expect(stderr.mock.calls.join("\n")).not.toContain("fake-refresh-canary");
+    stderr.mockRestore();
+  });
+
+  it("also logs when a container launch hits the dead login", async () => {
+    const stderr = vi.spyOn(console, "error").mockImplementation(() => {});
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    const deps = failingDeps("/fake/dead-login-launch.json", async () => {
+      throw invalidGrantError();
+    });
+
+    await expect(
+      resolveOAuthTokens(agent({ auth: { mode: "oauth" } }), undefined, deps)
+    ).resolves.toBeUndefined();
+
+    expect(loudLogs(stderr)).toHaveLength(1);
+    vi.restoreAllMocks();
+  });
+
+  it("does not log loudly for a refresh failure that is not invalid_grant", async () => {
+    const stderr = vi.spyOn(console, "error").mockImplementation(() => {});
+    const deps = failingDeps("/fake/idp-blip.json", async () => {
+      throw new Error("OAuth refresh failed for anthropic", {
+        cause: new Error("fetch failed: ECONNRESET"),
+      });
+    });
+
+    await expect(resolveOAuthToken("anthropic", ["anthropic"], deps)).rejects.toThrow();
+
+    expect(loudLogs(stderr)).toHaveLength(0);
+    stderr.mockRestore();
+  });
+
+  it("logs again after a successful refresh", async () => {
+    const stderr = vi.spyOn(console, "error").mockImplementation(() => {});
+    let dead = true;
+    const deps = failingDeps("/fake/dead-then-renewed.json", async () => {
+      if (dead) throw invalidGrantError();
+      return { auth: {} };
+    });
+
+    await expect(resolveOAuthToken("anthropic", ["anthropic"], deps)).rejects.toThrow();
+    dead = false;
+    await expect(resolveOAuthToken("anthropic", ["anthropic"], deps)).resolves.toMatchObject({
+      status: "ok",
+    });
+    dead = true;
+    await expect(resolveOAuthToken("anthropic", ["anthropic"], deps)).rejects.toThrow();
+
+    expect(loudLogs(stderr)).toHaveLength(2);
+    stderr.mockRestore();
+  });
+
+  it("logs again once the one-hour cool-down has passed", async () => {
+    const stderr = vi.spyOn(console, "error").mockImplementation(() => {});
+    vi.useFakeTimers({ toFake: ["Date"] });
+    const startedAt = Date.now();
+    const deps = failingDeps("/fake/dead-cooldown.json", async () => {
+      throw invalidGrantError();
+    });
+
+    try {
+      await expect(resolveOAuthToken("anthropic", ["anthropic"], deps)).rejects.toThrow();
+      vi.setSystemTime(startedAt + 59 * 60 * 1000);
+      await expect(resolveOAuthToken("anthropic", ["anthropic"], deps)).rejects.toThrow();
+      expect(loudLogs(stderr)).toHaveLength(1);
+      vi.setSystemTime(startedAt + 61 * 60 * 1000);
+      await expect(resolveOAuthToken("anthropic", ["anthropic"], deps)).rejects.toThrow();
+      expect(loudLogs(stderr)).toHaveLength(2);
+    } finally {
+      vi.useRealTimers();
+      stderr.mockRestore();
+    }
+  });
+});
