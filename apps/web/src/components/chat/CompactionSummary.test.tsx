@@ -19,7 +19,6 @@ function mount(text: string): HTMLElement {
 }
 
 it("renders the compaction summary as markdown", () => {
-  const css = readFileSync(join(__dirname, "ChatView.css"), "utf8");
   const el = mount("## Updates\n\n- **Eric** reconnected\n- done");
   expect(el.querySelector("h2")?.textContent).toBe("Updates");
   expect(el.querySelectorAll("li")).toHaveLength(2);
