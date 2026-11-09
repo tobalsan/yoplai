@@ -330,6 +330,28 @@ export class DashboardRegistry {
   private async write(registry: Registry): Promise<void> {
     await writeJsonAtomic(this.file, registry);
   }
+
+  /** Random key, persisted beside the registry, that signs page edit tokens. */
+  async editSigningKey(): Promise<Buffer> {
+    const file = path.join(path.dirname(this.file), "edit-key");
+    try {
+      return await fs.readFile(file);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    }
+    await fs.mkdir(path.dirname(file), { recursive: true });
+    const temp = `${file}.${randomBytes(8).toString("hex")}.tmp`;
+    await fs.writeFile(temp, randomBytes(32), { mode: 0o600 });
+    try {
+      await fs.link(temp, file);
+    } catch (error) {
+      // A concurrent first edit created it; both use the one on disk.
+      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+    } finally {
+      await fs.rm(temp, { force: true });
+    }
+    return fs.readFile(file);
+  }
 }
 
 const registries = new Map<string, DashboardRegistry>();

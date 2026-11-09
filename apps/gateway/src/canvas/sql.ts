@@ -5,11 +5,16 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { AgentConfig } from "@yoplai/shared";
 import { dashboardDatabasePath } from "./dashboard-files.js";
-import type { DashboardQueryRequest } from "./sql-protocol.js";
+import type {
+  DashboardEditRequest,
+  DashboardEditResponse,
+  DashboardQueryRequest,
+} from "./sql-protocol.js";
 import { isInsideRoot } from "../util/paths.js";
 
 export const DASHBOARD_QUERY_ROW_LIMIT = 5_000;
 export const DASHBOARD_QUERY_TIMEOUT_MS = 2_000;
+export const DASHBOARD_EDIT_TIMEOUT_MS = 5_000;
 export const DASHBOARD_QUERY_LIMIT = 20;
 export const DASHBOARD_SQL_BYTE_LIMIT = 100_000;
 export const DASHBOARD_RESULT_BYTE_LIMIT = 5 * 1024 * 1024;
@@ -67,6 +72,175 @@ export function parseDashboardQueries(html: string): DashboardQuery[] {
     }
   }
   return queries;
+}
+
+export type DashboardEditField =
+  | { type: "bool"; nullable: boolean }
+  | { type: "int"; min?: number; max?: number; nullable: boolean }
+  | { type: "text"; max: number; nullable: boolean }
+  | { type: "enum"; values: string[]; nullable: boolean };
+
+export type DashboardEdit = {
+  name: string;
+  database: string;
+  table: string;
+  key: string;
+  updatedAt?: string;
+  fields: Record<string, DashboardEditField>;
+  guard?: string;
+  create: boolean;
+};
+
+export const DASHBOARD_TEXT_EDIT_MAX = 2000;
+const SQL_IDENTIFIER = /^[A-Za-z_]\w*$/;
+
+/** Parses `<script type="application/json" data-yoplai-edit="name">` blocks. */
+export function parseDashboardEdits(html: string): DashboardEdit[] {
+  const edits: DashboardEdit[] = [];
+  for (const match of html.matchAll(
+    /<script\b([^>]*)>([\s\S]*?)<\/script\s*>/gi
+  )) {
+    const attrs = attributes(match[1]);
+    if (!attrs.has("data-yoplai-edit")) continue;
+    const name = attrs.get("data-yoplai-edit")!.trim();
+    if (!/^[A-Za-z_][\w-]*$/.test(name)) {
+      throw new Error(
+        "data-yoplai-edit needs a name made of letters, digits, _ or -"
+      );
+    }
+    if (edits.some((edit) => edit.name === name)) {
+      throw new Error(`Duplicate edit declaration: ${name}`);
+    }
+    if (Buffer.byteLength(match[2]) > DASHBOARD_SQL_BYTE_LIMIT) {
+      throw new Error(`Edit ${name} exceeds the 100KB limit`);
+    }
+    edits.push(parseEdit(name, match[2]));
+    if (edits.length > DASHBOARD_QUERY_LIMIT) {
+      throw new Error(
+        `Dashboard exceeds the ${DASHBOARD_QUERY_LIMIT} edit declaration limit`
+      );
+    }
+  }
+  return edits;
+}
+
+function parseEdit(name: string, source: string): DashboardEdit {
+  const fail = (reason: string): never => {
+    throw new Error(`Edit ${name}: ${reason}`);
+  };
+  let raw: Record<string, unknown>;
+  try {
+    raw = JSON.parse(source) as Record<string, unknown>;
+  } catch (error) {
+    return fail(`invalid JSON (${(error as Error).message})`);
+  }
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+    return fail("invalid JSON (expected an object)");
+  }
+  const identifier = (key: string, value: unknown): string => {
+    if (typeof value !== "string" || !SQL_IDENTIFIER.test(value)) {
+      fail(`${key} must be a column or table name (letters, digits, _)`);
+    }
+    return value as string;
+  };
+  if (typeof raw.db !== "string" || !raw.db.trim()) {
+    fail("db must name the database, e.g. data/app.db");
+  }
+  const table = identifier("table", raw.table);
+  const key = identifier("key", raw.key);
+  const updatedAt =
+    raw.updatedAt === undefined ? undefined : identifier("updatedAt", raw.updatedAt);
+  if (raw.create !== undefined && typeof raw.create !== "boolean") {
+    fail("create must be true or false");
+  }
+  if (
+    raw.guard !== undefined &&
+    (typeof raw.guard !== "string" || !raw.guard.trim())
+  ) {
+    fail("guard must be a SELECT statement");
+  }
+  if (
+    !raw.fields ||
+    typeof raw.fields !== "object" ||
+    Array.isArray(raw.fields) ||
+    !Object.keys(raw.fields).length
+  ) {
+    fail("fields must map at least one column to its type");
+  }
+  const fields: Record<string, DashboardEditField> = {};
+  for (const [column, spec] of Object.entries(
+    raw.fields as Record<string, Record<string, unknown>>
+  )) {
+    if (!SQL_IDENTIFIER.test(column) || column === "__proto__") {
+      fail(`field name ${column} must be a column name (letters, digits, _)`);
+    }
+    if (column === key) fail(`the key column ${key} cannot be an editable field`);
+    if (column === updatedAt) {
+      fail(`the updatedAt column ${column} cannot be an editable field`);
+    }
+    fields[column] = parseField(column, spec, fail);
+  }
+  return {
+    name,
+    database: (raw.db as string).trim(),
+    table,
+    key,
+    ...(updatedAt ? { updatedAt } : {}),
+    fields,
+    ...(raw.guard ? { guard: (raw.guard as string).trim() } : {}),
+    create: raw.create === true,
+  };
+}
+
+function parseField(
+  column: string,
+  spec: Record<string, unknown>,
+  fail: (reason: string) => never
+): DashboardEditField {
+  if (!spec || typeof spec !== "object") fail(`field ${column} needs a type`);
+  if (spec.nullable !== undefined && typeof spec.nullable !== "boolean") {
+    fail(`field ${column}: nullable must be true or false`);
+  }
+  const nullable = spec.nullable === true;
+  const number = (option: "min" | "max") => {
+    const value = spec[option];
+    if (value !== undefined && !Number.isSafeInteger(value)) {
+      fail(`field ${column}: ${option} must be an integer`);
+    }
+    return value as number | undefined;
+  };
+  switch (spec.type) {
+    case "bool":
+      return { type: "bool", nullable };
+    case "int": {
+      const min = number("min");
+      const max = number("max");
+      return {
+        type: "int",
+        ...(min !== undefined ? { min } : {}),
+        ...(max !== undefined ? { max } : {}),
+        nullable,
+      };
+    }
+    case "text": {
+      const max = number("max") ?? DASHBOARD_TEXT_EDIT_MAX;
+      if (max < 1) fail(`field ${column}: max must be at least 1`);
+      return { type: "text", max, nullable };
+    }
+    case "enum": {
+      const values = spec.values;
+      if (
+        !Array.isArray(values) ||
+        !values.length ||
+        values.some((value) => typeof value !== "string")
+      ) {
+        fail(`field ${column} needs values, a list of allowed strings`);
+      }
+      return { type: "enum", values: values as string[], nullable };
+    }
+    default:
+      return fail(`field ${column} has unknown type ${String(spec.type)} (use bool, int, text or enum)`);
+  }
 }
 
 export async function resolveDashboardDatabase(
@@ -133,34 +307,66 @@ export function runDashboardQuery(
   });
 }
 
-function spawnDashboardQuery(
+async function spawnDashboardQuery(
   request: DashboardQueryRequest,
   timeoutMs: number
 ): Promise<unknown[]> {
+  const message = (await forkDashboardWorker("sql-worker", request, timeoutMs, "Query")) as {
+    rows?: unknown[];
+    error?: string;
+  };
+  if (message.error) throw new Error(message.error);
+  return message.rows ?? [];
+}
+
+/**
+ * Runs one page edit or add in a forked worker that writes the real database.
+ * Shares the query worker pool; its deadline outlasts the worker's 3s busy
+ * timeout so a briefly locked database fails cleanly instead of being killed.
+ */
+export function runDashboardEditWorker(
+  request: DashboardEditRequest,
+  timeoutMs = DASHBOARD_EDIT_TIMEOUT_MS
+): Promise<DashboardEditResponse> {
+  return acquireWorker().then(async () => {
+    try {
+      return (await forkDashboardWorker("edit-worker", request, timeoutMs, "Edit")) as DashboardEditResponse;
+    } finally {
+      releaseWorker();
+    }
+  });
+}
+
+function forkDashboardWorker(
+  name: "sql-worker" | "edit-worker",
+  request: DashboardQueryRequest | DashboardEditRequest,
+  timeoutMs: number,
+  label: string
+): Promise<unknown> {
   return new Promise((resolve, reject) => {
     const sourceWorker = fileURLToPath(
-      new URL("./sql-worker.ts", import.meta.url)
+      new URL(`./${name}.ts`, import.meta.url)
     );
     const workerPath = existsSync(sourceWorker)
       ? sourceWorker
-      : fileURLToPath(new URL("./sql-worker.js", import.meta.url));
+      : fileURLToPath(new URL(`./${name}.js`, import.meta.url));
     const child = fork(workerPath, [], {
       execArgv: existsSync(sourceWorker) ? ["--import", "tsx"] : [],
       stdio: ["ignore", "ignore", "ignore", "ipc"],
     });
     let finishing = false;
-    let resultRows: unknown[] | undefined;
+    let result: unknown;
     let resultError: Error | undefined;
-    const finish = (error?: Error, rows?: unknown[]) => {
+    const finish = (error?: Error, message?: unknown) => {
       if (finishing) return;
       finishing = true;
       clearTimeout(timer);
       resultError = error;
-      resultRows = rows;
+      result = message;
       child.kill("SIGKILL");
     };
     const timer = setTimeout(
-      () => finish(new Error(`Query timed out after ${timeoutMs}ms`)),
+      () => finish(new Error(`${label} timed out after ${timeoutMs}ms`)),
       timeoutMs
     );
     child.once("error", (error) => finish(error));
@@ -168,16 +374,13 @@ function spawnDashboardQuery(
       clearTimeout(timer);
       if (!finishing) {
         resultError = new Error(
-          `Query worker exited before completing (code ${code ?? "unknown"})`
+          `${label} worker exited before completing (code ${code ?? "unknown"})`
         );
       }
       if (resultError) reject(resultError);
-      else resolve(resultRows ?? []);
+      else resolve(result);
     });
-    child.on("message", (message: { rows?: unknown[]; error?: string }) => {
-      if (message.error) finish(new Error(message.error));
-      else finish(undefined, message.rows);
-    });
+    child.on("message", (message: unknown) => finish(undefined, message));
     child.send(request);
   });
 }

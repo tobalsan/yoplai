@@ -33,6 +33,7 @@ import {
   DASHBOARD_WORKER_LIMIT,
   DASHBOARD_WORKER_QUEUE_LIMIT,
   executeDashboardQueries,
+  parseDashboardEdits,
   parseDashboardQueries,
   resolveDashboardDatabase,
   runDashboardQuery,
@@ -751,7 +752,7 @@ describe("internal dashboard rendering", () => {
     );
     expect(response.status).toBe(200);
     expect(response.headers.get("content-security-policy")).toBe(
-      "sandbox allow-scripts allow-downloads allow-modals allow-popups allow-popups-to-escape-sandbox; default-src 'none'; script-src 'unsafe-inline' http://localhost/d-assets/; style-src 'unsafe-inline' http://localhost/d-assets/; img-src data: blob:; font-src data: http://localhost/d-assets/; connect-src 'none'; frame-ancestors 'self'"
+      "sandbox allow-scripts allow-downloads allow-modals allow-popups allow-popups-to-escape-sandbox; default-src 'none'; script-src 'unsafe-inline' http://localhost/d-assets/; style-src 'unsafe-inline' http://localhost/d-assets/; img-src data: blob:; font-src data: http://localhost/d-assets/; connect-src http://localhost/d/; frame-ancestors 'self'"
     );
     expect(response.headers.get("cache-control")).toBe("no-store");
     const html = await response.text();
@@ -868,10 +869,10 @@ describe("dashboard viewer", () => {
     const first = await routes.request(`/${entry.id}`);
     expect(first.status).toBe(200);
     expect(first.headers.get("content-security-policy")).toBe(
-      "sandbox allow-scripts allow-downloads allow-modals allow-popups allow-popups-to-escape-sandbox; default-src 'none'; script-src 'unsafe-inline' https://yoplai.test/d-assets/; style-src 'unsafe-inline' https://yoplai.test/d-assets/; img-src data: blob:; font-src data: https://yoplai.test/d-assets/; connect-src 'none'; frame-ancestors 'self'"
+      "sandbox allow-scripts allow-downloads allow-modals allow-popups allow-popups-to-escape-sandbox; default-src 'none'; script-src 'unsafe-inline' https://yoplai.test/d-assets/; style-src 'unsafe-inline' https://yoplai.test/d-assets/; img-src data: blob:; font-src data: https://yoplai.test/d-assets/; connect-src https://yoplai.test/d/; frame-ancestors 'self'"
     );
     expect(first.headers.get("content-security-policy")).toContain(
-      "connect-src 'none'; frame-ancestors 'self'"
+      "connect-src https://yoplai.test/d/; frame-ancestors 'self'"
     );
     await fs.writeFile(
       path.join(workspace, "data", "dashboards", "hello.html"),
@@ -901,7 +902,7 @@ describe("dashboard viewer", () => {
       "allow-popups-to-escape-sandbox",
     ]);
     expect(csp).toContain("default-src 'none'");
-    expect(csp).toContain("connect-src 'none'; frame-ancestors 'self'");
+    expect(csp).toContain("connect-src https://yoplai.test/d/; frame-ancestors 'self'");
   });
 
   it("injects live query data, viewer bindings, params, and dashboard links before page scripts", async () => {
@@ -1013,7 +1014,7 @@ describe("dashboard kit assets", () => {
 
   it("serves only fixed versioned public assets with week-long caching", async () => {
     const routes = createDashboardAssetRoutes(() => config);
-    const response = await routes.request("/v2/kit.js");
+    const response = await routes.request("/v3/kit.js");
     expect(response.status).toBe(200);
     expect(response.headers.get("cache-control")).toBe(
       "public, max-age=604800"
@@ -1021,15 +1022,16 @@ describe("dashboard kit assets", () => {
     expect(response.headers.get("x-content-type-options")).toBe("nosniff");
     expect(await response.text()).toContain("DashboardKit");
     expect((await routes.request("/v1/kit.js")).status).toBe(200);
-    expect((await routes.request("/v3/kit.js")).status).toBe(404);
+    expect((await routes.request("/v2/kit.js")).status).toBe(200);
+    expect((await routes.request("/v4/kit.js")).status).toBe(404);
     expect((await routes.request("/v2/../routes.ts")).status).toBe(404);
     expect((await routes.request("/v2/routes.ts")).status).toBe(404);
     const alias = await routes.request("/kit.js");
     expect(alias.status).toBe(302);
-    expect(alias.headers.get("location")).toBe("/d-assets/v2/kit.js");
+    expect(alias.headers.get("location")).toBe("/d-assets/v3/kit.js");
     expect(alias.headers.get("cache-control")).toBe("public, max-age=300");
     expect((await routes.request("/kit.css")).headers.get("location")).toBe(
-      "/d-assets/v2/kit.css"
+      "/d-assets/v3/kit.css"
     );
     expect((await routes.request("/echarts.js")).status).toBe(404);
   });
@@ -1083,6 +1085,49 @@ describe("dashboard kit assets", () => {
         ]
       )
     ).toBe('"Name","Value"\r\n"A ""quote""","1,200"');
+  });
+
+  it("edit controls lock while saving, keep the server's value, roll back on failure, and send cleared text as empty text", async () => {
+    const routes = createDashboardAssetRoutes(() => config);
+    const dom = new JSDOM(
+      `<input id="pct" type="number" data-edit="t" data-key="1" data-field="pct" value="40"><input id="title" type="text" data-edit="t" data-key="1" data-field="title" value="Old">`,
+      { runScripts: "outside-only", url: "https://yoplai.test" }
+    );
+    const calls: Array<Record<string, unknown>> = [];
+    const pending: Array<{ resolve(v: unknown): void; reject(e: Error): void }> = [];
+    (dom.window as unknown as { YOPLAI: unknown }).YOPLAI = {
+      canEdit: true,
+      edit: (request: Record<string, unknown>) => {
+        calls.push(request);
+        return new Promise((resolve, reject) => pending.push({ resolve, reject }));
+      },
+    };
+    dom.window.eval(await (await routes.request("/v3/kit.js")).text());
+    const document = dom.window.document;
+    const pct = document.querySelector<HTMLInputElement>("#pct")!;
+    const change = (control: HTMLInputElement, value: string) => {
+      control.dispatchEvent(new dom.window.FocusEvent("focusin", { bubbles: true }));
+      control.value = value;
+      control.dispatchEvent(new dom.window.Event("change", { bubbles: true }));
+    };
+    const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
+    change(pct, "75");
+    expect(pct.disabled).toBe(true);
+    expect(pct.dataset.editState).toBe("saving");
+    pending.shift()!.resolve({ value: 75, at: "2026-01-01T00:00:00.000Z" });
+    await settle();
+    expect([pct.disabled, pct.value, pct.dataset.editState]).toEqual([false, "75", "saved"]);
+    change(pct, "150");
+    pending.shift()!.reject(new Error("pct must be at most 100"));
+    await settle();
+    expect([pct.disabled, pct.value, pct.dataset.editState]).toEqual([false, "75", "failed"]);
+    expect(document.querySelector(".dk-edit-toast")!.textContent).toBe("Not saved: pct must be at most 100");
+    change(document.querySelector<HTMLInputElement>("#title")!, "");
+    expect(calls).toEqual([
+      { edit: "t", key: "1", field: "pct", value: 75 },
+      { edit: "t", key: "1", field: "pct", value: 150 },
+      { edit: "t", key: "1", field: "title", value: "" },
+    ]);
   });
 
   it("shows a deduplicated error banner for uncaught page errors", async () => {
@@ -1358,6 +1403,60 @@ describe("dashboard SQL", () => {
         `<script type="application/sql" data-name="large" data-db="data/x.db">select '${"x".repeat(DASHBOARD_SQL_BYTE_LIMIT)}'</script>`
       )
     ).toThrow("100KB");
+  });
+
+  it("parses page edit declarations with their typed fields, guard and create flag", () => {
+    const html = `<script type="application/json" data-yoplai-edit="actions">${JSON.stringify({
+      db: "data/hr.db",
+      table: "actions",
+      key: "id",
+      updatedAt: "edited_at",
+      fields: {
+        done: { type: "bool", nullable: false },
+        pct: { type: "int", min: 0, max: 100, nullable: true },
+        status: { type: "enum", values: ["open", "closed"] },
+        comment: { type: "text" },
+      },
+      guard: "SELECT 1 FROM actions WHERE id = :key AND owner = :viewer_email",
+      create: true,
+    })}</script>`;
+    expect(parseDashboardEdits(html)).toEqual([
+      {
+        name: "actions",
+        database: "data/hr.db",
+        table: "actions",
+        key: "id",
+        updatedAt: "edited_at",
+        fields: {
+          done: { type: "bool", nullable: false },
+          pct: { type: "int", min: 0, max: 100, nullable: true },
+          status: { type: "enum", values: ["open", "closed"], nullable: false },
+          comment: { type: "text", max: 2000, nullable: false },
+        },
+        guard: "SELECT 1 FROM actions WHERE id = :key AND owner = :viewer_email",
+        create: true,
+      },
+    ]);
+    expect(parseDashboardEdits(`<script type="application/sql" data-name="q" data-db="data/x.db">select 1</script>`)).toEqual([]);
+  });
+
+  it("rejects malformed edit declarations with a reason", () => {
+    const edit = (name: string, body: unknown) =>
+      `<script type="application/json" data-yoplai-edit="${name}">${typeof body === "string" ? body : JSON.stringify(body)}</script>`;
+    const valid = { db: "data/x.db", table: "items", key: "id", fields: { done: { type: "bool" } } };
+    expect(() => parseDashboardEdits(edit("items", "{nope"))).toThrow(/Edit items: invalid JSON/);
+    expect(() => parseDashboardEdits(edit("items", { ...valid, table: "items; drop" }))).toThrow(/Edit items: table/);
+    expect(() => parseDashboardEdits(edit("items", { ...valid, fields: { "bad name": { type: "bool" } } }))).toThrow(/Edit items: field name/);
+    expect(() => parseDashboardEdits(edit("items", { ...valid, fields: { done: { type: "date" } } }))).toThrow(/Edit items: field done has unknown type date/);
+    expect(() => parseDashboardEdits(edit("items", { ...valid, fields: { s: { type: "enum" } } }))).toThrow(/Edit items: field s needs values/);
+    expect(() => parseDashboardEdits(edit("items", { ...valid, create: "yes" }))).toThrow(/Edit items: create must be true or false/);
+    expect(() => parseDashboardEdits(edit("items", { ...valid, db: undefined }))).toThrow(/Edit items: db/);
+    expect(() => parseDashboardEdits(edit("items", { ...valid, fields: {} }))).toThrow(/Edit items: fields/);
+    expect(() => parseDashboardEdits(edit("items", { ...valid, fields: { id: { type: "int" } } }))).toThrow(/Edit items: the key column id cannot be an editable field/);
+    expect(() => parseDashboardEdits(edit("items", valid) + edit("items", valid))).toThrow("Duplicate edit declaration: items");
+    expect(() => parseDashboardEdits(edit("", valid))).toThrow("data-yoplai-edit needs a name");
+    expect(() => parseDashboardEdits(Array.from({ length: 21 }, (_, i) => edit(`e${i}`, valid)).join(""))).toThrow("edit declaration limit");
+    expect(() => parseDashboardEdits(edit("items", { ...valid, guard: "x".repeat(DASHBOARD_SQL_BYTE_LIMIT) }))).toThrow("100KB");
   });
 
   it("rejects oversized serialized results", async () => {

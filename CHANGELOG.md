@@ -9,6 +9,10 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ## [Unreleased]
 
+### Added
+
+- Dashboards can now be editable: pages declare editable columns so owners and writers (and read-only viewers on the rows a page guard gives them) tick, set values and comment without chat; owners and writers can also add and hide rows. Every change is audited.
+
 ### Changed
 
 - Chat project file names now wrap to show in full instead of being cut off, and show the full name on hover.

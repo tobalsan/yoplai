@@ -20,9 +20,15 @@ Templates: `okr-teams` (platform rollup), `okr-me` (personal), `okr-reports` (ma
 
 **Database isolation**: any dashboard shared beyond the agent's confidential audience gets its own database under `data/` — never co-locate it with confidential tables like PTO or candidates, because every query on a page can read its whole db file, not just the tables it names in one query.
 
-## Chat-driven updates
+## Updates
 
-Updates happen by chat: the agent edits `okr_items` rows and their `updated_at`. Confirm weights with the person before changing them — adding a new item changes every other item's denominator (`Σweight`) for that person and period, shifting their contribution even if nothing else changed.
+Employees edit their own KPI completion on `okr-me` through an edit declaration with a guard: own rows, or rows of someone they manage.
+
+```json
+"guard": "SELECT 1 FROM okr_items i JOIN employees e ON lower(e.email)=lower(i.owner_email) WHERE i.id = :key AND (lower(i.owner_email)=lower(:viewer_email) OR lower(e.manager_email)=lower(:viewer_email))"
+```
+
+Use the same predicate in the page query to enable the controls (see [kit.md](kit.md)). Chat remains for weights and new items: confirm weights with the person before changing them — adding a new item changes every other item's denominator (`Σweight`) for that person and period, shifting their contribution even if nothing else changed. Edits are logged in `dashboard_edits` ([data.md](data.md)).
 
 To DM someone their private link, the agent needs their Slack user id. Look it up once with `slack.list_users` (by display name), confirm the match with the person before storing it, then set `employees.slack_user_id`. Skip the DM (don't guess an id) for anyone whose `slack_user_id` is still `NULL`.
 

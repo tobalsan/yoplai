@@ -1,5 +1,5 @@
 import vm from "node:vm";
-import { parseDashboardQueries } from "./sql.js";
+import { attributes, parseDashboardEdits, parseDashboardQueries } from "./sql.js";
 
 const SCRIPT = /<script\b([^>]*)>([\s\S]*?)<\/script\s*>/gi;
 const JS_TYPES = new Set(["", "text/javascript", "application/javascript"]);
@@ -110,17 +110,17 @@ export function lintDashboardHtml(html: string): string[] {
   const echarts = srcs.findIndex((src) => src.endsWith("/echarts.js"));
   if (/\/d-assets\/v1\//.test(html)) {
     problems.push(
-      "Outdated Dashboard Kit assets: use /d-assets/v2/ instead of /d-assets/v1/."
+      "Outdated Dashboard Kit assets: use /d-assets/v3/ instead of /d-assets/v1/."
     );
   }
   if (kit < 0 && /\bDashboardKit\b/.test(code)) {
     problems.push(
-      'DashboardKit is used but <script src="/d-assets/v2/kit.js"> is not loaded.'
+      'DashboardKit is used but <script src="/d-assets/v3/kit.js"> is not loaded.'
     );
   }
   if (/\.chart\s*\(/.test(code) && echarts < 0) {
     problems.push(
-      'Charts are used but <script src="/d-assets/v2/echarts.js"> is not loaded (before kit.js).'
+      'Charts are used but <script src="/d-assets/v3/echarts.js"> is not loaded (before kit.js).'
     );
   } else if (kit >= 0 && echarts > kit) {
     problems.push(
@@ -148,6 +148,8 @@ export function lintDashboardHtml(html: string): string[] {
     }
   }
 
+  problems.push(...editProblems(html, srcs));
+
   if (scripts.some((script) => script.module)) {
     const markup = html.replace(SCRIPT, (block) =>
       block.replace(/[^\n]/g, " ")
@@ -157,6 +159,35 @@ export function lintDashboardHtml(html: string): string[] {
         `Line ${lineAt(markup, match.index) + 1}: inline ${match[1]}= handler will not find functions declared in a module script; use addEventListener.`
       );
     }
+  }
+  return problems;
+}
+
+function editProblems(html: string, srcs: string[]): string[] {
+  const problems: string[] = [];
+  let declared: Set<string>;
+  try {
+    declared = new Set(parseDashboardEdits(html).map((edit) => edit.name));
+  } catch (error) {
+    problems.push((error as Error).message);
+    declared = new Set();
+  }
+  const markup = html.replace(SCRIPT, (block) => block.replace(/[^\n]/g, " "));
+  let controls = 0;
+  for (const match of markup.matchAll(/<(?:input|select|textarea)\b([^>]*)>/gi)) {
+    const name = attributes(match[1]).get("data-edit");
+    if (name === undefined) continue;
+    controls++;
+    if (!declared.has(name)) {
+      problems.push(
+        `Line ${lineAt(markup, match.index) + 1}: data-edit="${name}" names no <script type="application/json" data-yoplai-edit="${name}"> declaration.`
+      );
+    }
+  }
+  if ((declared.size || controls) && !srcs.some((src) => /\/d-assets\/v3\/kit\.js$/.test(src))) {
+    problems.push(
+      'Editable pages need <script src="/d-assets/v3/kit.js"> (and kit.css from /d-assets/v3/).'
+    );
   }
   return problems;
 }

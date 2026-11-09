@@ -3,18 +3,47 @@
 Load only platform assets; remote scripts and styles are blocked by Canvas CSP.
 
 ```html
-<link rel="stylesheet" href="/d-assets/v2/kit.css" />
-<script src="/d-assets/v2/echarts.js"></script>
-<script src="/d-assets/v2/marked.js"></script>
-<script src="/d-assets/v2/purify.js"></script>
-<script src="/d-assets/v2/kit.js"></script>
+<link rel="stylesheet" href="/d-assets/v3/kit.css" />
+<script src="/d-assets/v3/echarts.js"></script>
+<script src="/d-assets/v3/marked.js"></script>
+<script src="/d-assets/v3/purify.js"></script>
+<script src="/d-assets/v3/kit.js"></script>
 ```
 
 Put all page code in one `<script type="module">` after the markup (never a classic `<script>`: top-level `const top`, `window`, `document`, or `location` throw and blank the page). Module code has its own scope, so never use inline `on*=` handlers; attach them with `addEventListener`. Every snippet below goes inside that module.
 
-`DashboardKit` components: `callout`, `kpis`/`kpi`, `table`, `pill`, `segmented`, `filters`, `tabs`, ranked `list`, sanitized `md`, `chart`, and `format`. `/d-assets/v2/sample.html` shows every one. Pages that still load `/d-assets/v1/` keep working; use `v2` for new pages.
+`DashboardKit` components: `callout`, `kpis`/`kpi`, `table`, `pill`, `segmented`, `filters`, `tabs`, ranked `list`, sanitized `md`, `chart`, and `format`. `/d-assets/v3/sample.html` shows every one. Pages that still load `/d-assets/v1/` or `/d-assets/v2/` keep working; use `v3` for new pages (required for editable pages).
 
-The theme follows the viewer's light/dark mode (`data-theme="light|dark"` overrides it) and inherits deployment colors from `$YOPLAI_HOME/theme.css`. Print styles are A4 and hide filters, search, and buttons. Use DOM APIs or Kit helpers for dynamic content; use `textContent`, never interpolate untrusted values into `innerHTML`. The CSP permits platform `/d-assets/`, inline page script/style, data/blob images, and no network connections.
+The theme follows the viewer's light/dark mode (`data-theme="light|dark"` overrides it) and inherits deployment colors from `$YOPLAI_HOME/theme.css`. Print styles are A4 and hide filters, search, and buttons. Use DOM APIs or Kit helpers for dynamic content; use `textContent`, never interpolate untrusted values into `innerHTML`. The CSP permits platform `/d-assets/`, inline page script/style, data/blob images, and network requests only to the page's own edit endpoints.
+
+## Editable controls
+
+Add `data-edit="<declaration>"`, `data-key="<row key>"` and `data-field="<column>"` to `input[type=checkbox|text|number]`, `select` or `textarea` (declaration format: [canvas.md](canvas.md)). The Kit saves on change (text: on blur/change), locks the control while it saves, and sets `data-edit-state="saving|saved|failed"`. On failure it restores the previous value and shows a `.dk-edit-toast`. Controls are disabled when there is no edit token (e.g. impersonation).
+
+```html
+<input type="checkbox" data-edit="actions" data-key="7" data-field="manual_done" />
+```
+
+Writers can edit everything. For other viewers, enable a control per row with the same predicate as the guard, selected in the page SQL (`SELECT ..., lower(owner_email) = lower(:viewer_email) AS editable ...`); the server checks the guard again. Re-render derived numbers (rollups, %) on the `dk-edit-saved` event, detail `{ edit, key, field, value, at }`:
+
+```js
+document.addEventListener("dk-edit-saved", (e) => updateTotals(e.detail));
+```
+
+Add a row (declaration needs `create: true`); show the button only to writers:
+
+```js
+const add = document.querySelector("#add-task");
+add.hidden = !YOPLAI.canWrite;
+add.addEventListener("click", async () => {
+  try {
+    const { key, values } = await YOPLAI.add({ edit: "tasks", values: { title: "New task" } });
+    renderRow(key, values);
+  } catch (error) {
+    alert(error.message);
+  }
+});
+```
 
 ## Design guidance
 
