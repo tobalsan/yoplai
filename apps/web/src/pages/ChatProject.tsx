@@ -523,7 +523,7 @@ export function ChatProject() {
                         <li class="project-file-row">
                           <i class={`fa-solid ${getFileIcon(file.mimeType)} project-file-icon`} aria-hidden="true" />
                           <div class="project-file-main">
-                            <div class="project-file-name">{file.name}</div>
+                            <div class="project-file-name" title={file.name}>{file.name}</div>
                             <div class="project-file-meta">
                               {formatBytes(file.size)}
                               <Show when={file.extractionError}>
@@ -1084,12 +1084,19 @@ export function ChatProject() {
         .project-file-row,
         .project-reference-row {
           display: flex;
-          align-items: center;
           gap: 10px;
           padding: 8px 10px;
           border-radius: 6px;
           background: transparent;
           transition: background 150ms;
+        }
+
+        .project-file-row {
+          align-items: flex-start;
+        }
+
+        .project-reference-row {
+          align-items: center;
         }
 
         .project-file-row:hover,
@@ -1106,6 +1113,7 @@ export function ChatProject() {
           font-size: 14px;
           color: var(--text-tertiary);
           flex-shrink: 0;
+          margin-top: 2px;
         }
 
         .project-file-main,
@@ -1116,9 +1124,8 @@ export function ChatProject() {
 
         .project-file-name {
           font-size: 13px;
-          overflow: hidden;
-          text-overflow: ellipsis;
-          white-space: nowrap;
+          white-space: normal;
+          overflow-wrap: anywhere;
         }
 
         .project-reference-title {
