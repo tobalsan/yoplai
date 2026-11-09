@@ -9,6 +9,10 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ## [Unreleased]
 
+### Changed
+
+- Chat project file names now wrap to show in full instead of being cut off, and show the full name on hover.
+
 ## v0.28.0 — Artifacts in chat, side panel tabs + safer scheduled jobs
 
 _Released 2026-11-08._

@@ -103,6 +103,19 @@ describe("ChatProject file upload", () => {
     expect(root.textContent).not.toContain("Text unavailable");
   });
 
+  it("shows the full file name in a tooltip on the name", async () => {
+    fetchChatProjectFilesMock.mockResolvedValue({ items: [{
+      id: "long", name: "2609_AOO_INTEGRATEUR_reponse_candidature_lot1_version_finale_v3.docx", size: 300,
+      mimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    }] });
+    const { ChatProject } = await import("./ChatProject");
+    dispose = render(() => <ChatProject />, root);
+    await tick();
+
+    const name = root.querySelector<HTMLElement>(".project-file-name");
+    expect(name?.title).toBe("2609_AOO_INTEGRATEUR_reponse_candidature_lot1_version_finale_v3.docx");
+  });
+
   it("clicking Upload button triggers file input click", async () => {
     const { ChatProject } = await import("./ChatProject");
     dispose = render(() => <ChatProject />, root);
