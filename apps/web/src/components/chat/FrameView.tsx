@@ -1,7 +1,8 @@
-import { createEffect, createMemo, createSignal, on, onCleanup, Show } from "solid-js";
+import { createEffect, createMemo, createSignal, on, onCleanup, Show, useContext } from "solid-js";
 import { Button } from "../ui/Button";
 import { loadMcpAppData } from "../../api/mcp-apps";
 import type { DashboardFrame } from "./appViews";
+import { DashboardAnnotationsContext } from "./dashboardAnnotations";
 import frameViewStyles from "./FrameView.css?inline";
 
 export function FrameView(props: {
@@ -11,6 +12,7 @@ export function FrameView(props: {
   onCollapse?: () => void;
 }) {
   let frame: HTMLIFrameElement | undefined;
+  const annotation = useContext(DashboardAnnotationsContext)?.frame(() => frame);
   const url = () => `/d/${encodeURIComponent(props.target.id)}`;
   const title = () => props.target.title || "Dashboard";
   createEffect(
@@ -30,6 +32,18 @@ export function FrameView(props: {
       <header class="frame-view-header">
         <i class="fa-solid fa-table-columns" aria-hidden="true" />
         <strong>{title()}</strong>
+        <Show when={annotation?.available()}>
+          <Button
+            variant="ghost"
+            icon="fa-solid fa-comment-medical"
+            aria-label="Annotate"
+            aria-pressed={annotation!.active()}
+            title={annotation!.active() ? "Stop annotating (Esc)" : "Annotate: click parts of the dashboard to leave notes for the agent"}
+            onClick={() => annotation!.toggle()}
+          >
+            {null}
+          </Button>
+        </Show>
         <a
           class="frame-view-open"
           href={url()}

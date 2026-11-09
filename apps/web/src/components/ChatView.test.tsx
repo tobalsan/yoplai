@@ -308,6 +308,130 @@ describe("ChatView abort handling", () => {
     } finally { view.dispose(); }
   });
 
+  async function annotateLinkedDashboard() {
+    routeState.session = "origin-session";
+    routeState.dashboard = "garden";
+    const view = renderView();
+    await waitFor(() => expect(queryByTitle(view.container, "Dashboard dashboard")).not.toBeNull());
+    const frame = queryByTitle(view.container, "Dashboard dashboard") as HTMLIFrameElement;
+    const toFrame: unknown[] = [];
+    vi.spyOn(frame.contentWindow!, "postMessage").mockImplementation((message: unknown) => { toFrame.push(message); });
+    const fromFrame = (data: Record<string, unknown>) =>
+      window.dispatchEvent(new MessageEvent("message", { data: { channel: "yoplai-annotate", ...data }, source: frame.contentWindow }));
+    const announce = (page: Record<string, unknown> = {}) =>
+      fromFrame({ type: "ready", id: "garden", slug: "garden.html", agentId: "agent-1", title: "Garden overview", params: { bed: "north" }, ...page });
+    announce();
+    queryByRole(view.container, "button", { name: "Annotate" })!.click();
+    const note = (id: string, hint: Record<string, string>, note: string) =>
+      fromFrame({ type: "note", id, selector: "", tag: "", text: "", heading: "", ancestor: "", ...hint, note });
+    const chips = () => queryAllByRole(view.container, "listitem").filter((item) => item.closest('[aria-label="Dashboard notes"]')).map((item) => item.textContent);
+    const send = () => queryByRole(view.container, "button", { name: "Send message" }) as HTMLButtonElement;
+    return { ...view, toFrame, announce, note, chips, send };
+  }
+
+  it("sends staged dashboard notes as one chat message carrying the page and element context, then clears them", async () => {
+    const view = await annotateLinkedDashboard();
+    try {
+      await waitFor(() => expect(view.send().disabled).toBe(true));
+      view.note("n1", { selector: "section#beds > p.bed", tag: "p", text: "Tomatoes 12", heading: "Beds", ancestor: "section#beds" }, "Show kilos");
+      view.note("n2", { selector: "a#go", tag: "a", text: "Seed catalog", heading: "Beds", ancestor: "section#beds" }, "Link to the spring catalog");
+      view.note("n3", { selector: "h2", tag: "h2", text: "Beds" }, "Rename to Plots");
+      await waitFor(() => expect(view.chips()).toHaveLength(3));
+      expect(view.chips()[0]).toContain("Garden overview");
+      expect(view.chips()[0]).toContain("Show kilos");
+      expect(view.send().disabled).toBe(false);
+      queryByRole(view.container, "button", { name: "Remove note 3" })!.click();
+      expect(view.chips()).toHaveLength(2);
+      expect(view.toFrame).toContainEqual({ channel: "yoplai-annotate", type: "remove", id: "n3" });
+      const input = queryByRole(view.container, "textbox") as HTMLTextAreaElement;
+      input.value = "Keep the colors.";
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+      view.send().click();
+      await waitFor(() => expect(streamMessageMock).toHaveBeenCalledOnce());
+      expect(streamMessageMock.mock.calls[0][1]).toBe([
+        'Dashboard annotations for "Garden overview" (page: garden.html, id: garden, params: {"bed":"north"}).',
+        "Edit this dashboard as the notes below ask, then publish with dashboard_update.",
+        "",
+        '1. <section#beds > p.bed> "Tomatoes 12" (under "Beds") - Show kilos',
+        '2. <a#go> "Seed catalog" (under "Beds"; in <section#beds>) - Link to the spring catalog',
+        "",
+        "Keep the colors.",
+      ].join("\n"));
+      await waitFor(() => expect(view.chips()).toEqual([]));
+      expect(view.toFrame.slice(-2)).toEqual([
+        { channel: "yoplai-annotate", type: "remove", id: "n1" },
+        { channel: "yoplai-annotate", type: "remove", id: "n2" },
+      ]);
+    } finally { view.dispose(); }
+  });
+
+  it("keeps notes attributed to the page and parameters shown when they were made, grouped per page at send", async () => {
+    const view = await annotateLinkedDashboard();
+    try {
+      view.note("n1", { selector: "p", tag: "p", text: "North bed" }, "Add watering days");
+      view.announce({ id: "orchard", slug: "orchard.html", title: "Orchard", params: {} });
+      view.note("n2", { selector: "td:nth-of-type(2)", tag: "td", text: "Apples" }, "Sort by harvest");
+      view.announce({ params: { bed: "south" } });
+      view.note("n3", { selector: "p", tag: "p", text: "South bed" }, "Hide when empty");
+      view.announce();
+      view.note("n4", { selector: "h1", tag: "h1", text: "Garden" }, "Shorter title");
+      await waitFor(() => expect(view.chips()).toHaveLength(4));
+      view.send().click();
+      await waitFor(() => expect(streamMessageMock).toHaveBeenCalledOnce());
+      expect(streamMessageMock.mock.calls[0][1]).toBe([
+        'Dashboard annotations for "Garden overview" (page: garden.html, id: garden, params: {"bed":"north"}).',
+        "Edit this dashboard as the notes below ask, then publish with dashboard_update.",
+        "",
+        '1. <p> "North bed" - Add watering days',
+        '2. <h1> "Garden" - Shorter title',
+        "",
+        'Dashboard annotations for "Orchard" (page: orchard.html, id: orchard).',
+        "Edit this dashboard as the notes below ask, then publish with dashboard_update.",
+        "",
+        '3. <td:nth-of-type(2)> "Apples" - Sort by harvest',
+        "",
+        'Dashboard annotations for "Garden overview" (page: garden.html, id: garden, params: {"bed":"south"}).',
+        "Edit this dashboard as the notes below ask, then publish with dashboard_update.",
+        "",
+        '4. <p> "South bed" - Hide when empty',
+      ].join("\n"));
+    } finally { view.dispose(); }
+  });
+
+  it("keeps notes added while an earlier send is still uploading, for the next message", async () => {
+    const view = await annotateLinkedDashboard();
+    try {
+      let finishUpload!: (files: unknown[]) => void;
+      uploadFilesMock.mockImplementationOnce(() => new Promise((resolve) => { finishUpload = resolve; }));
+      view.note("n1", { selector: "p", tag: "p", text: "North bed" }, "Add watering days");
+      await waitFor(() => expect(view.chips()).toHaveLength(1));
+      view.container.querySelector("textarea")!.dispatchEvent(createFileDragEvent("drop", [new File(["plan"], "plan.txt", { type: "text/plain" })]));
+      view.send().click();
+      await waitFor(() => expect(uploadFilesMock).toHaveBeenCalledTimes(1));
+      view.note("n2", { selector: "h1", tag: "h1", text: "Garden" }, "Shorter title");
+      await waitFor(() => expect(view.chips()).toHaveLength(2));
+      finishUpload([]);
+      await waitFor(() => expect(streamMessageMock).toHaveBeenCalledTimes(1));
+      expect(streamMessageMock.mock.calls[0][1]).toContain("Add watering days");
+      expect(streamMessageMock.mock.calls[0][1]).not.toContain("Shorter title");
+      await waitFor(() => expect(view.chips()).toHaveLength(1));
+      expect(view.chips()[0]).toContain("Shorter title");
+      expect(view.toFrame).toContainEqual({ channel: "yoplai-annotate", type: "remove", id: "n1" });
+      expect(view.toFrame).not.toContainEqual({ channel: "yoplai-annotate", type: "remove", id: "n2" });
+    } finally { view.dispose(); }
+  });
+
+  it("drops staged dashboard notes when the user switches to another chat", async () => {
+    const view = await annotateLinkedDashboard();
+    try {
+      view.note("n1", { selector: "p", tag: "p", text: "North bed" }, "Add watering days");
+      await waitFor(() => expect(view.chips()).toHaveLength(1));
+      routeState.session = "other-session";
+      setRouteVersion((value) => value + 1);
+      await waitFor(() => expect(view.chips()).toEqual([]));
+    } finally { view.dispose(); }
+  });
+
   it("opens a linked dashboard once, preserving the requested session", async () => {
     routeState.session = "origin-session";
     routeState.dashboard = "garden";

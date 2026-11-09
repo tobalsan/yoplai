@@ -12,6 +12,7 @@ Breaking changes are marked **⚠ BREAKING**.
 ### Added
 
 - Dashboards can now be editable: pages declare editable columns so owners and writers (and read-only viewers on the rows a page guard gives them) tick, set values and comment without chat; owners and writers can also add and hide rows. Every change is audited.
+- Dashboards shown in web chat have an **Annotate** mode for owners and writers who can chat with the page's agent: click any part of the page, leave a note, and send all notes in one message with the page and element context so the agent applies the edits.
 
 ### Changed
 
