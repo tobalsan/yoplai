@@ -90,11 +90,12 @@ export function McpAppView(props: { agentId: string; sessionId: string; viewKey:
     let deliveredCallId = toolCallId;
     let dataController: AbortController | undefined;
     let generation = 0;
+    let sandboxDocument = 0;
     let dataTimer: ReturnType<typeof setTimeout> | undefined;
     let resizeObserver: ResizeObserver | undefined;
     let resizeFrame: number | undefined;
     let rejectedMessageLogged = false;
-    const initTimer = setTimeout(fail, 15000);
+    let initTimer = setTimeout(fail, 15000);
 
     function post(message: unknown) {
       if (data) frame?.contentWindow?.postMessage(message, data.appsOrigin);
@@ -209,7 +210,24 @@ export function McpAppView(props: { agentId: string; sessionId: string; viewKey:
       const notification = message.id === undefined;
       const reply = (result: unknown) => post({ jsonrpc: "2.0", id: message.id, result });
       const error = (code: number, text: string) => post({ jsonrpc: "2.0", id: message.id, error: { code, message: text } });
-      if (notification && message.method === "ui/notifications/sandbox-proxy-ready" && !bootstrapped) {
+      const requestDocument = sandboxDocument;
+      // Async answers go only to the sandbox document that asked.
+      const current = () => active && requestDocument === sandboxDocument;
+      if (notification && message.method === "ui/notifications/sandbox-proxy-ready") {
+        if (bootstrapped) {
+          // The sandbox document restarted (e.g. its frame was reloaded): bootstrap and initialize it again.
+          initializing = false;
+          initialized = false;
+          // Pending answers belong to the old document; a pending update would arrive before initialization, so redeliver latestCallId after it.
+          sandboxDocument++;
+          for (const timer of relayTimers) clearTimeout(timer);
+          relayTimers.clear();
+          generation++;
+          dataController?.abort();
+          clearTimeout(dataTimer);
+          clearTimeout(initTimer);
+          initTimer = setTimeout(fail, 15000);
+        }
         bootstrapped = true;
         post({ jsonrpc: "2.0", method: "ui/notifications/sandbox-resource-ready", params: { html: "", sandbox: "allow-scripts allow-same-origin allow-forms", csp: data.csp } });
       } else if (message.method === "ui/initialize" && !notification && bootstrapped && !initializing) {
@@ -248,8 +266,8 @@ export function McpAppView(props: { agentId: string; sessionId: string; viewKey:
           relayTimers.add(timer);
           const relayCallId = data.server === "yoplai" && message.method === "resources/read" ? deliveredCallId : toolCallId;
           void relayMcpAppRequest(agentId, sessionId, relayCallId, message, controller.signal).then((response) => {
-            if (active) post({ ...response, id: message.id });
-          }).catch(() => { if (active) fail(); }).finally(() => { clearTimeout(timer); relayTimers.delete(timer); });
+            if (current()) post({ ...response, id: message.id });
+          }).catch(() => { if (current()) fail(); }).finally(() => { clearTimeout(timer); relayTimers.delete(timer); });
         } else if (message.method === "ui/message") {
           const content = Array.isArray(params?.content) ? params.content : [];
           const text = content.filter((block) => block && typeof block === "object" && typeof block.text === "string").map((block) => block.text).join("\n\n");
@@ -267,10 +285,10 @@ export function McpAppView(props: { agentId: string; sessionId: string; viewKey:
           }
           const refused = (reason: unknown) => {
             audit(false);
-            if (active) error(-32000, reason instanceof Error ? reason.message.slice(0, 200) : "Message refused");
+            if (current()) error(-32000, reason instanceof Error ? reason.message.slice(0, 200) : "Message refused");
           };
           try {
-            void props.onUserMessage(text).then(() => { audit(true); if (active) reply({}); }).catch(refused);
+            void props.onUserMessage(text).then(() => { audit(true); if (current()) reply({}); }).catch(refused);
           } catch (reason) { refused(reason); }
         } else if (message.method === "ping") reply({});
         else if (message.method === "ui/request-display-mode") {

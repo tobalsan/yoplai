@@ -13,6 +13,10 @@ Breaking changes are marked **⚠ BREAKING**.
 
 - Chat project file names now wrap to show in full instead of being cut off, and show the full name on hover.
 
+### Fixed
+
+- The first view in the web chat side panel no longer goes blank when a second tab opens; a view whose sandbox reloads now loads again.
+
 ## v0.28.0 — Artifacts in chat, side panel tabs + safer scheduled jobs
 
 _Released 2026-11-08._

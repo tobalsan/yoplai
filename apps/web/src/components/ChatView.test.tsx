@@ -3034,6 +3034,42 @@ describe("ChatView abort handling", () => {
     } finally { dispose(); measure.mockRestore(); }
   });
 
+  it("keeps the first view loaded when a second tab opens and bootstraps it again if its sandbox restarts", async () => {
+    enableAppViews();
+    loadMcpAppViewMock.mockImplementation(async (_agent, _session, callId) => ({
+      available: true, sandboxUrl: "https://apps.test/sandbox", appsOrigin: "https://apps.test", server: "yoplai",
+      toolName: "send_file", args: { path: `${callId}.file` }, result: { content: [{ type: "text", text: `${callId} sent` }] }, csp: {}, prefersBorder: false,
+    }));
+    const measure = measureChatSpace();
+    const { container, dispose, callbacks } = await startFullStream();
+    try {
+      sendViewFile(callbacks(), "spec-doc", { fileId: "spec", filename: "spec.md", mimeType: "text/markdown", size: 64, title: "Spec" });
+      await waitFor(() => expect(queryByTitle(queryByRole(container, "complementary")!, "Spec file view")).not.toBeNull());
+      const spec = queryByTitle(container, "Spec file view") as HTMLIFrameElement;
+      initializeApp(spec);
+      const specDocument = spec.contentWindow;
+      sendViewFile(callbacks(), "flow-doc", { fileId: "flow", filename: "flow.html", mimeType: "text/html", size: 64, title: "Flow" });
+      const panel = queryByRole(container, "complementary")!;
+      await waitFor(() => expect(queryByTitle(panel, "Flow file view")).not.toBeNull());
+      queryByRole(panel, "tab", { name: "Spec" })!.click();
+      expect(queryByTitle(panel, "Spec file view")).toBe(spec);
+      // A moved iframe gets a new document, which is what blanked the first view in the browser.
+      expect(spec.contentWindow === specDocument).toBe(true);
+      const post = vi.spyOn(spec.contentWindow!, "postMessage");
+      appMessage(spec, { jsonrpc: "2.0", method: "ui/notifications/sandbox-proxy-ready" });
+      appMessage(spec, { jsonrpc: "2.0", id: 2, method: "ui/initialize", params: {} });
+      appMessage(spec, { jsonrpc: "2.0", method: "ui/notifications/initialized" });
+      expect(post.mock.calls.map(([message]) => message.method ?? `reply ${message.id}`)).toEqual([
+        "ui/notifications/sandbox-resource-ready", "reply 2", "ui/notifications/tool-input", "ui/notifications/tool-result",
+      ]);
+      expect(post.mock.calls.slice(2).map(([message]) => message.params)).toEqual([
+        { arguments: { path: "spec-doc.file" } },
+        { content: [{ type: "text", text: "spec-doc sent" }] },
+      ]);
+      expect(queryByText(panel, "View unavailable")).toBeNull();
+    } finally { dispose(); measure.mockRestore(); }
+  });
+
   it("navigates and reorders panel tabs with the keyboard without replacing their frames", async () => {
     enableAppViews();
     const measure = measureChatSpace();

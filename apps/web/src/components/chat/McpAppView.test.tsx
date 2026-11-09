@@ -357,6 +357,90 @@ describe("MCP App view host", () => {
     ]);
     expect(queryByText(container, "Loading view…")).toBeNull();
   });
+  it("bootstraps a restarted sandbox again and restores the latest delivered call", async () => {
+    const [callId, setCallId] = createSignal("call-1");
+    mount(callId, undefined, undefined, undefined, { mode: "panel" });
+    await settle();
+    const frame = getByTitle(container, "boards MCP App") as HTMLIFrameElement;
+    initialize(frame);
+    setCallId("call-2");
+    await settle();
+    const post = vi.spyOn(frame.contentWindow!, "postMessage");
+    send(frame, { jsonrpc: "2.0", method: "ui/notifications/sandbox-proxy-ready" });
+    expect(post.mock.calls).toEqual([[{
+      jsonrpc: "2.0", method: "ui/notifications/sandbox-resource-ready",
+      params: { html: "", sandbox: "allow-scripts allow-same-origin allow-forms", csp: { connectDomains: [], resourceDomains: [] } },
+    }, origin]]);
+    send(frame, { jsonrpc: "2.0", id: 2, method: "ui/initialize", params: { protocolVersion: "2026-01-26" } });
+    expect(post.mock.calls[1][0]).toMatchObject({ jsonrpc: "2.0", id: 2, result: { protocolVersion: "2026-01-26", hostContext: { displayMode: "fullscreen" } } });
+    post.mockClear();
+    send(frame, { jsonrpc: "2.0", method: "ui/notifications/initialized" });
+    await settle();
+    expect(post.mock.calls).toEqual([
+      [{ jsonrpc: "2.0", method: "ui/notifications/tool-input", params: { arguments: { title: "Roadmap" } } }, origin],
+      [{ jsonrpc: "2.0", method: "ui/notifications/tool-result", params: { content: [{ type: "text", text: "Board created" }], structuredContent: { board: 7 } } }, origin],
+      [{ jsonrpc: "2.0", method: "ui/notifications/tool-input", params: { arguments: { title: "Updated roadmap" } } }, origin],
+      [{ jsonrpc: "2.0", method: "ui/notifications/tool-result", params: { content: [{ type: "text", text: "Box added" }] } }, origin],
+    ]);
+    expect(queryByText(container, "Loading view…")).toBeNull();
+    expect(queryByText(container, "View unavailable")).toBeNull();
+  });
+  it("delivers a call that was loading during a sandbox restart only after the new document initializes", async () => {
+    const [callId, setCallId] = createSignal("call-1");
+    mount(callId, undefined, undefined, undefined, { mode: "panel" });
+    await settle();
+    const frame = getByTitle(container, "boards MCP App") as HTMLIFrameElement;
+    initialize(frame);
+    let finish!: (value: unknown) => void;
+    loadData.mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
+    setCallId("call-2");
+    await settle();
+    const post = vi.spyOn(frame.contentWindow!, "postMessage");
+    send(frame, { jsonrpc: "2.0", method: "ui/notifications/sandbox-proxy-ready" });
+    finish({ args: { title: "Too early" }, result: { content: [{ type: "text", text: "Lost" }] } });
+    await settle();
+    expect(post.mock.calls.map(([message]) => message.method)).toEqual(["ui/notifications/sandbox-resource-ready"]);
+    send(frame, { jsonrpc: "2.0", id: 2, method: "ui/initialize", params: {} });
+    post.mockClear();
+    send(frame, { jsonrpc: "2.0", method: "ui/notifications/initialized" });
+    await settle();
+    expect(post.mock.calls.map(([message]) => message.params)).toEqual([
+      { arguments: { title: "Roadmap" } },
+      { content: [{ type: "text", text: "Board created" }], structuredContent: { board: 7 } },
+      { arguments: { title: "Updated roadmap" } },
+      { content: [{ type: "text", text: "Box added" }] },
+    ]);
+  });
+  it("drops a server request from the previous sandbox document after a restart", async () => {
+    mount(undefined, undefined, undefined, undefined, { mode: "panel" });
+    await settle();
+    const frame = getByTitle(container, "boards MCP App") as HTMLIFrameElement;
+    initialize(frame);
+    let answer!: (value: unknown) => void;
+    relay.mockImplementationOnce(() => new Promise((resolve) => { answer = resolve; }));
+    send(frame, { jsonrpc: "2.0", id: 5, method: "tools/call", params: { name: "draw" } });
+    initialize(frame);
+    const post = vi.spyOn(frame.contentWindow!, "postMessage");
+    await vi.advanceTimersByTimeAsync(32000);
+    expect(queryByText(container, "View unavailable")).toBeNull();
+    answer({ jsonrpc: "2.0", id: 5, result: { content: [{ type: "text", text: "Old document" }] } });
+    await settle();
+    expect(post).not.toHaveBeenCalled();
+    send(frame, { jsonrpc: "2.0", id: "alive", method: "ping" });
+    expect(post.mock.calls).toEqual([[{ jsonrpc: "2.0", id: "alive", result: {} }, origin]]);
+  });
+  it("gives up on a restarted sandbox that does not initialize within 15 seconds", async () => {
+    mount(undefined, undefined, undefined, undefined, { mode: "panel" });
+    await settle();
+    const frame = getByTitle(container, "boards MCP App") as HTMLIFrameElement;
+    initialize(frame);
+    await vi.advanceTimersByTimeAsync(20000);
+    send(frame, { jsonrpc: "2.0", method: "ui/notifications/sandbox-proxy-ready" });
+    await vi.advanceTimersByTimeAsync(14999);
+    expect(queryByText(container, "View unavailable")).toBeNull();
+    await vi.advanceTimersByTimeAsync(1);
+    expect(getByText(container, "View unavailable")).toBeTruthy();
+  });
   it("advertises user messages only when the conversation provides a send action", async () => {
     mount(undefined, undefined, undefined, undefined, { onUserMessage: vi.fn().mockResolvedValue(undefined) });
     await settle();

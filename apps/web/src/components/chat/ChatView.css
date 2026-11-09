@@ -127,6 +127,7 @@
         .chat-panel-tab button:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
         .chat-panel-tab-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
         .chat-panel-tab .chat-panel-tab-close { flex-shrink: 0; justify-content: center; width: 40px; }
+        .chat-panel-tabpanels { display: contents; }
         .chat-panel-tabpanel { display: flex; flex-direction: column; flex: 1; min-height: 0; min-width: 0; }
         .chat-panel-tabpanel[hidden] { display: none; }
 
