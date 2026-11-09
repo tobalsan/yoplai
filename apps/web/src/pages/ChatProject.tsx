@@ -1124,7 +1124,6 @@ export function ChatProject() {
 
         .project-file-name {
           font-size: 13px;
-          line-height: 1.35;
           white-space: normal;
           overflow-wrap: anywhere;
         }
