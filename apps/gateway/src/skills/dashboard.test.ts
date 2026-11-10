@@ -230,6 +230,8 @@ describe("dashboard starter templates", () => {
     expect(noItemsRow?.items).toBe(0);
   }, 30_000);
 
+  // Runs every OKR template query (real child processes, cold TS loader)
+  // plus the teams page; exceeds 5s on 2-core CI like its sibling tests.
   it("falls back to the latest period and excludes small teams from the public OKR rollup", async () => {
     workspace = await fs.mkdtemp(path.join(os.tmpdir(), "dashboard-okr2-"));
     await fs.mkdir(path.join(workspace, "data"));
@@ -289,7 +291,7 @@ describe("dashboard starter templates", () => {
     }>;
     // The tiny team's 2 members are excluded from the company average too.
     expect(company[0]?.headcount).toBe(9);
-  });
+  }, 30_000);
 
   // The wiki rebuild plus 17 real child-process queries exceeds 5s on busy CI.
   it("rebuilds the CS sample from wiki and runs clients to QBR queries", async () => {
