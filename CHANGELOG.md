@@ -9,25 +9,11 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ## [Unreleased]
 
-### Added
+## v0.28.0 — Artifacts in chat, editable dashboards + safer scheduled jobs
 
-- Dashboards can now be editable: pages declare editable columns so owners and writers (and read-only viewers on the rows a page guard gives them) tick, set values and comment without chat; owners and writers can also add and hide rows. Every change is audited.
-- Dashboards shown in web chat have an **Annotate** mode for owners and writers who can chat with the page's agent: click any part of the page, leave a note, and send all notes in one message with the page and element context so the agent applies the edits.
+_Released 2026-11-10._
 
-### Changed
-
-- Chat project file names now wrap to show in full instead of being cut off, and show the full name on hover.
-
-### Fixed
-
-- A dashboard that links to a page the viewer can't open no longer breaks: the link shows disabled ("Not shared with you") and the rest of the page loads. Pages can hide such links with `YOPLAI.canLink()`. Opening an unshared dashboard's URL shows which dashboard it is and whom to ask instead of a bare 404.
-- The first view in the web chat side panel no longer goes blank when a second tab opens; a view whose sandbox reloads now loads again.
-
-## v0.28.0 — Artifacts in chat, side panel tabs + safer scheduled jobs
-
-_Released 2026-11-08._
-
-Files, images, HTML reports, PDFs and Canvas dashboards that agents send now show in web chat and in a side panel with reorderable tabs that survive reload; files can open in a full browser tab on the isolated apps origin. Agents' files in project chats are saved to the project. Scheduled jobs are safer: scripts are checked when a job is saved, jobs pause after repeated credential refusals and tell their owner, and agents offer a place to post results. Mattermost gains `yoplai notify` delivery and thread unlock for replies to the bot's own posts. Sandboxed runs recover from rotated OAuth logins, and container codemode scripts time out per call instead of stopping the run.
+Files, images, HTML reports, PDFs and Canvas dashboards that agents send now show in web chat and in a side panel with reorderable tabs that survive reload; files can open in a full browser tab on the isolated apps origin. Dashboards can be edited on the live page (tick, set values, comment, add rows, all audited) and annotated from chat, so the agent applies notes in one go. Agents' files in project chats are saved to the project. Scheduled jobs are safer: scripts are checked when a job is saved, jobs pause after repeated credential refusals and tell their owner, and agents offer a place to post results. Mattermost gains `yoplai notify` delivery and thread unlock for replies to the bot's own posts. Sandboxed runs recover from rotated OAuth logins, and container codemode scripts time out per call instead of stopping the run.
 
 ### Upgrade notes
 
@@ -37,6 +23,8 @@ Files, images, HTML reports, PDFs and Canvas dashboards that agents send now sho
 
 ### Added
 
+- Dashboards can now be editable: pages declare editable columns so owners and writers (and read-only viewers on the rows a page guard gives them) tick, set values and comment without chat; owners and writers can also add and hide rows. Every change is audited.
+- Dashboards shown in web chat have an **Annotate** mode for owners and writers who can chat with the page's agent: click any part of the page, leave a note, and send all notes in one message with the page and element context so the agent applies the edits.
 - Web chat composer accepts pasted images (Cmd+V or Ctrl+V) with the same checks and 25 MB limit as drag and drop, and HTML files can be uploaded; agents receive the raw HTML text.
 - Credential-paused schedules persist their reconnect reason, notify paired Slack owners once when no delivery target is configured, and show authorized agent red dots, chat reconnect/resume banners, and a credentials badge.
 
@@ -58,8 +46,14 @@ Files, images, HTML reports, PDFs and Canvas dashboards that agents send now sho
 - MCP App views in web chat can expand into one resizable side panel, including app-requested fullscreen, with a narrow-screen overlay and mode/size updates. Calls to the same server/resource URI update one view; replay uses the latest captured data without rerunning tools. Expand and collapse each reload the view once and may lose unsaved app state.
 - Mattermost delivery for `yoplai notify`, provider-quota alerts and orchestrator HITL, with agent/root bot credentials and default `all` surfaces (`both` remains an alias).
 
+### Changed
+
+- Chat project file names now wrap to show in full instead of being cut off, and show the full name on hover.
+
 ### Fixed
 
+- A dashboard that links to a page the viewer can't open no longer breaks: the link shows disabled ("Not shared with you") and the rest of the page loads. Pages can hide such links with `YOPLAI.canLink()`. Opening an unshared dashboard's URL shows which dashboard it is and whom to ask instead of a bare 404.
+- The first view in the web chat side panel no longer goes blank when a second tab opens; a view whose sandbox reloads now loads again.
 - Web chat scrolls from the side gutters, not only the center column, and the Schedules page no longer jumps while cron monitoring polls.
 - Web chat header no longer overlaps or clips controls when the chat column is narrow, including with the sidebar open (name truncates, New chat becomes icon-only, controls wrap to a second row); compaction summaries render as markdown.
 - Compaction summaries no longer show large blank gaps around headings and lists; their markdown spacing matches assistant messages.
