@@ -29,6 +29,7 @@ These hold on every page; the platform, sharing, and data safety depend on them.
 10. To remove a dashboard, call `dashboard_delete` with its slug (keeps shared `.db` files).
 11. Pages are read-only unless they declare editable columns with a `data-yoplai-edit` block (see [Editable pages](#editable-pages)). A user-set value always wins: never overwrite it; when your sources disagree, show the conflict next to the item.
 12. Maintenance is surgical: update rows and `updated_at` for data corrections, make the smallest HTML edit, re-run affected SQL with real bindings, explicitly publish with `dashboard_update`. Writers may iterate on live files before publishing.
+13. A message beginning "Dashboard annotations" is an edit request on the named page (slug, id, params): each numbered note names an element (CSS path, visible text, heading above it) and the change. Make the smallest edit per note, re-run affected SQL, publish with `dashboard_update`.
 
 ## Ownership and sharing
 

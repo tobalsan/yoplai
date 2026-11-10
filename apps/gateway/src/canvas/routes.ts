@@ -1,4 +1,5 @@
 import fs from "node:fs/promises";
+import { readFileSync } from "node:fs";
 import path from "node:path";
 import { Hono } from "hono";
 import { z } from "zod";
@@ -77,6 +78,12 @@ const ASSETS = {
 
 type Viewer = { email?: string; name?: string };
 type PageEditing = { canWrite: boolean; editToken: string | null; editBase: string };
+/** Page identity for annotation mode; present only when the viewer may request edits from the page's agent. */
+type Annotation = { id: string; slug: string; agentId: string };
+
+let annotationSource: string | undefined;
+const annotationScript = () =>
+  (annotationSource ??= readFileSync(new URL("./assets/annotate.js", import.meta.url), "utf8"));
 
 export type DashboardRouteDependencies = {
   getConfig(): GatewayConfig;
@@ -198,7 +205,12 @@ export function createDashboardRoutes(deps: DashboardRouteDependencies): Hono {
           canWrite: !!editToken && dashboardAccessPolicy.canWrite(entry, actor),
           editToken,
           editBase: `${dashboardBaseUrl(config)}/d/${encodeURIComponent(entry.id)}`,
-        }
+        },
+        // Annotations are a chat request to the page's agent: offer them only
+        // to viewers who could make the edit and can chat with that agent.
+        dashboardAccessPolicy.canWrite(entry, actor) && actor.hasAgentAccess
+          ? { id: entry.id, slug, agentId: entry.agentId }
+          : null
       );
       c.header("Content-Security-Policy", dashboardCsp(config));
       c.header("Cache-Control", "no-store");
@@ -397,7 +409,8 @@ export async function renderDashboardHtml(
   theme?: "light" | "dark" | null,
   protectedLinkParams?: Record<string, string>,
   chatHref?: string | null,
-  editing?: PageEditing
+  editing?: PageEditing,
+  annotation?: Annotation | null
 ): Promise<string> {
   const bindings: Record<string, string | null> = {
     ...params,
@@ -417,6 +430,7 @@ export async function renderDashboardHtml(
       protectedLinkParams,
       chatHref,
       ...editing,
+      annotation,
     },
     theme
   );
@@ -452,6 +466,7 @@ export function injectDashboardRuntime(
     canWrite?: boolean;
     editToken?: string | null;
     editBase?: string;
+    annotation?: Annotation | null;
   },
   themeCookie?: "light" | "dark" | null
 ): string {
@@ -481,7 +496,10 @@ export function injectDashboardRuntime(
   const errors = runtime.errors.length
     ? `<section role="alert" style="font:14px sans-serif;background:#fee;color:#900;border:1px solid #d88;padding:12px;margin:12px"><strong>Dashboard query error</strong>${runtime.errors.map((error) => `<div><code>${escapeHtml(error.name)}</code>: ${escapeHtml(error.error)}</div>`).join("")}</section>`
     : "";
-  const insertion = `${hasClosingHead ? "" : theme}${themeScript}${chatStyle}${bootstrap}${errors}`;
+  const annotate = runtime.annotation
+    ? `<script data-annotation="${escapeHtml(JSON.stringify({ ...runtime.annotation, params: runtime.params }))}">${annotationScript()}</script>`
+    : "";
+  const insertion = `${hasClosingHead ? "" : theme}${themeScript}${chatStyle}${bootstrap}${annotate}${errors}`;
   const doctype = html.match(/^\s*<!doctype[^>]*>/i);
   return doctype
     ? `${html.slice(0, doctype[0].length)}${insertion}${html.slice(doctype[0].length)}`

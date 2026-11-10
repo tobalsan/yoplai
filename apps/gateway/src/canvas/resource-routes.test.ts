@@ -2,7 +2,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, expect, it } from "vitest";
-import { JSDOM } from "jsdom";
+import { JSDOM, type DOMWindow } from "jsdom";
 import type { AgentConfig, GatewayConfig } from "@yoplai/shared";
 import { createDashboardResourceRoutes, createDashboardRoutes } from "./routes.js";
 import { DashboardRegistry } from "./store.js";
@@ -346,4 +346,171 @@ it("shared viewers get new chats only with agent access and lost-access creators
   userId = "alice";
   expect(await (await resources.request("/")).json()).toMatchObject({ owned: [{ id: entry.id, chatHref: null }] });
   expect(checks).toEqual([]);
+});
+
+type AnnotationMessage = { channel?: string; type?: string; [key: string]: unknown };
+
+async function framedDashboard(rendered: string) {
+  const parent = new JSDOM("<!doctype html><body></body>", { url: "https://example.test/chat/agent", runScripts: "dangerously" });
+  const received: AnnotationMessage[] = [];
+  parent.window.addEventListener("message", (event) => received.push(event.data));
+  const iframe = parent.window.document.createElement("iframe");
+  parent.window.document.body.append(iframe);
+  iframe.contentDocument!.open();
+  iframe.contentDocument!.write(rendered);
+  iframe.contentDocument!.close();
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  const page = iframe.contentWindow as unknown as DOMWindow;
+  const send = (data: unknown) => page.dispatchEvent(new page.MessageEvent("message", { data, source: parent.window as never }));
+  const annotations = () => received.filter((message) => message?.channel === "yoplai-annotate");
+  return { parent, page, send, annotations };
+}
+
+const GARDEN_PAGE = '<!doctype html><html><head><title>Garden plan</title></head><body><h2>Beds</h2><section id="beds"><p class="bed">Tomatoes 12</p><a id="go" href="#elsewhere">Seed catalog</a></section><script>document.getElementById("go").addEventListener("click", () => { document.body.dataset.pageClicks = String(Number(document.body.dataset.pageClicks || 0) + 1); });</script></body></html>';
+
+async function annotationViewer(actor: { userId: string; hasAgentAccess: boolean }, shares: Array<{ kind: "user"; id: string; mode: "read" | "write" }> = [], html = GARDEN_PAGE, query: Record<string, string> = { bed: "north" }) {
+  const entry = await registry.createOwned("agent", "garden-plan.html", "alice", html);
+  await registry.replaceShares(entry.id, shares);
+  await fs.writeFile(path.join(root, "data", "dashboards", "garden-plan.html"), html);
+  const viewer = createDashboardRoutes({
+    getConfig: () => config, getAgent: () => agent, registry,
+    authenticate: async () => ({ user: { id: actor.userId } }),
+    resolveActor: async () => ({ userId: actor.userId, eligible: true, hasAgentAccess: actor.hasAgentAccess }),
+    hasAgentAccess: async () => actor.hasAgentAccess, sessionExists: async () => false,
+  });
+  const response = await viewer.request(`/${entry.id}?${new URLSearchParams(query)}`);
+  expect(response.status).toBe(200);
+  return { entry, rendered: await response.text() };
+}
+
+it("a framed dashboard announces itself to the chat when its owner can chat with the page's agent", async () => {
+  const { entry, rendered } = await annotationViewer({ userId: "alice", hasAgentAccess: true });
+  const { parent, annotations } = await framedDashboard(rendered);
+  expect(annotations()).toEqual([{ channel: "yoplai-annotate", type: "ready", id: entry.id, slug: "garden-plan.html", agentId: "agent", title: "Garden plan", params: { bed: "north" } }]);
+  parent.window.close();
+});
+
+it.each([
+  { who: "a write-share user with agent access", actor: { userId: "carol", hasAgentAccess: true }, mode: "write" as const, offered: true },
+  { who: "a write-share user without agent access", actor: { userId: "carol", hasAgentAccess: false }, mode: "write" as const, offered: false },
+  { who: "a read-only viewer with agent access", actor: { userId: "carol", hasAgentAccess: true }, mode: "read" as const, offered: false },
+  { who: "an owner who lost agent access", actor: { userId: "alice", hasAgentAccess: false }, mode: "read" as const, offered: false },
+])("annotation mode is offered to $who: $offered", async ({ actor, mode, offered }) => {
+  const { rendered } = await annotationViewer(actor, [{ kind: "user", id: "carol", mode }]);
+  const { parent, annotations } = await framedDashboard(rendered);
+  expect(annotations().map((message) => message.type)).toEqual(offered ? ["ready"] : []);
+  parent.window.close();
+});
+
+it("a dashboard opened at top level stays a plain page even for its owner", async () => {
+  const { rendered } = await annotationViewer({ userId: "alice", hasAgentAccess: true });
+  const top = new JSDOM(rendered, { url: "https://example.test/d/garden", runScripts: "dangerously" });
+  const received: unknown[] = [];
+  top.window.addEventListener("message", (event) => received.push(event.data));
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  top.window.document.getElementById("go")!.click();
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  expect(top.window.document.body.dataset.pageClicks).toBe("1");
+  expect(top.window.location.hash).toBe("#elsewhere");
+  expect(received).toEqual([]);
+  top.window.close();
+});
+
+const tick = (ms = 10) => new Promise((resolve) => setTimeout(resolve, ms));
+const annotationUi = (page: DOMWindow) => page.document.querySelector("yoplai-annotations")!.shadowRoot!;
+async function writeNote(page: DOMWindow, text: string) {
+  const ui = annotationUi(page);
+  const field = ui.querySelector<HTMLTextAreaElement>('textarea[aria-label="Note"]')!;
+  field.value = text;
+  [...ui.querySelectorAll("button")].find((button) => button.textContent === "Add")!.click();
+  await tick();
+}
+
+it("in annotation mode a click notes the element for the chat instead of acting on the page, and normal clicks return when it ends", async () => {
+  const { rendered } = await annotationViewer({ userId: "alice", hasAgentAccess: true });
+  const { parent, page, send, annotations } = await framedDashboard(rendered);
+  const link = page.document.getElementById("go")!;
+  // dispatchEvent returns false when the default action (following the link) is cancelled.
+  const click = () => link.dispatchEvent(new page.MouseEvent("click", { bubbles: true, cancelable: true }));
+  send({ channel: "yoplai-annotate", type: "set", on: true });
+  expect(click()).toBe(false);
+  await writeNote(page, "Link to the spring catalog");
+  expect(page.document.body.dataset.pageClicks).toBeUndefined();
+  expect(annotations().at(-1)).toEqual({
+    channel: "yoplai-annotate", type: "note", id: expect.any(String),
+    selector: "a#go", tag: "a", text: "Seed catalog", heading: "Beds", ancestor: "section#beds",
+    note: "Link to the spring catalog",
+  });
+  send({ channel: "yoplai-annotate", type: "set", on: false });
+  expect(click()).toBe(true);
+  await tick();
+  expect(page.document.body.dataset.pageClicks).toBe("1");
+  expect(annotations().map((message) => message.type)).toEqual(["ready", "note"]);
+  parent.window.close();
+});
+
+it("noted elements carry a short CSS path, their visible text, the heading above them and the nearest identified container", async () => {
+  const crewBoard = `<!doctype html><html><head><title>Crew board</title></head><body>
+    <h1>Crew board</h1>
+    <div data-widget="roster"><table class="dk-table striped wide"><tbody>
+      <tr><td>Ann</td></tr><tr><td>Bo</td></tr><tr><td>Cy  -
+        Roadmap review</td></tr>
+    </tbody></table></div>
+    <h2>Notes</h2>
+    <div><p>${"a".repeat(300)}</p></div>
+  </body></html>`;
+  const { rendered } = await annotationViewer({ userId: "alice", hasAgentAccess: true }, [], crewBoard);
+  const { parent, page, send, annotations } = await framedDashboard(rendered);
+  send({ channel: "yoplai-annotate", type: "set", on: true });
+  page.document.querySelectorAll("tr")[2].click();
+  await writeNote(page, "Move to the top");
+  page.document.querySelector("p")!.click();
+  await writeNote(page, "Shorten");
+  const [row, paragraph] = annotations().filter((message) => message.type === "note");
+  expect(row).toMatchObject({
+    selector: "div:nth-of-type(1) > table.dk-table.striped > tbody > tr:nth-of-type(3)",
+    tag: "tr", text: "Cy - Roadmap review", heading: "Crew board", ancestor: 'div[data-widget="roster"]',
+  });
+  expect(paragraph).toMatchObject({
+    selector: "div:nth-of-type(2) > p", tag: "p", text: `${"a".repeat(119)}…`, heading: "Notes", ancestor: "",
+  });
+  parent.window.close();
+});
+
+it("annotated elements show numbered markers the chat can remove or clear, Esc asks the chat to leave the mode, and other windows cannot switch it on", async () => {
+  const { rendered } = await annotationViewer({ userId: "alice", hasAgentAccess: true });
+  const { parent, page, send, annotations } = await framedDashboard(rendered);
+  const markers = () => [...annotationUi(page).querySelectorAll(".marker")].map((marker) => marker.textContent);
+  page.dispatchEvent(new page.MessageEvent("message", { data: { channel: "yoplai-annotate", type: "set", on: true }, source: page as never }));
+  page.document.getElementById("go")!.click();
+  await tick();
+  expect(page.document.body.dataset.pageClicks).toBe("1");
+  send({ channel: "yoplai-annotate", type: "set", on: true });
+  page.document.querySelector("p")!.click();
+  await writeNote(page, "Bigger font");
+  page.document.getElementById("go")!.click();
+  await writeNote(page, "Remove");
+  expect(markers()).toEqual(["1", "2"]);
+  const first = annotations().find((message) => message.type === "note")!;
+  send({ channel: "yoplai-annotate", type: "remove", id: first.id });
+  expect(markers()).toEqual(["1"]);
+  send({ channel: "yoplai-annotate", type: "clear" });
+  expect(markers()).toEqual([]);
+  page.document.querySelector("p")!.click();
+  page.document.dispatchEvent(new page.KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+  await tick();
+  expect(annotations().filter((message) => message.type === "exit")).toEqual([]);
+  page.document.dispatchEvent(new page.KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+  await tick();
+  expect(annotations().filter((message) => message.type === "exit")).toEqual([{ channel: "yoplai-annotate", type: "exit" }]);
+  parent.window.close();
+});
+
+it("hostile URL parameters reach the chat as plain data without adding markup to the page", async () => {
+  const hostile = '"><img src=x id=injected>';
+  const { rendered } = await annotationViewer({ userId: "alice", hasAgentAccess: true }, [], GARDEN_PAGE, { bed: hostile });
+  const { parent, page, annotations } = await framedDashboard(rendered);
+  expect(annotations()[0]).toMatchObject({ type: "ready", params: { bed: hostile } });
+  expect(page.document.getElementById("injected")).toBeNull();
+  parent.window.close();
 });

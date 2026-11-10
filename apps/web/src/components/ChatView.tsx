@@ -4,6 +4,7 @@ import { createAppViews, chatAppViewCalls, viewKey } from "./chat/appViews";
 import { load as loadPanelTabs } from "./chat/appViewStorage";
 import { ChatSidePanel, canSplitPanel } from "./chat/ChatSidePanel";
 import { ChatPanelTabs } from "./chat/ChatPanelTabs";
+import { createDashboardAnnotations, DashboardAnnotationsContext } from "./chat/dashboardAnnotations";
 import chatViewStyles from "./chat/ChatView.css?inline";
 import {
   createSignal,
@@ -316,6 +317,9 @@ export function ChatView() {
     setPanelStorageReady(true);
   });
   onCleanup(appViews.close);
+  // Staged dashboard notes belong to this conversation only.
+  const annotations = createDashboardAnnotations(() => params.agentId);
+  createEffect(on(currentSession, () => annotations.reset(), { defer: true }));
   const viewMessageTimes = new Map<string, number[]>();
   createEffect(on(() => `${params.agentId}\n${session.appSessionId() ?? currentSession()}`, () => viewMessageTimes.clear()));
   const handleViewMessage = async (viewKey: string, text: string): Promise<void> => {
@@ -598,7 +602,8 @@ export function ChatView() {
     const text = input().trim();
     const currentPendingFiles = pendingFiles();
     const hasFiles = currentPendingFiles.length > 0;
-    if ((!text && !hasFiles) || loading() || uploadingFiles()) return;
+    const hasNotes = annotations.notes().length > 0;
+    if ((!text && !hasFiles && !hasNotes) || loading() || uploadingFiles()) return;
     if (isStreaming() && hasFiles) {
       setUploadError("Wait for the current response before attaching files.");
       return;
@@ -619,8 +624,10 @@ export function ChatView() {
       return;
     }
 
-    const result = await session.send({ text, pendingFiles: currentPendingFiles });
+    const message = annotations.compose(text);
+    const result = await session.send({ text: message.text, pendingFiles: currentPendingFiles });
     if (result.kind === "sent") {
+      message.sent();
       setInput("");
       if (textareaRef) textareaRef.style.height = "auto";
       scrollToBottom(true);
@@ -663,6 +670,7 @@ export function ChatView() {
 
   const startFreshChat = (agentId: string) => {
     appViews.close();
+    annotations.reset();
     session.startNewChat(agentId);
     clearPendingFiles();
     setInput("");
@@ -687,6 +695,7 @@ export function ChatView() {
   });
 
   return (
+    <DashboardAnnotationsContext.Provider value={annotations}>
     <div
       ref={chatViewRef}
       class="chat-view"
@@ -959,6 +968,28 @@ export function ChatView() {
         </div>
       </Show>
 
+      <Show when={annotations.notes().length > 0}>
+        <ul class="annotation-notes" aria-label="Dashboard notes">
+          <For each={annotations.notes()}>
+            {(note, index) => (
+              <li class="annotation-chip" title={`${note.page.title}: ${note.note}`}>
+                <span class="annotation-chip-number">{index() + 1}</span>
+                <span class="annotation-chip-page">{note.page.title}</span>
+                <span class="annotation-chip-note">{note.note}</span>
+                <button
+                  type="button"
+                  class="annotation-chip-remove"
+                  aria-label={`Remove note ${index() + 1}`}
+                  onClick={() => annotations.remove(note.id)}
+                >
+                  <i class="fa-solid fa-xmark" aria-hidden="true" />
+                </button>
+              </li>
+            )}
+          </For>
+        </ul>
+      </Show>
+
       <div class="input-area" classList={{ "drop-active": isFileDragActive() }}>
         <input
           ref={fileInputRef}
@@ -1034,7 +1065,7 @@ export function ChatView() {
               onClick={handleSend}
               disabled={
                 impersonationStatus()?.active ||
-                (!input().trim() && pendingFiles().length === 0) ||
+                (!input().trim() && pendingFiles().length === 0 && annotations.notes().length === 0) ||
                 loading() ||
                 uploadingFiles() ||
                 compactStatusForCurrentSession()?.state === "running"
@@ -1125,5 +1156,6 @@ export function ChatView() {
 
       <style>{chatViewStyles}</style>
     </div>
+    </DashboardAnnotationsContext.Provider>
   );
 }

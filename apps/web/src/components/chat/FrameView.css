@@ -54,6 +54,10 @@
   color: var(--text-primary);
   background: var(--bg-raised);
 }
+.frame-view-header > .ui-button[aria-pressed="true"] {
+  color: var(--text-on-accent, #fff);
+  background: var(--bg-accent, var(--accent));
+}
 .frame-view-open:active {
   background: var(--bg-overlay);
 }

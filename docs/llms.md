@@ -539,6 +539,27 @@ without `allow-same-origin`. Existing viewer access, sandbox CSP and publication
 rules still apply; `frame-ancestors 'self'` restricts embedding to the chat origin.
 The header offers title, Open and Expand/Collapse without a URL toolbar.
 
+Annotation mode: the `/d/:id` route injects `assets/annotate.js` inline (page
+identity in its `data-annotation`) only when the viewer `canWrite` the entry and
+has agent access; the script does nothing at top level. Framed, it posts
+`{channel:"yoplai-annotate", type:"ready", id, slug, agentId, title, params}` to
+the parent on every load, stays dormant until the parent sends `set {on}`, then
+blocks clicks/pointer events in the capture phase, outlines the hovered element
+and opens a note popover in a shadow root. It posts `note {id, selector, tag,
+text, heading, ancestor, note}`, draws numbered markers, handles `remove {id}`
+and `clear`, and posts `exit` on Esc; it accepts commands only from
+`window.parent`. `chat/dashboardAnnotations.ts` (chat-level context provided by
+`ChatView`) trusts only messages whose `source` is the registered frame's own
+window, shows FrameView's Annotate toggle only when `ready.agentId` is the chat's
+agent, keeps one frame annotating, re-sends the mode after a re-announce, stamps
+each note with the frame's latest page context, clips untrusted text (note 500,
+selector 200, text/heading 120) and caps 20 notes. Notes render as composer chips;
+Send builds one plain-text message grouped by dashboard id + params (one
+"Dashboard annotations for …" header per group, continuous numbering, composer
+text last), sends it through `session.send`, then drops exactly the sent notes
+and their markers (notes added while the send was in flight stay). Chat switches
+and New chat drop staged notes. Nothing is stored.
+
 Agents use `dashboard_delete` to remove a dashboard HTML file, its stable registry entry, and its managed versions. Deletion is idempotent, preserves `.db` files, invalidates the old viewer link, and lets a recreated slug receive a new link with fresh history.
 
 The web agent detail page has a Dashboards tab for accessible agents. `GET /api/agents/:id/dashboards` uses per-agent access middleware and lists registrations filtered by dashboard access, never auto-registering workspace drafts; it returns each dashboard's HTML title (or filename), slug, file modification time, viewer link, required `params`, and normalized `linksTo` slugs. Dashboards that require URL arguments declare `<meta name="yoplai:params" content="id">` (comma-separated names allowed); optional arguments do not need this meta. The API stays flat; the tab nests required-argument dashboards beneath every same-agent parent that calls `YOPLAI.link` to them, recursively with ancestor-cycle protection. These child rows have no Open action (they show the required params). Rows on the tab and on the Dashboards page share `DashboardListRow`; each row carries `shared` (true only for non-owner recipients, so superadmins see "Owned by <owner>" for dashboards not shared with them). `DashboardAccessDialog` is the Share dialog (people with access plus a General access select that maps to the `{kind:"all"}` share). Dashboards without required arguments stay top-level; unreachable required-argument dashboards appear under **Needs parameters**.
