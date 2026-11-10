@@ -21,3 +21,44 @@
 Publication diagnostics execute SQL with `:viewer_email`, `:viewer_name`, and URL params set to null. Before sharing, replace placeholders with quoted real values and run the queries through `sqlite3`.
 
 Owners/writers see live working HTML; read-only viewers see durable published HTML and metadata. SQL remains live. Manage selected-user/platform-wide read/write grants from **Dashboards**, without requiring agent membership; publishing requires agent execution access. Legacy pages stay agent-gated/live until claimed privately. Drill-down pages have independent grants and unavailable targets are omitted. Never share internal agent-token preview URLs or reveal pages the requester cannot access.
+
+## Editable pages
+
+Declare editable columns in one or more blocks (max 20 per page, 100KB each):
+
+```html
+<script type="application/json" data-yoplai-edit="actions">
+{
+  "db": "data/app.db",
+  "table": "actions",
+  "key": "id",
+  "updatedAt": "updated_at",
+  "fields": {
+    "manual_done": { "type": "bool", "nullable": true },
+    "manual_pct": { "type": "int", "min": 0, "max": 100, "nullable": true },
+    "manual_state": { "type": "enum", "values": ["todo", "doing", "done"], "nullable": true },
+    "comment": { "type": "text", "max": 500, "nullable": true },
+    "archived": { "type": "bool" }
+  },
+  "guard": "SELECT 1 FROM actions WHERE id = :key AND lower(owner_email) = lower(:viewer_email)",
+  "create": true
+}
+</script>
+<input type="checkbox" data-edit="actions" data-key="7" data-field="manual_done" />
+```
+
+- `db` follows the `data-db` rule; `table`, `key` (one column) and field names match `^[A-Za-z_]\w*$`. `updatedAt` (optional) is set to the edit time.
+- Field types: `bool`, `int` (`min`/`max`), `text` (`max`, default 2000), `enum` (`values`); `nullable: true` lets users clear the value (clearing returns to the agent value; an empty text is stored as `NULL`).
+- `guard` (optional): one read-only SELECT with `:key`, `:viewer_email`, `:viewer_name`; it returns a row when the viewer may edit that row. Use the same predicate the page query uses to show the row. It never sees URL parameters.
+- `create: true` allows `YOPLAI.add`; `key` must be the table's `INTEGER PRIMARY KEY`.
+- The server uses only the declaration in the served HTML, never the request.
+
+Rights: the owner and write-share users edit any row of a declared table. Read-only viewers edit only rows the guard returns; with no guard they are refused. Adding rows is for writers only. A platform admin impersonating a user is read-only (no edit token, `YOPLAI.canWrite` false). Legacy pages must be claimed before they accept edits.
+
+Runtime calls (both reject with the server's message, e.g. "Row not found"):
+
+- `await YOPLAI.edit({ edit, key, field, value })` → `{ value, at }`
+- `await YOPLAI.add({ edit, values })` → `{ key, values, at }` (writers only; `values` are the persisted declared fields, defaults included)
+- `YOPLAI.canWrite`: viewer is owner/writer (show add buttons). `YOPLAI.canEdit`: an edit token exists (false under impersonation).
+
+Calls go to the page's own `/d/` endpoints with a token valid about 8 hours; after expiry the page shows "Reload to keep editing". Every edit and add is logged in `dashboard_edits` (see [data.md](data.md)). Lint reports malformed declarations, `data-edit` naming an undeclared edit, and edit pages that do not load the `v3` kit.

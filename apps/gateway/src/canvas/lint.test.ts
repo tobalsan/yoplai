@@ -90,7 +90,7 @@ describe("lintDashboardHtml", () => {
       `<link rel="stylesheet" href="/d-assets/v1/kit.css" />`
     );
     expect(lintDashboardHtml(html)).toEqual([
-      expect.stringContaining("/d-assets/v2/"),
+      expect.stringContaining("/d-assets/v3/"),
     ]);
   });
 
@@ -118,6 +118,23 @@ describe("lintDashboardHtml", () => {
         )
       )
     ).toEqual([]);
+  });
+
+  it("reports malformed edit declarations, controls naming an undeclared edit, and editing without the v3 kit", () => {
+    const kit3 = `<script src="/d-assets/v3/kit.js"></script>`;
+    const edit = (body: string, name = "tasks") =>
+      `<script type="application/json" data-yoplai-edit="${name}">${body}</script>`;
+    const good = edit(JSON.stringify({ db: "data/app.db", table: "tasks", key: "id", fields: { done: { type: "bool" } } }));
+    expect(lintDashboardHtml(page(`${good}<input type="checkbox" data-edit="tasks" data-key="1" data-field="done">`, kit3))).toEqual([]);
+    expect(lintDashboardHtml(page(edit("{oops"), kit3))).toEqual([
+      expect.stringMatching(/^Edit tasks: invalid JSON/),
+    ]);
+    expect(lintDashboardHtml(page(`${good}<select data-edit="todo" data-key="1" data-field="status"></select>`, kit3))).toEqual([
+      'Line 3: data-edit="todo" names no <script type="application/json" data-yoplai-edit="todo"> declaration.',
+    ]);
+    expect(lintDashboardHtml(page(`${good}<input type="checkbox" data-edit="tasks" data-key="1" data-field="done">`, `<script src="/d-assets/v2/kit.js"></script>`))).toEqual([
+      'Editable pages need <script src="/d-assets/v3/kit.js"> (and kit.css from /d-assets/v3/).',
+    ]);
   });
 
   it("never executes agent code", () => {

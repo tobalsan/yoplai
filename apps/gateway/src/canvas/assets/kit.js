@@ -1001,6 +1001,117 @@
     }
   }
 
+  // Editable controls: <input|select|textarea data-edit data-key data-field>.
+  // Saves on change (blur for text), shows saving/saved/failed and restores
+  // the last saved value when the server refuses.
+  const EDITABLE =
+    "input[data-edit][data-field],select[data-edit][data-field],textarea[data-edit][data-field]";
+  const savedValues = new WeakMap();
+  const readControl = (control) => {
+    if (control.type === "checkbox") return control.checked;
+    // Cleared text stays text; the server stores it as NULL for nullable
+    // fields. Empty numbers and selects mean "no value".
+    if (control.type === "text" || control.tagName === "TEXTAREA")
+      return control.value;
+    if (control.value === "") return null;
+    return control.type === "number" ? Number(control.value) : control.value;
+  };
+  const writeControl = (control, value) => {
+    if (control.type === "checkbox") control.checked = !!value;
+    else control.value = value == null ? "" : String(value);
+  };
+  const remember = (control) => {
+    if (!savedValues.has(control)) savedValues.set(control, readControl(control));
+  };
+  let toastTimer;
+  function editToast(message) {
+    let toast = document.querySelector(".dk-edit-toast");
+    if (!toast) {
+      toast = node("div", "dk-edit-toast");
+      toast.setAttribute("role", "status");
+      document.body.append(toast);
+    }
+    toast.textContent = message;
+    toast.hidden = false;
+    global.clearTimeout(toastTimer);
+    toastTimer = global.setTimeout(() => (toast.hidden = true), 6000);
+  }
+  async function saveControl(control) {
+    const yoplai = global.YOPLAI || {};
+    const previous = savedValues.has(control)
+      ? savedValues.get(control)
+      : control.type === "checkbox"
+        ? !control.checked
+        : null;
+    const request = {
+      edit: control.dataset.edit,
+      key: control.dataset.key,
+      field: control.dataset.field,
+      value: readControl(control),
+    };
+    // Lock the control so overlapping saves cannot finish out of order.
+    const wasDisabled = control.disabled;
+    control.disabled = true;
+    control.dataset.editState = "saving";
+    control.removeAttribute("aria-invalid");
+    control.setAttribute("aria-busy", "true");
+    try {
+      if (typeof yoplai.edit !== "function")
+        throw new Error("Editing is not available here");
+      const saved = await yoplai.edit(request);
+      writeControl(control, saved.value);
+      savedValues.set(control, saved.value);
+      control.dataset.editState = "saved";
+      control.title = "Saved";
+      control.dispatchEvent(
+        new global.CustomEvent("dk-edit-saved", {
+          bubbles: true,
+          detail: { ...request, value: saved.value, at: saved.at },
+        })
+      );
+    } catch (error) {
+      writeControl(control, previous);
+      control.dataset.editState = "failed";
+      control.setAttribute("aria-invalid", "true");
+      control.title = `Not saved: ${error.message}`;
+      editToast(`Not saved: ${error.message}`);
+    } finally {
+      control.disabled = wasDisabled;
+      control.removeAttribute("aria-busy");
+    }
+  }
+  if (document && document.addEventListener) {
+    // Capture the saved value before the first change; focus events can be
+    // skipped when the frame is not focused, so keys and input also count.
+    for (const type of ["focusin", "pointerdown", "keydown", "beforeinput"])
+      document.addEventListener(
+        type,
+        (event) => event.target.matches?.(EDITABLE) && remember(event.target),
+        true
+      );
+    document.addEventListener("change", (event) => {
+      if (event.target.matches?.(EDITABLE)) saveControl(event.target);
+    });
+    // Without an edit token (expired session, read-only impersonation) the
+    // controls stay visible but cannot be used.
+    const lock = () => {
+      if ((global.YOPLAI || {}).canEdit) return;
+      for (const control of document.querySelectorAll(EDITABLE))
+        control.disabled = true;
+    };
+    const watch = () => {
+      lock();
+      if (!(global.YOPLAI || {}).canEdit && global.MutationObserver)
+        new global.MutationObserver(lock).observe(document.body, {
+          childList: true,
+          subtree: true,
+        });
+    };
+    if (document.readyState === "loading")
+      document.addEventListener("DOMContentLoaded", watch, { once: true });
+    else if (document.body) watch();
+  }
+
   const api = {
     kpi,
     kpis,
@@ -1018,7 +1129,7 @@
     downloadCsv,
     chart,
     locale: undefined,
-    version: "2",
+    version: "3",
   };
   global.DashboardKit = api;
 })(globalThis);

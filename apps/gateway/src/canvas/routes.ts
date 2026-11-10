@@ -18,11 +18,18 @@ import { dashboardAccessPolicy, type DashboardActor } from "./policy.js";
 import { DashboardRegistry } from "./store.js";
 import { DashboardPinStore } from "./pins.js";
 import { executeDashboardQueries } from "./sql.js";
+import {
+  addDashboardRow,
+  DashboardEditError,
+  editDashboardRow,
+  issueDashboardEditToken,
+  verifyDashboardEditToken,
+} from "./edit.js";
 
 // Versions are cached for a week; bump when the kit changes. Older versions keep
 // resolving to the current (backward-compatible) files.
-const ASSET_VERSION = "v2";
-const ASSET_VERSIONS = new Set(["v1", ASSET_VERSION]);
+const ASSET_VERSION = "v3";
+const ASSET_VERSIONS = new Set(["v1", "v2", ASSET_VERSION]);
 const ASSET_CACHE = "public, max-age=604800";
 const THEME_MAPPING = `:root:root:not([data-yoplai-dashboard-theme]) {
   --dk-bg: var(--bg-base);
@@ -69,6 +76,7 @@ const ASSETS = {
 } as const;
 
 type Viewer = { email?: string; name?: string };
+type PageEditing = { canWrite: boolean; editToken: string | null; editBase: string };
 
 export type DashboardRouteDependencies = {
   getConfig(): GatewayConfig;
@@ -87,7 +95,7 @@ export function dashboardCsp(
   assetOrigin?: string
 ): string {
   const assets = `${assetOrigin ?? dashboardBaseUrl(config)}/d-assets/`;
-  return `sandbox allow-scripts allow-downloads allow-modals allow-popups allow-popups-to-escape-sandbox; default-src 'none'; script-src 'unsafe-inline' ${assets}; style-src 'unsafe-inline' ${assets}; img-src data: blob:; font-src data: ${assets}; connect-src 'none'; frame-ancestors 'self'`;
+  return `sandbox allow-scripts allow-downloads allow-modals allow-popups allow-popups-to-escape-sandbox; default-src 'none'; script-src 'unsafe-inline' ${assets}; style-src 'unsafe-inline' ${assets}; img-src data: blob:; font-src data: ${assets}; connect-src ${assetOrigin ?? dashboardBaseUrl(config)}/d/; frame-ancestors 'self'`;
 }
 
 export function createDashboardAssetRoutes(
@@ -169,6 +177,14 @@ export function createDashboardRoutes(deps: DashboardRouteDependencies): Hono {
       const links = Object.fromEntries(
         dashboards.map((dashboard) => [dashboard.slug, `/d/${dashboard.id}`])
       );
+      // Platform impersonation is read-only, and legacy pages must be claimed
+      // first: no token means the page cannot save edits.
+      const impersonated = typeof auth === "object" && auth !== null && "impersonator" in auth && !!auth.impersonator;
+      const editToken = entry.ownerUserId && actor.userId && !impersonated
+        ? issueDashboardEditToken(await deps.registry.editSigningKey(), {
+          dashboardId: entry.id, userId: actor.userId, email: viewer.email ?? null, name: viewer.name ?? null,
+        })
+        : null;
       html = await renderDashboardHtml(
         agent,
         html,
@@ -177,7 +193,12 @@ export function createDashboardRoutes(deps: DashboardRouteDependencies): Hono {
         links,
         parseThemeCookie(c.req.header("Cookie")),
         undefined,
-        await dashboardChatHref(entry, actor, deps.sessionExists)
+        await dashboardChatHref(entry, actor, deps.sessionExists),
+        {
+          canWrite: !!editToken && dashboardAccessPolicy.canWrite(entry, actor),
+          editToken,
+          editBase: `${dashboardBaseUrl(config)}/d/${encodeURIComponent(entry.id)}`,
+        }
       );
       c.header("Content-Security-Policy", dashboardCsp(config));
       c.header("Cache-Control", "no-store");
@@ -185,6 +206,48 @@ export function createDashboardRoutes(deps: DashboardRouteDependencies): Hono {
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === "ENOENT")
         return c.notFound();
+      throw error;
+    }
+  });
+  // Page edits. The page is an opaque-origin sandbox without cookies, so it
+  // posts text/plain JSON (no preflight) carrying its signed edit token; the
+  // token, not the origin, is the credential.
+  routes.post("/:id/:op{edit|add}", async (c) => {
+    const reply = (status: 200 | 400 | 401 | 403 | 404 | 503, body: Record<string, unknown>) =>
+      c.json(body, status, { "Access-Control-Allow-Origin": "*", "Cache-Control": "no-store" });
+    const refuse = (status: 400 | 401 | 403 | 404 | 503, error: string) => reply(status, { ok: false, error });
+    if (deps.getConfig().canvas?.enabled === false) return refuse(404, "Not found");
+    let body: Record<string, unknown>;
+    try {
+      body = JSON.parse(await c.req.text()) as Record<string, unknown>;
+    } catch {
+      return refuse(400, "Invalid request");
+    }
+    const id = c.req.param("id");
+    const claims = verifyDashboardEditToken(await deps.registry.editSigningKey(), body?.token);
+    if (!claims || claims.dashboardId !== id) return refuse(401, "Reload to keep editing");
+    const entry = await deps.registry.get(id);
+    if (!entry) return refuse(404, "Not found");
+    if (!entry.ownerUserId) return refuse(403, "Claim this dashboard before editing it");
+    // Re-check access now so revoked shares stop working immediately.
+    const actor = await routeActor(deps, {
+      user: { id: claims.userId, email: claims.email ?? undefined, name: claims.name ?? undefined },
+      session: { id: "dashboard-edit", userId: claims.userId },
+    }, entry.agentId);
+    if (actor.userId !== claims.userId || !dashboardAccessPolicy.canRead(entry, actor))
+      return refuse(403, "You no longer have access to this dashboard");
+    const agent = deps.getAgent(entry.agentId);
+    if (!agent) return refuse(404, "Not found");
+    try {
+      const { html } = await dashboardHtml(agent, deps.registry, { ...entry, slug: normalizeDashboardSlug(entry.slug) }, actor);
+      const editor = { ...claims, canWrite: dashboardAccessPolicy.canWrite(entry, actor) };
+      const result = c.req.param("op") === "edit"
+        ? await editDashboardRow(agent, html, editor, body)
+        : await addDashboardRow(agent, html, editor, body);
+      return reply(200, { ok: true, ...result });
+    } catch (error) {
+      if (error instanceof DashboardEditError) return refuse(error.status, error.message);
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return refuse(404, "Not found");
       throw error;
     }
   });
@@ -333,7 +396,8 @@ export async function renderDashboardHtml(
   links: Record<string, string>,
   theme?: "light" | "dark" | null,
   protectedLinkParams?: Record<string, string>,
-  chatHref?: string | null
+  chatHref?: string | null,
+  editing?: PageEditing
 ): Promise<string> {
   const bindings: Record<string, string | null> = {
     ...params,
@@ -352,6 +416,7 @@ export async function renderDashboardHtml(
       errors: result.errors,
       protectedLinkParams,
       chatHref,
+      ...editing,
     },
     theme
   );
@@ -384,6 +449,9 @@ export function injectDashboardRuntime(
     errors: Array<{ name: string; error: string }>;
     protectedLinkParams?: Record<string, string>;
     chatHref?: string | null;
+    canWrite?: boolean;
+    editToken?: string | null;
+    editBase?: string;
   },
   themeCookie?: "light" | "dark" | null
 ): string {
@@ -409,7 +477,7 @@ export function injectDashboardRuntime(
 .yoplai-dashboard-chat:hover{background:color-mix(in srgb,var(--yoplai-chat-accent) 85%,#000);box-shadow:0 6px 18px color-mix(in srgb,var(--yoplai-chat-accent) 45%,transparent),0 1px 3px rgba(0,0,0,.2)}
 .yoplai-dashboard-chat:focus-visible{outline:2px solid var(--yoplai-chat-accent);outline-offset:3px}
 </style>` : "";
-  const bootstrap = `<script>(function(r){const build=(base,p)=>{const u=new URL(base,location.origin);for(const [k,v] of Object.entries(p||{}))u.searchParams.set(k,String(v));return u.pathname+u.search};window.YOPLAI={data:r.data,viewer:r.viewer,params:r.params,link:(slug,p)=>{const base=r.links[slug];if(!base)throw new Error("Unknown dashboard: "+slug);return build(base,{...p,...r.protectedLinkParams})}};if(r.chatHref&&window.top===window){const showChat=()=>{const a=document.createElement("a");a.className="yoplai-dashboard-chat";a.href=r.chatHref;a.innerHTML='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7.9 20A9 9 0 1 0 4 16.1L2 22Z"/></svg><span>Chat</span>';a.target="_blank";a.rel="noopener noreferrer";document.body.append(a)};if(document.readyState==="loading")document.addEventListener("DOMContentLoaded",showChat,{once:true});else showChat()}for(const e of r.errors)console.error("Dashboard query error ("+e.name+"): "+e.error)})(${safeJson(runtime)});</script>`;
+  const bootstrap = `<script>(function(r){const build=(base,p)=>{const u=new URL(base,location.origin);for(const [k,v] of Object.entries(p||{}))u.searchParams.set(k,String(v));return u.pathname+u.search};window.YOPLAI={data:r.data,viewer:r.viewer,params:r.params,link:(slug,p)=>{const base=r.links[slug];if(!base)throw new Error("Unknown dashboard: "+slug);return build(base,{...p,...r.protectedLinkParams})}};const post=(op,body)=>{if(!r.editToken)return Promise.reject(new Error("Editing is not available here"));return fetch(r.editBase+"/"+op,{method:"POST",headers:{"Content-Type":"text/plain;charset=UTF-8"},credentials:"omit",cache:"no-store",body:JSON.stringify({...body,token:r.editToken})}).catch(()=>{throw new Error("Could not reach the server; not saved")}).then((res)=>res.json().catch(()=>({})).then((j)=>{if(!res.ok||!j.ok)throw new Error(j.error||"Not saved ("+res.status+")");delete j.ok;return j}))};YOPLAI.canWrite=!!r.canWrite;YOPLAI.canEdit=!!r.editToken;YOPLAI.edit=(o)=>post("edit",{edit:o&&o.edit,key:o&&o.key,field:o&&o.field,value:o&&o.value});YOPLAI.add=(o)=>post("add",{edit:o&&o.edit,values:(o&&o.values)||{}});if(r.chatHref&&window.top===window){const showChat=()=>{const a=document.createElement("a");a.className="yoplai-dashboard-chat";a.href=r.chatHref;a.innerHTML='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7.9 20A9 9 0 1 0 4 16.1L2 22Z"/></svg><span>Chat</span>';a.target="_blank";a.rel="noopener noreferrer";document.body.append(a)};if(document.readyState==="loading")document.addEventListener("DOMContentLoaded",showChat,{once:true});else showChat()}for(const e of r.errors)console.error("Dashboard query error ("+e.name+"): "+e.error)})(${safeJson(runtime)});</script>`;
   const errors = runtime.errors.length
     ? `<section role="alert" style="font:14px sans-serif;background:#fee;color:#900;border:1px solid #d88;padding:12px;margin:12px"><strong>Dashboard query error</strong>${runtime.errors.map((error) => `<div><code>${escapeHtml(error.name)}</code>: ${escapeHtml(error.error)}</div>`).join("")}</section>`
     : "";

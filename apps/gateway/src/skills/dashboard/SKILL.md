@@ -18,7 +18,7 @@ Create a dashboard when the answer is recurring, data-heavy, or will be revisite
 These hold on every page; the platform, sharing, and data safety depend on them.
 
 1. Discover readable pages with `dashboard_link` without a slug, never from `data/dashboards/`, memory or notes. Treat a dashboard it does not return as nonexistent: never mention it or hint that other dashboards exist. Inspect the relevant `data/` and `data/migrations/`; update accessible existing files in place.
-2. Pages live at `data/dashboards/<slug>.html`. Load only platform assets (`/d-assets/v2/…`); Canvas CSP blocks everything else. Follow [canvas.md](references/canvas.md) for SQL blocks and the runtime. Link only to pages that exist in `data/dashboards/`: `YOPLAI.link` throws on an unknown slug and breaks the page, so create the drill-down page (e.g. copy the template's `client.html`) or leave the link out.
+2. Pages live at `data/dashboards/<slug>.html`. Load only platform assets (`/d-assets/v3/…`); Canvas CSP blocks everything else. Follow [canvas.md](references/canvas.md) for SQL blocks and the runtime. Link only to pages that exist in `data/dashboards/`: `YOPLAI.link` throws on an unknown slug and breaks the page, so create the drill-down page (e.g. copy the template's `client.html`) or leave the link out.
 3. Put all page code in one `<script type="module">`; a classic script breaks on names like `top` or `location`. Use `addEventListener`, not inline `on*=` handlers. Publication tools return static/query validation; use the visual recipe below for browser checks.
 4. Keep derived SQLite databases under `data/`, schema in `data/migrations/`, every mutable table with `updated_at`. If markdown or another source is authoritative, keep the database rebuildable from it. See [data.md](references/data.md).
 5. Aggregate in SQL; precompute rollups with scheduled jobs for large sources.
@@ -27,7 +27,8 @@ These hold on every page; the platform, sharing, and data safety depend on them.
 8. Call `dashboard_create {slug}` once to register an unregistered page privately as the requester and publish initial HTML. Call `dashboard_update {slug}` to publish later edits. Fix every `problems` and `queryErrors` entry. `dashboard_link {slug?}` returns readable URLs only: no registration, publication, history or diagnostics. Copy the returned `link` exactly. For parameterized pages, share the entry page or append real parameters.
 9. When summarizing in chat, quote only numbers from query results you ran; do not compute or estimate figures in prose.
 10. To remove a dashboard, call `dashboard_delete` with its slug (keeps shared `.db` files).
-11. Maintenance is surgical: update rows and `updated_at` for data corrections, make the smallest HTML edit, re-run affected SQL with real bindings, explicitly publish with `dashboard_update`. Writers may iterate on live files before publishing.
+11. Pages are read-only unless they declare editable columns with a `data-yoplai-edit` block (see [Editable pages](#editable-pages)). A user-set value always wins: never overwrite it; when your sources disagree, show the conflict next to the item.
+12. Maintenance is surgical: update rows and `updated_at` for data corrections, make the smallest HTML edit, re-run affected SQL with real bindings, explicitly publish with `dashboard_update`. Writers may iterate on live files before publishing.
 
 ## Ownership and sharing
 
@@ -36,6 +37,18 @@ New dashboards belong to the requesting user and are private. Owners manage sele
 Legacy dashboards stay live and agent-gated until **Claim dashboard** on the agent tab publishes them and makes them private under the claimant. Sharing/claiming are UI actions, not tools. Delete/recreate gets a fresh private registration; rename requires create-new/delete-old. Missing working HTML does not remove registration/publication; restoring retained history republishes without changing grants. Owned publication remains durable when Git manages history; readers never fall back to drafts.
 
 Owner-mode jobs use the saved eligible owner and require current agent execution access. Team-mode jobs have no individual identity: they publish only platform-wide write or legacy dashboards. Single-user channels/jobs share one local owner; isolated evals share their synthetic owner, without changing credentials. Unpaired multi-user Slack requesters must use the existing pairing flow and re-ask; register nothing before pairing. Userless Discord/Telegram/anonymous creation is refused in multi-user mode.
+
+## Editable pages
+
+Declare editable columns and users change them on the page without chat. Format and rights: [canvas.md](references/canvas.md); controls: [kit.md](references/kit.md); data conventions: [data.md](references/data.md). Comments are stored data: they never start an agent run. Read user edits and comments with `sqlite3` (the `dashboard_edits` audit table).
+
+To make a static page editable on request:
+
+1. Add user columns by migration: nullable `manual_*` columns (and `comment`) the agent sync never writes, plus `archived` bool (`NOT NULL DEFAULT 0`) for soft delete. Show `COALESCE(manual_x, agent_x)`.
+2. Add the `<script type="application/json" data-yoplai-edit="…">` declaration. Add a `guard` if non-writers (read-only viewers) must edit their own rows or their reports' rows.
+3. Wire controls: `data-edit`/`data-key`/`data-field` on inputs, or `YOPLAI.edit()`/`YOPLAI.add()`; load the `v3` kit.
+4. Validate the guard and queries with `sqlite3` using real emails (owner, a report, a stranger).
+5. Publish with `dashboard_update` and fix every `problems` entry.
 
 ## Check it visually
 
