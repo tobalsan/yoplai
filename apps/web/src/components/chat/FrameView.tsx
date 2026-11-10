@@ -76,7 +76,7 @@ export function FrameView(props: {
         ref={frame}
         title={`${title()} dashboard`}
         src={url()}
-        sandbox="allow-scripts allow-downloads allow-modals allow-popups allow-popups-to-escape-sandbox"
+        sandbox="allow-scripts allow-forms allow-downloads allow-modals allow-popups allow-popups-to-escape-sandbox"
         referrerpolicy="no-referrer"
       />
       <style>{frameViewStyles}</style>

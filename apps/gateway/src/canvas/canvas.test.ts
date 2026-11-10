@@ -752,7 +752,7 @@ describe("internal dashboard rendering", () => {
     );
     expect(response.status).toBe(200);
     expect(response.headers.get("content-security-policy")).toBe(
-      "sandbox allow-scripts allow-downloads allow-modals allow-popups allow-popups-to-escape-sandbox; default-src 'none'; script-src 'unsafe-inline' http://localhost/d-assets/; style-src 'unsafe-inline' http://localhost/d-assets/; img-src data: blob:; font-src data: http://localhost/d-assets/; connect-src http://localhost/d/; frame-ancestors 'self'"
+      "sandbox allow-scripts allow-forms allow-downloads allow-modals allow-popups allow-popups-to-escape-sandbox; default-src 'none'; script-src 'unsafe-inline' http://localhost/d-assets/; style-src 'unsafe-inline' http://localhost/d-assets/; img-src data: blob:; font-src data: http://localhost/d-assets/; connect-src http://localhost/d/; frame-ancestors 'self'; form-action 'none'"
     );
     expect(response.headers.get("cache-control")).toBe("no-store");
     const html = await response.text();
@@ -869,10 +869,10 @@ describe("dashboard viewer", () => {
     const first = await routes.request(`/${entry.id}`);
     expect(first.status).toBe(200);
     expect(first.headers.get("content-security-policy")).toBe(
-      "sandbox allow-scripts allow-downloads allow-modals allow-popups allow-popups-to-escape-sandbox; default-src 'none'; script-src 'unsafe-inline' https://yoplai.test/d-assets/; style-src 'unsafe-inline' https://yoplai.test/d-assets/; img-src data: blob:; font-src data: https://yoplai.test/d-assets/; connect-src https://yoplai.test/d/; frame-ancestors 'self'"
+      "sandbox allow-scripts allow-forms allow-downloads allow-modals allow-popups allow-popups-to-escape-sandbox; default-src 'none'; script-src 'unsafe-inline' https://yoplai.test/d-assets/; style-src 'unsafe-inline' https://yoplai.test/d-assets/; img-src data: blob:; font-src data: https://yoplai.test/d-assets/; connect-src https://yoplai.test/d/; frame-ancestors 'self'; form-action 'none'"
     );
     expect(first.headers.get("content-security-policy")).toContain(
-      "connect-src https://yoplai.test/d/; frame-ancestors 'self'"
+      "connect-src https://yoplai.test/d/; frame-ancestors 'self'; form-action 'none'"
     );
     await fs.writeFile(
       path.join(workspace, "data", "dashboards", "hello.html"),
@@ -896,13 +896,14 @@ describe("dashboard viewer", () => {
     expect(csp.split(";")[0].split(" ")).toEqual([
       "sandbox",
       "allow-scripts",
+      "allow-forms",
       "allow-downloads",
       "allow-modals",
       "allow-popups",
       "allow-popups-to-escape-sandbox",
     ]);
     expect(csp).toContain("default-src 'none'");
-    expect(csp).toContain("connect-src https://yoplai.test/d/; frame-ancestors 'self'");
+    expect(csp).toContain("connect-src https://yoplai.test/d/; frame-ancestors 'self'; form-action 'none'");
   });
 
   it("injects live query data, viewer bindings, params, and dashboard links before page scripts", async () => {
