@@ -147,7 +147,90 @@ it("a non-member recipient sees published HTML and filtered published metadata, 
   await registry.replaceShares(entry.id, [{ kind: "user", id: "bob", mode: "write" }]);
   expect(await (await viewer.request(`/${entry.id}`)).text()).toContain("DRAFT");
   userId = "stranger";
+  const denied = await viewer.request(`/${entry.id}`);
+  expect(denied.status).toBe(403);
+  expect(await denied.text()).toContain("<strong>Published</strong>. alice hasn't shared it with you.");
+});
+
+it("a page linking to a dashboard the viewer cannot read still loads, with that link disabled", async () => {
+  const handbook = await registry.createOwned("agent", "handbook.html", "harry",
+    '<!doctype html><html><head><title>People Handbook</title></head><body><nav></nav><a id="space">Personal space</a><h1 id="done"></h1><script>'
+    + 'document.getElementById("space").href = YOPLAI.link("my-space.html");'
+    + 'if (YOPLAI.canLink("okr.html")) { const a = document.createElement("a"); a.id = "okr"; a.href = YOPLAI.link("okr.html"); document.querySelector("nav").append(a); }'
+    + 'if (YOPLAI.canLink("my-space.html")) { const a = document.createElement("a"); a.id = "nav-space"; document.querySelector("nav").append(a); }'
+    + 'document.getElementById("done").textContent = "rendered";</script></body></html>');
+  const okr = await registry.createOwned("agent", "okr.html", "harry", "OKR");
+  await registry.createOwned("agent", "my-space.html", "phuong", "SPACE");
+  await registry.replaceShares(handbook.id, [{ kind: "user", id: "melissa", mode: "read" }]);
+  await registry.replaceShares(okr.id, [{ kind: "user", id: "melissa", mode: "read" }]);
+  const viewer = createDashboardRoutes({
+    getConfig: () => config, getAgent: () => agent, registry,
+    authenticate: async () => ({ user: { id: "melissa" } }),
+    resolveActor: async () => ({ userId: "melissa", eligible: true, hasAgentAccess: false }),
+    hasAgentAccess: async () => false, sessionExists: async () => false,
+  });
+  const response = await viewer.request(`/${handbook.id}`);
+  expect(response.status).toBe(200);
+  const warn: unknown[] = [];
+  const errors: unknown[] = [];
+  const dom = new JSDOM(await response.text(), {
+    url: `https://example.test/d/${handbook.id}`, runScripts: "dangerously",
+    beforeParse(window) { window.console.warn = (message: unknown) => warn.push(message); window.console.error = (message: unknown) => errors.push(message); },
+  });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  const document = dom.window.document;
+  expect(document.getElementById("done")?.textContent).toBe("rendered");
+  expect(document.getElementById("okr")?.getAttribute("href")).toBe(`/d/${okr.id}`);
+  expect(document.getElementById("nav-space")).toBeNull();
+  const space = document.getElementById("space")!;
+  expect(space.getAttribute("aria-disabled")).toBe("true");
+  expect(space.getAttribute("title")).toBe("Not shared with you");
+  expect(warn).toHaveLength(1);
+  expect(errors).toEqual([]);
+  dom.window.close();
+});
+
+it("an eligible viewer without a share gets a friendly 403 naming the dashboard and its owner", async () => {
+  const html = `<!doctype html><html><head><title>Phuong's "Space" & co</title></head><body>SECRET-CONTENT</body></html>`;
+  const entry = await registry.createOwned("agent", "my-space.html", "phuong", html);
+  await fs.writeFile(path.join(root, "data", "dashboards", "my-space.html"), html);
+  await registry.replaceShares(entry.id, [{ kind: "user", id: "bob", mode: "read" }]);
+  let actor: { userId?: string; eligible: boolean; superadmin?: boolean } = { userId: "melissa", eligible: true };
+  let signedIn = true;
+  const viewer = createDashboardRoutes({
+    getConfig: () => config, getAgent: (id) => (id === "agent" ? agent : undefined), registry,
+    authenticate: async () => (signedIn ? { user: { id: actor.userId } } : null),
+    resolveActor: async () => ({ ...actor, hasAgentAccess: false }),
+    hasAgentAccess: async () => false, sessionExists: async () => false,
+    getOwnerName: async (id) => (id === "phuong" ? "Phuong <Tran>" : "Unknown user"),
+  });
+  const denied = await viewer.request(`/${entry.id}`);
+  expect(denied.status).toBe(403);
+  expect(denied.headers.get("Cache-Control")).toBe("no-store");
+  expect(denied.headers.get("Content-Security-Policy")).toContain("sandbox allow-scripts");
+  const page = await denied.text();
+  expect(page).not.toContain("SECRET-CONTENT");
+  const dom = new JSDOM(page);
+  expect(dom.window.document.body.textContent?.replace(/\s+/g, " ")).toContain(
+    "You don't have access to Phuong's \"Space\" & co. Phuong <Tran> hasn't shared it with you. Ask them to share it."
+  );
+  expect(dom.window.document.querySelector("strong")?.textContent).toBe('Phuong\'s "Space" & co');
+  dom.window.close();
+
+  for (const allowed of [{ userId: "phuong", eligible: true }, { userId: "bob", eligible: true }, { userId: "admin", eligible: true, superadmin: true }]) {
+    actor = allowed;
+    const response = await viewer.request(`/${entry.id}`);
+    expect(response.status).toBe(200);
+    expect(await response.text()).toContain("SECRET-CONTENT");
+  }
+  actor = { userId: "pending", eligible: false };
   expect((await viewer.request(`/${entry.id}`)).status).toBe(404);
+  actor = { userId: "melissa", eligible: true };
+  expect((await viewer.request("/missing-id")).status).toBe(404);
+  signedIn = false;
+  const login = await viewer.request(`/${entry.id}`);
+  expect(login.status).toBe(302);
+  expect(login.headers.get("location")).toBe(`https://example.test/login?returnTo=%2F${entry.id}`);
 });
 
 it("owners without agent access manage eligible recipients, deny invalid grants and non-owner mutations", async () => {
@@ -218,7 +301,11 @@ it("non-member readers query live data with authenticated bindings, fail closed 
   expect((await viewer.request(`/${entry.id}`)).status).toBe(404);
   eligible = true;
   await registry.replaceShares(entry.id, []);
-  expect((await viewer.request(`/${entry.id}`)).status).toBe(404);
+  const revoked = await viewer.request(`/${entry.id}`);
+  expect(revoked.status).toBe(403);
+  const page = await revoked.text();
+  expect(page).toContain("You don't have access to <strong>sql.html</strong>. The owner hasn't shared it with you.");
+  expect(page).not.toContain("DRAFT-MUST-NEVER-LEAK");
   await registry.replaceShares(entry.id, [{ kind: "all", mode: "read" }]);
   await fs.rm(path.join(root, "canvas", "published"), { recursive: true });
   const missing = await viewer.request(`/${entry.id}`);

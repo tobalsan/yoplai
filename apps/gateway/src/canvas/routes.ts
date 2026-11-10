@@ -16,7 +16,8 @@ import {
 } from "./dashboard-files.js";
 import { dashboardChatHref, dashboardHtml, listAgentDashboards, type DashboardListContext } from "./list.js";
 import { dashboardAccessPolicy, type DashboardActor } from "./policy.js";
-import { DashboardRegistry } from "./store.js";
+import { DashboardRegistry, type DashboardRegistration } from "./store.js";
+import { dashboardTitle } from "./title.js";
 import { DashboardPinStore } from "./pins.js";
 import { executeDashboardQueries } from "./sql.js";
 import {
@@ -75,6 +76,8 @@ const ASSETS = {
     type: "text/javascript; charset=utf-8",
   },
 } as const;
+
+const NO_ACCESS_HREF = "#yoplai-no-access";
 
 type Viewer = { email?: string; name?: string };
 type PageEditing = { canWrite: boolean; editToken: string | null; editBase: string };
@@ -162,9 +165,15 @@ export function createDashboardRoutes(deps: DashboardRouteDependencies): Hono {
       return c.redirect(login.toString(), 302);
     }
     const actor = await routeActor(deps, auth, entry.agentId);
-    if (!dashboardAccessPolicy.canRead(entry, actor)) return c.notFound();
-
     const agent = deps.getAgent(entry.agentId);
+    if (!dashboardAccessPolicy.canRead(entry, actor)) {
+      // Name the page and its owner so the viewer knows whom to ask. Legacy
+      // pages have no owner to ask, and ineligible accounts learn nothing.
+      if (!actor.eligible || !entry.ownerUserId || !agent) return c.notFound();
+      c.header("Content-Security-Policy", dashboardCsp(config));
+      c.header("Cache-Control", "no-store");
+      return c.html(await noAccessPage(deps, entry, parseThemeCookie(c.req.header("Cookie"))), 403);
+    }
     if (!agent) return c.notFound();
     let slug: string;
     try {
@@ -180,10 +189,12 @@ export function createDashboardRoutes(deps: DashboardRouteDependencies): Hono {
           : {};
       const url = new URL(c.req.url);
       const params = Object.fromEntries(url.searchParams.entries());
-      const dashboards = dashboardAccessPolicy.filterVisible(await deps.registry.list(agent.id), actor);
+      const registered = await deps.registry.list(agent.id);
+      const dashboards = dashboardAccessPolicy.filterVisible(registered, actor);
       const links = Object.fromEntries(
         dashboards.map((dashboard) => [dashboard.slug, `/d/${dashboard.id}`])
       );
+      const noAccess = registered.filter((dashboard) => !dashboards.includes(dashboard)).map((dashboard) => dashboard.slug);
       // Platform impersonation is read-only, and legacy pages must be claimed
       // first: no token means the page cannot save edits.
       const impersonated = typeof auth === "object" && auth !== null && "impersonator" in auth && !!auth.impersonator;
@@ -210,7 +221,8 @@ export function createDashboardRoutes(deps: DashboardRouteDependencies): Hono {
         // to viewers who could make the edit and can chat with that agent.
         dashboardAccessPolicy.canWrite(entry, actor) && actor.hasAgentAccess
           ? { id: entry.id, slug, agentId: entry.agentId }
-          : null
+          : null,
+        noAccess
       );
       c.header("Content-Security-Policy", dashboardCsp(config));
       c.header("Cache-Control", "no-store");
@@ -264,6 +276,25 @@ export function createDashboardRoutes(deps: DashboardRouteDependencies): Hono {
     }
   });
   return routes;
+}
+
+async function noAccessPage(
+  deps: DashboardRouteDependencies,
+  entry: DashboardRegistration,
+  theme: "light" | "dark" | null
+): Promise<string> {
+  const title = await deps.registry.readPublished(entry.id)
+    .then((html) => dashboardTitle(html, entry.slug), () => entry.slug);
+  const owner = entry.ownerUserId
+    ? await deps.getOwnerName?.(entry.ownerUserId).catch(() => undefined)
+    : undefined;
+  const html = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Not shared with you</title><link rel="stylesheet" href="/d-assets/${ASSET_VERSION}/kit.css"><style>
+main.yoplai-no-access{max-width:34rem;padding-top:clamp(40px,14vh,120px)}
+.yoplai-no-access svg{display:block;width:28px;height:28px;margin-bottom:20px;color:var(--dk-muted)}
+.yoplai-no-access p{color:var(--dk-muted);font-size:15px;line-height:1.6}
+.yoplai-no-access strong{color:var(--dk-text);font-weight:600}
+</style></head><body><main class="yoplai-no-access"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg><h1>Not shared with you</h1><p>You don't have access to <strong>${escapeHtml(title)}</strong>. ${owner ? escapeHtml(owner) : "The owner"} hasn't shared it with you. Ask them to share it.</p></main></body></html>`;
+  return injectDashboardRuntime(html, { data: {}, viewer: { email: null, name: null }, params: {}, links: {}, errors: [] }, theme);
 }
 
 async function routeActor(deps: DashboardRouteDependencies, auth: unknown, agentId?: string): Promise<DashboardActor> {
@@ -410,7 +441,8 @@ export async function renderDashboardHtml(
   protectedLinkParams?: Record<string, string>,
   chatHref?: string | null,
   editing?: PageEditing,
-  annotation?: Annotation | null
+  annotation?: Annotation | null,
+  noAccess?: string[]
 ): Promise<string> {
   const bindings: Record<string, string | null> = {
     ...params,
@@ -426,6 +458,7 @@ export async function renderDashboardHtml(
       viewer: { email: viewer.email ?? null, name: viewer.name ?? null },
       params,
       links,
+      noAccess,
       errors: result.errors,
       protectedLinkParams,
       chatHref,
@@ -460,6 +493,8 @@ export function injectDashboardRuntime(
     viewer: { email: string | null; name: string | null };
     params: Record<string, string>;
     links: Record<string, string>;
+    /** Slugs of the agent's dashboards the viewer cannot read; links to them render disabled. */
+    noAccess?: string[];
     errors: Array<{ name: string; error: string }>;
     protectedLinkParams?: Record<string, string>;
     chatHref?: string | null;
@@ -492,14 +527,19 @@ export function injectDashboardRuntime(
 .yoplai-dashboard-chat:hover{background:color-mix(in srgb,var(--yoplai-chat-accent) 85%,#000);box-shadow:0 6px 18px color-mix(in srgb,var(--yoplai-chat-accent) 45%,transparent),0 1px 3px rgba(0,0,0,.2)}
 .yoplai-dashboard-chat:focus-visible{outline:2px solid var(--yoplai-chat-accent);outline-offset:3px}
 </style>` : "";
-  const bootstrap = `<script>(function(r){const build=(base,p)=>{const u=new URL(base,location.origin);for(const [k,v] of Object.entries(p||{}))u.searchParams.set(k,String(v));return u.pathname+u.search};window.YOPLAI={data:r.data,viewer:r.viewer,params:r.params,link:(slug,p)=>{const base=r.links[slug];if(!base)throw new Error("Unknown dashboard: "+slug);return build(base,{...p,...r.protectedLinkParams})}};const post=(op,body)=>{if(!r.editToken)return Promise.reject(new Error("Editing is not available here"));return fetch(r.editBase+"/"+op,{method:"POST",headers:{"Content-Type":"text/plain;charset=UTF-8"},credentials:"omit",cache:"no-store",body:JSON.stringify({...body,token:r.editToken})}).catch(()=>{throw new Error("Could not reach the server; not saved")}).then((res)=>res.json().catch(()=>({})).then((j)=>{if(!res.ok||!j.ok)throw new Error(j.error||"Not saved ("+res.status+")");delete j.ok;return j}))};YOPLAI.canWrite=!!r.canWrite;YOPLAI.canEdit=!!r.editToken;YOPLAI.edit=(o)=>post("edit",{edit:o&&o.edit,key:o&&o.key,field:o&&o.field,value:o&&o.value});YOPLAI.add=(o)=>post("add",{edit:o&&o.edit,values:(o&&o.values)||{}});if(r.chatHref&&window.top===window){const showChat=()=>{const a=document.createElement("a");a.className="yoplai-dashboard-chat";a.href=r.chatHref;a.innerHTML='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7.9 20A9 9 0 1 0 4 16.1L2 22Z"/></svg><span>Chat</span>';a.target="_blank";a.rel="noopener noreferrer";document.body.append(a)};if(document.readyState==="loading")document.addEventListener("DOMContentLoaded",showChat,{once:true});else showChat()}for(const e of r.errors)console.error("Dashboard query error ("+e.name+"): "+e.error)})(${safeJson(runtime)});</script>`;
+  const bootstrap = `<script>(function(r){const NO_ACCESS=${JSON.stringify(NO_ACCESS_HREF)},warned=new Set();const build=(base,p)=>{const u=new URL(base,location.origin);for(const [k,v] of Object.entries(p||{}))u.searchParams.set(k,String(v));return u.pathname+u.search};window.YOPLAI={data:r.data,viewer:r.viewer,params:r.params,link:(slug,p)=>{const base=r.links[slug];if(!base){if((r.noAccess||[]).includes(slug)){if(!warned.has(slug)){warned.add(slug);console.warn("Dashboard not shared with you: "+slug)}return NO_ACCESS}throw new Error("Unknown dashboard: "+slug)}return build(base,{...p,...r.protectedLinkParams})},canLink:(slug)=>Object.prototype.hasOwnProperty.call(r.links,slug)};const post=(op,body)=>{if(!r.editToken)return Promise.reject(new Error("Editing is not available here"));return fetch(r.editBase+"/"+op,{method:"POST",headers:{"Content-Type":"text/plain;charset=UTF-8"},credentials:"omit",cache:"no-store",body:JSON.stringify({...body,token:r.editToken})}).catch(()=>{throw new Error("Could not reach the server; not saved")}).then((res)=>res.json().catch(()=>({})).then((j)=>{if(!res.ok||!j.ok)throw new Error(j.error||"Not saved ("+res.status+")");delete j.ok;return j}))};YOPLAI.canWrite=!!r.canWrite;YOPLAI.canEdit=!!r.editToken;YOPLAI.edit=(o)=>post("edit",{edit:o&&o.edit,key:o&&o.key,field:o&&o.field,value:o&&o.value});YOPLAI.add=(o)=>post("add",{edit:o&&o.edit,values:(o&&o.values)||{}});if(r.chatHref&&window.top===window){const showChat=()=>{const a=document.createElement("a");a.className="yoplai-dashboard-chat";a.href=r.chatHref;a.innerHTML='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7.9 20A9 9 0 1 0 4 16.1L2 22Z"/></svg><span>Chat</span>';a.target="_blank";a.rel="noopener noreferrer";document.body.append(a)};if(document.readyState==="loading")document.addEventListener("DOMContentLoaded",showChat,{once:true});else showChat()}for(const e of r.errors)console.error("Dashboard query error ("+e.name+"): "+e.error)})(${safeJson(runtime)});</script>`;
+  // Links to pages the viewer cannot open stay visible but disabled. Page or
+  // kit code creates anchors after load, so mark them as they appear.
+  const noAccess = runtime.noAccess?.length ? `<style>
+a[href="${NO_ACCESS_HREF}"]{opacity:.5;cursor:not-allowed;text-decoration:none}
+</style><script>(function(d){const q='a[href="${NO_ACCESS_HREF}"]';const marked=new Map();const mark=()=>{for(const a of d.querySelectorAll(q)){if(!marked.has(a)){marked.set(a,a.getAttribute("title"));a.setAttribute("aria-disabled","true");a.setAttribute("title","Not shared with you")}}for(const [a,title] of marked){if(!a.matches(q)){marked.delete(a);a.removeAttribute("aria-disabled");if(title===null)a.removeAttribute("title");else a.setAttribute("title",title)}}};d.addEventListener("click",(e)=>{if(e.target instanceof Element&&e.target.closest(q))e.preventDefault()},true);new MutationObserver(mark).observe(d.documentElement,{childList:true,subtree:true,attributes:true,attributeFilter:["href"]});mark()})(document);</script>` : "";
   const errors = runtime.errors.length
     ? `<section role="alert" style="font:14px sans-serif;background:#fee;color:#900;border:1px solid #d88;padding:12px;margin:12px"><strong>Dashboard query error</strong>${runtime.errors.map((error) => `<div><code>${escapeHtml(error.name)}</code>: ${escapeHtml(error.error)}</div>`).join("")}</section>`
     : "";
   const annotate = runtime.annotation
     ? `<script data-annotation="${escapeHtml(JSON.stringify({ ...runtime.annotation, params: runtime.params }))}">${annotationScript()}</script>`
     : "";
-  const insertion = `${hasClosingHead ? "" : theme}${themeScript}${chatStyle}${bootstrap}${annotate}${errors}`;
+  const insertion = `${hasClosingHead ? "" : theme}${themeScript}${chatStyle}${bootstrap}${noAccess}${annotate}${errors}`;
   const doctype = html.match(/^\s*<!doctype[^>]*>/i);
   return doctype
     ? `${html.slice(0, doctype[0].length)}${insertion}${html.slice(doctype[0].length)}`

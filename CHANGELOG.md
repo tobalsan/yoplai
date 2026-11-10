@@ -20,6 +20,7 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Fixed
 
+- A dashboard that links to a page the viewer can't open no longer breaks: the link shows disabled ("Not shared with you") and the rest of the page loads. Pages can hide such links with `YOPLAI.canLink()`. Opening an unshared dashboard's URL shows which dashboard it is and whom to ask instead of a bare 404.
 - The first view in the web chat side panel no longer goes blank when a second tab opens; a view whose sandbox reloads now loads again.
 
 ## v0.28.0 — Artifacts in chat, side panel tabs + safer scheduled jobs

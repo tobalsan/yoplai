@@ -1606,6 +1606,103 @@ describe("dashboard SQL", () => {
     dom.window.close();
   });
 
+  describe("links to dashboards the viewer cannot open", () => {
+    const render = (body: string) => {
+      const warn = vi.fn();
+      const error = vi.fn();
+      const html = injectDashboardRuntime(
+        `<html><head></head><body>${body}</body></html>`,
+        {
+          data: {},
+          viewer: { email: null, name: null },
+          params: {},
+          links: { "detail.html": "/d/detail-id" },
+          noAccess: ["my-space.html"],
+          errors: [],
+        }
+      );
+      const dom = new JSDOM(html, {
+        runScripts: "dangerously",
+        url: "https://yoplai.test/d/source",
+        beforeParse(window) {
+          window.console.warn = warn;
+          window.console.error = error;
+        },
+      });
+      return { dom, warn, error };
+    };
+
+    it("renders an unshared link as a no-access href with a warning and keeps the page running", () => {
+      const { dom, warn, error } = render(
+        `<script>window.href=YOPLAI.link("my-space.html",{id:1});window.after=true</script>`
+      );
+      const window = dom.window as unknown as { href?: string; after?: boolean };
+      expect(window.href).toBe("#yoplai-no-access");
+      expect(window.after).toBe(true);
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining("my-space.html"));
+      expect(error).not.toHaveBeenCalled();
+      dom.window.close();
+    });
+
+    it("lets a page hide links it cannot open with canLink, and still throws on unknown slugs", () => {
+      const { dom } = render(
+        `<nav></nav><script>for (const slug of ["detail.html","my-space.html","typo.html"]) if (YOPLAI.canLink(slug)) { const a=document.createElement("a"); a.textContent=slug; document.querySelector("nav").append(a) }</script>`
+      );
+      const window = dom.window as unknown as {
+        YOPLAI: { canLink(slug: string): boolean; link(slug: string): string };
+      };
+      expect(["detail.html", "my-space.html", "typo.html"].map((slug) => window.YOPLAI.canLink(slug))).toEqual([true, false, false]);
+      expect(dom.window.document.querySelector("nav")?.textContent).toBe("detail.html");
+      expect(() => window.YOPLAI.link("typo.html")).toThrow("Unknown dashboard: typo.html");
+      dom.window.close();
+    });
+
+    it("disables no-access anchors, including ones added after load, without blanking their text", async () => {
+      const { dom } = render(
+        `<table><tr><td><a id="cell">Phuong</a></td></tr></table><script>document.getElementById("cell").href=YOPLAI.link("my-space.html")</script>`
+      );
+      const document = dom.window.document;
+      const late = document.createElement("a");
+      late.id = "late";
+      late.textContent = "Personal space";
+      late.setAttribute("href", (dom.window as unknown as { YOPLAI: { link(slug: string): string } }).YOPLAI.link("my-space.html"));
+      document.body.append(late);
+      const visible = document.createElement("a");
+      visible.id = "visible";
+      visible.setAttribute("href", "#totals");
+      document.body.append(visible);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      for (const id of ["cell", "late"]) {
+        const anchor = document.getElementById(id)!;
+        expect(anchor.getAttribute("aria-disabled")).toBe("true");
+        expect(anchor.getAttribute("title")).toBe("Not shared with you");
+        const click = new dom.window.MouseEvent("click", { bubbles: true, cancelable: true });
+        anchor.dispatchEvent(click);
+        expect(click.defaultPrevented).toBe(true);
+      }
+      expect(document.getElementById("cell")?.textContent).toBe("Phuong");
+      expect(document.getElementById("visible")?.hasAttribute("aria-disabled")).toBe(false);
+      const ordinary = new dom.window.MouseEvent("click", { bubbles: true, cancelable: true });
+      document.getElementById("visible")!.dispatchEvent(ordinary);
+      expect(ordinary.defaultPrevented).toBe(false);
+      dom.window.close();
+    });
+
+    it("re-enables an anchor whose href changes to a page the viewer can open", async () => {
+      const { dom } = render(
+        `<a id="menu" title="Phuong's page">Personal space</a><script>document.getElementById("menu").href=YOPLAI.link("my-space.html")</script>`
+      );
+      const anchor = dom.window.document.getElementById("menu")!;
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(anchor.getAttribute("aria-disabled")).toBe("true");
+      anchor.setAttribute("href", "/d/detail-id");
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(anchor.hasAttribute("aria-disabled")).toBe(false);
+      expect(anchor.getAttribute("title")).toBe("Phuong's page");
+      dom.window.close();
+    });
+  });
+
   it("injects the deployment theme into dashboard fragments", () => {
     const html = injectDashboardRuntime("<main>Dashboard</main>", {
       data: {},
