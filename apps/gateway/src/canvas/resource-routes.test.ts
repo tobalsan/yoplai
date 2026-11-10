@@ -1,7 +1,7 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, beforeEach, expect, it } from "vitest";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { JSDOM, type DOMWindow } from "jsdom";
 import type { AgentConfig, GatewayConfig } from "@yoplai/shared";
 import { createDashboardResourceRoutes, createDashboardRoutes } from "./routes.js";
@@ -446,7 +446,10 @@ async function framedDashboard(rendered: string) {
   iframe.contentDocument!.open();
   iframe.contentDocument!.write(rendered);
   iframe.contentDocument!.close();
-  await new Promise((resolve) => setTimeout(resolve, 10));
+  // The page announces itself asynchronously; wait for it so a late `ready`
+  // never lands after the messages a test asserts on.
+  if (!rendered.includes("data-annotation")) await new Promise((resolve) => setTimeout(resolve, 10));
+  else await vi.waitFor(() => expect(received.some((message) => message?.channel === "yoplai-annotate" && message.type === "ready")).toBe(true));
   const page = iframe.contentWindow as unknown as DOMWindow;
   const send = (data: unknown) => page.dispatchEvent(new page.MessageEvent("message", { data, source: parent.window as never }));
   const annotations = () => received.filter((message) => message?.channel === "yoplai-annotate");
