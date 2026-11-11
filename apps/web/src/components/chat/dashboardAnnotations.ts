@@ -75,6 +75,14 @@ function readNote(data: Record<string, unknown>, page: PageContext, frame: Frame
   };
 }
 
+const SHORT_TEXT = 36;
+
+/** Short name for what a note points at: its own short text, else the section heading, else the tag. */
+export function noteTarget(note: Pick<DashboardNote, "text" | "heading" | "tag">): string {
+  if (note.text && note.text.length <= SHORT_TEXT) return note.text;
+  return note.heading || note.tag || "element";
+}
+
 function noteLine(n: number, note: DashboardNote): string {
   const context = [
     note.heading && `under "${note.heading}"`,

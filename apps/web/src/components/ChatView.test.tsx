@@ -337,7 +337,7 @@ describe("ChatView abort handling", () => {
       view.note("n2", { selector: "a#go", tag: "a", text: "Seed catalog", heading: "Beds", ancestor: "section#beds" }, "Link to the spring catalog");
       view.note("n3", { selector: "h2", tag: "h2", text: "Beds" }, "Rename to Plots");
       await waitFor(() => expect(view.chips()).toHaveLength(3));
-      expect(view.chips()[0]).toContain("Garden overview");
+      expect(view.chips()[0]).toContain("Tomatoes 12");
       expect(view.chips()[0]).toContain("Show kilos");
       expect(view.send().disabled).toBe(false);
       queryByRole(view.container, "button", { name: "Remove note 3" })!.click();

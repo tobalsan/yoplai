@@ -4,7 +4,7 @@ import { createAppViews, chatAppViewCalls, viewKey } from "./chat/appViews";
 import { load as loadPanelTabs } from "./chat/appViewStorage";
 import { ChatSidePanel, canSplitPanel } from "./chat/ChatSidePanel";
 import { ChatPanelTabs } from "./chat/ChatPanelTabs";
-import { createDashboardAnnotations, DashboardAnnotationsContext } from "./chat/dashboardAnnotations";
+import { createDashboardAnnotations, DashboardAnnotationsContext, noteTarget } from "./chat/dashboardAnnotations";
 import chatViewStyles from "./chat/ChatView.css?inline";
 import {
   createSignal,
@@ -320,6 +320,7 @@ export function ChatView() {
   // Staged dashboard notes belong to this conversation only.
   const annotations = createDashboardAnnotations(() => params.agentId);
   createEffect(on(currentSession, () => annotations.reset(), { defer: true }));
+  const annotationPageCount = () => new Set(annotations.notes().map((note) => note.page.id)).size;
   const viewMessageTimes = new Map<string, number[]>();
   createEffect(on(() => `${params.agentId}\n${session.appSessionId() ?? currentSession()}`, () => viewMessageTimes.clear()));
   const handleViewMessage = async (viewKey: string, text: string): Promise<void> => {
@@ -972,9 +973,12 @@ export function ChatView() {
         <ul class="annotation-notes" aria-label="Dashboard notes">
           <For each={annotations.notes()}>
             {(note, index) => (
-              <li class="annotation-chip" title={`${note.page.title}: ${note.note}`}>
+              <li class="annotation-chip" title={`${note.page.title} › ${noteTarget(note)}: ${note.note}`}>
                 <span class="annotation-chip-number">{index() + 1}</span>
-                <span class="annotation-chip-page">{note.page.title}</span>
+                <Show when={annotationPageCount() > 1}>
+                  <span class="annotation-chip-page">{note.page.title}</span>
+                </Show>
+                <span class="annotation-chip-target">{noteTarget(note)}</span>
                 <span class="annotation-chip-note">{note.note}</span>
                 <button
                   type="button"

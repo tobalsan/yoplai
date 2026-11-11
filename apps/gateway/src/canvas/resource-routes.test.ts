@@ -512,6 +512,7 @@ async function writeNote(page: DOMWindow, text: string) {
   const ui = annotationUi(page);
   const field = ui.querySelector<HTMLTextAreaElement>('textarea[aria-label="Note"]')!;
   field.value = text;
+  field.dispatchEvent(new page.Event("input", { bubbles: true }));
   [...ui.querySelectorAll("button")].find((button) => button.textContent === "Add")!.click();
   await tick();
 }

@@ -1468,11 +1468,21 @@
 
         .annotation-chip-page {
           flex: none;
-          max-width: 96px;
+          max-width: 80px;
           overflow: hidden;
           text-overflow: ellipsis;
           white-space: nowrap;
           color: var(--text-muted);
+        }
+
+        .annotation-chip-target {
+          flex: none;
+          max-width: 120px;
+          overflow: hidden;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+          font-weight: 500;
+          color: var(--text-primary);
         }
 
         .annotation-chip-note {
@@ -1480,7 +1490,7 @@
           overflow: hidden;
           text-overflow: ellipsis;
           white-space: nowrap;
-          color: var(--text-primary);
+          color: var(--text-muted);
         }
 
         .annotation-chip-remove {

@@ -24,6 +24,8 @@ Add `data-edit="<declaration>"`, `data-key="<row key>"` and `data-field="<column
 <input type="checkbox" data-edit="actions" data-key="7" data-field="manual_done" />
 ```
 
+Forms are allowed. The submit handler must call `event.preventDefault()`, then save with `YOPLAI.add` or `YOPLAI.edit`. A native submit goes nowhere (CSP `form-action 'none'`).
+
 Writers can edit everything. For other viewers, enable a control per row with the same predicate as the guard, selected in the page SQL (`SELECT ..., lower(owner_email) = lower(:viewer_email) AS editable ...`); the server checks the guard again. Re-render derived numbers (rollups, %) on the `dk-edit-saved` event, detail `{ edit, key, field, value, at }`:
 
 ```js

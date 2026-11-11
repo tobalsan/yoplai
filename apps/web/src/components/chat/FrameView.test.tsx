@@ -23,7 +23,7 @@ describe("dashboard frame", () => {
     dispose = render(() => <FrameView target={target} mode="panel" onCollapse={() => {}} />, container);
     const frame = getByTitle(container, "Garden overview dashboard");
     expect(frame.getAttribute("src")).toBe("/d/garden");
-    expect(frame.getAttribute("sandbox")).toBe("allow-scripts allow-downloads allow-modals allow-popups allow-popups-to-escape-sandbox");
+    expect(frame.getAttribute("sandbox")).toBe("allow-scripts allow-forms allow-downloads allow-modals allow-popups allow-popups-to-escape-sandbox");
     expect(frame.getAttribute("referrerpolicy")).toBe("no-referrer");
     const open = getByRole(container, "link", { name: "Open in browser" });
     expect(open.getAttribute("href")).toBe("/d/garden");

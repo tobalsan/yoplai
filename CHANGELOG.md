@@ -9,6 +9,11 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ## [Unreleased]
 
+### Fixed
+
+- Forms on dashboards now work. The dashboard sandbox blocked the submit button before the page script ran. A native form post still goes nowhere.
+- A note in progress on a dashboard is no longer lost by a stray click or Esc, and each note chip names the element it points at.
+
 ## v0.28.0 — Artifacts in chat, editable dashboards + safer scheduled jobs
 
 _Released 2026-11-10._
