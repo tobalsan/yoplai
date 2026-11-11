@@ -9,6 +9,12 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ## [Unreleased]
 
+## v0.28.1 — Dashboard forms and annotation polish
+
+_Released 2026-11-11._
+
+Dashboard forms work again, and Annotate keeps notes in progress and names the element each note points at.
+
 ### Fixed
 
 - Forms on dashboards now work. The dashboard sandbox blocked the submit button before the page script ran. A native form post still goes nowhere.
