@@ -177,6 +177,9 @@ Flow:
 4. Top-level DMs, replies under non-proactive messages, and slash commands from
    non-allowlisted users stay rejected. `!` text in an admitted proactive thread
    reply is processed as an ordinary message, without executing a command.
+5. An admitted reply or reaction runs as the person's paired Yoplai account only
+   if that account has access to the agent. Otherwise it runs with team
+   credentials, like an unpaired person's, and a warning is logged.
 
 | Option | Meaning |
 | --- | --- |

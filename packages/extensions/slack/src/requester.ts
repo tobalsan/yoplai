@@ -1,3 +1,4 @@
+import { getSlackContext } from "./context.js";
 import { getSlackPairingService } from "./pairing.js";
 import type { SlackWebClient } from "./types.js";
 
@@ -42,6 +43,30 @@ export async function resolveSlackRequester(
   const workspace = await getSlackWorkspace(client);
   // Missing workspace or pairing is an unpaired run: team credentials only.
   return workspace ? pairing.resolve(workspace, slackUserId) : undefined;
+}
+
+/**
+ * Requester for an answer to a tracked proactive DM. A paired account without
+ * access to the agent runs as the service actor (team credentials), like an
+ * unpaired participant, instead of being denied by the gateway.
+ */
+export async function resolveProactiveSlackRequester(
+  client: SlackWebClient,
+  slackUserId: string | undefined,
+  agentId: string
+): Promise<string | undefined> {
+  const requesterId = await resolveSlackRequester(client, slackUserId);
+  if (!requesterId) return undefined;
+  const { getMultiUserRuntime, getEligibleAccount, hasAgentAccess } = await import("@yoplai/extension-multi-user");
+  const runtime = getMultiUserRuntime();
+  if (!runtime) return requesterId;
+  // Same check as the gateway's requireActorExecution, so the two cannot disagree.
+  const account = getEligibleAccount(runtime.db, requesterId, { approvalBypass: "superadmin" });
+  if (account && (await hasAgentAccess({ user: { id: account.id, email: account.email, role: account.role, approved: true }, session: { id: "agent-execution", userId: account.id } }, agentId))) {
+    return requesterId;
+  }
+  getSlackContext().logger.warn("[slack] proactive reply runs as service actor", { requesterId, agentId, reason: "no agent access" });
+  return undefined;
 }
 
 /** Trusted Slack sender of an in-flight run, so tools can act for them without model input. */
