@@ -78,6 +78,7 @@ import {
   cacheSlackWorkspace,
   getSlackWorkspace,
   resolveSlackRequester,
+  resolveProactiveSlackRequester,
   SLACK_PAIR_LINK_PLACEHOLDER,
   trackSlackSender,
 } from "./requester.js";
@@ -1119,7 +1120,9 @@ async function handleSlackMessage(
           : conversationType === "thread_reply"
           ? `${placeChannel} / ${threadName}`
           : placeChannel;
-    const requesterUserId = await resolveSlackRequester(client, data.user);
+    const requesterUserId = target.proactiveReply
+      ? await resolveProactiveSlackRequester(client, data.user, target.agent.id)
+      : await resolveSlackRequester(client, data.user);
     const sessionOwnerId = binding?.owner === undefined ? requesterUserId : binding.owner ?? undefined;
     const ctx = getSlackContext();
     // Resolve persisted availability explicitly: an indexed ID alone can outlive its history.
@@ -1401,7 +1404,9 @@ async function handleSlackReaction(
     const reactionThreadTs = data.item.thread_ts ?? messageInfo?.threadTs;
     const agentResult = await getSlackContext().runAgent({
       agentId: target.agent.id,
-      userId: await resolveSlackRequester(client, data.user),
+      userId: proactiveReply
+        ? await resolveProactiveSlackRequester(client, data.user, target.agent.id)
+        : await resolveSlackRequester(client, data.user),
       message: formatReactionMessage(data, action, messageInfo?.text),
       sessionKey: proactiveReply
         ? buildSlackSessionKey(result.channel)
@@ -1425,6 +1430,15 @@ async function handleSlackReaction(
       );
     }
   } catch (err) {
+    if (err instanceof Error && err.message === "Agent access denied") {
+      getSlackContext().logger.warn(`${target.logPrefix} Reaction denied`, {
+        agentId: target.agent.id,
+        slackUser: data.user,
+        channel: result.channel,
+        reason: err.message,
+      });
+      return;
+    }
     console.error(`${target.logPrefix} Reaction error:`, err);
   }
 }

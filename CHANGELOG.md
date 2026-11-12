@@ -9,6 +9,10 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ## [Unreleased]
 
+### Fixed
+
+- Slack: a person with a linked Yoplai account but no access to the agent can now answer its proactive DM (reaction or thread reply). The answer runs with team credentials, like an unlinked person's, instead of being dropped with "Agent access denied".
+
 ## v0.28.1 — Dashboard forms and annotation polish
 
 _Released 2026-11-11._

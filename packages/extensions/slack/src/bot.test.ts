@@ -99,6 +99,16 @@ vi.mock("./pairing.js", () => ({
   SlackPairingError: class extends Error {},
   getSlackPairingService: () => pairing.enabled ? pairing : undefined,
 }));
+const multiUser = vi.hoisted(() => ({
+  runtime: null as { db: object } | null,
+  accessByUser: new Set<string>(),
+}));
+vi.mock("@yoplai/extension-multi-user", () => ({
+  getMultiUserRuntime: () => multiUser.runtime,
+  getEligibleAccount: (_db: unknown, id: string) => ({ id, email: `${id}@example.test`, role: "user" }),
+  hasAgentAccess: async (auth: { user: { id: string } }) => multiUser.accessByUser.has(auth.user.id),
+}));
+const mockLoggerWarn = vi.hoisted(() => vi.fn());
 
 vi.mock("@slack/bolt", () => ({
   SocketModeReceiver: vi.fn((config: Record<string, unknown>) => {
@@ -158,7 +168,7 @@ let dataDir = "";
 
 vi.mock("./context.js", () => ({
   getSlackContext: vi.fn(() => ({
-    logger: { error: vi.fn() },
+    logger: { error: vi.fn(), warn: mockLoggerWarn },
     runAgent: mockRunAgent,
     getActiveRun: activeRunLookupAvailable ? mockGetActiveRun : undefined,
     resolveSessionId: mockGetSessionEntry,
@@ -2920,6 +2930,8 @@ describe.each(["component", "per-agent"] as const)("proactive DM routing (%s)", 
     vi.clearAllMocks();
     mockRunAgent.mockReset();
     pairing.enabled = false;
+    multiUser.runtime = null;
+    multiUser.accessByUser.clear();
     clearAllHistory();
     mockGetSessionEntry.mockResolvedValue(undefined);
     activeRunLookupAvailable = true;
@@ -3042,6 +3054,97 @@ describe.each(["component", "per-agent"] as const)("proactive DM routing (%s)", 
     await react("D1", "UA", "1.0");
     expect(mockRunAgent).toHaveBeenLastCalledWith(expect.objectContaining({ userId: requester, sessionKey: "slack:D1" }));
     await bot?.stop();
+  });
+
+  describe("paired participants answering a tracked proactive DM", () => {
+    // UA -> alice (no agent access), UB -> bob (has access), UC unpaired, Uhr -> hr (allowlisted, no access).
+    async function startPairedBot() {
+      await trackMessages([["D1", "1.0"]]);
+      pairing.enabled = true;
+      pairing.resolve.mockImplementation((_workspace: string, user: string) =>
+        ({ UA: "alice", UB: "bob", Uhr: "hr" } as Record<string, string>)[user]
+      );
+      multiUser.runtime = { db: {} };
+      multiUser.accessByUser.add("bob");
+      return startBot();
+    }
+    const answers = {
+      reaction: (user: string) => react("D1", user, "1.0"),
+      "thread reply": (user: string) => send("D1", user, "1.1", "1.0"),
+    };
+
+    it.each(Object.keys(answers) as Array<keyof typeof answers>)(
+      "runs a paired %s without agent access as the service actor and logs the fallback",
+      async (kind) => {
+        const bot = await startPairedBot();
+        await answers[kind]("UA");
+        expect(mockRunAgent).toHaveBeenCalledOnce();
+        const run = mockRunAgent.mock.calls[0][0];
+        expect(run.userId).toBeUndefined();
+        expect(run.sessionKey).toBe("slack:D1");
+        expect(apps[0].client.chat.postMessage).toHaveBeenCalledWith(
+          expect.objectContaining({ channel: "D1", text: "ok", thread_ts: "1.0" })
+        );
+        expect(mockLoggerWarn).toHaveBeenCalledWith(
+          expect.stringContaining("service actor"),
+          expect.objectContaining({ requesterId: "alice", agentId: "main", reason: "no agent access" })
+        );
+        await bot?.stop();
+      }
+    );
+
+    it.each(Object.keys(answers) as Array<keyof typeof answers>)(
+      "keeps a paired %s with agent access running as that user",
+      async (kind) => {
+        const bot = await startPairedBot();
+        await answers[kind]("UB");
+        expect(mockRunAgent).toHaveBeenCalledWith(expect.objectContaining({ userId: "bob", sessionKey: "slack:D1" }));
+        expect(mockLoggerWarn).not.toHaveBeenCalled();
+        await bot?.stop();
+      }
+    );
+
+    it.each(Object.keys(answers) as Array<keyof typeof answers>)(
+      "keeps an unpaired %s on the service actor",
+      async (kind) => {
+        const bot = await startPairedBot();
+        await answers[kind]("UC");
+        expect(mockRunAgent).toHaveBeenCalledOnce();
+        expect(mockRunAgent.mock.calls[0][0]).toMatchObject({ userId: undefined, sessionKey: "slack:D1" });
+        expect(mockLoggerWarn).not.toHaveBeenCalled();
+        await bot?.stop();
+      }
+    );
+
+    it.each(Object.keys(answers) as Array<keyof typeof answers>)(
+      "keeps the hard access check for an allowlisted paired %s without access",
+      async (kind) => {
+        const bot = await startPairedBot();
+        await answers[kind]("Uhr");
+        expect(mockRunAgent).toHaveBeenCalledWith(expect.objectContaining({ userId: "hr", sessionKey: "main" }));
+        expect(mockLoggerWarn).not.toHaveBeenCalled();
+        await bot?.stop();
+      }
+    );
+
+    it("logs a gateway access denial on a reaction as a warning with the reason", async () => {
+      const bot = await startPairedBot();
+      mockRunAgent.mockRejectedValue(new Error("Agent access denied"));
+      await react("D1", "Uhr", "1.0");
+      expect(mockLoggerWarn).toHaveBeenCalledWith(
+        expect.stringContaining("Reaction denied"),
+        expect.objectContaining({ agentId: "main", slackUser: "Uhr", channel: "D1", reason: "Agent access denied" })
+      );
+      await bot?.stop();
+    });
+
+    it("still drops a top-level DM from a paired participant without access", async () => {
+      const bot = await startPairedBot();
+      await send("D1", "UA", "2.0");
+      await react("D1", "UA", "9.9");
+      expect(mockRunAgent).not.toHaveBeenCalled();
+      await bot?.stop();
+    });
   });
 
   it("acknowledges queued proactive replies without advertising disabled bang commands", async () => {
