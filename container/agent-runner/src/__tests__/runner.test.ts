@@ -1639,6 +1639,62 @@ describe("Pi runner", () => {
     await fs.rm(tempDir, { recursive: true, force: true });
   });
 
+  // ALG-690 seam (issue spec, Testing Decisions): the published session file
+  // is unchanged when the model reports a safety refusal.
+  it.each([
+    [
+      "errored turn",
+      (refusal: string) => {
+        piMock.session.messages.push(
+          { role: "user", content: [{ type: "text", text: "flagged" }] },
+          { role: "assistant", content: [], stopReason: "error", errorMessage: refusal }
+        );
+      },
+    ],
+    [
+      "thrown error",
+      (refusal: string) => {
+        throw Object.assign(new Error(`400 invalid_request_error: ${refusal}`), {
+          status: 400,
+        });
+      },
+    ],
+  ])("keeps the published session unchanged after a safety refusal (%s)", async (_label, fail) => {
+    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-runner-"));
+    const workspaceDir = path.join(tempDir, "workspace");
+    const sessionDir = path.join(tempDir, "sessions");
+    await fs.mkdir(workspaceDir, { recursive: true });
+    await fs.mkdir(sessionDir, { recursive: true });
+    const published = path.join(sessionDir, "session-1.jsonl");
+    const before = `${JSON.stringify({ type: "message", text: "earlier turn" })}\n`;
+    await fs.writeFile(published, before);
+    const refusal = "Cyber safeguards flagged this message.";
+    piMock.session.prompt.mockImplementationOnce(async () => {
+      const [[runtimeFile]] = piMock.sessionManagerOpen.mock.calls as unknown as [[string]];
+      await fs.appendFile(
+        runtimeFile,
+        `${JSON.stringify({ type: "message", text: "flagged turn" })}\n`
+      );
+      fail(refusal);
+    });
+    vi.spyOn(console, "error").mockImplementation(() => {});
+
+    await expect(
+      runAgent(
+        createInput({
+          workspaceDir,
+          sessionDir,
+          retry: { maxAttempts: 1, baseDelaySeconds: 0 },
+          fallbackModel: { provider: "openai", model: "gpt-5" },
+        })
+      )
+    ).rejects.toThrow(refusal);
+
+    await expect(fs.readFile(published, "utf8")).resolves.toBe(before);
+    expect(piMock.session.setModel).not.toHaveBeenCalled();
+    await fs.rm(tempDir, { recursive: true, force: true });
+  });
+
   it("publishes the Pi session under sessionDir after the runtime ends", async () => {
     const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-runner-"));
     const workspaceDir = path.join(tempDir, "workspace");

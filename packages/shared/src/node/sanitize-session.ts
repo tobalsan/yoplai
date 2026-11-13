@@ -81,10 +81,16 @@ export async function sanitizeSessionFile(file: string): Promise<void> {
   if (sanitized !== content) await fs.writeFile(file, sanitized, "utf8");
 }
 
-/** Uses an ephemeral Pi session file and publishes only its sanitized form. */
-export async function createRuntimeSessionFile(
-  persistentFile: string
-): Promise<{ file: string; persist: () => Promise<void> }> {
+/**
+ * Uses an ephemeral Pi session file and publishes only its sanitized form.
+ * `discard()` drops the run's writes: the persisted file stays as it was
+ * before the run, and any later `persist()` is a no-op.
+ */
+export async function createRuntimeSessionFile(persistentFile: string): Promise<{
+  file: string;
+  persist: () => Promise<void>;
+  discard: () => Promise<void>;
+}> {
   const runtimeDir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-pi-"));
   const file = path.join(runtimeDir, path.basename(persistentFile));
   try {
@@ -94,12 +100,12 @@ export async function createRuntimeSessionFile(
     await fs.writeFile(file, "");
   }
 
-  let persisted = false;
+  let settled = false;
   return {
     file,
     async persist() {
-      if (persisted) return;
-      persisted = true;
+      if (settled) return;
+      settled = true;
       try {
         await sanitizeSessionFile(file);
         await fs.mkdir(path.dirname(persistentFile), { recursive: true });
@@ -107,6 +113,11 @@ export async function createRuntimeSessionFile(
       } finally {
         await fs.rm(runtimeDir, { recursive: true, force: true });
       }
+    },
+    async discard() {
+      if (settled) return;
+      settled = true;
+      await fs.rm(runtimeDir, { recursive: true, force: true });
     },
   };
 }

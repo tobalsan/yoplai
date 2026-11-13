@@ -38,6 +38,7 @@ import {
   getProviderErrorCategory,
   isReplayableFailedTurn,
   isFallbackEligibleError,
+  isSafetyRefusal,
   isUpstreamAuthFailure,
   renderAgentContext,
   resumeAfterFailedTurn,
@@ -721,6 +722,8 @@ export async function runAgent(
       if (
         primaryFailure &&
         fallbackConfig &&
+        // A refusal is about the content, so another model must not see it.
+        !isSafetyRefusal(primaryFailure.source, primaryFailure.message) &&
         isReplayableFailedTurn(session.messages) &&
         (isFallbackEligibleError(
           primaryFailure.source,
@@ -812,7 +815,9 @@ export async function runAgent(
         aborted = true;
       } else {
         session.dispose();
-        await runtimeSession.persist();
+        // A refused turn would poison every later turn: drop the whole run.
+        if (isSafetyRefusal(error)) await runtimeSession.discard();
+        else await runtimeSession.persist();
         activeSession = undefined;
         activeOAuthContext = undefined;
         pendingFollowUps = [];
@@ -841,7 +846,8 @@ export async function runAgent(
           ? lastAssistantRecord.errorMessage
           : "unknown error";
       session.dispose();
-      await runtimeSession.persist();
+      if (isSafetyRefusal(undefined, message)) await runtimeSession.discard();
+      else await runtimeSession.persist();
       activeSession = undefined;
       activeOAuthContext = undefined;
       pendingFollowUps = [];

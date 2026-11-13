@@ -358,6 +358,71 @@ describe("failed-run user message persistence (real store)", () => {
     ]);
   });
 
+  // ALG-690 seam (issue spec, Testing Decisions): a safety refusal is the
+  // explicit exception to keeping the user message.
+  it("drops a safety-refused turn and keeps the session usable", async () => {
+    const sessionId = "refusal-1";
+    getAgent.mockReturnValue(createAgent());
+    const { readSessionMeta, appendSessionMeta } = await import("../history/store.js");
+    const answer = (reply: string) => createAdapter(async (params) => {
+      params.onHistoryEvent({ type: "user", text: params.message, timestamp: Date.now() });
+      params.onHistoryEvent({ type: "assistant_text", text: reply, timestamp: Date.now() });
+      return { text: reply };
+    });
+    getSdkAdapter.mockReturnValue(answer("earlier answer"));
+    await runAgent({ agentId: "alpha", message: "earlier question", sessionId });
+
+    getSdkAdapter.mockReturnValue(createAdapter(async (params) => {
+      params.onHistoryEvent({ type: "user", text: "flagged payload", timestamp: Date.now() });
+      params.onHistoryEvent({ type: "tool_call", id: "t1", name: "bash", args: { command: "flagged tool call" }, timestamp: Date.now() });
+      params.onHistoryEvent({ type: "tool_result", id: "t1", name: "bash", content: "flagged tool output", isError: false, timestamp: Date.now() });
+      params.onHistoryEvent({ type: "turn_end", timestamp: Date.now() });
+      await appendSessionMeta("alpha", sessionId, "thinkingLevel", "high");
+      throw new Error("Agent error: Cyber safeguards flagged this message.");
+    }));
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    const onEvent = vi.fn();
+    try {
+      await expect(
+        runAgent({ agentId: "alpha", message: "flagged payload", sessionId, onEvent })
+      ).rejects.toThrow("Cyber safeguards flagged");
+      const messages = (spy: typeof warn) =>
+        spy.mock.calls.map(([line]) => (JSON.parse(String(line)) as { msg: string }).msg);
+      expect(messages(warn)).toContain("[agent] run failed");
+      expect(messages(error)).not.toContain("[agent] run failed");
+    } finally {
+      warn.mockRestore();
+      error.mockRestore();
+    }
+
+    const notice =
+      "The AI provider's safety filter blocked this message, so it was not kept. You can rephrase or carry on.";
+    expect(onEvent.mock.calls.map(([event]) => event).filter((event) => event.type === "error")).toEqual([
+      { type: "error", message: "Agent error: Cyber safeguards flagged this message.", kind: "safety_refusal", userMessage: notice },
+    ]);
+    const full = await getFullHistory("alpha", sessionId);
+    expect(JSON.stringify(full)).not.toMatch(/flagged (payload|tool call|tool output)/);
+    expect(full.map((entry) => entry.role)).toEqual(["user", "assistant", "assistant"]);
+    expect(full[2]).toMatchObject({
+      content: [{ type: "text", text: notice }],
+      meta: { failure: { kind: "safety_refusal" } },
+    });
+    await expect(readSessionMeta("alpha", sessionId, "thinkingLevel")).resolves.toBe("high");
+
+    getSdkAdapter.mockReturnValue(answer("hello back"));
+    const next = await runAgent({ agentId: "alpha", message: "hello ?", sessionId });
+    expect(next.payloads).toEqual([{ text: "hello back" }]);
+    const simple = await getSimpleHistory("alpha", sessionId);
+    expect(simple.map((m) => `${m.role}:${m.content}`)).toEqual([
+      "user:earlier question",
+      "assistant:earlier answer",
+      `assistant:${notice}`,
+      "user:hello ?",
+      "assistant:hello back",
+    ]);
+  });
+
   it.each(["resolved", "rejected", "signal"])("manual abort (%s) persists partial output without a failure notice", async (mode) => {
     const sessionId = `abort-${mode}`;
     getAgent.mockReturnValue(createAgent());

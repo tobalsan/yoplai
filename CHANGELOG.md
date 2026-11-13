@@ -11,6 +11,8 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Fixed
 
+- When the AI provider's safety filter refuses a message, the chat no longer gets stuck. The refused turn is dropped from the saved session, so the next message works, and the user sees "The AI provider's safety filter blocked this message, so it was not kept. You can rephrase or carry on." (French too) instead of "Something went wrong". The gateway logs it at warn, not error.
+
 - Slack: a person with a linked Yoplai account but no access to the agent can now answer its proactive DM (reaction or thread reply). The answer runs with team credentials, like an unlinked person's, instead of being dropped with "Agent access denied".
 
 ## v0.28.1 — Dashboard forms and annotation polish

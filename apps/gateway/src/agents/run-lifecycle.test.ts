@@ -7,6 +7,7 @@ const eagerlyFlushedUsers: Array<Array<HistoryEvent>> = [];
 
 vi.mock("../history/store.js", () => ({
   backfillFromPiSession: vi.fn(async () => false),
+  markHistoryEnd: vi.fn(async () => ({ rollback: vi.fn(async () => undefined) })),
   createTurnBuffer: () => ({ events: [] }),
   bufferHistoryEvent: (
     buffer: { events: HistoryEvent[] },

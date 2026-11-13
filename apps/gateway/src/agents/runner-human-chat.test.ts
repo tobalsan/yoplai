@@ -32,6 +32,7 @@ vi.mock("../history/store.js", () => ({
   appendSessionMeta: vi.fn(),
   appendRunFailureNotice: vi.fn(),
   backfillFromPiSession: vi.fn(async () => false),
+  markHistoryEnd: vi.fn(async () => ({ rollback: vi.fn(async () => undefined) })),
   bufferHistoryEvent: vi.fn(),
   createTurnBuffer: vi.fn(() => ({})),
   flushTurnBuffer: vi.fn(),

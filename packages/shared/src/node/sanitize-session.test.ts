@@ -246,6 +246,40 @@ describe("sanitizeSessionFile", () => {
     await expect(fs.readFile(file, "utf8")).resolves.not.toContain(canary);
   });
 
+  it("discard keeps the persisted session as it was before the run", async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-sanitize-"));
+    tempDirs.push(dir);
+    const file = path.join(dir, "session.jsonl");
+    const original = `${JSON.stringify({ type: "message", text: "hello" })}\n`;
+    await fs.writeFile(file, original);
+    const runtime = await createRuntimeSessionFile(file);
+
+    await fs.appendFile(
+      runtime.file,
+      `${JSON.stringify({ type: "message", text: "refused turn" })}\n`
+    );
+    await runtime.discard();
+    await runtime.persist();
+
+    await expect(fs.readFile(file, "utf8")).resolves.toBe(original);
+    await expect(fs.stat(runtime.file)).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+  });
+
+  it("discard leaves no session file when none existed", async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-sanitize-"));
+    tempDirs.push(dir);
+    const file = path.join(dir, "session.jsonl");
+    const runtime = await createRuntimeSessionFile(file);
+
+    await fs.writeFile(runtime.file, `${JSON.stringify({ text: "refused" })}\n`);
+    await runtime.discard();
+    await runtime.persist();
+
+    await expect(fs.stat(file)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
   it("uses a signed URL before persisting its redacted representation", async () => {
     const dir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-sanitize-"));
     tempDirs.push(dir);

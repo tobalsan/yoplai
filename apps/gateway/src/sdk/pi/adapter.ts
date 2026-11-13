@@ -23,6 +23,7 @@ import {
   isReplayableFailedTurn,
   isFallbackEligibleError,
   isInvalidRequestError,
+  isSafetyRefusal,
   modelSupportsImages,
   renderAgentContext,
   resumeAfterFailedTurn,
@@ -396,6 +397,7 @@ export const piAdapter: SdkAdapter = {
 
   async run(params: SdkRunParams): Promise<SdkRunResult> {
     let persistSession: (() => Promise<void>) | undefined;
+    let discardSession: (() => Promise<void>) | undefined;
     let managedSkills: Awaited<ReturnType<typeof createManagedSkillsStaging>> | undefined;
     return withPiOnecliEnv(params.agentId, async () => {
       const persistentSessionFile = await resolveSessionFile(
@@ -408,6 +410,7 @@ export const piAdapter: SdkAdapter = {
       );
       const sessionFile = runtimeSession.file;
       persistSession = runtimeSession.persist;
+      discardSession = runtimeSession.discard;
 
       // Ensure core workspace files exist
       const isFirstRun = await ensureWorkspaceFiles(params.workspaceDir);
@@ -979,6 +982,8 @@ export const piAdapter: SdkAdapter = {
       if (
         primaryFailure &&
         params.agent.fallback_model &&
+        // A refusal is about the content, so another model must not see it.
+        !isSafetyRefusal(primaryFailure.source, primaryFailure.message) &&
         isReplayableFailedTurn(agentSession.messages) &&
         isFallbackEligibleError(primaryFailure.source, primaryFailure.message)
       ) {
@@ -1066,9 +1071,12 @@ export const piAdapter: SdkAdapter = {
             ? lastAssistantRecord.errorMessage
             : "unknown error";
         const errorStr = `Agent error: ${errorMessage}`;
-        logError("[agent] SDK run failed", new Error(errorStr), {
-          agentId: params.agent.id,
-        });
+        const failure = new Error(errorStr);
+        if (isSafetyRefusal(failure)) {
+          logWarn("[agent] SDK run failed", { agentId: params.agent.id, message: errorStr });
+        } else {
+          logError("[agent] SDK run failed", failure, { agentId: params.agent.id });
+        }
         agentSession.dispose();
         throw runFailureError(errorStr);
       }
@@ -1080,6 +1088,10 @@ export const piAdapter: SdkAdapter = {
       agentSession.dispose();
 
       return { text: finalText, aborted };
+    }).catch(async (error: unknown) => {
+      // A refused turn would poison every later turn: drop the whole run.
+      if (isSafetyRefusal(error)) await discardSession?.();
+      throw error;
     }).finally(async () => {
       clearMcpAppViews(params);
       try { await persistSession?.(); }
