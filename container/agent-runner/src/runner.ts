@@ -634,7 +634,32 @@ export async function runAgent(
     };
     sendSystemPrompt();
 
+    // Pi's overflow recovery drops the failed answer from the session, then
+    // reports a failed compaction only through `compaction_end` (or nothing
+    // when there is nothing to compact), so the turn looks clean afterwards.
+    let overflowRecoveryError: string | undefined;
+    let lastTurnError: string | undefined;
     const unsubscribe = session.subscribe((evt) => {
+      if (
+        evt.type === "message_end" &&
+        evt.message.role === "assistant" &&
+        evt.message.stopReason === "error"
+      )
+        lastTurnError = evt.message.errorMessage ?? "unknown error";
+      if (evt.type === "compaction_end") {
+        console.error(
+          JSON.stringify({
+            event: "compaction_end",
+            reason: evt.reason,
+            aborted: evt.aborted,
+            willRetry: evt.willRetry,
+            errorMessage: evt.errorMessage,
+          })
+        );
+        if (evt.reason === "overflow" && !evt.result && !evt.aborted)
+          overflowRecoveryError =
+            evt.errorMessage ?? "Context overflow recovery failed";
+      }
       if (evt.type === "agent_start" && !initialRunStarted) {
         initialRunStarted = true;
         void steerPendingFollowUps(session);
@@ -809,6 +834,17 @@ export async function runAgent(
         logFallback("success");
       } else if (primaryThrown) {
         throw primaryThrown;
+      }
+      // No assistant message at the end: the failed answer was dropped and
+      // nothing replaced it (a user abort during that recovery is an abort).
+      if (
+        session.messages.at(-1)?.role !== "assistant" &&
+        (lastTurnError || overflowRecoveryError)
+      ) {
+        if (activeAbortRequested) throw new DOMException("This operation was aborted", "AbortError");
+        throw new Error(
+          [lastTurnError, overflowRecoveryError].filter(Boolean).join("; ")
+        );
       }
     } catch (error) {
       if (isAbortLikeError(error)) {

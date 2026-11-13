@@ -9,6 +9,7 @@ export const RunFailureKindSchema = z.enum([
   "max_run_time",
   "idle_timeout",
   "safety_refusal",
+  "context_overflow",
   "generic",
 ]);
 export type RunFailureKind = z.infer<typeof RunFailureKindSchema>;
@@ -75,6 +76,12 @@ export function classifyRunFailure(
   if (status === 429 || /\b429\b|rate[_ -]limit|too many requests/i.test(text))
     return "rate_limit";
   if (status === 529 || /\b529\b|overloaded/i.test(text)) return "overloaded";
+  if (
+    /prompt is too long|input\[\d+\][^:]*: string too long|context[_ -]overflow|context_length_exceeded|maximum context length|exceed(?:s|ed)? (?:the )?context (?:window|length)|context (?:window|length) exceeded/i.test(
+      text
+    )
+  )
+    return "context_overflow";
   return "generic";
 }
 
@@ -103,6 +110,10 @@ export function runFailureMessage(
       return lang === "fr"
         ? "Le filtre de sécurité du fournisseur d'IA a bloqué ce message, il n'a donc pas été conservé. Vous pouvez le reformuler ou continuer."
         : "The AI provider's safety filter blocked this message, so it was not kept. You can rephrase or carry on.";
+    case "context_overflow":
+      return lang === "fr"
+        ? "Le fichier joint ou la conversation est trop volumineux pour que le modèle le lise dans le chat. Joignez un fichier plus petit ou démarrez une nouvelle conversation."
+        : "The attached file or conversation is too large for the model to read in chat. Attach a smaller file, or start a new conversation.";
     case "generic":
       return lang === "fr"
         ? "Une erreur est survenue, merci de réessayer."

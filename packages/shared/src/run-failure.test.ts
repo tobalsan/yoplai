@@ -35,6 +35,33 @@ describe("classifyRunFailure", () => {
       "Primary failed: overloaded; fallback failed: insufficient_quota",
       "quota",
     ],
+    // ALG-700 incident strings
+    [
+      { status: 400 },
+      '400 {"type":"error","error":{"type":"invalid_request_error","message":"prompt is too long: 4543685 tokens > 1000000 maximum"}}',
+      "context_overflow",
+    ],
+    [
+      {},
+      "Agent error: Invalid 'input[1].content[0].text': string too long. Expected a string with maximum length 10485760, but got a string with length 14355887 instead.",
+      "context_overflow",
+    ],
+    [
+      {},
+      "Primary anthropic/claude-sonnet-5-5 failed: 400 prompt is too long: 4543685 tokens > 1000000 maximum; fallback openai-codex/gpt-6.1-sol failed: Invalid 'input[1].content[0].text': string too long.",
+      "context_overflow",
+    ],
+    [{}, "Context overflow recovery failed: summarization failed", "context_overflow"],
+    [{}, "This model's maximum context length is 128000 tokens", "context_overflow"],
+    [{}, "context_length_exceeded", "context_overflow"],
+    [{}, "input exceeds the context window of this model", "context_overflow"],
+    [{ status: 429 }, "prompt is too long; rate_limit_error", "rate_limit"],
+    [{}, "prompt is too long; insufficient_quota", "quota"],
+    [{}, "overloaded_error; context length exceeded", "overloaded"],
+    [{ kind: "context_overflow" }, "unknown", "context_overflow"],
+    [{}, "Failed to fetch context window metadata", "generic"],
+    [{}, "Invalid context_length configuration", "generic"],
+    [{}, "tool output string too long to display", "generic"],
     [{ code: "tool_deadline" }, "stopped", "tool_deadline"],
     [{ code: "max" }, "stopped", "max_run_time"],
     [{ code: "idle" }, "stopped", "idle_timeout"],
@@ -105,6 +132,12 @@ describe("runFailureMessage", () => {
         "Désolé, cette demande a pris trop de temps et a été interrompue. Des modifications partielles peuvent exister. Réessayez ou demandez-moi de continuer."
       );
     }
+    expect(runFailureMessage("context_overflow", "en")).toBe(
+      "The attached file or conversation is too large for the model to read in chat. Attach a smaller file, or start a new conversation."
+    );
+    expect(runFailureMessage("context_overflow", "fr")).toBe(
+      "Le fichier joint ou la conversation est trop volumineux pour que le modèle le lise dans le chat. Joignez un fichier plus petit ou démarrez une nouvelle conversation."
+    );
     expect(runFailureMessage("generic", "en")).toBe(
       "Something went wrong, please try again."
     );
@@ -172,5 +205,8 @@ describe("run failure schemas", () => {
         userMessage: "safe",
       })
     ).toMatchObject({ kind: "safety_refusal" });
+    expect(
+      StreamEventSchema.parse({ type: "error", message: "raw", kind: "context_overflow" })
+    ).toMatchObject({ kind: "context_overflow" });
   });
 });
