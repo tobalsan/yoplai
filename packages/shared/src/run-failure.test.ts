@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   classifyRunFailure,
+  isSafetyRefusal,
   runFailureMessage,
   RunFailureKindSchema,
 } from "./run-failure.js";
@@ -44,6 +45,38 @@ describe("classifyRunFailure", () => {
   ])("classifies %j / %s as %s", (error, message, kind) => {
     expect(classifyRunFailure(error, message)).toBe(kind);
   });
+
+  const cyber =
+    "Cyber safeguards flagged this message. If this is legitimate security work, you can apply for the Cyber Verification Program: https://example.test";
+  const tos =
+    "This request was blocked as it seems to violate Anthropic's Terms of Service restrictions on reverse engineering or duplicating model outputs.";
+  const refused = "The model refused to complete the request";
+
+  it.each([
+    ["cyber filter", new Error(cyber), undefined],
+    ["ToS filter", {}, tos],
+    ["refusal stop reason", {}, refused],
+    ["lower case", {}, "cyber SAFEGUARDS flagged this message"],
+    ["Agent error wrapper", new Error(`Agent error: ${cyber}`), undefined],
+    [
+      "Primary wrapper",
+      {},
+      `Primary anthropic/claude-sonnet-5-5 failed: ${refused}; fallback openai/gpt failed: 400`,
+    ],
+    ["wins over rate limit", { status: 429 }, `429 rate_limit: ${tos}`],
+    ["wins over quota", {}, `${refused} (usage limit reached)`],
+  ])("classifies a safety refusal (%s)", (_label, error, message) => {
+    expect(classifyRunFailure(error, message)).toBe("safety_refusal");
+    expect(isSafetyRefusal(error, message)).toBe(true);
+  });
+
+  it.each([
+    [{ status: 429 }, "rate_limit_error"],
+    [{}, "Something unrelated failed"],
+    [{}, "Provider stopped with: sensitive"],
+  ])("does not flag %j / %s as a safety refusal", (error, message) => {
+    expect(isSafetyRefusal(error, message)).toBe(false);
+  });
 });
 
 describe("runFailureMessage", () => {
@@ -77,6 +110,12 @@ describe("runFailureMessage", () => {
     );
     expect(runFailureMessage("generic", "fr")).toBe(
       "Une erreur est survenue, merci de réessayer."
+    );
+    expect(runFailureMessage("safety_refusal", "en")).toBe(
+      "The AI provider's safety filter blocked this message, so it was not kept. You can rephrase or carry on."
+    );
+    expect(runFailureMessage("safety_refusal", "fr")).toBe(
+      "Le filtre de sécurité du fournisseur d'IA a bloqué ce message, il n'a donc pas été conservé. Vous pouvez le reformuler ou continuer."
     );
   });
 
@@ -124,5 +163,14 @@ describe("run failure schemas", () => {
         userMessage: "safe",
       })
     ).toMatchObject({ kind: "quota", userMessage: "safe" });
+    expect(RunFailureKindSchema.parse("safety_refusal")).toBe("safety_refusal");
+    expect(
+      StreamEventSchema.parse({
+        type: "error",
+        message: "raw",
+        kind: "safety_refusal",
+        userMessage: "safe",
+      })
+    ).toMatchObject({ kind: "safety_refusal" });
   });
 });

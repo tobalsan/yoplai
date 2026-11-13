@@ -182,6 +182,50 @@ export async function appendRunFailureNotice(
 }
 
 /**
+ * Mark the current end of canonical history. `rollback()` later removes every
+ * history entry appended after the mark (user, assistant, toolResult, system)
+ * while keeping meta entries, so a refused run leaves no trace.
+ */
+export async function markHistoryEnd(
+  agentId: string,
+  sessionId: string,
+  userId?: string
+): Promise<{ rollback: () => Promise<void> }> {
+  const file = await resolveHistoryFile(agentId, sessionId, userId);
+  const mark = await fs.stat(file).then(
+    (stat) => stat.size,
+    (error: NodeJS.ErrnoException) => {
+      if (error.code === "ENOENT") return 0;
+      throw error;
+    }
+  );
+  return {
+    rollback: () =>
+      withSessionMetaWrite(agentId, sessionId, userId, async () => {
+        const content = await fs.readFile(file);
+        if (content.length <= mark) return;
+        const kept = content
+          .subarray(mark)
+          .toString("utf8")
+          .split("\n")
+          .filter((line) => {
+            try {
+              return (JSON.parse(line) as { type?: unknown }).type === "meta";
+            } catch {
+              return false;
+            }
+          })
+          .map((line) => `${line}\n`)
+          .join("");
+        await fs.writeFile(
+          file,
+          Buffer.concat([content.subarray(0, mark), Buffer.from(kept, "utf8")])
+        );
+      }),
+  };
+}
+
+/**
  * Append a meta entry to the session's JSONL file
  * Format: {"type":"meta","key":"thinkingLevel","value":"medium","timestamp":...}
  */

@@ -2,7 +2,7 @@ import * as viewContext from "../mcp-apps/view-context.js";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
-import { classifyRunFailure, runFailureMessage } from "@yoplai/shared";
+import { classifyRunFailure, isSafetyRefusal, runFailureMessage } from "@yoplai/shared";
 import type {
   RunAgentParams as SharedRunAgentParams,
   RunAgentResult as SharedRunAgentResult,
@@ -633,7 +633,7 @@ export async function runAgent(
     };
   } catch (err) {
     const errMessage = err instanceof Error ? err.message : String(err);
-    logError("[agent] run failed", err, { agentId: params.agentId, sessionId });
+    logRunFailure("[agent] run failed", err, { agentId: params.agentId, sessionId });
     holdback.finishSegment();
     heldReply?.flushText(emit);
     heldReply?.release().forEach((event) => lifecycle.acceptHistoryEvent(event));
@@ -699,7 +699,7 @@ export async function runAgent(
               onEvent: pending.params?.onEvent,
             }) };
           } catch (error) {
-            logError("[agent] queued turn failed", error, { agentId: params.agentId, sessionId });
+            logRunFailure("[agent] queued turn failed", error, { agentId: params.agentId, sessionId });
             outcome = { error };
           }
           try {
@@ -710,6 +710,15 @@ export async function runAgent(
         }
       }
     }
+  }
+}
+
+/** Provider safety refusals are expected user-content outcomes, not errors. */
+function logRunFailure(msg: string, error: unknown, fields: Record<string, unknown>): void {
+  if (isSafetyRefusal(error)) {
+    logWarn(msg, { ...fields, message: error instanceof Error ? error.message : String(error) });
+  } else {
+    logError(msg, error, fields);
   }
 }
 

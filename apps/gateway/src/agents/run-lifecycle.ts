@@ -41,6 +41,7 @@ import {
   createTurnBuffer,
   flushTurnBuffer,
   flushUserMessage,
+  markHistoryEnd,
   type TurnBuffer,
 } from "../history/store.js";
 
@@ -86,6 +87,8 @@ export class SessionRunLifecycle {
   // initial user-echo event so the pre-accepted message is not duplicated.
   private initialEchoArmed = false;
   private noticeWritten = false;
+  // Canonical history position before this run's user message.
+  private historyMark: Awaited<ReturnType<typeof markHistoryEnd>> | null = null;
 
   constructor(private readonly context: LifecycleContext) {}
 
@@ -350,9 +353,14 @@ export class SessionRunLifecycle {
     }
   }
 
+  /**
+   * Persist the run's failure notice. A safety refusal drops the whole run
+   * from canonical history first, so the refused content cannot come back.
+   */
   async writeFailureNotice(notice: { kind: RunFailureKind; text: string }): Promise<void> {
     if (this.noticeWritten) return;
-    await this.flushTurns();
+    if (notice.kind === "safety_refusal") await this.discardRunHistory();
+    else await this.flushTurns();
     await appendRunFailureNotice(
       this.context.agentId,
       this.context.sessionId,
@@ -421,6 +429,11 @@ export class SessionRunLifecycle {
       this.context.sessionId,
       this.context.userId
     );
+    this.historyMark = await markHistoryEnd(
+      this.context.agentId,
+      this.context.sessionId,
+      this.context.userId
+    );
     await flushUserMessage(
       this.context.agentId,
       this.context.sessionId,
@@ -436,6 +449,17 @@ export class SessionRunLifecycle {
    */
   rearmInitialEcho(): void {
     this.initialEchoArmed = this.preAcceptedRun;
+  }
+
+  private async discardRunHistory(): Promise<void> {
+    await Promise.all(this.eagerUserFlushes);
+    this.eagerUserFlushes = [];
+    this.completedTurns.length = 0;
+    this.currentTurn = null;
+    setSessionCurrentTurn(this.context.agentId, this.context.sessionId, null);
+    // Follow-ups steered into this run are part of it.
+    popAllPendingUserMessages(this.context.agentId, this.context.sessionId);
+    await this.historyMark?.rollback();
   }
 
   private startTurnWithUser(event: Extract<HistoryEvent, { type: "user" }>) {

@@ -1,3 +1,6 @@
+import fs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { AgentConfig, Extension, GatewayConfig } from "@yoplai/shared";
 import type { SdkRunParams } from "../../types.js";
@@ -43,10 +46,10 @@ vi.mock("../../sessions/store.js", () => ({
   getSessionCreatedAt: vi.fn().mockResolvedValue(undefined),
 }));
 
-vi.mock("../../sessions/files.js", () => ({
-  resolveSessionDataFile: vi.fn(
-    async () => "/tmp/yoplai-test/sessions/session-1.jsonl"
-  ),
+const mockSessionDataFile = { path: "/tmp/yoplai-test/sessions/session-1.jsonl" };
+
+vi.mock("../../../sessions/files.js", () => ({
+  resolveSessionDataFile: vi.fn(async () => mockSessionDataFile.path),
 }));
 
 vi.mock("../../extensions/registry.js", () => ({
@@ -859,6 +862,51 @@ describe("pi adapter transient provider retry", () => {
     expect(session.prompt).toHaveBeenCalledTimes(1);
     expect(session.agent.continue).not.toHaveBeenCalled();
     expect(retryWarnings(warn)).toEqual([]);
+  });
+
+  // ALG-690 (extends the ALG-595 public piAdapter.run seam): a safety refusal,
+  // even tagged as an invalid request, never reaches the fallback model, keeps
+  // the persisted Pi session as it was and logs at warn.
+  it("drops a safety-refused turn without fallback and logs it at warn", async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-pi-refusal-"));
+    mockSessionDataFile.path = path.join(dir, "session-1.jsonl");
+    const before = `${JSON.stringify({ type: "message", text: "earlier turn" })}\n`;
+    await fs.writeFile(mockSessionDataFile.path, before);
+    const agent = makeAgent({
+      retryMaxAttempts: 3,
+      fallback_model: { provider: "openai", model: "gpt-5" },
+    });
+    setLoadedConfig({ agents: [agent] } as GatewayConfig);
+    const session = makeSession();
+    const { SessionManager } = await import("@earendil-works/pi-coding-agent");
+    session.prompt.mockImplementationOnce(async () => {
+      const runtimeFile = vi.mocked(SessionManager.open).mock.calls[0]?.[0] as string;
+      await fs.appendFile(runtimeFile, `${JSON.stringify({ type: "message", text: "flagged" })}\n`);
+      session.agent.state.messages.push(
+        { role: "user", content: [{ type: "text", text: "flagged" }] },
+        erroredTurn("400 invalid_request_error: Cyber safeguards flagged this message.")
+      );
+    });
+    mockCreateAgentSession.mockResolvedValue({ session });
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    try {
+      const { piAdapter } = await import("../adapter.js");
+      await expect(piAdapter.run(makeRunParams(agent))).rejects.toMatchObject({
+        kind: "safety_refusal",
+      });
+      expect(session.setModel).not.toHaveBeenCalled();
+      expect(session.agent.continue).not.toHaveBeenCalled();
+      await expect(fs.readFile(mockSessionDataFile.path, "utf8")).resolves.toBe(before);
+      const logged = (spy: typeof warn) =>
+        spy.mock.calls.map(([line]) => (JSON.parse(String(line)) as { msg: string }).msg);
+      expect(logged(warn)).toContain("[agent] SDK run failed");
+      expect(logged(error)).not.toContain("[agent] SDK run failed");
+    } finally {
+      mockSessionDataFile.path = "/tmp/yoplai-test/sessions/session-1.jsonl";
+      await fs.rm(dir, { recursive: true, force: true });
+    }
   });
 
   it("stops retrying at retryMaxAttempts and fails the run", async () => {
