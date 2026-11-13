@@ -1,9 +1,13 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import type { FileAttachment } from "@yoplai/shared";
-import { extractText } from "../media/extract.js";
+import { extractText, PDF_OCR_LIMITS } from "../media/extract.js";
 import { getMediaInboundDir } from "../media/metadata.js";
 import { logWarn } from "../logging.js";
+
+// Longer extracted text is not pasted into the prompt: a multi-MB file
+// overflows the model context and breaks the chat for good.
+const MAX_INLINE_ATTACHMENT_CHARS = PDF_OCR_LIMITS.outputChars;
 
 export function isImageAttachment(attachment: FileAttachment): boolean {
   return attachment.mimeType.startsWith("image/");
@@ -70,7 +74,9 @@ export async function buildDocumentAttachmentContext(
       });
       text = null;
     }
-    const content = text?.trim();
+    const trimmed = text?.trim();
+    const tooLong = !!trimmed && trimmed.length > MAX_INLINE_ATTACHMENT_CHARS;
+    const content = tooLong ? undefined : trimmed;
     blocks.push(
       [
         `File: ${getAttachmentFilename(attachment)}`,
@@ -78,9 +84,11 @@ export async function buildDocumentAttachmentContext(
         !content && options?.includeUnextractedPath && validatedPath
           ? `Path: ${validatedPath}`
           : "",
-        content
-          ? ""
-          : "Content: not extracted; inspect the attached file path if available.",
+        tooLong
+          ? `Content: not inlined: ${trimmed.length.toLocaleString("en-US")} characters, over the ${MAX_INLINE_ATTACHMENT_CHARS.toLocaleString("en-US")}-character limit; read the file at its path with bash/python.`
+          : content
+            ? ""
+            : "Content: not extracted; inspect the attached file path if available.",
         content ?? "",
       ]
         .filter((line) => line !== "")

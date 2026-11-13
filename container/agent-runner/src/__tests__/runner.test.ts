@@ -5,7 +5,7 @@ import { ModelRuntime } from "@earendil-works/pi-coding-agent";
 import { ModelsError } from "@earendil-works/pi-ai";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ContainerInput, ContainerRunnerProtocolEvent } from "@yoplai/shared";
-import { runAgent, sendFollowUpMessage } from "../runner.js";
+import { abortActiveAgent, runAgent, sendFollowUpMessage } from "../runner.js";
 
 const proxyFetchMock = vi.hoisted(() => vi.fn());
 
@@ -378,6 +378,160 @@ describe("Pi runner", () => {
       primaryDurationMs: expect.any(Number),
       fallbackDurationMs: expect.any(Number),
     });
+    await fs.rm(tempDir, { recursive: true, force: true });
+  });
+
+  // ALG-700: runAgent seam with fake Pi session, approved in the issue spec.
+  it("fails the run when Pi's overflow compaction fails and no reply was produced", async () => {
+    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-runner-"));
+    const workspaceDir = path.join(tempDir, "workspace");
+    const sessionDir = path.join(tempDir, "sessions");
+    await fs.mkdir(workspaceDir, { recursive: true });
+    await fs.mkdir(sessionDir, { recursive: true });
+    piMock.session.prompt.mockImplementationOnce(async () => {
+      const failed = {
+        role: "assistant",
+        content: [],
+        stopReason: "error",
+        errorMessage: "400 prompt is too long: 4543685 tokens > 1000000 maximum",
+      };
+      piMock.session.messages.push(
+        { role: "user", content: [{ type: "text", text: "big file" }] },
+        failed
+      );
+      for (const subscriber of piMock.subscribers) subscriber({ type: "message_end", message: failed });
+      // Pi's overflow recovery omits the failed answer, then compaction fails.
+      piMock.session.messages.pop();
+      for (const subscriber of piMock.subscribers) {
+        subscriber({ type: "compaction_start", reason: "overflow" });
+        subscriber({
+          type: "compaction_end",
+          reason: "overflow",
+          result: undefined,
+          aborted: false,
+          willRetry: false,
+          errorMessage: "Context overflow recovery failed: summarizer said no",
+        });
+      }
+    });
+    const stderr = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    await expect(
+      runAgent(
+        createInput({
+          workspaceDir,
+          sessionDir,
+          retry: { maxAttempts: 1, baseDelaySeconds: 0 },
+          fallbackModel: { provider: "openai", model: "gpt-5" },
+        })
+      )
+    ).rejects.toThrow("Context overflow recovery failed: summarizer said no");
+    expect(piMock.session.setModel).not.toHaveBeenCalled();
+    expect(
+      stderr.mock.calls
+        .map(([entry]) => String(entry))
+        .filter((entry) => entry.startsWith("{"))
+        .map((entry) => JSON.parse(entry))
+        .find((entry) => entry.event === "compaction_end")
+    ).toEqual({
+      event: "compaction_end",
+      reason: "overflow",
+      aborted: false,
+      willRetry: false,
+      errorMessage: "Context overflow recovery failed: summarizer said no",
+    });
+    await fs.rm(tempDir, { recursive: true, force: true });
+  });
+
+  it("fails the run when Pi drops a failed overflow answer with nothing to compact", async () => {
+    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-runner-"));
+    const workspaceDir = path.join(tempDir, "workspace");
+    const sessionDir = path.join(tempDir, "sessions");
+    await fs.mkdir(workspaceDir, { recursive: true });
+    await fs.mkdir(sessionDir, { recursive: true });
+    piMock.session.prompt.mockImplementationOnce(async () => {
+      const failed = {
+        role: "assistant",
+        content: [],
+        stopReason: "error",
+        errorMessage: "400 prompt is too long: 4543685 tokens > 1000000 maximum",
+      };
+      piMock.session.messages.push(
+        { role: "user", content: [{ type: "text", text: "huge paste" }] },
+        failed
+      );
+      for (const subscriber of piMock.subscribers) subscriber({ type: "message_end", message: failed });
+      // Pi omits the failed answer; with nothing to compact it emits no compaction event.
+      piMock.session.messages.pop();
+    });
+    vi.spyOn(console, "error").mockImplementation(() => {});
+
+    await expect(
+      runAgent(createInput({ workspaceDir, sessionDir, retry: { maxAttempts: 1, baseDelaySeconds: 0 } }))
+    ).rejects.toThrow("400 prompt is too long: 4543685 tokens > 1000000 maximum");
+    await fs.rm(tempDir, { recursive: true, force: true });
+  });
+
+  it("reports a user abort during overflow compaction as aborted, not failed", async () => {
+    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-runner-"));
+    const workspaceDir = path.join(tempDir, "workspace");
+    const sessionDir = path.join(tempDir, "sessions");
+    await fs.mkdir(workspaceDir, { recursive: true });
+    await fs.mkdir(sessionDir, { recursive: true });
+    piMock.session.prompt.mockImplementationOnce(async () => {
+      const failed = {
+        role: "assistant",
+        content: [],
+        stopReason: "error",
+        errorMessage: "400 prompt is too long: 4543685 tokens > 1000000 maximum",
+      };
+      piMock.session.messages.push(
+        { role: "user", content: [{ type: "text", text: "big file" }] },
+        failed
+      );
+      for (const subscriber of piMock.subscribers) subscriber({ type: "message_end", message: failed });
+      piMock.session.messages.pop();
+      abortActiveAgent();
+      for (const subscriber of piMock.subscribers) {
+        subscriber({ type: "compaction_end", reason: "overflow", result: undefined, aborted: true, willRetry: false });
+      }
+    });
+    vi.spyOn(console, "error").mockImplementation(() => {});
+
+    const output = await runAgent(
+      createInput({ workspaceDir, sessionDir, retry: { maxAttempts: 1, baseDelaySeconds: 0 } })
+    );
+    expect(output).toMatchObject({ text: "", aborted: true });
+    await fs.rm(tempDir, { recursive: true, force: true });
+  });
+
+  it("keeps the reply when Pi's overflow compaction succeeds and the turn is retried", async () => {
+    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-runner-"));
+    const workspaceDir = path.join(tempDir, "workspace");
+    const sessionDir = path.join(tempDir, "sessions");
+    await fs.mkdir(workspaceDir, { recursive: true });
+    await fs.mkdir(sessionDir, { recursive: true });
+    piMock.session.prompt.mockImplementationOnce(async () => {
+      piMock.session.messages.push({ role: "user", content: [{ type: "text", text: "long chat" }] });
+      for (const subscriber of piMock.subscribers) {
+        subscriber({
+          type: "compaction_end",
+          reason: "overflow",
+          result: { summary: "earlier chat", firstKeptEntryId: "e1", tokensBefore: 900000 },
+          aborted: false,
+          willRetry: true,
+        });
+      }
+      piMock.session.messages.push({
+        role: "assistant",
+        content: [{ type: "text", text: "answer after compaction" }],
+        stopReason: "stop",
+      });
+    });
+    vi.spyOn(console, "error").mockImplementation(() => {});
+
+    const output = await runAgent(createInput({ workspaceDir, sessionDir }));
+    expect(output).toMatchObject({ text: "answer after compaction", aborted: false });
     await fs.rm(tempDir, { recursive: true, force: true });
   });
 

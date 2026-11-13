@@ -49,6 +49,35 @@ describe("document attachment context", () => {
     expect(context).toBe(`Attached document text:\n\nFile: ${filename}\nMIME type: ${mimeType}\ndébut\n\n${"  padded,raw\tvalue\n".repeat(2000)}END-OF-FILE`);
   });
 
+  // ALG-700: seam approved in the issue spec (Testing Decisions).
+  it("does not inline extracted text over 250,000 characters and points the agent to the file", async () => {
+    const filename = "subnets.json";
+    const content = `[${"\"10.0.0.0/24\",".repeat(18_000)}"END-OF-FILE"]`; // 252,015 chars
+    const filePath = path.join(inbound, filename);
+    await fs.writeFile(filePath, content);
+    const attachment = { path: filePath, filename, mimeType: "application/json", size: content.length };
+
+    const context = await buildDocumentAttachmentContext([attachment]);
+    expect(context).toBe(
+      "Attached document text:\n\nFile: subnets.json\nMIME type: application/json\n" +
+      "Content: not inlined: 252,015 characters, over the 250,000-character limit; read the file at its path with bash/python."
+    );
+
+    const withPath = await buildDocumentAttachmentContext([attachment], { includeUnextractedPath: true });
+    expect(withPath).toContain(`Path: ${await fs.realpath(filePath)}`);
+    expect(withPath).not.toContain("END-OF-FILE");
+  });
+
+  it("still inlines text of exactly 250,000 characters", async () => {
+    const content = `${"x".repeat(249_989)}END-OF-FILE`;
+    const filePath = path.join(inbound, "big.txt");
+    await fs.writeFile(filePath, content);
+    const context = await buildDocumentAttachmentContext([
+      { path: filePath, filename: "big.txt", mimeType: "text/plain", size: content.length },
+    ]);
+    expect(context).toBe(`Attached document text:\n\nFile: big.txt\nMIME type: text/plain\n${content}`);
+  });
+
   it.each(["outside", "missing", "symlink"])("excludes content and paths for %s inbound attachments", async (kind) => {
     const outside = path.join(home, "private.txt");
     await fs.writeFile(outside, "PRIVATE-CONTENT");
