@@ -1,4 +1,5 @@
 import type { MiddlewareHandler } from "hono";
+import { getAgent } from "../config/index.js";
 import { addGatewaySuffix } from "./agent-id.js";
 import { MAX_UPLOAD_SIZE_BYTES } from "../media/upload.js";
 import { getLinkedGateways, isTrustedOrigin, resolveRemoteAgent } from "./state.js";
@@ -88,7 +89,10 @@ async function mergeLists(
   const items = [...(local as { items: Array<Record<string, unknown>> }).items];
   for (const { gateway, body } of remotes) {
     const remoteItems = (body as { items?: unknown[] }).items ?? [];
-    items.push(...(remoteItems.map((item) => suffixAgentIds(item, gateway.name)) as Array<Record<string, unknown>>));
+    for (const item of remoteItems.map((entry) => suffixAgentIds(entry, gateway.name)) as Array<Record<string, unknown>>) {
+      if (typeof item.agentId === "string" && getAgent(item.agentId)) continue;
+      items.push(item);
+    }
   }
   if (segments[3] === "search") {
     items.sort(
@@ -158,10 +162,56 @@ function uploadTooLarge(): Response {
   );
 }
 
+const AGENT_ID_FIELD_RE = /name="agentId"\r\n\r\n([^\r]*)\r\n/;
+const FIELD_SCAN_TAIL_BYTES = 512;
+
+/**
+ * Keeps at most `limit` bytes of the body. When the body is longer, it keeps
+ * none, and only looks for the agentId field while it reads on.
+ */
+async function readUploadBody(
+  request: Request,
+  limit: number
+): Promise<{ bytes: Buffer; exceeded: boolean; agentId?: string }> {
+  let chunks: Buffer[] = [];
+  let size = 0;
+  let exceeded = false;
+  let tail = "";
+  const reader = request.body?.getReader();
+  while (reader) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    size += value.byteLength;
+    if (!exceeded && size > limit) {
+      exceeded = true;
+      chunks = [];
+    }
+    if (!exceeded) chunks.push(Buffer.from(value));
+    const window = tail + Buffer.from(value).toString("latin1");
+    const agentId = AGENT_ID_FIELD_RE.exec(window)?.[1];
+    if (exceeded && agentId !== undefined) {
+      await reader.cancel();
+      return { bytes: Buffer.alloc(0), exceeded, agentId };
+    }
+    tail = window.slice(-FIELD_SCAN_TAIL_BYTES);
+  }
+  return { bytes: Buffer.concat(chunks), exceeded };
+}
+
 async function forwardUpload(request: Request, gateways: RemoteGateway[]): Promise<Response | null> {
-  const length = Number(request.headers.get("content-length"));
-  if (length > MAX_UPLOAD_SIZE_BYTES + UPLOAD_FORM_OVERHEAD_BYTES) return uploadTooLarge();
-  const form = await request.clone().formData().catch(() => null);
+  const { bytes, exceeded, agentId: lateAgentId } = await readUploadBody(
+    request.clone(),
+    MAX_UPLOAD_SIZE_BYTES + UPLOAD_FORM_OVERHEAD_BYTES
+  );
+  if (exceeded) {
+    // Only a remote agent gets the early refusal. A local upload goes on to its own route.
+    return lateAgentId && resolveRemoteAgent(lateAgentId, gateways).gateway ? uploadTooLarge() : null;
+  }
+  const form = await new Response(new Uint8Array(bytes), {
+    headers: { "content-type": request.headers.get("content-type") ?? "" },
+  })
+    .formData()
+    .catch(() => null);
   const agentId = form?.get("agentId");
   if (!form || typeof agentId !== "string") return null;
   const target = resolveRemoteAgent(agentId, gateways);
@@ -200,6 +250,7 @@ async function downloadFromRemote(
         for (const name of DROPPED_RESPONSE_HEADERS) headers.delete(name);
         return new Response(response.body, { status: 200, headers });
       }
+      await response.body?.cancel();
     } catch {
       continue;
     }

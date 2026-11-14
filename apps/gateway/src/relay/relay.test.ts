@@ -49,7 +49,8 @@ async function startFakeGateway(
   handler: (req: http.IncomingMessage, res: http.ServerResponse, recorded: Recorded) => void = (_req, res) => {
     res.setHeader("content-type", "application/json");
     res.end("{}");
-  }
+  },
+  upgradeGate?: Promise<void>
 ) {
   const requests: Recorded[] = [];
   const socketMessages: Array<{ type?: string; agentId?: string }> = [];
@@ -63,7 +64,14 @@ async function startFakeGateway(
       handler(req, res, recorded);
     });
   });
-  const wss = new WebSocketServer({ server });
+  const wss = new WebSocketServer({
+    server,
+    verifyClient: upgradeGate ? (_info, done) => void upgradeGate.then(() => done(true)) : undefined,
+  });
+  let upgradeAttempts = 0;
+  server.on("upgrade", () => {
+    upgradeAttempts += 1;
+  });
   wss.on("connection", (socket) => {
     sockets.push(socket);
     socket.on("message", (raw) => socketMessages.push(JSON.parse(raw.toString()) as { type?: string; agentId?: string }));
@@ -74,6 +82,7 @@ async function startFakeGateway(
     requests,
     socketMessages,
     sockets,
+    upgradeAttempts: () => upgradeAttempts,
     close: () => {
       for (const socket of sockets) socket.terminate();
       server.closeAllConnections();
@@ -347,15 +356,26 @@ describe("desktop relay: chat relay", () => {
   });
 
   it("delivers an unsubscribe that a page sends while the remote socket connects", async () => {
-    await withFakeGateway("race", undefined, async (fake) => {
+    let openUpgrade!: () => void;
+    const gate = new Promise<void>((resolve) => { openUpgrade = resolve; });
+    const fake = await startFakeGateway(undefined, gate);
+    saveGateway({ name: "race", url: fake.url });
+    try {
       const ws = await openPage(localBase);
       ws.send(JSON.stringify({ type: "subscribe", agentId: "x@race", sessionKey: "race" }));
+      await waitFor(() => fake.upgradeAttempts() === 1);
       ws.send(JSON.stringify({ type: "unsubscribe" }));
+      await new Promise<void>((resolve) => { ws.once("pong", () => resolve()); ws.ping(); });
+      expect(fake.socketMessages).toEqual([]);
+      openUpgrade();
       await waitFor(() => fake.socketMessages.length === 2);
       expect(fake.socketMessages.map((message) => message.type)).toEqual(["subscribe", "unsubscribe"]);
       expect(ws.readyState).toBe(WebSocket.OPEN);
       ws.close();
-    });
+    } finally {
+      removeGateway("race");
+      fake.close();
+    }
   });
 
   it("sends unsubscribe to a remote gateway when the page subscribes to another agent", async () => {
@@ -442,21 +462,29 @@ describe("desktop relay: chat relay", () => {
     const stall = net.createServer(() => {});
     await new Promise<void>((resolve) => stall.listen(0, "127.0.0.1", resolve));
     saveGateway({ name: "slow", url: `http://127.0.0.1:${(stall.address() as AddressInfo).port}` });
+    const { RelayWsBridge } = await import("./ws.js");
+    const closed = new Promise<void>((resolve) => {
+      const page = { readyState: WebSocket.OPEN, send: vi.fn(), close: resolve } as unknown as WebSocket;
+      const bridge = new RelayWsBridge(page, undefined, () => {}, 200);
+      bridge.handle(JSON.stringify({ type: "send", agentId: "x@slow", sessionKey: "main", message: "hi" }));
+    });
     try {
-      const ws = await openPage(localBase);
-      const closed = new Promise<void>((resolve) => ws.once("close", () => resolve()));
-      ws.send(JSON.stringify({ type: "send", agentId: "x@slow", sessionKey: "main", message: "hi" }));
       await closed;
     } finally {
       removeGateway("slow");
       stall.close();
     }
-  }, 20_000);
+  });
 
   it("sends the bearer token and drops Origin, Referer, and cookies for a remote gateway", async () => {
     await withFakeGateway(
       "hdr",
-      (_req, res) => {
+      (req, res) => {
+        if (req.headers.authorization !== "Bearer test-bearer") {
+          res.statusCode = 401;
+          res.end();
+          return;
+        }
         res.setHeader("content-type", "application/json");
         res.setHeader("set-cookie", "session=remote; Path=/");
         res.end(JSON.stringify({ messages: [] }));
@@ -657,6 +685,142 @@ describe("desktop relay: chat relay", () => {
       vi.unstubAllGlobals();
       vi.useRealTimers();
     }
+  });
+
+  it("does not start the relay when the UI listens on a non-loopback address", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      configureRelay("127.0.0.1", false, false, "0.0.0.0");
+      expect(getLinkedGateways()).toEqual([]);
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining("the UI listens on 0.0.0.0"));
+    } finally {
+      warn.mockRestore();
+      configureRelay("127.0.0.1", false);
+    }
+  });
+
+  it("drops a remote session and a remote search hit whose id belongs to a local agent", async () => {
+    const items = [
+      { agentId: "pom", sessionId: "clash", match: "title", lastActivity: 5 },
+      { agentId: "other", sessionId: "fine", match: "title", lastActivity: 4 },
+    ];
+    await withFakeGateway(
+      "loc",
+      (_req, res) => {
+        res.setHeader("content-type", "application/json");
+        res.end(JSON.stringify({ items }));
+      },
+      async () => {
+        for (const url of ["/api/agents/sessions", "/api/agents/sessions/search?q=x"]) {
+          const result = (await (await fetch(`${localBase}${url}`)).json()) as { items: Array<{ sessionId: string }> };
+          const ids = result.items.map((item) => item.sessionId);
+          expect(ids).toContain("fine");
+          expect(ids).not.toContain("clash");
+        }
+      }
+    );
+  });
+
+  it("drops a remote status event whose id belongs to a local agent", async () => {
+    await withFakeGateway("loc", undefined, async (fake) => {
+      const ws = await openPage(localBase);
+      const seen: string[] = [];
+      const other = new Promise<void>((resolve) => {
+        ws.on("message", (raw) => {
+          const event = JSON.parse(raw.toString()) as WsEvent;
+          if (event.type !== "status" || !event.agentId) return;
+          seen.push(event.agentId);
+          if (event.agentId === "other@loc") resolve();
+        });
+      });
+      ws.send(JSON.stringify({ type: "subscribeStatus" }));
+      await waitFor(() => fake.sockets.length > 0 && fake.socketMessages.length > 0);
+      fake.sockets[0]?.send(JSON.stringify({ type: "status", agentId: "pom", status: "running" }));
+      fake.sockets[0]?.send(JSON.stringify({ type: "status", agentId: "other", status: "running" }));
+      await other;
+      expect(seen).toEqual(["other@loc"]);
+      ws.close();
+    });
+  });
+
+  /** A multipart body with no Content-Length. A file, then a padding field, then the agent id. */
+  function chunkedUpload(agentId: string, padBytes: number): ReadableStream<Uint8Array> {
+    const encoder = new TextEncoder();
+    const part = (name: string, value: string, file?: string) =>
+      `--B\r\nContent-Disposition: form-data; name="${name}"${file ? `; filename="${file}"` : ""}\r\n\r\n${value}\r\n`;
+    const pad = new Uint8Array(1024 * 1024).fill(97);
+    let sent = 0;
+    let step = 0;
+    return new ReadableStream({
+      pull(controller) {
+        if (step === 0) controller.enqueue(encoder.encode(part("file", "x", "note.txt") + `--B\r\nContent-Disposition: form-data; name="pad"\r\n\r\n`));
+        else if (sent < padBytes) {
+          controller.enqueue(pad);
+          sent += pad.length;
+        } else {
+          controller.enqueue(encoder.encode(`\r\n${part("agentId", agentId)}--B--\r\n`));
+          controller.close();
+        }
+        step += 1;
+      },
+    });
+  }
+
+  it("refuses a remote upload over the byte limit when the request has no Content-Length", async () => {
+    await withFakeGateway("chunky", undefined, async (fake) => {
+      const response = await fetch(`${localBase}/api/media/upload`, {
+        method: "POST",
+        headers: { "content-type": "multipart/form-data; boundary=B" },
+        body: chunkedUpload("pom@chunky", 28 * 1024 * 1024),
+        duplex: "half",
+      } as RequestInit);
+      expect(response.status).toBe(413);
+      expect(fake.requests).toEqual([]);
+    });
+  });
+
+  it("does not apply the relay byte limit to an upload for a local agent", async () => {
+    const form = new FormData();
+    form.set("file", new File(["local file"], "note.txt", { type: "text/plain" }));
+    form.set("pad", "a".repeat(28 * 1024 * 1024));
+    form.set("agentId", "local");
+    const response = await fetch(`${localBase}/api/media/upload`, { method: "POST", body: form });
+    expect(response.status).toBe(200);
+  });
+
+  it("does not close the page when a remote socket closes after the page left its chat", async () => {
+    await withFakeGateway("left", undefined, async (fake) => {
+      const ws = await openPage(localBase);
+      ws.send(JSON.stringify({ type: "subscribe", agentId: "x@left", sessionKey: "main" }));
+      await waitFor(() => fake.sockets.length === 1 && fake.socketMessages.length === 1);
+      ws.send(JSON.stringify({ type: "unsubscribe" }));
+      await waitFor(() => fake.socketMessages.length === 2);
+      const remoteClosed = new Promise<void>((resolve) => fake.sockets[0]?.once("close", () => resolve()));
+      fake.sockets[0]?.close();
+      await remoteClosed;
+      await new Promise<void>((resolve) => { ws.once("pong", () => resolve()); ws.ping(); });
+      expect(ws.readyState).toBe(WebSocket.OPEN);
+      ws.close();
+    });
+  });
+
+  it("cancels the body of a refused download before it asks the next gateway", async () => {
+    let refusedClosed = false;
+    await withFakeGateway(
+      "refuse",
+      (_req, res) => {
+        res.on("close", () => {
+          refusedClosed = true;
+        });
+        res.writeHead(404, { "content-type": "text/plain" });
+        res.write("not here");
+      },
+      async () => {
+        const response = await fetch(`${localBase}/api/media/download/22222222-2222-4222-8222-222222222222`);
+        expect(response.status).toBe(404);
+        await waitFor(() => refusedClosed);
+      }
+    );
   });
 
   it("saves the store file with mode 0600 when an old temp file has a wider mode", async () => {

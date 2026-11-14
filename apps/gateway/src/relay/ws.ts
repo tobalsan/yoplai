@@ -1,4 +1,5 @@
 import { WebSocket } from "ws";
+import { getAgent } from "../config/index.js";
 import { addGatewaySuffix } from "./agent-id.js";
 import { remoteWsHeaders, remoteWsUrl } from "./remote.js";
 import { getLinkedGateways, isTrustedOrigin, resolveRemoteAgent } from "./state.js";
@@ -25,7 +26,8 @@ export class RelayWsBridge {
   constructor(
     private readonly page: WebSocket,
     origin: string | undefined,
-    private readonly dropLocalSubscription: () => void
+    private readonly dropLocalSubscription: () => void,
+    private readonly connectTimeoutMs = CONNECT_TIMEOUT_MS
   ) {
     this.trusted = isTrustedOrigin(origin);
   }
@@ -66,6 +68,7 @@ export class RelayWsBridge {
     }
     if (message.type === "unsubscribe") {
       this.sendToOpenLinks(raw);
+      this.releaseChat(this.subscribedGateway);
       this.subscribedGateway = undefined;
       return false;
     }
@@ -85,9 +88,16 @@ export class RelayWsBridge {
     if (previous !== undefined && previous !== gatewayName) {
       const link = this.links.get(previous);
       if (link) this.deliver(link, JSON.stringify({ type: "unsubscribe" }));
+      this.releaseChat(previous);
     }
     if (gatewayName !== undefined) this.dropLocalSubscription();
     this.subscribedGateway = gatewayName;
+  }
+
+  /** The page no longer uses the chat stream of this gateway, so its close must not close the page. */
+  private releaseChat(gatewayName: string | undefined): void {
+    const link = gatewayName === undefined ? undefined : this.links.get(gatewayName);
+    if (link) link.chat = false;
   }
 
   private sendToOpenLinks(payload: string): void {
@@ -116,7 +126,7 @@ export class RelayWsBridge {
     }
     const socket = new WebSocket(remoteWsUrl(gateway), {
       headers: remoteWsHeaders(gateway),
-      handshakeTimeout: CONNECT_TIMEOUT_MS,
+      handshakeTimeout: this.connectTimeoutMs,
     });
     const link: RemoteLink = { socket, queue: [payload], chat };
     this.links.set(gateway.name, link);
@@ -142,6 +152,7 @@ export class RelayWsBridge {
       const event = JSON.parse(raw) as PageMessage;
       if (typeof event.agentId === "string") {
         event.agentId = addGatewaySuffix(event.agentId, gatewayName);
+        if (getAgent(event.agentId)) return;
       }
       this.page.send(JSON.stringify(event));
     } catch {
