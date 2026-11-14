@@ -120,6 +120,20 @@ describe("gateway web UI process management", () => {
     vi.restoreAllMocks();
   });
 
+  it("starts a run with the cli source when the send command runs", async () => {
+    const { getAgent } = await import("../config/index.js");
+    const { runAgent } = await import("../agents/index.js");
+    const { prepareStartupConfig } = await import("../config/validate.js");
+    vi.mocked(getAgent).mockReturnValue({ id: "alpha", name: "Alpha" } as never);
+    vi.mocked(prepareStartupConfig).mockResolvedValue({ resolvedConfig: {} } as never);
+    vi.mocked(runAgent).mockResolvedValue({ meta: { durationMs: 1 } } as never);
+    process.argv = ["node", "yoplai", "send", "-a", "alpha", "-m", "hi"];
+    await import("./index.js");
+
+    await vi.waitFor(() => expect(runAgent).toHaveBeenCalledOnce());
+    expect(vi.mocked(runAgent).mock.calls[0][0]).toMatchObject({ agentId: "alpha", message: "hi", source: "cli" });
+  });
+
   it("binds the UI to loopback when Tailscale serve fronts a LAN-bound UI", async () => {
     const child = Object.assign(new EventEmitter(), {
       pid: 123,

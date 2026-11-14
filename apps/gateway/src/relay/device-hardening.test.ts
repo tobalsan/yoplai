@@ -121,8 +121,9 @@ describe("device registry: socket errors", () => {
         tool: "device_bash", arguments: { command: "x" }, agentId: "a", sessionId: "s", toolCallId: "t", runKind: "chat",
       });
       const assertion = expect(pending).rejects.toThrow(/dropped/);
-      // A text frame with a byte that is not valid UTF-8.
-      (socket as unknown as { _socket: net.Socket })._socket.write(Buffer.from([0x81, 0x01, 0xff]));
+      // A masked text frame with one byte that is not valid UTF-8.
+      const mask = [0x11, 0x22, 0x33, 0x44];
+      (socket as unknown as { _socket: net.Socket })._socket.write(Buffer.from([0x81, 0x81, ...mask, 0xff ^ mask[0]]));
       await assertion;
       await waitFor(() => !getDeviceRegistry().has("local"));
     } finally {
@@ -151,6 +152,17 @@ describe("gateway broker close", () => {
     remote.broker.close();
     await assertion;
     await code;
+    expect(getDeviceRegistry().has("local")).toBe(false);
+  });
+});
+
+describe("gateway broker close before hello", () => {
+  it("closes a device socket that sent no hello, and a later hello does not register", async () => {
+    const socket = await openDevice();
+    const code = closed(socket);
+    remote.broker.close();
+    await code;
+    expect(socket.readyState).toBe(WebSocket.CLOSED);
     expect(getDeviceRegistry().has("local")).toBe(false);
   });
 });

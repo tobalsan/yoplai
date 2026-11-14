@@ -97,6 +97,102 @@ describe("device gate: the path that the gate checks is the path that the tool o
   });
 });
 
+describe("device gate: the file operations compare the path that Pi opens", () => {
+  const tools = ["device_write", "device_edit"] as const;
+  const forms: [string, (target: string) => string][] = [
+    ["file URL", (target) => `file://${target}`],
+    ["file URL with localhost", (target) => `file://localhost${target}`],
+    ["file URL with a leading @", (target) => `@file://${target}`],
+  ];
+
+  it.each(tools.flatMap((tool) => forms.map((form) => [tool, ...form] as const)))(
+    "%s keeps the outside file unchanged for a %s with an escaped Unicode space",
+    async (tool, _name, form) => {
+      fs.symlinkSync(outside, path.join(folder, "a b"));
+      fs.writeFileSync(path.join(outside, "x"), "old");
+      const raw = form(`${folder}/a%C2%A0b/x`);
+      const args =
+        tool === "device_write"
+          ? { path: raw, content: "escaped" }
+          : { path: raw, edits: [{ oldText: "old", newText: "new" }] };
+      await run(tool, args).catch(() => undefined);
+      expect(fs.readFileSync(path.join(outside, "x"), "utf8")).toBe("old");
+    }
+  );
+
+  it.each(["device_write", "device_edit"])(
+    "%s throws and writes nothing when the checked path differs from the path of Pi",
+    async (tool) => {
+      fs.symlinkSync(outside, path.join(folder, "a b"));
+      fs.writeFileSync(path.join(outside, "x"), "old");
+      const wrongPath = new DeviceExecutor({
+        settings, approvals, approvalTimeoutMs: 2000,
+        resolvePath: (cwd) => `${cwd}/a\u00a0b/x`,
+      });
+      const args =
+        tool === "device_write"
+          ? { path: "ignored", content: "escaped" }
+          : { path: "ignored", edits: [{ oldText: "old", newText: "new" }] };
+      await expect(wrongPath.execute(call(tool, args), "ams", new AbortController().signal)).rejects.toThrow(
+        /path changed after the permission check/
+      );
+      expect(fs.readFileSync(path.join(outside, "x"), "utf8")).toBe("old");
+      expect(asked).toEqual([]);
+    }
+  );
+
+  it("treats an escaped percent sign as a literal name", async () => {
+    await run("device_write", { path: path.join(folder, "p%2520q.txt"), content: "in" });
+    expect(fs.readFileSync(path.join(folder, "p%2520q.txt"), "utf8")).toBe("in");
+  });
+
+  it("handles a mix of @, ~, and a Unicode space with no write outside the folder", async () => {
+    await expect(run("device_write", { path: "@~/yoplai\u00a0never.txt", content: "x" })).rejects.toThrow();
+    expect(fs.existsSync(path.join(os.homedir(), "yoplai never.txt"))).toBe(false);
+  });
+
+  it("writes in a workspace folder whose name has a percent sign", async () => {
+    const odd = path.join(dir, "w%20x");
+    fs.mkdirSync(odd);
+    settings.setChat(chatKey, { workspaceFolder: odd, full: false });
+    await run("device_write", { path: "n.txt", content: "ok" });
+    expect(fs.readFileSync(path.join(odd, "n.txt"), "utf8")).toBe("ok");
+    expect(asked).toEqual([]);
+  });
+
+  it("asks, and writes nothing, in a workspace folder whose name has a Unicode space, which Pi cannot open", async () => {
+    const odd = path.join(dir, "w\u00a0s");
+    fs.mkdirSync(odd);
+    settings.setChat(chatKey, { workspaceFolder: odd, full: false });
+    await expect(run("device_write", { path: "n.txt", content: "no" })).rejects.toThrow(/refused/);
+    expect(asked).toHaveLength(1);
+    expect(fs.existsSync(path.join(odd, "n.txt"))).toBe(false);
+  });
+
+  it("still writes a relative path, an absolute path, and a new sub-directory, and edits a file", async () => {
+    await run("device_write", { path: "rel.txt", content: "r" });
+    await run("device_write", { path: path.join(folder, "abs.txt"), content: "a" });
+    await run("device_write", { path: "sub/deeper/new.txt", content: "n" });
+    await run("device_edit", { path: "rel.txt", edits: [{ oldText: "r", newText: "e" }] });
+    expect(fs.readFileSync(path.join(folder, "rel.txt"), "utf8")).toBe("e");
+    expect(fs.readFileSync(path.join(folder, "abs.txt"), "utf8")).toBe("a");
+    expect(fs.readFileSync(path.join(folder, "sub/deeper/new.txt"), "utf8")).toBe("n");
+    expect(asked).toEqual([]);
+  });
+
+  it("writes outside the folder after the user approves", async () => {
+    const target = path.join(outside, "ok.txt");
+    // The subscriber from beforeEach refuses, so use a fresh approvals object.
+    approvals = new DeviceApprovals();
+    executor = new DeviceExecutor({ settings, approvals, approvalTimeoutMs: 2000 });
+    approvals.subscribe((event) => {
+      if (event.kind === "request") approvals.answer(event.message.approvalId, true);
+    });
+    await run("device_write", { path: target, content: "approved" });
+    expect(fs.readFileSync(target, "utf8")).toBe("approved");
+  });
+});
+
 describe("device gate: other rules", () => {
   it("asks when the workspace folder no longer exists", async () => {
     fs.rmSync(folder, { recursive: true });

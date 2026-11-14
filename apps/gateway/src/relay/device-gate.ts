@@ -17,19 +17,32 @@ export function resolveDeviceMode(settings: ChatDeviceSettings): DeviceMode {
 
 const UNICODE_SPACES = /[\u00A0\u2000-\u200A\u202F\u205F\u3000]/g;
 
-/**
- * Gives the final absolute path of a file call. It applies the changes that the Pi file tools
- * apply to a path before they open it: Unicode spaces become spaces, a leading `@` goes away,
- * `~` expands, and a `file://` URL becomes a path. The gate checks this path and the tool gets
- * this same path. The result is absolute, so Pi changes it no more.
- */
-export function resolveAgainstFolder(folder: string, rawPath: string): string {
+/** Applies the path changes of the Pi file tools once. */
+function resolveOnce(folder: string, rawPath: string): string {
   let normalized = rawPath.replace(UNICODE_SPACES, " ");
   if (normalized.startsWith("@")) normalized = normalized.slice(1);
   if (normalized === "~") normalized = os.homedir();
   else if (normalized.startsWith("~/")) normalized = path.join(os.homedir(), normalized.slice(2));
   if (/^file:\/\//.test(normalized)) normalized = fileURLToPath(normalized);
   return path.resolve(folder, normalized);
+}
+
+const MAX_RESOLVE_PASSES = 8;
+
+/**
+ * Gives the checked path of a file call. It applies the changes that the Pi file tools apply to
+ * a path before they open it, until the result does not change. It throws when the result does
+ * not settle. The file operations of the device tools still compare the path that Pi opens with
+ * this path, so a rule that this copy does not know makes the call fail and not write.
+ */
+export function resolveAgainstFolder(folder: string, rawPath: string): string {
+  let current = rawPath;
+  for (let pass = 0; pass < MAX_RESOLVE_PASSES; pass++) {
+    const next = resolveOnce(folder, current);
+    if (next === current) return next;
+    current = next;
+  }
+  throw new Error("The path does not settle to one final path. The call did not run.");
 }
 
 /**

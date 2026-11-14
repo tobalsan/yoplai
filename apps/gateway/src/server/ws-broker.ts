@@ -108,6 +108,7 @@ export class WsBroker {
     this.statusSubscribers.clear();
     this.wss?.close();
     this.wss = null;
+    for (const client of this.deviceWss?.clients ?? []) client.terminate();
     this.deviceWss?.close();
     this.deviceWss = null;
     getDeviceRegistry().closeAll();

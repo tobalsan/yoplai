@@ -18,6 +18,8 @@ export type DeviceExecutorOptions = {
   settings: DeviceSettingsStore;
   approvals: DeviceApprovals;
   approvalTimeoutMs?: number;
+  /** Gives the checked path of a file call. Tests replace it to prove the compare of the file operations. */
+  resolvePath?: (folder: string, rawPath: string) => string;
 };
 
 export type DeviceExecution = { content: unknown[]; details?: unknown };
@@ -69,7 +71,7 @@ export class DeviceExecutor {
     const cwd = folder ?? os.homedir();
     let absolutePath: string | undefined;
     if (definition.filePath) {
-      absolutePath = resolveAgainstFolder(cwd, args.path as string);
+      absolutePath = (this.options.resolvePath ?? resolveAgainstFolder)(cwd, args.path as string);
       args = { ...args, path: absolutePath };
     }
 
@@ -108,7 +110,7 @@ export class DeviceExecutor {
     }
 
     signal.throwIfAborted();
-    const tool = definition.create(cwd);
+    const tool = definition.create(cwd, absolutePath);
     return tool.execute(call.callId, args as never, signal);
   }
 }
