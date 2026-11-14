@@ -31,7 +31,7 @@ Core TypeScript/Node.js process. Main ownership:
 - `src/agents/`: run orchestration, session lifecycle, workspace bootstrap, sandbox helpers
 - `src/sdk/`: Pi, Claude, OpenClaw, and container adapters
 - `src/server/`: Hono HTTP API, WebSocket broker, auth middleware, request normalization
-- `src/relay/`: chat relay to linked remote gateways: link store (`remote-gateways.json`, 0600), `<agentId>@<name>` ids (`agent-id.ts`), REST/upload/download forward and list merge (`http.ts`), WebSocket forward (`ws.ts`); `cli/connect.ts` has `yoplai connect|disconnect|remotes`. Active only on loopback with multi-user off and Tailscale serve off. Requests with a non-loopback `Origin` are not relayed. A local agent whose id equals the requested id wins over a gateway suffix. Tests start a fake-model remote gateway from `relay/remote-gateway.fixture.ts`.
+- `src/relay/`: chat relay to linked remote gateways: link store (`remote-gateways.json`, 0600), `<agentId>@<name>` ids (`agent-id.ts`), REST/upload/download forward and list merge (`http.ts`), WebSocket forward (`ws.ts`); `cli/connect.ts` has `yoplai connect|disconnect|remotes`. Active only when the gateway and the UI listen on loopback, with multi-user off and Tailscale serve off. Requests with a non-loopback `Origin` are not relayed. A local agent whose id equals the requested id wins over a gateway suffix. Tests start a fake-model remote gateway from `relay/remote-gateway.fixture.ts`.
 - `src/history/`: canonical history operations
 - `src/extensions/`: extension registry, runtime, route/tool/prompt composition, lifecycle
 - `src/media/`: inbound uploads, document extraction, outbound files

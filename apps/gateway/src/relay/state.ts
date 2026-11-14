@@ -41,12 +41,19 @@ export function resolveRemoteAgent(
 export function configureRelay(
   host: string,
   multiUser: boolean,
-  tailscaleServe = false
+  tailscaleServe = false,
+  uiHost = "127.0.0.1"
 ): void {
   enabled = false;
   if (tailscaleServe) {
     console.warn(
       "[relay] disabled: Tailscale serve exposes the gateway to the tailnet."
+    );
+    return;
+  }
+  if (!isLoopbackHost(uiHost)) {
+    console.warn(
+      `[relay] disabled: the UI listens on ${uiHost}, which is not a loopback address.`
     );
     return;
   }

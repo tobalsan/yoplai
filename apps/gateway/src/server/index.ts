@@ -377,7 +377,8 @@ export function startServer(
   configureRelay(
     resolvedHost,
     runtime.isEnabled("multiUser"),
-    config.ui?.tailscale?.mode === "serve"
+    config.ui?.tailscale?.mode === "serve",
+    resolveBindHost(config.ui?.bind)
   );
   const nodeBin = path.dirname(process.execPath);
   if (nodeBin && !process.env.PATH?.split(path.delimiter).includes(nodeBin)) {
