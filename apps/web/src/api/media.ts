@@ -8,9 +8,8 @@ import { API_BASE, apiFetch as fetch } from "./core";
 async function uploadFile(file: File, agentId?: string): Promise<UploadResponse> {
   const formData = new FormData();
   formData.append("file", file);
-  if (agentId) formData.append("agentId", agentId);
 
-  const res = await fetch(`${API_BASE}/media/upload`, {
+  const res = await fetch(`${API_BASE}/media/upload${agentId ? `?agentId=${encodeURIComponent(agentId)}` : ""}`, {
     method: "POST",
     body: formData,
   });

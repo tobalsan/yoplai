@@ -2,7 +2,7 @@ import type { MiddlewareHandler } from "hono";
 import { getAgent } from "../config/index.js";
 import { addGatewaySuffix } from "./agent-id.js";
 import { MAX_UPLOAD_SIZE_BYTES } from "../media/upload.js";
-import { getLinkedGateways, isTrustedOrigin, resolveRemoteAgent } from "./state.js";
+import { getLinkedGateways, isTrustedRequest, resolveRemoteAgent } from "./state.js";
 import {
   fetchRemote,
   fetchRemoteJson,
@@ -162,61 +162,41 @@ function uploadTooLarge(): Response {
   );
 }
 
-const AGENT_ID_FIELD_RE = /name="agentId"\r\n\r\n([^\r]*)\r\n/;
-const FIELD_SCAN_TAIL_BYTES = 512;
-
-/**
- * Keeps at most `limit` bytes of the body. When the body is longer, it keeps
- * none, and only looks for the agentId field while it reads on.
- */
-async function readUploadBody(
-  request: Request,
-  limit: number
-): Promise<{ bytes: Buffer; exceeded: boolean; agentId?: string }> {
-  let chunks: Buffer[] = [];
+/** Reads the body from one stream. Returns null and cancels the stream when it passes `limit` bytes. */
+async function readLimited(body: ReadableStream<Uint8Array> | null, limit: number): Promise<Buffer | null> {
+  const chunks: Buffer[] = [];
   let size = 0;
-  let exceeded = false;
-  let tail = "";
-  const reader = request.body?.getReader();
+  const reader = body?.getReader();
   while (reader) {
     const { done, value } = await reader.read();
     if (done) break;
     size += value.byteLength;
-    if (!exceeded && size > limit) {
-      exceeded = true;
-      chunks = [];
-    }
-    if (!exceeded) chunks.push(Buffer.from(value));
-    const window = tail + Buffer.from(value).toString("latin1");
-    const agentId = AGENT_ID_FIELD_RE.exec(window)?.[1];
-    if (exceeded && agentId !== undefined) {
+    if (size > limit) {
       await reader.cancel();
-      return { bytes: Buffer.alloc(0), exceeded, agentId };
+      return null;
     }
-    tail = window.slice(-FIELD_SCAN_TAIL_BYTES);
+    chunks.push(Buffer.from(value));
   }
-  return { bytes: Buffer.concat(chunks), exceeded };
+  return Buffer.concat(chunks);
 }
 
+/** Handles an upload for a remote agent. The page names the agent in the `agentId` query parameter. */
 async function forwardUpload(request: Request, gateways: RemoteGateway[]): Promise<Response | null> {
-  const { bytes, exceeded, agentId: lateAgentId } = await readUploadBody(
-    request.clone(),
-    MAX_UPLOAD_SIZE_BYTES + UPLOAD_FORM_OVERHEAD_BYTES
-  );
-  if (exceeded) {
-    // Only a remote agent gets the early refusal. A local upload goes on to its own route.
-    return lateAgentId && resolveRemoteAgent(lateAgentId, gateways).gateway ? uploadTooLarge() : null;
-  }
+  const queryAgentId = new URL(request.url).searchParams.get("agentId");
+  if (!queryAgentId) return null;
+  const target = resolveRemoteAgent(queryAgentId, gateways);
+  const gateway = gateways.find((item) => item.name === target.gateway);
+  if (!gateway) return null;
+  const limit = MAX_UPLOAD_SIZE_BYTES + UPLOAD_FORM_OVERHEAD_BYTES;
+  if (Number(request.headers.get("content-length")) > limit) return uploadTooLarge();
+  const bytes = await readLimited(request.body, limit);
+  if (!bytes) return uploadTooLarge();
   const form = await new Response(new Uint8Array(bytes), {
     headers: { "content-type": request.headers.get("content-type") ?? "" },
   })
     .formData()
     .catch(() => null);
-  const agentId = form?.get("agentId");
-  if (!form || typeof agentId !== "string") return null;
-  const target = resolveRemoteAgent(agentId, gateways);
-  const gateway = gateways.find((item) => item.name === target.gateway);
-  if (!gateway) return null;
+  if (!form) return Response.json({ error: "Invalid upload" }, { status: 400 });
   const file = form.get("file");
   if (file instanceof File && file.size > MAX_UPLOAD_SIZE_BYTES) return uploadTooLarge();
   form.set("agentId", target.agentId);
@@ -262,7 +242,7 @@ async function downloadFromRemote(
 export function relayHttp(): MiddlewareHandler {
   return async (c, next) => {
     const gateways = getLinkedGateways();
-    if (gateways.length === 0 || !isTrustedOrigin(c.req.header("origin"))) return next();
+    if (gateways.length === 0 || !isTrustedRequest(c.req.header("origin"), c.req.header("x-forwarded-for"))) return next();
     const url = new URL(c.req.url);
     const segments = url.pathname.split("/");
     const method = c.req.method;
