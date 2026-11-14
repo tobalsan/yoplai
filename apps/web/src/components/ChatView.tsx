@@ -2,6 +2,8 @@ import { decodeRouteParam } from "../lib/path";
 import { createChatSession } from "./chat/createChatSession";
 import { RemoteAgentMark } from "./RemoteAgentMark";
 import { ChatTranscript } from "./chat/ChatTranscript";
+import { DeviceApprovalCards } from "./chat/DeviceApprovalCards";
+import { DeviceSettingsControl } from "./chat/DeviceSettingsControl";
 import { createAppViews, chatAppViewCalls, viewKey } from "./chat/appViews";
 import { load as loadPanelTabs } from "./chat/appViewStorage";
 import { ChatSidePanel, canSplitPanel } from "./chat/ChatSidePanel";
@@ -840,6 +842,9 @@ export function ChatView() {
             </button>
           </div>
         </Show>
+        <Show when={agent()?.gateway}>
+          {(gateway) => <DeviceSettingsControl agentId={params.agentId} gateway={gateway()} sessionId={session.appSessionId()} />}
+        </Show>
         <button
           class="new-chat-btn"
           aria-label="Start a new chat"
@@ -937,6 +942,13 @@ export function ChatView() {
           }}
         >
           <ChatTranscript agentId={params.agentId} session={session} viewMode={viewMode} appViews={appViews} onUserMessage={handleViewMessage} />
+          <Show when={agent()?.gateway}>
+            <DeviceApprovalCards
+              agentName={agent()?.name ?? "The agent"}
+              items={session.deviceApprovals().filter((item) => item.request.sessionId === session.appSessionId())}
+              onAnswer={session.answerDeviceApproval}
+            />
+          </Show>
         </div>
 
         <div class="composer-zone">

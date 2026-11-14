@@ -77,6 +77,9 @@ function shouldDeliver(
   return hasInterest(interests, "session");
 }
 
+/** The stop function of a subscription. `send` writes one message on its socket. */
+export type RealtimeSubscription = (() => void) & { send: (message: unknown) => boolean };
+
 export function subscribeToRealtime({
   interests,
   onEvent,
@@ -85,7 +88,7 @@ export function subscribeToRealtime({
   onReconnect,
   reconnect = true,
   socketFactory = (url) => new WebSocket(url),
-}: SubscribeToRealtimeOptions): () => void {
+}: SubscribeToRealtimeOptions): RealtimeSubscription {
   let ws: WebSocket | null = null;
   let reconnectTimer: number | undefined;
   let closed = false;
@@ -152,7 +155,13 @@ export function subscribeToRealtime({
 
   connect();
 
-  return () => {
+  const send = (message: unknown): boolean => {
+    if (!ws || ws.readyState !== WebSocket.OPEN) return false;
+    ws.send(JSON.stringify(message));
+    return true;
+  };
+
+  const stop = () => {
     closed = true;
     clearReconnectTimer();
     const socket = ws;
@@ -168,4 +177,5 @@ export function subscribeToRealtime({
     }
     socket.close();
   };
+  return Object.assign(stop, { send });
 }

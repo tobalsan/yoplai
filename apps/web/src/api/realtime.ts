@@ -1,11 +1,13 @@
 import type { McpAppView, McpAppViewReference } from "@yoplai/shared/types";
 import type { SubagentRunStatus } from "@yoplai/shared/types";
+import type { WsDeviceApprovalRequest, WsDeviceApprovalResolved } from "@yoplai/shared";
 import type { ActiveTurn } from "./agents";
 import { dispatchWsEvent, wsDebug, type WsStreamEvent } from "./ws";
 import {
   subscribeToRealtime,
   type RealtimeEvent,
   type RealtimeInterest,
+  type RealtimeSubscription,
 } from "./realtime-client";
 
 export type SubscriptionCallbacks = {
@@ -34,6 +36,8 @@ export type SubscriptionCallbacks = {
   onDone?: () => void;
   onHistoryUpdated?: () => void;
   onError?: (error: string) => void;
+  onDeviceApprovalRequest?: (request: WsDeviceApprovalRequest) => void;
+  onDeviceApprovalResolved?: (resolved: WsDeviceApprovalResolved) => void;
 };
 
 export function subscribeToSession(
@@ -41,12 +45,21 @@ export function subscribeToSession(
   sessionKey: string,
   callbacks: SubscriptionCallbacks,
   sessionId?: string
-): () => void {
+): RealtimeSubscription {
   return subscribeToRealtime({
     interests: [{ type: "session", agentId, sessionKey, sessionId }],
     reconnect: false,
     onOpen: () => callbacks.onHistoryUpdated?.(),
     onEvent: (event) => {
+      const message = event as { type: string };
+      if (message.type === "device_approval_request") {
+        callbacks.onDeviceApprovalRequest?.(event as unknown as WsDeviceApprovalRequest);
+        return;
+      }
+      if (message.type === "device_approval_resolved") {
+        callbacks.onDeviceApprovalResolved?.(event as unknown as WsDeviceApprovalResolved);
+        return;
+      }
       dispatchWsEvent(event as WsStreamEvent, callbacks);
     },
     onError: () => callbacks.onError?.("Subscription connection error"),

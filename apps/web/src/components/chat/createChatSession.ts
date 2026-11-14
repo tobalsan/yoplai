@@ -12,6 +12,8 @@ import {
   type Accessor,
 } from "solid-js";
 import type { McpAppView, McpAppViewReference } from "@yoplai/shared/types";
+import type { WsDeviceApprovalRequest } from "@yoplai/shared";
+import type { RealtimeSubscription } from "../../api/realtime-client";
 import { isNoReply } from "@yoplai/shared/no-reply";
 import { getMaxContextTokens } from "@yoplai/shared/model-context";
 import {
@@ -98,6 +100,12 @@ type ChatSessionInput = {
   onLiveView?: (view: McpAppViewReference) => void;
 };
 
+/** A device call that waits for the user. `answered` means the page sent its answer. */
+export type DeviceApprovalItem = {
+  request: WsDeviceApprovalRequest;
+  state: "pending" | "answered" | "timeout";
+};
+
 export function createChatSession(input: ChatSessionInput) {
   const { agent, sessionKey, explicitSessionId, viewMode } = input;
   const [historyLoaded, setHistoryLoaded] = createSignal<HistoryLoaded>();
@@ -113,6 +121,7 @@ export function createChatSession(input: ChatSessionInput) {
   const [pendingThinkLevel, setPendingThinkLevel] =
     createSignal<ThinkLevel | null>(null);
 
+  const [deviceApprovals, setDeviceApprovals] = createSignal<DeviceApprovalItem[]>([]);
   const [stopping, setStopping] = createSignal(false);
   const [showInterrupted, setShowInterrupted] = createSignal(false);
   const [isStreaming, setIsStreaming] = createSignal(false);
@@ -178,7 +187,7 @@ export function createChatSession(input: ChatSessionInput) {
   let directStreamSession: string | null = null;
   let displayedSession: string | null = null;
   let pendingResetSession: string | null = null;
-  let subscriptionCleanup: (() => void) | null = null;
+  let subscriptionCleanup: RealtimeSubscription | null = null;
   let aborted = false;
   let skipNextHistoryRefresh = false;
   let preparingSend = false;
@@ -766,10 +775,30 @@ export function createChatSession(input: ChatSessionInput) {
     const isCurrentSubscription = () => subscribedSession === currentSession();
 
     subscriptionCleanup?.();
+    // The new subscription gets each approval that still waits.
+    setDeviceApprovals([]);
     subscriptionCleanup = subscribeToSession(
       agentId,
       key,
       {
+        onDeviceApprovalRequest: (request) => {
+          if (!isCurrentSubscription()) return;
+          setDeviceApprovals((prev) =>
+            prev.some((item) => item.request.approvalId === request.approvalId)
+              ? prev
+              : [...prev, { request, state: "pending" }]
+          );
+        },
+        onDeviceApprovalResolved: (resolved) => {
+          if (!isCurrentSubscription()) return;
+          setDeviceApprovals((prev) =>
+            resolved.outcome === "timeout"
+              ? prev.map((item) =>
+                  item.request.approvalId === resolved.approvalId ? { ...item, state: "timeout" } : item
+                )
+              : prev.filter((item) => item.request.approvalId !== resolved.approvalId)
+          );
+        },
         onText: (chunk) => {
           if (!isCurrentSubscription()) return;
           if (ownsDisplayedDirectStream()) return;
@@ -1814,6 +1843,13 @@ export function createChatSession(input: ChatSessionInput) {
   const copyTurnFor = (message: SimpleViewMessage | ContentBlock): string[] | undefined =>
     "role" in message ? simpleCopyReplies().get(message) : fullCopyReplies().get(message);
   const shouldAnimate = (id: string) => !noAnimIds.delete(id);
+  const answerDeviceApproval = (approvalId: string, approve: boolean) => {
+    const sent = subscriptionCleanup?.send({ type: "device_approval_answer", approvalId, approve });
+    if (!sent) return;
+    setDeviceApprovals((prev) =>
+      prev.map((item) => (item.request.approvalId === approvalId ? { ...item, state: "answered" } : item))
+    );
+  };
   onCleanup(() => {
     appSessionLookup?.abort();
     cleanup?.();
@@ -1830,6 +1866,7 @@ export function createChatSession(input: ChatSessionInput) {
     contextUsageDisplay, isContextUsageDanger, contextWarning,
     compactStatusForCurrentSession, compactStatuses,
     copyTurnFor, shouldAnimate,
+    deviceApprovals, answerDeviceApproval,
     thinkingLevel: () => pendingThinkLevel() ?? thinkingLevel(),
     selectThinking: (level: ThinkLevel | null) => setPendingThinkLevel(level),
     flushFinished, send, sendFromView, stop, compact: compactCurrentSession,

@@ -747,6 +747,198 @@ describe("ChatView abort handling", () => {
     expect(seen[0].href).toBe("/agents/pom%40ams/edit");
   });
 
+  describe("device access of a remote agent", () => {
+    type RelayState = {
+      links: Array<{ name: string; connected: boolean }>;
+      settings: { workspaceFolder: string | null; full: boolean; mode: string };
+      fullBackground: boolean;
+      putError?: string;
+      calls: Array<{ method: string; url: string; body: unknown }>;
+    };
+    const relay: RelayState = { links: [], settings: { workspaceFolder: null, full: false, mode: "ask" }, fullBackground: false, calls: [] };
+    const send = vi.fn();
+    let subscription: SubscriptionCallbacks = {};
+
+    const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
+    function stubRelay() {
+      relay.links = [{ name: "ams", connected: true }];
+      relay.settings = { workspaceFolder: null, full: false, mode: "ask" };
+      relay.fullBackground = false;
+      relay.putError = undefined;
+      relay.calls = [];
+      vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        const method = init?.method ?? "GET";
+        const body = init?.body ? JSON.parse(String(init.body)) : undefined;
+        if (!url.includes("/api/relay/")) return json({});
+        relay.calls.push({ method, url, body });
+        if (url.includes("device-links")) return json(relay.links);
+        if (url.includes("agent-settings")) {
+          if (method === "PUT") relay.fullBackground = body.fullBackground;
+          return json({ fullBackground: relay.fullBackground });
+        }
+        if (method === "PUT") {
+          if (relay.putError) return json({ error: relay.putError }, 400);
+          if ("workspaceFolder" in body) relay.settings.workspaceFolder = body.workspaceFolder;
+          if ("full" in body) relay.settings.full = body.full;
+          relay.settings.mode = relay.settings.full ? "full" : relay.settings.workspaceFolder ? "workspace" : "ask";
+        }
+        return json(relay.settings);
+      }));
+    }
+    async function renderRemote() {
+      routeState.agentId = "pom@ams";
+      fetchAgentMock.mockResolvedValue({ id: "pom@ams", name: "Pom (remote)", gateway: "ams", model: { provider: "openai", model: "gpt-5" }, queueMode: "queue" });
+      subscribeToSessionMock.mockImplementation((_id, _key, next) => { subscription = next; return Object.assign(() => {}, { send }); });
+      const view = renderView();
+      await waitFor(() => expect(queryByRole(view.container, "link", { name: "Pom (remote) settings" })).not.toBeNull());
+      await tick(); await tick();
+      return view;
+    }
+    const request = (approvalId: string, sessionId: string, tool = "device_bash", args: unknown = { command: "ls -la" }) => ({
+      type: "device_approval_request" as const, approvalId, gateway: "ams", agentId: "pom@ams", sessionId, toolCallId: "call-1", tool, arguments: args,
+    });
+
+    beforeEach(() => { send.mockReset(); send.mockReturnValue(true); stubRelay(); });
+
+    it("shows a card for a call of the open chat and none for another session", async () => {
+      const { container, dispose } = await renderRemote();
+      subscription.onDeviceApprovalRequest?.(request("a1", "session-other"));
+      await tick();
+      expect(queryByText(container, "ls -la")).toBeNull();
+      subscription.onDeviceApprovalRequest?.(request("a2", "session-main"));
+      await waitFor(() => expect(queryByText(container, "Pom (remote) wants to run a command on this device")).not.toBeNull());
+      expect(queryByText(container, "ls -la")).not.toBeNull();
+      dispose();
+    });
+
+    it("shows the path and the content of a file write as text", async () => {
+      const { container, dispose } = await renderRemote();
+      subscription.onDeviceApprovalRequest?.(request("a1", "session-main", "device_write", { path: "/tmp/a.txt", content: "<img src=x onerror=alert(1)>" }));
+      await waitFor(() => expect(queryByText(container, "Pom (remote) wants to write a file on this device")).not.toBeNull());
+      expect(queryByText(container, "/tmp/a.txt")).not.toBeNull();
+      expect(queryByText(container, "<img src=x onerror=alert(1)>")).not.toBeNull();
+      expect(container.querySelector("img")).toBeNull();
+      dispose();
+    });
+
+    it("shows the card in the simple view and in the full view", async () => {
+      for (const mode of ["simple", "full"]) {
+        routeState.view = mode;
+        const { container, dispose } = await renderRemote();
+        subscription.onDeviceApprovalRequest?.(request("a1", "session-main"));
+        await waitFor(() => expect(queryByRole(container, "button", { name: "Approve" })).not.toBeNull());
+        dispose();
+      }
+    });
+
+    it("sends Approve and Refuse on the subscription socket and disables the buttons", async () => {
+      const { container, dispose } = await renderRemote();
+      subscription.onDeviceApprovalRequest?.(request("a1", "session-main"));
+      subscription.onDeviceApprovalRequest?.(request("a2", "session-main", "device_read", { path: "/tmp/b" }));
+      await waitFor(() => expect(queryAllByRole(container, "button", { name: "Approve" })).toHaveLength(2));
+      queryAllByRole(container, "button", { name: "Approve" })[0].click();
+      queryAllByRole(container, "button", { name: "Refuse" })[1].click();
+      expect(send).toHaveBeenNthCalledWith(1, { type: "device_approval_answer", approvalId: "a1", approve: true });
+      expect(send).toHaveBeenNthCalledWith(2, { type: "device_approval_answer", approvalId: "a2", approve: false });
+      await waitFor(() => expect((queryAllByRole(container, "button", { name: "Approve" })[0] as HTMLButtonElement).disabled).toBe(true));
+      dispose();
+    });
+
+    it("removes the card on a resolved message and shows a line for a timeout", async () => {
+      const { container, dispose } = await renderRemote();
+      subscription.onDeviceApprovalRequest?.(request("a1", "session-main"));
+      subscription.onDeviceApprovalRequest?.(request("a2", "session-main"));
+      await waitFor(() => expect(queryAllByRole(container, "button", { name: "Approve" })).toHaveLength(2));
+      subscription.onDeviceApprovalResolved?.({ type: "device_approval_resolved", approvalId: "a1", agentId: "pom@ams", sessionId: "session-main", outcome: "approved" });
+      await waitFor(() => expect(queryAllByRole(container, "button", { name: "Approve" })).toHaveLength(1));
+      expect(queryByText(container, "A device call got no answer in time.")).toBeNull();
+      subscription.onDeviceApprovalResolved?.({ type: "device_approval_resolved", approvalId: "a2", agentId: "pom@ams", sessionId: "session-main", outcome: "timeout" });
+      await waitFor(() => expect(queryByText(container, "A device call got no answer in time.")).not.toBeNull());
+      expect(queryAllByRole(container, "button", { name: "Approve" })).toHaveLength(0);
+      dispose();
+    });
+
+    it("shows no device control and sends no relay request for a local agent", async () => {
+      const { container, dispose } = renderView();
+      await waitFor(() => expect(queryByRole(container, "link", { name: "Agent settings" })).not.toBeNull());
+      await tick(); await tick();
+      expect(queryByRole(container, "button", { name: "Ask" })).toBeNull();
+      expect(relay.calls).toEqual([]);
+      dispose();
+    });
+
+    it("shows the mode from the route, saves a folder, and shows Workspace", async () => {
+      const { container, dispose } = await renderRemote();
+      await waitFor(() => expect(queryByRole(container, "button", { name: "Ask" })).not.toBeNull());
+      expect(relay.calls.some((call) => call.url.includes("device-settings?agentId=pom%40ams&sessionId=session-main"))).toBe(true);
+      queryByRole(container, "button", { name: "Ask" })!.click();
+      const input = queryByRole(container, "textbox", { name: "Workspace folder" }) as HTMLInputElement;
+      input.value = "/Users/me/project";
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+      queryByRole(container, "button", { name: "Save" })!.click();
+      await waitFor(() => expect(queryByRole(container, "button", { name: "Workspace" })).not.toBeNull());
+      expect(relay.calls.find((call) => call.method === "PUT" && call.url.includes("device-settings"))?.body).toEqual({ workspaceFolder: "/Users/me/project" });
+      queryByRole(container, "button", { name: "Remove" })!.click();
+      await waitFor(() => expect(queryByRole(container, "button", { name: "Ask" })).not.toBeNull());
+      dispose();
+    });
+
+    it("sets the Full switch and shows Full", async () => {
+      const { container, dispose } = await renderRemote();
+      queryByRole(container, "button", { name: "Ask" })!.click();
+      queryByRole(container, "switch", { name: "Full access" })!.click();
+      await waitFor(() => expect(queryByRole(container, "button", { name: "Full" })).not.toBeNull());
+      expect(relay.calls.find((call) => call.method === "PUT" && call.url.includes("device-settings"))?.body).toEqual({ full: true });
+      dispose();
+    });
+
+    it("shows the error of the route in the panel", async () => {
+      relay.putError = "workspaceFolder must be an absolute path to a directory that exists";
+      const { container, dispose } = await renderRemote();
+      queryByRole(container, "button", { name: "Ask" })!.click();
+      const input = queryByRole(container, "textbox", { name: "Workspace folder" }) as HTMLInputElement;
+      input.value = "/nope";
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+      queryByRole(container, "button", { name: "Save" })!.click();
+      await waitFor(() => expect(queryByRole(container, "alert")?.textContent).toContain("must be an absolute path"));
+      dispose();
+    });
+
+    it("disables the fields of a chat with no session id", async () => {
+      fetchSimpleHistoryMock.mockResolvedValue({ messages: [], isStreaming: false, activeTurn: null });
+      fetchFullHistoryMock.mockResolvedValue({ messages: [], isStreaming: false, activeTurn: null });
+      const { container, dispose } = await renderRemote();
+      queryByRole(container, "button", { name: "Ask" })!.click();
+      expect(queryByText(container, "Send a first message, then set the folder.")).not.toBeNull();
+      expect((queryByRole(container, "textbox", { name: "Workspace folder" }) as HTMLInputElement).disabled).toBe(true);
+      expect((queryByRole(container, "switch", { name: "Full access" }) as HTMLInputElement).disabled).toBe(true);
+      expect(relay.calls.some((call) => call.url.includes("device-settings"))).toBe(false);
+      dispose();
+    });
+
+    it("shows Device offline when the link is not connected", async () => {
+      relay.links = [{ name: "ams", connected: false }];
+      const { container, dispose } = await renderRemote();
+      await waitFor(() => expect(queryByRole(container, "button", { name: "Device offline" })).not.toBeNull());
+      queryByRole(container, "button", { name: "Device offline" })!.click();
+      expect(queryByText(container, "The remote agent cannot reach this device now.")).not.toBeNull();
+      dispose();
+    });
+
+    it("reads and writes the scheduled jobs setting of the agent", async () => {
+      relay.fullBackground = true;
+      const { container, dispose } = await renderRemote();
+      queryByRole(container, "button", { name: "Ask" })!.click();
+      const name = "Scheduled jobs of this agent get full access on this device";
+      await waitFor(() => expect((queryByRole(container, "switch", { name }) as HTMLInputElement).checked).toBe(true));
+      queryByRole(container, "switch", { name })!.click();
+      await waitFor(() => expect(relay.calls.find((call) => call.method === "PUT" && call.url.includes("agent-settings"))?.body).toEqual({ fullBackground: false }));
+      expect(relay.calls.some((call) => call.url.includes("agent-settings?agentId=pom%40ams"))).toBe(true);
+      dispose();
+    });
+  });
+
   it("keeps /edit at the end of the settings link for an id with # or ?", async () => {
     routeState.agentId = "a%23b%3Fc%40ams";
     fetchAgentMock.mockResolvedValue({ id: "a#b?c@ams", name: "Odd", gateway: "ams", model: { provider: "openai", model: "gpt-5" }, queueMode: "queue" });

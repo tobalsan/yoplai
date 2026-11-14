@@ -186,7 +186,7 @@ While your local gateway runs and is linked, an agent on the remote gateway can 
 | Workspace | The chat has a workspace folder | Passes | Passes inside the folder, asks outside | Asks you |
 | Full | You switch it on | Passes | Passes | Passes |
 
-A relative path and each command start in the workspace folder. With no folder, they start in your home directory. A run with no person present, such as a scheduled job, gets a refusal for each call that asks. You can allow all calls of one remote agent for such runs. The controls for the folder, the Full switch, and the approval prompt come to the page in a later release. Until then, use the local routes `/api/relay/device-settings` and `/api/relay/agent-settings`.
+A relative path and each command start in the workspace folder. With no folder, they start in your home directory. A run with no person present, such as a scheduled job, gets a refusal for each call that asks. You can allow all calls of one remote agent for such runs. In a chat with a remote agent, a call that needs approval shows as a card with the buttons Approve and Refuse. The control in the chat header shows the mode (Ask, Workspace, Full). Its panel sets the workspace folder and the Full switch, and has a switch that allows all calls of that agent for scheduled jobs. A chat needs a first message before you can set the folder.
 
 ## Troubleshooting
 
