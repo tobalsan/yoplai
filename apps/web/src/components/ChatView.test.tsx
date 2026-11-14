@@ -756,6 +756,7 @@ describe("ChatView abort handling", () => {
       getFails?: boolean;
       linksFail?: boolean;
       hold?: Promise<void>;
+      staleGet?: { promise: Promise<void>; settings: { workspaceFolder: string | null; full: boolean; mode: string } };
       calls: Array<{ method: string; url: string; body: unknown }>;
     };
     const relay: RelayState = { links: [], settings: { workspaceFolder: null, full: false, mode: "ask" }, fullBackground: false, calls: [] };
@@ -771,6 +772,7 @@ describe("ChatView abort handling", () => {
       relay.getFails = false;
       relay.linksFail = false;
       relay.hold = undefined;
+      relay.staleGet = undefined;
       relay.calls = [];
       vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
         const url = String(input);
@@ -793,6 +795,13 @@ describe("ChatView abort handling", () => {
           if ("workspaceFolder" in body && relay.hold) await relay.hold;
           return answer;
         }
+        if (relay.staleGet) {
+          const { promise, settings } = relay.staleGet;
+          relay.staleGet = undefined;
+          const answer = json(settings);
+          await promise;
+          return answer;
+        }
         return json(relay.settings);
       }));
     }
@@ -805,8 +814,8 @@ describe("ChatView abort handling", () => {
       await tick(); await tick();
       return view;
     }
-    const request = (approvalId: string, sessionId: string, tool = "device_bash", args: unknown = { command: "ls -la" }) => ({
-      type: "device_approval_request" as const, approvalId, gateway: "ams", agentId: "pom@ams", sessionId, toolCallId: "call-1", tool, arguments: args,
+    const request = (approvalId: string, sessionId: string, tool = "device_bash", args: unknown = { command: "ls -la" }, toolCallId = "call-1") => ({
+      type: "device_approval_request" as const, approvalId, gateway: "ams", agentId: "pom@ams", sessionId, toolCallId, tool, arguments: args,
     });
 
     beforeEach(() => { send.mockReset(); send.mockReturnValue(true); stubRelay(); });
@@ -869,17 +878,83 @@ describe("ChatView abort handling", () => {
       dispose();
     });
 
-    it("shows a card for the first message of a new chat once the session id resolves", async () => {
+    it("asks for the session id again when a request matches no call and shows its card after the answer", async () => {
       fetchSimpleHistoryMock.mockResolvedValue({ messages: [], isStreaming: false, activeTurn: null });
       fetchFullHistoryMock.mockImplementation(async (_a: string, _k: string, _b: unknown, options?: { limit?: number }) =>
         options?.limit === 1 ? { sessionId: "session-new", messages: [], isStreaming: false, activeTurn: null } : { messages: [], isStreaming: false, activeTurn: null });
       const { container, dispose } = await renderRemote();
       subscription.onDeviceApprovalRequest?.(request("a1", "session-other"));
       subscription.onDeviceApprovalRequest?.(request("a2", "session-new"));
-      await waitFor(() => expect(queryAllByRole(container, "button", { name: "Approve" })).toHaveLength(1));
-      subscription.onDeviceApprovalRequest?.(request("a3", "session-elsewhere"));
       await tick();
-      expect(queryAllByRole(container, "button", { name: "Approve" })).toHaveLength(1);
+      expect(queryAllByRole(container, "button", { name: "Approve" })).toHaveLength(0);
+      await new Promise((resolve) => setTimeout(resolve, 3100));
+      await waitFor(() => expect(queryAllByRole(container, "button", { name: "Approve" })).toHaveLength(1));
+      dispose();
+    });
+
+    it("takes the session id of the active turn of its subscription for a chat with no session id", async () => {
+      fetchSimpleHistoryMock.mockResolvedValue({ messages: [], isStreaming: false, activeTurn: null });
+      fetchFullHistoryMock.mockResolvedValue({ messages: [], isStreaming: false, activeTurn: null });
+      const { container, dispose } = await renderRemote();
+      subscription.onActiveTurn?.({ userText: "go", userTimestamp: 1, startedAt: 2, thinking: "", text: "", toolCalls: [] }, "session-turn");
+      subscription.onDeviceApprovalRequest?.(request("a1", "session-turn"));
+      await waitFor(() => expect(queryByRole(container, "button", { name: "Approve" })).not.toBeNull());
+      dispose();
+    });
+
+    async function sendFirstMessageOfNewChat() {
+      fetchSimpleHistoryMock.mockResolvedValue({ messages: [], isStreaming: false, activeTurn: null });
+      fetchFullHistoryMock.mockImplementation(async (_a: string, _k: string, _b: unknown, options?: { limit?: number }) => {
+        if (options?.limit === 1) throw new Error("history down");
+        return { messages: [], isStreaming: false, activeTurn: null };
+      });
+      let stream: Partial<StreamCallbacks> | undefined;
+      streamMessageMock.mockImplementation((_a, _m, _k, _t, _d, _e, callbacks) => { stream = callbacks; return () => {}; });
+      const view = await renderRemote();
+      // An old request for this agent makes the page look up the session. The lookup fails before the first message.
+      subscription.onDeviceApprovalRequest?.(request("old", "session-old", "device_bash", { command: "old" }, "call-old"));
+      await tick();
+      queryByRole(view.container, "button", { name: "Start a new chat" })!.click();
+      await tick();
+      const input = queryByRole(view.container, "textbox") as HTMLTextAreaElement;
+      input.value = "Run ls";
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+      queryByRole(view.container, "button", { name: "Send message" })!.click();
+      await waitFor(() => expect(streamMessageMock).toHaveBeenCalled());
+      return { ...view, stream: () => stream! };
+    }
+
+    it("shows the card of the first message of a new chat when the request comes before the tool call", async () => {
+      const { container, stream, dispose } = await sendFirstMessageOfNewChat();
+      subscription.onDeviceApprovalRequest?.(request("a1", "session-new", "device_bash", { command: "ls -la" }, "call-new"));
+      await tick();
+      expect(queryByRole(container, "button", { name: "Approve" })).toBeNull();
+      stream().onToolCall?.("call-new", "device_bash", { command: "ls -la" });
+      await waitFor(() => expect(queryByRole(container, "button", { name: "Approve" })).not.toBeNull());
+      queryByRole(container, "button", { name: "Approve" })!.click();
+      expect(send).toHaveBeenCalledWith({ type: "device_approval_answer", approvalId: "a1", approve: true });
+      await waitFor(() => expect(queryByRole(container, "button", { name: "Device: Ask" })).not.toBeNull());
+      dispose();
+    });
+
+    it("shows the card of the first message of a new chat when the tool call comes before the request", async () => {
+      const { container, stream, dispose } = await sendFirstMessageOfNewChat();
+      stream().onToolCall?.("call-new", "device_bash", { command: "ls -la" });
+      await tick();
+      subscription.onDeviceApprovalRequest?.(request("a1", "session-new", "device_bash", { command: "ls -la" }, "call-new"));
+      await waitFor(() => expect(queryByRole(container, "button", { name: "Approve" })).not.toBeNull());
+      queryByRole(container, "button", { name: "Approve" })!.click();
+      expect(send).toHaveBeenCalledWith({ type: "device_approval_answer", approvalId: "a1", approve: true });
+      dispose();
+    });
+
+    it("shows no card for a request of another call and another session in a new chat", async () => {
+      const { container, stream, dispose } = await sendFirstMessageOfNewChat();
+      stream().onToolCall?.("call-new", "device_bash", { command: "ls -la" });
+      subscription.onDeviceApprovalRequest?.(request("a9", "session-elsewhere", "device_bash", { command: "rm -rf /" }, "call-elsewhere"));
+      await tick(); await tick();
+      expect(queryByRole(container, "button", { name: "Approve" })).toBeNull();
+      expect(queryByText(container, "rm -rf /")).toBeNull();
       dispose();
     });
 
@@ -893,6 +968,14 @@ describe("ChatView abort handling", () => {
       dispose();
     });
 
+    it("shows each invisible character and each backslash as an escape", async () => {
+      const { container, dispose } = await renderRemote();
+      const command = "a\uFE0Fb\u{E0100}c\u{E0061}d\u034Fe\u2061f\u202Eg\\u202E";
+      subscription.onDeviceApprovalRequest?.(request("a1", "session-main", "device_bash", { command }));
+      await waitFor(() => expect(queryByText(container, "a\\uFE0Fb\\u{E0100}c\\u{E0061}d\\u034Fe\\u2061f\\u202Eg\\\\u202E")).not.toBeNull());
+      dispose();
+    });
+
     it("shows the full text of a long command and warns about a cut command next to the buttons", async () => {
       const command = Array.from({ length: 40 }, (_, i) => `echo line-${i}`).join("\n") + "\nrm -rf /tmp/x… (cut)";
       const { container, dispose } = await renderRemote();
@@ -902,10 +985,12 @@ describe("ChatView abort handling", () => {
       dispose();
     });
 
-    it("warns when a file text is long or cut and shows the detail of an edit", async () => {
+    it("shows all of a long file text and warns only when a value is cut, and shows the detail of an edit", async () => {
       const { container, dispose } = await renderRemote();
-      subscription.onDeviceApprovalRequest?.(request("a1", "session-main", "device_write", { path: "/tmp/a", content: "x\n".repeat(30) }));
-      await waitFor(() => expect(queryByText(container, "This text is long. Scroll the box to read all of it before you approve.")).not.toBeNull());
+      const content = Array.from({ length: 30 }, (_, i) => `line-${i}`).join("\n");
+      subscription.onDeviceApprovalRequest?.(request("a1", "session-main", "device_write", { path: "/tmp/a", content }));
+      await waitFor(() => expect(queryByText(container, content, { normalizer: (value) => value })).not.toBeNull());
+      expect(queryByText(container, "This text is long. Scroll the box to read all of it before you approve.")).toBeNull();
       expect(queryByText(container, "This card does not show all of the text. The call uses the full text.")).toBeNull();
       subscription.onDeviceApprovalRequest?.(request("a2", "session-main", "device_edit", { path: "/tmp/b", edits: [{ oldText: "foo", newText: "bar… (cut)" }] }));
       await waitFor(() => expect(queryByText(container, "A remote agent wants to edit a file on this device")).not.toBeNull());
@@ -1006,6 +1091,44 @@ describe("ChatView abort handling", () => {
       release();
       await tick(); await tick();
       expect(queryByRole(container, "button", { name: "Device: Full" })).not.toBeNull();
+      dispose();
+    });
+
+    it("keeps the result of a write when a read that started during the write answers late with an older mode", async () => {
+      let releaseWrite!: () => void;
+      let releaseRead!: () => void;
+      relay.hold = new Promise<void>((resolve) => { releaseWrite = resolve; });
+      const { container, dispose } = await renderRemote();
+      await waitFor(() => expect(queryByRole(container, "button", { name: "Device: Ask" })).not.toBeNull());
+      queryByRole(container, "button", { name: "Device: Ask" })!.click();
+      const input = queryByRole(container, "textbox", { name: "Workspace folder" }) as HTMLInputElement;
+      input.value = "/work";
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+      queryByRole(container, "button", { name: "Save" })!.click();
+      await tick();
+      relay.staleGet = { promise: new Promise<void>((resolve) => { releaseRead = resolve; }), settings: { workspaceFolder: null, full: false, mode: "ask" } };
+      window.dispatchEvent(new Event("focus"));
+      await tick();
+      releaseWrite();
+      await waitFor(() => expect(queryByRole(container, "button", { name: "Device: Workspace" })).not.toBeNull());
+      releaseRead();
+      await tick(); await tick();
+      expect(queryByRole(container, "button", { name: "Device: Workspace" })).not.toBeNull();
+      dispose();
+    });
+
+    it("shows an unknown mode and a retry when a refresh on focus fails", async () => {
+      const { container, dispose } = await renderRemote();
+      await waitFor(() => expect(queryByRole(container, "button", { name: "Device: Ask" })).not.toBeNull());
+      relay.getFails = true;
+      window.dispatchEvent(new Event("focus"));
+      await waitFor(() => expect(queryByRole(container, "button", { name: "Device: error" })).not.toBeNull());
+      queryByRole(container, "button", { name: "Device: error" })!.click();
+      expect((queryByRole(container, "switch", { name: "Full access" }) as HTMLInputElement).disabled).toBe(true);
+      relay.getFails = false;
+      relay.settings = { workspaceFolder: null, full: true, mode: "full" };
+      queryByRole(container, "button", { name: "Try again" })!.click();
+      await waitFor(() => expect(queryByRole(container, "button", { name: "Device: Full" })).not.toBeNull());
       dispose();
     });
 

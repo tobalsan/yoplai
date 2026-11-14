@@ -2055,17 +2055,8 @@
           line-height: 1.5;
         }
 
-        .device-approval-text.limited {
-          max-height: 12em;
-          overflow: auto;
-        }
-
         .device-approval p,
         .device-approval-timeout {
           margin: 0;
           font-size: 12px;
-        }
-
-        .device-approval-note {
-          color: var(--text-muted);
         }

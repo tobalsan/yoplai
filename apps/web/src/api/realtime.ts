@@ -32,7 +32,7 @@ export type SubscriptionCallbacks = {
     mimeType: string;
     size: number;
   }) => void;
-  onActiveTurn?: (snapshot: ActiveTurn) => void;
+  onActiveTurn?: (snapshot: ActiveTurn, sessionId?: string) => void;
   onDone?: () => void;
   onHistoryUpdated?: () => void;
   onError?: (error: string) => void;

@@ -34,9 +34,8 @@ export function DeviceSettingsControl(props: {
     (agentId) => fetchFullBackground(agentId).catch(() => undefined)
   );
   let root: HTMLDivElement | undefined;
-  // A read applies only if it is the newest read and no write started after it.
-  let readCount = 0;
-  let writeCount = 0;
+  // One counter for reads and writes. A response applies only if no newer request started after it.
+  let requestCount = 0;
 
   const link = () => links.latest?.find((item) => item.name === props.gateway);
   const linkUnknown = () => !links.loading && link() === undefined;
@@ -63,15 +62,17 @@ export function DeviceSettingsControl(props: {
     const agentId = props.agentId;
     const sessionId = props.sessionId;
     if (!sessionId) return;
-    const thisRead = ++readCount;
-    const writesAtStart = writeCount;
-    const current = () => thisRead === readCount && writesAtStart === writeCount && sameScope(agentId, sessionId);
+    const thisRequest = ++requestCount;
+    const current = () => thisRequest === requestCount && sameScope(agentId, sessionId);
     fetchDeviceSettings(agentId, sessionId).then(
       (next) => {
         if (current()) apply(next);
       },
       () => {
-        if (current() && !settings()) setReadFailed(true);
+        // The mode is unknown until a read succeeds.
+        if (!current()) return;
+        setSettings(undefined);
+        setReadFailed(true);
       }
     );
   };
@@ -80,8 +81,7 @@ export function DeviceSettingsControl(props: {
     on(
       () => [props.agentId, props.sessionId] as const,
       () => {
-        readCount++;
-        writeCount++;
+        requestCount++;
         setSettings(undefined);
         setReadFailed(false);
         setFolder("");
@@ -124,16 +124,18 @@ export function DeviceSettingsControl(props: {
     const agentId = props.agentId;
     const sessionId = props.sessionId;
     if (!sessionId) return;
-    const thisWrite = ++writeCount;
+    const thisRequest = ++requestCount;
     setError("");
     try {
       const next = await saveDeviceSettings(agentId, sessionId, body);
-      if (thisWrite === writeCount && sameScope(agentId, sessionId)) apply(next);
+      if (thisRequest === requestCount && sameScope(agentId, sessionId)) apply(next);
     } catch (e) {
-      if (thisWrite === writeCount && sameScope(agentId, sessionId)) {
+      if (thisRequest === requestCount && sameScope(agentId, sessionId)) {
         setError(e instanceof Error ? e.message : "The settings did not save.");
       }
     }
+    // A read that started during the write is now out of date. Read one time again.
+    if (sameScope(agentId, sessionId)) read();
   };
 
   const changeFullBackground = async (value: boolean) => {

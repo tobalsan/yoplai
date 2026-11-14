@@ -4,27 +4,18 @@ import type { DeviceApprovalItem } from "./createChatSession";
 
 type ApprovalArguments = { command?: unknown; path?: unknown; content?: unknown; edits?: unknown };
 
-// Control characters (but not new line and tab), direction controls, and zero-width characters.
-const HIDDEN_RANGES: Array<[number, number]> = [
-  [0x00, 0x08], [0x0b, 0x1f], [0x7f, 0x9f], [0x061c, 0x061c], [0x200b, 0x200f], [0x2028, 0x2029],
-  [0x202a, 0x202e], [0x2060, 0x2060], [0x2066, 0x2069], [0xfeff, 0xfeff],
-];
+// Control characters (but not new line and tab), format, private, unassigned, and line separator characters,
+// default-ignorable characters (variation selectors, tag characters, U+034F, U+2061), and the backslash.
+const HIDDEN = /(?![\n\t])[\p{Cc}\p{Cf}\p{Co}\p{Cn}\p{Zl}\p{Zp}\p{Default_Ignorable_Code_Point}\\]/gu;
 const CUT_MARK = "… (cut)";
-const LONG_BLOCK_LINES = 6;
-const LONG_BLOCK_CHARACTERS = 300;
 
-function isHidden(code: number): boolean {
-  return HIDDEN_RANGES.some(([from, to]) => code >= from && code <= to);
-}
-
-/** The agent selects these texts. Each hidden character shows as an escape such as \u202E. */
+/** The agent selects these texts. Each hidden character shows as an escape such as \u202E. A backslash shows as two. */
 function escapeHidden(value: string): string {
-  let result = "";
-  for (const char of value) {
-    const code = char.codePointAt(0) ?? 0;
-    result += isHidden(code) ? `\\u${code.toString(16).toUpperCase().padStart(4, "0")}` : char;
-  }
-  return result;
+  return value.replace(HIDDEN, (char) => {
+    if (char === "\\") return "\\\\";
+    const code = (char.codePointAt(0) ?? 0).toString(16).toUpperCase().padStart(4, "0");
+    return code.length > 4 ? `\\u{${code}}` : `\\u${code}`;
+  });
 }
 
 function text(value: unknown): string {
@@ -57,14 +48,10 @@ function isCutCommand(request: WsDeviceApprovalRequest): boolean {
 
 function Block(props: { label: string; value: unknown; limited: boolean }): JSX.Element {
   const shown = () => text(props.value);
-  const isLong = () => props.limited && (shown().split("\n").length > LONG_BLOCK_LINES || shown().length > LONG_BLOCK_CHARACTERS);
   return (
     <div class="device-approval-block">
       <div class="device-approval-label">{props.label}</div>
-      <pre class="device-approval-text" classList={{ limited: props.limited }}>{shown()}</pre>
-      <Show when={isLong()}>
-        <p class="device-approval-note">This text is long. Scroll the box to read all of it before you approve.</p>
-      </Show>
+      <pre class="device-approval-text">{shown()}</pre>
       <Show when={props.limited && shown().includes(CUT_MARK)}>
         <p class="device-approval-warning">This card does not show all of the text. The call uses the full text.</p>
       </Show>
