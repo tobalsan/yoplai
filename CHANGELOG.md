@@ -9,6 +9,10 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ## [Unreleased]
 
+### Added
+
+- Link a remote gateway with `yoplai connect <url> [--name <name>] [--token <token>]`. The agents of the remote gateway then show on the page of the local gateway as `<agentId>@<name>`, with a small `@<name>` mark, and you chat with them there, including history, file upload and file download. `yoplai disconnect <name>` removes a link, and `yoplai remotes` lists the links. The link is stored in `$YOPLAI_HOME/remote-gateways.json` (mode 0600). The relay runs only on a loopback address, and not with multi-user mode. The remote gateway needs no change.
+
 ### Fixed
 
 - When the AI provider's safety filter refuses a message, the chat no longer gets stuck. The refused turn is dropped from the saved session, so the next message works, and the user sees "The AI provider's safety filter blocked this message, so it was not kept. You can rephrase or carry on." (French too) instead of "Something went wrong". The gateway logs it at warn, not error.

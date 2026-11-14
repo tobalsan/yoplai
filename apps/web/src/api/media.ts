@@ -5,9 +5,10 @@ import { API_BASE, apiFetch as fetch } from "./core";
  * Upload a file to the server
  * Returns the file path that can be used in attachments
  */
-async function uploadFile(file: File): Promise<UploadResponse> {
+async function uploadFile(file: File, agentId?: string): Promise<UploadResponse> {
   const formData = new FormData();
   formData.append("file", file);
+  if (agentId) formData.append("agentId", agentId);
 
   const res = await fetch(`${API_BASE}/media/upload`, {
     method: "POST",
@@ -25,8 +26,8 @@ async function uploadFile(file: File): Promise<UploadResponse> {
 /**
  * Upload multiple files and return their paths as FileAttachments
  */
-export async function uploadFiles(files: File[]): Promise<FileAttachment[]> {
-  const results = await Promise.all(files.map(uploadFile));
+export async function uploadFiles(files: File[], agentId?: string): Promise<FileAttachment[]> {
+  const results = await Promise.all(files.map((file) => uploadFile(file, agentId)));
   return results.map((r, index) => ({
     path: r.path,
     mimeType: r.mimeType,

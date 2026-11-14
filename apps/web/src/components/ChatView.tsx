@@ -252,7 +252,7 @@ export function ChatView() {
       setUploadingFiles(true);
       setUploadError("");
       try {
-        const attachments = await uploadFiles(currentPendingFiles.map((item) => item.file));
+        const attachments = await uploadFiles(currentPendingFiles.map((item) => item.file), params.agentId);
         const inboundFiles = attachments.map((attachment, index) =>
           attachmentToFileBlock(attachment, currentPendingFiles[index])
         );

@@ -172,6 +172,10 @@ Use an agent's **My connections** tab to inspect and disconnect your personal co
 
 Connecting an OAuth extension from settings takes you to the provider in the same tab and returns to the page with a connection result. Pending extension settings are saved before leaving. Chat's **Connect tools** prompt keeps its popup so the conversation stays open.
 
+## Link a remote gateway
+
+Run `yoplai connect https://remote.example.com --name ams [--token <user token>]` on your local gateway. The agents of the remote gateway then show in the agent list as `<agentId>@ams`, with a small `@ams` mark, and you chat with them on the local page. Use `--token` only when the remote gateway runs in multi-user mode (create one with `yoplai user token create` there). `yoplai remotes` lists links and `yoplai disconnect ams` removes one. The link works only when the local gateway listens on a loopback address and multi-user mode is off.
+
 ## Troubleshooting
 
 ### `yoplai.json` not found

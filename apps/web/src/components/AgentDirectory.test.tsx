@@ -99,6 +99,36 @@ describe("AgentDirectory", () => {
     dispose();
   });
 
+  it("marks a remote agent with the name of its gateway", async () => {
+    fetchAgentsMock.mockResolvedValue([
+      { id: "pom", name: "Pom" },
+      { id: "iris@ams", name: "Iris", gateway: "ams" },
+    ] as Agent[]);
+
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const [selected] = createSignal<string | null>(null);
+    const dispose = render(
+      () => (
+        <AgentDirectory
+          selectedAgent={selected}
+          onSelectAgent={() => {}}
+          onOpenProject={() => {}}
+        />
+      ),
+      container
+    );
+    await tick();
+    await tick();
+
+    expect(container.textContent).toContain("Pom");
+    expect(container.textContent).toContain("Iris");
+    expect(container.textContent).toContain("@ams");
+    expect(container.textContent?.match(/@/g)).toHaveLength(1);
+
+    dispose();
+  });
+
   it("shows all projects with running agents, ordered by latest activity", async () => {
     fetchAllSubagentsMock.mockResolvedValue({
       items: [
