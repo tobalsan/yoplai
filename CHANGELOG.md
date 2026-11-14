@@ -11,7 +11,7 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Added
 
-- Link a remote gateway with `yoplai connect <url> [--name <name>] [--token <token>]`. The agents of the remote gateway then show on the page of the local gateway as `<agentId>@<name>`, with a small `@<name>` mark, and you chat with them there, including history, file upload and file download. `yoplai disconnect <name>` removes a link, and `yoplai remotes` lists the links. The link is stored in `$YOPLAI_HOME/remote-gateways.json` (mode 0600). The relay runs only on a loopback address, and not with multi-user mode. The remote gateway needs no change.
+- Link a remote gateway with `yoplai connect <url> [--name <name>] [--token <token>]`. The agents of the remote gateway then show on the page of the local gateway as `<agentId>@<name>`, with a small `@<name>` mark, and you chat with them there, including history, file upload and file download. `yoplai disconnect <name>` removes a link, and `yoplai remotes` lists the links. The link is stored in `$YOPLAI_HOME/remote-gateways.json` (mode 0600). The relay runs only on a loopback address, and not with multi-user mode or Tailscale serve. It refuses requests from browser pages of other sites. The remote gateway needs no change.
 
 ### Fixed
 

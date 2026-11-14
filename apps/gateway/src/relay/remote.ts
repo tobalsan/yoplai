@@ -8,6 +8,8 @@ function withBearer(gateway: RemoteGateway, headers?: HeadersInit): Headers {
   result.delete("authorization");
   result.delete("cookie");
   result.delete("host");
+  result.delete("origin");
+  result.delete("referer");
   if (gateway.token) result.set("authorization", `Bearer ${gateway.token}`);
   return result;
 }
@@ -24,15 +26,27 @@ export function remoteWsHeaders(gateway: RemoteGateway): Record<string, string> 
   return Object.fromEntries(withBearer(gateway).entries());
 }
 
-export function fetchRemote(
+export const FIRST_RESPONSE_TIMEOUT_MS = 30_000;
+
+/** The deadline covers the wait for the response headers only. A streamed body can run longer. */
+export async function fetchRemote(
   gateway: RemoteGateway,
   pathAndQuery: string,
   init: RequestInit & { duplex?: "half" } = {}
 ): Promise<Response> {
-  return fetch(remoteHttpUrl(gateway, pathAndQuery), {
-    ...init,
-    headers: withBearer(gateway, init.headers),
-  });
+  const deadline = new AbortController();
+  const timer = setTimeout(() => deadline.abort(), FIRST_RESPONSE_TIMEOUT_MS);
+  try {
+    return await fetch(remoteHttpUrl(gateway, pathAndQuery), {
+      ...init,
+      headers: withBearer(gateway, init.headers),
+      signal: init.signal
+        ? AbortSignal.any([init.signal, deadline.signal])
+        : deadline.signal,
+    });
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 /** Fetch JSON from a remote gateway. Returns null when it does not answer in time or answers with an error. */

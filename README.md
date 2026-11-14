@@ -174,7 +174,7 @@ Connecting an OAuth extension from settings takes you to the provider in the sam
 
 ## Link a remote gateway
 
-Run `yoplai connect https://remote.example.com --name ams [--token <user token>]` on your local gateway. The agents of the remote gateway then show in the agent list as `<agentId>@ams`, with a small `@ams` mark, and you chat with them on the local page. Use `--token` only when the remote gateway runs in multi-user mode (create one with `yoplai user token create` there). `yoplai remotes` lists links and `yoplai disconnect ams` removes one. The link works only when the local gateway listens on a loopback address and multi-user mode is off.
+Run `yoplai connect https://remote.example.com --name ams [--token <user token>]` on your local gateway. The agents of the remote gateway then show in the agent list as `<agentId>@ams`, with a small `@ams` mark, and you chat with them on the local page. Use `--token` only when the remote gateway runs in multi-user mode (create one with `yoplai user token create` there). `yoplai remotes` lists links and `yoplai disconnect ams` removes one. The link works only when the local gateway listens on a loopback address and multi-user mode and Tailscale serve are off.
 
 ## Troubleshooting
 

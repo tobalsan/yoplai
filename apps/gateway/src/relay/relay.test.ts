@@ -6,11 +6,13 @@ import os from "node:os";
 import path from "node:path";
 import type { AddressInfo } from "node:net";
 import { fileURLToPath } from "node:url";
+import net from "node:net";
 import { WebSocket, WebSocketServer } from "ws";
 import { writeTestV3Config } from "../test-utils/v3-config.js";
 import { connectRemoteGateway } from "../cli/connect.js";
 import { createFileRemoteGatewayStore } from "./store.js";
 import { configureRelay, getLinkedGateways } from "./state.js";
+import { FIRST_RESPONSE_TIMEOUT_MS, fetchRemote } from "./remote.js";
 
 type WsEvent = { type: string; agentId?: string; data?: string; message?: string };
 
@@ -39,6 +41,57 @@ async function startRemoteGateway(home: string): Promise<{ child: ChildProcess; 
   return { child, port };
 }
 
+
+type Recorded = { method: string; url: string; headers: http.IncomingHttpHeaders; body: string };
+
+/** A fake remote gateway. It records each request and each WebSocket message. */
+async function startFakeGateway(
+  handler: (req: http.IncomingMessage, res: http.ServerResponse, recorded: Recorded) => void = (_req, res) => {
+    res.setHeader("content-type", "application/json");
+    res.end("{}");
+  }
+) {
+  const requests: Recorded[] = [];
+  const socketMessages: Array<{ type?: string; agentId?: string }> = [];
+  const sockets: WebSocket[] = [];
+  const server = http.createServer((req, res) => {
+    const chunks: Buffer[] = [];
+    req.on("data", (chunk: Buffer) => chunks.push(chunk));
+    req.on("end", () => {
+      const recorded = { method: req.method ?? "", url: req.url ?? "", headers: req.headers, body: Buffer.concat(chunks).toString() };
+      requests.push(recorded);
+      handler(req, res, recorded);
+    });
+  });
+  const wss = new WebSocketServer({ server });
+  wss.on("connection", (socket) => {
+    sockets.push(socket);
+    socket.on("message", (raw) => socketMessages.push(JSON.parse(raw.toString()) as { type?: string; agentId?: string }));
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  return {
+    url: `http://127.0.0.1:${(server.address() as AddressInfo).port}`,
+    requests,
+    socketMessages,
+    sockets,
+    close: () => {
+      for (const socket of sockets) socket.terminate();
+      server.closeAllConnections();
+      server.close();
+    },
+  };
+}
+
+async function waitFor(check: () => boolean, ms = 3000): Promise<void> {
+  const end = Date.now() + ms;
+  while (!check()) {
+    if (Date.now() > end) throw new Error("condition not met in time");
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+}
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
 describe("desktop relay: chat relay", () => {
   let tmpDir: string;
   let remote: { child: ChildProcess; port: number };
@@ -58,7 +111,7 @@ describe("desktop relay: chat relay", () => {
     process.env.YOPLAI_HOME = path.join(localHome, ".yoplai");
     process.env.HOME = localHome;
     await writeTestV3Config(process.env.YOPLAI_HOME, {
-      agents: [{ id: "local" }, { id: "twin" }],
+      agents: [{ id: "local" }, { id: "twin" }, { id: "pom@loc" }],
     });
     vi.resetModules();
     const { piAdapter } = await import("../sdk/pi/adapter.js");
@@ -114,13 +167,13 @@ describe("desktop relay: chat relay", () => {
 
   it("lists remote agents with a suffix and a gateway field", async () => {
     const agents = (await (await fetch(`${localBase}/api/agents`)).json()) as Array<{ id: string; gateway?: string }>;
-    expect(agents.map((agent) => agent.id).sort()).toEqual(["local", "pom@ams", "twin", "twin@ams"]);
+    expect(agents.map((agent) => agent.id).sort()).toEqual(["local", "pom@ams", "pom@loc", "twin", "twin@ams"]);
     expect(agents.find((agent) => agent.id === "pom@ams")?.gateway).toBe("ams");
     expect(agents.find((agent) => agent.id === "local")?.gateway).toBeUndefined();
     const { statuses } = (await (await fetch(`${localBase}/api/agents/status`)).json()) as {
       statuses: Record<string, string>;
     };
-    expect(Object.keys(statuses).sort()).toEqual(["local", "pom@ams", "twin", "twin@ams"]);
+    expect(Object.keys(statuses).sort()).toEqual(["local", "pom@ams", "pom@loc", "twin", "twin@ams"]);
   });
 
   it("returns the stream events and the answer of the remote gateway", async () => {
@@ -209,6 +262,412 @@ describe("desktop relay: chat relay", () => {
       removeGateway("flaky");
       flaky.close();
     }
+  });
+
+
+  function openPage(base: string, origin?: string): Promise<WebSocket> {
+    const ws = new WebSocket(`${base.replace("http", "ws")}/ws`, origin ? { origin } : undefined);
+    return new Promise((resolve, reject) => {
+      ws.once("open", () => resolve(ws));
+      ws.once("error", reject);
+    });
+  }
+
+  async function withFakeGateway<T>(
+    name: string,
+    handler: Parameters<typeof startFakeGateway>[0],
+    run: (fake: Awaited<ReturnType<typeof startFakeGateway>>) => Promise<T>,
+    token?: string
+  ): Promise<T> {
+    const fake = await startFakeGateway(handler);
+    saveGateway({ name, url: fake.url, ...(token ? { token } : {}) });
+    try {
+      return await run(fake);
+    } finally {
+      removeGateway(name);
+      fake.close();
+    }
+  }
+
+  it("refuses to relay for a page of another site and relays for a loopback page", async () => {
+    const list = async (origin?: string) =>
+      ((await (await fetch(`${localBase}/api/agents`, { headers: origin ? { origin } : {} })).json()) as Array<{ id: string }>).map((agent) => agent.id);
+    expect(await list("https://evil.example")).not.toContain("pom@ams");
+    expect(await list("http://localhost:5173")).toContain("pom@ams");
+    expect(await list()).toContain("pom@ams");
+    const evilPage = await openPage(localBase, "https://evil.example");
+    const reply = new Promise<WsEvent>((resolve) => evilPage.once("message", (raw) => resolve(JSON.parse(raw.toString()) as WsEvent)));
+    evilPage.send(JSON.stringify({ type: "send", agentId: "pom@ams", sessionKey: "main", message: "hi" }));
+    expect((await reply).message).toBe("Agent not found");
+    evilPage.close();
+    const loopbackPage = await openPage(localBase, "http://127.0.0.1:5173");
+    const loopbackEvents = await new Promise<WsEvent[]>((resolve) => {
+      const events: WsEvent[] = [];
+      loopbackPage.on("message", (raw) => {
+        events.push(JSON.parse(raw.toString()) as WsEvent);
+        if (events.at(-1)?.type === "done") resolve(events);
+      });
+      loopbackPage.send(JSON.stringify({ type: "send", agentId: "pom@ams", sessionKey: "main", message: "origin" }));
+    });
+    loopbackPage.close();
+    expect(loopbackEvents.find((event) => event.type === "text")?.data).toBe("remote answers pom: origin");
+  });
+
+  it("refuses to forward an upload for a page of another site", async () => {
+    await withFakeGateway("origin-up", undefined, async (fake) => {
+      const form = new FormData();
+      form.set("file", new File(["x"], "note.txt", { type: "text/plain" }));
+      form.set("agentId", "pom@origin-up");
+      await fetch(`${localBase}/api/media/upload`, { method: "POST", body: form, headers: { origin: "https://evil.example" } });
+      expect(fake.requests).toEqual([]);
+    });
+  });
+
+  it("does not start the relay when Tailscale serve is on", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      configureRelay("127.0.0.1", false, true);
+      expect(getLinkedGateways()).toEqual([]);
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining("Tailscale serve"));
+    } finally {
+      warn.mockRestore();
+      configureRelay("127.0.0.1", false);
+    }
+  });
+
+  it("does not start the relay for a host name that starts with 127.", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      configureRelay("127.evil.example", false);
+      expect(getLinkedGateways()).toEqual([]);
+    } finally {
+      warn.mockRestore();
+      configureRelay("127.0.0.1", false);
+    }
+  });
+
+  it("delivers an unsubscribe that a page sends while the remote socket connects", async () => {
+    await withFakeGateway("race", undefined, async (fake) => {
+      const ws = await openPage(localBase);
+      ws.send(JSON.stringify({ type: "subscribe", agentId: "x@race", sessionKey: "race" }));
+      ws.send(JSON.stringify({ type: "unsubscribe" }));
+      await waitFor(() => fake.socketMessages.length === 2);
+      expect(fake.socketMessages.map((message) => message.type)).toEqual(["subscribe", "unsubscribe"]);
+      expect(ws.readyState).toBe(WebSocket.OPEN);
+      ws.close();
+    });
+  });
+
+  it("sends unsubscribe to a remote gateway when the page subscribes to another agent", async () => {
+    await withFakeGateway("rec", undefined, async (fake) => {
+      const ws = await openPage(localBase);
+      ws.send(JSON.stringify({ type: "subscribe", agentId: "x@rec", sessionKey: "main" }));
+      await waitFor(() => fake.socketMessages.length === 1);
+      ws.send(JSON.stringify({ type: "subscribe", agentId: "pom@ams", sessionKey: "main" }));
+      await waitFor(() => fake.socketMessages.some((message) => message.type === "unsubscribe"));
+      ws.send(JSON.stringify({ type: "subscribe", agentId: "x@rec", sessionKey: "main" }));
+      ws.send(JSON.stringify({ type: "subscribe", agentId: "local", sessionKey: "main" }));
+      await waitFor(() => fake.socketMessages.filter((message) => message.type === "unsubscribe").length === 2);
+      ws.close();
+    });
+  });
+
+  it("drops the local subscription when the page subscribes to a remote agent", async () => {
+    const ws = await openPage(localBase);
+    const updates: WsEvent[] = [];
+    ws.on("message", (raw) => {
+      const event = JSON.parse(raw.toString()) as WsEvent;
+      if (event.type === "history_updated") updates.push(event);
+    });
+    ws.send(JSON.stringify({ type: "subscribe", agentId: "local", sessionKey: "one-sub" }));
+    await sleep(100);
+    ws.send(JSON.stringify({ type: "subscribe", agentId: "pom@ams", sessionKey: "one-sub" }));
+    await sleep(200);
+    await chat(localBase, "local", "no echo", "one-sub");
+    await sleep(300);
+    expect(updates).toEqual([]);
+    ws.close();
+  });
+
+  it("keeps the page socket open while a status gateway is offline or closes its socket", async () => {
+    saveGateway({ name: "dead", url: "http://127.0.0.1:1" });
+    try {
+      await withFakeGateway("closer", undefined, async (fake) => {
+        const ws = await openPage(localBase);
+        ws.send(JSON.stringify({ type: "subscribeStatus" }));
+        await waitFor(() => fake.socketMessages.length === 1);
+        fake.sockets[0]?.close();
+        await sleep(500);
+        expect(ws.readyState).toBe(WebSocket.OPEN);
+        ws.close();
+      });
+    } finally {
+      removeGateway("dead");
+    }
+  });
+
+  it("sends the status message of a remote gateway with the suffix", async () => {
+    const ws = await openPage(localBase);
+    const status = new Promise<WsEvent>((resolve) => {
+      ws.on("message", (raw) => {
+        const event = JSON.parse(raw.toString()) as WsEvent;
+        if (event.type === "status" && event.agentId === "pom@ams") resolve(event);
+      });
+    });
+    ws.send(JSON.stringify({ type: "subscribeStatus" }));
+    await sleep(300);
+    await chat(localBase, "pom@ams", "status please", "status-key");
+    expect((await status).agentId).toBe("pom@ams");
+    ws.close();
+  });
+
+  it("closes the page socket when the queue for a connecting remote socket is full", async () => {
+    const stall = net.createServer(() => {});
+    await new Promise<void>((resolve) => stall.listen(0, "127.0.0.1", resolve));
+    saveGateway({ name: "stall", url: `http://127.0.0.1:${(stall.address() as AddressInfo).port}` });
+    try {
+      const ws = await openPage(localBase);
+      const closed = new Promise<void>((resolve) => ws.once("close", () => resolve()));
+      for (let i = 0; i < 30; i++) {
+        ws.send(JSON.stringify({ type: "send", agentId: "x@stall", sessionKey: "main", message: `m${i}` }));
+      }
+      await closed;
+    } finally {
+      removeGateway("stall");
+      stall.close();
+    }
+  });
+
+  it("closes the page socket when the remote socket does not connect in time", async () => {
+    const stall = net.createServer(() => {});
+    await new Promise<void>((resolve) => stall.listen(0, "127.0.0.1", resolve));
+    saveGateway({ name: "slow", url: `http://127.0.0.1:${(stall.address() as AddressInfo).port}` });
+    try {
+      const ws = await openPage(localBase);
+      const closed = new Promise<void>((resolve) => ws.once("close", () => resolve()));
+      ws.send(JSON.stringify({ type: "send", agentId: "x@slow", sessionKey: "main", message: "hi" }));
+      await closed;
+    } finally {
+      removeGateway("slow");
+      stall.close();
+    }
+  }, 20_000);
+
+  it("sends the bearer token and drops Origin, Referer, and cookies for a remote gateway", async () => {
+    await withFakeGateway(
+      "hdr",
+      (_req, res) => {
+        res.setHeader("content-type", "application/json");
+        res.setHeader("set-cookie", "session=remote; Path=/");
+        res.end(JSON.stringify({ messages: [] }));
+      },
+      async (fake) => {
+        const response = await fetch(`${localBase}/api/agents/pom%40hdr/history`, {
+          headers: { origin: "http://localhost:5173", referer: "http://localhost:5173/", cookie: "local=1" },
+        });
+        expect(response.status).toBe(200);
+        expect(response.headers.get("set-cookie")).toBeNull();
+        const seen = fake.requests[0]?.headers;
+        expect(seen?.authorization).toBe("Bearer test-bearer");
+        expect(seen?.origin).toBeUndefined();
+        expect(seen?.referer).toBeUndefined();
+        expect(seen?.cookie).toBeUndefined();
+      },
+      "test-bearer"
+    );
+  });
+
+  it("answers a HEAD request and a 204 without a body, and keeps an error object as it is", async () => {
+    await withFakeGateway(
+      "body",
+      (req, res) => {
+        if (req.url?.includes("/missing")) {
+          res.statusCode = 404;
+          res.setHeader("content-type", "application/json");
+          res.end(JSON.stringify({ error: "Agent not found" }));
+          return;
+        }
+        if (req.method === "DELETE") {
+          res.statusCode = 204;
+          res.setHeader("content-type", "application/json");
+          res.end();
+          return;
+        }
+        res.setHeader("content-type", "application/json");
+        res.setHeader("content-length", "11");
+        res.end(req.method === "HEAD" ? undefined : '{"a":"bbbb"}');
+      },
+      async () => {
+        const head = await fetch(`${localBase}/api/agents/pom%40body/history`, { method: "HEAD" });
+        expect(head.status).toBe(200);
+        const noContent = await fetch(`${localBase}/api/agents/pom%40body/sessions/abc`, { method: "DELETE" });
+        expect(noContent.status).toBe(204);
+        const missing = await fetch(`${localBase}/api/agents/missing%40body`);
+        expect(missing.status).toBe(404);
+        expect(await missing.json()).toEqual({ error: "Agent not found" });
+      }
+    );
+  });
+
+  it("stops a run on a remote agent", async () => {
+    await withFakeGateway("stopper", undefined, async (fake) => {
+      const response = await fetch(`${localBase}/api/agents/pom%40stopper/messages`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ message: "/abort", sessionKey: "main" }),
+      });
+      expect(response.status).toBe(200);
+      expect(fake.requests[0]).toMatchObject({ method: "POST", url: "/api/agents/pom/messages" });
+      expect(JSON.parse(fake.requests[0]?.body ?? "{}")).toMatchObject({ message: "/abort" });
+    });
+  });
+
+  it("renames a session of a remote agent", async () => {
+    await chat(localBase, "pom@ams", "rename me", "rename-key");
+    const { items } = (await (await fetch(`${localBase}/api/agents/sessions/search?q=rename%20me`)).json()) as {
+      items: Array<{ agentId: string; sessionId: string }>;
+    };
+    const session = items.find((item) => item.agentId === "pom@ams");
+    expect(session).toBeDefined();
+    const renamed = await fetch(`${localBase}/api/agents/pom%40ams/sessions/${session?.sessionId}`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ title: "Renamed remotely" }),
+    });
+    expect(renamed.status).toBe(200);
+    const after = (await (await fetch(`${localBase}/api/agents/sessions`)).json()) as { items: Array<{ sessionId: string; title?: string }> };
+    expect(after.items.find((item) => item.sessionId === session?.sessionId)?.title).toBe("Renamed remotely");
+  });
+
+  it("finds a session of a remote agent in the search", async () => {
+    await chat(localBase, "pom@ams", "zebra-needle", "search-key");
+    const { items } = (await (await fetch(`${localBase}/api/agents/sessions/search?q=zebra-needle`)).json()) as {
+      items: Array<{ agentId: string }>;
+    };
+    expect(items.map((item) => item.agentId)).toContain("pom@ams");
+  });
+
+  it("keeps the title-first order and the 50 result limit in a merged search", async () => {
+    const many = Array.from({ length: 60 }, (_, i) => ({ agentId: "a", sessionId: `s${i}`, match: "text", lastActivity: 1000 + i }));
+    const items = [...many, { agentId: "a", sessionId: "title-hit", match: "title", lastActivity: 1 }];
+    await withFakeGateway(
+      "many",
+      (_req, res) => {
+        res.setHeader("content-type", "application/json");
+        res.end(JSON.stringify({ items }));
+      },
+      async () => {
+        const result = (await (await fetch(`${localBase}/api/agents/sessions/search?q=x`)).json()) as {
+          items: Array<{ sessionId: string }>;
+        };
+        expect(result.items).toHaveLength(50);
+        expect(result.items[0]?.sessionId).toBe("title-hit");
+      }
+    );
+  });
+
+  it("prefers a local agent whose id ends with a gateway suffix", async () => {
+    saveGateway({ name: "loc", url: remoteBase });
+    try {
+      const events = await chat(localBase, "pom@loc", "hi");
+      expect(events.find((event) => event.type === "text")?.data).toBe("local answers pom@loc: hi");
+      const agents = (await (await fetch(`${localBase}/api/agents`)).json()) as Array<{ id: string; gateway?: string }>;
+      const matching = agents.filter((agent) => agent.id === "pom@loc");
+      expect(matching).toHaveLength(1);
+      expect(matching[0]?.gateway).toBeUndefined();
+    } finally {
+      removeGateway("loc");
+    }
+  });
+
+  it("refuses a too large upload before it reaches the remote gateway", async () => {
+    await withFakeGateway("big", undefined, async (fake) => {
+      const form = new FormData();
+      form.set("file", new File([new Uint8Array(26 * 1024 * 1024)], "big.txt", { type: "text/plain" }));
+      form.set("agentId", "pom@big");
+      const response = await fetch(`${localBase}/api/media/upload`, { method: "POST", body: form });
+      expect(response.status).toBe(413);
+      expect(fake.requests).toEqual([]);
+    });
+  });
+
+  it("stops a forwarded upload when the page request aborts", async () => {
+    let closed = false;
+    await withFakeGateway(
+      "hang-up",
+      (_req, res) => {
+        res.on("close", () => {
+          closed = true;
+        });
+      },
+      async (fake) => {
+        const controller = new AbortController();
+        const form = new FormData();
+        form.set("file", new File(["x"], "note.txt", { type: "text/plain" }));
+        form.set("agentId", "pom@hang-up");
+        const pending = fetch(`${localBase}/api/media/upload`, { method: "POST", body: form, signal: controller.signal }).catch(() => null);
+        await waitFor(() => fake.requests.length === 1);
+        controller.abort();
+        await pending;
+        await waitFor(() => closed);
+      }
+    );
+  });
+
+  it("stops a download fallback when the page request aborts", async () => {
+    let closed = false;
+    await withFakeGateway(
+      "hang-down",
+      (_req, res) => {
+        res.on("close", () => {
+          closed = true;
+        });
+      },
+      async (fake) => {
+        const controller = new AbortController();
+        const pending = fetch(`${localBase}/api/media/download/11111111-1111-4111-8111-111111111111`, { signal: controller.signal }).catch(() => null);
+        await waitFor(() => fake.requests.some((request) => request.url.includes("/download/")));
+        controller.abort();
+        await pending;
+        await waitFor(() => closed);
+      }
+    );
+  });
+
+  it("gives the first response a deadline and lets a streamed body run on", async () => {
+    vi.useFakeTimers();
+    const signals: AbortSignal[] = [];
+    vi.stubGlobal("fetch", (_url: string, init: RequestInit) => {
+      signals.push(init.signal as AbortSignal);
+      return Promise.resolve(new Response("ok"));
+    });
+    try {
+      await fetchRemote({ name: "x", url: "http://127.0.0.1:1" }, "/a");
+      await vi.advanceTimersByTimeAsync(FIRST_RESPONSE_TIMEOUT_MS + 1000);
+      expect(signals[0]?.aborted).toBe(false);
+      let pendingSignal: AbortSignal | undefined;
+      vi.stubGlobal("fetch", (_url: string, init: RequestInit) => {
+        pendingSignal = init.signal as AbortSignal;
+        return new Promise<Response>(() => {});
+      });
+      void fetchRemote({ name: "x", url: "http://127.0.0.1:1" }, "/b");
+      await vi.advanceTimersByTimeAsync(FIRST_RESPONSE_TIMEOUT_MS + 1000);
+      expect(pendingSignal?.aborted).toBe(true);
+    } finally {
+      vi.unstubAllGlobals();
+      vi.useRealTimers();
+    }
+  });
+
+  it("saves the store file with mode 0600 when an old temp file has a wider mode", async () => {
+    const dir = path.join(tmpDir, "mode-store");
+    await fs.mkdir(dir, { recursive: true });
+    const file = path.join(dir, "remote-gateways.json");
+    await fs.writeFile(`${file}.${process.pid}.tmp`, "old", { mode: 0o644 });
+    createFileRemoteGatewayStore(file).save({ name: "a", url: "http://127.0.0.1:1", token: "t" });
+    expect((await fs.stat(file)).mode & 0o777).toBe(0o600);
+    createFileRemoteGatewayStore(file).remove("a");
+    expect((await fs.stat(file)).mode & 0o777).toBe(0o600);
   });
 
   it("does not start the relay on a non-loopback address without multi-user mode", () => {

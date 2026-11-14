@@ -100,7 +100,9 @@ export class WsBroker {
       this.authContexts.set(ws, request.authContext);
     }
 
-    const bridge = new RelayWsBridge(ws);
+    const bridge = new RelayWsBridge(ws, request?.headers.origin, () => {
+      this.subscriptions.delete(ws);
+    });
     this.relayBridges.set(ws, bridge);
     ws.on("message", (raw) => {
       const text = raw.toString();

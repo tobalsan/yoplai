@@ -1,6 +1,7 @@
 import type { MiddlewareHandler } from "hono";
-import { addGatewaySuffix, removeGatewaySuffix } from "./agent-id.js";
-import { getLinkedGateways } from "./state.js";
+import { addGatewaySuffix } from "./agent-id.js";
+import { MAX_UPLOAD_SIZE_BYTES } from "../media/upload.js";
+import { getLinkedGateways, isTrustedOrigin, resolveRemoteAgent } from "./state.js";
 import {
   fetchRemote,
   fetchRemoteJson,
@@ -13,9 +14,10 @@ type RemoteAgent = { id: string; avatar?: string } & Record<string, unknown>;
 
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const SEARCH_LIMIT = 50;
 const AGGREGATE_SEGMENTS = new Set(["status", "sessions"]);
 const DROPPED_REQUEST_HEADERS = ["connection", "content-length", "accept-encoding"];
-const DROPPED_RESPONSE_HEADERS = ["content-encoding", "content-length", "transfer-encoding", "connection"];
+const DROPPED_RESPONSE_HEADERS = ["content-encoding", "content-length", "transfer-encoding", "connection", "set-cookie"];
 
 function suffixAgent(agent: RemoteAgent, gateway: string): RemoteAgent {
   return {
@@ -57,9 +59,15 @@ async function mergeLists(
   const remotes = await remoteLists<unknown>(gateways, pathAndQuery);
   if (segments.length === 2) {
     const agents = [...(local as RemoteAgent[])];
+    const knownIds = new Set(agents.map((agent) => agent.id));
     for (const { gateway, body } of remotes) {
       if (Array.isArray(body)) {
-        agents.push(...(body as RemoteAgent[]).map((agent) => suffixAgent(agent, gateway.name)));
+        for (const agent of body as RemoteAgent[]) {
+          const suffixed = suffixAgent(agent, gateway.name);
+          if (knownIds.has(suffixed.id)) continue;
+          knownIds.add(suffixed.id);
+          agents.push(suffixed);
+        }
       }
     }
     replaceJson(c, agents);
@@ -71,7 +79,7 @@ async function mergeLists(
       for (const [id, status] of Object.entries(
         (body as { statuses?: Record<string, string> }).statuses ?? {}
       )) {
-        statuses[addGatewaySuffix(id, gateway.name)] = status;
+        statuses[addGatewaySuffix(id, gateway.name)] ??= status;
       }
     }
     replaceJson(c, { statuses });
@@ -82,7 +90,14 @@ async function mergeLists(
     const remoteItems = (body as { items?: unknown[] }).items ?? [];
     items.push(...(remoteItems.map((item) => suffixAgentIds(item, gateway.name)) as Array<Record<string, unknown>>));
   }
-  if (segments[3] !== "search") {
+  if (segments[3] === "search") {
+    items.sort(
+      (a, b) =>
+        Number(b.match === "title") - Number(a.match === "title") ||
+        Number(b.lastActivity) - Number(a.lastActivity)
+    );
+    items.splice(SEARCH_LIMIT);
+  } else {
     items.sort((a, b) => Number(b.lastActivity) - Number(a.lastActivity));
   }
   replaceJson(c, { ...(local as object), items });
@@ -114,26 +129,53 @@ async function forward(
   }
   const responseHeaders = new Headers(response.headers);
   for (const name of DROPPED_RESPONSE_HEADERS) responseHeaders.delete(name);
-  if (!(response.headers.get("content-type") ?? "").includes("application/json")) {
-    return new Response(response.body, { status: response.status, headers: responseHeaders });
+  const hasNoBody =
+    request.method === "HEAD" || [204, 205, 304].includes(response.status);
+  if (hasNoBody || !(response.headers.get("content-type") ?? "").includes("application/json")) {
+    return new Response(hasNoBody ? null : response.body, { status: response.status, headers: responseHeaders });
   }
   let body = suffixAgentIds(await response.json(), gateway.name);
-  if (request.method === "GET" && segments.length === 4 && body && typeof body === "object" && !Array.isArray(body)) {
+  if (
+    response.ok &&
+    request.method === "GET" &&
+    segments.length === 4 &&
+    body &&
+    typeof body === "object" &&
+    !Array.isArray(body) &&
+    typeof (body as RemoteAgent).id === "string"
+  ) {
     body = suffixAgent(body as RemoteAgent, gateway.name);
   }
   return new Response(JSON.stringify(body), { status: response.status, headers: responseHeaders });
 }
 
+const UPLOAD_FORM_OVERHEAD_BYTES = 1024 * 1024;
+
+function uploadTooLarge(): Response {
+  return Response.json(
+    { error: "File exceeds the 25MB upload limit", maxSize: MAX_UPLOAD_SIZE_BYTES },
+    { status: 413 }
+  );
+}
+
 async function forwardUpload(request: Request, gateways: RemoteGateway[]): Promise<Response | null> {
+  const length = Number(request.headers.get("content-length"));
+  if (length > MAX_UPLOAD_SIZE_BYTES + UPLOAD_FORM_OVERHEAD_BYTES) return uploadTooLarge();
   const form = await request.clone().formData().catch(() => null);
   const agentId = form?.get("agentId");
   if (!form || typeof agentId !== "string") return null;
-  const target = removeGatewaySuffix(agentId, gateways.map((gateway) => gateway.name));
+  const target = resolveRemoteAgent(agentId, gateways);
   const gateway = gateways.find((item) => item.name === target.gateway);
   if (!gateway) return null;
+  const file = form.get("file");
+  if (file instanceof File && file.size > MAX_UPLOAD_SIZE_BYTES) return uploadTooLarge();
   form.set("agentId", target.agentId);
   try {
-    const response = await fetchRemote(gateway, "/api/media/upload", { method: "POST", body: form });
+    const response = await fetchRemote(gateway, "/api/media/upload", {
+      method: "POST",
+      body: form,
+      signal: request.signal,
+    });
     return new Response(response.body, {
       status: response.status,
       headers: { "content-type": response.headers.get("content-type") ?? "application/json" },
@@ -143,11 +185,15 @@ async function forwardUpload(request: Request, gateways: RemoteGateway[]): Promi
   }
 }
 
-async function downloadFromRemote(fileId: string, gateways: RemoteGateway[]): Promise<Response | null> {
+async function downloadFromRemote(
+  fileId: string,
+  gateways: RemoteGateway[],
+  signal: AbortSignal
+): Promise<Response | null> {
   for (const gateway of gateways) {
     try {
       const response = await fetchRemote(gateway, `/api/media/download/${fileId}`, {
-        signal: AbortSignal.timeout(10_000),
+        signal,
       });
       if (response.ok) {
         const headers = new Headers(response.headers);
@@ -165,7 +211,7 @@ async function downloadFromRemote(fileId: string, gateways: RemoteGateway[]): Pr
 export function relayHttp(): MiddlewareHandler {
   return async (c, next) => {
     const gateways = getLinkedGateways();
-    if (gateways.length === 0) return next();
+    if (gateways.length === 0 || !isTrustedOrigin(c.req.header("origin"))) return next();
     const url = new URL(c.req.url);
     const segments = url.pathname.split("/");
     const method = c.req.method;
@@ -174,7 +220,7 @@ export function relayHttp(): MiddlewareHandler {
       const first = decodeURIComponent(segments[3]);
       const target = AGGREGATE_SEGMENTS.has(first)
         ? { agentId: first }
-        : removeGatewaySuffix(first, gateways.map((gateway) => gateway.name));
+        : resolveRemoteAgent(first, gateways);
       const gateway = gateways.find((item) => item.name === target.gateway);
       if (gateway) {
         return forward(c.req.raw, gateway, target.agentId, segments);
@@ -196,7 +242,7 @@ export function relayHttp(): MiddlewareHandler {
       if (fileId && UUID_RE.test(fileId)) {
         await next();
         if (c.res.status !== 404) return;
-        const remote = await downloadFromRemote(fileId, gateways);
+        const remote = await downloadFromRemote(fileId, gateways, c.req.raw.signal);
         if (remote) c.res = remote;
         return;
       }

@@ -374,7 +374,11 @@ export function startServer(
     host ??
     config.gateway?.host ??
     resolveGatewayBindHost(config.gateway?.bind);
-  configureRelay(resolvedHost, runtime.isEnabled("multiUser"));
+  configureRelay(
+    resolvedHost,
+    runtime.isEnabled("multiUser"),
+    config.ui?.tailscale?.mode === "serve"
+  );
   const nodeBin = path.dirname(process.execPath);
   if (nodeBin && !process.env.PATH?.split(path.delimiter).includes(nodeBin)) {
     process.env.PATH = `${nodeBin}${path.delimiter}${process.env.PATH ?? ""}`;

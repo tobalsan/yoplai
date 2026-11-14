@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { resolveHomeDir } from "@yoplai/shared";
@@ -23,9 +24,10 @@ export function createFileRemoteGatewayStore(
 ): RemoteGatewayStore {
   const write = (gateways: RemoteGateway[]) => {
     fs.mkdirSync(path.dirname(filePath), { recursive: true });
-    const tmpPath = `${filePath}.${process.pid}.tmp`;
+    const tmpPath = `${filePath}.${process.pid}.${randomUUID()}.tmp`;
     fs.writeFileSync(tmpPath, `${JSON.stringify(gateways, null, 2)}\n`, {
       mode: 0o600,
+      flag: "wx",
     });
     fs.renameSync(tmpPath, filePath);
   };
