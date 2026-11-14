@@ -31,28 +31,28 @@ export const DEVICE_TOOL_DEFINITIONS: Record<DeviceToolName, DeviceToolDefinitio
     description:
       "Read a file on the device of the user. This is not the workspace of the agent. Give a path. Use offset and limit for a long file.",
     filePath: true,
-    create: createReadTool,
+    create: (cwd) => createReadTool(cwd),
   },
   device_write: {
     name: "device_write",
     description:
       "Write a file on the device of the user. This is not the workspace of the agent. It replaces the file when it exists. The user can refuse the call.",
     filePath: true,
-    create: createWriteTool,
+    create: (cwd) => createWriteTool(cwd),
   },
   device_edit: {
     name: "device_edit",
     description:
       "Edit a file on the device of the user. This is not the workspace of the agent. Give exact text to replace. The user can refuse the call.",
     filePath: true,
-    create: createEditTool,
+    create: (cwd) => createEditTool(cwd),
   },
   device_bash: {
     name: "device_bash",
     description:
       "Run a shell command on the device of the user. This is not the workspace of the agent. The command starts in the workspace folder of the chat. The user can refuse the call.",
     filePath: false,
-    create: createBashTool,
+    create: (cwd) => createBashTool(cwd),
   },
 };
 
