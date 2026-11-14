@@ -1,3 +1,4 @@
+import { decodeRouteParam } from "../lib/path";
 import { createChatSession } from "./chat/createChatSession";
 import { RemoteAgentMark } from "./RemoteAgentMark";
 import { ChatTranscript } from "./chat/ChatTranscript";
@@ -127,7 +128,11 @@ export function ChatView() {
     }
   };
   void refreshToolLabels();
-  const params = useParams<{ agentId: string; view?: string }>();
+  const routeParams = useParams<{ agentId: string; view?: string }>();
+  const params = {
+    get agentId() { return decodeRouteParam(routeParams.agentId); },
+    get view() { return routeParams.view; },
+  };
   const navigate = useNavigate();
   const location = useLocation<{ mainAgentHome?: boolean; draftMessage?: string }>();
   const [agent] = createResource(() => params.agentId, fetchAgent);
@@ -140,8 +145,7 @@ export function ChatView() {
   );
   // Ignore a stale result from the previous agent while the new lookup loads.
   const settingsAgentId = () => {
-    // The router gives the raw path segment ("pom%40ams"), so decode before the link encodes once.
-    if (!capabilities.forkedAgents) return decodeURIComponent(params.agentId);
+    if (!capabilities.forkedAgents) return params.agentId;
     const resolved = settingsPoolActions();
     return resolved?.chatAgentId === params.agentId ? resolved.poolId : null;
   };
@@ -587,8 +591,8 @@ export function ChatView() {
     if (mode !== viewMode()) {
       const basePath =
         mode === "full"
-          ? `/chat/${params.agentId}/full`
-          : `/chat/${params.agentId}`;
+          ? `/chat/${encodeURIComponent(params.agentId)}/full`
+          : `/chat/${encodeURIComponent(params.agentId)}`;
       const session = explicitSessionId();
       const query = new URLSearchParams();
       if (session) query.set("session", session);
@@ -859,7 +863,7 @@ export function ChatView() {
         <Show when={settingsAgentId()}>
           {(poolId) => (
             <A
-              href={`/agents/${encodeURI(poolId())}/edit`}
+              href={`/agents/${encodeURIComponent(poolId())}/edit`}
               state={{ backTo: `${location.pathname}${location.search}` }}
               class="agent-settings-btn"
               aria-label={`${agent()?.name ?? "Agent"} settings`}

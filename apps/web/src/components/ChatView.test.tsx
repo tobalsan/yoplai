@@ -712,7 +712,70 @@ describe("ChatView abort handling", () => {
     const { container, dispose } = renderView();
     await waitFor(() => expect(queryByRole(container, "link", { name: "Pom (remote) settings" })).not.toBeNull());
     expect(container.textContent).toContain("@ams");
-    expect(queryByRole(container, "link", { name: "Pom (remote) settings" })?.getAttribute("href")).toBe("/agents/pom@ams/edit");
+    expect(queryByRole(container, "link", { name: "Pom (remote) settings" })?.getAttribute("href")).toBe("/agents/pom%40ams/edit");
+    dispose();
+  });
+
+  it("sends the decoded agent id from the route /chat/pom%40ams", async () => {
+    routeState.agentId = "pom%40ams";
+    fetchAgentMock.mockResolvedValue({ id: "pom@ams", name: "Pom (remote)", gateway: "ams", model: { provider: "openai", model: "gpt-5" }, queueMode: "queue" });
+    const { container, dispose } = renderView();
+    await waitFor(() => expect(queryByRole(container, "link", { name: "Pom (remote) settings" })).not.toBeNull());
+    const input = queryByRole(container, "textbox") as HTMLTextAreaElement;
+    input.value = "Hello";
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    queryByRole(container, "button", { name: "Send message" })!.click();
+    await waitFor(() => expect(streamMessageMock).toHaveBeenCalled());
+    expect(streamMessageMock.mock.calls[0][0]).toBe("pom@ams");
+    dispose();
+  });
+
+  it("shows the same header and settings link for /chat/pom%40ams and /chat/pom@ams", async () => {
+    fetchAgentMock.mockResolvedValue({ id: "pom@ams", name: "Pom (remote)", gateway: "ams", model: { provider: "openai", model: "gpt-5" }, queueMode: "queue" });
+    const seen: Array<{ text: string; href: string | null | undefined }> = [];
+    for (const routeId of ["pom%40ams", "pom@ams"]) {
+      routeState.agentId = routeId;
+      const { container, dispose } = renderView();
+      await waitFor(() => expect(queryByRole(container, "link", { name: "Pom (remote) settings" })).not.toBeNull());
+      seen.push({
+        text: container.textContent?.includes("@ams") ? "marked" : "unmarked",
+        href: queryByRole(container, "link", { name: "Pom (remote) settings" })?.getAttribute("href"),
+      });
+      dispose();
+    }
+    expect(seen[0]).toEqual(seen[1]);
+    expect(seen[0].href).toBe("/agents/pom%40ams/edit");
+  });
+
+  it("keeps /edit at the end of the settings link for an id with # or ?", async () => {
+    routeState.agentId = "a%23b%3Fc%40ams";
+    fetchAgentMock.mockResolvedValue({ id: "a#b?c@ams", name: "Odd", gateway: "ams", model: { provider: "openai", model: "gpt-5" }, queueMode: "queue" });
+    const { container, dispose } = renderView();
+    await waitFor(() => expect(queryByRole(container, "link", { name: "Odd settings" })).not.toBeNull());
+    const href = queryByRole(container, "link", { name: "Odd settings" })!.getAttribute("href")!;
+    expect(new URL(href, "http://localhost").pathname).toBe("/agents/a%23b%3Fc%40ams/edit");
+    dispose();
+  });
+
+  it("renders a chat at a route with a malformed escape", async () => {
+    routeState.agentId = "%E0%A4%A";
+    const { container, dispose } = renderView();
+    await waitFor(() => expect(queryByRole(container, "textbox")).not.toBeNull());
+    dispose();
+  });
+
+  it("keeps the payload and settings link of a local agent", async () => {
+    routeState.agentId = "pom";
+    fetchAgentMock.mockResolvedValue({ id: "pom", name: "Pom", model: { provider: "openai", model: "gpt-5" }, queueMode: "queue" });
+    const { container, dispose } = renderView();
+    await waitFor(() => expect(queryByRole(container, "link", { name: "Pom settings" })).not.toBeNull());
+    expect(queryByRole(container, "link", { name: "Pom settings" })?.getAttribute("href")).toBe("/agents/pom/edit");
+    const input = queryByRole(container, "textbox") as HTMLTextAreaElement;
+    input.value = "Hello";
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    queryByRole(container, "button", { name: "Send message" })!.click();
+    await waitFor(() => expect(streamMessageMock).toHaveBeenCalled());
+    expect(streamMessageMock.mock.calls[0][0]).toBe("pom");
     dispose();
   });
 

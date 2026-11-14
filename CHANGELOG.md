@@ -15,7 +15,7 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Fixed
 
-- A remote agent now shows the `@<name>` mark on the Agents page, in the chat header, and in the project agent picker. The settings link in the chat header of a remote agent opens the settings page instead of "Agent not found.".
+- A remote agent now shows the `@<name>` mark on the Agents page, in the chat header, and in the project agent picker. The settings link in the chat header of a remote agent opens the settings page instead of "Agent not found.". A message in a remote chat opened from the sidebar now reaches the remote agent.
 - When the AI provider's safety filter refuses a message, the chat no longer gets stuck. The refused turn is dropped from the saved session, so the next message works, and the user sees "The AI provider's safety filter blocked this message, so it was not kept. You can rephrase or carry on." (French too) instead of "Something went wrong". The gateway logs it at warn, not error.
 - A large text attachment (JSON, CSV, text, docx, spreadsheet) no longer breaks the chat. Above 250,000 extracted characters it is not pasted into the message; the agent is told its size and reads the file from its path.
 - When the prompt is too large for the model, the user now sees "The attached file or conversation is too large for the model to read in chat" (English and French) instead of "Something went wrong". Sandboxed agents no longer end such a run with a silent empty reply.
