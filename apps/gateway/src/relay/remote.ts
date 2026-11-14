@@ -22,6 +22,10 @@ export function remoteWsUrl(gateway: RemoteGateway): string {
   return remoteHttpUrl(gateway, "/ws").replace(/^http/i, "ws");
 }
 
+export function remoteDeviceUrl(gateway: RemoteGateway): string {
+  return remoteHttpUrl(gateway, "/ws/device").replace(/^http/i, "ws");
+}
+
 export function remoteWsHeaders(gateway: RemoteGateway): Record<string, string> {
   return Object.fromEntries(withBearer(gateway).entries());
 }

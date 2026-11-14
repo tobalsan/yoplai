@@ -1,9 +1,8 @@
-import { createServer, type Server } from "node:http";
-import type { AddressInfo } from "node:net";
+import type { Server } from "node:http";
 import { WebSocket } from "ws";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AgentEventBus, DEVICE_PROTOCOL_VERSION, type AgentConfig, type ExtensionAgentToolContext } from "@yoplai/shared";
-import type { ExtensionRuntime } from "../extensions/runtime.js";
+import { startRemoteServer, waitFor } from "./device-test-server.js";
 import { getDeviceRegistry, resetDeviceRegistry } from "./device-registry.js";
 
 vi.mock("../config/index.js", () => ({
@@ -18,23 +17,6 @@ vi.mock("../server/run-request.js", () => ({ normalizeRunRequest: vi.fn() }));
 
 const agent = { id: "pom" } as AgentConfig;
 type Json = Record<string, unknown>;
-
-async function startRemoteServer(multiUser: boolean) {
-  const { WsBroker } = await import("../server/ws-broker.js");
-  const server = createServer();
-  const broker = new WsBroker();
-  broker.attach(server, {
-    isMultiUserEnabled: () => multiUser,
-    validateWebSocketRequest: async (request) => {
-      const token = request.headers.get("authorization")?.replace("Bearer ", "");
-      return token ? ({ user: { id: `user-${token}` }, session: { userId: `user-${token}` } } as never) : null;
-    },
-    canAccessAgent: async () => true,
-    getExtensionRuntime: () => ({} as ExtensionRuntime),
-  });
-  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
-  return { server, broker, port: (server.address() as AddressInfo).port };
-}
 
 /** A fake relay that records each message of the remote gateway. */
 async function connectRelay(port: number, options: { token?: string; version?: number; hello?: boolean } = {}) {
@@ -54,14 +36,6 @@ async function connectRelay(port: number, options: { token?: string; version?: n
     socket.send(JSON.stringify({ type: "hello", protocolVersion: options.version ?? DEVICE_PROTOCOL_VERSION, deviceName: "laptop" }));
   }
   return { socket, messages, closed };
-}
-
-async function waitFor(check: () => boolean, ms = 3000): Promise<void> {
-  const end = Date.now() + ms;
-  while (!check()) {
-    if (Date.now() > end) throw new Error("condition not met in time");
-    await new Promise((resolve) => setTimeout(resolve, 10));
-  }
 }
 
 function toolContext(overrides: Partial<ExtensionAgentToolContext> = {}): ExtensionAgentToolContext {
