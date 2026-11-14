@@ -32,6 +32,7 @@ export type SubscribeToRealtimeOptions = {
   interests: RealtimeInterest[];
   onEvent: (event: RealtimeEvent) => void;
   onOpen?: () => void;
+  onClose?: () => void;
   onError?: (error: string) => void;
   onReconnect?: () => void;
   reconnect?: boolean;
@@ -84,6 +85,7 @@ export function subscribeToRealtime({
   interests,
   onEvent,
   onOpen,
+  onClose,
   onError,
   onReconnect,
   reconnect = true,
@@ -149,6 +151,7 @@ export function subscribeToRealtime({
 
     socket.onclose = () => {
       if (ws === socket) ws = null;
+      if (!closed) onClose?.();
       scheduleReconnect();
     };
   };

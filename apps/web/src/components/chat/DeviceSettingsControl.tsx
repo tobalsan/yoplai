@@ -1,4 +1,4 @@
-import { createEffect, createResource, createSignal, on, Show } from "solid-js";
+import { createEffect, createResource, createSignal, on, onCleanup, onMount, Show } from "solid-js";
 import {
   fetchDeviceLinks,
   fetchDeviceSettings,
@@ -14,142 +14,223 @@ const MODE_LABELS: Record<DeviceMode, string> = { ask: "Ask", workspace: "Worksp
 /**
  * Header control for a chat with a remote agent. It shows the device mode of the chat
  * and opens a panel for the workspace folder, the Full switch, and the scheduled jobs.
+ * It shows a mode only after the gateway confirmed it. `refreshKey` changes when the page
+ * gets a new approval request. The control then reads the settings again.
  */
-export function DeviceSettingsControl(props: { agentId: string; gateway: string; sessionId: string | null | undefined }) {
+export function DeviceSettingsControl(props: {
+  agentId: string;
+  gateway: string;
+  sessionId: string | null | undefined;
+  refreshKey: number;
+}) {
   const [open, setOpen] = createSignal(false);
   const [settings, setSettings] = createSignal<DeviceSettings>();
+  const [readFailed, setReadFailed] = createSignal(false);
   const [folder, setFolder] = createSignal("");
   const [error, setError] = createSignal("");
-  const [links, { refetch: refetchLinks }] = createResource(() => fetchDeviceLinks().catch(() => []));
+  const [links, { refetch: refetchLinks }] = createResource(() => fetchDeviceLinks().catch(() => null));
   const [fullBackground, { mutate: setFullBackground }] = createResource(
     () => props.agentId,
     (agentId) => fetchFullBackground(agentId).catch(() => undefined)
   );
+  let root: HTMLDivElement | undefined;
+  // A read applies only if it is the newest read and no write started after it.
+  let readCount = 0;
+  let writeCount = 0;
 
-  const online = () => links()?.find((link) => link.name === props.gateway)?.connected ?? true;
-  const mode = (): DeviceMode => settings()?.mode ?? "ask";
+  const link = () => links.latest?.find((item) => item.name === props.gateway);
+  const linkUnknown = () => !links.loading && link() === undefined;
+  const offline = () => link()?.connected === false;
   const ready = () => typeof props.sessionId === "string" && props.sessionId !== "";
+  const confirmed = () => ready() && settings() !== undefined;
+  const label = () => {
+    if (offline()) return "Device: offline";
+    if (linkUnknown()) return "Device: unknown";
+    if (readFailed()) return "Device: error";
+    const current = settings();
+    return current ? `Device: ${MODE_LABELS[current.mode]}` : "Device: …";
+  };
 
   const apply = (next: DeviceSettings) => {
     setSettings(next);
+    setReadFailed(false);
     setFolder(next.workspaceFolder ?? "");
+  };
+
+  const sameScope = (agentId: string, sessionId: string) => agentId === props.agentId && sessionId === props.sessionId;
+
+  const read = () => {
+    const agentId = props.agentId;
+    const sessionId = props.sessionId;
+    if (!sessionId) return;
+    const thisRead = ++readCount;
+    const writesAtStart = writeCount;
+    const current = () => thisRead === readCount && writesAtStart === writeCount && sameScope(agentId, sessionId);
+    fetchDeviceSettings(agentId, sessionId).then(
+      (next) => {
+        if (current()) apply(next);
+      },
+      () => {
+        if (current() && !settings()) setReadFailed(true);
+      }
+    );
   };
 
   createEffect(
     on(
       () => [props.agentId, props.sessionId] as const,
-      ([agentId, sessionId]) => {
+      () => {
+        readCount++;
+        writeCount++;
         setSettings(undefined);
+        setReadFailed(false);
         setFolder("");
         setError("");
-        if (!sessionId) return;
-        fetchDeviceSettings(agentId, sessionId).then(
-          (next) => {
-            if (agentId === props.agentId && sessionId === props.sessionId) apply(next);
-          },
-          () => undefined
-        );
+        read();
       }
     )
   );
+  createEffect(on(() => props.refreshKey, read, { defer: true }));
+
+  onMount(() => {
+    const onVisible = () => {
+      if (document.visibilityState === "visible") read();
+    };
+    window.addEventListener("focus", read);
+    document.addEventListener("visibilitychange", onVisible);
+    onCleanup(() => {
+      window.removeEventListener("focus", read);
+      document.removeEventListener("visibilitychange", onVisible);
+    });
+  });
+
+  createEffect(() => {
+    if (!open()) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setOpen(false);
+    };
+    const onPointer = (event: Event) => {
+      if (root && event.target instanceof Node && !root.contains(event.target)) setOpen(false);
+    };
+    document.addEventListener("keydown", onKey);
+    document.addEventListener("pointerdown", onPointer);
+    onCleanup(() => {
+      document.removeEventListener("keydown", onKey);
+      document.removeEventListener("pointerdown", onPointer);
+    });
+  });
 
   const change = async (body: { workspaceFolder?: string | null; full?: boolean }) => {
+    const agentId = props.agentId;
     const sessionId = props.sessionId;
     if (!sessionId) return;
+    const thisWrite = ++writeCount;
     setError("");
     try {
-      apply(await saveDeviceSettings(props.agentId, sessionId, body));
+      const next = await saveDeviceSettings(agentId, sessionId, body);
+      if (thisWrite === writeCount && sameScope(agentId, sessionId)) apply(next);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "The settings did not save.");
+      if (thisWrite === writeCount && sameScope(agentId, sessionId)) {
+        setError(e instanceof Error ? e.message : "The settings did not save.");
+      }
     }
   };
 
   const changeFullBackground = async (value: boolean) => {
+    const agentId = props.agentId;
     setError("");
     try {
-      setFullBackground(await saveFullBackground(props.agentId, value));
+      const next = await saveFullBackground(agentId, value);
+      if (agentId === props.agentId) setFullBackground(next);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "The settings did not save.");
+      if (agentId === props.agentId) setError(e instanceof Error ? e.message : "The settings did not save.");
     }
   };
 
   const toggle = () => {
-    if (!open()) void refetchLinks();
+    if (!open()) {
+      void refetchLinks();
+      read();
+    }
     setOpen(!open());
   };
 
   return (
-    <div style={{ position: "relative" }}>
+    <div class="device-control" ref={root}>
       <button
         type="button"
+        class="device-control-button"
+        classList={{ warning: settings()?.mode === "full" && !offline() }}
         aria-expanded={open()}
         title="Device access of this chat"
         onClick={toggle}
-        style={mode() === "full" && online() ? { color: "#b45309", "border-color": "#f59e0b", "font-weight": "600" } : {}}
       >
-        {online() ? MODE_LABELS[mode()] : "Device offline"}
+        {label()}
       </button>
       <Show when={open()}>
-        <div
-          role="group"
-          aria-label="Device access"
-          style={{ position: "absolute", right: 0, top: "100%", "z-index": 20, width: "320px", padding: "12px", background: "var(--bg-surface)", border: "1px solid var(--surface-2)", "border-radius": "8px", display: "flex", "flex-direction": "column", gap: "10px" }}
-        >
-          <Show when={!online()}>
+        <div role="group" aria-label="Device access" class="device-panel">
+          <strong>Device access</strong>
+          <Show when={offline()}>
             <p>The remote agent cannot reach this device now.</p>
+          </Show>
+          <Show when={linkUnknown()}>
+            <p>The page cannot read the state of this device link.</p>
           </Show>
           <Show when={!ready()}>
             <p>Send a first message, then set the folder.</p>
           </Show>
-          <label>
+          <Show when={readFailed()}>
+            <p role="alert">The device settings did not load.</p>
+            <button type="button" class="device-button" onClick={read}>
+              Try again
+            </button>
+          </Show>
+          <label class="device-field">
             Workspace folder
             <input
               type="text"
               value={folder()}
-              disabled={!ready()}
+              disabled={!confirmed()}
               onInput={(e) => setFolder(e.currentTarget.value)}
               placeholder="/Users/you/project"
-              style={{ width: "100%" }}
             />
           </label>
-          <p style={{ margin: 0, "font-size": "12px", opacity: 0.7 }}>File writes in this folder pass with no prompt.</p>
-          <div style={{ display: "flex", gap: "8px" }}>
-            <button type="button" disabled={!ready() || folder().trim() === ""} onClick={() => void change({ workspaceFolder: folder().trim() })}>
+          <p class="device-help">File writes in this folder pass with no prompt.</p>
+          <div class="device-actions">
+            <button type="button" class="device-button primary" disabled={!confirmed() || folder().trim() === ""} onClick={() => void change({ workspaceFolder: folder().trim() })}>
               Save
             </button>
-            <button type="button" disabled={!ready() || !settings()?.workspaceFolder} onClick={() => void change({ workspaceFolder: null })}>
+            <button type="button" class="device-button" disabled={!confirmed() || !settings()?.workspaceFolder} onClick={() => void change({ workspaceFolder: null })}>
               Remove
             </button>
           </div>
-          <label>
+          <label class="device-switch-row">
             <input
               type="checkbox"
               role="switch"
+              class="device-switch"
               checked={settings()?.full ?? false}
-              disabled={!ready()}
+              disabled={!confirmed()}
               onChange={(e) => void change({ full: e.currentTarget.checked })}
-            />{" "}
+            />
             Full access
           </label>
-          <p style={{ margin: 0, "font-size": "12px", color: "#b45309" }}>
-            Each call then passes with no prompt, also commands.
-          </p>
+          <p class="device-help warning">Each call then passes with no prompt, also commands.</p>
           <strong>Scheduled jobs</strong>
-          <label>
+          <label class="device-switch-row">
             <input
               type="checkbox"
               role="switch"
+              class="device-switch"
               checked={fullBackground() ?? false}
               disabled={fullBackground() === undefined}
               onChange={(e) => void changeFullBackground(e.currentTarget.checked)}
-            />{" "}
+            />
             Scheduled jobs of this agent get full access on this device
           </label>
-          <p style={{ margin: 0, "font-size": "12px", opacity: 0.7 }}>
-            Without it, a scheduled job gets a refusal for each call that needs approval, because nobody can answer.
-          </p>
+          <p class="device-help">Without it, a job that needs approval gets a refusal.</p>
           <Show when={error()}>
-            <p role="alert" style={{ margin: 0, color: "#b91c1c" }}>{error()}</p>
+            <p role="alert" class="device-error">{error()}</p>
           </Show>
         </div>
       </Show>

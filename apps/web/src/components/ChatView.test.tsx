@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, queryAllByRole, queryByRole, queryByText, queryByTitle } from "@testing-library/dom";
+import { fireEvent, queryAllByRole, queryAllByText, queryByRole, queryByText, queryByTitle } from "@testing-library/dom";
 import { createSignal } from "solid-js";
 import { delegateEvents, render } from "solid-js/web";
 import { ChatView, ThinkingLine } from "./ChatView";
@@ -753,6 +753,9 @@ describe("ChatView abort handling", () => {
       settings: { workspaceFolder: string | null; full: boolean; mode: string };
       fullBackground: boolean;
       putError?: string;
+      getFails?: boolean;
+      linksFail?: boolean;
+      hold?: Promise<void>;
       calls: Array<{ method: string; url: string; body: unknown }>;
     };
     const relay: RelayState = { links: [], settings: { workspaceFolder: null, full: false, mode: "ask" }, fullBackground: false, calls: [] };
@@ -765,6 +768,9 @@ describe("ChatView abort handling", () => {
       relay.settings = { workspaceFolder: null, full: false, mode: "ask" };
       relay.fullBackground = false;
       relay.putError = undefined;
+      relay.getFails = false;
+      relay.linksFail = false;
+      relay.hold = undefined;
       relay.calls = [];
       vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
         const url = String(input);
@@ -772,26 +778,30 @@ describe("ChatView abort handling", () => {
         const body = init?.body ? JSON.parse(String(init.body)) : undefined;
         if (!url.includes("/api/relay/")) return json({});
         relay.calls.push({ method, url, body });
-        if (url.includes("device-links")) return json(relay.links);
+        if (url.includes("device-links")) return relay.linksFail ? json({ error: "down" }, 500) : json(relay.links);
         if (url.includes("agent-settings")) {
           if (method === "PUT") relay.fullBackground = body.fullBackground;
           return json({ fullBackground: relay.fullBackground });
         }
+        if (method === "GET" && relay.getFails) return json({ error: "down" }, 500);
         if (method === "PUT") {
           if (relay.putError) return json({ error: relay.putError }, 400);
           if ("workspaceFolder" in body) relay.settings.workspaceFolder = body.workspaceFolder;
           if ("full" in body) relay.settings.full = body.full;
           relay.settings.mode = relay.settings.full ? "full" : relay.settings.workspaceFolder ? "workspace" : "ask";
+          const answer = json({ ...relay.settings });
+          if ("workspaceFolder" in body && relay.hold) await relay.hold;
+          return answer;
         }
         return json(relay.settings);
       }));
     }
-    async function renderRemote() {
+    async function renderRemote(agentName = "Pom (remote)") {
       routeState.agentId = "pom@ams";
-      fetchAgentMock.mockResolvedValue({ id: "pom@ams", name: "Pom (remote)", gateway: "ams", model: { provider: "openai", model: "gpt-5" }, queueMode: "queue" });
+      fetchAgentMock.mockResolvedValue({ id: "pom@ams", name: agentName, gateway: "ams", model: { provider: "openai", model: "gpt-5" }, queueMode: "queue" });
       subscribeToSessionMock.mockImplementation((_id, _key, next) => { subscription = next; return Object.assign(() => {}, { send }); });
       const view = renderView();
-      await waitFor(() => expect(queryByRole(view.container, "link", { name: "Pom (remote) settings" })).not.toBeNull());
+      await waitFor(() => expect(queryByRole(view.container, "link", { name: `${agentName} settings` })).not.toBeNull());
       await tick(); await tick();
       return view;
     }
@@ -807,7 +817,7 @@ describe("ChatView abort handling", () => {
       await tick();
       expect(queryByText(container, "ls -la")).toBeNull();
       subscription.onDeviceApprovalRequest?.(request("a2", "session-main"));
-      await waitFor(() => expect(queryByText(container, "Pom (remote) wants to run a command on this device")).not.toBeNull());
+      await waitFor(() => expect(queryByText(container, "A remote agent wants to run a command on this device")).not.toBeNull());
       expect(queryByText(container, "ls -la")).not.toBeNull();
       dispose();
     });
@@ -815,10 +825,10 @@ describe("ChatView abort handling", () => {
     it("shows the path and the content of a file write as text", async () => {
       const { container, dispose } = await renderRemote();
       subscription.onDeviceApprovalRequest?.(request("a1", "session-main", "device_write", { path: "/tmp/a.txt", content: "<img src=x onerror=alert(1)>" }));
-      await waitFor(() => expect(queryByText(container, "Pom (remote) wants to write a file on this device")).not.toBeNull());
+      await waitFor(() => expect(queryByText(container, "A remote agent wants to write a file on this device")).not.toBeNull());
       expect(queryByText(container, "/tmp/a.txt")).not.toBeNull();
       expect(queryByText(container, "<img src=x onerror=alert(1)>")).not.toBeNull();
-      expect(container.querySelector("img")).toBeNull();
+      expect(queryByRole(container, "img")).toBeNull();
       dispose();
     });
 
@@ -859,36 +869,189 @@ describe("ChatView abort handling", () => {
       dispose();
     });
 
+    it("shows a card for the first message of a new chat once the session id resolves", async () => {
+      fetchSimpleHistoryMock.mockResolvedValue({ messages: [], isStreaming: false, activeTurn: null });
+      fetchFullHistoryMock.mockImplementation(async (_a: string, _k: string, _b: unknown, options?: { limit?: number }) =>
+        options?.limit === 1 ? { sessionId: "session-new", messages: [], isStreaming: false, activeTurn: null } : { messages: [], isStreaming: false, activeTurn: null });
+      const { container, dispose } = await renderRemote();
+      subscription.onDeviceApprovalRequest?.(request("a1", "session-other"));
+      subscription.onDeviceApprovalRequest?.(request("a2", "session-new"));
+      await waitFor(() => expect(queryAllByRole(container, "button", { name: "Approve" })).toHaveLength(1));
+      subscription.onDeviceApprovalRequest?.(request("a3", "session-elsewhere"));
+      await tick();
+      expect(queryAllByRole(container, "button", { name: "Approve" })).toHaveLength(1);
+      dispose();
+    });
+
+    it("shows each hidden character of the command and of the agent name as an escape", async () => {
+      const { container, dispose } = await renderRemote("Pom\u202E(remote)");
+      subscription.onDeviceApprovalRequest?.(request("a1", "session-main", "device_bash", { command: "echo ok\u202Eevil\u200B\u0007\rend" }));
+      await waitFor(() => expect(queryByText(container, "echo ok\\u202Eevil\\u200B\\u0007\\u000Dend")).not.toBeNull());
+      expect(queryByText(container, "Pom\\u202E(remote)")).not.toBeNull();
+      expect(queryByRole(container, "region", { name: "A remote agent wants to run a command on this device" })!.textContent).not.toMatch(/[\u202E\u200B\r]/);
+      expect(queryByRole(container, "region", { name: "A remote agent wants to run a command on this device" })!.textContent?.includes(String.fromCharCode(7))).toBe(false);
+      dispose();
+    });
+
+    it("shows the full text of a long command and warns about a cut command next to the buttons", async () => {
+      const command = Array.from({ length: 40 }, (_, i) => `echo line-${i}`).join("\n") + "\nrm -rf /tmp/x… (cut)";
+      const { container, dispose } = await renderRemote();
+      subscription.onDeviceApprovalRequest?.(request("a1", "session-main", "device_bash", { command }));
+      await waitFor(() => expect(queryByText(container, command, { normalizer: (value) => value })).not.toBeNull());
+      expect(queryByText(container, "This command is longer than the card shows. If you approve, the full command runs.")).not.toBeNull();
+      dispose();
+    });
+
+    it("warns when a file text is long or cut and shows the detail of an edit", async () => {
+      const { container, dispose } = await renderRemote();
+      subscription.onDeviceApprovalRequest?.(request("a1", "session-main", "device_write", { path: "/tmp/a", content: "x\n".repeat(30) }));
+      await waitFor(() => expect(queryByText(container, "This text is long. Scroll the box to read all of it before you approve.")).not.toBeNull());
+      expect(queryByText(container, "This card does not show all of the text. The call uses the full text.")).toBeNull();
+      subscription.onDeviceApprovalRequest?.(request("a2", "session-main", "device_edit", { path: "/tmp/b", edits: [{ oldText: "foo", newText: "bar… (cut)" }] }));
+      await waitFor(() => expect(queryByText(container, "A remote agent wants to edit a file on this device")).not.toBeNull());
+      expect(container.textContent).toContain('"oldText": "foo"');
+      expect(container.textContent).toContain('"newText": "bar… (cut)"');
+      expect(queryByText(container, "This card does not show all of the text. The call uses the full text.")).not.toBeNull();
+      dispose();
+    });
+
+    it("shows a pending approval again after a new subscription and none that ended while the socket was down", async () => {
+      const { container, dispose } = await renderRemote();
+      subscription.onDeviceApprovalRequest?.(request("a1", "session-main"));
+      subscription.onDeviceApprovalRequest?.(request("a2", "session-main", "device_read", { path: "/tmp/b" }));
+      await waitFor(() => expect(queryAllByRole(container, "button", { name: "Approve" })).toHaveLength(2));
+      subscription.onDisconnected?.();
+      await waitFor(() => expect(queryAllByText(container, "The connection is lost. You cannot answer until it returns.")).toHaveLength(2));
+      for (const button of queryAllByRole(container, "button", { name: "Approve" })) expect((button as HTMLButtonElement).disabled).toBe(true);
+      subscription.onConnected?.();
+      subscription.onDeviceApprovalRequest?.(request("a1", "session-main"));
+      await waitFor(() => expect(queryAllByRole(container, "button", { name: "Approve" })).toHaveLength(1));
+      expect((queryByRole(container, "button", { name: "Approve" }) as HTMLButtonElement).disabled).toBe(false);
+      expect(queryByText(container, "The connection is lost. You cannot answer until it returns.")).toBeNull();
+      dispose();
+    });
+
+    it("asks for a new connection after a drop for a remote agent and not for a local agent", async () => {
+      const { dispose } = await renderRemote();
+      expect(subscribeToSessionMock.mock.calls.at(-1)?.[4]).toBe(true);
+      dispose();
+      subscribeToSessionMock.mockClear();
+      routeState.agentId = "agent-1";
+      const local = renderView();
+      await waitFor(() => expect(subscribeToSessionMock).toHaveBeenCalled());
+      expect(subscribeToSessionMock.mock.calls.at(-1)?.[4]).toBeFalsy();
+      local.dispose();
+    });
+
+    it("shows the mode Full when the first answer of the route is Full", async () => {
+      relay.settings = { workspaceFolder: null, full: true, mode: "full" };
+      fetchAgentMock.mockResolvedValue({ id: "pom@ams", name: "Pom (remote)", gateway: "ams", model: { provider: "openai", model: "gpt-5" }, queueMode: "queue" });
+      routeState.agentId = "pom@ams";
+      subscribeToSessionMock.mockImplementation((_id, _key, next) => { subscription = next; return Object.assign(() => {}, { send }); });
+      const { container, dispose } = renderView();
+      await waitFor(() => expect(queryByRole(container, "button", { name: "Device: Full" })).not.toBeNull());
+      expect(queryByRole(container, "button", { name: "Device: Ask" })).toBeNull();
+      dispose();
+    });
+
+    it("shows no mode and an error with a retry when the settings do not load", async () => {
+      relay.getFails = true;
+      const { container, dispose } = await renderRemote();
+      await waitFor(() => expect(queryByRole(container, "button", { name: "Device: error" })).not.toBeNull());
+      queryByRole(container, "button", { name: "Device: error" })!.click();
+      expect((queryByRole(container, "textbox", { name: "Workspace folder" }) as HTMLInputElement).disabled).toBe(true);
+      expect((queryByRole(container, "switch", { name: "Full access" }) as HTMLInputElement).disabled).toBe(true);
+      relay.getFails = false;
+      relay.settings = { workspaceFolder: null, full: true, mode: "full" };
+      queryByRole(container, "button", { name: "Try again" })!.click();
+      await waitFor(() => expect(queryByRole(container, "button", { name: "Device: Full" })).not.toBeNull());
+      dispose();
+    });
+
+    it("shows an unknown state when the page cannot read the device link", async () => {
+      relay.linksFail = true;
+      const { container, dispose } = await renderRemote();
+      await waitFor(() => expect(queryByRole(container, "button", { name: "Device: unknown" })).not.toBeNull());
+      dispose();
+    });
+
+    it("follows a mode change of another tab on focus, on panel open, and on a new approval request", async () => {
+      const { container, dispose } = await renderRemote();
+      await waitFor(() => expect(queryByRole(container, "button", { name: "Device: Ask" })).not.toBeNull());
+      relay.settings = { workspaceFolder: null, full: true, mode: "full" };
+      window.dispatchEvent(new Event("focus"));
+      await waitFor(() => expect(queryByRole(container, "button", { name: "Device: Full" })).not.toBeNull());
+      relay.settings = { workspaceFolder: "/work", full: false, mode: "workspace" };
+      queryByRole(container, "button", { name: "Device: Full" })!.click();
+      await waitFor(() => expect(queryByRole(container, "button", { name: "Device: Workspace" })).not.toBeNull());
+      relay.settings = { workspaceFolder: null, full: false, mode: "ask" };
+      subscription.onDeviceApprovalRequest?.(request("a1", "session-main"));
+      await waitFor(() => expect(queryByRole(container, "button", { name: "Device: Ask" })).not.toBeNull());
+      dispose();
+    });
+
+    it("ignores the late answer of an older write", async () => {
+      let release!: () => void;
+      relay.hold = new Promise<void>((resolve) => { release = resolve; });
+      const { container, dispose } = await renderRemote();
+      await waitFor(() => expect(queryByRole(container, "button", { name: "Device: Ask" })).not.toBeNull());
+      queryByRole(container, "button", { name: "Device: Ask" })!.click();
+      const input = queryByRole(container, "textbox", { name: "Workspace folder" }) as HTMLInputElement;
+      input.value = "/work";
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+      queryByRole(container, "button", { name: "Save" })!.click();
+      await tick();
+      queryByRole(container, "switch", { name: "Full access" })!.click();
+      await waitFor(() => expect(queryByRole(container, "button", { name: "Device: Full" })).not.toBeNull());
+      release();
+      await tick(); await tick();
+      expect(queryByRole(container, "button", { name: "Device: Full" })).not.toBeNull();
+      dispose();
+    });
+
+    it("closes the panel on Escape and on a click outside it", async () => {
+      const { container, dispose } = await renderRemote();
+      await waitFor(() => expect(queryByRole(container, "button", { name: "Device: Ask" })).not.toBeNull());
+      queryByRole(container, "button", { name: "Device: Ask" })!.click();
+      expect(queryByRole(container, "group", { name: "Device access" })).not.toBeNull();
+      document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+      await waitFor(() => expect(queryByRole(container, "group", { name: "Device access" })).toBeNull());
+      queryByRole(container, "button", { name: "Device: Ask" })!.click();
+      document.body.dispatchEvent(new Event("pointerdown", { bubbles: true }));
+      await waitFor(() => expect(queryByRole(container, "group", { name: "Device access" })).toBeNull());
+      dispose();
+    });
+
     it("shows no device control and sends no relay request for a local agent", async () => {
       const { container, dispose } = renderView();
       await waitFor(() => expect(queryByRole(container, "link", { name: "Agent settings" })).not.toBeNull());
       await tick(); await tick();
-      expect(queryByRole(container, "button", { name: "Ask" })).toBeNull();
+      expect(queryByRole(container, "button", { name: "Device: Ask" })).toBeNull();
       expect(relay.calls).toEqual([]);
       dispose();
     });
 
     it("shows the mode from the route, saves a folder, and shows Workspace", async () => {
       const { container, dispose } = await renderRemote();
-      await waitFor(() => expect(queryByRole(container, "button", { name: "Ask" })).not.toBeNull());
+      await waitFor(() => expect(queryByRole(container, "button", { name: "Device: Ask" })).not.toBeNull());
       expect(relay.calls.some((call) => call.url.includes("device-settings?agentId=pom%40ams&sessionId=session-main"))).toBe(true);
-      queryByRole(container, "button", { name: "Ask" })!.click();
+      queryByRole(container, "button", { name: "Device: Ask" })!.click();
       const input = queryByRole(container, "textbox", { name: "Workspace folder" }) as HTMLInputElement;
       input.value = "/Users/me/project";
       input.dispatchEvent(new Event("input", { bubbles: true }));
       queryByRole(container, "button", { name: "Save" })!.click();
-      await waitFor(() => expect(queryByRole(container, "button", { name: "Workspace" })).not.toBeNull());
+      await waitFor(() => expect(queryByRole(container, "button", { name: "Device: Workspace" })).not.toBeNull());
       expect(relay.calls.find((call) => call.method === "PUT" && call.url.includes("device-settings"))?.body).toEqual({ workspaceFolder: "/Users/me/project" });
       queryByRole(container, "button", { name: "Remove" })!.click();
-      await waitFor(() => expect(queryByRole(container, "button", { name: "Ask" })).not.toBeNull());
+      await waitFor(() => expect(queryByRole(container, "button", { name: "Device: Ask" })).not.toBeNull());
       dispose();
     });
 
     it("sets the Full switch and shows Full", async () => {
       const { container, dispose } = await renderRemote();
-      queryByRole(container, "button", { name: "Ask" })!.click();
+      queryByRole(container, "button", { name: "Device: Ask" })!.click();
       queryByRole(container, "switch", { name: "Full access" })!.click();
-      await waitFor(() => expect(queryByRole(container, "button", { name: "Full" })).not.toBeNull());
+      await waitFor(() => expect(queryByRole(container, "button", { name: "Device: Full" })).not.toBeNull());
       expect(relay.calls.find((call) => call.method === "PUT" && call.url.includes("device-settings"))?.body).toEqual({ full: true });
       dispose();
     });
@@ -896,7 +1059,7 @@ describe("ChatView abort handling", () => {
     it("shows the error of the route in the panel", async () => {
       relay.putError = "workspaceFolder must be an absolute path to a directory that exists";
       const { container, dispose } = await renderRemote();
-      queryByRole(container, "button", { name: "Ask" })!.click();
+      queryByRole(container, "button", { name: "Device: Ask" })!.click();
       const input = queryByRole(container, "textbox", { name: "Workspace folder" }) as HTMLInputElement;
       input.value = "/nope";
       input.dispatchEvent(new Event("input", { bubbles: true }));
@@ -909,7 +1072,8 @@ describe("ChatView abort handling", () => {
       fetchSimpleHistoryMock.mockResolvedValue({ messages: [], isStreaming: false, activeTurn: null });
       fetchFullHistoryMock.mockResolvedValue({ messages: [], isStreaming: false, activeTurn: null });
       const { container, dispose } = await renderRemote();
-      queryByRole(container, "button", { name: "Ask" })!.click();
+      expect(queryByRole(container, "button", { name: "Device: Ask" })).toBeNull();
+      queryByRole(container, "button", { name: "Device: …" })!.click();
       expect(queryByText(container, "Send a first message, then set the folder.")).not.toBeNull();
       expect((queryByRole(container, "textbox", { name: "Workspace folder" }) as HTMLInputElement).disabled).toBe(true);
       expect((queryByRole(container, "switch", { name: "Full access" }) as HTMLInputElement).disabled).toBe(true);
@@ -917,11 +1081,11 @@ describe("ChatView abort handling", () => {
       dispose();
     });
 
-    it("shows Device offline when the link is not connected", async () => {
+    it("shows Device: offline when the link is not connected", async () => {
       relay.links = [{ name: "ams", connected: false }];
       const { container, dispose } = await renderRemote();
-      await waitFor(() => expect(queryByRole(container, "button", { name: "Device offline" })).not.toBeNull());
-      queryByRole(container, "button", { name: "Device offline" })!.click();
+      await waitFor(() => expect(queryByRole(container, "button", { name: "Device: offline" })).not.toBeNull());
+      queryByRole(container, "button", { name: "Device: offline" })!.click();
       expect(queryByText(container, "The remote agent cannot reach this device now.")).not.toBeNull();
       dispose();
     });
@@ -929,7 +1093,7 @@ describe("ChatView abort handling", () => {
     it("reads and writes the scheduled jobs setting of the agent", async () => {
       relay.fullBackground = true;
       const { container, dispose } = await renderRemote();
-      queryByRole(container, "button", { name: "Ask" })!.click();
+      queryByRole(container, "button", { name: "Device: Ask" })!.click();
       const name = "Scheduled jobs of this agent get full access on this device";
       await waitFor(() => expect((queryByRole(container, "switch", { name }) as HTMLInputElement).checked).toBe(true));
       queryByRole(container, "switch", { name })!.click();

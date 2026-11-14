@@ -843,7 +843,7 @@ export function ChatView() {
           </div>
         </Show>
         <Show when={agent()?.gateway}>
-          {(gateway) => <DeviceSettingsControl agentId={params.agentId} gateway={gateway()} sessionId={session.appSessionId()} />}
+          {(gateway) => <DeviceSettingsControl agentId={params.agentId} gateway={gateway()} sessionId={session.appSessionId()} refreshKey={session.deviceApprovals().length} />}
         </Show>
         <button
           class="new-chat-btn"
@@ -946,6 +946,7 @@ export function ChatView() {
             <DeviceApprovalCards
               agentName={agent()?.name ?? "The agent"}
               items={session.deviceApprovals().filter((item) => item.request.sessionId === session.appSessionId())}
+              connectionLost={session.deviceConnectionLost()}
               onAnswer={session.answerDeviceApproval}
             />
           </Show>

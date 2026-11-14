@@ -106,6 +106,11 @@ export type DeviceApprovalItem = {
   state: "pending" | "answered" | "timeout";
 };
 
+/** A remote agent has an id of the form `name@gateway`. Only its socket connects again after a drop. */
+function isRemoteAgent(agentId: string): boolean {
+  return agentId.includes("@");
+}
+
 export function createChatSession(input: ChatSessionInput) {
   const { agent, sessionKey, explicitSessionId, viewMode } = input;
   const [historyLoaded, setHistoryLoaded] = createSignal<HistoryLoaded>();
@@ -122,6 +127,7 @@ export function createChatSession(input: ChatSessionInput) {
     createSignal<ThinkLevel | null>(null);
 
   const [deviceApprovals, setDeviceApprovals] = createSignal<DeviceApprovalItem[]>([]);
+  const [deviceConnectionLost, setDeviceConnectionLost] = createSignal(false);
   const [stopping, setStopping] = createSignal(false);
   const [showInterrupted, setShowInterrupted] = createSignal(false);
   const [isStreaming, setIsStreaming] = createSignal(false);
@@ -777,12 +783,25 @@ export function createChatSession(input: ChatSessionInput) {
     subscriptionCleanup?.();
     // The new subscription gets each approval that still waits.
     setDeviceApprovals([]);
+    setDeviceConnectionLost(false);
     subscriptionCleanup = subscribeToSession(
       agentId,
       key,
       {
+        onConnected: () => {
+          if (!isCurrentSubscription()) return;
+          // The gateway sends each approval that still waits after each subscribe.
+          setDeviceApprovals([]);
+          setDeviceConnectionLost(false);
+        },
+        onDisconnected: () => {
+          if (!isCurrentSubscription()) return;
+          setDeviceConnectionLost(true);
+        },
         onDeviceApprovalRequest: (request) => {
           if (!isCurrentSubscription()) return;
+          // A new chat has no session id before its first answer. The card needs it.
+          if (request.agentId === agentId) resolveAppSession();
           setDeviceApprovals((prev) =>
             prev.some((item) => item.request.approvalId === request.approvalId)
               ? prev
@@ -934,7 +953,8 @@ export function createChatSession(input: ChatSessionInput) {
           }
         },
       },
-      explicitSessionId()
+      explicitSessionId(),
+      isRemoteAgent(agentId)
     );
   });
 
@@ -1866,7 +1886,7 @@ export function createChatSession(input: ChatSessionInput) {
     contextUsageDisplay, isContextUsageDanger, contextWarning,
     compactStatusForCurrentSession, compactStatuses,
     copyTurnFor, shouldAnimate,
-    deviceApprovals, answerDeviceApproval,
+    deviceApprovals, deviceConnectionLost, answerDeviceApproval,
     thinkingLevel: () => pendingThinkLevel() ?? thinkingLevel(),
     selectThinking: (level: ThinkLevel | null) => setPendingThinkLevel(level),
     flushFinished, send, sendFromView, stop, compact: compactCurrentSession,

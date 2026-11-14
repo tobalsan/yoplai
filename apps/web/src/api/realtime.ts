@@ -38,18 +38,27 @@ export type SubscriptionCallbacks = {
   onError?: (error: string) => void;
   onDeviceApprovalRequest?: (request: WsDeviceApprovalRequest) => void;
   onDeviceApprovalResolved?: (resolved: WsDeviceApprovalResolved) => void;
+  /** The socket opened. It sends the subscription again after a drop. */
+  onConnected?: () => void;
+  /** The socket closed and the page did not stop it. */
+  onDisconnected?: () => void;
 };
 
 export function subscribeToSession(
   agentId: string,
   sessionKey: string,
   callbacks: SubscriptionCallbacks,
-  sessionId?: string
+  sessionId?: string,
+  reconnect = false
 ): RealtimeSubscription {
   return subscribeToRealtime({
     interests: [{ type: "session", agentId, sessionKey, sessionId }],
-    reconnect: false,
-    onOpen: () => callbacks.onHistoryUpdated?.(),
+    reconnect,
+    onOpen: () => {
+      callbacks.onConnected?.();
+      callbacks.onHistoryUpdated?.();
+    },
+    onClose: () => callbacks.onDisconnected?.(),
     onEvent: (event) => {
       const message = event as { type: string };
       if (message.type === "device_approval_request") {
