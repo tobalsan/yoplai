@@ -17,6 +17,7 @@ import {
   subscribeToStatus,
 } from "../api";
 import type { SubagentGlobalListItem } from "../api/types";
+import { RemoteAgentMark } from "./RemoteAgentMark";
 
 type AgentDirectoryProps = {
   selectedAgent: Accessor<string | null>;
@@ -153,12 +154,6 @@ export function AgentDirectory(props: AgentDirectoryProps) {
           color: #a7f3d0;
         }
 
-        .remote-mark {
-          font-size: 10px;
-          opacity: 0.7;
-          white-space: nowrap;
-        }
-
         .status-pill {
           margin-left: auto;
           padding: 2px 6px;
@@ -285,11 +280,7 @@ function LeadAgentsSection(props: {
                   {getInitials(agent.name)}
                 </span>
                 <span class="agent-label">{agent.name}</span>
-                <Show when={agent.gateway}>
-                  <span class="remote-mark" title={`Remote agent on ${agent.gateway}`}>
-                    @{agent.gateway}
-                  </span>
-                </Show>
+                <RemoteAgentMark gateway={agent.gateway} />
                 <span
                   class="status-pill"
                   classList={{ working: isRunning(), idle: !isRunning() }}

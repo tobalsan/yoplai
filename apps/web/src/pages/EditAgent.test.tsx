@@ -227,6 +227,15 @@ afterEach(() => {
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
 describe("EditAgent", () => {
+  it("loads the settings page of a remote agent from its relay id", async () => {
+    setCapabilitiesForTests({ forkedAgents: false });
+    setSession("superadmin");
+    fetchAgentsMock.mockResolvedValue([agent({ id: "pom@ams", name: "Pom (remote)", gateway: "ams" })]);
+    await mountEdit("pom@ams");
+    expect(container.textContent).toContain("Pom (remote)");
+    expect(container.textContent).not.toContain("Agent not found.");
+  });
+
   it("opens Scheduled jobs from the credential banner's Schedules link", async () => {
     setCapabilitiesForTests({ forkedAgents: false, extensions: { scheduler: true } });
     setSession("superadmin");

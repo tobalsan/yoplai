@@ -706,6 +706,16 @@ describe("ChatView abort handling", () => {
     dispose();
   });
 
+  it("marks a remote agent in the header and links its settings with one encoding", async () => {
+    routeState.agentId = "pom%40ams";
+    fetchAgentMock.mockResolvedValue({ id: "pom@ams", name: "Pom (remote)", gateway: "ams", model: { provider: "openai", model: "gpt-5" }, queueMode: "queue" });
+    const { container, dispose } = renderView();
+    await waitFor(() => expect(queryByRole(container, "link", { name: "Pom (remote) settings" })).not.toBeNull());
+    expect(container.textContent).toContain("@ams");
+    expect(queryByRole(container, "link", { name: "Pom (remote) settings" })?.getAttribute("href")).toBe("/agents/pom@ams/edit");
+    dispose();
+  });
+
   it("links the settings cog to the pool agent in forked mode and hides it without a match", async () => {
     setCapabilitiesForTests({ multiUser: false, forkedAgents: true });
     fetchPoolActionsMock.mockResolvedValue([{ poolId: "pool-1", action: "chat", chatAgentId: "agent-1", forked: true, reason: null, teamName: null }]);

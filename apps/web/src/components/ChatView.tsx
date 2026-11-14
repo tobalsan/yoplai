@@ -1,4 +1,5 @@
 import { createChatSession } from "./chat/createChatSession";
+import { RemoteAgentMark } from "./RemoteAgentMark";
 import { ChatTranscript } from "./chat/ChatTranscript";
 import { createAppViews, chatAppViewCalls, viewKey } from "./chat/appViews";
 import { load as loadPanelTabs } from "./chat/appViewStorage";
@@ -139,7 +140,8 @@ export function ChatView() {
   );
   // Ignore a stale result from the previous agent while the new lookup loads.
   const settingsAgentId = () => {
-    if (!capabilities.forkedAgents) return params.agentId;
+    // The router gives the raw path segment ("pom%40ams"), so decode before the link encodes once.
+    if (!capabilities.forkedAgents) return decodeURIComponent(params.agentId);
     const resolved = settingsPoolActions();
     return resolved?.chatAgentId === params.agentId ? resolved.poolId : null;
   };
@@ -741,7 +743,7 @@ export function ChatView() {
           </Show>
           <div class="agent-info-text">
             <div class="agent-title-row">
-              <div class="agent-name">{agent()?.name ?? "Loading..."}</div>
+              <div class="agent-name">{agent()?.name ?? "Loading..."}<RemoteAgentMark gateway={agent()?.gateway} /></div>
               <Show when={project()}>
                 {(proj) => (
                   <A href={`/p/${projectId()}`} class="chat-project-chip">
@@ -857,7 +859,7 @@ export function ChatView() {
         <Show when={settingsAgentId()}>
           {(poolId) => (
             <A
-              href={`/agents/${encodeURIComponent(poolId())}/edit`}
+              href={`/agents/${encodeURI(poolId())}/edit`}
               state={{ backTo: `${location.pathname}${location.search}` }}
               class="agent-settings-btn"
               aria-label={`${agent()?.name ?? "Agent"} settings`}
