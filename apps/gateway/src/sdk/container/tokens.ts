@@ -19,6 +19,10 @@ export type ContainerTokenContext = {
   actorKind?: "user" | "service" | "local" | "eval";
   sessionOwnerId?: string | null;
   requesterId?: string;
+  /** Run origin, which tools use to tell a human run from a background run. */
+  source?: string;
+  sender?: { kind: string };
+  background?: boolean;
   projectId?: string;
   emitProgress?: (event: {
     label: string;

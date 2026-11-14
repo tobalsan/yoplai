@@ -1,0 +1,69 @@
+import {
+  createBashTool,
+  createEditTool,
+  createReadTool,
+  createWriteTool,
+} from "@earendil-works/pi-coding-agent";
+import type { DeviceToolName } from "@yoplai/shared";
+
+/** The part of a Pi SDK tool that the device link uses. */
+type PiToolLike = {
+  parameters: unknown;
+  execute(
+    toolCallId: string,
+    params: never,
+    signal?: AbortSignal
+  ): Promise<{ content: unknown[]; details?: unknown }>;
+};
+
+export type DeviceToolDefinition = {
+  name: DeviceToolName;
+  description: string;
+  /** True when the arguments have a `path` that the permission gate checks. */
+  filePath: boolean;
+  create(cwd: string): PiToolLike;
+};
+
+/** Each device tool has the parameters of the Pi SDK tool with the same function. */
+export const DEVICE_TOOL_DEFINITIONS: Record<DeviceToolName, DeviceToolDefinition> = {
+  device_read: {
+    name: "device_read",
+    description:
+      "Read a file on the device of the user. This is not the workspace of the agent. Give a path. Use offset and limit for a long file.",
+    filePath: true,
+    create: createReadTool,
+  },
+  device_write: {
+    name: "device_write",
+    description:
+      "Write a file on the device of the user. This is not the workspace of the agent. It replaces the file when it exists. The user can refuse the call.",
+    filePath: true,
+    create: createWriteTool,
+  },
+  device_edit: {
+    name: "device_edit",
+    description:
+      "Edit a file on the device of the user. This is not the workspace of the agent. Give exact text to replace. The user can refuse the call.",
+    filePath: true,
+    create: createEditTool,
+  },
+  device_bash: {
+    name: "device_bash",
+    description:
+      "Run a shell command on the device of the user. This is not the workspace of the agent. The command starts in the workspace folder of the chat. The user can refuse the call.",
+    filePath: false,
+    create: createBashTool,
+  },
+};
+
+export function getDeviceToolDefinition(name: string): DeviceToolDefinition | undefined {
+  return Object.hasOwn(DEVICE_TOOL_DEFINITIONS, name)
+    ? DEVICE_TOOL_DEFINITIONS[name as DeviceToolName]
+    : undefined;
+}
+
+/** The JSON schema of the arguments of a device tool. */
+export function deviceToolParameters(name: DeviceToolName): Record<string, unknown> {
+  const tool = DEVICE_TOOL_DEFINITIONS[name].create(process.cwd());
+  return JSON.parse(JSON.stringify(tool.parameters)) as Record<string, unknown>;
+}

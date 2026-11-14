@@ -1,5 +1,5 @@
 import type { IncomingMessage, Server } from "node:http";
-import { WebSocket, WebSocketServer } from "ws";
+import { WebSocket, WebSocketServer, type VerifyClientCallbackAsync } from "ws";
 import type {
   AgentStatusChangeEvent,
   AgentStreamEvent,
@@ -13,6 +13,7 @@ import { getSessionCurrentTurn, isStreaming } from "../agents/index.js";
 import type { ExtensionRuntime } from "../extensions/runtime.js";
 import { normalizeRunRequest } from "./run-request.js";
 import { RelayWsBridge } from "../relay/ws.js";
+import { getDeviceRegistry, LOCAL_DEVICE_USER } from "../relay/device-registry.js";
 
 type RequestAuthContext =
   import("@yoplai/extension-multi-user").RequestAuthContext;
@@ -20,6 +21,9 @@ type RequestAuthContext =
 type WsRequest = IncomingMessage & {
   authContext?: RequestAuthContext | null;
 };
+
+const CHAT_PATH = "/ws";
+const DEVICE_PATH = "/ws/device";
 
 type Subscription = { agentId: string; sessionKey: string; sessionId?: string };
 
@@ -45,33 +49,46 @@ export class WsBroker {
   private readonly relayBridges = new Map<WebSocket, RelayWsBridge>();
   private readonly disposers: Array<() => void> = [];
   private wss: WebSocketServer | null = null;
+  private deviceWss: WebSocketServer | null = null;
 
   attach(server: Server, authAdapter: WsBrokerAuthAdapter): void {
     const shouldValidateWs = authAdapter.isMultiUserEnabled();
-    this.wss = new WebSocketServer({
-      server,
-      path: "/ws",
-      verifyClient: shouldValidateWs
-        ? (info, done) => {
-            const request = new Request("http://localhost/ws", {
-              headers: new Headers(
-                info.req.headers as Record<string, string>
-              ),
-            });
+    const verifyClient: VerifyClientCallbackAsync | undefined = shouldValidateWs
+      ? (info, done) => {
+          const request = new Request("http://localhost/ws", {
+            headers: new Headers(
+              info.req.headers as Record<string, string>
+            ),
+          });
 
-            authAdapter
-              .validateWebSocketRequest(request)
-              .then((authContext) => {
-                (info.req as WsRequest).authContext = authContext;
-                done(!!authContext, authContext ? undefined : 401);
-              })
-              .catch(() => done(false, 401));
-          }
-        : undefined,
-    });
+          authAdapter
+            .validateWebSocketRequest(request)
+            .then((authContext) => {
+              (info.req as WsRequest).authContext = authContext;
+              done(!!authContext, authContext ? undefined : 401);
+            })
+            .catch(() => done(false, 401));
+        }
+      : undefined;
+    // One upgrade handler sends each request to its server, because a server with a `path` option refuses the other path.
+    this.wss = new WebSocketServer({ noServer: true, verifyClient });
+    this.deviceWss = new WebSocketServer({ noServer: true, verifyClient });
 
     this.wss.on("connection", (ws, request) => {
       this.handleConnection(ws, request as WsRequest, authAdapter);
+    });
+    this.deviceWss.on("connection", (ws, request) => {
+      const userId = (request as WsRequest).authContext?.user.id ?? LOCAL_DEVICE_USER;
+      getDeviceRegistry().accept(ws, userId);
+    });
+    server.on("upgrade", (request, socket, head) => {
+      const pathname = new URL(request.url ?? "/", "http://localhost").pathname;
+      const target = pathname === CHAT_PATH ? this.wss : pathname === DEVICE_PATH ? this.deviceWss : null;
+      if (!target) {
+        socket.end("HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n");
+        return;
+      }
+      target.handleUpgrade(request, socket, head, (ws) => target.emit("connection", ws, request));
     });
     this.setupEventBroadcast(authAdapter);
     server.once("close", () => this.close());
@@ -90,6 +107,8 @@ export class WsBroker {
     this.statusSubscribers.clear();
     this.wss?.close();
     this.wss = null;
+    this.deviceWss?.close();
+    this.deviceWss = null;
   }
 
   private handleConnection(

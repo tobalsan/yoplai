@@ -27,3 +27,4 @@ export * from "./mcp-url.js";
 export * from "./codemode.js";
 export * from "./model-quota.js";
 export * from "./web-url.js";
+export * from "./device-link.js";
