@@ -20,6 +20,8 @@ import { getExtensionRuntime } from "../extensions/registry.js";
 import type { ExtensionRuntime } from "../extensions/runtime.js";
 import { WsBroker, type WsBrokerAuthAdapter } from "./ws-broker.js";
 import { accessLogger } from "./access-log.js";
+import { relayHttp } from "../relay/http.js";
+import { configureRelay } from "../relay/state.js";
 import { SKILL_IMPORT_TOKEN_PREFIX } from "../skills/import-tokens.js";
 import { getAgent, CONFIG_DIR } from "../config/index.js";
 import { createDashboardAssetRoutes, createDashboardRoutes } from "../canvas/routes.js";
@@ -259,6 +261,8 @@ if (readEnv("DEV")) {
   );
 }
 
+app.use("/api/*", relayHttp());
+
 app.all("/api/*", async (c) => {
   const url = new URL(c.req.url);
   const pathname = url.pathname.startsWith("/api/")
@@ -370,6 +374,7 @@ export function startServer(
     host ??
     config.gateway?.host ??
     resolveGatewayBindHost(config.gateway?.bind);
+  configureRelay(resolvedHost, runtime.isEnabled("multiUser"));
   const nodeBin = path.dirname(process.execPath);
   if (nodeBin && !process.env.PATH?.split(path.delimiter).includes(nodeBin)) {
     process.env.PATH = `${nodeBin}${path.delimiter}${process.env.PATH ?? ""}`;

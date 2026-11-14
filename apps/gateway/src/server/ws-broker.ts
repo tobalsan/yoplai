@@ -12,6 +12,7 @@ import { getSessionEntry } from "../sessions/index.js";
 import { getSessionCurrentTurn, isStreaming } from "../agents/index.js";
 import type { ExtensionRuntime } from "../extensions/runtime.js";
 import { normalizeRunRequest } from "./run-request.js";
+import { RelayWsBridge } from "../relay/ws.js";
 
 type RequestAuthContext =
   import("@yoplai/extension-multi-user").RequestAuthContext;
@@ -39,6 +40,7 @@ export class WsBroker {
   private readonly connectedClients = new Set<WebSocket>();
   private readonly authContexts = new Map<WebSocket, RequestAuthContext>();
   private readonly statusSubscribers = new Set<WebSocket>();
+  private readonly relayBridges = new Map<WebSocket, RelayWsBridge>();
   private readonly disposers: Array<() => void> = [];
   private wss: WebSocketServer | null = null;
 
@@ -98,8 +100,12 @@ export class WsBroker {
       this.authContexts.set(ws, request.authContext);
     }
 
+    const bridge = new RelayWsBridge(ws);
+    this.relayBridges.set(ws, bridge);
     ws.on("message", (raw) => {
-      void this.handleMessage(ws, raw.toString(), authAdapter);
+      const text = raw.toString();
+      if (bridge.handle(text)) return;
+      void this.handleMessage(ws, text, authAdapter);
     });
 
     ws.on("close", () => {
@@ -107,6 +113,8 @@ export class WsBroker {
       this.statusSubscribers.delete(ws);
       this.connectedClients.delete(ws);
       this.authContexts.delete(ws);
+      this.relayBridges.get(ws)?.close();
+      this.relayBridges.delete(ws);
     });
   }
 
