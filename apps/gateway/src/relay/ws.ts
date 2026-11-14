@@ -1,8 +1,9 @@
+import type { IncomingHttpHeaders } from "node:http";
 import { WebSocket } from "ws";
 import { getAgent } from "../config/index.js";
 import { addGatewaySuffix } from "./agent-id.js";
 import { remoteWsHeaders, remoteWsUrl } from "./remote.js";
-import { getLinkedGateways, isTrustedOrigin, resolveRemoteAgent } from "./state.js";
+import { getLinkedGateways, isTrustedRequest, resolveRemoteAgent } from "./state.js";
 import type { RemoteGateway } from "./store.js";
 
 type PageMessage = { type?: string; agentId?: string } & Record<string, unknown>;
@@ -25,11 +26,11 @@ export class RelayWsBridge {
 
   constructor(
     private readonly page: WebSocket,
-    origin: string | undefined,
+    headers: IncomingHttpHeaders | undefined,
     private readonly dropLocalSubscription: () => void,
     private readonly connectTimeoutMs = CONNECT_TIMEOUT_MS
   ) {
-    this.trusted = isTrustedOrigin(origin);
+    this.trusted = isTrustedRequest(headers?.origin, [headers?.["x-forwarded-for"] ?? []].flat().join(","));
   }
 
   /** Returns true when the message belongs to a remote agent. A failure never reaches the caller. */

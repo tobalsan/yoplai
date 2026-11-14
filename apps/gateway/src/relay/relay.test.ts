@@ -228,8 +228,7 @@ describe("desktop relay: chat relay", () => {
   it("uploads to the remote gateway and downloads from it", async () => {
     const form = new FormData();
     form.set("file", new File(["remote file body"], "note.txt", { type: "text/plain" }));
-    form.set("agentId", "pom@ams");
-    const upload = await fetch(`${localBase}/api/media/upload`, { method: "POST", body: form });
+    const upload = await fetch(`${localBase}/api/media/upload?agentId=pom%40ams`, { method: "POST", body: form });
     expect(upload.status).toBe(200);
     const uploaded = (await upload.json()) as { filename: string };
     const fileId = uploaded.filename.replace(/\.txt$/, "");
@@ -274,8 +273,8 @@ describe("desktop relay: chat relay", () => {
   });
 
 
-  function openPage(base: string, origin?: string): Promise<WebSocket> {
-    const ws = new WebSocket(`${base.replace("http", "ws")}/ws`, origin ? { origin } : undefined);
+  function openPage(base: string, origin?: string, headers?: Record<string, string>): Promise<WebSocket> {
+    const ws = new WebSocket(`${base.replace("http", "ws")}/ws`, { ...(origin ? { origin } : {}), headers });
     return new Promise((resolve, reject) => {
       ws.once("open", () => resolve(ws));
       ws.once("error", reject);
@@ -326,8 +325,7 @@ describe("desktop relay: chat relay", () => {
     await withFakeGateway("origin-up", undefined, async (fake) => {
       const form = new FormData();
       form.set("file", new File(["x"], "note.txt", { type: "text/plain" }));
-      form.set("agentId", "pom@origin-up");
-      await fetch(`${localBase}/api/media/upload`, { method: "POST", body: form, headers: { origin: "https://evil.example" } });
+      await fetch(`${localBase}/api/media/upload?agentId=pom%40origin-up`, { method: "POST", body: form, headers: { origin: "https://evil.example" } });
       expect(fake.requests).toEqual([]);
     });
   });
@@ -399,14 +397,24 @@ describe("desktop relay: chat relay", () => {
       const event = JSON.parse(raw.toString()) as WsEvent;
       if (event.type === "history_updated") updates.push(event);
     });
+    const control = await openPage(localBase);
+    const controlUpdates: WsEvent[] = [];
+    control.on("message", (raw) => {
+      const event = JSON.parse(raw.toString()) as WsEvent;
+      if (event.type === "history_updated") controlUpdates.push(event);
+    });
     ws.send(JSON.stringify({ type: "subscribe", agentId: "local", sessionKey: "one-sub" }));
-    await sleep(100);
+    control.send(JSON.stringify({ type: "subscribe", agentId: "local", sessionKey: "one-sub" }));
     ws.send(JSON.stringify({ type: "subscribe", agentId: "pom@ams", sessionKey: "one-sub" }));
-    await sleep(200);
-    await chat(localBase, "local", "no echo", "one-sub");
-    await sleep(300);
+    // The control page proves that the gateway sent the update. Chat again until its subscription is active.
+    for (let attempt = 0; controlUpdates.length === 0; attempt += 1) {
+      if (attempt > 40) throw new Error("control page got no update");
+      await chat(localBase, "local", "no echo", "one-sub");
+      await sleep(25);
+    }
     expect(updates).toEqual([]);
     ws.close();
+    control.close();
   });
 
   it("keeps the page socket open while a status gateway is offline or closes its socket", async () => {
@@ -612,8 +620,7 @@ describe("desktop relay: chat relay", () => {
     await withFakeGateway("big", undefined, async (fake) => {
       const form = new FormData();
       form.set("file", new File([new Uint8Array(26 * 1024 * 1024)], "big.txt", { type: "text/plain" }));
-      form.set("agentId", "pom@big");
-      const response = await fetch(`${localBase}/api/media/upload`, { method: "POST", body: form });
+      const response = await fetch(`${localBase}/api/media/upload?agentId=pom%40big`, { method: "POST", body: form });
       expect(response.status).toBe(413);
       expect(fake.requests).toEqual([]);
     });
@@ -632,8 +639,7 @@ describe("desktop relay: chat relay", () => {
         const controller = new AbortController();
         const form = new FormData();
         form.set("file", new File(["x"], "note.txt", { type: "text/plain" }));
-        form.set("agentId", "pom@hang-up");
-        const pending = fetch(`${localBase}/api/media/upload`, { method: "POST", body: form, signal: controller.signal }).catch(() => null);
+        const pending = fetch(`${localBase}/api/media/upload?agentId=pom%40hang-up`, { method: "POST", body: form, signal: controller.signal }).catch(() => null);
         await waitFor(() => fake.requests.length === 1);
         controller.abort();
         await pending;
@@ -743,49 +749,88 @@ describe("desktop relay: chat relay", () => {
     });
   });
 
-  /** A multipart body with no Content-Length. A file, then a padding field, then the agent id. */
-  function chunkedUpload(agentId: string, padBytes: number): ReadableStream<Uint8Array> {
+  /** A multipart body with no Content-Length: a file, then endless padding. `given` counts the bytes that the source gave. */
+  function endlessUpload(): { body: ReadableStream<Uint8Array>; given: () => number } {
     const encoder = new TextEncoder();
-    const part = (name: string, value: string, file?: string) =>
-      `--B\r\nContent-Disposition: form-data; name="${name}"${file ? `; filename="${file}"` : ""}\r\n\r\n${value}\r\n`;
     const pad = new Uint8Array(1024 * 1024).fill(97);
-    let sent = 0;
-    let step = 0;
-    return new ReadableStream({
+    let given = 0;
+    let first = true;
+    const body = new ReadableStream<Uint8Array>({
       pull(controller) {
-        if (step === 0) controller.enqueue(encoder.encode(part("file", "x", "note.txt") + `--B\r\nContent-Disposition: form-data; name="pad"\r\n\r\n`));
-        else if (sent < padBytes) {
-          controller.enqueue(pad);
-          sent += pad.length;
-        } else {
-          controller.enqueue(encoder.encode(`\r\n${part("agentId", agentId)}--B--\r\n`));
-          controller.close();
-        }
-        step += 1;
+        const chunk = first
+          ? encoder.encode('--B\r\nContent-Disposition: form-data; name="file"; filename="note.txt"\r\nContent-Type: text/plain\r\n\r\nx\r\n--B\r\nContent-Disposition: form-data; name="pad"\r\n\r\n')
+          : pad;
+        first = false;
+        given += chunk.length;
+        controller.enqueue(chunk);
       },
     });
+    return { body, given: () => given };
   }
 
-  it("refuses a remote upload over the byte limit when the request has no Content-Length", async () => {
+  it("refuses a remote upload over the byte limit with no Content-Length and stops the read near the limit", async () => {
     await withFakeGateway("chunky", undefined, async (fake) => {
-      const response = await fetch(`${localBase}/api/media/upload`, {
+      const source = endlessUpload();
+      const response = await fetch(`${localBase}/api/media/upload?agentId=pom%40chunky`, {
         method: "POST",
         headers: { "content-type": "multipart/form-data; boundary=B" },
-        body: chunkedUpload("pom@chunky", 28 * 1024 * 1024),
+        body: source.body,
         duplex: "half",
       } as RequestInit);
       expect(response.status).toBe(413);
       expect(fake.requests).toEqual([]);
+      expect(source.given()).toBeLessThan(40 * 1024 * 1024);
     });
   });
 
-  it("does not apply the relay byte limit to an upload for a local agent", async () => {
-    const form = new FormData();
-    form.set("file", new File(["local file"], "note.txt", { type: "text/plain" }));
-    form.set("pad", "a".repeat(28 * 1024 * 1024));
-    form.set("agentId", "local");
-    const response = await fetch(`${localBase}/api/media/upload`, { method: "POST", body: form });
-    expect(response.status).toBe(200);
+  it("sends the agent id of a remote upload to the remote gateway with no suffix", async () => {
+    await withFakeGateway("plain-up", undefined, async (fake) => {
+      const form = new FormData();
+      form.set("file", new File(["small"], "note.txt", { type: "text/plain" }));
+      const response = await fetch(`${localBase}/api/media/upload?agentId=pom%40plain-up`, { method: "POST", body: form });
+      expect(response.status).toBe(200);
+      expect(fake.requests).toHaveLength(1);
+      expect(fake.requests[0]?.body).toMatch(/name="agentId"\r\n\r\npom\r\n/);
+    });
+  });
+
+  it("passes a local upload over the relay limit to the local route", async () => {
+    await withFakeGateway("local-big", undefined, async (fake) => {
+      const form = new FormData();
+      form.set("file", new File(["local file"], "note.txt", { type: "text/plain" }));
+      form.set("pad", "a".repeat(28 * 1024 * 1024));
+      const response = await fetch(`${localBase}/api/media/upload?agentId=local`, { method: "POST", body: form });
+      expect(response.status).toBe(200);
+      expect(fake.requests).toEqual([]);
+    });
+  });
+
+  it("sends an upload to the local route when the file text names a remote agent and there is no query parameter", async () => {
+    await withFakeGateway("text-up", undefined, async (fake) => {
+      const form = new FormData();
+      form.set("file", new File(['name="agentId"\r\n\r\npom@text-up\r\n'], "note.txt", { type: "text/plain" }));
+      const response = await fetch(`${localBase}/api/media/upload`, { method: "POST", body: form });
+      expect(response.status).toBe(200);
+      expect(fake.requests).toEqual([]);
+    });
+  });
+
+  it("does not relay for a request that a proxy forwarded for a client outside loopback", async () => {
+    const list = async (forwardedFor: string) =>
+      ((await (await fetch(`${localBase}/api/agents`, { headers: { "x-forwarded-for": forwardedFor } })).json()) as Array<{ id: string }>).map((agent) => agent.id);
+    expect(await list("192.168.1.20")).not.toContain("pom@ams");
+    expect(await list("127.0.0.1, 10.0.0.5")).not.toContain("pom@ams");
+    expect(await list("127.0.0.1")).toContain("pom@ams");
+    expect(await list("::ffff:127.0.0.1")).toContain("pom@ams");
+    expect(await list("::1")).toContain("pom@ams");
+    const outside = await fetch(`${localBase}/api/agents/pom%40ams/history?view=full`, { headers: { "x-forwarded-for": "192.168.1.20" } });
+    const unknown = await fetch(`${localBase}/api/agents/nobody%40ams/history?view=full`, { headers: { "x-forwarded-for": "192.168.1.20" } });
+    expect(outside.status).toBe(unknown.status);
+    const page = await openPage(localBase, undefined, { "x-forwarded-for": "192.168.1.20" });
+    const reply = new Promise<WsEvent>((resolve) => page.once("message", (raw) => resolve(JSON.parse(raw.toString()) as WsEvent)));
+    page.send(JSON.stringify({ type: "send", agentId: "pom@ams", sessionKey: "main", message: "hi" }));
+    expect((await reply).message).toBe("Agent not found");
+    page.close();
   });
 
   it("does not close the page when a remote socket closes after the page left its chat", async () => {

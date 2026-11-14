@@ -11,17 +11,33 @@ function isLoopbackHost(host: string): boolean {
   return host === "localhost" || host === "::1" || LOOPBACK_IPV4_RE.test(host);
 }
 
-/**
- * A request with no Origin header (CLI, curl) is trusted. A browser page sends
- * Origin, and the relay trusts only pages that load from a loopback host name.
- */
-export function isTrustedOrigin(origin: string | null | undefined): boolean {
+function isTrustedOrigin(origin: string | null | undefined): boolean {
   if (!origin) return true;
   try {
     return isLoopbackHost(new URL(origin).hostname.replace(/^\[|\]$/g, ""));
   } catch {
     return false;
   }
+}
+
+/** The UI proxy of Vite adds the real client address to `X-Forwarded-For`. */
+function isLoopbackForwardedFor(forwardedFor: string | null | undefined): boolean {
+  if (!forwardedFor) return true;
+  return forwardedFor
+    .split(",")
+    .every((entry) => isLoopbackHost(entry.trim().replace(/^::ffff:/i, "")));
+}
+
+/**
+ * A request with no Origin header (CLI, curl) is trusted. A browser page sends
+ * Origin, and the relay trusts only pages that load from a loopback host name.
+ * A request that a proxy forwarded for a client outside loopback is not trusted.
+ */
+export function isTrustedRequest(
+  origin: string | null | undefined,
+  forwardedFor: string | null | undefined
+): boolean {
+  return isTrustedOrigin(origin) && isLoopbackForwardedFor(forwardedFor);
 }
 
 /** A local agent with exactly this ID always wins over a gateway suffix. */

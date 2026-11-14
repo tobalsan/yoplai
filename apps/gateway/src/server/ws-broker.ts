@@ -102,7 +102,7 @@ export class WsBroker {
       this.authContexts.set(ws, request.authContext);
     }
 
-    const bridge = new RelayWsBridge(ws, request?.headers.origin, () => {
+    const bridge = new RelayWsBridge(ws, request?.headers, () => {
       this.supersedeSubscribe(ws);
       this.subscriptions.delete(ws);
     });

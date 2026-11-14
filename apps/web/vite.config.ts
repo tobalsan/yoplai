@@ -158,16 +158,20 @@ export default defineConfig({
       "/api": {
         target: gatewayTarget,
         changeOrigin: true,
+        xfwd: true,
       },
       "/ws": {
         target: gatewayTarget,
         ws: true,
+        xfwd: true,
       },
       "/hooks": {
         target: gatewayTarget,
+        xfwd: true,
       },
       "^/d(?:/|-assets/)": {
         target: gatewayTarget,
+        xfwd: true,
       },
     },
   },
