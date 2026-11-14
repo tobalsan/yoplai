@@ -4,7 +4,7 @@ import { getAgent } from "../config/index.js";
 import { addGatewaySuffix } from "./agent-id.js";
 import { getDeviceApprovals, type ApprovalEvent } from "./device-approvals.js";
 import { remoteWsHeaders, remoteWsUrl } from "./remote.js";
-import { getLinkedGateways, isTrustedRequest, resolveRemoteAgent } from "./state.js";
+import { getLinkedGateways, isRelayEnabled, isTrustedRequest, resolveRemoteAgent } from "./state.js";
 import type { RemoteGateway } from "./store.js";
 
 type PageMessage = { type?: string; agentId?: string } & Record<string, unknown>;
@@ -64,8 +64,15 @@ export class RelayWsBridge {
     }
     // The answer belongs to the local gateway. It never goes to a remote gateway, and a page that is not trusted has no effect.
     if (message.type === "device_approval_answer") {
-      if (this.trusted && typeof message.approvalId === "string" && typeof message.approve === "boolean") {
-        getDeviceApprovals().answer(message.approvalId, message.approve);
+      if (
+        this.trusted &&
+        isRelayEnabled() &&
+        typeof message.approvalId === "string" &&
+        typeof message.approve === "boolean"
+      ) {
+        getDeviceApprovals().answer(message.approvalId, message.approve, (request) =>
+          this.subscribes(request.agentId, request.sessionId)
+        );
       }
       return true;
     }
@@ -110,7 +117,7 @@ export class RelayWsBridge {
   }
 
   private sendApproval(event: ApprovalEvent): void {
-    if (this.page.readyState !== WebSocket.OPEN) return;
+    if (this.page.readyState !== WebSocket.OPEN || !isRelayEnabled()) return;
     if (!this.subscribes(event.message.agentId, event.message.sessionId)) return;
     this.page.send(JSON.stringify(event.message));
   }
@@ -192,6 +199,8 @@ export class RelayWsBridge {
     if (this.page.readyState !== WebSocket.OPEN) return;
     try {
       const event = JSON.parse(raw) as PageMessage;
+      // Only the local gateway makes device approval messages. A remote gateway must not send them to the page.
+      if (typeof event.type === "string" && event.type.startsWith("device_approval_")) return;
       if (typeof event.agentId === "string") {
         event.agentId = addGatewaySuffix(event.agentId, gatewayName);
         if (getAgent(event.agentId)) return;

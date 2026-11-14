@@ -1,6 +1,7 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { isInsideRoot } from "../util/paths.js";
 import type { DeviceToolName } from "@yoplai/shared";
 import type { ChatDeviceSettings } from "./device-settings.js";
@@ -14,11 +15,21 @@ export function resolveDeviceMode(settings: ChatDeviceSettings): DeviceMode {
   return settings.workspaceFolder ? "workspace" : "ask";
 }
 
-/** Resolves a path one time to an absolute path. The gate and the tool both use this result. */
+const UNICODE_SPACES = /[\u00A0\u2000-\u200A\u202F\u205F\u3000]/g;
+
+/**
+ * Gives the final absolute path of a file call. It applies the changes that the Pi file tools
+ * apply to a path before they open it: Unicode spaces become spaces, a leading `@` goes away,
+ * `~` expands, and a `file://` URL becomes a path. The gate checks this path and the tool gets
+ * this same path. The result is absolute, so Pi changes it no more.
+ */
 export function resolveAgainstFolder(folder: string, rawPath: string): string {
-  const expanded =
-    rawPath === "~" ? os.homedir() : rawPath.startsWith("~/") ? path.join(os.homedir(), rawPath.slice(2)) : rawPath;
-  return path.resolve(folder, expanded);
+  let normalized = rawPath.replace(UNICODE_SPACES, " ");
+  if (normalized.startsWith("@")) normalized = normalized.slice(1);
+  if (normalized === "~") normalized = os.homedir();
+  else if (normalized.startsWith("~/")) normalized = path.join(os.homedir(), normalized.slice(2));
+  if (/^file:\/\//.test(normalized)) normalized = fileURLToPath(normalized);
+  return path.resolve(folder, normalized);
 }
 
 /**

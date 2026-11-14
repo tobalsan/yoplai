@@ -301,5 +301,26 @@ describe("device settings routes", () => {
   it("answers like an unknown route while the relay is off", async () => {
     enabled = false;
     expect((await request("/api/relay/device-links")).status).toBe(404);
+    expect((await request(chatUrl)).status).toBe(404);
+    expect((await put(chatUrl, { full: true })).status).toBe(404);
+    expect((await request("/api/relay/agent-settings?agentId=pom%40ams")).status).toBe(404);
+    expect((await put("/api/relay/agent-settings?agentId=pom%40ams", { fullBackground: true })).status).toBe(404);
+    expect(settings.getChat(chatKey).full).toBe(false);
+    expect(settings.getAgentFullBackground("pom@ams")).toBe(false);
+  });
+
+  it("refuses to write the agent setting from an untrusted request", async () => {
+    const url = "/api/relay/agent-settings?agentId=pom%40ams";
+    const response = await put(url, { fullBackground: true }, { origin: "https://evil.example" });
+    expect(response.status).toBe(404);
+    expect(settings.getAgentFullBackground("pom@ams")).toBe(false);
+  });
+
+  it("reports the mode that the executor uses when the workspace folder is gone", async () => {
+    await put(chatUrl, { workspaceFolder: folder });
+    fs.rmSync(folder, { recursive: true });
+    expect(await (await request(chatUrl)).json()).toMatchObject({ mode: "ask" });
+    await put(chatUrl, { full: true });
+    expect(await (await request(chatUrl)).json()).toMatchObject({ mode: "full" });
   });
 });

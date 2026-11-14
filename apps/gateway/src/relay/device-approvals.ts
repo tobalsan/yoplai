@@ -88,9 +88,13 @@ export class DeviceApprovals {
   }
 
   /** Returns false when the approval is not pending, so a second answer has no effect. */
-  answer(approvalId: string, approve: boolean): boolean {
+  answer(
+    approvalId: string,
+    approve: boolean,
+    allow?: (request: WsDeviceApprovalRequest) => boolean
+  ): boolean {
     const item = this.pending.get(approvalId);
-    if (!item) return false;
+    if (!item || (allow && !allow(item.message))) return false;
     item.settle(approve ? "approved" : "refused");
     return true;
   }

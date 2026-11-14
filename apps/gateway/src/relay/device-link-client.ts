@@ -8,6 +8,7 @@ import {
   parseDeviceLinkMessage,
   type DeviceCall,
 } from "@yoplai/shared";
+import { DEVICE_MAX_MESSAGE_BYTES } from "./device-registry.js";
 import type { DeviceExecutor } from "./device-exec.js";
 import { remoteDeviceUrl, remoteWsHeaders } from "./remote.js";
 import type { RemoteGateway } from "./store.js";
@@ -15,6 +16,8 @@ import type { RemoteGateway } from "./store.js";
 export const RECONNECT_MIN_MS = 1000;
 export const RECONNECT_MAX_MS = 30_000;
 export const GATEWAY_CHECK_MS = 5000;
+/** Most running calls on one link. A call over the limit gets an error result. */
+export const MAX_ACTIVE_CALLS = 20;
 
 export type DeviceLinkState = { name: string; connected: boolean };
 
@@ -56,13 +59,14 @@ class DeviceLinkClient {
   stop(): void {
     this.stopped = true;
     clearTimeout(this.timer);
-    this.socket?.close();
+    this.socket?.terminate();
   }
 
   private connect(): void {
     const socket = new WebSocket(remoteDeviceUrl(this.gateway), {
       headers: remoteWsHeaders(this.gateway),
       handshakeTimeout: 10_000,
+      maxPayload: DEVICE_MAX_MESSAGE_BYTES,
     });
     this.socket = socket;
     /** Each running call of this link. A drop aborts them all. */
@@ -123,6 +127,13 @@ class DeviceLinkClient {
   }
 
   private runCall(socket: WebSocket, calls: Map<string, AbortController>, call: DeviceCall): void {
+    const reject = (error: string) => {
+      if (socket.readyState === WebSocket.OPEN) {
+        socket.send(JSON.stringify({ type: "result", callId: call.callId, ok: false, error }));
+      }
+    };
+    if (calls.has(call.callId)) return reject(`A call with the ID ${call.callId} is already active. This call did not run.`);
+    if (calls.size >= MAX_ACTIVE_CALLS) return reject(`This link has ${MAX_ACTIVE_CALLS} active calls. This call did not run.`);
     const controller = new AbortController();
     calls.set(call.callId, controller);
     const send = (payload: Record<string, unknown>) => {
@@ -135,7 +146,9 @@ class DeviceLinkClient {
         (result) => send({ ok: true, content: result.content, details: result.details }),
         (error: unknown) => send({ ok: false, error: error instanceof Error ? error.message : String(error) })
       )
-      .finally(() => calls.delete(call.callId));
+      .finally(() => {
+        if (calls.get(call.callId) === controller) calls.delete(call.callId);
+      });
   }
 
   private logFailure(error: Error): void {

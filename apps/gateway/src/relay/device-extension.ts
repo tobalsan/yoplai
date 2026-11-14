@@ -20,10 +20,10 @@ const BACKGROUND_SOURCES = new Set([
   "system",
 ]);
 
-/** An unknown run counts as a background run, so no prompt waits for a user who is not there. */
+/** A run with no origin, and an unknown run, count as a background run, so no prompt waits for a user who is not there. */
 export function deviceRunKind(run: ExtensionRunInfo | undefined): DeviceRunKind {
-  if (!run || run.background === true) return "background";
-  return run.source !== undefined && BACKGROUND_SOURCES.has(run.source) ? "background" : "chat";
+  if (!run || run.background === true || run.source === undefined) return "background";
+  return BACKGROUND_SOURCES.has(run.source) ? "background" : "chat";
 }
 
 /** Joins the text of a tool result. The model sees text only. */

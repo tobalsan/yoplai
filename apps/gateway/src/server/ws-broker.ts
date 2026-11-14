@@ -13,7 +13,7 @@ import { getSessionCurrentTurn, isStreaming } from "../agents/index.js";
 import type { ExtensionRuntime } from "../extensions/runtime.js";
 import { normalizeRunRequest } from "./run-request.js";
 import { RelayWsBridge } from "../relay/ws.js";
-import { getDeviceRegistry, LOCAL_DEVICE_USER } from "../relay/device-registry.js";
+import { DEVICE_MAX_MESSAGE_BYTES, getDeviceRegistry, LOCAL_DEVICE_USER } from "../relay/device-registry.js";
 
 type RequestAuthContext =
   import("@yoplai/extension-multi-user").RequestAuthContext;
@@ -72,7 +72,7 @@ export class WsBroker {
       : undefined;
     // One upgrade handler sends each request to its server, because a server with a `path` option refuses the other path.
     this.wss = new WebSocketServer({ noServer: true, verifyClient });
-    this.deviceWss = new WebSocketServer({ noServer: true, verifyClient });
+    this.deviceWss = new WebSocketServer({ noServer: true, verifyClient, maxPayload: DEVICE_MAX_MESSAGE_BYTES });
 
     this.wss.on("connection", (ws, request) => {
       this.handleConnection(ws, request as WsRequest, authAdapter);
@@ -82,7 +82,8 @@ export class WsBroker {
       getDeviceRegistry().accept(ws, userId);
     });
     server.on("upgrade", (request, socket, head) => {
-      const pathname = new URL(request.url ?? "/", "http://localhost").pathname;
+      // The same rule as the `path` option of ws: the text before the first "?", with no URL parsing.
+      const pathname = (request.url ?? "").split("?")[0];
       const target = pathname === CHAT_PATH ? this.wss : pathname === DEVICE_PATH ? this.deviceWss : null;
       if (!target) {
         socket.end("HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n");
@@ -109,6 +110,7 @@ export class WsBroker {
     this.wss = null;
     this.deviceWss?.close();
     this.deviceWss = null;
+    getDeviceRegistry().closeAll();
   }
 
   private handleConnection(

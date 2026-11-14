@@ -100,7 +100,11 @@ export function relayDeviceApi(overrides: Partial<DeviceRoutesDeps> = {}): Middl
       sessionId,
       workspaceFolder: settings.workspaceFolder ?? null,
       full: settings.full,
-      mode: resolveDeviceMode(settings),
+      // The executor ignores a workspace folder that does not exist, so the mode ignores it too.
+      mode: resolveDeviceMode({
+        ...settings,
+        workspaceFolder: settings.workspaceFolder && isExistingDirectory(settings.workspaceFolder) ? settings.workspaceFolder : undefined,
+      }),
     });
   };
 }

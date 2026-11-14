@@ -37,7 +37,7 @@ describe("createExtensionContext media helpers", () => {
       expect(validateContainerToken(minted.token, "other")).toBe(false);
       expect(getContainerTokenUserId(minted.token, "alpha")).toBe("alice");
       const entry = getContainerTokenContext(minted.token)!;
-      expect(entry).toMatchObject({ agentId: "alpha", userId: "alice", actorKind: "service", sessionId: "scheduler:job:run", runId: "run" });
+      expect(entry).toMatchObject({ agentId: "alpha", userId: "alice", actorKind: "service", source: "system", background: true, sessionId: "scheduler:job:run", runId: "run" });
       expect(entry.actorUserId).toBeUndefined();
       expect(entry.roots).toEqual({ workspace: path.join(tmpDir, "agents/alpha"), data: path.join(tmpDir, "agents/alpha"), uploads: path.join(tmpDir, "agents/alpha") });
       expect(entry.registerFileOutput).toBeUndefined();

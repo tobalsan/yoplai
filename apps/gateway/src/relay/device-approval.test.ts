@@ -12,7 +12,7 @@ import { getDeviceApprovals } from "./device-approvals.js";
 import { DeviceExecutor } from "./device-exec.js";
 import { createFileDeviceSettingsStore, type DeviceSettingsStore } from "./device-settings.js";
 
-const remote = vi.hoisted(() => ({ url: "" }));
+const remote = vi.hoisted(() => ({ url: "", enabled: true }));
 vi.mock("../config/index.js", () => ({
   getAgent: (id: string) => (id === "alpha" ? { id } : undefined),
   isAgentActive: () => true,
@@ -23,6 +23,7 @@ vi.mock("../agents/index.js", () => ({
 vi.mock("../sessions/index.js", () => ({ getSessionEntry: vi.fn() }));
 vi.mock("../server/run-request.js", () => ({ normalizeRunRequest: vi.fn() }));
 vi.mock("../relay/state.js", () => ({
+  isRelayEnabled: () => remote.enabled,
   getLinkedGateways: () => [{ name: "ams", url: remote.url }],
   // A page that sends an Origin header from "evil.example" is not trusted.
   isTrustedRequest: (origin?: string | null) => !origin || !origin.includes("evil.example"),
@@ -40,6 +41,7 @@ let localServer: Server;
 let localPort: number;
 let remoteServer: WebSocketServer;
 let remoteMessages: Json[];
+let remoteSockets: WebSocket[];
 let broker: { close(): void };
 const pages: Page[] = [];
 
@@ -77,10 +79,12 @@ beforeEach(async () => {
   settings = createFileDeviceSettingsStore(path.join(dir, "device-settings.json"));
   executor = new DeviceExecutor({ settings, approvals: getDeviceApprovals(), approvalTimeoutMs: 5000 });
   remoteMessages = [];
+  remoteSockets = [];
+  remote.enabled = true;
   remoteServer = new WebSocketServer({ port: 0, host: "127.0.0.1" });
   await new Promise<void>((resolve) => remoteServer.once("listening", resolve));
   remote.url = `http://127.0.0.1:${(remoteServer.address() as AddressInfo).port}`;
-  remoteServer.on("connection", (socket) => socket.on("message", (raw) => remoteMessages.push(JSON.parse(raw.toString()) as Json)));
+  remoteServer.on("connection", (socket) => remoteSockets.push(socket as unknown as WebSocket) && socket.on("message", (raw) => remoteMessages.push(JSON.parse(raw.toString()) as Json)));
   const { WsBroker } = await import("../server/ws-broker.js");
   localServer = createServer();
   const wsBroker = new WsBroker();
@@ -234,5 +238,55 @@ describe("device approval: protocol", () => {
     await waitFor(() => ofType(page, "device_approval_resolved").length === 1);
     expect(ofType(page, "device_approval_resolved")[0].outcome).toBe("cancelled");
     expect(getDeviceApprovals().pendingFor("pom@ams", "s1")).toEqual([]);
+  });
+
+  it("ignores an answer from a page that subscribes to another chat", async () => {
+    const owner = await openPage();
+    const other = await openPage();
+    subscribe(owner);
+    subscribe(other, "pom@ams", "other-session");
+    const file = path.join(dir, "wrong-chat.txt");
+    const pending = startWrite(file);
+    await waitFor(() => ofType(owner, "device_approval_request").length === 1);
+    const approvalId = ofType(owner, "device_approval_request")[0].approvalId;
+    other.socket.send(JSON.stringify({ type: "device_approval_answer", approvalId, approve: true }));
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    expect(fs.existsSync(file)).toBe(false);
+    expect(getDeviceApprovals().pendingFor("pom@ams", "s1")).toHaveLength(1);
+    owner.socket.send(JSON.stringify({ type: "device_approval_answer", approvalId, approve: false }));
+    await expect(pending).rejects.toThrow(/refused/);
+  });
+
+  it("ignores an answer while the relay is off, and sends no request", async () => {
+    const page = await openPage();
+    subscribe(page);
+    const pending = startWrite(path.join(dir, "off.txt"));
+    const assertion = expect(pending).rejects.toThrow(/refused|cancelled/);
+    await waitFor(() => ofType(page, "device_approval_request").length === 1);
+    const approvalId = ofType(page, "device_approval_request")[0].approvalId;
+    remote.enabled = false;
+    page.socket.send(JSON.stringify({ type: "device_approval_answer", approvalId, approve: true }));
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    expect(getDeviceApprovals().pendingFor("pom@ams", "s1")).toHaveLength(1);
+    const later = startWrite(path.join(dir, "off2.txt"), "x", { sessionId: "s1" });
+    const laterAssertion = expect(later).rejects.toThrow(/refused|cancelled/);
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    expect(ofType(page, "device_approval_request")).toHaveLength(1);
+    remote.enabled = true;
+    for (const item of getDeviceApprovals().pendingFor("pom@ams", "s1")) getDeviceApprovals().answer(item.approvalId, false);
+    await assertion;
+    await laterAssertion;
+  });
+
+  it("does not forward a device approval message from a remote gateway to the page", async () => {
+    const page = await openPage();
+    subscribe(page);
+    await waitFor(() => remoteSockets.length === 1);
+    for (const type of ["device_approval_request", "device_approval_resolved", "device_approval_answer"]) {
+      remoteSockets[0].send(JSON.stringify({ type, approvalId: "fake", agentId: "pom", sessionId: "s1" }));
+    }
+    remoteSockets[0].send(JSON.stringify({ type: "status", agentId: "zzz" }));
+    await waitFor(() => ofType(page, "status").length === 1);
+    expect(page.messages.filter((message) => String(message.type).startsWith("device_approval_"))).toEqual([]);
   });
 });

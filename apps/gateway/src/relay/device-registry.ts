@@ -13,6 +13,9 @@ import {
 /** Deadline of one device call. It is shorter than the 300 s default of a sandbox tool call. */
 export const DEVICE_CALL_TIMEOUT_MS = 270_000;
 
+/** Largest message on a device socket, on the two sides. */
+export const DEVICE_MAX_MESSAGE_BYTES = 10 * 1024 * 1024;
+
 /** Registry key of a gateway with no multi-user mode. One relay then serves each run. */
 export const LOCAL_DEVICE_USER = "local";
 
@@ -45,6 +48,16 @@ export class DeviceRegistry {
 
   has(userId: string): boolean {
     return this.connections.has(userId);
+  }
+
+  /** Closes each device socket, fails its pending calls, and clears the registry. */
+  closeAll(): void {
+    const connections = [...this.connections.values()];
+    this.connections.clear();
+    for (const connection of connections) {
+      connection.failPending(new Error("The gateway stopped"));
+      connection.socket.close(1001, "Gateway stopping");
+    }
   }
 
   /** Takes over a new device socket. The relay is online after its valid hello. */
@@ -82,6 +95,10 @@ export class DeviceRegistry {
       }
       if (message.type === "result") this.settle(connection, message);
     });
+
+    // An invalid frame raises an error event. Without a handler it would stop the process.
+    // ws closes the socket after the error, and the close handler fails the pending calls.
+    socket.on("error", () => socket.terminate());
 
     socket.on("close", () => {
       if (!connection) return;
