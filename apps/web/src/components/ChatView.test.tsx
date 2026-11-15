@@ -909,19 +909,22 @@ describe("ChatView abort handling", () => {
         return { messages: [], isStreaming: false, activeTurn: null };
       });
       let stream: Partial<StreamCallbacks> | undefined;
-      streamMessageMock.mockImplementation((_a, _m, _k, _t, _d, _e, callbacks) => { stream = callbacks; return () => {}; });
+      let finish = () => {};
+      streamMessageMock.mockImplementation((_a, _m, _k, onText, onDone, _e, callbacks) => { stream = callbacks; finish = () => { onText("Done"); onDone(); }; return () => {}; });
       const view = await renderRemote();
       // An old request for this agent makes the page look up the session. The lookup fails before the first message.
       subscription.onDeviceApprovalRequest?.(request("old", "session-old", "device_bash", { command: "old" }, "call-old"));
-      await tick();
+      await new Promise((resolve) => setTimeout(resolve, 3300));
+      expect(fetchFullHistoryMock.mock.calls.filter((call) => (call[3] as { limit?: number } | undefined)?.limit === 1).length).toBeGreaterThan(0);
       queryByRole(view.container, "button", { name: "Start a new chat" })!.click();
       await tick();
+      subscription.onActiveTurn?.({ userText: "old", userTimestamp: 1, startedAt: 2, thinking: "", text: "", toolCalls: [] }, "session-old");
       const input = queryByRole(view.container, "textbox") as HTMLTextAreaElement;
       input.value = "Run ls";
       input.dispatchEvent(new Event("input", { bubbles: true }));
       queryByRole(view.container, "button", { name: "Send message" })!.click();
       await waitFor(() => expect(streamMessageMock).toHaveBeenCalled());
-      return { ...view, stream: () => stream! };
+      return { ...view, stream: () => stream!, finish: () => finish() };
     }
 
     it("shows the card of the first message of a new chat when the request comes before the tool call", async () => {
@@ -933,7 +936,60 @@ describe("ChatView abort handling", () => {
       await waitFor(() => expect(queryByRole(container, "button", { name: "Approve" })).not.toBeNull());
       queryByRole(container, "button", { name: "Approve" })!.click();
       expect(send).toHaveBeenCalledWith({ type: "device_approval_answer", approvalId: "a1", approve: true });
+      expect(relay.calls.some((call) => call.url.includes("device-settings") && call.url.includes("session-new"))).toBe(false);
+      dispose();
+    });
+
+    it("keeps the device control disabled and sends no settings request for the session of a matched request", async () => {
+      const { container, stream, dispose } = await sendFirstMessageOfNewChat();
+      stream().onToolCall?.("call-x", "device_bash", { command: "ls -la" });
+      await tick();
+      subscription.onDeviceApprovalRequest?.(request("a1", "session-b", "device_bash", { command: "ls -la" }, "call-x"));
+      await waitFor(() => expect(queryByRole(container, "button", { name: "Approve" })).not.toBeNull());
+      await tick(); await tick();
+      expect(queryByRole(container, "button", { name: "Device: …" })).not.toBeNull();
+      expect(relay.calls.some((call) => call.url.includes("device-settings"))).toBe(false);
+      dispose();
+    });
+
+    it("reads the settings of the session that the lookup by the session key gives after a match", async () => {
+      const { container, stream, dispose } = await sendFirstMessageOfNewChat();
+      fetchFullHistoryMock.mockImplementation(async (_a: string, _k: string, _b: unknown, options?: { limit?: number }) =>
+        options?.limit === 1 ? { sessionId: "session-a", messages: [], isStreaming: false, activeTurn: null } : { messages: [], isStreaming: false, activeTurn: null });
+      stream().onToolCall?.("call-x", "device_bash", { command: "ls -la" });
+      subscription.onDeviceApprovalRequest?.(request("a1", "session-b", "device_bash", { command: "ls -la" }, "call-x"));
+      await waitFor(() => expect(relay.calls.some((call) => call.url.includes("device-settings?agentId=pom%40ams&sessionId=session-a"))).toBe(true));
+      expect(relay.calls.some((call) => call.url.includes("session-b"))).toBe(false);
+      expect(queryByRole(container, "button", { name: "Approve" })).not.toBeNull();
+      dispose();
+    });
+
+    it("reads the device settings when the first answer of a new chat ends and the lookup gives the session", async () => {
+      const { container, finish, dispose } = await sendFirstMessageOfNewChat();
+      fetchFullHistoryMock.mockImplementation(async (_a: string, _k: string, _b: unknown, options?: { limit?: number }) =>
+        options?.limit === 1 ? { sessionId: "session-a", messages: [], isStreaming: false, activeTurn: null } : { messages: [], isStreaming: false, activeTurn: null });
+      finish();
       await waitFor(() => expect(queryByRole(container, "button", { name: "Device: Ask" })).not.toBeNull());
+      expect(relay.calls.some((call) => call.url.includes("sessionId=session-a"))).toBe(true);
+      dispose();
+    });
+
+    it("tries the lookup again after 3 seconds when the first lookup of a matched request fails", async () => {
+      const { stream, dispose } = await sendFirstMessageOfNewChat();
+      const lookups = () => fetchFullHistoryMock.mock.calls.filter((call) => (call[3] as { limit?: number } | undefined)?.limit === 1).length;
+      const before = lookups();
+      stream().onToolCall?.("call-x", "device_bash", { command: "ls -la" });
+      subscription.onDeviceApprovalRequest?.(request("a1", "session-b", "device_bash", { command: "ls -la" }, "call-x"));
+      await waitFor(() => expect(lookups()).toBe(before + 1));
+      await new Promise((resolve) => setTimeout(resolve, 3300));
+      expect(lookups()).toBe(before + 2);
+      dispose();
+    }, 15_000);
+
+    it("shows a lone surrogate as an escape", async () => {
+      const { container, dispose } = await renderRemote();
+      subscription.onDeviceApprovalRequest?.(request("a1", "session-main", "device_bash", { command: "a\uD800b" }));
+      await waitFor(() => expect(queryByText(container, "a\\uD800b")).not.toBeNull());
       dispose();
     });
 

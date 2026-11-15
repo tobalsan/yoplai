@@ -945,7 +945,7 @@ export function ChatView() {
           <Show when={agent()?.gateway}>
             <DeviceApprovalCards
               agentName={agent()?.name ?? "The agent"}
-              items={session.deviceApprovals().filter((item) => item.request.sessionId === session.appSessionId())}
+              items={session.deviceApprovals().filter(session.isDeviceApprovalShown)}
               connectionLost={session.deviceConnectionLost()}
               onAnswer={session.answerDeviceApproval}
             />

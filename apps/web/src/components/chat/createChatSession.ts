@@ -142,6 +142,7 @@ export function createChatSession(input: ChatSessionInput) {
   let appSessionLookup: AbortController | undefined;
   // IDs of the tool calls that the direct stream of this chat received. They match a device approval to this chat.
   const directToolCallIds = new Set<string>();
+  const [directToolCallVersion, setDirectToolCallVersion] = createSignal(0);
   let lookupRetries = 0;
   let lookupRetryTimer: ReturnType<typeof setTimeout> | undefined;
   const [streamingThinking, setStreamingThinking] = createSignal("");
@@ -641,13 +642,24 @@ export function createChatSession(input: ChatSessionInput) {
     });
   };
 
-  const resolveAppSession = () => {
+  // A request shows as a card of this chat for its session ID, or for the ID of a tool call of this chat.
+  // This match does not give the chat a session ID.
+  const isDeviceApprovalShown = (item: DeviceApprovalItem) => {
+    directToolCallVersion();
+    const confirmed = explicitSessionId() ?? resolvedSessionId();
+    return (confirmed !== undefined && item.request.sessionId === confirmed) || directToolCallIds.has(item.request.toolCallId);
+  };
+
+  const resolveAppSession = (onFailed?: () => void) => {
     if (explicitSessionId() || resolvedSessionId() || appSessionLookup || appSessionFailed()) return;
     const scope = currentSession();
     const controller = new AbortController();
     appSessionLookup = controller;
     const timer = setTimeout(() => {
-      if (scope === currentSession()) setAppSessionFailed(true);
+      if (scope === currentSession()) {
+        setAppSessionFailed(true);
+        onFailed?.();
+      }
       controller.abort();
     }, 15_000);
     controller.signal.addEventListener("abort", () => clearTimeout(timer), { once: true });
@@ -655,10 +667,16 @@ export function createChatSession(input: ChatSessionInput) {
       .then((response) => {
         if (controller.signal.aborted || scope !== currentSession()) return;
         if (response.sessionId) setResolvedSessionId(response.sessionId);
-        else setAppSessionFailed(true);
+        else {
+          setAppSessionFailed(true);
+          onFailed?.();
+        }
       })
       .catch(() => {
-        if (!controller.signal.aborted && scope === currentSession()) setAppSessionFailed(true);
+        if (!controller.signal.aborted && scope === currentSession()) {
+          setAppSessionFailed(true);
+          onFailed?.();
+        }
       })
       .finally(() => {
         clearTimeout(timer);
@@ -666,21 +684,36 @@ export function createChatSession(input: ChatSessionInput) {
       });
   };
 
-  // A device approval that matches a tool call of this chat gives the chat its session ID.
+  // The active turn of the subscription for the key of this chat gives the session ID.
   const adoptSessionId = (sessionId: string) => {
     if (explicitSessionId() || resolvedSessionId()) return;
     setResolvedSessionId(sessionId);
     setAppSessionFailed(false);
   };
 
-  // With no match after 3 seconds, ask for the session ID. Two attempts at most.
+  // Ask for the session ID. After a failure, try again after 3 seconds, two more times at most.
+  const lookupWithRetry = (isCurrent: () => boolean) => {
+    const retry = () => {
+      if (!isCurrent() || lookupRetries >= 2) return;
+      clearTimeout(lookupRetryTimer);
+      lookupRetryTimer = setTimeout(() => {
+        if (!isCurrent() || explicitSessionId() || resolvedSessionId()) return;
+        lookupRetries++;
+        setAppSessionFailed(false);
+        resolveAppSession(retry);
+      }, 3_000);
+    };
+    resolveAppSession(retry);
+  };
+
+  // With no match after 3 seconds, ask for the session ID.
   const scheduleLookupRetry = (isCurrent: () => boolean) => {
     clearTimeout(lookupRetryTimer);
     lookupRetryTimer = setTimeout(() => {
       if (!isCurrent() || explicitSessionId() || resolvedSessionId() || lookupRetries >= 2) return;
       lookupRetries++;
       setAppSessionFailed(false);
-      resolveAppSession();
+      lookupWithRetry(isCurrent);
     }, 3_000);
   };
 
@@ -828,8 +861,9 @@ export function createChatSession(input: ChatSessionInput) {
         },
         onDeviceApprovalRequest: (request) => {
           if (!isOpenAgent()) return;
-          if (directToolCallIds.has(request.toolCallId)) adoptSessionId(request.sessionId);
-          else if (request.agentId === agentId && !explicitSessionId() && !resolvedSessionId()) {
+          if (directToolCallIds.has(request.toolCallId)) {
+            if (!explicitSessionId() && !resolvedSessionId()) lookupWithRetry(isOpenAgent);
+          } else if (request.agentId === agentId && !explicitSessionId() && !resolvedSessionId()) {
             scheduleLookupRetry(isOpenAgent);
           }
           setDeviceApprovals((prev) =>
@@ -1617,6 +1651,7 @@ export function createChatSession(input: ChatSessionInput) {
     setStreamingTextAt(null);
     setActiveTools([]);
     directToolCallIds.clear();
+    setDirectToolCallVersion((version) => version + 1);
     lookupRetries = 0;
     setAppSessionFailed(false);
 
@@ -1745,8 +1780,14 @@ export function createChatSession(input: ChatSessionInput) {
         onToolCall: (id, name, args, parentToolCallId, view) => {
           if (!isCurrentDirectStream()) return;
           directToolCallIds.add(id);
-          const approval = deviceApprovals().find((item) => item.request.toolCallId === id);
-          if (approval) adoptSessionId(approval.request.sessionId);
+          setDirectToolCallVersion((version) => version + 1);
+          if (
+            deviceApprovals().some((item) => item.request.toolCallId === id) &&
+            !explicitSessionId() &&
+            !resolvedSessionId()
+          ) {
+            lookupWithRetry(() => isCurrentDirectStream());
+          }
           setStreamingFinished(false);
           appendStreamingToolCallBlock(id, name, args, parentToolCallId, Date.now(), view);
           setStreamingToolCalls((prev) => [
@@ -1862,6 +1903,7 @@ export function createChatSession(input: ChatSessionInput) {
     setAppSessionFailed(false);
     setResolvedSessionId(undefined);
     directToolCallIds.clear();
+    setDirectToolCallVersion((version) => version + 1);
     lookupRetries = 0;
     clearTimeout(lookupRetryTimer);
     if (cleanup) cleanup();
@@ -1928,7 +1970,7 @@ export function createChatSession(input: ChatSessionInput) {
     contextUsageDisplay, isContextUsageDanger, contextWarning,
     compactStatusForCurrentSession, compactStatuses,
     copyTurnFor, shouldAnimate,
-    deviceApprovals, deviceConnectionLost, answerDeviceApproval,
+    deviceApprovals, isDeviceApprovalShown, deviceConnectionLost, answerDeviceApproval,
     thinkingLevel: () => pendingThinkLevel() ?? thinkingLevel(),
     selectThinking: (level: ThinkLevel | null) => setPendingThinkLevel(level),
     flushFinished, send, sendFromView, stop, compact: compactCurrentSession,

@@ -4,9 +4,9 @@ import type { DeviceApprovalItem } from "./createChatSession";
 
 type ApprovalArguments = { command?: unknown; path?: unknown; content?: unknown; edits?: unknown };
 
-// Control characters (but not new line and tab), format, private, unassigned, and line separator characters,
+// Control characters (but not new line and tab), format, surrogate, private, unassigned, and line separator characters,
 // default-ignorable characters (variation selectors, tag characters, U+034F, U+2061), and the backslash.
-const HIDDEN = /(?![\n\t])[\p{Cc}\p{Cf}\p{Co}\p{Cn}\p{Zl}\p{Zp}\p{Default_Ignorable_Code_Point}\\]/gu;
+const HIDDEN = /(?![\n\t])[\p{Cc}\p{Cf}\p{Cs}\p{Co}\p{Cn}\p{Zl}\p{Zp}\p{Default_Ignorable_Code_Point}\\]/gu;
 const CUT_MARK = "… (cut)";
 
 /** The agent selects these texts. Each hidden character shows as an escape such as \u202E. A backslash shows as two. */
