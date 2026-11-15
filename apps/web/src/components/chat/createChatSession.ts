@@ -113,7 +113,18 @@ function isRemoteAgent(agentId: string): boolean {
 }
 
 export function createChatSession(input: ChatSessionInput) {
-  const { agent, sessionKey, explicitSessionId, viewMode } = input;
+  const { agent, sessionKey, viewMode } = input;
+  const [resetOrigin, setResetOrigin] = createSignal<{ agentId: string; sessionId: string | undefined }>();
+  const explicitSessionId = () => {
+    const origin = resetOrigin();
+    return origin?.agentId === input.agentId() && origin.sessionId === input.explicitSessionId()
+      ? undefined
+      : input.explicitSessionId();
+  };
+  createEffect(() => {
+    const origin = resetOrigin();
+    if (origin && (origin.agentId !== input.agentId() || origin.sessionId !== input.explicitSessionId())) setResetOrigin(undefined);
+  });
   const [historyLoaded, setHistoryLoaded] = createSignal<HistoryLoaded>();
   const [simpleMessages, setSimpleMessages] = createSignal<SimpleViewMessage[]>(
     []
@@ -659,16 +670,27 @@ export function createChatSession(input: ChatSessionInput) {
         : prev.filter((item) => item.request.approvalId !== resolved.approvalId)
     );
   };
-  const messageApprovalCallbacks = (agentId: string): Pick<StreamCallbacks, "onDeviceApprovalRequest" | "onDeviceApprovalResolved"> => ({
-    onDeviceApprovalRequest: (request, answer) => {
-      if (input.agentId() !== agentId || request.agentId !== agentId) return;
-      approvalAnswerers.set(request.approvalId, answer);
-      addDeviceApproval(request);
-    },
-    onDeviceApprovalResolved: (resolved) => {
-      if (input.agentId() === agentId) resolveDeviceApproval(resolved);
-    },
-  });
+  const messageApprovalCallbacks = (agentId: string): Pick<StreamCallbacks, "onDeviceApprovalRequest" | "onDeviceApprovalResolved" | "onDeviceApprovalClosed"> => {
+    const chat = deviceChatName();
+    let socketAnswer: ((approvalId: string, approve: boolean) => boolean) | undefined;
+    return {
+      onDeviceApprovalRequest: (request, answer) => {
+        if (input.agentId() !== agentId || request.agentId !== agentId || request.chat !== deviceChatName() || chat !== deviceChatName()) return;
+        socketAnswer = answer;
+        approvalAnswerers.set(request.approvalId, answer);
+        addDeviceApproval(request);
+      },
+      onDeviceApprovalResolved: (resolved) => {
+        if (input.agentId() === agentId) resolveDeviceApproval(resolved);
+      },
+      onDeviceApprovalClosed: () => {
+        for (const [id, answer] of approvalAnswerers) {
+          if (answer === socketAnswer) approvalAnswerers.delete(id);
+        }
+        socketAnswer = undefined;
+      },
+    };
+  };
   const isDeviceApprovalShown = (item: DeviceApprovalItem) => item.request.chat === deviceChatName();
 
   const resolveAppSession = (onFailed?: () => void) => {
@@ -835,6 +857,7 @@ export function createChatSession(input: ChatSessionInput) {
     const isOpenAgent = () => input.agentId() === agentId;
 
     subscriptionCleanup?.();
+    approvalAnswerers.clear();
     // The new subscription gets each approval that still waits.
     setDeviceApprovals([]);
     setDeviceConnectionLost(false);
@@ -1295,6 +1318,12 @@ export function createChatSession(input: ChatSessionInput) {
     }
     beforeSubmit?.();
 
+    if (isResetCommand && isRemoteAgent(input.agentId())) {
+      batch(() => {
+        setResetOrigin({ agentId: input.agentId(), sessionId: input.explicitSessionId() });
+        startNewChat(input.agentId());
+      });
+    }
     const messageText = text || "Attached file(s).";
     const levelToSend = pendingThinkLevel() ?? thinkingLevel();
     const currentAgent = agent();
@@ -1864,6 +1893,7 @@ export function createChatSession(input: ChatSessionInput) {
 
 
   const startNewChat = (agentId: string) => {
+    approvalAnswerers.clear();
     appSessionLookup?.abort();
     appSessionLookup = undefined;
     setAppSessionFailed(false);

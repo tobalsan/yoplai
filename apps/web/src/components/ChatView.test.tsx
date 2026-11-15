@@ -821,6 +821,33 @@ describe("ChatView abort handling", () => {
 
     beforeEach(() => { send.mockReset(); send.mockReturnValue(true); stubRelay(); });
 
+    it.each(["/reset write a synthetic file", "/reset"])("uses a fresh Ask key for %s from an Ask history view", async (text) => {
+      routeState.session = "history-ask";
+      const fetchRelay = globalThis.fetch;
+      vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        if (String(input).includes("chat=key%3Amain")) return json({ workspaceFolder: null, full: true, mode: "full" });
+        return fetchRelay(input, init);
+      }));
+      const { container, dispose } = await renderRemote();
+      await waitFor(() => expect(queryByRole(container, "button", { name: /Device: Ask/ })).not.toBeNull());
+      expect(relay.calls.some(call => call.url.includes("chat=session%3Ahistory-ask"))).toBe(true);
+      const textarea = queryByRole(container, "textbox") as HTMLTextAreaElement;
+      textarea.value = text;
+      textarea.dispatchEvent(new Event("input", { bubbles: true }));
+      await tick();
+      queryByRole(container, "button", { name: "Send message" })!.click();
+      await waitFor(() => expect(streamMessageMock).toHaveBeenCalled());
+      const sent = streamMessageMock.mock.calls.at(-1)!;
+      expect(sent[1]).toBe(text);
+      expect(sent[2]).toBe("fresh-key");
+      expect(sent[7]?.sessionId).toBeUndefined();
+      await waitFor(() => expect(subscribeToSessionMock.mock.calls.at(-1)?.[1]).toBe("fresh-key"));
+      expect(subscribeToSessionMock.mock.calls.at(-1)?.[3]).toBeUndefined();
+      await waitFor(() => expect(relay.calls.some(call => call.url.includes("chat=key%3Afresh-key"))).toBe(true));
+      await waitFor(() => expect(queryByRole(container, "button", { name: /Device: Ask/ })).not.toBeNull());
+      dispose();
+    });
+
     it("shows a card for a request of the open chat and none for another chat", async () => {
       const { container, dispose } = await renderRemote();
       subscription.onDeviceApprovalRequest?.(request("a1", "key:other"));
@@ -869,6 +896,7 @@ describe("ChatView abort handling", () => {
       type MessageCallbacks = {
         onDeviceApprovalRequest?: (request: WsDeviceApprovalRequest, answer: (id: string, approve: boolean) => boolean) => void;
         onDeviceApprovalResolved?: (resolved: unknown) => void;
+        onDeviceApprovalClosed?: () => void;
       };
       async function sendFirstMessageOfNewChat() {
         let callbacks: MessageCallbacks = {};
@@ -898,6 +926,30 @@ describe("ChatView abort handling", () => {
         expect(messageSocketSend).toHaveBeenCalledWith("a1", true);
         expect(send).not.toHaveBeenCalled();
         await waitFor(() => expect((queryByRole(container, "button", { name: "Approve" }) as HTMLButtonElement).disabled).toBe(true));
+        dispose();
+      });
+
+      it("uses the subscription after the message socket ends", async () => {
+        const { container, dispose, callbacks, messageSocketSend } = await sendFirstMessageOfNewChat();
+        callbacks().onDeviceApprovalRequest?.(request("a1", "key:fresh-key"), messageSocketSend);
+        callbacks().onDeviceApprovalClosed?.();
+        await waitFor(() => expect(queryByRole(container, "button", { name: "Approve" })).not.toBeNull());
+        queryByRole(container, "button", { name: "Approve" })!.click();
+        expect(messageSocketSend).not.toHaveBeenCalled();
+        expect(send).toHaveBeenCalledWith({ type: "device_approval_answer", approvalId: "a1", approve: true });
+        dispose();
+      });
+
+      it("removes old answer functions when the chat changes", async () => {
+        const { container, dispose, callbacks, messageSocketSend } = await sendFirstMessageOfNewChat();
+        callbacks().onDeviceApprovalRequest?.(request("a1", "key:fresh-key"), messageSocketSend);
+        queryByTitle(container, "New chat")!.click();
+        await tick();
+        subscription.onDeviceApprovalRequest?.(request("a1", "key:fresh-key"));
+        await waitFor(() => expect(queryByRole(container, "button", { name: "Approve" })).not.toBeNull());
+        queryByRole(container, "button", { name: "Approve" })!.click();
+        expect(messageSocketSend).not.toHaveBeenCalled();
+        expect(send).toHaveBeenCalledWith({ type: "device_approval_answer", approvalId: "a1", approve: true });
         dispose();
       });
 

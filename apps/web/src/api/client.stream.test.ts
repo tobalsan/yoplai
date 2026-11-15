@@ -61,6 +61,19 @@ describe("streamMessage", () => {
     vi.unstubAllGlobals();
   });
 
+  it.each(["done", "error", "close", "cleanup"])("clears message approval answers once after %s", (event) => {
+    const onDeviceApprovalClosed = vi.fn();
+    const cleanup = streamMessage("pom@ams", "hello", "main", vi.fn(), vi.fn(), vi.fn(), { onDeviceApprovalClosed });
+    const socket = MockWebSocket.instances[0];
+    socket.open();
+    if (event === "close") socket.close();
+    else if (event === "cleanup") cleanup();
+    else socket.receive({ type: event, meta: { durationMs: 1 }, message: "Synthetic error" });
+    cleanup();
+    socket.close();
+    expect(onDeviceApprovalClosed).toHaveBeenCalledTimes(1);
+  });
+
   it("carries a project on the run request", () => {
     streamMessage("agent-1", "hello", "fresh", vi.fn(), vi.fn(), vi.fn(), undefined, { projectId: "project-1" });
     const ws = MockWebSocket.instances[0]!;

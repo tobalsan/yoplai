@@ -48,6 +48,7 @@ export type StreamCallbacks = {
     size: number;
   }) => void;
   onSessionReset?: (sessionId: string) => void;
+  onDeviceApprovalClosed?: () => void;
   /** `answer` sends the reply on the socket of this message. It returns false when the socket is closed. */
   onDeviceApprovalRequest?: (
     request: WsDeviceApprovalRequest,
@@ -242,6 +243,18 @@ export function streamMessage(
 ): () => void {
   const ws = new WebSocket(getWsUrl());
   let terminated = false;
+  let approvalsClosed = false;
+  const closeApprovals = () => {
+    if (approvalsClosed) return;
+    approvalsClosed = true;
+    callbacks?.onDeviceApprovalClosed?.();
+  };
+
+  const answerApproval = (approvalId: string, approve: boolean) => {
+    if (terminated || ws.readyState !== WebSocket.OPEN) return false;
+    ws.send(JSON.stringify({ type: "device_approval_answer", approvalId, approve }));
+    return true;
+  };
 
   ws.onopen = () => {
     const payload: Record<string, unknown> = {
@@ -264,14 +277,13 @@ export function streamMessage(
   ws.onmessage = (e) => {
     if (terminated) return;
     const event = JSON.parse(e.data) as WsStreamEvent;
-    if (event.type === "done" || event.type === "error") terminated = true;
+    if (event.type === "done" || event.type === "error") {
+      terminated = true;
+      closeApprovals();
+    }
     const approval = event as unknown as { type: string };
     if (approval.type === "device_approval_request") {
-      callbacks?.onDeviceApprovalRequest?.(event as unknown as WsDeviceApprovalRequest, (approvalId, approve) => {
-        if (ws.readyState !== WebSocket.OPEN) return false;
-        ws.send(JSON.stringify({ type: "device_approval_answer", approvalId, approve }));
-        return true;
-      });
+      callbacks?.onDeviceApprovalRequest?.(event as unknown as WsDeviceApprovalRequest, answerApproval);
       return;
     }
     if (approval.type === "device_approval_resolved") {
@@ -287,6 +299,7 @@ export function streamMessage(
   };
 
   ws.onerror = () => {
+    closeApprovals();
     terminated = true;
     onError("Connection error");
   };
@@ -294,6 +307,7 @@ export function streamMessage(
   // If the socket closes without a terminal done/error event (e.g. network drop,
   // server restart), surface a recoverable error so the UI can clear isStreaming.
   ws.onclose = () => {
+    closeApprovals();
     if (!terminated) {
       terminated = true;
       onError("Connection closed");
@@ -301,6 +315,7 @@ export function streamMessage(
   };
 
   return () => {
+    closeApprovals();
     terminated = true;
     if (
       ws.readyState === WebSocket.OPEN ||

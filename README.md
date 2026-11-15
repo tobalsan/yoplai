@@ -202,6 +202,8 @@ The check also covers the real path behind a symbolic link. A command (`device_b
 
 How your gateway picks the chat: your local gateway names the chat that you use (the session ID of the page, or its session key) and gives each message that it forwards a secret token for that one turn. The remote gateway sends the token back with each device call of that turn. A call with no valid token counts as a background call. The remote gateway cannot pick the chat or the mode of a call. The link protocol is version 2, so your local and remote gateways must both run this version. One limit: during a turn in a Full chat, the remote gateway controls the agent, so Full means trust in that gateway for that turn. The switch that allows all calls of an agent for scheduled jobs means trust in its gateway for background runs.
 
+Queued remote messages keep their own device permissions, also when two views use the same remote session. A remote reset uses a fresh chat key and starts in Ask mode, with no workspace folder. The relay limits pending turns to 20 per page socket and 1,000 across the local gateway.
+
 Scheduled jobs: a job gets the device tools only when its config has `requiresDevice: true` (set it in the `requiresDevice` field of `scheduler.create_job` or `scheduler.update_job`). A job with this flag stops at once, with the error code `device_offline`, when your device is not connected. You cannot combine the flag with `noAgent`. On a multi-user gateway, the job needs the credential mode `owner`.
 
 ## Troubleshooting
