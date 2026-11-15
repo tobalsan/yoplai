@@ -3,11 +3,14 @@ import {
   createEditTool,
   createReadTool,
   createWriteTool,
+  detectSupportedImageMimeTypeFromFile,
 } from "@earendil-works/pi-coding-agent";
 import path from "node:path";
 import { constants } from "node:fs";
 import fs from "node:fs/promises";
 import type { DeviceToolName } from "@yoplai/shared";
+import { touchesSecretFile } from "./device-gate.js";
+import { secretReadRefusal } from "./device-secrets.js";
 
 /** The part of a Pi SDK tool that the device link uses. */
 type PiToolLike = {
@@ -24,8 +27,11 @@ export type DeviceToolDefinition = {
   description: string;
   /** True when the arguments have a `path` that the permission gate checks. */
   filePath: boolean;
-  /** `checkedPath` is the path that the gate checked. A write or edit opens no other path. */
-  create(cwd: string, checkedPath?: string): PiToolLike;
+  /**
+   * `checkedPath` is the path that the gate checked. A write or edit opens no other path.
+   * `enforceSecrets` makes a read throw for a secret file, at the point of use.
+   */
+  create(cwd: string, checkedPath?: string, enforceSecrets?: boolean): PiToolLike;
 };
 
 function sameAsChecked(checkedPath: string | undefined, actual: string): void {
@@ -41,7 +47,27 @@ export const DEVICE_TOOL_DEFINITIONS: Record<DeviceToolName, DeviceToolDefinitio
     description:
       "Read a file on the device of the user. This is not the workspace of the agent. Give a path. Use offset and limit for a long file.",
     filePath: true,
-    create: (cwd) => createReadTool(cwd),
+    create: (cwd, _checkedPath, enforceSecrets) => {
+      const refuseSecret = async (target: string) => {
+        if (enforceSecrets && (await touchesSecretFile(target))) throw new Error(secretReadRefusal(target));
+      };
+      return createReadTool(cwd, {
+        operations: {
+          access: async (target) => {
+            await refuseSecret(target);
+            await fs.access(target, constants.R_OK);
+          },
+          readFile: async (target) => {
+            await refuseSecret(target);
+            return fs.readFile(target);
+          },
+          detectImageMimeType: async (target) => {
+            await refuseSecret(target);
+            return detectSupportedImageMimeTypeFromFile(target);
+          },
+        },
+      });
+    },
   },
   device_write: {
     name: "device_write",

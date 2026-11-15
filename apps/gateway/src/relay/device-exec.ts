@@ -12,6 +12,7 @@ import {
   type GateDecision,
 } from "./device-gate.js";
 import { deviceChatKey, type DeviceSettingsStore } from "./device-settings.js";
+import { secretReadRefusal } from "./device-secrets.js";
 import { deviceToolParameters, getDeviceToolDefinition } from "./device-tools.js";
 
 export type DeviceExecutorOptions = {
@@ -85,6 +86,7 @@ export class DeviceExecutor {
     });
     signal.throwIfAborted();
 
+    if (decision === "refuse") throw new Error(secretReadRefusal(absolutePath ?? ""));
     if (decision === "ask") {
       if (call.runKind === "background") {
         throw new Error(
@@ -110,7 +112,7 @@ export class DeviceExecutor {
     }
 
     signal.throwIfAborted();
-    const tool = definition.create(cwd, absolutePath);
+    const tool = definition.create(cwd, absolutePath, !full);
     return tool.execute(call.callId, args as never, signal);
   }
 }

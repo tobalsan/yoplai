@@ -4,10 +4,11 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { isInsideRoot } from "../util/paths.js";
 import type { DeviceToolName } from "@yoplai/shared";
+import { isSecretPath } from "./device-secrets.js";
 import type { ChatDeviceSettings } from "./device-settings.js";
 
 export type DeviceMode = "ask" | "workspace" | "full";
-export type GateDecision = "pass" | "ask";
+export type GateDecision = "pass" | "ask" | "refuse";
 
 /** The mode that results from the settings of a chat. Full wins over a workspace folder. */
 export function resolveDeviceMode(settings: ChatDeviceSettings): DeviceMode {
@@ -50,7 +51,7 @@ export function resolveAgainstFolder(folder: string, rawPath: string): string {
  * directory that exists. Returns undefined for a dangling symbolic link, because a write
  * would follow it to an unknown place.
  */
-async function realPathOrNearest(target: string): Promise<string | undefined> {
+export async function realPathOrNearest(target: string): Promise<string | undefined> {
   const missing: string[] = [];
   let current = target;
   for (;;) {
@@ -79,6 +80,13 @@ export async function isInsideWorkspaceFolder(folder: string, absolutePath: stri
   return realFolder !== undefined && realTarget !== undefined && isInsideRoot(realFolder, realTarget);
 }
 
+/** True when the path, or the real path behind it, is on the list of secret files. */
+export async function touchesSecretFile(target: string): Promise<boolean> {
+  if (isSecretPath(target)) return true;
+  const real = await realPathOrNearest(target);
+  return real !== undefined && isSecretPath(real);
+}
+
 export async function decideGate(input: {
   tool: DeviceToolName;
   mode: DeviceMode;
@@ -86,8 +94,11 @@ export async function decideGate(input: {
   /** The resolved path of a file call. */
   absolutePath?: string;
 }): Promise<GateDecision> {
-  if (input.mode === "full" || input.tool === "device_read") return "pass";
+  if (input.mode === "full") return "pass";
+  const secret = input.absolutePath !== undefined && (await touchesSecretFile(input.absolutePath));
+  if (input.tool === "device_read") return secret ? "refuse" : "pass";
   if (
+    !secret &&
     input.mode === "workspace" &&
     (input.tool === "device_write" || input.tool === "device_edit") &&
     input.folder !== undefined &&
