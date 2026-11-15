@@ -17,6 +17,7 @@ import {
   resolveDashboardViewGrant,
   type ResolvedDashboardViewGrant,
 } from "./dashboard-view-grants.js";
+import { DASHBOARD_VIEW_NAMESPACE, ownsDashboardViewPath } from "./dashboard-view-paths.js";
 import { fetchRemoteExact } from "./remote.js";
 import { getLinkedGateways, isLoopbackForwardedFor, isRelayEnabled } from "./state.js";
 import type { RemoteGateway } from "./store.js";
@@ -27,7 +28,7 @@ import type { RemoteGateway } from "./store.js";
  * gateway's dashboards, and the remote edit token authorizes every write.
  * See docs/relay-configuration.md for the full contract.
  */
-export const DASHBOARD_VIEW_NAMESPACE = "/api/relay/dashboard-views";
+export { DASHBOARD_VIEW_NAMESPACE, ownsDashboardViewPath };
 
 export const dashboardViewLimits = {
   htmlBytes: 5 * 1024 * 1024,
@@ -64,22 +65,6 @@ function parseRoute(pathname: string): Route | undefined {
     if (match) return build(match);
   }
   return undefined;
-}
-
-/** Claims every spelling of the namespace, so a malformed path never reaches another relay handler. */
-export function ownsDashboardViewPath(pathname: string): boolean {
-  let value = pathname;
-  for (let i = 0; i < 3; i++) {
-    if (value.toLowerCase().startsWith(DASHBOARD_VIEW_NAMESPACE)) return true;
-    try {
-      const decoded = decodeURIComponent(value);
-      if (decoded === value) break;
-      value = decoded;
-    } catch {
-      break;
-    }
-  }
-  return false;
 }
 
 const LOCAL_HEADERS = {

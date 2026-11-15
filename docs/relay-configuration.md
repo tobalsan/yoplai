@@ -340,6 +340,14 @@ The local policy replaces the remote headers. The gateway drops the remote cooki
 The page keeps its own restrictive `<meta>` policy, but the local header does not rely on it. HTML has no CORS grant.
 A raw top-level open of the frame URL keeps the same sandbox.
 
+### Logs
+
+A grant in a path is a secret. The gateway access log replaces the whole target of every owned request with `/api/relay/dashboard-views/[redacted]`.
+This includes the query and the encoded, double encoded, and mixed case spellings.
+The access log and the route code use one ownership test, `ownsDashboardViewPath`.
+The Vite dev proxy of `apps/web/vite.config.ts` does the same in its proxy error log, for example when the gateway is down.
+Other proxy errors keep their request URL.
+
 ### Edit and add
 
 `POST .../:grant/:id/edit` and `.../add` need the grant, `Origin: null`, `Content-Type: text/plain`, and a JSON body of at most 256 KiB

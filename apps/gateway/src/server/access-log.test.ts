@@ -124,7 +124,7 @@ describe("accessLogger", () => {
     );
   });
 
-  it("redacts the grant in a dashboard viewer path and keeps the rest of the path", async () => {
+  it("redacts the whole target of a dashboard viewer request", async () => {
     const app = new Hono();
     const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
     vi.spyOn(Date, "now").mockReturnValue(0);
@@ -139,9 +139,62 @@ describe("accessLogger", () => {
 
     const text = log.mock.calls.map((call) => String(call[0])).join("\n");
     expect(text).not.toContain(grant);
-    expect(text).toContain(`--> GET /api/relay/dashboard-views/[redacted]/${id}/?region=emea 200`);
-    expect(text).toContain(`--> POST /api/relay/dashboard-views/[redacted]/${id}/edit 200`);
-    expect(text).toContain("--> GET /api/relay/dashboard-views/[redacted]/current 200");
+    expect(text).not.toContain(id);
+    expect(text).not.toContain("emea");
+    expect(log.mock.calls.map((call) => String(call[0]))).toEqual([
+      "--> GET /api/relay/dashboard-views/[redacted] 200 0ms",
+      "--> POST /api/relay/dashboard-views/[redacted] 200 0ms",
+      "--> GET /api/relay/dashboard-views/[redacted] 200 0ms",
+    ]);
+  });
+
+  it.each([
+    "/api/relay/dashboard-views%2F{grant}/{id}/",
+    "/api/relay/dashboard-views%252F{grant}/{id}/",
+    "/api/relay/dashboard%2Dviews/{grant}/{id}/",
+    "/api/relay/dashboard%2dviews%2F{grant}/{id}/?x=1",
+    "/api/Relay/Dashboard-Views/{grant}/{id}/",
+    "/api/relay/dashboard-views/{grant}%zz/{id}/",
+    "/api/relay/dashboard-views/%20{grant}/{id}/",
+    "/api/relay/dashboard-views/{grant}/{id}/edit%2Fx",
+    "/api/relay/dashboard-views/{grant}/{id}/other",
+    "/api/relay/dashboard-viewsX/{grant}",
+  ])("redacts an encoded, mixed case, or malformed alias %s", async (template) => {
+    const app = new Hono();
+    const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    vi.spyOn(Date, "now").mockReturnValue(0);
+    app.use("*", accessLogger());
+    app.all("*", (c) => c.text("ok"));
+    const grant = "SyntheticGrantNotReal0123456789abcdefghijk";
+    const id = "i".repeat(32);
+
+    for (const method of ["GET", "POST"]) {
+      await app.request(template.replace("{grant}", grant).replace("{id}", id), { method });
+    }
+
+    const lines = log.mock.calls.map((call) => String(call[0]));
+    expect(lines).toHaveLength(2);
+    for (const line of lines) {
+      expect(line).not.toContain(grant);
+      expect(line).not.toContain(id);
+      expect(line).toMatch(/^--> (?:GET|POST) \/api\/relay\/dashboard-views\/\[redacted\] \d{3} \d+ms$/);
+    }
+  });
+
+  it("does not redact a path outside the viewer namespace", async () => {
+    const app = new Hono();
+    const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    vi.spyOn(Date, "now").mockReturnValue(0);
+    app.use("*", accessLogger());
+    app.all("*", (c) => c.text("ok"));
+
+    await app.request("/api/relay/gateways/ams/api/agents");
+    await app.request("/api/relay/oauth/start", { method: "POST" });
+
+    expect(log.mock.calls.map((call) => String(call[0]))).toEqual([
+      "--> GET /api/relay/gateways/ams/api/agents 200 0ms",
+      "--> POST /api/relay/oauth/start 200 0ms",
+    ]);
   });
 
   it.each([

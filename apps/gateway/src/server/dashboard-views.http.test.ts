@@ -367,6 +367,39 @@ describe("real adapter: logs, bounds and disconnects", () => {
     expect(logs.join("\n")).not.toContain(ALICE_BEARER);
   });
 
+  it("redacts the complete target of canonical and encoded viewer requests", async () => {
+    const { grant, frameUrl } = await openView();
+    const canonical = [frameUrl, `${frameUrl}?region=emea`, `/api/relay/dashboard-views/${grant}/current`];
+    for (const path of canonical) {
+      const response = await fetch(`${local}${path}`, { headers: navigation({ "sec-fetch-site": "same-origin" }) });
+      expect(response.status).toBe(200);
+    }
+    await write(frameUrl, "edit", { token: "x" });
+    const aliases = [
+      `/api/relay/dashboard-views%2F${grant}/${dashboardId}/`,
+      `/api/relay/dashboard-views%252F${grant}/${dashboardId}/`,
+      `/api/relay/dashboard%2Dviews/${grant}/${dashboardId}/?region=emea`,
+      `/api/Relay/Dashboard-Views/${grant}/${dashboardId}/`,
+      `/api/relay/dashboard-views/${grant}%zz/${dashboardId}/`,
+    ];
+    for (const path of aliases) {
+      for (const method of ["GET", "POST"]) {
+        const response = await fetch(`${local}${path}`, { method, headers: { ...navigation(), ...opaque() }, body: method === "POST" ? "{}" : undefined });
+        // The refusal and the log use the same ownership test. Routing is case sensitive, so a mixed case path reaches no viewer handler.
+        if (path.startsWith("/api/Relay")) expect(response.status).toBe(404);
+        else await expectJsonError(response, 404, "invalid_dashboard_view_route");
+      }
+    }
+    const text = logs.join("\n");
+    expect(text).not.toContain(grant);
+    expect(text).not.toContain(dashboardId);
+    expect(text).not.toContain("emea");
+    const viewerLines = logs.filter((line) => line.includes("dashboard-views"));
+    // The grant request, the three reads, the write, and two methods for each alias.
+    expect(viewerLines).toHaveLength(1 + canonical.length + 1 + aliases.length * 2);
+    for (const line of viewerLines) expect(line).toMatch(/^--> (?:GET|POST) \/api\/relay\/dashboard-views\/\[redacted\] \d{3} \S+$/);
+  });
+
   it("returns a readable 413 for a streamed oversized write", async () => {
     const { frameUrl } = await openView();
     const result = await new Promise<{ status: number; body: string }>((resolve, reject) => {
