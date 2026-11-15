@@ -15,6 +15,7 @@ import {
   createEffect,
   createResource,
   createMemo,
+  startTransition,
   For,
   onCleanup,
   onMount,
@@ -277,6 +278,12 @@ export function ChatView() {
       showToast("Chat restored", "success");
       void refetchSessions();
       window.dispatchEvent(new Event("chat-projects-changed"));
+    },
+    onRemoteReset: async () => {
+      clearPendingFiles();
+      await startTransition(() => {
+        setSearchParams({ session: undefined }, { replace: true, state: location.state });
+      });
     },
     onSessionReset: (sessionId) => {
       clearPendingFiles();

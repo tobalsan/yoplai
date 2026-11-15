@@ -97,6 +97,7 @@ type ChatSessionInput = {
   uploadPending: (pendingFiles: readonly PendingFile[]) => Promise<{ attachments?: FileAttachment[]; inboundFiles: FileBlock[] } | "failed">;
   onArchiveRestored: () => void;
   onSessionReset: (newSessionId: string) => void;
+  onRemoteReset: () => Promise<void>;
   preservePrependScroll: (prepend: () => void) => void;
   onLiveView?: (view: McpAppViewReference) => void;
 };
@@ -113,18 +114,7 @@ function isRemoteAgent(agentId: string): boolean {
 }
 
 export function createChatSession(input: ChatSessionInput) {
-  const { agent, sessionKey, viewMode } = input;
-  const [resetOrigin, setResetOrigin] = createSignal<{ agentId: string; sessionId: string | undefined }>();
-  const explicitSessionId = () => {
-    const origin = resetOrigin();
-    return origin?.agentId === input.agentId() && origin.sessionId === input.explicitSessionId()
-      ? undefined
-      : input.explicitSessionId();
-  };
-  createEffect(() => {
-    const origin = resetOrigin();
-    if (origin && (origin.agentId !== input.agentId() || origin.sessionId !== input.explicitSessionId())) setResetOrigin(undefined);
-  });
+  const { agent, sessionKey, viewMode, explicitSessionId } = input;
   const [historyLoaded, setHistoryLoaded] = createSignal<HistoryLoaded>();
   const [simpleMessages, setSimpleMessages] = createSignal<SimpleViewMessage[]>(
     []
@@ -1319,10 +1309,8 @@ export function createChatSession(input: ChatSessionInput) {
     beforeSubmit?.();
 
     if (isResetCommand && isRemoteAgent(input.agentId())) {
-      batch(() => {
-        setResetOrigin({ agentId: input.agentId(), sessionId: input.explicitSessionId() });
-        startNewChat(input.agentId());
-      });
+      await input.onRemoteReset();
+      batch(() => startNewChat(input.agentId()));
     }
     const messageText = text || "Attached file(s).";
     const levelToSend = pendingThinkLevel() ?? thinkingLevel();
@@ -1342,7 +1330,7 @@ export function createChatSession(input: ChatSessionInput) {
       setSimpleMessages([]);
       setFullMessages([]);
       setPendingQueuedMessages([]);
-      input.onSessionReset(sessionId);
+      if (!isRemoteAgent(input.agentId())) input.onSessionReset(sessionId);
     };
 
     // Add user message to both views
@@ -1622,7 +1610,7 @@ export function createChatSession(input: ChatSessionInput) {
           onSessionReset: (sessionId) => {
             if (!isCurrentQueuedStream()) return;
             queuedResetFrom = queuedSession;
-            queuedSession = sessionScope(sessionId);
+            queuedSession = isRemoteAgent(input.agentId()) ? currentSession() : sessionScope(sessionId);
             pendingResetSession = queuedSession;
             // Queued /new or /reset triggered - clear messages and streaming state
             handleSessionReset(sessionId);
@@ -1843,7 +1831,7 @@ export function createChatSession(input: ChatSessionInput) {
         onSessionReset: (sessionId) => {
           if (!isCurrentDirectStream()) return;
           resetFromSession = streamSession;
-          streamSession = sessionScope(sessionId);
+          streamSession = isRemoteAgent(input.agentId()) ? currentSession() : sessionScope(sessionId);
           directStreamSession = streamSession;
           pendingResetSession = streamSession;
           // Clear messages when session resets (e.g., /new command)

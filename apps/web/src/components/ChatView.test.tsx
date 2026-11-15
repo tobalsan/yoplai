@@ -74,6 +74,7 @@ const {
   fetchChatProjectMock: vi.fn(),
   routeState: {
     agentId: "agent-1",
+    state: null as unknown,
     view: undefined as string | undefined,
     session: undefined as string | undefined,
     project: undefined as string | undefined,
@@ -85,7 +86,7 @@ const {
 vi.mock("@solidjs/router", () => ({
   A: (props: Record<string, unknown>) => <a {...props} />,
   useNavigate: () => navigateMock,
-  useLocation: () => ({ state: null }),
+  useLocation: () => ({ get state() { return routeState.state; } }),
   useParams: () => ({ get agentId() { routeAgentVersion(); return routeState.agentId; }, get view() { routeVersion(); return routeState.view; } }),
   useSearchParams: () => [
     {
@@ -263,6 +264,7 @@ describe("ChatView abort handling", () => {
     uploadFilesMock.mockResolvedValue([]);
     archiveAgentSessionMock.mockResolvedValue(undefined);
     routeState.view = undefined;
+    routeState.state = null;
     routeState.agentId = "agent-1";
     routeState.session = undefined;
     routeState.project = undefined;
@@ -846,6 +848,133 @@ describe("ChatView abort handling", () => {
       await waitFor(() => expect(relay.calls.some(call => call.url.includes("chat=key%3Afresh-key"))).toBe(true));
       await waitFor(() => expect(queryByRole(container, "button", { name: /Device: Ask/ })).not.toBeNull());
       dispose();
+    });
+
+    async function sendReset(container: HTMLElement, text: string, count = 1) {
+      const textarea = queryByRole(container, "textbox") as HTMLTextAreaElement;
+      fireEvent.input(textarea, { target: { value: text } });
+      await tick();
+      fireEvent.keyDown(textarea, { key: "Enter" });
+      await waitFor(() => expect(streamMessageMock).toHaveBeenCalledTimes(count));
+      return streamMessageMock.mock.calls.at(-1)!;
+    }
+
+    it.each([
+      ["/reset run the synthetic command", false],
+      ["/new run the synthetic command", true],
+    ] as const)("restores a pending approval after remount for %s from history", async (text, approve) => {
+      routeState.session = "history-ask";
+      routeState.project = "project-1";
+      routeState.view = "full";
+      routeState.state = { backTo: "/agents" };
+      const first = await renderRemote();
+      const messageAnswer = vi.fn().mockReturnValue(true);
+      let sessionAtSend: string | undefined;
+      streamMessageMock.mockImplementation(() => {
+        sessionAtSend = routeState.session;
+        return () => {};
+      });
+      const sent = await sendReset(first.container, text);
+      expect(sent[2]).toBe("fresh-key");
+      expect(sent[7]?.sessionId).toBeUndefined();
+      const pending = request("reset-pending", "key:fresh-key");
+      sent[6].onDeviceApprovalRequest(pending, messageAnswer);
+      sent[3]("The command waits for approval.");
+      await waitFor(() => expect(queryByRole(first.container, "button", { name: "Approve" })).not.toBeNull());
+      expect(first.container.textContent).toContain("The command waits for approval.");
+      first.dispose();
+
+      const second = await renderRemote();
+      expect(getSessionKeyMock()).toBe("fresh-key");
+      expect(subscribeToSessionMock.mock.calls.at(-1)?.slice(0, 2)).toEqual(["pom@ams", "fresh-key"]);
+      expect(subscribeToSessionMock.mock.calls.at(-1)?.[3]).toBeUndefined();
+      expect(sessionAtSend).toBeUndefined();
+      expect(setSearchParamsMock).toHaveBeenCalledWith(
+        { session: undefined }, { replace: true, state: routeState.state },
+      );
+      expect(routeState.project).toBe("project-1");
+      expect(routeState.view).toBe("full");
+      expect(navigateMock).not.toHaveBeenCalled();
+      subscription.onDeviceApprovalRequest?.(pending);
+      await waitFor(() => expect(queryByRole(second.container, "button", { name: "Approve" })).not.toBeNull());
+      expect(queryByText(second.container, "ls -la")).not.toBeNull();
+      queryByRole(second.container, "button", { name: approve ? "Approve" : "Refuse" })!.click();
+      expect(send).toHaveBeenCalledWith({ type: "device_approval_answer", approvalId: "reset-pending", approve });
+      expect(messageAnswer).not.toHaveBeenCalled();
+      subscription.onDeviceApprovalResolved?.({ type: "device_approval_resolved", approvalId: "reset-pending", agentId: "pom@ams", chat: "key:fresh-key", outcome: approve ? "approved" : "refused" });
+      await waitFor(() => expect(queryByRole(second.container, "button", { name: "Approve" })).toBeNull());
+      second.dispose();
+    });
+
+    it.each(["/reset", "/new"])("keeps the fresh key route after an empty %s and its reset event", async (text) => {
+      routeState.session = "history-ask";
+      const first = await renderRemote();
+      const sent = await sendReset(first.container, text);
+      sent[6].onSessionReset("remote-empty-reset");
+      sent[3]("The reset is complete.");
+      sent[4]();
+      await tick();
+      expect(routeState.session).toBeUndefined();
+      expect(navigateMock).not.toHaveBeenCalled();
+      expect(first.container.textContent).toContain("The reset is complete.");
+      expect(subscribeToSessionMock.mock.calls.at(-1)?.[1]).toBe("fresh-key");
+      expect(subscribeToSessionMock.mock.calls.at(-1)?.[3]).toBeUndefined();
+      first.dispose();
+      const second = await renderRemote();
+      expect(subscribeToSessionMock.mock.calls.at(-1)?.[1]).toBe("fresh-key");
+      expect(subscribeToSessionMock.mock.calls.at(-1)?.[3]).toBeUndefined();
+      expect(startNewChatMock).toHaveBeenCalledOnce();
+      second.dispose();
+    });
+
+    it("uses separate keys for consecutive resets and hides the old approval", async () => {
+      routeState.session = "history-ask";
+      let resetCount = 0;
+      startNewChatMock.mockImplementation(() => { getSessionKeyMock.mockReturnValue(`reset-${++resetCount}`); });
+      const view = await renderRemote();
+      const first = await sendReset(view.container, "/reset first command");
+      const oldAnswer = vi.fn().mockReturnValue(true);
+      first[6].onDeviceApprovalRequest(request("first", "key:reset-1"), oldAnswer);
+      await waitFor(() => expect(queryByRole(view.container, "button", { name: "Approve" })).not.toBeNull());
+      const second = await sendReset(view.container, "/reset second command", 2);
+      expect(first[2]).toBe("reset-1");
+      expect(second[2]).toBe("reset-2");
+      expect(second[7]?.sessionId).toBeUndefined();
+      expect(routeState.session).toBeUndefined();
+      first[3]("Text from the old reset.");
+      first[6].onDeviceApprovalRequest(request("stale", "key:reset-1"), oldAnswer);
+      subscription.onDeviceApprovalRequest?.(request("second", "key:reset-2", "device_bash", { command: "echo second" }));
+      await waitFor(() => expect(queryAllByRole(view.container, "button", { name: "Approve" })).toHaveLength(1));
+      expect(queryByText(view.container, "ls -la")).toBeNull();
+      expect(view.container.textContent).not.toContain("Text from the old reset.");
+      expect(queryByText(view.container, "echo second")).not.toBeNull();
+      queryByRole(view.container, "button", { name: "Refuse" })!.click();
+      expect(send).toHaveBeenCalledWith({ type: "device_approval_answer", approvalId: "second", approve: false });
+      expect(oldAnswer).not.toHaveBeenCalled();
+      view.dispose();
+    });
+
+    it("uses another history identity after a reset and ignores the old stream", async () => {
+      routeState.session = "history-ask";
+      const view = await renderRemote();
+      const sent = await sendReset(view.container, "/reset first command");
+      sent[6].onDeviceApprovalRequest(request("reset", "key:fresh-key"), () => true);
+      await waitFor(() => expect(queryByRole(view.container, "button", { name: "Approve" })).not.toBeNull());
+      routeState.session = "another-history";
+      setRouteVersion(value => value + 1);
+      await waitFor(() => expect(subscribeToSessionMock.mock.calls.at(-1)?.[3]).toBe("another-history"));
+      sent[3]("Text from the old reset.");
+      sent[6].onSessionReset("stale-reset-event");
+      subscription.onDeviceApprovalRequest?.(request("stale", "key:fresh-key"));
+      subscription.onDeviceApprovalRequest?.(request("history", "session:another-history", "device_bash", { command: "echo history" }));
+      await waitFor(() => expect(queryAllByRole(view.container, "button", { name: "Approve" })).toHaveLength(1));
+      expect(queryByText(view.container, "ls -la")).toBeNull();
+      expect(view.container.textContent).not.toContain("Text from the old reset.");
+      expect(queryByText(view.container, "echo history")).not.toBeNull();
+      expect(routeState.session).toBe("another-history");
+      queryByRole(view.container, "button", { name: "Approve" })!.click();
+      expect(send).toHaveBeenCalledWith({ type: "device_approval_answer", approvalId: "history", approve: true });
+      view.dispose();
     });
 
     it("shows a card for a request of the open chat and none for another chat", async () => {
