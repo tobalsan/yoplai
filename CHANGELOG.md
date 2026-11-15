@@ -26,6 +26,7 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Fixed
 
+- Remote dashboard snapshots now free their stored bytes and metadata at their deadlines, with no later request. The gateway answers each alias of a viewer path, such as mixed case or encoded separators, with the typed 404 and no remote call. A remote 403 access denial now wins over a version check, so it never shows as an update prompt.
 - Remote OAuth no longer needs a local provider extension and rejects unrelated core login redirects.
   Core starts now require the JSON start result on the remote gateway. Browser OAuth keeps its existing behavior.
 - Remote schedules bypass only the local extension gate for allowed remote routes.
