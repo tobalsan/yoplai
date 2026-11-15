@@ -6,7 +6,7 @@ import type { DeviceCall } from "@yoplai/shared";
 import { DeviceApprovals } from "./device-approvals.js";
 import { DeviceExecutor } from "./device-exec.js";
 import { createFileDeviceSettingsStore, deviceChatKey, type DeviceSettingsStore } from "./device-settings.js";
-import { DeviceTurns, TURN_TOKEN_TTL_MS } from "./device-turns.js";
+import { DeviceTurns, MAX_PENDING_DEVICE_TURNS, TURN_TOKEN_TTL_MS } from "./device-turns.js";
 
 vi.mock("../config/index.js", () => ({ getAgent: () => undefined }));
 
@@ -96,5 +96,32 @@ describe("device call permission: the chat of the turn token", () => {
     await write(token);
     vi.advanceTimersByTime(2000);
     await expect(write(token)).rejects.toThrow(/no user is present/);
+  });
+});
+
+describe("device turn limits", () => {
+  it("cancels the timer and ends each turn once", () => {
+    vi.useFakeTimers();
+    const before = vi.getTimerCount();
+    const token = turns.issue({ gateway: "ams", agentId: "pom", chat: "key:main", page: undefined });
+    expect(turns.find(token)).toMatchObject({ createdAt: Date.now() });
+    expect(vi.getTimerCount()).toBe(before + 1);
+    turns.end(token);
+    turns.end(token);
+    expect(turns.find(token)).toBeUndefined();
+    expect(vi.getTimerCount()).toBe(before);
+  });
+
+  it("removes expired turns and frees the pending limit", () => {
+    vi.useFakeTimers();
+    const tokens = Array.from({ length: MAX_PENDING_DEVICE_TURNS }, () =>
+      turns.issue({ gateway: "ams", agentId: "pom", chat: "key:main", page: undefined }));
+    expect(() => turn("key:main")).toThrow(/Too many pending device turns/);
+    vi.advanceTimersByTime(TURN_TOKEN_TTL_MS);
+    expect(vi.getTimerCount()).toBe(0);
+    expect(tokens.every(token => turns.find(token) === undefined)).toBe(true);
+    const token = turn("key:main");
+    expect(turns.find(token)).toBeDefined();
+    turns.end(token);
   });
 });

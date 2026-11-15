@@ -249,6 +249,7 @@ export async function runAgent(
     sessionKey,
     userId: sessionOwnerId,
     requesterId: params.requesterId ?? params.userId,
+    deviceTurnToken: params.deviceTurnToken,
     source: params.source,
     slackDelivery: params.slackDelivery,
     trace: params.trace,
@@ -688,6 +689,11 @@ export async function runAgent(
             continue;
           }
           let outcome: { result: SharedRunAgentResult } | { error: unknown };
+          let terminalEventSent = false;
+          const onDeferredEvent = (event: StreamEvent) => {
+            if (event.type === "error" || (event.type === "done" && !event.meta?.queued)) terminalEventSent = true;
+            pending.params?.onEvent?.(event);
+          };
           try {
             outcome = { result: await runAgent({
               ...(pending.params ?? params),
@@ -698,11 +704,12 @@ export async function runAgent(
               resolvedSession: undefined,
               deferredTurn: true,
               extensionRuntime,
-              onEvent: pending.params?.onEvent,
+              onEvent: onDeferredEvent,
             }) };
           } catch (error) {
             logRunFailure("[agent] queued turn failed", error, { agentId: params.agentId, sessionId });
             outcome = { error };
+            if (!terminalEventSent) onDeferredEvent({ type: "error", message: error instanceof Error ? error.message : String(error) });
           }
           try {
             await pending.params?.onDeferredResult?.(outcome);

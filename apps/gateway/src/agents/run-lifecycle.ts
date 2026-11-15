@@ -56,6 +56,7 @@ type LifecycleContext = {
   sessionKey?: string;
   userId?: string;
   requesterId?: string;
+  deviceTurnToken?: string;
   source?: string;
   slackDelivery?: ContainerDeliveryContext["slack"];
   background?: boolean;
@@ -182,13 +183,15 @@ export class SessionRunLifecycle {
   async handleJoin(policy: QueuePolicy): Promise<QueueDecision> {
     if (!this.isStreaming()) return { handled: false };
 
+    const differentDeviceTurn = getSession(this.context.agentId, this.context.sessionId)?.deviceTurnToken !== this.context.deviceTurnToken;
     const differentRequester = getSession(this.context.agentId, this.context.sessionId)?.requesterId !== this.context.requesterId;
     if (policy.queueMode === "queue" || differentRequester) {
       let deliveredToCurrentRun = false;
       if (
         policy.capabilities.queueWhileStreaming &&
         policy.adapter.queueMessage &&
-        !differentRequester
+        !differentRequester &&
+        !differentDeviceTurn
       ) {
         enqueuePendingUserMessage(
           this.context.agentId,
@@ -249,6 +252,7 @@ export class SessionRunLifecycle {
     const session = getSession(this.context.agentId, this.context.sessionId);
     if (session) {
       session.requesterId = this.context.requesterId;
+      session.deviceTurnToken = this.context.deviceTurnToken;
       session.storageOwnerId = this.context.userId ?? null;
       session.bufferedTurns = this.completedTurns;
       session.settled = new Promise<void>((resolve) => { session.resolveSettled = resolve; });
@@ -269,7 +273,7 @@ export class SessionRunLifecycle {
       );
       for (const pending of buffered) {
         const requesterId = pending.params?.requesterId ?? pending.params?.userId;
-        if (requesterId !== this.context.requesterId) {
+        if (requesterId !== this.context.requesterId || pending.params?.deviceTurnToken !== this.context.deviceTurnToken) {
           bufferPendingMessage(this.context.agentId, this.context.sessionId, pending.message, pending.sender, pending.params);
           continue;
         }

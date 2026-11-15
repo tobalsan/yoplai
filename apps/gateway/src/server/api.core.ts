@@ -1351,7 +1351,7 @@ api.post("/agents/:id/messages", async (c) => {
     const authContext = await getRequestAuthContext(c);
     const normalized = await normalizeRunRequest({
       agent,
-      input: { agentId, ...body },
+      input: { agentId, ...body, deviceTurnToken: undefined },
       authContext,
       extensionRuntime: getExtensionRuntime(),
       source: "web",

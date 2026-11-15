@@ -15,10 +15,11 @@ type RemoteLink = { socket: WebSocket; queue: string[]; chat: boolean };
 
 export const CONNECT_TIMEOUT_MS = 10_000;
 export const MAX_QUEUED_MESSAGES = 20;
+export const MAX_PENDING_PAGE_TURNS = 20;
 
 /**
  * Carries the messages of one page socket to the remote gateways. It opens one
- * socket for each remote gateway that the page uses, and closes them with the page socket.
+ * socket for each subscription gateway and each send, and closes them with the page socket.
  */
 export class RelayWsBridge {
   private readonly links = new Map<string, RemoteLink>();
@@ -27,8 +28,7 @@ export class RelayWsBridge {
   private subscribedGateway: string | undefined;
   /** The remote agent and local chat name of the page subscription. Device approvals for them go to the page. */
   private subscription: { agentId: string; chat: string } | undefined;
-  /** The turn tokens of this page that wait for a `done` or `error` event, oldest first, for each gateway. */
-  private readonly openTurns = new Map<string, string[]>();
+  private readonly sendLinks = new Set<RemoteLink>();
   private readonly stopApprovals: (() => void) | undefined;
 
   constructor(
@@ -54,8 +54,9 @@ export class RelayWsBridge {
 
   close(): void {
     this.stopApprovals?.();
-    for (const link of this.links.values()) link.socket.close();
+    for (const link of [...this.links.values(), ...this.sendLinks]) link.socket.close();
     this.links.clear();
+    this.sendLinks.clear();
   }
 
   private route(raw: string): boolean {
@@ -115,14 +116,25 @@ export class RelayWsBridge {
     const forwarded: PageMessage = { ...message, agentId: target.agentId };
     if (message.type === "send") {
       // The token is new for each message. A value from the page never reaches the remote gateway.
-      const token = getDeviceTurns().issue({
-        gateway: gateway.name,
-        agentId: target.agentId,
-        chat: localChatName(message),
-        page: this.page,
-      });
-      this.openTurns.set(gateway.name, [...(this.openTurns.get(gateway.name) ?? []), token]);
+      if (this.sendLinks.size >= MAX_PENDING_PAGE_TURNS) {
+        this.page.send(JSON.stringify({ type: "error", message: "Too many pending device turns. Try again after a turn ends." }));
+        return true;
+      }
+      let token: string;
+      try {
+        token = getDeviceTurns().issue({
+          gateway: gateway.name,
+          agentId: target.agentId,
+          chat: localChatName(message),
+          page: this.page,
+        });
+      } catch (error) {
+        this.page.send(JSON.stringify({ type: "error", message: (error as Error).message }));
+        return true;
+      }
       forwarded.deviceTurnToken = token;
+      this.sendTo(gateway, forwarded, true, token);
+      return true;
     }
     this.sendTo(gateway, forwarded, true);
     return true;
@@ -131,15 +143,6 @@ export class RelayWsBridge {
   private subscribes(agentId: string, chat: string): boolean {
     const sub = this.subscription;
     return sub !== undefined && sub.agentId === agentId && sub.chat === chat;
-  }
-
-  /** A `done` or `error` event of a gateway ends the oldest open turn of this page on that gateway. */
-  private endTurn(gatewayName: string): void {
-    const [token, ...rest] = this.openTurns.get(gatewayName) ?? [];
-    if (token === undefined) return;
-    getDeviceTurns().end(token);
-    if (rest.length > 0) this.openTurns.set(gatewayName, rest);
-    else this.openTurns.delete(gatewayName);
   }
 
   private sendApproval(event: ApprovalEvent): void {
@@ -191,9 +194,9 @@ export class RelayWsBridge {
     link.queue.push(payload);
   }
 
-  private sendTo(gateway: RemoteGateway, message: PageMessage, chat: boolean): void {
+  private sendTo(gateway: RemoteGateway, message: PageMessage, chat: boolean, turnToken?: string): void {
     const payload = JSON.stringify(message);
-    const existing = this.links.get(gateway.name);
+    const existing = turnToken === undefined ? this.links.get(gateway.name) : undefined;
     if (existing) {
       existing.chat ||= chat;
       this.deliver(existing, payload);
@@ -204,39 +207,57 @@ export class RelayWsBridge {
       handshakeTimeout: this.connectTimeoutMs,
     });
     const link: RemoteLink = { socket, queue: [payload], chat };
-    this.links.set(gateway.name, link);
+    if (turnToken === undefined) this.links.set(gateway.name, link);
+    else {
+      this.sendLinks.add(link);
+    }
+    let finished = false;
     socket.on("open", () => {
       for (const queued of link.queue.splice(0)) socket.send(queued);
     });
-    socket.on("message", (data) => this.toPage(gateway.name, data.toString()));
+    socket.on("message", (data) => {
+      if (turnToken !== undefined && finished) return;
+      const terminal = this.toPage(gateway.name, data.toString(), turnToken);
+      if (turnToken !== undefined && terminal) {
+        finished = true;
+        socket.close();
+      }
+    });
     socket.on("error", () => {
       if (!link.chat) return;
-      this.toPage(gateway.name, JSON.stringify({ type: "error", message: `Gateway ${gateway.name} is offline` }));
+      this.toPage(gateway.name, JSON.stringify({ type: "error", message: `Gateway ${gateway.name} is offline` }), turnToken);
+      if (turnToken !== undefined) {
+        finished = true;
+        this.page.close();
+      }
     });
     // A failed chat stream looks like a local agent whose socket closes: the page sees the close.
     // A failed status link stays silent, so one offline gateway does not interrupt the page.
     socket.on("close", () => {
       if (this.links.get(gateway.name) === link) this.links.delete(gateway.name);
-      if (link.chat) this.page.close();
+      if (turnToken !== undefined) {
+        this.sendLinks.delete(link);
+        if (!finished) this.page.close();
+      } else if (link.chat) this.page.close();
     });
   }
 
-  private toPage(gatewayName: string, raw: string): void {
-    if (this.page.readyState !== WebSocket.OPEN) return;
+  private toPage(gatewayName: string, raw: string, turnToken?: string): boolean {
     try {
       const event = JSON.parse(raw) as PageMessage;
       // Only the local gateway makes device approval messages. A remote gateway must not send them to the page.
-      if (typeof event.type === "string" && event.type.startsWith("device_approval_")) return;
-      if (event.type === "error" || (event.type === "done" && (event.meta as { queued?: boolean } | undefined)?.queued !== true)) {
-        this.endTurn(gatewayName);
-      }
+      if (typeof event.type === "string" && event.type.startsWith("device_approval_")) return false;
+      const terminal = event.type === "error" || (event.type === "done" && (event.meta as { queued?: boolean } | undefined)?.queued !== true);
+      if (terminal && turnToken !== undefined) getDeviceTurns().end(turnToken);
       if (typeof event.agentId === "string") {
         event.agentId = addGatewaySuffix(event.agentId, gatewayName);
-        if (getAgent(event.agentId)) return;
+        if (getAgent(event.agentId)) return terminal;
       }
-      this.page.send(JSON.stringify(event));
+      if (this.page.readyState === WebSocket.OPEN) this.page.send(JSON.stringify(event));
+      return terminal;
     } catch {
-      this.page.send(raw);
+      if (this.page.readyState === WebSocket.OPEN) this.page.send(raw);
+      return false;
     }
   }
 }

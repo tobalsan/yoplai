@@ -24,6 +24,7 @@ export type AgentSession = {
   bufferedTurns?: TurnBuffer[];
   storageOwnerId?: string | null;
   requesterId?: string;
+  deviceTurnToken?: string;
   settled?: Promise<void>;
   resolveSettled?: () => void;
   resetting?: boolean;

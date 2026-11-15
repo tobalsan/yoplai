@@ -3,6 +3,8 @@ import { randomBytes } from "node:crypto";
 /** A turn token stops working this long after its creation, when no `done` or `error` event ends it first. */
 export const TURN_TOKEN_TTL_MS = 2 * 60 * 60 * 1000;
 
+export const MAX_PENDING_DEVICE_TURNS = 1000;
+
 export type DeviceTurn = {
   gateway: string;
   /** Remote agent ID with the gateway suffix. */
@@ -21,13 +23,15 @@ export function localChatName(message: Record<string, unknown>): string {
 
 /** Holds the chat turns that this gateway forwarded. Memory only. */
 export class DeviceTurns {
-  private readonly turns = new Map<string, DeviceTurn>();
+  private readonly turns = new Map<string, DeviceTurn & { createdAt: number; timer: ReturnType<typeof setTimeout> }>();
 
   /** Makes the secret token of a new turn. */
   issue(turn: DeviceTurn): string {
+    if (this.turns.size >= MAX_PENDING_DEVICE_TURNS) throw new Error("Too many pending device turns. Try again after a turn ends.");
     const token = randomBytes(32).toString("base64url");
-    this.turns.set(token, turn);
-    setTimeout(() => this.end(token), TURN_TOKEN_TTL_MS).unref();
+    const timer = setTimeout(() => this.end(token), TURN_TOKEN_TTL_MS);
+    timer.unref();
+    this.turns.set(token, { ...turn, createdAt: Date.now(), timer });
     return token;
   }
 
@@ -37,6 +41,9 @@ export class DeviceTurns {
   }
 
   end(token: string): void {
+    const turn = this.turns.get(token);
+    if (!turn) return;
+    clearTimeout(turn.timer);
     this.turns.delete(token);
   }
 }

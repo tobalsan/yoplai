@@ -363,7 +363,6 @@ describe("device approval: protocol", () => {
 
     it.each(["done", "error"])("ends the token when the remote gateway sends %s", async (type) => {
       const page = await openPage();
-      subscribe(page);
       sendChat(page);
       await waitFor(() => sentTokens().length === 1);
       const token = sentTokens()[0] as string;
