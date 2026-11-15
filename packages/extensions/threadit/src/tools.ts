@@ -557,14 +557,28 @@ export function threaditAgentTools(
     ),
     define(
       "edit_message",
-      "Change the body of your own message. An edit notifies nobody.",
-      { message_id: ID, body: { ...STR, description: "1-20000 chars." } },
-      ["message_id", "body"],
-      z.object({ message_id: id, body: z.string().min(1).max(20000) }).strict(),
-      async (input, board) => ({
-        message: await board.json("PATCH", `/api/messages/${input.message_id}`, {
-          body: { body: input.body },
+      "Edit your own message: change the body, the attachments, or both. attachment_ids is the full list the message keeps; ids left out are removed, [] removes all. Upload new files first with upload_attachment. An edit notifies nobody.",
+      {
+        message_id: ID,
+        body: { ...STR, description: "1-20000 chars. Omit to keep the body." },
+        attachment_ids: {
+          ...ATTACHMENT_IDS,
+          description: "Full set of attachment ids the message keeps. Omit to keep them; [] removes all.",
+        },
+      },
+      ["message_id"],
+      z
+        .object({
+          message_id: id,
+          body: z.string().min(1).max(20000).optional(),
+          attachment_ids: attachmentIds,
+        })
+        .strict()
+        .refine((v) => v.body !== undefined || v.attachment_ids !== undefined, {
+          message: "needs body or attachment_ids",
         }),
+      async ({ message_id, ...body }, board) => ({
+        message: await board.json("PATCH", `/api/messages/${message_id}`, { body }),
       })
     ),
     define(
@@ -685,7 +699,7 @@ export function threaditAgentTools(
     ),
     define(
       "upload_attachment",
-      "Upload a file from your workspace (max 10 MB). Pass the returned id as attachment_ids in create_thread or reply.",
+      "Upload a file from your workspace (max 10 MB). Pass the returned id as attachment_ids in create_thread, reply or edit_message.",
       { path: { ...STR, description: "File path in your workspace, for example /workspace/report.pdf." } },
       ["path"],
       z.object({ path: z.string().min(1) }).strict(),
