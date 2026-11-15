@@ -124,6 +124,26 @@ describe("accessLogger", () => {
     );
   });
 
+  it("redacts the grant in a dashboard viewer path and keeps the rest of the path", async () => {
+    const app = new Hono();
+    const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    vi.spyOn(Date, "now").mockReturnValue(0);
+    app.use("*", accessLogger());
+    app.all("*", (c) => c.text("ok"));
+    const grant = "g".repeat(43);
+    const id = "i".repeat(32);
+
+    await app.request(`/api/relay/dashboard-views/${grant}/${id}/?region=emea`);
+    await app.request(`/api/relay/dashboard-views/${grant}/${id}/edit`, { method: "POST" });
+    await app.request(`/api/relay/dashboard-views/${grant}/current`);
+
+    const text = log.mock.calls.map((call) => String(call[0])).join("\n");
+    expect(text).not.toContain(grant);
+    expect(text).toContain(`--> GET /api/relay/dashboard-views/[redacted]/${id}/?region=emea 200`);
+    expect(text).toContain(`--> POST /api/relay/dashboard-views/[redacted]/${id}/edit 200`);
+    expect(text).toContain("--> GET /api/relay/dashboard-views/[redacted]/current 200");
+  });
+
   it.each([
     "/api/agents/sessions/search?q=hello",
     "/api/skills/import-token?v=1",
