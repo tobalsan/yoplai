@@ -271,6 +271,7 @@ Lifetime and capacity. These are fixed defaults, not settings.
 | Page | 5 MiB after decompression |
 
 Both `429` answers have `Retry-After: 60`. Expiry, unlink, relink, and restart end a snapshot and its bytes. A failed remote read stores nothing.
+One timer without a reference waits for the next deadline of any snapshot. It frees undelivered bytes at the end of the delivery window and removes metadata at its expiry, also while no request arrives. The store sets the timer again after each store, delivery, and removal. The timer does not keep the process alive. Each use still checks the expiry and the link.
 
 ### Trusted host contract
 

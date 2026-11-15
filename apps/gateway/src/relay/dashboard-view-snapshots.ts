@@ -42,17 +42,46 @@ type Snapshot = {
 
 const snapshots = new Map<string, Snapshot>();
 
+/** The longest delay of a Node timer. A longer deadline wakes the sweep early, and the sweep sets the timer again. */
+const MAX_TIMER_MS = 2 ** 31 - 1;
+
+/** The one cleanup timer. It waits for the next deadline of any snapshot, so an idle viewer still frees its bytes and metadata. */
+let cleanupTimer: NodeJS.Timeout | undefined;
+
+/** Time when this snapshot next changes: its delivery deadline while it holds bytes, else its end. */
+function deadlineOf(snapshot: Snapshot): number {
+  return snapshot.bytes === undefined ? snapshot.expiresAt : Math.min(snapshot.expiresAt, snapshot.createdAt + dashboardViewSnapshotLimits.deliveryMs);
+}
+
+/** Replaces the cleanup timer with one for the earliest deadline. No snapshot means no timer. The timer never keeps the process alive. */
+function scheduleCleanup(): void {
+  if (cleanupTimer) clearTimeout(cleanupTimer);
+  cleanupTimer = undefined;
+  if (snapshots.size === 0) return;
+  let next = Infinity;
+  for (const snapshot of snapshots.values()) next = Math.min(next, deadlineOf(snapshot));
+  cleanupTimer = setTimeout(() => {
+    cleanupTimer = undefined;
+    sweep(Date.now());
+  }, Math.min(Math.max(next - Date.now(), 1), MAX_TIMER_MS));
+  cleanupTimer.unref();
+}
+
 function linkFingerprint(gateway: RemoteGateway): string {
   return createHash("sha256").update(JSON.stringify([gateway.name, gateway.url, gateway.token ?? null, gateway.generation ?? null])).digest("hex");
 }
 
-/** Ends snapshots that expired, that nobody delivered in time, or whose link no longer exists or changed. */
+/**
+ * Ends snapshots that expired, that nobody delivered in time, or whose link no
+ * longer exists or changed. It then sets the cleanup timer for what remains.
+ */
 function sweep(now: number): void {
   const links = new Map(getLinkedGateways().map((gateway) => [gateway.name, linkFingerprint(gateway)]));
   for (const [handle, snapshot] of snapshots) {
     const lateDelivery = snapshot.bytes !== undefined && snapshot.createdAt + dashboardViewSnapshotLimits.deliveryMs <= now;
     if (snapshot.expiresAt <= now || lateDelivery || links.get(snapshot.gateway) !== snapshot.link) snapshots.delete(handle);
   }
+  scheduleCleanup();
 }
 
 function storedBytes(): number {
@@ -100,6 +129,7 @@ export function storeDashboardViewSnapshot(
     expiresAt,
     shellDelivered: false,
   });
+  scheduleCleanup();
   return { handle, instance, expiresAt };
 }
 
@@ -150,11 +180,13 @@ export function claimDashboardViewBytes(handle: string): Buffer | undefined {
   const bytes = snapshot?.bytes;
   if (!snapshot || !bytes) return undefined;
   snapshot.bytes = undefined;
+  scheduleCleanup();
   return bytes;
 }
 
 export function resetDashboardViewSnapshotsForTests(): void {
   snapshots.clear();
+  scheduleCleanup();
 }
 
 export function dashboardViewStoreSizeForTests(): { count: number; bytes: number } {

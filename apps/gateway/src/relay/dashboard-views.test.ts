@@ -433,6 +433,124 @@ describe("snapshots", () => {
   });
 });
 
+/**
+ * The store frees bytes and metadata at their deadlines while the viewer is idle.
+ * These checks never call a store function that sweeps, so only the timer can
+ * explain a freed entry. The size helper reads the map and sweeps nothing.
+ */
+describe("idle cleanup of snapshots", () => {
+  const MINUTE = 60 * 1000;
+  const newSnapshot = (bytes = 100) => ({ dashboardId: ID, query: "", theme: null, meta: metaFor(ID), bytes: Buffer.alloc(bytes, 0x61) });
+  const link = () => state.getRemoteGatewayStore().list().find((gateway) => gateway.name === "ams")!;
+  const store = (bytes = 100) => {
+    const stored = snapshots.storeDashboardViewSnapshot(link(), UI, newSnapshot(bytes));
+    if (typeof stored === "string") throw new Error(`store refused: ${stored}`);
+    return stored;
+  };
+  const size = () => snapshots.dashboardViewStoreSizeForTests();
+
+  it("releases undelivered bytes and metadata at the delivery deadline, with no later request", async () => {
+    snapshots.dashboardViewSnapshotLimits.deliveryMs = 20;
+    await open();
+    expect(size().bytes).toBeGreaterThan(0);
+    await vi.waitFor(() => expect(size()).toEqual({ count: 0, bytes: 0 }), { timeout: 2000, interval: 5 });
+  });
+
+  it("releases undelivered bytes exactly at the delivery deadline", () => {
+    vi.useFakeTimers();
+    store();
+    vi.advanceTimersByTime(2 * MINUTE - 1);
+    expect(size()).toEqual({ count: 1, bytes: 100 });
+    vi.advanceTimersByTime(1);
+    expect(size()).toEqual({ count: 0, bytes: 0 });
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("keeps delivered metadata until its own deadline and removes it with no later request", () => {
+    vi.useFakeTimers();
+    const { handle } = store();
+    expect(snapshots.claimDashboardViewBytes(handle)).toHaveLength(100);
+    expect(size()).toEqual({ count: 1, bytes: 0 });
+    vi.advanceTimersByTime(2 * MINUTE + 1);
+    expect(size()).toEqual({ count: 1, bytes: 0 });
+    vi.advanceTimersByTime(28 * MINUTE - 2);
+    expect(size()).toEqual({ count: 1, bytes: 0 });
+    vi.advanceTimersByTime(1);
+    expect(size()).toEqual({ count: 0, bytes: 0 });
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("removes metadata that nobody read or delivered at the first deadline, and leaves no timer", () => {
+    vi.useFakeTimers();
+    snapshots.dashboardViewSnapshotLimits.ttlMs = 30_000;
+    store();
+    vi.advanceTimersByTime(30_000);
+    expect(size()).toEqual({ count: 0, bytes: 0 });
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("handles overlapping deadlines and sets the timer again after storage, delivery and deletion", () => {
+    vi.useFakeTimers();
+    const first = store(100);
+    vi.advanceTimersByTime(30_000);
+    const second = store(200);
+    vi.advanceTimersByTime(30_000);
+    expect(snapshots.claimDashboardViewBytes(second.handle)).toHaveLength(200);
+    expect(size()).toEqual({ count: 2, bytes: 100 });
+    // The first snapshot ends at 2 minutes. The delivered second one stays.
+    vi.advanceTimersByTime(MINUTE - 1);
+    expect(size()).toEqual({ count: 2, bytes: 100 });
+    vi.advanceTimersByTime(1);
+    expect(size()).toEqual({ count: 1, bytes: 0 });
+    expect(snapshots.resolveDashboardViewSnapshot(first.handle)).toBeUndefined();
+    // A snapshot with an earlier deadline that comes later replaces the waiting timer.
+    snapshots.dashboardViewSnapshotLimits.deliveryMs = 10_000;
+    store(300);
+    vi.advanceTimersByTime(10_000);
+    expect(size()).toEqual({ count: 1, bytes: 0 });
+    // The delivered second snapshot ends 30 minutes after its storage at 30 seconds. Now is 130 seconds.
+    vi.advanceTimersByTime(30 * MINUTE + 30_000 - 130_000 - 1);
+    expect(size().count).toBe(1);
+    vi.advanceTimersByTime(1);
+    expect(size()).toEqual({ count: 0, bytes: 0 });
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("clears the timer in the test reset and never brings back a deleted snapshot", () => {
+    vi.useFakeTimers();
+    const { handle } = store();
+    expect(vi.getTimerCount()).toBe(1);
+    snapshots.resetDashboardViewSnapshotsForTests();
+    expect(vi.getTimerCount()).toBe(0);
+    expect(size()).toEqual({ count: 0, bytes: 0 });
+    vi.advanceTimersByTime(40 * MINUTE);
+    expect(size()).toEqual({ count: 0, bytes: 0 });
+    expect(snapshots.resolveDashboardViewSnapshot(handle)).toBeUndefined();
+    // A new snapshot after the reset keeps its own full life.
+    const next = store(50);
+    vi.advanceTimersByTime(2 * MINUTE - 1);
+    expect(size()).toEqual({ count: 1, bytes: 50 });
+    expect(snapshots.claimDashboardViewBytes(next.handle)).toHaveLength(50);
+  });
+
+  it("ends a snapshot at the timer when its link changed", () => {
+    vi.useFakeTimers();
+    store();
+    state.getRemoteGatewayStore().save({ name: "ams", url: remoteUrl, token: "bearer-ams-rotated" });
+    expect(size().count).toBe(1);
+    vi.advanceTimersByTime(2 * MINUTE);
+    expect(size()).toEqual({ count: 0, bytes: 0 });
+  });
+
+  it("does not keep the process alive", () => {
+    const refs = () => process.getActiveResourcesInfo().filter((name) => name === "Timeout").length;
+    const before = refs();
+    store();
+    expect(refs()).toBe(before);
+    snapshots.resetDashboardViewSnapshotsForTests();
+  });
+});
+
 describe("overlapping prepare requests", () => {
   it("keeps each snapshot on its own dashboard when the reads finish in the opposite order", async () => {
     const waiting: Array<() => void> = [];
