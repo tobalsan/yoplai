@@ -100,6 +100,7 @@ import { getDashboardRegistry } from "../canvas/store.js";
 import { createDashboardResourceRoutes } from "../canvas/routes.js";
 import { DashboardPinStore } from "../canvas/pins.js";
 import { resolveDashboardHttpActor, listDashboardRecipients, dashboardOwnerName } from "../canvas/http-auth.js";
+import { DASHBOARD_EMBED_ASSET_VERSION, DASHBOARD_EMBED_POLICY_VERSION, DASHBOARD_EMBED_VERSION } from "../canvas/embed-contract.js";
 import { getAuditActor, listSettingsChanges, recordSettingsChange } from "../audit/store.js";
 import { diffSettings } from "../audit/diff.js";
 import { modelQuotaStore } from "../model-quota/runtime.js";
@@ -596,6 +597,12 @@ api.get("/capabilities", async (c) => {
       : {}),
     forkedAgents: config.forkedAgents ?? false,
     enableCronMonitoring: config.enableCronMonitoring ?? false,
+    dashboardEmbed: {
+      version: DASHBOARD_EMBED_VERSION,
+      assetVersion: DASHBOARD_EMBED_ASSET_VERSION,
+      policyVersion: DASHBOARD_EMBED_POLICY_VERSION,
+      enabled: config.canvas?.enabled !== false,
+    },
     ...(home ? { home } : {}),
     ...(isMultiUserEnabled && authContext
       ? {

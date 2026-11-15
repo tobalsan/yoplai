@@ -1,7 +1,7 @@
 import fs from "node:fs/promises";
 import { readFileSync } from "node:fs";
 import path from "node:path";
-import { Hono } from "hono";
+import { Hono, type Context } from "hono";
 import { z } from "zod";
 import {
   resolveHomeDir,
@@ -14,7 +14,15 @@ import {
   normalizeDashboardSlug,
   openDashboardFile,
 } from "./dashboard-files.js";
-import { dashboardChatHref, dashboardHtml, listAgentDashboards, type DashboardListContext } from "./list.js";
+import { dashboardChatHref, dashboardChatTarget, dashboardHtml, listAgentDashboards, type DashboardListContext } from "./list.js";
+import {
+  DASHBOARD_EMBED_ASSET_VERSION,
+  DASHBOARD_EMBED_HEADERS,
+  DASHBOARD_EMBED_POLICY_VERSION,
+  DASHBOARD_EMBED_VERSION,
+  DASHBOARD_ID_RE,
+  encodeDashboardEmbedMeta,
+} from "./embed-contract.js";
 import { dashboardAccessPolicy, type DashboardActor } from "./policy.js";
 import { DashboardRegistry, type DashboardRegistration } from "./store.js";
 import { dashboardTitle } from "./title.js";
@@ -30,7 +38,7 @@ import {
 
 // Versions are cached for a week; bump when the kit changes. Older versions keep
 // resolving to the current (backward-compatible) files.
-const ASSET_VERSION = "v3";
+const ASSET_VERSION = DASHBOARD_EMBED_ASSET_VERSION;
 const ASSET_VERSIONS = new Set(["v1", "v2", ASSET_VERSION]);
 const ASSET_CACHE = "public, max-age=604800";
 const THEME_MAPPING = `:root:root:not([data-yoplai-dashboard-theme]) {
@@ -108,6 +116,19 @@ export function dashboardCsp(
   return `sandbox allow-scripts allow-forms allow-downloads allow-modals allow-popups allow-popups-to-escape-sandbox; default-src 'none'; script-src 'unsafe-inline' ${assets}; style-src 'unsafe-inline' ${assets}; img-src data: blob:; font-src data: ${assets}; connect-src ${assetOrigin ?? dashboardBaseUrl(config)}/d/; frame-ancestors 'self'; form-action 'none'`;
 }
 
+/**
+ * An embedded page runs in an opaque origin, so its module scripts and fonts
+ * load in CORS mode with `Origin: null`. Only the finite public assets answer
+ * that origin, and they answer without credentials. The global CORS middleware
+ * adds a credentials header, so the answer removes it.
+ */
+function allowOpaqueOrigin(c: Context): void {
+  if (c.req.header("origin") !== "null") return;
+  c.header("Access-Control-Allow-Origin", "*");
+  c.header("Access-Control-Allow-Credentials", undefined);
+  c.header("Vary", "Origin", { append: true });
+}
+
 export function createDashboardAssetRoutes(
   getConfig: () => GatewayConfig
 ): Hono {
@@ -115,6 +136,7 @@ export function createDashboardAssetRoutes(
   routes.get("/theme.css", async (c) => {
     c.header("Content-Type", "text/css; charset=utf-8");
     c.header("Cache-Control", "no-cache");
+    allowOpaqueOrigin(c);
     try {
       const css = await fs.readFile(
         path.join(resolveHomeDir(), "theme.css"),
@@ -129,6 +151,7 @@ export function createDashboardAssetRoutes(
     const asset = c.req.param("asset");
     if (asset !== "kit.js" && asset !== "kit.css") return c.notFound();
     c.header("Cache-Control", "public, max-age=300");
+    allowOpaqueOrigin(c);
     return c.redirect(`/d-assets/${ASSET_VERSION}/${asset}`, 302);
   });
   routes.get("/:version/:asset", async (c) => {
@@ -144,21 +167,35 @@ export function createDashboardAssetRoutes(
     if (asset.type.startsWith("text/html")) {
       headers["Content-Security-Policy"] = dashboardCsp(getConfig());
     }
-    return new Response(body, { headers });
+    allowOpaqueOrigin(c);
+    return c.body(new Uint8Array(body), 200, headers);
   });
   return routes;
 }
 
 export function createDashboardRoutes(deps: DashboardRouteDependencies): Hono {
   const routes = new Hono();
-  routes.get("/:id", async (c) => {
+  // The ordinary page and the embed page share one policy path. The embed page
+  // is for the local viewer relay: it keeps all links relative to its own URL,
+  // reports checked metadata to the trusted host in a header, and answers
+  // failures with bounded JSON instead of a login redirect or an HTML page.
+  const viewPage = async (c: Context, embed: boolean) => {
     const config = deps.getConfig();
-    if (config.canvas?.enabled === false) return c.notFound();
-    const entry = await deps.registry.get(c.req.param("id"));
-    if (!entry) return c.notFound();
+    const embedFailure = (status: 401 | 403 | 404, error: string, extra: Record<string, unknown> = {}, reason?: string) => {
+      setEmbedHeaders(c);
+      if (reason) c.header(DASHBOARD_EMBED_HEADERS.reason, reason);
+      return c.json({ error, ...extra }, status);
+    };
+    const missing = (reason?: string) => (embed ? embedFailure(404, "not_found", {}, reason) : c.notFound());
+    if (config.canvas?.enabled === false) return missing("canvas_disabled");
+    const id = c.req.param("id");
+    if (embed && !DASHBOARD_ID_RE.test(id)) return missing();
+    const entry = await deps.registry.get(id);
+    if (!entry) return missing();
 
     const auth = await deps.authenticate(c.req.raw);
     if (!auth) {
+      if (embed) return embedFailure(401, "unauthorized");
       const login = new URL("/login", dashboardBaseUrl(config));
       const target = new URL(c.req.url);
       login.searchParams.set("returnTo", target.pathname + target.search);
@@ -166,20 +203,25 @@ export function createDashboardRoutes(deps: DashboardRouteDependencies): Hono {
     }
     const actor = await routeActor(deps, auth, entry.agentId);
     const agent = deps.getAgent(entry.agentId);
+    const theme = embed ? parseEmbedTheme(c.req.header(DASHBOARD_EMBED_HEADERS.theme)) : parseThemeCookie(c.req.header("Cookie"));
     if (!dashboardAccessPolicy.canRead(entry, actor)) {
       // Name the page and its owner so the viewer knows whom to ask. Legacy
       // pages have no owner to ask, and ineligible accounts learn nothing.
-      if (!actor.eligible || !entry.ownerUserId || !agent) return c.notFound();
+      if (!actor.eligible || !entry.ownerUserId || !agent) return missing();
+      if (embed) {
+        const owner = await deps.getOwnerName?.(entry.ownerUserId).catch(() => undefined);
+        return embedFailure(403, "forbidden", owner ? { ownerName: owner.slice(0, 200) } : {});
+      }
       c.header("Content-Security-Policy", dashboardCsp(config));
       c.header("Cache-Control", "no-store");
-      return c.html(await noAccessPage(deps, entry, parseThemeCookie(c.req.header("Cookie"))), 403);
+      return c.html(await noAccessPage(deps, entry, theme), 403);
     }
-    if (!agent) return c.notFound();
+    if (!agent) return missing();
     let slug: string;
     try {
       slug = normalizeDashboardSlug(entry.slug);
     } catch {
-      return c.notFound();
+      return missing();
     }
     try {
       let { html } = await dashboardHtml(agent, deps.registry, { ...entry, slug }, actor);
@@ -192,7 +234,7 @@ export function createDashboardRoutes(deps: DashboardRouteDependencies): Hono {
       const registered = await deps.registry.list(agent.id);
       const dashboards = dashboardAccessPolicy.filterVisible(registered, actor);
       const links = Object.fromEntries(
-        dashboards.map((dashboard) => [dashboard.slug, `/d/${dashboard.id}`])
+        dashboards.map((dashboard) => [dashboard.slug, embed ? `../${encodeURIComponent(dashboard.id)}/` : `/d/${dashboard.id}`])
       );
       const noAccess = registered.filter((dashboard) => !dashboards.includes(dashboard)).map((dashboard) => dashboard.slug);
       // Platform impersonation is read-only, and legacy pages must be claimed
@@ -203,36 +245,54 @@ export function createDashboardRoutes(deps: DashboardRouteDependencies): Hono {
           dashboardId: entry.id, userId: actor.userId, email: viewer.email ?? null, name: viewer.name ?? null,
         })
         : null;
+      const canWrite = !!editToken && dashboardAccessPolicy.canWrite(entry, actor);
+      // Annotations are a chat request to the page's agent: offer them only
+      // to viewers who could make the edit and can chat with that agent. An
+      // embed page also needs a viewer who is not impersonated.
+      const canAnnotate = dashboardAccessPolicy.canWrite(entry, actor) && !!actor.hasAgentAccess && (!embed || !impersonated);
+      const chatTarget = embed ? await dashboardChatTarget(entry, actor, deps.sessionExists) : null;
       html = await renderDashboardHtml(
         agent,
         html,
         viewer,
         params,
         links,
-        parseThemeCookie(c.req.header("Cookie")),
+        theme,
         undefined,
-        await dashboardChatHref(entry, actor, deps.sessionExists),
+        // The trusted host owns Chat for an embed page. A relative chat link would open the wrong local agent.
+        embed ? null : await dashboardChatHref(entry, actor, deps.sessionExists),
         {
-          canWrite: !!editToken && dashboardAccessPolicy.canWrite(entry, actor),
+          canWrite,
           editToken,
-          editBase: `${dashboardBaseUrl(config)}/d/${encodeURIComponent(entry.id)}`,
+          editBase: embed ? "." : `${dashboardBaseUrl(config)}/d/${encodeURIComponent(entry.id)}`,
         },
-        // Annotations are a chat request to the page's agent: offer them only
-        // to viewers who could make the edit and can chat with that agent.
-        dashboardAccessPolicy.canWrite(entry, actor) && actor.hasAgentAccess
-          ? { id: entry.id, slug, agentId: entry.agentId }
-          : null,
-        noAccess
+        canAnnotate ? { id: entry.id, slug, agentId: entry.agentId } : null,
+        noAccess,
+        embed
       );
       c.header("Content-Security-Policy", dashboardCsp(config));
       c.header("Cache-Control", "no-store");
+      if (embed) {
+        setEmbedHeaders(c);
+        c.header("X-Content-Type-Options", "nosniff");
+        c.header(DASHBOARD_EMBED_HEADERS.meta, encodeDashboardEmbedMeta({
+          dashboardId: entry.id,
+          agentId: entry.agentId,
+          canWrite,
+          canEdit: !!editToken,
+          chat: chatTarget ? { sessionId: chatTarget.sessionId } : null,
+          annotation: canAnnotate && !!chatTarget,
+        }));
+      }
       return c.html(html);
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === "ENOENT")
-        return c.notFound();
+        return missing();
       throw error;
     }
-  });
+  };
+  routes.get("/:id", (c) => viewPage(c, false));
+  routes.get("/:id/embed", (c) => viewPage(c, true));
   // Page edits. The page is an opaque-origin sandbox without cookies, so it
   // posts text/plain JSON (no preflight) carrying its signed edit token; the
   // token, not the origin, is the credential.
@@ -442,7 +502,8 @@ export async function renderDashboardHtml(
   chatHref?: string | null,
   editing?: PageEditing,
   annotation?: Annotation | null,
-  noAccess?: string[]
+  noAccess?: string[],
+  embed?: boolean
 ): Promise<string> {
   const bindings: Record<string, string | null> = {
     ...params,
@@ -464,6 +525,7 @@ export async function renderDashboardHtml(
       chatHref,
       ...editing,
       annotation,
+      embed,
     },
     theme
   );
@@ -474,6 +536,17 @@ function safeJson(value: unknown): string {
     .replaceAll("<", "\\u003c")
     .replaceAll("\u2028", "\\u2028")
     .replaceAll("\u2029", "\\u2029");
+}
+
+function setEmbedHeaders(c: Context): void {
+  c.header("Cache-Control", "no-store");
+  c.header(DASHBOARD_EMBED_HEADERS.version, String(DASHBOARD_EMBED_VERSION));
+  c.header(DASHBOARD_EMBED_HEADERS.assets, DASHBOARD_EMBED_ASSET_VERSION);
+  c.header(DASHBOARD_EMBED_HEADERS.policy, String(DASHBOARD_EMBED_POLICY_VERSION));
+}
+
+function parseEmbedTheme(value: string | undefined): "light" | "dark" | null {
+  return value === "light" || value === "dark" ? value : null;
 }
 
 export function parseThemeCookie(
@@ -502,6 +575,8 @@ export function injectDashboardRuntime(
     editToken?: string | null;
     editBase?: string;
     annotation?: Annotation | null;
+    /** Resolve links against the document URL. The page lives under a viewer path, not at the origin root. */
+    embed?: boolean;
   },
   themeCookie?: "light" | "dark" | null
 ): string {
@@ -527,7 +602,7 @@ export function injectDashboardRuntime(
 .yoplai-dashboard-chat:hover{background:color-mix(in srgb,var(--yoplai-chat-accent) 85%,#000);box-shadow:0 6px 18px color-mix(in srgb,var(--yoplai-chat-accent) 45%,transparent),0 1px 3px rgba(0,0,0,.2)}
 .yoplai-dashboard-chat:focus-visible{outline:2px solid var(--yoplai-chat-accent);outline-offset:3px}
 </style>` : "";
-  const bootstrap = `<script>(function(r){const NO_ACCESS=${JSON.stringify(NO_ACCESS_HREF)},warned=new Set();const build=(base,p)=>{const u=new URL(base,location.origin);for(const [k,v] of Object.entries(p||{}))u.searchParams.set(k,String(v));return u.pathname+u.search};window.YOPLAI={data:r.data,viewer:r.viewer,params:r.params,link:(slug,p)=>{const base=r.links[slug];if(!base){if((r.noAccess||[]).includes(slug)){if(!warned.has(slug)){warned.add(slug);console.warn("Dashboard not shared with you: "+slug)}return NO_ACCESS}throw new Error("Unknown dashboard: "+slug)}return build(base,{...p,...r.protectedLinkParams})},canLink:(slug)=>Object.prototype.hasOwnProperty.call(r.links,slug)};const post=(op,body)=>{if(!r.editToken)return Promise.reject(new Error("Editing is not available here"));return fetch(r.editBase+"/"+op,{method:"POST",headers:{"Content-Type":"text/plain;charset=UTF-8"},credentials:"omit",cache:"no-store",body:JSON.stringify({...body,token:r.editToken})}).catch(()=>{throw new Error("Could not reach the server; not saved")}).then((res)=>res.json().catch(()=>({})).then((j)=>{if(!res.ok||!j.ok)throw new Error(j.error||"Not saved ("+res.status+")");delete j.ok;return j}))};YOPLAI.canWrite=!!r.canWrite;YOPLAI.canEdit=!!r.editToken;YOPLAI.edit=(o)=>post("edit",{edit:o&&o.edit,key:o&&o.key,field:o&&o.field,value:o&&o.value});YOPLAI.add=(o)=>post("add",{edit:o&&o.edit,values:(o&&o.values)||{}});if(r.chatHref&&window.top===window){const showChat=()=>{const a=document.createElement("a");a.className="yoplai-dashboard-chat";a.href=r.chatHref;a.innerHTML='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7.9 20A9 9 0 1 0 4 16.1L2 22Z"/></svg><span>Chat</span>';a.target="_blank";a.rel="noopener noreferrer";document.body.append(a)};if(document.readyState==="loading")document.addEventListener("DOMContentLoaded",showChat,{once:true});else showChat()}for(const e of r.errors)console.error("Dashboard query error ("+e.name+"): "+e.error)})(${safeJson(runtime)});</script>`;
+  const bootstrap = `<script>(function(r){const NO_ACCESS=${JSON.stringify(NO_ACCESS_HREF)},warned=new Set();const build=(base,p)=>{const u=new URL(base,r.embed?document.URL:location.origin);for(const [k,v] of Object.entries(p||{}))u.searchParams.set(k,String(v));return u.pathname+u.search};window.YOPLAI={data:r.data,viewer:r.viewer,params:r.params,link:(slug,p)=>{const base=r.links[slug];if(!base){if((r.noAccess||[]).includes(slug)){if(!warned.has(slug)){warned.add(slug);console.warn("Dashboard not shared with you: "+slug)}return NO_ACCESS}throw new Error("Unknown dashboard: "+slug)}return build(base,{...p,...r.protectedLinkParams})},canLink:(slug)=>Object.prototype.hasOwnProperty.call(r.links,slug)};const post=(op,body)=>{if(!r.editToken)return Promise.reject(new Error("Editing is not available here"));return fetch(r.editBase+"/"+op,{method:"POST",headers:{"Content-Type":"text/plain;charset=UTF-8"},credentials:"omit",cache:"no-store",body:JSON.stringify({...body,token:r.editToken})}).catch(()=>{throw new Error("Could not reach the server; not saved")}).then((res)=>res.json().catch(()=>({})).then((j)=>{if(!res.ok||!j.ok)throw new Error(j.error||"Not saved ("+res.status+")");delete j.ok;return j}))};YOPLAI.canWrite=!!r.canWrite;YOPLAI.canEdit=!!r.editToken;YOPLAI.edit=(o)=>post("edit",{edit:o&&o.edit,key:o&&o.key,field:o&&o.field,value:o&&o.value});YOPLAI.add=(o)=>post("add",{edit:o&&o.edit,values:(o&&o.values)||{}});if(r.chatHref&&window.top===window){const showChat=()=>{const a=document.createElement("a");a.className="yoplai-dashboard-chat";a.href=r.chatHref;a.innerHTML='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7.9 20A9 9 0 1 0 4 16.1L2 22Z"/></svg><span>Chat</span>';a.target="_blank";a.rel="noopener noreferrer";document.body.append(a)};if(document.readyState==="loading")document.addEventListener("DOMContentLoaded",showChat,{once:true});else showChat()}for(const e of r.errors)console.error("Dashboard query error ("+e.name+"): "+e.error)})(${safeJson(runtime)});</script>`;
   // Links to pages the viewer cannot open stay visible but disabled. Page or
   // kit code creates anchors after load, so mark them as they appear.
   const noAccess = runtime.noAccess?.length ? `<style>

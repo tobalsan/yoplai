@@ -11,19 +11,35 @@ export type DashboardListContext = {
   sessionExists(userId: string, agentId: string, sessionId: string): Promise<boolean>;
 };
 
+export type DashboardChatTarget = { agentId: string; dashboardId: string; sessionId: string | null };
+
+/** The chat to open for a page. A null session means a new chat. Null when the viewer cannot chat with the agent. */
+export async function dashboardChatTarget(
+  entry: DashboardRegistration,
+  actor: DashboardActor,
+  sessionExists: DashboardListContext["sessionExists"]
+): Promise<DashboardChatTarget | null> {
+  if (!actor.hasAgentAccess) return null;
+  const target = { agentId: entry.agentId, dashboardId: entry.id };
+  if (entry.createdIn && entry.createdIn.userId === actor.userId &&
+    await sessionExists(entry.createdIn.userId, entry.agentId, entry.createdIn.sessionId)) {
+    return { ...target, sessionId: entry.createdIn.sessionId };
+  }
+  return { ...target, sessionId: null };
+}
+
 export async function dashboardChatHref(
   entry: DashboardRegistration,
   actor: DashboardActor,
   sessionExists: DashboardListContext["sessionExists"]
 ): Promise<string | null> {
-  if (!actor.hasAgentAccess) return null;
-  const agent = encodeURIComponent(entry.agentId);
-  const dashboard = encodeURIComponent(entry.id);
-  if (entry.createdIn && entry.createdIn.userId === actor.userId &&
-    await sessionExists(entry.createdIn.userId, entry.agentId, entry.createdIn.sessionId)) {
-    return `/chat/${agent}?session=${encodeURIComponent(entry.createdIn.sessionId)}&dashboard=${dashboard}`;
-  }
-  return `/chat/${agent}?dashboard=${dashboard}&new=1`;
+  const target = await dashboardChatTarget(entry, actor, sessionExists);
+  if (!target) return null;
+  const agent = encodeURIComponent(target.agentId);
+  const dashboard = encodeURIComponent(target.dashboardId);
+  return target.sessionId
+    ? `/chat/${agent}?session=${encodeURIComponent(target.sessionId)}&dashboard=${dashboard}`
+    : `/chat/${agent}?dashboard=${dashboard}&new=1`;
 }
 
 export async function dashboardHtml(

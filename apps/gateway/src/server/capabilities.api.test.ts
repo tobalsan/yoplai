@@ -58,6 +58,7 @@ describe("/capabilities API", () => {
       multiUser: false,
       forkedAgents: false,
       enableCronMonitoring: false,
+      dashboardEmbed: { version: 1, assetVersion: "v3", policyVersion: 1, enabled: true },
     });
   });
 });
