@@ -107,6 +107,10 @@ describe("SchedulerService run ledger", () => {
     setSchedulerContext(ctx);
   }
 
+  function jobState(jobs: Awaited<ReturnType<SchedulerService["list"]>>) {
+    return (jobs[0] as { state?: { lastStatus?: string; lastErrorCode?: string } }).state;
+  }
+
   async function addDeviceJob(overrides: Partial<Parameters<SchedulerService["add"]>[1]> = {}) {
     return scheduler.add("alpha", {
       name: "Notes", schedule: { cron: "0 8 * * *", tz: "UTC" }, payload: jobPayload({ message: "Read my notes" }), requiresDevice: true, ...overrides,
@@ -128,7 +132,7 @@ describe("SchedulerService run ledger", () => {
     expect(await scheduler.listRuns("alpha", job.id)).toEqual([
       expect.objectContaining({ status: "error", errorCode: "device_offline", error: result.error }),
     ]);
-    expect((await scheduler.list("alpha"))[0]?.state).toMatchObject({ lastStatus: "error", lastErrorCode: "device_offline" });
+    expect(jobState(await scheduler.list("alpha"))).toMatchObject({ lastStatus: "error", lastErrorCode: "device_offline" });
   });
 
   it("runs a job that needs the device when the device is online, and clears the code after a success", async () => {
@@ -142,7 +146,7 @@ describe("SchedulerService run ledger", () => {
     expect(result.status).toBe("ok");
     expect(result.errorCode).toBeUndefined();
     expect(runAgent).toHaveBeenCalledOnce();
-    expect((await scheduler.list("alpha"))[0]?.state?.lastErrorCode).toBeUndefined();
+    expect(jobState(await scheduler.list("alpha"))?.lastErrorCode).toBeUndefined();
     const runs = await scheduler.listRuns("alpha", job.id);
     expect(runs.find((run) => run.status === "ok")?.errorCode).toBeUndefined();
   });
