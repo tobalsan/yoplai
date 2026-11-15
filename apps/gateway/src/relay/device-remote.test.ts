@@ -184,6 +184,21 @@ describe("device link: remote side", () => {
     expect(await deviceTools(undefined, { source: "web", background: true })).toEqual([]);
   });
 
+  it("keeps the device tools for a background run with requiresDevice after a drop, and the call gets the fixed offline text", async () => {
+    remote = await startRemoteServer(false);
+    const connection = await relay(remote.port);
+    await waitFor(() => connection.messages.length === 1);
+    connection.socket.terminate();
+    await connection.closed;
+    await vi.waitFor(async () => expect(await deviceTools(undefined, { source: "web" })).toHaveLength(0));
+    const tools = await deviceTools(undefined, { source: "scheduler", requiresDevice: true });
+    expect(tools.map((item) => item.name)).toHaveLength(4);
+    await expect(
+      tools.find((item) => item.name === "device_read")?.execute({ path: "a.txt" }, toolContext({ run: { source: "scheduler", requiresDevice: true } }))
+    ).rejects.toThrow(DEVICE_OFFLINE_CALL_TEXT);
+    expect(await deviceTools(undefined, { source: "scheduler" })).toEqual([]);
+  });
+
   it("refuses a device call of a background run with no flag, even when the tool was listed", async () => {
     remote = await startRemoteServer(false);
     const connection = await relay(remote.port);

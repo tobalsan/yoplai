@@ -49,7 +49,8 @@ export function resolveAgainstFolder(folder: string, rawPath: string): string {
 /**
  * Resolves each symbolic link. For a path that does not exist, it resolves the nearest
  * directory that exists. Returns undefined for a dangling symbolic link, because a write
- * would follow it to an unknown place.
+ * would follow it to an unknown place. Throws the error of a lookup that fails for a reason other
+ * than a missing path, so the caller does not treat an unknown path as safe.
  */
 export async function realPathOrNearest(target: string): Promise<string | undefined> {
   const missing: string[] = [];
@@ -58,7 +59,9 @@ export async function realPathOrNearest(target: string): Promise<string | undefi
     try {
       return path.join(await fs.realpath(current), ...missing.reverse());
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "ENOENT") return undefined;
+      const code = (error as NodeJS.ErrnoException).code;
+      if (code === "ENOTDIR") return undefined;
+      if (code !== "ENOENT") throw error;
     }
     try {
       await fs.lstat(current);
@@ -75,15 +78,26 @@ export async function realPathOrNearest(target: string): Promise<string | undefi
 
 /** Compares real paths: a symbolic link in the folder that points outside is not in the folder. */
 export async function isInsideWorkspaceFolder(folder: string, absolutePath: string): Promise<boolean> {
-  const realFolder = await realPathOrNearest(folder);
-  const realTarget = await realPathOrNearest(absolutePath);
+  let realFolder: string | undefined;
+  let realTarget: string | undefined;
+  try {
+    realFolder = await realPathOrNearest(folder);
+    realTarget = await realPathOrNearest(absolutePath);
+  } catch {
+    return false;
+  }
   return realFolder !== undefined && realTarget !== undefined && isInsideRoot(realFolder, realTarget);
 }
 
 /** True when the path, or the real path behind it, is on the list of secret files. */
 export async function touchesSecretFile(target: string): Promise<boolean> {
   if (isSecretPath(target)) return true;
-  const real = await realPathOrNearest(target);
+  let real: string | undefined;
+  try {
+    real = await realPathOrNearest(target);
+  } catch {
+    throw new Error(`The device cannot check ${target} against the list of secret files. The call did not run.`);
+  }
   return real !== undefined && isSecretPath(real);
 }
 

@@ -118,7 +118,7 @@ export class DeviceExecutor {
     }
 
     signal.throwIfAborted();
-    const tool = definition.create(cwd, absolutePath, !full);
+    const tool = definition.create(cwd, absolutePath, !full && decision === "pass");
     return tool.execute(call.callId, args as never, signal);
   }
 }

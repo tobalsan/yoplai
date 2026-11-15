@@ -909,6 +909,18 @@ export class SchedulerService {
       await this.saveRun(ledgerRun);
     }
 
+    // The script can take a long time, so check the device again before the model starts.
+    if (requiresDevice && payload.script && !ctx.isDeviceOnline?.(credentialMode === "owner" ? ownerUserId : undefined)) {
+      ctx.logger.error("[scheduler] job failed", DEVICE_OFFLINE_JOB_TEXT, {
+        jobId: job.id,
+        jobName: job.name,
+        agentId: job.agentId,
+        runId: ledgerRun?.id,
+        kind: "gated",
+      });
+      return this.completeAndRelease(key, { ledgerRun, payload, job, scheduledRunAt, agent, workspaceDir, model: outputModel, firedAt, status: "error", statusLabel: "error", gateOutput, prompt, error: new Error(DEVICE_OFFLINE_JOB_TEXT), errorMessage: DEVICE_OFFLINE_JOB_TEXT, errorCode: DEVICE_OFFLINE_CODE });
+    }
+
     // Each execution gets its own AbortController so timeout can cancel the run.
     const controller = new AbortController();
     this.executingJobControllers.set(key, controller);
@@ -981,6 +993,12 @@ export class SchedulerService {
       runStatus = "error";
       errorValue = err;
       runError = err instanceof Error ? err.message : String(err);
+      // A rejected run keeps a timeout as a timeout. A device drop must not hide a credential refusal.
+      if (deviceDropped && missingCredentialError && !credentialRefused) {
+        credentialRefused = missingCredentialError;
+        runError = `Reconnect ${missingCredentialError.integration} credentials before this scheduled job can run.`;
+        errorValue = new Error(runError);
+      }
       ctx.logger.error("[scheduler] job failed", runError.split("\n")[0], {
         jobId: job.id,
         jobName: job.name,

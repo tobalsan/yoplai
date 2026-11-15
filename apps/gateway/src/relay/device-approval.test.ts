@@ -138,7 +138,7 @@ describe("device approval: protocol", () => {
     );
   }
 
-  it("shows a command of 5,000 characters on the card in full", async () => {
+  it("shows a command of 5,011 characters on the card in full", async () => {
     const page = await openPage();
     subscribe(page);
     await waitFor(() => remoteMessages.length === 1);

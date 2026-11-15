@@ -179,6 +179,45 @@ describe("SchedulerService run ledger", () => {
     ]);
   });
 
+  it("checks the device again after the script, and does not start the model when the device dropped", async () => {
+    const { config, runAgent } = await setup();
+    const state = { online: true };
+    withDevice(config, runAgent, state);
+    vi.spyOn(scriptRunner, "runScript").mockImplementation(async () => {
+      state.online = false;
+      return { stdout: '{"wakeAgent":true}', stderr: "", finalStdoutLine: '{"wakeAgent":true}' };
+    });
+    const job = await addDeviceJob({ payload: jobPayload({ message: "Read my notes", script: "check.sh" }) });
+    const result = await scheduler.runNow("alpha", job.id);
+    expect(runAgent).not.toHaveBeenCalled();
+    expect(result).toMatchObject({ status: "error", errorCode: "device_offline" });
+  });
+
+  const deviceDropEvent = {
+    type: "tool_result", id: "t1", name: "device_bash", isError: true, timestamp: 1, content: DEVICE_OFFLINE_CALL_TEXT,
+  };
+  const credentialEvent = {
+    type: "tool_result", id: "t0", name: "google_calendar", isError: false, timestamp: 0,
+    content: '{"error":"oauth_connection_required","provider":"google"}',
+  };
+
+  it.each(["resolves", "rejects"])("keeps the credential refusal over the device code when the run %s", async (outcome) => {
+    const runAgent = vi.fn((params: { onEvent: (event: unknown) => void }) => {
+      params.onEvent(credentialEvent);
+      params.onEvent(deviceDropEvent);
+      return outcome === "rejects"
+        ? Promise.reject(new Error("aborted"))
+        : Promise.resolve({ payloads: [{ text: "x" }], meta: { durationMs: 1, sessionId: "s" } });
+    });
+    const { config } = await setup(true, runAgent);
+    withDevice(config, runAgent, { online: true });
+    const job = await addDeviceJob();
+    const result = await scheduler.runNow("alpha", job.id);
+    expect(result.status).toBe("error");
+    expect(result.errorCode).toBeUndefined();
+    expect(result.error).toContain("Reconnect google");
+  });
+
   it("refuses requiresDevice on a team job of a multi-user gateway, at create and at update", async () => {
     const { config } = await setup();
     config.extensions = { ...config.extensions, multiUser: { enabled: true } } as GatewayConfig["extensions"];

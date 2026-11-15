@@ -29,10 +29,15 @@ export type DeviceToolDefinition = {
   filePath: boolean;
   /**
    * `checkedPath` is the path that the gate checked. A write or edit opens no other path.
-   * `enforceSecrets` makes a read throw for a secret file, at the point of use.
+   * `enforceSecrets` makes a call throw for a secret file, at the point of use. The executor sets it
+   * outside Full mode, for a read and for a write or edit that passed with no approval.
    */
   create(cwd: string, checkedPath?: string, enforceSecrets?: boolean): PiToolLike;
 };
+
+async function refuseSecret(enforceSecrets: boolean | undefined, target: string): Promise<void> {
+  if (enforceSecrets && (await touchesSecretFile(target))) throw new Error(secretReadRefusal(target));
+}
 
 function sameAsChecked(checkedPath: string | undefined, actual: string): void {
   if (checkedPath === undefined || actual !== checkedPath) {
@@ -48,21 +53,19 @@ export const DEVICE_TOOL_DEFINITIONS: Record<DeviceToolName, DeviceToolDefinitio
       "Read a file on the device of the user. This is not the workspace of the agent. Give a path. Use offset and limit for a long file.",
     filePath: true,
     create: (cwd, _checkedPath, enforceSecrets) => {
-      const refuseSecret = async (target: string) => {
-        if (enforceSecrets && (await touchesSecretFile(target))) throw new Error(secretReadRefusal(target));
-      };
+      const refuse = (target: string) => refuseSecret(enforceSecrets, target);
       return createReadTool(cwd, {
         operations: {
           access: async (target) => {
-            await refuseSecret(target);
+            await refuse(target);
             await fs.access(target, constants.R_OK);
           },
           readFile: async (target) => {
-            await refuseSecret(target);
+            await refuse(target);
             return fs.readFile(target);
           },
           detectImageMimeType: async (target) => {
-            await refuseSecret(target);
+            await refuse(target);
             return detectSupportedImageMimeTypeFromFile(target);
           },
         },
@@ -74,15 +77,17 @@ export const DEVICE_TOOL_DEFINITIONS: Record<DeviceToolName, DeviceToolDefinitio
     description:
       "Write a file on the device of the user. This is not the workspace of the agent. It replaces the file when it exists. The user can refuse the call.",
     filePath: true,
-    create: (cwd, checkedPath) =>
+    create: (cwd, checkedPath, enforceSecrets) =>
       createWriteTool(cwd, {
         operations: {
           mkdir: async (dir) => {
             sameAsChecked(checkedPath === undefined ? undefined : path.dirname(checkedPath), dir);
+            await refuseSecret(enforceSecrets, dir);
             await fs.mkdir(dir, { recursive: true });
           },
           writeFile: async (target, content) => {
             sameAsChecked(checkedPath, target);
+            await refuseSecret(enforceSecrets, target);
             await fs.writeFile(target, content, "utf-8");
           },
         },
@@ -93,19 +98,22 @@ export const DEVICE_TOOL_DEFINITIONS: Record<DeviceToolName, DeviceToolDefinitio
     description:
       "Edit a file on the device of the user. This is not the workspace of the agent. Give exact text to replace. The user can refuse the call.",
     filePath: true,
-    create: (cwd, checkedPath) =>
+    create: (cwd, checkedPath, enforceSecrets) =>
       createEditTool(cwd, {
         operations: {
           access: async (target) => {
             sameAsChecked(checkedPath, target);
+            await refuseSecret(enforceSecrets, target);
             await fs.access(target, constants.R_OK | constants.W_OK);
           },
           readFile: async (target) => {
             sameAsChecked(checkedPath, target);
+            await refuseSecret(enforceSecrets, target);
             return fs.readFile(target);
           },
           writeFile: async (target, content) => {
             sameAsChecked(checkedPath, target);
+            await refuseSecret(enforceSecrets, target);
             await fs.writeFile(target, content, "utf-8");
           },
         },

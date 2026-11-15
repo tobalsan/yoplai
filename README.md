@@ -194,6 +194,8 @@ Secret files: a read of a common secret file gets a refusal with no prompt, in A
 - The file `.docker/config.json`.
 - File names: `.env` and `.env.<x>` (not `.env.example`, `.env.sample`, `.env.template`, `.env.dist`), `.netrc`, `.npmrc`, `.pypirc`, `.git-credentials`, `.htpasswd`, `auth.json`, `credentials`, `credentials.json`, and names that start with `id_rsa`, `id_dsa`, `id_ecdsa`, or `id_ed25519`.
 - File types: `.pem`, `.key`, `.p12`, `.pfx`, `.keychain-db`, `.kdbx`.
+
+Limits: the rules match names and real paths. A hard link to a secret file, a copy with a different name, and a file that a local process swaps during a call are not covered. `device_bash` is not covered. If Yoplai cannot find the real path of a file, it refuses the read.
 - In the Yoplai home: `remote-gateways.json`, `device-settings.json`, `user-token.json`, `auth.db`.
 
 The check also covers the real path behind a symbolic link. A command (`device_bash`) is not checked against this list. It asks in Ask and Workspace mode, so you see the command first. The card shows the whole command. A command over 20,000 characters that needs approval gets a refusal. The agent must write it to a script file and run the file.

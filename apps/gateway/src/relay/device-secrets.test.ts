@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import fsPromises from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -156,6 +157,55 @@ describe("device calls and secret files", () => {
     fs.symlinkSync(secret, link);
     await expect(run("device_read", { path: link })).rejects.toThrow(/secret files/);
     await expect(run("device_read", { path: "innocent.txt" })).rejects.toThrow(/secret files/);
+    expect(asked).toEqual([]);
+  });
+
+  it("refuses a read when the real path lookup fails with an error other than a missing file", async () => {
+    settings.setChat(chatKey, { workspaceFolder: folder, full: false });
+    const link = path.join(folder, "innocent.txt");
+    fs.symlinkSync(secret, link);
+    const realpath = fsPromises.realpath.bind(fsPromises);
+    vi.spyOn(fsPromises, "realpath").mockImplementation(async (target, ...rest) => {
+      if (String(target) === link) throw Object.assign(new Error("disk error"), { code: "EIO" });
+      return realpath(target, ...(rest as []));
+    });
+    try {
+      await expect(run("device_read", { path: link })).rejects.toThrow(
+        `The device cannot check ${link} against the list of secret files. The call did not run.`
+      );
+      expect(asked).toEqual([]);
+    } finally {
+      vi.restoreAllMocks();
+    }
+  });
+
+  it("does not let a write or an edit that passed with no prompt change a secret file when the path becomes a link", async () => {
+    settings.setChat(chatKey, { workspaceFolder: folder, full: false });
+    const target = path.join(folder, "later.txt");
+    fs.writeFileSync(target, "plain notes");
+    const realpath = fsPromises.realpath.bind(fsPromises);
+    let gateDone = false;
+    vi.spyOn(fsPromises, "realpath").mockImplementation(async (value, ...rest) => {
+      const result = await realpath(value, ...(rest as []));
+      if (!gateDone && String(value) === target) {
+        gateDone = true;
+        fs.rmSync(target);
+        fs.symlinkSync(secret, target);
+      }
+      return result;
+    });
+    try {
+      await expect(run("device_write", { path: target, content: "WRITE-CHANGE" })).rejects.toThrow(/secret files/);
+      gateDone = false;
+      fs.rmSync(target);
+      fs.writeFileSync(target, "PRIVATE-KEY");
+      await expect(
+        run("device_edit", { path: target, edits: [{ oldText: "PRIVATE", newText: "EDIT-CHANGE" }] })
+      ).rejects.toThrow(/secret files/);
+    } finally {
+      vi.restoreAllMocks();
+    }
+    expect(fs.readFileSync(secret, "utf8")).toBe("PRIVATE-KEY");
     expect(asked).toEqual([]);
   });
 

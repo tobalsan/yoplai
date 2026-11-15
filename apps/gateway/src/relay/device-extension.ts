@@ -63,8 +63,10 @@ export const deviceToolsExtension: Extension = {
   },
   getAgentTools(_agent, hook) {
     const userId = hook?.userId ?? LOCAL_DEVICE_USER;
-    if (!getDeviceRegistry().has(userId)) return [];
     if (!mayUseDevice(hook?.run)) return [];
+    // A background run that needs the device keeps the tools after a drop. The call then fails
+    // with the fixed offline text, which the scheduler matches. A chat run has no tools offline.
+    if (!getDeviceRegistry().has(userId) && deviceRunKind(hook?.run) !== "background") return [];
     return DEVICE_TOOL_NAMES.map((name) => ({
       name,
       description: DEVICE_TOOL_DEFINITIONS[name].description,
