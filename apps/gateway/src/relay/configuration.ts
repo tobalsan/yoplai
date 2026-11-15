@@ -34,6 +34,12 @@ const rules: Rule[] = [
 
 export type ConfigurationForward = (request: Request, gateway: RemoteGateway, path: string, agentDetail?: boolean) => Promise<Response>;
 const fail = (error: string, status = 400) => Response.json({ error }, { status });
+/**
+ * The Node adapter of Hono replaces the global Response class when the server starts.
+ * Then a Response from `Response.json()` is not an `instanceof` the global class.
+ * Check the class tag, which both kinds of Response share.
+ */
+export const isResponse = (value: unknown): value is Response => Object.prototype.toString.call(value) === "[object Response]";
 const isRecord = (value: unknown): value is Record<string, unknown> => !!value && typeof value === "object" && !Array.isArray(value);
 
 /** Provider state stays remote. The local server never fetches this URL. */
@@ -109,7 +115,7 @@ async function startOAuth(request: Request, gateways: RemoteGateway[]): Promise<
   const denied = browserStartError(request);
   if (denied) return denied;
   const input = await jsonBody(request);
-  if (input instanceof Response) return input;
+  if (isResponse(input)) return input;
   if (Object.keys(input).some((key) => !["gateway", "agentId", "kind", "provider", "server", "scope", "scopes"].includes(key))) return fail("invalid_oauth_start");
   const gateway = gateways.find((item) => item.name === input.gateway);
   if (!gateway) return fail("unknown_gateway", 404);
@@ -138,7 +144,7 @@ async function startOAuth(request: Request, gateways: RemoteGateway[]): Promise<
     if ([401, 403, 404].includes(response.status)) {
       if (core && response.status === 404 && response.headers.get("content-type")?.split(";")[0].trim() === "application/json") {
         const result = await jsonBody({ body: response.body, signal });
-        if (!(result instanceof Response) && result.error === "unknown_provider") return fail("unknown_remote_provider", 404);
+        if (!isResponse(result) && result.error === "unknown_provider") return fail("unknown_remote_provider", 404);
       } else {
         void response.body?.cancel().catch(() => undefined);
       }
@@ -205,7 +211,7 @@ export async function relayConfiguration(request: Request, gateways: RemoteGatew
   }
   if (agentKind === "body") {
     const input = await jsonBody(request);
-    if (input instanceof Response) return input;
+    if (isResponse(input)) return input;
     body = input;
     request = withJson(request, body);
     value = typeof body?.agentId === "string" ? body.agentId : undefined;
@@ -238,7 +244,7 @@ export async function relayConfiguration(request: Request, gateways: RemoteGatew
     const denied = browserStartError(request);
     if (denied) return denied;
     const input = await jsonBody(request);
-    if (input instanceof Response) return input;
+    if (isResponse(input)) return input;
     if (!["personal", "team"].includes(String(input.credentialScope))) return fail("invalid_credential_scope");
     delete input.returnTo;
     request = withJson(request, input);

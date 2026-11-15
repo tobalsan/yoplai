@@ -165,6 +165,9 @@ Schedule selection reads one body stream with a one-MiB limit.
 The relay rebuilds valid local requests before the local handler reads them.
 Oversized bodies return status 413 with `configuration_body_too_large` without a cancellation wait.
 Malformed JSON and failed reads return bounded errors before any mutation.
+The Node adapter of Hono replaces the global `Response` class when the server starts.
+The relay checks results with `isResponse`, not `instanceof Response`, so these errors reach the client.
+`apps/gateway/src/server/relay-configuration.http.test.ts` checks them through the real adapter on ephemeral loopback ports.
 
 Media and merged agent lists follow at most five same-origin redirects.
 Uploads accept only 307 or 308 and reuse their buffered form and file bytes.

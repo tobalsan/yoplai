@@ -11,7 +11,7 @@ import {
   suffixAgentIds,
   suffixAvatarUrl,
 } from "./remote.js";
-import { configurationRedirect, relayConfiguration } from "./configuration.js";
+import { configurationRedirect, isResponse, relayConfiguration } from "./configuration.js";
 import type { RemoteGateway } from "./store.js";
 
 type RemoteAgent = { id: string; avatar?: string } & Record<string, unknown>;
@@ -258,8 +258,8 @@ async function downloadFromRemote(
 export function relayConfigurationHttp(): MiddlewareHandler {
   return async (c, next) => {
     const result = await relayConfiguration(c.req.raw, getLinkedGateways(), forward);
-    if (result instanceof Response) return result;
-    if (result instanceof Request) c.req.raw = result;
+    if (isResponse(result)) return result;
+    if (result) c.req.raw = result;
     return next();
   };
 }
