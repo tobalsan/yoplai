@@ -85,6 +85,24 @@ describe("oauth routes", () => {
     expect(audit).toHaveBeenCalledWith({ actorUserId: "alice", actorEmail: "alice@example.com", impersonatorUserId: "admin", action: "oauth.connect", agentId: "a1", targetType: "oauth", targetId: "google", scope: "team", changes: [{ field: "credentials", secret: "set" }] });
   });
 
+  it("returns a typed JSON start only when the caller requests JSON", async () => {
+    const service = new OAuthService({ store, loadConfig: makeConfig });
+    const app = createOAuthRoutes(service);
+    const response = await app.request("/oauth/google/authorize?agent=a1&scope=team", { headers: { accept: "application/json" } });
+    expect(response.status).toBe(200);
+    expect(response.headers.get("cache-control")).toBe("no-store");
+    expect(response.headers.get("location")).toBeNull();
+    const result = await response.json();
+    expect(result).toMatchObject({ kind: "oauth_authorization", provider: "google" });
+    const url = new URL(result.authorizationUrl);
+    expect(url.origin).toBe("https://accounts.google.com");
+    expect(url.searchParams.get("redirect_uri")).toBe("http://localhost:4000/api/oauth/google/callback");
+    const callback = await app.request(`/oauth/google/callback?error=access_denied&state=${url.searchParams.get("state")}`);
+    expect(callback.status).toBe(400);
+    expect(await callback.text()).toContain("access_denied");
+    expect((await app.request(`/oauth/google/callback?error=access_denied&state=${url.searchParams.get("state")}`)).status).toBe(400);
+  });
+
   it("authorize requires an agent query param", async () => {
     const app = createOAuthRoutes(
       new OAuthService({ store, loadConfig: makeConfig })

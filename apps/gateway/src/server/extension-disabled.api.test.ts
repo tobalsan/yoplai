@@ -125,4 +125,74 @@ describe("extension-disabled API responses", () => {
       });
     }
   });
+
+  it("F4 relays remote schedules before the local extension gate", async () => {
+    const { loadConfig } = await import("../config/index.js");
+    const { loadExtensions } = await import("../extensions/registry.js");
+    await loadExtensions(loadConfig());
+    const state = await import("../relay/state.js");
+    state.configureRelay("127.0.0.1", false);
+    state.getRemoteGatewayStore().save({ name: "east", url: "https://east.test", token: "fake-bearer" });
+    state.getRemoteGatewayStore().save({ name: "west", url: "https://west.test", token: "fake-west-bearer" });
+    const remote = vi.fn(async () => Response.json({ remote: true }));
+    vi.stubGlobal("fetch", remote);
+    try {
+      const { app } = await import("./index.js");
+      for (const [url, method, body] of [
+        ["/api/schedules?agent=agent@east", "GET"],
+        ["/api/schedules", "POST", { agentId: "agent@east", name: "remote" }],
+        ["/api/schedules/agent@east/job", "PATCH", { name: "remote" }],
+        ["/api/schedules/agent@east/job", "DELETE"],
+        ["/api/schedules/agent@east/job/run", "POST"],
+        ["/api/relay/gateways/east/api/schedules?agent=agent", "GET"],
+      ] as const) {
+        const response = await app.request(url, { method, ...(body ? { headers: { "content-type": "application/json" }, body: JSON.stringify(body) } : {}) });
+        expect(response.status, `${method} ${url}`).toBe(200);
+        expect(await response.json()).toEqual({ remote: true });
+      }
+      expect(remote).toHaveBeenCalledTimes(6);
+      for (const url of [
+        "/api/mcp/servers?agent=agent@east", "/api/mcp/oauth/status?agent=agent@east",
+        "/api/oauth/google/status?agent=agent@east", "/api/agents/agent@east/extensions",
+        "/api/agents/agent@east/connections", "/api/agents/agent@east/webhooks",
+        "/api/relay/gateways/east/api/schedule-alerts", "/api/relay/gateways/east/api/capabilities",
+      ]) {
+        expect((await app.request(url)).status, url).toBe(200);
+      }
+      remote.mockClear();
+      for (const [url, method, body] of [
+        ["/api/schedules?agent=main", "GET"],
+        ["/api/schedules", "POST", { agentId: "main", name: "local" }],
+        ["/api/schedules/main/job", "DELETE"],
+      ] as const) {
+        const response = await app.request(url, { method, ...(body ? { headers: { "content-type": "application/json" }, body: JSON.stringify(body) } : {}) });
+        expect(response.status).toBe(404);
+        expect(await response.json()).toEqual({ error: "extension_disabled", extension: "scheduler" });
+      }
+      for (const [url, headers, status] of [
+        ["/api/schedules/agent@east/job", { origin: "https://foreign.test" }, 403],
+        ["/api/schedules/agent@east/job", { "x-forwarded-for": "192.0.2.1" }, 403],
+        ["/api/schedules/agent@missing/job", {}, 404],
+        ["/api/relay/gateways/east/api/schedules/agent@west/job", {}, 400],
+        ["/api/relay/gateways/east/api/projects/job", {}, 405],
+      ] as const) {
+        expect((await app.request(url, { method: "DELETE", headers })).status, url).toBe(status);
+      }
+      const unrelated = await app.request("/api/projects?agent=agent@east");
+      expect(unrelated.status).toBe(404);
+      expect(await unrelated.json()).toEqual({ error: "extension_disabled", extension: "projects" });
+      expect(remote).not.toHaveBeenCalled();
+      await expect(fs.access(path.join(tmpDir, ".yoplai/agents/main/cron/jobs.json"))).rejects.toMatchObject({ code: "ENOENT" });
+      state.configureRelay("127.0.0.1", true);
+      expect((await app.request("/api/relay/gateways/east/api/schedules?agent=agent")).status).toBe(403);
+      expect((await app.request("/api/schedules?agent=agent@east")).status).toBe(404);
+      expect(remote).not.toHaveBeenCalled();
+    } finally {
+      vi.unstubAllGlobals();
+      state.getRemoteGatewayStore().remove("east");
+      state.getRemoteGatewayStore().remove("west");
+      state.configureRelay("127.0.0.1", true);
+    }
+  });
+
 });

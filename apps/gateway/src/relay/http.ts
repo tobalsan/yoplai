@@ -6,6 +6,8 @@ import { getLinkedGateways, isTrustedRequest, resolveRemoteAgent } from "./state
 import {
   fetchRemote,
   fetchRemoteJson,
+  fetchRemoteWithRedirects,
+  UnsafeRemoteRedirectError,
   suffixAgentIds,
   suffixAvatarUrl,
 } from "./remote.js";
@@ -213,7 +215,7 @@ async function forwardUpload(request: Request, gateways: RemoteGateway[]): Promi
   if (file instanceof File && file.size > MAX_UPLOAD_SIZE_BYTES) return uploadTooLarge();
   form.set("agentId", target.agentId);
   try {
-    const response = await fetchRemote(gateway, "/api/media/upload", {
+    const response = await fetchRemoteWithRedirects(gateway, "/api/media/upload", "upload", {
       method: "POST",
       body: form,
       signal: request.signal,
@@ -222,7 +224,8 @@ async function forwardUpload(request: Request, gateways: RemoteGateway[]): Promi
       status: response.status,
       headers: { "content-type": response.headers.get("content-type") ?? "application/json" },
     });
-  } catch {
+  } catch (error) {
+    if (error instanceof UnsafeRemoteRedirectError) return Response.json({ error: "unsafe_remote_redirect" }, { status: 502 });
     return Response.json({ error: "gateway_offline", gateway: gateway.name }, { status: 502 });
   }
 }
@@ -234,7 +237,7 @@ async function downloadFromRemote(
 ): Promise<Response | null> {
   for (const gateway of gateways) {
     try {
-      const response = await fetchRemote(gateway, `/api/media/download/${fileId}`, {
+      const response = await fetchRemoteWithRedirects(gateway, `/api/media/download/${fileId}`, "download", {
         signal,
       });
       if (response.ok) {
@@ -243,19 +246,28 @@ async function downloadFromRemote(
         return new Response(response.body, { status: 200, headers });
       }
       await response.body?.cancel();
-    } catch {
+    } catch (error) {
+      if (error instanceof UnsafeRemoteRedirectError) return Response.json({ error: "unsafe_remote_redirect" }, { status: 502 });
       continue;
     }
   }
   return null;
 }
 
+/** Resolve only allowed configuration routes before the local extension gate. */
+export function relayConfigurationHttp(): MiddlewareHandler {
+  return async (c, next) => {
+    const result = await relayConfiguration(c.req.raw, getLinkedGateways(), forward);
+    if (result instanceof Response) return result;
+    if (result instanceof Request) c.req.raw = result;
+    return next();
+  };
+}
+
 /** Sends `/api/agents/:id` calls for remote agents to their gateway and merges remote entries into the lists. */
 export function relayHttp(): MiddlewareHandler {
   return async (c, next) => {
     const gateways = getLinkedGateways();
-    const configuration = await relayConfiguration(c.req.raw, gateways, forward);
-    if (configuration) return configuration;
     if (gateways.length === 0 || !isTrustedRequest(c.req.header("origin"), c.req.header("x-forwarded-for"))) return next();
     const url = new URL(c.req.url);
     const segments = url.pathname.split("/");

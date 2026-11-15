@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Hono } from "hono";
-import { relayHttp } from "./http.js";
+import { relayConfigurationHttp, relayHttp } from "./http.js";
 import { fetchRemote, isSafeRemotePath, remoteHttpUrl } from "./remote.js";
 import type { RemoteGateway } from "./store.js";
 
@@ -15,6 +15,7 @@ vi.mock("../config/index.js", () => ({
   getAgent: (id: string) => fixture.localIds.has(id) ? { id } : undefined,
   loadConfig: () => ({ gateway: { port: 4700 }, ui: { port: 3700 }, web: { baseUrl: "http://localhost:3701" } }),
 }));
+vi.mock("../audit/store.js", () => ({ getAuditActor: async () => ({}), recordSettingsChange: vi.fn() }));
 vi.mock("./state.js", async (original) => ({ ...await original<typeof import("./state.js")>(), getLinkedGateways: () => fixture.gateways }));
 
 const origin = "http://localhost:3700";
@@ -41,6 +42,7 @@ beforeEach(() => {
   });
   vi.stubGlobal("fetch", remote);
   app = new Hono();
+  app.use("/api/*", relayConfigurationHttp());
   app.use("/api/*", relayHttp());
   app.all("*", (c) => {
     localCalls.push(`${c.req.method} ${c.req.path}`);
@@ -278,7 +280,9 @@ describe("configuration path boundaries", () => {
 });
 
 describe("remote OAuth start", () => {
-  beforeEach(() => { answer = () => new Response(null, { status: 302, headers: { location: "https://provider.test/authorize?state=fake-state" } }); });
+  beforeEach(() => { answer = (url) => url.pathname.startsWith("/api/oauth/")
+    ? Response.json({ kind: "oauth_authorization", provider: "google", authorizationUrl: "https://provider.test/authorize?state=fake-state" })
+    : new Response(null, { status: 302, headers: { location: "https://provider.test/authorize?state=fake-state" } }); });
 
   it.each(["personal", "team"])("starts core OAuth with explicit %s scope", async (scope) => {
     const response = await app.request("/api/relay/oauth/start", json({ ...startInput, scope }));
@@ -318,7 +322,7 @@ describe("remote OAuth start", () => {
 
   it.each([
     { ...startInput, scope: undefined }, { ...startInput, scope: "all" }, { ...startInput, kind: "other" },
-    { ...startInput, provider: "unknown" }, { ...startInput, agentId: "agent@west" },
+    { ...startInput, provider: "../unknown" }, { ...startInput, agentId: "agent@west" },
     { ...startInput, returnTo: "/agents" }, { ...startInput, userId: "admin" }, { ...startInput, scopes: [42] },
     { ...startInput, agentId: "same@east" },
   ])("refuses an invalid start: %j", async (input) => {
@@ -338,7 +342,7 @@ describe("remote OAuth start", () => {
   });
 
   it.each(["javascript:alert(1)", "data:text/html,x", "file:///tmp/file", "https://user:pass@provider.test/auth", "/api/auth/login", "https://east.test/login", "https://provider.test/auth?code=private-code", "https://provider.test/auth?client_secret=secret", "https://provider.test/auth?token=fake-east-bearer", "https://provider.test/a\\b"])("refuses the unsafe provider URL: %s", async (location) => {
-    answer = () => new Response(null, { status: 302, headers: { location } });
+    answer = () => Response.json({ kind: "oauth_authorization", provider: "google", authorizationUrl: location });
     const response = await app.request("/api/relay/oauth/start", json(startInput));
     expect(response.status).toBe(502);
     expect(records).toHaveLength(1);
@@ -405,5 +409,292 @@ describe("remote OAuth start", () => {
     const response = await app.request(`${prefix()}/api/mcp/servers?agent=agent`, json({ url: "https://mcp.test", credentialScope: "team" }));
     expect(response.status).toBe(502);
     expect(records).toHaveLength(1);
+  });
+});
+
+describe("transport correction regressions", () => {
+  it("F1 starts a remote provider without a local registration", async () => {
+    const { listOAuthProviders, resetOAuthProviders, registerOAuthProviders } = await import("@yoplai/shared");
+    const saved = listOAuthProviders();
+    resetOAuthProviders();
+    try {
+      answer = () => Response.json({ kind: "oauth_authorization", provider: "google", authorizationUrl: "https://provider.test/authorize?state=fake" });
+      const response = await app.request("/api/relay/oauth/start", json(startInput));
+      expect(response.status).toBe(200);
+      expect(await response.json()).toEqual({ authorizationUrl: "https://provider.test/authorize?state=fake" });
+      expect(records).toHaveLength(1);
+    } finally {
+      resetOAuthProviders();
+      registerOAuthProviders(saved);
+    }
+  });
+
+  it("F2 refuses an unrelated external login redirect", async () => {
+    answer = () => new Response(null, { status: 302, headers: { location: "https://login.example.test/sign-in" } });
+    const response = await app.request("/api/relay/oauth/start", json(startInput));
+    expect(response.status).toBe(502);
+    expect(await response.json()).toEqual({ error: "unexpected_oauth_redirect" });
+    expect(records).toHaveLength(1);
+    expect(records[0].url.origin).toBe("https://east.test");
+  });
+
+  it.each(["agent@east", "local"])("F3 rejects an oversized schedule for %s without a cancellation wait", async (agentId) => {
+    const pending = app.request("/api/schedules", json({ agentId, name: "x".repeat(1024 * 1024) }));
+    const response = await Promise.race([pending, new Promise<null>((resolve) => setTimeout(() => resolve(null), 300))]);
+    expect(response?.status).toBe(413);
+    expect(await response?.json()).toEqual({ error: "configuration_body_too_large" });
+    expect(records).toEqual([]);
+    expect(localCalls).toEqual([]);
+  });
+
+  it("F5 preserves a 307 upload method and binary file", async () => {
+    const bytes = new Uint8Array([0, 255, 128, 13, 10]);
+    const form = new FormData();
+    form.set("file", new File([bytes], "fixture.bin"));
+    answer = (url) => url.searchParams.has("next")
+      ? Response.json({ uploaded: true })
+      : new Response(null, { status: 307, headers: { location: "/api/media/upload?next=1" } });
+    const response = await app.request("/api/media/upload?agentId=agent@east", { method: "POST", body: form });
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ uploaded: true });
+    expect(records).toHaveLength(2);
+    for (const record of records) {
+      expect(record.init.method).toBe("POST");
+      const sent = record.init.body as FormData;
+      expect(sent.get("agentId")).toBe("agent");
+      expect(new Uint8Array(await (sent.get("file") as File).arrayBuffer())).toEqual(bytes);
+    }
+  });
+
+  it("F5 follows a 302 download without a byte change", async () => {
+    app = new Hono();
+    app.use("/api/*", relayConfigurationHttp());
+    app.use("/api/*", relayHttp());
+    app.all("*", () => new Response(null, { status: 404 }));
+    const bytes = new Uint8Array([0, 255, 128, 13, 10]);
+    answer = (url) => url.searchParams.has("next")
+      ? new Response(bytes, { headers: { "content-type": "application/octet-stream" } })
+      : new Response(null, { status: 302, headers: { location: `${url.pathname}?next=1` } });
+    const response = await app.request("/api/media/download/11111111-1111-4111-8111-111111111111");
+    expect(response.status).toBe(200);
+    expect(new Uint8Array(await response.arrayBuffer())).toEqual(bytes);
+    expect(records).toHaveLength(2);
+  });
+
+  it("F5 merges a redirected remote agent list", async () => {
+    app = new Hono();
+    app.use("/api/*", relayConfigurationHttp());
+    app.use("/api/*", relayHttp());
+    app.all("*", () => Response.json([{ id: "local" }]));
+    answer = (url) => url.pathname.endsWith("/")
+      ? Response.json([{ id: "agent" }])
+      : new Response(null, { status: 302, headers: { location: "/api/agents/" } });
+    expect(await (await app.request("/api/agents")).json()).toEqual([
+      { id: "local" }, { id: "agent@east", gateway: "east" }, { id: "agent@west", gateway: "west" },
+    ]);
+    expect(records).toHaveLength(4);
+  });
+});
+
+describe("configuration body ownership", () => {
+  it("keeps a valid local schedule body for the local handler", async () => {
+    app = new Hono();
+    app.use("/api/*", relayConfigurationHttp());
+    app.use("/api/*", relayHttp());
+    app.post("/api/schedules", async (c) => c.json({ created: await c.req.json() }, 201));
+    const body = { agentId: "local", name: "Local", payload: { message: "x".repeat(400_000) } };
+    const response = await app.request("/api/schedules", json(body));
+    expect(response.status).toBe(201);
+    expect(await response.json()).toEqual({ created: body });
+    expect(records).toEqual([]);
+  });
+
+  it.each(["{", "[]", "null"])("refuses malformed schedule JSON: %s", async (body) => {
+    const response = await app.request("/api/schedules", { ...json({}), body });
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({ error: "invalid_configuration_body" });
+    expect(localCalls).toEqual([]);
+    expect(records).toEqual([]);
+  });
+
+  it("returns a bounded error when the body read fails", async () => {
+    const { relayConfiguration } = await import("./configuration.js");
+    const body = new ReadableStream<Uint8Array>({ start(controller) { controller.error(new Error("private read error")); } });
+    const request = new Request("http://localhost/api/schedules", { method: "POST", body, duplex: "half" } as RequestInit);
+    const forward = vi.fn();
+    const result = await relayConfiguration(request, fixture.gateways, forward);
+    expect(result).toBeInstanceOf(Response);
+    expect(await (result as Response).json()).toEqual({ error: "configuration_body_read_failed" });
+    expect(forward).not.toHaveBeenCalled();
+  });
+
+  it("does not wait for a stalled source cancellation", async () => {
+    const { relayConfiguration } = await import("./configuration.js");
+    const cancel = vi.fn(() => new Promise<void>(() => {}));
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) { controller.enqueue(new Uint8Array(1024 * 1024 + 1)); }, cancel,
+    });
+    const request = new Request("http://localhost/api/schedules", { method: "POST", body, duplex: "half" } as RequestInit);
+    const pending = relayConfiguration(request, fixture.gateways, vi.fn());
+    const result = await Promise.race([pending, new Promise<null>((resolve) => setTimeout(() => resolve(null), 300))]);
+    expect((result as Response)?.status).toBe(413);
+    expect(cancel).toHaveBeenCalledOnce();
+    expect(request.body?.locked).toBe(false);
+  });
+
+  it("ends a pending body read when the caller aborts", async () => {
+    const { relayConfiguration } = await import("./configuration.js");
+    const cancel = vi.fn();
+    const body = new ReadableStream<Uint8Array>({ cancel });
+    const controller = new AbortController();
+    const request = new Request("http://localhost/api/schedules", { method: "POST", body, signal: controller.signal, duplex: "half" } as RequestInit);
+    const pending = relayConfiguration(request, fixture.gateways, vi.fn());
+    controller.abort();
+    const result = await pending;
+    expect((result as Response).status).toBe(400);
+    expect(await (result as Response).json()).toEqual({ error: "configuration_body_read_failed" });
+    expect(cancel).toHaveBeenCalledOnce();
+    expect(request.body?.locked).toBe(false);
+  });
+});
+
+describe("core start result boundary", () => {
+  it.each(["", ".", "..", "a/b", "a\\b", "a%2fb", "a?b", "a#b", "a b"])("refuses the provider path segment %j", async (provider) => {
+    expect((await app.request("/api/relay/oauth/start", json({ ...startInput, provider }))).status).toBe(400);
+    expect(records).toEqual([]);
+  });
+
+  it.each([
+    {}, { authorizationUrl: "https://provider.test/auth" },
+    { kind: "login", provider: "google", authorizationUrl: "https://login.example.test/sign-in" },
+    { kind: "oauth_authorization", provider: "other", authorizationUrl: "https://provider.test/auth" },
+  ])("refuses an invalid core start result: %j", async (body) => {
+    answer = () => Response.json(body);
+    const response = await app.request("/api/relay/oauth/start", json(startInput));
+    expect(response.status).toBe(502);
+    expect(await response.json()).toEqual({ error: "remote_oauth_start_failed" });
+    expect(records).toHaveLength(1);
+  });
+
+  it("uses the actual core start, callback, and scoped store", async () => {
+    const shared = await import("@yoplai/shared");
+    const fs = await import("node:fs/promises");
+    const os = await import("node:os");
+    const path = await import("node:path");
+    const { OAuthService } = await import("../oauth/service.js");
+    const { OAuthConnectionStore } = await import("../oauth/store.js");
+    const { TokenCipher } = await import("../oauth/crypto.js");
+    const { createOAuthRoutes } = await import("../oauth/routes.js");
+    const home = await fs.mkdtemp(path.join(os.tmpdir(), "relay-core-oauth-"));
+    const providerFetch = vi.fn<typeof fetch>(async (input) => Response.json(
+      String(input).includes("token") ? { access_token: "fake-personal-token", expires_in: 3600 } : { email: "owner@example.test" }
+    ));
+    try {
+      const service = new OAuthService({
+        store: new OAuthConnectionStore(home, new TokenCipher("fake-test-key")), fetchImpl: providerFetch,
+        loadConfig: () => shared.GatewayConfigSchema.parse({ version: 2, agents: [], extensions: {}, oauth: { redirectBaseUrl: "https://east.test", providers: { google: { clientId: "fake-id", clientSecret: "fake-secret" } } } }),
+      });
+      const core = createOAuthRoutes(service,
+        async (c) => c.req.header("authorization") === "Bearer fake-east-bearer",
+        async (c) => c.req.header("authorization") === "Bearer fake-east-bearer" ? "remote-owner" : undefined,
+        async () => false);
+      remote.mockImplementation(async (input, init) => {
+        const url = new URL(String(input));
+        expect(url.origin).toBe("https://east.test");
+        expect(init?.redirect).toBe("manual");
+        expect(new Headers(init?.headers).get("accept")).toBe("application/json");
+        expect(url.searchParams.has("returnTo")).toBe(false);
+        url.pathname = url.pathname.replace(/^\/api/, "");
+        return core.fetch(new Request(url, init));
+      });
+      const response = await app.request("/api/relay/oauth/start", json(startInput));
+      expect(response.status).toBe(200);
+      const url = new URL((await response.json()).authorizationUrl);
+      expect(url.origin).toBe("https://accounts.google.com");
+      expect(url.searchParams.get("redirect_uri")).toBe("https://east.test/api/oauth/google/callback");
+      expect(providerFetch).not.toHaveBeenCalled();
+      expect(remote).toHaveBeenCalledOnce();
+      const callbackPath = `/oauth/google/callback?code=fake-code&state=${url.searchParams.get("state")}`;
+      expect((await core.request(callbackPath)).status).toBe(200);
+      expect(service.getConnection("agent", "google", "remote-owner")?.accessToken).toBe("fake-personal-token");
+      const replay = await core.request(callbackPath);
+      expect(replay.status).toBe(400);
+      expect(await replay.text()).toContain("Invalid or expired OAuth state");
+      expect(providerFetch.mock.calls.every(([, init]) => new Headers(init?.headers).get("authorization") !== "Bearer fake-east-bearer")).toBe(true);
+      const unknown = await app.request("/api/relay/oauth/start", json({ ...startInput, provider: "remote_unknown" }));
+      expect(unknown.status).toBe(404);
+      expect(await unknown.json()).toEqual({ error: "remote_oauth_denied" });
+    } finally {
+      await fs.rm(home, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("media and list redirect refusals", () => {
+  const fileId = "11111111-1111-4111-8111-111111111111";
+  const cases = ["cross-origin", "wrong-family", "traversal", "encoded-separator", "double-encoding", "userinfo", "fragment", "loop", "missing-location", "hop-limit"];
+  for (const family of ["upload", "download", "agent-list"] as const) {
+    it.each(cases)(`refuses ${family} redirects: %s`, async (kind) => {
+      app = new Hono();
+      app.use("/api/*", relayConfigurationHttp());
+      app.use("/api/*", relayHttp());
+      app.all("*", () => family === "agent-list" ? Response.json([{ id: "local" }]) : new Response(null, { status: 404 }));
+      answer = (url) => {
+        const location = {
+          "cross-origin": `https://foreign.test${url.pathname}`,
+          "wrong-family": "/api/capabilities",
+          traversal: `${url.pathname}/../${url.pathname.split("/").at(-1)}`,
+          "encoded-separator": `${url.pathname}%2fother`,
+          "double-encoding": `${url.pathname}%252fother`,
+          userinfo: `https://user@${url.hostname}${url.pathname}`,
+          fragment: `${url.pathname}#private`,
+          loop: url.href,
+          "hop-limit": `${url.pathname}?hop=${Number(url.searchParams.get("hop")) + 1}`,
+        }[kind];
+        return new Response(null, { status: family === "upload" ? 307 : 302, headers: location ? { location } : {} });
+      };
+      const form = new FormData();
+      form.set("file", new File([new Uint8Array([0, 255, 128])], "fixture.bin"));
+      const route = family === "upload" ? "/api/media/upload?agentId=agent@east" : family === "download" ? `/api/media/download/${fileId}` : "/api/agents";
+      const response = await app.request(route, family === "upload" ? { method: "POST", body: form } : {});
+      if (family === "agent-list") {
+        expect(response.status).toBe(200);
+        expect(await response.json()).toEqual([{ id: "local" }]);
+      } else {
+        expect(response.status).toBe(502);
+        expect(await response.json()).toEqual({ error: "unsafe_remote_redirect" });
+      }
+      expect(records).toHaveLength((family === "agent-list" ? 2 : 1) * (kind === "hop-limit" ? 6 : 1));
+      for (const record of records) {
+        expect(["https://east.test", "https://west.test"]).toContain(record.url.origin);
+        expect(record.init.redirect).toBe("manual");
+        expect(record.headers.get("authorization")).toBe(`Bearer fake-${record.url.hostname.split(".")[0]}-bearer`);
+      }
+    });
+  }
+
+  it.each([301, 302, 303])("does not replay an upload after status %s", async (status) => {
+    answer = () => new Response(null, { status, headers: { location: "/api/media/upload/" } });
+    const form = new FormData();
+    form.set("file", new File([new Uint8Array([0, 255])], "fixture.bin"));
+    const response = await app.request("/api/media/upload?agentId=agent@east", { method: "POST", body: form });
+    expect(response.status).toBe(502);
+    expect(records).toHaveLength(1);
+  });
+
+  it("keeps a redirected list under the gateway base path", async () => {
+    const saved = fixture.gateways;
+    fixture.gateways = [{ ...saved[0], url: "https://east.test/gateway" }];
+    app = new Hono();
+    app.use("/api/*", relayConfigurationHttp());
+    app.use("/api/*", relayHttp());
+    app.all("*", () => Response.json([{ id: "local" }]));
+    answer = (url) => url.pathname.endsWith("/") ? Response.json([{ id: "agent" }]) : new Response(null, { status: 302, headers: { location: "/gateway/api/agents/" } });
+    try {
+      expect(await (await app.request("/api/agents")).json()).toEqual([{ id: "local" }, { id: "agent@east", gateway: "east" }]);
+      expect(records.map(({ url }) => url.pathname)).toEqual(["/gateway/api/agents", "/gateway/api/agents/"]);
+    } finally {
+      fixture.gateways = saved;
+    }
   });
 });

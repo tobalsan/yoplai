@@ -181,6 +181,11 @@ The linked bearer defines the remote requester, including personal connections a
 Remote OAuth starts use a trusted-origin JSON POST and return a checked provider URL.
 The remote stores state and tokens. The local server never fetches the provider URL.
 The page controls and dashboard viewer still need round 3b.
+
+Core OAuth starts need the new JSON start result on the remote gateway.
+A desktop does not need the remote provider extension or scheduler extension to forward these requests.
+Media and agent lists permit only bounded redirects within the same gateway and route family.
+
 See [remote configuration transport](docs/relay-configuration.md) for the API and page contract.
 
 

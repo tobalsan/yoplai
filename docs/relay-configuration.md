@@ -124,6 +124,58 @@ The remote callback consumes its stored state without a browser session and rend
 The relay omits remote `returnTo`.
 The remote must use the correct callback base and provider registration.
 
+## Core start result
+
+The relay checks the provider name as one safe path segment.
+It does not require that provider in the local extension registry.
+The selected remote checks its own provider and permissions.
+An unknown remote provider returns a local 404 error.
+
+For core OAuth, the relay sends `Accept: application/json` to the remote authorize route.
+The remote must support this response contract:
+
+```json
+{
+  "kind": "oauth_authorization",
+  "provider": "google",
+  "authorizationUrl": "https://provider.example.test/authorize?state=example"
+}
+```
+
+The core handler returns status 200 with `Content-Type: application/json` and `Cache-Control: no-store`.
+It returns this body only after it starts state for the checked provider, agent, scope, and requester.
+The relay checks the result kind, provider, and URL before it returns the URL to the page.
+It rejects all core redirects, including unrelated external login redirects.
+It also rejects the old core redirect response instead of using an unsafe fallback.
+Update the remote gateway before a core OAuth start through this relay.
+
+Ordinary browser requests keep the scope page and provider redirect.
+A JSON start requires an explicit scope and returns `missing_scope` without it.
+The callback, one-use state, token store, and browser return path keep their existing behavior.
+The shared schema is `OAuthAuthorizationStartSchema`.
+Dynamic MCP discovery keeps its separate redirect contract and does not use the static core result.
+The external MCP extension remains unchanged.
+
+## Body and redirect limits
+
+Configuration selection runs before the local extension gate only for the allowed remote routes.
+Local requests still pass through that gate.
+The relay still refuses untrusted clients and local multi-user mode.
+Schedule selection reads one body stream with a one-MiB limit.
+The relay rebuilds valid local requests before the local handler reads them.
+Oversized bodies return status 413 with `configuration_body_too_large` without a cancellation wait.
+Malformed JSON and failed reads return bounded errors before any mutation.
+
+Media and merged agent lists follow at most five same-origin redirects.
+Uploads accept only 307 or 308 and reuse their buffered form and file bytes.
+Downloads accept 301, 302, 303, 307, or 308 within the UUID download routes.
+Agent lists accept those GET redirects only within the same list route, with an optional trailing slash.
+Each redirect must stay within the configured gateway base path.
+Missing Location, unsafe paths, other origins, userinfo, fragments, loops, and excessive hops fail before another fetch.
+Failed media redirects return status 502 with `unsafe_remote_redirect`.
+Failed list redirects omit that remote list and keep the local list.
+The relay never uses unrestricted Fetch redirects.
+
 ## Round-3b page contract
 
 1. Open a blank popup during the click event, before the asynchronous start request.

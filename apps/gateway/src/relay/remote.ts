@@ -75,13 +75,59 @@ export async function fetchRemote(
   }
 }
 
+export class UnsafeRemoteRedirectError extends Error {
+  constructor() { super("Unsafe remote redirect"); }
+}
+
+type RedirectFamily = "upload" | "download" | "agent-list";
+
+/** Only replay buffered uploads. Other callers use GET without a body. */
+export async function fetchRemoteWithRedirects(
+  gateway: RemoteGateway,
+  pathAndQuery: string,
+  family: RedirectFamily,
+  init: RequestInit = {}
+): Promise<Response> {
+  const initialPath = pathAndQuery.split("?")[0].replace(/\/$/, "");
+  const base = new URL(gateway.url);
+  const basePath = base.pathname.replace(/\/+$/, "");
+  const seen = new Set<string>();
+  let currentPath = pathAndQuery;
+  for (let hop = 0; ; hop++) {
+    const current = remoteHttpUrl(gateway, currentPath);
+    if (seen.has(current)) throw new UnsafeRemoteRedirectError();
+    seen.add(current);
+    const response = await fetchRemote(gateway, currentPath, init);
+    if (response.status < 300 || response.status >= 400) return response;
+    void response.body?.cancel().catch(() => undefined);
+    const location = response.headers.get("location");
+    const allowedStatus = family === "upload" ? [307, 308] : [301, 302, 303, 307, 308];
+    if (!allowedStatus.includes(response.status) || !location || hop >= 5 || /[\s\p{Cc}\\]/u.test(location)) throw new UnsafeRemoteRedirectError();
+    // Check the raw path before URL parsing can remove traversal segments.
+    const rawPath = location.replace(/^[a-z][a-z\d+.-]*:\/\/[^/?#]*/i, "");
+    if (!isSafeRemotePath(rawPath.startsWith("/") ? rawPath : `/${rawPath}`)) throw new UnsafeRemoteRedirectError();
+    let target: URL;
+    try { target = new URL(location, current); }
+    catch { throw new UnsafeRemoteRedirectError(); }
+    if (target.origin !== base.origin || target.username || target.password || target.hash) throw new UnsafeRemoteRedirectError();
+    if (!target.pathname.startsWith(`${basePath}/`)) throw new UnsafeRemoteRedirectError();
+    const routePath = target.pathname.slice(basePath.length);
+    const path = routePath.replace(/\/$/, "");
+    const allowedPath = family === "download"
+      ? /^\/api\/media\/download\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(path)
+      : family === "upload" ? path === "/api/media/upload" : path === initialPath;
+    if (!allowedPath || !isSafeRemotePath(target.pathname)) throw new UnsafeRemoteRedirectError();
+    currentPath = `${routePath}${target.search}`;
+  }
+}
+
 /** Fetch JSON from a remote gateway. Returns null when it does not answer in time or answers with an error. */
 export async function fetchRemoteJson<T>(
   gateway: RemoteGateway,
   pathAndQuery: string
 ): Promise<T | null> {
   try {
-    const response = await fetchRemote(gateway, pathAndQuery, {
+    const response = await fetchRemoteWithRedirects(gateway, pathAndQuery, "agent-list", {
       signal: AbortSignal.timeout(LIST_TIMEOUT_MS),
     });
     if (!response.ok) return null;

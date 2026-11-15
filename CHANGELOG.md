@@ -25,6 +25,12 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Fixed
 
+- Remote OAuth no longer needs a local provider extension and rejects unrelated core login redirects.
+  Core starts now require the JSON start result on the remote gateway. Browser OAuth keeps its existing behavior.
+- Remote schedules bypass only the local extension gate for allowed remote routes.
+  Oversized schedule bodies fail promptly, and valid local schedule bodies remain readable.
+- Media and merged agent lists follow bounded same-origin redirects without changing file bytes.
+
 - Remote resets keep the chat route and its hash when the session is the only query field.
 - Remote resets from history keep their fresh chat key after reload. Pending approvals remain visible, and Approve and Refuse use the restored subscription.
 - Queued remote messages keep their own device permissions, also when two views use the same remote session. A remote reset uses a fresh chat key and starts in Ask mode, with no workspace folder. The relay ends only the matching turn after an error or completion. REST requests cannot supply a device token. Completed turns release their timers. Expired turns release their token records. The relay allows 20 live send sockets per page socket and 1,000 token records across the local gateway. Token expiry removes device authorization but leaves the stream open. The token limit does not bound all live upstream sockets. This fix adds no global socket limit. The page removes old approval answer functions when the chat changes or the message socket ends.

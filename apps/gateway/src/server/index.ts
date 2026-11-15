@@ -21,7 +21,7 @@ import type { ExtensionRuntime } from "../extensions/runtime.js";
 import { WsBroker, type WsBrokerAuthAdapter } from "./ws-broker.js";
 import { accessLogger } from "./access-log.js";
 import { allowedCorsOrigins } from "./origins.js";
-import { relayHttp } from "../relay/http.js";
+import { relayConfigurationHttp, relayHttp } from "../relay/http.js";
 import { relayDeviceApi } from "../relay/device-routes.js";
 import { startDeviceLinks } from "../relay/device-links.js";
 import { configureRelay } from "../relay/state.js";
@@ -99,6 +99,11 @@ app.route(
     },
   })
 );
+const configurationRelay = relayConfigurationHttp();
+app.use("/api/*", (c, next) => {
+  if (currentExtensionRuntime().isEnabled("multiUser")) return next();
+  return configurationRelay(c, next);
+});
 app.use("/api/*", async (c, next) => {
   let config: GatewayConfig;
   try {

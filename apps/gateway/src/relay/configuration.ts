@@ -1,4 +1,4 @@
-import { getOAuthProvider } from "@yoplai/shared";
+import { OAuthAuthorizationStartSchema } from "@yoplai/shared";
 import { getAgent } from "../config/index.js";
 import { allowedCorsOrigins } from "../server/origins.js";
 import { isTrustedRequest, resolveRemoteAgent } from "./state.js";
@@ -54,26 +54,38 @@ function browserStartError(request: Request): Response | undefined {
   if (request.headers.get("content-type")?.split(";")[0].trim().toLowerCase() !== "application/json") return fail("json_required", 415);
 }
 
-async function jsonBody(request: Request): Promise<Record<string, unknown> | undefined> {
-  // Configuration bodies need a bound before JSON parsing.
+async function jsonBody(request: Pick<Request, "body" | "signal">): Promise<Record<string, unknown> | Response> {
   const reader = request.body?.getReader();
   const chunks: Uint8Array[] = [];
   let size = 0;
-  while (reader) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    size += value.byteLength;
-    if (size > 1024 * 1024) {
-      await reader.cancel();
-      return undefined;
+  // Cancel the owned stream without waiting for its source to finish cancellation.
+  const cancel = () => { void reader?.cancel().catch(() => undefined); };
+  request.signal.addEventListener("abort", cancel, { once: true });
+  try {
+    request.signal.throwIfAborted();
+    while (reader) {
+      const { done, value } = await reader.read();
+      request.signal.throwIfAborted();
+      if (done) break;
+      size += value.byteLength;
+      if (size > 1024 * 1024) {
+        cancel();
+        return fail("configuration_body_too_large", 413);
+      }
+      if (value.byteLength) chunks.push(value);
     }
-    chunks.push(value);
+  } catch {
+    cancel();
+    return fail("configuration_body_read_failed");
+  } finally {
+    request.signal.removeEventListener("abort", cancel);
+    reader?.releaseLock();
   }
   try {
     const value: unknown = JSON.parse(Buffer.concat(chunks).toString());
-    return isRecord(value) ? value : undefined;
+    return isRecord(value) ? value : fail("invalid_configuration_body");
   } catch {
-    return undefined;
+    return fail("invalid_configuration_body");
   }
 }
 
@@ -97,7 +109,8 @@ async function startOAuth(request: Request, gateways: RemoteGateway[]): Promise<
   const denied = browserStartError(request);
   if (denied) return denied;
   const input = await jsonBody(request);
-  if (!input || Object.keys(input).some((key) => !["gateway", "agentId", "kind", "provider", "server", "scope", "scopes"].includes(key))) return fail("invalid_oauth_start");
+  if (input instanceof Response) return input;
+  if (Object.keys(input).some((key) => !["gateway", "agentId", "kind", "provider", "server", "scope", "scopes"].includes(key))) return fail("invalid_oauth_start");
   const gateway = gateways.find((item) => item.name === input.gateway);
   if (!gateway) return fail("unknown_gateway", 404);
   if (typeof input.agentId !== "string" || !input.agentId || !["personal", "team"].includes(String(input.scope))) return fail("invalid_oauth_start");
@@ -105,7 +118,7 @@ async function startOAuth(request: Request, gateways: RemoteGateway[]): Promise<
   if (!agent) return fail("invalid_remote_agent");
   const query = new URLSearchParams({ agent, scope: String(input.scope) });
   let path: string;
-  if (input.kind === "core" && typeof input.provider === "string" && getOAuthProvider(input.provider)) {
+  if (input.kind === "core" && typeof input.provider === "string" && /^[A-Za-z0-9_-]+$/.test(input.provider)) {
     path = `/api/oauth/${encodeURIComponent(input.provider)}/authorize`;
     if (input.scopes !== undefined) {
       if (!Array.isArray(input.scopes) || input.scopes.some((scope) => typeof scope !== "string")) return fail("invalid_oauth_scopes");
@@ -116,11 +129,35 @@ async function startOAuth(request: Request, gateways: RemoteGateway[]): Promise<
     query.set("server", input.server);
   } else return fail("invalid_oauth_target");
   try {
-    const response = await fetchRemote(gateway, `${path}?${query}`, { signal: AbortSignal.any([request.signal, AbortSignal.timeout(30_000)]) });
-    const location = response.headers.get("location");
-    await response.body?.cancel();
-    if ([401, 403, 404].includes(response.status)) return fail("remote_oauth_denied", response.status);
-    if (![302, 303].includes(response.status) || !location) return fail("remote_oauth_start_failed", 502);
+    const core = input.kind === "core";
+    const signal = AbortSignal.any([request.signal, AbortSignal.timeout(30_000)]);
+    const response = await fetchRemote(gateway, `${path}?${query}`, {
+      headers: core ? { accept: "application/json" } : undefined,
+      signal,
+    });
+    if ([401, 403, 404].includes(response.status)) {
+      void response.body?.cancel().catch(() => undefined);
+      return fail("remote_oauth_denied", response.status);
+    }
+    let location: unknown;
+    if (core) {
+      if (response.status >= 300 && response.status < 400) {
+        void response.body?.cancel().catch(() => undefined);
+        return fail("unexpected_oauth_redirect", 502);
+      }
+      if (response.status !== 200 || response.headers.get("content-type")?.split(";")[0].trim() !== "application/json") {
+        void response.body?.cancel().catch(() => undefined);
+        return fail("remote_oauth_start_failed", 502);
+      }
+      const result = await jsonBody({ body: response.body, signal });
+      const parsed = OAuthAuthorizationStartSchema.safeParse(result);
+      if (!parsed.success || parsed.data.provider !== input.provider) return fail("remote_oauth_start_failed", 502);
+      location = parsed.data.authorizationUrl;
+    } else {
+      location = response.headers.get("location");
+      void response.body?.cancel().catch(() => undefined);
+      if (![302, 303].includes(response.status) || !location) return fail("remote_oauth_start_failed", 502);
+    }
     const authorizationUrl = safeAuthorizationUrl(location);
     if (!authorizationUrl || (gateway.token && decodeURIComponent(authorizationUrl).includes(gateway.token))) return fail("unsafe_authorization_url", 502);
     const target = new URL(authorizationUrl);
@@ -131,8 +168,11 @@ async function startOAuth(request: Request, gateways: RemoteGateway[]): Promise<
   }
 }
 
-/** Only this table adds configuration routes to the relay. Object IDs stay unchanged. */
-export async function relayConfiguration(request: Request, gateways: RemoteGateway[], forward: ConfigurationForward): Promise<Response | null> {
+/**
+ * Only this table adds configuration routes to the relay. Object IDs stay unchanged.
+ * A returned Request holds the rebuilt body for a local handler.
+ */
+export async function relayConfiguration(request: Request, gateways: RemoteGateway[], forward: ConfigurationForward): Promise<Response | Request | null> {
   const url = new URL(request.url);
   const prefix = /^\/api\/relay\/gateways\/([^/]+)(\/.*)?$/.exec(url.pathname);
   const isStart = url.pathname === "/api/relay/oauth/start";
@@ -146,6 +186,7 @@ export async function relayConfiguration(request: Request, gateways: RemoteGatew
     if (!trusted || gateways.length === 0) return fail("relay_unavailable", 403);
     if (isStart) return startOAuth(request, gateways);
   }
+  if (!prefix && gateways.length === 0) return null;
   let gateway = prefix ? gateways.find((item) => item.name === decodeURIComponent(prefix[1])) : undefined;
   if (prefix && !gateway) return fail("unknown_gateway", 404);
   if (prefix && (!rule || !rule.methods.includes(request.method))) return fail("relay_route_not_allowed", 405);
@@ -158,20 +199,23 @@ export async function relayConfiguration(request: Request, gateways: RemoteGatew
     value = url.searchParams.get("agent") ?? undefined;
   }
   if (agentKind === "body") {
-    body = await jsonBody(request.clone());
+    const input = await jsonBody(request);
+    if (input instanceof Response) return input;
+    body = input;
+    request = withJson(request, body);
     value = typeof body?.agentId === "string" ? body.agentId : undefined;
   }
   let agent: string | undefined;
   if (value) {
     const target = resolveRemoteAgent(value, gateways);
     if (!prefix && !target.gateway) {
-      if (getAgent(value) || !value.includes("@")) return null;
+      if (getAgent(value) || !value.includes("@")) return body ? request : null;
       return fail("unknown_gateway", 404);
     }
     gateway ??= gateways.find((item) => item.name === target.gateway);
     if (gateway) agent = selectedAgent(value, gateway, gateways);
   }
-  if (!gateway) return null;
+  if (!gateway) return body ? request : null;
   if (!trusted) return fail("untrusted_origin", 403);
   if (rule && !rule.methods.includes(request.method)) return fail("relay_route_not_allowed", 405);
   if (authorize) return fail("use_oauth_start", 405);
@@ -189,7 +233,8 @@ export async function relayConfiguration(request: Request, gateways: RemoteGatew
     const denied = browserStartError(request);
     if (denied) return denied;
     const input = await jsonBody(request);
-    if (!input || !["personal", "team"].includes(String(input.credentialScope))) return fail("invalid_credential_scope");
+    if (input instanceof Response) return input;
+    if (!["personal", "team"].includes(String(input.credentialScope))) return fail("invalid_credential_scope");
     delete input.returnTo;
     request = withJson(request, input);
   }
