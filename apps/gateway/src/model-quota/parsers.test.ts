@@ -1,6 +1,32 @@
 import { expect, it } from "vitest";
 import { parseClaudeUsage } from "./parsers.js";
 
+it.each([
+  { utilization: 0, resets_at: null },
+  { utilization: 0 },
+  { utilization: 66, resets_at: 42 },
+  { utilization: 0, resets_at: {} },
+  { utilization: 0, resets_at: [] },
+  { utilization: 0, resets_at: false },
+])("keeps weekly usage when the five-hour window is idle: %j", (five_hour) => {
+  expect(
+    parseClaudeUsage({
+      five_hour,
+      seven_day: { utilization: 50, resets_at: "2026-11-03T06:00:00Z" },
+    })
+  ).toEqual({
+    ok: true,
+    windows: [
+      {
+        kind: "weekly",
+        usedPercent: 50,
+        resetAt: 1793685600,
+        windowSeconds: 604800,
+      },
+    ],
+  });
+});
+
 it.each([null, undefined])(
   "keeps weekly usage when the five-hour window is %s",
   (five_hour) => {
@@ -158,8 +184,18 @@ it.each([
   { five_hour: null, seven_day: null },
   { five_hour: null },
   { seven_day: null },
+  { five_hour: { utilization: 0, resets_at: null }, seven_day: null },
+  { five_hour: { utilization: 0 }, seven_day: null },
   {
-    five_hour: { utilization: 66, resets_at: null },
+    five_hour: { utilization: 0, resets_at: null },
+    seven_day: { utilization: 50, resets_at: null },
+  },
+  {
+    five_hour: { utilization: 0, resets_at: null },
+    seven_day: { utilization: "50", resets_at: "2026-11-03T06:00:00Z" },
+  },
+  {
+    five_hour: [],
     seven_day: { utilization: 50, resets_at: "2026-11-03T06:00:00Z" },
   },
   {

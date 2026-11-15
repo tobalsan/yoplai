@@ -262,7 +262,7 @@ describe("host quota polling lifecycle", () => {
       JSON.stringify({
         five_hour: {
           utilization: "RAW_RESPONSE_TOKEN_SENTINEL",
-          resets_at: null,
+          resets_at: "RAW_RESPONSE_TOKEN_SENTINEL",
         },
         seven_day: null,
         extra_usage: "RAW_RESPONSE_TOKEN_SENTINEL",
@@ -273,7 +273,8 @@ describe("host quota polling lifecycle", () => {
         keys: { five_hour: "object", seven_day: "null", extra_usage: "string" },
         issues: [
           { path: ["five_hour", "utilization"], code: "invalid_type" },
-          { path: ["five_hour", "resets_at"], code: "invalid_type" },
+          { path: ["five_hour", "resets_at"], code: "invalid_string" },
+          { path: ["five_hour", "resets_at"], code: "custom" },
         ],
       },
     ],
