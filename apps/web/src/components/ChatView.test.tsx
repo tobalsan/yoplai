@@ -10,6 +10,7 @@ import type { SubscriptionCallbacks } from "../api/realtime";
 import type { StreamCallbacks } from "../api/chat";
 import type { FullHistoryMessage } from "../api/types";
 import type { McpAppFile } from "@yoplai/shared/types";
+import type { WsDeviceApprovalRequest } from "@yoplai/shared";
 import { ToastHost } from "../lib/toast";
 import {
   resetCapabilitiesForTests,
@@ -862,6 +863,65 @@ describe("ChatView abort handling", () => {
       expect(send).toHaveBeenNthCalledWith(2, { type: "device_approval_answer", approvalId: "a2", approve: false });
       await waitFor(() => expect((queryAllByRole(container, "button", { name: "Approve" })[0] as HTMLButtonElement).disabled).toBe(true));
       dispose();
+    });
+
+    describe("a request on the socket of a message", () => {
+      type MessageCallbacks = {
+        onDeviceApprovalRequest?: (request: WsDeviceApprovalRequest, answer: (id: string, approve: boolean) => boolean) => void;
+        onDeviceApprovalResolved?: (resolved: unknown) => void;
+      };
+      async function sendFirstMessageOfNewChat() {
+        let callbacks: MessageCallbacks = {};
+        const messageSocketSend = vi.fn().mockReturnValue(true);
+        streamMessageMock.mockImplementation((_a, _m, _k, _t, _d, _e, next) => { callbacks = next; return () => {}; });
+        const view = await renderRemote();
+        const keysSubscribed = () => subscribeToSessionMock.mock.calls.map((call) => call[1]);
+        expect(keysSubscribed()).toEqual(["main"]);
+        queryByTitle(view.container, "New chat")!.click();
+        await tick();
+        const textarea = view.container.querySelector("textarea") as HTMLTextAreaElement;
+        textarea.value = "list the files";
+        textarea.dispatchEvent(new Event("input", { bubbles: true }));
+        await tick();
+        queryByRole(view.container, "button", { name: "Send message" })!.click();
+        await waitFor(() => expect(streamMessageMock).toHaveBeenCalled());
+        expect(streamMessageMock.mock.calls.at(-1)?.[2]).toBe("fresh-key");
+        return { ...view, callbacks: () => callbacks, messageSocketSend, keysSubscribed };
+      }
+
+      it("shows the card of the first message after New chat and answers on the socket of the message", async () => {
+        const { container, dispose, callbacks, messageSocketSend } = await sendFirstMessageOfNewChat();
+        callbacks().onDeviceApprovalRequest?.(request("a1", "key:fresh-key"), messageSocketSend);
+        await waitFor(() => expect(queryByRole(container, "button", { name: "Approve" })).not.toBeNull());
+        expect(queryByText(container, "ls -la")).not.toBeNull();
+        queryByRole(container, "button", { name: "Approve" })!.click();
+        expect(messageSocketSend).toHaveBeenCalledWith("a1", true);
+        expect(send).not.toHaveBeenCalled();
+        await waitFor(() => expect((queryByRole(container, "button", { name: "Approve" }) as HTMLButtonElement).disabled).toBe(true));
+        dispose();
+      });
+
+      it("subscribes again with the key of the new chat", async () => {
+        const { keysSubscribed, dispose } = await sendFirstMessageOfNewChat();
+        expect(keysSubscribed()).toContain("fresh-key");
+        dispose();
+      });
+
+      it("shows no card for a request of another chat", async () => {
+        const { container, dispose, callbacks, messageSocketSend } = await sendFirstMessageOfNewChat();
+        callbacks().onDeviceApprovalRequest?.(request("a1", "key:main"), messageSocketSend);
+        await tick();
+        expect(queryByRole(container, "button", { name: "Approve" })).toBeNull();
+        dispose();
+      });
+
+      it("shows one card for a request that arrives on two sockets", async () => {
+        const { container, dispose, callbacks, messageSocketSend } = await sendFirstMessageOfNewChat();
+        callbacks().onDeviceApprovalRequest?.(request("a1", "key:fresh-key"), messageSocketSend);
+        subscription.onDeviceApprovalRequest?.(request("a1", "key:fresh-key"));
+        await waitFor(() => expect(queryAllByRole(container, "button", { name: "Approve" })).toHaveLength(1));
+        dispose();
+      });
     });
 
     it("removes the card on a resolved message and shows a line for a timeout", async () => {

@@ -12,7 +12,7 @@ import {
   type Accessor,
 } from "solid-js";
 import type { McpAppView, McpAppViewReference } from "@yoplai/shared/types";
-import type { WsDeviceApprovalRequest } from "@yoplai/shared";
+import type { WsDeviceApprovalRequest, WsDeviceApprovalResolved } from "@yoplai/shared";
 import type { RealtimeSubscription } from "../../api/realtime-client";
 import { isNoReply } from "@yoplai/shared/no-reply";
 import { getMaxContextTokens } from "@yoplai/shared/model-context";
@@ -26,6 +26,7 @@ import {
   postAbort,
   postCompact,
   type DoneMeta,
+  type StreamCallbacks,
 } from "../../api";
 import type {
   Agent,
@@ -642,6 +643,32 @@ export function createChatSession(input: ChatSessionInput) {
     newChatCount();
     return explicitSessionId() ? `session:${explicitSessionId()}` : `key:${sessionKey()}`;
   };
+  /** The socket of a message that got the request. An answer goes back on the same socket. */
+  const approvalAnswerers = new Map<string, (approvalId: string, approve: boolean) => boolean>();
+  const addDeviceApproval = (request: WsDeviceApprovalRequest) =>
+    setDeviceApprovals((prev) =>
+      prev.some((item) => item.request.approvalId === request.approvalId)
+        ? prev
+        : [...prev, { request, state: "pending" }]
+    );
+  const resolveDeviceApproval = (resolved: WsDeviceApprovalResolved) => {
+    approvalAnswerers.delete(resolved.approvalId);
+    setDeviceApprovals((prev) =>
+      resolved.outcome === "timeout"
+        ? prev.map((item) => (item.request.approvalId === resolved.approvalId ? { ...item, state: "timeout" } : item))
+        : prev.filter((item) => item.request.approvalId !== resolved.approvalId)
+    );
+  };
+  const messageApprovalCallbacks = (agentId: string): Pick<StreamCallbacks, "onDeviceApprovalRequest" | "onDeviceApprovalResolved"> => ({
+    onDeviceApprovalRequest: (request, answer) => {
+      if (input.agentId() !== agentId || request.agentId !== agentId) return;
+      approvalAnswerers.set(request.approvalId, answer);
+      addDeviceApproval(request);
+    },
+    onDeviceApprovalResolved: (resolved) => {
+      if (input.agentId() === agentId) resolveDeviceApproval(resolved);
+    },
+  });
   const isDeviceApprovalShown = (item: DeviceApprovalItem) => item.request.chat === deviceChatName();
 
   const resolveAppSession = (onFailed?: () => void) => {
@@ -800,12 +827,11 @@ export function createChatSession(input: ChatSessionInput) {
   // Subscribe to live updates for background runs
   createEffect(() => {
     const agentId = input.agentId();
+    newChatCount(); // "New chat" writes a new session key. Subscribe again with it.
     const key = sessionKey();
     if (!agentId) return;
     const subscribedSession = currentSession();
     const isCurrentSubscription = () => subscribedSession === currentSession();
-    // "New chat" changes the session key but does not subscribe again. This socket then stays open and
-    // still delivers the approval requests of the agent, so approval events check only the agent.
     const isOpenAgent = () => input.agentId() === agentId;
 
     subscriptionCleanup?.();
@@ -827,22 +853,10 @@ export function createChatSession(input: ChatSessionInput) {
           setDeviceConnectionLost(true);
         },
         onDeviceApprovalRequest: (request) => {
-          if (!isOpenAgent()) return;
-          setDeviceApprovals((prev) =>
-            prev.some((item) => item.request.approvalId === request.approvalId)
-              ? prev
-              : [...prev, { request, state: "pending" }]
-          );
+          if (isOpenAgent()) addDeviceApproval(request);
         },
         onDeviceApprovalResolved: (resolved) => {
-          if (!isOpenAgent()) return;
-          setDeviceApprovals((prev) =>
-            resolved.outcome === "timeout"
-              ? prev.map((item) =>
-                  item.request.approvalId === resolved.approvalId ? { ...item, state: "timeout" } : item
-                )
-              : prev.filter((item) => item.request.approvalId !== resolved.approvalId)
-          );
+          if (isOpenAgent()) resolveDeviceApproval(resolved);
         },
         onText: (chunk) => {
           if (!isCurrentSubscription()) return;
@@ -1575,6 +1589,7 @@ export function createChatSession(input: ChatSessionInput) {
             queuedFiles.push(fileBlock);
             queuedBlocks.push(fileBlock);
           },
+          ...messageApprovalCallbacks(input.agentId()),
           onSessionReset: (sessionId) => {
             if (!isCurrentQueuedStream()) return;
             queuedResetFrom = queuedSession;
@@ -1795,6 +1810,7 @@ export function createChatSession(input: ChatSessionInput) {
           setStreamingFiles((prev) => [...prev, fileBlock]);
           appendStreamingFileBlock(fileBlock);
         },
+        ...messageApprovalCallbacks(input.agentId()),
         onSessionReset: (sessionId) => {
           if (!isCurrentDirectStream()) return;
           resetFromSession = streamSession;
@@ -1894,7 +1910,9 @@ export function createChatSession(input: ChatSessionInput) {
     "role" in message ? simpleCopyReplies().get(message) : fullCopyReplies().get(message);
   const shouldAnimate = (id: string) => !noAnimIds.delete(id);
   const answerDeviceApproval = (approvalId: string, approve: boolean) => {
-    const sent = subscriptionCleanup?.send({ type: "device_approval_answer", approvalId, approve });
+    const sent =
+      approvalAnswerers.get(approvalId)?.(approvalId, approve) ||
+      subscriptionCleanup?.send({ type: "device_approval_answer", approvalId, approve });
     if (!sent) return;
     setDeviceApprovals((prev) =>
       prev.map((item) => (item.request.approvalId === approvalId ? { ...item, state: "answered" } : item))
