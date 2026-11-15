@@ -250,7 +250,9 @@ The host code does these steps:
 1. Send `POST /api/relay/dashboard-views` with `Content-Type: application/json` and `{"gateway":"<linked name>","dashboardId":"<id>"}`.
    The body has no other field and stays under 1 KiB. The request must be a same-origin fetch from an exact configured UI origin
    (`server/origins.ts`). The gateway checks `Origin` and `Sec-Fetch-Site: same-origin`. A foreign or opaque origin gets `403 untrusted_origin`.
-   A cross-site fetch gets `403 same_origin_required`. Other refusals: `415 json_required`, `404 unknown_gateway`, `400 invalid_dashboard_id`, `413 request_too_large`.
+   A cross-site fetch gets `403 same_origin_required`. Other refusals: `415 json_required`, `404 unknown_gateway`, `400 invalid_dashboard_id`, `413 request_too_large`, `408 request_timeout`, `429 too_many_dashboard_view_requests`.
+   The gateway refuses a declared length over 1 KiB before it reads the body. It reads the body for at most 5 seconds and cancels the read when the time ends or the client disconnects.
+   At most 16 grant requests can wait for a body at the same time. This limit is separate from the cap of 128 stored grants.
 2. Read `{frameUrl, expiresAt, gateway, dashboardId}` from the answer. `frameUrl` is a path, such as `/api/relay/dashboard-views/<grant>/<id>/`.
    `expiresAt` is an ISO time 30 minutes after creation. At most 128 grants are active. The 129th request gets `429 too_many_dashboard_views`.
 3. Create the frame with `src=frameUrl` and exactly `sandbox="allow-scripts allow-downloads allow-modals"`.

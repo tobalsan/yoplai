@@ -35,6 +35,10 @@ export const dashboardViewLimits = {
   editBytes: 256 * 1024,
   queryBytes: 8 * 1024,
   createBytes: 1024,
+  /** Time to read the small body of a grant request. */
+  createDeadlineMs: 5_000,
+  /** Grant requests that can wait for a body at the same time. This is not the stored grant cap. */
+  createPending: 16,
   capabilitiesBytes: 64 * 1024,
   deadlineMs: 30_000,
   concurrencyPerGateway: 8,
@@ -387,18 +391,41 @@ async function writeDashboard(request: Request, op: "edit" | "add", id: string, 
 
 const CreateViewSchema = z.object({ gateway: z.string(), dashboardId: z.string() }).strict();
 
+let pendingCreates = 0;
+
+/** Reads the grant request body under a size limit, a deadline, and a cap on parallel reads. */
+async function readCreateBody(request: Request): Promise<Buffer | Response> {
+  const declared = declaredLength(request.headers);
+  if (declared !== undefined && declared > dashboardViewLimits.createBytes) {
+    discard(request.body);
+    return localJson(413, { error: "request_too_large" });
+  }
+  if (pendingCreates >= dashboardViewLimits.createPending) {
+    discard(request.body);
+    return localJson(429, { error: "too_many_dashboard_view_requests" }, { "Retry-After": "1" });
+  }
+  pendingCreates += 1;
+  const deadline = new AbortController();
+  const timer = setTimeout(() => deadline.abort(), dashboardViewLimits.createDeadlineMs);
+  try {
+    return await readBounded(request.body, dashboardViewLimits.createBytes, AbortSignal.any([request.signal, deadline.signal]));
+  } catch (error) {
+    if (error instanceof BodyTooLargeError) return localJson(413, { error: "request_too_large" });
+    if (request.signal.aborted) return new Response(null, { status: 499 });
+    return localJson(408, { error: "request_timeout" });
+  } finally {
+    clearTimeout(timer);
+    pendingCreates -= 1;
+  }
+}
+
 async function createView(request: Request): Promise<Response> {
   const origin = request.headers.get("origin");
   if (!origin || !allowedCorsOrigins().includes(origin)) return localJson(403, { error: "untrusted_origin" });
   if (request.headers.get("sec-fetch-site") !== "same-origin") return localJson(403, { error: "same_origin_required" });
   if (mediaType(request.headers) !== "application/json") return localJson(415, { error: "json_required" });
-  let body: Buffer;
-  try {
-    body = await readBounded(request.body, dashboardViewLimits.createBytes, request.signal);
-  } catch (error) {
-    if (error instanceof BodyTooLargeError) return localJson(413, { error: "request_too_large" });
-    return new Response(null, { status: 499 });
-  }
+  const body = await readCreateBody(request);
+  if (!Buffer.isBuffer(body)) return body;
   let input: z.infer<typeof CreateViewSchema>;
   try {
     input = CreateViewSchema.parse(JSON.parse(body.toString("utf8")));

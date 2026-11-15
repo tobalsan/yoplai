@@ -42,7 +42,7 @@ let remoteCalls: Array<{ method: string; url: string; authorization: string | un
 let logs: string[] = [];
 let state: typeof import("../relay/state.js");
 let views: typeof import("../relay/dashboard-views.js");
-const defaultLimits = { htmlBytes: 5 * 1024 * 1024, editBytes: 256 * 1024, queryBytes: 8 * 1024, createBytes: 1024, capabilitiesBytes: 64 * 1024, deadlineMs: 30_000, concurrencyPerGateway: 8 };
+const defaultLimits = { htmlBytes: 5 * 1024 * 1024, editBytes: 256 * 1024, queryBytes: 8 * 1024, createBytes: 1024, createDeadlineMs: 5_000, createPending: 16, capabilitiesBytes: 64 * 1024, deadlineMs: 30_000, concurrencyPerGateway: 8 };
 const originalRequest = globalThis.Request;
 const originalResponse = globalThis.Response;
 
@@ -398,6 +398,57 @@ describe("real adapter: logs, bounds and disconnects", () => {
     // The grant request, the three reads, the write, and two methods for each alias.
     expect(viewerLines).toHaveLength(1 + canonical.length + 1 + aliases.length * 2);
     for (const line of viewerLines) expect(line).toMatch(/^--> (?:GET|POST) \/api\/relay\/dashboard-views\/\[redacted\] \d{3} \S+$/);
+  });
+
+  it("answers a grant request that stops sending its body, and one that declares too much, without waiting", async () => {
+    views.dashboardViewLimits.createDeadlineMs = 200;
+    const send = (headers: Headers, firstChunk: string) => new Promise<{ status: number; body: string; ms: number }>((resolve, reject) => {
+      const started = Date.now();
+      const url = new URL(`${local}/api/relay/dashboard-views`);
+      const request = http.request({ hostname: url.hostname, port: url.port, path: url.pathname, method: "POST", headers, agent: false }, (response) => {
+        const parts: Buffer[] = [];
+        response.on("data", (part: Buffer) => parts.push(part));
+        response.on("end", () => resolve({ status: response.statusCode ?? 0, body: Buffer.concat(parts).toString(), ms: Date.now() - started }));
+      });
+      request.on("error", reject);
+      request.write(firstChunk);
+      // The request never ends. The gateway must answer on its own deadline.
+    });
+    const stalled = await send({ ...jsonHeaders(), "content-length": "100" }, "{");
+    expect(stalled.status).toBe(408);
+    expect(JSON.parse(stalled.body)).toEqual({ error: "request_timeout" });
+    expect(stalled.ms).toBeLessThan(3000);
+    const declared = await send({ ...jsonHeaders(), "content-length": "5000" }, "{");
+    expect(declared.status).toBe(413);
+    expect(JSON.parse(declared.body)).toEqual({ error: "request_too_large" });
+    expect(remoteCalls).toEqual([]);
+    views.dashboardViewLimits.createDeadlineMs = 5_000;
+    expect((await fetch(`${local}/health`)).status).toBe(200);
+    await openView();
+  });
+
+  it("frees pending grant requests when the client disconnects", async () => {
+    views.dashboardViewLimits.createPending = 2;
+    const sockets: net.Socket[] = [];
+    const hold = () => new Promise<void>((resolve) => {
+      const socket = net.connect(Number(new URL(local).port), "127.0.0.1", () => {
+        socket.write(`POST /api/relay/dashboard-views HTTP/1.1\r\nHost: 127.0.0.1\r\nOrigin: ${UI}\r\nSec-Fetch-Site: same-origin\r\nContent-Type: application/json\r\nContent-Length: 100\r\n\r\n{`);
+        resolve();
+      });
+      socket.on("error", () => undefined);
+      sockets.push(socket);
+    });
+    await hold();
+    await hold();
+    await vi.waitFor(async () => {
+      const refused = await fetch(`${local}/api/relay/dashboard-views`, { method: "POST", headers: jsonHeaders(), body: JSON.stringify({ gateway: "ams", dashboardId }) });
+      expect(refused.status).toBe(429);
+    });
+    for (const socket of sockets) socket.destroy();
+    await vi.waitFor(async () => {
+      const accepted = await fetch(`${local}/api/relay/dashboard-views`, { method: "POST", headers: jsonHeaders(), body: JSON.stringify({ gateway: "ams", dashboardId }) });
+      expect(accepted.status).toBe(201);
+    });
   });
 
   it("returns a readable 413 for a streamed oversized write", async () => {

@@ -39,7 +39,7 @@ let views: typeof import("./dashboard-views.js");
 let app: Hono;
 const gatewayDir = fileURLToPath(new URL("../..", import.meta.url));
 const storeModule = new URL("./store.ts", import.meta.url).href;
-const defaultLimits = { htmlBytes: 5 * 1024 * 1024, editBytes: 256 * 1024, queryBytes: 8 * 1024, createBytes: 1024, capabilitiesBytes: 64 * 1024, deadlineMs: 30_000, concurrencyPerGateway: 8 };
+const defaultLimits = { htmlBytes: 5 * 1024 * 1024, editBytes: 256 * 1024, queryBytes: 8 * 1024, createBytes: 1024, createDeadlineMs: 5_000, createPending: 16, capabilitiesBytes: 64 * 1024, deadlineMs: 30_000, concurrencyPerGateway: 8 };
 
 const metaFor = (id: string, overrides: Partial<DashboardEmbedMeta> = {}): DashboardEmbedMeta => ({
   dashboardId: id, agentId: "pom", canWrite: true, canEdit: true, chat: { sessionId: "session-1" }, annotation: true, ...overrides,
@@ -339,6 +339,82 @@ describe("view grants", () => {
     const second = await view(pathFor(id, ID));
     expect(second.status).toBe(200);
     expect(calls).toHaveLength(2);
+  });
+});
+
+/** A request body that sends one byte and then waits. It records when the reader cancels it. */
+function stalledBody(): { stream: ReadableStream<Uint8Array>; cancelled: () => boolean } {
+  let cancelled = false;
+  const stream = new ReadableStream<Uint8Array>({
+    start(controller) { controller.enqueue(new TextEncoder().encode("{")); },
+    cancel() { cancelled = true; },
+  });
+  return { stream, cancelled: () => cancelled };
+}
+
+const createWithStream = (stream: ReadableStream<Uint8Array>, extra: Record<string, string> = {}, signal?: AbortSignal) =>
+  app.request("/api/relay/dashboard-views", { method: "POST", headers: createHeaders(extra), body: stream, duplex: "half", signal } as RequestInit);
+
+describe("grant request body bounds", () => {
+  it("refuses a declared length over the limit before it reads the body", async () => {
+    const { stream, cancelled } = stalledBody();
+    const response = await createWithStream(stream, { "content-length": "5000" });
+    expect(response.status).toBe(413);
+    expect(await response.json()).toEqual({ error: "request_too_large" });
+    await vi.waitFor(() => expect(cancelled()).toBe(true));
+    expect(calls).toEqual([]);
+  });
+
+  it("ends a body that stalls at the deadline and cancels the reader", async () => {
+    views.dashboardViewLimits.createDeadlineMs = 100;
+    const { stream, cancelled } = stalledBody();
+    const started = Date.now();
+    const response = await createWithStream(stream);
+    expect(response.status).toBe(408);
+    expect(await response.json()).toEqual({ error: "request_timeout" });
+    expect(Date.now() - started).toBeLessThan(2000);
+    expect(cancelled()).toBe(true);
+    expect(response.headers.get("cache-control")).toBe("no-store");
+  });
+
+  it("cancels the reader and frees the slot when the client aborts", async () => {
+    views.dashboardViewLimits.createPending = 1;
+    const first = stalledBody();
+    const controller = new AbortController();
+    const pending = createWithStream(first.stream, {}, controller.signal);
+    // The pending read holds the only slot.
+    await vi.waitFor(async () => {
+      const second = stalledBody();
+      const refused = await createWithStream(second.stream);
+      expect(refused.status).toBe(429);
+      expect(refused.headers.get("retry-after")).toBe("1");
+      expect(await refused.json()).toEqual({ error: "too_many_dashboard_view_requests" });
+      expect(second.cancelled()).toBe(true);
+    });
+    controller.abort();
+    expect((await pending).status).toBe(499);
+    expect(first.cancelled()).toBe(true);
+    expect((await create()).status).toBe(201);
+  });
+
+  it("counts pending reads apart from stored grants", async () => {
+    views.dashboardViewLimits.createPending = 2;
+    views.dashboardViewLimits.createDeadlineMs = 150;
+    const waiting = [stalledBody(), stalledBody()];
+    const pending = waiting.map((item) => createWithStream(item.stream));
+    const refused = await createWithStream(stalledBody().stream);
+    expect(refused.status).toBe(429);
+    for (const response of await Promise.all(pending)) expect(response.status).toBe(408);
+    for (const item of waiting) expect(item.cancelled()).toBe(true);
+    // No grant exists after the refusals, so the stored cap of 128 is untouched.
+    vi.useFakeTimers({ toFake: ["Date"] });
+    for (let i = 0; i < 128; i++) expect((await create()).status).toBe(201);
+    expect((await create()).status).toBe(429);
+  });
+
+  it("keeps the small defaults", () => {
+    expect(defaultLimits).toMatchObject({ createBytes: 1024, createDeadlineMs: 5_000, createPending: 16 });
+    expect(views.dashboardViewLimits).toMatchObject(defaultLimits);
   });
 });
 
