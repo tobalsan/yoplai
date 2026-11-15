@@ -225,6 +225,12 @@ Every route needs a supported relay mode and loopback forwarding.
 Otherwise it returns `403 relay_unavailable`. Local multi-user mode is not supported.
 No route returns a redirect. The global CORS middleware skips this prefix.
 
+Link lifetime: the link store saves a random `generation` with each new link in `remote-gateways.json`.
+The gateway checks the link name, URL, bearer, and generation each time a grant is used.
+Another process can remove a link and create it again with equal values, for example `yoplai disconnect` and then `yoplai connect`.
+The new link gets a new generation, so its old grants end with `410`, and the gateway makes no remote call.
+A save with equal values keeps the generation and the grants. A link file from an older version has no generation. It gets one on the next save.
+
 | Route | Caller | Result |
 | --- | --- | --- |
 | `POST /api/relay/dashboard-views` | Trusted UI code | Creates a grant. Returns 201. |

@@ -14,7 +14,7 @@ export type DashboardViewRecord = { seq: number; dashboardId: string } & Dashboa
 
 type Grant = {
   gateway: string;
-  /** Hash of the link that issued the grant. Unlink and relink change it. */
+  /** Hash of the link that issued the grant. Unlink, relink, and a new link generation change it. */
   link: string;
   origin: string;
   expiresAt: number;
@@ -25,7 +25,7 @@ type Grant = {
 const grants = new Map<string, Grant>();
 
 function linkFingerprint(gateway: RemoteGateway): string {
-  return createHash("sha256").update(JSON.stringify([gateway.name, gateway.url, gateway.token ?? null])).digest("hex");
+  return createHash("sha256").update(JSON.stringify([gateway.name, gateway.url, gateway.token ?? null, gateway.generation ?? null])).digest("hex");
 }
 
 /** Drops expired grants and grants whose link no longer exists or changed. */

@@ -1,8 +1,10 @@
 import fs from "node:fs/promises";
+import { spawnSync } from "node:child_process";
 import http from "node:http";
 import os from "node:os";
 import path from "node:path";
 import type { AddressInfo } from "node:net";
+import { fileURLToPath } from "node:url";
 import { Hono } from "hono";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { writeTestV3Config } from "../test-utils/v3-config.js";
@@ -35,6 +37,8 @@ let state: typeof import("./state.js");
 let grants: typeof import("./dashboard-view-grants.js");
 let views: typeof import("./dashboard-views.js");
 let app: Hono;
+const gatewayDir = fileURLToPath(new URL("../..", import.meta.url));
+const storeModule = new URL("./store.ts", import.meta.url).href;
 const defaultLimits = { htmlBytes: 5 * 1024 * 1024, editBytes: 256 * 1024, queryBytes: 8 * 1024, createBytes: 1024, capabilitiesBytes: 64 * 1024, deadlineMs: 30_000, concurrencyPerGateway: 8 };
 
 const metaFor = (id: string, overrides: Partial<DashboardEmbedMeta> = {}): DashboardEmbedMeta => ({
@@ -153,6 +157,18 @@ async function expectNoSecrets(response: Response, ...extra: string[]): Promise<
   return text;
 }
 
+/** Runs store code in a separate Node process, like `yoplai connect` and `yoplai disconnect` do. */
+function inAnotherProcess(code: string): void {
+  const script = `import { createFileRemoteGatewayStore } from ${JSON.stringify(storeModule)};
+const store = createFileRemoteGatewayStore(${JSON.stringify(path.join(home, "remote-gateways.json"))});
+${code}`;
+  const result = spawnSync(process.execPath, ["--conditions=development", "--import", "tsx", "--input-type=module", "-e", script], {
+    cwd: gatewayDir, env: { ...process.env, YOPLAI_HOME: home }, encoding: "utf8", timeout: 20_000,
+  });
+  expect(result.stderr).not.toContain("Error");
+  expect(result.status).toBe(0);
+}
+
 async function localTree(): Promise<string[]> {
   const entries = await fs.readdir(home, { recursive: true });
   return entries.filter((entry) => !entry.startsWith("remote-gateways.json")).sort();
@@ -264,6 +280,48 @@ describe("view grants", () => {
     state.getRemoteGatewayStore().remove("ams");
     expect((await view(third.frameUrl)).status).toBe(410);
     expect((await view(unaffected.frameUrl)).status).toBe(200);
+  });
+
+  it("stops a grant when another process removes the link and creates it again with equal values", async () => {
+    const { frameUrl } = await grant();
+    const unaffected = await grant("other");
+    expect((await view(frameUrl)).status).toBe(200);
+    calls = [];
+    // No gateway check runs between the removal and the new link.
+    inAnotherProcess(`store.remove("ams"); store.save({ name: "ams", url: ${JSON.stringify(remoteUrl)}, token: ${JSON.stringify(BEARER)} });`);
+    const stopped = await view(frameUrl);
+    expect(stopped.status).toBe(410);
+    expect(await stopped.json()).toEqual({ error: "dashboard_view_expired" });
+    expect(calls).toEqual([]);
+    expect((await view(unaffected.frameUrl)).status).toBe(200);
+    // The new link starts its own grants.
+    calls = [];
+    const fresh = await grant();
+    expect((await view(fresh.frameUrl)).status).toBe(200);
+    expect(calls).toHaveLength(1);
+  });
+
+  it("stops a grant when another process changes the URL or the bearer, and keeps it for an equal save", async () => {
+    const first = await grant();
+    const second = await grant();
+    inAnotherProcess(`store.save({ name: "ams", url: ${JSON.stringify(remoteUrl)}, token: ${JSON.stringify(BEARER)} });`);
+    expect((await view(first.frameUrl)).status).toBe(200);
+    inAnotherProcess(`store.save({ name: "ams", url: ${JSON.stringify(remoteUrl)}, token: "bearer-ams-rotated" });`);
+    calls = [];
+    expect((await view(first.frameUrl)).status).toBe(410);
+    expect((await view(second.frameUrl)).status).toBe(410);
+    expect(calls).toEqual([]);
+  });
+
+  it("ends the old grant of an older link file with no generation when a new save starts the link again", async () => {
+    await fs.writeFile(path.join(home, "remote-gateways.json"), `${JSON.stringify([{ name: "ams", url: remoteUrl, token: BEARER }])}\n`);
+    const { frameUrl } = await grant();
+    expect((await view(frameUrl)).status).toBe(200);
+    expect(JSON.parse(await fs.readFile(path.join(home, "remote-gateways.json"), "utf8"))[0]).not.toHaveProperty("generation");
+    state.getRemoteGatewayStore().save({ name: "ams", url: remoteUrl, token: BEARER });
+    calls = [];
+    expect((await view(frameUrl)).status).toBe(410);
+    expect(calls).toEqual([]);
   });
 
   it("forgets every grant on restart", async () => {
