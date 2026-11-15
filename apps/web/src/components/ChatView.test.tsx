@@ -86,7 +86,18 @@ const {
 vi.mock("@solidjs/router", () => ({
   A: (props: Record<string, unknown>) => <a {...props} />,
   useNavigate: () => navigateMock,
-  useLocation: () => ({ get state() { return routeState.state; } }),
+  useLocation: () => ({
+    get state() { return routeState.state; },
+    get pathname() { return `/chat/${encodeURIComponent(routeState.agentId)}${routeState.view ? `/${routeState.view}` : ""}`; },
+    get search() {
+      const query = new URLSearchParams();
+      for (const key of ["session", "project", "dashboard", "new"] as const) {
+        if (routeState[key]) query.set(key, routeState[key]);
+      }
+      return query.size ? `?${query}` : "";
+    },
+    hash: "",
+  }),
   useParams: () => ({ get agentId() { routeAgentVersion(); return routeState.agentId; }, get view() { routeVersion(); return routeState.view; } }),
   useSearchParams: () => [
     {
@@ -271,6 +282,14 @@ describe("ChatView abort handling", () => {
     routeState.dashboard = undefined;
     routeState.new = undefined;
     setSearchParamsMock.mockImplementation((changes) => { Object.assign(routeState, changes); setRouteVersion((value) => value + 1); });
+    navigateMock.mockImplementation((target: string, options?: { replace?: boolean }) => {
+      if (!options?.replace) return;
+      const url = new URL(target, "http://localhost");
+      for (const key of ["session", "project", "dashboard", "new"] as const) {
+        routeState[key] = url.searchParams.get(key) ?? undefined;
+      }
+      setRouteVersion((value) => value + 1);
+    });
     fetchMainAgentPreferenceMock.mockResolvedValue({ mainAgentId: null, accessible: false, pickerDismissedAt: null });
     fetchMainAgentOptionsMock.mockResolvedValue({ preference: null, agents: [{ id: "agent-1", name: "Agent" }, { id: "agent-2", name: "Other" }] });
     fetchPoolActionsMock.mockResolvedValue([]);
@@ -889,12 +908,12 @@ describe("ChatView abort handling", () => {
       expect(subscribeToSessionMock.mock.calls.at(-1)?.slice(0, 2)).toEqual(["pom@ams", "fresh-key"]);
       expect(subscribeToSessionMock.mock.calls.at(-1)?.[3]).toBeUndefined();
       expect(sessionAtSend).toBeUndefined();
-      expect(setSearchParamsMock).toHaveBeenCalledWith(
-        { session: undefined }, { replace: true, state: routeState.state },
+      expect(navigateMock).toHaveBeenCalledOnce();
+      expect(navigateMock).toHaveBeenCalledWith(
+        "/chat/pom%40ams/full?project=project-1", { replace: true, state: routeState.state },
       );
       expect(routeState.project).toBe("project-1");
       expect(routeState.view).toBe("full");
-      expect(navigateMock).not.toHaveBeenCalled();
       subscription.onDeviceApprovalRequest?.(pending);
       await waitFor(() => expect(queryByRole(second.container, "button", { name: "Approve" })).not.toBeNull());
       expect(queryByText(second.container, "ls -la")).not.toBeNull();
@@ -915,7 +934,8 @@ describe("ChatView abort handling", () => {
       sent[4]();
       await tick();
       expect(routeState.session).toBeUndefined();
-      expect(navigateMock).not.toHaveBeenCalled();
+      expect(navigateMock).toHaveBeenCalledOnce();
+      expect(navigateMock).toHaveBeenCalledWith("/chat/pom%40ams", { replace: true, state: routeState.state });
       expect(first.container.textContent).toContain("The reset is complete.");
       expect(subscribeToSessionMock.mock.calls.at(-1)?.[1]).toBe("fresh-key");
       expect(subscribeToSessionMock.mock.calls.at(-1)?.[3]).toBeUndefined();

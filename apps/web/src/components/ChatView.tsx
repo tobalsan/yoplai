@@ -281,8 +281,12 @@ export function ChatView() {
     },
     onRemoteReset: async () => {
       clearPendingFiles();
+      const query = new URLSearchParams(location.search);
+      query.delete("session");
+      const search = query.toString();
+      const url = `${location.pathname}${search ? `?${search}` : ""}${location.hash}`;
       await startTransition(() => {
-        setSearchParams({ session: undefined }, { replace: true, state: location.state });
+        navigate(url, { replace: true, state: location.state });
       });
     },
     onSessionReset: (sessionId) => {

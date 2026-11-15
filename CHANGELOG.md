@@ -23,6 +23,7 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Fixed
 
+- Remote resets keep the chat route and its hash when the session is the only query field.
 - Remote resets from history keep their fresh chat key after reload. Pending approvals remain visible, and Approve and Refuse use the restored subscription.
 - Queued remote messages keep their own device permissions, also when two views use the same remote session. A remote reset uses a fresh chat key and starts in Ask mode, with no workspace folder. The relay ends only the matching turn after an error or completion. REST requests cannot supply a device token. Completed turns release their timers. Expired turns release their token records. The relay allows 20 live send sockets per page socket and 1,000 token records across the local gateway. Token expiry removes device authorization but leaves the stream open. The token limit does not bound all live upstream sockets. This fix adds no global socket limit. The page removes old approval answer functions when the chat changes or the message socket ends.
 - A remote agent now shows the `@<name>` mark on the Agents page, in the chat header, and in the project agent picker. The settings link in the chat header of a remote agent opens the settings page instead of "Agent not found.". A message in a remote chat opened from the sidebar now reaches the remote agent.
