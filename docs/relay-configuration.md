@@ -327,6 +327,8 @@ An error body is local JSON `{error, ...}` with no remote HTML, bearer, edit tok
 A client disconnect aborts the remote call and releases the slot. The answer is status 499 with no body.
 A bare 404 never proves an old remote. A missing capability decides it, and each Retry reads it again. The gateway caches nothing.
 
+The HTML body is the exact byte sequence that the gateway counted. The gateway does not decode it as text, so invalid UTF-8 cannot grow past the limit.
+
 Success headers: `Content-Type: text/html; charset=utf-8`, `Cache-Control: no-store`, `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer`,
 and this `Content-Security-Policy` (`o` is the UI origin that issued the grant, `p` is `/api/relay/dashboard-views/<grant>/<id>`):
 

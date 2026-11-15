@@ -9,6 +9,7 @@ import { Hono } from "hono";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AgentConfig, GatewayConfig } from "@yoplai/shared";
 import { writeTestV3Config } from "../test-utils/v3-config.js";
+import { DASHBOARD_EMBED_HEADERS, encodeDashboardEmbedMeta } from "../canvas/embed-contract.js";
 
 /**
  * These checks use the real `@hono/node-server` adapter, the real global
@@ -37,6 +38,8 @@ let local: string;
 let remoteUrl: string;
 let dashboardId: string;
 let stall = false;
+/** When set, the fake remote answers every embed request with these exact bytes. */
+let rawEmbedBody: Buffer | undefined;
 let remoteSocketsClosed = 0;
 let remoteCalls: Array<{ method: string; url: string; authorization: string | undefined }> = [];
 let logs: string[] = [];
@@ -106,6 +109,12 @@ beforeAll(async () => {
   remoteServer = serve({
     fetch: (request) => {
       remoteCalls.push({ method: request.method, url: new URL(request.url).pathname, authorization: request.headers.get("authorization") ?? undefined });
+      if (rawEmbedBody && /\/embed$/.test(new URL(request.url).pathname)) {
+        return Promise.resolve(new Response(new Uint8Array(rawEmbedBody), {
+          headers: { "content-type": "text/html; charset=utf-8", [DASHBOARD_EMBED_HEADERS.version]: "1", [DASHBOARD_EMBED_HEADERS.assets]: "v3", [DASHBOARD_EMBED_HEADERS.policy]: "1",
+            [DASHBOARD_EMBED_HEADERS.meta]: encodeDashboardEmbedMeta({ dashboardId, agentId: "pom", canWrite: false, canEdit: false, chat: null, annotation: false }) },
+        }));
+      }
       return stall ? new Promise<Response>(() => undefined) : remoteApp.fetch(request);
     },
     port: 0,
@@ -144,6 +153,7 @@ beforeEach(() => {
   db.exec("DELETE FROM actions WHERE id > 2; UPDATE actions SET done = 0, edited_at = NULL");
   db.close();
   stall = false;
+  rawEmbedBody = undefined;
   remoteCalls = [];
   logs = [];
   remoteSocketsClosed = 0;
@@ -398,6 +408,26 @@ describe("real adapter: logs, bounds and disconnects", () => {
     // The grant request, the three reads, the write, and two methods for each alias.
     expect(viewerLines).toHaveLength(1 + canonical.length + 1 + aliases.length * 2);
     for (const line of viewerLines) expect(line).toMatch(/^--> (?:GET|POST) \/api\/relay\/dashboard-views\/\[redacted\] \d{3} \S+$/);
+  });
+
+  it("sends no more HTML bytes on the wire than the limit, also for invalid UTF-8", async () => {
+    const { frameUrl } = await openView();
+    views.dashboardViewLimits.htmlBytes = 64;
+    rawEmbedBody = Buffer.alloc(64, 0xff);
+    const wire = await new Promise<{ status: number; bytes: Buffer; encoding: string | undefined }>((resolve, reject) => {
+      const url = new URL(`${local}${frameUrl}`);
+      http.get({ hostname: url.hostname, port: url.port, path: url.pathname, headers: navigation(), agent: false }, (response) => {
+        const parts: Buffer[] = [];
+        response.on("data", (part: Buffer) => parts.push(part));
+        response.on("end", () => resolve({ status: response.statusCode ?? 0, bytes: Buffer.concat(parts), encoding: response.headers["content-encoding"] }));
+      }).on("error", reject);
+    });
+    expect(wire.status).toBe(200);
+    expect(wire.encoding).toBeUndefined();
+    expect(wire.bytes.byteLength).toBe(64);
+    expect(wire.bytes.equals(rawEmbedBody)).toBe(true);
+    rawEmbedBody = Buffer.alloc(65, 0xff);
+    await expectJsonError(await fetch(`${local}${frameUrl}`, { headers: navigation() }), 502, "remote_response_too_large");
   });
 
   it("answers a grant request that stops sending its body, and one that declares too much, without waiting", async () => {

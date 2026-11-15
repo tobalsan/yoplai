@@ -832,6 +832,30 @@ describe("viewer GET: bounds", () => {
     expect((await view(frameUrl)).status).toBe(200);
   });
 
+  it("returns exactly the bytes that it counted, also for invalid UTF-8 and multi-byte text", async () => {
+    const { frameUrl } = await grant();
+    views.dashboardViewLimits.htmlBytes = 64;
+    const invalid = Buffer.alloc(64, 0xff);
+    handler = (_request, response) => { response.writeHead(200, embedHeaders(ID)); response.end(invalid); };
+    const broken = await view(frameUrl);
+    expect(broken.status).toBe(200);
+    const brokenBytes = Buffer.from(await broken.arrayBuffer());
+    expect(brokenBytes.byteLength).toBe(64);
+    expect(brokenBytes.equals(invalid)).toBe(true);
+    // The same bytes with one more byte are refused, so the limit is exact.
+    handler = (_request, response) => { response.writeHead(200, embedHeaders(ID)); response.end(Buffer.alloc(65, 0xff)); };
+    const over = await view(frameUrl);
+    expect(over.status).toBe(502);
+    expect(await over.json()).toEqual({ error: "remote_response_too_large" });
+    // Valid multi-byte text keeps its bytes. A BOM is not removed or doubled.
+    const text = Buffer.from("\uFEFF<p>é €</p>\u{1F600}", "utf8");
+    views.dashboardViewLimits.htmlBytes = text.byteLength;
+    handler = (_request, response) => { response.writeHead(200, embedHeaders(ID)); response.end(text); };
+    const valid = await view(frameUrl);
+    expect(valid.status).toBe(200);
+    expect(Buffer.from(await valid.arrayBuffer()).equals(text)).toBe(true);
+  });
+
   it("times out stalled headers and a stalled body, and closes the remote connection", async () => {
     views.dashboardViewLimits.deadlineMs = 150;
     const { frameUrl } = await grant();

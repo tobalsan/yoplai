@@ -323,9 +323,10 @@ async function viewDashboard(request: Request, url: URL, grant: string, id: stri
         discard(response.body);
         return fail(502, "remote_response_too_large");
       }
-      const html = new TextDecoder().decode(await readBounded(response.body, dashboardViewLimits.htmlBytes, signal));
+      // Return the counted bytes as they are. A text decode would replace each invalid byte with three bytes.
+      const html = await readBounded(response.body, dashboardViewLimits.htmlBytes, signal);
       recordDashboardView(grant, id, { ok: true, meta });
-      return new Response(html, {
+      return new Response(new Uint8Array(html), {
         status: 200,
         headers: {
           ...LOCAL_HEADERS,
