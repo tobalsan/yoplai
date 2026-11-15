@@ -136,7 +136,7 @@ const gatewayPort = readEnv("GATEWAY_PORT")
   : (gatewayConfig.port ?? 4000);
 const gatewayTarget = `http://${gatewayHost}:${gatewayPort}`;
 
-// The viewer path of a remote dashboard holds a secret grant. Vite's default
+// The viewer path of a remote dashboard holds a secret snapshot handle. Vite's default
 // proxy error log prints the request URL, so the handler below replaces it
 // first. Keep this test in step with `ownsDashboardViewPath` in the gateway.
 const dashboardViewNamespace = "/api/relay/dashboard-views";

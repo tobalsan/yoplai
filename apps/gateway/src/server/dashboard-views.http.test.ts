@@ -45,7 +45,7 @@ let remoteCalls: Array<{ method: string; url: string; authorization: string | un
 let logs: string[] = [];
 let state: typeof import("../relay/state.js");
 let views: typeof import("../relay/dashboard-views.js");
-const defaultLimits = { htmlBytes: 5 * 1024 * 1024, editBytes: 256 * 1024, queryBytes: 8 * 1024, createBytes: 1024, createDeadlineMs: 5_000, createPending: 16, capabilitiesBytes: 64 * 1024, deadlineMs: 30_000, concurrencyPerGateway: 8 };
+const defaultLimits = { htmlBytes: 5 * 1024 * 1024, editBytes: 256 * 1024, queryBytes: 8 * 1024, createBytes: 12 * 1024, createDeadlineMs: 5_000, createPending: 16, capabilitiesBytes: 64 * 1024, deadlineMs: 30_000, concurrencyPerGateway: 8 };
 const originalRequest = globalThis.Request;
 const originalResponse = globalThis.Response;
 
@@ -150,7 +150,7 @@ afterAll(async () => {
 
 beforeEach(() => {
   const db = new Database(path.join(remoteRoot, "data", "hr.db"));
-  db.exec("DELETE FROM actions WHERE id > 2; UPDATE actions SET done = 0, edited_at = NULL");
+  db.exec("DELETE FROM actions WHERE id > 2; UPDATE actions SET done = 0, edited_at = NULL; UPDATE actions SET title = 'Alice task' WHERE id = 1; UPDATE actions SET title = 'Bob task' WHERE id = 2");
   db.close();
   stall = false;
   rawEmbedBody = undefined;
@@ -167,25 +167,35 @@ function link(bearer: string): void {
 }
 
 type Headers = Record<string, string>;
+const NS = "/api/relay/dashboard-views";
 const jsonHeaders = (extra: Headers = {}): Headers => ({ origin: UI, "content-type": "application/json", "sec-fetch-site": "same-origin", ...extra });
-const navigation = (extra: Headers = {}): Headers => ({ "sec-fetch-dest": "iframe", "sec-fetch-mode": "navigate", ...extra });
+const navigation = (extra: Headers = {}): Headers => ({ "sec-fetch-dest": "iframe", "sec-fetch-mode": "navigate", "sec-fetch-site": "same-origin", ...extra });
 const opaque = (extra: Headers = {}): Headers => ({ origin: "null", "content-type": "text/plain;charset=UTF-8", ...extra });
 
-async function openView(): Promise<{ grant: string; frameUrl: string }> {
-  const response = await fetch(`${local}/api/relay/dashboard-views`, { method: "POST", headers: jsonHeaders(), body: JSON.stringify({ gateway: "ams", dashboardId }) });
+type Opened = { handle: string; instance: string; shellUrl: string; frameUrl: string };
+
+const prepareRequest = (body: unknown = { gateway: "ams", dashboardId }, headers: Headers = jsonHeaders()) =>
+  fetch(`${local}${NS}`, { method: "POST", headers, body: typeof body === "string" ? body : JSON.stringify(body) });
+
+async function openView(): Promise<Opened> {
+  const response = await prepareRequest();
   expect(response.status).toBe(201);
-  const { frameUrl } = await response.json() as { frameUrl: string };
-  return { grant: frameUrl.split("/")[4], frameUrl };
+  const body = await response.json() as { handle: string; instance: string; shellUrl: string };
+  return { ...body, frameUrl: `${NS}/${body.handle}/frame` };
 }
 
+/** What the sandboxed frame loads from the shell: the frame GET. */
 async function page(frameUrl: string, headers: Headers = navigation()): Promise<{ response: Response; html: string; token: string | undefined }> {
   const response = await fetch(`${local}${frameUrl}`, { headers, redirect: "manual" });
   const html = await response.text();
   return { response, html, token: /"editToken":"([^"]+)"/.exec(html)?.[1] };
 }
 
-const write = (frameUrl: string, op: "edit" | "add", body: unknown, headers: Headers = opaque()) =>
-  fetch(`${local}${frameUrl}${op}`, { method: "POST", headers, body: typeof body === "string" ? body : JSON.stringify(body) });
+const write = (opened: Opened, op: "edit" | "add", body: unknown, headers: Headers = opaque()) =>
+  fetch(`${local}${NS}/${opened.handle}/${op}`, { method: "POST", headers, body: typeof body === "string" ? body : JSON.stringify(body) });
+
+const readRequest = (handle: string, headers: Headers = jsonHeaders()) =>
+  fetch(`${local}${NS}/read`, { method: "POST", headers, body: JSON.stringify({ handle }) });
 
 async function expectJsonError(response: Response, status: number, error: string): Promise<void> {
   expect(response.status).toBe(status);
@@ -194,14 +204,21 @@ async function expectJsonError(response: Response, status: number, error: string
 }
 
 describe("real adapter: owned routes", () => {
-  it("refuses malformed paths, wrong methods, unsupported mode and external clients with local JSON", async () => {
-    const { grant, frameUrl } = await openView();
+  it("refuses malformed paths, queries, wrong methods, unsupported mode and external clients with local JSON", async () => {
+    const { handle, frameUrl, shellUrl } = await openView();
+    remoteCalls = [];
     for (const pathname of [
-      "/api/relay/dashboard-views/",
-      `/api/relay/dashboard-views/${grant}/${dashboardId}`,
-      `/api/relay/dashboard-views/${grant}/${dashboardId}/other`,
-      `/api/relay/dashboard-views/${grant}/%2e%2e/${dashboardId}/`,
-      `/api/relay/dashboard-views%2F${grant}/${dashboardId}/`,
+      `${NS}/`,
+      `${NS}/${handle}`,
+      `${NS}/${handle}/${dashboardId}/`,
+      `${NS}/${handle}/current`,
+      `${NS}/${handle}/frame/extra`,
+      `${NS}/${handle}/%2e%2e/frame`,
+      `/api/relay/dashboard-views%2F${handle}/frame`,
+      `${frameUrl}?x=1`,
+      `${shellUrl}?`,
+      `${NS}/${handle}/edit?id=${dashboardId}`,
+      `${NS}/read?handle=${handle}`,
     ]) {
       for (const method of ["GET", "POST"]) {
         await expectJsonError(await fetch(`${local}${pathname}`, { method, headers: { ...navigation(), ...opaque() }, body: method === "POST" ? "{}" : undefined }), 404, "invalid_dashboard_view_route");
@@ -213,31 +230,66 @@ describe("real adapter: owned routes", () => {
     await expectJsonError(await fetch(`${local}${frameUrl}`, { headers: navigation({ "x-forwarded-for": "203.0.113.9" }) }), 403, "relay_unavailable");
     state.configureRelay("127.0.0.1", true);
     await expectJsonError(await fetch(`${local}${frameUrl}`, { headers: navigation() }), 403, "relay_unavailable");
-    await expectJsonError(await fetch(`${local}/api/relay/dashboard-views`, { method: "POST", headers: jsonHeaders(), body: JSON.stringify({ gateway: "ams", dashboardId }) }), 403, "relay_unavailable");
+    await expectJsonError(await prepareRequest(), 403, "relay_unavailable");
     expect(remoteCalls).toEqual([]);
   });
 
-  it("refuses a foreign or opaque Origin for a grant and a form post for a write", async () => {
-    const body = JSON.stringify({ gateway: "ams", dashboardId });
+  it("refuses a foreign or opaque Origin for prepare and read, and a form post for a write", async () => {
+    const body = { gateway: "ams", dashboardId };
     for (const origin of ["https://evil.example.test", "null"]) {
-      await expectJsonError(await fetch(`${local}/api/relay/dashboard-views`, { method: "POST", headers: jsonHeaders({ origin }), body }), 403, "untrusted_origin");
+      await expectJsonError(await prepareRequest(body, jsonHeaders({ origin })), 403, "untrusted_origin");
     }
-    await expectJsonError(await fetch(`${local}/api/relay/dashboard-views`, { method: "POST", headers: jsonHeaders({ "content-type": "text/plain" }), body }), 415, "json_required");
-    const { frameUrl } = await openView();
-    await expectJsonError(await write(frameUrl, "edit", { token: "x" }, opaque({ "content-type": "application/x-www-form-urlencoded" })), 415, "text_plain_required");
-    expect((await write(frameUrl, "edit", { token: "x" }, { origin: UI, "content-type": "text/plain" })).status).toBe(403);
+    await expectJsonError(await prepareRequest(body, jsonHeaders({ "content-type": "text/plain" })), 415, "json_required");
     expect(remoteCalls).toEqual([]);
+    const opened = await openView();
+    await page(opened.frameUrl);
+    await expectJsonError(await readRequest(opened.handle, jsonHeaders({ origin: "null" })), 403, "untrusted_origin");
+    await expectJsonError(await readRequest(opened.handle, jsonHeaders({ "sec-fetch-site": "cross-site" })), 403, "same_origin_required");
+    await expectJsonError(await write(opened, "edit", { token: "x" }, opaque({ "content-type": "application/x-www-form-urlencoded" })), 415, "text_plain_required");
+    expect((await write(opened, "edit", { token: "x" }, { origin: UI, "content-type": "text/plain" })).status).toBe(403);
+    expect(remoteCalls).toHaveLength(1);
+  });
+});
+
+describe("real adapter: snapshot, shell and frame delivery", () => {
+  it("makes one remote read at prepare, none at delivery, and delivers the shell once and the bytes once", async () => {
+    const opened = await openView();
+    expect(remoteCalls.map((call) => [call.method, call.url, call.authorization])).toEqual([["GET", `/d/${dashboardId}/embed`, `Bearer ${ALICE_BEARER}`]]);
+    const shellResponse = await fetch(`${local}${opened.shellUrl}`, { headers: navigation() });
+    expect(shellResponse.status).toBe(200);
+    expect(shellResponse.headers.get("content-security-policy")).toContain(`frame-src ${UI}${opened.frameUrl};`);
+    expect(shellResponse.headers.get("access-control-allow-origin")).toBeNull();
+    expect(await shellResponse.text()).toContain(opened.instance);
+    await expectJsonError(await fetch(`${local}${opened.shellUrl}`, { headers: navigation() }), 409, "dashboard_view_shell_delivered");
+    // Two frames race for the bytes. One wins and the other gets a typed refusal.
+    const results = await Promise.all([page(opened.frameUrl), page(opened.frameUrl)]);
+    expect(results.map((result) => result.response.status).sort()).toEqual([200, 409]);
+    expect(results.find((result) => result.response.status === 200)!.html).toContain("Actions");
+    expect(remoteCalls).toHaveLength(1);
+  });
+
+  it("answers a top-level request with a sandboxed refusal and leaves the delivery for the frame", async () => {
+    const opened = await openView();
+    for (const headers of [{}, { "sec-fetch-dest": "document", "sec-fetch-mode": "navigate" }] as Headers[]) {
+      const refused = await fetch(`${local}${opened.frameUrl}`, { headers });
+      await expectJsonError(refused, 403, "navigation_required");
+      expect(refused.headers.get("content-security-policy")).toContain("sandbox");
+    }
+    const shellTop = await fetch(`${local}${opened.shellUrl}`, { headers: { "sec-fetch-dest": "document" } });
+    await expectJsonError(shellTop, 403, "navigation_required");
+    expect((await page(opened.frameUrl)).response.status).toBe(200);
+    expect((await fetch(`${local}${opened.shellUrl}`, { headers: navigation() })).status).toBe(200);
   });
 });
 
 describe("real adapter: owner flow through the real remote renderer", () => {
   it("views the page under the exact viewer headers and edits with only the remote token", async () => {
-    const { grant, frameUrl } = await openView();
-    const { response, html, token } = await page(frameUrl);
+    const opened = await openView();
+    const { response, html, token } = await page(opened.frameUrl);
     expect(response.status).toBe(200);
     expect(html).toContain("Actions");
     expect(token).toBeTruthy();
-    const viewer = `/api/relay/dashboard-views/${grant}/${dashboardId}`;
+    const viewer = `${NS}/${opened.handle}`;
     const csp = response.headers.get("content-security-policy")!;
     expect(csp).toContain("sandbox allow-scripts allow-downloads allow-modals;");
     expect(csp).toContain(`connect-src ${UI}${viewer}/edit ${UI}${viewer}/add;`);
@@ -251,7 +303,7 @@ describe("real adapter: owner flow through the real remote renderer", () => {
     expect(remoteCalls.map((call) => [call.method, call.url, call.authorization])).toEqual([["GET", `/d/${dashboardId}/embed`, `Bearer ${ALICE_BEARER}`]]);
     expect(html).not.toContain(ALICE_BEARER);
 
-    const saved = await write(frameUrl, "edit", { token, edit: "actions", key: 1, field: "done", value: true });
+    const saved = await write(opened, "edit", { token, edit: "actions", key: 1, field: "done", value: true });
     expect(saved.status).toBe(200);
     expect(saved.headers.get("access-control-allow-origin")).toBe("null");
     expect(saved.headers.get("vary")).toBe("Origin");
@@ -263,77 +315,91 @@ describe("real adapter: owner flow through the real remote renderer", () => {
   });
 
   it("lets the owner add a row, and keeps the bearer and the token out of local errors", async () => {
-    const { frameUrl } = await openView();
-    const { token } = await page(frameUrl);
-    const added = await write(frameUrl, "add", { token, edit: "actions", values: { title: "From the viewer" } });
+    const opened = await openView();
+    const { token } = await page(opened.frameUrl);
+    const added = await write(opened, "add", { token, edit: "actions", values: { title: "From the viewer" } });
     expect(added.status).toBe(200);
     expect(await added.json()).toMatchObject({ ok: true, key: 3 });
     expect(rows()).toContainEqual({ id: 3, title: "From the viewer", done: 0 });
-    const refused = await write(frameUrl, "edit", { token: "forged.token", edit: "actions", key: 1, field: "done", value: true });
+    const refused = await write(opened, "edit", { token: "forged.token", edit: "actions", key: 1, field: "done", value: true });
     expect(refused.status).toBe(401);
     expect(await refused.json()).toEqual({ ok: false, error: "Reload to keep editing" });
   });
 
-  it("gives the trusted host checked metadata through its own fetch, without the edit token", async () => {
-    const { grant, frameUrl } = await openView();
-    const { token } = await page(frameUrl);
-    const response = await fetch(`${local}/api/relay/dashboard-views/${grant}/current`, { headers: { "sec-fetch-site": "same-origin", origin: UI } });
+  it("gives the trusted host checked metadata through a JSON body, without the edit token", async () => {
+    const opened = await openView();
+    const { token } = await page(opened.frameUrl);
+    const response = await readRequest(opened.handle);
     const text = await response.text();
     expect(response.status).toBe(200);
     expect(text).not.toContain(token!);
-    expect(JSON.parse(text).view).toEqual({
-      seq: 1, dashboardId, ok: true,
+    expect(JSON.parse(text)).toMatchObject({
+      state: "delivered", gateway: "ams", dashboardId,
       meta: { dashboardId, agentId: "pom", canWrite: true, canEdit: true, chat: { sessionId: null }, annotation: true },
     });
+  });
+
+  it("keeps a snapshot of one page when the page changes later, and a new prepare reads the new page", async () => {
+    const opened = await openView();
+    const db = new Database(path.join(remoteRoot, "data", "hr.db"));
+    db.exec("UPDATE actions SET title = 'Changed later' WHERE id = 1");
+    db.close();
+    const { html } = await page(opened.frameUrl);
+    expect(html).toContain("Alice task");
+    expect(html).not.toContain("Changed later");
+    const next = await openView();
+    expect((await page(next.frameUrl)).html).toContain("Changed later");
   });
 });
 
 describe("real adapter: reader flow and relink", () => {
-  it("keeps a guarded reader's own-row edit, refuses other rows and adds, and ends the old grant on relink", async () => {
+  it("keeps a guarded reader's own-row edit, refuses other rows and adds, and ends the old snapshot on relink", async () => {
     const owner = await openView();
     link(BOB_BEARER);
-    await expectJsonError(await fetch(`${local}${owner.frameUrl}`, { headers: navigation() }), 410, "dashboard_view_expired");
+    await expectJsonError(await readRequest(owner.handle), 410, "dashboard_view_expired");
     const reader = await openView();
     const { token, response } = await page(reader.frameUrl);
     expect(response.status).toBe(200);
     expect(token).toBeTruthy();
-    const meta = await (await fetch(`${local}/api/relay/dashboard-views/${reader.grant}/current`, { headers: { "sec-fetch-site": "same-origin" } })).json() as { view: { meta: object } };
-    expect(meta.view.meta).toMatchObject({ canWrite: false, canEdit: true, annotation: false });
-    expect((await write(reader.frameUrl, "edit", { token, edit: "actions", key: 2, field: "done", value: true })).status).toBe(200);
-    const other = await write(reader.frameUrl, "edit", { token, edit: "actions", key: 1, field: "done", value: true });
+    const meta = await (await readRequest(reader.handle)).json() as { meta: object };
+    expect(meta.meta).toMatchObject({ canWrite: false, canEdit: true, annotation: false });
+    expect((await write(reader, "edit", { token, edit: "actions", key: 2, field: "done", value: true })).status).toBe(200);
+    const other = await write(reader, "edit", { token, edit: "actions", key: 1, field: "done", value: true });
     expect(other.status).toBe(403);
     expect(await other.json()).toEqual({ ok: false, error: "You cannot edit this row" });
-    const add = await write(reader.frameUrl, "add", { token, edit: "actions", values: { title: "Nope" } });
+    const add = await write(reader, "add", { token, edit: "actions", values: { title: "Nope" } });
     expect(add.status).toBe(403);
     expect(await add.json()).toEqual({ ok: false, error: "Only the owner or a write share can add rows" });
     expect(rows()).toEqual([{ id: 1, title: "Alice task", done: 0 }, { id: 2, title: "Bob task", done: 1 }]);
   });
 
-  it("returns a bounded 403 for a user with no share and no HTML", async () => {
+  it("returns a bounded 403 for a user with no share and no HTML, and stores no snapshot", async () => {
     link(CAROL_BEARER);
-    const { frameUrl } = await openView();
-    const { response, html } = await page(frameUrl);
+    const response = await prepareRequest();
     expect(response.status).toBe(403);
     expect(response.headers.get("content-type")).toContain("application/json");
-    expect(JSON.parse(html)).toEqual({ error: "forbidden", ownerName: "Alice Martin" });
+    expect(await response.json()).toEqual({ error: "forbidden", ownerName: "Alice Martin" });
   });
 
   it("reports unauthorized for a rotated bearer without following a login redirect", async () => {
     link("fake-bearer-rotated");
-    const { frameUrl } = await openView();
-    await expectJsonError(await fetch(`${local}${frameUrl}`, { headers: navigation() }), 401, "remote_unauthorized");
+    await expectJsonError(await prepareRequest(), 401, "remote_unauthorized");
     expect(remoteCalls).toHaveLength(1);
   });
 });
 
 describe("real adapter: final headers through the global middleware", () => {
-  it("adds no CORS grant to viewer HTML, even for an allowed Origin", async () => {
-    const { frameUrl } = await openView();
-    const { response } = await page(frameUrl, navigation({ origin: UI }));
-    expect(response.status).toBe(200);
-    expect(response.headers.get("access-control-allow-origin")).toBeNull();
-    expect(response.headers.get("access-control-allow-credentials")).toBeNull();
+  it("adds no CORS grant to viewer HTML or to the shell, even for an allowed Origin", async () => {
+    const opened = await openView();
+    const shellResponse = await fetch(`${local}${opened.shellUrl}`, { headers: navigation({ origin: UI }) });
+    const { response } = await page(opened.frameUrl, navigation({ origin: UI }));
+    for (const answer of [shellResponse, response]) {
+      expect(answer.status).toBe(200);
+      expect(answer.headers.get("access-control-allow-origin")).toBeNull();
+      expect(answer.headers.get("access-control-allow-credentials")).toBeNull();
+    }
     expect(response.headers.get("content-security-policy")!.split("sandbox").length).toBe(2);
+    expect(shellResponse.headers.get("content-security-policy")).not.toContain("sandbox");
   });
 
   it("answers an asset load from an opaque origin without credentials, and leaves other origins unchanged", async () => {
@@ -357,7 +423,7 @@ describe("real adapter: final headers through the global middleware", () => {
   });
 
   it("does not widen CORS on the local API for an opaque origin", async () => {
-    const response = await fetch(`${local}/api/relay/dashboard-views`, { method: "POST", headers: jsonHeaders({ origin: "null" }), body: "{}" });
+    const response = await prepareRequest("{}", jsonHeaders({ origin: "null" }));
     expect(response.status).toBe(403);
     expect(response.headers.get("access-control-allow-origin")).toBeNull();
     const api = await fetch(`${local}/health`, { headers: { origin: "null" } });
@@ -366,31 +432,33 @@ describe("real adapter: final headers through the global middleware", () => {
 });
 
 describe("real adapter: logs, bounds and disconnects", () => {
-  it("never logs a grant path", async () => {
-    const { grant, frameUrl } = await openView();
-    await page(frameUrl);
-    await write(frameUrl, "edit", { token: "x" });
-    await fetch(`${local}/api/relay/dashboard-views/${grant}/current`, { headers: { "sec-fetch-site": "same-origin" } });
-    await fetch(`${local}${frameUrl}other`);
+  it("never logs a handle path", async () => {
+    const opened = await openView();
+    await fetch(`${local}${opened.shellUrl}`, { headers: navigation() });
+    await page(opened.frameUrl);
+    await write(opened, "edit", { token: "x" });
+    await readRequest(opened.handle);
+    await fetch(`${local}${opened.frameUrl}other`);
     expect(logs.some((line) => line.includes("dashboard-views"))).toBe(true);
-    expect(logs.join("\n")).not.toContain(grant);
+    expect(logs.join("\n")).not.toContain(opened.handle);
     expect(logs.join("\n")).not.toContain(ALICE_BEARER);
   });
 
   it("redacts the complete target of canonical and encoded viewer requests", async () => {
-    const { grant, frameUrl } = await openView();
-    const canonical = [frameUrl, `${frameUrl}?region=emea`, `/api/relay/dashboard-views/${grant}/current`];
+    const { handle, frameUrl, shellUrl } = await openView();
+    const canonical = [shellUrl, frameUrl];
     for (const path of canonical) {
-      const response = await fetch(`${local}${path}`, { headers: navigation({ "sec-fetch-site": "same-origin" }) });
+      const response = await fetch(`${local}${path}`, { headers: navigation() });
       expect(response.status).toBe(200);
     }
-    await write(frameUrl, "edit", { token: "x" });
+    await write({ handle } as Opened, "edit", { token: "x" });
+    await readRequest(handle);
     const aliases = [
-      `/api/relay/dashboard-views%2F${grant}/${dashboardId}/`,
-      `/api/relay/dashboard-views%252F${grant}/${dashboardId}/`,
-      `/api/relay/dashboard%2Dviews/${grant}/${dashboardId}/?region=emea`,
-      `/api/Relay/Dashboard-Views/${grant}/${dashboardId}/`,
-      `/api/relay/dashboard-views/${grant}%zz/${dashboardId}/`,
+      `/api/relay/dashboard-views%2F${handle}/frame`,
+      `/api/relay/dashboard-views%252F${handle}/shell`,
+      `/api/relay/dashboard%2Dviews/${handle}/frame?region=emea`,
+      `/api/Relay/Dashboard-Views/${handle}/frame`,
+      `/api/relay/dashboard-views/${handle}%zz/frame`,
     ];
     for (const path of aliases) {
       for (const method of ["GET", "POST"]) {
@@ -401,19 +469,19 @@ describe("real adapter: logs, bounds and disconnects", () => {
       }
     }
     const text = logs.join("\n");
-    expect(text).not.toContain(grant);
+    expect(text).not.toContain(handle);
     expect(text).not.toContain(dashboardId);
     expect(text).not.toContain("emea");
     const viewerLines = logs.filter((line) => line.includes("dashboard-views"));
-    // The grant request, the three reads, the write, and two methods for each alias.
-    expect(viewerLines).toHaveLength(1 + canonical.length + 1 + aliases.length * 2);
+    // The prepare request, two deliveries, one write, one read, and two methods for each alias.
+    expect(viewerLines).toHaveLength(1 + canonical.length + 2 + aliases.length * 2);
     for (const line of viewerLines) expect(line).toMatch(/^--> (?:GET|POST) \/api\/relay\/dashboard-views\/\[redacted\] \d{3} \S+$/);
   });
 
   it("sends no more HTML bytes on the wire than the limit, also for invalid UTF-8", async () => {
-    const { frameUrl } = await openView();
     views.dashboardViewLimits.htmlBytes = 64;
     rawEmbedBody = Buffer.alloc(64, 0xff);
+    const { frameUrl } = await openView();
     const wire = await new Promise<{ status: number; bytes: Buffer; encoding: string | undefined }>((resolve, reject) => {
       const url = new URL(`${local}${frameUrl}`);
       http.get({ hostname: url.hostname, port: url.port, path: url.pathname, headers: navigation(), agent: false }, (response) => {
@@ -427,14 +495,14 @@ describe("real adapter: logs, bounds and disconnects", () => {
     expect(wire.bytes.byteLength).toBe(64);
     expect(wire.bytes.equals(rawEmbedBody)).toBe(true);
     rawEmbedBody = Buffer.alloc(65, 0xff);
-    await expectJsonError(await fetch(`${local}${frameUrl}`, { headers: navigation() }), 502, "remote_response_too_large");
+    await expectJsonError(await prepareRequest(), 502, "remote_response_too_large");
   });
 
-  it("answers a grant request that stops sending its body, and one that declares too much, without waiting", async () => {
+  it("answers a prepare request that stops sending its body, and one that declares too much, without waiting", async () => {
     views.dashboardViewLimits.createDeadlineMs = 200;
     const send = (headers: Headers, firstChunk: string) => new Promise<{ status: number; body: string; ms: number }>((resolve, reject) => {
       const started = Date.now();
-      const url = new URL(`${local}/api/relay/dashboard-views`);
+      const url = new URL(`${local}${NS}`);
       const request = http.request({ hostname: url.hostname, port: url.port, path: url.pathname, method: "POST", headers, agent: false }, (response) => {
         const parts: Buffer[] = [];
         response.on("data", (part: Buffer) => parts.push(part));
@@ -448,7 +516,7 @@ describe("real adapter: logs, bounds and disconnects", () => {
     expect(stalled.status).toBe(408);
     expect(JSON.parse(stalled.body)).toEqual({ error: "request_timeout" });
     expect(stalled.ms).toBeLessThan(3000);
-    const declared = await send({ ...jsonHeaders(), "content-length": "5000" }, "{");
+    const declared = await send({ ...jsonHeaders(), "content-length": "20000" }, "{");
     expect(declared.status).toBe(413);
     expect(JSON.parse(declared.body)).toEqual({ error: "request_too_large" });
     expect(remoteCalls).toEqual([]);
@@ -457,12 +525,12 @@ describe("real adapter: logs, bounds and disconnects", () => {
     await openView();
   });
 
-  it("frees pending grant requests when the client disconnects", async () => {
+  it("frees pending prepare requests when the client disconnects", async () => {
     views.dashboardViewLimits.createPending = 2;
     const sockets: net.Socket[] = [];
     const hold = () => new Promise<void>((resolve) => {
       const socket = net.connect(Number(new URL(local).port), "127.0.0.1", () => {
-        socket.write(`POST /api/relay/dashboard-views HTTP/1.1\r\nHost: 127.0.0.1\r\nOrigin: ${UI}\r\nSec-Fetch-Site: same-origin\r\nContent-Type: application/json\r\nContent-Length: 100\r\n\r\n{`);
+        socket.write(`POST ${NS} HTTP/1.1\r\nHost: 127.0.0.1\r\nOrigin: ${UI}\r\nSec-Fetch-Site: same-origin\r\nContent-Type: application/json\r\nContent-Length: 100\r\n\r\n{`);
         resolve();
       });
       socket.on("error", () => undefined);
@@ -471,20 +539,20 @@ describe("real adapter: logs, bounds and disconnects", () => {
     await hold();
     await hold();
     await vi.waitFor(async () => {
-      const refused = await fetch(`${local}/api/relay/dashboard-views`, { method: "POST", headers: jsonHeaders(), body: JSON.stringify({ gateway: "ams", dashboardId }) });
-      expect(refused.status).toBe(429);
+      expect((await prepareRequest()).status).toBe(429);
     });
     for (const socket of sockets) socket.destroy();
     await vi.waitFor(async () => {
-      const accepted = await fetch(`${local}/api/relay/dashboard-views`, { method: "POST", headers: jsonHeaders(), body: JSON.stringify({ gateway: "ams", dashboardId }) });
-      expect(accepted.status).toBe(201);
+      expect((await prepareRequest()).status).toBe(201);
     });
   });
 
   it("returns a readable 413 for a streamed oversized write", async () => {
-    const { frameUrl } = await openView();
+    const opened = await openView();
+    await page(opened.frameUrl);
+    remoteCalls = [];
     const result = await new Promise<{ status: number; body: string }>((resolve, reject) => {
-      const url = new URL(`${local}${frameUrl}edit`);
+      const url = new URL(`${local}${NS}/${opened.handle}/edit`);
       const request = http.request({ hostname: url.hostname, port: url.port, path: url.pathname, method: "POST", headers: { ...opaque(), "transfer-encoding": "chunked" } }, (response) => {
         const parts: Buffer[] = [];
         response.on("data", (part: Buffer) => parts.push(part));
@@ -508,33 +576,35 @@ describe("real adapter: logs, bounds and disconnects", () => {
   });
 
   it("times out a stalled remote and aborts the remote call when the browser disconnects", async () => {
-    const { frameUrl } = await openView();
     stall = true;
     views.dashboardViewLimits.deadlineMs = 200;
-    await expectJsonError(await fetch(`${local}${frameUrl}`, { headers: navigation() }), 504, "remote_timeout");
+    await expectJsonError(await prepareRequest(), 504, "remote_timeout");
     await vi.waitFor(() => expect(remoteSocketsClosed).toBeGreaterThanOrEqual(1));
     views.dashboardViewLimits.deadlineMs = 30_000;
     // More aborted calls than the per-gateway limit: the slots must come back.
     for (let i = 0; i < 10; i++) {
       const before = remoteCalls.length;
       const closedBefore = remoteSocketsClosed;
-      const url = new URL(`${local}${frameUrl}`);
-      const request = http.request({ hostname: url.hostname, port: url.port, path: url.pathname, headers: navigation(), agent: false });
+      const url = new URL(`${local}${NS}`);
+      const body = JSON.stringify({ gateway: "ams", dashboardId });
+      const request = http.request({ hostname: url.hostname, port: url.port, path: url.pathname, method: "POST", headers: { ...jsonHeaders(), "content-length": String(Buffer.byteLength(body)) }, agent: false });
       request.on("error", () => undefined);
-      request.end();
+      request.end(body);
       await vi.waitFor(() => expect(remoteCalls.length).toBe(before + 1));
       request.destroy();
       await vi.waitFor(() => expect(remoteSocketsClosed).toBeGreaterThan(closedBefore));
     }
     stall = false;
-    expect((await fetch(`${local}${frameUrl}`, { headers: navigation() })).status).toBe(200);
+    expect((await prepareRequest()).status).toBe(201);
   });
 
   it("answers a socket that closes mid-body to a write with no remote call and keeps serving", async () => {
-    const { frameUrl } = await openView();
+    const opened = await openView();
+    await page(opened.frameUrl);
+    remoteCalls = [];
     await new Promise<void>((resolve) => {
       const socket = net.connect(Number(new URL(local).port), "127.0.0.1", () => {
-        socket.write(`POST ${frameUrl}edit HTTP/1.1\r\nHost: 127.0.0.1\r\nOrigin: null\r\nContent-Type: text/plain\r\nContent-Length: 5000\r\n\r\n{"token":"x"`);
+        socket.write(`POST ${NS}/${opened.handle}/edit HTTP/1.1\r\nHost: 127.0.0.1\r\nOrigin: null\r\nContent-Type: text/plain\r\nContent-Length: 5000\r\n\r\n{"token":"x"`);
         setTimeout(() => socket.destroy(), 50);
       });
       socket.on("error", () => undefined);
@@ -542,6 +612,6 @@ describe("real adapter: logs, bounds and disconnects", () => {
     });
     expect(remoteCalls).toEqual([]);
     expect((await fetch(`${local}/health`)).status).toBe(200);
-    expect((await fetch(`${local}${frameUrl}`, { headers: navigation() })).status).toBe(200);
+    expect((await prepareRequest()).status).toBe(201);
   });
 });

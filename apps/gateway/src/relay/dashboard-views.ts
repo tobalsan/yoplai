@@ -8,25 +8,29 @@ import {
   DASHBOARD_ID_RE,
   DASHBOARD_TRANSPORT_QUERY_PREFIX,
   decodeDashboardEmbedMeta,
+  type DashboardEmbedMeta,
 } from "../canvas/embed-contract.js";
-import { parseThemeCookie } from "../canvas/routes.js";
 import { allowedCorsOrigins } from "../server/origins.js";
-import {
-  createDashboardViewGrant,
-  recordDashboardView,
-  resolveDashboardViewGrant,
-  type ResolvedDashboardViewGrant,
-} from "./dashboard-view-grants.js";
 import { DASHBOARD_VIEW_NAMESPACE, ownsDashboardViewPath } from "./dashboard-view-paths.js";
+import { shellCsp, shellHtml } from "./dashboard-view-shell.js";
+import {
+  claimDashboardViewBytes,
+  claimDashboardViewShell,
+  hasDashboardViewRoom,
+  resolveDashboardViewSnapshot,
+  storeDashboardViewSnapshot,
+  type ResolvedSnapshot,
+} from "./dashboard-view-snapshots.js";
 import { fetchRemoteExact } from "./remote.js";
 import { getLinkedGateways, isLoopbackForwardedFor, isRelayEnabled } from "./state.js";
 import type { RemoteGateway } from "./store.js";
 
 /**
  * Local viewer for remote dashboards. The browser never holds the linked
- * bearer. A short-lived grant in the path lets a sandboxed frame load one
- * gateway's dashboards, and the remote edit token authorizes every write.
- * See docs/relay-configuration.md for the full contract.
+ * bearer. The trusted UI prepares one snapshot of one dashboard: a single
+ * checked remote read whose bytes and metadata never change. A trusted shell
+ * delivers the bytes once to one sandboxed frame, and the remote edit token
+ * authorizes every write. See docs/relay-configuration.md for the full contract.
  */
 export { DASHBOARD_VIEW_NAMESPACE, ownsDashboardViewPath };
 
@@ -34,10 +38,11 @@ export const dashboardViewLimits = {
   htmlBytes: 5 * 1024 * 1024,
   editBytes: 256 * 1024,
   queryBytes: 8 * 1024,
-  createBytes: 1024,
-  /** Time to read the small body of a grant request. */
+  /** The prepare body holds the gateway, the dashboard ID, and a query of up to `queryBytes`. */
+  createBytes: 12 * 1024,
+  /** Time to read the small body of a prepare or read request. */
   createDeadlineMs: 5_000,
-  /** Grant requests that can wait for a body at the same time. This is not the stored grant cap. */
+  /** Prepare and read requests that can wait for a body at the same time. This is not the stored snapshot cap. */
   createPending: 16,
   capabilitiesBytes: 64 * 1024,
   deadlineMs: 30_000,
@@ -48,20 +53,17 @@ export const dashboardViewLimits = {
 const SUPPORTED_ASSET_VERSIONS = new Set<string>([DASHBOARD_EMBED_ASSET_VERSION]);
 
 type Route =
-  | { kind: "create" }
-  | { kind: "current"; grant: string }
-  | { kind: "view"; grant: string; id: string }
-  | { kind: "edit" | "add"; grant: string; id: string };
+  | { kind: "prepare" }
+  | { kind: "read" }
+  | { kind: "shell" | "frame" | "edit" | "add"; handle: string };
 
-const G = "([A-Za-z0-9_-]{43})";
-const I = "([A-Za-z0-9_-]{32})";
+const H = "([A-Za-z0-9_-]{43})";
 const ROUTES: Array<[RegExp, (match: RegExpExecArray) => Route]> = [
-  [/^\/api\/relay\/dashboard-views$/, () => ({ kind: "create" })],
-  [new RegExp(`^/api/relay/dashboard-views/${G}/current$`), (m) => ({ kind: "current", grant: m[1] })],
-  [new RegExp(`^/api/relay/dashboard-views/${G}/${I}/$`), (m) => ({ kind: "view", grant: m[1], id: m[2] })],
-  [new RegExp(`^/api/relay/dashboard-views/${G}/${I}/(edit|add)$`), (m) => ({ kind: m[3] as "edit" | "add", grant: m[1], id: m[2] })],
+  [/^\/api\/relay\/dashboard-views$/, () => ({ kind: "prepare" })],
+  [/^\/api\/relay\/dashboard-views\/read$/, () => ({ kind: "read" })],
+  [new RegExp(`^/api/relay/dashboard-views/${H}/(shell|frame|edit|add)$`), (m) => ({ kind: m[2] as "shell" | "frame" | "edit" | "add", handle: m[1] })],
 ];
-const METHODS: Record<Route["kind"], string> = { create: "POST", current: "GET", view: "GET", edit: "POST", add: "POST" };
+const METHODS: Record<Route["kind"], string> = { prepare: "POST", read: "POST", shell: "GET", frame: "GET", edit: "POST", add: "POST" };
 
 function parseRoute(pathname: string): Route | undefined {
   for (const [pattern, build] of ROUTES) {
@@ -151,12 +153,12 @@ function acquire(gateway: string): (() => void) | undefined {
  * Runs one remote exchange under a deadline that covers the headers and the
  * body, and under the abort signal of the caller. Both abort reasons end here.
  */
-async function withDeadline(
+async function withDeadline<T>(
   request: Request,
   gateway: RemoteGateway,
   fail: Fail,
-  run: (signal: AbortSignal) => Promise<Response>
-): Promise<Response> {
+  run: (signal: AbortSignal) => Promise<T>
+): Promise<T | Response> {
   const deadline = new AbortController();
   const timer = setTimeout(() => deadline.abort(), dashboardViewLimits.deadlineMs);
   const signal = AbortSignal.any([request.signal, deadline.signal]);
@@ -264,87 +266,76 @@ async function classifyUnmarkedNotFound(gateway: RemoteGateway, fail: Fail, sign
   return enabled ? fail(404, "not_found") : fail(404, "canvas_disabled");
 }
 
-async function viewDashboard(request: Request, url: URL, grant: string, id: string, resolved: ResolvedDashboardViewGrant): Promise<Response> {
-  const { gateway } = resolved;
-  const fail: Fail = (status, error, extra = {}, headers = {}) => {
-    recordDashboardView(grant, id, { ok: false, error, status });
-    return localJson(status, { error, ...extra }, headers);
-  };
-  const query = forwardedQuery(url.searchParams);
-  if (Buffer.byteLength(query) > dashboardViewLimits.queryBytes) return fail(414, "query_too_large");
-  const release = acquire(gateway.name);
-  if (!release) return fail(429, "too_many_dashboard_view_requests", {}, { "Retry-After": "1" });
-  try {
-    return await withDeadline(request, gateway, fail, async (signal) => {
-      const theme = parseThemeCookie(request.headers.get("cookie"));
-      const response = await fetchRemoteExact(gateway, `/d/${id}/embed${query}`, {
-        method: "GET",
-        headers: { accept: "text/html", ...(theme ? { [DASHBOARD_EMBED_HEADERS.theme]: theme } : {}) },
-        signal,
-        bearer: true,
-      });
-      const marked = response.headers.has(DASHBOARD_EMBED_HEADERS.version);
-      if (response.status >= 300 && response.status < 400) {
-        const location = response.headers.get("location") ?? "";
-        discard(response.body);
-        let login = false;
-        try { login = new URL(location, gateway.url).pathname.replace(/\/+$/, "").endsWith("/login"); } catch { /* An unparsable location is not a login page. */ }
-        return login ? fail(401, "remote_unauthorized") : fail(502, "invalid_remote_response");
-      }
-      if (response.status === 401) { discard(response.body); return fail(401, "remote_unauthorized"); }
-      if (marked || response.status === 200) {
-        const reason = incompatibility(headerVersions(response.headers));
-        if (reason) { discard(response.body); return fail(409, "remote_update_required", { reason }); }
-      }
-      if (response.status === 403) {
-        let ownerName: string | undefined;
-        try {
-          const body = await readJsonRecord(response, 4096, signal);
-          if (typeof body?.ownerName === "string" && body.ownerName.length <= 200) ownerName = body.ownerName;
-        } catch (error) {
-          if (signal.aborted) throw error;
-        }
-        return fail(403, "forbidden", ownerName ? { ownerName } : {});
-      }
-      if (response.status === 404) {
-        const reason = response.headers.get(DASHBOARD_EMBED_HEADERS.reason);
-        discard(response.body);
-        if (marked) return reason === "canvas_disabled" ? fail(404, "canvas_disabled") : fail(404, "not_found");
-        return classifyUnmarkedNotFound(gateway, fail, signal);
-      }
-      if (response.status !== 200 || !mediaType(response.headers)?.startsWith("text/html")) {
-        discard(response.body);
-        return fail(502, "invalid_remote_response", { remoteStatus: response.status });
-      }
-      const meta = decodeDashboardEmbedMeta(response.headers.get(DASHBOARD_EMBED_HEADERS.meta));
-      if (!meta || meta.dashboardId !== id) { discard(response.body); return fail(502, "invalid_remote_response"); }
-      const declared = declaredLength(response.headers);
-      if (declared !== undefined && declared > dashboardViewLimits.htmlBytes) {
-        discard(response.body);
-        return fail(502, "remote_response_too_large");
-      }
-      // Return the counted bytes as they are. A text decode would replace each invalid byte with three bytes.
-      const html = await readBounded(response.body, dashboardViewLimits.htmlBytes, signal);
-      recordDashboardView(grant, id, { ok: true, meta });
-      return new Response(new Uint8Array(html), {
-        status: 200,
-        headers: {
-          ...LOCAL_HEADERS,
-          "Content-Type": "text/html; charset=utf-8",
-          "Content-Security-Policy": viewerCsp(resolved.origin, `${DASHBOARD_VIEW_NAMESPACE}/${grant}/${id}`),
-        },
-      });
-    });
-  } finally {
-    release();
+type CheckedRemotePage = { meta: DashboardEmbedMeta; bytes: Buffer };
+
+/**
+ * One bounded remote read of `GET /d/:id/embed`. It returns the checked
+ * metadata and the counted bytes, or the typed local error for the result.
+ */
+async function readRemoteDashboard(
+  gateway: RemoteGateway,
+  id: string,
+  query: string,
+  theme: "light" | "dark" | null,
+  fail: Fail,
+  signal: AbortSignal
+): Promise<CheckedRemotePage | Response> {
+  const response = await fetchRemoteExact(gateway, `/d/${id}/embed${query}`, {
+    method: "GET",
+    headers: { accept: "text/html", ...(theme ? { [DASHBOARD_EMBED_HEADERS.theme]: theme } : {}) },
+    signal,
+    bearer: true,
+  });
+  const marked = response.headers.has(DASHBOARD_EMBED_HEADERS.version);
+  if (response.status >= 300 && response.status < 400) {
+    const location = response.headers.get("location") ?? "";
+    discard(response.body);
+    let login = false;
+    try { login = new URL(location, gateway.url).pathname.replace(/\/+$/, "").endsWith("/login"); } catch { /* An unparsable location is not a login page. */ }
+    return login ? fail(401, "remote_unauthorized") : fail(502, "invalid_remote_response");
   }
+  if (response.status === 401) { discard(response.body); return fail(401, "remote_unauthorized"); }
+  if (marked || response.status === 200) {
+    const reason = incompatibility(headerVersions(response.headers));
+    if (reason) { discard(response.body); return fail(409, "remote_update_required", { reason }); }
+  }
+  if (response.status === 403) {
+    let ownerName: string | undefined;
+    try {
+      const body = await readJsonRecord(response, 4096, signal);
+      if (typeof body?.ownerName === "string" && body.ownerName.length <= 200) ownerName = body.ownerName;
+    } catch (error) {
+      if (signal.aborted) throw error;
+    }
+    return fail(403, "forbidden", ownerName ? { ownerName } : {});
+  }
+  if (response.status === 404) {
+    const reason = response.headers.get(DASHBOARD_EMBED_HEADERS.reason);
+    discard(response.body);
+    if (marked) return reason === "canvas_disabled" ? fail(404, "canvas_disabled") : fail(404, "not_found");
+    return classifyUnmarkedNotFound(gateway, fail, signal);
+  }
+  if (response.status !== 200 || !mediaType(response.headers)?.startsWith("text/html")) {
+    discard(response.body);
+    return fail(502, "invalid_remote_response", { remoteStatus: response.status });
+  }
+  const meta = decodeDashboardEmbedMeta(response.headers.get(DASHBOARD_EMBED_HEADERS.meta));
+  if (!meta || meta.dashboardId !== id) { discard(response.body); return fail(502, "invalid_remote_response"); }
+  const declared = declaredLength(response.headers);
+  if (declared !== undefined && declared > dashboardViewLimits.htmlBytes) {
+    discard(response.body);
+    return fail(502, "remote_response_too_large");
+  }
+  // Keep the counted bytes as they are. A text decode would replace each invalid byte with three bytes.
+  return { meta, bytes: await readBounded(response.body, dashboardViewLimits.htmlBytes, signal) };
 }
 
 const EditRequestSchema = z.object({ token: z.string().min(1).max(4096) }).passthrough();
 const WRITE_STATUSES = new Set([200, 400, 401, 403, 404, 503]);
 
-async function writeDashboard(request: Request, op: "edit" | "add", id: string, resolved: ResolvedDashboardViewGrant): Promise<Response> {
-  const { gateway } = resolved;
+/** The write route holds no dashboard ID. The snapshot names the one dashboard that its frame shows. */
+async function writeDashboard(request: Request, op: "edit" | "add", resolved: ResolvedSnapshot): Promise<Response> {
+  const { gateway, dashboardId: id } = resolved;
   const fail: Fail = (status, error, extra = {}, headers = {}) => localJson(status, { error, ...extra }, headers);
   if (request.headers.get("origin") !== "null") return fail(403, "opaque_origin_required");
   if (mediaType(request.headers) !== "text/plain") return fail(415, "text_plain_required");
@@ -390,22 +381,28 @@ async function writeDashboard(request: Request, op: "edit" | "add", id: string, 
   }
 }
 
-const CreateViewSchema = z.object({ gateway: z.string(), dashboardId: z.string() }).strict();
+const PrepareSchema = z.object({
+  gateway: z.string(),
+  dashboardId: z.string(),
+  query: z.string().optional(),
+  theme: z.enum(["light", "dark"]).optional(),
+}).strict();
+const ReadSchema = z.object({ handle: z.string() }).strict();
 
-let pendingCreates = 0;
+let pendingBodies = 0;
 
-/** Reads the grant request body under a size limit, a deadline, and a cap on parallel reads. */
-async function readCreateBody(request: Request): Promise<Buffer | Response> {
+/** Reads the small JSON body of a prepare or read request under a size limit, a deadline, and a cap on parallel reads. */
+async function readSmallBody(request: Request): Promise<Buffer | Response> {
   const declared = declaredLength(request.headers);
   if (declared !== undefined && declared > dashboardViewLimits.createBytes) {
     discard(request.body);
     return localJson(413, { error: "request_too_large" });
   }
-  if (pendingCreates >= dashboardViewLimits.createPending) {
+  if (pendingBodies >= dashboardViewLimits.createPending) {
     discard(request.body);
     return localJson(429, { error: "too_many_dashboard_view_requests" }, { "Retry-After": "1" });
   }
-  pendingCreates += 1;
+  pendingBodies += 1;
   const deadline = new AbortController();
   const timer = setTimeout(() => deadline.abort(), dashboardViewLimits.createDeadlineMs);
   try {
@@ -416,62 +413,144 @@ async function readCreateBody(request: Request): Promise<Buffer | Response> {
     return localJson(408, { error: "request_timeout" });
   } finally {
     clearTimeout(timer);
-    pendingCreates -= 1;
+    pendingBodies -= 1;
   }
 }
 
-async function createView(request: Request): Promise<Response> {
+/** The checks that every strict same-origin JSON request from the trusted UI must pass. Returns the issuer origin or the refusal. */
+function trustedUiRequest(request: Request): string | Response {
   const origin = request.headers.get("origin");
   if (!origin || !allowedCorsOrigins().includes(origin)) return localJson(403, { error: "untrusted_origin" });
   if (request.headers.get("sec-fetch-site") !== "same-origin") return localJson(403, { error: "same_origin_required" });
   if (mediaType(request.headers) !== "application/json") return localJson(415, { error: "json_required" });
-  const body = await readCreateBody(request);
+  return origin;
+}
+
+const expired = () => localJson(410, { state: "expired", error: "dashboard_view_expired", status: 410 });
+
+/**
+ * Makes one snapshot: one checked remote read, stored as bytes plus metadata.
+ * A remote failure is a typed error of this request, and no snapshot exists.
+ */
+async function prepareView(request: Request): Promise<Response> {
+  const origin = trustedUiRequest(request);
+  if (typeof origin !== "string") return origin;
+  const body = await readSmallBody(request);
   if (!Buffer.isBuffer(body)) return body;
-  let input: z.infer<typeof CreateViewSchema>;
+  let input: z.infer<typeof PrepareSchema>;
   try {
-    input = CreateViewSchema.parse(JSON.parse(body.toString("utf8")));
+    input = PrepareSchema.parse(JSON.parse(body.toString("utf8")));
   } catch {
     return localJson(400, { error: "invalid_dashboard_view_request" });
   }
   const gateway = getLinkedGateways().find((item) => item.name === input.gateway);
   if (!gateway) return localJson(404, { error: "unknown_gateway" });
   if (!DASHBOARD_ID_RE.test(input.dashboardId)) return localJson(400, { error: "invalid_dashboard_id" });
-  const created = createDashboardViewGrant(gateway, origin);
-  if (!created) return localJson(429, { error: "too_many_dashboard_views" }, { "Retry-After": "60" });
+  const fail: Fail = (status, error, extra = {}, headers = {}) => localJson(status, { error, ...extra }, headers);
+  const query = forwardedQuery(new URLSearchParams(input.query ?? ""));
+  if (Buffer.byteLength(query) > dashboardViewLimits.queryBytes) return fail(414, "query_too_large");
+  if (!hasDashboardViewRoom()) return fail(429, "too_many_dashboard_views", {}, { "Retry-After": "60" });
+  const release = acquire(gateway.name);
+  if (!release) return fail(429, "too_many_dashboard_view_requests", {}, { "Retry-After": "1" });
+  const theme = input.theme ?? null;
+  let page: CheckedRemotePage | Response;
+  try {
+    page = await withDeadline(request, gateway, fail, (signal) => readRemoteDashboard(gateway, input.dashboardId, query, theme, fail, signal));
+  } finally {
+    release();
+  }
+  if (!("meta" in page)) return page;
+  const stored = storeDashboardViewSnapshot(gateway, origin, { dashboardId: input.dashboardId, query, theme, meta: page.meta, bytes: page.bytes });
+  if (stored === "count") return fail(429, "too_many_dashboard_views", {}, { "Retry-After": "60" });
+  if (stored === "bytes") return fail(429, "dashboard_view_storage_full", {}, { "Retry-After": "60" });
   return localJson(201, {
-    frameUrl: `${DASHBOARD_VIEW_NAMESPACE}/${created.grant}/${input.dashboardId}/`,
-    expiresAt: new Date(created.expiresAt).toISOString(),
+    handle: stored.handle,
+    instance: stored.instance,
+    shellUrl: `${DASHBOARD_VIEW_NAMESPACE}/${stored.handle}/shell`,
+    expiresAt: new Date(stored.expiresAt).toISOString(),
     gateway: gateway.name,
     dashboardId: input.dashboardId,
   });
 }
 
-function currentView(request: Request, resolved: ResolvedDashboardViewGrant): Response {
-  const origin = request.headers.get("origin");
-  if (request.headers.get("sec-fetch-site") !== "same-origin" || (origin !== null && origin !== resolved.origin)) {
-    return localJson(403, { error: "same_origin_required" });
+/**
+ * Gives the trusted host the checked metadata of one snapshot. The handle is
+ * in the JSON body, never in a URL. Only the issuer origin can read it.
+ */
+async function readView(request: Request): Promise<Response> {
+  const origin = trustedUiRequest(request);
+  if (typeof origin !== "string") return origin;
+  const body = await readSmallBody(request);
+  if (!Buffer.isBuffer(body)) return body;
+  let handle: string;
+  try {
+    handle = ReadSchema.parse(JSON.parse(body.toString("utf8"))).handle;
+  } catch {
+    return localJson(400, { error: "invalid_dashboard_view_request" });
   }
-  return localJson(200, { expiresAt: new Date(resolved.expiresAt).toISOString(), view: resolved.view ?? null });
+  const resolved = /^[A-Za-z0-9_-]{43}$/.test(handle) ? resolveDashboardViewSnapshot(handle) : undefined;
+  if (!resolved) return expired();
+  if (resolved.origin !== origin) return localJson(403, { error: "untrusted_origin" });
+  return localJson(200, {
+    expiresAt: new Date(resolved.expiresAt).toISOString(),
+    state: resolved.state,
+    gateway: resolved.gateway.name,
+    dashboardId: resolved.dashboardId,
+    meta: resolved.meta,
+  });
 }
 
-async function dispatch(request: Request, url: URL, route: Route): Promise<Response> {
+/** The trusted shell loads once, as a frame of the trusted UI page. */
+function deliverShell(request: Request, handle: string, resolved: ResolvedSnapshot): Response {
+  if (request.headers.get("sec-fetch-dest") !== "iframe") return localJson(403, { error: "navigation_required" });
+  if (request.headers.get("sec-fetch-site") !== "same-origin") return localJson(403, { error: "same_origin_required" });
+  if (!claimDashboardViewShell(handle)) return localJson(409, { error: "dashboard_view_shell_delivered" });
+  const framePath = `${DASHBOARD_VIEW_NAMESPACE}/${handle}/frame`;
+  return new Response(shellHtml(framePath, resolved.instance), {
+    status: 200,
+    headers: {
+      ...LOCAL_HEADERS,
+      "Content-Type": "text/html; charset=utf-8",
+      "Content-Security-Policy": shellCsp(resolved.origin, framePath),
+    },
+  });
+}
+
+/**
+ * Delivers the stored bytes to one frame, once. A top-level request, a second
+ * frame, and a later request get a refusal and never another document.
+ */
+function deliverFrame(request: Request, handle: string, resolved: ResolvedSnapshot): Response {
+  if (request.headers.get("sec-fetch-dest") !== "iframe") return localJson(403, { error: "navigation_required" });
+  const bytes = claimDashboardViewBytes(handle);
+  if (!bytes) return localJson(409, { error: "dashboard_view_delivered" });
+  return new Response(new Uint8Array(bytes), {
+    status: 200,
+    headers: {
+      ...LOCAL_HEADERS,
+      "Content-Type": "text/html; charset=utf-8",
+      "Content-Security-Policy": viewerCsp(resolved.origin, `${DASHBOARD_VIEW_NAMESPACE}/${handle}`),
+    },
+  });
+}
+
+async function dispatch(request: Request, route: Route): Promise<Response> {
   if (request.method !== METHODS[route.kind]) return localJson(405, { error: "method_not_allowed" }, { Allow: METHODS[route.kind] });
   if (!isRelayEnabled() || !isLoopbackForwardedFor(request.headers.get("x-forwarded-for"))) return localJson(403, { error: "relay_unavailable" });
-  if (route.kind === "create") return createView(request);
-  const resolved = resolveDashboardViewGrant(route.grant);
-  if (!resolved) return localJson(410, { error: "dashboard_view_expired" });
-  if (route.kind === "current") return currentView(request, resolved);
-  if (route.kind === "view") {
-    const destination = request.headers.get("sec-fetch-dest");
-    if (destination !== "iframe" && destination !== "document") return localJson(403, { error: "navigation_required" });
-    return viewDashboard(request, url, route.grant, route.id, resolved);
-  }
-  return writeDashboard(request, route.kind, route.id, resolved);
+  if (route.kind === "prepare") return prepareView(request);
+  if (route.kind === "read") return readView(request);
+  const resolved = resolveDashboardViewSnapshot(route.handle);
+  if (!resolved) return expired();
+  if (route.kind === "shell") return deliverShell(request, route.handle, resolved);
+  if (route.kind === "frame") return deliverFrame(request, route.handle, resolved);
+  if (resolved.state !== "delivered") return localJson(409, { error: "dashboard_view_not_delivered" });
+  return writeDashboard(request, route.kind, resolved);
 }
 
 /**
  * Claims the exact viewer namespace before the extension gate and the generic
  * relay. A malformed path in the namespace gets a local refusal, not a fallthrough.
+ * A query string is an identity variation, so it gets the same refusal.
  * The global CORS middleware skips this namespace, so only an accepted
  * opaque-origin write gets the one CORS answer that its page may read. That
  * answer carries no credentials.
@@ -482,8 +561,8 @@ export function dashboardViewHttp(): MiddlewareHandler {
     if (!ownsDashboardViewPath(url.pathname)) return next();
     const request = c.req.raw;
     const route = parseRoute(url.pathname);
-    if (!route) return localJson(404, { error: "invalid_dashboard_view_route" });
-    const response = await dispatch(request, url, route);
+    if (!route || request.url.includes("?")) return localJson(404, { error: "invalid_dashboard_view_route" });
+    const response = await dispatch(request, route);
     if ((route.kind === "edit" || route.kind === "add") && request.headers.get("origin") === "null") {
       response.headers.set("Access-Control-Allow-Origin", "null");
       response.headers.set("Vary", "Origin");

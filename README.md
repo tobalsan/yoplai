@@ -180,7 +180,7 @@ Configuration transport now supports linked gateways through an explicit API pre
 The linked bearer defines the remote requester, including personal connections and administrative rights.
 Remote OAuth starts use a trusted-origin JSON POST and return a checked provider URL.
 The remote stores state and tokens. The local server never fetches the provider URL.
-The page controls and the dashboard viewer page still need the next round. The backend for remote dashboards now exists (a local grant, a bounded viewer route, and token-authenticated edit routes).
+The page controls and the dashboard viewer page still need the next round. The backend for remote dashboards now exists (a prepared snapshot, a trusted shell, a bounded viewer route, and token-authenticated edit routes).
 
 Core OAuth starts need the new JSON start result on the remote gateway.
 A desktop does not need the remote provider extension or scheduler extension to forward these requests.

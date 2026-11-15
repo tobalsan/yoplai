@@ -69,7 +69,7 @@ function isPollingOrHealthPath(path: string): boolean {
   );
 }
 
-/** Hides the whole target of an owned viewer request, because every part of it can carry a grant. */
+/** Hides the whole target of an owned viewer request, because every part of it can carry a snapshot handle. */
 function redactViewerTarget(message: string): string {
   const parts = /^(--> \S+ )([\s\S]+?)( \d{3} \S+)$/.exec(message);
   if (!parts || !ownsDashboardViewPath(parts[2].split("?")[0])) return message;

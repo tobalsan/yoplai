@@ -71,7 +71,7 @@ const globalCors = cors({
   origin: (origin) => (allowedCorsOrigins().includes(origin) ? origin : null),
   credentials: true,
 });
-// The dashboard viewer answers CORS itself: no grant for HTML, no credentials for writes.
+// The dashboard viewer answers CORS itself: no CORS grant for HTML, no credentials for writes.
 app.use("*", (c, next) => (ownsDashboardViewPath(new URL(c.req.url).pathname) ? next() : globalCors(c, next)));
 app.use("*", accessLogger());
 app.route("/internal", internalTools);
