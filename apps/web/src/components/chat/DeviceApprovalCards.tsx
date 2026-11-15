@@ -42,10 +42,6 @@ function argumentsOf(request: WsDeviceApprovalRequest): ApprovalArguments {
   return request.arguments && typeof request.arguments === "object" ? (request.arguments as ApprovalArguments) : {};
 }
 
-function isCutCommand(request: WsDeviceApprovalRequest): boolean {
-  return request.tool === "device_bash" && text(argumentsOf(request).command).includes(CUT_MARK);
-}
-
 function Block(props: { label: string; value: unknown; limited: boolean }): JSX.Element {
   const shown = () => text(props.value);
   return (
@@ -91,9 +87,6 @@ export function DeviceApprovalCards(props: {
               Agent: <span>{escapeHidden(props.agentName)}</span>
             </div>
             <Detail request={item.request} />
-            <Show when={isCutCommand(item.request)}>
-              <p class="device-approval-warning">This command is longer than the card shows. If you approve, the full command runs.</p>
-            </Show>
             <Show when={props.connectionLost}>
               <p class="device-approval-warning">The connection is lost. You cannot answer until it returns.</p>
             </Show>

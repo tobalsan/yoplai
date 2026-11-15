@@ -8,6 +8,8 @@ import type {
 /** The user has this long to answer an approval request. */
 export const APPROVAL_TIMEOUT_MS = 120_000;
 export const MAX_APPROVAL_TEXT_CHARS = 2000;
+/** The longest `device_bash` command that a card can show in full, so the user never approves a cut command. */
+export const MAX_APPROVAL_COMMAND_CHARS = 20_000;
 
 export type ApprovalEvent =
   | { kind: "request"; message: WsDeviceApprovalRequest }
@@ -18,7 +20,7 @@ type PendingApproval = {
   settle: (outcome: DeviceApprovalOutcome) => void;
 };
 
-/** Cuts each long text value, for example a file content, so the prompt stays small. */
+/** Cuts each long text value, for example a file content, so the prompt stays small. The command of `device_bash` is never cut. */
 export function truncateApprovalArguments(value: unknown): unknown {
   if (typeof value === "string") {
     return value.length > MAX_APPROVAL_TEXT_CHARS ? `${value.slice(0, MAX_APPROVAL_TEXT_CHARS)}… (cut)` : value;
@@ -28,6 +30,12 @@ export function truncateApprovalArguments(value: unknown): unknown {
     return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, truncateApprovalArguments(item)]));
   }
   return value;
+}
+
+function truncateToolArguments(tool: string, value: unknown): unknown {
+  const cut = truncateApprovalArguments(value);
+  if (tool !== "device_bash" || !value || typeof value !== "object" || !("command" in value)) return cut;
+  return { ...(cut as Record<string, unknown>), command: value.command };
 }
 
 export type ApprovalRequestInput = Omit<WsDeviceApprovalRequest, "type" | "approvalId"> & {
@@ -60,7 +68,7 @@ export class DeviceApprovals {
       type: "device_approval_request",
       approvalId: randomUUID(),
       ...fields,
-      arguments: truncateApprovalArguments(fields.arguments),
+      arguments: truncateToolArguments(fields.tool, fields.arguments),
     };
     return new Promise<DeviceApprovalOutcome>((resolve) => {
       const settle = (outcome: DeviceApprovalOutcome) => {

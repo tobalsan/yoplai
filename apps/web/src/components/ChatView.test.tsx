@@ -1032,12 +1032,13 @@ describe("ChatView abort handling", () => {
       dispose();
     });
 
-    it("shows the full text of a long command and warns about a cut command next to the buttons", async () => {
-      const command = Array.from({ length: 40 }, (_, i) => `echo line-${i}`).join("\n") + "\nrm -rf /tmp/x… (cut)";
+    it("shows the full text of a long command with no warning, also when the command contains the text of a cut mark", async () => {
+      const command = Array.from({ length: 400 }, (_, i) => `echo line-${i}`).join("\n") + "\nrm -rf /tmp/x… (cut)";
       const { container, dispose } = await renderRemote();
       subscription.onDeviceApprovalRequest?.(request("a1", "session-main", "device_bash", { command }));
       await waitFor(() => expect(queryByText(container, command, { normalizer: (value) => value })).not.toBeNull());
-      expect(queryByText(container, "This command is longer than the card shows. If you approve, the full command runs.")).not.toBeNull();
+      expect(queryByText(container, "This command is longer than the card shows. If you approve, the full command runs.")).toBeNull();
+      expect(queryByText(container, "This card does not show all of the text. The call uses the full text.")).toBeNull();
       dispose();
     });
 

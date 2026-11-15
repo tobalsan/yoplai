@@ -4,7 +4,7 @@ import { Ajv2020 } from "ajv/dist/2020.js";
 import type { ValidateFunction } from "ajv";
 import type { DeviceCall, DeviceToolName } from "@yoplai/shared";
 import { addGatewaySuffix } from "./agent-id.js";
-import { APPROVAL_TIMEOUT_MS, type DeviceApprovals } from "./device-approvals.js";
+import { APPROVAL_TIMEOUT_MS, MAX_APPROVAL_COMMAND_CHARS, type DeviceApprovals } from "./device-approvals.js";
 import {
   decideGate,
   resolveAgainstFolder,
@@ -91,6 +91,12 @@ export class DeviceExecutor {
       if (call.runKind === "background") {
         throw new Error(
           `${definition.name} needs the approval of the user, and no user is present in this run. The call did not run. The user can allow background calls in the settings of this agent.`
+        );
+      }
+      const command = definition.name === "device_bash" ? args.command : undefined;
+      if (typeof command === "string" && command.length > MAX_APPROVAL_COMMAND_CHARS) {
+        throw new Error(
+          `The command has ${command.length} characters. The limit for an approval is ${MAX_APPROVAL_COMMAND_CHARS.toLocaleString("en-US")}. The call did not run. Write the commands to a script file, then run the file.`
         );
       }
       const timeoutMs = this.options.approvalTimeoutMs ?? APPROVAL_TIMEOUT_MS;

@@ -10,7 +10,7 @@ import type { ExtensionRuntime } from "../extensions/runtime.js";
 import { waitFor } from "./device-test-server.js";
 import { getDeviceApprovals } from "./device-approvals.js";
 import { DeviceExecutor } from "./device-exec.js";
-import { createFileDeviceSettingsStore, type DeviceSettingsStore } from "./device-settings.js";
+import { createFileDeviceSettingsStore, deviceChatKey, type DeviceSettingsStore } from "./device-settings.js";
 
 const remote = vi.hoisted(() => ({ url: "", enabled: true }));
 vi.mock("../config/index.js", () => ({
@@ -125,6 +125,51 @@ describe("device approval: protocol", () => {
     expect(args.content.startsWith("x".repeat(2000))).toBe(true);
     page.socket.send(JSON.stringify({ type: "device_approval_answer", approvalId: request.approvalId, approve: false }));
     await expect(pending).rejects.toThrow(/refused/);
+  });
+
+  function startBash(command: string) {
+    return executor.execute(
+      {
+        type: "call", callId: `c-${Math.random()}`, tool: "device_bash", arguments: { command },
+        agentId: "pom", sessionId: "s1", toolCallId: "tc-1", runKind: "chat",
+      },
+      "ams",
+      new AbortController().signal
+    );
+  }
+
+  it("shows a command of 5,000 characters on the card in full", async () => {
+    const page = await openPage();
+    subscribe(page);
+    await waitFor(() => remoteMessages.length === 1);
+    const command = `echo ${"a".repeat(2500)}\necho ${"b".repeat(2500)}`;
+    const pending = startBash(command);
+    await waitFor(() => ofType(page, "device_approval_request").length === 1);
+    const request = ofType(page, "device_approval_request")[0];
+    expect((request.arguments as { command: string }).command).toBe(command);
+    page.socket.send(JSON.stringify({ type: "device_approval_answer", approvalId: request.approvalId, approve: false }));
+    await expect(pending).rejects.toThrow(/refused/);
+  });
+
+  it("refuses a command of 20,001 characters with no approval request, and accepts 20,000", async () => {
+    const page = await openPage();
+    subscribe(page);
+    await waitFor(() => remoteMessages.length === 1);
+    await expect(startBash(`:${"x".repeat(20_000)}`)).rejects.toThrow(
+      "The command has 20001 characters. The limit for an approval is 20,000. The call did not run. Write the commands to a script file, then run the file."
+    );
+    expect(ofType(page, "device_approval_request")).toHaveLength(0);
+    const pending = startBash(`:${"x".repeat(19_999)}`);
+    await waitFor(() => ofType(page, "device_approval_request").length === 1);
+    const request = ofType(page, "device_approval_request")[0];
+    page.socket.send(JSON.stringify({ type: "device_approval_answer", approvalId: request.approvalId, approve: false }));
+    await expect(pending).rejects.toThrow(/refused/);
+  });
+
+  it("runs a command of 20,001 characters in Full mode with no limit", async () => {
+    settings.setChat(deviceChatKey("ams", "s1"), { full: true });
+    const result = await startBash(`:${"x".repeat(20_000)}; echo done`);
+    expect(JSON.stringify(result.content)).toContain("done");
   });
 
   it("runs the call after the user approves, and tells the page the outcome", async () => {
