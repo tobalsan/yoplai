@@ -41,7 +41,7 @@ afterAll(async () => {
   await fs.rm(setup.home, { recursive: true, force: true });
 });
 
-async function runWith(runFields: { source?: string; background?: boolean }) {
+async function runWith(runFields: { source?: string; background?: boolean; requiresDevice?: boolean }) {
   const workspace = path.join(setup.home, "workspace");
   await fs.mkdir(workspace, { recursive: true });
   for (const name of ["AGENTS.md", "SOUL.md", "USER.md"]) await fs.writeFile(path.join(workspace, name), "Fixture.");
@@ -81,4 +81,9 @@ it("gives the tool the run origin and the ID of the tool_call stream event", asy
   const web = await runWith({ source: "web" });
   expect(web.seen?.run).toMatchObject({ source: "web" });
   expect((await runWith({ source: "web", background: true })).seen?.run).toMatchObject({ background: true });
+});
+
+it("gives the tool the requiresDevice flag of a background run", async () => {
+  expect((await runWith({ source: "scheduler", requiresDevice: true })).seen?.run).toMatchObject({ requiresDevice: true });
+  expect((await runWith({ source: "scheduler" })).seen?.run?.requiresDevice).toBeUndefined();
 });

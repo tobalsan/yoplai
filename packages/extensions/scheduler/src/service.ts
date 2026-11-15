@@ -50,6 +50,13 @@ function credentialError(event: StreamEvent): CredentialRefusal | undefined {
   }
 }
 
+/** A job with no agent run has no device tools, so the flag cannot work with it. */
+function assertDeviceJobValid(requiresDevice: boolean | undefined, noAgent: boolean | undefined): void {
+  if (requiresDevice && noAgent) {
+    throw new Error("requiresDevice cannot be used with noAgent. A script-only job has no agent run, so it has no device tools.");
+  }
+}
+
 type SchedulerRunKind = "script_only" | "silent_tick" | "woke_agent";
 
 type SchedulerState = {
@@ -293,6 +300,7 @@ export class SchedulerService {
     if (!ctx.getAgent(agentId)) throw new Error(`Agent not found: ${agentId}`);
     const credentialMode = input.credentialMode ?? (ownerUserId ? "owner" : "team");
     if (credentialMode === "owner" && !ownerUserId) throw new Error("Owner credentials require an authenticated user");
+    assertDeviceJobValid(input.requiresDevice, input.payload.noAgent);
     const id = crypto.randomUUID();
     const job: JobWithState = {
       id,
@@ -305,6 +313,7 @@ export class SchedulerService {
       schedule: input.schedule,
       model: input.model,
       payload: input.payload,
+      requiresDevice: input.requiresDevice,
       deliver: input.deliver,
       timeoutMs: input.timeoutMs,
       createdAt: new Date().toISOString(),
@@ -330,6 +339,7 @@ export class SchedulerService {
     if (!job) throw new Error(`Schedule not found: ${agentId}/${id}`);
 
     if (patch.credentialMode === "owner" && !job.ownerUserId && !ownerUserId) throw new Error("Owner credentials require an authenticated user");
+    assertDeviceJobValid(patch.requiresDevice ?? job.requiresDevice, (patch.payload ?? job.payload).noAgent);
     if (patch.name !== undefined) job.name = patch.name;
     if (patch.credentialMode !== undefined) job.credentialMode = patch.credentialMode;
     if (patch.credentialMode === "team") delete job.ownerUserId;
@@ -342,6 +352,7 @@ export class SchedulerService {
     if (patch.schedule) job.schedule = patch.schedule;
     if (patch.model) job.model = patch.model;
     if (patch.payload) job.payload = patch.payload;
+    if (patch.requiresDevice !== undefined) job.requiresDevice = patch.requiresDevice;
     if (patch.deliver !== undefined) job.deliver = patch.deliver;
     if (patch.timeoutMs !== undefined) job.timeoutMs = patch.timeoutMs;
 
@@ -592,7 +603,7 @@ export class SchedulerService {
     // Settings can change while persistence or a gate awaits; this fire keeps
     // the same payload and credentials that its ledger record describes.
     const payload = { ...job.payload };
-    const { credentialMode, ownerUserId } = job;
+    const { credentialMode, ownerUserId, requiresDevice } = job;
     const scheduledRunAt = job.schedule.runAt;
     this.executingJobs.add(key);
     this.runningJobStartedAtMs.set(key, Date.now());
@@ -874,6 +885,7 @@ export class SchedulerService {
       model: job.model,
       thinkLevel: job.reasoning,
       source: "scheduler",
+      requiresDevice,
       // Without an explicit surface the tracer falls back to "chat", so
       // scheduled runs would show up as yoplai:chat:<agent> in Langfuse.
       trace: {

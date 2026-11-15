@@ -87,6 +87,18 @@ describe("SchedulerService run ledger", () => {
     }));
   });
 
+  it("passes requiresDevice from the job to the agent run, and omits it for a job with no flag", async () => {
+    const { runAgent } = await setup(false);
+    const withFlag = await scheduler.add("alpha", {
+      name: "Notes", schedule: { cron: "0 8 * * *", tz: "UTC" }, payload: jobPayload({ message: "Read" }), requiresDevice: true,
+    });
+    await scheduler.runNow("alpha", withFlag.id);
+    expect(runAgent).toHaveBeenLastCalledWith(expect.objectContaining({ source: "scheduler", requiresDevice: true }));
+    const plain = await add();
+    await scheduler.runNow("alpha", plain.id);
+    expect(runAgent.mock.calls.at(-1)?.[0].requiresDevice).toBeUndefined();
+  });
+
   it("persists running state before invoking the agent and finishes the same record after monitoring turns off", async () => {
     let finish!: (value: { payloads: { text: string }[]; meta: { durationMs: number; sessionId: string } }) => void;
     const runAgent = vi.fn(() => new Promise<{ payloads: { text: string }[]; meta: { durationMs: number; sessionId: string } }>((resolve) => { finish = resolve; }));

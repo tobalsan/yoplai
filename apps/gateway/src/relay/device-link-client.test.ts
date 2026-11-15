@@ -48,7 +48,7 @@ function startManager(options: Partial<ConstructorParameters<typeof DeviceLinkMa
 }
 
 async function deviceTool(name: string) {
-  const tools = (await deviceToolsExtension.getAgentTools?.(agent, { config: {} as never })) ?? [];
+  const tools = (await deviceToolsExtension.getAgentTools?.(agent, { config: {} as never, run: { source: "web" } })) ?? [];
   const tool = tools.find((item) => item.name === name);
   if (!tool) throw new Error(`No ${name} tool`);
   return (args: unknown, overrides: Partial<ExtensionAgentToolContext> = {}) =>

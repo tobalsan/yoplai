@@ -26,6 +26,11 @@ export function deviceRunKind(run: ExtensionRunInfo | undefined): DeviceRunKind 
   return BACKGROUND_SOURCES.has(run.source) ? "background" : "chat";
 }
 
+/** A background run gets the device tools only when its job says that it needs the device. */
+function mayUseDevice(run: ExtensionRunInfo | undefined): boolean {
+  return deviceRunKind(run) === "chat" || run?.requiresDevice === true;
+}
+
 /** Joins the text of a tool result. The model sees text only. */
 function resultText(content: unknown[]): string {
   return content
@@ -49,14 +54,25 @@ export const deviceToolsExtension: Extension = {
   async start() {},
   async stop() {},
   capabilities: () => [],
+  getSystemPromptContributions(_agent, hook) {
+    if (!getDeviceRegistry().has(hook?.userId ?? LOCAL_DEVICE_USER)) return undefined;
+    return (
+      "Device tools: the user has a desktop device connected. The tools device_read, device_write, device_edit, and device_bash work on the files and the shell of that device, not in your workspace. " +
+      "A scheduled job gets these tools only when the job has requiresDevice: true. Set that flag in scheduler.create_job or scheduler.update_job."
+    );
+  },
   getAgentTools(_agent, hook) {
     const userId = hook?.userId ?? LOCAL_DEVICE_USER;
     if (!getDeviceRegistry().has(userId)) return [];
+    if (!mayUseDevice(hook?.run)) return [];
     return DEVICE_TOOL_NAMES.map((name) => ({
       name,
       description: DEVICE_TOOL_DEFINITIONS[name].description,
       parameters: deviceToolParameters(name),
       async execute(args: unknown, context: ExtensionAgentToolContext) {
+        if (!mayUseDevice(context.run)) {
+          throw new Error("This background run has no device tools. A scheduled job needs requiresDevice: true.");
+        }
         const result = await getDeviceRegistry().call(
           context.userId ?? LOCAL_DEVICE_USER,
           {

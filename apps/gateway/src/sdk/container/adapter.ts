@@ -380,6 +380,7 @@ export function getContainerAdapter(): SdkAdapter {
           source: params.source,
           sender: params.sender,
           background: params.background,
+          requiresDevice: params.requiresDevice,
           registerFileOutput: (event, signal) =>
             fileOutputAdapter.handle(params, event, hostDataDir, signal, launchSpec.conversationFiles),
           projectId: params.context?.project?.id,

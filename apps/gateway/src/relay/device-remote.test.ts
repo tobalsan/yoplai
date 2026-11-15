@@ -44,9 +44,9 @@ function toolContext(overrides: Partial<ExtensionAgentToolContext> = {}): Extens
   };
 }
 
-async function deviceTools(userId?: string) {
+async function deviceTools(userId?: string, run: ExtensionAgentToolContext["run"] = { source: "web" }) {
   const { deviceToolsExtension } = await import("./device-extension.js");
-  return (await deviceToolsExtension.getAgentTools?.(agent, { config: {} as never, userId })) ?? [];
+  return (await deviceToolsExtension.getAgentTools?.(agent, { config: {} as never, userId, run })) ?? [];
 }
 
 describe("device link: remote side", () => {
@@ -172,6 +172,36 @@ describe("device link: remote side", () => {
     await expect(pending).rejects.toThrow("The user refused");
   });
 
+  it("gives a background run the device tools only with requiresDevice, and a chat run as before", async () => {
+    remote = await startRemoteServer(false);
+    const connection = await relay(remote.port);
+    await waitFor(() => connection.messages.length === 1);
+    for (const source of ["scheduler", "heartbeat", "webhook", "agent", "orchestrator", "dream", "system"]) {
+      expect(await deviceTools(undefined, { source })).toEqual([]);
+      expect(await deviceTools(undefined, { source, requiresDevice: true })).toHaveLength(4);
+    }
+    expect(await deviceTools(undefined, { source: "web" })).toHaveLength(4);
+    expect(await deviceTools(undefined, { source: "web", background: true })).toEqual([]);
+  });
+
+  it("refuses a device call of a background run with no flag, even when the tool was listed", async () => {
+    remote = await startRemoteServer(false);
+    const connection = await relay(remote.port);
+    await waitFor(() => connection.messages.length === 1);
+    const tool = (await deviceTools(undefined, { source: "scheduler", requiresDevice: true })).find((item) => item.name === "device_read");
+    await expect(tool?.execute({ path: "a.txt" }, toolContext({ run: { source: "scheduler" } }))).rejects.toThrow("requiresDevice: true");
+    expect(connection.messages).toHaveLength(1);
+  });
+
+  it("tells the agent about the device tools only while a relay is online", async () => {
+    remote = await startRemoteServer(false);
+    const { deviceToolsExtension } = await import("./device-extension.js");
+    expect(await deviceToolsExtension.getSystemPromptContributions?.(agent, { config: {} as never })).toBeUndefined();
+    const connection = await relay(remote.port);
+    await waitFor(() => connection.messages.length === 1);
+    expect(await deviceToolsExtension.getSystemPromptContributions?.(agent, { config: {} as never })).toMatch(/requiresDevice: true/);
+  });
+
   it("marks a run with no human as a background run", async () => {
     remote = await startRemoteServer(false);
     const connection = await relay(remote.port);
@@ -180,8 +210,8 @@ describe("device link: remote side", () => {
     const runs: Array<ExtensionAgentToolContext["run"]> = [
       { source: "scheduler" }, { source: "heartbeat" }, { source: "webhook" }, { source: "agent" },
       { source: "orchestrator" }, { source: "dream" }, { source: "system" },
-      { source: "web", background: true }, undefined, { source: "slack" }, { source: "cli" },
-    ];
+      { source: "web", background: true }, {}, { source: "slack" }, { source: "cli" },
+    ].map((run) => (run.source === "slack" || run.source === "cli" ? run : { ...run, requiresDevice: true }));
     for (const run of runs) {
       void Promise.resolve(tool?.execute({ path: "a" }, toolContext({ run }))).catch(() => undefined);
     }

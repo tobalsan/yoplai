@@ -132,6 +132,22 @@ describe("internal tools", () => {
     expect(executeExtensionTool.mock.calls[0][9]).toMatchObject({ source: "scheduler", background: true, toolCallId: "call-7" });
   });
 
+  it("gives the extension tool the requiresDevice flag of the sandbox run", async () => {
+    const { app, executeExtensionTool } = createDeps();
+    registerContainerToken("token-device-flag", {
+      agentId: "agent-1", sessionId: "session-1", runId: "run-1", containerName: "container-1",
+      roots: { workspace: "/tmp/workspace", data: "/tmp/data", uploads: "/tmp/uploads" },
+      source: "scheduler", background: true, requiresDevice: true,
+    });
+    registeredTokens.push("token-device-flag");
+    const response = await postTool(app, {
+      tool: "extension.success", args: {}, sessionId: "session-1", toolCallId: "call-8",
+      agentId: "agent-1", agentToken: "token-device-flag",
+    });
+    expect(response.status).toBe(200);
+    expect(executeExtensionTool.mock.calls[0][9]).toMatchObject({ requiresDevice: true });
+  });
+
   it("releases call listeners and deadlines after repeated successful tools on one run", async () => {
     vi.useFakeTimers();
     const { app, executeExtensionTool } = createDeps();

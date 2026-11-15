@@ -548,6 +548,8 @@ export const ScheduleJobFileSchema = z.object({
   model: RequiredModelConfigSchema.optional(),
   reasoning: ThinkLevelSchema.optional(),
   payload: SchedulePayloadSchema,
+  /** The job uses the device tools on the device of the user. */
+  requiresDevice: z.boolean().optional(),
   deliver: z.array(DeliverTargetSchema).optional(),
   createdAt: z.string().optional(),
   timeoutMs: z.number().positive().optional(),
@@ -1439,6 +1441,8 @@ export type RunAgentParams = {
   slackDelivery?: ContainerDeliveryContext["slack"];
   /** Exclude this run from agent-wide UI streaming status. */
   background?: boolean;
+  /** A background run gets the device tools only when this is true. */
+  requiresDevice?: boolean;
   trace?: AgentTraceContext;
   onEvent?: (event: StreamEvent) => void;
   /** Delivery callback for a turn deferred behind an active requester. */
@@ -1807,6 +1811,8 @@ export type ExtensionRunInfo = {
   source?: string;
   sender?: { kind: string };
   background?: boolean;
+  /** A scheduled job that needs the device tools of the user sets this. */
+  requiresDevice?: boolean;
   sessionId?: string;
 };
 
@@ -2254,6 +2260,7 @@ export const CreateScheduleRequestSchema = z.object({
   schedule: ScheduleSchema,
   model: RequiredModelConfigSchema.optional(),
   payload: SchedulePayloadSchema,
+  requiresDevice: z.boolean().optional(),
   deliver: z.array(DeliverTargetSchema).optional(),
   timeoutMs: z.number().positive().optional(),
 });
@@ -2266,6 +2273,7 @@ export const UpdateScheduleRequestSchema = z.object({
   schedule: ScheduleSchema.optional(),
   model: RequiredModelConfigSchema.optional(),
   payload: SchedulePayloadSchema.optional(),
+  requiresDevice: z.boolean().optional(),
   deliver: z.array(DeliverTargetSchema).optional(),
   timeoutMs: z.number().positive().optional(),
 });

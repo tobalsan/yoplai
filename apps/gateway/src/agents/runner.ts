@@ -503,6 +503,7 @@ export async function runAgent(
       source: params.source,
       sender: params.sender,
       background: params.background,
+      requiresDevice: params.requiresDevice,
       nudge: [heldReply?.nudge, appContext].filter(Boolean).join("\n\n") || undefined,
       attachments: params.attachments,
       workspaceDir,
