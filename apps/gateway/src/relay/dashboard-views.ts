@@ -295,10 +295,7 @@ async function readRemoteDashboard(
     return login ? fail(401, "remote_unauthorized") : fail(502, "invalid_remote_response");
   }
   if (response.status === 401) { discard(response.body); return fail(401, "remote_unauthorized"); }
-  if (marked || response.status === 200) {
-    const reason = incompatibility(headerVersions(response.headers));
-    if (reason) { discard(response.body); return fail(409, "remote_update_required", { reason }); }
-  }
+  // A forbidden answer comes before the version check, like an unauthorized one. It is never an update prompt.
   if (response.status === 403) {
     let ownerName: string | undefined;
     try {
@@ -308,6 +305,10 @@ async function readRemoteDashboard(
       if (signal.aborted) throw error;
     }
     return fail(403, "forbidden", ownerName ? { ownerName } : {});
+  }
+  if (marked || response.status === 200) {
+    const reason = incompatibility(headerVersions(response.headers));
+    if (reason) { discard(response.body); return fail(409, "remote_update_required", { reason }); }
   }
   if (response.status === 404) {
     const reason = response.headers.get(DASHBOARD_EMBED_HEADERS.reason);

@@ -1121,6 +1121,29 @@ describe("prepare: remote results", () => {
     expect(await unmarked.text()).not.toContain("<script>");
   });
 
+  it.each<[string, Record<string, string>]>([
+    ["no embed marker", {}],
+    ["a marker without the other versions", { [DASHBOARD_EMBED_HEADERS.version]: "1" }],
+    ["the supported markers", embedMarker],
+    ["a malformed version", { ...embedMarker, [DASHBOARD_EMBED_HEADERS.version]: "one" }],
+    ["an empty version", { ...embedMarker, [DASHBOARD_EMBED_HEADERS.version]: "" }],
+    ["an unsupported version", { ...embedMarker, [DASHBOARD_EMBED_HEADERS.version]: "2" }],
+    ["an unsupported asset version", { ...embedMarker, [DASHBOARD_EMBED_HEADERS.assets]: "v99" }],
+    ["an unsupported policy version", { ...embedMarker, [DASHBOARD_EMBED_HEADERS.policy]: "9" }],
+    ["a malformed asset and policy version", { ...embedMarker, [DASHBOARD_EMBED_HEADERS.assets]: "", [DASHBOARD_EMBED_HEADERS.policy]: "x" }],
+  ])("returns a forbidden answer, not an update prompt, for a 403 with %s", async (_label, markers) => {
+    handler = (_request, response) => sendJson(response, 403, { error: "forbidden", ownerName: "Alice Martin" }, markers);
+    await expectError(403, "forbidden", { ownerName: "Alice Martin" });
+    handler = (_request, response) => {
+      response.writeHead(403, { "content-type": "text/html", ...markers });
+      response.end("<script>alert(1)</script><h1>Not shared</h1>");
+    };
+    const html = await prepare();
+    expect(html.status).toBe(403);
+    expect(await html.json()).toEqual({ error: "forbidden" });
+    expect(snapshots.dashboardViewStoreSizeForTests()).toEqual({ count: 0, bytes: 0 });
+  });
+
   it("tells a missing dashboard, a disabled Canvas and an old remote apart", async () => {
     const marker = embedMarker;
     handler = (_request, response) => sendJson(response, 404, { error: "not_found" }, marker);
