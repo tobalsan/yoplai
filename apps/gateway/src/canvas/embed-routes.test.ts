@@ -85,13 +85,15 @@ async function embed(id: string, viewer: Viewer, init: RequestInit & { query?: s
 }
 
 /** Runs the page bootstrap as a browser would, inside a document that lives at `documentUrl`. */
-function boot(html: string, documentUrl: string) {
+function boot(html: string, documentUrl: string, framed = false) {
   const script = [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)].map((match) => match[1]).find((code) => code.includes("window.YOPLAI"));
   if (!script) throw new Error("No bootstrap script");
   const fetches: Array<{ url: string; body: { token?: string } }> = [];
   const appended: object[] = [];
+  const posted: Array<Record<string, unknown>> = [];
+  const listeners: Array<{ type: string; handler: (event: object) => void }> = [];
   const sandbox: Record<string, unknown> = {
-    document: { URL: documentUrl, readyState: "complete", addEventListener: () => undefined, createElement: () => ({}), body: { append: (element: object) => appended.push(element) } },
+    document: { URL: documentUrl, readyState: "complete", addEventListener: (type: string, handler: (event: object) => void) => listeners.push({ type, handler }), createElement: () => ({}), body: { append: (element: object) => appended.push(element) } },
     location: { origin: new URL(documentUrl).origin },
     URL, Object, JSON, Promise, Error, console,
     fetch: async (url: string, init: { body: string }) => {
@@ -100,12 +102,13 @@ function boot(html: string, documentUrl: string) {
     },
   };
   sandbox.window = sandbox;
-  sandbox.top = sandbox;
+  sandbox.top = framed ? {} : sandbox;
+  sandbox.parent = { postMessage: (message: Record<string, unknown>, targetOrigin: string) => posted.push({ ...message, targetOrigin }) };
   vm.runInNewContext(script, sandbox);
-  return { appended, yoplai: sandbox.YOPLAI as { link(slug: string, params?: Record<string, unknown>): string; edit(o: object): Promise<unknown>; canEdit: boolean; canWrite: boolean }, fetches };
+  return { appended, posted, listeners, yoplai: sandbox.YOPLAI as { link(slug: string, params?: Record<string, unknown>): string; edit(o: object): Promise<unknown>; canEdit: boolean; canWrite: boolean }, fetches };
 }
 
-const viewerUrl = (id: string, query = "") => `http://127.0.0.1:3000/api/relay/dashboard-views/${"G".repeat(43)}/${id}/${query}`;
+const viewerUrl = (_id: string, query = "") => `http://127.0.0.1:3000/api/relay/dashboard-views/${"G".repeat(43)}/frame${query}`;
 
 it("sends the embed marker, the checked metadata and a bounded security policy that the local viewer replaces", async () => {
   const id = await ownedPage("overview", "<title>Overview</title><h1>Hello</h1>");
@@ -146,15 +149,59 @@ it("resolves sibling links and edits against the viewer document URL and keeps d
   const { text } = await embed(id, { user: alice });
   const page = boot(text, viewerUrl(id, "?region=emea"));
   const link = page.yoplai.link("detail.html", { region: "emea", "q & more": "a b" });
-  expect(link).toBe(`/api/relay/dashboard-views/${"G".repeat(43)}/${sibling}/?region=emea&q+%26+more=a+b`);
+  // The target names the sibling. The trusted shell treats a click on it as a request, never as a navigation.
+  expect(link).toBe(`/api/relay/dashboard-views/${sibling}/?region=emea&q+%26+more=a+b`);
   await page.yoplai.edit({ edit: "actions", key: 1, field: "done", value: true });
   // The edit URL is relative, so it resolves against the document and keeps the viewer prefix.
   expect(page.fetches[0].url).toBe("./edit");
-  expect(new URL(page.fetches[0].url, viewerUrl(id, "?region=emea")).pathname).toBe(`/api/relay/dashboard-views/${"G".repeat(43)}/${id}/edit`);
+  expect(new URL(page.fetches[0].url, viewerUrl(id, "?region=emea")).pathname).toBe(`/api/relay/dashboard-views/${"G".repeat(43)}/edit`);
   expect(page.fetches[0].body.token).toBe(/"editToken":"([^"]+)"/.exec(text)![1]);
   // Served straight from the remote, the same links stay on the remote.
   const direct = boot(text, `https://remote.example.test/d/${id}/embed`);
   expect(direct.yoplai.link("detail.html")).toBe(`/d/${sibling}/`);
+});
+
+it("tells the parent when the embed page runs and turns a link click into a request instead of a navigation", async () => {
+  const id = await ownedPage("overview", "<h1>Hello</h1>");
+  const { text } = await embed(id, { user: alice });
+  const framed = boot(text, viewerUrl(id), true);
+  expect(framed.posted).toEqual([{ channel: "yoplai-embed", type: "ready", targetOrigin: "*" }]);
+  const click = framed.listeners.find((listener) => listener.type === "click")!.handler;
+  const clickOn = (href: string, extra: Record<string, unknown> = {}) => {
+    let prevented = false;
+    click({ defaultPrevented: false, button: 0, preventDefault: () => { prevented = true; }, target: { closest: () => ({ href, hasAttribute: () => false }) }, ...extra });
+    return prevented;
+  };
+  const sibling = `http://127.0.0.1:3000/api/relay/dashboard-views/${"S".repeat(32)}/?region=emea`;
+  expect(clickOn(sibling)).toBe(true);
+  expect(clickOn("https://example.test/report")).toBe(true);
+  expect(framed.posted.slice(1)).toEqual([
+    { channel: "yoplai-embed", type: "link", href: sibling, targetOrigin: "*" },
+    { channel: "yoplai-embed", type: "link", href: "https://example.test/report", targetOrigin: "*" },
+  ]);
+  // The page keeps its own behavior for the same document, other schemes, and modified clicks.
+  const before = framed.posted.length;
+  expect(clickOn(`${viewerUrl(id)}#section`)).toBe(false);
+  expect(clickOn("#yoplai-no-access")).toBe(false);
+  expect(clickOn("mailto:a@example.test")).toBe(false);
+  expect(clickOn("javascript:void(0)")).toBe(false);
+  expect(clickOn(sibling, { metaKey: true })).toBe(false);
+  expect(clickOn(sibling, { button: 1 })).toBe(false);
+  expect(clickOn(sibling, { defaultPrevented: true })).toBe(false);
+  // A link that is too long is stopped and not sent.
+  expect(clickOn(`https://example.test/${"x".repeat(2100)}`)).toBe(true);
+  expect(framed.posted).toHaveLength(before);
+});
+
+it("posts nothing from an unframed embed page or from an ordinary page", async () => {
+  const id = await ownedPage("overview", "<h1>Hello</h1>");
+  const embedded = boot((await embed(id, { user: alice })).text, viewerUrl(id));
+  expect(embedded.posted).toEqual([]);
+  expect(embedded.listeners.some((listener) => listener.type === "click")).toBe(false);
+  const ordinary = await routesFor({ user: alice }).request(`/${id}`);
+  const page = boot(await ordinary.text(), `https://remote.example.test/d/${id}`, true);
+  expect(page.posted).toEqual([]);
+  expect(page.listeners.some((listener) => listener.type === "click")).toBe(false);
 });
 
 it("keeps links to dashboards the viewer cannot read disabled and refuses unknown ones", async () => {

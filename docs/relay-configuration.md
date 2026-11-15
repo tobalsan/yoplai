@@ -372,6 +372,13 @@ Every answer of the route has `X-Yoplai-Dashboard-Embed: 1`, `X-Yoplai-Dashboard
 A 404 for a disabled Canvas adds `X-Yoplai-Dashboard-Embed-Reason: canvas_disabled`. A 200 adds `X-Yoplai-Dashboard-Embed-Meta` (base64url JSON, at most 2,048 characters, strict schema).
 `GET /api/capabilities` adds `dashboardEmbed: {version, assetVersion, policyVersion, enabled}`. Update the remote before it serves a local viewer.
 
+An embed page that runs inside a frame posts two messages to its parent, with `targetOrigin` `*`:
+`{channel:"yoplai-embed", type:"ready"}` once when its bootstrap runs, and `{channel:"yoplai-embed", type:"link", href}` when the user clicks a link.
+`href` is the absolute `http` or `https` target, at most 2048 characters. The page stops the navigation.
+A click on a link to the same document, a link with another scheme, a modified click, and a link with `download` keep their default behavior.
+Both messages come from untrusted remote script. The parent treats `ready` as proof that scripts run and `link` as a request. See the shell contract below.
+Ordinary pages and pages that are not framed post nothing.
+
 Dashboard IDs have 32 base64url characters. Pages load the local `/d-assets` kit. The embed asset version `v3` must match.
 Assets answer `Origin: null` with `Access-Control-Allow-Origin: *` and no credentials. Other API routes keep their CORS rules.
 The page uses the local UI theme unless the dashboard sets `data-theme`.
