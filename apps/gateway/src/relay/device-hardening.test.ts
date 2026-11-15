@@ -7,6 +7,7 @@ import { WebSocket, WebSocketServer } from "ws";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AgentEventBus, DEVICE_PROTOCOL_VERSION } from "@yoplai/shared";
 import { DeviceApprovals } from "./device-approvals.js";
+import { issueTestTurn } from "./device-turn.fixture.js";
 import { DeviceExecutor } from "./device-exec.js";
 import { DeviceLinkManager, MAX_ACTIVE_CALLS } from "./device-link-client.js";
 import { DEVICE_MAX_MESSAGE_BYTES, getDeviceRegistry, resetDeviceRegistry } from "./device-registry.js";
@@ -118,7 +119,7 @@ describe("device registry: socket errors", () => {
     process.on("uncaughtException", listener);
     try {
       const pending = getDeviceRegistry().call("local", {
-        tool: "device_bash", arguments: { command: "x" }, agentId: "a", sessionId: "s", toolCallId: "t", runKind: "chat",
+        tool: "device_bash", arguments: { command: "x" }, agentId: "a", toolCallId: "t",
       });
       const assertion = expect(pending).rejects.toThrow(/dropped/);
       // A masked text frame with one byte that is not valid UTF-8.
@@ -145,7 +146,7 @@ describe("gateway broker close", () => {
   it("closes each device socket, fails its calls, and clears the registry", async () => {
     const { socket } = await helloDevice();
     const pending = getDeviceRegistry().call("local", {
-      tool: "device_bash", arguments: { command: "x" }, agentId: "a", sessionId: "s", toolCallId: "t", runKind: "chat",
+      tool: "device_bash", arguments: { command: "x" }, agentId: "a", toolCallId: "t",
     });
     const assertion = expect(pending).rejects.toThrow();
     const code = closed(socket);
@@ -192,7 +193,7 @@ describe("device link client", () => {
 
   const callMessage = (callId: string): Json => ({
     type: "call", callId, tool: "device_bash", arguments: { command: "x" },
-    agentId: "pom", sessionId: "s1", toolCallId: "t", runKind: "chat",
+    agentId: "pom", toolCallId: "t", turnToken: issueTestTurn(),
   });
 
   it("refuses a call whose ID is active, and keeps the first call cancellable", async () => {
@@ -289,7 +290,7 @@ describe("device link client", () => {
   it("fails the pending approval when the link drops", async () => {
     const approvals = new DeviceApprovals();
     const gateway = await fakeGateway(() => undefined);
-    settings.setChat(deviceChatKey("ams", "s1"), { workspaceFolder: dir, full: false });
+    settings.setChat(deviceChatKey("ams", "pom@ams", "session:s1"), { workspaceFolder: dir, full: false });
     const pending: string[] = [];
     approvals.subscribe((event) => {
       if (event.kind === "request") pending.push(event.message.approvalId);

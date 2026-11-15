@@ -3,6 +3,7 @@ import { WebSocket } from "ws";
 import { getAgent } from "../config/index.js";
 import { addGatewaySuffix } from "./agent-id.js";
 import { getDeviceApprovals, type ApprovalEvent } from "./device-approvals.js";
+import { getDeviceTurns, localChatName } from "./device-turns.js";
 import { remoteWsHeaders, remoteWsUrl } from "./remote.js";
 import { getLinkedGateways, isRelayEnabled, isTrustedRequest, resolveRemoteAgent } from "./state.js";
 import type { RemoteGateway } from "./store.js";
@@ -24,8 +25,10 @@ export class RelayWsBridge {
   private readonly trusted: boolean;
   /** The gateway of the active session subscription. Unset means a local agent or none. */
   private subscribedGateway: string | undefined;
-  /** The remote agent and session of the page subscription. Device approvals for them go to the page. */
-  private subscription: { agentId: string; sessionId?: string } | undefined;
+  /** The remote agent and local chat name of the page subscription. Device approvals for them go to the page. */
+  private subscription: { agentId: string; chat: string } | undefined;
+  /** The turn tokens of this page that wait for a `done` or `error` event, oldest first, for each gateway. */
+  private readonly openTurns = new Map<string, string[]>();
   private readonly stopApprovals: (() => void) | undefined;
 
   constructor(
@@ -70,8 +73,10 @@ export class RelayWsBridge {
         typeof message.approvalId === "string" &&
         typeof message.approve === "boolean"
       ) {
-        getDeviceApprovals().answer(message.approvalId, message.approve, (request) =>
-          this.subscribes(request.agentId, request.sessionId)
+        getDeviceApprovals().answer(
+          message.approvalId,
+          message.approve,
+          (request, page) => page === this.page || this.subscribes(request.agentId, request.chat)
         );
       }
       return true;
@@ -102,23 +107,44 @@ export class RelayWsBridge {
     if (message.type === "subscribe") {
       this.replaceSubscription(gateway?.name);
       this.subscription = gateway
-        ? { agentId: message.agentId, sessionId: typeof message.sessionId === "string" ? message.sessionId : undefined }
+        ? { agentId: message.agentId, chat: localChatName(message) }
         : undefined;
       if (gateway) this.sendPendingApprovals();
     }
     if (!gateway) return false;
-    this.sendTo(gateway, { ...message, agentId: target.agentId }, true);
+    const forwarded: PageMessage = { ...message, agentId: target.agentId };
+    if (message.type === "send") {
+      // The token is new for each message. A value from the page never reaches the remote gateway.
+      const token = getDeviceTurns().issue({
+        gateway: gateway.name,
+        agentId: target.agentId,
+        chat: localChatName(message),
+        page: this.page,
+      });
+      this.openTurns.set(gateway.name, [...(this.openTurns.get(gateway.name) ?? []), token]);
+      forwarded.deviceTurnToken = token;
+    }
+    this.sendTo(gateway, forwarded, true);
     return true;
   }
 
-  private subscribes(agentId: string, sessionId: string): boolean {
+  private subscribes(agentId: string, chat: string): boolean {
     const sub = this.subscription;
-    return sub !== undefined && sub.agentId === agentId && (sub.sessionId === undefined || sub.sessionId === sessionId);
+    return sub !== undefined && sub.agentId === agentId && sub.chat === chat;
+  }
+
+  /** A `done` or `error` event of a gateway ends the oldest open turn of this page on that gateway. */
+  private endTurn(gatewayName: string): void {
+    const [token, ...rest] = this.openTurns.get(gatewayName) ?? [];
+    if (token === undefined) return;
+    getDeviceTurns().end(token);
+    if (rest.length > 0) this.openTurns.set(gatewayName, rest);
+    else this.openTurns.delete(gatewayName);
   }
 
   private sendApproval(event: ApprovalEvent): void {
     if (this.page.readyState !== WebSocket.OPEN || !isRelayEnabled()) return;
-    if (!this.subscribes(event.message.agentId, event.message.sessionId)) return;
+    if (event.page !== this.page && !this.subscribes(event.message.agentId, event.message.chat)) return;
     this.page.send(JSON.stringify(event.message));
   }
 
@@ -126,7 +152,7 @@ export class RelayWsBridge {
   private sendPendingApprovals(): void {
     const sub = this.subscription;
     if (!sub) return;
-    for (const message of getDeviceApprovals().pendingFor(sub.agentId, sub.sessionId)) {
+    for (const message of getDeviceApprovals().pendingFor(sub.agentId, sub.chat)) {
       if (this.page.readyState === WebSocket.OPEN) this.page.send(JSON.stringify(message));
     }
   }
@@ -201,6 +227,9 @@ export class RelayWsBridge {
       const event = JSON.parse(raw) as PageMessage;
       // Only the local gateway makes device approval messages. A remote gateway must not send them to the page.
       if (typeof event.type === "string" && event.type.startsWith("device_approval_")) return;
+      if (event.type === "error" || (event.type === "done" && (event.meta as { queued?: boolean } | undefined)?.queued !== true)) {
+        this.endTurn(gatewayName);
+      }
       if (typeof event.agentId === "string") {
         event.agentId = addGatewaySuffix(event.agentId, gatewayName);
         if (getAgent(event.agentId)) return;

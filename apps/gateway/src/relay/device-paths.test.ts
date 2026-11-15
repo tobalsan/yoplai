@@ -5,6 +5,7 @@ import { pathToFileURL } from "node:url";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { DeviceCall } from "@yoplai/shared";
 import { DeviceApprovals } from "./device-approvals.js";
+import { issueTestTurn } from "./device-turn.fixture.js";
 import { DeviceExecutor } from "./device-exec.js";
 import { deviceRunKind } from "./device-extension.js";
 import { createFileDeviceSettingsStore, deviceChatKey, type DeviceSettingsStore } from "./device-settings.js";
@@ -18,12 +19,12 @@ let settings: DeviceSettingsStore;
 let approvals: DeviceApprovals;
 let executor: DeviceExecutor;
 let asked: string[];
-const chatKey = deviceChatKey("ams", "s1");
+const chatKey = deviceChatKey("ams", "pom@ams", "session:s1");
 
 function call(tool: string, args: unknown, overrides: Partial<DeviceCall> = {}): DeviceCall {
   return {
     type: "call", callId: `call-${Math.random()}`, tool, arguments: args,
-    agentId: "pom", sessionId: "s1", toolCallId: "tc1", runKind: "chat", ...overrides,
+    agentId: "pom", toolCallId: "tc1", turnToken: issueTestTurn(), ...overrides,
   };
 }
 
@@ -214,7 +215,7 @@ describe("device gate: other rules", () => {
   ])("treats %s in a background run by the gate rule", async (tool, args) => {
     fs.writeFileSync(path.join(folder, "e.txt"), "a");
     fs.writeFileSync(path.join(outside, "e.txt"), "a");
-    const result = run(tool, args(), { runKind: "background" });
+    const result = run(tool, args(), { turnToken: undefined });
     if (tool === "device_read") {
       await expect(result).resolves.toBeDefined();
     } else {

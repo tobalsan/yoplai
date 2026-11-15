@@ -14,13 +14,14 @@ const MODE_LABELS: Record<DeviceMode, string> = { ask: "Ask", workspace: "Worksp
 /**
  * Header control for a chat with a remote agent. It shows the device mode of the chat
  * and opens a panel for the workspace folder, the Full switch, and the scheduled jobs.
+ * `chat` is the local chat name, so the control works before the first message of a chat.
  * It shows a mode only after the gateway confirmed it. `refreshKey` changes when the page
  * gets a new approval request. The control then reads the settings again.
  */
 export function DeviceSettingsControl(props: {
   agentId: string;
   gateway: string;
-  sessionId: string | null | undefined;
+  chat: string;
   refreshKey: number;
 }) {
   const [open, setOpen] = createSignal(false);
@@ -40,8 +41,7 @@ export function DeviceSettingsControl(props: {
   const link = () => links.latest?.find((item) => item.name === props.gateway);
   const linkUnknown = () => !links.loading && link() === undefined;
   const offline = () => link()?.connected === false;
-  const ready = () => typeof props.sessionId === "string" && props.sessionId !== "";
-  const confirmed = () => ready() && settings() !== undefined;
+  const confirmed = () => settings() !== undefined;
   const label = () => {
     if (offline()) return "Device: offline";
     if (linkUnknown()) return "Device: unknown";
@@ -56,15 +56,14 @@ export function DeviceSettingsControl(props: {
     setFolder(next.workspaceFolder ?? "");
   };
 
-  const sameScope = (agentId: string, sessionId: string) => agentId === props.agentId && sessionId === props.sessionId;
+  const sameScope = (agentId: string, chat: string) => agentId === props.agentId && chat === props.chat;
 
   const read = () => {
     const agentId = props.agentId;
-    const sessionId = props.sessionId;
-    if (!sessionId) return;
+    const chat = props.chat;
     const thisRequest = ++requestCount;
-    const current = () => thisRequest === requestCount && sameScope(agentId, sessionId);
-    fetchDeviceSettings(agentId, sessionId).then(
+    const current = () => thisRequest === requestCount && sameScope(agentId, chat);
+    fetchDeviceSettings(agentId, chat).then(
       (next) => {
         if (current()) apply(next);
       },
@@ -79,7 +78,7 @@ export function DeviceSettingsControl(props: {
 
   createEffect(
     on(
-      () => [props.agentId, props.sessionId] as const,
+      () => [props.agentId, props.chat] as const,
       () => {
         requestCount++;
         setSettings(undefined);
@@ -122,20 +121,19 @@ export function DeviceSettingsControl(props: {
 
   const change = async (body: { workspaceFolder?: string | null; full?: boolean }) => {
     const agentId = props.agentId;
-    const sessionId = props.sessionId;
-    if (!sessionId) return;
+    const chat = props.chat;
     const thisRequest = ++requestCount;
     setError("");
     try {
-      const next = await saveDeviceSettings(agentId, sessionId, body);
-      if (thisRequest === requestCount && sameScope(agentId, sessionId)) apply(next);
+      const next = await saveDeviceSettings(agentId, chat, body);
+      if (thisRequest === requestCount && sameScope(agentId, chat)) apply(next);
     } catch (e) {
-      if (thisRequest === requestCount && sameScope(agentId, sessionId)) {
+      if (thisRequest === requestCount && sameScope(agentId, chat)) {
         setError(e instanceof Error ? e.message : "The settings did not save.");
       }
     }
     // A read that started during the write is now out of date. Read one time again.
-    if (sameScope(agentId, sessionId)) read();
+    if (sameScope(agentId, chat)) read();
   };
 
   const changeFullBackground = async (value: boolean) => {
@@ -177,9 +175,6 @@ export function DeviceSettingsControl(props: {
           </Show>
           <Show when={linkUnknown()}>
             <p>The page cannot read the state of this device link.</p>
-          </Show>
-          <Show when={!ready()}>
-            <p>Send a first message, then set the folder.</p>
           </Show>
           <Show when={readFailed()}>
             <p role="alert">The device settings did not load.</p>

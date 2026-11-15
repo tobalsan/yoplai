@@ -843,7 +843,7 @@ export function ChatView() {
           </div>
         </Show>
         <Show when={agent()?.gateway}>
-          {(gateway) => <DeviceSettingsControl agentId={params.agentId} gateway={gateway()} sessionId={session.appSessionId()} refreshKey={session.deviceApprovals().length} />}
+          {(gateway) => <DeviceSettingsControl agentId={params.agentId} gateway={gateway()} chat={session.deviceChatName()} refreshKey={session.deviceApprovals().length} />}
         </Show>
         <button
           class="new-chat-btn"

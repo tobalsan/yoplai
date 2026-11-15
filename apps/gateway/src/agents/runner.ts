@@ -504,6 +504,7 @@ export async function runAgent(
       sender: params.sender,
       background: params.background,
       requiresDevice: params.requiresDevice,
+      deviceTurnToken: params.deviceTurnToken,
       nudge: [heldReply?.nudge, appContext].filter(Boolean).join("\n\n") || undefined,
       attachments: params.attachments,
       workspaceDir,

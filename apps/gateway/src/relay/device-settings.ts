@@ -20,9 +20,9 @@ export interface DeviceSettingsStore {
 
 export const DEVICE_SETTINGS_FILE = "device-settings.json";
 
-/** The chat key is the gateway name plus the session ID. JSON keeps two different pairs from sharing a key. */
-export function deviceChatKey(gatewayName: string, sessionId: string): string {
-  return JSON.stringify([gatewayName, sessionId]);
+/** The chat key is the gateway name, the remote agent ID, and the local chat name. JSON keeps two different triples from sharing a key. */
+export function deviceChatKey(gatewayName: string, agentId: string, chat: string): string {
+  return JSON.stringify([gatewayName, agentId, chat]);
 }
 
 type SettingsFile = {

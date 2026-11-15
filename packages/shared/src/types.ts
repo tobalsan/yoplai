@@ -1445,6 +1445,8 @@ export type RunAgentParams = {
   background?: boolean;
   /** A background run gets the device tools only when this is true. */
   requiresDevice?: boolean;
+  /** Secret of one chat turn from the local gateway. Only the device tools send it back. */
+  deviceTurnToken?: string;
   trace?: AgentTraceContext;
   onEvent?: (event: StreamEvent) => void;
   /** Delivery callback for a turn deferred behind an active requester. */
@@ -1817,6 +1819,8 @@ export type ExtensionRunInfo = {
   background?: boolean;
   /** A scheduled job that needs the device tools of the user sets this. */
   requiresDevice?: boolean;
+  /** Secret of one chat turn from the local gateway. Only the device tools send it back. */
+  deviceTurnToken?: string;
   sessionId?: string;
 };
 
@@ -2042,6 +2046,7 @@ export const ExtensionDefinitionSchema = z.object({
 
 // API payloads
 export const SendMessageRequestSchema = z.object({
+  deviceTurnToken: z.string().max(200).optional(),
   projectId: z.string().regex(/^[a-zA-Z0-9_-]{1,100}$/).optional(),
   message: z.string(),
   sessionId: z.string().optional(), // explicit session ID (bypasses sessionKey resolution)

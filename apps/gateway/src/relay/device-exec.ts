@@ -11,6 +11,7 @@ import {
   resolveDeviceMode,
   type GateDecision,
 } from "./device-gate.js";
+import { getDeviceTurns, type DeviceTurns } from "./device-turns.js";
 import { deviceChatKey, type DeviceSettingsStore } from "./device-settings.js";
 import { secretReadRefusal } from "./device-secrets.js";
 import { deviceToolParameters, getDeviceToolDefinition } from "./device-tools.js";
@@ -19,6 +20,8 @@ export type DeviceExecutorOptions = {
   settings: DeviceSettingsStore;
   approvals: DeviceApprovals;
   approvalTimeoutMs?: number;
+  /** The turns that this gateway forwarded. Defaults to the registry of the process. */
+  turns?: DeviceTurns;
   /** Gives the checked path of a file call. Tests replace it to prove the compare of the file operations. */
   resolvePath?: (folder: string, rawPath: string) => string;
 };
@@ -64,7 +67,11 @@ export class DeviceExecutor {
     let args = call.arguments as Record<string, unknown>;
 
     const { settings, approvals } = this.options;
-    const chatSettings = settings.getChat(deviceChatKey(gatewayName, call.sessionId));
+    const agentKey = addGatewaySuffix(call.agentId, gatewayName);
+    // Only a token that this gateway issued for this gateway and agent makes a chat call. The message says nothing else about the chat.
+    const found = (this.options.turns ?? getDeviceTurns()).find(call.turnToken);
+    const turn = found && found.gateway === gatewayName && found.agentId === call.agentId ? found : undefined;
+    const chatSettings = turn ? settings.getChat(deviceChatKey(gatewayName, agentKey, turn.chat)) : { full: false };
     const folder =
       chatSettings.workspaceFolder && isDirectory(chatSettings.workspaceFolder)
         ? chatSettings.workspaceFolder
@@ -76,8 +83,7 @@ export class DeviceExecutor {
       args = { ...args, path: absolutePath };
     }
 
-    const agentKey = addGatewaySuffix(call.agentId, gatewayName);
-    const full = chatSettings.full || (call.runKind === "background" && settings.getAgentFullBackground(agentKey));
+    const full = chatSettings.full || (!turn && settings.getAgentFullBackground(agentKey));
     const decision: GateDecision = await decideGate({
       tool: definition.name,
       mode: full ? "full" : resolveDeviceMode({ ...chatSettings, workspaceFolder: folder }),
@@ -88,7 +94,7 @@ export class DeviceExecutor {
 
     if (decision === "refuse") throw new Error(secretReadRefusal(absolutePath ?? ""));
     if (decision === "ask") {
-      if (call.runKind === "background") {
+      if (!turn) {
         throw new Error(
           `${definition.name} needs the approval of the user, and no user is present in this run. The call did not run. The user can allow background calls in the settings of this agent.`
         );
@@ -103,7 +109,8 @@ export class DeviceExecutor {
       const outcome = await approvals.request({
         gateway: gatewayName,
         agentId: agentKey,
-        sessionId: call.sessionId,
+        chat: turn.chat,
+        page: turn.page,
         toolCallId: call.toolCallId,
         tool: definition.name,
         arguments: args,

@@ -12,11 +12,13 @@ export const MAX_APPROVAL_TEXT_CHARS = 2000;
 export const MAX_APPROVAL_COMMAND_CHARS = 20_000;
 
 export type ApprovalEvent =
-  | { kind: "request"; message: WsDeviceApprovalRequest }
-  | { kind: "resolved"; message: WsDeviceApprovalResolved };
+  | { kind: "request"; message: WsDeviceApprovalRequest; page: unknown }
+  | { kind: "resolved"; message: WsDeviceApprovalResolved; page: unknown };
 
 type PendingApproval = {
   message: WsDeviceApprovalRequest;
+  /** Page socket of the turn. The page never sees it. */
+  page: unknown;
   settle: (outcome: DeviceApprovalOutcome) => void;
 };
 
@@ -41,6 +43,8 @@ function truncateToolArguments(tool: string, value: unknown): unknown {
 export type ApprovalRequestInput = Omit<WsDeviceApprovalRequest, "type" | "approvalId"> & {
   signal: AbortSignal;
   timeoutMs?: number;
+  /** Page socket of the turn. It always gets the request. */
+  page: unknown;
 };
 
 /** Holds each device call that waits for the answer of the user. */
@@ -53,16 +57,16 @@ export class DeviceApprovals {
     return () => this.listeners.delete(listener);
   }
 
-  /** Each pending approval of one remote agent. A subscription with no session ID matches each session. */
-  pendingFor(agentId: string, sessionId: string | undefined): WsDeviceApprovalRequest[] {
+  /** Each pending approval of one remote agent and one local chat. */
+  pendingFor(agentId: string, chat: string): WsDeviceApprovalRequest[] {
     return [...this.pending.values()]
       .map((item) => item.message)
-      .filter((message) => message.agentId === agentId && (sessionId === undefined || message.sessionId === sessionId));
+      .filter((message) => message.agentId === agentId && message.chat === chat);
   }
 
   /** Waits for an answer, a timeout, or an abort of the signal. */
   request(input: ApprovalRequestInput): Promise<DeviceApprovalOutcome> {
-    const { signal, timeoutMs = APPROVAL_TIMEOUT_MS, ...fields } = input;
+    const { signal, timeoutMs = APPROVAL_TIMEOUT_MS, page, ...fields } = input;
     if (signal.aborted) return Promise.resolve("cancelled");
     const message: WsDeviceApprovalRequest = {
       type: "device_approval_request",
@@ -81,17 +85,18 @@ export class DeviceApprovals {
             type: "device_approval_resolved",
             approvalId: message.approvalId,
             agentId: message.agentId,
-            sessionId: message.sessionId,
+            chat: message.chat,
             outcome,
           },
+          page,
         });
         resolve(outcome);
       };
       const onAbort = () => settle("cancelled");
       const timer = setTimeout(() => settle("timeout"), timeoutMs);
       signal.addEventListener("abort", onAbort, { once: true });
-      this.pending.set(message.approvalId, { message, settle });
-      this.emit({ kind: "request", message });
+      this.pending.set(message.approvalId, { message, page, settle });
+      this.emit({ kind: "request", message, page });
     });
   }
 
@@ -99,10 +104,10 @@ export class DeviceApprovals {
   answer(
     approvalId: string,
     approve: boolean,
-    allow?: (request: WsDeviceApprovalRequest) => boolean
+    allow?: (request: WsDeviceApprovalRequest, page: unknown) => boolean
   ): boolean {
     const item = this.pending.get(approvalId);
-    if (!item || (allow && !allow(item.message))) return false;
+    if (!item || (allow && !allow(item.message, item.page))) return false;
     item.settle(approve ? "approved" : "refused");
     return true;
   }

@@ -3,7 +3,7 @@ import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import os from "node:os";
 import { randomUUID } from "node:crypto";
-import type { FullHistoryMessage, GatewayConfig } from "@yoplai/shared";
+import { DEVICE_PROTOCOL_VERSION, type FullHistoryMessage, type GatewayConfig } from "@yoplai/shared";
 
 describe("createExtensionContext media helpers", () => {
   let tmpDir: string;
@@ -88,7 +88,7 @@ describe("createExtensionContext media helpers", () => {
     expect(ctx.isDeviceOnline?.()).toBe(false);
     const socket = Object.assign(new EventEmitter(), { send: vi.fn(), close: vi.fn(), terminate: vi.fn(), readyState: 1, OPEN: 1 });
     getDeviceRegistry().accept(socket as never, "local");
-    socket.emit("message", Buffer.from(JSON.stringify({ type: "hello", protocolVersion: 1, deviceName: "laptop" })));
+    socket.emit("message", Buffer.from(JSON.stringify({ type: "hello", protocolVersion: DEVICE_PROTOCOL_VERSION, deviceName: "laptop" })));
     expect(ctx.isDeviceOnline?.()).toBe(true);
     expect(ctx.isDeviceOnline?.("local")).toBe(true);
     expect(ctx.isDeviceOnline?.("someone-else")).toBe(false);

@@ -16,8 +16,8 @@ async function readJson<T>(res: Response): Promise<T> {
   return body as T;
 }
 
-function settingsUrl(agentId: string, sessionId: string): string {
-  return `${API_BASE}/relay/device-settings?agentId=${encodeURIComponent(agentId)}&sessionId=${encodeURIComponent(sessionId)}`;
+function settingsUrl(agentId: string, chat: string): string {
+  return `${API_BASE}/relay/device-settings?agentId=${encodeURIComponent(agentId)}&chat=${encodeURIComponent(chat)}`;
 }
 
 function agentSettingsUrl(agentId: string): string {
@@ -32,16 +32,16 @@ export async function fetchDeviceLinks(): Promise<DeviceLink[]> {
   return readJson<DeviceLink[]>(await fetch(`${API_BASE}/relay/device-links`));
 }
 
-export async function fetchDeviceSettings(agentId: string, sessionId: string): Promise<DeviceSettings> {
-  return readJson<DeviceSettings>(await fetch(settingsUrl(agentId, sessionId)));
+export async function fetchDeviceSettings(agentId: string, chat: string): Promise<DeviceSettings> {
+  return readJson<DeviceSettings>(await fetch(settingsUrl(agentId, chat)));
 }
 
 export async function saveDeviceSettings(
   agentId: string,
-  sessionId: string,
+  chat: string,
   change: { workspaceFolder?: string | null; full?: boolean }
 ): Promise<DeviceSettings> {
-  return readJson<DeviceSettings>(await putJson(settingsUrl(agentId, sessionId), change));
+  return readJson<DeviceSettings>(await putJson(settingsUrl(agentId, chat), change));
 }
 
 export async function fetchFullBackground(agentId: string): Promise<boolean> {

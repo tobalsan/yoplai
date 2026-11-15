@@ -148,6 +148,23 @@ describe("internal tools", () => {
     expect(executeExtensionTool.mock.calls[0][9]).toMatchObject({ requiresDevice: true });
   });
 
+  it("gives the extension tool the device turn token of the sandbox run", async () => {
+    const { app, executeExtensionTool } = createDeps();
+    registerContainerToken("token-turn", {
+      agentId: "agent-1", sessionId: "session-1", runId: "run-1", containerName: "container-1",
+      roots: { workspace: "/tmp/workspace", data: "/tmp/data", uploads: "/tmp/uploads" },
+      source: "web", deviceTurnToken: "secret-turn-token",
+    });
+    registeredTokens.push("token-turn");
+    const response = await postTool(app, {
+      tool: "extension.success", args: {}, sessionId: "session-1", toolCallId: "call-9",
+      agentId: "agent-1", agentToken: "token-turn",
+    });
+    expect(response.status).toBe(200);
+    expect(executeExtensionTool.mock.calls[0][9]).toMatchObject({ deviceTurnToken: "secret-turn-token" });
+    expect(JSON.stringify(await response.json())).not.toContain("secret-turn-token");
+  });
+
   it("releases call listeners and deadlines after repeated successful tools on one run", async () => {
     vi.useFakeTimers();
     const { app, executeExtensionTool } = createDeps();

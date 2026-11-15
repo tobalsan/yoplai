@@ -81,9 +81,8 @@ export const deviceToolsExtension: Extension = {
             tool: name,
             arguments: args,
             agentId: context.agent.id,
-            sessionId: context.sessionId ?? "",
             toolCallId: context.toolCallId ?? "",
-            runKind: deviceRunKind(context.run),
+            ...(context.run?.deviceTurnToken ? { turnToken: context.run.deviceTurnToken } : {}),
           },
           context.signal
         );

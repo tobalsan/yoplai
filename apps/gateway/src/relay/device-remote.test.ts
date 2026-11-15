@@ -85,6 +85,14 @@ describe("device link: remote side", () => {
     expect(await deviceTools()).toEqual([]);
   });
 
+  it("closes the link of an old relay with protocol version 1", async () => {
+    remote = await startRemoteServer(false);
+    const connection = await relay(remote.port, { version: 1 });
+    const closed = await connection.closed;
+    expect(closed.code).toBe(4001);
+    expect(closed.reason).toContain("Unsupported protocol version 1");
+  });
+
   it("closes the link on a message that it cannot parse", async () => {
     remote = await startRemoteServer(false);
     const connection = await relay(remote.port, { hello: false });
@@ -155,8 +163,23 @@ describe("device link: remote side", () => {
     const call = connection.messages[1];
     expect(call).toMatchObject({
       type: "call", tool: "device_read", arguments: { path: "a.txt" },
-      agentId: "pom", sessionId: "s1", toolCallId: "tc1", runKind: "chat",
+      agentId: "pom", toolCallId: "tc1",
     });
+    connection.socket.send(JSON.stringify({ type: "result", callId: call.callId, ok: true, content: [{ type: "text", text: "hello" }] }));
+    expect(await pending).toBe("hello");
+  });
+
+  it("puts the turn token of the run on the call, and keeps it out of the tool result", async () => {
+    remote = await startRemoteServer(false);
+    const connection = await relay(remote.port);
+    await waitFor(() => connection.messages.length === 1);
+    const read = (await deviceTools()).find((tool) => tool.name === "device_read");
+    const pending = read?.execute({ path: "a.txt" }, toolContext({ run: { source: "web", deviceTurnToken: "secret-turn-token" } }));
+    await waitFor(() => connection.messages.length === 2);
+    const call = connection.messages[1];
+    expect(call.turnToken).toBe("secret-turn-token");
+    expect(call).not.toHaveProperty("sessionId");
+    expect(call).not.toHaveProperty("runKind");
     connection.socket.send(JSON.stringify({ type: "result", callId: call.callId, ok: true, content: [{ type: "text", text: "hello" }] }));
     expect(await pending).toBe("hello");
   });
@@ -217,7 +240,7 @@ describe("device link: remote side", () => {
     expect(await deviceToolsExtension.getSystemPromptContributions?.(agent, { config: {} as never })).toMatch(/requiresDevice: true/);
   });
 
-  it("marks a run with no human as a background run", async () => {
+  it("sends a call with no turn token for a run that has none", async () => {
     remote = await startRemoteServer(false);
     const connection = await relay(remote.port);
     await waitFor(() => connection.messages.length === 1);
@@ -231,10 +254,7 @@ describe("device link: remote side", () => {
       void Promise.resolve(tool?.execute({ path: "a" }, toolContext({ run }))).catch(() => undefined);
     }
     await waitFor(() => connection.messages.length === 1 + runs.length);
-    expect(connection.messages.slice(1).map((message) => message.runKind)).toEqual([
-      "background", "background", "background", "background", "background", "background", "background",
-      "background", "background", "chat", "chat",
-    ]);
+    expect(connection.messages.slice(1).map((message) => message.turnToken)).toEqual(runs.map(() => undefined));
   });
 
   it("sends cancel and fails the call when the run aborts", async () => {
@@ -257,7 +277,7 @@ describe("device link: remote side", () => {
     await waitFor(() => connection.messages.length === 1);
     const pending = getDeviceRegistry().call(
       "local",
-      { tool: "device_bash", arguments: {}, agentId: "pom", sessionId: "s1", toolCallId: "tc", runKind: "chat" },
+      { tool: "device_bash", arguments: {}, agentId: "pom", toolCallId: "tc" },
       undefined,
       50
     );
@@ -318,7 +338,7 @@ describe("device link: remote side", () => {
   it("fails a call at once when no relay is online", async () => {
     remote = await startRemoteServer(false);
     await expect(
-      getDeviceRegistry().call("local", { tool: "device_read", arguments: {}, agentId: "pom", sessionId: "s", toolCallId: "t", runKind: "chat" })
+      getDeviceRegistry().call("local", { tool: "device_read", arguments: {}, agentId: "pom", toolCallId: "t" })
     ).rejects.toThrow(DEVICE_OFFLINE_CALL_TEXT);
   });
 });

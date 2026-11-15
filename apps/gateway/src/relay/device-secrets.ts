@@ -41,8 +41,9 @@ function homeDirectories(): string[] {
   const directories = [home];
   try {
     directories.push(fs.realpathSync(home));
-  } catch {
-    // A home directory that does not exist has no real path.
+  } catch (error) {
+    // A home directory that does not exist has no real path. Any other error leaves the file list unknown.
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
   }
   return directories.map((directory) => directory.toLowerCase());
 }
@@ -62,5 +63,12 @@ export function isSecretPath(filePath: string): boolean {
   if (SECRET_FILE_PREFIXES.some((prefix) => name.startsWith(prefix))) return true;
   if (SECRET_EXTENSIONS.some((extension) => name.endsWith(extension))) return true;
   const normalized = path.normalize(lower);
-  return homeDirectories().some((home) => YOPLAI_HOME_FILES.some((file) => normalized === path.join(home, file)));
+  let homes: string[];
+  try {
+    homes = homeDirectories();
+  } catch {
+    // Fail closed: when the real path of the home directory is unknown, the path counts as secret.
+    return true;
+  }
+  return homes.some((home) => YOPLAI_HOME_FILES.some((file) => normalized === path.join(home, file)));
 }

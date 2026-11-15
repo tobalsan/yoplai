@@ -4,8 +4,9 @@ import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { DeviceCall } from "@yoplai/shared";
+import { resolveHomeDir, type DeviceCall } from "@yoplai/shared";
 import { DeviceApprovals } from "./device-approvals.js";
+import { issueTestTurn } from "./device-turn.fixture.js";
 import { DeviceExecutor } from "./device-exec.js";
 import { createFileDeviceSettingsStore, deviceChatKey, type DeviceSettingsStore } from "./device-settings.js";
 import { DEVICE_TOOL_DEFINITIONS } from "./device-tools.js";
@@ -86,11 +87,11 @@ describe("device calls and secret files", () => {
   let executor: DeviceExecutor;
   let asked: Array<{ tool: string; path: string }>;
   let previousHome: string | undefined;
-  const chatKey = deviceChatKey("ams", "s1");
+  const chatKey = deviceChatKey("ams", "pom@ams", "session:s1");
 
   const call = (tool: string, args: unknown, overrides: Partial<DeviceCall> = {}): DeviceCall => ({
     type: "call", callId: `call-${Math.random()}`, tool, arguments: args,
-    agentId: "pom", sessionId: "s1", toolCallId: "tc1", runKind: "chat", ...overrides,
+    agentId: "pom", toolCallId: "tc1", turnToken: issueTestTurn(), ...overrides,
   });
   const run = (tool: string, args: unknown, overrides: Partial<DeviceCall> = {}) =>
     executor.execute(call(tool, args, overrides), "ams", new AbortController().signal);
@@ -125,7 +126,7 @@ describe("device calls and secret files", () => {
   const modes: Array<[string, () => void, Partial<DeviceCall>]> = [
     ["Ask mode", () => settings.setChat(chatKey, { full: false }), {}],
     ["Workspace mode", () => settings.setChat(chatKey, { workspaceFolder: folder, full: false }), {}],
-    ["a background run", () => settings.setChat(chatKey, { workspaceFolder: folder, full: false }), { runKind: "background" }],
+    ["a background run", () => settings.setChat(chatKey, { workspaceFolder: folder, full: false }), { turnToken: undefined }],
   ];
 
   it.each(modes)("refuses a read of a secret file in %s with no prompt", async (_name, setup, overrides) => {
@@ -140,6 +141,23 @@ describe("device calls and secret files", () => {
     expect(textOf(await run("device_read", { path: path.join(folder, ".env.example") }))).toBe("EXAMPLE=1");
   });
 
+  it("refuses a call outside Full mode when the real path of the home directory cannot be read", async () => {
+    const realpath = fs.realpathSync;
+    const home = path.resolve(resolveHomeDir());
+    const spy = vi.spyOn(fs, "realpathSync").mockImplementation(((target: fs.PathLike, ...rest: unknown[]) => {
+      if (path.resolve(String(target)) === home) throw Object.assign(new Error("denied"), { code: "EACCES" });
+      return (realpath as (...args: unknown[]) => string)(target, ...rest);
+    }) as typeof fs.realpathSync);
+    try {
+      settings.setChat(chatKey, { full: false });
+      await expect(run("device_read", { path: path.join(folder, "notes.txt") })).rejects.toThrow(/secret files/);
+      settings.setChat(chatKey, { workspaceFolder: folder, full: true });
+      expect(textOf(await run("device_read", { path: path.join(folder, "notes.txt") }))).toBe("plain notes");
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
   it("reads a secret file in Full mode", async () => {
     settings.setChat(chatKey, { workspaceFolder: folder, full: true });
     expect(textOf(await run("device_read", { path: secret }))).toBe("PRIVATE-KEY");
@@ -148,7 +166,7 @@ describe("device calls and secret files", () => {
   it("reads a secret file in a background run with the Full switch of the agent", async () => {
     settings.setChat(chatKey, { workspaceFolder: folder, full: false });
     settings.setAgentFullBackground("pom@ams", true);
-    expect(textOf(await run("device_read", { path: secret }, { runKind: "background" }))).toBe("PRIVATE-KEY");
+    expect(textOf(await run("device_read", { path: secret }, { turnToken: undefined }))).toBe("PRIVATE-KEY");
   });
 
   it("refuses a read through a symbolic link that points to a secret file", async () => {
@@ -257,7 +275,7 @@ describe("device calls and secret files", () => {
 
   it("refuses a write to a secret file in a background run, as a call that asks", async () => {
     settings.setChat(chatKey, { workspaceFolder: folder, full: false });
-    await expect(run("device_write", { path: ".env", content: "x" }, { runKind: "background" })).rejects.toThrow(/needs the approval/);
+    await expect(run("device_write", { path: ".env", content: "x" }, { turnToken: undefined })).rejects.toThrow(/needs the approval/);
     expect(asked).toEqual([]);
   });
 

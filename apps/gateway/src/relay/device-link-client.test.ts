@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AgentEventBus, DEVICE_OFFLINE_CALL_TEXT, DEVICE_PROTOCOL_VERSION, type AgentConfig, type ExtensionAgentToolContext } from "@yoplai/shared";
 import { deviceToolsExtension } from "./device-extension.js";
 import { DeviceApprovals } from "./device-approvals.js";
+import { issueTestTurn } from "./device-turn.fixture.js";
 import { DeviceExecutor } from "./device-exec.js";
 import { DeviceLinkManager } from "./device-link-client.js";
 import { getDeviceRegistry, resetDeviceRegistry } from "./device-registry.js";
@@ -52,7 +53,7 @@ async function deviceTool(name: string) {
   const tool = tools.find((item) => item.name === name);
   if (!tool) throw new Error(`No ${name} tool`);
   return (args: unknown, overrides: Partial<ExtensionAgentToolContext> = {}) =>
-    tool.execute(args, { agent, config: {} as never, sessionId: "s1", toolCallId: "tc1", run: { source: "web" }, ...overrides });
+    tool.execute(args, { agent, config: {} as never, sessionId: "s1", toolCallId: "tc1", run: { source: "web", deviceTurnToken: issueTestTurn() }, ...overrides });
 }
 
 const online = () => getDeviceRegistry().has("local");
@@ -154,7 +155,7 @@ describe("device link: local client", () => {
 
 describe("device link: calls from the remote gateway", () => {
   beforeEach(async () => {
-    settings.setChat(deviceChatKey("ams", "s1"), { full: true });
+    settings.setChat(deviceChatKey("ams", "pom@ams", "session:s1"), { full: true });
     startManager();
     await waitFor(() => online());
   });
@@ -197,7 +198,7 @@ describe("device link: calls from the remote gateway", () => {
       socket.send(JSON.stringify({ type: "hello", protocolVersion: DEVICE_PROTOCOL_VERSION }));
       socket.send(JSON.stringify({
         type: "call", callId: "c1", tool: "device_write", arguments: { path: path.join(dir, "link.txt"), content: "x" },
-        agentId: "pom", sessionId: "s1", toolCallId: "t1", runKind: "chat", gateway: "evil", gatewayName: "evil",
+        agentId: "pom", toolCallId: "t1", turnToken: issueTestTurn(), gateway: "evil", gatewayName: "evil",
       }));
     });
     manager?.stop();
@@ -208,13 +209,15 @@ describe("device link: calls from the remote gateway", () => {
     expect(results[0]).toMatchObject({ callId: "c1", ok: true });
     expect(fs.readFileSync(path.join(dir, "link.txt"), "utf8")).toBe("x");
 
+    // The same call on the link "other" carries a token of the link "ams". It is a background call, so it asks nothing.
     gateways = [{ name: "other", url: gateways[0].url }];
     const asked: string[] = [];
     approvals.subscribe((event) => {
       if (event.kind === "request") asked.push(event.message.gateway);
     });
-    await waitFor(() => asked.length === 1);
-    expect(asked).toEqual(["other"]);
+    await waitFor(() => results.length === 2);
+    expect(results[1]).toMatchObject({ ok: false, error: expect.stringMatching(/no user is present/) });
+    expect(asked).toEqual([]);
   });
 
   it("stops a running command when the run aborts", async () => {
@@ -262,13 +265,13 @@ describe("device link: a drop with a call that waits", () => {
       socket.send(JSON.stringify({ type: "hello", protocolVersion: DEVICE_PROTOCOL_VERSION }));
     });
     gateways = [{ name: "ams", url: `http://127.0.0.1:${(fake.address() as AddressInfo).port}` }];
-    settings.setChat(deviceChatKey("ams", "s1"), { full: true });
+    settings.setChat(deviceChatKey("ams", "pom@ams", "session:s1"), { full: true });
     const pidFile = path.join(dir, "old.pid");
     startManager();
     await waitFor(() => connections.length === 1 && connections[0].messages.length === 1);
     connections[0].socket.send(JSON.stringify({
       type: "call", callId: "old", tool: "device_bash", arguments: { command: `echo $$ > ${pidFile}; exec sleep 1` },
-      agentId: "pom", sessionId: "s1", toolCallId: "t", runKind: "chat",
+      agentId: "pom", toolCallId: "t", turnToken: issueTestTurn(),
     }));
     await waitFor(() => fs.existsSync(pidFile) && fs.readFileSync(pidFile, "utf8").trim() !== "");
     connections[0].socket.terminate();

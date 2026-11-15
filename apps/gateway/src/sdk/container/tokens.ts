@@ -24,6 +24,7 @@ export type ContainerTokenContext = {
   sender?: { kind: string };
   background?: boolean;
   requiresDevice?: boolean;
+  deviceTurnToken?: string;
   projectId?: string;
   emitProgress?: (event: {
     label: string;
