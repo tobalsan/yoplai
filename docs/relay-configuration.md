@@ -414,7 +414,9 @@ Link clicks in the renderer become `link-request` messages. A script that sets `
 
 A handle in a path is a secret. The gateway access log replaces the whole target of every owned request with `/api/relay/dashboard-views/[redacted]`.
 This includes the query and the encoded, double encoded, and mixed case spellings.
-The access log and the route code use one ownership test, `ownsDashboardViewPath`.
+The access log, the CORS skip, and the route code use one ownership test, `ownsDashboardViewPath`.
+The viewer middleware runs on every path and passes each path that the test does not claim to the next handler.
+Each owned spelling therefore gets the same typed refusal and the same final sandbox headers.
 The Vite dev proxy of `apps/web/vite.config.ts` does the same in its proxy error log, for example when the gateway is down.
 Other proxy errors keep their request URL.
 

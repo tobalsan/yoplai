@@ -100,7 +100,8 @@ app.route(
   })
 );
 // The viewer namespace answers before the extension gate and the generic relay.
-app.use("/api/relay/*", dashboardViewHttp());
+// The mount matches every path, because the ownership test also claims mixed-case and encoded spellings.
+app.use("*", dashboardViewHttp());
 const configurationRelay = relayConfigurationHttp();
 app.use("/api/*", (c, next) => {
   if (currentExtensionRuntime().isEnabled("multiUser")) return next();

@@ -105,7 +105,7 @@ beforeAll(async () => {
   });
   remoteUrl = `http://127.0.0.1:${await listen(remote)}`;
   app = new Hono();
-  app.use("/api/relay/*", views.dashboardViewHttp());
+  app.use("*", views.dashboardViewHttp());
   app.all("*", (c) => c.text("fell through", 299 as 200));
 });
 
@@ -690,11 +690,21 @@ describe("route ownership", () => {
     `/api/relay/dashboard%2dviews%2F${H43}/shell`,
     `/api/relay/dashboard-views/${H43}%zz/frame`,
     "/api/relay/dashboard-viewsX",
+    `/api/Relay/Dashboard-Views/${H43}/frame`,
+    `/API/RELAY/DASHBOARD-VIEWS/${H43}/shell`,
+    `/api/relay%2Fdashboard-views/${H43}/frame`,
+    `/api%2Frelay/dashboard-views/${H43}/frame`,
+    `/%61pi/relay/dashboard-views/${H43}/frame`,
+    `/api/%72elay/dashboard-views/${H43}/frame`,
+    `/api/relay/%64ashboard-views/${H43}/frame`,
+    `/api/%2552elay/dashboard-views/${H43}/frame`,
+    `/api/Relay%2FDashboard-Views/${H43}%zz/frame`,
   ])("answers a malformed owned path %s locally, with no remote call and no fallthrough", async (pathname) => {
     for (const method of ["GET", "POST"]) {
       const response = await app.request(pathname, { method, headers: { ...navigation(), ...opaque() }, body: method === "POST" ? "{}" : undefined });
       expect(response.status).not.toBe(299);
       expect(response.status).toBe(404);
+      expect(response.headers.get("content-security-policy")).toContain("sandbox");
       expect(await response.json()).toEqual({ error: "invalid_dashboard_view_route" });
     }
     expect(calls).toEqual([]);
@@ -741,9 +751,13 @@ describe("route ownership", () => {
     expect(calls).toHaveLength(1);
   });
 
-  it("leaves other relay paths to later handlers", async () => {
-    const response = await app.request("/api/relay/gateways/ams/api/agents");
-    expect(response.status).toBe(299);
+  it("leaves other relay paths and every unrelated path to later handlers", async () => {
+    for (const pathname of ["/api/relay/gateways/ams/api/agents", "/api/relay", "/api/relayx/dashboard-views", "/api/agents", "/health", "/d/x/embed", "/"]) {
+      const response = await app.request(pathname);
+      expect(response.status, pathname).toBe(299);
+      expect(await response.text()).toBe("fell through");
+    }
+    expect(calls).toEqual([]);
   });
 });
 

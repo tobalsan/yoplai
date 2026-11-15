@@ -549,7 +549,9 @@ async function dispatch(request: Request, route: Route): Promise<Response> {
 
 /**
  * Claims the exact viewer namespace before the extension gate and the generic
- * relay. A malformed path in the namespace gets a local refusal, not a fallthrough.
+ * relay. Mount it on every path (`*`): it calls `next()` for each path that
+ * the ownership test does not claim, so every spelling of the namespace gets
+ * the local refusal and no other request changes. A malformed path in the namespace gets a local refusal, not a fallthrough.
  * A query string is an identity variation, so it gets the same refusal.
  * The global CORS middleware skips this namespace, so only an accepted
  * opaque-origin write gets the one CORS answer that its page may read. That

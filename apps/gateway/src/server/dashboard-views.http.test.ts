@@ -234,6 +234,49 @@ describe("real adapter: owned routes", () => {
     expect(remoteCalls).toEqual([]);
   });
 
+  it.each([
+    "/api/Relay/Dashboard-Views/HANDLE/frame",
+    "/API/RELAY/DASHBOARD-VIEWS/HANDLE/shell",
+    "/api/relay%2Fdashboard-views/HANDLE/frame",
+    "/api/relay%2fdashboard-views/HANDLE/frame",
+    "/api%2Frelay/dashboard-views/HANDLE/frame",
+    "/%61pi/relay/dashboard-views/HANDLE/frame",
+    "/api/%72elay/dashboard-views/HANDLE/frame",
+    "/api/relay/%64ashboard-views/HANDLE/frame",
+    "/api/%2552elay/dashboard-views/HANDLE/frame",
+    "/api/Relay%2FDashboard-Views/HANDLE%zz/frame",
+    "/api/relay/dashboard-views/HANDLE%zz/frame",
+  ])("answers the owned spelling %s with the typed refusal and the sandbox headers", async (template) => {
+    const { handle } = await openView();
+    remoteCalls = [];
+    const pathname = template.replace("HANDLE", handle);
+    for (const method of ["GET", "POST"]) {
+      for (const origin of [undefined, UI, "null", "https://evil.example.test"]) {
+        const response = await fetch(`${local}${pathname}`, { method, headers: { ...navigation(), ...opaque(), ...(origin ? { origin } : {}) }, body: method === "POST" ? "{}" : undefined });
+        await expectJsonError(response, 404, "invalid_dashboard_view_route");
+        expect(response.headers.get("content-security-policy")).toContain("sandbox");
+        expect(response.headers.get("access-control-allow-origin")).toBeNull();
+        expect(response.headers.get("access-control-allow-credentials")).toBeNull();
+        expect(response.headers.get("cache-control")).toBe("no-store");
+      }
+    }
+    expect(remoteCalls).toEqual([]);
+  });
+
+  it("leaves unrelated requests, also under the relay prefix, to their own handlers", async () => {
+    const health = await fetch(`${local}/health`);
+    expect(health.status).toBe(200);
+    expect(await health.json()).toEqual({ ok: true });
+    expect(health.headers.get("content-security-policy")).toBeNull();
+    for (const pathname of ["/api/relayx/dashboard-views", "/api/relay", "/api/relay/gateways", "/api/Relay/gateways", "/api/relay%2Fgateways"]) {
+      const response = await fetch(`${local}${pathname}`);
+      expect(response.headers.get("content-security-policy"), pathname).toBeNull();
+      expect(await response.text(), pathname).not.toContain("invalid_dashboard_view_route");
+    }
+    const asset = await fetch(`${local}/d-assets/v3/kit.css`);
+    expect(asset.status).toBe(200);
+  });
+
   it("refuses a foreign or opaque Origin for prepare and read, and a form post for a write", async () => {
     const body = { gateway: "ams", dashboardId };
     for (const origin of ["https://evil.example.test", "null"]) {
@@ -463,9 +506,8 @@ describe("real adapter: logs, bounds and disconnects", () => {
     for (const path of aliases) {
       for (const method of ["GET", "POST"]) {
         const response = await fetch(`${local}${path}`, { method, headers: { ...navigation(), ...opaque() }, body: method === "POST" ? "{}" : undefined });
-        // The refusal and the log use the same ownership test. Routing is case sensitive, so a mixed case path reaches no viewer handler.
-        if (path.startsWith("/api/Relay")) expect(response.status).toBe(404);
-        else await expectJsonError(response, 404, "invalid_dashboard_view_route");
+        // The refusal, the CORS skip and the log use the same ownership test, also for a mixed case path.
+        await expectJsonError(response, 404, "invalid_dashboard_view_route");
       }
     }
     const text = logs.join("\n");
