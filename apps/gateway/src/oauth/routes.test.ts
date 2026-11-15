@@ -252,6 +252,31 @@ describe("oauth routes", () => {
     expect(service.getConnection("a1", "google", "alice")).toBeDefined();
   });
 
+  it("accepts a bearer start and a callback without a browser session", async () => {
+    const fetchImpl = vi.fn(async (input: RequestInfo | URL) => Response.json(
+      String(input).includes("token") ? { access_token: "fake-personal-token", expires_in: 3600 } : { email: "owner@example.test" }
+    ));
+    const service = new OAuthService({ store, fetchImpl, loadConfig: makeConfig });
+    const headers = { authorization: "Bearer fake-linked-bearer" };
+    const app = createOAuthRoutes(
+      service,
+      async (c) => c.req.header("authorization") === headers.authorization,
+      async (c) => c.req.header("authorization") === headers.authorization ? "remote-owner" : undefined,
+      async () => false
+    );
+    const authorization = await app.request("/oauth/google/authorize?agent=a1&scope=personal", { headers });
+    expect(authorization.status).toBe(302);
+    const state = new URL(authorization.headers.get("location")!).searchParams.get("state");
+    const callback = await app.request(`/oauth/google/callback?code=fake-code&state=${state}`);
+    expect(callback.status).toBe(200);
+    expect(callback.headers.get("content-type")).toContain("text/html");
+    expect(callback.headers.get("location")).toBeNull();
+    expect(service.getConnection("a1", "google", "remote-owner")?.accessToken).toBe("fake-personal-token");
+    expect((await app.request(`/oauth/google/callback?code=fake-code&state=${state}`)).status).toBe(400);
+    expect((await app.request("/oauth/google/authorize?agent=a1&scope=team", { headers })).status).toBe(403);
+    expect(fetchImpl.mock.calls.every(([input]) => !String(input).includes("authorize"))).toBe(true);
+  });
+
   it("requires a user account for personal operations and rejects invalid scopes", async () => {
     const app = createOAuthRoutes(new OAuthService({ store, loadConfig: makeConfig }));
     for (const [operation, method] of [["authorize", "GET"], ["status", "GET"], ["disconnect", "POST"]] as const) {
