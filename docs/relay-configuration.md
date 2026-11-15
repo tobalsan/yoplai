@@ -313,7 +313,7 @@ The query is the browser query without names that start with `__yoplai_` (reserv
 | 401, or a redirect to `/login` | `401 remote_unauthorized` |
 | 403 | `403 forbidden` with an optional `ownerName` |
 | 404 with the embed marker | `404 not_found`, or `404 canvas_disabled` |
-| 404 without the marker | The gateway reads remote `/api/capabilities`. No `dashboardEmbed` gives `409 remote_update_required` (`reason: missing_capability`). Otherwise `404 not_found`. |
+| 404 without the marker | The gateway reads remote `/api/capabilities` and checks `dashboardEmbed`. It needs `version`, `assetVersion`, `policyVersion` (numbers and text as in the marker) and a boolean `enabled`. No `dashboardEmbed` gives `409 remote_update_required` (`reason: missing_capability`). An unsupported `version`, `assetVersion`, or `policyVersion` gives `409 remote_update_required` with `reason` `embed_version`, `asset_version`, or `policy_version`. A field of the wrong type gives `502 invalid_remote_response`. `enabled: false` gives `404 canvas_disabled`. Otherwise `404 not_found`. |
 | 200 without the marker, or an unsupported version | `409 remote_update_required` with `reason` `missing_embed_marker`, `embed_version`, `asset_version`, or `policy_version` |
 | Other redirect, other status, bad JSON metadata, wrong content type | `502 invalid_remote_response` |
 | Page over 5 MiB after decompression | `502 remote_response_too_large` |

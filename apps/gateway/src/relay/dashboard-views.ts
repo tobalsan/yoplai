@@ -197,15 +197,23 @@ function forwardedQuery(params: URLSearchParams): string {
   return query ? `?${query}` : "";
 }
 
+/** The versions that a remote reports, as the text of a header or of a capability field. */
+type EmbedVersions = { version: string | null; assets: string | null; policy: string | null };
+
 /** Names the first part of the embed contract that the remote does not meet. */
-function incompatibility(headers: Headers): string | undefined {
-  const version = headers.get(DASHBOARD_EMBED_HEADERS.version);
+function incompatibility({ version, assets, policy }: EmbedVersions): string | undefined {
   if (version === null) return "missing_embed_marker";
   if (version !== String(DASHBOARD_EMBED_VERSION)) return "embed_version";
-  if (!SUPPORTED_ASSET_VERSIONS.has(headers.get(DASHBOARD_EMBED_HEADERS.assets) ?? "")) return "asset_version";
-  if (headers.get(DASHBOARD_EMBED_HEADERS.policy) !== String(DASHBOARD_EMBED_POLICY_VERSION)) return "policy_version";
+  if (!SUPPORTED_ASSET_VERSIONS.has(assets ?? "")) return "asset_version";
+  if (policy !== String(DASHBOARD_EMBED_POLICY_VERSION)) return "policy_version";
   return undefined;
 }
+
+const headerVersions = (headers: Headers): EmbedVersions => ({
+  version: headers.get(DASHBOARD_EMBED_HEADERS.version),
+  assets: headers.get(DASHBOARD_EMBED_HEADERS.assets),
+  policy: headers.get(DASHBOARD_EMBED_HEADERS.policy),
+});
 
 const isRecord = (value: unknown): value is Record<string, unknown> => !!value && typeof value === "object" && !Array.isArray(value);
 
@@ -228,7 +236,14 @@ async function readJsonRecord(response: Response, limit: number, signal: AbortSi
   }
 }
 
-/** A 404 without the embed marker comes from an old remote or from a proxy. The remote capabilities tell which. */
+/** The `dashboardEmbed` field of `GET /api/capabilities`. A newer remote can add fields. */
+const EmbedCapabilitySchema = z.object({ version: z.number(), assetVersion: z.string(), policyVersion: z.number(), enabled: z.boolean() });
+
+/**
+ * A 404 without the embed marker comes from an old remote or from a proxy. The
+ * remote capabilities tell which: no capability (old remote), a malformed
+ * capability, an unsupported version, a disabled Canvas, or a missing dashboard.
+ */
 async function classifyUnmarkedNotFound(gateway: RemoteGateway, fail: Fail, signal: AbortSignal): Promise<Response> {
   const response = await fetchRemoteExact(gateway, "/api/capabilities", { method: "GET", headers: { accept: "application/json" }, signal, bearer: true });
   if (response.status === 401) { discard(response.body); return fail(401, "remote_unauthorized"); }
@@ -236,9 +251,13 @@ async function classifyUnmarkedNotFound(gateway: RemoteGateway, fail: Fail, sign
   if (response.status !== 200) { discard(response.body); return fail(502, "invalid_remote_response"); }
   const capabilities = await readJsonRecord(response, dashboardViewLimits.capabilitiesBytes, signal);
   if (!capabilities) return fail(502, "invalid_remote_response");
-  return isRecord(capabilities.dashboardEmbed)
-    ? fail(404, "not_found")
-    : fail(409, "remote_update_required", { reason: "missing_capability" });
+  if (capabilities.dashboardEmbed === undefined) return fail(409, "remote_update_required", { reason: "missing_capability" });
+  const embed = EmbedCapabilitySchema.safeParse(capabilities.dashboardEmbed);
+  if (!embed.success) return fail(502, "invalid_remote_response");
+  const { version, assetVersion, policyVersion, enabled } = embed.data;
+  const reason = incompatibility({ version: String(version), assets: assetVersion, policy: String(policyVersion) });
+  if (reason) return fail(409, "remote_update_required", { reason });
+  return enabled ? fail(404, "not_found") : fail(404, "canvas_disabled");
 }
 
 async function viewDashboard(request: Request, url: URL, grant: string, id: string, resolved: ResolvedDashboardViewGrant): Promise<Response> {
@@ -270,7 +289,7 @@ async function viewDashboard(request: Request, url: URL, grant: string, id: stri
       }
       if (response.status === 401) { discard(response.body); return fail(401, "remote_unauthorized"); }
       if (marked || response.status === 200) {
-        const reason = incompatibility(response.headers);
+        const reason = incompatibility(headerVersions(response.headers));
         if (reason) { discard(response.body); return fail(409, "remote_update_required", { reason }); }
       }
       if (response.status === 403) {

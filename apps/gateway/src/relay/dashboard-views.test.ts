@@ -602,6 +602,52 @@ describe("viewer GET: remote results", () => {
     await expectError(frameUrl, 502, "invalid_remote_response");
   });
 
+  it.each<[string, unknown, number, string, Record<string, unknown>]>([
+    ["a missing capability", undefined, 409, "remote_update_required", { reason: "missing_capability" }],
+    ["a newer embed version", { version: 2, assetVersion: "v3", policyVersion: 1, enabled: true }, 409, "remote_update_required", { reason: "embed_version" }],
+    ["an older embed version", { version: 0, assetVersion: "v3", policyVersion: 1, enabled: true }, 409, "remote_update_required", { reason: "embed_version" }],
+    ["an unsupported asset version", { version: 1, assetVersion: "v9", policyVersion: 1, enabled: true }, 409, "remote_update_required", { reason: "asset_version" }],
+    ["a different policy version", { version: 1, assetVersion: "v3", policyVersion: 2, enabled: true }, 409, "remote_update_required", { reason: "policy_version" }],
+    ["a newer version that is disabled", { version: 2, assetVersion: "v3", policyVersion: 1, enabled: false }, 409, "remote_update_required", { reason: "embed_version" }],
+    ["a disabled Canvas", { version: 1, assetVersion: "v3", policyVersion: 1, enabled: false }, 404, "canvas_disabled", {}],
+    ["an enabled Canvas, so the dashboard is missing", { version: 1, assetVersion: "v3", policyVersion: 1, enabled: true }, 404, "not_found", {}],
+    ["a compatible capability with extra fields", { version: 1, assetVersion: "v3", policyVersion: 1, enabled: true, note: "later" }, 404, "not_found", {}],
+    ["an empty object", {}, 502, "invalid_remote_response", {}],
+    ["a null value", null, 502, "invalid_remote_response", {}],
+    ["a string", "yes", 502, "invalid_remote_response", {}],
+    ["a list", [1], 502, "invalid_remote_response", {}],
+    ["a missing enabled field", { version: 1, assetVersion: "v3", policyVersion: 1 }, 502, "invalid_remote_response", {}],
+    ["an enabled field that is not a boolean", { version: 1, assetVersion: "v3", policyVersion: 1, enabled: "true" }, 502, "invalid_remote_response", {}],
+    ["a version that is not a number", { version: "1", assetVersion: "v3", policyVersion: 1, enabled: true }, 502, "invalid_remote_response", {}],
+    ["an asset version that is not text", { version: 1, assetVersion: 3, policyVersion: 1, enabled: true }, 502, "invalid_remote_response", {}],
+  ])("classifies an unmarked 404 by the remote capability: %s", async (_label, capability, status, error, extra) => {
+    const { frameUrl } = await grant();
+    handler = (_request, response, call) => {
+      if (call.url === "/api/capabilities") return sendJson(response, 200, { version: 2, extensions: {}, agents: [], ...(capability === undefined ? {} : { dashboardEmbed: capability }) });
+      sendJson(response, 404, { error: "not_found" });
+    };
+    const answer = await view(frameUrl);
+    expect(answer.status).toBe(status);
+    expect(await answer.json()).toEqual({ error, ...extra });
+    expect(calls.map((call) => call.url)).toEqual([`/d/${ID}/embed`, "/api/capabilities"]);
+    expect(answer.headers.get("cache-control")).toBe("no-store");
+    // A second view reads the capability again, so nothing is cached.
+    calls = [];
+    expect((await view(frameUrl)).status).toBe(status);
+    expect(calls.map((call) => call.url)).toEqual([`/d/${ID}/embed`, "/api/capabilities"]);
+  });
+
+  it("records each unmarked 404 result for the host", async () => {
+    const { grant: id, frameUrl } = await grant();
+    handler = (_request, response, call) => {
+      if (call.url === "/api/capabilities") return sendJson(response, 200, { dashboardEmbed: { version: 1, assetVersion: "v3", policyVersion: 1, enabled: false } });
+      sendJson(response, 404, { error: "not_found" });
+    };
+    expect((await view(frameUrl)).status).toBe(404);
+    const record = await (await app.request(`/api/relay/dashboard-views/${id}/current`, { headers: { "sec-fetch-site": "same-origin" } })).json() as { view: object };
+    expect(record.view).toMatchObject({ dashboardId: ID, ok: false, error: "canvas_disabled", status: 404 });
+  });
+
   it.each<[string, Record<string, string>, string]>([
     ["no marker on a page", { [DASHBOARD_EMBED_HEADERS.version]: "" }, "missing_embed_marker"],
     ["a newer embed version", { [DASHBOARD_EMBED_HEADERS.version]: "2" }, "embed_version"],
