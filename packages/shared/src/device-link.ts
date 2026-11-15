@@ -11,6 +11,9 @@ export const DEVICE_CLOSE_REPLACED = 4003;
 export const DEVICE_TOOL_NAMES = ["device_read", "device_write", "device_edit", "device_bash"] as const;
 export type DeviceToolName = (typeof DEVICE_TOOL_NAMES)[number];
 
+/** Each device call that finds no device starts its error text with this. The scheduler looks for it. */
+export const DEVICE_OFFLINE_CALL_TEXT = "The device of the user is not connected. The call did not run.";
+
 /** `background` means that no human is present to answer a prompt. */
 export const DeviceRunKindSchema = z.enum(["chat", "background"]);
 export type DeviceRunKind = z.infer<typeof DeviceRunKindSchema>;

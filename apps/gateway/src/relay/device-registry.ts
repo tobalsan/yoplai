@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { WebSocket } from "ws";
 import {
   DEVICE_CLOSE_INVALID_MESSAGE,
+  DEVICE_OFFLINE_CALL_TEXT,
   DEVICE_CLOSE_REPLACED,
   DEVICE_CLOSE_UNSUPPORTED_VERSION,
   DEVICE_PROTOCOL_VERSION,
@@ -87,7 +88,7 @@ export class DeviceRegistry {
         const previous = this.connections.get(userId);
         this.connections.set(userId, connection);
         if (previous) {
-          previous.failPending(new Error("Device link replaced by a new connection"));
+          previous.failPending(new Error(`${DEVICE_OFFLINE_CALL_TEXT} The link was replaced by a new connection during the call.`));
           previous.socket.close(DEVICE_CLOSE_REPLACED, "Replaced by a new connection");
         }
         socket.send(JSON.stringify({ type: "hello", protocolVersion: DEVICE_PROTOCOL_VERSION }));
@@ -103,7 +104,7 @@ export class DeviceRegistry {
     socket.on("close", () => {
       if (!connection) return;
       if (this.connections.get(userId) === connection) this.connections.delete(userId);
-      connection.failPending(new Error("Device link dropped during the call"));
+      connection.failPending(new Error(`${DEVICE_OFFLINE_CALL_TEXT} The link dropped during the call, so the call may have run.`));
     });
   }
 
@@ -116,7 +117,7 @@ export class DeviceRegistry {
   ): Promise<DeviceCallResult> {
     const connection = this.connections.get(userId);
     if (!connection || connection.socket.readyState !== connection.socket.OPEN) {
-      return Promise.reject(new Error("No device is online. Ask the user to start the desktop relay."));
+      return Promise.reject(new Error(DEVICE_OFFLINE_CALL_TEXT));
     }
     if (signal?.aborted) return Promise.reject(new Error("The device call was cancelled"));
 

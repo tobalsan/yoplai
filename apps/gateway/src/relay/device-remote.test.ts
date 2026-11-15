@@ -1,7 +1,7 @@
 import type { Server } from "node:http";
 import { WebSocket } from "ws";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { AgentEventBus, DEVICE_PROTOCOL_VERSION, type AgentConfig, type ExtensionAgentToolContext } from "@yoplai/shared";
+import { AgentEventBus, DEVICE_OFFLINE_CALL_TEXT, DEVICE_PROTOCOL_VERSION, type AgentConfig, type ExtensionAgentToolContext } from "@yoplai/shared";
 import { startRemoteServer, waitFor } from "./device-test-server.js";
 import { getDeviceRegistry, resetDeviceRegistry } from "./device-registry.js";
 
@@ -259,7 +259,7 @@ describe("device link: remote side", () => {
     const pending = tool?.execute({ command: "sleep 5" }, toolContext());
     await waitFor(() => connection.messages.length === 2);
     connection.socket.terminate();
-    await expect(pending).rejects.toThrow(/Device link dropped/);
+    await expect(pending).rejects.toThrow(DEVICE_OFFLINE_CALL_TEXT);
   });
 
   it("does not send a call again after a new connection", async () => {
@@ -285,7 +285,7 @@ describe("device link: remote side", () => {
     const pending = tool?.execute({ command: "sleep 5" }, toolContext());
     await waitFor(() => first.messages.length === 2);
     const second = await relay(remote.port);
-    await expect(pending).rejects.toThrow(/replaced/);
+    await expect(pending).rejects.toThrow(DEVICE_OFFLINE_CALL_TEXT);
     expect((await first.closed).code).toBe(4003);
     await waitFor(() => second.messages.length === 1);
     expect((await deviceTools()).length).toBe(4);
@@ -304,6 +304,6 @@ describe("device link: remote side", () => {
     remote = await startRemoteServer(false);
     await expect(
       getDeviceRegistry().call("local", { tool: "device_read", arguments: {}, agentId: "pom", sessionId: "s", toolCallId: "t", runKind: "chat" })
-    ).rejects.toThrow(/No device is online/);
+    ).rejects.toThrow(DEVICE_OFFLINE_CALL_TEXT);
   });
 });

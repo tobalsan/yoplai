@@ -27,6 +27,7 @@ import {
   getSubagentTemplates,
   resolveWorkspaceDir,
 } from "../config/index.js";
+import { getDeviceRegistry, LOCAL_DEVICE_USER } from "../relay/device-registry.js";
 import { reportExtensionWork } from "../agents/active-turns.js";
 import { runAgent, agentEventBus } from "../agents/index.js";
 import { getAllSessionsForAgent, getSession } from "../agents/sessions.js";
@@ -292,6 +293,7 @@ export function createExtensionContext(
       return resolveAgentConfigRoute(matched.configRoute, agentId) ?? `/agents/${encodeURIComponent(agentId)}/extensions/${encodeURIComponent(matched.id)}${matched.oauth ? "" : "/config"}`;
     },
     getDeliverySink: (id: string) => deliverySinks.get(id)?.sink,
+    isDeviceOnline: (userId) => getDeviceRegistry().has(userId ?? LOCAL_DEVICE_USER),
     getDeliveryOffers: async (agent, { userId }) => {
       const config = loadConfig();
       const offers = await Promise.all([...deliveryOffers].map(async ([target, offer]) => {

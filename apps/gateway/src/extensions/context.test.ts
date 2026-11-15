@@ -77,6 +77,25 @@ describe("createExtensionContext media helpers", () => {
     } finally { first.revoke(); second.revoke(); }
   });
 
+  it("tells an extension whether the device relay of a user is online", async () => {
+    const { writeTestV3Config } = await import("../test-utils/v3-config.js");
+    await writeTestV3Config(tmpDir, { agents: [{ id: "alpha" }] });
+    const { createExtensionContext } = await import("./context.js");
+    const { loadConfig } = await import("../config/index.js");
+    const { getDeviceRegistry } = await import("../relay/device-registry.js");
+    const { EventEmitter } = await import("node:events");
+    const ctx = createExtensionContext(loadConfig());
+    expect(ctx.isDeviceOnline?.()).toBe(false);
+    const socket = Object.assign(new EventEmitter(), { send: vi.fn(), close: vi.fn(), terminate: vi.fn(), readyState: 1, OPEN: 1 });
+    getDeviceRegistry().accept(socket as never, "local");
+    socket.emit("message", Buffer.from(JSON.stringify({ type: "hello", protocolVersion: 1, deviceName: "laptop" })));
+    expect(ctx.isDeviceOnline?.()).toBe(true);
+    expect(ctx.isDeviceOnline?.("local")).toBe(true);
+    expect(ctx.isDeviceOnline?.("someone-else")).toBe(false);
+    socket.emit("close");
+    expect(ctx.isDeviceOnline?.()).toBe(false);
+  });
+
   it("emits extension fields at the top level on one physical JSON line", async () => {
     const { createExtensionContext } = await import("./context.js");
     const logger = createExtensionContext({} as GatewayConfig).logger;

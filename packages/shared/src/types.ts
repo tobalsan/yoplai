@@ -583,6 +583,8 @@ export type ScheduleRun = {
   exitCode?: number;
   gateOutput?: string;
   error?: string;
+  /** Machine-readable reason of an error. `device_offline` means the device was not connected. */
+  errorCode?: string;
   outputPath?: string;
   prompt: string;
   /** null selects shared storage; private runs retain their original owner. */
@@ -1723,6 +1725,8 @@ export interface ExtensionContext {
   getUserNotifiers(): Map<string, UserNotifier>;
   resolveConnectPath?(agentId: string, hints: CredentialConnectHints): Promise<string | undefined>;
   getDeliveryOffers?(agent: AgentConfig, requester: { userId?: string }): Promise<DeliveryOffer[]>;
+  /** True when the device relay of the user is connected. No user ID means the user `local`. */
+  isDeviceOnline?(userId?: string): boolean;
 
   // Events
   subscribe(event: string, handler: (payload: unknown) => void): () => void;

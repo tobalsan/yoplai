@@ -4,7 +4,7 @@ import path from "node:path";
 import type { AddressInfo } from "node:net";
 import { WebSocket, WebSocketServer } from "ws";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { AgentEventBus, DEVICE_PROTOCOL_VERSION, type AgentConfig, type ExtensionAgentToolContext } from "@yoplai/shared";
+import { AgentEventBus, DEVICE_OFFLINE_CALL_TEXT, DEVICE_PROTOCOL_VERSION, type AgentConfig, type ExtensionAgentToolContext } from "@yoplai/shared";
 import { deviceToolsExtension } from "./device-extension.js";
 import { DeviceApprovals } from "./device-approvals.js";
 import { DeviceExecutor } from "./device-exec.js";
@@ -235,7 +235,7 @@ describe("device link: calls from the remote gateway", () => {
     const pid = Number(fs.readFileSync(pidFile, "utf8"));
     const wss = (remote?.broker as unknown as { deviceWss: WebSocketServer }).deviceWss;
     for (const client of wss.clients) client.terminate();
-    await expect(pending).rejects.toThrow(/Device link dropped/);
+    await expect(pending).rejects.toThrow(DEVICE_OFFLINE_CALL_TEXT);
     await waitFor(() => !isAlive(pid));
   });
 });
