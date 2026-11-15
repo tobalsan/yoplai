@@ -27,7 +27,16 @@ const claudeWindow = z.object({
 });
 const claudeUsage = z
   .object({
-    five_hour: claudeWindow.nullish(),
+    five_hour: z.preprocess(
+      (window) =>
+        window !== null &&
+        typeof window === "object" &&
+        !Array.isArray(window) &&
+        (!("resets_at" in window) || typeof window.resets_at !== "string")
+          ? undefined
+          : window,
+      claudeWindow.nullish()
+    ),
     seven_day: claudeWindow.nullish(),
   })
   .refine((usage) => usage.five_hour || usage.seven_day);
