@@ -433,6 +433,42 @@ describe("snapshots", () => {
   });
 });
 
+describe("overlapping prepare requests", () => {
+  it("keeps each snapshot on its own dashboard when the reads finish in the opposite order", async () => {
+    const waiting: Array<() => void> = [];
+    handler = (_request, response, call) => {
+      const id = /\/d\/([^/]+)\/embed/.exec(call.url)![1];
+      // The first read waits for the second one to finish.
+      if (id === ID) waiting.push(() => sendHtml(response, id, "<h1>Page A</h1>"));
+      else { sendHtml(response, id, "<h1>Page B</h1>"); waiting.forEach((finish) => finish()); }
+    };
+    const a = prepare({ gateway: "ams", dashboardId: ID });
+    await vi.waitFor(() => expect(calls).toHaveLength(1));
+    const b = prepare({ gateway: "ams", dashboardId: SIBLING });
+    const [first, second] = await Promise.all([a, b]);
+    const [bodyA, bodyB] = [await first.json() as { handle: string; dashboardId: string }, await second.json() as { handle: string; dashboardId: string }];
+    expect([first.status, second.status]).toEqual([201, 201]);
+    expect(await (await frame(bodyA.handle)).text()).toContain("Page A");
+    expect(await (await frame(bodyB.handle)).text()).toContain("Page B");
+    const readA = await (await readView({ handle: bodyA.handle })).json() as { dashboardId: string; meta: { dashboardId: string } };
+    const readB = await (await readView({ handle: bodyB.handle })).json() as { dashboardId: string; meta: { dashboardId: string } };
+    expect([readA.dashboardId, readA.meta.dashboardId, readB.dashboardId, readB.meta.dashboardId]).toEqual([ID, ID, SIBLING, SIBLING]);
+  });
+
+  it("does not store a snapshot for a prepare request that the client cancelled before the headers", async () => {
+    handler = () => undefined;
+    const controller = new AbortController();
+    const pending = prepare(undefined, {}, controller.signal);
+    await vi.waitFor(() => expect(calls).toHaveLength(1));
+    controller.abort();
+    expect((await pending).status).toBe(499);
+    expect(snapshots.dashboardViewStoreSizeForTests()).toEqual({ count: 0, bytes: 0 });
+    handler = defaultHandler;
+    expect((await prepare()).status).toBe(201);
+    expect(snapshots.dashboardViewStoreSizeForTests().count).toBe(1);
+  });
+});
+
 describe("body bounds of prepare and read", () => {
   it("refuses a declared length over the limit before it reads the body", async () => {
     const { stream, cancelled } = stalledBody();
