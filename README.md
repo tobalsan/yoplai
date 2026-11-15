@@ -188,6 +188,18 @@ While your local gateway runs and is linked, an agent on the remote gateway can 
 
 A relative path and each command start in the workspace folder. With no folder, they start in your home directory. A run with no person present, such as a scheduled job, gets a refusal for each call that asks. You can allow all calls of one remote agent for such runs. In a chat with a remote agent, a call that needs approval shows as a card with the buttons Approve and Refuse. The control in the chat header shows the mode as "Device: Ask", "Device: Workspace", or "Device: Full". Its panel sets the workspace folder and the Full switch, and has a switch that allows all calls of that agent for scheduled jobs. A chat needs a first message before you can set the folder.
 
+Secret files: a read of a common secret file gets a refusal with no prompt, in Ask and Workspace mode and in a run with no person present. A write or edit of such a file always asks, also inside the workspace folder. Full access bypasses these rules. The list covers these paths and names, in upper and lower case:
+
+- Folders at any depth: `.ssh`, `.gnupg`, `.aws`, `.azure`, `.kube`, `.password-store`, `.config/gcloud`, `Library/Keychains`.
+- The file `.docker/config.json`.
+- File names: `.env` and `.env.<x>` (not `.env.example`, `.env.sample`, `.env.template`, `.env.dist`), `.netrc`, `.npmrc`, `.pypirc`, `.git-credentials`, `.htpasswd`, `auth.json`, `credentials`, `credentials.json`, and names that start with `id_rsa`, `id_dsa`, `id_ecdsa`, or `id_ed25519`.
+- File types: `.pem`, `.key`, `.p12`, `.pfx`, `.keychain-db`, `.kdbx`.
+- In the Yoplai home: `remote-gateways.json`, `device-settings.json`, `user-token.json`, `auth.db`.
+
+The check also covers the real path behind a symbolic link. A command (`device_bash`) is not checked against this list. It asks in Ask and Workspace mode, so you see the command first. The card shows the whole command. A command over 20,000 characters that needs approval gets a refusal. The agent must write it to a script file and run the file.
+
+Scheduled jobs: a job gets the device tools only when its config has `requiresDevice: true` (set it in the `requiresDevice` field of `scheduler.create_job` or `scheduler.update_job`). A job with this flag stops at once, with the error code `device_offline`, when your device is not connected. You cannot combine the flag with `noAgent`. On a multi-user gateway, the job needs the credential mode `owner`.
+
 ## Troubleshooting
 
 ### `yoplai.json` not found
