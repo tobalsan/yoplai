@@ -136,7 +136,12 @@ async function startOAuth(request: Request, gateways: RemoteGateway[]): Promise<
       signal,
     });
     if ([401, 403, 404].includes(response.status)) {
-      void response.body?.cancel().catch(() => undefined);
+      if (core && response.status === 404 && response.headers.get("content-type")?.split(";")[0].trim() === "application/json") {
+        const result = await jsonBody({ body: response.body, signal });
+        if (!(result instanceof Response) && result.error === "unknown_provider") return fail("unknown_remote_provider", 404);
+      } else {
+        void response.body?.cancel().catch(() => undefined);
+      }
       return fail("remote_oauth_denied", response.status);
     }
     let location: unknown;

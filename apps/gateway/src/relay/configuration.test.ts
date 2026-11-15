@@ -623,7 +623,7 @@ describe("core start result boundary", () => {
       expect(providerFetch.mock.calls.every(([, init]) => new Headers(init?.headers).get("authorization") !== "Bearer fake-east-bearer")).toBe(true);
       const unknown = await app.request("/api/relay/oauth/start", json({ ...startInput, provider: "remote_unknown" }));
       expect(unknown.status).toBe(404);
-      expect(await unknown.json()).toEqual({ error: "remote_oauth_denied" });
+      expect(await unknown.json()).toEqual({ error: "unknown_remote_provider" });
     } finally {
       await fs.rm(home, { recursive: true, force: true });
     }

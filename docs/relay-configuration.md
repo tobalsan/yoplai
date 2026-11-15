@@ -129,7 +129,7 @@ The remote must use the correct callback base and provider registration.
 The relay checks the provider name as one safe path segment.
 It does not require that provider in the local extension registry.
 The selected remote checks its own provider and permissions.
-An unknown remote provider returns a local 404 error.
+An unknown remote core provider returns status 404 with `unknown_remote_provider`.
 
 For core OAuth, the relay sends `Accept: application/json` to the remote authorize route.
 The remote must support this response contract:
