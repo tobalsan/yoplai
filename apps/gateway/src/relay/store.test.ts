@@ -71,3 +71,49 @@ describe("remote gateway store link generation", () => {
     expect((await fs.stat(file)).mode & 0o777).toBe(0o600);
   });
 });
+
+describe("remote gateway store generation checks", () => {
+  it("saves a new link only when no link of that name exists", () => {
+    const store = createFileRemoteGatewayStore(file);
+    expect(store.saveIfGeneration(link, null)).toBe(true);
+    expect(store.saveIfGeneration({ ...link, token: "fake-bearer-second" }, null)).toBe(false);
+    expect(store.list()[0].token).toBe(link.token);
+  });
+
+  it("replaces a link only while its generation is the one the caller saw", () => {
+    const store = createFileRemoteGatewayStore(file);
+    store.save(link);
+    const seen = store.list()[0].generation!;
+    expect(store.saveIfGeneration({ ...link, token: "fake-bearer-next" }, seen)).toBe(true);
+    const next = store.list()[0].generation;
+    expect(next).not.toBe(seen);
+    // A second writer still holds the old generation, so its write loses.
+    expect(store.saveIfGeneration({ ...link, token: "fake-bearer-late" }, seen)).toBe(false);
+    expect(store.list()[0]).toMatchObject({ token: "fake-bearer-next", generation: next });
+  });
+
+  it("removes a link only while its generation matches", () => {
+    const store = createFileRemoteGatewayStore(file);
+    store.save(link);
+    const seen = store.list()[0].generation;
+    expect(store.removeIfGeneration("ams", "another-generation")).toBe(false);
+    expect(store.list()).toHaveLength(1);
+    expect(store.removeIfGeneration("ams", seen)).toBe(true);
+    expect(store.list()).toEqual([]);
+    expect(store.removeIfGeneration("ams", seen)).toBe(false);
+  });
+
+  it("keeps the managed facts of a link in the 0600 file", async () => {
+    const store = createFileRemoteGatewayStore(file);
+    const managed = {
+      linkId: "link-1",
+      account: { email: "user@example.test", name: null },
+      deviceLabel: "Laptop",
+      expiresAt: "2026-04-02T00:00:00.000Z",
+      linkedAt: "2026-01-02T00:00:00.000Z",
+    };
+    expect(store.saveIfGeneration({ ...link, managed }, null)).toBe(true);
+    expect(store.list()[0].managed).toEqual(managed);
+    expect((await fs.stat(file)).mode & 0o777).toBe(0o600);
+  });
+});

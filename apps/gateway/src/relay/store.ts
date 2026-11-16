@@ -3,10 +3,22 @@ import fs from "node:fs";
 import path from "node:path";
 import { resolveHomeDir } from "@yoplai/shared";
 
+/** Facts about a link that the browser sign-in made. A link with no `managed` field is a manual link or an open link. */
+export type ManagedLink = {
+  /** The stable link ID of the remote. A re-link keeps it. */
+  linkId: string;
+  account: { email: string | null; name: string | null };
+  deviceLabel: string;
+  /** When the key expires, as an ISO time, or null when the remote named no expiry. */
+  expiresAt: string | null;
+  linkedAt: string;
+};
+
 export type RemoteGateway = {
   name: string;
   url: string;
   token?: string;
+  managed?: ManagedLink;
   /**
    * Random value that the store sets on each new link. A link that another
    * process removes and creates again with equal values gets a new generation.
@@ -20,6 +32,13 @@ export interface RemoteGatewayStore {
   list(): RemoteGateway[];
   save(gateway: RemoteGateway): void;
   remove(name: string): boolean;
+  /**
+   * Saves a link only when the stored link still has the generation that the caller saw. `null` means that no link of
+   * this name may exist. Returns false and writes nothing on a mismatch. A saved link always gets a new generation.
+   */
+  saveIfGeneration(gateway: RemoteGateway, expected: string | null): boolean;
+  /** Removes a link only when it still has this generation. */
+  removeIfGeneration(name: string, expected: string | undefined): boolean;
 }
 
 export const REMOTE_GATEWAYS_FILE = "remote-gateways.json";
@@ -60,6 +79,20 @@ export function createFileRemoteGatewayStore(
       const remaining = gateways.filter((item) => item.name !== name);
       if (remaining.length === gateways.length) return false;
       write(remaining);
+      return true;
+    },
+    saveIfGeneration(gateway, expected) {
+      const gateways = list();
+      const existing = gateways.find((item) => item.name === gateway.name);
+      if (expected === null ? existing !== undefined : existing?.generation !== expected) return false;
+      write([...gateways.filter((item) => item.name !== gateway.name), { ...gateway, generation: randomUUID() }]);
+      return true;
+    },
+    removeIfGeneration(name, expected) {
+      const gateways = list();
+      const existing = gateways.find((item) => item.name === name);
+      if (!existing || existing.generation !== expected) return false;
+      write(gateways.filter((item) => item.name !== name));
       return true;
     },
   };
