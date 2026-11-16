@@ -287,11 +287,18 @@ describe("core OAuth callback past the outer authentication gate (real socket)",
       `/api/oauth/%66ixture/callback`, `/api/oauth/fix%74ure/callback`, `/api/oauth/%46ixture/callback`, `/api/oauth/%66%69%78%74%75%72%65/callback`,
       `/api/oauth/fixture/%63allback`, `/api/oauth/fixture/call%62ack`, `/api/oauth/fixture/%43allback`, `/api/oauth/fixture/%63%61%6c%6c%62%61%63%6b`,
       `/api/%6Fauth/fixture/callback`, `/%61pi/oauth/fixture/callback`, `/api/oauth%2Ffixture/callback`, `/api/oauth/fixture/callback%2F`,
+      // Dot segments, double slashes, and backslashes. The adapter normalizes some of them before Hono sees the request.
+      `/api/oauth/fixture/%2e/callback`, `/api/oauth/fixture/%2E/callback`, `/api/oauth/fixture/%2e%2e/fixture/callback`, `/api/oauth/fixture/%2E%2E/fixture/callback`,
+      `/api/oauth/fixture/%2e%2E/fixture/callback`, `/api/oauth/fixture/%2e./fixture/callback`, `/api/oauth/fixture/./callback`, `/api/oauth/fixture/../fixture/callback`,
+      `/api/oauth/fixture/x/%2e%2e/callback`, `/api/oauth//fixture/callback`, `/api//oauth/fixture/callback`,
+      `/api/oauth/fixture\\callback`, `/api\\oauth/fixture/callback`, `/api/oauth/fixture/callback\\`,
     ];
     for (const alias of aliases) {
       const response = await raw("GET", `${alias}${query}`);
       expect({ alias, status: response.status }).toEqual({ alias, status: 401 });
     }
+    // A leading double slash is outside the `/api/*` mount. It reaches no gateway route, so it is 404 and not an exception.
+    expect((await raw("GET", `//api/oauth/fixture/callback${query}`)).status).toBe(404);
     expect(exchanges).toBe(0);
     // No state was consumed: the exact, unencoded request still completes.
     expect((await callback(url)).status).toBe(200);
@@ -299,7 +306,7 @@ describe("core OAuth callback past the outer authentication gate (real socket)",
   });
 
   it("refuses an encoded alias of the MCP callback path with no credentials, and keeps the exact path through the gate", async () => {
-    for (const alias of ["/api/mcp/oauth/%63allback", "/api/mcp/oauth/call%62ack", "/api/mcp/oauth/%43allback", "/api/mcp/%6Fauth/callback", "/api/%6Dcp/oauth/callback", "/%61pi/mcp/oauth/callback"]) {
+    for (const alias of ["/api/mcp/oauth/%63allback", "/api/mcp/oauth/call%62ack", "/api/mcp/oauth/%43allback", "/api/mcp/%6Fauth/callback", "/api/%6Dcp/oauth/callback", "/%61pi/mcp/oauth/callback", "/api/mcp/oauth/%2e/callback", "/api/mcp/oauth/%2E/callback", "/api/mcp/oauth/%2e%2e/oauth/callback", "/api/mcp/oauth/%2e%2E/oauth/callback", "/api/mcp/oauth/./callback", "/api/mcp//oauth/callback", "/api/mcp/oauth\\callback"]) {
       expect({ alias, status: (await raw("GET", `${alias}?state=x&code=y`)).status }).toEqual({ alias, status: 401 });
     }
     expect((await raw("GET", "/api/mcp/oauth/callback?state=x&code=y")).status).toBe(404);

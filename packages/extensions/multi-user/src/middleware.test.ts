@@ -49,16 +49,19 @@ describe("multi-user middleware", () => {
     app.use("/api/*", createAuthMiddleware());
     app.all("/api/mcp/*", (c) => c.json({ ok: true }));
 
+    const send = (target: string, init: RequestInit = {}) => app.request(target, init, { incoming: { url: target } });
     const callback = "/api/mcp/oauth/callback";
-    expect((await app.request(`${callback}?code=c&state=s`)).status).toBe(200);
-    for (const alias of ["/api/mcp/oauth/%63allback", "/api/mcp/%6Fauth/callback", "/api/%6Dcp/oauth/callback"]) {
-      expect({ alias, status: (await app.request(`${alias}?code=c&state=s`)).status }).toEqual({ alias, status: 401 });
+    expect((await send(`${callback}?code=c&state=s`)).status).toBe(200);
+    // Without the binding, the exception fails closed.
+    expect((await app.request(`${callback}?code=c&state=s`)).status).toBe(401);
+    for (const alias of ["/api/mcp/oauth/%63allback", "/api/mcp/%6Fauth/callback", "/api/%6Dcp/oauth/callback", "/api/mcp/oauth/%2e/callback", "/api/mcp/oauth/%2E/callback", "/api/mcp/oauth/%2e%2e/oauth/callback", "/api/mcp//oauth/callback", "/api/mcp/oauth\\callback"]) {
+      expect({ alias, status: (await send(`${alias}?code=c&state=s`)).status }).toEqual({ alias, status: 401 });
     }
     for (const method of ["POST", "PUT", "PATCH", "DELETE", "HEAD"]) {
-      expect((await app.request(callback, { method })).status).toBe(401);
+      expect((await send(callback, { method })).status).toBe(401);
     }
     for (const url of [`${callback}/`, `${callback}/extra`, `${callback}.json`, "/api/mcp/oauth/Callback", "/api/mcp/oauth/status", "/api/mcp/oauth/authorize", "/api/mcp/servers", "/api/mcp/catalog", "/api/mcp/servers/callback"]) {
-      expect((await app.request(url)).status).toBe(401);
+      expect((await send(url)).status).toBe(401);
     }
   });
 
@@ -72,17 +75,22 @@ describe("multi-user middleware", () => {
       const app = new Hono();
       app.use("/api/*", createAuthMiddleware());
       app.all("/api/*", (c) => c.json({ ok: true }));
+      // The Node adapter binds the incoming message. Its `url` is the original request target.
+      const send = (target: string, init: RequestInit = {}) => app.request(target, init, { incoming: { url: target } });
       const callback = "/api/oauth/fixture/callback";
-      expect((await app.request(`${callback}?code=c&state=s`)).status).toBe(200);
+      expect((await send(`${callback}?code=c&state=s`)).status).toBe(200);
+      // Without the binding, the exception fails closed.
+      expect((await app.request(`${callback}?code=c&state=s`)).status).toBe(401);
+      expect((await app.request(`${callback}?code=c&state=s`, {}, { incoming: { url: `http://x.test${callback}` } })).status).toBe(401);
       // Hono decodes these paths to the exact callback path, and the raw pathname keeps the escapes.
-      for (const alias of ["/api/oauth/%66ixture/callback", "/api/oauth/fixture/%63allback", "/api/%6Fauth/fixture/callback"]) {
-        expect({ alias, status: (await app.request(`${alias}?code=c&state=s`)).status }).toEqual({ alias, status: 401 });
+      for (const alias of ["/api/oauth/%66ixture/callback", "/api/oauth/fixture/%63allback", "/api/%6Fauth/fixture/callback", "/api/oauth/fixture/%2e/callback", "/api/oauth/fixture/%2E/callback", "/api/oauth/fixture/%2e%2e/fixture/callback", "/api/oauth/fixture/%2e%2E/fixture/callback", "/api/oauth//fixture/callback", "/api//oauth/fixture/callback", "/api/oauth/fixture\\callback", "/api/oauth/fixture/./callback"]) {
+        expect({ alias, status: (await send(`${alias}?code=c&state=s`)).status }).toEqual({ alias, status: 401 });
       }
       for (const method of ["POST", "PUT", "PATCH", "DELETE", "HEAD"]) {
         expect({ method, status: (await app.request(callback, { method })).status }).toEqual({ method, status: 401 });
       }
       for (const url of [`${callback}/`, `${callback}/extra`, `${callback}.json`, "/api/oauth/Fixture/callback", "/api/oauth/fixture%2Fextra/callback", "/api/oauth/unknown/callback", "/api/oauth//callback", "/api/oauth/fixture/authorize", "/api/oauth/fixture/status", "/api/oauth/fixture/disconnect", "/api/oauth/callback", "/api/mcp/oauth/authorize"]) {
-        expect({ url, status: (await app.request(url)).status }).toEqual({ url, status: 401 });
+        expect({ url, status: (await send(url)).status }).toEqual({ url, status: 401 });
       }
     } finally {
       resetOAuthProviders();

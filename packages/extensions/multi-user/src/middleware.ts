@@ -234,11 +234,25 @@ export function forwardAuthContextToRequest(
 }
 
 /**
- * `path` is the path that Hono gives (it decodes most percent escapes, so `%63allback` reads as `callback`). `rawPath`
- * is the pathname of the request URL, with every escape kept. The two callback exceptions check `rawPath`, so an
- * encoded alias of a callback path needs credentials. Every other rule keeps its own `path` handling.
+ * The original request target of a Node request, up to the query, with no normalization and no decoding. The Node
+ * adapter binds the incoming message as `env.incoming`. Its `url` is the target as the client sent it. Hono decodes
+ * `c.req.path`, and the adapter has already run `new URL()` on `c.req.url`, which removes `%2e` segments, so neither
+ * shows the original target. Without the binding, or with a target that is not in origin form, the result is
+ * `undefined`, and the callback exceptions fail closed.
  */
-function shouldSkipAuth(path: string, method: string, rawPath: string): boolean {
+function originalRequestPath(c: Context): string | undefined {
+  const target = (c.env as { incoming?: { url?: unknown } } | undefined)?.incoming?.url;
+  if (typeof target !== "string" || !target.startsWith("/")) return undefined;
+  const query = target.indexOf("?");
+  return query === -1 ? target : target.slice(0, query);
+}
+
+/**
+ * `path` is the path that Hono gives. `rawPath` is the original request path (see `originalRequestPath`). The two
+ * callback exceptions need an exact match on `rawPath`, so an encoded alias, an encoded dot segment, a double slash, and
+ * a backslash need credentials. Every other rule keeps its own `path` handling.
+ */
+function shouldSkipAuth(path: string, method: string, rawPath: string | undefined): boolean {
   if (method === "GET" && path === "/api/mcp/oauth/client-metadata.json") return true;
   // The provider sends the browser here with no session. The callback holds only a one-use state. The state binds the
   // owner, scope, agent, server, and PKCE verifier from the authenticated start. The exact method and raw path only.
@@ -246,7 +260,7 @@ function shouldSkipAuth(path: string, method: string, rawPath: string): boolean 
   // The browser returns from a core provider with no session. The one-use state of the authenticated start binds the
   // owner, scope, agent, provider, redirect URI, and PKCE verifier. Only GET and the exact callback path of a provider that
   // the registry holds pass. The raw path segment is the registry ID. Suffixes, aliases, and unknown providers need auth.
-  const coreCallback = method === "GET" ? /^\/api\/oauth\/([^/]+)\/callback$/.exec(rawPath) : null;
+  const coreCallback = method === "GET" && rawPath !== undefined ? /^\/api\/oauth\/([^/]+)\/callback$/.exec(rawPath) : null;
   if (coreCallback && getOAuthProvider(coreCallback[1])) return true;
   if (method === "POST" && path === "/api/skills/import") return true;
   if (method === "GET" && /^\/api\/slack\/(?:pair|connect)\/[A-Za-z0-9_-]{43}$/.test(path)) return true;
@@ -380,7 +394,7 @@ export const createAuthMiddleware = (): MiddlewareHandler => {
 
     if (bearer) {
       const result = await verifyBearer(bearer);
-      const skip = shouldSkipAuth(c.req.path, c.req.method, new URL(c.req.url).pathname);
+      const skip = shouldSkipAuth(c.req.path, c.req.method, originalRequestPath(c));
 
       if (!result || result.kind === "invalid") {
         if (skip) {
@@ -408,7 +422,7 @@ export const createAuthMiddleware = (): MiddlewareHandler => {
       headers: c.req.raw.headers,
     });
 
-    if (shouldSkipAuth(c.req.path, c.req.method, new URL(c.req.url).pathname)) {
+    if (shouldSkipAuth(c.req.path, c.req.method, originalRequestPath(c))) {
       // Public path — attach session if present but never reject
       if (session) {
         const authContext = normalizeAuthContext(session);
