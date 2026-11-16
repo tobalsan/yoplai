@@ -32,6 +32,7 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Fixed
 
+- A multi-user gateway now lets the exact `GET /api/oauth/<provider>/callback` of a registered core OAuth provider through the authentication gate, so a Google or other core provider sign-in finishes when the browser returns with no session cookie. The one-use state, PKCE, provider, owner scope, and start-time policy are unchanged. Unknown providers, other methods and paths, and every other route still need credentials.
 - The remote import prompt now accepts a configured HTTPS address on a private network, an internal name, or a tailnet name. It needs a complete HTTPS address with the exact root path `/api/skills/import`, and it refuses credentials, a query, a fragment, loopback, and unspecified addresses. The importing client must reach that address.
 - A multi-user gateway now lets the exact `GET /api/mcp/oauth/callback` through the authentication gate, so an MCP sign-in finishes when the provider returns with no session cookie. The state, PKCE, owner binding, and scope checks are unchanged. Other methods and paths still need credentials, and the existing client-metadata GET and CORS preflight answers stay as they were.
 - The Configure page of an extension that the gateway of the agent does not load now shows that it is not available, with a Retry button when the capabilities cannot be read, and no longer links back to itself.
