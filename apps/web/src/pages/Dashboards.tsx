@@ -1,4 +1,4 @@
-import { For, Show, createEffect, createMemo, createResource, createSignal, on } from "solid-js";
+import { For, Show, createComputed, createEffect, createMemo, createResource, createSignal, on, onCleanup } from "solid-js";
 import { useSearchParams } from "@solidjs/router";
 import { fetchAgents } from "../api/agents";
 import { gatewayKey } from "../api/gateway";
@@ -36,6 +36,11 @@ export function Dashboards() {
   const [pinError, setPinError] = createSignal<string>();
   const [pendingPins, setPendingPins] = createSignal(new Set<string>());
   const [pinOverrides, setPinOverrides] = createSignal(new Map<string, boolean>());
+  // Each visit to a gateway has its own number. Returning to the same gateway is a new visit, so an answer
+  // that started in an older visit changes nothing. The page closing ends the visit too.
+  let visit = 0;
+  createComputed(() => { void gateway(); visit++; });
+  onCleanup(() => { visit++; });
   // A gateway change drops pins in flight, open dialogs, and messages of the old gateway.
   createEffect(on(gateway, () => {
     setManaging(undefined);
@@ -59,8 +64,9 @@ export function Dashboards() {
     if (pendingPins().has(dashboard.id)) return;
     const previous = !!dashboard.pinned;
     const host = gateway();
+    const mine = visit;
     // An answer that arrives after a gateway change must not touch the new gateway.
-    const same = () => gateway() === host;
+    const same = () => visit === mine && gateway() === host;
     setPinError(undefined);
     setPendingPins((ids) => new Set([...ids, dashboard.id]));
     updatePinned(dashboard.id, !previous);
@@ -126,8 +132,9 @@ export function Dashboards() {
       <Show when={managing()}>{(dashboard) => <DashboardAccessDialog dashboard={dashboard()} gateway={gateway()} onClose={() => setManaging(undefined)} onSaved={async () => { await refetch(); }} />}</Show>
       <Show when={deleting()}>{(dashboard) => <ConfirmDialog title="Delete dashboard" description={`Delete ${dashboard().title} and its published HTML and history? Shared databases are retained.`} confirmLabel="Delete" danger error={deleteError()} onCancel={() => setDeleting(undefined)} onConfirm={async () => {
         const host = gateway();
+        const mine = visit;
         // An answer after a gateway change must not refresh, close, or mark the dialog of the new gateway.
-        const same = () => gateway() === host;
+        const same = () => visit === mine && gateway() === host;
         try { await deleteDashboard(dashboard().id, host); if (same()) { await refetch(); if (same()) setDeleting(undefined); } }
         catch (cause) { if (same()) setDeleteError(cause instanceof Error ? cause.message : "Unable to delete dashboard."); }
       }} />}</Show>

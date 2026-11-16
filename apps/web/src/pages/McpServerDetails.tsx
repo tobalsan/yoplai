@@ -119,6 +119,8 @@ export function McpServerDetails() {
     setError(undefined);
     setConfirmRemove(false);
   });
+  // The page ends all mutation authority when it closes: no navigation, error, or refresh follows.
+  onCleanup(() => { generation++; });
   /** The resolved target for one mutation, or nothing while the target is unknown. */
   const mutation = () => {
     const key = identity();

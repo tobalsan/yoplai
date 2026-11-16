@@ -1,5 +1,5 @@
 import { A, useParams } from "@solidjs/router";
-import { createResource, createSignal, For, onCleanup, Show } from "solid-js";
+import { createComputed, createResource, createSignal, For, onCleanup, Show } from "solid-js";
 import {
   fetchWebhooks,
   updateWebhook,
@@ -54,7 +54,13 @@ export default function WebhooksConfigPage() {
   const gateway = () => { const current = target(); return current.state === "ready" ? current.gateway : undefined; };
   const requester = useRequester(gateway);
   // The page names the gateway and the agent of each request. A late answer of another one changes nothing.
-  const sameScope = (key: string) => key === gatewayKey(gateway(), params.agentId);
+  // Each visit has its own number. Returning to the same gateway and agent is a new visit, so an answer
+  // that started in an older visit changes nothing. The page closing ends the visit too.
+  let visit = 0;
+  createComputed(() => { void gatewayKey(gateway(), params.agentId); visit++; });
+  onCleanup(() => { visit++; });
+  const scopeOf = (host: string | undefined, agentId: string) => `${visit}|${gatewayKey(host, agentId)}`;
+  const sameScope = (key: string) => key === scopeOf(gateway(), params.agentId);
   const [error, setError] = createSignal<string>();
   const [busy, setBusy] = createSignal<string[]>([]);
   // Optimistic on/off state while a toggle request is in flight.
@@ -67,10 +73,11 @@ export default function WebhooksConfigPage() {
       setError(undefined);
       setBusy([]);
       setPending({});
+      const startedIn = scopeOf(host, agentId);
       try {
         return await fetchWebhooks(agentId, host);
       } catch (cause) {
-        if (sameScope(gatewayKey(host, agentId)))
+        if (sameScope(startedIn))
           setLoadError(
             cause instanceof Error
               ? cause.message
@@ -98,7 +105,7 @@ export default function WebhooksConfigPage() {
       return;
     const agentId = params.agentId;
     const host = gateway();
-    const scopeKey = gatewayKey(host, agentId);
+    const scopeKey = scopeOf(host, agentId);
     setError(undefined);
     setBusy((current) => [...current, webhook.name]);
     try {
@@ -139,7 +146,7 @@ export default function WebhooksConfigPage() {
       return;
     const agentId = params.agentId;
     const host = gateway();
-    const scopeKey = gatewayKey(host, agentId);
+    const scopeKey = scopeOf(host, agentId);
     setError(undefined);
     setBusy((current) => [...current, webhook.name]);
     setPending((current) => ({ ...current, [webhook.name]: enabled }));

@@ -2,7 +2,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from "vitest";
 import { render } from "solid-js/web";
 import { Suspense, createRoot, type JSX } from "solid-js";
-import { MemoryRouter, Route, createMemoryHistory } from "@solidjs/router";
+import { MemoryRouter, Route, createMemoryHistory, useParams } from "@solidjs/router";
 import { createFakeGateways, createFakePopup, relayPrefix, type FakeAnswer } from "./remote-gateway.fixture";
 import { resetCapabilitiesForTests, setCapabilitiesForTests } from "./lib/capabilities";
 import { OAUTH_POLL_INTERVAL_MS } from "./lib/oauth-popup-flow";
@@ -57,13 +57,15 @@ function mount(path: string) {
     <MemoryRouter history={history} root={(props: { children?: JSX.Element }) => <Suspense>{props.children}</Suspense>}>
       <Route path="/agents/:agentId/edit" component={EditAgent} />
       <Route path="/dashboards" component={Dashboards} />
-      <Route path="/banner/:agentId" component={BannerPage} />
+      <Route path="/banner/:agentId/:gateway" component={BannerPage} />
+      <Route path="/review-away" component={() => <h1>Other page</h1>} />
     </MemoryRouter>
   ), container);
 }
 
 function BannerPage() {
-  return <ScheduleAlertsBanner agentId="assistant@east" gateway="east" />;
+  const params = useParams<{ agentId: string; gateway: string }>();
+  return <ScheduleAlertsBanner agentId={decodeURIComponent(params.agentId)} gateway={params.gateway === "local" ? undefined : params.gateway} />;
 }
 
 beforeEach(() => {
@@ -199,6 +201,164 @@ describe("Edit page of a remote agent", () => {
     }
     const addUrl = `${east}/api/mcp/servers?agent=${agent}`;
     const submit = () => container.querySelector<HTMLButtonElement>('button[type="submit"]');
+
+    const added = (name: string) => ({ json: { server: { name, type: "http", auth: "none", state: "connected", readOnly: false } } });
+    const listReads = () => gateways.log().filter((line) => line === `GET ${east}/api/mcp/servers?agent=${agent}&live=0`).length;
+    const queuePosts = (url: string) => {
+      const waiting: ((answer: FakeAnswer) => void)[] = [];
+      gateways.on("POST", url, () => new Promise<FakeAnswer>((resolve) => { waiting.push(resolve); }));
+      return waiting;
+    };
+    const addAgain = async () => {
+      const input = container.querySelector<HTMLInputElement>('input[type="url"]')!;
+      input.value = "https://docs.test/mcp-two";
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+      button("Add and connect")!.click();
+    };
+    const localEdit = () => {
+      gateways.on("GET", "/api/agents/assistant/extensions", { json: { extensions: [entry({ displayName: "Local Exa" })] } });
+      gateways.on("GET", /^\/api\/mcp\/servers\?agent=assistant/, { json: { servers: [], canConfigureTeam: true } });
+      gateways.on("GET", "/api/top-extensions", { json: { extensions: [], mcp: [], system: { extensions: [], mcp: [] } } });
+    };
+
+    it("frees the local add after a success without a redirect, so a second add works", async () => {
+      localEdit();
+      gateways.on("POST", "/api/mcp/servers?agent=assistant", added("docs"));
+      mount("/agents/assistant/edit");
+      await vi.waitFor(() => expect(button("Add custom extension")?.disabled).toBe(false));
+      button("Add custom extension")!.click();
+      await tick();
+      const input = container.querySelector<HTMLInputElement>('input[type="url"]')!;
+      input.value = "https://docs.test/mcp";
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+      button("Add and connect")!.click();
+      await vi.waitFor(() => expect(text()).toContain("Added Docs."));
+      button("Add custom extension")!.click();
+      await tick();
+      expect(submit()?.disabled).toBe(false);
+      await addAgain();
+      await vi.waitFor(() => expect(gateways.requests.filter((request) => request.method === "POST").length).toBe(2));
+    });
+
+    it("frees the remote add after a success that needs no sign-in, so a second add works", async () => {
+      gateways.on("POST", addUrl, added("docs"));
+      await openAdd();
+      button("Add and connect")!.click();
+      await vi.waitFor(() => expect(text()).toContain("Added Docs."));
+      button("Add custom extension")!.click();
+      await tick();
+      expect(submit()?.disabled).toBe(false);
+    });
+
+    it("ends the add on Cancel, reads the list, and ignores the late answer", async () => {
+      const posts = queuePosts(addUrl);
+      await openAdd();
+      button("Add and connect")!.click();
+      await vi.waitFor(() => expect(posts.length).toBe(1));
+      const before = listReads();
+      button("Cancel")!.click();
+      // The submitted add may still run on the server, so the list is read before another add.
+      await vi.waitFor(() => expect(listReads()).toBeGreaterThan(before));
+      await vi.waitFor(() => expect(submit()?.disabled).toBe(false));
+      expect(popup.closed).toBe(true);
+      posts[0](added("late"));
+      await tick();
+      await tick();
+      expect(text()).not.toContain("Added Late.");
+      expect(container.querySelector('[role="dialog"]')).not.toBeNull();
+      expect(submit()?.disabled).toBe(false);
+    });
+
+    it("keeps another add off when the list read after Cancel fails, and frees it after a working read", async () => {
+      const posts = queuePosts(addUrl);
+      await openAdd();
+      button("Add and connect")!.click();
+      await vi.waitFor(() => expect(posts.length).toBe(1));
+      gateways.on("GET", `${east}/api/mcp/servers?agent=${agent}&live=0`, { status: 502, json: { error: "gateway_offline" } });
+      button("Cancel")!.click();
+      await vi.waitFor(() => expect(text()).toContain("The server list could not be read"));
+      expect(submit()?.disabled).toBe(true);
+      gateways.on("GET", `${east}/api/mcp/servers?agent=${agent}&live=0`, { json: { canConfigureTeam: true, servers: [] } });
+      button("Read list")!.click();
+      await vi.waitFor(() => expect(submit()?.disabled).toBe(false));
+    });
+
+    it("gives a new attempt on the same target its own record, so the old late answer changes nothing", async () => {
+      const posts = queuePosts(addUrl);
+      await openAdd();
+      button("Add and connect")!.click();
+      await vi.waitFor(() => expect(posts.length).toBe(1));
+      button("Cancel")!.click();
+      await vi.waitFor(() => expect(submit()?.disabled).toBe(false));
+      popup.closed = false;
+      await addAgain();
+      await vi.waitFor(() => expect(posts.length).toBe(2));
+      posts[0](added("late"));
+      await tick();
+      await tick();
+      expect(text()).not.toContain("Added Late.");
+      expect(container.querySelector('[role="dialog"]')).not.toBeNull();
+      expect(container.querySelector<HTMLButtonElement>('button[type="submit"]')?.disabled).toBe(true);
+      posts[1](added("docs"));
+      await vi.waitFor(() => expect(text()).toContain("Added Docs."));
+    });
+
+    it("ignores the answer of an earlier visit when the page returns to the same agent", async () => {
+      const posts = queuePosts(addUrl);
+      localEdit();
+      await openAdd();
+      button("Add and connect")!.click();
+      await vi.waitFor(() => expect(posts.length).toBe(1));
+      history.set({ value: "/agents/assistant/edit" });
+      await vi.waitFor(() => expect(text()).toContain("Local Exa"));
+      history.set({ value: `/agents/${agent}/edit` });
+      await vi.waitFor(() => expect(button("Add custom extension")?.disabled).toBe(false));
+      posts[0](added("late"));
+      await tick();
+      await tick();
+      expect(text()).not.toContain("Added Late.");
+      expect(container.querySelector('[role="dialog"]')).toBeNull();
+      expect(popup.location.href).toBe("");
+    });
+
+    it("starts nothing after the page closes during a remote add", async () => {
+      const posts = queuePosts(addUrl);
+      await openAdd();
+      button("Add and connect")!.click();
+      await vi.waitFor(() => expect(posts.length).toBe(1));
+      history.set({ value: "/review-away" });
+      await vi.waitFor(() => expect(text()).toContain("Other page"));
+      const before = gateways.requests.length;
+      posts[0]({ json: { server: { name: "late", type: "http", auth: "oauth", state: "disconnected", readOnly: false }, authorizationUrl: PROVIDER_URL } });
+      await tick();
+      await tick();
+      expect(gateways.requests.length).toBe(before);
+      expect(popup.location.href).not.toBe(PROVIDER_URL);
+    });
+
+    it("starts no redirect and no refresh after the page closes during a local add", async () => {
+      localEdit();
+      const posts = queuePosts("/api/mcp/servers?agent=assistant");
+      const assign = vi.fn();
+      vi.stubGlobal("location", { href: "http://localhost/agents/assistant/edit", pathname: "/agents/assistant/edit", search: "", hash: "", assign });
+      mount("/agents/assistant/edit");
+      await vi.waitFor(() => expect(button("Add custom extension")?.disabled).toBe(false));
+      button("Add custom extension")!.click();
+      await tick();
+      const input = container.querySelector<HTMLInputElement>('input[type="url"]')!;
+      input.value = "https://docs.test/mcp";
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+      button("Add and connect")!.click();
+      await vi.waitFor(() => expect(posts.length).toBe(1));
+      history.set({ value: "/review-away" });
+      await vi.waitFor(() => expect(text()).toContain("Other page"));
+      const before = gateways.requests.length;
+      posts[0]({ json: { server: { name: "late", type: "http", auth: "oauth", state: "disconnected", readOnly: false }, authorizationUrl: PROVIDER_URL } });
+      await tick();
+      await tick();
+      expect(assign).not.toHaveBeenCalled();
+      expect(gateways.requests.length).toBe(before);
+    });
 
     it("opens the window before the add, uses the grant from the add result, and starts no second grant", async () => {
       gateways.on("POST", addUrl, () => ({ json: { server: { name: "docs", type: "http", auth: "oauth", state: "disconnected", readOnly: false }, authorizationUrl: PROVIDER_URL } }));
@@ -381,8 +541,38 @@ describe("Edit page of a remote agent", () => {
       fail!();
       await tick();
       await tick();
-      expect(text()).not.toContain("Failed to disconnect connection");
+      expect(text()).not.toContain("Failed to disconnect personal connection");
       expect(container.querySelector<HTMLButtonElement>('button[aria-label="Disconnect your personal Notion connection"]')?.disabled).toBe(false);
+    });
+
+    it("ignores the old disconnect error after the page returns to the same agent", async () => {
+      let fail: (() => void) | undefined;
+      gateways.on("GET", `${east}/api/agents/${agent}/connections`, { json: { connections: [{ kind: "oauth", id: "google", name: "Google", personal: true, team: false }] } });
+      gateways.on("GET", `${east}/api/mcp/oauth/status?agent=${agent}&scope=team`, { json: { servers: [] } });
+      gateways.on("GET", `${east}/api/mcp/oauth/status?agent=${agent}&scope=personal`, { json: { servers: [] } });
+      gateways.on("DELETE", `${east}/api/agents/${agent}/connections/oauth/google`, () => new Promise((resolve) => { fail = () => resolve({ status: 403, json: { error: "forbidden" } }); }));
+      gateways.on("GET", "/api/agents/assistant/connections", { json: { connections: [] } });
+      gateways.on("GET", "/api/mcp/oauth/status?agent=assistant&scope=team", { json: { servers: [] } });
+      gateways.on("GET", /^\/api\/mcp\/servers\?agent=assistant/, { json: { servers: [], canConfigureTeam: true } });
+      gateways.on("GET", "/api/agents/assistant/extensions", { json: { extensions: [] } });
+      gateways.on("GET", "/api/top-extensions", { json: { extensions: [], mcp: [], system: { extensions: [], mcp: [] } } });
+      mount(`/agents/${agent}/edit`);
+      await vi.waitFor(() => expect(button("My connections")).toBeDefined());
+      button("My connections")!.click();
+      await vi.waitFor(() => expect(text()).toContain("Google"));
+      container.querySelector<HTMLButtonElement>('button[aria-label="Disconnect your personal Google connection"]')!.click();
+      await vi.waitFor(() => expect(fail).toBeDefined());
+      history.set({ value: "/agents/assistant/edit" });
+      await vi.waitFor(() => expect(gateways.log()).toContain("GET /api/agents/assistant/connections"));
+      await vi.waitFor(() => expect(text()).toContain("No connections are configured"));
+      history.set({ value: `/agents/${agent}/edit` });
+      await vi.waitFor(() => expect(text()).toContain("Google"));
+      fail!();
+      await tick();
+      await tick();
+      // The API text of a failed disconnect is "Failed to disconnect personal connection".
+      expect(text()).not.toContain("Failed to disconnect personal connection");
+      expect(container.querySelector<HTMLButtonElement>('button[aria-label="Disconnect your personal Google connection"]')?.disabled).toBe(false);
     });
 
     it("lists and disconnects connections of the remote agent through the gateway, with the remote requester", async () => {
@@ -595,7 +785,30 @@ describe("Dashboards page", () => {
     await tick();
     await tick();
     // The old answer neither shows its error in the new dialog nor closes it.
-    expect(document.body.textContent).not.toContain("Unable to delete dashboard.");
+    expect(document.body.textContent).not.toContain("Dashboard request failed (403)");
+    expect(document.body.textContent).toContain("Delete dashboard");
+  });
+
+  it("ignores the old delete error after the page returns to the same gateway", async () => {
+    let fail: (() => void) | undefined;
+    gateways.on("DELETE", `${east}/api/dashboards/shared-id`, () => new Promise((resolve) => { fail = () => resolve({ status: 403, json: { error: "forbidden" } }); }));
+    mount("/dashboards?gateway=east");
+    await vi.waitFor(() => expect(text()).toContain("East board"));
+    button("Delete")!.click();
+    await tick();
+    Array.from(document.querySelectorAll<HTMLButtonElement>("button")).filter((item) => item.textContent?.trim() === "Delete").pop()!.click();
+    await vi.waitFor(() => expect(fail).toBeDefined());
+    history.set({ value: "/dashboards" });
+    await vi.waitFor(() => expect(text()).toContain("Local board"));
+    history.set({ value: "/dashboards?gateway=east" });
+    await vi.waitFor(() => expect(text()).toContain("East board"));
+    button("Delete")!.click();
+    await tick();
+    fail!();
+    await tick();
+    await tick();
+    // The API text of a failed delete is "Dashboard request failed (403)". The new visit shows none of it.
+    expect(document.body.textContent).not.toContain("Dashboard request failed (403)");
     expect(document.body.textContent).toContain("Delete dashboard");
   });
 
@@ -614,7 +827,7 @@ describe("schedule alerts of a remote agent", () => {
   it("shows the alerts of its own gateway, links Reconnect to the qualified agent, and resumes through the gateway", async () => {
     gateways.on("GET", `${east}/api/schedule-alerts`, { json: [alert] });
     gateways.on("PATCH", `${east}/api/schedules/${agent}/job-1`, { json: {} });
-    mount("/banner/assistant%40east");
+    mount("/banner/assistant%40east/east");
     createRoot(() => { void refreshScheduleAlerts("east"); });
     await vi.waitFor(() => expect(text()).toContain("Digest is paused"));
     expect(link("Reconnect")?.getAttribute("href")).toBe(`/agents/${agent}/extensions/google`);
@@ -623,10 +836,32 @@ describe("schedule alerts of a remote agent", () => {
     expect(gateways.localConfigurationRequests()).toEqual([]);
   });
 
+  it("ignores the old resume error after the banner returns to the same agent", async () => {
+    gateways.on("GET", `${east}/api/schedule-alerts`, { json: [alert] });
+    let fail: (() => void) | undefined;
+    gateways.on("PATCH", `${east}/api/schedules/${agent}/job-1`, () => new Promise((resolve) => { fail = () => resolve({ status: 500, json: {} }); }));
+    gateways.on("GET", "/api/schedule-alerts", { json: [] });
+    mount("/banner/assistant%40east/east");
+    createRoot(() => { void refreshScheduleAlerts("east"); });
+    await vi.waitFor(() => expect(button("Resume")).toBeDefined());
+    button("Resume")!.click();
+    await vi.waitFor(() => expect(fail).toBeDefined());
+    history.set({ value: "/banner/other/local" });
+    await tick();
+    history.set({ value: "/banner/assistant%40east/east" });
+    await vi.waitFor(() => expect(button("Resume")).toBeDefined());
+    fail!();
+    await tick();
+    await tick();
+    // The API text is "Failed to update scheduled job". The new visit shows none of it, and Resume stays on.
+    expect(text()).not.toContain("Failed to update scheduled job");
+    expect(button("Resume")?.disabled).toBe(false);
+  });
+
   it("does not show an alert of the local gateway for the remote agent", async () => {
     gateways.on("GET", "/api/schedule-alerts", { json: [{ ...alert, agentId: "assistant@east" }] });
     gateways.on("GET", `${east}/api/schedule-alerts`, { json: [] });
-    mount("/banner/assistant%40east");
+    mount("/banner/assistant%40east/east");
     createRoot(() => { void refreshScheduleAlerts(); void refreshScheduleAlerts("east"); });
     await tick();
     expect(text()).not.toContain("Digest is paused");

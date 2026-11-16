@@ -75,7 +75,8 @@ export function OAuthConnectCard(props: {
   if (oauthResult) props.onScopeChange?.(oauthResult.scope);
   let statusRequest = 0;
   // A status answer that arrives after the card is gone must not call back into the page.
-  onCleanup(() => { statusRequest++; });
+  let disposed = false;
+  onCleanup(() => { statusRequest++; disposed = true; });
 
   const refreshStatus = async () => {
     if (!props.agentId) return;
@@ -195,7 +196,7 @@ export function OAuthConnectCard(props: {
   const disconnect = async () => {
     // An answer for another agent, gateway, or provider changes nothing here.
     const { agentId, provider, gateway } = props;
-    const same = () => props.agentId === agentId && props.provider === provider && props.gateway === gateway;
+    const same = () => !disposed && props.agentId === agentId && props.provider === provider && props.gateway === gateway;
     try {
       await disconnectOAuth(agentId, provider, scope(), gateway);
       if (same()) await refreshStatus();

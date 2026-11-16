@@ -1,4 +1,4 @@
-import { createComputed, createMemo, createResource, createSignal, Show } from "solid-js";
+import { createComputed, createMemo, createResource, createSignal, onCleanup, Show } from "solid-js";
 import { A, useParams } from "@solidjs/router";
 import {
   fetchAgentExtensions,
@@ -34,6 +34,8 @@ export function ExtensionDetails(props: { extensionId?: string }) {
   // The identity of this page: the gateway and the agent. The catalog, the form drafts, and every
   // mutation belong to one identity. A new identity drops them all, so no old permission carries over.
   const targetKey = createMemo(() => { const current = target(); return current.state === "ready" ? gatewayKey(current.gateway, current.agentId) : undefined; });
+  // The form, its drafts, and its actions belong to one extension of one agent. The catalog stays agent-wide.
+  const formKey = createMemo(() => { const key = targetKey(); return key === undefined ? undefined : JSON.stringify([key, params.extensionId]); });
   const [extensions, { mutate }] = createResource(
     () => { const current = target(); return current.state === "ready" ? current : null; },
     async (current) => ({ key: gatewayKey(current.gateway, current.agentId), list: await fetchAgentExtensions(current.agentId, current.gateway) })
@@ -43,14 +45,15 @@ export function ExtensionDetails(props: { extensionId?: string }) {
   const [scope, setScope] = createSignal<CredentialScope>("personal");
   let settingsActions: ConnectSettingsActions | undefined;
   const [toggleError, setToggleError] = createSignal<string | null>(null);
-  // Each identity change starts a new generation. A late result checks both before it changes the page.
+  // Each change of the form key starts a new generation. A late result checks both before it changes the page.
   let generation = 0;
   createComputed(() => {
-    void targetKey();
+    void formKey();
     generation++;
     setBusy(false);
     setToggleError(null);
   });
+  onCleanup(() => { generation++; });
   // Only the catalog of the resolved target counts. A failed lookup leaves no catalog, so no mutation control.
   const catalog = createMemo(() => {
     if (extensions.error) return undefined;
@@ -60,17 +63,18 @@ export function ExtensionDetails(props: { extensionId?: string }) {
   const entry = createMemo(() => catalog()?.find((candidate) => candidate.id === params.extensionId));
 
   /** A form of an older identity can finish after the page moved on. Its catalog is dropped. */
-  const saved = (key: string, mine: number, list: ExtensionCatalogEntry[]) => {
-    if (generation === mine && targetKey() === key) mutate({ key, list });
+  const saved = (catalogKey: string, form: string, mine: number, list: ExtensionCatalogEntry[]) => {
+    if (generation === mine && formKey() === form) mutate({ key: catalogKey, list });
   };
 
   /** Runs one mutation for the exact target that is shown now. Results of an older target change nothing. */
   const mutateExtension = async (ext: ExtensionCatalogEntry, patch: Parameters<typeof patchAgentExtension>[2], failure: string) => {
     const key = targetKey();
+    const form = formKey();
     const current = target();
-    if (!key || current.state !== "ready" || entry()?.id !== ext.id) return;
+    if (!key || !form || current.state !== "ready" || entry()?.id !== ext.id) return;
     const mine = generation;
-    const live = () => generation === mine && targetKey() === key;
+    const live = () => generation === mine && formKey() === form;
     setBusy(true);
     setToggleError(null);
     try {
@@ -132,10 +136,13 @@ export function ExtensionDetails(props: { extensionId?: string }) {
           </div>
         </Show>
 
-        <Show when={targetKey()} keyed>
-          {(key) => {
+        <Show when={formKey()} keyed>
+          {(form) => {
           // A new identity remounts everything below: form drafts, saved permissions, and the sign-in card.
           const mine = generation;
+          const catalogKey = targetKey()!;
+          // The registered actions belong to this form. They end with it.
+          onCleanup(() => { settingsActions = undefined; });
           return (
           <Show when={entry()}>
           {(ext) => (
@@ -183,7 +190,7 @@ export function ExtensionDetails(props: { extensionId?: string }) {
                     label={ext().displayName}
                     onStatus={(connected) => {
                       // A connection in either scope turns the extension on.
-                      if (generation !== mine || targetKey() !== key) return;
+                      if (generation !== mine || formKey() !== form) return;
                       if (connected && !ext().enabled && !busy() && !ext().managedAtRoot && ext().configurable !== false) void enableAfterConnect(ext());
                     }}
                   >
@@ -193,7 +200,7 @@ export function ExtensionDetails(props: { extensionId?: string }) {
                         agentId={params.agentId}
                         gateway={gateway()}
                         scope={scope()}
-                        onSaved={(list) => saved(key, mine, list)}
+                        onSaved={(list) => saved(catalogKey, form, mine, list)}
                         registerConnectActions={(actions) => { settingsActions = actions; }}
                       />
                     </Show>
@@ -206,7 +213,7 @@ export function ExtensionDetails(props: { extensionId?: string }) {
                   entry={ext()}
                   agentId={params.agentId}
                   gateway={gateway()}
-                  onSaved={(list) => saved(key, mine, list)}
+                  onSaved={(list) => saved(catalogKey, form, mine, list)}
                   registerConnectActions={(actions) => { settingsActions = actions; }}
                 />
               </Show>

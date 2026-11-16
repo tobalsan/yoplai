@@ -146,9 +146,15 @@ export function ExtensionConfigForm(props: {
     setError(null);
     setSaved(false);
     try {
-      const updated = personal
-        ? (await disconnectAgentConnection(params.agentId, "extension", params.extensionId, gateway), await fetchAgentExtensions(params.agentId, gateway))
-        : await removeTeamExtensionCredentials(params.agentId, params.extensionId, gateway);
+      let updated: ExtensionCatalogEntry[];
+      if (personal) {
+        await disconnectAgentConnection(params.agentId, "extension", params.extensionId, gateway);
+        // A form that is gone starts no catalog read.
+        if (disposed) return;
+        updated = await fetchAgentExtensions(params.agentId, gateway);
+      } else {
+        updated = await removeTeamExtensionCredentials(params.agentId, params.extensionId, gateway);
+      }
       if (disposed) return;
       const refreshed = updated.find((extension) => extension.id === params.extensionId);
       if (refreshed) setEntry(refreshed);

@@ -1,4 +1,4 @@
-import { createEffect, createSignal, For, Show } from "solid-js";
+import { createComputed, createEffect, createSignal, For, onCleanup, Show } from "solid-js";
 import {
   disconnectMcpConnection,
   disconnectAgentConnection,
@@ -27,6 +27,11 @@ export function AgentConnectionsPanel(props: {
   const [pending, setPending] = createSignal<string>();
   const requester = useRequester(() => props.gateway);
   let requestId = 0;
+  // Each visit has its own number. Returning to the same gateway, agent, and user is a new visit, so an answer
+  // that started in an older visit changes nothing. The panel closing ends the visit too.
+  let visit = 0;
+  createComputed(() => { void props.agentId; void props.gateway; void requester().user?.id; visit++; });
+  onCleanup(() => { visit++; requestId++; });
 
   const refresh = async (agentId: string, userId?: string) => {
     const gateway = props.gateway;
@@ -85,7 +90,8 @@ export function AgentConnectionsPanel(props: {
     const userId = requester().user?.id;
     const key = `${connection.kind}:${connection.id}`;
     // A late answer of an older gateway, agent, or user changes nothing.
-    const same = () => agentId === props.agentId && gateway === props.gateway && userId === requester().user?.id;
+    const mine = visit;
+    const same = () => visit === mine && agentId === props.agentId && gateway === props.gateway && userId === requester().user?.id;
     setPending(key);
     if (connection.kind === "mcp") setMcpError(undefined);
     else setError(undefined);

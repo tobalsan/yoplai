@@ -51,6 +51,7 @@ function mount(path: string) {
     <MemoryRouter history={history} root={(props) => <Suspense>{props.children}</Suspense>}>
       <Route path="/agents/:agentId/extensions/:extensionId" component={() => <ExtensionDetails />} />
       <Route path="/agents/:agentId/schedules/:jobId/runs" component={ScheduleRuns} />
+      <Route path="/review-away" component={() => <h1>Other page</h1>} />
       {renderExtensionRoutes((Component) => <Component />)}
     </MemoryRouter>
   ), container);
@@ -329,6 +330,78 @@ describe("identity of the extension page", () => {
   const region = () => (Array.from(container.getElementsByTagName("label")).find((label) => label.textContent?.includes("Region"))?.control as HTMLInputElement | undefined);
   const eastList = `${east}/api/agents/assistant%40east/extensions`;
   const westList = `${west}/api/agents/assistant%40west/extensions`;
+
+  it("resets the form for another extension of the same agent and keeps the draft out of it", async () => {
+    const first = form("First extension", "first-value");
+    const second = { ...form("Second extension", "second-value"), id: "other" };
+    gateways.on("GET", eastList, { json: { extensions: [first, second] } });
+    mount("/agents/assistant%40east/extensions/exa");
+    await vi.waitFor(() => expect(region()?.value).toBe("first-value"));
+    region()!.value = "first-draft";
+    region()!.dispatchEvent(new Event("input", { bubbles: true }));
+    go("/agents/assistant%40east/extensions/other");
+    await vi.waitFor(() => expect(text()).toContain("Second extension"));
+    expect(region()?.value).toBe("second-value");
+  });
+
+  it("saves only the extension that is shown after a route change, to its own endpoint", async () => {
+    const first = form("First extension", "first-value");
+    const second = { ...form("Second extension", "second-value"), id: "other" };
+    gateways.on("GET", eastList, { json: { extensions: [first, second] } });
+    gateways.on("PATCH", `${eastList}/exa`, { json: { extensions: [first, second] } });
+    gateways.on("PATCH", `${eastList}/other`, { json: { extensions: [first, second] } });
+    mount("/agents/assistant%40east/extensions/exa");
+    await vi.waitFor(() => expect(region()?.value).toBe("first-value"));
+    region()!.value = "first-draft";
+    region()!.dispatchEvent(new Event("input", { bubbles: true }));
+    go("/agents/assistant%40east/extensions/other");
+    await vi.waitFor(() => expect(text()).toContain("Second extension"));
+    button("Save")!.click();
+    await vi.waitFor(() => expect(gateways.requests.some((request) => request.method === "PATCH")).toBe(true));
+    const patch = gateways.requests.find((request) => request.method === "PATCH")!;
+    expect(patch.url).toBe(`${eastList}/other`);
+    expect(JSON.stringify(patch.body)).not.toContain("first-draft");
+  });
+
+  it("drops the actions of the old form, so a sign-in save never reaches another extension", async () => {
+    const first = { ...form("First extension", "first-value"), oauth: { provider: "google", scopes: ["drive"] } };
+    const second = { ...form("Second extension", "second-value"), id: "other" };
+    gateways.on("GET", eastList, { json: { extensions: [first, second] } });
+    mount("/agents/assistant%40east/extensions/exa");
+    await vi.waitFor(() => expect(text()).toContain("First extension"));
+    go("/agents/assistant%40east/extensions/other");
+    await vi.waitFor(() => expect(text()).toContain("Second extension"));
+    // The second extension has no sign-in card, and the page keeps no connect action of the first form.
+    expect(button("Connect")).toBeUndefined();
+    expect(region()?.value).toBe("second-value");
+  });
+
+  it("starts no catalog read after the page closes during a personal credential removal", async () => {
+    const secretEntry = entry({
+      configJsonSchema: { type: "object", properties: { apiKey: { type: "string" } }, required: ["apiKey"] },
+      requiredSecrets: ["apiKey"], personalSecretFields: ["apiKey"], canConfigureTeam: true, configValues: { apiKey: "********" },
+      tier: "auto-form", enabled: true,
+    });
+    let finish: (() => void) | undefined;
+    gateways.on("GET", eastList, { json: { extensions: [secretEntry] } });
+    gateways.on("DELETE", `${east}/api/agents/assistant%40east/connections/extension/exa`, () => new Promise((resolve) => { finish = () => resolve({ json: { ok: true } }); }));
+    mount("/agents/assistant%40east/extensions/exa");
+    await vi.waitFor(() => expect(text()).toContain("Exa"));
+    await tick();
+    selectScope(container, "personal");
+    await vi.waitFor(() => expect(button("Remove my credentials")?.disabled).toBe(false));
+    button("Remove my credentials")!.click();
+    await vi.waitFor(() => expect(button("Remove")).toBeDefined());
+    button("Remove")!.click();
+    await vi.waitFor(() => expect(finish).toBeDefined());
+    go("/review-away");
+    await vi.waitFor(() => expect(text()).toContain("Other page"));
+    const before = gateways.requests.length;
+    finish!();
+    await tick();
+    await tick();
+    expect(gateways.requests.length).toBe(before);
+  });
 
   it("shows the values of the new gateway, not the form of the old one", async () => {
     gateways.on("GET", eastList, { json: { extensions: [form("East Exa", "east-value")] } });

@@ -46,6 +46,7 @@ function mount(path: string) {
     <MemoryRouter history={history} root={(props) => <Suspense>{props.children}</Suspense>}>
       <Route path="/agents/:agentId/extensions/:extensionId" component={() => <ExtensionDetails />} />
       <Route path="/agents/:agentId/mcp-servers/:serverName" component={McpServerDetails} />
+      <Route path="/review-away" component={() => <h1>Other page</h1>} />
     </MemoryRouter>
   ), container);
 }
@@ -266,6 +267,25 @@ describe("core sign-in of a remote agent", () => {
     expect(text()).not.toContain("Connected as");
   });
 
+  it("starts no status refresh after the page closes during a core disconnect", async () => {
+    team = { ...team, state: "connected", connected: true, scopes: ["drive"], connectedAt: 10 };
+    let finish: (() => void) | undefined;
+    gateways.on("POST", `${east}/api/oauth/google/disconnect?agent=${agent}&scope=team`, () => new Promise((resolve) => { finish = () => resolve({ json: { state: "disconnected", connected: false, provider: "google" } }); }));
+    mount(`/agents/${agent}/extensions/google`);
+    await vi.waitFor(() => expect(button("Connect Google") ?? button("Disconnect Google")).toBeDefined());
+    selectScope(container, "team");
+    await vi.waitFor(() => expect(button("Disconnect Google")).toBeDefined());
+    button("Disconnect Google")!.click();
+    await vi.waitFor(() => expect(finish).toBeDefined());
+    history.set({ value: "/review-away" });
+    await vi.waitFor(() => expect(text()).toContain("Other page"));
+    const before = gateways.requests.length;
+    finish!();
+    await tick();
+    await tick();
+    expect(gateways.requests.length).toBe(before);
+  });
+
   it("names a remote status refusal instead of showing a disconnected grant", async () => {
     gateways.on("GET", `${east}/api/oauth/google/status?agent=${agent}&scope=team`, { status: 403, json: { error: "forbidden" } });
     mount(`/agents/${agent}/extensions/google`);
@@ -309,6 +329,43 @@ describe("late answers of MCP controls", () => {
     gateways.on("GET", new RegExp(`^${east}/api/mcp/servers\\?agent=${other}`), { json: { canConfigureTeam: true, servers: [server({ personalState: "connected", state: "connected" })] } });
     gateways.on("GET", `${east}/api/mcp/oauth/status?agent=${other}&scope=personal`, { json: { servers: [{ name: "docs", auth: "oauth", state: "connected" }] } });
     gateways.on("GET", `${east}/api/mcp/oauth/status?agent=${other}&scope=team`, { json: { servers: [{ name: "docs", auth: "oauth", state: "disconnected" }] } });
+  });
+
+  it("does not navigate after the MCP page closes, and starts no refresh or error", async () => {
+    personal = "connected";
+    let finish: (() => void) | undefined;
+    gateways.on("POST", `${east}/api/mcp/servers/remove?agent=${agent}&server=docs`, () => new Promise((resolve) => { finish = () => resolve({ json: { ok: true } }); }));
+    mount(`/agents/${agent}/mcp-servers/docs`);
+    await vi.waitFor(() => expect(button("Remove server")).toBeDefined());
+    button("Remove server")!.click();
+    await vi.waitFor(() => expect(button("Confirm remove")).toBeDefined());
+    button("Confirm remove")!.click();
+    await vi.waitFor(() => expect(finish).toBeDefined());
+    history.set({ value: "/review-away" });
+    await vi.waitFor(() => expect(text()).toContain("Other page"));
+    const before = gateways.requests.length;
+    finish!();
+    await tick();
+    await tick();
+    expect(history.get()).toBe("/review-away");
+    expect(gateways.requests.length).toBe(before);
+  });
+
+  it("starts no list refresh after the page closes during a disconnect", async () => {
+    personal = "connected";
+    let finish: (() => void) | undefined;
+    gateways.on("POST", `${east}/api/mcp/oauth/disconnect?agent=${agent}&server=docs&scope=personal`, () => new Promise((resolve) => { finish = () => resolve({ json: { ok: true } }); }));
+    mount(`/agents/${agent}/mcp-servers/docs`);
+    await vi.waitFor(() => expect(button("Disconnect")).toBeDefined());
+    button("Disconnect")!.click();
+    await vi.waitFor(() => expect(finish).toBeDefined());
+    history.set({ value: "/review-away" });
+    await vi.waitFor(() => expect(text()).toContain("Other page"));
+    const before = gateways.requests.length;
+    finish!();
+    await tick();
+    await tick();
+    expect(gateways.requests.length).toBe(before);
   });
 
   it("does not leave the page for the old agent when its remove ends late", async () => {

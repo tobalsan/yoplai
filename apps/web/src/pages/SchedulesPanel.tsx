@@ -102,6 +102,7 @@ export function SchedulesPanel(props: { agentId: string; agentName: string; gate
     setDeleting(false);
     setDeleteError(null);
   });
+  onCleanup(() => { generation++; });
   const mutation = () => {
     const mine = generation;
     const key = identity();

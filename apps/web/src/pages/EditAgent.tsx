@@ -424,6 +424,16 @@ export function EditAgent() {
     return current.phase === "failed" && current.reason !== "start_failed" ? current.message : undefined;
   };
 
+  // One add attempt has its own record. It ends on Cancel, on replacement by a newer attempt, on a new target,
+  // and when the page closes. Every effect of the attempt checks the record first. A cancelled fetch or popup
+  // does not prove that the server stopped, so a cancelled submitted add needs a list read before another add.
+  type AddAttempt = { gen: number; key: string; submitted: boolean; state: "pending" | "added" | "failed" };
+  let activeAttempt: AddAttempt | undefined;
+  const attemptLive = (attempt: AddAttempt) => activeAttempt === attempt && attempt.gen === addGeneration && addIdentity() === attempt.key;
+  const targetLive = (attempt: AddAttempt) => attempt.gen === addGeneration && addIdentity() === attempt.key;
+  // The busy state belongs to the newest attempt. An older attempt never frees it.
+  const release = (attempt: AddAttempt) => { if (targetLive(attempt) && (activeAttempt === attempt || activeAttempt === undefined)) setMcpBusy(false); };
+
   // Reads the list of the exact target again and keeps another add off while the state is unknown.
   const settleList = async (live: () => boolean) => {
     if (!live()) return;
@@ -434,16 +444,37 @@ export function EditAgent() {
     const mine = addGeneration;
     const key = addIdentity();
     setMcpBusy(true);
-    await settleList(() => addGeneration === mine && addIdentity() === key);
-    if (addGeneration === mine && addIdentity() === key) setMcpBusy(false);
+    const live = () => addGeneration === mine && addIdentity() === key;
+    await settleList(live);
+    if (live()) setMcpBusy(false);
   };
+
+  /** Ends the active attempt. A submitted add that has no answer yet is uncertain, so the list of its target is read first. */
+  const endAttempt = (recover: boolean) => {
+    const attempt = activeAttempt;
+    if (!attempt) return;
+    activeAttempt = undefined;
+    addFlow.cancel();
+    if (!targetLive(attempt)) return;
+    if (attempt.state !== "pending") return;
+    if (recover && attempt.submitted) {
+      void settleList(() => targetLive(attempt)).then(() => { if (targetLive(attempt) && activeAttempt === undefined) setMcpBusy(false); });
+    } else if (!attempt.submitted) {
+      setMcpBusy(false);
+    }
+  };
+  const cancelAdd = () => endAttempt(true);
+  /** The answer of an ended attempt changes no dialog. The add may still have changed the server, so the list of its target is read again. */
+  const lateAnswer = (attempt: AddAttempt) => {
+    if (targetLive(attempt)) void settleList(() => targetLive(attempt));
+  };
+  onCleanup(() => { addGeneration++; activeAttempt = undefined; });
 
   /**
    * Remote add. The click opens the popup first. The add result can already hold the
    * authorization URL, and the page opens it directly: no second grant starts.
-   * `onAdded` and `onFailed` run only while the dialog still belongs to the target of the add.
    */
-  const addRemoteExtension = (targetId: string, host: string, href: string, run: { live: () => boolean; onAdded: (result: Awaited<ReturnType<typeof addMcpServer>>) => void; onFailed: (cause: unknown) => void; done: () => Promise<void> }) => {
+  const addRemoteExtension = (attempt: AddAttempt, targetId: string, host: string, href: string, run: { onAdded: (result: Awaited<ReturnType<typeof addMcpServer>>) => void; onFailed: (cause: unknown) => void; done: () => Promise<void> }) => {
     const scope = mcpScope();
     let addedName: string | undefined;
     let firstRead = true;
@@ -455,12 +486,15 @@ export function EditAgent() {
         return fetchMcpStatus(targetId, scope, host, signal);
       },
       start: async () => {
+        attempt.submitted = true;
         try {
           const result = await addMcpServer(targetId, href, scope, undefined, host);
+          if (!attemptLive(attempt)) { lateAnswer(attempt); return undefined; }
           addedName = result.server.name;
-          if (run.live()) { run.onAdded(result); setMcpBusy(false); }
-          return run.live() ? result.authorizationUrl : undefined;
+          run.onAdded(result);
+          return result.authorizationUrl;
         } catch (cause) {
+          if (!attemptLive(attempt)) lateAnswer(attempt);
           run.onFailed(cause);
           throw cause;
         }
@@ -470,9 +504,9 @@ export function EditAgent() {
       verdict: (_before, now): OAuthVerdict => (stateOf(now) === "connected" ? "connected" : "pending"),
       canProve: () => true,
       onConnected: async () => {
-        if (!run.live()) return;
+        if (!attemptLive(attempt)) return;
         await refetchMcpServers();
-        if (run.live() && addedName) void checkServer(addedName, true);
+        if (attemptLive(attempt) && addedName) void checkServer(addedName, true);
       },
     }).then(run.done);
   };
@@ -496,48 +530,52 @@ export function EditAgent() {
       setMcpAddedToast({ message: DUPLICATE_MCP_MESSAGE, variant: "warning" });
       return;
     }
+    // A newer attempt replaces the older one. The older one is certain here: its add already answered.
+    if (activeAttempt) { activeAttempt = undefined; addFlow.cancel(); }
+    const attempt: AddAttempt = { gen: addGeneration, key, submitted: false, state: "pending" };
+    activeAttempt = attempt;
     setMcpBusy(true);
     setMcpError(undefined);
     const host = gateway();
-    const mine = addGeneration;
-    const live = () => addGeneration === mine && addIdentity() === key;
-    let failed = false;
-    let added = false;
     const run = {
-      live,
       onAdded: (result: Awaited<ReturnType<typeof addMcpServer>>) => {
-        added = true;
+        attempt.state = "added";
         setAddOpen(false);
         setMcpUrl("");
         setMcpAddedToast({ message: `Added ${mcpDisplayName(result.server.name, result.server.title)}.`, variant: "success" });
         void refetchMcpServers();
+        // The add answered, so the dialog is free again. A remote sign-in may still wait.
+        release(attempt);
       },
       onFailed: (cause: unknown) => {
-        failed = true;
-        if (!live()) return;
+        if (!attemptLive(attempt)) return;
+        attempt.state = "failed";
         const message = cause instanceof Error ? cause.message : "Failed to add MCP server.";
         if (message === DUPLICATE_MCP_MESSAGE) setMcpAddedToast({ message, variant: "warning" });
         else setMcpError(message);
       },
       // The remote can add before its answer fails, so the list of this target must settle before another add.
       done: async () => {
-        if (failed) await settleList(live);
-        // A successful add already freed the dialog. A later flow end must not free a newer add.
-        if (live() && !added) setMcpBusy(false);
+        // An ended attempt frees nothing: its recovery read owns the busy state.
+        if (!attemptLive(attempt)) return;
+        if (attempt.state === "failed") await settleList(() => targetLive(attempt));
+        if (attempt.state !== "added") release(attempt);
       },
     };
     if (host !== undefined) {
-      addRemoteExtension(targetId, host, url.href, run);
+      addRemoteExtension(attempt, targetId, host, url.href, run);
       return;
     }
     try {
+      attempt.submitted = true;
       const result = await addMcpServer(targetId, url.href, mcpScope(), window.location.pathname + window.location.search + window.location.hash);
-      if (live()) {
+      if (attemptLive(attempt)) {
         run.onAdded(result);
         if (result.authorizationUrl) window.location.assign(result.authorizationUrl);
-      }
+      } else lateAnswer(attempt);
     } catch (cause) {
-      run.onFailed(cause);
+      if (attemptLive(attempt)) run.onFailed(cause);
+      else lateAnswer(attempt);
     }
     await run.done();
   };
@@ -773,7 +811,7 @@ export function EditAgent() {
               <p role="alert" class="mcp-ext-error">Failed to load MCP servers. <button type="button" onClick={() => void refetchMcpServers()}>Retry</button></p>
             </Show>
             <Show when={addFlowBusy()}>
-              <p role="status" class="mcp-ext-status">Finish the sign-in in the new window. This page confirms the connection. <button type="button" class="mcp-ext-add-button" onClick={() => addFlow.cancel()}>Cancel</button></p>
+              <p role="status" class="mcp-ext-status">Finish the sign-in in the new window. This page confirms the connection. <button type="button" class="mcp-ext-add-button" onClick={cancelAdd}>Cancel</button></p>
             </Show>
             <Show when={addFlowFailure()}>{(message) => <p role="alert" class="mcp-ext-error">{message()}</p>}</Show>
             <Show when={mcpAddedToast()}>

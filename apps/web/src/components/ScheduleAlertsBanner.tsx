@@ -1,4 +1,4 @@
-import { For, Show, createComputed, createMemo, createSignal } from "solid-js";
+import { For, Show, createComputed, createMemo, createSignal, onCleanup } from "solid-js";
 import { A } from "@solidjs/router";
 import { refreshScheduleAlerts, scheduleAlertsFor } from "../lib/schedule-alerts";
 import { updateSchedule } from "../api/schedules";
@@ -14,12 +14,16 @@ export function ScheduleAlertsBanner(props: { agentId: string; schedulesAgentId?
   const [busy, setBusy] = createSignal<string>();
   const [error, setError] = createSignal<{ jobId: string; text: string }>();
   // A new agent or gateway drops the pending action and the message of the old one.
-  createComputed(() => { void props.agentId; void props.gateway; setBusy(undefined); setError(undefined); });
+  // Each visit has its own number, so returning to the same agent never accepts an older answer.
+  let visit = 0;
+  createComputed(() => { void props.agentId; void props.gateway; visit++; setBusy(undefined); setError(undefined); });
+  onCleanup(() => { visit++; });
   const resume = async (jobId: string) => {
     if (busy()) return;
     // A late answer of another gateway or agent changes nothing.
     const { agentId, gateway } = props;
-    const same = () => props.agentId === agentId && props.gateway === gateway;
+    const mine = visit;
+    const same = () => visit === mine && props.agentId === agentId && props.gateway === gateway;
     setBusy(jobId);
     setError(undefined);
     try {
