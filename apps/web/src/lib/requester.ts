@@ -19,13 +19,15 @@ export type Requester = {
   enableCronMonitoring: boolean;
   user?: { id: string; name?: string | null; email?: string | null; image?: string | null; role?: SessionRole };
   isExtensionEnabled: (id: string) => boolean;
+  /** Reads the capabilities of the gateway again. A local requester has nothing to read. */
+  retry: () => void;
   isStaff: boolean;
   isSuperadmin: boolean;
 };
 
 export function useRequester(gateway: Accessor<GatewayName>): Accessor<Requester> {
   const session = useSession();
-  const [remote] = createResource(
+  const [remote, { refetch }] = createResource(
     () => gateway() ?? null,
     async (name) => {
       try { return { gateway: name, caps: await fetchGatewayCapabilities(name) }; }
@@ -46,6 +48,7 @@ export function useRequester(gateway: Accessor<GatewayName>): Accessor<Requester
         enableCronMonitoring: capabilities.enableCronMonitoring === true,
         user,
         isExtensionEnabled: (id) => capabilities.extensions[id] === true,
+        retry: () => undefined,
         isStaff: hasStaffRole(role),
         isSuperadmin: isSuperadmin(role),
       };
@@ -63,6 +66,7 @@ export function useRequester(gateway: Accessor<GatewayName>): Accessor<Requester
       enableCronMonitoring: caps?.enableCronMonitoring === true,
       user: caps?.user,
       isExtensionEnabled: (id) => caps?.extensions[id] === true,
+      retry: () => void refetch(),
       isStaff: hasStaffRole(role),
       isSuperadmin: isSuperadmin(role),
     };

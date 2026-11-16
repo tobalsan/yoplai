@@ -131,6 +131,8 @@ describe("extension page of a remote agent", () => {
   });
 
   it("links a bespoke config page to the qualified agent, not to the raw remote agent", async () => {
+    // The remote loads the module, so its bespoke page opens from the link.
+    gateways.on("GET", `${east}/api/capabilities`, { json: { ...remoteCapabilities, extensions: { ...remoteCapabilities.extensions, notes: true } } });
     gateways.on("GET", `${east}/api/agents/assistant%40east/extensions`, { json: { extensions: [entry({ id: "notes", displayName: "Notes", tier: "bespoke-route", configRoutePath: "/agents/assistant/extensions/notes/settings" })] } });
     mount("/agents/assistant%40east/extensions/notes");
     await vi.waitFor(() => expect(text()).toContain("Notes"));

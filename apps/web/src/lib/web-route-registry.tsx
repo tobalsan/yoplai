@@ -77,7 +77,7 @@ function AgentConfigRoute(props: { extensionId: string; component: Component }) 
   const Config = props.component;
   return (
     <Show when={settled()} fallback={<LeftNavShell><p role="status">Loading…</p></LeftNavShell>}>
-      <Show when={target().state === "missing" || requester().isExtensionEnabled(props.extensionId)} fallback={<LeftNavShell><ExtensionDetails extensionId={props.extensionId} /></LeftNavShell>}>
+      <Show when={target().state === "missing" || requester().isExtensionEnabled(props.extensionId)} fallback={<LeftNavShell><ExtensionDetails extensionId={props.extensionId} requester={requester} /></LeftNavShell>}>
         <Config />
       </Show>
     </Show>

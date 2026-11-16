@@ -1,4 +1,4 @@
-import { createComputed, createMemo, createResource, createSignal, onCleanup, Show } from "solid-js";
+import { type Accessor, createComputed, createMemo, createResource, createSignal, onCleanup, Show } from "solid-js";
 import { A, useParams } from "@solidjs/router";
 import {
   fetchAgentExtensions,
@@ -10,7 +10,7 @@ import type { CredentialScope } from "../components/CredentialScopeTabs";
 import { ExtensionConfigForm, type ConnectSettingsActions } from "./ExtensionConfigForm";
 import { decodeRouteParam } from "../lib/path";
 import { useAgentTarget } from "../lib/agent-target";
-import { useRequester } from "../lib/requester";
+import { useRequester, type Requester } from "../lib/requester";
 import { gatewayKey, qualifyAgentRoute } from "../api/gateway";
 
 /**
@@ -19,7 +19,11 @@ import { gatewayKey, qualifyAgentRoute } from "../api/gateway";
  * the legacy `.../config` path renders the same page). Shows the extension's
  * OAuth connection or schema-driven settings inline, so one click reaches them.
  */
-export function ExtensionDetails(props: { extensionId?: string }) {
+export function ExtensionDetails(props: {
+  extensionId?: string;
+  /** A config route that falls back to this page passes its own requester, so Retry reads the capabilities that the route uses. */
+  requester?: Accessor<Requester>;
+}) {
   const routeParams = useParams<{ agentId: string; extensionId: string }>();
   // Router params keep the raw path segment, so a qualified remote ID needs decoding.
   const params = {
@@ -29,7 +33,7 @@ export function ExtensionDetails(props: { extensionId?: string }) {
   };
   const { target, retry } = useAgentTarget(() => params.agentId);
   const gateway = () => { const current = target(); return current.state === "ready" ? current.gateway : undefined; };
-  const requester = useRequester(gateway);
+  const requester = props.requester ?? useRequester(gateway);
 
   // The identity of this page: the gateway and the agent. The catalog, the form drafts, and every
   // mutation belong to one identity. A new identity drops them all, so no old permission carries over.
@@ -61,6 +65,9 @@ export function ExtensionDetails(props: { extensionId?: string }) {
     return loaded && loaded.key === targetKey() ? loaded.list : undefined;
   });
   const entry = createMemo(() => catalog()?.find((candidate) => candidate.id === params.extensionId));
+  const bespokeBlocked = (ext: ExtensionCatalogEntry) => bespokeHref(ext) !== null && !requester().isExtensionEnabled(ext.id);
+  const bespokeHref = (ext: ExtensionCatalogEntry) =>
+    ext.tier === "bespoke-route" && ext.configRoutePath ? qualifyAgentRoute(ext.configRoutePath, params.agentId, gateway()) ?? null : null;
 
   /** A form of an older identity can finish after the page moved on. Its catalog is dropped. */
   const saved = (catalogKey: string, form: string, mine: number, list: ExtensionCatalogEntry[]) => {
@@ -218,46 +225,65 @@ export function ExtensionDetails(props: { extensionId?: string }) {
                 />
               </Show>
 
+              {/* The bespoke page opens only where the gateway of the agent loads the extension. The route wrapper uses the
+                  same test. Without it, the link would lead back to this page, so the page shows the state instead. */}
               <Show
-                when={
-                  ext().tier === "bespoke-route" && ext().configRoutePath
-                    ? qualifyAgentRoute(ext().configRoutePath!, params.agentId, gateway()) ?? null
-                    : null
-                }
+                when={bespokeBlocked(ext())}
                 fallback={
-                  <Show when={!ext().oauth && ext().tier !== "auto-form"}>
-                    <button
-                      type="button"
-                      class="ext-details-configure"
-                      disabled={
-                        busy() ||
-                        ext().managedAtRoot ||
-                        (!ext().enabled && ext().configurable === false)
-                      }
-                      title={
-                        ext().managedAtRoot
-                          ? "Configured in agent.yaml — edit the file to change."
-                          : !ext().enabled && ext().configurable === false
-                          ? "The agent must be assigned to a team to enable this extension"
-                          : undefined
-                      }
-                      onClick={() => void toggle(ext())}
-                    >
-                      {ext().enabled ? "Disable" : "Enable"}
-                    </button>
-                    <Show when={toggleError()}>
-                      {(message) => (
-                        <p class="ext-details-error">{message()}</p>
-                      )}
-                    </Show>
+                  <Show
+                    when={bespokeHref(ext())}
+                    fallback={
+                      <Show when={!ext().oauth && ext().tier !== "auto-form"}>
+                        <button
+                          type="button"
+                          class="ext-details-configure"
+                          disabled={
+                            busy() ||
+                            ext().managedAtRoot ||
+                            (!ext().enabled && ext().configurable === false)
+                          }
+                          title={
+                            ext().managedAtRoot
+                              ? "Configured in agent.yaml — edit the file to change."
+                              : !ext().enabled && ext().configurable === false
+                              ? "The agent must be assigned to a team to enable this extension"
+                              : undefined
+                          }
+                          onClick={() => void toggle(ext())}
+                        >
+                          {ext().enabled ? "Disable" : "Enable"}
+                        </button>
+                        <Show when={toggleError()}>
+                          {(message) => (
+                            <p class="ext-details-error">{message()}</p>
+                          )}
+                        </Show>
+                      </Show>
+                    }
+                  >
+                    {(href) => (
+                      <A href={href()} class="ext-details-configure">
+                        Configure →
+                      </A>
+                    )}
                   </Show>
                 }
               >
-                {(href) => (
-                  <A href={href()} class="ext-details-configure">
-                    Configure →
-                  </A>
-                )}
+                <Show
+                  when={requester().unknown}
+                  fallback={
+                    <Show when={requester().ready}>
+                      <p class="ext-details-error" role="status">
+                        This extension is not available on {gateway() === undefined ? "this gateway" : "the gateway of this agent"}, so its page cannot open.
+                      </p>
+                    </Show>
+                  }
+                >
+                  <p class="ext-details-error" role="alert">
+                    Unable to read what the gateway of this agent offers.{" "}
+                    <button type="button" class="ext-details-configure" onClick={() => requester().retry()}>Retry</button>
+                  </p>
+                </Show>
               </Show>
             </>
           )}
