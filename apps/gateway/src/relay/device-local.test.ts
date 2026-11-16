@@ -246,7 +246,7 @@ describe("device settings routes", () => {
     app.use("/api/*", relayDeviceApi({
       isEnabled: () => enabled,
       getGateways: () => [{ name: "ams", url: "http://127.0.0.1:1" }],
-      getLinkStates: () => [{ name: "ams", connected: true }],
+      getLinkStates: () => [{ name: "ams", connected: true, status: "connected" }],
       settings: () => settings,
     }));
     app.all("/api/*", (c) => c.json({ error: "Not found" }, 404));
@@ -291,7 +291,7 @@ describe("device settings routes", () => {
   });
 
   it("lists the device links for diagnosis", async () => {
-    expect(await (await request("/api/relay/device-links")).json()).toEqual([{ name: "ams", connected: true }]);
+    expect(await (await request("/api/relay/device-links")).json()).toEqual([{ name: "ams", connected: true, status: "connected" }]);
   });
 
   it("answers an untrusted request like an unknown route", async () => {

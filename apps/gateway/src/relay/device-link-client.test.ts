@@ -115,7 +115,31 @@ describe("device link: local client", () => {
     vi.spyOn(console, "warn").mockImplementation(() => undefined);
     const started = startManager();
     await waitFor(() => closes.includes(4001));
-    expect(started.states()).toEqual([{ name: "ams", connected: false }]);
+    expect(started.states()).toEqual([{ name: "ams", connected: false, status: "connecting" }]);
+  });
+
+  it("shows an unauthorized state when the remote refuses the key at the upgrade", async () => {
+    const server = (await import("node:http")).createServer();
+    closers.push(() => server.close());
+    server.on("upgrade", (_request, socket) => socket.end("HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n"));
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    gateways = [{ name: "ams", url: `http://127.0.0.1:${(server.address() as AddressInfo).port}`, token: "dead-key" }];
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const started = startManager();
+    await waitFor(() => started.states()[0]?.status === "unauthorized");
+    expect(started.states()).toEqual([{ name: "ams", connected: false, status: "unauthorized" }]);
+  });
+
+  it("shows a replaced state when another relay of the same user took the link", async () => {
+    const fake = new WebSocketServer({ port: 0, host: "127.0.0.1" });
+    closers.push(() => fake.close());
+    await new Promise<void>((resolve) => fake.once("listening", resolve));
+    fake.on("connection", (socket) => socket.once("message", () => socket.close(4003, "Replaced")));
+    gateways = [{ name: "ams", url: `http://127.0.0.1:${(fake.address() as AddressInfo).port}` }];
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const started = startManager();
+    await waitFor(() => started.states()[0]?.status === "replaced");
+    expect(started.states()).toEqual([{ name: "ams", connected: false, status: "replaced" }]);
   });
 
   it("links to nothing while the list of gateways is empty, and links after a store change with no restart", async () => {
@@ -126,7 +150,7 @@ describe("device link: local client", () => {
     expect(online()).toBe(false);
     gateways = [{ name: "ams", url: `http://127.0.0.1:${remote?.port}` }];
     await waitFor(() => online());
-    expect(started.states()).toEqual([{ name: "ams", connected: true }]);
+    expect(started.states()).toEqual([{ name: "ams", connected: true, status: "connected" }]);
     gateways = [];
     await waitFor(() => !online());
     expect(started.states()).toEqual([]);
