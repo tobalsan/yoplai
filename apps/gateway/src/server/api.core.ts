@@ -105,6 +105,7 @@ import { getAuditActor, listSettingsChanges, recordSettingsChange } from "../aud
 import { diffSettings } from "../audit/diff.js";
 import { modelQuotaStore } from "../model-quota/runtime.js";
 import { fiveHourState, pace } from "../model-quota/policy.js";
+import { getLinkCallbackPort } from "../relay/state.js";
 
 const api = new Hono();
 // Hono fetch creates a fresh context. Carry only the outer host’s authenticated
@@ -613,6 +614,7 @@ api.get("/capabilities", async (c) => {
         }
       : {}),
     ...((await isGatewayLinkReady()) ? { gatewayLink: { version: 1, method: "loopback-pkce" } } : {}),
+    relayLink: { available: getLinkCallbackPort() !== undefined },
     forkedAgents: config.forkedAgents ?? false,
     enableCronMonitoring: config.enableCronMonitoring ?? false,
     dashboardEmbed: {

@@ -2095,6 +2095,8 @@ export const CapabilitiesResponseSchema = z.object({
     .optional(),
   /** Present only on a multi-user gateway whose browser-link handlers and recovery service are ready. */
   gatewayLink: z.object({ version: z.literal(1), method: z.literal("loopback-pkce") }).optional(),
+  /** Present on a local gateway. `available` is true only when the browser link can reach this gateway at `127.0.0.1`. */
+  relayLink: z.object({ available: z.boolean() }).optional(),
   home: z.string().optional(),
   user: CapabilitiesUserSchema.optional(),
   branding: z

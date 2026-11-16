@@ -645,6 +645,12 @@ describe("gateway link contracts", () => {
     expect(CapabilitiesResponseSchema.safeParse({ ...capabilities, gatewayLink: { version: 1, method: "device" } }).success).toBe(false);
   });
 
+  it("accepts the optional relayLink capability and keeps it optional", () => {
+    expect(CapabilitiesResponseSchema.parse(capabilities).relayLink).toBeUndefined();
+    expect(CapabilitiesResponseSchema.parse({ ...capabilities, relayLink: { available: false } }).relayLink).toEqual({ available: false });
+    expect(CapabilitiesResponseSchema.safeParse({ ...capabilities, relayLink: { available: "yes" } }).success).toBe(false);
+  });
+
   it("accepts a request with fixed-size challenge and state and rejects unknown fields", () => {
     const base = { challenge, state, callbackUri: "http://127.0.0.1:4000/api/relay/link/callback", deviceLabel: "Laptop" };
     expect(GatewayLinkRequestInputSchema.safeParse(base).success).toBe(true);
