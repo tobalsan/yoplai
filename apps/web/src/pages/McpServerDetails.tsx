@@ -1,4 +1,4 @@
-import { createEffect, createMemo, createResource, createSignal, Match, onCleanup, Show, Switch } from "solid-js";
+import { createComputed, createEffect, createMemo, createResource, createSignal, Match, onCleanup, Show, Switch } from "solid-js";
 import { A, useNavigate, useParams } from "@solidjs/router";
 import {
   disconnectMcpServer,
@@ -29,6 +29,7 @@ import { useRequester } from "../lib/requester";
 import { createOAuthPopupFlow, type OAuthVerdict } from "../lib/oauth-popup-flow";
 import { fetchMcpStatus, type McpServerStatus } from "../api/connections";
 import { startRemoteOAuth } from "../api/oauth";
+import { gatewayKey } from "../api/gateway";
 import { ReconnectWarning, ScopeUsageNote, TEAM_MANAGED_NOTE } from "../components/ScopedConnectionNotes";
 
 function errorMessage(cause: unknown, fallback: string): string {
@@ -106,6 +107,26 @@ export function McpServerDetails() {
   const canEditLabels = () => status()?.canEditLabels === true;
   const [error, setError] = createSignal<string>();
   const [busy, setBusy] = createSignal(false);
+  const [confirmRemove, setConfirmRemove] = createSignal(false);
+  // The identity of this page: gateway, agent, and server. Each change starts a new generation, so a late
+  // result of an older identity changes no state, starts no navigation, and refreshes no other target.
+  const identity = createMemo(() => { const current = target(); return current.state === "ready" ? gatewayKey(current.gateway, current.agentId, params.serverName) : undefined; });
+  let generation = 0;
+  createComputed(() => {
+    void identity();
+    generation++;
+    setBusy(false);
+    setError(undefined);
+    setConfirmRemove(false);
+  });
+  /** The resolved target for one mutation, or nothing while the target is unknown. */
+  const mutation = () => {
+    const key = identity();
+    const current = target();
+    if (!key || current.state !== "ready") return undefined;
+    const mine = generation;
+    return { agentId: current.agentId, gateway: current.gateway, name: params.serverName, live: () => generation === mine && identity() === key };
+  };
   // Show feedback while the provider sign-in page loads. Reset it when Back restores this page from the bfcache.
   const [redirecting, setRedirecting] = createSignal(false);
   const onPageShow = (event: PageTransitionEvent) => { if (event.persisted) setRedirecting(false); };
@@ -179,25 +200,29 @@ export function McpServerDetails() {
   };
 
   const disconnect = async () => {
+    const run = mutation();
+    if (!run) return;
     setBusy(true);
     setError(undefined);
     try {
-      await disconnectMcpServer(params.agentId, params.serverName, scope(), gateway());
-      await refetch();
+      await disconnectMcpServer(run.agentId, run.name, scope(), run.gateway);
+      if (run.live()) await refetch();
     } catch (cause) {
-      setError(errorMessage(cause, "Failed to disconnect MCP server."));
-    } finally { setBusy(false); }
+      if (run.live()) setError(errorMessage(cause, "Failed to disconnect MCP server."));
+    } finally { if (run.live()) setBusy(false); }
   };
 
   const setEnabled = async (enabled: boolean) => {
+    const run = mutation();
+    if (!run) return;
     setBusy(true);
     setError(undefined);
     try {
-      await setSharedMcpServer(params.agentId, params.serverName, enabled, gateway());
-      await refetchFast();
+      await setSharedMcpServer(run.agentId, run.name, enabled, run.gateway);
+      if (run.live()) await refetchFast();
     } catch (cause) {
-      setError(errorMessage(cause, "Failed to update MCP server."));
-    } finally { setBusy(false); }
+      if (run.live()) setError(errorMessage(cause, "Failed to update MCP server."));
+    } finally { if (run.live()) setBusy(false); }
   };
 
   const [iconOverride, setIconOverride] = createSignal<{ agent: string; name: string; gateway: string | undefined; iconUrl?: string }>();
@@ -241,16 +266,20 @@ export function McpServerDetails() {
     return saved?.agent === params.agentId && saved.name === params.serverName && saved.gateway === gateway() ? saved.iconUrl : server()?.iconUrl;
   };
 
-  const [confirmRemove, setConfirmRemove] = createSignal(false);
   const remove = async () => {
+    const run = mutation();
+    if (!run) return;
     setBusy(true);
     setError(undefined);
     try {
-      await removeMcpServer(params.agentId, params.serverName, gateway());
-      navigate(`/agents/${encodeURIComponent(params.agentId)}/edit`);
+      await removeMcpServer(run.agentId, run.name, run.gateway);
+      // Leave for the edit page only when this is still the page that asked.
+      if (run.live()) navigate(`/agents/${encodeURIComponent(run.agentId)}/edit`);
     } catch (cause) {
-      setError(errorMessage(cause, "Failed to remove MCP server."));
-      setBusy(false);
+      if (run.live()) {
+        setError(errorMessage(cause, "Failed to remove MCP server."));
+        setBusy(false);
+      }
     }
   };
 
@@ -321,7 +350,7 @@ export function McpServerDetails() {
               <Show when={current().auth !== "oauth"}>
                 {current().shared
                   ? <p class="oauth-shared-note">This shared server has no sign-in or configuration here; a superadmin manages it.</p>
-                  : <McpConfigEditor agentId={params.agentId} gateway={gateway()} name={params.serverName} onSaved={() => void refetchFast()} />}
+                  : <Show when={identity()} keyed>{(_id) => <McpConfigEditor agentId={params.agentId} gateway={gateway()} name={params.serverName} onSaved={() => void refetchFast()} />}</Show>}
               </Show>
               </Show>
 
@@ -384,7 +413,7 @@ export function McpServerDetails() {
         <Show when={server() && canEditLabels() && !server()?.shared}>
           <details class="mcp-edit-details">
             <summary>Edit MCP details</summary>
-            <McpLabelForm agentId={params.agentId} gateway={gateway()} name={params.serverName} label={server()?.manualLabel} onSaved={() => void refetchFast()} />
+            <Show when={identity()} keyed>{(_id) => <McpLabelForm agentId={params.agentId} gateway={gateway()} name={params.serverName} label={server()?.manualLabel} onSaved={() => void refetchFast()} />}</Show>
           </details>
         </Show>
       </div>
@@ -423,6 +452,10 @@ export function McpServerDetails() {
 }
 
 function McpLabelForm(props: { agentId: string; gateway?: string; name: string; label?: { displayName?: string; description?: string }; onSaved: () => void }) {
+  // The parent mounts a new form for each gateway, agent, and server. This form reads that identity once.
+  const bound = { agentId: props.agentId, gateway: props.gateway, name: props.name };
+  let disposed = false;
+  onCleanup(() => { disposed = true; });
   const [displayName, setDisplayName] = createSignal(props.label?.displayName ?? "");
   const [description, setDescription] = createSignal(props.label?.description ?? "");
   const [error, setError] = createSignal<string>();
@@ -434,12 +467,13 @@ function McpLabelForm(props: { agentId: string; gateway?: string; name: string; 
     setError(undefined);
     setSaved(false);
     try {
-      await saveMcpServerLabel(props.agentId, props.name, { displayName: displayName(), description: description() }, props.gateway);
+      await saveMcpServerLabel(bound.agentId, bound.name, { displayName: displayName(), description: description() }, bound.gateway);
+      if (disposed) return;
       setSaved(true);
       props.onSaved();
     } catch (cause) {
-      setError(errorMessage(cause, "Failed to save name and description."));
-    } finally { setSaving(false); }
+      if (!disposed) setError(errorMessage(cause, "Failed to save name and description."));
+    } finally { if (!disposed) setSaving(false); }
   };
   return (
     <form class="mcp-label-form" onSubmit={(event) => void save(event)}>
@@ -453,7 +487,11 @@ function McpLabelForm(props: { agentId: string; gateway?: string; name: string; 
 }
 
 function McpConfigEditor(props: { agentId: string; gateway?: string; name: string; onSaved: () => void }) {
-  const [view, { refetch }] = createResource(() => ({ agent: props.agentId, name: props.name, gateway: props.gateway }), (key) => fetchMcpServerConfig(key.agent, key.name, key.gateway));
+  // The parent mounts a new editor for each gateway, agent, and server. This editor reads that identity once.
+  const bound = { agent: props.agentId, name: props.name, gateway: props.gateway };
+  let disposed = false;
+  onCleanup(() => { disposed = true; });
+  const [view, { refetch }] = createResource(() => bound, (key) => fetchMcpServerConfig(key.agent, key.name, key.gateway));
   const [text, setText] = createSignal("");
   const [error, setError] = createSignal<string>();
   const [saved, setSaved] = createSignal(false);
@@ -471,13 +509,15 @@ function McpConfigEditor(props: { agentId: string; gateway?: string; name: strin
     setError(undefined);
     setSaved(false);
     try {
-      show((await saveMcpServerConfig(props.agentId, props.name, parsed, props.gateway)).config);
+      const result = await saveMcpServerConfig(bound.agent, bound.name, parsed, bound.gateway);
+      if (disposed) return;
+      show(result.config);
       setSaved(true);
       props.onSaved();
       void refetch();
     } catch (cause) {
-      setError(errorMessage(cause, "Failed to save MCP server config."));
-    } finally { setSaving(false); }
+      if (!disposed) setError(errorMessage(cause, "Failed to save MCP server config."));
+    } finally { if (!disposed) setSaving(false); }
   };
 
   return (
@@ -492,7 +532,7 @@ function McpConfigEditor(props: { agentId: string; gateway?: string; name: strin
                 ? "Local (stdio) servers are read-only here. Edit mcp.json directly to change them."
                 : "Applies to the whole team. Header values are masked; leave a masked value unchanged to keep it."}
             </p>
-            <textarea aria-label={`${props.name} config JSON`} spellcheck={false} readOnly={!current().editable} value={text()} onInput={(event) => { setText(event.currentTarget.value); setSaved(false); }} />
+            <textarea aria-label={`${bound.name} config JSON`} spellcheck={false} readOnly={!current().editable} value={text()} onInput={(event) => { setText(event.currentTarget.value); setSaved(false); }} />
             <Show when={error()}>{(message) => <div class="oauth-error" role="alert">{message()}</div>}</Show>
             <Show when={saved()}><p role="status">Saved.</p></Show>
             <Show when={current().editable}>

@@ -319,3 +319,132 @@ describe("credential actions of a remote agent", () => {
     expect(gateways.unexpected).toEqual([]);
   });
 });
+
+describe("identity of the extension page", () => {
+  const form = (name: string, value: string) => entry({
+    displayName: name, tier: "auto-form", enabled: true,
+    configJsonSchema: { type: "object", properties: { region: { type: "string", title: "Region" } } },
+    configValues: { region: value },
+  });
+  const region = () => (Array.from(container.getElementsByTagName("label")).find((label) => label.textContent?.includes("Region"))?.control as HTMLInputElement | undefined);
+  const eastList = `${east}/api/agents/assistant%40east/extensions`;
+  const westList = `${west}/api/agents/assistant%40west/extensions`;
+
+  it("shows the values of the new gateway, not the form of the old one", async () => {
+    gateways.on("GET", eastList, { json: { extensions: [form("East Exa", "east-value")] } });
+    gateways.on("GET", westList, { json: { extensions: [form("West Exa", "west-value")] } });
+    mount("/agents/assistant%40east/extensions/exa");
+    await vi.waitFor(() => expect(region()?.value).toBe("east-value"));
+    go("/agents/assistant%40west/extensions/exa");
+    await vi.waitFor(() => expect(text()).toContain("West Exa"));
+    expect(region()?.value).toBe("west-value");
+  });
+
+  it("sends no draft of the old gateway to the new one", async () => {
+    gateways.on("GET", eastList, { json: { extensions: [form("East Exa", "east-value")] } });
+    gateways.on("GET", westList, { json: { extensions: [form("West Exa", "west-value")] } });
+    gateways.on("PATCH", `${west}/api/agents/assistant%40west/extensions/exa`, { json: { extensions: [form("West Exa", "west-value")] } });
+    mount("/agents/assistant%40east/extensions/exa");
+    await vi.waitFor(() => expect(region()?.value).toBe("east-value"));
+    region()!.value = "east-draft";
+    region()!.dispatchEvent(new Event("input", { bubbles: true }));
+    go("/agents/assistant%40west/extensions/exa");
+    await vi.waitFor(() => expect(text()).toContain("West Exa"));
+    button("Save")!.click();
+    await vi.waitFor(() => expect(gateways.requests.some((request) => request.method === "PATCH")).toBe(true));
+    const patch = gateways.requests.find((request) => request.method === "PATCH")!;
+    expect(patch.url).toBe(`${west}/api/agents/assistant%40west/extensions/exa`);
+    expect(JSON.stringify(patch.body)).not.toContain("east-draft");
+  });
+
+  it("removes every mutation control when the next agent cannot be resolved, and sends no request", async () => {
+    gateways.on("GET", eastList, { json: { extensions: [entry({ displayName: "East Exa" })] } });
+    mount("/agents/assistant%40east/extensions/exa");
+    await vi.waitFor(() => expect(button("Enable")).toBeDefined());
+    go("/agents/ghost%40west/extensions/exa");
+    await vi.waitFor(() => expect(text()).toContain("This agent is unavailable"));
+    expect(button("Enable")).toBeUndefined();
+    expect(text()).not.toContain("East Exa");
+    expect(gateways.requests.filter((request) => request.method !== "GET")).toEqual([]);
+    expect(gateways.localConfigurationRequests()).toEqual([]);
+  });
+
+  it("ignores a completed mutation of the old gateway", async () => {
+    let finish: (() => void) | undefined;
+    gateways.on("GET", eastList, { json: { extensions: [entry({ displayName: "East Exa" })] } });
+    gateways.on("GET", westList, { json: { extensions: [entry({ displayName: "West Exa" })] } });
+    gateways.on("PATCH", `${east}/api/agents/assistant%40east/extensions/exa`, () => new Promise((resolve) => { finish = () => resolve({ json: { extensions: [entry({ displayName: "East Changed", enabled: true })] } }); }));
+    mount("/agents/assistant%40east/extensions/exa");
+    await vi.waitFor(() => expect(button("Enable")).toBeDefined());
+    button("Enable")!.click();
+    await vi.waitFor(() => expect(finish).toBeDefined());
+    go("/agents/assistant%40west/extensions/exa");
+    await vi.waitFor(() => expect(text()).toContain("West Exa"));
+    finish!();
+    await tick();
+    await tick();
+    expect(text()).toContain("West Exa");
+    expect(text()).not.toContain("East Changed");
+  });
+
+  it("ignores a late error and keeps the new page usable", async () => {
+    let fail: (() => void) | undefined;
+    gateways.on("GET", eastList, { json: { extensions: [entry({ displayName: "East Exa" })] } });
+    gateways.on("GET", westList, { json: { extensions: [entry({ displayName: "West Exa" })] } });
+    gateways.on("PATCH", `${east}/api/agents/assistant%40east/extensions/exa`, () => new Promise((resolve) => { fail = () => resolve({ status: 403, json: { error: "forbidden" } }); }));
+    mount("/agents/assistant%40east/extensions/exa");
+    await vi.waitFor(() => expect(button("Enable")).toBeDefined());
+    button("Enable")!.click();
+    await vi.waitFor(() => expect(fail).toBeDefined());
+    go("/agents/assistant%40west/extensions/exa");
+    await vi.waitFor(() => expect(text()).toContain("West Exa"));
+    fail!();
+    await tick();
+    await tick();
+    expect(text()).not.toContain("Failed to update extension");
+    expect(button("Enable")?.disabled).toBe(false);
+  });
+
+  it("ignores the answer of an earlier visit when the page returns to the same agent", async () => {
+    let finish: (() => void) | undefined;
+    gateways.on("GET", eastList, { json: { extensions: [entry({ displayName: "East Exa" })] } });
+    gateways.on("GET", westList, { json: { extensions: [entry({ displayName: "West Exa" })] } });
+    gateways.on("PATCH", `${east}/api/agents/assistant%40east/extensions/exa`, () => new Promise((resolve) => { finish = () => resolve({ json: { extensions: [entry({ displayName: "East Changed", enabled: true })] } }); }));
+    mount("/agents/assistant%40east/extensions/exa");
+    await vi.waitFor(() => expect(button("Enable")).toBeDefined());
+    button("Enable")!.click();
+    await vi.waitFor(() => expect(finish).toBeDefined());
+    go("/agents/assistant%40west/extensions/exa");
+    await vi.waitFor(() => expect(text()).toContain("West Exa"));
+    go("/agents/assistant%40east/extensions/exa");
+    await vi.waitFor(() => expect(text()).toContain("East Exa"));
+    finish!();
+    await tick();
+    await tick();
+    expect(text()).not.toContain("East Changed");
+    expect(button("Enable")?.disabled).toBe(false);
+  });
+
+  it("ignores a late credential save of the old gateway and keeps the new form usable", async () => {
+    let finish: (() => void) | undefined;
+    gateways.on("GET", eastList, { json: { extensions: [form("East Exa", "east-value")] } });
+    gateways.on("GET", westList, { json: { extensions: [form("West Exa", "west-value")] } });
+    gateways.on("PATCH", `${east}/api/agents/assistant%40east/extensions/exa`, () => new Promise((resolve) => { finish = () => resolve({ json: { extensions: [form("East Saved", "east-saved")] } }); }));
+    mount("/agents/assistant%40east/extensions/exa");
+    await vi.waitFor(() => expect(region()?.value).toBe("east-value"));
+    region()!.value = "east-draft";
+    region()!.dispatchEvent(new Event("input", { bubbles: true }));
+    button("Save")!.click();
+    await vi.waitFor(() => expect(finish).toBeDefined());
+    go("/agents/assistant%40west/extensions/exa");
+    await vi.waitFor(() => expect(text()).toContain("West Exa"));
+    finish!();
+    await tick();
+    await tick();
+    expect(text()).toContain("West Exa");
+    expect(text()).not.toContain("East Saved");
+    expect(region()?.value).toBe("west-value");
+    expect(text()).not.toContain("Saved ✓");
+    expect(button("Save")?.disabled).toBe(false);
+  });
+});

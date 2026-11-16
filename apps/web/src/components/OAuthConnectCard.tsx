@@ -74,6 +74,8 @@ export function OAuthConnectCard(props: {
   let scopePicked = !!oauthResult;
   if (oauthResult) props.onScopeChange?.(oauthResult.scope);
   let statusRequest = 0;
+  // A status answer that arrives after the card is gone must not call back into the page.
+  onCleanup(() => { statusRequest++; });
 
   const refreshStatus = async () => {
     if (!props.agentId) return;
@@ -191,11 +193,14 @@ export function OAuthConnectCard(props: {
   };
 
   const disconnect = async () => {
+    // An answer for another agent, gateway, or provider changes nothing here.
+    const { agentId, provider, gateway } = props;
+    const same = () => props.agentId === agentId && props.provider === provider && props.gateway === gateway;
     try {
-      await disconnectOAuth(props.agentId, props.provider, scope(), props.gateway);
-      await refreshStatus();
+      await disconnectOAuth(agentId, provider, scope(), gateway);
+      if (same()) await refreshStatus();
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause));
+      if (same()) setError(cause instanceof Error ? cause.message : String(cause));
     }
   };
 

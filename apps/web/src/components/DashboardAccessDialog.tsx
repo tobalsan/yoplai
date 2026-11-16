@@ -1,4 +1,4 @@
-import { For, Show, createMemo, createResource, createSignal } from "solid-js";
+import { For, Show, createMemo, createResource, createSignal, onCleanup } from "solid-js";
 import { fetchDashboardRecipients, saveDashboardShares, type DashboardRow, type DashboardShare } from "../api/dashboards";
 import { Modal } from "./ui/Modal";
 import { Button } from "./ui/Button";
@@ -45,11 +45,15 @@ export function DashboardAccessDialog(props: {
     setUserShares([...userShares(), { kind: "user", id, mode: "read" }]);
     setSelected("");
   };
+  // The dialog belongs to one gateway and dashboard. A save that ends after it closed changes nothing.
+  const gateway = props.gateway;
+  let disposed = false;
+  onCleanup(() => { disposed = true; });
   const save = async () => {
     setBusy(true); setError(undefined);
-    try { await (props.saveShares ?? ((id, next) => saveDashboardShares(id, next, props.gateway)))(props.dashboard.id, shares()); await props.onSaved(); props.onClose(); }
-    catch (cause) { setError(cause instanceof Error ? cause.message : "Unable to save access."); }
-    finally { setBusy(false); }
+    try { await (props.saveShares ?? ((id, next) => saveDashboardShares(id, next, gateway)))(props.dashboard.id, shares()); if (disposed) return; await props.onSaved(); if (!disposed) props.onClose(); }
+    catch (cause) { if (!disposed) setError(cause instanceof Error ? cause.message : "Unable to save access."); }
+    finally { if (!disposed) setBusy(false); }
   };
   return (
     <Modal title={`Share "${props.dashboard.title}"`} onClose={props.onClose} dismissible={!busy()} error={error()}

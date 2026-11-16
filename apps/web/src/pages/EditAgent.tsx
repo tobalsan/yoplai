@@ -1,5 +1,6 @@
 import { decodeRouteParam } from "../lib/path";
 import {
+  createComputed,
   createMemo,
   createResource,
   createEffect,
@@ -12,7 +13,7 @@ import {
 import { A, useLocation, useParams } from "@solidjs/router";
 import { normalizeMcpServerUrl } from "@yoplai/shared/mcp-url";
 import { EMPTY_TOP_EXTENSIONS, fetchTopExtensions } from "../api/top-extensions";
-import { gatewayApiPath, qualifiedAgentId, qualifyAgentRoute, rawAgentId, type GatewayName } from "../api/gateway";
+import { gatewayApiPath, gatewayKey, qualifiedAgentId, qualifyAgentRoute, rawAgentId, type GatewayName } from "../api/gateway";
 import { useAgentTarget } from "../lib/agent-target";
 import { useRequester } from "../lib/requester";
 import { createResourceKey } from "../lib/resource-key";
@@ -90,6 +91,11 @@ function TeamAssignment(props: {
   gateway?: GatewayName;
   onChanged: () => void;
 }) {
+  // The page mounts a new control for each gateway and pool. This control reads that identity once,
+  // and an answer after it is gone changes nothing.
+  const bound = { poolId: props.poolId, gateway: props.gateway };
+  let disposed = false;
+  onCleanup(() => { disposed = true; });
   const [selected, setSelected] = createSignal<string[]>(props.fork?.assignment.teamIds ?? []);
   const [busy, setBusy] = createSignal(false);
   const [error, setError] = createSignal<string | null>(null);
@@ -107,12 +113,12 @@ function TeamAssignment(props: {
       // Admins send only their own teams; the server keeps other teams' links.
       const own = new Set(props.teams.map((team) => team.id));
       const teamIds = props.superadmin ? selected() : selected().filter((id) => own.has(id));
-      await setForkTeams(props.poolId, { mode: "list", teamIds }, props.gateway);
-      props.onChanged();
+      await setForkTeams(bound.poolId, { mode: "list", teamIds }, bound.gateway);
+      if (!disposed) props.onChanged();
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Failed to assign.");
+      if (!disposed) setError(cause instanceof Error ? cause.message : "Failed to assign.");
     } finally {
-      setBusy(false);
+      if (!disposed) setBusy(false);
     }
   };
 
@@ -180,19 +186,25 @@ function TeamAssignment(props: {
 }
 
 function ForkVisibility(props: { fork: AgentFork; canManage: boolean; gateway?: GatewayName; onChanged: () => unknown }) {
+  // One control per gateway and pool. It reads its identity once, and an answer after it is gone changes nothing.
+  const bound = { gateway: props.gateway };
+  let disposed = false;
+  onCleanup(() => { disposed = true; });
   const [busy, setBusy] = createSignal(false);
   const [error, setError] = createSignal<string>();
   const toggle = async () => {
     if (busy() || !props.canManage) return;
+    const poolId = props.fork.sourcePoolId;
+    const isPublic = props.fork.public;
     setBusy(true);
     setError(undefined);
     try {
-      await setForkVisibility(props.fork.sourcePoolId, !props.fork.public, props.gateway);
-      await props.onChanged();
+      await setForkVisibility(poolId, !isPublic, bound.gateway);
+      if (!disposed) await props.onChanged();
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Failed to update visibility.");
+      if (!disposed) setError(cause instanceof Error ? cause.message : "Failed to update visibility.");
     } finally {
-      setBusy(false);
+      if (!disposed) setBusy(false);
     }
   };
   const tooltip = () => {
@@ -375,6 +387,21 @@ export function EditAgent() {
     ? { message: oauthResult.status === "connected" ? "Connected" : oauthResult.error ?? "Connection failed.", variant: oauthResult.status === "connected" ? "success" : "error" }
     : undefined);
   const [mcpBusy, setMcpBusy] = createSignal(false);
+  // After an uncertain add error the list read failed too. Another add stays off until a read works.
+  const [mcpListUnknown, setMcpListUnknown] = createSignal(false);
+  // The identity of the add dialog: gateway and runnable agent. Each change starts a new generation, so a late
+  // answer of an older add changes no dialog, toast, or list, and refreshes no other target.
+  const addIdentity = createMemo(() => { const id = contextReady() ? dashboardAgentId() : undefined; return id === undefined ? undefined : gatewayKey(gateway(), id); });
+  let addGeneration = 0;
+  createComputed(() => {
+    void addIdentity();
+    addGeneration++;
+    setMcpBusy(false);
+    setMcpListUnknown(false);
+    setMcpError(undefined);
+    setAddOpen(false);
+    setMcpUrl("");
+  });
   // Wait for the gateway context. Before it loads, the local requester would force the team scope.
   createEffect(() => {
     if (contextReady() && !requester().user) setMcpScope("team");
@@ -397,15 +424,27 @@ export function EditAgent() {
     return current.phase === "failed" && current.reason !== "start_failed" ? current.message : undefined;
   };
 
+  // Reads the list of the exact target again and keeps another add off while the state is unknown.
+  const settleList = async (live: () => boolean) => {
+    if (!live()) return;
+    try { await refetchMcpServers(); } catch { /* The error state of the resource tells the result. */ }
+    if (live()) setMcpListUnknown(Boolean(mcpServers.error));
+  };
+  const retryListRead = async () => {
+    const mine = addGeneration;
+    const key = addIdentity();
+    setMcpBusy(true);
+    await settleList(() => addGeneration === mine && addIdentity() === key);
+    if (addGeneration === mine && addIdentity() === key) setMcpBusy(false);
+  };
+
   /**
    * Remote add. The click opens the popup first. The add result can already hold the
    * authorization URL, and the page opens it directly: no second grant starts.
-   * An add error reads the remote list again, because the remote can add before the relay refuses.
+   * `onAdded` and `onFailed` run only while the dialog still belongs to the target of the add.
    */
-  let addCounter = 0;
-  const addRemoteExtension = (targetId: string, host: string, href: string) => {
+  const addRemoteExtension = (targetId: string, host: string, href: string, run: { live: () => boolean; onAdded: (result: Awaited<ReturnType<typeof addMcpServer>>) => void; onFailed: (cause: unknown) => void; done: () => Promise<void> }) => {
     const scope = mcpScope();
-    const mine = ++addCounter;
     let addedName: string | undefined;
     let firstRead = true;
     const stateOf = (statuses: McpServerStatus[]) => statuses.find((item) => item.name === addedName)?.state;
@@ -419,19 +458,11 @@ export function EditAgent() {
         try {
           const result = await addMcpServer(targetId, href, scope, undefined, host);
           addedName = result.server.name;
-          setAddOpen(false);
-          setMcpUrl("");
-          setMcpAddedToast({ message: `Added ${mcpDisplayName(result.server.name, result.server.title)}.`, variant: "success" });
-          void refetchMcpServers();
-          return result.authorizationUrl;
+          if (run.live()) { run.onAdded(result); setMcpBusy(false); }
+          return run.live() ? result.authorizationUrl : undefined;
         } catch (cause) {
-          const message = cause instanceof Error ? cause.message : "Failed to add MCP server.";
-          if (message === DUPLICATE_MCP_MESSAGE) setMcpAddedToast({ message, variant: "warning" });
-          else setMcpError(message);
-          void refetchMcpServers();
+          run.onFailed(cause);
           throw cause;
-        } finally {
-          setMcpBusy(false);
         }
       },
       // The add call can run longer than the default deadline: the remote discovers the server first.
@@ -439,17 +470,19 @@ export function EditAgent() {
       verdict: (_before, now): OAuthVerdict => (stateOf(now) === "connected" ? "connected" : "pending"),
       canProve: () => true,
       onConnected: async () => {
+        if (!run.live()) return;
         await refetchMcpServers();
-        if (addedName) void checkServer(addedName, true);
+        if (run.live() && addedName) void checkServer(addedName, true);
       },
-      // The flow can end before the add call ran (blocked window, failed first read). The dialog must not stay busy then.
-    }).finally(() => { if (mine === addCounter) setMcpBusy(false); });
+    }).then(run.done);
   };
 
   const addCustomExtension = async (event: SubmitEvent) => {
     event.preventDefault();
     const targetId = dashboardAgentId();
-    if (mcpBusy() || !targetId) return;
+    const key = addIdentity();
+    // No resolved target means no add: a lookup that failed must not fall back to a local call.
+    if (mcpBusy() || mcpListUnknown() || !targetId || !key) return;
     let url: URL;
     try {
       url = new URL(mcpUrl().trim());
@@ -466,27 +499,47 @@ export function EditAgent() {
     setMcpBusy(true);
     setMcpError(undefined);
     const host = gateway();
+    const mine = addGeneration;
+    const live = () => addGeneration === mine && addIdentity() === key;
+    let failed = false;
+    let added = false;
+    const run = {
+      live,
+      onAdded: (result: Awaited<ReturnType<typeof addMcpServer>>) => {
+        added = true;
+        setAddOpen(false);
+        setMcpUrl("");
+        setMcpAddedToast({ message: `Added ${mcpDisplayName(result.server.name, result.server.title)}.`, variant: "success" });
+        void refetchMcpServers();
+      },
+      onFailed: (cause: unknown) => {
+        failed = true;
+        if (!live()) return;
+        const message = cause instanceof Error ? cause.message : "Failed to add MCP server.";
+        if (message === DUPLICATE_MCP_MESSAGE) setMcpAddedToast({ message, variant: "warning" });
+        else setMcpError(message);
+      },
+      // The remote can add before its answer fails, so the list of this target must settle before another add.
+      done: async () => {
+        if (failed) await settleList(live);
+        // A successful add already freed the dialog. A later flow end must not free a newer add.
+        if (live() && !added) setMcpBusy(false);
+      },
+    };
     if (host !== undefined) {
-      addRemoteExtension(targetId, host, url.href);
+      addRemoteExtension(targetId, host, url.href, run);
       return;
     }
     try {
       const result = await addMcpServer(targetId, url.href, mcpScope(), window.location.pathname + window.location.search + window.location.hash);
-      setAddOpen(false);
-      setMcpUrl("");
-      setMcpAddedToast({ message: `Added ${mcpDisplayName(result.server.name, result.server.title)}.`, variant: "success" });
-      if (result.authorizationUrl) {
-        window.location.assign(result.authorizationUrl);
+      if (live()) {
+        run.onAdded(result);
+        if (result.authorizationUrl) window.location.assign(result.authorizationUrl);
       }
-      void refetchMcpServers();
     } catch (cause) {
-      const message = cause instanceof Error ? cause.message : "Failed to add MCP server.";
-      if (message === DUPLICATE_MCP_MESSAGE) setMcpAddedToast({ message, variant: "warning" });
-      else setMcpError(message);
-      void refetchMcpServers();
-    } finally {
-      setMcpBusy(false);
+      run.onFailed(cause);
     }
+    await run.done();
   };
 
   // Hold the list until regular extensions, Top flags, and fast MCP configuration settle.
@@ -598,7 +651,7 @@ export function EditAgent() {
                 <div class="edit-agent-name-row">
                   <h1 class="edit-agent-name">{current().name}</h1>
                   <Show when={isAdmin() && forkedAgents() && fork()}>
-                    {(currentFork) => <ForkVisibility fork={currentFork()} canManage={canManageFork()} gateway={gateway()} onChanged={refetchForks} />}
+                    {(currentFork) => <Show when={gatewayKey(gateway(), currentFork().sourcePoolId)} keyed>{(_id) => <ForkVisibility fork={currentFork()} canManage={canManageFork()} gateway={gateway()} onChanged={refetchForks} />}</Show>}
                   </Show>
                 </div>
                 <Show when={current().role}>
@@ -610,18 +663,22 @@ export function EditAgent() {
         </Show>
 
         <Show when={isAdmin() && forkedAgents() && poolAgent() && (isSuperadmin() || !fork() || fork()!.public || canManageFork())}>
-          <TeamAssignment
-            poolId={rawId()}
-            agentName={agent()?.name ?? params.agentId}
-            teams={teamList().filter((team) => team.canManage)}
-            superadmin={isSuperadmin()}
-            gateway={gateway()}
-            fork={fork()}
-            onChanged={() => {
-              void refetchForks();
-              void refetchExtensions();
-            }}
-          />
+          <Show when={gatewayKey(gateway(), rawId())} keyed>
+            {(_id) => (
+              <TeamAssignment
+                poolId={rawId()}
+                agentName={agent()?.name ?? params.agentId}
+                teams={teamList().filter((team) => team.canManage)}
+                superadmin={isSuperadmin()}
+                gateway={gateway()}
+                fork={fork()}
+                onChanged={() => {
+                  void refetchForks();
+                  void refetchExtensions();
+                }}
+              />
+            )}
+          </Show>
         </Show>
 
         <Show when={agent()}>
@@ -696,8 +753,12 @@ export function EditAgent() {
           </section>
           <Show when={accessDashboard()}>{(dashboard) => <DashboardAccessDialog dashboard={dashboard()} gateway={gateway()} onClose={() => setAccessDashboard(undefined)} onSaved={async () => { await refetchDashboards(); }} />}</Show>
           <Show when={claimTarget()}>{(dashboard) => <ConfirmDialog title="Claim dashboard" description="This publishes the current HTML and makes the dashboard private to you. Previous viewers lose access until you share it." confirmLabel="Claim dashboard" error={claimError()} onCancel={() => setClaimTarget(undefined)} onConfirm={async () => {
-            try { await claimDashboard(dashboard().id, gateway()); await refetchDashboards(); setClaimTarget(undefined); }
-            catch (cause) { setClaimError(cause instanceof Error ? cause.message : "Unable to claim dashboard."); }
+            const key = addIdentity();
+            const mine = addGeneration;
+            const live = () => addGeneration === mine && addIdentity() === key;
+            if (!key) return;
+            try { await claimDashboard(dashboard().id, gateway()); if (live()) { await refetchDashboards(); if (live()) setClaimTarget(undefined); } }
+            catch (cause) { if (live()) setClaimError(cause instanceof Error ? cause.message : "Unable to claim dashboard."); }
           }} />}</Show>
         </Show>
 
@@ -733,9 +794,12 @@ export function EditAgent() {
                       </fieldset>
                     </Show>
                     <Show when={mcpError()}>{(message) => <p role="alert" class="mcp-ext-error">{message()}</p>}</Show>
+                    <Show when={mcpListUnknown()}>
+                      <p role="alert" class="mcp-ext-error">The server list could not be read after the error, and the server may exist. Read the list before you add again. <button type="button" disabled={mcpBusy()} onClick={() => void retryListRead()}>Read list</button></p>
+                    </Show>
                     <div class="mcp-ext-dialog-actions">
                       <button type="button" disabled={mcpBusy()} onClick={() => setAddOpen(false)}>Cancel</button>
-                      <button type="submit" disabled={mcpBusy()}>{mcpBusy() ? "Adding…" : "Add and connect"}</button>
+                      <button type="submit" disabled={mcpBusy() || mcpListUnknown()}>{mcpBusy() ? "Adding…" : "Add and connect"}</button>
                     </div>
                   </form>
                 </div>

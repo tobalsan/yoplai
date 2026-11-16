@@ -1,4 +1,4 @@
-import { createMemo, createResource, createSignal, Show } from "solid-js";
+import { createComputed, createMemo, createResource, createSignal, Show } from "solid-js";
 import { A, useParams } from "@solidjs/router";
 import {
   fetchAgentExtensions,
@@ -11,7 +11,7 @@ import { ExtensionConfigForm, type ConnectSettingsActions } from "./ExtensionCon
 import { decodeRouteParam } from "../lib/path";
 import { useAgentTarget } from "../lib/agent-target";
 import { useRequester } from "../lib/requester";
-import { qualifyAgentRoute } from "../api/gateway";
+import { gatewayKey, qualifyAgentRoute } from "../api/gateway";
 
 /**
  * Details page for one extension on one agent, reached by clicking an
@@ -31,61 +31,75 @@ export function ExtensionDetails(props: { extensionId?: string }) {
   const gateway = () => { const current = target(); return current.state === "ready" ? current.gateway : undefined; };
   const requester = useRequester(gateway);
 
+  // The identity of this page: the gateway and the agent. The catalog, the form drafts, and every
+  // mutation belong to one identity. A new identity drops them all, so no old permission carries over.
+  const targetKey = createMemo(() => { const current = target(); return current.state === "ready" ? gatewayKey(current.gateway, current.agentId) : undefined; });
   const [extensions, { mutate }] = createResource(
     () => { const current = target(); return current.state === "ready" ? current : null; },
-    (current) => fetchAgentExtensions(current.agentId, current.gateway)
+    async (current) => ({ key: gatewayKey(current.gateway, current.agentId), list: await fetchAgentExtensions(current.agentId, current.gateway) })
   );
   const [busy, setBusy] = createSignal(false);
   // The OAuth card's selected tab also selects which settings the form edits.
   const [scope, setScope] = createSignal<CredentialScope>("personal");
   let settingsActions: ConnectSettingsActions | undefined;
   const [toggleError, setToggleError] = createSignal<string | null>(null);
+  // Each identity change starts a new generation. A late result checks both before it changes the page.
+  let generation = 0;
+  createComputed(() => {
+    void targetKey();
+    generation++;
+    setBusy(false);
+    setToggleError(null);
+  });
+  // Only the catalog of the resolved target counts. A failed lookup leaves no catalog, so no mutation control.
+  const catalog = createMemo(() => {
+    if (extensions.error) return undefined;
+    const loaded = extensions();
+    return loaded && loaded.key === targetKey() ? loaded.list : undefined;
+  });
+  const entry = createMemo(() => catalog()?.find((candidate) => candidate.id === params.extensionId));
 
-  // Extensions without settings are a plain on/off, flipped here.
-  const toggle = async (ext: ExtensionCatalogEntry) => {
+  /** A form of an older identity can finish after the page moved on. Its catalog is dropped. */
+  const saved = (key: string, mine: number, list: ExtensionCatalogEntry[]) => {
+    if (generation === mine && targetKey() === key) mutate({ key, list });
+  };
+
+  /** Runs one mutation for the exact target that is shown now. Results of an older target change nothing. */
+  const mutateExtension = async (ext: ExtensionCatalogEntry, patch: Parameters<typeof patchAgentExtension>[2], failure: string) => {
+    const key = targetKey();
+    const current = target();
+    if (!key || current.state !== "ready" || entry()?.id !== ext.id) return;
+    const mine = generation;
+    const live = () => generation === mine && targetKey() === key;
     setBusy(true);
     setToggleError(null);
     try {
-      mutate(
-        await patchAgentExtension(params.agentId, ext.id, {
-          enabled: !ext.enabled,
-        }, gateway())
-      );
+      const list = await patchAgentExtension(current.agentId, ext.id, patch, current.gateway);
+      if (live()) mutate({ key, list });
     } catch (cause) {
-      setToggleError(
-        cause instanceof Error ? cause.message : "Failed to update extension."
-      );
+      if (live()) setToggleError(cause instanceof Error ? cause.message : failure);
     } finally {
-      setBusy(false);
+      if (live()) setBusy(false);
     }
   };
+
+  // Extensions without settings are a plain on/off, flipped here.
+  const toggle = (ext: ExtensionCatalogEntry) => mutateExtension(ext, { enabled: !ext.enabled }, "Failed to update extension.");
   // Whoever connects turns the extension on for the agent. Signed-in users go
   // through their own scope, which any agent member may write (a team-scope
   // enable is admin-only); resending their overrides keeps them.
-  const enableAfterConnect = async (ext: ExtensionCatalogEntry) => {
-    setBusy(true);
-    setToggleError(null);
-    try {
-      mutate(
-        await patchAgentExtension(
-          params.agentId,
-          ext.id,
-          requester().multiUser && requester().user
-            ? { credentialScope: "personal", config: ext.personalConfigValues ?? {} }
-            : { enabled: true },
-          gateway()
-        )
-      );
-    } catch (cause) {
-      setToggleError(cause instanceof Error ? cause.message : "Failed to enable extension.");
-    } finally {
-      setBusy(false);
-    }
+  const enableAfterConnect = (ext: ExtensionCatalogEntry) => {
+    // The requester must belong to the gateway of this page. Another gateway's rights do not apply.
+    const asked = requester();
+    if (asked.gateway !== gateway()) return Promise.resolve();
+    return mutateExtension(
+      ext,
+      asked.multiUser && asked.user
+        ? { credentialScope: "personal", config: ext.personalConfigValues ?? {} }
+        : { enabled: true },
+      "Failed to enable extension."
+    );
   };
-  // Reading a failed resource throws. A failed remote read must show the error, not a blank page.
-  const entry = createMemo(() =>
-    extensions.error ? undefined : (extensions() ?? []).find((candidate) => candidate.id === params.extensionId)
-  );
 
   const backHref = createMemo(
     () => `/agents/${encodeURIComponent(params.agentId)}/edit`
@@ -118,7 +132,12 @@ export function ExtensionDetails(props: { extensionId?: string }) {
           </div>
         </Show>
 
-        <Show when={entry()}>
+        <Show when={targetKey()} keyed>
+          {(key) => {
+          // A new identity remounts everything below: form drafts, saved permissions, and the sign-in card.
+          const mine = generation;
+          return (
+          <Show when={entry()}>
           {(ext) => (
             <>
               <div class="ext-details-heading">
@@ -164,6 +183,7 @@ export function ExtensionDetails(props: { extensionId?: string }) {
                     label={ext().displayName}
                     onStatus={(connected) => {
                       // A connection in either scope turns the extension on.
+                      if (generation !== mine || targetKey() !== key) return;
                       if (connected && !ext().enabled && !busy() && !ext().managedAtRoot && ext().configurable !== false) void enableAfterConnect(ext());
                     }}
                   >
@@ -173,7 +193,7 @@ export function ExtensionDetails(props: { extensionId?: string }) {
                         agentId={params.agentId}
                         gateway={gateway()}
                         scope={scope()}
-                        onSaved={mutate}
+                        onSaved={(list) => saved(key, mine, list)}
                         registerConnectActions={(actions) => { settingsActions = actions; }}
                       />
                     </Show>
@@ -186,7 +206,7 @@ export function ExtensionDetails(props: { extensionId?: string }) {
                   entry={ext()}
                   agentId={params.agentId}
                   gateway={gateway()}
-                  onSaved={mutate}
+                  onSaved={(list) => saved(key, mine, list)}
                   registerConnectActions={(actions) => { settingsActions = actions; }}
                 />
               </Show>
@@ -234,6 +254,9 @@ export function ExtensionDetails(props: { extensionId?: string }) {
               </Show>
             </>
           )}
+        </Show>
+          );
+          }}
         </Show>
       </div>
 

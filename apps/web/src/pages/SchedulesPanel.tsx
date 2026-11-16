@@ -1,12 +1,13 @@
 import cronstrue from "cronstrue";
 import { A } from "@solidjs/router";
-import { createEffect, createMemo, createResource, createSignal, For, onCleanup, Show } from "solid-js";
+import { createComputed, createEffect, createMemo, createResource, createSignal, For, onCleanup, Show } from "solid-js";
 import { createStore, reconcile } from "solid-js/store";
 import { deleteSchedule, fetchSchedules, updateSchedule, type ScheduleJob } from "../api/schedules";
 import { ScopeIcon } from "../components/CredentialScopeTabs";
 import { useRequester } from "../lib/requester";
 import { isForeignMine, usePrivateItemsVisibility, visibleJobs } from "../lib/private-items";
 import { refreshScheduleAlerts } from "../lib/schedule-alerts";
+import { gatewayKey } from "../api/gateway";
 
 type CredentialMode = "owner" | "team";
 
@@ -55,16 +56,23 @@ function elapsedTime(ms: number): string {
 export function SchedulesPanel(props: { agentId: string; agentName: string; gateway?: string }) {
   const requester = useRequester(() => props.gateway);
   const { showPrivateItems } = usePrivateItemsVisibility();
-  const [result, { refetch }] = createResource(
+  // The identity of the list: the gateway and the agent. Jobs, actions, and dialogs belong to one identity.
+  const identity = createMemo(() => gatewayKey(props.gateway, props.agentId));
+  const [loaded, { refetch }] = createResource(
     () => ({ agentId: props.agentId, gateway: props.gateway }),
-    async ({ agentId, gateway }, { value }): Promise<{ jobs: ScheduleJob[]; error?: string }> => {
+    async ({ agentId, gateway }, { value }): Promise<{ key: string; jobs: ScheduleJob[]; error?: string }> => {
+      const key = gatewayKey(gateway, agentId);
       try {
-        return { jobs: await fetchSchedules(agentId, gateway) };
+        return { key, jobs: await fetchSchedules(agentId, gateway) };
       } catch (cause) {
-        return { jobs: value?.jobs ?? [], error: cause instanceof Error ? cause.message : "Failed to load scheduled jobs." };
+        // Keep earlier jobs only for the same gateway and agent.
+        return { key, jobs: value?.key === key ? value.jobs : [], error: cause instanceof Error ? cause.message : "Failed to load scheduled jobs." };
       }
     }
   );
+  // Data of another gateway or agent is never current data.
+  const current = () => { const latest = loaded.latest; return latest?.key === identity() ? latest : undefined; };
+  const result = { get loading() { return loaded.loading; }, get latest() { return current(); } };
   const [jobs, setJobs] = createStore<ScheduleJob[]>([]);
   const visible = createMemo(() => visibleJobs(jobs, requester().user?.id,
     !requester().isSuperadmin || showPrivateItems()));
@@ -78,6 +86,27 @@ export function SchedulesPanel(props: { agentId: string; agentName: string; gate
   const [busy, setBusy] = createSignal<string>();
   // Optimistic on/off state while a toggle request is in flight.
   const [pending, setPending] = createSignal<Record<string, boolean>>({});
+  const [confirming, setConfirming] = createSignal<ScheduleJob>();
+  const [deleting, setDeleting] = createSignal(false);
+  const [deleteError, setDeleteError] = createSignal<string | null>(null);
+  // Each identity change starts a new generation and drops pending actions and the open dialog.
+  // A late answer of an older identity then changes nothing and refreshes nothing.
+  let generation = 0;
+  createComputed(() => {
+    void identity();
+    generation++;
+    setBusy(undefined);
+    setPending({});
+    setError(null);
+    setConfirming(undefined);
+    setDeleting(false);
+    setDeleteError(null);
+  });
+  const mutation = () => {
+    const mine = generation;
+    const key = identity();
+    return { agentId: props.agentId, gateway: props.gateway, live: () => generation === mine && identity() === key };
+  };
   // Single-user mode has no session: everyone manages every job (server enforces the same).
   // A remote page needs a loaded single-user context for that. An unknown context grants nothing.
   const isAdmin = () => {
@@ -89,36 +118,39 @@ export function SchedulesPanel(props: { agentId: string; agentName: string; gate
 
   const changeMode = async (job: ScheduleJob, credentialMode: CredentialMode) => {
     if (busy() || (job.credentialMode ?? "team") === credentialMode) return;
+    const run = mutation();
     setBusy(job.id);
     setError(null);
     try {
-      await updateSchedule(props.agentId, job.id, { credentialMode }, props.gateway);
+      await updateSchedule(run.agentId, job.id, { credentialMode }, run.gateway);
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Failed to update scheduled job.");
+      if (run.live()) setError(cause instanceof Error ? cause.message : "Failed to update scheduled job.");
     } finally {
-      await refetch();
-      setBusy(undefined);
+      if (run.live()) {
+        await refetch();
+        if (run.live()) setBusy(undefined);
+      }
     }
   };
 
   const toggleEnabled = async (job: ScheduleJob, enabled: boolean) => {
     if (job.id in pending()) return;
+    const run = mutation();
     setPending((current) => ({ ...current, [job.id]: enabled }));
     setError(null);
     try {
-      await updateSchedule(props.agentId, job.id, { enabled }, props.gateway);
-      void refreshScheduleAlerts(props.gateway);
+      await updateSchedule(run.agentId, job.id, { enabled }, run.gateway);
+      void refreshScheduleAlerts(run.gateway);
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Failed to update scheduled job.");
+      if (run.live()) setError(cause instanceof Error ? cause.message : "Failed to update scheduled job.");
     } finally {
-      await refetch();
-      setPending(({ [job.id]: _done, ...rest }) => rest);
+      if (run.live()) {
+        await refetch();
+        if (run.live()) setPending(({ [job.id]: _done, ...rest }) => rest);
+      }
     }
   };
 
-  const [confirming, setConfirming] = createSignal<ScheduleJob>();
-  const [deleting, setDeleting] = createSignal(false);
-  const [deleteError, setDeleteError] = createSignal<string | null>(null);
   let deleteTrigger: HTMLButtonElement | undefined;
 
   const openDelete = (job: ScheduleJob, trigger: HTMLButtonElement) => {
@@ -134,16 +166,19 @@ export function SchedulesPanel(props: { agentId: string; agentName: string; gate
   const confirmDelete = async () => {
     const job = confirming();
     if (!job || deleting()) return;
+    const run = mutation();
     setDeleting(true);
     setDeleteError(null);
     try {
-      await deleteSchedule(props.agentId, job.id, props.gateway);
-      setConfirming(undefined);
-      await refetch();
+      await deleteSchedule(run.agentId, job.id, run.gateway);
+      if (run.live()) {
+        setConfirming(undefined);
+        await refetch();
+      }
     } catch (cause) {
-      setDeleteError(cause instanceof Error ? cause.message : "Failed to delete scheduled job.");
+      if (run.live()) setDeleteError(cause instanceof Error ? cause.message : "Failed to delete scheduled job.");
     } finally {
-      setDeleting(false);
+      if (run.live()) setDeleting(false);
     }
   };
   createEffect(() => {

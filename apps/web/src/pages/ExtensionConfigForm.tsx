@@ -3,6 +3,7 @@ import {
   createMemo,
   createSignal,
   For,
+  onCleanup,
   Show,
 } from "solid-js";
 import { useParams } from "@solidjs/router";
@@ -66,10 +67,13 @@ export function ExtensionConfigForm(props: {
   personalOnly?: boolean;
 }) {
   const routeParams = useParams<{ agentId: string; extensionId: string }>();
-  const params = {
-    get agentId() { return props.agentId ?? routeParams.agentId; },
-    get extensionId() { return props.agentId ? props.entry.id : routeParams.extensionId; },
-  };
+  // One form belongs to one gateway, agent, and extension. The parent mounts a new form when that identity
+  // changes, so this form reads the identity once. Props that follow the route later must not retarget it.
+  const params = { agentId: props.agentId ?? routeParams.agentId, extensionId: props.agentId ? props.entry.id : routeParams.extensionId };
+  const gateway = props.gateway;
+  // A request of a form that is gone must not change the page, the draft, or the parent catalog.
+  let disposed = false;
+  onCleanup(() => { disposed = true; });
 
   // Updated in place after saving, from the PATCH response.
   const [entry, setEntry] = createSignal<ExtensionCatalogEntry>(props.entry);
@@ -143,14 +147,15 @@ export function ExtensionConfigForm(props: {
     setSaved(false);
     try {
       const updated = personal
-        ? (await disconnectAgentConnection(params.agentId, "extension", params.extensionId, props.gateway), await fetchAgentExtensions(params.agentId, props.gateway))
-        : await removeTeamExtensionCredentials(params.agentId, params.extensionId, props.gateway);
+        ? (await disconnectAgentConnection(params.agentId, "extension", params.extensionId, gateway), await fetchAgentExtensions(params.agentId, gateway))
+        : await removeTeamExtensionCredentials(params.agentId, params.extensionId, gateway);
+      if (disposed) return;
       const refreshed = updated.find((extension) => extension.id === params.extensionId);
       if (refreshed) setEntry(refreshed);
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Failed to remove credentials.");
+      if (!disposed) setError(cause instanceof Error ? cause.message : "Failed to remove credentials.");
     } finally {
-      setSaving(false);
+      if (!disposed) setSaving(false);
     }
   };
 
@@ -301,7 +306,8 @@ export function ExtensionConfigForm(props: {
         ...(credentialScope() === "team" ? { enabled: true } : {}),
         config,
         secrets,
-      }, props.gateway);
+      }, gateway);
+      if (disposed) return undefined;
       const refreshed = updated.find((extension) => extension.id === params.extensionId);
       // Always refresh, so the team baseline follows the saved state.
       if (refreshed) setEntry(refreshed);
@@ -311,7 +317,7 @@ export function ExtensionConfigForm(props: {
       setSaved(true);
       return refreshed;
     } finally {
-      setSaving(false);
+      if (!disposed) setSaving(false);
     }
   };
 
@@ -321,7 +327,7 @@ export function ExtensionConfigForm(props: {
     try {
       await submit();
     } catch (cause) {
-      setError(
+      if (!disposed) setError(
         cause instanceof Error ? cause.message : "Failed to save configuration."
       );
     }

@@ -302,3 +302,65 @@ describe("MCP configuration of a remote agent", () => {
     expect(gateways.localConfigurationRequests()).toEqual([]);
   });
 });
+
+describe("late answers of MCP controls", () => {
+  const other = "other%40east";
+  beforeEach(() => {
+    gateways.on("GET", new RegExp(`^${east}/api/mcp/servers\\?agent=${other}`), { json: { canConfigureTeam: true, servers: [server({ personalState: "connected", state: "connected" })] } });
+    gateways.on("GET", `${east}/api/mcp/oauth/status?agent=${other}&scope=personal`, { json: { servers: [{ name: "docs", auth: "oauth", state: "connected" }] } });
+    gateways.on("GET", `${east}/api/mcp/oauth/status?agent=${other}&scope=team`, { json: { servers: [{ name: "docs", auth: "oauth", state: "disconnected" }] } });
+  });
+
+  it("does not leave the page for the old agent when its remove ends late", async () => {
+    personal = "connected";
+    let finish: (() => void) | undefined;
+    gateways.on("POST", `${east}/api/mcp/servers/remove?agent=${agent}&server=docs`, () => new Promise((resolve) => { finish = () => resolve({ json: { ok: true } }); }));
+    mount(`/agents/${agent}/mcp-servers/docs`);
+    await vi.waitFor(() => expect(button("Remove server")).toBeDefined());
+    button("Remove server")!.click();
+    await vi.waitFor(() => expect(button("Confirm remove")).toBeDefined());
+    button("Confirm remove")!.click();
+    await vi.waitFor(() => expect(finish).toBeDefined());
+    history.set({ value: `/agents/${other}/mcp-servers/docs` });
+    await vi.waitFor(() => expect(button("Remove server")).toBeDefined());
+    finish!();
+    await tick();
+    await tick();
+    expect(history.get()).toBe(`/agents/${other}/mcp-servers/docs`);
+    expect(button("Remove server")?.disabled).toBe(false);
+  });
+
+  it("ignores a late disconnect error of the old agent and keeps the new page usable", async () => {
+    personal = "connected";
+    let fail: (() => void) | undefined;
+    gateways.on("POST", `${east}/api/mcp/oauth/disconnect?agent=${agent}&server=docs&scope=personal`, () => new Promise((resolve) => { fail = () => resolve({ status: 403, json: { error: "forbidden" } }); }));
+    mount(`/agents/${agent}/mcp-servers/docs`);
+    await vi.waitFor(() => expect(button("Disconnect")).toBeDefined());
+    button("Disconnect")!.click();
+    await vi.waitFor(() => expect(fail).toBeDefined());
+    history.set({ value: `/agents/${other}/mcp-servers/docs` });
+    await vi.waitFor(() => expect(button("Disconnect")).toBeDefined());
+    fail!();
+    await tick();
+    await tick();
+    expect(text()).not.toContain("Failed to disconnect MCP server.");
+    expect(button("Disconnect")?.disabled).toBe(false);
+  });
+
+  it("does not carry an unsaved config draft to the next agent, and sends no old draft", async () => {
+    gateways.on("GET", new RegExp(`^${east}/api/mcp/servers\\?agent=(${agent}|${other})`), { json: { canConfigureTeam: true, servers: [server({ auth: "none", state: "connected" })] } });
+    gateways.on("GET", `${east}/api/mcp/servers/config?agent=${agent}&server=docs`, { json: { name: "docs", type: "http", editable: true, config: { url: "https://east.test/mcp" } } });
+    gateways.on("GET", `${east}/api/mcp/servers/config?agent=${other}&server=docs`, { json: { name: "docs", type: "http", editable: true, config: { url: "https://other.test/mcp" } } });
+    gateways.on("POST", `${east}/api/mcp/servers/config?agent=${other}&server=docs`, { json: { name: "docs", type: "http", editable: true, config: {} } });
+    mount(`/agents/${agent}/mcp-servers/docs`);
+    await vi.waitFor(() => expect(container.querySelector("textarea")?.value).toContain("east.test"));
+    const editor = container.querySelector("textarea")!;
+    editor.value = JSON.stringify({ url: "https://draft.test/mcp" });
+    editor.dispatchEvent(new Event("input", { bubbles: true }));
+    history.set({ value: `/agents/${other}/mcp-servers/docs` });
+    await vi.waitFor(() => expect(container.querySelector("textarea")?.value).toContain("other.test"));
+    button("Save")!.click();
+    await vi.waitFor(() => expect(gateways.requests.some((request) => request.method === "POST" && request.url.includes("/mcp/servers/config"))).toBe(true));
+    expect(JSON.stringify(gateways.requests.filter((request) => request.method === "POST").map((request) => request.body))).not.toContain("draft.test");
+  });
+});

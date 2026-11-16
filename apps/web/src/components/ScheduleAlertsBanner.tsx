@@ -1,4 +1,4 @@
-import { For, Show, createMemo, createSignal } from "solid-js";
+import { For, Show, createComputed, createMemo, createSignal } from "solid-js";
 import { A } from "@solidjs/router";
 import { refreshScheduleAlerts, scheduleAlertsFor } from "../lib/schedule-alerts";
 import { updateSchedule } from "../api/schedules";
@@ -13,17 +13,22 @@ export function ScheduleAlertsBanner(props: { agentId: string; schedulesAgentId?
   const connectHref = (path: string | undefined) => (path ? qualifyAgentRoute(path, props.agentId, props.gateway) : undefined) ?? editPath();
   const [busy, setBusy] = createSignal<string>();
   const [error, setError] = createSignal<{ jobId: string; text: string }>();
+  // A new agent or gateway drops the pending action and the message of the old one.
+  createComputed(() => { void props.agentId; void props.gateway; setBusy(undefined); setError(undefined); });
   const resume = async (jobId: string) => {
     if (busy()) return;
+    // A late answer of another gateway or agent changes nothing.
+    const { agentId, gateway } = props;
+    const same = () => props.agentId === agentId && props.gateway === gateway;
     setBusy(jobId);
     setError(undefined);
     try {
-      await updateSchedule(props.agentId, jobId, { enabled: true }, props.gateway);
-      await refreshScheduleAlerts(props.gateway);
+      await updateSchedule(agentId, jobId, { enabled: true }, gateway);
+      await refreshScheduleAlerts(gateway);
     } catch (cause) {
-      setError({ jobId, text: cause instanceof Error ? cause.message : "Failed to resume scheduled job. Try again." });
+      if (same()) setError({ jobId, text: cause instanceof Error ? cause.message : "Failed to resume scheduled job. Try again." });
     } finally {
-      setBusy(undefined);
+      if (same()) setBusy(undefined);
     }
   };
   return (

@@ -74,6 +74,8 @@ export function AgentConnectionsPanel(props: {
     if (props.gateway !== undefined && !requester().ready) return;
     setConnections([]);
     setMcpConnections([]);
+    // A disconnect of the old identity must not leave the new list locked.
+    setPending(undefined);
     if (agentId) void refresh(agentId, userId);
   });
 
@@ -82,18 +84,21 @@ export function AgentConnectionsPanel(props: {
     const gateway = props.gateway;
     const userId = requester().user?.id;
     const key = `${connection.kind}:${connection.id}`;
+    // A late answer of an older gateway, agent, or user changes nothing.
+    const same = () => agentId === props.agentId && gateway === props.gateway && userId === requester().user?.id;
     setPending(key);
     if (connection.kind === "mcp") setMcpError(undefined);
     else setError(undefined);
     try {
       if (connection.kind === "mcp") await disconnectMcpConnection(agentId, connection.id, gateway);
       else await disconnectAgentConnection(agentId, connection.kind, connection.id, gateway);
-      if (agentId === props.agentId && gateway === props.gateway && userId === requester().user?.id) await refresh(agentId, userId);
+      if (same()) await refresh(agentId, userId);
     } catch (cause) {
+      if (!same()) return;
       if (connection.kind === "mcp") setMcpError(cause instanceof Error ? cause.message : "Failed to disconnect MCP connection");
       else setError(cause instanceof Error ? cause.message : "Failed to disconnect connection");
     } finally {
-      setPending(undefined);
+      if (same()) setPending(undefined);
     }
   };
 

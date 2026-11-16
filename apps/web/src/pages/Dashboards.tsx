@@ -125,8 +125,11 @@ export function Dashboards() {
       </section></Show>
       <Show when={managing()}>{(dashboard) => <DashboardAccessDialog dashboard={dashboard()} gateway={gateway()} onClose={() => setManaging(undefined)} onSaved={async () => { await refetch(); }} />}</Show>
       <Show when={deleting()}>{(dashboard) => <ConfirmDialog title="Delete dashboard" description={`Delete ${dashboard().title} and its published HTML and history? Shared databases are retained.`} confirmLabel="Delete" danger error={deleteError()} onCancel={() => setDeleting(undefined)} onConfirm={async () => {
-        try { await deleteDashboard(dashboard().id, gateway()); await refetch(); setDeleting(undefined); }
-        catch (cause) { setDeleteError(cause instanceof Error ? cause.message : "Unable to delete dashboard."); }
+        const host = gateway();
+        // An answer after a gateway change must not refresh, close, or mark the dialog of the new gateway.
+        const same = () => gateway() === host;
+        try { await deleteDashboard(dashboard().id, host); if (same()) { await refetch(); if (same()) setDeleting(undefined); } }
+        catch (cause) { if (same()) setDeleteError(cause instanceof Error ? cause.message : "Unable to delete dashboard."); }
       }} />}</Show>
       <Show when={!data()?.shared.length || shared().length > 0}><section><h2>Shared with me</h2>
         <ul class="dashboards-list"><For each={shared()} fallback={<Show when={!requesting() && !dashboards.error}><li>No dashboards have been shared with you.</li></Show>}>{(dashboard) => row(dashboard, true)}</For></ul>
