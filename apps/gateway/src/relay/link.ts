@@ -89,6 +89,8 @@ type Attempt = {
   deviceLabel: string;
   /** The generation of the stored link when the attempt began, or null when the name was free. */
   expectedGeneration: string | null;
+  /** The mutation version of the name when the attempt began. A later save or removal of the name changes it. */
+  expectedVersion: number;
   expiresAt: number;
   finishedAt?: number;
   status: AttemptStatus;
@@ -269,6 +271,7 @@ export class RelayLinkService {
       replaceLinkId = existing.managed.linkId;
     }
     const expectedGeneration = existing ? (existing.generation ?? null) : null;
+    const expectedVersion = this.deps.store().mutationVersion(name);
     if (existing && expectedGeneration === null) {
       return fail(409, "name_in_use", `The link "${name}" has no generation. Disconnect it first.`);
     }
@@ -280,7 +283,7 @@ export class RelayLinkService {
     const parsed = CapabilitiesResponseSchema.safeParse(capabilities.body);
     if (!parsed.success) return fail(502, "remote_invalid", `${origin} did not answer like a Yoplai gateway.`);
 
-    if (parsed.data.multiUser === false) return this.linkOpenGateway(origin, name, expectedGeneration);
+    if (parsed.data.multiUser === false) return this.linkOpenGateway(origin, name, expectedGeneration, expectedVersion);
     if (!parsed.data.gatewayLink) {
       return fail(409, "remote_not_supported", "This remote gateway has no browser sign-in. Link it with a user token: yoplai connect <url> --token <token>.");
     }
@@ -318,6 +321,7 @@ export class RelayLinkService {
       callbackUri,
       deviceLabel,
       expectedGeneration,
+      expectedVersion,
       expiresAt,
       status: "pending",
     };
@@ -337,13 +341,13 @@ export class RelayLinkService {
   }
 
   /** The unauthenticated path for a remote that reports `multiUser === false`. It stores no key and opens no consent page. */
-  private async linkOpenGateway(origin: string, name: string, expectedGeneration: string | null): Promise<LinkResult<StartOutcome>> {
+  private async linkOpenGateway(origin: string, name: string, expectedGeneration: string | null, expectedVersion: number): Promise<LinkResult<StartOutcome>> {
     const agents = await this.remote(origin, "/api/agents", { method: "GET" });
     if (agents.kind === "lost" || agents.status !== 200 || !Array.isArray(agents.body)) {
       return fail(502, "remote_invalid", `${origin} did not answer like an open Yoplai gateway.`);
     }
     const gateway: RemoteGateway = { name, url: origin };
-    if (!this.deps.store().saveIfGeneration(gateway, expectedGeneration)) {
+    if (!this.deps.store().saveIfGeneration(gateway, expectedGeneration, expectedVersion)) {
       return fail(409, "link_changed", `The link "${name}" changed while it was checked. Try again.`);
     }
     return ok({ kind: "linked", name });
@@ -454,7 +458,7 @@ export class RelayLinkService {
     let saved = false;
     let saveFailed = false;
     try {
-      saved = this.deps.store().saveIfGeneration(gateway, attempt.expectedGeneration);
+      saved = this.deps.store().saveIfGeneration(gateway, attempt.expectedGeneration, attempt.expectedVersion);
     } catch {
       saveFailed = true;
     }

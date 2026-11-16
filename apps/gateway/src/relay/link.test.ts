@@ -378,6 +378,40 @@ describe("complete", () => {
   });
 });
 
+describe("a name that a later link removed", () => {
+  it("is not restored by an older attempt, and the key of the older attempt is revoked", async () => {
+    const older = await begin({ name: "work" });
+    const newer = await begin({ name: "work" });
+    expect(await service.complete({ state: newer.state, code: "code-newer" })).toMatchObject({ ok: true, value: { status: "linked" } });
+    expect(await service.disconnect("work")).toMatchObject({ ok: true });
+    expect(store.list()).toEqual([]);
+    calls.length = 0;
+    expect(await service.complete({ state: older.state, code: "code-older" })).toMatchObject({ ok: true, value: { status: "failed" } });
+    expect(store.list()).toEqual([]);
+    expect(calls.map((call) => call.path)).toContain("/api/auth/gateway-link/revoke");
+    expect(service.status(older.attempt.attemptId, older.attempt.controlToken)).toMatchObject({ ok: true, value: { status: "failed" } });
+  });
+
+  it("is not restored after a local removal of a manual link of the same name", async () => {
+    const older = await begin({ name: "work" });
+    store.save({ name: "work", url: "https://manual.example.test", token: "manual-token" });
+    store.remove("work");
+    expect(await service.complete({ state: older.state, code: "code-older" })).toMatchObject({ ok: true, value: { status: "failed" } });
+    expect(store.list()).toEqual([]);
+  });
+
+  it("is not restored for an open gateway that was checked before the removal", async () => {
+    handlers["GET /api/capabilities"] = () => jsonResponse(200, { version: 2, extensions: {}, agents: [], multiUser: false });
+    handlers["GET /api/agents"] = () => {
+      store.save({ name: "open", url: "https://manual.example.test", token: "manual-token" });
+      store.remove("open");
+      return jsonResponse(200, []);
+    };
+    expect(await service.start({ remote: ORIGIN, name: "open" })).toMatchObject({ ok: false, error: "link_changed" });
+    expect(store.list()).toEqual([]);
+  });
+});
+
 describe("status and cancel", () => {
   it("answer only with the control token of the attempt", async () => {
     const { attempt } = await begin({ name: "work" });

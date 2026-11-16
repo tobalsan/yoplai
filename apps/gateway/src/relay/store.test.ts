@@ -72,6 +72,32 @@ describe("remote gateway store link generation", () => {
   });
 });
 
+describe("remote gateway store mutation version", () => {
+  it("changes for a save and for a removal, and counts one name apart from another", () => {
+    const store = createFileRemoteGatewayStore(file);
+    const free = store.mutationVersion("ams");
+    store.save(link);
+    expect(store.mutationVersion("ams")).not.toBe(free);
+    const saved = store.mutationVersion("ams");
+    store.save({ ...link });
+    expect(store.mutationVersion("ams")).toBe(saved);
+    store.remove("ams");
+    expect(store.mutationVersion("ams")).not.toBe(saved);
+    expect(store.mutationVersion("east")).toBe(free);
+  });
+
+  it("refuses a save for a name that was linked and removed after the caller saw it free", () => {
+    const store = createFileRemoteGatewayStore(file);
+    const seen = store.mutationVersion("ams");
+    expect(store.saveIfGeneration(link, null, seen)).toBe(true);
+    expect(store.removeIfGeneration("ams", store.list()[0].generation)).toBe(true);
+    expect(store.list()).toEqual([]);
+    expect(store.saveIfGeneration({ ...link, token: "fake-bearer-late" }, null, seen)).toBe(false);
+    expect(store.list()).toEqual([]);
+    expect(store.saveIfGeneration({ ...link, token: "fake-bearer-fresh" }, null, store.mutationVersion("ams"))).toBe(true);
+  });
+});
+
 describe("remote gateway store generation checks", () => {
   it("saves a new link only when no link of that name exists", () => {
     const store = createFileRemoteGatewayStore(file);

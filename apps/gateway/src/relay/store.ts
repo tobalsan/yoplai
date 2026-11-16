@@ -33,10 +33,16 @@ export interface RemoteGatewayStore {
   save(gateway: RemoteGateway): void;
   remove(name: string): boolean;
   /**
-   * Saves a link only when the stored link still has the generation that the caller saw. `null` means that no link of
-   * this name may exist. Returns false and writes nothing on a mismatch. A saved link always gets a new generation.
+   * Counts the changes that this store object made to one name, and keeps counting after the name is removed. A caller
+   * that saw a free name reads this count first. A later removal then still shows that the name changed.
    */
-  saveIfGeneration(gateway: RemoteGateway, expected: string | null): boolean;
+  mutationVersion(name: string): number;
+  /**
+   * Saves a link only when the stored link still has the generation that the caller saw. `null` means that no link of
+   * this name may exist. `expectedVersion` is the `mutationVersion` that the caller saw. Returns false and writes
+   * nothing on a mismatch. A saved link always gets a new generation.
+   */
+  saveIfGeneration(gateway: RemoteGateway, expected: string | null, expectedVersion?: number): boolean;
   /** Removes a link only when it still has this generation. */
   removeIfGeneration(name: string, expected: string | undefined): boolean;
 }
@@ -56,6 +62,9 @@ export function createFileRemoteGatewayStore(
     });
     fs.renameSync(tmpPath, filePath);
   };
+  const versions = new Map<string, number>();
+  const version = (name: string) => versions.get(name) ?? 0;
+  const bump = (name: string) => versions.set(name, version(name) + 1);
   const list = (): RemoteGateway[] => {
     try {
       const parsed: unknown = JSON.parse(fs.readFileSync(filePath, "utf8"));
@@ -72,6 +81,7 @@ export function createFileRemoteGatewayStore(
       // An equal save changes nothing, so existing grants stay valid. Any other save starts a new link.
       const unchanged = existing?.generation !== undefined && existing.url === gateway.url && existing.token === gateway.token;
       const generation = unchanged ? existing.generation : randomUUID();
+      if (!unchanged) bump(gateway.name);
       write([...gateways.filter((item) => item.name !== gateway.name), { ...gateway, generation }]);
     },
     remove(name) {
@@ -79,12 +89,16 @@ export function createFileRemoteGatewayStore(
       const remaining = gateways.filter((item) => item.name !== name);
       if (remaining.length === gateways.length) return false;
       write(remaining);
+      bump(name);
       return true;
     },
-    saveIfGeneration(gateway, expected) {
+    mutationVersion: version,
+    saveIfGeneration(gateway, expected, expectedVersion) {
       const gateways = list();
       const existing = gateways.find((item) => item.name === gateway.name);
+      if (expectedVersion !== undefined && version(gateway.name) !== expectedVersion) return false;
       if (expected === null ? existing !== undefined : existing?.generation !== expected) return false;
+      bump(gateway.name);
       write([...gateways.filter((item) => item.name !== gateway.name), { ...gateway, generation: randomUUID() }]);
       return true;
     },
@@ -93,6 +107,7 @@ export function createFileRemoteGatewayStore(
       const existing = gateways.find((item) => item.name === name);
       if (!existing || existing.generation !== expected) return false;
       write(gateways.filter((item) => item.name !== name));
+      bump(name);
       return true;
     },
   };
