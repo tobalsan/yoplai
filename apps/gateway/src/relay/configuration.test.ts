@@ -107,7 +107,7 @@ describe("configuration transport", () => {
     expect(localCalls).toEqual([]);
   });
 
-  it.each(["/api/agents", "/api/mcp/catalog", "/api/schedule-alerts", "/api/dashboards", "/api/dashboards/recipients", "/api/pool", "/api/pool/pool/avatar", "/api/pool-actions", "/api/teams", "/api/admin/forks", "/api/top-extensions", "/api/capabilities"])("reads %s from the selected gateway", async (path) => {
+  it.each(["/api/agents", "/api/mcp/catalog", "/api/schedule-alerts", "/api/dashboards", "/api/dashboards/recipients", "/api/pool", "/api/pool/pool/avatar", "/api/pool-actions", "/api/teams", "/api/admin/forks", "/api/top-extensions", "/api/admin/top-extensions", "/api/capabilities"])("reads %s from the selected gateway", async (path) => {
     for (const name of ["east", "west"]) {
       expect((await app.request(`${prefix(name)}${path}`)).status).toBe(200);
       expect(records.at(-1)?.url.origin).toBe(`https://${name}.test`);
@@ -173,8 +173,11 @@ describe("configuration transport", () => {
     ["POST", `${prefix()}/api/auth/sign-out`, {}, 405],
     ["GET", `${prefix()}/api/internal/tools`, undefined, 405],
     ["GET", `${prefix()}/api/admin/users`, undefined, 405],
-    ["PUT", `${prefix()}/api/admin/top-extensions`, {}, 405],
-    ["POST", `${prefix()}/api/mcp/catalog`, {}, 405],
+    ["DELETE", `${prefix()}/api/admin/top-extensions`, undefined, 405],
+    ["POST", `${prefix()}/api/admin/top-extensions`, {}, 405],
+    ["DELETE", `${prefix()}/api/mcp/catalog`, undefined, 405],
+    ["PUT", `${prefix()}/api/mcp/catalog`, {}, 405],
+    ["POST", `${prefix()}/api/mcp/catalog/other`, {}, 405],
     ["PUT", "/api/mcp/servers?agent=agent@east", {}, 405],
     ["GET", "/api/mcp/servers?agent=agent@east&agent=local", undefined, 400],
     ["GET", `${prefix()}/api/mcp/servers`, undefined, 400],

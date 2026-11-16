@@ -1,11 +1,12 @@
 import { OAuthAuthorizationStartSchema } from "@yoplai/shared";
 import { getAgent } from "../config/index.js";
 import { allowedCorsOrigins } from "../server/origins.js";
-import { isTrustedRequest, resolveRemoteAgent } from "./state.js";
+import { isRelayEnabled, isTrustedRequest, resolveRemoteAgent } from "./state.js";
 import { fetchRemote, isSafeRemotePath, remoteHttpUrl } from "./remote.js";
 import type { RemoteGateway } from "./store.js";
 
-type Rule = { methods: string[]; path: RegExp; agent?: "path" | "query" | "body" };
+/** `json` marks a global write whose JSON body the relay reads within the 1 MiB bound before it forwards. */
+type Rule = { methods: string[]; path: RegExp; agent?: "path" | "query" | "body"; json?: boolean };
 const rules: Rule[] = [
   { methods: ["GET"], path: /^\/api\/agents\/[^/]+(?:\/(?:extensions|connections|webhooks|dashboards|avatar))?$/, agent: "path" },
   { methods: ["PATCH"], path: /^\/api\/agents\/[^/]+\/(?:extensions|webhooks)\/[^/]+$/, agent: "path" },
@@ -22,7 +23,12 @@ const rules: Rule[] = [
   { methods: ["PATCH", "DELETE"], path: /^\/api\/schedules\/[^/]+\/[^/]+$/, agent: "path" },
   { methods: ["POST"], path: /^\/api\/schedules\/[^/]+\/[^/]+\/run$/, agent: "path" },
   { methods: ["GET"], path: /^\/api\/schedules\/[^/]+\/[^/]+\/runs(?:\/[^/]+\/trace)?$/, agent: "path" },
-  { methods: ["GET"], path: /^\/api\/(?:agents|mcp\/catalog|schedule-alerts|dashboards(?:\/recipients)?|pool(?:\/[^/]+\/avatar)?|pool-actions|teams|admin\/forks|top-extensions|capabilities)$/ },
+  { methods: ["GET"], path: /^\/api\/(?:agents|mcp\/catalog|schedule-alerts|dashboards(?:\/recipients)?|pool(?:\/[^/]+\/avatar)?|pool-actions|teams|admin\/forks|top-extensions|admin\/top-extensions|capabilities)$/ },
+  // Global extension and MCP catalog administration. The remote checks its own superadmin policy.
+  { methods: ["PUT"], path: /^\/api\/admin\/top-extensions$/, json: true },
+  { methods: ["POST"], path: /^\/api\/mcp\/catalog$/, json: true },
+  { methods: ["POST"], path: /^\/api\/mcp\/catalog\/update$/, json: true },
+  { methods: ["POST"], path: /^\/api\/mcp\/catalog\/(?:remove|icon\/refresh)$/ },
   { methods: ["PUT", "DELETE"], path: /^\/api\/dashboards\/[^/]+\/pin$/ },
   { methods: ["PATCH"], path: /^\/api\/dashboards\/[^/]+\/sharing$/ },
   { methods: ["POST"], path: /^\/api\/dashboards\/[^/]+\/claim$/ },
@@ -179,12 +185,27 @@ async function startOAuth(request: Request, gateways: RemoteGateway[]): Promise<
   }
 }
 
+export const GATEWAY_LIST_PATH = "/api/relay/gateways";
+
+/**
+ * The configured gateway names, for the gateway choice of global pages. It lists every link,
+ * also a link with no visible agent or a gateway that is offline. It never returns a URL, a token,
+ * or any other field of the store. A disabled relay is an explicit refusal, not an empty list.
+ */
+function gatewayList(request: Request, gateways: RemoteGateway[]): Response {
+  if (request.method !== "GET") return Response.json({ error: "method_not_allowed" }, { status: 405, headers: { allow: "GET", "cache-control": "no-store" } });
+  if (!isTrustedRequest(request.headers.get("origin"), request.headers.get("x-forwarded-for"))) return fail("untrusted_origin", 403);
+  if (!isRelayEnabled()) return fail("relay_unavailable", 403);
+  return Response.json({ gateways: gateways.map((gateway) => ({ name: gateway.name })) }, { headers: { "cache-control": "no-store" } });
+}
+
 /**
  * Only this table adds configuration routes to the relay. Object IDs stay unchanged.
  * A returned Request holds the rebuilt body for a local handler.
  */
 export async function relayConfiguration(request: Request, gateways: RemoteGateway[], forward: ConfigurationForward): Promise<Response | Request | null> {
   const url = new URL(request.url);
+  if (url.pathname === GATEWAY_LIST_PATH) return gatewayList(request, gateways);
   const prefix = /^\/api\/relay\/gateways\/([^/]+)(\/.*)?$/.exec(url.pathname);
   const isStart = url.pathname === "/api/relay/oauth/start";
   const path = prefix ? prefix[2] ?? "" : url.pathname;
@@ -239,6 +260,14 @@ export async function relayConfiguration(request: Request, gateways: RemoteGatew
   }
   if (agentKind === "query") url.searchParams.set("agent", agent!);
   if (agentKind === "body") request = withJson(request, { ...body, agentId: agent });
+  if (rule?.json) {
+    // Same strict start checks as the MCP add: a trusted Origin and a JSON body inside the 1 MiB bound.
+    const denied = browserStartError(request);
+    if (denied) return denied;
+    const input = await jsonBody(request);
+    if (isResponse(input)) return input;
+    request = withJson(request, input);
+  }
   const mcpAdd = request.method === "POST" && path === "/api/mcp/servers";
   if (mcpAdd) {
     const denied = browserStartError(request);
