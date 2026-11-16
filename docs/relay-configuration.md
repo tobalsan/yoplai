@@ -330,7 +330,7 @@ The verifier and the key never reach the browser. A remote with `multiUser: fals
 
 ### Address rule
 
-All programmatic requests of the flow use HTTPS. The one exception is plain HTTP to the literal hosts `127.0.0.1` and `[::1]`, which tests use. `localhost` and a name that resolves to loopback get no exception. The input is an origin with an optional trailing slash. Credentials, other paths, queries, fragments, and alternative number forms (integer, hexadecimal, shortened) are refused before any URL parser runs. No request in the flow follows a redirect. New links made with `--token` follow the same rule. Saved links change in no way.
+All programmatic requests of the flow use HTTPS. The one exception is plain HTTP to the literal hosts `127.0.0.1` and `[::1]`, which tests use. `localhost` and a name that resolves to loopback get no exception. The input is an origin with an optional trailing slash. Credentials, other paths, queries, fragments, and alternative number forms (integer, hexadecimal, shortened) are refused. A host that the URL parser would change into another dotted address, such as `127.0x0.0.1`, is refused too. No request in the flow follows a redirect. New links made with `--token` follow the same rule. Saved links change in no way.
 
 ### Callback reachability
 
@@ -354,13 +354,13 @@ Policy of every route, in order: the relay is on, the socket peer is loopback, n
 
 ### Attempts
 
-An attempt holds the origin, the callback address, the name, the device label, the verifier, and the generation of the stored link at start. It lives in memory, so a restart cancels every attempt. Limits: 20 open attempts, 50 finished attempts, retention of 10 minutes, and 6 minutes of life. The `state` works once and is the only authority of `complete`. The control token (32 random bytes, kept in page memory, never in an address) guards `status` and `cancel`. A cancel during the exchange answers 409.
+An attempt holds the origin, the callback address, the name, the device label, the verifier, and the generation of the stored link at start. It lives in memory, so a restart cancels every attempt. A start takes its slot before the first remote request, so starts that run together cannot pass 20 open attempts, and a failed start gives the slot back. Limits: 20 open attempts, 50 finished attempts, retention of 10 minutes, and 6 minutes of life. The `state` works once and is the only authority of `complete`. The control token (32 random bytes, kept in page memory, never in an address) guards `status` and `cancel`. A cancel during the exchange answers 409.
 
 Outcomes of `status`: `pending`, `exchanging`, `linked`, `denied`, `cancelled`, `expired`, `failed`, `uncertain`.
 
 - A refusal on the remote ends as `denied` and erases the verifier.
 - A 4xx answer to the exchange ends as `failed`. The remote burned the code.
-- The store saves with `saveIfGeneration`. A completion cannot overwrite a newer link or a disconnect. If it loses the race, or the disk write fails, the gateway revokes the new key with the key itself. If that revoke also fails, the attempt ends as `uncertain`.
+- The store saves with `saveIfGeneration`. A completion cannot overwrite a newer link or a disconnect. Each attempt also holds the `mutationVersion` of its name. The store counts each change of a name and keeps counting after a removal, so an older attempt cannot restore a name that was linked and then disconnected. If it loses the race, or the disk write fails, the gateway revokes the new key with the key itself. If that revoke also fails, the attempt ends as `uncertain`.
 
 ### Lost first exchange
 
@@ -368,7 +368,7 @@ If the answer to the first exchange is lost (network error, timeout, 5xx, redire
 
 ### Saved links
 
-`remote-gateways.json` entries of a browser link have a `managed` field: `linkId`, `account`, `deviceLabel`, `expiresAt`, `linkedAt`. `saveIfGeneration(gateway, expected)` and `removeIfGeneration(name, expected)` write only while the stored generation is the one the caller saw. Manual links (`--token`) and open links have no `managed` field, and the metadata route shows their unknown fields as `null`. `yoplai connect` never adopts, migrates, or rotates a manual link, and a name that a manual link uses is refused.
+`remote-gateways.json` entries of a browser link have a `managed` field: `linkId`, `account`, `deviceLabel`, `expiresAt`, `linkedAt`. `saveIfGeneration(gateway, expected, expectedVersion)` and `removeIfGeneration(name, expected)` write only while the stored generation (and, for a save, the `mutationVersion` of the name) is the one the caller saw. Manual links (`--token`) and open links have no `managed` field, and the metadata route shows their unknown fields as `null`. `yoplai connect` never adopts, migrates, or rotates a manual link, and a name that a manual link uses is refused. `yoplai connect --token` also refuses the name of a browser link. Run `yoplai disconnect <name>` first, which revokes the key.
 
 The metadata route keeps key state and connection state apart. `keyState` is `active`, `expired` (by the stored expiry), `rejected` (the remote refused the key at the device upgrade), `none` (open gateway), or `unknown` (manual token). `connection` is `connected`, `connecting`, `replaced` (another device of the same account took the one device connection of the remote user), `unauthorized`, or `offline`. An offline device does not prove that the remote revoked the key.
 
@@ -376,7 +376,7 @@ Disconnect of a browser link calls `POST /api/auth/gateway-link/revoke` with the
 
 ### Sockets
 
-The remote closes the chat socket and the device socket of a key when the key stops (revoked, replaced, expired, disabled, deleted, or the owner is not eligible). `WsBroker` checks `isAuthContextActive` before each client action and before each sent event (reusing a check for at most one second), and every five seconds for an idle socket. The device registry checks before each message and each call. A closed device socket fails its pending calls. The cookie session of a browser is not affected. The local device link then shows `unauthorized` after its next attempt.
+The remote closes the chat socket and the device socket of a key when the key stops (revoked, replaced, expired, disabled, deleted, or the owner is not eligible). `WsBroker` checks `isAuthContextActive` before each client action and before each sent event (each check reads the current state and reuses no earlier answer), and every five seconds for an idle socket. The device registry checks before each message and each call. A closed device socket fails its pending calls. The cookie session of a browser is not affected. The local device link then shows `unauthorized` after its next attempt.
 
 ### CLI
 
