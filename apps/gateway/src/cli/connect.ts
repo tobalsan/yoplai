@@ -45,8 +45,17 @@ export async function connectRemoteGateway(
   if (!isValidGatewayName(name)) {
     throw new Error(`Invalid gateway name "${name}". Use letters, digits, ".", "_" or "-". Set one with --name.`);
   }
+  // A browser link owns a key on the remote. A token that replaced it would hide the key, and a later disconnect
+  // would skip the revoke. The user disconnects the browser link first, which revokes the key.
+  const refuseBrowserLink = () => {
+    if (store.list().find((item) => item.name === name)?.managed) {
+      throw new Error(`"${name}" is a browser link. Run "yoplai disconnect ${name}" first, then connect with a token.`);
+    }
+  };
+  refuseBrowserLink();
   const gateway: RemoteGateway = { name, url: checked.value.origin, token: options.token };
   await verifyRemoteGateway(gateway);
+  refuseBrowserLink();
   store.save(gateway);
   return gateway;
 }

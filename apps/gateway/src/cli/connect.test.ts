@@ -139,6 +139,48 @@ describe("yoplai connect with a token", () => {
   });
 });
 
+describe("yoplai connect with a token over a browser link", () => {
+  const managedLink = { linkId: "link-1", account: { email: "user@example.test", name: null }, deviceLabel: "Laptop", expiresAt: null, linkedAt: "2026-01-01T00:00:00.000Z" };
+
+  it("refuses to replace the name of a browser link, and keeps the link and its key", async () => {
+    store.save({ name: "work", url: REMOTE, token: "synthetic-key", managed: managedLink });
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(json(200, []));
+    try {
+      await expect(connectRemoteGateway(REMOTE, { name: "work", token: "synthetic-key" }, store)).rejects.toThrow(/yoplai disconnect work/);
+      await expect(connectRemoteGateway("https://other.example.test", { name: "work", token: "other-token" }, store)).rejects.toThrow(/browser link/);
+      expect(fetchMock).not.toHaveBeenCalled();
+    } finally {
+      fetchMock.mockRestore();
+    }
+    expect(store.list()).toHaveLength(1);
+    expect(store.list()[0]).toMatchObject({ name: "work", url: REMOTE, token: "synthetic-key", managed: { linkId: "link-1" } });
+  });
+
+  it("refuses when a browser link appears while the token is checked", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async () => {
+      store.save({ name: "work", url: REMOTE, token: "synthetic-key", managed: managedLink });
+      return json(200, []);
+    });
+    try {
+      await expect(connectRemoteGateway(REMOTE, { name: "work", token: "manual-token" }, store)).rejects.toThrow(/browser link/);
+    } finally {
+      fetchMock.mockRestore();
+    }
+    expect(store.list()[0]).toMatchObject({ token: "synthetic-key", managed: { linkId: "link-1" } });
+  });
+
+  it("still replaces a manual link of the same name", async () => {
+    store.save({ name: "work", url: REMOTE, token: "old-token" });
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(json(200, []));
+    try {
+      await connectRemoteGateway(REMOTE, { name: "work", token: "new-token" }, store);
+    } finally {
+      fetchMock.mockRestore();
+    }
+    expect(store.list()[0]).toMatchObject({ name: "work", token: "new-token" });
+  });
+});
+
 describe("yoplai disconnect", () => {
   const managed = { linkId: "link-1", account: { email: "user@example.test", name: null }, deviceLabel: "Laptop", expiresAt: null, linkedAt: "2026-01-01T00:00:00.000Z" };
 
