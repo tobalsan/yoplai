@@ -1,7 +1,7 @@
 # Remote configuration transport
 
-Status: rounds 3a and 3b1 supply the transport. Round 3b2 adds the trusted dashboard host and its chat wiring.
-The configuration pages, OAuth popups, and the browser confinement checks are not built yet. The full remote configuration batch is not complete.
+Status: rounds 3a and 3b1 supply the transport. Round 3b2 adds the trusted dashboard host. Round 3c adds the configuration pages and OAuth popups.
+Browser acceptance of the whole batch (popups, dashboard confinement, chat frames) is still open. Node and jsdom tests do not prove it.
 
 ## Target selection
 
@@ -179,7 +179,9 @@ Failed media redirects return status 502 with `unsafe_remote_redirect`.
 Failed list redirects omit that remote list and keep the local list.
 The relay never uses unrestricted Fetch redirects.
 
-## Round-3b page contract
+## OAuth page contract
+
+The round-3c pages follow this contract. See [OAuth popups](#oauth-popups) for the implementation.
 
 1. Open a blank popup during the click event, before the asynchronous start request.
 2. Request the start URL through the local endpoint with the selected gateway and explicit scope.
@@ -204,11 +206,53 @@ Without an authorization URL, the page closes the blank popup and refreshes the 
 After an add error, the page must read the remote list before retrying.
 The remote add can succeed before the relay rejects its response.
 
+## Configuration pages (round 3c)
+
+The pages in `apps/web` use the routes above. They add no new transport route.
+
+### Gateway context
+
+- The route of an agent page holds the qualified agent ID (`<agentId>@<name>`). The page resolves the gateway once from the merged local agent list (`lib/agent-target.ts`).
+  A name without `@` is local and needs no list. A name with `@` is remote only when the list names a `gateway` for that exact ID. The ID suffix alone never selects a gateway.
+  When the list fails or does not hold the ID, the page shows "This agent is unavailable" with Retry and makes no configuration call. It never falls back to a local call.
+- Every API function takes an optional `gateway` argument (`api/gateway.ts`). With a name, the URL is `/api/relay/gateways/<name>` plus the normal path. The qualified agent ID stays in the path or query, and the relay checks that it belongs to that gateway.
+  Object IDs (job, run, dashboard, pool, team, MCP server) stay unchanged. Caches and resource keys include the gateway, so equal IDs on two gateways never share data.
+  Pages read route params with `decodeRouteParam`, because the router keeps the raw path segment.
+- `lib/requester.ts` gives the requester of the gateway. A local page uses the local session and capabilities. A remote page reads `GET .../api/capabilities` of its gateway: the remote user ID, role, `multiUser`, `forkedAgents`, `enableCronMonitoring`, and extension flags.
+  A failed read is "unknown" and grants no rights. Pages also use remote `canConfigureTeam`, `canEditLabels`, `editable`, and dashboard ownership fields.
+- Navigation keeps the context in the qualified agent ID: extension cards, MCP cards, schedule and run links, Back links, and the settings link of a chat. A remote catalog names the raw remote agent in `configRoutePath`, and `connectPath` of a schedule alert.
+  The page moves those paths to the qualified agent (`qualifyAgentRoute`), or falls back to the details or Edit page.
+- Global pages need an explicit gateway. `/dashboards?gateway=<name>` selects one linked gateway. The selector lists the gateways of the loaded agents and the one in the address. The local list is the default. A gateway change drops dialogs, pins in flight, and late answers of the old gateway.
+  A remote dashboard row opens `/remote-dashboards/<name>/<id>`, and Chat opens `/chat/<agentId>@<name>?dashboard=<id>` (with `session` when the row has one). The remote `link` and `chatHref` values are never local targets.
+- The Edit page of a remote agent reads Top flags from its gateway (`GET .../api/top-extensions`), the pool, teams, forks, and pool actions of its gateway, and saves team and visibility changes there. Pool IDs and fork fields stay remote values.
+  Pool avatar paths load through the relay prefix. The local Top flags and the local session never apply to a remote agent.
+- The webhook config route (`/agents/:agentId/extensions/webhooks`) is always mounted. It checks the extension on the gateway of the agent, and opens the generic details page when that gateway does not load it.
+- Schedule alerts are kept per gateway (`lib/schedule-alerts.ts`). A chat with a remote agent also loads the alerts of that gateway.
+
+### OAuth popups
+
+Local agents keep the redirect flow. A remote agent uses `lib/oauth-popup-flow.ts`:
+
+1. The click opens a blank popup (`window.open("", "yoplai-oauth-<n>")`) before any asynchronous work. A blocked popup shows a message and starts no grant.
+2. The flow reads the status through the relay (the baseline), then starts the grant with `POST /api/relay/oauth/start` (`api/oauth.ts` `startRemoteOAuth`). The request holds the gateway, the qualified agent, the kind, the provider or server, the explicit scope, and the provider scopes. It holds no return path.
+   A custom MCP add (`POST /mcp/servers`) opens the popup first and uses the `authorizationUrl` of the add result. It does not start a second grant. Without an URL it closes the popup and refreshes the list. After an add error it reads the remote list again.
+3. The popup navigates to the returned web address. The flow polls the remote status every 2 seconds for at most 5 minutes. The baseline read and the start request each have a 30 second deadline (the add has 50 seconds).
+4. The flow trusts no `postMessage`. It decides only from fresh status of the same gateway, agent, provider or server, and scope. A new connection needs a state change, or a new `connectedAt` for core status. MCP status has no connection time, so a connected server cannot prove a reconnect and the flow reports "unconfirmed" instead of success.
+5. Success closes the popup and refreshes the status. Blocked, closed, cancelled, failed, denied, unconfirmed, and timed-out flows show a visible message. A newer flow, a changed agent, gateway, provider, or scope, a Cancel click, or the end of the page ends the old flow and closes its popup. A late status of an old flow changes nothing.
+
+### Limits
+
+- `ConnectToolsPrompt` and the "Connect tools" button need local multi-user mode, and the relay is off there. They stay local.
+- Admin pages, the MCP catalog admin page, skills, and account Slack pairing stay local.
+- The schedule alert dot of the agent list shows local alerts only.
+- A job ID or server name that decodes to `%`, `/`, or `\` is refused by the relay path check.
+- Tests use synthetic gateways: `apps/web/src/remote-configuration*.test.tsx`, `api/remote-configuration.test.ts`, `lib/oauth-popup-flow.test.ts`, and `remote-gateway.fixture.ts`. They run the real router and pages with a fake fetch and a fake popup.
+  Real popups, provider redirects, the external MCP extension, and the browser behavior of the relay need a browser check.
+
 ## Dashboard viewer transport
 
 Round 3b1 adds the backend for remote dashboards and a small trusted shell.
-Round 3b2 adds the host page and the frame wiring of the chat page. See [Web host](#web-host). It adds no configuration pages or popups.
-The remote configuration batch is not complete.
+Round 3b2 adds the host page and the frame wiring of the chat page. See [Web host](#web-host). These two rounds add no configuration pages or popups. Round 3c adds them (see [Configuration pages](#configuration-pages-round-3c)).
 
 The linked bearer never reaches the browser. The remote edit token authorizes every write.
 JSON dashboard routes (list, recipients, pin, sharing, claim, delete) keep using `/api/relay/gateways/:name/api/dashboards...`.
