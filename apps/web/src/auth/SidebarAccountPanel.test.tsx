@@ -2,6 +2,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createSignal } from "solid-js";
 import { render } from "solid-js/web";
+import { getByRole } from "@testing-library/dom";
 
 // matchMedia must exist before theme.ts module-level code runs
 window.matchMedia = vi.fn().mockReturnValue({ matches: false });
@@ -131,6 +132,16 @@ describe("SidebarAccountPanel", () => {
     
     expect(navigateMock).toHaveBeenCalledWith("/account/connections");
     
+    dispose();
+  });
+
+  it("opens the list of linked devices from the account menu", () => {
+    setCapabilitiesForTests({ multiUser: true });
+    const [collapsed] = createSignal(false);
+    const dispose = render(() => <SidebarAccountPanel collapsed={collapsed} />, document.body);
+    getByRole(document.body, "button", { name: "Account menu" }).click();
+    getByRole(document.body, "menuitem", { name: "Linked devices" }).click();
+    expect(navigateMock).toHaveBeenCalledWith("/account/gateway-links");
     dispose();
   });
 

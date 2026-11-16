@@ -8,6 +8,10 @@ describe("safeReturnTo", () => {
     );
   });
 
+  it("keeps the request of a gateway link consent page through the login redirect", () => {
+    expect(safeReturnTo("?returnTo=%2Fgateway-link%3Frequest%3Dabc_DEF-123")).toBe("/gateway-link?request=abc_DEF-123");
+  });
+
   it.each([
     "//evil.com",
     "//return-to.invalid/path",

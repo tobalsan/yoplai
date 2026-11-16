@@ -114,6 +114,18 @@ export default function SidebarAccountPanel(_props: SidebarAccountPanelProps) {
                     role="menuitem"
                     onClick={() => {
                       setMenuOpen(false);
+                      navigate("/account/gateway-links");
+                    }}
+                  >
+                    <i class="fa-solid fa-laptop" aria-hidden="true" />
+                    Linked devices
+                  </button>
+                  <button
+                    type="button"
+                    class="account-menu-item"
+                    role="menuitem"
+                    onClick={() => {
+                      setMenuOpen(false);
                       navigate("/archive");
                     }}
                   >
