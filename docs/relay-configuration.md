@@ -229,6 +229,13 @@ The pages in `apps/web` use the routes above. They add no new transport route.
 - The webhook config route (`/agents/:agentId/extensions/webhooks`) is always mounted. It checks the extension on the gateway of the agent, and opens the generic details page when that gateway does not load it.
 - Schedule alerts are kept per gateway (`lib/schedule-alerts.ts`). A chat with a remote agent also loads the alerts of that gateway.
 
+### Identity of a page
+
+- A page binds its catalog, forms, dialogs, and actions to one identity: the gateway, the agent, and where it applies the extension or server. A change of identity mounts the forms again and clears drafts, pending actions, and dialogs.
+- Each mutation captures the identity and a generation before it starts. A result, an error, a refresh, a form change, or a navigation of an older identity changes nothing. This covers extension toggles and credential forms, MCP controls and forms, schedule actions, connection actions, alert resume, dashboard delete and share, and the MCP add dialog.
+- A lookup that failed leaves no catalog, no mutation control, and no request. No handler falls back to a local call.
+- After an uncertain MCP add error (the remote can add before its answer fails), the add dialog reads the list of the same target and stays busy until that read settles. When the read fails, the dialog shows an unknown state with a "Read list" button, and another add stays off until a read works.
+
 ### OAuth popups
 
 Local agents keep the redirect flow. A remote agent uses `lib/oauth-popup-flow.ts`:
@@ -236,14 +243,14 @@ Local agents keep the redirect flow. A remote agent uses `lib/oauth-popup-flow.t
 1. The click opens a blank popup (`window.open("", "yoplai-oauth-<n>")`) before any asynchronous work. A blocked popup shows a message and starts no grant.
 2. The flow reads the status through the relay (the baseline), then starts the grant with `POST /api/relay/oauth/start` (`api/oauth.ts` `startRemoteOAuth`). The request holds the gateway, the qualified agent, the kind, the provider or server, the explicit scope, and the provider scopes. It holds no return path.
    A custom MCP add (`POST /mcp/servers`) opens the popup first and uses the `authorizationUrl` of the add result. It does not start a second grant. Without an URL it closes the popup and refreshes the list. After an add error it reads the remote list again.
-3. The popup navigates to the returned web address. The flow polls the remote status every 2 seconds for at most 5 minutes. The baseline read and the start request each have a 30 second deadline (the add has 50 seconds).
+3. The popup navigates to the returned web address. The whole flow has one budget of 5 minutes that starts at the click. The baseline read, the start request, each pause, and each poll share it, and each wait ends at the remaining time. The flow polls the remote status every 2 seconds. The baseline read and the start request each have a 30 second limit inside that budget (the add has 50 seconds). An answer that arrives after the budget ends never reports success.
 4. The flow trusts no `postMessage`. It decides only from fresh status of the same gateway, agent, provider or server, and scope. A new connection needs a state change, or a new `connectedAt` for core status. MCP status has no connection time, so a connected server cannot prove a reconnect and the flow reports "unconfirmed" instead of success.
 5. Success closes the popup and refreshes the status. Blocked, closed, cancelled, failed, denied, unconfirmed, and timed-out flows show a visible message. A newer flow, a changed agent, gateway, provider, or scope, a Cancel click, or the end of the page ends the old flow and closes its popup. A late status of an old flow changes nothing.
 
 ### Limits
 
 - `ConnectToolsPrompt` and the "Connect tools" button need local multi-user mode, and the relay is off there. They stay local.
-- Admin pages, the MCP catalog admin page, skills, and account Slack pairing stay local.
+- Admin pages (the Admin link of the local UI opens `/admin/extensions` and the others), the MCP catalog admin page, skills, and account Slack pairing act on the local gateway only. Gateway-aware administration is outside this batch.
 - The schedule alert dot of the agent list shows local alerts only.
 - A job ID or server name that decodes to `%`, `/`, or `\` is refused by the relay path check.
 - Tests use synthetic gateways: `apps/web/src/remote-configuration*.test.tsx`, `api/remote-configuration.test.ts`, `lib/oauth-popup-flow.test.ts`, and `remote-gateway.fixture.ts`. They run the real router and pages with a fake fetch and a fake popup.

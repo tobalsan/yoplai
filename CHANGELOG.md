@@ -28,6 +28,7 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Fixed
 
+- Settings pages of a remote agent no longer keep a draft, a catalog, a job list, or a permission of the previous gateway or agent. A late answer of an older page changes nothing, a failed agent lookup leaves no mutation control, and an MCP add that failed with an uncertain answer waits for a list read before another add. The sign-in popup of a remote agent now ends after 5 minutes counted from the click.
 - The webhook page and the Top flags of a remote agent no longer use the local extension list and the local Top flags. Links from a remote catalog and from schedule alerts now keep the gateway of the agent.
 - Remote dashboard snapshots now free their stored bytes and metadata at their deadlines, with no later request. The gateway answers each alias of a viewer path, such as mixed case or encoded separators, with the typed 404 and no remote call. A remote 403 access denial now wins over a version check, so it never shows as an update prompt.
 - Remote OAuth no longer needs a local provider extension and rejects unrelated core login redirects.
