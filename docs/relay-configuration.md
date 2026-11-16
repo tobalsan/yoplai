@@ -314,6 +314,80 @@ Local agents keep the redirect flow. A remote agent uses `lib/oauth-popup-flow.t
 - Tests use synthetic gateways: `apps/web/src/remote-configuration*.test.tsx`, `api/remote-configuration.test.ts`, `lib/oauth-popup-flow.test.ts`, and `remote-gateway.fixture.ts`. They run the real router and pages with a fake fetch and a fake popup.
   Real popups, provider redirects, the external MCP extension, and the browser behavior of the relay need a browser check.
 
+## Browser link
+
+`yoplai connect <url>` and the page `/remote-gateways` link a remote gateway with a browser sign-in. The user copies no key. The remote gateway side is in [the multi-user README](../packages/extensions/multi-user/README.md#gateway-link-remote-side). This section is the local gateway side.
+
+### Flow
+
+1. The user starts a link on the page or with the CLI. The local gateway checks the address, asks the remote for `GET /api/capabilities`, and posts a request to `POST /api/auth/gateway-link/requests` with the S256 challenge, a random `state`, the callback address, and the device label (the host name of this computer).
+2. The local gateway gives the user the consent address `<remote>/gateway-link?request=<id>`. The local gateway builds it from the checked origin and the request ID. It never trusts an address from the remote.
+3. The user signs in on the remote gateway and approves. The remote gateway sends the browser to `http://127.0.0.1:<gateway port>/api/relay/link/callback#code=<code>&state=<state>`.
+4. The fixed callback page removes the fragment with `history.replaceState` before any request. Then it posts `{ code, state }` (or `{ error: "access_denied", state }`) to `POST /api/relay/link/complete`.
+5. The local gateway exchanges the code and the verifier at `POST /api/auth/gateway-link/token`, stores the key in `remote-gateways.json` (mode 0600), and ends the attempt as `linked`.
+
+The verifier and the key never reach the browser. A remote with `multiUser: false` (a valid capability answer) links at once with no page, no key, and no token, after `GET /api/agents` returns a list. A timeout, a redirect, a malformed answer, a 401, or a 403 never counts as a single-user remote. A multi-user remote with no `gatewayLink` capability needs `--token`.
+
+### Address rule
+
+All programmatic requests of the flow use HTTPS. The one exception is plain HTTP to the literal hosts `127.0.0.1` and `[::1]`, which tests use. `localhost` and a name that resolves to loopback get no exception. The input is an origin with an optional trailing slash. Credentials, other paths, queries, fragments, and alternative number forms (integer, hexadecimal, shortened) are refused before any URL parser runs. No request in the flow follows a redirect. New links made with `--token` follow the same rule. Saved links change in no way.
+
+### Callback reachability
+
+The callback host is the literal `127.0.0.1`. The gateway records the address that its listener really bound (`setGatewayListener` in `relay/state.ts`). `getLinkCallbackPort()` returns a port only while the relay is on and that address is `127.0.0.1`. A gateway bound to `127.0.0.2` or `::1` cannot receive the callback, so `/api/capabilities` reports `relayLink: { available: false }`, the sidebar shows no Link entry, and `POST /api/relay/link/start` answers `409 link_callback_unavailable` before any request to the remote. Saved links keep working through the existing relay. The listener is never widened, and the browser cannot choose the callback host.
+
+### Routes
+
+All routes live in `relay/link-routes.ts`. `relay/link-paths.ts` owns every spelling of `/api/relay/link` (encoded, mixed case), so a path that no route owns answers 404 and never falls through. The global CORS middleware skips this namespace, and the routes answer CORS for a configured UI origin only.
+
+| Route | Purpose |
+|---|---|
+| `POST /api/relay/link/start` | Body `{ remote, name? }`. Answers `201 { attemptId, controlToken, expiresAt, consentUrl, recoveryNote? }`, or `200 { status: "linked", name }` for a remote with no sign-in. |
+| `GET /api/relay/link/status/:attemptId` | Header `x-link-control: <controlToken>`. Answers the safe state of the attempt. |
+| `POST /api/relay/link/cancel` | Body `{ attemptId }` with the control header. |
+| `GET /api/relay/link/callback` | The fixed page. It changes no state. CSP by script hash, `Cache-Control: no-store`, `Referrer-Policy: no-referrer`. |
+| `POST /api/relay/link/complete` | Body `{ code, state }` or `{ error: "access_denied", state }`. Only the callback origin. |
+| `POST /api/relay/link/metadata` | Body `{}`. Answers the saved links. It uses POST so the normal write policy applies. |
+| `POST /api/relay/link/disconnect` | Body `{ name, localOnly? }`. |
+
+Policy of every route, in order: the relay is on, the socket peer is loopback, no `X-Forwarded-For`, `X-Real-IP`, or `Forwarded` address leaves loopback, and `Host` is `127.0.0.1`, `localhost`, or `[::1]` with the gateway port. Then a write needs no `Origin` (the CLI) or exactly a configured UI origin (`allowedCorsOrigins()` minus the callback origin). Only `complete` accepts `http://127.0.0.1:<gateway port>`, and it needs the Host `127.0.0.1:<gateway port>`. The callback origin cannot start, cancel, disconnect, or read metadata. Bodies are JSON, at most 4 KiB, with no repeated key and no unknown field. Routes take no query string. `complete` accepts exactly one outcome: a payload with both `code` and `error`, or an unknown error, is refused.
+
+### Attempts
+
+An attempt holds the origin, the callback address, the name, the device label, the verifier, and the generation of the stored link at start. It lives in memory, so a restart cancels every attempt. Limits: 20 open attempts, 50 finished attempts, retention of 10 minutes, and 6 minutes of life. The `state` works once and is the only authority of `complete`. The control token (32 random bytes, kept in page memory, never in an address) guards `status` and `cancel`. A cancel during the exchange answers 409.
+
+Outcomes of `status`: `pending`, `exchanging`, `linked`, `denied`, `cancelled`, `expired`, `failed`, `uncertain`.
+
+- A refusal on the remote ends as `denied` and erases the verifier.
+- A 4xx answer to the exchange ends as `failed`. The remote burned the code.
+- The store saves with `saveIfGeneration`. A completion cannot overwrite a newer link or a disconnect. If it loses the race, or the disk write fails, the gateway revokes the new key with the key itself. If that revoke also fails, the attempt ends as `uncertain`.
+
+### Lost first exchange
+
+If the answer to the first exchange is lost (network error, timeout, 5xx, redirect, or an answer that does not parse), the remote may hold a key that nobody has. The attempt ends as `uncertain`, with the link ID when known. The page and the CLI tell the user to revoke the key on the owner page `<remote>/account/gateway-links` and then start a new link. There is no retry of the same link and no recovery selector. A fresh start for the same remote shows the instruction again (`recoveryNote`, kept in memory), and the remote consent page lists the older links of the account with the same device name (`sameDeviceLinks`). A re-link of a saved link needs no such step, because the new consent disables the uncertain key first.
+
+### Saved links
+
+`remote-gateways.json` entries of a browser link have a `managed` field: `linkId`, `account`, `deviceLabel`, `expiresAt`, `linkedAt`. `saveIfGeneration(gateway, expected)` and `removeIfGeneration(name, expected)` write only while the stored generation is the one the caller saw. Manual links (`--token`) and open links have no `managed` field, and the metadata route shows their unknown fields as `null`. `yoplai connect` never adopts, migrates, or rotates a manual link, and a name that a manual link uses is refused.
+
+The metadata route keeps key state and connection state apart. `keyState` is `active`, `expired` (by the stored expiry), `rejected` (the remote refused the key at the device upgrade), `none` (open gateway), or `unknown` (manual token). `connection` is `connected`, `connecting`, `replaced` (another device of the same account took the one device connection of the remote user), `unauthorized`, or `offline`. An offline device does not prove that the remote revoked the key.
+
+Disconnect of a browser link calls `POST /api/auth/gateway-link/revoke` with the key first. A `401` means that the remote no longer accepts the key, so the entry goes away. Any other failure keeps the entry. The page then offers **Remove locally**, and the CLI offers `--local-only`. Both leave the remote key valid until it is revoked or it expires. Manual links go away locally with no remote call.
+
+### Sockets
+
+The remote closes the chat socket and the device socket of a key when the key stops (revoked, replaced, expired, disabled, deleted, or the owner is not eligible). `WsBroker` checks `isAuthContextActive` before each client action and before each sent event (reusing a check for at most one second), and every five seconds for an idle socket. The device registry checks before each message and each call. A closed device socket fails its pending calls. The cookie session of a browser is not affected. The local device link then shows `unauthorized` after its next attempt.
+
+### CLI
+
+- `yoplai connect <url> [--name <name>] [--no-browser]` needs the running local gateway at `127.0.0.1:<gateway port>` (config `gateway.port`, or `YOPLAI_GATEWAY_PORT`). It prints the consent address, opens a browser unless `--no-browser`, and waits. The browser must run on the same computer.
+- `yoplai connect <url> --token <token>` is the explicit older path.
+- `yoplai disconnect <name> [--local-only]` goes through the gateway for a browser link. While the gateway is down, only a link with no key goes away, or a link removed with `--local-only`.
+
+### Tests
+
+`relay/link.test.ts` (service, with a scripted remote), `relay/link-routes.test.ts` (policy, callback page, listeners on `127.0.0.1`, `127.0.0.2`, and `::1`), `relay/store.test.ts`, `server/ws-broker-credential.test.ts`, `cli/connect.test.ts`, `server/access-log.test.ts`, `apps/web/src/pages/RemoteGateways.test.tsx`, and `relay/link.http.test.ts`. The last one starts two real gateways in two processes with isolated homes. A synthetic user signs in with email and password, approves, and the local store gets a working key. It also covers refuse, link again, revoke on the remote, disconnect from the CLI, a lost first exchange, and a remote with no sign-in. On a machine with only `127.0.0.1` on its loopback interface (macOS), the `127.0.0.2` listener cannot bind, so the test checks that address without a real listener. A real browser check is still open.
+
 ## Dashboard viewer transport
 
 Round 3b1 adds the backend for remote dashboards and a small trusted shell.
