@@ -29,7 +29,7 @@ const MAX_TIMER_MS = 2_147_483_000;
 
 /** A failed view. The code is a typed gateway error or one of the local codes below. */
 export type HostError = {
-  /** Local codes: `network`, `prepare_timeout`, `readiness_timeout`, `unknown_display`, `ended`, `expired`, `invalid_link`. */
+  /** Local codes: `network`, `prepare_timeout`, `readiness_timeout`, `unknown_display`, `shell_reloaded`, `ended`, `expired`, `invalid_link`. */
   code: string;
   status?: number;
   reason?: string;
@@ -45,6 +45,8 @@ type ActiveView = {
   prepared: PreparedDashboardView;
   gateway: string;
   iframe?: HTMLIFrameElement;
+  /** Loads of the shell iframe itself. A renderer load message is a separate fact. */
+  shellLoads: number;
   loaded: boolean;
   ready: boolean;
   read?: AbortController;
@@ -150,6 +152,7 @@ export function createRemoteDashboardHost(options: RemoteDashboardHostOptions) {
         const view: ActiveView = {
           prepared,
           gateway: request.gateway,
+          shellLoads: 0,
           loaded: false,
           ready: false,
           timers: [],
@@ -308,6 +311,17 @@ export function createRemoteDashboardHost(options: RemoteDashboardHostOptions) {
     bindShell(view: ShellView, element: HTMLIFrameElement) {
       if (active && active.shell === view) active.iframe = element;
     },
+    /**
+     * Counts loads of one exact shell iframe. The first load is normal and can come before or
+     * after readiness. A later load can show a refusal document that sends no message, so it
+     * fails closed here and does not wait for an `ended` event.
+     */
+    shellLoaded(view: ShellView) {
+      const current = active;
+      if (!current || current.shell !== view) return;
+      current.shellLoads += 1;
+      if (current.shellLoads > 1) fail({ code: "shell_reloaded" });
+    },
     reload: start,
     sendAnnotation,
     annotationTarget: createMemo(() => {
@@ -346,6 +360,7 @@ export function hostErrorText(error: HostError): string {
     case "expired": return "This view expired. Reload to see the dashboard.";
     case "readiness_timeout": return "The dashboard did not finish loading.";
     case "unknown_display":
+    case "shell_reloaded":
     case "ended": return "The dashboard display is in an unknown state. Reload to see it again.";
     case "relay_unavailable": return "The relay to linked gateways is off, or this page is not local.";
     case "untrusted_origin":

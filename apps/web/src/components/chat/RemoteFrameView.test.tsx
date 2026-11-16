@@ -375,6 +375,99 @@ describe("remote dashboard host: identity controls", () => {
   });
 });
 
+describe("remote dashboard host: loads of the shell", () => {
+  const standalone = { standalone: true, mode: "panel" as const };
+  const load = (frame: HTMLIFrameElement) => frame.dispatchEvent(new Event("load"));
+
+  it("accepts the first shell load before or after readiness", async () => {
+    mount(standalone);
+    await answerPrepare(prepares()[0]);
+    let frame = shellFrame();
+    load(frame);
+    fromShell(frame, "renderer-loaded");
+    fromShell(frame, "renderer-ready");
+    await settle();
+    await answerRead(reads()[0]);
+    expect(chat()).toBeTruthy();
+    expect(queryByRole(container, "alert")).toBeNull();
+    dispose!();
+    container.innerHTML = "";
+    calls = [];
+    mount(standalone);
+    frame = await showReady();
+    load(frame);
+    expect(chat()).toBeTruthy();
+    expect(queryByRole(container, "alert")).toBeNull();
+  });
+
+  it("clears authority, notes, and the iframe on an extra shell load after readiness, with no message from the shell", async () => {
+    const { annotations } = mount(standalone);
+    const frame = await showReady();
+    fromShell(frame, "annotation", { message: { channel: "yoplai-annotate", type: "ready", id: "x", slug: "home.html", agentId: "agent-7@east", title: "Home", params: {} } });
+    queryByRole(container, "button", { name: "Annotate" })!.click();
+    fromShell(frame, "annotation", { message: { channel: "yoplai-annotate", type: "note", id: "n1", selector: "p", tag: "p", text: "", heading: "", ancestor: "", note: "Bolder" } });
+    expect(annotations.notes()).toHaveLength(1);
+    load(frame);
+    load(frame);
+    expect(chat()).toBeNull();
+    expect(chatButton()?.disabled).toBe(true);
+    expect(annotations.notes()).toHaveLength(0);
+    expect(queryByRole(container, "button", { name: "Annotate" })).toBeNull();
+    expect(container.querySelector("iframe")).toBeNull();
+    expect(getByRole(container, "alert").textContent).toContain("unknown state");
+    // Late events of the old instance change nothing.
+    fromShell(frame, "renderer-ready");
+    fromShell(frame, "link-request", { href: "https://example.com/" });
+    await settle();
+    expect(chat()).toBeNull();
+    expect(queryByRole(container, "group", { name: "External link" })).toBeNull();
+    expect(getByRole(container, "alert")).toBeTruthy();
+  });
+
+  it("ignores the late metadata answer of an instance that an extra load ended, and Reload succeeds", async () => {
+    ignoreAbort = true;
+    mount(standalone);
+    await answerPrepare(prepares()[0]);
+    const frame = shellFrame();
+    load(frame);
+    fromShell(frame, "renderer-loaded");
+    fromShell(frame, "renderer-ready");
+    const read = reads()[0];
+    load(frame);
+    expect(read.signal.aborted).toBe(true);
+    await answerRead(read);
+    expect(chat()).toBeNull();
+    expect(container.querySelector("iframe")).toBeNull();
+    getByRole(container, "button", { name: "Reload" }).click();
+    expect(prepares()).toHaveLength(2);
+    await answerPrepare(prepares()[1], 2);
+    const fresh = shellFrame();
+    expect(fresh).not.toBe(frame);
+    load(fresh);
+    fromShell(fresh, "renderer-loaded", {}, { instance: "instance-2" });
+    fromShell(fresh, "renderer-ready", {}, { instance: "instance-2" });
+    await settle();
+    await answerRead(reads()[1]);
+    expect(chat()).toBeTruthy();
+    expect(queryByRole(container, "alert")).toBeNull();
+  });
+
+  it("fails closed on an extra shell load before readiness", async () => {
+    mount(standalone);
+    await answerPrepare(prepares()[0]);
+    const frame = shellFrame();
+    load(frame);
+    load(frame);
+    expect(getByRole(container, "alert")).toBeTruthy();
+    expect(container.querySelector("iframe")).toBeNull();
+    fromShell(frame, "renderer-loaded");
+    fromShell(frame, "renderer-ready");
+    await settle();
+    expect(reads()).toHaveLength(0);
+    expect(chat()).toBeNull();
+  });
+});
+
 describe("remote dashboard host: replacement and late results", () => {
   it("aborts a pending preparation on disposal and ignores its late answer", async () => {
     mount({ standalone: true, mode: "panel" });

@@ -158,6 +158,7 @@ export function RemoteFrameView(props: FrameViewProps) {
         {(shell) => (
           <iframe
             ref={(element) => host.bindShell(shell, element)}
+            onLoad={() => host.shellLoaded(shell)}
             title={`${title()} dashboard`}
             src={shell.shellUrl}
             referrerpolicy="no-referrer"
