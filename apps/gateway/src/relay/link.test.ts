@@ -1,7 +1,9 @@
 import { createHash } from "node:crypto";
+import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { GATEWAY_LINK_CALLBACK_PATH } from "@yoplai/shared";
 import { RelayLinkService, checkRemoteOrigin, type LinkDeps } from "./link.js";
@@ -433,6 +435,26 @@ describe("a name that a later link removed", () => {
     store.remove("work");
     expect(await service.complete({ state: older.state, code: "code-older" })).toMatchObject({ ok: true, value: { status: "failed" } });
     expect(store.list()).toEqual([]);
+  });
+
+  it("is not restored after a separate process saved and removed the name", async () => {
+    const older = await begin({ name: "work" });
+    const storeModule = fileURLToPath(new URL("./store.ts", import.meta.url));
+    const script = `
+      const { createFileRemoteGatewayStore } = await import(${JSON.stringify(storeModule)});
+      const store = createFileRemoteGatewayStore(process.argv[1]);
+      store.save({ name: "work", url: "https://manual.example.test", token: "manual-token" });
+      store.remove("work");
+    `;
+    execFileSync(process.execPath, ["--conditions=development", "--import", "tsx", "--input-type=module", "-e", script, path.join(dir, "remote-gateways.json")], {
+      cwd: path.dirname(fileURLToPath(new URL("../../package.json", import.meta.url))),
+      stdio: "pipe",
+    });
+    expect(store.list()).toEqual([]);
+    calls.length = 0;
+    expect(await service.complete({ state: older.state, code: "code-older" })).toMatchObject({ ok: true, value: { status: "failed" } });
+    expect(store.list()).toEqual([]);
+    expect(calls.map((call) => call.path)).toContain("/api/auth/gateway-link/revoke");
   });
 
   it("is not restored for an open gateway that was checked before the removal", async () => {

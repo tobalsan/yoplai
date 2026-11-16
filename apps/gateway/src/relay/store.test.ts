@@ -98,6 +98,59 @@ describe("remote gateway store mutation version", () => {
   });
 });
 
+describe("remote gateway store mutation version in the file", () => {
+  it("is shared by a second store object on the same file, also after a removal", () => {
+    const first = createFileRemoteGatewayStore(file);
+    const second = createFileRemoteGatewayStore(file);
+    const seen = first.mutationVersion("ams");
+    second.save(link);
+    second.remove("ams");
+    expect(first.mutationVersion("ams")).toBeGreaterThan(seen);
+    expect(first.saveIfGeneration(link, null, seen)).toBe(false);
+    expect(first.list()).toEqual([]);
+  });
+
+  it("keeps the file a plain array of links, with a count row only for a removed name", async () => {
+    const store = createFileRemoteGatewayStore(file);
+    store.save(link);
+    store.save({ name: "east", url: "http://127.0.0.1:11" });
+    store.remove("ams");
+    const rows = JSON.parse(await fs.readFile(file, "utf8")) as Array<Record<string, unknown>>;
+    expect(rows.filter((row) => row.name !== undefined).map((row) => row.name)).toEqual(["east"]);
+    expect(rows.filter((row) => row.removedName !== undefined)).toEqual([{ removedName: "ams", mutations: 2 }]);
+    expect(store.list().map((item) => item.name)).toEqual(["east"]);
+    expect(store.list()[0]).not.toHaveProperty("mutations");
+  });
+
+  it("keeps the file mode 0600 and leaves no lock file after a removal", async () => {
+    const store = createFileRemoteGatewayStore(file);
+    store.save(link);
+    store.remove("ams");
+    expect((await fs.stat(file)).mode & 0o777).toBe(0o600);
+    await expect(fs.stat(`${file}.lock`)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("reads an older array file with a version of zero, then keeps the count after the next write", async () => {
+    await fs.writeFile(file, `${JSON.stringify([{ name: "ams", url: link.url, token: link.token }])}\n`);
+    const store = createFileRemoteGatewayStore(file);
+    expect(store.mutationVersion("ams")).toBe(0);
+    expect(store.remove("ams")).toBe(true);
+    expect(store.mutationVersion("ams")).toBe(1);
+    expect(store.list()).toEqual([]);
+    expect(createFileRemoteGatewayStore(file).mutationVersion("ams")).toBe(1);
+  });
+
+  it("replaces a stale lock that a dead writer left", async () => {
+    const store = createFileRemoteGatewayStore(file);
+    await fs.writeFile(`${file}.lock`, "");
+    const old = new Date(Date.now() - 120_000);
+    await fs.utimes(`${file}.lock`, old, old);
+    store.save(link);
+    expect(store.list()).toHaveLength(1);
+    await expect(fs.stat(`${file}.lock`)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+});
+
 describe("remote gateway store generation checks", () => {
   it("saves a new link only when no link of that name exists", () => {
     const store = createFileRemoteGatewayStore(file);
