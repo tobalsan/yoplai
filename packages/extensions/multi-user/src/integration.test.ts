@@ -445,6 +445,7 @@ describe("multi-user integration", () => {
         multiUser: false,
         enableCronMonitoring: false,
         forkedAgents: false,
+        dashboardEmbed: { version: 1, assetVersion: "v3", policyVersion: 1, enabled: true },
       });
 
       const agentsResponse = await app.request("/api/agents");
@@ -507,11 +508,12 @@ describe("multi-user integration", () => {
       await expect(response.json()).resolves.toEqual({
         version: 2,
         apps: { available: false },
-        extensions: { canvas: true, sessionHistory: true },
+        extensions: { canvas: true, deviceTools: true, sessionHistory: true },
         agents: ["main"],
         multiUser: false,
         enableCronMonitoring: false,
         forkedAgents: false,
+        dashboardEmbed: { version: 1, assetVersion: "v3", policyVersion: 1, enabled: true },
       });
     } finally {
       restoreEnv(previousEnv);
