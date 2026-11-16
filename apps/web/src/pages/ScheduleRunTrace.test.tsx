@@ -186,7 +186,7 @@ describe("ScheduleRunTrace", () => {
   it("renders canonical history and anchors once at the start of the final assistant output", async () => {
     dispose = render(() => <ScheduleRunTrace />, container);
     await settle();
-    expect(fetchTraceMock).toHaveBeenCalledWith("agent/a", "job/b", "run/c");
+    expect(fetchTraceMock).toHaveBeenCalledWith("agent/a", "job/b", "run/c", undefined);
     expect(container.querySelector("a")!.getAttribute("href")).toBe("/agents/agent%2Fa/schedules/job%2Fb/runs");
     expect(container.querySelector(".schedule-trace-prompt")!.textContent).toContain("Send digest");
     expect(container.querySelector(".board-msg-user")!.textContent).toContain("Send digest");

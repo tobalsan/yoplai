@@ -1,4 +1,5 @@
 import { API_BASE, apiFetch as fetch } from "./core";
+import { gatewayApiPath, type GatewayName } from "./gateway";
 
 type ExtensionFlags = { extensions: string[]; mcp: string[] };
 export type TopExtensions = ExtensionFlags & { system: ExtensionFlags };
@@ -13,8 +14,8 @@ export type AdminTopExtensions = TopExtensions & { candidates: TopExtensionCandi
 export const EMPTY_TOP_EXTENSIONS: TopExtensions = { extensions: [], mcp: [], system: { extensions: [], mcp: [] } };
 
 /** Global Top and system flags; any signed-in user may read them. */
-export async function fetchTopExtensions(): Promise<TopExtensions> {
-  const res = await fetch(`${API_BASE}/top-extensions`);
+export async function fetchTopExtensions(gateway?: GatewayName): Promise<TopExtensions> {
+  const res = await fetch(gatewayApiPath(gateway, `${API_BASE}/top-extensions`));
   if (!res.ok) throw new Error("Failed to fetch top extensions");
   return res.json() as Promise<TopExtensions>;
 }

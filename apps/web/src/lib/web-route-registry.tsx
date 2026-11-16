@@ -1,6 +1,11 @@
-import { Route } from "@solidjs/router";
-import { type Component, type JSX } from "solid-js";
+import { Route, useParams } from "@solidjs/router";
+import { Show, type Component, type JSX } from "solid-js";
 import { isExtensionEnabled } from "./capabilities";
+import { decodeRouteParam } from "./path";
+import { useAgentTarget } from "./agent-target";
+import { useRequester } from "./requester";
+import { LeftNavShell } from "../components/LeftNavShell";
+import { ExtensionDetails } from "../pages/ExtensionDetails";
 
 type ExtensionRoute = {
   path: string;
@@ -57,26 +62,48 @@ export function getDefaultExtensionHome(): Component | undefined {
   return extension?.home;
 }
 
+/**
+ * An agent config page belongs to the gateway of its agent. The route is always
+ * mounted, because the local extension list says nothing about a remote agent.
+ * The page checks the extension on the gateway that hosts the agent. Where that
+ * gateway does not load the extension, the generic details page opens instead.
+ */
+function AgentConfigRoute(props: { extensionId: string; component: Component }) {
+  const routeParams = useParams<{ agentId: string }>();
+  const { target } = useAgentTarget(() => decodeRouteParam(routeParams.agentId));
+  const gateway = () => { const current = target(); return current.state === "ready" ? current.gateway : undefined; };
+  const requester = useRequester(gateway);
+  const settled = () => target().state === "missing" || (target().state === "ready" && (gateway() === undefined || requester().ready));
+  const Config = props.component;
+  return (
+    <Show when={settled()} fallback={<LeftNavShell><p role="status">Loading…</p></LeftNavShell>}>
+      <Show when={target().state === "missing" || requester().isExtensionEnabled(props.extensionId)} fallback={<LeftNavShell><ExtensionDetails extensionId={props.extensionId} /></LeftNavShell>}>
+        <Config />
+      </Show>
+    </Show>
+  );
+}
+
 export function renderExtensionRoutes(
   wrap: (component: Component) => JSX.Element
 ): JSX.Element[] {
-  return getExtensions()
-    .filter((extension) => isExtensionEnabled(extension.extensionId))
-    .flatMap((extension) => {
-      const routes = extension.routes.map((route) => (
-        <Route path={route.path} component={() => wrap(route.component)} />
-      ));
-      // Mount the bespoke agent-keyed config route too, so the hub's redirect
-      // target renders. Registered alongside the extension's other routes.
-      if (extension.configRoute) {
-        const configRoute = extension.configRoute;
-        routes.push(
-          <Route
-            path={configRoute.path}
-            component={() => wrap(configRoute.component)}
-          />
-        );
-      }
-      return routes;
-    });
+  return getExtensions().flatMap((extension) => {
+    const routes = isExtensionEnabled(extension.extensionId)
+      ? extension.routes.map((route) => (
+          <Route path={route.path} component={() => wrap(route.component)} />
+        ))
+      : [];
+    // Mount the bespoke agent-keyed config route too, so the hub's redirect
+    // target renders. The route does not depend on the local extension list.
+    if (extension.configRoute) {
+      const configRoute = extension.configRoute;
+      routes.push(
+        <Route
+          path={configRoute.path}
+          component={() => wrap(() => <AgentConfigRoute extensionId={extension.extensionId} component={configRoute.component} />)}
+        />
+      );
+    }
+    return routes;
+  });
 }

@@ -142,15 +142,16 @@ export function ChatView() {
   // The gateway of a captured dashboard comes from the resolved agent, never from an ID suffix or a tool result.
   const chatGateway = () => (agent.loading || agent.error ? undefined : agent()?.gateway);
   // Settings live on the pool agent in forked mode; the chat agent is a fork.
+  // A remote agent has no local pool entry. Its settings page resolves the agent on its own gateway.
   const [settingsPoolActions] = createResource(
-    () => (capabilities.forkedAgents ? params.agentId : null),
+    () => (capabilities.forkedAgents && !agent.loading && !chatGateway() ? params.agentId : null),
     (chatAgentId) => fetchPoolActions()
       .then((entries) => ({ chatAgentId, poolId: entries.find((entry) => entry.action === "chat" && entry.chatAgentId === chatAgentId)?.poolId ?? null }))
       .catch(() => ({ chatAgentId, poolId: null }))
   );
   // Ignore a stale result from the previous agent while the new lookup loads.
   const settingsAgentId = () => {
-    if (!capabilities.forkedAgents) return params.agentId;
+    if (chatGateway() || !capabilities.forkedAgents) return params.agentId;
     const resolved = settingsPoolActions();
     return resolved?.chatAgentId === params.agentId ? resolved.poolId : null;
   };
@@ -916,7 +917,7 @@ export function ChatView() {
         onRestore={async () => { await session.restoreArchived(); }}
       />
 
-      <ScheduleAlertsBanner agentId={params.agentId} schedulesAgentId={settingsAgentId() ?? undefined} />
+      <ScheduleAlertsBanner agentId={params.agentId} gateway={chatGateway()} schedulesAgentId={settingsAgentId() ?? undefined} />
 
       <div class="chat-body">
         <div class="hero-spacer hero-spacer-top" />

@@ -1,5 +1,6 @@
 import { API_BASE, apiFetch as fetch } from "./core";
 import { fetchMcpServersFast } from "./mcp-servers";
+import { gatewayApiPath, type GatewayName } from "./gateway";
 
 export type AgentConnection = {
   kind: "oauth" | "extension" | "mcp";
@@ -11,8 +12,8 @@ export type AgentConnection = {
   iconUrl?: string;
 };
 
-export async function fetchAgentConnections(agentId: string): Promise<AgentConnection[]> {
-  const response = await fetch(`${API_BASE}/agents/${encodeURIComponent(agentId)}/connections`);
+export async function fetchAgentConnections(agentId: string, gateway?: GatewayName): Promise<AgentConnection[]> {
+  const response = await fetch(gatewayApiPath(gateway, `${API_BASE}/agents/${encodeURIComponent(agentId)}/connections`));
   if (!response.ok) throw new Error("Failed to load connections");
   const data = (await response.json()) as { connections: AgentConnection[] };
   return data.connections;
@@ -22,21 +23,22 @@ export async function disconnectAgentConnection(
   agentId: string,
   kind: Exclude<AgentConnection["kind"], "mcp">,
   id: string,
+  gateway?: GatewayName,
 ): Promise<void> {
   const response = await fetch(
-    `${API_BASE}/agents/${encodeURIComponent(agentId)}/connections/${kind}/${encodeURIComponent(id)}`,
+    gatewayApiPath(gateway, `${API_BASE}/agents/${encodeURIComponent(agentId)}/connections/${kind}/${encodeURIComponent(id)}`),
     { method: "DELETE" },
   );
   if (!response.ok) throw new Error("Failed to disconnect personal connection");
 }
 
-type McpServerStatus = { name: string; auth: "oauth" | "static"; state: "connected" | "disconnected" | "needs_reconnect" | "static" };
+export type McpServerStatus = { name: string; auth: "oauth" | "static"; state: "connected" | "disconnected" | "needs_reconnect" | "static" };
 
-async function fetchMcpStatus(agentId: string, scope: "team" | "personal"): Promise<McpServerStatus[]> {
+export async function fetchMcpStatus(agentId: string, scope: "team" | "personal", gateway?: GatewayName, signal?: AbortSignal): Promise<McpServerStatus[]> {
   let response: Response;
   try {
-    response = await fetch(`/api/mcp/oauth/status?agent=${encodeURIComponent(agentId)}&scope=${scope}`, {
-      signal: AbortSignal.timeout(8_000),
+    response = await fetch(gatewayApiPath(gateway, `/api/mcp/oauth/status?agent=${encodeURIComponent(agentId)}&scope=${scope}`), {
+      signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(8_000)]) : AbortSignal.timeout(8_000),
     });
   } catch (cause) {
     if (cause instanceof DOMException && cause.name === "TimeoutError") {
@@ -49,12 +51,12 @@ async function fetchMcpStatus(agentId: string, scope: "team" | "personal"): Prom
   return data.servers;
 }
 
-export async function fetchAgentMcpConnections(agentId: string, includePersonal: boolean): Promise<AgentConnection[]> {
+export async function fetchAgentMcpConnections(agentId: string, includePersonal: boolean, gateway?: GatewayName): Promise<AgentConnection[]> {
   const [teamServers, personalServers, icons] = await Promise.all([
-    fetchMcpStatus(agentId, "team"),
-    includePersonal ? fetchMcpStatus(agentId, "personal") : Promise.resolve([]),
+    fetchMcpStatus(agentId, "team", gateway),
+    includePersonal ? fetchMcpStatus(agentId, "personal", gateway) : Promise.resolve([]),
     // Icons are cosmetic: a failed fast list keeps the letter fallback.
-    fetchMcpServersFast(agentId).then(
+    fetchMcpServersFast(agentId, undefined, gateway).then(
       (list) => new Map(list.servers.flatMap((server) => server.iconUrl ? [[server.name, server.iconUrl] as const] : [])),
       () => new Map<string, string>(),
     ),
@@ -77,9 +79,9 @@ export async function fetchAgentMcpConnections(agentId: string, includePersonal:
   });
 }
 
-export async function disconnectMcpConnection(agentId: string, server: string): Promise<void> {
+export async function disconnectMcpConnection(agentId: string, server: string, gateway?: GatewayName): Promise<void> {
   const response = await fetch(
-    `/api/mcp/oauth/disconnect?agent=${encodeURIComponent(agentId)}&server=${encodeURIComponent(server)}&scope=personal`,
+    gatewayApiPath(gateway, `/api/mcp/oauth/disconnect?agent=${encodeURIComponent(agentId)}&server=${encodeURIComponent(server)}&scope=personal`),
     { method: "POST" },
   );
   if (!response.ok) throw new Error("Failed to disconnect personal MCP connection");

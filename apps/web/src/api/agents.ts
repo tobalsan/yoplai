@@ -8,6 +8,7 @@ import type {
 import type { Suggestion, WsActiveTurnSnapshot } from "@yoplai/shared/types";
 import { API_BASE, apiFetch as fetch } from "./core";
 import type { DashboardRow } from "./dashboards";
+import { gatewayApiPath, type GatewayName } from "./gateway";
 
 export async function fetchAgents(): Promise<Agent[]> {
   const res = await fetch(`${API_BASE}/agents`);
@@ -15,8 +16,8 @@ export async function fetchAgents(): Promise<Agent[]> {
   return res.json();
 }
 
-export async function fetchPool(): Promise<Agent[]> {
-  const res = await fetch(`${API_BASE}/pool`);
+export async function fetchPool(gateway?: GatewayName): Promise<Agent[]> {
+  const res = await fetch(gatewayApiPath(gateway, `${API_BASE}/pool`));
   if (!res.ok) throw new Error("Failed to fetch pool");
   return res.json();
 }
@@ -29,8 +30,8 @@ export async function fetchAgent(agentId: string): Promise<Agent> {
 
 export type AgentDashboard = DashboardRow;
 
-export async function fetchAgentDashboards(agentId: string): Promise<AgentDashboard[]> {
-  const res = await fetch(`${API_BASE}/agents/${encodeURIComponent(agentId)}/dashboards`);
+export async function fetchAgentDashboards(agentId: string, gateway?: GatewayName): Promise<AgentDashboard[]> {
+  const res = await fetch(gatewayApiPath(gateway, `${API_BASE}/agents/${encodeURIComponent(agentId)}/dashboards`));
   if (!res.ok) throw new Error("Failed to fetch dashboards");
   return res.json();
 }

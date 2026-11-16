@@ -2,7 +2,10 @@ import { A, useParams } from "@solidjs/router";
 import { createMemo, createResource, For, onCleanup, Show } from "solid-js";
 import type { ScheduleRun } from "@yoplai/shared/types";
 import { fetchScheduleRuns } from "../api/schedules";
-import { capabilities, isExtensionEnabled } from "../lib/capabilities";
+import { gatewayKey } from "../api/gateway";
+import { decodeRouteParam } from "../lib/path";
+import { useAgentTarget } from "../lib/agent-target";
+import { useRequester } from "../lib/requester";
 
 function duration(run: ScheduleRun): string {
   const seconds = Math.max(0, Math.floor(((run.finishedAt ? Date.parse(run.finishedAt) : Date.now()) - Date.parse(run.startedAt)) / 1000));
@@ -12,28 +15,46 @@ function duration(run: ScheduleRun): string {
 const STATUS_LABELS = { running: "Running", ok: "OK", error: "Error", interrupted: "Interrupted" };
 
 export function ScheduleRuns() {
-  const params = useParams<{ agentId: string; jobId: string }>();
+  const routeParams = useParams<{ agentId: string; jobId: string }>();
+  // Router params keep the raw path segment. A job ID is an arbitrary string.
+  const params = {
+    get agentId() { return decodeRouteParam(routeParams.agentId); },
+    get jobId() { return decodeRouteParam(routeParams.jobId); },
+  };
+  const { target, retry } = useAgentTarget(() => params.agentId);
+  const gateway = () => { const current = target(); return current.state === "ready" ? current.gateway : undefined; };
+  const requester = useRequester(gateway);
+  // A local page reads the local capabilities. A remote page waits for the capabilities of its gateway.
+  const contextReady = () => gateway() === undefined || requester().ready;
   return (
     <main class="schedule-runs">
       <style>{STYLES}</style>
       <A href={`/agents/${encodeURIComponent(params.agentId)}/edit`}>Back to agent</A>
       <h1>Run history</h1>
       <p class="schedule-runs-job">Job: {params.jobId}</p>
-      <Show when={isExtensionEnabled("scheduler") && capabilities.enableCronMonitoring === true} fallback={<p>Run history is unavailable.</p>}>
-        <RunHistory agentId={params.agentId} jobId={params.jobId} />
+      <Show when={target().state === "missing"}>
+        <p role="alert">This agent is unavailable. Check that its gateway is online. <button type="button" onClick={retry}>Retry</button></p>
+      </Show>
+      <Show when={target().state === "loading" || (target().state === "ready" && !contextReady())}><p role="status">Loading run history…</p></Show>
+      <Show when={target().state === "ready" && contextReady()}>
+        <Show when={requester().isExtensionEnabled("scheduler") && requester().enableCronMonitoring} fallback={<p>Run history is unavailable.</p>}>
+          <RunHistory agentId={params.agentId} jobId={params.jobId} gateway={gateway()} />
+        </Show>
       </Show>
     </main>
   );
 }
 
-function RunHistory(props: { agentId: string; jobId: string }) {
+function RunHistory(props: { agentId: string; jobId: string; gateway?: string }) {
   const [result, { refetch }] = createResource(
-    () => [props.agentId, props.jobId] as const,
-    async ([agentId, jobId], { value }): Promise<{ runs: ScheduleRun[]; error?: string }> => {
+    () => ({ agentId: props.agentId, jobId: props.jobId, gateway: props.gateway }),
+    async ({ agentId, jobId, gateway }, { value }): Promise<{ key: string; runs: ScheduleRun[]; error?: string }> => {
+      const key = gatewayKey(gateway, agentId, jobId);
       try {
-        return { runs: await fetchScheduleRuns(agentId, jobId), error: undefined };
+        return { key, runs: await fetchScheduleRuns(agentId, jobId, gateway), error: undefined };
       } catch (cause) {
-        return { runs: value?.runs ?? [], error: cause instanceof Error ? cause.message : "Failed to load run history." };
+        // Keep earlier runs only for the same gateway, agent, and job.
+        return { key, runs: value?.key === key ? value.runs : [], error: cause instanceof Error ? cause.message : "Failed to load run history." };
       }
     }
   );

@@ -8,7 +8,10 @@ import {
 import { OAuthConnectCard } from "../components/OAuthConnectCard";
 import type { CredentialScope } from "../components/CredentialScopeTabs";
 import { ExtensionConfigForm, type ConnectSettingsActions } from "./ExtensionConfigForm";
-import { capabilities } from "../lib/capabilities";
+import { decodeRouteParam } from "../lib/path";
+import { useAgentTarget } from "../lib/agent-target";
+import { useRequester } from "../lib/requester";
+import { qualifyAgentRoute } from "../api/gateway";
 
 /**
  * Details page for one extension on one agent, reached by clicking an
@@ -16,11 +19,21 @@ import { capabilities } from "../lib/capabilities";
  * the legacy `.../config` path renders the same page). Shows the extension's
  * OAuth connection or schema-driven settings inline, so one click reaches them.
  */
-export function ExtensionDetails() {
-  const params = useParams<{ agentId: string; extensionId: string }>();
+export function ExtensionDetails(props: { extensionId?: string }) {
+  const routeParams = useParams<{ agentId: string; extensionId: string }>();
+  // Router params keep the raw path segment, so a qualified remote ID needs decoding.
+  const params = {
+    get agentId() { return decodeRouteParam(routeParams.agentId); },
+    // A config route that falls back to this page passes the extension, because its path has no `:extensionId`.
+    get extensionId() { return props.extensionId ?? decodeRouteParam(routeParams.extensionId); },
+  };
+  const { target, retry } = useAgentTarget(() => params.agentId);
+  const gateway = () => { const current = target(); return current.state === "ready" ? current.gateway : undefined; };
+  const requester = useRequester(gateway);
 
-  const [extensions, { mutate }] = createResource(() =>
-    fetchAgentExtensions(params.agentId)
+  const [extensions, { mutate }] = createResource(
+    () => { const current = target(); return current.state === "ready" ? current : null; },
+    (current) => fetchAgentExtensions(current.agentId, current.gateway)
   );
   const [busy, setBusy] = createSignal(false);
   // The OAuth card's selected tab also selects which settings the form edits.
@@ -36,7 +49,7 @@ export function ExtensionDetails() {
       mutate(
         await patchAgentExtension(params.agentId, ext.id, {
           enabled: !ext.enabled,
-        })
+        }, gateway())
       );
     } catch (cause) {
       setToggleError(
@@ -57,9 +70,10 @@ export function ExtensionDetails() {
         await patchAgentExtension(
           params.agentId,
           ext.id,
-          capabilities.multiUser && capabilities.user
+          requester().multiUser && requester().user
             ? { credentialScope: "personal", config: ext.personalConfigValues ?? {} }
-            : { enabled: true }
+            : { enabled: true },
+          gateway()
         )
       );
     } catch (cause) {
@@ -68,8 +82,9 @@ export function ExtensionDetails() {
       setBusy(false);
     }
   };
+  // Reading a failed resource throws. A failed remote read must show the error, not a blank page.
   const entry = createMemo(() =>
-    (extensions() ?? []).find((candidate) => candidate.id === params.extensionId)
+    extensions.error ? undefined : (extensions() ?? []).find((candidate) => candidate.id === params.extensionId)
   );
 
   const backHref = createMemo(
@@ -83,7 +98,13 @@ export function ExtensionDetails() {
           ← Back to agent
         </A>
 
-        <Show when={extensions.loading}>
+        <Show when={target().state === "missing"}>
+          <div class="ext-details-status ext-details-error" role="alert">
+            This agent is unavailable. Check that its gateway is online.{" "}
+            <button type="button" onClick={retry}>Retry</button>
+          </div>
+        </Show>
+        <Show when={target().state === "loading" || extensions.loading}>
           <div class="ext-details-status">Loading extension…</div>
         </Show>
         <Show when={extensions.error}>
@@ -91,7 +112,7 @@ export function ExtensionDetails() {
             Failed to load extension.
           </div>
         </Show>
-        <Show when={!extensions.loading && !extensions.error && !entry()}>
+        <Show when={target().state === "ready" && !extensions.loading && !extensions.error && !entry()}>
           <div class="ext-details-status ext-details-error">
             Extension not found.
           </div>
@@ -132,6 +153,7 @@ export function ExtensionDetails() {
                 {(oauth) => (
                   <OAuthConnectCard
                     agentId={params.agentId}
+                    gateway={gateway()}
                     provider={oauth().provider}
                     scopes={oauth().scopes}
                     personalScopes={oauth().personalScopes}
@@ -148,6 +170,8 @@ export function ExtensionDetails() {
                     <Show when={ext().tier === "auto-form"}>
                       <ExtensionConfigForm
                         entry={ext()}
+                        agentId={params.agentId}
+                        gateway={gateway()}
                         scope={scope()}
                         onSaved={mutate}
                         registerConnectActions={(actions) => { settingsActions = actions; }}
@@ -160,6 +184,8 @@ export function ExtensionDetails() {
               <Show when={ext().tier === "auto-form" && !ext().oauth}>
                 <ExtensionConfigForm
                   entry={ext()}
+                  agentId={params.agentId}
+                  gateway={gateway()}
                   onSaved={mutate}
                   registerConnectActions={(actions) => { settingsActions = actions; }}
                 />
@@ -168,7 +194,7 @@ export function ExtensionDetails() {
               <Show
                 when={
                   ext().tier === "bespoke-route" && ext().configRoutePath
-                    ? ext().configRoutePath
+                    ? qualifyAgentRoute(ext().configRoutePath!, params.agentId, gateway()) ?? null
                     : null
                 }
                 fallback={

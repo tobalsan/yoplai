@@ -4,10 +4,24 @@ import { createStore, reconcile } from "solid-js/store";
 import type { ScheduleRunTrace as RunTrace } from "@yoplai/shared/types";
 import { fetchScheduleRunTrace } from "../api/schedules";
 import { BoardChatLog, buildBoardLogs } from "../components/BoardChatRenderer";
-import { capabilities, isExtensionEnabled } from "../lib/capabilities";
+import { decodeRouteParam } from "../lib/path";
+import { useAgentTarget } from "../lib/agent-target";
+import { useRequester } from "../lib/requester";
+import { gatewayKey } from "../api/gateway";
 
 export function ScheduleRunTrace() {
-  const params = useParams<{ agentId: string; jobId: string; runId: string }>();
+  const routeParams = useParams<{ agentId: string; jobId: string; runId: string }>();
+  // Router params keep the raw path segment. Job and run IDs are arbitrary strings.
+  const params = {
+    get agentId() { return decodeRouteParam(routeParams.agentId); },
+    get jobId() { return decodeRouteParam(routeParams.jobId); },
+    get runId() { return decodeRouteParam(routeParams.runId); },
+  };
+  const { target, retry } = useAgentTarget(() => params.agentId);
+  const gateway = () => { const current = target(); return current.state === "ready" ? current.gateway : undefined; };
+  const requester = useRequester(gateway);
+  // A local page reads the local capabilities. A remote page waits for the capabilities of its gateway.
+  const contextReady = () => gateway() === undefined || requester().ready;
   let scrollContainer!: HTMLElement;
   let followBottom = true;
   return (
@@ -18,21 +32,29 @@ export function ScheduleRunTrace() {
       <A href={`/agents/${encodeURIComponent(params.agentId)}/schedules/${encodeURIComponent(params.jobId)}/runs`}>Back to run history</A>
       <h1>Run trace</h1>
       <p>Job: {params.jobId}</p>
-      <Show when={isExtensionEnabled("scheduler") && capabilities.enableCronMonitoring === true} fallback={<p>Run trace is unavailable.</p>}>
-        <LoadTrace agentId={params.agentId} jobId={params.jobId} runId={params.runId} scrollContainer={scrollContainer} followBottom={() => followBottom} />
+      <Show when={target().state === "missing"}>
+        <p role="alert">This agent is unavailable. Check that its gateway is online. <button type="button" onClick={retry}>Retry</button></p>
+      </Show>
+      <Show when={target().state === "loading" || (target().state === "ready" && !contextReady())}><p role="status">Loading run trace…</p></Show>
+      <Show when={target().state === "ready" && contextReady()}>
+        <Show when={requester().isExtensionEnabled("scheduler") && requester().enableCronMonitoring} fallback={<p>Run trace is unavailable.</p>}>
+          <LoadTrace agentId={params.agentId} jobId={params.jobId} runId={params.runId} gateway={gateway()} scrollContainer={scrollContainer} followBottom={() => followBottom} />
+        </Show>
       </Show>
     </main>
   );
 }
 
-function LoadTrace(props: { agentId: string; jobId: string; runId: string; scrollContainer: HTMLElement; followBottom: () => boolean }) {
+function LoadTrace(props: { agentId: string; jobId: string; runId: string; gateway?: string; scrollContainer: HTMLElement; followBottom: () => boolean }) {
   const [result, { refetch }] = createResource(
-    () => [props.agentId, props.jobId, props.runId] as const,
-    async ([agentId, jobId, runId], { value }): Promise<{ trace?: RunTrace; error?: string }> => {
+    () => ({ agentId: props.agentId, jobId: props.jobId, runId: props.runId, gateway: props.gateway }),
+    async ({ agentId, jobId, runId, gateway }, { value }): Promise<{ key: string; trace?: RunTrace; error?: string }> => {
+      const key = gatewayKey(gateway, agentId, jobId, runId);
       try {
-        return { trace: await fetchScheduleRunTrace(agentId, jobId, runId), error: undefined };
+        return { key, trace: await fetchScheduleRunTrace(agentId, jobId, runId, gateway), error: undefined };
       } catch (cause) {
-        return { trace: value?.trace, error: cause instanceof Error ? cause.message : "Failed to load run trace." };
+        // Keep an earlier trace only for the same gateway, agent, job, and run.
+        return { key, trace: value?.key === key ? value.trace : undefined, error: cause instanceof Error ? cause.message : "Failed to load run trace." };
       }
     }
   );

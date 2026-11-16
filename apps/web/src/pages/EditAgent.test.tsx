@@ -457,7 +457,7 @@ describe("EditAgent", () => {
 
     expect(navigateMock).not.toHaveBeenCalledWith("/", { replace: true });
     expect(container.querySelector(".edit-agent")).not.toBeNull();
-    expect(fetchAgentExtensionsMock).toHaveBeenCalledWith("scribe-fork", expect.any(Object));
+    expect(fetchAgentExtensionsMock).toHaveBeenCalledWith("scribe-fork", undefined);
   });
 
   it("shows dashboards for the accessible fork with working open and copy links", async () => {
@@ -478,7 +478,7 @@ describe("EditAgent", () => {
     openTab("Dashboards");
     await new Promise((resolve) => setTimeout(resolve, 0));
 
-    expect(fetchAgentDashboardsMock).toHaveBeenCalledWith("scribe-fork", expect.any(Object));
+    expect(fetchAgentDashboardsMock).toHaveBeenCalledWith("scribe-fork", undefined);
     expect(container.textContent).toContain("Writing Report");
     expect(container.textContent).not.toContain("report.html");
         expect(byText<HTMLAnchorElement>("a", "Open").getAttribute("href")).toBe("https://yoplai.test/d/stable-link");
@@ -561,7 +561,7 @@ describe("EditAgent", () => {
     await mountEdit("scribe");
     openTab("Dashboards");
     await new Promise((resolve) => setTimeout(resolve, 0));
-    expect(fetchAgentDashboardsMock).toHaveBeenCalledWith("scribe", expect.any(Object));
+    expect(fetchAgentDashboardsMock).toHaveBeenCalledWith("scribe", undefined);
     expect(container.textContent).toContain("No dashboards yet.");
   });
 
@@ -622,7 +622,7 @@ describe("EditAgent", () => {
     expect(toggle.textContent).toBe("Private");
     expect(toggle.closest("[title]")?.getAttribute("title")).toContain("Click to make it public");
     toggle.click();
-    await vi.waitFor(() => expect(setForkVisibilityMock).toHaveBeenCalledWith("scribe", true));
+    await vi.waitFor(() => expect(setForkVisibilityMock).toHaveBeenCalledWith("scribe", true, undefined));
     await vi.waitFor(() => expect(toggle.textContent).toBe("Public"));
     expect(fetchForksMock).toHaveBeenCalledTimes(2);
   });
@@ -698,7 +698,7 @@ describe("EditAgent", () => {
     button.click();
     await new Promise((resolve) => setTimeout(resolve, 0));
 
-    expect(setForkTeamsMock).toHaveBeenCalledWith("scribe", { mode: "list", teamIds: ["t1"] });
+    expect(setForkTeamsMock).toHaveBeenCalledWith("scribe", { mode: "list", teamIds: ["t1"] }, undefined);
   });
 
   it("refetches extensions after assigning an agent to a team", async () => {
@@ -788,7 +788,7 @@ describe("EditAgent", () => {
     expect(confirm.textContent).toContain("If you remove scribe from Red, members of Red can no longer chat with scribe.");
     expect(setForkTeamsMock).not.toHaveBeenCalled();
     [...confirm.querySelectorAll("button")].find((item) => item.textContent === "Remove")!.click();
-    await vi.waitFor(() => expect(setForkTeamsMock).toHaveBeenCalledWith("scribe", { mode: "list", teamIds: ["t2"] }));
+    await vi.waitFor(() => expect(setForkTeamsMock).toHaveBeenCalledWith("scribe", { mode: "list", teamIds: ["t2"] }, undefined));
     await vi.waitFor(() => expect(container.querySelector('[role="alertdialog"]')).toBeNull());
   });
 
@@ -1286,7 +1286,7 @@ describe("EditAgent", () => {
     const popup = { close: vi.fn() };
     vi.spyOn(window, "open").mockReturnValue(popup as unknown as Window);
     await mountEdit("scribe");
-    expect(fetchMcpServersMock).toHaveBeenCalledWith("scribe-fork");
+    expect(fetchMcpServersMock).toHaveBeenCalledWith("scribe-fork", undefined, undefined);
 
     Array.from(container.querySelectorAll<HTMLButtonElement>("button")).find((button) => button.textContent === "Add custom extension")!.click();
     const input = container.querySelector<HTMLInputElement>('.mcp-ext-dialog input[type="url"]')!;
@@ -1308,7 +1308,7 @@ describe("EditAgent", () => {
       id: "notion", displayName: "Notion", description: "Notes", enabled: false, tier: "auto-form", requiredSecrets: [],
     }]);
     await mountEdit("scribe");
-    expect(fetchAgentExtensionsMock).toHaveBeenCalledWith("scribe-fork", expect.any(Object));
+    expect(fetchAgentExtensionsMock).toHaveBeenCalledWith("scribe-fork", undefined);
     expect(container.querySelector<HTMLAnchorElement>(".edit-agent-ext-open")?.getAttribute("href")).toBe("/agents/scribe-fork/extensions/notion");
   });
 
@@ -1336,7 +1336,7 @@ describe("EditAgent", () => {
     await mountEdit("scribe-fork");
     expect(container.textContent).not.toContain("Agent not found");
     expect(container.querySelector(".edit-agent-name")?.textContent).toBe("Scribe");
-    expect(fetchMcpServersMock).toHaveBeenCalledWith("scribe-fork");
+    expect(fetchMcpServersMock).toHaveBeenCalledWith("scribe-fork", undefined, undefined);
     expect(container.querySelector<HTMLButtonElement>(".mcp-ext-add-button")?.disabled).toBe(false);
   });
 

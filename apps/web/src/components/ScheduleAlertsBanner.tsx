@@ -1,11 +1,16 @@
 import { For, Show, createMemo, createSignal } from "solid-js";
 import { A } from "@solidjs/router";
-import { refreshScheduleAlerts, scheduleAlerts } from "../lib/schedule-alerts";
+import { refreshScheduleAlerts, scheduleAlertsFor } from "../lib/schedule-alerts";
 import { updateSchedule } from "../api/schedules";
+import { qualifyAgentRoute } from "../api/gateway";
 import { Button } from "./ui/Button";
 
-export function ScheduleAlertsBanner(props: { agentId: string; schedulesAgentId?: string }) {
-  const alerts = createMemo(() => scheduleAlerts().filter((alert) => alert.agentId === props.agentId));
+/** `gateway` is the resolved gateway of the agent. Alerts and actions stay on that gateway. */
+export function ScheduleAlertsBanner(props: { agentId: string; schedulesAgentId?: string; gateway?: string }) {
+  const alerts = createMemo(() => scheduleAlertsFor(props.gateway).filter((alert) => alert.agentId === props.agentId));
+  const editPath = () => `/agents/${encodeURIComponent(props.agentId)}/edit`;
+  // A remote path names the raw remote agent. It must keep the gateway, or fall back to the edit page.
+  const connectHref = (path: string | undefined) => (path ? qualifyAgentRoute(path, props.agentId, props.gateway) : undefined) ?? editPath();
   const [busy, setBusy] = createSignal<string>();
   const [error, setError] = createSignal<{ jobId: string; text: string }>();
   const resume = async (jobId: string) => {
@@ -13,8 +18,8 @@ export function ScheduleAlertsBanner(props: { agentId: string; schedulesAgentId?
     setBusy(jobId);
     setError(undefined);
     try {
-      await updateSchedule(props.agentId, jobId, { enabled: true });
-      await refreshScheduleAlerts();
+      await updateSchedule(props.agentId, jobId, { enabled: true }, props.gateway);
+      await refreshScheduleAlerts(props.gateway);
     } catch (cause) {
       setError({ jobId, text: cause instanceof Error ? cause.message : "Failed to resume scheduled job. Try again." });
     } finally {
@@ -27,7 +32,7 @@ export function ScheduleAlertsBanner(props: { agentId: string; schedulesAgentId?
         <For each={alerts().slice(0, 3)}>{(alert) => (
           <div class="schedule-alert-row">
             <span>{alert.jobName} is paused: reconnect {alert.pausedReason.integration}, then resume it.</span>
-            <A href={alert.pausedReason.connectPath ?? `/agents/${encodeURIComponent(props.agentId)}/edit`}>Reconnect</A>
+            <A href={connectHref(alert.pausedReason.connectPath)}>Reconnect</A>
             <Button disabled={!!busy()} loading={busy() === alert.jobId} loadingLabel="Resuming…" onClick={() => void resume(alert.jobId)}>Resume</Button>
             <Show when={error()?.jobId === alert.jobId}><p class="schedule-alert-error" role="alert">{error()?.text}</p></Show>
           </div>

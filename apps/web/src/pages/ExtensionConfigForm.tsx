@@ -60,6 +60,8 @@ export function ExtensionConfigForm(props: {
   registerConnectActions?: (actions: ConnectSettingsActions) => void;
   /** Agent id when not rendered under an extension route (e.g. the connect prompt). */
   agentId?: string;
+  /** Linked gateway that hosts the agent. Absent for a local agent. */
+  gateway?: string;
   /** Only the requester's own credentials: no scope tabs and no remove action. */
   personalOnly?: boolean;
 }) {
@@ -141,8 +143,8 @@ export function ExtensionConfigForm(props: {
     setSaved(false);
     try {
       const updated = personal
-        ? (await disconnectAgentConnection(params.agentId, "extension", params.extensionId), await fetchAgentExtensions(params.agentId))
-        : await removeTeamExtensionCredentials(params.agentId, params.extensionId);
+        ? (await disconnectAgentConnection(params.agentId, "extension", params.extensionId, props.gateway), await fetchAgentExtensions(params.agentId, props.gateway))
+        : await removeTeamExtensionCredentials(params.agentId, params.extensionId, props.gateway);
       const refreshed = updated.find((extension) => extension.id === params.extensionId);
       if (refreshed) setEntry(refreshed);
     } catch (cause) {
@@ -299,7 +301,7 @@ export function ExtensionConfigForm(props: {
         ...(credentialScope() === "team" ? { enabled: true } : {}),
         config,
         secrets,
-      });
+      }, props.gateway);
       const refreshed = updated.find((extension) => extension.id === params.extensionId);
       // Always refresh, so the team baseline follows the saved state.
       if (refreshed) setEntry(refreshed);

@@ -1,4 +1,5 @@
 import { API_BASE, apiFetch } from "./core";
+import { gatewayApiPath, type GatewayName } from "./gateway";
 
 export type WebhookCredentials = {
   name: string;
@@ -10,13 +11,14 @@ export type WebhookCredentials = {
 };
 
 export async function fetchWebhooks(
-  agentId: string
+  agentId: string,
+  gateway?: GatewayName
 ): Promise<WebhookCredentials[]> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 15_000);
   try {
     const res = await apiFetch(
-      `${API_BASE}/agents/${encodeURIComponent(agentId)}/webhooks`,
+      gatewayApiPath(gateway, `${API_BASE}/agents/${encodeURIComponent(agentId)}/webhooks`),
       { signal: controller.signal }
     );
     if (!res.ok) throw new Error("Failed to load webhooks. Try again.");
@@ -36,13 +38,14 @@ export async function updateWebhook(
   patch: {
     credentialMode?: WebhookCredentials["credentialMode"];
     enabled?: boolean;
-  }
+  },
+  gateway?: GatewayName
 ): Promise<WebhookCredentials> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 15_000);
   try {
     const res = await apiFetch(
-      `${API_BASE}/agents/${encodeURIComponent(agentId)}/webhooks/${encodeURIComponent(name)}`,
+      gatewayApiPath(gateway, `${API_BASE}/agents/${encodeURIComponent(agentId)}/webhooks/${encodeURIComponent(name)}`),
       {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },

@@ -4,23 +4,26 @@ import { Modal } from "./ui/Modal";
 import { Button } from "./ui/Button";
 import { UserPicker } from "./UserPicker";
 import { UserAvatar } from "./UserAvatar";
-import { useSession } from "../auth/client";
+import { useRequester } from "../lib/requester";
 
 type Mode = "read" | "write";
 type UserShare = Extract<DashboardShare, { kind: "user" }>;
 
 export function DashboardAccessDialog(props: {
   dashboard: Pick<DashboardRow, "id" | "title" | "shares">;
+  /** Linked gateway that owns the dashboard. Recipients and saves go to that gateway. */
+  gateway?: string;
   onClose: () => void; onSaved: () => void | Promise<void>;
   loadRecipients?: typeof fetchDashboardRecipients;
   saveShares?: (id: string, shares: DashboardShare[]) => Promise<unknown>;
   platformReadOnly?: boolean;
   note?: string;
 }) {
-  const session = useSession();
-  const owner = () => session().data?.user;
+  const requester = useRequester(() => props.gateway);
+  // The owner row shows the requester of the gateway that owns the dashboard.
+  const owner = () => requester().user;
   const initial = props.dashboard.shares ?? [];
-  const [recipients] = createResource(props.loadRecipients ?? fetchDashboardRecipients);
+  const [recipients] = createResource(() => (props.loadRecipients ? props.loadRecipients() : fetchDashboardRecipients(props.gateway)));
   const [userShares, setUserShares] = createSignal<UserShare[]>(initial.filter((share): share is UserShare => share.kind === "user"));
   const [everyoneMode, setEveryoneMode] = createSignal<Mode | null>(initial.find((share) => share.kind === "all")?.mode ?? null);
   const [selected, setSelected] = createSignal("");
@@ -44,7 +47,7 @@ export function DashboardAccessDialog(props: {
   };
   const save = async () => {
     setBusy(true); setError(undefined);
-    try { await (props.saveShares ?? saveDashboardShares)(props.dashboard.id, shares()); await props.onSaved(); props.onClose(); }
+    try { await (props.saveShares ?? ((id, next) => saveDashboardShares(id, next, props.gateway)))(props.dashboard.id, shares()); await props.onSaved(); props.onClose(); }
     catch (cause) { setError(cause instanceof Error ? cause.message : "Unable to save access."); }
     finally { setBusy(false); }
   };

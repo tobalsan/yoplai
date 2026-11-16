@@ -5,10 +5,13 @@ import {
   updateWebhook,
   type WebhookCredentials,
 } from "../api/webhooks";
-import { useSession } from "../auth/client";
 import { LeftNavShell } from "../components/LeftNavShell";
 import { ScopeIcon } from "../components/CredentialScopeTabs";
 import { MODES, SCHEDULES_STYLES } from "./SchedulesPanel";
+import { decodeRouteParam } from "../lib/path";
+import { useAgentTarget } from "../lib/agent-target";
+import { useRequester } from "../lib/requester";
+import { gatewayKey } from "../api/gateway";
 
 function WebhookUrl(props: { name: string; url: string }) {
   const [copied, setCopied] = createSignal(false);
@@ -45,24 +48,29 @@ function WebhookUrl(props: { name: string; url: string }) {
 }
 
 export default function WebhooksConfigPage() {
-  const params = useParams<{ agentId: string }>();
-  const session = useSession();
+  const routeParams = useParams<{ agentId: string }>();
+  const params = { get agentId() { return decodeRouteParam(routeParams.agentId); } };
+  const { target, retry } = useAgentTarget(() => params.agentId);
+  const gateway = () => { const current = target(); return current.state === "ready" ? current.gateway : undefined; };
+  const requester = useRequester(gateway);
+  // The page names the gateway and the agent of each request. A late answer of another one changes nothing.
+  const sameScope = (key: string) => key === gatewayKey(gateway(), params.agentId);
   const [error, setError] = createSignal<string>();
   const [busy, setBusy] = createSignal<string[]>([]);
   // Optimistic on/off state while a toggle request is in flight.
   const [pending, setPending] = createSignal<Record<string, boolean>>({});
   const [loadError, setLoadError] = createSignal<string>();
   const [webhooks, { mutate, refetch }] = createResource(
-    () => params.agentId,
-    async (agentId) => {
+    () => { const current = target(); return current.state === "ready" ? { agentId: current.agentId, gateway: current.gateway } : null; },
+    async ({ agentId, gateway: host }) => {
       setLoadError(undefined);
       setError(undefined);
       setBusy([]);
       setPending({});
       try {
-        return await fetchWebhooks(agentId);
+        return await fetchWebhooks(agentId, host);
       } catch (cause) {
-        if (params.agentId === agentId)
+        if (sameScope(gatewayKey(host, agentId)))
           setLoadError(
             cause instanceof Error
               ? cause.message
@@ -75,7 +83,7 @@ export default function WebhooksConfigPage() {
 
   const isReadOnly = (webhook: WebhookCredentials) =>
     webhook.credentialMode === "owner" &&
-    (!webhook.ownerUserId || webhook.ownerUserId !== session().data?.user.id);
+    (!webhook.ownerUserId || webhook.ownerUserId !== requester().user?.id);
 
   const changeMode = async (
     webhook: WebhookCredentials,
@@ -83,24 +91,26 @@ export default function WebhooksConfigPage() {
   ) => {
     if (
       busy().includes(webhook.name) ||
-      (credentialMode === "owner" && !session().data?.user) ||
+      (credentialMode === "owner" && !requester().user) ||
       isReadOnly(webhook) ||
       webhook.credentialMode === credentialMode
     )
       return;
     const agentId = params.agentId;
+    const host = gateway();
+    const scopeKey = gatewayKey(host, agentId);
     setError(undefined);
     setBusy((current) => [...current, webhook.name]);
     try {
       const updated = await updateWebhook(agentId, webhook.name, {
         credentialMode,
-      });
-      if (params.agentId !== agentId) return;
+      }, host);
+      if (!sameScope(scopeKey)) return;
       mutate((current) =>
         current?.map((item) => (item.name === webhook.name ? updated : item))
       );
     } catch (cause) {
-      if (params.agentId !== agentId) return;
+      if (!sameScope(scopeKey)) return;
       setError(
         cause instanceof Error
           ? cause.message
@@ -112,7 +122,7 @@ export default function WebhooksConfigPage() {
         )
       );
     } finally {
-      if (params.agentId === agentId)
+      if (sameScope(scopeKey))
         setBusy((current) => current.filter((name) => name !== webhook.name));
     }
   };
@@ -128,24 +138,26 @@ export default function WebhooksConfigPage() {
     )
       return;
     const agentId = params.agentId;
+    const host = gateway();
+    const scopeKey = gatewayKey(host, agentId);
     setError(undefined);
     setBusy((current) => [...current, webhook.name]);
     setPending((current) => ({ ...current, [webhook.name]: enabled }));
     try {
-      const updated = await updateWebhook(agentId, webhook.name, { enabled });
-      if (params.agentId !== agentId) return;
+      const updated = await updateWebhook(agentId, webhook.name, { enabled }, host);
+      if (!sameScope(scopeKey)) return;
       mutate((current) =>
         current?.map((item) => (item.name === webhook.name ? updated : item))
       );
     } catch (cause) {
-      if (params.agentId !== agentId) return;
+      if (!sameScope(scopeKey)) return;
       setError(
         cause instanceof Error
           ? cause.message
           : "Failed to update webhook. Try again."
       );
     } finally {
-      if (params.agentId === agentId) {
+      if (sameScope(scopeKey)) {
         setPending(({ [webhook.name]: _done, ...rest }) => rest);
         setBusy((current) => current.filter((name) => name !== webhook.name));
       }
@@ -175,12 +187,18 @@ export default function WebhooksConfigPage() {
             </p>
           )}
         </Show>
-        <Show when={!session().data?.user}>
+        <Show when={!requester().user}>
           <p class="webhooks-note">
             Mine requires an authenticated user in multi-user mode.
           </p>
         </Show>
-        <Show when={webhooks.loading}>
+        <Show when={target().state === "missing"}>
+          <div class="webhooks-error" role="alert">
+            This agent is unavailable. Check that its gateway is online.{" "}
+            <button type="button" class="webhooks-retry" onClick={retry}>Retry</button>
+          </div>
+        </Show>
+        <Show when={target().state === "loading" || webhooks.loading}>
           <p class="webhooks-note" role="status">
             Loading webhooks…
           </p>
@@ -200,11 +218,11 @@ export default function WebhooksConfigPage() {
           )}
         </Show>
         <Show
-          when={!webhooks.loading && !loadError() && webhooks()?.length === 0}
+          when={target().state === "ready" && !webhooks.loading && !loadError() && webhooks()?.length === 0}
         >
           <p class="webhooks-note">No webhooks configured for this agent.</p>
         </Show>
-        <Show when={(webhooks()?.length ?? 0) > 0}>
+        <Show when={!webhooks.loading && (webhooks()?.length ?? 0) > 0}>
           <ul class="schedule-list">
             <For each={webhooks()}>
               {(webhook) => {
@@ -235,7 +253,7 @@ export default function WebhooksConfigPage() {
                       <Show when={webhook.credentialMode === "owner"}>
                         <p class="schedule-prompt">
                           {webhook.ownerUserId
-                            ? `Owned by ${webhook.ownerUserId === session().data?.user.id ? "you" : webhook.ownerDisplayName || "another user"}`
+                            ? `Owned by ${webhook.ownerUserId === requester().user?.id ? "you" : webhook.ownerDisplayName || "another user"}`
                             : "Owner missing"}
                         </p>
                       </Show>
@@ -260,7 +278,7 @@ export default function WebhooksConfigPage() {
                                 busy().includes(webhook.name) ||
                                 readOnly() ||
                                 (option.mode === "owner" &&
-                                  !session().data?.user)
+                                  !requester().user)
                               }
                               onClick={() =>
                                 void changeMode(webhook, option.mode)

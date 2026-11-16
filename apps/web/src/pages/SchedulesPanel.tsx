@@ -4,9 +4,7 @@ import { createEffect, createMemo, createResource, createSignal, For, onCleanup,
 import { createStore, reconcile } from "solid-js/store";
 import { deleteSchedule, fetchSchedules, updateSchedule, type ScheduleJob } from "../api/schedules";
 import { ScopeIcon } from "../components/CredentialScopeTabs";
-import { useSession } from "../auth/client";
-import { capabilities } from "../lib/capabilities";
-import { isSuperadmin } from "../lib/roles";
+import { useRequester } from "../lib/requester";
 import { isForeignMine, usePrivateItemsVisibility, visibleJobs } from "../lib/private-items";
 import { refreshScheduleAlerts } from "../lib/schedule-alerts";
 
@@ -54,25 +52,25 @@ function elapsedTime(ms: number): string {
   return seconds < 60 ? `${seconds}s` : `${Math.floor(seconds / 60)}m ${seconds % 60}s`;
 }
 
-export function SchedulesPanel(props: { agentId: string; agentName: string }) {
-  const session = useSession();
+export function SchedulesPanel(props: { agentId: string; agentName: string; gateway?: string }) {
+  const requester = useRequester(() => props.gateway);
   const { showPrivateItems } = usePrivateItemsVisibility();
   const [result, { refetch }] = createResource(
-    () => props.agentId,
-    async (agentId, { value }): Promise<{ jobs: ScheduleJob[]; error?: string }> => {
+    () => ({ agentId: props.agentId, gateway: props.gateway }),
+    async ({ agentId, gateway }, { value }): Promise<{ jobs: ScheduleJob[]; error?: string }> => {
       try {
-        return { jobs: await fetchSchedules(agentId) };
+        return { jobs: await fetchSchedules(agentId, gateway) };
       } catch (cause) {
         return { jobs: value?.jobs ?? [], error: cause instanceof Error ? cause.message : "Failed to load scheduled jobs." };
       }
     }
   );
   const [jobs, setJobs] = createStore<ScheduleJob[]>([]);
-  const visible = createMemo(() => visibleJobs(jobs, session().data?.user.id,
-    !isSuperadmin((session().data?.user as { role?: string | string[] } | undefined)?.role) || showPrivateItems()));
+  const visible = createMemo(() => visibleJobs(jobs, requester().user?.id,
+    !requester().isSuperadmin || showPrivateItems()));
   createEffect(() => setJobs(reconcile(result.latest?.jobs ?? [])));
   createEffect(() => {
-    if (capabilities.enableCronMonitoring !== true) return;
+    if (!requester().enableCronMonitoring) return;
     const poll = setInterval(() => { if (!result.loading) void refetch(); }, 2_000);
     onCleanup(() => clearInterval(poll));
   });
@@ -81,9 +79,10 @@ export function SchedulesPanel(props: { agentId: string; agentName: string }) {
   // Optimistic on/off state while a toggle request is in flight.
   const [pending, setPending] = createSignal<Record<string, boolean>>({});
   // Single-user mode has no session: everyone manages every job (server enforces the same).
+  // A remote page needs a loaded single-user context for that. An unknown context grants nothing.
   const isAdmin = () => {
-    const user = session().data?.user as { role?: string | string[] | null } | undefined;
-    if (!user) return true;
+    const user = requester().user as { role?: string | string[] | null } | undefined;
+    if (!user) return requester().gateway === undefined || (requester().ready && !requester().unknown && !requester().multiUser);
     const roles = Array.isArray(user.role) ? user.role : (user.role ?? "").split(",");
     return roles.some((role) => STAFF_ROLES.includes(role.trim()));
   };
@@ -93,7 +92,7 @@ export function SchedulesPanel(props: { agentId: string; agentName: string }) {
     setBusy(job.id);
     setError(null);
     try {
-      await updateSchedule(props.agentId, job.id, { credentialMode });
+      await updateSchedule(props.agentId, job.id, { credentialMode }, props.gateway);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Failed to update scheduled job.");
     } finally {
@@ -107,8 +106,8 @@ export function SchedulesPanel(props: { agentId: string; agentName: string }) {
     setPending((current) => ({ ...current, [job.id]: enabled }));
     setError(null);
     try {
-      await updateSchedule(props.agentId, job.id, { enabled });
-      void refreshScheduleAlerts();
+      await updateSchedule(props.agentId, job.id, { enabled }, props.gateway);
+      void refreshScheduleAlerts(props.gateway);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Failed to update scheduled job.");
     } finally {
@@ -138,7 +137,7 @@ export function SchedulesPanel(props: { agentId: string; agentName: string }) {
     setDeleting(true);
     setDeleteError(null);
     try {
-      await deleteSchedule(props.agentId, job.id);
+      await deleteSchedule(props.agentId, job.id, props.gateway);
       setConfirming(undefined);
       await refetch();
     } catch (cause) {
@@ -171,7 +170,7 @@ export function SchedulesPanel(props: { agentId: string; agentName: string }) {
         <ul class="schedule-list">
           <For each={visible()}>{(job) => {
             const mode = () => job.credentialMode ?? "team";
-            const foreignMine = () => isForeignMine(job, session().data?.user.id);
+            const foreignMine = () => isForeignMine(job, requester().user?.id);
             const ownerOnlyTitle = "Only the owner can change this job";
             const enabled = () => pending()[job.id] ?? job.enabled !== false;
             const canToggle = () => !foreignMine() && (mode() === "owner" || isAdmin());
@@ -186,11 +185,11 @@ export function SchedulesPanel(props: { agentId: string; agentName: string }) {
                 </span>
                 <div class="schedule-main">
                   <div class="schedule-title">
-                    <Show when={capabilities.enableCronMonitoring === true} fallback={<strong>{job.name}</strong>}>
+                    <Show when={requester().enableCronMonitoring} fallback={<strong>{job.name}</strong>}>
                       <A href={`/agents/${encodeURIComponent(props.agentId)}/schedules/${encodeURIComponent(job.id)}/runs`}><strong>{job.name}</strong></A>
                     </Show>
                     <Show when={!enabled()}><span class="schedule-paused">{job.pausedReason?.kind === "credentials" ? "Paused: credentials" : "Paused"}</span></Show>
-                    <Show when={capabilities.enableCronMonitoring === true && job.state?.runningForMs !== undefined}>
+                    <Show when={requester().enableCronMonitoring && job.state?.runningForMs !== undefined}>
                       <span class="schedule-running">Running {elapsedTime(job.state?.runningForMs ?? 0)}</span>
                     </Show>
                   </div>
@@ -201,8 +200,8 @@ export function SchedulesPanel(props: { agentId: string; agentName: string }) {
                   <Show when={jobSummary(job)}>
                     {(summary) => <p class="schedule-prompt" title={summary()}>{summary()}</p>}
                   </Show>
-                  <Show when={mode() === "team" && job.createdByUserId && (job.createdByUserId === session().data?.user.id || job.createdByDisplayName)}>
-                    <p class="schedule-prompt">Created by {job.createdByUserId === session().data?.user.id ? "you" : job.createdByDisplayName}</p>
+                  <Show when={mode() === "team" && job.createdByUserId && (job.createdByUserId === requester().user?.id || job.createdByDisplayName)}>
+                    <p class="schedule-prompt">Created by {job.createdByUserId === requester().user?.id ? "you" : job.createdByDisplayName}</p>
                   </Show>
                   <Show when={foreignMine()}>
                     <p class="schedule-prompt">Owned by {job.ownerDisplayName || "another user"}</p>

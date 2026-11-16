@@ -1,13 +1,14 @@
 import type { ScheduleAlert, ScheduleJob as StoredScheduleJob, ScheduleRun, ScheduleRunTrace } from "@yoplai/shared/types";
 import { API_BASE, apiFetch } from "./core";
+import { gatewayApiPath, type GatewayName } from "./gateway";
 
 export type ScheduleJob = StoredScheduleJob & { createdByDisplayName?: string; ownerDisplayName?: string; state?: { runningForMs?: number } };
 
-export async function fetchScheduleAlerts(): Promise<ScheduleAlert[]> {
+export async function fetchScheduleAlerts(gateway?: GatewayName): Promise<ScheduleAlert[]> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 15_000);
   try {
-    const res = await apiFetch(`${API_BASE}/schedule-alerts`, { signal: controller.signal });
+    const res = await apiFetch(gatewayApiPath(gateway, `${API_BASE}/schedule-alerts`), { signal: controller.signal });
     if (!res.ok) throw Object.assign(new Error("Failed to load schedule alerts."), { status: res.status });
     return await res.json();
   } finally {
@@ -15,12 +16,12 @@ export async function fetchScheduleAlerts(): Promise<ScheduleAlert[]> {
   }
 }
 
-export async function fetchScheduleRunTrace(agentId: string, jobId: string, runId: string): Promise<ScheduleRunTrace> {
+export async function fetchScheduleRunTrace(agentId: string, jobId: string, runId: string, gateway?: GatewayName): Promise<ScheduleRunTrace> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 15_000);
   try {
     const res = await apiFetch(
-      `${API_BASE}/schedules/${encodeURIComponent(agentId)}/${encodeURIComponent(jobId)}/runs/${encodeURIComponent(runId)}/trace`,
+      gatewayApiPath(gateway, `${API_BASE}/schedules/${encodeURIComponent(agentId)}/${encodeURIComponent(jobId)}/runs/${encodeURIComponent(runId)}/trace`),
       { signal: controller.signal }
     );
     if (!res.ok) throw new Error("Failed to load run trace.");
@@ -33,12 +34,12 @@ export async function fetchScheduleRunTrace(agentId: string, jobId: string, runI
   }
 }
 
-export async function fetchScheduleRuns(agentId: string, jobId: string): Promise<ScheduleRun[]> {
+export async function fetchScheduleRuns(agentId: string, jobId: string, gateway?: GatewayName): Promise<ScheduleRun[]> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 15_000);
   try {
     const res = await apiFetch(
-      `${API_BASE}/schedules/${encodeURIComponent(agentId)}/${encodeURIComponent(jobId)}/runs`,
+      gatewayApiPath(gateway, `${API_BASE}/schedules/${encodeURIComponent(agentId)}/${encodeURIComponent(jobId)}/runs`),
       { signal: controller.signal }
     );
     if (!res.ok) throw new Error("Failed to load run history.");
@@ -52,11 +53,11 @@ export async function fetchScheduleRuns(agentId: string, jobId: string): Promise
   }
 }
 
-export async function fetchSchedules(agentId: string): Promise<ScheduleJob[]> {
+export async function fetchSchedules(agentId: string, gateway?: GatewayName): Promise<ScheduleJob[]> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 15_000);
   try {
-    const res = await apiFetch(`${API_BASE}/schedules?agent=${encodeURIComponent(agentId)}`, { signal: controller.signal });
+    const res = await apiFetch(gatewayApiPath(gateway, `${API_BASE}/schedules?agent=${encodeURIComponent(agentId)}`), { signal: controller.signal });
     if (!res.ok) throw new Error("Failed to fetch scheduled jobs");
     return await res.json();
   } catch (error) {
@@ -70,12 +71,13 @@ export async function fetchSchedules(agentId: string): Promise<ScheduleJob[]> {
 export async function updateSchedule(
   agentId: string,
   jobId: string,
-  patch: { credentialMode?: "owner" | "team"; enabled?: boolean }
+  patch: { credentialMode?: "owner" | "team"; enabled?: boolean },
+  gateway?: GatewayName
 ): Promise<ScheduleJob> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 15_000);
   try {
-    const res = await apiFetch(`${API_BASE}/schedules/${encodeURIComponent(agentId)}/${encodeURIComponent(jobId)}`, {
+    const res = await apiFetch(gatewayApiPath(gateway, `${API_BASE}/schedules/${encodeURIComponent(agentId)}/${encodeURIComponent(jobId)}`), {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(patch),
@@ -94,8 +96,8 @@ export async function updateSchedule(
   }
 }
 
-export async function deleteSchedule(agentId: string, jobId: string): Promise<void> {
-  const res = await apiFetch(`${API_BASE}/schedules/${encodeURIComponent(agentId)}/${encodeURIComponent(jobId)}`, {
+export async function deleteSchedule(agentId: string, jobId: string, gateway?: GatewayName): Promise<void> {
+  const res = await apiFetch(gatewayApiPath(gateway, `${API_BASE}/schedules/${encodeURIComponent(agentId)}/${encodeURIComponent(jobId)}`), {
     method: "DELETE",
   });
   if (res.status === 403 && (await res.json().catch(() => ({}))).error === "team_requires_admin") {

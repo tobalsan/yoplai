@@ -46,6 +46,25 @@ export function remoteDashboardChatPath(view: CheckedRemoteView): string | undef
     : `/chat/${agent}?dashboard=${dashboard}&new=1`;
 }
 
+/**
+ * Local targets of one dashboard row that a linked gateway returned. The row `link`
+ * and `chatHref` hold remote paths and never become local navigation targets.
+ * Only the checked IDs and the session value of the row count.
+ */
+export function remoteRowTargets(
+  row: { id: string; agentId: string; chatHref: string | null },
+  gateway: string
+): { open: string; chat: string | null } {
+  let chat: string | null = null;
+  if (row.chatHref) {
+    let sessionId: string | null = null;
+    try { sessionId = new URL(row.chatHref, "http://remote.invalid").searchParams.get("session"); } catch { /* No session: start a new chat. */ }
+    const agentId = `${row.agentId.endsWith(`@${gateway}`) ? row.agentId.slice(0, -gateway.length - 1) : row.agentId}@${gateway}`;
+    chat = remoteDashboardChatPath({ gateway, dashboardId: row.id, agentId, canWrite: false, canEdit: false, chat: { sessionId }, annotation: false }) ?? null;
+  }
+  return { open: remoteDashboardPath(gateway, row.id), chat };
+}
+
 export type DashboardLinkDecision =
   | { kind: "dashboard"; id: string; query: string }
   | { kind: "external"; href: string; destination: string }

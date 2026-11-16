@@ -1485,6 +1485,19 @@ describe("ChatView abort handling", () => {
     second.dispose();
   });
 
+  it("links the settings cog of a remote agent to its qualified route and never reads the local pool", async () => {
+    setCapabilitiesForTests({ multiUser: false, forkedAgents: true });
+    routeState.agentId = "pom%40ams";
+    fetchAgentMock.mockResolvedValue({ id: "pom@ams", name: "Pom (remote)", gateway: "ams", model: { provider: "openai", model: "gpt-5" }, queueMode: "queue" });
+    // A local pool entry with the same chat ID must not capture the remote agent.
+    fetchPoolActionsMock.mockResolvedValue([{ poolId: "local-pool", action: "chat", chatAgentId: "pom@ams", forked: true, reason: null, teamName: null }]);
+    const { container, dispose } = renderView();
+    await waitFor(() => expect(queryByRole(container, "link", { name: "Pom (remote) settings" })).not.toBeNull());
+    expect(queryByRole(container, "link", { name: "Pom (remote) settings" })?.getAttribute("href")).toBe("/agents/pom%40ams/edit");
+    expect(fetchPoolActionsMock).not.toHaveBeenCalled();
+    dispose();
+  });
+
   it("shows an unpressed star for a non-main agent and opens the picker", async () => {
     const { container, dispose } = renderView();
     await waitFor(() => expect(container.querySelector('button[aria-label="Choose main agent"]')).not.toBeNull());

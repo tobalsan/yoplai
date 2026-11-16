@@ -113,7 +113,7 @@ describe("ExtensionDetails", () => {
     fetchAgentExtensionsMock.mockResolvedValue([entry()]);
     await mount("scribe", "exa");
 
-    expect(fetchAgentExtensionsMock).toHaveBeenCalledWith("scribe");
+    expect(fetchAgentExtensionsMock).toHaveBeenCalledWith("scribe", undefined);
     expect(container.querySelector(".ext-details-name")?.textContent).toBe(
       "Exa"
     );
@@ -235,7 +235,7 @@ describe("ExtensionDetails", () => {
         expect(patchAgentExtensionMock).toHaveBeenCalledWith("scribe", "gmail", {
           credentialScope: "personal",
           config: { label: "work" },
-        })
+        }, undefined)
       );
     });
 
@@ -246,7 +246,7 @@ describe("ExtensionDetails", () => {
       fetchAgentExtensionsMock.mockResolvedValue([gmail()]);
       patchAgentExtensionMock.mockResolvedValue([{ ...gmail(), enabled: true }]);
       await mount("scribe", "gmail");
-      await vi.waitFor(() => expect(patchAgentExtensionMock).toHaveBeenCalledWith("scribe", "gmail", { enabled: true }));
+      await vi.waitFor(() => expect(patchAgentExtensionMock).toHaveBeenCalledWith("scribe", "gmail", { enabled: true }, undefined));
     });
   });
 
@@ -308,7 +308,7 @@ describe("ExtensionDetails", () => {
 
     expect(patchAgentExtensionMock).toHaveBeenCalledWith("scribe", "exa", {
       enabled: true,
-    });
+    }, undefined);
     expect(
       container.querySelector("button.ext-details-configure")?.textContent
     ).toBe("Disable");
@@ -373,7 +373,7 @@ describe("ExtensionDetails", () => {
       await flush();
       checkbox().click();
       await flush();
-      expect(patchAgentExtensionMock).toHaveBeenCalledWith("scribe", "drive", expect.objectContaining({ credentialScope: "team", config: { allowWrite: true } }));
+      expect(patchAgentExtensionMock).toHaveBeenCalledWith("scribe", "drive", expect.objectContaining({ credentialScope: "team", config: { allowWrite: true } }), undefined);
     });
 
     it("shows an inline error when the immediate save fails", async () => {
@@ -396,7 +396,7 @@ describe("ExtensionDetails", () => {
       expect(checkbox().disabled).toBe(false);
       checkbox().click();
       await flush();
-      expect(patchAgentExtensionMock).toHaveBeenCalledWith("scribe", "drive", expect.objectContaining({ credentialScope: "personal", config: { allowWrite: true } }));
+      expect(patchAgentExtensionMock).toHaveBeenCalledWith("scribe", "drive", expect.objectContaining({ credentialScope: "personal", config: { allowWrite: true } }), undefined);
       expect(container.textContent).toContain("Saved ✓");
       connectButton().click();
       const url = String(assign.mock.calls.at(-1)?.[0]);
@@ -434,7 +434,7 @@ describe("ExtensionDetails", () => {
       connectButton().click();
       expect(assign).not.toHaveBeenCalled();
       await flush();
-      expect(patchAgentExtensionMock).toHaveBeenCalledWith("scribe", "drive", expect.objectContaining({ credentialScope: "personal", config: { allowWrite: true } }));
+      expect(patchAgentExtensionMock).toHaveBeenCalledWith("scribe", "drive", expect.objectContaining({ credentialScope: "personal", config: { allowWrite: true } }), undefined);
       const url = String(assign.mock.calls[0]?.[0]);
       expect(url).toContain("drive.file");
       expect(url).toContain("spreadsheets");
@@ -452,7 +452,7 @@ describe("ExtensionDetails", () => {
       checkbox().click();
       connectButton().click();
       await flush();
-      expect(patchAgentExtensionMock).toHaveBeenCalledWith("scribe", "drive", expect.objectContaining({ credentialScope: "team", config: { allowWrite: true } }));
+      expect(patchAgentExtensionMock).toHaveBeenCalledWith("scribe", "drive", expect.objectContaining({ credentialScope: "team", config: { allowWrite: true } }), undefined);
       const url = String(assign.mock.calls[0]?.[0]);
       expect(url).toContain("drive.file");
       expect(url).toContain("scope=team");

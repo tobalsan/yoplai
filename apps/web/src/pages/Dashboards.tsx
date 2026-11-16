@@ -1,13 +1,34 @@
-import { For, Show, createMemo, createResource, createSignal } from "solid-js";
+import { For, Show, createEffect, createMemo, createResource, createSignal, on } from "solid-js";
+import { useSearchParams } from "@solidjs/router";
 import { fetchAgents } from "../api/agents";
+import { gatewayKey } from "../api/gateway";
+import { createResourceKey } from "../lib/resource-key";
 import { deleteDashboard, fetchDashboards, setDashboardPinned, type DashboardRow } from "../api/dashboards";
 import { DashboardAccessDialog } from "../components/DashboardAccessDialog";
 import { DashboardListRow } from "../components/DashboardListRow";
 import { ConfirmDialog } from "../components/ui/ConfirmDialog";
 
+/**
+ * Dashboards of the local gateway, or of one linked gateway that the page names
+ * in `?gateway=`. The choice stays in the address, so links, reloads, and Back keep it.
+ * A dashboard ID alone never selects a gateway.
+ */
 export function Dashboards() {
-  const [dashboards, { refetch }] = createResource(fetchDashboards);
+  const [search, setSearch] = useSearchParams();
+  const gateway = () => (typeof search.gateway === "string" && search.gateway ? search.gateway : undefined);
   const [agents] = createResource(() => fetchAgents().catch(() => []));
+  // The selector lists the gateways of the loaded agents and the gateway that the address names.
+  const gatewayNames = createMemo(() => [...new Set((agents() ?? []).flatMap((agent) => (agent.gateway ? [agent.gateway] : [])))].sort());
+  const [dashboards, { refetch }] = createResource(
+    createResourceKey(() => ({ gateway: gateway() })),
+    async (key) => ({ key: gatewayKey(key.gateway), ...(await fetchDashboards(key.gateway)) })
+  );
+  // Rows of another gateway never show. Ids repeat across gateways.
+  const current = createMemo(() => {
+    const loaded = dashboards.error ? undefined : dashboards();
+    return loaded?.key === gatewayKey(gateway()) ? loaded : undefined;
+  });
+  const requesting = () => dashboards.loading || (!dashboards.error && !current());
   const avatarOf = (agentId: string) => agents()?.find((agent) => agent.id === agentId)?.avatar;
   const [managing, setManaging] = createSignal<DashboardRow>();
   const [deleting, setDeleting] = createSignal<DashboardRow>();
@@ -15,12 +36,21 @@ export function Dashboards() {
   const [pinError, setPinError] = createSignal<string>();
   const [pendingPins, setPendingPins] = createSignal(new Set<string>());
   const [pinOverrides, setPinOverrides] = createSignal(new Map<string, boolean>());
+  // A gateway change drops pins in flight, open dialogs, and messages of the old gateway.
+  createEffect(on(gateway, () => {
+    setManaging(undefined);
+    setDeleting(undefined);
+    setDeleteError(undefined);
+    setPinError(undefined);
+    setPendingPins(new Set<string>());
+    setPinOverrides(new Map<string, boolean>());
+  }, { defer: true }));
   const data = createMemo(() => {
-    const current = dashboards.error ? undefined : dashboards();
-    if (!current) return undefined;
+    const loaded = current();
+    if (!loaded) return undefined;
     const applyPins = (rows: DashboardRow[]) => rows.map((row) => pinOverrides().has(row.id)
       ? { ...row, pinned: pinOverrides().get(row.id) } : row);
-    return { owned: applyPins(current.owned), shared: applyPins(current.shared) };
+    return { owned: applyPins(loaded.owned), shared: applyPins(loaded.shared) };
   });
   const pinned = createMemo(() => [...data()?.owned ?? [], ...data()?.shared ?? []].filter((row) => row.pinned));
   const shared = createMemo(() => (data()?.shared ?? []).filter((row) => !row.pinned));
@@ -28,17 +58,22 @@ export function Dashboards() {
   const togglePin = async (dashboard: DashboardRow) => {
     if (pendingPins().has(dashboard.id)) return;
     const previous = !!dashboard.pinned;
+    const host = gateway();
+    // An answer that arrives after a gateway change must not touch the new gateway.
+    const same = () => gateway() === host;
     setPinError(undefined);
     setPendingPins((ids) => new Set([...ids, dashboard.id]));
     updatePinned(dashboard.id, !previous);
     try {
-      const result = await setDashboardPinned(dashboard.id, !previous);
-      updatePinned(dashboard.id, result.pinned);
+      const result = await setDashboardPinned(dashboard.id, !previous, host);
+      if (same()) updatePinned(dashboard.id, result.pinned);
     } catch (cause) {
-      updatePinned(dashboard.id, previous);
-      setPinError(cause instanceof Error ? cause.message : "Unable to update pin. Try again.");
+      if (same()) {
+        updatePinned(dashboard.id, previous);
+        setPinError(cause instanceof Error ? cause.message : "Unable to update pin. Try again.");
+      }
     } finally {
-      setPendingPins((ids) => { const next = new Set(ids); next.delete(dashboard.id); return next; });
+      if (same()) setPendingPins((ids) => { const next = new Set(ids); next.delete(dashboard.id); return next; });
     }
   };
   const groups = createMemo(() => {
@@ -52,21 +87,29 @@ export function Dashboards() {
     return [...result.values()];
   });
   const row = (dashboard: DashboardRow, showAgent = false) => (
-    <li><DashboardListRow dashboard={dashboard} onManage={() => setManaging(dashboard)}
+    <li><DashboardListRow dashboard={dashboard} gateway={gateway()} onManage={() => setManaging(dashboard)}
       showAgent={showAgent} reserveDelete onPin={() => void togglePin(dashboard)} pinPending={pendingPins().has(dashboard.id)}
       onDelete={() => { setDeleteError(undefined); setDeleting(dashboard); }} /></li>
   );
   return (
     <main class="dashboards-page">
       <h1>Dashboards</h1>
+      <Show when={gatewayNames().length > 0 || gateway() !== undefined}>
+        <label class="dashboards-gateway">Gateway{" "}
+          <select aria-label="Gateway" value={gateway() ?? ""} onChange={(event) => setSearch({ gateway: event.currentTarget.value || undefined })}>
+            <option value="">This computer</option>
+            <For each={[...new Set([...gatewayNames(), ...(gateway() ? [gateway()!] : [])])]}>{(name) => <option value={name}>{name}</option>}</For>
+          </select>
+        </label>
+      </Show>
       <Show when={dashboards.error}><p role="alert">Unable to load dashboards. <button onClick={() => window.location.reload()}>Retry</button></p></Show>
-      <Show when={dashboards.loading}><p>Loading dashboards…</p></Show>
+      <Show when={requesting()}><p>Loading dashboards…</p></Show>
       <Show when={pinError()}>{(error) => <p role="alert">{error()}</p>}</Show>
       <Show when={pinned().length > 0}>
         <section><h2>Pinned</h2><ul class="dashboards-list"><For each={pinned()}>{(dashboard) => row(dashboard, true)}</For></ul></section>
       </Show>
       <Show when={!data()?.owned.length || groups().length > 0}><section><h2>My dashboards</h2>
-        <For each={groups()} fallback={<Show when={!dashboards.loading && !dashboards.error}><p>You do not own any dashboards yet.</p></Show>}>{(group) => (
+        <For each={groups()} fallback={<Show when={!requesting() && !dashboards.error}><p>You do not own any dashboards yet.</p></Show>}>{(group) => (
           <section class="dashboards-group">
             <h3>
               <span class="dashboards-group__avatar" aria-hidden="true">
@@ -80,13 +123,13 @@ export function Dashboards() {
           </section>
         )}</For>
       </section></Show>
-      <Show when={managing()}>{(dashboard) => <DashboardAccessDialog dashboard={dashboard()} onClose={() => setManaging(undefined)} onSaved={async () => { await refetch(); }} />}</Show>
+      <Show when={managing()}>{(dashboard) => <DashboardAccessDialog dashboard={dashboard()} gateway={gateway()} onClose={() => setManaging(undefined)} onSaved={async () => { await refetch(); }} />}</Show>
       <Show when={deleting()}>{(dashboard) => <ConfirmDialog title="Delete dashboard" description={`Delete ${dashboard().title} and its published HTML and history? Shared databases are retained.`} confirmLabel="Delete" danger error={deleteError()} onCancel={() => setDeleting(undefined)} onConfirm={async () => {
-        try { await deleteDashboard(dashboard().id); await refetch(); setDeleting(undefined); }
+        try { await deleteDashboard(dashboard().id, gateway()); await refetch(); setDeleting(undefined); }
         catch (cause) { setDeleteError(cause instanceof Error ? cause.message : "Unable to delete dashboard."); }
       }} />}</Show>
       <Show when={!data()?.shared.length || shared().length > 0}><section><h2>Shared with me</h2>
-        <ul class="dashboards-list"><For each={shared()} fallback={<Show when={!dashboards.loading && !dashboards.error}><li>No dashboards have been shared with you.</li></Show>}>{(dashboard) => row(dashboard, true)}</For></ul>
+        <ul class="dashboards-list"><For each={shared()} fallback={<Show when={!requesting() && !dashboards.error}><li>No dashboards have been shared with you.</li></Show>}>{(dashboard) => row(dashboard, true)}</For></ul>
       </section></Show>
       <style>{`
         .dashboards-page { flex: 1; min-width: 0; overflow: auto; padding: 32px; color: var(--text-primary); }
