@@ -30,6 +30,9 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Fixed
 
+- Skill dialogs of a linked gateway now read the same item again after a failed write. Restore, import token, share, and delete controls stay off until the read works. The share dialog refreshes its draft from the saved shares.
+- The remote import prompt now needs an HTTPS address. A public HTTP address shows a message to set `server.baseUrl` and hides the token.
+- The skill upload route now parses the multipart body and refuses a malformed part before the remote sees the upload.
 - Settings pages of a remote agent no longer keep a draft, a catalog, a job list, or a permission of the previous gateway or agent. A late answer of an older page changes nothing, a failed agent lookup leaves no mutation control, and an MCP add that failed or was cancelled with an uncertain answer waits for a list read before another add. A successful local add frees the dialog, an answer of an earlier visit to the same agent changes nothing, and the extension form follows the extension that the route shows. The sign-in popup of a remote agent now ends after 5 minutes counted from the click.
 - The webhook page and the Top flags of a remote agent no longer use the local extension list and the local Top flags. Links from a remote catalog and from schedule alerts now keep the gateway of the agent.
 - Remote dashboard snapshots now free their stored bytes and metadata at their deadlines, with no later request. The gateway answers each alias of a viewer path, such as mixed case or encoded separators, with the typed 404 and no remote call. A remote 403 access denial now wins over a version check, so it never shows as an update prompt.
