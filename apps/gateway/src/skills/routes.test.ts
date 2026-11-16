@@ -4,6 +4,7 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import Database from "better-sqlite3";
 import { getEligibleAccount } from "@yoplai/extension-multi-user";
+import { encodeSkillId } from "@yoplai/shared/skill-id-wire";
 import { SkillStore } from "./store.js";
 import { SkillAccessPolicy } from "./access.js";
 import { createSkillRoutes } from "./routes.js";
@@ -304,3 +305,132 @@ describe("Skills HTTP", () => {
     expect(await (await routes.request(`/skills/${encodeURIComponent(row.id)}`)).json()).toMatchObject({ skillMd: fallback, locked: true });
   });
 });
+
+describe("skill ID alias routes", () => {
+  const wire = encodeSkillId;
+  const asUser = (routes: ReturnType<typeof setup>["routes"]) => (suffix: string, method = "GET", body?: unknown, user = "alice") =>
+    routes.request(suffix, { method, headers: { "x-test-user": user, "content-type": "application/json" }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
+  const answer = async (response: Response) => ({ status: response.status, body: await response.json().catch(() => null) });
+
+  async function fixture() {
+    const agentDir = path.join(home, "agents/hr");
+    await fs.mkdir(path.join(agentDir, "category/folder-name"), { recursive: true });
+    await fs.mkdir(path.join(agentDir, "onboarding"), { recursive: true });
+    await fs.writeFile(path.join(agentDir, "category/folder-name/SKILL.md"), "---\nname: nested-skill\ndescription: A nested agent skill.\n---\nNested.");
+    await fs.writeFile(path.join(agentDir, "onboarding/SKILL.md"), skillText.replace("meeting-notes", "onboarding"));
+    const built = setup(true, [{ id: "hr", name: "HR", directory: agentDir }]);
+    const { skill } = await built.store.create("alice", { files: [{ path: "SKILL.md", content: skillText }] });
+    await built.store.shares(skill.id, [{ kind: "user", id: "bob", mode: "read" }, { kind: "user", id: "carol", mode: "write" }]);
+    return { ...built, request: asUser(built.routes), skillId: skill.id };
+  }
+
+  it("answers every read and refusal of the alias exactly like the legacy route, for every kind of requester", async () => {
+    const { request, skillId } = await fixture();
+    const users = ["alice", "bob", "carol", "dave", "root", "banned", "pending", "unknown"];
+    const nested = "agent:hr:category/folder-name";
+    const calls: Array<[string, string, string, unknown?]> = [
+      [skillId, "", "GET"], [skillId, "/versions", "GET"], [skillId, "/enabled", "PUT", {}], [skillId, "/shares", "PUT", { shares: [] }],
+      [skillId, "/system", "PUT", { system: true }], [skillId, "/owner", "PUT", { ownerId: "bob" }], [skillId, "/admin", "PUT", { disabledByAdmin: true }],
+      [skillId, "/default", "GET"], [skillId, "/default", "POST"], [skillId, "/versions/none/restore", "POST"],
+      ["agent:hr:onboarding", "", "GET"], ["agent:hr:onboarding", "/enabled", "PUT", { enabled: true }], ["agent:hr:onboarding", "/system", "PUT", { system: true }],
+      ["agent:hr:onboarding", "/shares", "PUT", { shares: [] }], ["agent:hr:onboarding", "/default", "GET"], ["agent:hr:onboarding", "/versions", "GET"],
+      ["builtin:dashboard", "/enabled", "PUT", { enabled: true }], ["missing-skill", "", "GET"], ["missing-skill", "/versions", "GET"],
+    ];
+    for (const user of users) {
+      for (const [id, suffix, method, body] of calls) {
+        // A call that changes state for an allowed user is skipped here. Allowed changes have their own test below.
+        const legacy = await answer(await request(`/skills/${id}${suffix}`, method, body, user));
+        if (legacy.status < 300 && method !== "GET") continue;
+        const alias = await answer(await request(`/skill-ids/${wire(id)}${suffix}`, method, body, user));
+        expect({ user, id, suffix, method, ...alias }).toEqual({ user, id, suffix, method, ...legacy });
+      }
+    }
+    // The nested ID has an alias and no legacy route that carries its slash. It follows the same policy.
+    expect((await request(`/skill-ids/${wire(nested)}`, "GET", undefined, "alice")).status).toBe(200);
+    expect(await (await request(`/skill-ids/${wire(nested)}`, "GET", undefined, "alice")).json()).toMatchObject({ id: nested, locked: true, canWrite: false, canManage: false });
+    expect((await request(`/skill-ids/${wire(nested)}/system`, "PUT", { system: true }, "alice")).status).toBe(403);
+    expect((await request(`/skill-ids/${wire(nested)}/enabled`, "PUT", { enabled: true }, "alice")).status).toBe(400);
+    expect((await request(`/skill-ids/${wire(nested)}/versions`, "GET", undefined, "alice")).status).toBe(404);
+    expect((await request(`/skill-ids/${wire(nested)}/shares`, "PUT", { shares: [] }, "alice")).status).toBe(404);
+    expect((await request(`/skill-ids/${wire(nested)}`, "DELETE", undefined, "alice")).status).toBe(404);
+  });
+
+  it("lets the same allowed change through both routes with the same stored result, and keeps nested IDs exact", async () => {
+    const { request, store, skillId } = await fixture();
+    expect((await request(`/skill-ids/${wire(skillId)}/enabled`, "PUT", { enabled: true }, "bob")).status).toBe(200);
+    expect((await store.getState("bob")).enabled).toContain(skillId);
+    expect((await request(`/skills/${skillId}/enabled`, "PUT", { enabled: false }, "bob")).status).toBe(200);
+    expect((await store.getState("bob")).enabled).not.toContain(skillId);
+    // Sharing needs manage permission. A writer is refused, the owner changes it, and the stored ID stays the same.
+    expect((await request(`/skill-ids/${wire(skillId)}/shares`, "PUT", { shares: [] }, "carol")).status).toBe(403);
+    expect((await request(`/skill-ids/${wire(skillId)}/shares`, "PUT", { shares: [{ kind: "all", mode: "read" }] }, "alice")).status).toBe(200);
+    expect((await store.get(skillId))?.shares).toEqual([{ kind: "all", mode: "read" }]);
+    const nested = "agent:hr:category/folder-name";
+    expect((await request(`/skill-ids/${wire(nested)}/system`, "PUT", { system: true }, "root")).status).toBe(200);
+    expect(await store.systemAgentSkills()).toContain(nested);
+    expect((await request(`/skill-ids/${wire(nested)}/default`, "POST", undefined, "root")).status).toBe(200);
+    expect((await store.defaults()).map((skill) => skill.id)).toContain("default:nested-skill");
+    // A user skill is deleted through the alias with the same owner policy.
+    expect((await request(`/skill-ids/${wire(skillId)}`, "DELETE", undefined, "bob")).status).toBe(403);
+    expect((await request(`/skill-ids/${wire(skillId)}`, "DELETE", undefined, "alice")).status).toBe(200);
+    expect(await store.get(skillId)).toBeNull();
+  });
+
+  it("restores a version and replaces content through the alias with the writer policy", async () => {
+    const { routes, request, skillId } = await fixture();
+    const replace = (user: string, text: string) => routes.request(`/skill-ids/${wire(skillId)}/content`, { method: "PUT", body: upload(text), headers: { "x-test-user": user } });
+    expect((await replace("carol", skillText + "\nv2")).status).toBe(200);
+    expect((await replace("bob", skillText + "\nbob")).status).toBe(404);
+    const { versions } = await (await request(`/skill-ids/${wire(skillId)}/versions`, "GET", undefined, "carol")).json();
+    expect(versions).toHaveLength(1);
+    expect((await request(`/skill-ids/${wire(skillId)}/versions/${versions[0].id}/restore`, "POST", undefined, "bob")).status).toBe(404);
+    expect((await request(`/skill-ids/${wire(skillId)}/versions/${versions[0].id}/restore`, "POST", undefined, "carol")).status).toBe(200);
+    expect(await (await request(`/skill-ids/${wire(skillId)}`, "GET", undefined, "carol")).json()).toMatchObject({ skillMd: skillText });
+  });
+
+  it("refuses an invalid wire ID with 400 and no store change, whatever the action", async () => {
+    const { request, skillId } = await fixture();
+    const good = wire(skillId);
+    const bad = ["v1_", "v2_" + good.slice(3), good.slice(3), `${good}=`, "v1_YR", "v1_YWJj%2F", "v1_" + Buffer.from([0xff, 0xfe]).toString("base64url"), "V1_" + good.slice(3)];
+    for (const id of bad) {
+      for (const [suffix, method, body] of [["", "GET"], ["", "DELETE"], ["/enabled", "PUT", { enabled: true }], ["/shares", "PUT", { shares: [] }], ["/system", "PUT", { system: true }], ["/default", "GET"], ["/default", "POST"], ["/versions", "GET"], ["/owner", "PUT", { ownerId: "bob" }], ["/admin", "PUT", { disabledByAdmin: true }]] as Array<[string, string, unknown?]>) {
+        expect({ id, suffix, method, status: (await request(`/skill-ids/${id}${suffix}`, method, body, "root")).status }).toEqual({ id, suffix, method, status: 400 });
+      }
+    }
+  });
+
+  it("uses an encoded ID only as an object key: import, a path, and another gateway name name no other route", async () => {
+    const { request, store, skillId } = await fixture();
+    const before = JSON.stringify(await store.list());
+    for (const id of ["import", "../import", "../../etc/passwd", "ams", "east@west", "agent:hr:../../outside", "%2e%2e/%2fimport", skillId + "/versions"]) {
+      for (const [suffix, method, body] of [["", "GET"], ["", "DELETE"], ["/enabled", "PUT", { enabled: true }], ["/content", "PUT"], ["/default", "GET"], ["/system", "PUT", { system: true }]] as Array<[string, string, unknown?]>) {
+        const response = await request(`/skill-ids/${wire(id)}${suffix}`, method, body, "root");
+        // A missing object is 404 and a wrong action is 400 or 404. A request that reached the import handler would be 401.
+        expect({ id, suffix, method, ok: [400, 404].includes(response.status) }).toEqual({ id, suffix, method, ok: true });
+      }
+    }
+    expect(JSON.stringify(await store.list())).toBe(before);
+  });
+
+  it("refuses an import token on the alias and still serves the import endpoint with it", async () => {
+    const { routes, tokens, skillId } = await fixture();
+    const { token } = await tokens.create("alice");
+    for (const [suffix, method] of [["", "GET"], ["", "DELETE"], ["/versions", "GET"], ["/enabled", "PUT"]]) {
+      const response = await routes.request(`/skill-ids/${wire(skillId)}${suffix}`, { method, headers: { authorization: `Bearer ${token}`, "x-test-user": "alice" } });
+      expect(response.status).toBe(401);
+    }
+    const imported = await routes.request("/skills/import", { method: "POST", headers: { authorization: `Bearer ${token}`, "content-type": "application/json" }, body: JSON.stringify({ name: "imported-one", files: [{ path: "SKILL.md", content: "---\nname: imported-one\ndescription: Imported.\n---\nBody." }] }) });
+    expect(imported.status).toBe(201);
+  });
+
+  it("serves no alias for the collection, the import token, the recipients, or a version ID", async () => {
+    const { request, skillId } = await fixture();
+    expect((await request("/skill-ids", "GET")).status).toBe(404);
+    expect((await request(`/skill-ids/${wire(skillId)}/other`, "GET")).status).toBe(404);
+    expect((await request(`/skill-ids/${wire(skillId)}`, "POST")).status).toBe(404);
+    expect((await request(`/skill-ids/${wire(skillId)}/import-token`, "POST")).status).toBe(404);
+    expect((await request(`/skill-ids/${wire("recipients")}`, "GET")).status).toBe(404);
+    expect((await request(`/skill-ids/${wire(skillId)}/versions/${wire("v")}/restore/extra`, "POST")).status).toBe(404);
+  });
+});
+

@@ -1,4 +1,5 @@
 import { OAuthAuthorizationStartSchema } from "@yoplai/shared";
+import { decodeSkillId } from "@yoplai/shared/skill-id-wire";
 import { getAgent } from "../config/index.js";
 import { allowedCorsOrigins } from "../server/origins.js";
 import { isRelayEnabled, isTrustedRequest, resolveRemoteAgent } from "./state.js";
@@ -48,6 +49,16 @@ const rules: Rule[] = [
   { methods: ["GET"], path: /^\/api\/skills\/[^/]+\/(?:default|versions)$/ },
   { methods: ["POST"], path: /^\/api\/skills\/[^/]+\/default$/, bodyless: true },
   { methods: ["POST"], path: /^\/api\/skills\/[^/]+\/versions\/[^/]+\/restore$/, bodyless: true },
+  // Skill object alias for IDs that the generic path guard cannot carry, such as a nested agent skill. `W` is one canonical
+  // wire ID segment (`v1_` and base64url). The relay validates it before it forwards, and the remote decodes it once.
+  // The alias covers object operations only. Collections, import tokens, import, and version IDs keep their routes above.
+  { methods: ["GET"], path: /^\/api\/skill-ids\/[^/]+$/ },
+  { methods: ["DELETE"], path: /^\/api\/skill-ids\/[^/]+$/, bodyless: true },
+  { methods: ["PUT"], path: /^\/api\/skill-ids\/[^/]+\/content$/, multipart: true },
+  { methods: ["PUT"], path: /^\/api\/skill-ids\/[^/]+\/(?:enabled|shares|system|owner|admin)$/, json: true },
+  { methods: ["GET"], path: /^\/api\/skill-ids\/[^/]+\/(?:default|versions)$/ },
+  { methods: ["POST"], path: /^\/api\/skill-ids\/[^/]+\/default$/, bodyless: true },
+  { methods: ["POST"], path: /^\/api\/skill-ids\/[^/]+\/versions\/[^/]+\/restore$/, bodyless: true },
   { methods: ["PUT", "DELETE"], path: /^\/api\/dashboards\/[^/]+\/pin$/ },
   { methods: ["PATCH"], path: /^\/api\/dashboards\/[^/]+\/sharing$/ },
   { methods: ["POST"], path: /^\/api\/dashboards\/[^/]+\/claim$/ },
@@ -341,6 +352,9 @@ export async function relayConfiguration(request: Request, gateways: RemoteGatew
   if (rule && !rule.methods.includes(request.method)) return fail("relay_route_not_allowed", 405);
   if (authorize) return fail("use_oauth_start", 405);
   if (agentKind && !agent) return fail("invalid_remote_agent");
+  // A malformed or noncanonical wire ID stops here, before any body is read and before any upstream request.
+  const wireId = /^\/api\/skill-ids\/([^/]+)/.exec(path)?.[1];
+  if (wireId !== undefined && decodeSkillId(wireId) === undefined) return fail("invalid_skill_id");
   let remotePath = path;
   if (agentKind === "path") {
     const segments = path.split("/");

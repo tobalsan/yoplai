@@ -79,6 +79,11 @@
       "development": "./src/media-types.ts",
       "import": "./dist/media-types.js",
       "types": "./dist/media-types.d.ts"
+    },
+    "./skill-id-wire": {
+      "development": "./src/skill-id-wire.ts",
+      "import": "./dist/skill-id-wire.js",
+      "types": "./dist/skill-id-wire.d.ts"
     }
   },
   "scripts": {
