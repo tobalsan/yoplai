@@ -640,6 +640,7 @@ export async function runAgent(
     let overflowRecoveryError: string | undefined;
     let lastTurnError: string | undefined;
     const unsubscribe = session.subscribe((evt) => {
+      if (evt.type === "agent_settled" && evt.aborted) aborted = true;
       if (
         evt.type === "message_end" &&
         evt.message.role === "assistant" &&

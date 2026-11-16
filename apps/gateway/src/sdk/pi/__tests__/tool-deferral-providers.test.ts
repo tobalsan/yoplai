@@ -2,10 +2,10 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { zstdDecompressSync } from "node:zlib";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { Type } from "typebox";
 import {
   InMemoryCredentialStore,
   InMemoryModelsStore,
-  Type,
   type Api,
   type Model,
 } from "@earendil-works/pi-ai";
@@ -272,9 +272,18 @@ describe("Pi deferred tools through native provider serialization (offline)", ()
       supportsToolSearch: true,
     });
     await prompt(session, "First request");
-    expect(requests[0].tools).toEqual([
-      expect.objectContaining({ type: "function", name: "tool_search" }),
-    ]);
+    expect(requests[0].tools).toBeUndefined();
+    expect(requests[0].input).toEqual(
+      expect.arrayContaining([
+        {
+          type: "additional_tools",
+          role: "developer",
+          tools: [
+            expect.objectContaining({ type: "function", name: "tool_search" }),
+          ],
+        },
+      ])
+    );
     expect(JSON.stringify(requests[0])).not.toContain(
       "UNLOADED_SCHEMA_MARKER_493"
     );
@@ -433,7 +442,7 @@ describe("Pi deferred tools through native provider serialization (offline)", ()
     expect(requests[2].tools).toEqual(requests[0].tools);
   });
 
-  it("falls back to Responses' current list when a loaded tool is removed", async () => {
+  it("announces a removed Responses tool while retaining its inline declaration", async () => {
     const { session, requests } = await nativeSession("openai-responses", {
       supportsMidConvoSystemMessages: true,
       supportsAdditionalTools: true,
@@ -448,18 +457,34 @@ describe("Pi deferred tools through native provider serialization (offline)", ()
     session.setActiveToolsByName(["tool_search"]);
     await prompt(session, "After removing the tool");
     expect(requests).toHaveLength(3);
-    expect(requests[2].tools).toEqual([
-      expect.objectContaining({ type: "function", name: "tool_search" }),
-    ]);
-    expect(JSON.stringify(requests[2].input)).not.toContain(
-      '"type":"additional_tools"'
+    expect(requests[2].tools).toBeUndefined();
+    expect(requests[2].input).toEqual(
+      expect.arrayContaining([
+        {
+          type: "additional_tools",
+          role: "developer",
+          tools: [
+            expect.objectContaining({
+              type: "function",
+              name: "fixture_lookup",
+              description: "UNLOADED_SCHEMA_MARKER_493",
+            }),
+          ],
+        },
+        expect.objectContaining({
+          role: "system",
+          content: expect.stringContaining(
+            "The following tools are no longer available. Do not call them:\n- fixture_lookup"
+          ),
+        }),
+      ])
     );
     expect(JSON.stringify(requests[2].input)).not.toContain(
       '"type":"tool_search_output"'
     );
   });
 
-  it("falls back to Responses' replacement schema after a same-name tool redefinition", async () => {
+  it("sends Responses' replacement schema inline after a same-name tool redefinition", async () => {
     const { session, requests, fixtureTool } = await nativeSession(
       "openai-responses",
       {
@@ -480,24 +505,26 @@ describe("Pi deferred tools through native provider serialization (offline)", ()
     session.setActiveToolsByName(["tool_search", "fixture_lookup"]);
     await prompt(session, "After redefining the tool");
     expect(requests).toHaveLength(3);
-    expect(requests[2].tools).toEqual([
-      expect.objectContaining({ type: "function", name: "tool_search" }),
-      expect.objectContaining({
-        type: "function",
-        name: "fixture_lookup",
-        description: "REDEFINED_SCHEMA_MARKER_493",
-        parameters: {
-          type: "object",
-          properties: { reference: { type: "string" } },
-          required: ["reference"],
+    expect(requests[2].tools).toBeUndefined();
+    expect(requests[2].input).toEqual(
+      expect.arrayContaining([
+        {
+          type: "additional_tools",
+          role: "developer",
+          tools: [
+            expect.objectContaining({
+              type: "function",
+              name: "fixture_lookup",
+              description: "REDEFINED_SCHEMA_MARKER_493",
+              parameters: {
+                type: "object",
+                properties: { reference: { type: "string" } },
+                required: ["reference"],
+              },
+            }),
+          ],
         },
-      }),
-    ]);
-    expect(JSON.stringify(requests[2].tools)).not.toContain(
-      "UNLOADED_SCHEMA_MARKER_493"
-    );
-    expect(JSON.stringify(requests[2].input)).not.toContain(
-      '"type":"additional_tools"'
+      ])
     );
     expect(JSON.stringify(requests[2].input)).not.toContain(
       '"type":"tool_search_output"'
