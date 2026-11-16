@@ -102,6 +102,9 @@ export function createOAuthPopupFlow() {
   if (getOwner()) onCleanup(() => { generation++; abort?.abort(); closePopup(); });
 
   async function begin<Snapshot>(request: OAuthFlowRequest<Snapshot>): Promise<OAuthFlowState> {
+    // One budget runs from the click. The first read, the start, every pause, and every poll share it.
+    const deadline = Date.now() + OAUTH_FLOW_TIMEOUT_MS;
+    const remaining = () => Math.max(0, deadline - Date.now());
     cancel();
     const mine = generation;
     const current = () => mine === generation;
@@ -123,18 +126,22 @@ export function createOAuthPopupFlow() {
     }
     let before: Snapshot;
     try {
-      before = await withDeadline(request.read, controller.signal, OAUTH_PREPARE_TIMEOUT_MS);
+      before = await withDeadline(request.read, controller.signal, Math.min(OAUTH_PREPARE_TIMEOUT_MS, remaining()));
     } catch {
-      return current() ? fail("status_failed") : state();
+      if (!current()) return state();
+      return fail(remaining() === 0 ? "timed_out" : "status_failed");
     }
     if (!current()) return state();
+    if (remaining() === 0) return fail("timed_out");
     let url: string | undefined;
     try {
-      url = await withDeadline(request.start, controller.signal, request.startTimeoutMs ?? OAUTH_PREPARE_TIMEOUT_MS);
+      url = await withDeadline(request.start, controller.signal, Math.min(request.startTimeoutMs ?? OAUTH_PREPARE_TIMEOUT_MS, remaining()));
     } catch (cause) {
-      return current() ? fail("start_failed", cause instanceof Error && cause.message ? cause.message : MESSAGES.start_failed) : state();
+      if (!current()) return state();
+      return remaining() === 0 ? fail("timed_out") : fail("start_failed", cause instanceof Error && cause.message ? cause.message : MESSAGES.start_failed);
     }
     if (!current()) return state();
+    if (remaining() === 0) return fail("timed_out");
     if (url === undefined) {
       closePopup();
       return finish({ phase: "idle" });
@@ -152,13 +159,14 @@ export function createOAuthPopupFlow() {
       return fail("closed");
     }
     setState({ phase: "waiting" });
-    const deadline = Date.now() + OAUTH_FLOW_TIMEOUT_MS;
     let failures = 0;
     while (current()) {
       const closed = opened.closed;
       try {
-        const now = await withDeadline((signal) => request.read(signal), controller.signal, OAUTH_PREPARE_TIMEOUT_MS);
+        const now = await withDeadline((signal) => request.read(signal), controller.signal, Math.min(OAUTH_PREPARE_TIMEOUT_MS, remaining()));
         if (!current()) return state();
+        // An answer that arrives after the budget ended must not report success.
+        if (remaining() === 0) return fail(request.canProve(before) ? "timed_out" : "unconfirmed");
         failures = 0;
         const verdict = request.verdict(before, now);
         if (verdict === "connected") {
@@ -171,12 +179,13 @@ export function createOAuthPopupFlow() {
       } catch {
         if (!current()) return state();
         failures += 1;
+        if (remaining() === 0) return fail(request.canProve(before) ? "timed_out" : "unconfirmed");
         if (failures >= MAX_POLL_FAILURES || closed) return fail("status_failed");
       }
       // The read above ran after the popup closed. Closure alone proves nothing.
       if (closed) return fail(request.canProve(before) ? "closed" : "unconfirmed");
-      if (Date.now() >= deadline) return fail(request.canProve(before) ? "timed_out" : "unconfirmed");
-      await pause(OAUTH_POLL_INTERVAL_MS, controller.signal);
+      if (remaining() === 0) return fail(request.canProve(before) ? "timed_out" : "unconfirmed");
+      await pause(Math.min(OAUTH_POLL_INTERVAL_MS, remaining()), controller.signal);
     }
     return state();
   }

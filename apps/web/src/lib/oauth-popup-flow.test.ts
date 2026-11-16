@@ -209,4 +209,58 @@ describe("OAuth popup flow", () => {
     flow.cancel();
     await done;
   });
+
+  it("counts the baseline read and the start request in the total budget from the click", async () => {
+    let first = true;
+    const { flow, request, popup } = setup({
+      read: async () => {
+        if (first) { first = false; await new Promise((resolve) => setTimeout(resolve, 20_000)); }
+        return { connected: false };
+      },
+      start: async () => { await new Promise((resolve) => setTimeout(resolve, 20_000)); return "https://provider.example.test/authorize"; },
+    });
+    const done = flow.begin(request);
+    await vi.advanceTimersByTimeAsync(OAUTH_FLOW_TIMEOUT_MS + 1);
+    expect(await done).toMatchObject({ phase: "failed", reason: "timed_out" });
+    expect(popup.closed).toBe(true);
+  });
+
+  it("never reports success for a poll that finishes after the budget", async () => {
+    const started = Date.now();
+    let polls = 0;
+    const { flow, request, popup, onConnected } = setup({
+      read: async () => {
+        polls += 1;
+        if (polls === 1) return { connected: false };
+        await new Promise((resolve) => setTimeout(resolve, 20_000));
+        // The grant finishes only at the end of the budget, so the answer comes too late.
+        return { connected: Date.now() - started >= OAUTH_FLOW_TIMEOUT_MS, at: 7 };
+      },
+    });
+    const done = flow.begin(request);
+    await vi.advanceTimersByTimeAsync(OAUTH_FLOW_TIMEOUT_MS + 30_000);
+    expect(await done).toMatchObject({ phase: "failed", reason: "timed_out" });
+    expect(onConnected).not.toHaveBeenCalled();
+    expect(popup.closed).toBe(true);
+  });
+
+  it("does not report success for a poll that answers after the deadline, and a cancel still ends the flow", async () => {
+    let release: (() => void) | undefined;
+    let polls = 0;
+    const { flow, request, onConnected } = setup({
+      read: () => {
+        polls += 1;
+        if (polls === 1) return Promise.resolve({ connected: false });
+        return new Promise<Snapshot>((resolve) => { release = () => resolve({ connected: true, at: 3 }); });
+      },
+    });
+    const done = flow.begin(request);
+    await vi.advanceTimersByTimeAsync(OAUTH_POLL_INTERVAL_MS + 1);
+    flow.cancel();
+    release?.();
+    await vi.advanceTimersByTimeAsync(OAUTH_POLL_INTERVAL_MS);
+    await done;
+    expect(onConnected).not.toHaveBeenCalled();
+    expect(flow.state()).toEqual({ phase: "idle" });
+  });
 });
