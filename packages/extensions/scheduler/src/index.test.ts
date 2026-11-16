@@ -213,6 +213,11 @@ describe("scheduler routes", () => {
     // Another user cannot change the owned job.
     userId = "bob";
     expect((await patch(team.id, { enabled: true })).status).toBe(403);
+    // An absent job is 404 from the real router with no service mock, and a foreign-owned job stays 403.
+    userId = "alice";
+    const absent = await patch("absent-job-id", { enabled: true });
+    expect(absent.status).toBe(404);
+    expect(await absent.json()).toEqual({ error: "Schedule not found" });
     // A job that disappears between the access check and the update is 404.
     userId = "alice";
     vi.spyOn(SchedulerService.prototype, "update").mockRejectedValueOnce(new ScheduleNotFoundError("alpha", team.id));

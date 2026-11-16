@@ -793,6 +793,8 @@ const schedulerExtension: Extension = {
       }
 
       const scheduler = getScheduler();
+      // A job that does not exist is 404. Only a job that exists and belongs to another user is 403.
+      if (!(await scheduler.list(agentId)).some((candidate) => candidate.id === id)) return c.json({ error: "Schedule not found" }, 404);
       if (!(await canAccessJob(agentId, id, requestUserId(c)))) return c.json({ error: "Schedule owner access required" }, 403);
       try {
         const previous = (await scheduler.list(agentId)).find((candidate) => candidate.id === id);
