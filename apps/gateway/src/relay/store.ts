@@ -53,10 +53,39 @@ export const REMOTE_GATEWAYS_FILE = "remote-gateways.json";
 type StoreFile = { gateways: RemoteGateway[]; mutations: Map<string, number> };
 
 const LOCK_WAIT_MS = 5_000;
-const LOCK_STALE_MS = 30_000;
+
+/** The content of the lock file. */
+type LockOwner = { pid: number; token: string };
+
+export type FileRemoteGatewayStoreOptions = {
+  /** How long a writer waits for a lock that a live process holds. The default is 5 seconds. */
+  lockWaitMs?: number;
+};
 
 function sleepSync(ms: number): void {
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+
+function processIsAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code !== "ESRCH";
+  }
+}
+
+/** Returns null when the file is missing or does not hold a lock owner. */
+function readLockOwner(lockFile: string): LockOwner | null {
+  try {
+    const parsed = JSON.parse(fs.readFileSync(lockFile, "utf8")) as Partial<LockOwner> | null;
+    if (parsed && typeof parsed.token === "string" && typeof parsed.pid === "number" && Number.isSafeInteger(parsed.pid) && parsed.pid > 0) {
+      return { pid: parsed.pid, token: parsed.token };
+    }
+  } catch {
+    // A missing file or broken content has no owner.
+  }
+  return null;
 }
 
 /**
@@ -67,11 +96,18 @@ function sleepSync(ms: number): void {
  * field or row. A file from an older version has neither, and it reads with counts of zero. Every writer, in any
  * process, reads the file, checks it, and writes it while it holds the lock file `<file>.lock`, so no process loses the
  * change of another process.
+ *
+ * The lock file holds the process ID of its owner and a random token. A lock is stale only when its owner process does
+ * not exist. Age never makes a lock stale, so a live writer that pauses keeps its lock, and other writers wait and then
+ * fail. A stale lock is moved to a unique name before it is deleted, so two writers cannot both recover it. A writer
+ * deletes only a lock that holds its own token.
  */
 export function createFileRemoteGatewayStore(
-  filePath: string = path.join(resolveHomeDir(), REMOTE_GATEWAYS_FILE)
+  filePath: string = path.join(resolveHomeDir(), REMOTE_GATEWAYS_FILE),
+  options: FileRemoteGatewayStoreOptions = {}
 ): RemoteGatewayStore {
   const lockPath = `${filePath}.lock`;
+  const lockWaitMs = options.lockWaitMs ?? LOCK_WAIT_MS;
   const validCount = (value: unknown): value is number => typeof value === "number" && Number.isSafeInteger(value) && value > 0;
   const read = (): StoreFile => {
     const file: StoreFile = { gateways: [], mutations: new Map() };
@@ -108,33 +144,59 @@ export function createFileRemoteGatewayStore(
     });
     fs.renameSync(tmpPath, filePath);
   };
+  /** Moves a stale lock to a unique name. The rename lets only one writer take the lock, and the content check undoes a wrong take. */
+  const recoverStaleLock = (stale: LockOwner) => {
+    const moved = `${lockPath}.${process.pid}.${randomUUID()}.stale`;
+    try {
+      fs.renameSync(lockPath, moved);
+    } catch {
+      return; // Another writer moved or released the lock first.
+    }
+    const taken = readLockOwner(moved);
+    if (!taken || (taken.token !== stale.token && processIsAlive(taken.pid))) {
+      // Another writer made a new lock between our read and our rename, so put that lock back.
+      try {
+        fs.linkSync(moved, lockPath);
+      } catch {
+        // A third writer already holds the lock path. The owner keeps its token, and it deletes only that lock.
+      }
+    }
+    fs.rmSync(moved, { force: true });
+  };
   const locked = <T>(change: () => T): T => {
     fs.mkdirSync(path.dirname(filePath), { recursive: true });
-    const deadline = Date.now() + LOCK_WAIT_MS;
-    let handle: number | undefined;
-    while (handle === undefined) {
-      try {
-        handle = fs.openSync(lockPath, "wx", 0o600);
-      } catch (error) {
-        if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+    const owner: LockOwner = { pid: process.pid, token: randomUUID() };
+    // The lock file appears with its full content: write a private file, then link it to the lock path.
+    const pending = `${lockPath}.${process.pid}.${owner.token}.tmp`;
+    fs.writeFileSync(pending, JSON.stringify(owner), { mode: 0o600, flag: "wx" });
+    const deadline = Date.now() + lockWaitMs;
+    try {
+      for (;;) {
         try {
-          if (Date.now() - fs.statSync(lockPath).mtimeMs > LOCK_STALE_MS) fs.unlinkSync(lockPath);
-        } catch {
-          // The holder released the lock between the two calls.
+          fs.linkSync(pending, lockPath);
+          break;
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
         }
-        if (Date.now() > deadline) throw new Error(`Cannot lock ${path.basename(filePath)}. Another process holds the lock.`);
+        const holder = readLockOwner(lockPath);
+        if (holder && !processIsAlive(holder.pid)) {
+          recoverStaleLock(holder);
+          if (Date.now() <= deadline) continue;
+        }
+        if (Date.now() > deadline) {
+          const who = holder ? `Process ${holder.pid} holds the lock` : "Another process holds the lock";
+          throw new Error(`Cannot lock ${path.basename(filePath)}. ${who}. Wait and try again, or delete ${path.basename(lockPath)} if no Yoplai process runs.`);
+        }
         sleepSync(5);
       }
+    } finally {
+      fs.rmSync(pending, { force: true });
     }
     try {
       return change();
     } finally {
-      fs.closeSync(handle);
-      try {
-        fs.unlinkSync(lockPath);
-      } catch {
-        // The lock file is already gone.
-      }
+      // Delete the lock only when it still holds our token. Another writer may have replaced it.
+      if (readLockOwner(lockPath)?.token === owner.token) fs.rmSync(lockPath, { force: true });
     }
   };
   const bump = (file: StoreFile, name: string) => file.mutations.set(name, (file.mutations.get(name) ?? 0) + 1);

@@ -1,7 +1,10 @@
+import { spawn, spawnSync } from "node:child_process";
+import nodeFs from "node:fs";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { fileURLToPath } from "node:url";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createFileRemoteGatewayStore } from "./store.js";
 
 let dir: string;
@@ -13,6 +16,7 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
+  vi.restoreAllMocks();
   await fs.rm(dir, { recursive: true, force: true });
 });
 
@@ -140,15 +144,118 @@ describe("remote gateway store mutation version in the file", () => {
     expect(createFileRemoteGatewayStore(file).mutationVersion("ams")).toBe(1);
   });
 
-  it("replaces a stale lock that a dead writer left", async () => {
+});
+
+/** The pid of a process that has exited, so `process.kill(pid, 0)` gives ESRCH. */
+function deadPid(): number {
+  const child = spawnSync(process.execPath, ["-e", ""]);
+  return child.pid;
+}
+
+const writeLock = (lockFile: string, owner: { pid: number; token: string }) => fs.writeFile(lockFile, JSON.stringify(owner), { mode: 0o600 });
+const readLockToken = async (lockFile: string) => (JSON.parse(await fs.readFile(lockFile, "utf8")) as { token: string }).token;
+
+describe("remote gateway store lock", () => {
+  it("replaces a lock whose owner process is dead, also when the lock is new", async () => {
     const store = createFileRemoteGatewayStore(file);
-    await fs.writeFile(`${file}.lock`, "");
-    const old = new Date(Date.now() - 120_000);
-    await fs.utimes(`${file}.lock`, old, old);
+    await writeLock(`${file}.lock`, { pid: deadPid(), token: "dead-owner" });
     store.save(link);
     expect(store.list()).toHaveLength(1);
     await expect(fs.stat(`${file}.lock`)).rejects.toMatchObject({ code: "ENOENT" });
+    expect((await fs.readdir(dir)).sort()).toEqual(["remote-gateways.json"]);
   });
+
+  it("keeps the lock of a live writer that paused for longer than 30 seconds, and fails after the wait", async () => {
+    const store = createFileRemoteGatewayStore(file, { lockWaitMs: 150 });
+    store.save({ name: "victim", url: link.url });
+    const lockFile = `${file}.lock`;
+    await writeLock(lockFile, { pid: process.pid, token: "paused-writer" });
+    const old = new Date(Date.now() - 120_000);
+    await fs.utimes(lockFile, old, old);
+    expect(() => store.remove("victim")).toThrow(/Cannot lock remote-gateways\.json\. Process \d+ holds the lock/);
+    expect(store.list().map((item) => item.name)).toEqual(["victim"]);
+    expect(await readLockToken(lockFile)).toBe("paused-writer");
+  });
+
+  it("does not delete a replacement lock when it releases its own lock", async () => {
+    const store = createFileRemoteGatewayStore(file);
+    const lockFile = `${file}.lock`;
+    const rename = nodeFs.renameSync;
+    vi.spyOn(nodeFs, "renameSync").mockImplementation((from, to) => {
+      // Another writer replaced the lock while this writer works.
+      if (String(to) === file) nodeFs.writeFileSync(lockFile, JSON.stringify({ pid: process.pid, token: "replacement" }));
+      return rename(from, to);
+    });
+    store.save(link);
+    expect(store.list()).toHaveLength(1);
+    expect(await readLockToken(lockFile)).toBe("replacement");
+  });
+
+  it("deletes its own lock after a write", async () => {
+    createFileRemoteGatewayStore(file).save(link);
+    await expect(fs.stat(`${file}.lock`)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("puts back a live lock that it moved by mistake while it recovered a dead lock", async () => {
+    const store = createFileRemoteGatewayStore(file, { lockWaitMs: 150 });
+    const lockFile = `${file}.lock`;
+    await writeLock(lockFile, { pid: deadPid(), token: "dead-owner" });
+    const rename = nodeFs.renameSync;
+    let replaced = false;
+    vi.spyOn(nodeFs, "renameSync").mockImplementation((from, to) => {
+      // A faster writer recovers the dead lock and makes its own lock before this rename runs.
+      if (!replaced && String(from) === lockFile) {
+        replaced = true;
+        nodeFs.writeFileSync(lockFile, JSON.stringify({ pid: process.pid, token: "faster-writer" }));
+      }
+      return rename(from, to);
+    });
+    expect(() => store.save(link)).toThrow(/Cannot lock remote-gateways\.json/);
+    expect(store.list()).toEqual([]);
+    expect(await readLockToken(lockFile)).toBe("faster-writer");
+    expect((await fs.readdir(dir)).sort()).toEqual(["remote-gateways.json.lock"]);
+  });
+
+  it("lets only one process recover a dead lock, and loses no write", async () => {
+    const names = ["a", "b", "c", "d", "e", "f"];
+    const storeModule = fileURLToPath(new URL("./store.ts", import.meta.url));
+    const sync = path.join(dir, "sync");
+    await fs.mkdir(sync);
+    const script = `
+      import fs from "node:fs";
+      const { createFileRemoteGatewayStore } = await import(${JSON.stringify(storeModule)});
+      const [file, sync, name] = process.argv.slice(1);
+      fs.writeFileSync(sync + "/ready-" + name, "");
+      while (!fs.existsSync(sync + "/go")) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 5);
+      createFileRemoteGatewayStore(file).save({ name, url: "http://127.0.0.1:9" });
+    `;
+    await writeLock(`${file}.lock`, { pid: deadPid(), token: "dead-owner" });
+    const cwd = path.dirname(fileURLToPath(new URL("../../package.json", import.meta.url)));
+    const children = names.map(
+      (name) =>
+        new Promise<number | null>((resolve, reject) => {
+          const child = spawn(process.execPath, ["--conditions=development", "--import", "tsx", "--input-type=module", "-e", script, file, sync, name], {
+            cwd,
+            stdio: ["ignore", "ignore", "inherit"],
+          });
+          child.once("error", reject);
+          child.once("exit", resolve);
+        })
+    );
+    // Start all writers at the same time: each child loads the store, then waits for the go file.
+    while ((await fs.readdir(sync)).length < names.length) await new Promise((resolve) => setTimeout(resolve, 20));
+    await fs.writeFile(path.join(sync, "go"), "");
+    expect(await Promise.all(children)).toEqual(names.map(() => 0));
+    const store = createFileRemoteGatewayStore(file);
+    expect(
+      store
+        .list()
+        .map((item) => item.name)
+        .sort()
+    ).toEqual(names);
+    for (const name of names) expect(store.mutationVersion(name)).toBe(1);
+    expect((await fs.readdir(dir)).sort()).toEqual(["remote-gateways.json", "sync"]);
+  }, 30_000);
 });
 
 describe("remote gateway store generation checks", () => {
