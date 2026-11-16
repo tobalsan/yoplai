@@ -12,6 +12,10 @@ export function importAddressProblem(prompt: string): string | undefined {
   let url: URL;
   try { url = new URL(match[0]); }
   catch { return "The import address of this gateway is not valid."; }
+  // A remote import prompt holds a secret token. Over plain HTTP on a public address it would cross the network unprotected.
+  if (url.protocol !== "https:" && !isLocalHostname(url.hostname)) {
+    return `The import address of this gateway is ${url.origin}, which uses plain HTTP. Set server.baseUrl on the gateway to an HTTPS public address, expose /api/skills/import at the root of that address, and try again.`;
+  }
   if (isLocalHostname(url.hostname)) {
     return `The import address of this gateway is ${url.origin}, which only works on that gateway. Set server.baseUrl on the gateway to its public address, expose /api/skills/import at the root of that address, and try again.`;
   }

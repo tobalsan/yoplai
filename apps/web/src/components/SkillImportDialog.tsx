@@ -23,17 +23,36 @@ export function SkillImportDialog(props: { onClose: () => void; gateway?: Gatewa
   const [error, setError] = createSignal("");
   // A remote prompt with an address of the local network cannot work. The secret then stays hidden.
   const addressProblem = () => { const token = created(); return gateway !== undefined && token ? importAddressProblem(token.prompt) : undefined; };
-  const run = async (operation: () => Promise<void>) => {
+  // After an uncertain create or revoke the remote may hold the change although the answer failed. Both controls stay off
+  // until a read of the same gateway works, so no click creates a second token or repeats a revoke from a stale list.
+  const [unknown, setUnknown] = createSignal(false);
+  // Each write has its own attempt number. A recovery of an older attempt changes nothing.
+  let attempt = 0;
+  const settle = async (mine: number) => {
+    try { await refetch(); } catch { /* The error state of the resource tells the result. */ }
+    if (!disposed && mine === attempt) setUnknown(Boolean(tokens.error));
+  };
+  const run = async (operation: () => Promise<void>, uncertain = true) => {
+    if (unknown()) return;
+    const mine = ++attempt;
     setBusy(true); setError("");
+    let failed = false;
     try { await operation(); }
-    catch (cause) { if (!disposed) setError(cause instanceof Error ? cause.message : "Unable to manage import token."); }
-    finally { if (!disposed) setBusy(false); }
+    catch (cause) { failed = true; if (!disposed && mine === attempt) setError(cause instanceof Error ? cause.message : "Unable to manage import token."); }
+    if (failed && uncertain && !disposed && mine === attempt) await settle(mine);
+    if (!disposed && mine === attempt) setBusy(false);
+  };
+  const retryRead = async () => {
+    const mine = ++attempt;
+    setBusy(true);
+    await settle(mine);
+    if (!disposed && mine === attempt) setBusy(false);
   };
   const copy = (kind: "token" | "prompt", value: string) => run(async () => {
     await navigator.clipboard.writeText(value);
     if (disposed) return;
     setCopied(kind); setTimeout(() => setCopied((current) => current === kind ? undefined : current), 2000);
-  });
+  }, false);
   const copyLabel = (kind: "token" | "prompt", label: string) => copied() === kind ? "Copied" : label;
   return <Modal title="Import from Claude or ChatGPT" size="lg" onClose={props.onClose} dismissible={!busy()} error={error()} footer={<Button onClick={props.onClose} disabled={busy()}>Done</Button>}>
     <ol class="skill-dialog-steps">
@@ -41,7 +60,7 @@ export function SkillImportDialog(props: { onClose: () => void; gateway?: Gatewa
       <li><span>Copy the prompt and paste it into Claude or ChatGPT. For 24 hours, it can send skill files to your library. <strong>If you want to import specific skills, do not forget to customize the prompt to name them first.</strong></span></li>
       <li>Turn on the skills that you want. Imported skills stay off until you turn them on.</li>
     </ol>
-    <Show when={created()} fallback={<div class="skill-dialog-start"><Button variant="primary" icon="fa-solid fa-key" disabled={busy()} onClick={() => void run(async () => { const token = await createImportToken(gateway); if (disposed) return; setCreated(token); await refetch(); })}>Generate import token</Button></div>}>{(token) => <Show when={!addressProblem()} fallback={<p class="skill-dialog-status" role="alert">{addressProblem()} Revoke the token below, then generate a new one.</p>}><section class="skill-dialog-token" aria-label="New import token">
+    <Show when={created()} fallback={<div class="skill-dialog-start"><Button variant="primary" icon="fa-solid fa-key" disabled={busy() || unknown()} onClick={() => void run(async () => { const token = await createImportToken(gateway); if (disposed) return; setCreated(token); await refetch(); })}>Generate import token</Button></div>}>{(token) => <Show when={!addressProblem()} fallback={<p class="skill-dialog-status" role="alert">{addressProblem()} Revoke the token below, then generate a new one.</p>}><section class="skill-dialog-token" aria-label="New import token">
       <p class="skill-dialog-notice"><i class="fa-solid fa-triangle-exclamation" aria-hidden="true" />Copy the prompt now. The token shows only once. It expires {formatDate(token().expiresAt)}.</p>
       <div class="skill-dialog-field">
         <div class="skill-dialog-field-head"><span>Prompt to paste</span><Button variant="primary" icon={copied() === "prompt" ? "fa-solid fa-check" : "fa-regular fa-copy"} onClick={() => void copy("prompt", token().prompt)} disabled={busy()}>{copyLabel("prompt", "Copy prompt")}</Button></div>
@@ -54,14 +73,14 @@ export function SkillImportDialog(props: { onClose: () => void; gateway?: Gatewa
     </section></Show>}</Show>
     <section class="skill-dialog-section" aria-labelledby="skill-import-active">
       <h3 id="skill-import-active">Active import tokens</h3>
-      <Show when={tokens.error}><p class="skill-dialog-status" role="alert">Unable to load tokens. <button class="skill-dialog-link" onClick={() => void refetch()}>Retry</button></p></Show>
+      <Show when={tokens.error}><p class="skill-dialog-status" role="alert">Unable to load tokens. <button class="skill-dialog-link" onClick={() => void retryRead()}>Retry</button></p></Show>
       <Show when={tokens.loading}><p class="skill-dialog-status" role="status">Loading tokens…</p></Show>
       <Show when={!tokens.loading && !tokens.error}>
         <Show when={tokens()?.tokens.length} fallback={<p class="skill-dialog-status">No active tokens.</p>}>
           <ul class="skill-dialog-list">
             <For each={tokens()?.tokens}>{(token) => <li>
               <div><strong>Import token</strong><span>Expires {formatDate(token.expiresAt)}</span></div>
-              <Button icon="fa-solid fa-ban" aria-label={`Revoke import token ${token.id}`} disabled={busy()} onClick={() => void run(async () => { await revokeImportToken(token.id, gateway); if (disposed) return; if (created()?.id === token.id) setCreated(undefined); await refetch(); })}>Revoke</Button>
+              <Button icon="fa-solid fa-ban" aria-label={`Revoke import token ${token.id}`} disabled={busy() || unknown()} onClick={() => void run(async () => { await revokeImportToken(token.id, gateway); if (disposed) return; if (created()?.id === token.id) setCreated(undefined); await refetch(); })}>Revoke</Button>
             </li>}</For>
           </ul>
         </Show>

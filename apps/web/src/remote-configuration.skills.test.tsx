@@ -530,3 +530,256 @@ describe("skill administration of a chosen gateway", () => {
     expect(log().filter((line) => line.includes("/api/relay/gateways/"))).toEqual([]);
   });
 });
+
+it("reads versions after an uncertain restore before retry", async () => {
+  const path = `${east}/api/skills/same-id/versions`;
+  gateways.on("GET", path, { json: { versions: [{ id: "v-1", createdAt: "2026-01-01T00:00:00Z" }] } });
+  gateways.on("POST", `${path}/v-1/restore`, { status: 502, json: { error: "gateway_offline" } });
+  mount("/skills?gateway=east");
+  await vi.waitFor(() => expect(labelled("Actions for East Skill")).not.toBeNull());
+  labelled("Actions for East Skill")!.click(); await tick();
+  labelled("Versions of East Skill")!.click();
+  await vi.waitFor(() => expect(labelled("Restore version v-1")).not.toBeNull());
+  labelled("Restore version v-1")!.click();
+  await vi.waitFor(() => expect(document.body.textContent).toContain("The remote gateway is offline."));
+  await tick();
+  expect(log().filter(x => x === `GET ${path}`).length).toBeGreaterThan(1);
+});
+it("reads tokens after uncertain creation before retry", async () => {
+  const path = `${east}/api/skills/import-token`;
+  gateways.on("GET", path, { json: { tokens: [] } });
+  gateways.on("POST", path, { status: 502, json: { error: "gateway_offline" } });
+  mount("/skills?gateway=east");
+  await vi.waitFor(() => expect(button("Add skill")?.disabled).toBe(false));
+  button("Add skill")!.click(); await tick();
+  Array.from(container.querySelectorAll<HTMLElement>('[role="menuitem"]')).find(x => x.textContent?.includes("Import"))!.click();
+  await tick(); button("Generate import token")!.click();
+  await vi.waitFor(() => expect(document.body.textContent).toContain("The remote gateway is offline."));
+  await tick();
+  expect(log().filter(x => x === `GET ${path}`).length).toBeGreaterThan(1);
+});
+it("reads shares after an uncertain save before retry", async () => {
+  gateways.on("GET", `${east}/api/skills/recipients`, { json: { users: [] } });
+  gateways.on("PUT", `${east}/api/skills/same-id/shares`, { status: 502, json: { error: "gateway_offline" } });
+  mount("/skills?gateway=east");
+  await vi.waitFor(() => expect(labelled("Share East Skill")).not.toBeNull());
+  labelled("Share East Skill")!.click();
+  await vi.waitFor(() => expect(document.querySelector('[aria-label="General access"]')).not.toBeNull());
+  const general = document.querySelector<HTMLSelectElement>('[aria-label="General access"]')!;
+  general.value = "all"; general.dispatchEvent(new Event("change", { bubbles: true })); await tick();
+  const save = () => Array.from(document.querySelectorAll<HTMLButtonElement>("button")).find(x => x.textContent?.trim() === "Save")!;
+  await vi.waitFor(() => expect(save().disabled).toBe(false)); save().click();
+  await vi.waitFor(() => expect(document.body.textContent).toContain("The remote gateway is offline.")); await tick();
+  expect(log().filter(x => x === `GET ${east}/api/skills`).length).toBeGreaterThan(1);
+});
+it("rejects a public HTTP import address", async () => {
+  const { importAddressProblem } = await import("./lib/skill-import-url");
+  expect(importAddressProblem("POST http://skills.example.test/api/skills/import")).toBeDefined();
+});
+it.each([undefined, "east"])("keeps local HTTP but refuses remote HTTP for %s", async (gateway) => {
+  const scope = gateway ? east : "";
+  gateways.on("GET", `${scope}/api/skills/import-token`, { json: { tokens: [] } });
+  gateways.on("POST", `${scope}/api/skills/import-token`, { status: 201, json: { id: "synthetic", token: "synthetic", expiresAt: "2099-01-01T00:00:00Z", prompt: "POST http://skills.example.test/api/skills/import" } });
+  mount(gateway ? "/skills?gateway=east" : "/skills");
+  await vi.waitFor(() => expect(button("Add skill")?.disabled).toBe(false));
+  button("Add skill")!.click(); await tick();
+  Array.from(container.querySelectorAll<HTMLElement>('[role="menuitem"]')).find(x => x.textContent?.includes("Import"))!.click();
+  await tick(); button("Generate import token")!.click();
+  await vi.waitFor(() => expect(log()).toContain(`POST ${scope}/api/skills/import-token`));
+  await tick(); await tick();
+  const prompt = document.querySelector('[aria-label="Import prompt"]');
+  if (gateway) expect(prompt).toBeNull();
+  else expect(prompt).not.toBeNull();
+});
+it("blocks delete after failed recovery", async () => {
+  gateways.on("DELETE", `${east}/api/skills/same-id`, { status: 502, json: { error: "gateway_offline" } });
+  mount("/skills?gateway=east");
+  await vi.waitFor(() => expect(labelled("Delete East Skill")).not.toBeNull());
+  labelled("Delete East Skill")!.click(); await tick();
+  gateways.on("GET", `${east}/api/skills`, { status: 502, json: { error: "gateway_offline" } });
+  const confirm = () => Array.from(document.querySelectorAll<HTMLButtonElement>("button")).find(x => x.textContent?.trim() === "Delete")!;
+  confirm().click();
+  await vi.waitFor(() => expect(log().filter(x => x === `GET ${east}/api/skills`).length).toBe(2));
+  await tick(); await tick();
+  confirm().click(); await tick(); await tick();
+  expect(writes()).toHaveLength(1);
+});
+
+describe("recovery of uncertain dialog writes", () => {
+  const dialogButton = (name: string) => Array.from(document.querySelectorAll<HTMLButtonElement>("button")).find((item) => item.textContent?.trim() === name);
+  const versionsPath = `${east}/api/skills/same-id/versions`;
+  const openVersions = async () => {
+    gateways.on("GET", versionsPath, { json: { versions: [{ id: "v-1", createdAt: "2026-01-01T00:00:00Z" }] } });
+    mount("/skills?gateway=east");
+    await vi.waitFor(() => expect(labelled("Actions for East Skill")).not.toBeNull());
+    labelled("Actions for East Skill")!.click(); await tick();
+    labelled("Versions of East Skill")!.click();
+    await vi.waitFor(() => expect(labelled("Restore version v-1")).not.toBeNull());
+  };
+  const restoreButton = () => document.querySelector<HTMLButtonElement>('[aria-label="Restore version v-1"]')!;
+
+  it("keeps Restore off after a failed restore and a failed read, and repeats nothing", async () => {
+    await openVersions();
+    gateways.on("POST", `${versionsPath}/v-1/restore`, { status: 502, json: { error: "gateway_offline" } });
+    gateways.on("GET", versionsPath, { status: 502, json: { error: "gateway_offline" } });
+    restoreButton().click();
+    await vi.waitFor(() => expect(document.body.textContent).toContain("The remote gateway is offline."));
+    await vi.waitFor(() => expect(document.body.textContent).toContain("Retry"));
+    await tick();
+    expect(writes().filter((request) => request.url.endsWith("/restore"))).toHaveLength(1);
+    // No restore button shows while the list is unreadable, so no click can repeat the restore.
+    expect(document.querySelector('[aria-label="Restore version v-1"]')).toBeNull();
+    expect(writes().filter((request) => request.url.endsWith("/restore"))).toHaveLength(1);
+  });
+
+  it("turns Restore on again after the same list reads again", async () => {
+    await openVersions();
+    gateways.on("POST", `${versionsPath}/v-1/restore`, { status: 502, json: { error: "gateway_offline" } });
+    let failing = true;
+    gateways.on("GET", versionsPath, () => failing ? { status: 502, json: { error: "gateway_offline" } } : { json: { versions: [{ id: "v-1", createdAt: "2026-01-01T00:00:00Z" }, { id: "v-2", createdAt: "2026-01-02T00:00:00Z" }] } });
+    restoreButton().click();
+    await vi.waitFor(() => expect(Array.from(document.querySelectorAll("button")).some((item) => item.textContent?.trim() === "Retry")).toBe(true));
+    failing = false;
+    dialogButton("Retry")!.click();
+    await vi.waitFor(() => expect(document.querySelector('[aria-label="Restore version v-2"]')).not.toBeNull());
+    expect(restoreButton().disabled).toBe(false);
+  });
+
+  it("keeps token creation off after a failed creation and a failed read, then recovers with Retry", async () => {
+    const path = `${east}/api/skills/import-token`;
+    gateways.on("GET", path, { json: { tokens: [] } });
+    mount("/skills?gateway=east");
+    await vi.waitFor(() => expect(button("Add skill")?.disabled).toBe(false));
+    button("Add skill")!.click(); await tick();
+    Array.from(container.querySelectorAll<HTMLElement>('[role="menuitem"]')).find((item) => item.textContent?.includes("Import"))!.click();
+    await tick();
+    gateways.on("POST", path, { status: 502, json: { error: "gateway_offline" } });
+    let failing = true;
+    gateways.on("GET", path, () => failing ? { status: 502, json: { error: "gateway_offline" } } : { json: { tokens: [] } });
+    const generate = () => dialogButton("Generate import token")!;
+    generate().click();
+    await vi.waitFor(() => expect(document.body.textContent).toContain("Unable to load tokens."));
+    expect(generate().disabled).toBe(true);
+    generate().click(); await tick();
+    expect(writes().filter((request) => request.url.endsWith("/import-token"))).toHaveLength(1);
+    failing = false;
+    dialogButton("Retry")!.click();
+    await vi.waitFor(() => expect(generate().disabled).toBe(false));
+  });
+
+  it("keeps revoke off after a failed revoke and a failed read", async () => {
+    const path = `${east}/api/skills/import-token`;
+    gateways.on("GET", path, { json: { tokens: [{ id: "t-1", createdAt: "2026-01-01T00:00:00Z", expiresAt: "2099-01-01T00:00:00Z" }] } });
+    mount("/skills?gateway=east");
+    await vi.waitFor(() => expect(button("Add skill")?.disabled).toBe(false));
+    button("Add skill")!.click(); await tick();
+    Array.from(container.querySelectorAll<HTMLElement>('[role="menuitem"]')).find((item) => item.textContent?.includes("Import"))!.click();
+    await vi.waitFor(() => expect(document.querySelector('[aria-label="Revoke import token t-1"]')).not.toBeNull());
+    gateways.on("DELETE", `${path}/t-1`, { status: 502, json: { error: "gateway_offline" } });
+    gateways.on("GET", path, { status: 502, json: { error: "gateway_offline" } });
+    document.querySelector<HTMLButtonElement>('[aria-label="Revoke import token t-1"]')!.click();
+    await vi.waitFor(() => expect(document.body.textContent).toContain("Unable to load tokens."));
+    expect(writes().filter((request) => request.method === "DELETE")).toHaveLength(1);
+    expect(dialogButton("Generate import token")!.disabled).toBe(true);
+  });
+
+  const openShare = async (shares: unknown[] = []) => {
+    gateways.on("GET", `${east}/api/skills`, { json: groups(skill("same-id", "East Skill", { shares })) });
+    gateways.on("GET", `${east}/api/skills/recipients`, { json: { users: [{ id: "u-1", name: "Una", email: "una@example.test" }] } });
+    mount("/skills?gateway=east");
+    await vi.waitFor(() => expect(labelled("Share East Skill")).not.toBeNull());
+    labelled("Share East Skill")!.click();
+    await vi.waitFor(() => expect(document.querySelector('[aria-label="General access"]')).not.toBeNull());
+  };
+  const setGeneral = async (value: string) => {
+    const general = document.querySelector<HTMLSelectElement>('[aria-label="General access"]')!;
+    general.value = value; general.dispatchEvent(new Event("change", { bubbles: true })); await tick();
+  };
+
+  it("replaces the share draft with the shares that the recovery read returns", async () => {
+    await openShare();
+    await setGeneral("all");
+    // The remote saved the change but the answer failed. The read shows the saved shares.
+    gateways.on("PUT", `${east}/api/skills/same-id/shares`, { status: 502, json: { error: "gateway_offline" } });
+    gateways.on("GET", `${east}/api/skills`, { json: groups(skill("same-id", "East Skill", { shares: [{ kind: "all", mode: "read" }] })) });
+    const readsBefore = log().filter((entry) => entry === `GET ${east}/api/skills`).length;
+    dialogButton("Save")!.click();
+    await vi.waitFor(() => expect(log().filter((entry) => entry === `GET ${east}/api/skills`).length).toBeGreaterThan(readsBefore));
+    await vi.waitFor(() => expect(document.querySelector<HTMLSelectElement>('[aria-label="General access"]')!.value).toBe("all"));
+    // The draft now equals the saved state, so a second Save has nothing to send.
+    await vi.waitFor(() => expect(dialogButton("Save")!.disabled).toBe(true));
+    dialogButton("Save")!.click(); await tick();
+    expect(writes().filter((request) => request.method === "PUT")).toHaveLength(1);
+  });
+
+  it("drops a draft change that the recovery read does not show", async () => {
+    await openShare();
+    await setGeneral("all");
+    gateways.on("PUT", `${east}/api/skills/same-id/shares`, { status: 502, json: { error: "gateway_offline" } });
+    const readsBefore = log().filter((entry) => entry === `GET ${east}/api/skills`).length;
+    dialogButton("Save")!.click();
+    await vi.waitFor(() => expect(log().filter((entry) => entry === `GET ${east}/api/skills`).length).toBeGreaterThan(readsBefore));
+    await vi.waitFor(() => expect(document.querySelector<HTMLSelectElement>('[aria-label="General access"]')!.value).toBe("restricted"));
+  });
+
+  it("keeps Save off after a failed save and a failed read, then turns it on after Read shares works", async () => {
+    await openShare();
+    await setGeneral("all");
+    gateways.on("PUT", `${east}/api/skills/same-id/shares`, { status: 502, json: { error: "gateway_offline" } });
+    let failing = true;
+    gateways.on("GET", `${east}/api/skills`, () => failing ? { status: 502, json: { error: "gateway_offline" } } : { json: groups(skill("same-id", "East Skill")) });
+    dialogButton("Save")!.click();
+    await vi.waitFor(() => expect(dialogButton("Read shares")).toBeDefined());
+    expect(dialogButton("Save")!.disabled).toBe(true);
+    dialogButton("Save")!.click(); await tick();
+    expect(writes().filter((request) => request.method === "PUT")).toHaveLength(1);
+    failing = false;
+    dialogButton("Read shares")!.click();
+    await vi.waitFor(() => expect(dialogButton("Read shares")).toBeUndefined());
+    await setGeneral("all");
+    await vi.waitFor(() => expect(dialogButton("Save")!.disabled).toBe(false));
+  });
+
+  it("ignores a recovery read that ends after the share dialog closes", async () => {
+    await openShare();
+    await setGeneral("all");
+    gateways.on("PUT", `${east}/api/skills/same-id/shares`, { status: 502, json: { error: "gateway_offline" } });
+    let release: (() => void) | undefined;
+    gateways.on("GET", `${east}/api/skills`, () => new Promise<FakeAnswer>((resolve) => { release = () => resolve({ json: groups(skill("same-id", "East Skill")) }); }));
+    dialogButton("Save")!.click();
+    await vi.waitFor(() => expect(release).toBeDefined());
+    dispose?.(); dispose = undefined;
+    expect(() => release!()).not.toThrow();
+    await tick();
+    expect(writes().filter((request) => request.method === "PUT")).toHaveLength(1);
+  });
+});
+
+describe("remote import prompt address", () => {
+  const openImport = async (prompt: string) => {
+    gateways.on("GET", `${east}/api/skills/import-token`, { json: { tokens: [] } });
+    gateways.on("POST", `${east}/api/skills/import-token`, { status: 201, json: { id: "synthetic", token: "synthetic-token", expiresAt: "2099-01-01T00:00:00Z", prompt } });
+    mount("/skills?gateway=east");
+    await vi.waitFor(() => expect(button("Add skill")?.disabled).toBe(false));
+    button("Add skill")!.click(); await tick();
+    Array.from(container.querySelectorAll<HTMLElement>('[role="menuitem"]')).find((item) => item.textContent?.includes("Import"))!.click();
+    await tick();
+    Array.from(document.querySelectorAll<HTMLButtonElement>("button")).find((item) => item.textContent?.trim() === "Generate import token")!.click();
+    await vi.waitFor(() => expect(log()).toContain(`POST ${east}/api/skills/import-token`));
+    await tick(); await tick();
+  };
+
+  it("shows the prompt for a public HTTPS address", async () => {
+    await openImport("POST https://skills.example.test/api/skills/import");
+    expect(document.querySelector('[aria-label="Import prompt"]')).not.toBeNull();
+  });
+
+  it("shows a configuration error and no secret for a public HTTP address", async () => {
+    await openImport("POST http://skills.example.test/api/skills/import");
+    expect(document.querySelector('[aria-label="Import prompt"]')).toBeNull();
+    expect(document.querySelector('[aria-label="Import token"]')).toBeNull();
+    expect(document.body.textContent).toContain("server.baseUrl");
+    expect(document.body.textContent).toContain("HTTPS");
+    expect(document.body.textContent).not.toContain("synthetic-token");
+  });
+});

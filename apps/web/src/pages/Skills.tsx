@@ -1,6 +1,6 @@
 import { For, Show, createEffect, createMemo, createResource, createSignal, on, onCleanup, onMount } from "solid-js";
 import { A, useNavigate, useParams } from "@solidjs/router";
-import { fetchSkills, fetchSkill, setSkillEnabled, uploadSkill, fetchSkillRecipients, saveSkillShares, deleteSkill, skillPath, skillsPath, SkillRequestError, type SkillRow } from "../api/skills";
+import { fetchSkills, fetchSkill, setSkillEnabled, uploadSkill, fetchSkillRecipients, saveSkillShares, deleteSkill, skillPath, skillsPath, SkillRequestError, type SkillRow, type SkillShare } from "../api/skills";
 import type { GatewayName } from "../api/gateway";
 import { missingGatewayText, useGatewayChoice } from "../lib/gateway-choice";
 import { useRequester } from "../lib/requester";
@@ -66,6 +66,14 @@ function SkillsView(props: { gateway?: GatewayName; id?: string }) {
   const settle = async () => {
     try { await refetch(); } catch { /* The error state of the resources tells the result. */ }
     if (!disposed) setUnknown(Boolean(skills.error || detail.error));
+  };
+  // Reads the shares of one skill from its own gateway. The share dialog uses it to recover after a failed save.
+  const reloadShares = async (id: string): Promise<SkillShare[]> => {
+    const list = await fetchSkills(gateway);
+    const row = [...list.mine, ...list.sharedWithMe].find((item) => item.id === id);
+    if (!row) throw new Error("The skill is not in the list.");
+    if (!disposed) void refetch().catch(() => undefined);
+    return row.shares ?? [];
   };
   const retry = async () => { setBusy("read"); await settle(); if (!disposed) setBusy(undefined); };
   onMount(() => {
@@ -188,11 +196,13 @@ function SkillsView(props: { gateway?: GatewayName; id?: string }) {
     <input ref={(element) => { folderInput = element; element.setAttribute("webkitdirectory", ""); }} aria-label="Skill folder files" type="file" multiple hidden onChange={(event) => selected(event, true)} />
     <Show when={replacement()}>{(item) => <ConfirmDialog title="Replace existing skill" description="Replace the content of your skill? Sharing and enable settings will be kept, and the current content saved in version history." confirmLabel="Replace" error={error()} onCancel={() => setReplacement(undefined)} onConfirm={() => upload(item().files, item().folder, item().id)} />}</Show>
     <Show when={choosingReplacement()}>{(row) => <Modal title={`Update ${row().name}`} onClose={() => setChoosingReplacement(undefined)}><p class="skill-dialog-intro">Upload a new version with the same skill name. Sharing and enable settings stay the same, and the current content goes to version history.</p><div class="skill-dialog-choices"><Button icon="fa-regular fa-file-zipper" onClick={() => { setReplaceTarget(row().id); setChoosingReplacement(undefined); zipInput?.click(); }}>Update from zip</Button><Button icon="fa-regular fa-folder-open" onClick={() => { setReplaceTarget(row().id); setChoosingReplacement(undefined); folderInput?.click(); }}>Update from folder</Button></div></Modal>}</Show>
-    <Show when={managing()}>{(row) => <DashboardAccessDialog dashboard={{ id: row().id, title: row().name, shares: row().shares }} gateway={gateway} loadRecipients={() => fetchSkillRecipients(gateway)} saveShares={(id, shares) => saveSkillShares(id, shares, gateway)} platformReadOnly note="People with access can turn this skill on for their own agents. Editors can change its content. Only you can share or delete it." onClose={() => setManaging(undefined)} onSaved={async () => { await refetch(); }} />}</Show>
+    <Show when={managing()}>{(row) => <DashboardAccessDialog dashboard={{ id: row().id, title: row().name, shares: row().shares }} gateway={gateway} loadRecipients={() => fetchSkillRecipients(gateway)} saveShares={(id, shares) => saveSkillShares(id, shares, gateway)} reload={() => reloadShares(row().id)} platformReadOnly note="People with access can turn this skill on for their own agents. Editors can change its content. Only you can share or delete it." onClose={() => setManaging(undefined)} onSaved={async () => { await refetch(); }} />}</Show>
     <Show when={importing()}><SkillImportDialog gateway={gateway} onClose={() => setImporting(false)} /></Show>
     <Show when={createAgents()}>{(agents) => <Modal title="Create skill: choose an agent" onClose={() => setCreateAgents(undefined)} footer={<Button onClick={() => setCreateAgents(undefined)}>Cancel</Button>}><p>Who do you want to create this skill with?</p><For each={agents()} fallback={<p>No agents with skill support are available. Ask your operator for an agent that supports skills, or upload or import a skill instead.</p>}>{(agent) => <Button onClick={() => createChat(agent.id)}>{agent.name}</Button>}</For></Modal>}</Show>
     <Show when={versions()}>{(row) => <SkillVersionsDialog skill={row()} gateway={gateway} onClose={() => setVersions(undefined)} onRestored={async () => { await refetch(); }} />}</Show>
     <Show when={deleting()}>{(row) => <ConfirmDialog title="Delete skill" description={`Delete ${row().name}, its saved versions and all shares? This cannot be undone.`} confirmLabel="Delete" danger error={error()} onCancel={() => setDeleting(undefined)} onConfirm={async () => {
+      // The open confirmation obeys the unknown state of the page. After a failed delete and a failed read, no click repeats the delete.
+      if (unknown()) { setError("The skill list could not be read after the error. Use Retry before you delete again."); return; }
       let failed = false;
       try { await deleteSkill(row().id, gateway); if (disposed) return; setDeleting(undefined); if (params.id) navigate(skillsPath(gateway)); else await refetch(); }
       catch (cause) { failed = true; if (!disposed) setError(cause instanceof Error ? cause.message : "Unable to delete skill."); }
