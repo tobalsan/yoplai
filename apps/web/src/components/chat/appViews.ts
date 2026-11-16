@@ -39,7 +39,16 @@ export function chatAppViewCalls(session: ChatTranscriptSession, mode: HistoryVi
     : [])];
 }
 
-export type DashboardFrame = { kind: "dashboard"; id: string; title: string };
+/** A dashboard of a linked remote gateway carries its `gateway` name, so the host prepares a fresh view for it. */
+export type DashboardFrame = { kind: "dashboard"; id: string; title: string; gateway?: string; query?: string };
+function savedFrame(frame: DashboardFrame): NonNullable<SavedAppViews["tabs"][number]["frame"]> {
+  return {
+    id: frame.id,
+    title: frame.title,
+    ...(frame.gateway ? { gateway: frame.gateway } : {}),
+    ...(frame.gateway && frame.query ? { query: frame.query } : {}),
+  };
+}
 export type AppViewTab = AppView | { key: string; frame: DashboardFrame };
 
 export type AppViews = ReturnType<typeof createAppViews>;
@@ -136,7 +145,7 @@ export function createAppViews(sessionId: Accessor<string | null | undefined>, c
     if (!session || !persistence.ready()) return;
     pendingSave = false;
     save(persistence.agentId(), session, {
-      tabs: tabs().map((tab) => ({ key: tab.key, ...("frame" in tab ? { frame: { id: tab.frame.id, title: tab.frame.title } } : {}) })),
+      tabs: tabs().map((tab) => ({ key: tab.key, ...("frame" in tab ? { frame: savedFrame(tab.frame) } : {}) })),
       active: activeKey(),
     });
   }
@@ -225,7 +234,7 @@ export function createAppViews(sessionId: Accessor<string | null | undefined>, c
     },
     openFrame(frame: DashboardFrame) {
       selectedScope = chatScope?.();
-      const key = viewKey({ server: "yoplai", resourceUri: "ui://yoplai/dashboard", key: frame.id });
+      const key = viewKey({ server: "yoplai", resourceUri: "ui://yoplai/dashboard", key: frame.gateway ? `${frame.gateway}\n${frame.id}` : frame.id });
       if (!isTab(key)) setSelections((current) => [...current, { session: sessionId(), tab: { key, frame }, order: [] }]);
       setActiveKey(key);
       persist();

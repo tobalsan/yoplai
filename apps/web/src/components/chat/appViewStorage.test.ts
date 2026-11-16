@@ -19,6 +19,20 @@ describe("saved chat panel tabs", () => {
     expect(load("birch", "morning")).toBeUndefined();
   });
 
+  it("keeps the gateway and query of a remote dashboard frame, and never a handle", () => {
+    save("maple", "morning", { tabs: [{ key: "east\nlarge", frame: { id: "garden", title: "Garden", gateway: "east", query: "week=3" } }] });
+    expect(load("maple", "morning")).toEqual({ tabs: [{ key: "east\nlarge", frame: { id: "garden", title: "Garden", gateway: "east", query: "week=3" } }] });
+    expect(sessionStorage.getItem("yoplai.chat-panel-tabs.v1:maple:morning")).not.toMatch(/handle|instance/);
+  });
+
+  it("ignores a stored frame with an invalid gateway or query", () => {
+    const key = "yoplai.chat-panel-tabs.v1:maple:morning";
+    for (const frame of [{ gateway: "" }, { gateway: 4 }, { gateway: "east", query: 5 }]) {
+      sessionStorage.setItem(key, JSON.stringify({ tabs: [{ key: "k", frame: { id: "garden", title: "Garden", ...frame } }] }));
+      expect(load("maple", "morning")).toBeUndefined();
+    }
+  });
+
   it("removes a chat's entry after its last tab closes without changing another chat", () => {
     save("maple", "morning", { tabs: [{ key: "notes" }] });
     save("maple", "evening", { tabs: [{ key: "sketch" }] });

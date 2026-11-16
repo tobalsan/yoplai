@@ -27,6 +27,7 @@ import { McpServerDetails } from "./pages/McpServerDetails";
 import { ChatProject } from "./pages/ChatProject";
 import { Teams } from "./pages/Teams";
 import { Dashboards } from "./pages/Dashboards";
+import { RemoteDashboard } from "./pages/RemoteDashboard";
 import { Skills } from "./pages/Skills";
 import { AccountConnections } from "./pages/AccountConnections";
 import { SessionArchive } from "./pages/SessionArchive";
@@ -286,6 +287,10 @@ export default function App() {
       <Route
         path="/dashboards"
         component={() => <GuardedRoute><LeftNavShell><Dashboards /></LeftNavShell></GuardedRoute>}
+      />
+      <Route
+        path="/remote-dashboards/:gateway/:id"
+        component={() => <GuardedRoute><LeftNavShell><RemoteDashboard /></LeftNavShell></GuardedRoute>}
       />
       <Route path={["/skills", "/skills/:id"]} component={() => <GuardedRoute><LeftNavShell><Skills /></LeftNavShell></GuardedRoute>} />
       <Route path="/admin/skills" component={() => <GuardedRoute><LeftNavShell><Suspense><LazyAdminSkillsPage /></Suspense></LeftNavShell></GuardedRoute>} />

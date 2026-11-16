@@ -4,13 +4,29 @@ import { loadMcpAppData } from "../../api/mcp-apps";
 import type { DashboardFrame } from "./appViews";
 import { DashboardAnnotationsContext } from "./dashboardAnnotations";
 import frameViewStyles from "./FrameView.css?inline";
+import { RemoteFrameView } from "./RemoteFrameView";
 
-export function FrameView(props: {
+export type FrameViewProps = {
   target: DashboardFrame;
   mode: "inline" | "panel";
   onExpand?: () => void;
   onCollapse?: () => void;
-}) {
+  /** The frame fills a public route of its own. A remote frame then offers Chat. */
+  standalone?: boolean;
+  /** A remote dashboard link of the same gateway. Without it, the frame shows the new dashboard itself. */
+  onNavigate?: (next: { id: string; query: string }) => void;
+};
+
+/** A dashboard with a `gateway` comes from a linked remote gateway and goes through the trusted host. */
+export function FrameView(props: FrameViewProps) {
+  return (
+    <Show when={props.target.gateway} fallback={<LocalFrameView {...props} />}>
+      <RemoteFrameView {...props} />
+    </Show>
+  );
+}
+
+function LocalFrameView(props: FrameViewProps) {
   let frame: HTMLIFrameElement | undefined;
   const annotation = useContext(DashboardAnnotationsContext)?.frame(() => frame);
   const url = () => `/d/${encodeURIComponent(props.target.id)}`;

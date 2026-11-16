@@ -698,10 +698,22 @@ export function ChatView() {
     requestAnimationFrame(() => textareaRef?.focus());
   };
 
-  onMount(() => {
-    if (!dashboardFromUrl) return;
-    appViews.openFrame({ kind: "dashboard", id: dashboardFromUrl, title: "Dashboard" });
+  const openDashboardFromUrl = (gateway?: string) => {
+    appViews.openFrame({ kind: "dashboard", id: dashboardFromUrl!, title: "Dashboard", ...(gateway ? { gateway } : {}) });
     setSearchParams({ dashboard: undefined, new: undefined }, { replace: true });
+  };
+  // A remote agent ID has the form `name@gateway`. Its dashboard belongs to the gateway that the loaded agent names.
+  const remoteDashboardPending = () => !!dashboardFromUrl && params.agentId.includes("@");
+  onMount(() => {
+    if (dashboardFromUrl && !remoteDashboardPending()) openDashboardFromUrl();
+  });
+  let remoteDashboardOpened = false;
+  createEffect(() => {
+    if (!remoteDashboardPending() || remoteDashboardOpened || agent.loading) return;
+    remoteDashboardOpened = true;
+    // A failed agent read opens nothing: the dashboard gateway would be a guess.
+    if (agent.error) setSearchParams({ dashboard: undefined, new: undefined }, { replace: true });
+    else openDashboardFromUrl(agent()?.gateway);
   });
 
   let draftMessageUsed = false;

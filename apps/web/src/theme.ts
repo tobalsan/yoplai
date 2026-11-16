@@ -10,7 +10,7 @@ function getInitialTheme(): Theme {
     localStorage.setItem("yoplai-theme", legacy);
     return legacy;
   }
-  return window.matchMedia("(prefers-color-scheme: light)").matches
+  return window.matchMedia?.("(prefers-color-scheme: light)").matches
     ? "light"
     : "dark";
 }

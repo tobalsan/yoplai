@@ -1,7 +1,7 @@
 # Remote configuration transport
 
-Status: rounds 3a and 3b1 supply the transport only. The next round must connect the pages and test the browser flows.
-The full remote configuration batch is not complete.
+Status: rounds 3a and 3b1 supply the transport. Round 3b2 adds the trusted dashboard host and its chat wiring.
+The configuration pages, OAuth popups, and the browser confinement checks are not built yet. The full remote configuration batch is not complete.
 
 ## Target selection
 
@@ -206,8 +206,9 @@ The remote add can succeed before the relay rejects its response.
 
 ## Dashboard viewer transport
 
-Round 3b1 adds the backend for remote dashboards and a small trusted shell. It does not add the host page, the configuration pages, popups, or the frame wiring of the chat page.
-The next worker builds those parts from this contract. The remote configuration batch is not complete.
+Round 3b1 adds the backend for remote dashboards and a small trusted shell.
+Round 3b2 adds the host page and the frame wiring of the chat page. See [Web host](#web-host). It adds no configuration pages or popups.
+The remote configuration batch is not complete.
 
 The linked bearer never reaches the browser. The remote edit token authorizes every write.
 JSON dashboard routes (list, recipients, pin, sharing, claim, delete) keep using `/api/relay/gateways/:name/api/dashboards...`.
@@ -451,6 +452,31 @@ Ordinary pages and pages that are not framed post nothing.
 Dashboard IDs have 32 base64url characters. Pages load the local `/d-assets` kit. The embed asset version `v3` must match.
 Assets answer `Origin: null` with `Access-Control-Allow-Origin: *` and no credentials. Other API routes keep their CORS rules.
 The page uses the theme of the prepare request unless the dashboard sets `data-theme`.
+
+### Web host
+
+The web app builds the host contract above in `apps/web`. Remote HTML never enters the web DOM.
+
+| Part | File |
+| --- | --- |
+| Public route `/remote-dashboards/:gateway/:id` | `pages/RemoteDashboard.tsx`, mounted in `App.tsx` |
+| Host lifecycle | `components/chat/remoteDashboardHost.ts` |
+| Remote `FrameView` | `components/chat/RemoteFrameView.tsx`, chosen by `FrameView` when `target.gateway` is set |
+| Prepare and read client | `api/dashboard-views.ts` |
+| Route, Chat target, and link rules | `lib/remote-dashboard.ts` |
+| Annotation entry | `remoteFrame` in `components/chat/dashboardAnnotations.ts` |
+
+- The public route holds the gateway, the dashboard ID, and the clean query. It holds no handle, instance, or token. Copy and Open in browser use only this route.
+- The host keeps the handle and the instance in memory. It never writes them to a URL, storage, a log, or the clipboard. Saved chat tabs store only the gateway, the dashboard ID, the title, and the query.
+- Each preparation makes a new generation and a new shell iframe. Reload, a link of the same gateway, a history step, a query change, a gateway change, a theme change, and a cached page restoration all prepare a new view. Disposal and replacement abort the prepare and read requests and ignore every late result of an older generation.
+- Controls stay off until the shell sent `renderer-loaded` and `renderer-ready`, the read answered `delivered` for the same gateway and dashboard, and the view has not expired. Any other state shows an error and Reload: a second load, an early ready, an `ended` event, a read failure, a prepare timeout (40 seconds), and a readiness timeout (30 seconds). Nothing that arrives later clears a failure.
+- Chat access, the agent, and annotation rights come from the checked `meta`. The Chat link and the annotation target use `meta.agentId` plus the host gateway. The standalone route shows Chat. A frame in a chat panel shows Annotate when the chat agent equals that checked agent.
+- Annotation messages reach the chat staging only when `meta.annotation` is true. The host replaces the page ID and the agent with the checked values. Staged notes and the page announcement of an ended or replaced instance are dropped. A note still needs an explicit send from the chat composer.
+- A link request resolves against the checked dashboard. A viewer path of the same gateway prepares a new view. An external HTTP or HTTPS link shows its destination and opens with `noopener,noreferrer` only after a click on Open link. Executable schemes, credentials, and addresses of this machine or network never open.
+- `ChatView` opens `?dashboard=<id>` for a remote agent (`name@gateway`) through the host. It waits for the loaded agent and uses the `gateway` of that agent.
+- Dashboards that a remote chat shows through tool calls still use the local MCP app route, which the relay does not forward. They do not open yet.
+
+Tests: `components/chat/RemoteFrameView.test.tsx`, `lib/remote-dashboard.test.ts`, `api/dashboard-views.test.ts`, `App.remote-dashboard.test.tsx` (actual router), and `components/ChatView.remote-dashboard.test.tsx`. They use fake shell windows and a fake fetch. Browser confinement still needs the real browser gate.
 
 ### Safe fixtures and limits
 

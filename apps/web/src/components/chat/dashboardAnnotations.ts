@@ -17,6 +17,8 @@ type PageContext = { id: string; slug: string; agentId: string; title: string; p
 type Frame = {
   window: () => Window | null | undefined;
   page: Accessor<PageContext | undefined>;
+  /** A remote dashboard reaches its renderer through its trusted shell, not a window of its own. */
+  send?: (message: Record<string, unknown>) => void;
 };
 
 /** A staged note, stamped with the page the frame showed when it arrived. */
@@ -32,6 +34,9 @@ export type DashboardNote = {
 };
 
 type StagedNote = DashboardNote & { frame: Frame };
+
+/** The checked target of a remote dashboard view. It comes from gateway metadata and host state, never from a renderer message. */
+export type RemoteAnnotationTarget = { id: string; agentId: string };
 
 export type DashboardFrameAnnotation = {
   /** The frame announced a page of this chat's agent. */
@@ -113,8 +118,11 @@ export function createDashboardAnnotations(agentId: Accessor<string>) {
     return [...groups.values()].flat();
   });
 
-  const post = (frame: Frame, type: string, body: Record<string, unknown> = {}) =>
-    frame.window()?.postMessage({ channel: CHANNEL, type, ...body }, "*");
+  const post = (frame: Frame, type: string, body: Record<string, unknown> = {}) => {
+    const message = { channel: CHANNEL, type, ...body };
+    if (frame.send) frame.send(message);
+    else frame.window()?.postMessage(message, "*");
+  };
 
   const activate = (next: Frame | null) => {
     const previous = active();
@@ -122,6 +130,33 @@ export function createDashboardAnnotations(agentId: Accessor<string>) {
     if (previous) post(previous, "set", { on: false });
     setActive(next);
     if (next) post(next, "set", { on: true });
+  };
+
+  /**
+   * Applies one message of a dashboard page. The caller has already proved the
+   * sender. `setPage` stores the page announcement of a `ready` message.
+   */
+  const receive = (
+    entry: Frame,
+    available: () => boolean,
+    setPage: (page: PageContext | undefined) => void,
+    data: Record<string, unknown>
+  ) => {
+    if (data.type === "ready") {
+      setPage(readPage(data));
+      if (active() !== entry) return;
+      // A reloaded or navigated page starts dormant: re-send the mode.
+      if (available()) post(entry, "set", { on: true });
+      else activate(null);
+    } else if (data.type === "exit" && active() === entry) {
+      activate(null);
+    } else if (data.type === "note" && active() === entry && available()) {
+      const note = readNote(data, entry.page()!, entry);
+      if (!note || staged().some((existing) => existing.id === note.id)) return;
+      // Over the limit, drop the marker the page already drew.
+      if (staged().length >= MAX_NOTES) post(entry, "remove", { id: note.id });
+      else setStaged((current) => [...current, note]);
+    }
   };
 
   /** Connect one rendered dashboard iframe; call inside its component. */
@@ -133,21 +168,7 @@ export function createDashboardAnnotations(agentId: Accessor<string>) {
       const source = entry.window();
       const data: unknown = event.data;
       if (!source || event.source !== source || !isRecord(data) || data.channel !== CHANNEL) return;
-      if (data.type === "ready") {
-        setPage(readPage(data));
-        if (active() !== entry) return;
-        // A reloaded or navigated page starts dormant: re-send the mode.
-        if (available()) post(entry, "set", { on: true });
-        else activate(null);
-      } else if (data.type === "exit" && active() === entry) {
-        activate(null);
-      } else if (data.type === "note" && active() === entry && available()) {
-        const note = readNote(data, page()!, entry);
-        if (!note || staged().some((existing) => existing.id === note.id)) return;
-        // Over the limit, drop the marker the page already drew.
-        if (staged().length >= MAX_NOTES) post(entry, "remove", { id: note.id });
-        else setStaged((current) => [...current, note]);
-      }
+      receive(entry, available, setPage, data);
     };
     frames.add(entry);
     window.addEventListener("message", listener);
@@ -160,6 +181,46 @@ export function createDashboardAnnotations(agentId: Accessor<string>) {
       available,
       active: () => active() === entry,
       toggle: () => activate(active() === entry || !available() ? null : entry),
+    };
+  };
+
+  /**
+   * Connect one remote dashboard view; call inside its component. The trusted
+   * host proves the sender and the instance, and calls `receive` only for a
+   * view whose checked metadata allows annotation. The page and the agent of
+   * every note come from `target`: the page announcement supplies only text.
+   * `endInstance` drops the announcement and the staged notes of the ended view.
+   */
+  const remoteFrame = (options: {
+    target: Accessor<RemoteAnnotationTarget | undefined>;
+    send: (message: Record<string, unknown>) => void;
+  }): DashboardFrameAnnotation & { receive(data: Record<string, unknown>): void; endInstance(): void } => {
+    const [claim, setClaim] = createSignal<PageContext>();
+    const page = createMemo<PageContext | undefined>(() => {
+      const target = options.target();
+      const announced = claim();
+      return target && announced ? { ...announced, id: target.id, agentId: target.agentId } : undefined;
+    });
+    const entry: Frame = { window: () => undefined, page, send: options.send };
+    const available = () => page()?.agentId === agentId();
+    frames.add(entry);
+    const endInstance = () => {
+      setClaim(undefined);
+      if (active() === entry) setActive(null);
+      setStaged((current) => current.filter((note) => note.frame !== entry));
+    };
+    onCleanup(() => {
+      frames.delete(entry);
+      endInstance();
+    });
+    return {
+      available,
+      active: () => active() === entry,
+      toggle: () => activate(active() === entry || !available() ? null : entry),
+      receive: (data) => {
+        if (data.channel === CHANNEL) receive(entry, available, setClaim, data);
+      },
+      endInstance,
     };
   };
 
@@ -198,6 +259,7 @@ export function createDashboardAnnotations(agentId: Accessor<string>) {
 
   return {
     frame,
+    remoteFrame,
     notes: notes as Accessor<DashboardNote[]>,
     remove,
     compose,

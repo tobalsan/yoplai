@@ -54,6 +54,30 @@ describe("app views", () => {
     });
   });
 
+  it("keeps a remote dashboard separate from a local one with the same ID, saves its gateway, and restores it", () => {
+    createRoot((dispose) => {
+      const views = createAppViews(() => "session", () => [], undefined, { agentId: () => "maple@east", ready: () => true });
+      views.openFrame({ kind: "dashboard", id: "garden", title: "Dashboard" });
+      views.openFrame({ kind: "dashboard", id: "garden", title: "Dashboard", gateway: "east", query: "week=3" });
+      expect(views.tabs().map((tab) => tab.key)).toEqual([
+        "yoplai\nui://yoplai/dashboard\ngarden",
+        "yoplai\nui://yoplai/dashboard\neast\ngarden",
+      ]);
+      const saved = load("maple@east", "session");
+      expect(saved?.tabs.map((tab) => tab.frame)).toEqual([
+        { id: "garden", title: "Dashboard" },
+        { id: "garden", title: "Dashboard", gateway: "east", query: "week=3" },
+      ]);
+      const restored = createAppViews(() => "session", () => []);
+      restored.restore(saved!);
+      expect(restored.tabs().map((tab) => ("frame" in tab ? tab.frame : undefined))).toEqual([
+        { kind: "dashboard", id: "garden", title: "Dashboard" },
+        { kind: "dashboard", id: "garden", title: "Dashboard", gateway: "east", query: "week=3" },
+      ]);
+      dispose();
+    });
+  });
+
   it("merges saved tabs around a pre-open dashboard, keeps its active key and appends other open tabs", () => {
     createRoot((dispose) => {
       const [calls, setCalls] = createSignal([fileCall("a", "a.md"), fileCall("b", "b.md"), fileCall("c", "c.md")]);
