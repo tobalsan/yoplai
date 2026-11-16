@@ -207,6 +207,27 @@ describe("threadit tools: requests", () => {
       body: { body: "fixed" },
     },
     {
+      tool: "edit_message",
+      args: { message_id: 7, attachment_ids: [3, 4] },
+      method: "PATCH",
+      path: "/api/messages/7",
+      body: { attachment_ids: [3, 4] },
+    },
+    {
+      tool: "edit_message",
+      args: { message_id: 7, body: "fixed", attachment_ids: [3] },
+      method: "PATCH",
+      path: "/api/messages/7",
+      body: { body: "fixed", attachment_ids: [3] },
+    },
+    {
+      tool: "edit_message",
+      args: { message_id: 7, attachment_ids: [] },
+      method: "PATCH",
+      path: "/api/messages/7",
+      body: { attachment_ids: [] },
+    },
+    {
       tool: "vote",
       args: { message_id: 7, delta: -5 },
       method: "POST",
@@ -335,6 +356,19 @@ describe("threadit tools: errors", () => {
     const result = await run("vote", { message_id: 1, delta: 3 });
     expect(result.ok).toBe(false);
     expect(String(result.error)).toContain("Invalid arguments");
+    expect(seen).toEqual([]);
+  });
+
+  it("rejects an edit with neither body nor attachments, or too many attachments", async () => {
+    const empty = await run("edit_message", { message_id: 1 });
+    expect(empty.ok).toBe(false);
+    expect(String(empty.error)).toContain("needs body or attachment_ids");
+    const many = await run("edit_message", {
+      message_id: 1,
+      attachment_ids: Array.from({ length: 11 }, (_, i) => i + 1),
+    });
+    expect(many.ok).toBe(false);
+    expect(String(many.error)).toContain("Invalid arguments");
     expect(seen).toEqual([]);
   });
 

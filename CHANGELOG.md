@@ -9,6 +9,10 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ## [Unreleased]
 
+### Added
+
+- Threadit `edit_message` tool can replace or remove a message's attachments via `attachment_ids` (full set; `[]` removes all); `body` is now optional.
+
 ### Fixed
 
 - Claude quota readings stay fresh while idle by ignoring five-hour windows without a string reset time and retaining valid weekly usage.
