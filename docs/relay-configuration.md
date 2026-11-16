@@ -231,10 +231,11 @@ The pages in `apps/web` use the routes above. They add no new transport route.
 
 ### Identity of a page
 
-- A page binds its catalog, forms, dialogs, and actions to one identity: the gateway, the agent, and where it applies the extension or server. A change of identity mounts the forms again and clears drafts, pending actions, and dialogs.
-- Each mutation captures the identity and a generation before it starts. A result, an error, a refresh, a form change, or a navigation of an older identity changes nothing. This covers extension toggles and credential forms, MCP controls and forms, schedule actions, connection actions, alert resume, dashboard delete and share, and the MCP add dialog.
+- A page binds its catalog, forms, dialogs, and actions to one identity: the gateway, the agent, and where it applies the extension or server. A change of identity mounts the forms again and clears drafts, pending actions, and dialogs. The extension page keys its form by gateway, agent, and extension. Its catalog key stays agent-wide.
+- Each mutation captures the identity and a visit generation before it starts. A visit ends when the identity changes, also when the page returns to the same target, and when the page closes. A result, an error, a refresh, a form change, or a navigation of an older visit changes nothing. This covers extension toggles and credential forms, MCP controls and forms, schedule actions, connection actions, alert resume, dashboard delete and share, webhook changes, and core sign-in disconnect.
+- Each MCP add attempt has its own record. It ends on Cancel, on a newer attempt, on a new target, and when the page closes. A late answer of an ended attempt changes no dialog or toast. The page reads the list of the same target again. A cancelled submitted add stays uncertain, because a cancelled fetch or popup does not prove that the server stopped. The dialog then reads the list of its target before another add.
 - A lookup that failed leaves no catalog, no mutation control, and no request. No handler falls back to a local call.
-- After an uncertain MCP add error (the remote can add before its answer fails), the add dialog reads the list of the same target and stays busy until that read settles. When the read fails, the dialog shows an unknown state with a "Read list" button, and another add stays off until a read works.
+- After an uncertain MCP add error (the remote can add before its answer fails), the add dialog reads the list of the same target and stays busy until that read settles. When the read fails, the dialog shows an unknown state with a "Read list" button, and another add stays off until a read works. A successful add frees the dialog, also for a local agent with no redirect.
 
 ### OAuth popups
 
