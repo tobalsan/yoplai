@@ -374,6 +374,42 @@ describe("real HTTP adapter: skill uploads", () => {
     expect(remoteCalls).toEqual([]);
   });
 
+  it("refuses a body with matching outer delimiters and a malformed inner part before any remote call", async () => {
+    const part = (head: string, tail = "x") => `--${BOUNDARY}\r\n${head}\r\n\r\n${tail}\r\n--${BOUNDARY}--\r\n`;
+    const bad = [
+      part("not-a-header"),
+      part("Content-Type: application/zip"),
+      part('Content-Disposition: form-data; name="file"\r\nbroken header line'),
+      part('Content-Disposition: form-data; name="file"; filename="a.zip"').replace("\r\n\r\nx", "\r\nx"),
+      `--${BOUNDARY}\r\n--${BOUNDARY}--\r\n`,
+    ];
+    for (const body of bad) {
+      for (const [method, path] of [["POST", `${prefix}/api/skills`], ["PUT", `${prefix}/api/skills/same-id/content`]]) {
+        await expectJsonError(await upload(method, path, body), 400, "invalid_multipart");
+      }
+    }
+    expect(remoteCalls).toEqual([]);
+  });
+
+  it("refuses a malformed inner part sent in chunks without a length", async () => {
+    const chunks = [Buffer.from(`--${BOUNDARY}\r\nnot-a`), Buffer.from(`-header\r\n\r\nx\r\n--${BOUNDARY}--\r\n`)];
+    const answer = await sendChunked(`${prefix}/api/skills`, chunks);
+    expect(answer.status).toBe(400);
+    expect(remoteCalls).toEqual([]);
+  });
+
+  it("still forwards a valid body with several parts and a text field, with its exact bytes", async () => {
+    const body = Buffer.from(
+      `--${BOUNDARY}\r\nContent-Disposition: form-data; name="note"\r\n\r\nhello\r\n` +
+      `--${BOUNDARY}\r\nContent-Disposition: form-data; name="file"; filename="a/SKILL.md"\r\nContent-Type: text/markdown\r\n\r\n# Skill\r\n--${BOUNDARY}--\r\n`,
+    );
+    const response = await upload("PUT", `${prefix}/api/skills/same-id/content`, body);
+    expect(response.status).toBe(200);
+    expect(remoteCalls).toHaveLength(1);
+    expect(remoteCalls[0].bytes.equals(body)).toBe(true);
+    expect(remoteCalls[0].contentType).toBe(`multipart/form-data; boundary=${BOUNDARY}`);
+  });
+
   it("refuses an upload with no trusted Origin or a foreign one, and sends nothing", async () => {
     const bytes = multipartOf(2048);
     await expectJsonError(await fetch(`${base}${prefix}/api/skills`, { method: "POST", headers: { "content-type": `multipart/form-data; boundary=${BOUNDARY}` }, body: new Uint8Array(bytes) }), 403, "untrusted_origin");

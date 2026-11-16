@@ -175,6 +175,10 @@ async function skillUpload(request: Request): Promise<Request | Response> {
   const closing = Buffer.from(`--${boundary}--`);
   const tail = bytes.subarray(Math.max(0, bytes.length - closing.length - 4)).toString("latin1").replace(/[\r\n\t ]+$/, "");
   if (!bytes.subarray(0, opening.length).equals(opening) || !tail.endsWith(closing.toString("latin1"))) return fail("invalid_multipart");
+  // Parse the whole bounded envelope before any forward. A part with a malformed header or a broken inner structure
+  // stops here. The parse only validates. The forwarded body is still the original bytes with the original boundary.
+  const parsed = await new Response(new Uint8Array(bytes.buffer, bytes.byteOffset, bytes.length), { headers: { "content-type": type.trim() } }).formData().then(() => true, () => false);
+  if (!parsed) return fail("invalid_multipart");
   const headers = new Headers(request.headers);
   // The new body has a known length. The old framing headers must not reach the remote request.
   headers.delete("content-length");
