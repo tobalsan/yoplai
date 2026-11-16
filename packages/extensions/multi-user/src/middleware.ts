@@ -224,6 +224,9 @@ export function forwardAuthContextToRequest(
 
 function shouldSkipAuth(path: string, method: string): boolean {
   if (method === "GET" && path === "/api/mcp/oauth/client-metadata.json") return true;
+  // The provider sends the browser here with no session. The callback holds only a one-use state. The state binds the
+  // owner, scope, agent, server, and PKCE verifier from the authenticated start. The exact method and path only.
+  if (method === "GET" && path === "/api/mcp/oauth/callback") return true;
   if (method === "POST" && path === "/api/skills/import") return true;
   if (method === "GET" && /^\/api\/slack\/(?:pair|connect)\/[A-Za-z0-9_-]{43}$/.test(path)) return true;
   if (path === "/api/auth" || path.startsWith("/api/auth/")) return true;
