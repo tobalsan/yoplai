@@ -5,8 +5,11 @@ import { isRelayEnabled, isTrustedRequest, resolveRemoteAgent } from "./state.js
 import { fetchRemote, isSafeRemotePath, remoteHttpUrl } from "./remote.js";
 import type { RemoteGateway } from "./store.js";
 
-/** `json` marks a global write whose JSON body the relay reads within the 1 MiB bound before it forwards. */
-type Rule = { methods: string[]; path: RegExp; agent?: "path" | "query" | "body"; json?: boolean };
+/**
+ * `multipart` marks a skill upload. The relay counts the whole envelope against `SKILL_UPLOAD_LIMIT` before it parses or
+ * forwards it. `bodyless` marks a write that must carry no body.
+ * `json` marks a global write whose JSON body the relay reads within the 1 MiB bound before it forwards. */
+type Rule = { methods: string[]; path: RegExp; agent?: "path" | "query" | "body"; json?: boolean; multipart?: boolean; bodyless?: boolean };
 const rules: Rule[] = [
   { methods: ["GET"], path: /^\/api\/agents\/[^/]+(?:\/(?:extensions|connections|webhooks|dashboards|avatar))?$/, agent: "path" },
   { methods: ["PATCH"], path: /^\/api\/agents\/[^/]+\/(?:extensions|webhooks)\/[^/]+$/, agent: "path" },
@@ -29,6 +32,22 @@ const rules: Rule[] = [
   { methods: ["POST"], path: /^\/api\/mcp\/catalog$/, json: true },
   { methods: ["POST"], path: /^\/api\/mcp\/catalog\/update$/, json: true },
   { methods: ["POST"], path: /^\/api\/mcp\/catalog\/(?:remove|icon\/refresh)$/ },
+  // Skills. Skill IDs are opaque and belong to one gateway. `/api/skills/import` is not here: its bearer is an import
+  // token, never the linked bearer. Each method and path is exact, and the remote keeps its role and owner policy.
+  { methods: ["GET"], path: /^\/api\/skills$/ },
+  { methods: ["POST"], path: /^\/api\/skills$/, multipart: true },
+  { methods: ["GET"], path: /^\/api\/skills\/recipients$/ },
+  { methods: ["GET"], path: /^\/api\/skills\/import-token$/ },
+  { methods: ["POST"], path: /^\/api\/skills\/import-token$/, bodyless: true },
+  { methods: ["DELETE"], path: /^\/api\/skills\/import-token\/[^/]+$/, bodyless: true },
+  { methods: ["GET"], path: /^\/api\/skills\/(?!import$)[^/]+$/ },
+  { methods: ["DELETE"], path: /^\/api\/skills\/(?!import$)[^/]+$/, bodyless: true },
+  { methods: ["PUT"], path: /^\/api\/skills\/[^/]+\/content$/, multipart: true },
+  { methods: ["PUT"], path: /^\/api\/skills\/[^/]+\/(?:enabled|shares|system|owner|admin)$/, json: true },
+  { methods: ["GET"], path: /^\/api\/admin\/skills$/ },
+  { methods: ["GET"], path: /^\/api\/skills\/[^/]+\/(?:default|versions)$/ },
+  { methods: ["POST"], path: /^\/api\/skills\/[^/]+\/default$/, bodyless: true },
+  { methods: ["POST"], path: /^\/api\/skills\/[^/]+\/versions\/[^/]+\/restore$/, bodyless: true },
   { methods: ["PUT", "DELETE"], path: /^\/api\/dashboards\/[^/]+\/pin$/ },
   { methods: ["PATCH"], path: /^\/api\/dashboards\/[^/]+\/sharing$/ },
   { methods: ["POST"], path: /^\/api\/dashboards\/[^/]+\/claim$/ },
@@ -60,9 +79,14 @@ export function safeAuthorizationUrl(value: unknown): string | undefined {
   }
 }
 
-function browserStartError(request: Request): Response | undefined {
+function originError(request: Request): Response | undefined {
   const origin = request.headers.get("origin");
   if (!origin || !allowedCorsOrigins().includes(origin)) return fail("untrusted_origin", 403);
+}
+
+function browserStartError(request: Request): Response | undefined {
+  const denied = originError(request);
+  if (denied) return denied;
   if (request.headers.get("content-type")?.split(";")[0].trim().toLowerCase() !== "application/json") return fail("json_required", 415);
 }
 
@@ -99,6 +123,63 @@ async function jsonBody(request: Pick<Request, "body" | "signal">): Promise<Reco
   } catch {
     return fail("invalid_configuration_body");
   }
+}
+
+/** The whole multipart envelope of a skill upload, boundary and headers included, may hold at most this many bytes. */
+export const SKILL_UPLOAD_LIMIT = 25 * 1024 * 1024;
+const MULTIPART_TYPE = /^multipart\/form-data;\s*boundary=(?:"([^"\r\n]{1,70})"|([0-9A-Za-z'()+_,\-./:=?]{1,70}))$/i;
+
+/**
+ * Reads the whole upload before any forward. It counts bytes while it reads, so an oversized or chunked body stops at the
+ * limit. A bad length, a body that is not multipart, a read that fails, and an abort all end before the remote sees a byte.
+ * The returned request keeps the original content type, so the boundary of the header and the body stay equal.
+ */
+async function skillUpload(request: Request): Promise<Request | Response> {
+  const type = request.headers.get("content-type") ?? "";
+  const match = MULTIPART_TYPE.exec(type.trim());
+  if (!match) return fail("multipart_required", 415);
+  const boundary = match[1] ?? match[2];
+  const declared = request.headers.get("content-length");
+  if (declared !== null && !/^\d+$/.test(declared)) return fail("invalid_content_length");
+  if (declared !== null && Number(declared) > SKILL_UPLOAD_LIMIT) return fail("skill_upload_too_large", 413);
+  const reader = request.body?.getReader();
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  // Cancel the owned stream without waiting for its source to finish cancellation.
+  const cancel = () => { void reader?.cancel().catch(() => undefined); };
+  request.signal.addEventListener("abort", cancel, { once: true });
+  try {
+    request.signal.throwIfAborted();
+    while (reader) {
+      const { done, value } = await reader.read();
+      request.signal.throwIfAborted();
+      if (done) break;
+      size += value.byteLength;
+      if (size > SKILL_UPLOAD_LIMIT) {
+        cancel();
+        return fail("skill_upload_too_large", 413);
+      }
+      if (value.byteLength) chunks.push(value);
+    }
+  } catch {
+    cancel();
+    return fail("skill_upload_read_failed");
+  } finally {
+    request.signal.removeEventListener("abort", cancel);
+    reader?.releaseLock();
+  }
+  if (declared !== null && Number(declared) !== size) return fail("invalid_content_length");
+  const bytes = Buffer.concat(chunks);
+  // A multipart body opens with its first delimiter and closes with the final delimiter.
+  const opening = Buffer.from(`--${boundary}`);
+  const closing = Buffer.from(`--${boundary}--`);
+  const tail = bytes.subarray(Math.max(0, bytes.length - closing.length - 4)).toString("latin1").replace(/[\r\n\t ]+$/, "");
+  if (!bytes.subarray(0, opening.length).equals(opening) || !tail.endsWith(closing.toString("latin1"))) return fail("invalid_multipart");
+  const headers = new Headers(request.headers);
+  // The new body has a known length. The old framing headers must not reach the remote request.
+  headers.delete("content-length");
+  headers.delete("transfer-encoding");
+  return new Request(request.url, { method: request.method, headers, body: new Uint8Array(bytes), signal: request.signal });
 }
 
 function withJson(request: Request, body: Record<string, unknown>): Request {
@@ -212,7 +293,10 @@ export async function relayConfiguration(request: Request, gateways: RemoteGatew
   const rule = rules.find((item) => item.path.test(path) && item.methods.includes(request.method)) ?? rules.find((item) => item.path.test(path));
   const authorize = /^\/api\/(?:oauth\/[^/]+|mcp\/oauth)\/authorize$/.test(path);
   if (!prefix && !isStart && !rule && !authorize) return null;
-  if (!isSafeRemotePath(url.pathname)) return fail("invalid_remote_path");
+  // A request for the named gateway and the OAuth start need a safe path now. An unprefixed request stays local unless it
+  // resolves to a remote agent below, and the same check then runs before any forward.
+  const unsafePath = !isSafeRemotePath(url.pathname);
+  if (unsafePath && (prefix || isStart || authorize)) return fail("invalid_remote_path");
   const trusted = isTrustedRequest(request.headers.get("origin"), request.headers.get("x-forwarded-for"));
   if (prefix || isStart) {
     if (!trusted || gateways.length === 0) return fail("relay_unavailable", 403);
@@ -248,6 +332,7 @@ export async function relayConfiguration(request: Request, gateways: RemoteGatew
     if (gateway) agent = selectedAgent(value, gateway, gateways);
   }
   if (!gateway) return body ? request : null;
+  if (unsafePath) return fail("invalid_remote_path");
   if (!trusted) return fail("untrusted_origin", 403);
   if (rule && !rule.methods.includes(request.method)) return fail("relay_route_not_allowed", 405);
   if (authorize) return fail("use_oauth_start", 405);
@@ -268,6 +353,14 @@ export async function relayConfiguration(request: Request, gateways: RemoteGatew
     if (isResponse(input)) return input;
     request = withJson(request, input);
   }
+  if (rule?.multipart) {
+    const denied = originError(request);
+    if (denied) return denied;
+    const upload = await skillUpload(request);
+    if (isResponse(upload)) return upload;
+    request = upload;
+  }
+  if (rule?.bodyless && (request.headers.has("transfer-encoding") || (request.headers.get("content-length") ?? "0") !== "0")) return fail("body_not_allowed");
   const mcpAdd = request.method === "POST" && path === "/api/mcp/servers";
   if (mcpAdd) {
     const denied = browserStartError(request);
@@ -290,6 +383,12 @@ export async function relayConfiguration(request: Request, gateways: RemoteGatew
       result.authorizationUrl = authorizationUrl;
     }
     return Response.json(result, { status: response.status, headers: response.headers });
+  }
+  // A new import token is a secret of the account on the remote. It never lands in a cache.
+  if (request.method === "POST" && path === "/api/skills/import-token") {
+    const headers = new Headers(response.headers);
+    headers.set("cache-control", "no-store");
+    return new Response(response.body, { status: response.status, headers });
   }
   return response;
 }
