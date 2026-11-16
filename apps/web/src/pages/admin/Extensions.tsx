@@ -1,4 +1,4 @@
-import { For, Show, createResource, createSignal } from "solid-js";
+import { For, Show, createComputed, createMemo, createResource, createSignal, onCleanup } from "solid-js";
 import {
   fetchAdminTopExtensions,
   saveTopExtensions,
@@ -8,6 +8,11 @@ import {
 import AdminLayout from "./AdminLayout";
 import { McpIcon } from "../../components/McpExtensionCard";
 import { capabilities } from "../../lib/capabilities";
+import { gatewayKey } from "../../api/gateway";
+import { missingGatewayText, useGatewayChoice } from "../../lib/gateway-choice";
+import { useRequester } from "../../lib/requester";
+import { createResourceKey } from "../../lib/resource-key";
+import { GatewaySelect } from "../../components/GatewaySelect";
 
 /** Extension icon, or the generic puzzle piece the Edit-Agent list uses. */
 function ExtensionIcon(props: { src?: string }) {
@@ -35,13 +40,45 @@ function toggled(list: string[], value: string): string[] {
 }
 
 export default function AdminExtensionsPage() {
-  const [data, { mutate }] = createResource<AdminTopExtensions>(fetchAdminTopExtensions);
+  // The explicit gateway choice. A gateway that is not configured makes no call and never means Local.
+  const choice = useGatewayChoice();
+  const gateway = choice.gateway;
+  // The remote requester decides what the page offers. The local session and role never apply to a gateway.
+  const requester = useRequester(gateway);
+  const multiUser = () => (gateway() === undefined ? capabilities.multiUser : requester().multiUser);
+  // Local keeps its old behavior: the gateway refuses what the role may not do. A gateway is read-only
+  // until its requester is known, and a remote multi-user gateway allows only its superadmin.
+  const canWrite = () => gateway() === undefined || (requester().ready && !requester().unknown && (!requester().multiUser || requester().isSuperadmin));
+  const [loaded, { mutate }] = createResource(
+    createResourceKey(() => (choice.ready() ? { gateway: gateway() } : null)),
+    async (key): Promise<{ key: string; data: AdminTopExtensions }> => ({ key: gatewayKey(key.gateway), data: await fetchAdminTopExtensions(key.gateway) })
+  );
+  // Data of another gateway is never current data.
+  const data = createMemo<AdminTopExtensions | undefined>(() => {
+    if (loaded.error || !choice.ready()) return undefined;
+    const value = loaded();
+    return value?.key === gatewayKey(gateway()) ? value.data : undefined;
+  });
   const [pending, setPending] = createSignal<string | null>(null);
   const [error, setError] = createSignal<string | null>(null);
+  // Each visit to a gateway has its own number. A save that started in an older visit, also one of the same
+  // gateway, changes nothing. The page closing ends the visit too.
+  let visit = 0;
+  createComputed(() => {
+    void choice.chosen();
+    void gateway();
+    visit++;
+    setPending(null);
+    setError(null);
+  });
+  onCleanup(() => { visit++; });
 
   async function toggle(kind: "extensions" | "mcp", value: string, system = false) {
-    const current = data.error ? undefined : data();
-    if (!current) return;
+    const current = data();
+    const host = gateway();
+    if (!current || !choice.ready() || !canWrite()) return;
+    const mine = visit;
+    const live = () => visit === mine;
     const next: TopExtensions = {
       extensions: current.extensions,
       mcp: current.mcp,
@@ -52,17 +89,17 @@ export default function AdminExtensionsPage() {
     setPending(`${kind}:${value}`);
     setError(null);
     try {
-      const saved = await saveTopExtensions(next);
-      mutate({ ...current, ...saved });
+      const saved = await saveTopExtensions(next, host);
+      if (live()) mutate({ key: gatewayKey(host), data: { ...current, ...saved } });
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Save failed.");
+      if (live()) setError(cause instanceof Error ? cause.message : "Save failed.");
     } finally {
-      setPending(null);
+      if (live()) setPending(null);
     }
   }
 
   const star = (kind: "extensions" | "mcp", value: string, label: string) => {
-    const on = () => (data.error ? false : data()?.[kind].includes(value) === true);
+    const on = () => data()?.[kind].includes(value) === true;
     return (
       <button
         type="button"
@@ -71,7 +108,7 @@ export default function AdminExtensionsPage() {
         aria-pressed={on()}
         aria-label={`${on() ? "Unmark" : "Mark"} ${label} as top`}
         title={on() ? "Top: shown first and prompted to users" : "Mark as top"}
-        disabled={pending() !== null}
+        disabled={pending() !== null || !canWrite()}
         onClick={() => void toggle(kind, value)}
       >
         {on() ? "★" : "☆"}
@@ -80,16 +117,16 @@ export default function AdminExtensionsPage() {
   };
 
   const systemToggle = (kind: "extensions" | "mcp", value: string, label: string) => {
-    const on = () => (data.error ? false : data()?.system[kind].includes(value) === true);
+    const on = () => data()?.system[kind].includes(value) === true;
     return (
-      <Show when={capabilities.multiUser}>
+      <Show when={multiUser()}>
         <button
           type="button"
           role="switch"
           class="top-system"
           aria-checked={on()}
           aria-label={`${on() ? "Unmark" : "Mark"} ${label} as system`}
-          disabled={pending() !== null}
+          disabled={pending() !== null || !canWrite()}
           onClick={() => void toggle(kind, value, true)}
         >
           System
@@ -98,18 +135,28 @@ export default function AdminExtensionsPage() {
     );
   };
 
+  const missing = () => { const selection = choice.selection(); return selection.state === "missing" ? selection : undefined; };
   return (
     <AdminLayout
       title="Extensions"
-      description={capabilities.multiUser
+      gateway={gateway()}
+      description={multiUser()
         ? "Star Top extensions and MCP servers to promote them. Mark system items to hide them from users and admins on agent configuration pages."
         : "Star the extensions and MCP servers your team should connect first. They sort first and users are prompted to connect them."}
     >
-      <Show when={error()}>{(message) => <p class="top-error">{message()}</p>}</Show>
-      <Show when={data.error}>
-        <p class="top-error">{data.error instanceof Error ? data.error.message : "Failed to load."}</p>
+      <GatewaySelect value={choice.chosen()} names={choice.names()} onChange={choice.choose} />
+      <Show when={missing()}>{(selection) => <p class="top-error" role="alert">{missingGatewayText(selection())}</p>}</Show>
+      <Show when={gateway() !== undefined && requester().ready && requester().unknown}>
+        <p class="top-error" role="alert">Could not read your permissions on {gateway()}. The controls stay off.</p>
       </Show>
-      <Show when={!data.error && data()} fallback={<Show when={data.loading}><div class="top-empty">Loading…</div></Show>}>
+      <Show when={gateway() !== undefined && requester().ready && !requester().unknown && requester().multiUser && !requester().isSuperadmin}>
+        <p class="top-empty" role="status">Only the superadmin of {gateway()} can change these flags.</p>
+      </Show>
+      <Show when={error()}>{(message) => <p class="top-error">{message()}</p>}</Show>
+      <Show when={choice.ready() && loaded.error}>
+        <p class="top-error">{loaded.error instanceof Error ? loaded.error.message : "Failed to load."}</p>
+      </Show>
+      <Show when={data()} fallback={<Show when={choice.selection().state === "loading" || (choice.ready() && loaded.loading)}><div class="top-empty">Loading…</div></Show>}>
         {(loaded) => (
           <>
             <h2 class="top-heading">Extensions</h2>

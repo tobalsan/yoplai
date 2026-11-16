@@ -191,7 +191,7 @@ export function AgentCatalog() {
                     </div>
                   )}
                 </Show>
-                <div class="catalog-name">{agent.name}<RemoteAgentMark gateway={agent.gateway} /><ScheduleAlertDot agentId={mainAgentIdFor(agent.id)} /></div>
+                <div class="catalog-name">{agent.name}<RemoteAgentMark gateway={agent.gateway} /><ScheduleAlertDot agentId={agent.gateway ? agent.id : mainAgentIdFor(agent.id)} gateway={agent.gateway} /></div>
                 <Show when={agent.role}>
                   <div class="catalog-role">{agent.role}</div>
                 </Show>

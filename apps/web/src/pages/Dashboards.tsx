@@ -1,8 +1,9 @@
 import { For, Show, createComputed, createEffect, createMemo, createResource, createSignal, on, onCleanup } from "solid-js";
-import { useSearchParams } from "@solidjs/router";
 import { fetchAgents } from "../api/agents";
 import { gatewayKey } from "../api/gateway";
 import { createResourceKey } from "../lib/resource-key";
+import { missingGatewayText, useGatewayChoice } from "../lib/gateway-choice";
+import { GatewaySelect } from "../components/GatewaySelect";
 import { deleteDashboard, fetchDashboards, setDashboardPinned, type DashboardRow } from "../api/dashboards";
 import { DashboardAccessDialog } from "../components/DashboardAccessDialog";
 import { DashboardListRow } from "../components/DashboardListRow";
@@ -14,21 +15,21 @@ import { ConfirmDialog } from "../components/ui/ConfirmDialog";
  * A dashboard ID alone never selects a gateway.
  */
 export function Dashboards() {
-  const [search, setSearch] = useSearchParams();
-  const gateway = () => (typeof search.gateway === "string" && search.gateway ? search.gateway : undefined);
+  // The selector lists every configured gateway, also a link with no visible agent. A name that is not
+  // configured is an error and makes no call. A failed choice never means Local.
+  const choice = useGatewayChoice();
+  const gateway = choice.gateway;
   const [agents] = createResource(() => fetchAgents().catch(() => []));
-  // The selector lists the gateways of the loaded agents and the gateway that the address names.
-  const gatewayNames = createMemo(() => [...new Set((agents() ?? []).flatMap((agent) => (agent.gateway ? [agent.gateway] : [])))].sort());
   const [dashboards, { refetch }] = createResource(
-    createResourceKey(() => ({ gateway: gateway() })),
+    createResourceKey(() => (choice.ready() ? { gateway: gateway() } : null)),
     async (key) => ({ key: gatewayKey(key.gateway), ...(await fetchDashboards(key.gateway)) })
   );
   // Rows of another gateway never show. Ids repeat across gateways.
   const current = createMemo(() => {
     const loaded = dashboards.error ? undefined : dashboards();
-    return loaded?.key === gatewayKey(gateway()) ? loaded : undefined;
+    return choice.ready() && loaded?.key === gatewayKey(gateway()) ? loaded : undefined;
   });
-  const requesting = () => dashboards.loading || (!dashboards.error && !current());
+  const requesting = () => choice.selection().state === "loading" || (choice.ready() && (dashboards.loading || (!dashboards.error && !current())));
   const avatarOf = (agentId: string) => agents()?.find((agent) => agent.id === agentId)?.avatar;
   const [managing, setManaging] = createSignal<DashboardRow>();
   const [deleting, setDeleting] = createSignal<DashboardRow>();
@@ -39,7 +40,7 @@ export function Dashboards() {
   // Each visit to a gateway has its own number. Returning to the same gateway is a new visit, so an answer
   // that started in an older visit changes nothing. The page closing ends the visit too.
   let visit = 0;
-  createComputed(() => { void gateway(); visit++; });
+  createComputed(() => { void choice.chosen(); void gateway(); visit++; });
   onCleanup(() => { visit++; });
   // A gateway change drops pins in flight, open dialogs, and messages of the old gateway.
   createEffect(on(gateway, () => {
@@ -100,22 +101,16 @@ export function Dashboards() {
   return (
     <main class="dashboards-page">
       <h1>Dashboards</h1>
-      <Show when={gatewayNames().length > 0 || gateway() !== undefined}>
-        <label class="dashboards-gateway">Gateway{" "}
-          <select aria-label="Gateway" value={gateway() ?? ""} onChange={(event) => setSearch({ gateway: event.currentTarget.value || undefined })}>
-            <option value="">This computer</option>
-            <For each={[...new Set([...gatewayNames(), ...(gateway() ? [gateway()!] : [])])]}>{(name) => <option value={name}>{name}</option>}</For>
-          </select>
-        </label>
-      </Show>
-      <Show when={dashboards.error}><p role="alert">Unable to load dashboards. <button onClick={() => window.location.reload()}>Retry</button></p></Show>
+      <GatewaySelect value={choice.chosen()} names={choice.names()} onChange={choice.choose} />
+      {(() => { const selection = choice.selection(); return selection.state === "missing" ? <p role="alert">{missingGatewayText(selection)}</p> : null; })()}
+      <Show when={choice.ready() && dashboards.error}><p role="alert">Unable to load dashboards. <button onClick={() => window.location.reload()}>Retry</button></p></Show>
       <Show when={requesting()}><p>Loading dashboards…</p></Show>
       <Show when={pinError()}>{(error) => <p role="alert">{error()}</p>}</Show>
       <Show when={pinned().length > 0}>
         <section><h2>Pinned</h2><ul class="dashboards-list"><For each={pinned()}>{(dashboard) => row(dashboard, true)}</For></ul></section>
       </Show>
       <Show when={!data()?.owned.length || groups().length > 0}><section><h2>My dashboards</h2>
-        <For each={groups()} fallback={<Show when={!requesting() && !dashboards.error}><p>You do not own any dashboards yet.</p></Show>}>{(group) => (
+        <For each={groups()} fallback={<Show when={!requesting() && choice.ready() && !dashboards.error}><p>You do not own any dashboards yet.</p></Show>}>{(group) => (
           <section class="dashboards-group">
             <h3>
               <span class="dashboards-group__avatar" aria-hidden="true">
@@ -139,7 +134,7 @@ export function Dashboards() {
         catch (cause) { if (same()) setDeleteError(cause instanceof Error ? cause.message : "Unable to delete dashboard."); }
       }} />}</Show>
       <Show when={!data()?.shared.length || shared().length > 0}><section><h2>Shared with me</h2>
-        <ul class="dashboards-list"><For each={shared()} fallback={<Show when={!requesting() && !dashboards.error}><li>No dashboards have been shared with you.</li></Show>}>{(dashboard) => row(dashboard, true)}</For></ul>
+        <ul class="dashboards-list"><For each={shared()} fallback={<Show when={!requesting() && choice.ready() && !dashboards.error}><li>No dashboards have been shared with you.</li></Show>}>{(dashboard) => row(dashboard, true)}</For></ul>
       </section></Show>
       <style>{`
         .dashboards-page { flex: 1; min-width: 0; overflow: auto; padding: 32px; color: var(--text-primary); }

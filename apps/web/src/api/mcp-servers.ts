@@ -1,5 +1,6 @@
 import { apiFetch as fetch } from "./core";
 import { gatewayApiPath, gatewayKey, type GatewayName } from "./gateway";
+import { refusalMessage } from "./oauth";
 
 export type McpScope = "personal" | "team";
 export type McpServer = {
@@ -92,7 +93,7 @@ export async function refreshMcpServerIcon(agentId: string, name: string, gatewa
   const key = gatewayKey(gateway, agentId, name);
   const request = {};
   statusRequests.set(key, request);
-  const response = await fetch(agentPath(gateway, "/api/mcp/servers/icon/refresh", agentId, name), { method: "POST", signal: AbortSignal.timeout(35_000) });
+  const response = await withIconDeadline((signal) => fetch(agentPath(gateway, "/api/mcp/servers/icon/refresh", agentId, name), { method: "POST", signal }));
   if (!response.ok) throw new Error((await response.text()) || "Failed to refresh MCP server icon.");
   const result: { status: McpIconRefreshStatus; error?: string; server: McpServer } = await response.json();
   const listKey = gatewayKey(gateway, agentId);
@@ -174,15 +175,34 @@ export async function saveMcpServerLabel(agentId: string, name: string, label: {
 
 export type McpCatalogServer = { name: string; url: string; displayName?: string; description?: string; iconUrl?: string };
 
-async function catalogRequest<T>(path: string, init: RequestInit | undefined, failure: string): Promise<T> {
-  const response = await fetch(`/api/mcp/catalog${path}`, init);
-  if (!response.ok) throw new Error((await response.text()) || failure);
+/**
+ * One finite deadline for both icon refresh calls, the agent call and the catalog call.
+ * A relay answers within its own 30 second header deadline, so a relay refusal arrives before this one.
+ * A timeout is an uncertain outcome: the remote may still save the icon.
+ */
+export const ICON_REFRESH_TIMEOUT_MS = 35_000;
+export const ICON_REFRESH_UNCERTAIN = "The icon refresh did not answer in time. The server may still change it, so read the list again.";
+
+/** Runs one icon refresh. A timeout becomes the uncertain-outcome message. */
+async function withIconDeadline<T>(run: (signal: AbortSignal) => Promise<T>): Promise<T> {
+  try {
+    return await run(AbortSignal.timeout(ICON_REFRESH_TIMEOUT_MS));
+  } catch (cause) {
+    if (cause instanceof DOMException && cause.name === "TimeoutError") throw new Error(ICON_REFRESH_UNCERTAIN);
+    throw cause;
+  }
+}
+
+/** Remote refusals show as plain text. The local text of the response stays as it was. */
+async function catalogRequest<T>(path: string, init: RequestInit | undefined, failure: string, gateway?: GatewayName): Promise<T> {
+  const response = await fetch(gatewayApiPath(gateway, `/api/mcp/catalog${path}`), init);
+  if (!response.ok) throw new Error(gateway === undefined ? (await response.text()) || failure : await refusalMessage(response, failure));
   return response.json();
 }
 const jsonPost = (body: unknown): RequestInit => ({ method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
 
-export const fetchMcpCatalog = async (): Promise<McpCatalogServer[]> => (await catalogRequest<{ servers: McpCatalogServer[] }>("", undefined, "Failed to load MCP servers.")).servers;
-export const addMcpCatalogServer = (input: { url: string; displayName?: string; description?: string }) => catalogRequest<{ server: McpCatalogServer }>("", jsonPost(input), "Failed to add MCP server.").then((result) => result.server);
-export const updateMcpCatalogServer = (name: string, label: { displayName: string; description: string }) => catalogRequest<{ server: McpCatalogServer }>(`/update?server=${encodeURIComponent(name)}`, jsonPost(label), "Failed to save MCP server.").then((result) => result.server);
-export const removeMcpCatalogServer = async (name: string): Promise<void> => { await catalogRequest(`/remove?server=${encodeURIComponent(name)}`, { method: "POST" }, "Failed to remove MCP server."); };
-export const refreshMcpCatalogIcon = (name: string) => catalogRequest<{ status: McpIconRefreshStatus; error?: string; server: McpCatalogServer }>(`/icon/refresh?server=${encodeURIComponent(name)}`, { method: "POST", signal: AbortSignal.timeout(35_000) }, "Failed to refresh MCP server icon.");
+export const fetchMcpCatalog = async (gateway?: GatewayName): Promise<McpCatalogServer[]> => (await catalogRequest<{ servers: McpCatalogServer[] }>("", undefined, "Failed to load MCP servers.", gateway)).servers;
+export const addMcpCatalogServer = (input: { url: string; displayName?: string; description?: string }, gateway?: GatewayName) => catalogRequest<{ server: McpCatalogServer }>("", jsonPost(input), "Failed to add MCP server.", gateway).then((result) => result.server);
+export const updateMcpCatalogServer = (name: string, label: { displayName: string; description: string }, gateway?: GatewayName) => catalogRequest<{ server: McpCatalogServer }>(`/update?server=${encodeURIComponent(name)}`, jsonPost(label), "Failed to save MCP server.", gateway).then((result) => result.server);
+export const removeMcpCatalogServer = async (name: string, gateway?: GatewayName): Promise<void> => { await catalogRequest(`/remove?server=${encodeURIComponent(name)}`, { method: "POST" }, "Failed to remove MCP server.", gateway); };
+export const refreshMcpCatalogIcon = (name: string, gateway?: GatewayName) => withIconDeadline((signal) => catalogRequest<{ status: McpIconRefreshStatus; error?: string; server: McpCatalogServer }>(`/icon/refresh?server=${encodeURIComponent(name)}`, { method: "POST", signal }, "Failed to refresh MCP server icon.", gateway));

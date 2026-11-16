@@ -6,7 +6,15 @@ import { isSuperadmin } from "../../lib/roles";
 
 
 /** Admin sections, one tab each; users exist only in multi-user mode, extensions and MCP servers are superadmin-only. */
-function adminTabs() {
+function adminTabs(gateway?: string) {
+  // Only the extension and MCP pages work on a linked gateway. The other pages act on the local gateway.
+  if (gateway !== undefined) {
+    const query = `?gateway=${encodeURIComponent(gateway)}`;
+    return [
+      { href: "/admin/extensions", to: `/admin/extensions${query}`, label: "Extensions", visible: true },
+      { href: "/admin/mcp-servers", to: `/admin/mcp-servers${query}`, label: "MCP servers", visible: true },
+    ];
+  }
   return [
     { href: "/admin/users", label: "User management", visible: !!capabilities.multiUser },
     {
@@ -21,12 +29,14 @@ function adminTabs() {
     },
     { href: "/admin/skills", label: "Skills", visible: !capabilities.multiUser || isSuperadmin(capabilities.user?.role) },
     { href: "/admin/quota", label: "Quota", visible: !capabilities.multiUser || isSuperadmin(capabilities.user?.role) },
-  ].filter((tab) => tab.visible);
+  ].filter((tab) => tab.visible).map((tab) => ({ ...tab, to: tab.href }));
 }
 
 export default function AdminLayout(props: {
   title: string;
   description: string;
+  /** The linked gateway that the page works on. Absent for the local gateway. */
+  gateway?: string;
   children?: JSX.Element;
 }) {
   const location = useLocation();
@@ -40,12 +50,12 @@ export default function AdminLayout(props: {
             <p>{props.description}</p>
           </div>
         </header>
-        <Show when={adminTabs().length > 1}>
+        <Show when={adminTabs(props.gateway).length > 1}>
           <nav class="admin-tabs" aria-label="Admin sections">
-            <For each={adminTabs()}>
+            <For each={adminTabs(props.gateway)}>
               {(tab) => (
                 <A
-                  href={tab.href}
+                  href={tab.to}
                   class="admin-tab"
                   classList={{ active: stripBase(location.pathname).startsWith(tab.href) }}
                   aria-current={stripBase(location.pathname).startsWith(tab.href) ? "page" : undefined}

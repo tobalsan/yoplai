@@ -1,5 +1,6 @@
 import { API_BASE, apiFetch as fetch } from "./core";
 import { gatewayApiPath, type GatewayName } from "./gateway";
+import { refusalMessage } from "./oauth";
 
 type ExtensionFlags = { extensions: string[]; mcp: string[] };
 export type TopExtensions = ExtensionFlags & { system: ExtensionFlags };
@@ -21,20 +22,20 @@ export async function fetchTopExtensions(gateway?: GatewayName): Promise<TopExte
 }
 
 /** Same lists plus every flaggable candidate; superadmin only. */
-export async function fetchAdminTopExtensions(): Promise<AdminTopExtensions> {
-  const res = await fetch(`${API_BASE}/admin/top-extensions`);
+export async function fetchAdminTopExtensions(gateway?: GatewayName): Promise<AdminTopExtensions> {
+  const res = await fetch(gatewayApiPath(gateway, `${API_BASE}/admin/top-extensions`));
   if (res.status === 403) throw new Error("Only the superadmin can manage top extensions.");
-  if (!res.ok) throw new Error("Failed to fetch top extensions");
+  if (!res.ok) throw new Error(await refusalMessage(res, "Failed to fetch top extensions"));
   return res.json() as Promise<AdminTopExtensions>;
 }
 
-export async function saveTopExtensions(next: TopExtensions): Promise<TopExtensions> {
-  const res = await fetch(`${API_BASE}/admin/top-extensions`, {
+export async function saveTopExtensions(next: TopExtensions, gateway?: GatewayName): Promise<TopExtensions> {
+  const res = await fetch(gatewayApiPath(gateway, `${API_BASE}/admin/top-extensions`), {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(next),
   });
   if (res.status === 403) throw new Error("Only the superadmin can manage top extensions.");
-  if (!res.ok) throw new Error("Failed to save top extensions");
+  if (!res.ok) throw new Error(await refusalMessage(res, "Failed to save top extensions"));
   return res.json() as Promise<TopExtensions>;
 }
