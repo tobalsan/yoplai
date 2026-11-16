@@ -279,6 +279,12 @@ Local agents keep the redirect flow. A remote agent uses `lib/oauth-popup-flow.t
 - The relay refuses a skill ID with an encoded slash (`%2F`) for a linked gateway, because the relay path check bans encoded separators. Such an agent skill, from a nested workspace folder, has no remote page. The same ID on the local gateway still works.
 - The chat shortcut "Create skill" starts a local agent, so the page hides it for a linked gateway.
 
+### Confirmed fixes (callback, Webhooks, owner mode)
+
+- The MCP OAuth callback is the one MCP route that a multi-user gateway lets through the outer authentication gate. The exception is exactly `GET /api/mcp/oauth/callback`. Any other method, a suffix, a trailing slash, a different case, and every other MCP route still need credentials. The provider sends the browser to this path with no session. The one-use state of the authenticated start carries the owner, scope, agent, server, and PKCE verifier. The callback takes only `code`, `state`, and `error`. The relay has no callback route. The core provider callbacks (`/api/oauth/<provider>/callback`) are unchanged.
+- An agent page for a bespoke extension (for example Webhooks) opens only where the gateway of the agent loads the extension. The route wrapper and the generic details page use the same remote availability test. Where the module is not available, the page shows that state with no link to the same closed route. Where the capabilities cannot be read, the page shows a Retry button that reads them again. The page never enables a remote module and never uses the local capabilities as remote authority.
+- Mine on a scheduled job of a linked gateway needs the confirmed user ID of that gateway. The page disables Mine without it, and the handler checks the same rule. A refused request returns `403 {"error":"owner_requires_user","message":"Owner credentials need a signed-in user."}`. A job that is gone returns 404. An unexpected failure returns 500 with no caught text. The historical browser failure stays unrecorded.
+
 ### Limits
 
 - `ConnectToolsPrompt` and the "Connect tools" button need local multi-user mode, and the relay is off there. They stay local.

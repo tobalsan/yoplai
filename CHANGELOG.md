@@ -30,6 +30,9 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Fixed
 
+- A multi-user gateway now lets the exact `GET /api/mcp/oauth/callback` through the authentication gate, so an MCP sign-in finishes when the provider returns with no session cookie. The state, PKCE, owner binding, and scope checks are unchanged, and every other MCP route and method still needs credentials.
+- The Configure page of an extension that the gateway of the agent does not load now shows that it is not available, with a Retry button when the capabilities cannot be read, and no longer links back to itself.
+- Mine on a scheduled job now stays off on a linked gateway that gave no signed-in user. A refused owner mode shows its own message and no longer reports "Schedule not found".
 - Skill dialogs of a linked gateway now read the same item again after a failed write. Restore, import token, share, and delete controls stay off until the read works. The share dialog refreshes its draft from the saved shares.
 - The remote import prompt now needs an HTTPS address. A public HTTP address shows a message to set `server.baseUrl` and hides the token.
 - The skill upload route now parses the multipart body and refuses a malformed part before the remote sees the upload.
