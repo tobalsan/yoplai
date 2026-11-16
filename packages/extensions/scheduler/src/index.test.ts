@@ -5,7 +5,7 @@ import { Hono, type Context } from "hono";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AgentConfig, ExtensionContext, FullHistoryMessage, GatewayConfig } from "@yoplai/shared";
 import { schedulerExtension } from "./index.js";
-import { clearSchedulerContext, getScheduler, setSchedulerContext, stopScheduler } from "./service.js";
+import { ScheduleNotFoundError, SchedulerService, clearSchedulerContext, getScheduler, setSchedulerContext, stopScheduler } from "./service.js";
 
 const creatorLookup = vi.hoisted(() => vi.fn());
 const agentAccess = vi.hoisted(() => vi.fn(async () => true));
@@ -179,6 +179,51 @@ describe("scheduler routes", () => {
     userId = "alice";
     const run = await app.request(`/api/schedules/alpha/${job.id}/run`, { method: "POST" });
     expect(run.status).toBe(403);
+  });
+
+  it("reports a refused userless owner mode with a typed safe answer, and keeps 404 and 500 apart", async () => {
+    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-scheduler-owner-refusal-"));
+    const alpha = agent("alpha", path.join(tmpDir, "alpha"));
+    const config: GatewayConfig = { version: 3, agents: [alpha], extensions: { scheduler: { enabled: true } }, sessions: { idleMinutes: 360 } };
+    setSchedulerContext(context(config));
+    creatorLookup.mockReturnValue(undefined);
+    const app = new Hono().basePath("/api");
+    let userId: string | undefined;
+    app.use("*", async (c, next) => {
+      if (userId) (c as unknown as Context<{ Variables: { multiUserAuthContext: { session: { userId: string } } } }>).set("multiUserAuthContext", { session: { userId } });
+      await next();
+    });
+    schedulerExtension.registerRoutes!(app);
+    const scheduler = getScheduler();
+    const team = await scheduler.add("alpha", { name: "Team digest", credentialMode: "team", schedule: { cron: "0 8 * * *", tz: "UTC" }, payload: { message: "Run" } });
+    const patch = (id: string, body: unknown) => app.request(`/api/schedules/alpha/${id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+
+    // A Team job pauses with no requester identity.
+    expect((await patch(team.id, { enabled: false })).status).toBe(200);
+    // Owner mode with no requester identity is refused with a typed answer and a fixed message.
+    const refused = await patch(team.id, { credentialMode: "owner" });
+    expect(refused.status).toBe(403);
+    expect(await refused.json()).toEqual({ error: "owner_requires_user", message: "Owner credentials need a signed-in user." });
+    expect((await scheduler.list("alpha"))[0]).toMatchObject({ credentialMode: "team" });
+    // An authenticated requester takes the job in owner mode.
+    userId = "alice";
+    const owned = await patch(team.id, { credentialMode: "owner" });
+    expect(owned.status).toBe(200);
+    expect(await owned.json()).toMatchObject({ credentialMode: "owner", ownerUserId: "alice" });
+    // Another user cannot change the owned job.
+    userId = "bob";
+    expect((await patch(team.id, { enabled: true })).status).toBe(403);
+    // A job that disappears between the access check and the update is 404.
+    userId = "alice";
+    vi.spyOn(SchedulerService.prototype, "update").mockRejectedValueOnce(new ScheduleNotFoundError("alpha", team.id));
+    const missing = await patch(team.id, { enabled: true });
+    expect(missing.status).toBe(404);
+    expect(await missing.json()).toEqual({ error: "Schedule not found" });
+    // An unexpected failure is 500 and shows no caught text.
+    vi.spyOn(SchedulerService.prototype, "update").mockRejectedValueOnce(new Error("EACCES: /private/store/secret-path"));
+    const failed = await patch(team.id, { enabled: true });
+    expect(failed.status).toBe(500);
+    expect(JSON.stringify(await failed.json())).not.toContain("secret-path");
   });
 
   it("lists signed-in Team creations for another member with the server-resolved creator name", async () => {
