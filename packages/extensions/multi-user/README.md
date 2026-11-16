@@ -223,6 +223,55 @@ Stop the gateway before running the bootstrap `create`, or rely on SQLite WAL
 to keep the write safe — both processes touching `auth.db` concurrently is
 supported but discouraged.
 
+## Gateway Link (remote side)
+
+A local gateway links to this remote through a browser consent and gets its own
+API key. The flow is a loopback redirect with PKCE (S256). The device
+authorization plugin stays disabled. `GET /api/capabilities` reports
+`gatewayLink: { version: 1, method: "loopback-pkce" }` only after the link
+routes are ready and crash recovery has finished.
+
+1. The local gateway posts `{ challenge, state, callbackUri, deviceLabel,
+   replaceLinkId? }` to `POST /api/auth/gateway-link/requests` and gets a
+   request ID. The callback must be exactly
+   `http://127.0.0.1:<port>/api/relay/link/callback`.
+2. The browser opens `/gateway-link?request=<id>`. Login returns to this page.
+   `GET /api/auth/gateway-link/requests/:id` shows safe details and a consent
+   nonce that is bound to the request and the session.
+3. The user approves or refuses (`POST .../approve`, `POST .../deny`). Each
+   answer returns the callback address with `#code=...&state=...` or
+   `#error=access_denied&state=...`.
+4. The local gateway posts `{ code, verifier, callbackUri }` to
+   `POST /api/auth/gateway-link/token` and gets the key once.
+
+Rules of the routes:
+
+- Request and token routes refuse any `Origin`. Consent writes need the exact
+  configured web origin (`getTrustedOrigins`), a real cookie session, and the
+  nonce. A bearer, a forwarded context, and an impersonating session never
+  count. Bodies are JSON, at most 4 KiB, with no repeated key.
+- A code lasts 60 seconds, a request five minutes, and a key 90 days. The code
+  burns at its first exchange, also when the verifier is wrong.
+- Limits: five request starts per source per minute, 1,000 pending requests,
+  ten consent writes per user per minute, ten exchanges per code and 30 per
+  source per minute. The source is the socket peer. A peer on loopback (the
+  proxy of a deployment) may name the client in the last `X-Forwarded-For` entry.
+- Each link has one key, named `Desktop: <device> (<id8>)` (32 characters at
+  most) with the reserved prefix `gl_<22 characters>`. The service writes the
+  candidate prefix to `gateway_link_issuances` before it creates the key, so
+  recovery at start finds and disables a key that a crash left behind. The
+  generic key routes refuse a `gl_` prefix on create and any update of a
+  managed key.
+- A managed key works only while its link is active, owned by the key owner,
+  not expired, and the owner is eligible. Revoke from the owner page
+  (`/account/gateway-links`, `POST .../revoke` with `{ linkId }`) or with the
+  link's own bearer. A deleted key row counts as revoked.
+- A lost first exchange response leaves a key that nobody holds. Revoke it on
+  the owner page, then start a new link. A re-link of a saved link ID needs no
+  such step: the new consent disables the uncertain key first.
+- One gateway process per `auth.db`. `getManagedKeyState(keyId, ownerId)` lets
+  a socket check its key.
+
 ## Per-User Isolation
 
 When multi-user is enabled, every agent run is rewritten to read and write
