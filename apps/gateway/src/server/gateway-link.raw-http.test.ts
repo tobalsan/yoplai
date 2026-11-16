@@ -87,7 +87,18 @@ function rawRequest(method: string, target: string, headers: Array<[string, stri
   return sendRaw(`${lines.join("\r\n")}\r\n\r\n${payload}`);
 }
 
-const json = (response: RawResponse) => JSON.parse(response.body) as Record<string, any>;
+type Body = {
+  requestId: string;
+  redirectUrl: string;
+  key: string;
+  nonce: string;
+  status: string;
+  multiUser?: boolean;
+  gatewayLink?: unknown;
+  link: { id: string };
+  links: unknown[];
+};
+const json = (response: RawResponse) => JSON.parse(response.body) as Body;
 
 async function signUp(name: string): Promise<Account> {
   const email = `${name}@example.test`;
@@ -125,13 +136,13 @@ async function start(options: { replaceLinkId?: string } = {}) {
     }
   );
   expect(response.status).toBe(201);
-  return { requestId: json(response).requestId as string, verifier, state };
+  return { requestId: json(response).requestId, verifier, state };
 }
 
 async function consent(account: Account, requestId: string) {
   const response = await rawRequest("GET", `/api/auth/gateway-link/requests/${requestId}`, [["Cookie", account.cookie]]);
   expect(response.status).toBe(200);
-  return json(response) as { nonce: string; status: string };
+  return json(response);
 }
 
 const act = (account: Account, action: "approve" | "deny", requestId: string, nonce: string, extra: Array<[string, string]> = [["Origin", WEB_ORIGIN]]) =>
@@ -150,7 +161,7 @@ async function linkDevice(account: Account, options: { replaceLinkId?: string } 
   expect(exchanged.status).toBe(200);
   const body = json(exchanged);
   const keyId = (db.prepare("SELECT keyId FROM gateway_links WHERE id = ?").get(body.link.id) as { keyId: string }).keyId;
-  return { key: body.key as string, linkId: body.link.id as string, keyId };
+  return { key: body.key, linkId: body.link.id, keyId };
 }
 
 const me = (key: string) => rawRequest("GET", "/api/me", [["Authorization", `Bearer ${key}`]]);
@@ -198,7 +209,8 @@ beforeAll(async () => {
   server = serverMod.startServer(0, "127.0.0.1");
   await new Promise<void>((resolve) => (server.listening ? resolve() : server.once("listening", () => resolve())));
   port = (server.address() as AddressInfo).port;
-  closers.push(async () => { server.closeAllConnections?.(); await new Promise((resolve) => server.close(resolve)); });
+  const httpServer = server as import("node:http").Server;
+  closers.push(async () => { httpServer.closeAllConnections(); await new Promise((resolve) => httpServer.close(resolve)); });
 
   // The first account is the bootstrap superadmin. The second is an ordinary approved user.
   accounts.alice = await signUp("alice");
