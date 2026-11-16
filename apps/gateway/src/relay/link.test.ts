@@ -95,12 +95,19 @@ describe("checkRemoteOrigin", () => {
     ["HTTPS://Gateway.Example.com:8443", "https://gateway.example.com:8443"],
     ["http://127.0.0.1:4100", "http://127.0.0.1:4100"],
     ["http://[::1]:4100/", "http://[::1]:4100"],
+    ["https://203.0.113.7:8443", "https://203.0.113.7:8443"],
   ])("accepts %s", (input, origin) => {
     const result = checkRemoteOrigin(input);
     expect(result.ok && result.value.origin).toBe(origin);
   });
 
   it.each([
+    "https://127.0x0.0.1",
+    "https://127.0.0x1",
+    "https://0x7f.0.0.0x1",
+    "https://1.2.3.0x4",
+    "https://0x1.2.3.4",
+    "http://127.0x0.0.1:4100",
     "https://gateway.example.com/app",
     "https://gateway.example.com/?next=1",
     "https://gateway.example.com/#frag",

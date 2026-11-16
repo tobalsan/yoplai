@@ -70,6 +70,8 @@ export function checkRemoteOrigin(input: string): LinkResult<CheckedRemoteOrigin
   } catch {
     return refuse("The address of the remote gateway is not valid.");
   }
+  // The parser turns a mixed spelling such as 127.0x0.0.1 into a dotted address. Only the plain dotted form is allowed.
+  if (isIPv4(url.hostname) && url.hostname !== host) return refuse("Use a host name or a plain dotted address. Other number forms are not allowed.");
   return ok({ origin: url.origin, defaultName: url.hostname.replace(/^\[|\]$/g, "").replace(/:/g, "-") });
 }
 
