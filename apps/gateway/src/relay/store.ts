@@ -97,10 +97,10 @@ function readLockOwner(lockFile: string): LockOwner | null {
  * process, reads the file, checks it, and writes it while it holds the lock file `<file>.lock`, so no process loses the
  * change of another process.
  *
- * The lock file holds the process ID of its owner and a random token. A lock is stale only when its owner process does
- * not exist. Age never makes a lock stale, so a live writer that pauses keeps its lock, and other writers wait and then
- * fail. A stale lock is moved to a unique name before it is deleted, so two writers cannot both recover it. A writer
- * deletes only a lock that holds its own token.
+ * The lock file holds the process ID of its owner and a random token. Only the process that made a lock deletes it, right
+ * after its own write. No process renames, moves, or deletes the lock of another process. A writer that finds a lock
+ * waits, then fails. If the owner process is dead, the error names the lock file and the process ID, and the user
+ * deletes the file by hand.
  */
 export function createFileRemoteGatewayStore(
   filePath: string = path.join(resolveHomeDir(), REMOTE_GATEWAYS_FILE),
@@ -144,25 +144,6 @@ export function createFileRemoteGatewayStore(
     });
     fs.renameSync(tmpPath, filePath);
   };
-  /** Moves a stale lock to a unique name. The rename lets only one writer take the lock, and the content check undoes a wrong take. */
-  const recoverStaleLock = (stale: LockOwner) => {
-    const moved = `${lockPath}.${process.pid}.${randomUUID()}.stale`;
-    try {
-      fs.renameSync(lockPath, moved);
-    } catch {
-      return; // Another writer moved or released the lock first.
-    }
-    const taken = readLockOwner(moved);
-    if (!taken || (taken.token !== stale.token && processIsAlive(taken.pid))) {
-      // Another writer made a new lock between our read and our rename, so put that lock back.
-      try {
-        fs.linkSync(moved, lockPath);
-      } catch {
-        // A third writer already holds the lock path. The owner keeps its token, and it deletes only that lock.
-      }
-    }
-    fs.rmSync(moved, { force: true });
-  };
   const locked = <T>(change: () => T): T => {
     fs.mkdirSync(path.dirname(filePath), { recursive: true });
     const owner: LockOwner = { pid: process.pid, token: randomUUID() };
@@ -178,14 +159,15 @@ export function createFileRemoteGatewayStore(
         } catch (error) {
           if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
         }
-        const holder = readLockOwner(lockPath);
-        if (holder && !processIsAlive(holder.pid)) {
-          recoverStaleLock(holder);
-          if (Date.now() <= deadline) continue;
-        }
         if (Date.now() > deadline) {
+          const holder = readLockOwner(lockPath);
+          if (holder && !processIsAlive(holder.pid)) {
+            throw new Error(
+              `Cannot lock ${path.basename(filePath)}. Process ${holder.pid} died and left the lock file ${lockPath}. Delete that file, then try again.`
+            );
+          }
           const who = holder ? `Process ${holder.pid} holds the lock` : "Another process holds the lock";
-          throw new Error(`Cannot lock ${path.basename(filePath)}. ${who}. Wait and try again, or delete ${path.basename(lockPath)} if no Yoplai process runs.`);
+          throw new Error(`Cannot lock ${path.basename(filePath)}. ${who}. Wait and try again. The lock file is ${lockPath}.`);
         }
         sleepSync(5);
       }
@@ -195,8 +177,8 @@ export function createFileRemoteGatewayStore(
     try {
       return change();
     } finally {
-      // Delete the lock only when it still holds our token. Another writer may have replaced it.
-      if (readLockOwner(lockPath)?.token === owner.token) fs.rmSync(lockPath, { force: true });
+      // This process made the lock, and no other process deletes it.
+      fs.rmSync(lockPath, { force: true });
     }
   };
   const bump = (file: StoreFile, name: string) => file.mutations.set(name, (file.mutations.get(name) ?? 0) + 1);
