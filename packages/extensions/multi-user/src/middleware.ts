@@ -2,6 +2,7 @@ import type { Context, MiddlewareHandler } from "hono";
 import { getOAuthProvider } from "@yoplai/shared";
 import { canUserUseAgent, getMultiUserRuntime } from "./runtime-state.js";
 import { getImpersonation } from "./impersonation.js";
+import { isReservedPrefix } from "./gateway-link-codec.js";
 
 export const FORWARDED_AUTH_CONTEXT_HEADER = "x-yoplai-auth-context";
 // Deprecated: accepted for requests forwarded by older code, never sent.
@@ -328,6 +329,14 @@ async function verifyBearer(token: string): Promise<BearerVerifyResult | null> {
 
   const keyId =
     typeof key.id === "string" && key.id.length > 0 ? key.id : "unknown";
+
+  // A managed link key works only through its active link. A key with the reserved prefix and no link service fails closed.
+  const managed = runtime.gatewayLinks
+    ? runtime.gatewayLinks.checkManagedKey({ id: keyId, prefix: key.prefix, referenceId: ownerId })
+    : isReservedPrefix(key.prefix)
+      ? "inactive"
+      : "unmanaged";
+  if (managed === "inactive") return { kind: "invalid" };
 
   const authContext = normalizeAuthContext({
     user: {

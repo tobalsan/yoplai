@@ -1,6 +1,7 @@
 import type { Hono } from "hono";
 import { getMultiUserRuntime } from "./runtime-state.js";
 import { registerMultiUserAdminRoutes } from "./admin-routes.js";
+import { registerGatewayLinkRoutes } from "./gateway-link-routes.js";
 import {
   getForwardedAuthContext,
   getRequestAuthContext,
@@ -34,6 +35,8 @@ function getRuntimeOrThrow() {
 }
 
 export function registerMultiUserRoutes(app: Hono): void {
+  // The link routes and the managed-key guards must come before the auth wildcard, which answers every `/auth/*` path.
+  registerGatewayLinkRoutes(app);
   app.on(["GET", "POST"], "/auth/*", (c) => {
     const { auth } = getRuntimeOrThrow();
     const url = new URL(c.req.url);

@@ -5,8 +5,9 @@ import {
   type ExtensionContext,
 } from "@yoplai/shared";
 import type { Hono } from "hono";
-import { initializeMultiUserDatabase } from "./db.js";
-import { createMultiUserAuth } from "./auth.js";
+import { ensureManagedKeyPrefixIndex, initializeMultiUserDatabase } from "./db.js";
+import { createMultiUserAuth, getTrustedOrigins } from "./auth.js";
+import { createGatewayLinkService } from "./gateway-link.js";
 import { registerMultiUserRoutes } from "./routes.js";
 import { createAgentAssignmentStore } from "./assignments.js";
 import { createTeamStore } from "./teams.js";
@@ -23,7 +24,16 @@ import {
 } from "./runtime-state.js";
 import path from "node:path";
 
-export { canUserUseAgent, getMultiUserRuntime } from "./runtime-state.js";
+export { canUserUseAgent, getMultiUserRuntime, isGatewayLinkReady } from "./runtime-state.js";
+export type { ManagedKeyState } from "./gateway-link.js";
+
+/**
+ * The state of an API key for a socket that must stop when its key stops. `unmanaged` is a key that the link service
+ * does not own. A managed key is `active`, `inactive` (expired, replaced, revoked, or blocked), or `missing`.
+ */
+export function getManagedKeyState(keyId: string, ownerId: string): import("./gateway-link.js").ManagedKeyState {
+  return getMultiUserRuntime()?.gatewayLinks?.getManagedKeyState(keyId, ownerId) ?? "unmanaged";
+}
 export type { MultiUserRuntime } from "./runtime-state.js";
 
 function hasSuperadminRole(role: string | string[] | null | undefined): boolean {
@@ -176,9 +186,20 @@ export const multiUserExtension: Extension = {
       isAgentRunnable: (agentId) => Boolean(ctx.getAgent(agentId)),
       getTeamName: (teamId) => teams.getTeam(teamId)?.name ?? null,
     });
+    // Recovery resolves every unfinished key issuance before the remote advertises link support or accepts a managed key.
+    ensureManagedKeyPrefixIndex(db);
+    const gatewayLinks = createGatewayLinkService({
+      db,
+      auth: auth.api,
+      secret: config.sessionSecret,
+      getAllowedOrigins: () => getTrustedOrigins(ctx.getConfig()),
+      logger: ctx.logger,
+    });
+    gatewayLinks.recover();
     setMultiUserRuntime({
       auth,
       db,
+      gatewayLinks,
       assignments,
       teams,
       membership,

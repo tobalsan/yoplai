@@ -69,6 +69,8 @@ const fail = (status: number, error: string): GatewayLinkFailure => ({ ok: false
 const ok = <T>(value: T): GatewayLinkResult<T> => ({ ok: true, value });
 
 export type ManagedKeyCheck = "unmanaged" | "active" | "inactive";
+/** `missing` is a key ID with no key row. A managed link whose key row is gone counts as revoked. */
+export type ManagedKeyState = ManagedKeyCheck | "missing";
 
 export type GatewayLinkServiceOptions = {
   db: Database.Database;
@@ -499,10 +501,14 @@ export class GatewayLinkService {
     return ok(this.revoke(link));
   }
 
-  /** Revokes the link that owns a verified key. The caller names no link. */
-  revokeByKey(keyId: string): GatewayLinkResult<GatewayLinkSummary> {
+  /**
+   * Revokes the link that owns a verified key. A link ID in the request grants nothing: it must match that link, or the
+   * call fails.
+   */
+  revokeByKey(keyId: string, requestedLinkId?: string): GatewayLinkResult<GatewayLinkSummary> {
     const link = this.db.prepare("SELECT * FROM gateway_links WHERE keyId = ?").get(keyId) as LinkRow | undefined;
     if (!link) return fail(404, "not_found");
+    if (requestedLinkId !== undefined && requestedLinkId !== link.id) return fail(403, "link_mismatch");
     return ok(this.revoke(link));
   }
 
@@ -529,10 +535,23 @@ export class GatewayLinkService {
   checkManagedKey(key: { id: string; prefix?: unknown; referenceId: string }): ManagedKeyCheck {
     const link = this.db.prepare("SELECT * FROM gateway_links WHERE keyId = ?").get(key.id) as LinkRow | undefined;
     if (!link) return isReservedPrefix(key.prefix) ? "inactive" : "unmanaged";
-    if (link.state !== "active" || link.ownerId !== key.referenceId) return "inactive";
+    // Before recovery finished, no managed key works.
+    if (!this.ready || link.state !== "active" || link.ownerId !== key.referenceId) return "inactive";
     if (link.expiresAt !== null && link.expiresAt <= this.now()) return "inactive";
     if (!getEligibleAccount(this.db, link.ownerId)) return "inactive";
     return "active";
+  }
+
+  /** The state of a key by its ID, for a socket that must stop when its key stops. Reads the key row afresh. */
+  getManagedKeyState(keyId: string, ownerId: string): ManagedKeyState {
+    const row = this.db.prepare("SELECT prefix, enabled, referenceId FROM apikey WHERE id = ?").get(keyId) as
+      | { prefix: string | null; enabled: number | boolean; referenceId: string }
+      | undefined;
+    if (!row) return "missing";
+    const state = this.checkManagedKey({ id: keyId, prefix: row.prefix, referenceId: row.referenceId });
+    if (state === "unmanaged") return row.referenceId === ownerId ? "unmanaged" : "inactive";
+    if (state !== "active") return state;
+    return Boolean(row.enabled) && row.referenceId === ownerId ? "active" : "inactive";
   }
 
   /** True when the key belongs to the service: it has the reserved prefix, or a link or an issuance names it. */
