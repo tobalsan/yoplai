@@ -59,7 +59,6 @@ describe("/capabilities API", () => {
       forkedAgents: false,
       enableCronMonitoring: false,
       dashboardEmbed: { version: 1, assetVersion: "v3", policyVersion: 1, enabled: true },
-      relayLink: { available: false },
     });
   });
 
@@ -67,7 +66,7 @@ describe("/capabilities API", () => {
     const { api } = await import("./api.core.js");
     const state = await import("../relay/state.js");
     vi.spyOn(console, "warn").mockImplementation(() => undefined);
-    const available = async () => ((await (await Promise.resolve(api.request("/capabilities"))).json()) as { relayLink: { available: boolean } }).relayLink.available;
+    const available = async () => ((await (await Promise.resolve(api.request("/capabilities"))).json()) as { relayLink?: { available: boolean } }).relayLink?.available;
     try {
       state.configureRelay("127.0.0.1", false);
       state.setGatewayListener({ address: "127.0.0.1", port: 4000 });
@@ -77,8 +76,9 @@ describe("/capabilities API", () => {
         expect(await available()).toBe(false);
       }
       state.setGatewayListener({ address: "127.0.0.1", port: 4000 });
+      // With the relay off, the gateway reports no relayLink at all.
       state.configureRelay("127.0.0.1", true);
-      expect(await available()).toBe(false);
+      expect(await available()).toBeUndefined();
     } finally {
       state.setGatewayListener(undefined);
       state.configureRelay("127.0.0.1", true);

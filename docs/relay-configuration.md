@@ -334,7 +334,7 @@ All programmatic requests of the flow use HTTPS. The one exception is plain HTTP
 
 ### Callback reachability
 
-The callback host is the literal `127.0.0.1`. The gateway records the address that its listener really bound (`setGatewayListener` in `relay/state.ts`). `getLinkCallbackPort()` returns a port only while the relay is on and that address is `127.0.0.1`. A gateway bound to `127.0.0.2` or `::1` cannot receive the callback, so `/api/capabilities` reports `relayLink: { available: false }`, the sidebar shows no Link entry, and `POST /api/relay/link/start` answers `409 link_callback_unavailable` before any request to the remote. Saved links keep working through the existing relay. The listener is never widened, and the browser cannot choose the callback host.
+The callback host is the literal `127.0.0.1`. The gateway records the address that its listener really bound (`setGatewayListener` in `relay/state.ts`). `getLinkCallbackPort()` returns a port only while the relay is on and that address is `127.0.0.1`. A gateway bound to `127.0.0.2` or `::1` cannot receive the callback, so `/api/capabilities` reports `relayLink: { available: false }` (a gateway with the relay off reports no `relayLink`), the sidebar shows no Link entry, and `POST /api/relay/link/start` answers `409 link_callback_unavailable` before any request to the remote. Saved links keep working through the existing relay. The listener is never widened, and the browser cannot choose the callback host.
 
 ### Routes
 
