@@ -1,7 +1,7 @@
 import { For, Show, createResource, createSignal, onCleanup } from "solid-js";
 import { createImportToken, fetchImportTokens, revokeImportToken, type CreatedImportToken } from "../api/skills";
 import type { GatewayName } from "../api/gateway";
-import { importAddressProblem } from "../lib/skill-import-url";
+import { IMPORT_REACH_NOTE, importAddressProblem } from "../lib/skill-import-url";
 import { Modal } from "./ui/Modal";
 import { Button } from "./ui/Button";
 
@@ -62,6 +62,7 @@ export function SkillImportDialog(props: { onClose: () => void; gateway?: Gatewa
     </ol>
     <Show when={created()} fallback={<div class="skill-dialog-start"><Button variant="primary" icon="fa-solid fa-key" disabled={busy() || unknown()} onClick={() => void run(async () => { const token = await createImportToken(gateway); if (disposed) return; setCreated(token); await refetch(); })}>Generate import token</Button></div>}>{(token) => <Show when={!addressProblem()} fallback={<p class="skill-dialog-status" role="alert">{addressProblem()} Revoke the token below, then generate a new one.</p>}><section class="skill-dialog-token" aria-label="New import token">
       <p class="skill-dialog-notice"><i class="fa-solid fa-triangle-exclamation" aria-hidden="true" />Copy the prompt now. The token shows only once. It expires {formatDate(token().expiresAt)}.</p>
+      <Show when={gateway !== undefined}><p class="skill-dialog-status" role="note">{IMPORT_REACH_NOTE}</p></Show>
       <div class="skill-dialog-field">
         <div class="skill-dialog-field-head"><span>Prompt to paste</span><Button variant="primary" icon={copied() === "prompt" ? "fa-solid fa-check" : "fa-regular fa-copy"} onClick={() => void copy("prompt", token().prompt)} disabled={busy()}>{copyLabel("prompt", "Copy prompt")}</Button></div>
         <textarea aria-label="Import prompt" readonly rows={8} value={token().prompt} />

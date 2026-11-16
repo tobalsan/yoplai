@@ -32,12 +32,18 @@ const CREATE_SKILL_PROMPT = "Help me create a skill. Let's start with you interv
 export function Skills() {
   const params = useParams<{ id?: string }>();
   const choice = useGatewayChoice();
-  const skillId = () => params.id && decodeURIComponent(params.id); // the router keeps %3A etc. encoded
-  const visitKey = createMemo(() => (choice.ready() ? JSON.stringify([choice.gateway() ?? null, skillId() ?? null]) : undefined));
+  // The router keeps %3A etc. encoded, so the page decodes the ID once. A malformed escape makes no request at all.
+  const decoded = createMemo<{ id?: string; malformed?: true }>(() => {
+    if (!params.id) return {};
+    try { return { id: decodeURIComponent(params.id) }; } catch { return { malformed: true }; }
+  });
+  const skillId = () => decoded().id;
+  const visitKey = createMemo(() => (choice.ready() && !decoded().malformed ? JSON.stringify([choice.gateway() ?? null, skillId() ?? null]) : undefined));
   const missing = () => { const selection = choice.selection(); return selection.state === "missing" ? selection : undefined; };
   return <main class="skills-page"><div class="skills-shell">
     <GatewaySelect value={choice.chosen()} names={choice.names()} onChange={choice.choose} />
     <Show when={missing()}>{(selection) => <p class="skills-notice skills-notice--error" role="alert">{missingGatewayText(selection())}</p>}</Show>
+    <Show when={decoded().malformed}><p class="skills-notice skills-notice--error" role="alert">The skill address is not valid.</p></Show>
     <Show when={choice.selection().state === "loading"}><p class="skills-notice" role="status">Loading linked gateways…</p></Show>
     <Show when={visitKey()} keyed>{(_visit) => <SkillsView gateway={choice.gateway()} id={skillId() || undefined} />}</Show>
   </div><style>{SKILLS_STYLES}</style></main>;
@@ -60,6 +66,11 @@ function SkillsView(props: { gateway?: GatewayName; id?: string }) {
   const listData = () => skills.error ? undefined : skills.latest;
   const detailData = () => detail.error ? undefined : detail.latest;
   const refetch = () => Promise.all([refetchList(), refetchDetail()]);
+  // A read that failed because the peer has no alias gets the upgrade message. Other read failures keep the generic text.
+  const readFailure = () => {
+    const failure = detail.error ?? skills.error;
+    return failure instanceof SkillRequestError && failure.code === "remote_skill_route_unsupported" ? failure.message : undefined;
+  };
   // After an uncertain write the remote may hold the change although the answer failed. Every control stays off until a
   // read of the same gateway works, so no later write starts from an old list.
   const [unknown, setUnknown] = createSignal(false);
@@ -210,7 +221,7 @@ function SkillsView(props: { gateway?: GatewayName; id?: string }) {
       if (failed && !disposed) await settle();
     }} />}</Show>
     <Show when={!params.id}><label class="skills-search"><i class="fa-solid fa-magnifying-glass" aria-hidden="true" /><input type="search" aria-label="Search skills" placeholder="Search skills" value={search()} onInput={(event) => setSearch(event.currentTarget.value)} /></label></Show>
-    <Show when={skills.error || detail.error || error() || unknown()}><p class="skills-notice skills-notice--error" role="alert">{error() || "Unable to load skills."} <button class="skills-link-button" onClick={() => void retry()}>Retry</button></p></Show>
+    <Show when={skills.error || detail.error || error() || unknown()}><p class="skills-notice skills-notice--error" role="alert">{error() || readFailure() || "Unable to load skills."} <button class="skills-link-button" onClick={() => void retry()}>Retry</button></p></Show>
     <Show when={skills.state === "pending" || detail.state === "pending"}><p class="skills-notice" role="status">Loading skills…</p></Show>
     <Show when={params.id ? detailData() : undefined}>{(row) => <>{group("Skill", () => [row()])}
       <section class="skills-section"><header class="skills-section-header"><h2>Instructions</h2><p>The SKILL.md file the agent reads.</p></header><div aria-label="Skill instructions" class="skill-instructions" innerHTML={renderMarkdown(skillMarkdown(row().skillMd), { stripFrontmatter: false })} /></section>

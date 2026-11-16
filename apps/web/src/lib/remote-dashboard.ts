@@ -71,7 +71,7 @@ export type DashboardLinkDecision =
   | { kind: "blocked"; reason: "credentials" | "local" }
   | { kind: "ignored" };
 
-export function isLocalHostname(hostname: string): boolean {
+function isLocalHostname(hostname: string): boolean {
   // A final DNS dot names the same host: `localhost.` is `localhost`.
   const host = hostname.toLowerCase().replace(/\.+$/, "");
   if (host.startsWith("[")) {
