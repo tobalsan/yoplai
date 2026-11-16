@@ -233,15 +233,20 @@ export function forwardAuthContextToRequest(
   return request;
 }
 
-function shouldSkipAuth(path: string, method: string): boolean {
+/**
+ * `path` is the path that Hono gives (it decodes most percent escapes, so `%63allback` reads as `callback`). `rawPath`
+ * is the pathname of the request URL, with every escape kept. The two callback exceptions check `rawPath`, so an
+ * encoded alias of a callback path needs credentials. Every other rule keeps its own `path` handling.
+ */
+function shouldSkipAuth(path: string, method: string, rawPath: string): boolean {
   if (method === "GET" && path === "/api/mcp/oauth/client-metadata.json") return true;
   // The provider sends the browser here with no session. The callback holds only a one-use state. The state binds the
-  // owner, scope, agent, server, and PKCE verifier from the authenticated start. The exact method and path only.
-  if (method === "GET" && path === "/api/mcp/oauth/callback") return true;
+  // owner, scope, agent, server, and PKCE verifier from the authenticated start. The exact method and raw path only.
+  if (method === "GET" && rawPath === "/api/mcp/oauth/callback") return true;
   // The browser returns from a core provider with no session. The one-use state of the authenticated start binds the
   // owner, scope, agent, provider, redirect URI, and PKCE verifier. Only GET and the exact callback path of a provider that
   // the registry holds pass. The raw path segment is the registry ID. Suffixes, aliases, and unknown providers need auth.
-  const coreCallback = method === "GET" ? /^\/api\/oauth\/([^/]+)\/callback$/.exec(path) : null;
+  const coreCallback = method === "GET" ? /^\/api\/oauth\/([^/]+)\/callback$/.exec(rawPath) : null;
   if (coreCallback && getOAuthProvider(coreCallback[1])) return true;
   if (method === "POST" && path === "/api/skills/import") return true;
   if (method === "GET" && /^\/api\/slack\/(?:pair|connect)\/[A-Za-z0-9_-]{43}$/.test(path)) return true;
@@ -375,7 +380,7 @@ export const createAuthMiddleware = (): MiddlewareHandler => {
 
     if (bearer) {
       const result = await verifyBearer(bearer);
-      const skip = shouldSkipAuth(c.req.path, c.req.method);
+      const skip = shouldSkipAuth(c.req.path, c.req.method, new URL(c.req.url).pathname);
 
       if (!result || result.kind === "invalid") {
         if (skip) {
@@ -403,7 +408,7 @@ export const createAuthMiddleware = (): MiddlewareHandler => {
       headers: c.req.raw.headers,
     });
 
-    if (shouldSkipAuth(c.req.path, c.req.method)) {
+    if (shouldSkipAuth(c.req.path, c.req.method, new URL(c.req.url).pathname)) {
       // Public path — attach session if present but never reject
       if (session) {
         const authContext = normalizeAuthContext(session);

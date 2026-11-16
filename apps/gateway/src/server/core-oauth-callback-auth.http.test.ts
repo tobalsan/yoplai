@@ -280,6 +280,31 @@ describe("core OAuth callback past the outer authentication gate (real socket)",
     expect(exchanges).toBe(0);
   });
 
+  it("refuses an encoded alias of the callback path or provider, with valid state and code, and makes no exchange", async () => {
+    const url = await start("alice", "allowed-agent", "personal");
+    const query = url.search;
+    const aliases = [
+      `/api/oauth/%66ixture/callback`, `/api/oauth/fix%74ure/callback`, `/api/oauth/%46ixture/callback`, `/api/oauth/%66%69%78%74%75%72%65/callback`,
+      `/api/oauth/fixture/%63allback`, `/api/oauth/fixture/call%62ack`, `/api/oauth/fixture/%43allback`, `/api/oauth/fixture/%63%61%6c%6c%62%61%63%6b`,
+      `/api/%6Fauth/fixture/callback`, `/%61pi/oauth/fixture/callback`, `/api/oauth%2Ffixture/callback`, `/api/oauth/fixture/callback%2F`,
+    ];
+    for (const alias of aliases) {
+      const response = await raw("GET", `${alias}${query}`);
+      expect({ alias, status: response.status }).toEqual({ alias, status: 401 });
+    }
+    expect(exchanges).toBe(0);
+    // No state was consumed: the exact, unencoded request still completes.
+    expect((await callback(url)).status).toBe(200);
+    expect(exchanges).toBe(1);
+  });
+
+  it("refuses an encoded alias of the MCP callback path with no credentials, and keeps the exact path through the gate", async () => {
+    for (const alias of ["/api/mcp/oauth/%63allback", "/api/mcp/oauth/call%62ack", "/api/mcp/oauth/%43allback", "/api/mcp/%6Fauth/callback", "/api/%6Dcp/oauth/callback", "/%61pi/mcp/oauth/callback"]) {
+      expect({ alias, status: (await raw("GET", `${alias}?state=x&code=y`)).status }).toEqual({ alias, status: 401 });
+    }
+    expect((await raw("GET", "/api/mcp/oauth/callback?state=x&code=y")).status).toBe(404);
+  });
+
   it("keeps the other protected routes behind credentials", async () => {
     for (const [method, p] of [["GET", "/api/oauth/fixture/authorize?agent=allowed-agent&scope=personal"], ["GET", "/api/oauth/fixture/status?agent=allowed-agent"], ["POST", "/api/oauth/fixture/disconnect?agent=allowed-agent&scope=personal"], ["GET", "/api/agents"], ["GET", "/api/mcp/oauth/status?agent=allowed-agent"]]) {
       expect({ method, p, status: (await raw(method, p)).status }).toEqual({ method, p, status: 401 });

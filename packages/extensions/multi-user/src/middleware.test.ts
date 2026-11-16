@@ -51,6 +51,9 @@ describe("multi-user middleware", () => {
 
     const callback = "/api/mcp/oauth/callback";
     expect((await app.request(`${callback}?code=c&state=s`)).status).toBe(200);
+    for (const alias of ["/api/mcp/oauth/%63allback", "/api/mcp/%6Fauth/callback", "/api/%6Dcp/oauth/callback"]) {
+      expect({ alias, status: (await app.request(`${alias}?code=c&state=s`)).status }).toEqual({ alias, status: 401 });
+    }
     for (const method of ["POST", "PUT", "PATCH", "DELETE", "HEAD"]) {
       expect((await app.request(callback, { method })).status).toBe(401);
     }
@@ -71,6 +74,10 @@ describe("multi-user middleware", () => {
       app.all("/api/*", (c) => c.json({ ok: true }));
       const callback = "/api/oauth/fixture/callback";
       expect((await app.request(`${callback}?code=c&state=s`)).status).toBe(200);
+      // Hono decodes these paths to the exact callback path, and the raw pathname keeps the escapes.
+      for (const alias of ["/api/oauth/%66ixture/callback", "/api/oauth/fixture/%63allback", "/api/%6Fauth/fixture/callback"]) {
+        expect({ alias, status: (await app.request(`${alias}?code=c&state=s`)).status }).toEqual({ alias, status: 401 });
+      }
       for (const method of ["POST", "PUT", "PATCH", "DELETE", "HEAD"]) {
         expect({ method, status: (await app.request(callback, { method })).status }).toEqual({ method, status: 401 });
       }
