@@ -49,18 +49,22 @@ export default function AdminExtensionsPage() {
   // Local keeps its old behavior: the gateway refuses what the role may not do. A gateway is read-only
   // until its requester is known, and a remote multi-user gateway allows only its superadmin.
   const canWrite = () => gateway() === undefined || (requester().ready && !requester().unknown && (!requester().multiUser || requester().isSuperadmin));
-  const [loaded, { mutate }] = createResource(
+  const [loaded, { mutate, refetch }] = createResource(
     createResourceKey(() => (choice.ready() ? { gateway: gateway() } : null)),
     async (key): Promise<{ key: string; data: AdminTopExtensions }> => ({ key: gatewayKey(key.gateway), data: await fetchAdminTopExtensions(key.gateway) })
   );
   // Data of another gateway is never current data.
   const data = createMemo<AdminTopExtensions | undefined>(() => {
     if (loaded.error || !choice.ready()) return undefined;
-    const value = loaded();
+    // `latest` keeps the last data while a read runs, and it does not suspend the page.
+    const value = loaded.latest;
     return value?.key === gatewayKey(gateway()) ? value.data : undefined;
   });
   const [pending, setPending] = createSignal<string | null>(null);
   const [error, setError] = createSignal<string | null>(null);
+  // After an uncertain write the remote may hold the change although the answer failed. Every switch stays off
+  // until a read of the same gateway works, so the next write starts from a fresh snapshot.
+  const [unknown, setUnknown] = createSignal(false);
   // Each visit to a gateway has its own number. A save that started in an older visit, also one of the same
   // gateway, changes nothing. The page closing ends the visit too.
   let visit = 0;
@@ -70,13 +74,14 @@ export default function AdminExtensionsPage() {
     visit++;
     setPending(null);
     setError(null);
+    setUnknown(false);
   });
   onCleanup(() => { visit++; });
 
   async function toggle(kind: "extensions" | "mcp", value: string, system = false) {
     const current = data();
     const host = gateway();
-    if (!current || !choice.ready() || !canWrite()) return;
+    if (!current || !choice.ready() || !canWrite() || unknown()) return;
     const mine = visit;
     const live = () => visit === mine;
     const next: TopExtensions = {
@@ -88,14 +93,30 @@ export default function AdminExtensionsPage() {
     else next[kind] = toggled(current[kind], value);
     setPending(`${kind}:${value}`);
     setError(null);
+    let failed = false;
     try {
       const saved = await saveTopExtensions(next, host);
       if (live()) mutate({ key: gatewayKey(host), data: { ...current, ...saved } });
     } catch (cause) {
+      failed = true;
       if (live()) setError(cause instanceof Error ? cause.message : "Save failed.");
-    } finally {
-      if (live()) setPending(null);
     }
+    // The remote can commit a write before its answer fails. Read the same gateway before another write.
+    if (failed && live()) await settleRead(live);
+    if (live()) setPending(null);
+  }
+
+  /** Reads the flags of the gateway of this visit again. A failed read keeps the unknown state. */
+  async function settleRead(live: () => boolean) {
+    try { await refetch(); } catch { /* The error state of the resource tells the result. */ }
+    if (live()) setUnknown(Boolean(loaded.error));
+  }
+  async function retryRead() {
+    const mine = visit;
+    const live = () => visit === mine;
+    setPending("read");
+    await settleRead(live);
+    if (live()) setPending(null);
   }
 
   const star = (kind: "extensions" | "mcp", value: string, label: string) => {
@@ -108,7 +129,7 @@ export default function AdminExtensionsPage() {
         aria-pressed={on()}
         aria-label={`${on() ? "Unmark" : "Mark"} ${label} as top`}
         title={on() ? "Top: shown first and prompted to users" : "Mark as top"}
-        disabled={pending() !== null || !canWrite()}
+        disabled={pending() !== null || !canWrite() || unknown()}
         onClick={() => void toggle(kind, value)}
       >
         {on() ? "★" : "☆"}
@@ -126,7 +147,7 @@ export default function AdminExtensionsPage() {
           class="top-system"
           aria-checked={on()}
           aria-label={`${on() ? "Unmark" : "Mark"} ${label} as system`}
-          disabled={pending() !== null || !canWrite()}
+          disabled={pending() !== null || !canWrite() || unknown()}
           onClick={() => void toggle(kind, value, true)}
         >
           System
@@ -153,6 +174,9 @@ export default function AdminExtensionsPage() {
         <p class="top-empty" role="status">Only the superadmin of {gateway()} can change these flags.</p>
       </Show>
       <Show when={error()}>{(message) => <p class="top-error">{message()}</p>}</Show>
+      <Show when={unknown()}>
+        <p class="top-error" role="alert">The flags could not be read after the error, and the change may have happened. Read the flags before you change them again. <button type="button" disabled={pending() !== null} onClick={() => void retryRead()}>Read list</button></p>
+      </Show>
       <Show when={choice.ready() && loaded.error}>
         <p class="top-error">{loaded.error instanceof Error ? loaded.error.message : "Failed to load."}</p>
       </Show>

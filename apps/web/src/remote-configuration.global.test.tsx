@@ -173,6 +173,73 @@ describe("global extension administration", () => {
     expect(star("Ext exa")?.getAttribute("aria-pressed")).toBe("true");
   });
 
+  it("reads the flags after a committed write whose answer failed, and keeps the first change in the next write", async () => {
+    // The remote commits the first write, then the relay answer is the actual 502 gateway_offline.
+    let remote = top([], ["exa", "notion"]);
+    const puts: unknown[] = [];
+    gateways.on("GET", `${east}/api/admin/top-extensions`, () => ({ json: remote }));
+    gateways.on("PUT", `${east}/api/admin/top-extensions`, (request) => {
+      puts.push(request.body);
+      remote = { ...remote, ...(request.body as object) } as typeof remote;
+      return puts.length === 1 ? { status: 502, json: { error: "gateway_offline" } } : { json: remote };
+    });
+    mount("/admin/extensions?gateway=east");
+    await vi.waitFor(() => expect(star("Ext exa")?.disabled).toBe(false));
+    const reads = () => gateways.log().filter((line) => line === `GET ${east}/api/admin/top-extensions`).length;
+    const before = reads();
+    let releaseRead: (() => void) | undefined;
+    gateways.on("GET", `${east}/api/admin/top-extensions`, () => new Promise<FakeAnswer>((resolve) => { releaseRead = () => resolve({ json: remote }); }));
+    star("Ext exa")!.click();
+    await vi.waitFor(() => expect(text()).toContain("The remote gateway is offline."));
+    await vi.waitFor(() => expect(reads()).toBeGreaterThan(before));
+    // Every switch stays off while the read of the same gateway is pending.
+    expect(star("Ext notion")?.disabled).toBe(true);
+    star("Ext notion")!.click();
+    await tick();
+    expect(puts).toHaveLength(1);
+    releaseRead!();
+    await vi.waitFor(() => expect(star("Ext notion")?.disabled).toBe(false));
+    // The fresh snapshot holds the first change, so the second write keeps it.
+    expect(star("Ext exa")?.getAttribute("aria-pressed")).toBe("true");
+    star("Ext notion")!.click();
+    await vi.waitFor(() => expect(puts).toHaveLength(2));
+    expect(puts[1]).toMatchObject({ extensions: ["exa", "notion"] });
+  });
+
+  it("keeps every switch off with a Read list button when the read after a failed write fails", async () => {
+    gateways.on("PUT", `${east}/api/admin/top-extensions`, { status: 502, json: { error: "gateway_offline" } });
+    mount("/admin/extensions?gateway=east");
+    await vi.waitFor(() => expect(star("Ext exa")?.disabled).toBe(false));
+    gateways.on("GET", `${east}/api/admin/top-extensions`, { status: 502, json: { error: "gateway_offline" } });
+    star("Ext exa")!.click();
+    await vi.waitFor(() => expect(text()).toContain("The flags could not be read after the error"));
+    expect(container.querySelector("button.top-star")).toBeNull();
+    const puts = () => gateways.requests.filter((request) => request.method === "PUT").length;
+    expect(puts()).toBe(1);
+    gateways.on("GET", `${east}/api/admin/top-extensions`, { json: top(["exa"]) });
+    button("Read list")!.click();
+    await vi.waitFor(() => expect(star("Ext exa")?.disabled).toBe(false));
+    expect(star("Ext exa")?.getAttribute("aria-pressed")).toBe("true");
+    expect(text()).not.toContain("The flags could not be read");
+  });
+
+  it("ignores a late read after the visit changed", async () => {
+    let finish: (() => void) | undefined;
+    gateways.on("PUT", `${east}/api/admin/top-extensions`, { status: 502, json: { error: "gateway_offline" } });
+    mount("/admin/extensions?gateway=east");
+    await vi.waitFor(() => expect(star("Ext exa")?.disabled).toBe(false));
+    gateways.on("GET", `${east}/api/admin/top-extensions`, () => new Promise<FakeAnswer>((resolve) => { finish = () => resolve({ status: 502, json: { error: "gateway_offline" } }); }));
+    star("Ext exa")!.click();
+    await vi.waitFor(() => expect(finish).toBeDefined());
+    history.set({ value: "/admin/extensions" });
+    await vi.waitFor(() => expect(text()).toContain("Ext local-only"));
+    finish!();
+    await tick();
+    await tick();
+    expect(text()).not.toContain("The flags could not be read");
+    expect(container.querySelector<HTMLButtonElement>("button.top-star")?.disabled).toBe(false);
+  });
+
   it("starts nothing after the page closes during a save", async () => {
     let finish: (() => void) | undefined;
     gateways.on("PUT", `${east}/api/admin/top-extensions`, () => new Promise<FakeAnswer>((resolve) => { finish = () => resolve({ json: top([]) }); }));
@@ -329,6 +396,56 @@ describe("MCP catalog administration", () => {
     expect(rowButton("docs", "Remove")?.disabled).toBe(false);
   });
 
+  it("reads the catalog after the actual relay answer 502 gateway_offline for an icon refresh, with the controls off during the read", async () => {
+    gateways.on("POST", `${eastCatalog}/icon/refresh?server=docs`, { status: 502, json: { error: "gateway_offline" } });
+    mount("/admin/mcp-servers?gateway=east");
+    await vi.waitFor(() => expect(rowButton("docs", "Refresh icon")?.disabled).toBe(false));
+    const reads = () => gateways.log().filter((line) => line === `GET ${eastCatalog}`).length;
+    const before = reads();
+    let releaseRead: (() => void) | undefined;
+    gateways.on("GET", eastCatalog, () => new Promise<FakeAnswer>((resolve) => { releaseRead = () => resolve({ json: { servers: [server("docs", { displayName: "East Docs", iconUrl: "https://icons.example.test/new.png" })] } }); }));
+    rowButton("docs", "Refresh icon")!.click();
+    await vi.waitFor(() => expect(text()).toContain("The remote gateway is offline."));
+    await vi.waitFor(() => expect(reads()).toBeGreaterThan(before));
+    // Every catalog control stays off while the read of the same catalog is pending.
+    expect(rowButton("docs", "Edit")?.disabled).toBe(true);
+    expect(rowButton("docs", "Remove")?.disabled).toBe(true);
+    expect(button("Add server")?.disabled).toBe(true);
+    releaseRead!();
+    await vi.waitFor(() => expect(rowButton("docs", "Edit")?.disabled).toBe(false));
+    expect(container.querySelector('[data-server="docs"] img')?.getAttribute("src")).toBe("https://icons.example.test/new.png");
+  });
+
+  it("keeps the unknown state and Read list after a failed catalog read that follows an icon failure", async () => {
+    gateways.on("POST", `${eastCatalog}/icon/refresh?server=docs`, { status: 502, json: { error: "gateway_offline" } });
+    mount("/admin/mcp-servers?gateway=east");
+    await vi.waitFor(() => expect(rowButton("docs", "Refresh icon")?.disabled).toBe(false));
+    gateways.on("GET", eastCatalog, { status: 502, json: { error: "gateway_offline" } });
+    rowButton("docs", "Refresh icon")!.click();
+    await vi.waitFor(() => expect(text()).toContain("The server list could not be read after the error"));
+    expect(button("Add server")?.disabled).toBe(true);
+    gateways.on("GET", eastCatalog, { json: { servers: [server("docs", { displayName: "East Docs" })] } });
+    button("Read list")!.click();
+    await vi.waitFor(() => expect(button("Add server")?.disabled).toBe(false));
+  });
+
+  it("drops the icon recovery of an older visit", async () => {
+    let finish: (() => void) | undefined;
+    gateways.on("POST", `${eastCatalog}/icon/refresh?server=docs`, { status: 502, json: { error: "gateway_offline" } });
+    mount("/admin/mcp-servers?gateway=east");
+    await vi.waitFor(() => expect(rowButton("docs", "Refresh icon")?.disabled).toBe(false));
+    gateways.on("GET", eastCatalog, () => new Promise<FakeAnswer>((resolve) => { finish = () => resolve({ status: 502, json: { error: "gateway_offline" } }); }));
+    rowButton("docs", "Refresh icon")!.click();
+    await vi.waitFor(() => expect(finish).toBeDefined());
+    history.set({ value: "/admin/mcp-servers" });
+    await vi.waitFor(() => expect(text()).toContain("Local Docs"));
+    finish!();
+    await tick();
+    await tick();
+    expect(text()).not.toContain("The server list could not be read");
+    expect(button("Add server")?.disabled).toBe(false);
+  });
+
   it("ends the finite icon deadline as an uncertain outcome, reads the same list, and ignores an older attempt", async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     vi.spyOn(AbortSignal, "timeout").mockImplementation((milliseconds) => {
@@ -403,6 +520,27 @@ describe("alert dots of configured gateways", () => {
     window.dispatchEvent(new Event("focus"));
     await vi.waitFor(() => expect(dot("quiet")).toBeNull());
     expect(dot("nav")).toBeNull();
+  });
+
+  it("does not restore a removed gateway from an older list read that ends later", async () => {
+    mount("/alerts", () => <Alerts />);
+    await vi.waitFor(() => expect(dot("quiet")).not.toBeNull());
+    let finish: ((answer: FakeAnswer) => void) | undefined;
+    gateways.on("GET", "/api/relay/gateways", () => new Promise<FakeAnswer>((resolve) => { finish = resolve; }));
+    window.dispatchEvent(new Event("focus"));
+    await vi.waitFor(() => expect(finish).toBeDefined());
+    gateways.on("GET", "/api/relay/gateways", { json: { gateways: [{ name: "east" }] } });
+    window.dispatchEvent(new Event("focus"));
+    await vi.waitFor(() => expect(dot("quiet")).toBeNull());
+    const quietReads = () => gateways.log().filter((line) => line === `GET ${relayPrefix("quiet")}/api/schedule-alerts`).length;
+    const before = quietReads();
+    finish!({ json: { gateways: [{ name: "east" }, { name: "quiet" }] } });
+    await tick();
+    await tick();
+    await tick();
+    expect(dot("quiet")).toBeNull();
+    expect(dot("nav")).toBeNull();
+    expect(quietReads()).toBe(before);
   });
 
   it("does not gate a remote read on the local scheduler flag", async () => {

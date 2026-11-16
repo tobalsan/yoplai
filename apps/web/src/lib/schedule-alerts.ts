@@ -12,6 +12,8 @@ const [failedGateways, setFailedGateways] = createSignal<Record<string, boolean>
 /** The configured gateway names, also a link with no visible agent or a gateway that is offline. */
 const [configured, setConfigured] = createSignal<string[]>([]);
 const revisions = new Map<string, number>();
+/** Each configured-list read has a number. Only the latest read may set the list or start alert reads. */
+let listRevision = 0;
 const LOCAL = "";
 
 const bump = (gateway: string) => {
@@ -99,16 +101,19 @@ export function useScheduleAlerts(enabled: Accessor<boolean>, chatAgentId: Acces
     const names = () => [...new Set([...configured(), ...(fromChat === undefined ? [] : [fromChat])])];
     const refreshAll = () => { for (const name of names()) void refreshScheduleAlerts(name); };
     const readList = async () => {
+      const mine = ++listRevision;
+      const current = () => live && mine === listRevision;
       try {
         const list = await fetchGatewayList();
-        if (!live) return;
+        // An older read that ends after a newer one must not restore a removed gateway.
+        if (!current()) return;
         const next = list.state === "ready" ? list.names : [];
         for (const old of configured()) if (!next.includes(old)) forget(old);
         setConfigured(next);
       } catch {
         // The configured list stays as it was. The next trigger reads it again.
       }
-      if (live) refreshAll();
+      if (current()) refreshAll();
     };
     void readList();
     onCleanup(onOAuthReturn(() => { void readList(); }));

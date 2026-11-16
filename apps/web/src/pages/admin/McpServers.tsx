@@ -6,7 +6,6 @@ import {
   removeMcpCatalogServer,
   iconRefreshOutcome,
   refreshMcpCatalogIcon,
-  ICON_REFRESH_UNCERTAIN,
   updateMcpCatalogServer,
   type McpCatalogServer,
 } from "../../api/mcp-servers";
@@ -36,7 +35,8 @@ export default function AdminMcpServersPage() {
   // The catalog of another gateway is never current data. Server names repeat across gateways.
   const servers = createMemo<McpCatalogServer[] | undefined>(() => {
     if (result.error || !choice.ready()) return undefined;
-    const value = result();
+    // `latest` keeps the last data while a read runs, and it does not suspend the page.
+    const value = result.latest;
     return value?.key === gatewayKey(gateway()) ? value.servers : undefined;
   });
   const [error, setError] = createSignal<string>();
@@ -102,10 +102,14 @@ export default function AdminMcpServersPage() {
       mutate((value) => value && value.key === gatewayKey(host) ? { ...value, servers: value.servers.map((item) => item.name === key ? { ...item, iconUrl: outcome.server.iconUrl } : item) } : value);
       setIconResults((results) => ({ ...results, [key]: iconRefreshOutcome(outcome, "This server needs sign-in; its own icon is captured the next time an agent connects.") }));
     } catch (cause) {
-      if (!live()) return;
-      setIconResults((results) => ({ ...results, [key]: { error: message(cause, "Failed to refresh MCP server icon.") } }));
-      // A timeout leaves the outcome uncertain. Read the same list before the next try.
-      if (cause instanceof Error && cause.message === ICON_REFRESH_UNCERTAIN) await settleList(() => visit === mine);
+      // Any failed answer leaves the outcome uncertain: the browser deadline, the relay answer
+      // `502 gateway_offline` after its own 30 second deadline, and a refusal that follows a commit all look alike.
+      // The page reads the same catalog before another change, and keeps the catalog controls off during that read.
+      if (attempt === iconAttempts.get(key) && visit === mine) setIconResults((results) => ({ ...results, [key]: { error: message(cause, "Failed to refresh MCP server icon.") } }));
+      if (visit !== mine) return;
+      setBusy(true);
+      await settleList(() => visit === mine);
+      if (visit === mine) setBusy(false);
     }
   };
 
