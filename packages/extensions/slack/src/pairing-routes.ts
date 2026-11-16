@@ -43,17 +43,30 @@ export function registerSlackPairingRoutes(app: Hono): void {
     c.header("Cache-Control", "no-store");
     const service = getSlackPairingService();
     if (!service) return c.json({ error: "slack_unavailable" }, 503);
-    const { getMultiUserRuntime, getEligibleAccount } = await import("@yoplai/extension-multi-user");
+    const { getMultiUserRuntime, getEligibleAccount, getRequestAuthContext, isVerifiedBearerRequest } = await import("@yoplai/extension-multi-user");
     const runtime = getMultiUserRuntime();
-    const session = await runtime?.auth.api.getSession({ headers: c.req.raw.headers });
-    if (!session || !runtime) return c.json({ error: "login_required" }, 401);
-    if (!getEligibleAccount(runtime.db, session.user.id)) return c.json({ error: "forbidden" }, 403);
-    if (c.req.method === "GET") return c.json({ pairings: service.list(session.user.id) });
+    // A gateway with no multi-user identity cannot own a pairing. Say so, so a remote page can show the cause.
+    if (!runtime) return c.json({ error: "multi_user_required" }, 409);
+    // The bearer branch uses the identity that the outer middleware bound after it verified the bearer. The marker comes
+    // from the in-process binding only. A header, a session string, or a role never sets it, and a failed bearer never
+    // reaches this handler because the outer middleware answers it first.
+    const bearer = isVerifiedBearerRequest(c) ? getRequestAuthContext(c) : null;
+    let userId: string;
+    if (bearer) userId = bearer.user.id;
+    else {
+      const session = await runtime.auth.api.getSession({ headers: c.req.raw.headers });
+      if (!session) return c.json({ error: "login_required" }, 401);
+      userId = session.user.id;
+    }
+    // Fresh eligibility for both kinds of identity.
+    if (!getEligibleAccount(runtime.db, userId)) return c.json({ error: "forbidden" }, 403);
+    if (c.req.method === "GET") return c.json({ pairings: service.list(userId) });
     const workspaceId = c.req.param("workspaceId");
     const slackUserId = c.req.param("slackUserId");
     if (!workspaceId || !slackUserId) return c.json({ error: "missing_identity" }, 400);
-    if (!isTrustedOrigin(c, service.baseUrl)) return c.json({ error: "invalid_origin" }, 403);
-    service.unpair(session.user.id, workspaceId, slackUserId);
+    // The cookie branch needs a same-origin or configured Origin. A verified bearer request carries no cookie, so it has none.
+    if (!bearer && !isTrustedOrigin(c, service.baseUrl)) return c.json({ error: "invalid_origin" }, 403);
+    service.unpair(userId, workspaceId, slackUserId);
     return c.json({ ok: true });
   });
   app.on(["GET", "POST"], "/slack/pair/:token", async (c) => {

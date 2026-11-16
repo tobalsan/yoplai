@@ -271,6 +271,30 @@ describe("multi-user middleware", () => {
     await expect(response.json()).resolves.toEqual({ error: "forbidden" });
   });
 
+  it("marks a request as a verified bearer only after the bearer passed, never for a cookie or a header", async () => {
+    const verifyApiKey = vi.fn(async ({ body }: { body: { key: string } }) => (body.key === "good" ? { valid: true, key: { id: "key-1", referenceId: "user-1" } } : { valid: false }));
+    const getSession = vi.fn(async () => ({ user: { id: "user-1" }, session: { id: "apikey:fake", userId: "user-1" } }));
+    setRuntime({
+      auth: { api: { getSession, verifyApiKey } },
+      db: { prepare: vi.fn(() => ({ get: vi.fn(() => ({ id: "user-1", email: "u@example.com", name: "U", image: null, role: "user", approved: 1 })) })) },
+    });
+    const { createAuthMiddleware, isVerifiedBearerRequest } = await import("./middleware.js");
+    const app = new Hono();
+    app.use("/api/*", createAuthMiddleware());
+    app.get("/api/probe", (c) => c.json({ verified: isVerifiedBearerRequest(c) }));
+    const probe = async (headers: Record<string, string>) => {
+      const response = await app.request("/api/probe", { headers });
+      return { status: response.status, body: response.status === 200 ? await response.json() : null };
+    };
+    expect(await probe({ Authorization: "Bearer good" })).toEqual({ status: 200, body: { verified: true } });
+    // A cookie session, even one whose ID looks like an API key session, is not a bearer.
+    expect(await probe({ Cookie: "session=1" })).toEqual({ status: 200, body: { verified: false } });
+    // Caller headers never set the marker.
+    expect(await probe({ Cookie: "session=1", "x-multi-user-bearer-verified": "true", multiUserBearerVerified: "true" })).toEqual({ status: 200, body: { verified: false } });
+    // An invalid bearer never falls through to the cookie session.
+    expect(await probe({ Authorization: "Bearer forged", Cookie: "session=1" })).toEqual({ status: 401, body: null });
+  });
+
   it("attaches auth context for bearer tokens of approved users", async () => {
     const verifyApiKey = vi.fn(async () => ({
       valid: true,

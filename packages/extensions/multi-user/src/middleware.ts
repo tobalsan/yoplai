@@ -29,6 +29,11 @@ export type RequestAuthContext = {
 };
 
 const REQUEST_AUTH_CONTEXT_KEY = "multiUserAuthContext";
+/**
+ * Set only by `createAuthMiddleware`, and only after `verifyBearer` accepted the request bearer. It lives in the Hono
+ * context and in the in-process bindings of the inner API. A header, a session string, or a role never sets it.
+ */
+const REQUEST_BEARER_VERIFIED_KEY = "multiUserBearerVerified";
 
 function normalizeAuthContext(session: {
   user: Record<string, unknown>;
@@ -186,6 +191,11 @@ function decodeAuthContext(value: string): RequestAuthContext | null {
 export function getRequestAuthContext(c: Context): RequestAuthContext | null {
   const authContext = c.get(REQUEST_AUTH_CONTEXT_KEY);
   return (authContext as RequestAuthContext | null | undefined) ?? null;
+}
+
+/** True when this request passed through a verified bearer. A cookie session is never a verified bearer. */
+export function isVerifiedBearerRequest(c: Context): boolean {
+  return c.get(REQUEST_BEARER_VERIFIED_KEY) === true;
 }
 
 export function getForwardedAuthContext(
@@ -378,6 +388,7 @@ export const createAuthMiddleware = (): MiddlewareHandler => {
       }
 
       c.set(REQUEST_AUTH_CONTEXT_KEY, result.authContext);
+      c.set(REQUEST_BEARER_VERIFIED_KEY, true);
       await next();
       return;
     }
