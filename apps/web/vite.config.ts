@@ -153,6 +153,22 @@ function ownsDashboardViewUrl(url: string | undefined): boolean {
   return false;
 }
 
+// The status path of a browser link holds an attempt ID. Keep this test in step with `ownsLinkPath` in the gateway.
+const linkNamespace = "/api/relay/link";
+function ownsLinkUrl(url: string | undefined): boolean {
+  let value = (url ?? "").split("?")[0];
+  for (let i = 0; i < 4; i++) {
+    const lower = value.toLowerCase();
+    if (lower === linkNamespace || lower.startsWith(`${linkNamespace}/`)) return true;
+    const decoded = value.replace(/%([0-9a-f]{2})/gi, (_match, hex: string) =>
+      String.fromCharCode(parseInt(hex, 16))
+    );
+    if (decoded === value) break;
+    value = decoded;
+  }
+  return false;
+}
+
 // In dev mode, always use root path (no /yoplai prefix)
 const base = tailscaleServe ? "/yoplai" : "/";
 
@@ -181,6 +197,8 @@ export default defineConfig({
           proxy.on("error", (_error, request) => {
             if (ownsDashboardViewUrl(request.url)) {
               request.url = `${dashboardViewNamespace}/[redacted]`;
+            } else if (ownsLinkUrl(request.url)) {
+              request.url = `${linkNamespace}/[redacted]`;
             }
           });
         },

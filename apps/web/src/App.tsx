@@ -32,6 +32,7 @@ import { Skills } from "./pages/Skills";
 import { AccountConnections } from "./pages/AccountConnections";
 import { GatewayLink } from "./pages/GatewayLink";
 import { GatewayLinks } from "./pages/GatewayLinks";
+import { RemoteGateways } from "./pages/RemoteGateways";
 import { SessionArchive } from "./pages/SessionArchive";
 import { ImpersonationBanner } from "./components/ImpersonationBanner";
 import {
@@ -406,6 +407,14 @@ export default function App() {
         component={() => (
           <GuardedRoute>
             <GatewayLinks />
+          </GuardedRoute>
+        )}
+      />
+      <Route
+        path="/remote-gateways"
+        component={() => (
+          <GuardedRoute>
+            <RemoteGateways />
           </GuardedRoute>
         )}
       />

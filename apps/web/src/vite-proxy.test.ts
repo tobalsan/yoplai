@@ -100,6 +100,24 @@ describe("vite dev proxy", () => {
       expect(message).not.toContain(grant);
     }
 
+    // The status path of a browser link holds an attempt ID, in every spelling.
+    errors.length = 0;
+    const attempt = "SyntheticAttemptNotReal0123456789abcdefghi";
+    const linkRequests = [
+      `/api/relay/link/status/${attempt}`,
+      `/api/relay/link%2Fstatus%2F${attempt}`,
+      `/api/Relay/Link/status/${attempt}`,
+      `/api/relay/link/status/${attempt}?x=1`,
+    ];
+    for (const path of linkRequests) {
+      expect((await fetch(`http://127.0.0.1:${uiPort}${path}`)).status).toBe(500);
+    }
+    expect(errors).toHaveLength(linkRequests.length);
+    for (const message of errors) {
+      expect(message).toContain("http proxy error");
+      expect(message).not.toContain(attempt);
+    }
+
     // Other proxy errors keep their request URL.
     errors.length = 0;
     expect((await fetch(`http://127.0.0.1:${uiPort}/api/agents?agent=pom`)).status).toBe(500);

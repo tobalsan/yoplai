@@ -11,6 +11,7 @@ const defaultCapabilities: CapabilitiesResponse = {
   multiUser: false,
   forkedAgents: false,
   enableCronMonitoring: false,
+  relayLink: { available: false },
 };
 
 const [capabilities, setCapabilities] =
@@ -23,7 +24,14 @@ export async function loadCapabilities(): Promise<CapabilitiesResponse> {
   if (loadPromise) return loadPromise;
   loadPromise = fetchCapabilities()
     .then((data) => {
-      setCapabilities({ ...data, apps: data.apps ?? { available: false }, enableCronMonitoring: data.enableCronMonitoring ?? false });
+      // A store merge keeps a field that the new answer omits, so each optional link field is set on every load.
+      setCapabilities({
+        ...data,
+        apps: data.apps ?? { available: false },
+        enableCronMonitoring: data.enableCronMonitoring ?? false,
+        relayLink: data.relayLink ?? { available: false },
+        gatewayLink: data.gatewayLink,
+      });
       setCapabilitiesReady(true);
       return data;
     })
@@ -37,8 +45,8 @@ export async function loadCapabilities(): Promise<CapabilitiesResponse> {
           : undefined;
       setCapabilities(
         status === 401 || status === 403
-          ? { ...defaultCapabilities, multiUser: true }
-          : defaultCapabilities
+          ? { ...defaultCapabilities, multiUser: true, gatewayLink: undefined }
+          : { ...defaultCapabilities, gatewayLink: undefined }
       );
       setCapabilitiesReady(true);
       return status === 401 || status === 403
@@ -52,7 +60,7 @@ export async function loadCapabilities(): Promise<CapabilitiesResponse> {
 }
 
 export function resetCapabilitiesForTests(): void {
-  setCapabilities(defaultCapabilities);
+  setCapabilities({ ...defaultCapabilities, gatewayLink: undefined });
   setCapabilitiesReady(false);
   loadPromise = null;
 }
@@ -69,6 +77,8 @@ export function setCapabilitiesForTests(
     authMethods: value.authMethods,
     forkedAgents: value.forkedAgents ?? defaultCapabilities.forkedAgents,
     enableCronMonitoring: value.enableCronMonitoring ?? defaultCapabilities.enableCronMonitoring,
+    relayLink: value.relayLink ?? defaultCapabilities.relayLink,
+    gatewayLink: value.gatewayLink,
     user: value.user,
   });
   setCapabilitiesReady(true);

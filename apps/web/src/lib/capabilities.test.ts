@@ -104,4 +104,30 @@ describe("capabilities store", () => {
     expect(capabilities.multiUser).toBe(true);
     expect(capabilitiesReady()).toBe(true);
   });
+
+  it("defaults the browser link to unavailable and reads it from the answer", async () => {
+    fetchMock.mockResolvedValue({ ok: true, status: 200, json: async () => ({ version: 2, extensions: {}, agents: [], multiUser: false }) });
+    await loadCapabilities();
+    expect(capabilities.relayLink?.available).toBe(false);
+    fetchMock.mockResolvedValue({ ok: true, status: 200, json: async () => ({ version: 2, extensions: {}, agents: [], multiUser: false, relayLink: { available: true } }) });
+    await loadCapabilities();
+    expect(capabilities.relayLink?.available).toBe(true);
+  });
+
+  it("clears the link fields of an older answer on reload and after a failed load", async () => {
+    fetchMock.mockResolvedValue({
+      ok: true, status: 200,
+      json: async () => ({ version: 2, extensions: {}, agents: [], multiUser: true, gatewayLink: { version: 1, method: "loopback-pkce" }, relayLink: { available: true } }),
+    });
+    await loadCapabilities();
+    expect(capabilities.gatewayLink).toEqual({ version: 1, method: "loopback-pkce" });
+    fetchMock.mockResolvedValue({ ok: true, status: 200, json: async () => ({ version: 2, extensions: {}, agents: [], multiUser: true }) });
+    await loadCapabilities();
+    expect(capabilities.gatewayLink).toBeUndefined();
+    expect(capabilities.relayLink?.available).toBe(false);
+    setCapabilitiesForTests({ relayLink: { available: true } });
+    fetchMock.mockResolvedValue({ ok: false, status: 401, json: async () => ({ error: "unauthorized" }) });
+    await loadCapabilities();
+    expect(capabilities.relayLink?.available).toBe(false);
+  });
 });

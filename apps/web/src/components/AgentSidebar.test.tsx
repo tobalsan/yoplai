@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { getByRole } from "@testing-library/dom";
+import { getByRole, queryByRole } from "@testing-library/dom";
 import { createSignal, splitProps } from "solid-js";
 import { render } from "solid-js/web";
 
@@ -1166,6 +1166,27 @@ describe("AgentSidebar", () => {
     expect(container2.querySelector(".archive-link")).toBeNull();
     dispose2();
     container2.remove();
+  });
+
+  it("shows a Link gateway entry when the gateway can link, also with no saved gateway, and none otherwise", async () => {
+    vi.useFakeTimers();
+    fetchAgentSessionsMock.mockResolvedValue({ items: [] });
+    setPathname("/chat/alpha");
+    const render_ = async (capabilities: Parameters<typeof setCapabilitiesForTests>[0]) => {
+      vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({ gateways: [] }), { status: 200 }));
+      setCapabilitiesForTests(capabilities);
+      const container = document.createElement("div");
+      document.body.appendChild(container);
+      const dispose = render(() => <AgentSidebar collapsed={() => false} onToggleCollapse={() => {}} />, container);
+      await vi.advanceTimersByTimeAsync(5);
+      const link = queryByRole(container, "link", { name: /Link gateway/ });
+      dispose();
+      container.remove();
+      return link?.getAttribute("href");
+    };
+    expect(await render_({ multiUser: false, relayLink: { available: true } })).toBe("/remote-gateways");
+    expect(await render_({ multiUser: false, relayLink: { available: false } })).toBeUndefined();
+    expect(await render_({ multiUser: false })).toBeUndefined();
   });
 
   it("shows a Slack pairings entry for a local user with linked gateways, and no entry for a multi-user gateway or without links", async () => {
