@@ -59,6 +59,29 @@ describe("multi-user middleware", () => {
     }
   });
 
+  it("allows only the exact GET callback of a registered core OAuth provider without a session", async () => {
+    setRuntime({ auth: { api: { getSession: vi.fn(async () => null) } } });
+    const { registerOAuthProvider, resetOAuthProviders } = await import("@yoplai/shared");
+    resetOAuthProviders();
+    registerOAuthProvider({ id: "fixture", displayName: "Fixture", authorizeUrl: "https://p.example/a", tokenUrl: "https://p.example/t", defaultScopes: ["read"] });
+    try {
+      const { createAuthMiddleware } = await import("./middleware.js");
+      const app = new Hono();
+      app.use("/api/*", createAuthMiddleware());
+      app.all("/api/*", (c) => c.json({ ok: true }));
+      const callback = "/api/oauth/fixture/callback";
+      expect((await app.request(`${callback}?code=c&state=s`)).status).toBe(200);
+      for (const method of ["POST", "PUT", "PATCH", "DELETE", "HEAD"]) {
+        expect({ method, status: (await app.request(callback, { method })).status }).toEqual({ method, status: 401 });
+      }
+      for (const url of [`${callback}/`, `${callback}/extra`, `${callback}.json`, "/api/oauth/Fixture/callback", "/api/oauth/fixture%2Fextra/callback", "/api/oauth/unknown/callback", "/api/oauth//callback", "/api/oauth/fixture/authorize", "/api/oauth/fixture/status", "/api/oauth/fixture/disconnect", "/api/oauth/callback", "/api/mcp/oauth/authorize"]) {
+        expect({ url, status: (await app.request(url)).status }).toEqual({ url, status: 401 });
+      }
+    } finally {
+      resetOAuthProviders();
+    }
+  });
+
   it("allows only the exact skill import POST without a session", async () => {
     setRuntime({ auth: { api: { getSession: vi.fn(async () => null) } } });
     const { createAuthMiddleware } = await import("./middleware.js");

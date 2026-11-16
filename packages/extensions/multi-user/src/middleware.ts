@@ -1,4 +1,5 @@
 import type { Context, MiddlewareHandler } from "hono";
+import { getOAuthProvider } from "@yoplai/shared";
 import { canUserUseAgent, getMultiUserRuntime } from "./runtime-state.js";
 import { getImpersonation } from "./impersonation.js";
 
@@ -237,6 +238,11 @@ function shouldSkipAuth(path: string, method: string): boolean {
   // The provider sends the browser here with no session. The callback holds only a one-use state. The state binds the
   // owner, scope, agent, server, and PKCE verifier from the authenticated start. The exact method and path only.
   if (method === "GET" && path === "/api/mcp/oauth/callback") return true;
+  // The browser returns from a core provider with no session. The one-use state of the authenticated start binds the
+  // owner, scope, agent, provider, redirect URI, and PKCE verifier. Only GET and the exact callback path of a provider that
+  // the registry holds pass. The raw path segment is the registry ID. Suffixes, aliases, and unknown providers need auth.
+  const coreCallback = method === "GET" ? /^\/api\/oauth\/([^/]+)\/callback$/.exec(path) : null;
+  if (coreCallback && getOAuthProvider(coreCallback[1])) return true;
   if (method === "POST" && path === "/api/skills/import") return true;
   if (method === "GET" && /^\/api\/slack\/(?:pair|connect)\/[A-Za-z0-9_-]{43}$/.test(path)) return true;
   if (path === "/api/auth" || path.startsWith("/api/auth/")) return true;
