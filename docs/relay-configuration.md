@@ -474,9 +474,12 @@ The web app builds the host contract above in `apps/web`. Remote HTML never ente
 - Annotation messages reach the chat staging only when `meta.annotation` is true. The host replaces the page ID and the agent with the checked values. Staged notes and the page announcement of an ended or replaced instance are dropped. A note still needs an explicit send from the chat composer.
 - A link request resolves against the checked dashboard. A viewer path of the same gateway prepares a new view. An external HTTP or HTTPS link shows its destination and opens with `noopener,noreferrer` only after a click on Open link. Executable schemes, credentials, and addresses of this machine or network never open.
 - `ChatView` opens `?dashboard=<id>` for a remote agent (`name@gateway`) through the host. It waits for the loaded agent and uses the `gateway` of that agent.
-- Dashboards that a remote chat shows through tool calls still use the local MCP app route, which the relay does not forward. They do not open yet.
+- A dashboard that a tool call of a remote chat shows (`CapturedFrameView`) uses the gateway of the locally resolved chat agent (`agent.gateway`). `ChatView` passes it to the transcript rows and the side panel. The captured result supplies only the dashboard ID and title. A `gateway` or `query` field in the result changes nothing. An ID suffix never implies a gateway, so a local agent with `@` in its ID keeps the local frame. While the agent loads, the frame shows a loading status. The existing relay already forwards the captured-frame data path.
+- The host counts loads of each shell iframe. The first load is normal. A second load clears the checked view, the staged notes, and the iframe, and shows Reload. The host does not wait for an `ended` message, because a refusal document sends none.
+- Opening the same remote gateway and dashboard again with an explicit query (`openFrame`) updates the existing tab and prepares a fresh view. An omitted query keeps the selected one. Local dashboards have no query.
+- A final DNS dot does not change the link policy: `localhost.`, `nas.local.`, and `app.localhost.` stay blocked.
 
-Tests: `components/chat/RemoteFrameView.test.tsx`, `lib/remote-dashboard.test.ts`, `api/dashboard-views.test.ts`, `App.remote-dashboard.test.tsx` (actual router), and `components/ChatView.remote-dashboard.test.tsx`. They use fake shell windows and a fake fetch. Browser confinement still needs the real browser gate.
+Tests: `components/chat/RemoteFrameView.test.tsx`, `lib/remote-dashboard.test.ts`, `api/dashboard-views.test.ts`, `App.remote-dashboard.test.tsx` (actual router), and `components/ChatView.remote-dashboard.test.tsx`, and `components/chat/CapturedRemoteFrame.test.tsx`. They use fake shell windows and a fake fetch. Browser confinement still needs the real browser gate.
 
 ### Safe fixtures and limits
 
