@@ -191,6 +191,8 @@ export class RelayLinkService {
   private readonly attempts = new Map<string, Attempt>();
   private readonly byState = new Map<string, Attempt>();
   private readonly uncertainOrigins = new Map<string, string>();
+  /** Starts that passed the limit and still wait for the remote. Each holds one slot until it ends. */
+  private reservedStarts = 0;
 
   constructor(private readonly deps: LinkDeps) {}
 
@@ -259,9 +261,20 @@ export class RelayLinkService {
       return fail(400, "invalid_name", `Invalid gateway name "${name}". Use letters, digits, ".", "_" or "-".`);
     }
     this.purge();
-    if ([...this.attempts.values()].filter((attempt) => attempt.status === "pending" || attempt.status === "exchanging").length >= MAX_PENDING_ATTEMPTS) {
+    const open = [...this.attempts.values()].filter((attempt) => attempt.status === "pending" || attempt.status === "exchanging").length;
+    if (open + this.reservedStarts >= MAX_PENDING_ATTEMPTS) {
       return fail(429, "too_many_attempts", "Too many link attempts are open. Cancel one or wait.");
     }
+    // The slot is taken before the first await. A start that ends with no attempt gives the slot back.
+    this.reservedStarts += 1;
+    try {
+      return await this.startReserved(origin, name, port);
+    } finally {
+      this.reservedStarts -= 1;
+    }
+  }
+
+  private async startReserved(origin: string, name: string, port: number): Promise<LinkResult<StartOutcome>> {
     const existing = this.deps.store().list().find((gateway) => gateway.name === name);
     let replaceLinkId: string | undefined;
     if (existing) {

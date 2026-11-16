@@ -378,6 +378,34 @@ describe("complete", () => {
   });
 });
 
+describe("the limit of open attempts for starts that run together", () => {
+  const slowRemote = () => new Promise<void>((resolve) => setTimeout(resolve, 10));
+
+  it("lets twenty concurrent starts through and refuses the next", async () => {
+    handlers["GET /api/capabilities"] = async () => {
+      await slowRemote();
+      return jsonResponse(200, MULTI_USER_CAPABILITIES);
+    };
+    const results = await Promise.all(Array.from({ length: 21 }, (_, index) => service.start({ remote: ORIGIN, name: `g${index}` })));
+    expect(results.filter((result) => result.ok)).toHaveLength(20);
+    expect(results.filter((result) => !result.ok)).toEqual([expect.objectContaining({ status: 429, error: "too_many_attempts" })]);
+    expect(calls.filter((call) => call.path === "/api/auth/gateway-link/requests")).toHaveLength(20);
+  });
+
+  it("gives the slot back when a start fails", async () => {
+    handlers["GET /api/capabilities"] = async () => {
+      await slowRemote();
+      throw new Error("offline");
+    };
+    const failed = await Promise.all(Array.from({ length: 25 }, (_, index) => service.start({ remote: ORIGIN, name: `f${index}` })));
+    expect(failed.filter((result) => !result.ok && result.error === "too_many_attempts")).toHaveLength(5);
+    expect(failed.filter((result) => !result.ok && result.error === "remote_unreachable")).toHaveLength(20);
+    handlers = defaultHandlers();
+    const later = await Promise.all(Array.from({ length: 20 }, (_, index) => service.start({ remote: ORIGIN, name: `ok${index}` })));
+    expect(later.every((result) => result.ok)).toBe(true);
+  });
+});
+
 describe("a name that a later link removed", () => {
   it("is not restored by an older attempt, and the key of the older attempt is revoked", async () => {
     const older = await begin({ name: "work" });
