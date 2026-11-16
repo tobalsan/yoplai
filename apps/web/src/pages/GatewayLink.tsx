@@ -86,6 +86,12 @@ export function GatewayLink() {
                 <Show when={view().replaces}>
                   {(replaced) => <p>This replaces your link for {replaced().deviceLabel}. The old key stops working.</p>}
                 </Show>
+                <Show when={view().sameDeviceLinks.length > 0}>
+                  <p role="note">
+                    You already have a link for {view().deviceLabel}. If you linked this device before and lost its key,
+                    revoke that link in Linked devices first. Then approve this request.
+                  </p>
+                </Show>
                 <Show when={view().replaceConflict}>
                   <p role="alert">{describeGatewayLinkError("replace_not_allowed")}</p>
                 </Show>

@@ -34,7 +34,7 @@ beforeEach(() => {
     calls.push(path);
     if (path === "/api/capabilities") return Response.json({ multiUser: true, extensions: {}, agents: [], apps: { available: false }, version: 2, authMethods: { google: false, emailAndPassword: true }, user: { id: user.id } });
     if (path === `/api/auth/gateway-link/requests/${REQUEST_ID}`) {
-      return Response.json({ requestId: REQUEST_ID, status: "pending", deviceLabel: "Work laptop", expiresAt: new Date(Date.now() + 300_000).toISOString(), account: { email: user.email, name: user.name }, replaces: null, replaceConflict: false, nonce: "nonce" });
+      return Response.json({ requestId: REQUEST_ID, status: "pending", deviceLabel: "Work laptop", expiresAt: new Date(Date.now() + 300_000).toISOString(), account: { email: user.email, name: user.name }, replaces: null, replaceConflict: false, sameDeviceLinks: [], nonce: "nonce" });
     }
     if (path === "/api/auth/gateway-link/links") {
       return Response.json({ links: [{ id: "link-1", deviceLabel: "Work laptop", status: "active", createdAt: new Date().toISOString(), expiresAt: new Date(Date.now() + 86_400_000).toISOString(), revokedAt: null }] });

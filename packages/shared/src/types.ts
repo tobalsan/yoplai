@@ -2168,6 +2168,11 @@ export const GatewayLinkConsentViewSchema = z.object({
   replaces: z.object({ id: z.string(), deviceLabel: z.string() }).nullable(),
   /** True when the request names a link that another account owns, or that does not exist. Approval is not possible. */
   replaceConflict: z.boolean(),
+  /**
+   * Other links of this account with the same device label that still work or are blocked. When a first exchange loses
+   * its answer, the account holds a key that nobody has. This list lets the page tell the user to revoke it first.
+   */
+  sameDeviceLinks: z.array(GatewayLinkSummarySchema),
   /** A nonce bound to this request and the signed-in session. The page sends it back with approve or deny. */
   nonce: z.string(),
 });

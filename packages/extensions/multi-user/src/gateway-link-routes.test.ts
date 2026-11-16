@@ -174,6 +174,19 @@ describe("gateway link routes: one link end to end", () => {
     expect(JSON.stringify(await repeat.json())).not.toContain(body.key);
   });
 
+  it("tells the consent page about an older link of the same device name", async () => {
+    const h = await harness();
+    const alice = await h.signUp("alice");
+    const first = await h.linkDevice(alice, { deviceLabel: "Same name" });
+    const fresh = await startRequest(h, { deviceLabel: "Same name" });
+    const view = (await consentGet(h, alice, fresh.requestId)) as { sameDeviceLinks: Array<{ id: string; status: string }> };
+    expect(view.sameDeviceLinks).toEqual([expect.objectContaining({ id: first.linkId, status: "active" })]);
+    // Revoke it, as the page tells the user, and the notice goes away.
+    const revoked = await h.request("/api/auth/gateway-link/revoke", { method: "POST", headers: { ...JSON_HEADERS, cookie: alice.cookie, origin: REMOTE_ORIGIN }, body: JSON.stringify({ linkId: first.linkId }) });
+    expect(revoked.status).toBe(200);
+    expect(((await consentGet(h, alice, fresh.requestId)) as { sameDeviceLinks: unknown[] }).sameDeviceLinks).toEqual([]);
+  });
+
   it("answers Refuse with an access_denied callback and issues no key", async () => {
     const h = await harness();
     const alice = await h.signUp("alice");

@@ -225,6 +225,14 @@ export class GatewayLinkService {
       if (link && link.ownerId === session.userId) replaces = { id: link.id, deviceLabel: link.deviceLabel };
       else replaceConflict = true;
     }
+    const sameDeviceLinks = (
+      this.db
+        .prepare("SELECT * FROM gateway_links WHERE ownerId = ? AND deviceLabel = ? AND activatedAt IS NOT NULL AND state != 'revoked' ORDER BY createdAt DESC LIMIT 10")
+        .all(session.userId, request.deviceLabel) as LinkRow[]
+    )
+      .filter((row) => row.id !== request.replaceLinkId)
+      .map((row) => this.summarize(row))
+      .filter((summary) => summary.status === "active" || summary.status === "blocked");
     const status: GatewayLinkConsentView["status"] =
       request.status === "denied"
         ? "denied"
@@ -243,6 +251,7 @@ export class GatewayLinkService {
       account: { email: account.email, name: user?.name ?? null },
       replaces,
       replaceConflict,
+      sameDeviceLinks,
       nonce: consentNonce(this.options.secret, request.id, session.sessionId, request.expiresAt),
     });
   }

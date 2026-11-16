@@ -267,7 +267,9 @@ Rules of the routes:
   (`/account/gateway-links`, `POST .../revoke` with `{ linkId }`) or with the
   link's own bearer. A deleted key row counts as revoked.
 - A lost first exchange response leaves a key that nobody holds. Revoke it on
-  the owner page, then start a new link. A re-link of a saved link ID needs no
+  the owner page, then start a new link. The consent page helps: it lists the
+  older links of the account with the same device name (`sameDeviceLinks`) and
+  tells the user to revoke them first. A re-link of a saved link ID needs no
   such step: the new consent disables the uncertain key first.
 - One gateway process per `auth.db`. `getManagedKeyState(keyId, ownerId)` lets
   a socket check its key.

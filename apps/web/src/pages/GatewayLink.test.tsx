@@ -26,6 +26,7 @@ const view = (overrides: Partial<GatewayLinkConsentView> = {}): GatewayLinkConse
   account: { email: "alice@example.test", name: "Alice" },
   replaces: null,
   replaceConflict: false,
+  sameDeviceLinks: [],
   nonce: "nonce-1",
   ...overrides,
 });
@@ -103,6 +104,23 @@ describe("GatewayLink consent page", () => {
     const screen = mount();
     expect(await screen.findByText(/replaces your link for Old laptop/)).toBeTruthy();
     expect((screen.getByRole("button", { name: "Approve" }) as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it("tells the user to revoke an older link of the same device name before a fresh link", async () => {
+    api.fetchGatewayLinkConsent.mockResolvedValue(
+      view({ sameDeviceLinks: [{ id: "link-9", deviceLabel: "Work laptop", status: "active", createdAt: new Date().toISOString(), expiresAt: null, revokedAt: null }] }),
+    );
+    const screen = mount();
+    expect((await screen.findByRole("note")).textContent).toContain("revoke that link in Linked devices first");
+    expect(screen.getByRole("link", { name: "Manage linked devices" }).getAttribute("href")).toBe("/account/gateway-links");
+    expect((screen.getByRole("button", { name: "Approve" }) as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it("shows no such notice when no older link has the device name", async () => {
+    api.fetchGatewayLinkConsent.mockResolvedValue(view());
+    const screen = mount();
+    await screen.findByRole("button", { name: "Approve" });
+    expect(screen.queryByRole("note")).toBeNull();
   });
 
   it("blocks approval when the request names a link of another account", async () => {

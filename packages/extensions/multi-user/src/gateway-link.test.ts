@@ -352,6 +352,31 @@ describe("gateway link re-link, revocation, and key checks", () => {
     expect(aliceView).toMatchObject({ ok: true, value: { replaces: { id: first.link.id }, replaceConflict: false } });
   });
 
+  it("lists the older links of the same device name so a lost first exchange has a visible recovery", async () => {
+    const f = await fixture();
+    f.addUser("alice");
+    f.addUser("bob");
+    const first = await link(f, "alice", { deviceLabel: "Same name" });
+    const input = requestInput({ deviceLabel: "Same name" });
+    const created = f.service.createRequest(input.body, "source");
+    if (!created.ok) throw new Error("create failed");
+    const seen = (userId: string) => {
+      const view = f.service.describeRequest(created.value.requestId, sessionOf(userId));
+      if (!view.ok) throw new Error("describe failed");
+      return view.value.sameDeviceLinks.map((entry) => entry.id);
+    };
+    expect(seen("alice")).toEqual([first.link.id]);
+    // Another account sees nothing, and a different name matches nothing.
+    expect(seen("bob")).toEqual([]);
+    const other = f.service.createRequest(requestInput({ deviceLabel: "Other name" }).body, "source2");
+    if (!other.ok) throw new Error("create failed");
+    const otherView = f.service.describeRequest(other.value.requestId, sessionOf("alice"));
+    expect(otherView).toMatchObject({ ok: true, value: { sameDeviceLinks: [] } });
+    // A revoked link needs no warning, and the link that this request replaces is not listed twice.
+    f.service.revokeOwnedLink("alice", first.link.id);
+    expect(seen("alice")).toEqual([]);
+  });
+
   it("fails an exchange whose approved generation changed", async () => {
     const f = await fixture();
     f.addUser("alice");
