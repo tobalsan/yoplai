@@ -248,6 +248,76 @@ export function ensureAgentForksTable(db: Database.Database): void {
   }
 }
 
+/**
+ * Durable records of the gateway link flow. Times are epoch milliseconds. The service never stores a plaintext key:
+ * `codeHash` is the SHA-256 of the one-use authorization code, and an issuance names its candidate key only by the
+ * prefix that the service wrote before it created the key.
+ */
+export function ensureGatewayLinkTables(db: Database.Database): void {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS gateway_links (
+      id TEXT PRIMARY KEY,
+      ownerId TEXT NOT NULL,
+      deviceLabel TEXT NOT NULL,
+      keyId TEXT,
+      generation INTEGER NOT NULL,
+      state TEXT NOT NULL CHECK (state IN ('issuing', 'active', 'blocked', 'revoked')),
+      createdAt INTEGER NOT NULL,
+      updatedAt INTEGER NOT NULL,
+      activatedAt INTEGER,
+      expiresAt INTEGER,
+      revokedAt INTEGER,
+      FOREIGN KEY (ownerId) REFERENCES user(id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_gateway_links_owner ON gateway_links (ownerId);
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_gateway_links_key ON gateway_links (keyId) WHERE keyId IS NOT NULL;
+    CREATE TABLE IF NOT EXISTS gateway_link_requests (
+      id TEXT PRIMARY KEY,
+      challenge TEXT NOT NULL,
+      state TEXT NOT NULL,
+      callbackUri TEXT NOT NULL,
+      deviceLabel TEXT NOT NULL,
+      replaceLinkId TEXT,
+      status TEXT NOT NULL CHECK (status IN ('pending', 'approved', 'denied', 'exchanging', 'exchanged', 'failed')),
+      ownerId TEXT,
+      approvedGeneration INTEGER,
+      codeHash TEXT,
+      codeExpiresAt INTEGER,
+      createdAt INTEGER NOT NULL,
+      expiresAt INTEGER NOT NULL,
+      updatedAt INTEGER NOT NULL
+    );
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_gateway_link_requests_code ON gateway_link_requests (codeHash) WHERE codeHash IS NOT NULL;
+    CREATE INDEX IF NOT EXISTS idx_gateway_link_requests_status ON gateway_link_requests (status, expiresAt);
+    CREATE TABLE IF NOT EXISTS gateway_link_issuances (
+      id TEXT PRIMARY KEY,
+      requestId TEXT NOT NULL,
+      linkId TEXT NOT NULL,
+      ownerId TEXT NOT NULL,
+      expectedGeneration INTEGER NOT NULL,
+      candidatePrefix TEXT NOT NULL UNIQUE,
+      candidateKeyId TEXT,
+      state TEXT NOT NULL CHECK (state IN ('claimed', 'created', 'committed', 'failed')),
+      createdAt INTEGER NOT NULL,
+      updatedAt INTEGER NOT NULL
+    );
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_gateway_link_issuances_open
+      ON gateway_link_issuances (linkId) WHERE state IN ('claimed', 'created');
+  `);
+}
+
+/**
+ * One key row for each reserved candidate prefix. The plugin creates the `apikey` table at its own migration, so the
+ * service calls this after that migration. Without the table there is nothing to index and the call does nothing.
+ */
+export function ensureManagedKeyPrefixIndex(db: Database.Database): void {
+  const table = db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'apikey'").get();
+  if (!table) return;
+  db.exec(
+    "CREATE UNIQUE INDEX IF NOT EXISTS idx_apikey_managed_prefix ON apikey (prefix) WHERE prefix LIKE 'gl\\_%' ESCAPE '\\'"
+  );
+}
+
 /** Records one-shot data migrations so bootstrap never re-runs them. */
 function ensureMigrationsTable(db: Database.Database): void {
   db.exec(`
@@ -377,6 +447,7 @@ export function initializeMultiUserDatabase(
   ensureUserOnboardingTable(db);
   ensureUserAgentConnectPromptTable(db);
   ensureAgentForksTable(db);
+  ensureGatewayLinkTables(db);
   ensureMigrationsTable(db);
   // Convert legacy allowlist rows into the team model once, at bootstrap, so
   // pre-teams installs keep working after the resolver stops reading the

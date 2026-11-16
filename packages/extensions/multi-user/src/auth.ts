@@ -94,7 +94,7 @@ export type MultiUserAuth = {
       error?: { message?: string; code?: string } | null;
     }>;
     createApiKey(args: {
-      body: { userId: string; name?: string };
+      body: { userId: string; name?: string; prefix?: string; expiresIn?: number };
     }): Promise<Record<string, unknown>>;
     listApiKeys(args: {
       headers: Headers;
