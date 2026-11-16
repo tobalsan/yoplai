@@ -54,6 +54,10 @@ Existing chat and media routes keep their contracts.
 | GET, PUT | `/admin/top-extensions` | Gateway prefix. The PUT body is JSON inside the 1 MiB bound. |
 | POST | `/mcp/catalog`, `/mcp/catalog/update?server=...` | Gateway prefix. JSON body inside the 1 MiB bound. |
 | POST | `/mcp/catalog/remove?server=...`, `/mcp/catalog/icon/refresh?server=...` | Gateway prefix. No body. |
+| GET | `/skills`, `/skills/recipients`, `/skills/import-token`, `/skills/:id`, `/skills/:id/default`, `/skills/:id/versions`, `/admin/skills` | Gateway prefix. The ID is opaque. |
+| POST | `/skills`, `PUT /skills/:id/content` | Gateway prefix. Multipart, with the whole envelope inside 25 MiB. |
+| PUT | `/skills/:id/{enabled,shares,system,owner,admin}` | Gateway prefix. JSON inside the 1 MiB bound. |
+| POST, DELETE | `/skills/import-token`, `/skills/import-token/:tokenId`, `/skills/:id/default`, `/skills/:id/versions/:versionId/restore`, `DELETE /skills/:id` | Gateway prefix. No body. |
 
 The relay uses only the linked bearer. The remote gateway checks agent access and permissions.
 The relay removes caller cookies, authorization, Origin, Host, forwarded headers, and `x-yoplai-*` identity headers.
@@ -262,12 +266,23 @@ Local agents keep the redirect flow. A remote agent uses `lib/oauth-popup-flow.t
 - Each page binds its data, forms, dialogs, and writes to the gateway, the visit, and the attempt. A write whose answer is uncertain (an error, a timeout, a cancel) makes the page read the list of the same gateway again before another change. A failed read keeps an explicit unknown state with a "Read list" button.
 - Both icon refresh calls share one finite client deadline (`ICON_REFRESH_TIMEOUT_MS`, 35 seconds). The relay answers within its own 30 second header deadline, so a relay refusal arrives first. A timeout is an uncertain outcome, not proof that the remote made no change.
 - Schedule alerts load for every configured gateway, whatever its agents or health, and not only for the open chat. A failed read keeps the last known alerts and is recorded as a failed read. A denied scope clears its alerts, and a link that leaves the list drops its alerts. The dot of an agent reads only the alerts of its own gateway and compares the qualified agent ID. The dot of the navigation shows an alert of Local or of any configured gateway.
-- Skills and Slack pairing stay in the remaining scope of this slice. They are not part of batch 1.
+- Skills follow in the next batches (see below). Slack pairing stays in the remaining scope of this slice.
+
+### Skills (batches 2 and 3)
+
+- The relay allows exactly the skill routes in the route table. Each method and path is exact, and the remote keeps its own role, owner, and share policy. A skill ID is opaque and belongs to the gateway that the request names. The relay and the pages never read an agent ID inside a skill ID (`agent:<agentId>:<path>`) and never use it to select a gateway.
+- `POST /api/skills/import` is not allowed through the relay, whatever the method. Its bearer is an import token that the remote makes for the account, and it is never the linked gateway bearer. The page never calls it.
+- Skill creation and content replacement use a bounded multipart branch. The relay needs a trusted Origin and a `multipart/form-data` content type with one boundary. It counts the whole envelope, boundary lines and headers included, against exactly `25 * 1024 * 1024` bytes while it reads. A declared length over the limit gets 413 before the body is read. A chunked body that passes the limit gets 413 at the limit. A length header that is not a number, a length that differs from the bytes received, a body that does not open and close with its boundary, a failed read, and an abort all end before the remote sees a byte. The relay forwards the exact bytes with the original content type, so the boundary of the header and the body stay equal. The JSON skill writes keep the 1 MiB bound, and the bodyless writes refuse a body.
+- A new import token is a secret. The relay answers it with `Cache-Control: no-store`. The page keeps it only in the open dialog, and not in a cache, storage, or log.
+- The import prompt holds the root import address that the remote builds from `server.baseUrl`, then `web.baseUrl`, then localhost. A path in the base address is dropped, so the remote must serve `/api/skills/import` at the root of its public origin, over HTTPS for a non-local deployment. The page never replaces that address with the local relay or a browser address. When the address points at the local machine or the private network, the page shows the message "Set server.baseUrl on the gateway to its public address" and hides the token. Revoke that token in the list.
+- `/skills`, `/skills/:id`, and `/admin/skills` choose a gateway with `?gateway=<name>`. Links keep it. The remote requester decides the Share control and the administration page, and a remote multi-user gateway allows administration only for its superadmin. A skill page mounts again for each gateway and skill, and a dialog, a draft, or a write of an older visit changes nothing. After a failed write the page reads the same gateway again before another write.
+- The relay refuses a skill ID with an encoded slash (`%2F`) for a linked gateway, because the relay path check bans encoded separators. Such an agent skill, from a nested workspace folder, has no remote page. The same ID on the local gateway still works.
+- The chat shortcut "Create skill" starts a local agent, so the page hides it for a linked gateway.
 
 ### Limits
 
 - `ConnectToolsPrompt` and the "Connect tools" button need local multi-user mode, and the relay is off there. They stay local.
-- The user, skill, and quota admin pages, the skills page, and account Slack pairing act on the local gateway only. Skills and Slack remain in the remaining scope of this slice. The extension and MCP catalog admin pages follow the chosen gateway.
+- The user and quota admin pages and account Slack pairing act on the local gateway only. Slack pairing remains in the remaining scope of this slice. The extension, MCP catalog, and skills pages follow the chosen gateway.
 - A job ID or server name that decodes to `%`, `/`, or `\` is refused by the relay path check.
 - Tests use synthetic gateways: `apps/web/src/remote-configuration*.test.tsx`, `api/remote-configuration.test.ts`, `lib/oauth-popup-flow.test.ts`, and `remote-gateway.fixture.ts`. They run the real router and pages with a fake fetch and a fake popup.
   Real popups, provider redirects, the external MCP extension, and the browser behavior of the relay need a browser check.
