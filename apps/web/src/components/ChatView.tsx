@@ -139,6 +139,8 @@ export function ChatView() {
   const navigate = useNavigate();
   const location = useLocation<{ mainAgentHome?: boolean; draftMessage?: string }>();
   const [agent] = createResource(() => params.agentId, fetchAgent);
+  // The gateway of a captured dashboard comes from the resolved agent, never from an ID suffix or a tool result.
+  const chatGateway = () => (agent.loading || agent.error ? undefined : agent()?.gateway);
   // Settings live on the pool agent in forked mode; the chat agent is a fork.
   const [settingsPoolActions] = createResource(
     () => (capabilities.forkedAgents ? params.agentId : null),
@@ -964,7 +966,7 @@ export function ChatView() {
             "drop-target": isFileDragActive() && activeDropZone() === "history",
           }}
         >
-          <ChatTranscript agentId={params.agentId} session={session} viewMode={viewMode} appViews={appViews} onUserMessage={handleViewMessage} />
+          <ChatTranscript agentId={params.agentId} gateway={chatGateway()} gatewayPending={agent.loading} session={session} viewMode={viewMode} appViews={appViews} onUserMessage={handleViewMessage} />
           <Show when={agent()?.gateway}>
             <DeviceApprovalCards
               agentName={agent()?.name ?? "The agent"}
@@ -1196,7 +1198,7 @@ export function ChatView() {
       </div>
       <Show when={appViews.tabs().length > 0}>
         <ChatSidePanel>
-          <ChatPanelTabs appViews={appViews} agentId={params.agentId} sessionId={session.appSessionId()} onUserMessage={handleViewMessage} />
+          <ChatPanelTabs appViews={appViews} agentId={params.agentId} gateway={chatGateway()} gatewayPending={agent.loading} sessionId={session.appSessionId()} onUserMessage={handleViewMessage} />
         </ChatSidePanel>
       </Show>
 

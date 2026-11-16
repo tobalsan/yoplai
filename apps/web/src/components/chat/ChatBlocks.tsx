@@ -158,7 +158,7 @@ function SimpleToolBlock(props: { name: string; arguments?: unknown }) {
   );
 }
 
-export function McpAppToolRow(props: { agentId: string; sessionId?: string | null; toolCallId: string; name: string; arguments?: unknown; result?: FullToolResultMessage; appViews: AppViews; onUserMessage?: (viewKey: string, text: string) => Promise<void> }) {
+export function McpAppToolRow(props: { agentId: string; gateway?: string; gatewayPending?: boolean; sessionId?: string | null; toolCallId: string; name: string; arguments?: unknown; result?: FullToolResultMessage; appViews: AppViews; onUserMessage?: (viewKey: string, text: string) => Promise<void> }) {
   const view = () => props.appViews.viewOf(props.toolCallId);
   const file = () => {
     const current = view();
@@ -200,7 +200,7 @@ export function McpAppToolRow(props: { agentId: string; sessionId?: string | nul
         </Show>
       </Match>
       <Match when={dashboard() && captured() && !!props.sessionId}>
-        <CapturedFrameView kind="dashboard" agentId={props.agentId} sessionId={props.sessionId!} callId={() => view()!.latest.id} startCallId={props.appViews.shownCallOf(view()!.key)} onShown={(callId) => { const key = view()?.key; if (key) props.appViews.reportShown(key, callId); }} mode="inline" onExpand={() => props.appViews.open(view()!.key)} />
+        <CapturedFrameView kind="dashboard" agentId={props.agentId} gateway={props.gateway} gatewayPending={props.gatewayPending} sessionId={props.sessionId!} callId={() => view()!.latest.id} startCallId={props.appViews.shownCallOf(view()!.key)} onShown={(callId) => { const key = view()?.key; if (key) props.appViews.reportShown(key, callId); }} mode="inline" onExpand={() => props.appViews.open(view()!.key)} />
       </Match>
       <Match when={settled() && appsAvailable() !== undefined && (appsAvailable() === false || !captured() || props.sessionId !== undefined)}>
         <Show when={captured() && appsAvailable() === true && !!props.sessionId}

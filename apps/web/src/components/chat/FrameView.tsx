@@ -103,6 +103,13 @@ function LocalFrameView(props: FrameViewProps) {
 export function CapturedFrameView(props: {
   kind: DashboardFrame["kind"];
   agentId: string;
+  /**
+   * The linked gateway of the locally resolved chat agent. It is the only source of the
+   * gateway: a captured result and the renderer never choose it, and an ID suffix never implies it.
+   */
+  gateway?: string;
+  /** The chat agent is not resolved yet, so the frame cannot choose between a local and a remote host. */
+  gatewayPending?: boolean;
   sessionId: string;
   callId: () => string;
   mode: "inline" | "panel";
@@ -137,10 +144,10 @@ export function CapturedFrameView(props: {
     )
       .then((data) => {
         if (controller.signal.aborted) return;
-        setTarget({
-          ...(data.result.structuredContent as Omit<DashboardFrame, "kind">),
-          kind: props.kind,
-        });
+        // Only the dashboard ID and title come from the result. Other fields, such as a gateway or query, never reach the target.
+        const content = data.result.structuredContent as { id?: unknown; title?: unknown } | undefined;
+        if (typeof content?.id !== "string" || !content.id) throw new Error("View update unavailable");
+        setTarget({ kind: props.kind, id: content.id, title: typeof content.title === "string" ? content.title : "" });
         props.onShown?.(id);
         if (!primed()) setPrimed(true);
       })
@@ -156,9 +163,14 @@ export function CapturedFrameView(props: {
       controller.abort();
     });
   });
+  const frame = createMemo<DashboardFrame | undefined>(() => {
+    const current = target();
+    if (!current || props.gatewayPending) return undefined;
+    return props.gateway ? { ...current, gateway: props.gateway } : current;
+  });
   return (
     <Show
-      when={target()}
+      when={frame()}
       fallback={
         <p role="status">
           {failed() ? "Dashboard unavailable" : "Loading dashboard…"}

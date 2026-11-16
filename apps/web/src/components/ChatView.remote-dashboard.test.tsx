@@ -32,6 +32,8 @@ const json = (body: unknown, status = 200) => new Response(JSON.stringify(body),
 let root: HTMLDivElement;
 let dispose: (() => void) | undefined;
 let prepareBodies: Array<Record<string, unknown>>;
+let mcpAppPaths: string[];
+let capturedExtra: Record<string, unknown>;
 
 function mountChat() {
   dispose = render(() => <Router><Route path="/chat/:agentId/:view?" component={ChatView} /></Router>, root);
@@ -45,6 +47,8 @@ beforeEach(() => {
   localStorage.clear();
   sessionStorage.clear();
   prepareBodies = [];
+  mcpAppPaths = [];
+  capturedExtra = {};
   delegateEvents(["click", "input", "keydown"]);
   Element.prototype.scrollIntoView = vi.fn();
   vi.stubGlobal("scrollTo", vi.fn());
@@ -73,6 +77,10 @@ beforeEach(() => {
         expiresAt: new Date(Date.now() + 60_000).toISOString(), gateway: body.gateway, dashboardId: body.dashboardId,
       }, 201);
     }
+    if (path.endsWith("/mcp-apps/tool-1/data")) {
+      mcpAppPaths.push(path);
+      return json({ args: {}, result: { content: [], structuredContent: { id: ID, agentId: "pom", slug: "garden.html", title: "Garden", link: `/d/${ID}`, ...capturedExtra } } });
+    }
     if (path === "/api/relay/dashboard-views/read") return json({ expiresAt: new Date(Date.now() + 60_000).toISOString(), state: "delivered", gateway: "ams", dashboardId: ID, meta });
     if (path === "/api/relay/device-links") return json([{ name: "ams", connected: true }]);
     if (path === "/api/relay/agent-settings") return json({ fullBackground: false });
@@ -87,6 +95,42 @@ afterEach(() => {
   root.remove();
   resetCapabilitiesForTests();
   vi.unstubAllGlobals();
+});
+
+const toolHistory = () => {
+  const view = { server: "yoplai", tool: "dashboard", resourceUri: "ui://yoplai/dashboard" };
+  return {
+    messages: [
+      { role: "assistant", timestamp: 1, content: [{ type: "toolCall", id: "tool-1", name: "dashboard_create", arguments: {}, viewCall: true, view }] },
+      { role: "toolResult", timestamp: 2, toolCallId: "tool-1", toolName: "dashboard_create", content: [{ type: "text", text: "Created" }], view: { ...view, recordId: "record", key: ID } },
+    ],
+    sessionId: "history-1", isStreaming: false, activeTurn: null,
+  };
+};
+const showToolHistory = () => {
+  api.fetchSimpleHistory.mockResolvedValue(toolHistory());
+  api.fetchFullHistory.mockResolvedValue(toolHistory());
+};
+
+describe("captured dashboard in a chat", () => {
+  it("opens the dashboard of a tool call for the gateway of the loaded remote agent, whatever the result names", async () => {
+    capturedExtra = { gateway: "evil" };
+    showToolHistory();
+    history.replaceState({}, "", "/chat/pom%40ams?session=history-1");
+    mountChat();
+    await waitFor(() => expect(getByTitle(root, "Garden dashboard").getAttribute("src")).toBe(`/api/relay/dashboard-views/${handleOf(1)}/shell`));
+    expect(mcpAppPaths[0]).toBe("/api/agents/pom%40ams/sessions/history-1/mcp-apps/tool-1/data");
+    expect(prepareBodies).toEqual([expect.objectContaining({ gateway: "ams", dashboardId: ID })]);
+    expect(getByRole(root, "link", { name: "Open in browser" }).getAttribute("href")).toBe(`/remote-dashboards/ams/${ID}`);
+  });
+
+  it("keeps a local agent with an @ in its ID on the local frame", async () => {
+    showToolHistory();
+    history.replaceState({}, "", "/chat/me%40home?session=history-1");
+    mountChat();
+    await waitFor(() => expect(getByTitle(root, "Garden dashboard").getAttribute("src")).toBe(`/d/${ID}`));
+    expect(prepareBodies).toHaveLength(0);
+  });
 });
 
 describe("remote dashboard in a chat", () => {
