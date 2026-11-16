@@ -46,8 +46,6 @@ export type WsBrokerAuthAdapter = {
 
 /** A socket whose key stops is closed within this time even when it sends nothing. */
 const AUTH_RECHECK_MS = 5000;
-/** The most that a sent event may rely on an earlier check. A client action always checks again. */
-const SEND_CHECK_MAX_AGE_MS = 1000;
 const CLOSE_CREDENTIAL_INVALID = 1008;
 
 export class WsBroker {
@@ -55,7 +53,6 @@ export class WsBroker {
   private readonly connectedClients = new Set<WebSocket>();
   private readonly authContexts = new Map<WebSocket, RequestAuthContext>();
   private readonly deviceContexts = new Map<WebSocket, RequestAuthContext>();
-  private readonly authChecks = new Map<WebSocket, { at: number; ok: boolean }>();
   private authAdapter: WsBrokerAuthAdapter | undefined;
 
   constructor(private readonly options: { recheckMs?: number } = {}) {}
@@ -126,24 +123,23 @@ export class WsBroker {
     server.once("close", () => this.close());
   }
 
-  /** Closes each socket whose key no longer works. Chat sockets use the cache of the last check. */
+  /** Closes each socket whose key no longer works. */
   private recheckSockets(isActive: (authContext: RequestAuthContext) => boolean): void {
-    for (const ws of [...this.authContexts.keys()]) this.socketActive(ws, 0);
+    for (const ws of [...this.authContexts.keys()]) this.socketActive(ws);
     for (const [ws, authContext] of [...this.deviceContexts]) {
       if (!isActive(authContext)) ws.close(CLOSE_CREDENTIAL_INVALID, "Credential no longer valid");
     }
   }
 
-  /** True while the credential of a chat socket works. A failed check closes the socket. `maxAgeMs` bounds the reuse of an earlier check. */
-  private socketActive(ws: WebSocket, maxAgeMs: number): boolean {
+  /**
+   * True while the credential of a chat socket works. Each call reads the current state and reuses no earlier answer,
+   * so a revoked key stops the very next send. A failed check closes the socket.
+   */
+  private socketActive(ws: WebSocket): boolean {
     const authContext = this.authContexts.get(ws);
     const isActive = this.authAdapter?.isAuthContextActive;
     if (!authContext || !isActive) return true;
-    const now = Date.now();
-    const last = this.authChecks.get(ws);
-    if (last && now - last.at <= maxAgeMs) return last.ok;
     const ok = isActive(authContext);
-    this.authChecks.set(ws, { at: now, ok });
     if (!ok) ws.close(CLOSE_CREDENTIAL_INVALID, "Credential no longer valid");
     return ok;
   }
@@ -159,7 +155,6 @@ export class WsBroker {
     this.connectedClients.clear();
     this.authContexts.clear();
     this.deviceContexts.clear();
-    this.authChecks.clear();
     this.authAdapter = undefined;
     this.statusSubscribers.clear();
     this.wss?.close();
@@ -187,7 +182,7 @@ export class WsBroker {
     this.relayBridges.set(ws, bridge);
     ws.on("message", (raw) => {
       // Each client action checks the credential again, so a revoked key stops at the next message.
-      if (!this.socketActive(ws, 0)) return;
+      if (!this.socketActive(ws)) return;
       const text = raw.toString();
       if (bridge.handle(text)) return;
       void this.handleMessage(ws, text, authAdapter);
@@ -199,7 +194,6 @@ export class WsBroker {
       this.statusSubscribers.delete(ws);
       this.connectedClients.delete(ws);
       this.authContexts.delete(ws);
-      this.authChecks.delete(ws);
       this.relayBridges.get(ws)?.close();
       this.relayBridges.delete(ws);
     });
@@ -469,7 +463,7 @@ export class WsBroker {
   }
 
   private send(ws: WebSocket, event: WsServerMessage): void {
-    if (ws.readyState === WebSocket.OPEN && this.socketActive(ws, SEND_CHECK_MAX_AGE_MS)) {
+    if (ws.readyState === WebSocket.OPEN && this.socketActive(ws)) {
       ws.send(JSON.stringify(event));
     }
   }

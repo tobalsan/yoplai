@@ -83,6 +83,22 @@ describe("chat socket of a key", () => {
     expect(runAgent).not.toHaveBeenCalled();
   });
 
+  it("sends no event after the key stops, also right after an earlier send worked", async () => {
+    // A slow timer and a send in the same moment show that the send path reads the key state each time.
+    await start(bearerContext, 60_000);
+    const ws = await open("/ws");
+    const messages: string[] = [];
+    ws.on("message", (data) => messages.push(data.toString()));
+    const { agentEventBus } = await import("../agents/index.js");
+    agentEventBus.emit("subagent.changed", { type: "subagent.changed", marker: "before" });
+    await waitFor(() => messages.length === 1);
+    const closed = closeCode(ws);
+    keyActive = false;
+    agentEventBus.emit("subagent.changed", { type: "subagent.changed", marker: "after" });
+    expect(await closed).toBe(1008);
+    expect(messages.filter((message) => message.includes("after"))).toEqual([]);
+  });
+
   it("keeps a cookie session open whatever the key state is", async () => {
     await start(cookieContext);
     const ws = await open("/ws");
