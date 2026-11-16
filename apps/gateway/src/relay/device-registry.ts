@@ -17,6 +17,9 @@ export const DEVICE_CALL_TIMEOUT_MS = 270_000;
 /** Largest message on a device socket, on the two sides. */
 export const DEVICE_MAX_MESSAGE_BYTES = 10 * 1024 * 1024;
 
+/** Close code of a device socket whose key stopped working. It is the policy violation code of WebSocket. */
+const DEVICE_CLOSE_UNAUTHORIZED = 1008;
+
 /** Registry key of a gateway with no multi-user mode. One relay then serves each run. */
 export const LOCAL_DEVICE_USER = "local";
 
@@ -34,7 +37,9 @@ class DeviceConnection {
 
   constructor(
     readonly socket: WebSocket,
-    readonly deviceName: string | undefined
+    readonly deviceName: string | undefined,
+    /** False when the credential of this socket stopped working. Only a multi-user remote sets it. */
+    readonly isAuthorized: () => boolean = () => true
   ) {}
 
   failPending(error: Error): void {
@@ -61,12 +66,19 @@ export class DeviceRegistry {
     }
   }
 
-  /** Takes over a new device socket. The relay is online after its valid hello. */
-  accept(socket: WebSocket, userId: string): void {
+  /**
+   * Takes over a new device socket. The relay is online after its valid hello. `isAuthorized` is checked before each
+   * message and each call, and a socket that fails it closes, which fails its pending calls.
+   */
+  accept(socket: WebSocket, userId: string, isAuthorized: () => boolean = () => true): void {
     let connection: DeviceConnection | undefined;
     const closeWith = (code: number, reason: string) => socket.close(code, reason);
 
     socket.on("message", (raw) => {
+      if (!isAuthorized()) {
+        socket.close(DEVICE_CLOSE_UNAUTHORIZED, "Credential no longer valid");
+        return;
+      }
       const message = parseDeviceLinkMessage(raw.toString());
       if (!message) {
         closeWith(DEVICE_CLOSE_INVALID_MESSAGE, "Invalid device link message");
@@ -84,7 +96,7 @@ export class DeviceRegistry {
           );
           return;
         }
-        connection = new DeviceConnection(socket, message.deviceName);
+        connection = new DeviceConnection(socket, message.deviceName, isAuthorized);
         const previous = this.connections.get(userId);
         this.connections.set(userId, connection);
         if (previous) {
@@ -117,6 +129,10 @@ export class DeviceRegistry {
   ): Promise<DeviceCallResult> {
     const connection = this.connections.get(userId);
     if (!connection || connection.socket.readyState !== connection.socket.OPEN) {
+      return Promise.reject(new Error(DEVICE_OFFLINE_CALL_TEXT));
+    }
+    if (!connection.isAuthorized()) {
+      connection.socket.close(DEVICE_CLOSE_UNAUTHORIZED, "Credential no longer valid");
       return Promise.reject(new Error(DEVICE_OFFLINE_CALL_TEXT));
     }
     if (signal?.aborted) return Promise.reject(new Error("The device call was cancelled"));

@@ -388,12 +388,20 @@ export function startServer(
   const stopApps = startAppsListener(config, resolvedHost);
   server.once("close", stopApps);
 
+  // Loaded by the first upgrade of a multi-user socket, so the sync check below finds it for every socket with a context.
+  let loadedMultiUserModule: MultiUserMiddlewareModule | undefined;
   const wsAuthAdapter: WsBrokerAuthAdapter = {
     isMultiUserEnabled: () => currentExtensionRuntime().isEnabled("multiUser"),
     validateWebSocketRequest: async (request) => {
-      const { validateWebSocketRequest } =
-        await loadMultiUserMiddlewareModule();
-      return validateWebSocketRequest(request);
+      loadedMultiUserModule = await loadMultiUserMiddlewareModule();
+      return loadedMultiUserModule.validateWebSocketRequest(request);
+    },
+    isAuthContextActive: (authContext) => {
+      // A bearer session has the ID `apikey:<key ID>`. A cookie session has no key to revoke.
+      if (!authContext.session.id.startsWith("apikey:")) return true;
+      if (!loadedMultiUserModule) return false;
+      const state = loadedMultiUserModule.getManagedKeyState(authContext.session.id.slice("apikey:".length), authContext.user.id);
+      return state === "active" || state === "unmanaged";
     },
     canAccessAgent,
     getExtensionRuntime: currentExtensionRuntime,
