@@ -367,3 +367,64 @@ describe("a peer that has no alias", () => {
     expect(old.calls.map((call) => call.url)).toEqual(["/api/skills/plain-id"]);
   });
 });
+
+describe("the remote alias checks the raw wire segment (direct sockets to the actual skill router)", () => {
+  /** A raw request to the remote. The path reaches the router exactly as written. */
+  function direct(method: string, rawPath: string, body?: string): Promise<{ status: number; text: string }> {
+    return new Promise((resolve, reject) => {
+      const request = http.request({ host: "127.0.0.1", port: east.port, method, path: rawPath, headers: { authorization: "Bearer bearer-root", ...(body === undefined ? {} : { "content-type": "application/json", "content-length": Buffer.byteLength(body) }) } }, (response) => {
+        const chunks: Buffer[] = [];
+        response.on("data", (chunk: Buffer) => chunks.push(chunk));
+        response.on("end", () => resolve({ status: response.statusCode ?? 0, text: Buffer.concat(chunks).toString() }));
+      });
+      request.on("error", reject);
+      request.end(body);
+    });
+  }
+  const good = wire(nested);
+  // The same canonical wire ID with one escaped character: the prefix, the first payload character, a middle one, and the last one.
+  const escape = (index: number) => `${good.slice(0, index)}%${good.charCodeAt(index).toString(16).toUpperCase()}${good.slice(index + 1)}`;
+  const escaped = [
+    ["the version prefix", `%76%31_${good.slice(3)}`],
+    ["one prefix character", escape(0)],
+    ["the underscore of the prefix", escape(2)],
+    ["the first payload character", escape(3)],
+    ["a middle payload character", escape(Math.floor(good.length / 2))],
+    ["the last payload character", escape(good.length - 1)],
+    ["a lower-case escape", `${good.slice(0, 3)}%${good.charCodeAt(3).toString(16).toLowerCase()}${good.slice(4)}`],
+    ["a double escape", `%2576%31_${good.slice(3)}`],
+    ["an escaped slash", `${good}%2Fextra`],
+    ["an escaped percent", `${good}%25`],
+    ["an escaped space", `${good}%20`],
+  ];
+  const actions: Array<[string, string, string?]> = [["GET", ""], ["DELETE", ""], ["PUT", "/enabled", "{\"enabled\":true}"], ["PUT", "/system", "{\"system\":false}"], ["PUT", "/shares", "{\"shares\":[]}"], ["GET", "/default"], ["POST", "/default"], ["GET", "/versions"], ["PUT", "/owner", "{\"ownerId\":\"alice\"}"], ["PUT", "/admin", "{\"disabledByAdmin\":true}"]];
+
+  it.each(escaped)("answers 400 for %s, whatever the action, and changes no stored state", async (_name, segment) => {
+    const before = JSON.stringify({ system: await east.store.systemAgentSkills(), list: await east.store.list(), defaults: (await east.store.defaults()).map((skill) => skill.id) });
+    for (const [method, suffix, body] of actions) {
+      const response = await direct(method, `/api/skill-ids/${segment}${suffix}`, body);
+      expect({ segment, method, suffix, status: response.status }).toEqual({ segment, method, suffix, status: 400 });
+      expect(JSON.parse(response.text)).toEqual({ error: "invalid_skill_id" });
+    }
+    expect(JSON.stringify({ system: await east.store.systemAgentSkills(), list: await east.store.list(), defaults: (await east.store.defaults()).map((skill) => skill.id) })).toBe(before);
+    // The nested skill is still there and still reads through its canonical wire ID.
+    expect((await direct("GET", `/api/skill-ids/${good}`)).status).toBe(200);
+  });
+
+  it("serves the canonical segment and keeps the legacy :id route unchanged", async () => {
+    const alias = await direct("GET", `/api/skill-ids/${good}`);
+    expect(alias.status).toBe(200);
+    expect(JSON.parse(alias.text)).toMatchObject({ id: nested });
+    // The legacy route still decodes its :id once, as before this change.
+    const legacy = await direct("GET", `/api/skills/${encodeURIComponent(nested)}`);
+    expect(legacy.status).toBe(200);
+    expect(JSON.parse(legacy.text)).toMatchObject({ id: nested });
+    expect((await direct("GET", "/api/skills/agent%3Ahr%3Amissing")).status).toBe(404);
+  });
+
+  it("keeps the relay refusal in front of the same forms", async () => {
+    east.calls.length = 0;
+    for (const [, segment] of escaped) expect([400, 405]).toContain((await send("GET", `${through("east")}/api/skill-ids/${segment}`)).status);
+    expect(east.calls).toEqual([]);
+  });
+});

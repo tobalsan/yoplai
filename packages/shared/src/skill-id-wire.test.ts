@@ -32,6 +32,17 @@ describe("skill ID wire codec", () => {
     expect(decodeSkillId(nested)).toBe(wire);
   });
 
+  it.each(["\ufeffa", "a\ufeffb", "\ufeff", "\ufeff\ufeffagent:x/y", "agent:x/\ufeffy"])("round-trips U+FEFF exactly in %j", (id) => {
+    const wire = encodeSkillId(id);
+    expect(decodeSkillId(wire)).toBe(id);
+    expect(decodeSkillId(wire)?.length).toBe(id.length);
+  });
+
+  it("rejects the bytes of a byte order mark only when the encoding is not canonical", () => {
+    // The bytes EF BB BF 61 are the canonical encoding of the ID with a leading U+FEFF, so they decode to it.
+    expect(decodeSkillId(bytesToWire([0xef, 0xbb, 0xbf, 0x61]))).toBe("\ufeffa");
+  });
+
   it("rejects an empty ID and an ID with a lone surrogate on encode", () => {
     expect(() => encodeSkillId("")).toThrow();
     expect(() => encodeSkillId("a\uD800b")).toThrow();
@@ -56,7 +67,6 @@ describe("skill ID wire codec", () => {
     ["malformed UTF-8", bytesToWire([0xff, 0xfe])],
     ["an overlong UTF-8 form", bytesToWire([0xc0, 0xaf])],
     ["a UTF-16 surrogate in UTF-8", bytesToWire([0xed, 0xa0, 0x80])],
-    ["a byte order mark", bytesToWire([0xef, 0xbb, 0xbf, 0x61])],
   ])("rejects %s", (_name, wire) => {
     expect(decodeSkillId(wire)).toBeUndefined();
   });

@@ -37,11 +37,11 @@ export function decodeSkillId(wire: string): string | undefined {
     const base64 = payload.replace(/-/g, "+").replace(/_/g, "/") + "=".repeat((4 - (payload.length % 4)) % 4);
     const binary = atob(base64);
     const bytes = Uint8Array.from(binary, (char) => char.charCodeAt(0));
-    id = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+    id = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(bytes);
   } catch {
     return undefined;
   }
   if (!id) return undefined;
-  // Noncanonical trailing bits and a byte order mark change the encoding, so equality rejects them.
+  // `ignoreBOM` keeps a leading U+FEFF, which is valid Unicode. Noncanonical trailing bits change the encoding, so equality rejects them.
   return encodeSkillId(id) === wire ? id : undefined;
 }

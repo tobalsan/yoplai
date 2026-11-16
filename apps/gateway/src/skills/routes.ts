@@ -99,9 +99,11 @@ export function createSkillRoutes(deps: SkillRoutesDeps): Hono {
   // carry the canonical wire form in `:wireId`, and the accessor decodes it once. The decoded ID is only a store key and a
   // policy input. It never becomes a path, a URL, or a gateway name.
   const skillId = (c: Context): string => {
-    const wire = c.req.param("wireId");
-    if (wire === undefined) return c.req.param("id")!;
-    const id = decodeSkillId(wire);
+    if (c.req.param("wireId") === undefined) return c.req.param("id")!;
+    // The parameter above is already URL-decoded, so `%76%31_` would read as `v1_`. The codec checks the raw segment of
+    // the request path instead, and a percent escape in it is never canonical.
+    const wire = /(?:^|\/)skill-ids\/([^/]+)/.exec(new URL(c.req.url).pathname)?.[1];
+    const id = wire === undefined ? undefined : decodeSkillId(wire);
     if (id === undefined) throw new SkillError("invalid_skill_id");
     return id;
   };
