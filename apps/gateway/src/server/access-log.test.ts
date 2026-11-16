@@ -149,6 +149,26 @@ describe("accessLogger", () => {
   });
 
   it.each([
+    "/api/relay/link/status/{id}",
+    "/api/relay/link%2Fstatus%2F{id}",
+    "/api/Relay/Link/status/{id}",
+    "/api/relay/link/status/{id}?x=1",
+  ])("redacts the attempt ID of a link request %s", async (template) => {
+    const app = new Hono();
+    const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    vi.spyOn(Date, "now").mockReturnValue(0);
+    app.use("*", accessLogger());
+    app.all("*", (c) => c.text("ok"));
+    const id = "SyntheticAttemptNotReal0123456789abcdefghi";
+
+    await app.request(template.replace("{id}", id));
+
+    const lines = log.mock.calls.map((call) => String(call[0]));
+    expect(lines.join("\n")).not.toContain(id);
+    expect(lines).toEqual(["--> GET /api/relay/link/[redacted] 200 0ms"]);
+  });
+
+  it.each([
     "/api/relay/dashboard-views%2F{grant}/{id}/",
     "/api/relay/dashboard-views%252F{grant}/{id}/",
     "/api/relay/dashboard%2Dviews/{grant}/{id}/",

@@ -1,6 +1,7 @@
 import type { MiddlewareHandler } from "hono";
 import { logger } from "hono/logger";
 import { DASHBOARD_VIEW_NAMESPACE, ownsDashboardViewPath } from "../relay/dashboard-view-paths.js";
+import { LINK_NAMESPACE, ownsLinkPath } from "../relay/link-paths.js";
 
 const SLOW_REQUEST_MS = 500;
 const SECRET_QUERY_NAMES = new Set([
@@ -76,10 +77,17 @@ function redactViewerTarget(message: string): string {
   return `${parts[1]}${DASHBOARD_VIEW_NAMESPACE}/[redacted]${parts[3]}`;
 }
 
+/** Hides the whole target of a link request, because a status path holds an attempt ID. */
+function redactLinkTarget(message: string): string {
+  const parts = /^(--> \S+ )([\s\S]+?)( \d{3} \S+)$/.exec(message);
+  if (!parts || !ownsLinkPath(parts[2].split("?")[0])) return message;
+  return `${parts[1]}${LINK_NAMESPACE}/[redacted]${parts[3]}`;
+}
+
 export function accessLogger(): MiddlewareHandler {
   const normalLogger = logger((message) => {
     if (message.startsWith("<-- ")) return;
-    const safeMessage = redactViewerTarget(stripAnsi(message)).replace(/\/(sandbox|content|open)\/[^/?\s]+(?:\?[^\s]*)?/g, "/$1/[redacted]").replace(
+    const safeMessage = redactLinkTarget(redactViewerTarget(stripAnsi(message))).replace(/\/(sandbox|content|open)\/[^/?\s]+(?:\?[^\s]*)?/g, "/$1/[redacted]").replace(
       /^(--> \S+ )(\S+)/,
       (_, prefix: string, target: string) => prefix + redactQuery(target)
     );

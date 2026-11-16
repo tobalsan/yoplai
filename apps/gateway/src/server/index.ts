@@ -25,8 +25,10 @@ import { relayConfigurationHttp, relayHttp } from "../relay/http.js";
 import { GATEWAY_LIST_PATH } from "../relay/configuration.js";
 import { relayDeviceApi } from "../relay/device-routes.js";
 import { dashboardViewHttp, ownsDashboardViewPath } from "../relay/dashboard-views.js";
+import { relayLinkApi } from "../relay/link-routes.js";
+import { ownsLinkPath } from "../relay/link-paths.js";
 import { startDeviceLinks } from "../relay/device-links.js";
-import { configureRelay } from "../relay/state.js";
+import { configureRelay, setGatewayListener } from "../relay/state.js";
 import { SKILL_IMPORT_TOKEN_PREFIX } from "../skills/import-tokens.js";
 import { getAgent, CONFIG_DIR } from "../config/index.js";
 import { createDashboardAssetRoutes, createDashboardRoutes } from "../canvas/routes.js";
@@ -72,8 +74,11 @@ const globalCors = cors({
   origin: (origin) => (allowedCorsOrigins().includes(origin) ? origin : null),
   credentials: true,
 });
-// The dashboard viewer answers CORS itself: no CORS grant for HTML, no credentials for writes.
-app.use("*", (c, next) => (ownsDashboardViewPath(new URL(c.req.url).pathname) ? next() : globalCors(c, next)));
+// The dashboard viewer and the browser link routes answer CORS themselves: a narrower grant than the global list.
+app.use("*", (c, next) => {
+  const pathname = new URL(c.req.url).pathname;
+  return ownsDashboardViewPath(pathname) || ownsLinkPath(pathname) ? next() : globalCors(c, next);
+});
 app.use("*", accessLogger());
 app.route("/internal", internalTools);
 app.route("/d-assets", createDashboardAssetRoutes(loadConfig));
@@ -103,6 +108,8 @@ app.route(
 // The viewer namespace answers before the extension gate and the generic relay.
 // The mount matches every path, because the ownership test also claims mixed-case and encoded spellings.
 app.use("*", dashboardViewHttp());
+// The link namespace answers before the extension gate. It owns every spelling of its path and refuses what no route owns.
+app.use("*", relayLinkApi());
 const configurationRelay = relayConfigurationHttp();
 app.use("/api/*", (c, next) => {
   // Local multi-user mode keeps the relay off. Only the gateway list answers there, with an explicit refusal.
@@ -369,6 +376,14 @@ export function startServer(
     port: resolvedPort,
     hostname: resolvedHost,
   });
+  // The browser link needs the address that the listener really bound. A host name can bind to any of its addresses.
+  const recordListener = () => {
+    const address = server.address();
+    setGatewayListener(address && typeof address === "object" ? { address: address.address, port: address.port } : undefined);
+  };
+  if (server.listening) recordListener();
+  else server.once("listening", recordListener);
+  server.once("close", () => setGatewayListener(undefined));
 
   const stopApps = startAppsListener(config, resolvedHost);
   server.once("close", stopApps);
