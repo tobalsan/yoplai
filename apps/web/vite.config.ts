@@ -153,13 +153,31 @@ function ownsDashboardViewUrl(url: string | undefined): boolean {
   return false;
 }
 
-// The status path of a browser link holds an attempt ID. Keep this test in step with `ownsLinkPath` in the gateway.
+// The status path of a browser link holds an attempt ID. The remote link paths hold request IDs, and a stray request
+// can carry a verifier or a code. Keep these tests in step with `ownsLinkPath` and `ownsRemoteLinkPath` in the gateway.
 const linkNamespace = "/api/relay/link";
-function ownsLinkUrl(url: string | undefined): boolean {
+const remoteLinkNamespace = "/api/auth/gateway-link";
+function resolveSegments(value: string): string {
+  const kept: string[] = [];
+  for (const segment of value.split("/")) {
+    if (segment === "" || segment === ".") continue;
+    if (segment === "..") kept.pop();
+    else kept.push(segment);
+  }
+  return `/${kept.join("/")}`;
+}
+function ownsLinkNamespace(url: string | undefined, namespace: string): boolean {
   let value = (url ?? "").split("?")[0];
   for (let i = 0; i < 4; i++) {
-    const lower = value.toLowerCase();
-    if (lower === linkNamespace || lower.startsWith(`${linkNamespace}/`)) return true;
+    for (const candidate of [value, resolveSegments(value)]) {
+      const lower = candidate.toLowerCase();
+      if (
+        lower.startsWith(namespace) &&
+        /^[/?#]?$/.test(lower.charAt(namespace.length))
+      ) {
+        return true;
+      }
+    }
     const decoded = value.replace(/%([0-9a-f]{2})/gi, (_match, hex: string) =>
       String.fromCharCode(parseInt(hex, 16))
     );
@@ -197,8 +215,10 @@ export default defineConfig({
           proxy.on("error", (_error, request) => {
             if (ownsDashboardViewUrl(request.url)) {
               request.url = `${dashboardViewNamespace}/[redacted]`;
-            } else if (ownsLinkUrl(request.url)) {
+            } else if (ownsLinkNamespace(request.url, linkNamespace)) {
               request.url = `${linkNamespace}/[redacted]`;
+            } else if (ownsLinkNamespace(request.url, remoteLinkNamespace)) {
+              request.url = `${remoteLinkNamespace}/[redacted]`;
             }
           });
         },

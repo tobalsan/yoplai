@@ -362,6 +362,29 @@ describe("request target, header, and forged-context rules", () => {
   });
 });
 
+describe("access log of the remote link routes", () => {
+  it("hides a request ID and a verifier, also on a rejected request", async () => {
+    const begun = await start();
+    const marker = "SyntheticVerifierMarkerNotReal0123456789";
+    const captured: string[] = [];
+    const spy = vi.spyOn(console, "log").mockImplementation((...args) => {
+      captured.push(args.join(" "));
+    });
+    try {
+      await consent(accounts.alice, begun.requestId);
+      await rawRequest("GET", `/api/auth/gateway-link/token?verifier=${marker}`);
+      await rawRequest("GET", `/api/auth/gateway%2Dlink/requests/${begun.requestId}?code=${marker}`);
+      await rawRequest("GET", `/api/agents?verifier=${marker}`);
+    } finally {
+      spy.mockRestore();
+    }
+    const text = captured.join("\n");
+    expect(text).toContain("/api/auth/gateway-link/[redacted]");
+    expect(text).not.toContain(begun.requestId);
+    expect(text).not.toContain(marker);
+  });
+});
+
 describe("real /ws and /ws/device upgrades with a managed key", () => {
   const open = (pathname: string, headers: Record<string, string>) =>
     new Promise<"open" | number>((resolve) => {

@@ -1,12 +1,13 @@
 import type { MiddlewareHandler } from "hono";
 import { logger } from "hono/logger";
 import { DASHBOARD_VIEW_NAMESPACE, ownsDashboardViewPath } from "../relay/dashboard-view-paths.js";
-import { LINK_NAMESPACE, ownsLinkPath } from "../relay/link-paths.js";
+import { LINK_NAMESPACE, REMOTE_LINK_NAMESPACE, ownsLinkPath, ownsRemoteLinkPath } from "../relay/link-paths.js";
 
 const SLOW_REQUEST_MS = 500;
 const SECRET_QUERY_NAMES = new Set([
   "code",
   "state",
+  "verifier",
   "token",
   "access_token",
   "refresh_token",
@@ -77,11 +78,17 @@ function redactViewerTarget(message: string): string {
   return `${parts[1]}${DASHBOARD_VIEW_NAMESPACE}/[redacted]${parts[3]}`;
 }
 
-/** Hides the whole target of a link request, because a status path holds an attempt ID. */
+/**
+ * Hides the whole target of a link request on either side, because a path can hold an attempt ID or a request ID and
+ * a query can hold a verifier or a code. A rejected request is hidden in the same way.
+ */
 function redactLinkTarget(message: string): string {
   const parts = /^(--> \S+ )([\s\S]+?)( \d{3} \S+)$/.exec(message);
-  if (!parts || !ownsLinkPath(parts[2].split("?")[0])) return message;
-  return `${parts[1]}${LINK_NAMESPACE}/[redacted]${parts[3]}`;
+  if (!parts) return message;
+  const path = parts[2].split("?")[0];
+  if (ownsLinkPath(path)) return `${parts[1]}${LINK_NAMESPACE}/[redacted]${parts[3]}`;
+  if (ownsRemoteLinkPath(path)) return `${parts[1]}${REMOTE_LINK_NAMESPACE}/[redacted]${parts[3]}`;
+  return message;
 }
 
 export function accessLogger(): MiddlewareHandler {

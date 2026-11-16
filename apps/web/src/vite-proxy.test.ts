@@ -118,6 +118,26 @@ describe("vite dev proxy", () => {
       expect(message).not.toContain(attempt);
     }
 
+    // The remote link paths hold request IDs, and a stray request can hold a verifier. The whole target is hidden.
+    errors.length = 0;
+    const requestId = "SyntheticRequestNotReal0123456789abcdefghi";
+    const remoteLinkRequests = [
+      `/api/auth/gateway-link/requests/${requestId}`,
+      `/api/auth/gateway-link/token?verifier=${requestId}`,
+      `/api/auth/gateway%2Dlink/requests/${requestId}`,
+      `/api/auth/gateway-link%2Frequests%2F${requestId}`,
+      `/api/Auth/Gateway-Link/requests/${requestId}`,
+      `/api/auth/gateway-link%3Fverifier=${requestId}`,
+    ];
+    for (const path of remoteLinkRequests) {
+      expect((await fetch(`http://127.0.0.1:${uiPort}${path}`)).status).toBe(500);
+    }
+    expect(errors).toHaveLength(remoteLinkRequests.length);
+    for (const message of errors) {
+      expect(message).toContain("http proxy error");
+      expect(message).not.toContain(requestId);
+    }
+
     // Other proxy errors keep their request URL.
     errors.length = 0;
     expect((await fetch(`http://127.0.0.1:${uiPort}/api/agents?agent=pom`)).status).toBe(500);
