@@ -53,7 +53,8 @@ export type DashboardLinkDecision =
   | { kind: "ignored" };
 
 function isLocalHostname(hostname: string): boolean {
-  const host = hostname.toLowerCase();
+  // A final DNS dot names the same host: `localhost.` is `localhost`.
+  const host = hostname.toLowerCase().replace(/\.+$/, "");
   if (host.startsWith("[")) {
     const address = host.slice(1, -1);
     // Loopback, unspecified, unique local, link local, and mapped IPv4 addresses.

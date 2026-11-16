@@ -72,4 +72,11 @@ describe("dashboard link requests", () => {
     ]) expect(classify(href), href).toEqual({ kind: "blocked", reason: "local" });
     expect(classify("http://172.32.0.1/")).toMatchObject({ kind: "external" });
   });
+
+  it("blocks local names that end with a DNS dot, and keeps a public name with a dot usable", () => {
+    for (const href of ["http://localhost.:9999/", "http://nas.local./", "http://app.localhost./x", "http://printer./", "http://127.0.0.1./", "http://localhost../", "http://svc.internal./"]) {
+      expect(classify(href), href).toEqual({ kind: "blocked", reason: "local" });
+    }
+    expect(classify("https://example.com./report")).toMatchObject({ kind: "external", destination: "https://example.com./report" });
+  });
 });
