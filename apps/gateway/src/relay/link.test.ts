@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { GATEWAY_LINK_CALLBACK_PATH } from "@yoplai/shared";
-import { RelayLinkService, checkRemoteOrigin, type LinkDeps, type StartOutcome } from "./link.js";
+import { RelayLinkService, checkRemoteOrigin, type LinkDeps } from "./link.js";
 import { createFileRemoteGatewayStore, type RemoteGatewayStore } from "./store.js";
 
 /** The remote side is a scripted fake. Every key, code, and account here is synthetic. */
