@@ -19,6 +19,7 @@ import { theme, toggleTheme } from "../theme";
 import { capabilities, isExtensionEnabled } from "../lib/capabilities";
 import { openConnectPrompt, restartTour } from "../onboarding/state";
 import { EMPTY_TOP_EXTENSIONS, fetchTopExtensions } from "../api/top-extensions";
+import { fetchGatewayList } from "../api/gateway";
 import { chatRouteSession, stripBase } from "../lib/path";
 import {
   deleteAgentSession,
@@ -104,6 +105,19 @@ export function AgentSidebar(props: AgentSidebarProps) {
   const [topExtensions] = createResource(
     () => (capabilities.multiUser && capabilities.user ? chatRouteSession(location.pathname, location.search).agentId : null),
     () => fetchTopExtensions().catch(() => EMPTY_TOP_EXTENSIONS)
+  );
+  // A local user with linked gateways reaches the personal Slack page of a linked gateway from the footer. The local
+  // multi-user account panel stays off. A failed read gives no link.
+  const [relayGateways] = createResource(
+    () => !capabilities.multiUser,
+    async () => {
+      try {
+        const list = await fetchGatewayList();
+        return list.state === "ready" ? list.names : [];
+      } catch {
+        return [];
+      }
+    }
   );
   const hasTopExtensions = () => {
     const top = topExtensions();
@@ -867,6 +881,12 @@ export function AgentSidebar(props: AgentSidebarProps) {
             <Suspense>
               <LazySidebarAccountPanel collapsed={props.collapsed} />
             </Suspense>
+          </Show>
+          <Show when={!capabilities.multiUser && (relayGateways()?.length ?? 0) > 0}>
+            <A href={`/account/connections?gateway=${encodeURIComponent(relayGateways()![0])}`} class="archive-link" title="Slack pairings of a linked gateway">
+              <i class="fa-brands fa-slack" aria-hidden="true" />
+              <span class="archive-label">Slack pairings</span>
+            </A>
           </Show>
           <Show when={!capabilities.multiUser}>
             <A href="/archive" class="archive-link" title="Archive">

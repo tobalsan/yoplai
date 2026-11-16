@@ -2,6 +2,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createSignal } from "solid-js";
 import { render } from "solid-js/web";
+import { Suspense, type JSX } from "solid-js";
+import { MemoryRouter, Route, createMemoryHistory } from "@solidjs/router";
 
 const { useSessionMock, fetchPairingsMock, unpairMock } = vi.hoisted(() => ({
   useSessionMock: vi.fn(),
@@ -9,6 +11,7 @@ const { useSessionMock, fetchPairingsMock, unpairMock } = vi.hoisted(() => ({
   unpairMock: vi.fn(),
 }));
 vi.mock("../auth/client", () => ({ useSession: useSessionMock }));
+vi.mock("../api/gateway", async (original) => ({ ...(await original<typeof import("../api/gateway")>()), fetchGatewayList: () => Promise.resolve({ state: "unavailable" }) }));
 vi.mock("../components/LeftNavShell", () => ({ LeftNavShell: (props: { children: unknown }) => props.children }));
 vi.mock("../api/connections", () => ({
   fetchSlackPairings: fetchPairingsMock,
@@ -16,6 +19,16 @@ vi.mock("../api/connections", () => ({
 }));
 
 import { AccountConnections } from "./AccountConnections";
+
+function mountPage() {
+  const history = createMemoryHistory();
+  history.set({ value: "/account/connections", replace: true });
+  return render(() => (
+    <MemoryRouter history={history} root={(props: { children?: JSX.Element }) => <Suspense>{props.children}</Suspense>}>
+      <Route path="/account/connections" component={AccountConnections} />
+    </MemoryRouter>
+  ), root);
+}
 
 let root: HTMLDivElement;
 let dispose: () => void;
@@ -39,12 +52,12 @@ describe("AccountConnections", () => {
     useSessionMock.mockReturnValue(session);
     fetchPairingsMock.mockResolvedValue([pairing]);
     unpairMock.mockResolvedValue(undefined);
-    dispose = render(() => <AccountConnections />, root);
+    dispose = mountPage();
     await tick();
     expect(root.textContent).toContain("U1");
     root.querySelector("button")!.click();
     await tick();
-    expect(unpairMock).toHaveBeenCalledWith(pairing);
+    expect(unpairMock).toHaveBeenCalledWith(pairing, undefined);
     expect(fetchPairingsMock).toHaveBeenCalledTimes(2);
   });
 
@@ -53,7 +66,7 @@ describe("AccountConnections", () => {
     useSessionMock.mockReturnValue(session);
     let reject!: (cause: Error) => void;
     fetchPairingsMock.mockReturnValue(new Promise((_resolve, rejectPromise) => { reject = rejectPromise; }));
-    dispose = render(() => <AccountConnections />, root);
+    dispose = mountPage();
     expect(root.textContent).toContain("Loading Slack pairings");
     reject(new Error("service unavailable"));
     await tick();
@@ -67,7 +80,7 @@ describe("AccountConnections", () => {
     fetchPairingsMock
       .mockReturnValueOnce(new Promise((resolve) => { resolveAlice = resolve; }))
       .mockResolvedValueOnce([{ workspaceId: "T2", slackUserId: "U2", pairedAt: 2000 }]);
-    dispose = render(() => <AccountConnections />, root);
+    dispose = mountPage();
     setSession({ data: { user: { id: "bob" } } });
     await tick();
     expect(root.textContent).toContain("U2");

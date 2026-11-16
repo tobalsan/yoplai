@@ -89,17 +89,28 @@ export async function disconnectMcpConnection(agentId: string, server: string, g
 
 export type SlackPairing = { workspaceId: string; slackUserId: string; pairedAt: number };
 
-export async function fetchSlackPairings(): Promise<SlackPairing[]> {
-  const response = await fetch(`${API_BASE}/slack/pairings`);
-  if (!response.ok) throw new Error("Failed to load Slack pairings");
+/** The message of a failed pairing call. A fixed text per case, never the body of a remote answer. */
+async function pairingFailure(response: Response, fallback: string, gateway: GatewayName | undefined): Promise<Error> {
+  const body = (await response.json().catch(() => undefined)) as { error?: unknown } | undefined;
+  const code = typeof body?.error === "string" ? body.error : undefined;
+  if (code === "multi_user_required") return new Error(gateway === undefined ? "This gateway has no multi-user sign-in, so it cannot hold Slack pairings." : "The remote gateway has no multi-user sign-in, so it cannot hold Slack pairings.");
+  if (code === "gateway_offline") return new Error("The remote gateway is offline.");
+  if (code === "slack_unavailable") return new Error("Slack is not available on that gateway.");
+  if (gateway !== undefined && (response.status === 401 || response.status === 403)) return new Error("The remote gateway refused this action.");
+  return new Error(fallback);
+}
+
+export async function fetchSlackPairings(gateway?: GatewayName): Promise<SlackPairing[]> {
+  const response = await fetch(gatewayApiPath(gateway, `${API_BASE}/slack/pairings`));
+  if (!response.ok) throw await pairingFailure(response, "Failed to load Slack pairings", gateway);
   const data = (await response.json()) as { pairings: SlackPairing[] };
   return data.pairings;
 }
 
-export async function unpairSlackAccount(pairing: SlackPairing): Promise<void> {
+export async function unpairSlackAccount(pairing: SlackPairing, gateway?: GatewayName): Promise<void> {
   const response = await fetch(
-    `${API_BASE}/slack/pairings/${encodeURIComponent(pairing.workspaceId)}/${encodeURIComponent(pairing.slackUserId)}`,
+    gatewayApiPath(gateway, `${API_BASE}/slack/pairings/${encodeURIComponent(pairing.workspaceId)}/${encodeURIComponent(pairing.slackUserId)}`),
     { method: "DELETE" },
   );
-  if (!response.ok) throw new Error("Failed to remove Slack pairing");
+  if (!response.ok) throw await pairingFailure(response, "Failed to remove Slack pairing", gateway);
 }
