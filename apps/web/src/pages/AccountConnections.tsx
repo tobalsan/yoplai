@@ -108,7 +108,12 @@ function PairingsView(props: { gateway?: GatewayName }) {
       if (!disposed && activeUserId === userId) await refresh(userId);
     } catch (cause) {
       failed = true;
-      if (!disposed && activeUserId === userId) setError(cause instanceof Error ? cause.message : "Failed to remove Slack pairing");
+      if (!disposed && activeUserId === userId) {
+        setError(cause instanceof Error ? cause.message : "Failed to remove Slack pairing");
+        // The remote can commit an unpair before its answer fails. Lock the controls before `pending` clears, so no
+        // click starts another write while the recovery read runs.
+        if (gateway !== undefined) setUnknown(true);
+      }
     } finally {
       if (!disposed) setPending(undefined);
     }
@@ -116,9 +121,10 @@ function PairingsView(props: { gateway?: GatewayName }) {
     if (failed && gateway !== undefined && !disposed && activeUserId === userId) {
       const message = error();
       const ok = await refresh(userId);
-      if (!disposed && activeUserId === userId) {
-        setUnknown(!ok);
-        if (ok && message) setError(message);
+      // The lock stays until the same visit completes a successful read.
+      if (!disposed && activeUserId === userId && ok) {
+        setUnknown(false);
+        if (message) setError(message);
       }
     }
   };

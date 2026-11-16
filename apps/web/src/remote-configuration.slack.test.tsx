@@ -206,6 +206,47 @@ describe("Slack pairings of a chosen gateway", () => {
     expect(writes()).toHaveLength(1);
   });
 
+  it("keeps Unpair off and sends no second DELETE while the recovery read is still pending", async () => {
+    gateways.on("GET", `${east}/api/slack/pairings`, { json: { pairings: [pairing("UEAST"), pairing("UEAST2")] } });
+    gateways.on("DELETE", new RegExp(`^${east}/api/slack/pairings/`), { status: 502, json: { error: "gateway_offline" } });
+    mount("/account/connections?gateway=east");
+    await vi.waitFor(() => expect(unpairButtons()).toHaveLength(2));
+    // The recovery read never ends during the checks below.
+    let release: (() => void) | undefined;
+    gateways.on("GET", `${east}/api/slack/pairings`, () => new Promise<FakeAnswer>((resolve) => { release = () => resolve({ json: { pairings: [pairing("UEAST"), pairing("UEAST2")] } }); }));
+    unpairButtons()[0].click();
+    await vi.waitFor(() => expect(release).toBeDefined());
+    await tick(); await tick();
+    // The old list is still visible, and every control is off.
+    expect(unpairButtons()).toHaveLength(2);
+    for (const control of unpairButtons()) expect(control.disabled).toBe(true);
+    for (const control of unpairButtons()) control.click();
+    await tick();
+    expect(writes()).toHaveLength(1);
+    // A good read ends the lock.
+    release!();
+    await vi.waitFor(() => expect(unpairButtons().every((control) => !control.disabled)).toBe(true));
+    expect(writes()).toHaveLength(1);
+  });
+
+  it("keeps Unpair off after a recovery read that fails, until one read works", async () => {
+    gateways.on("DELETE", `${east}/api/slack/pairings/T1/UEAST`, { status: 502, json: { error: "gateway_offline" } });
+    mount("/account/connections?gateway=east");
+    await vi.waitFor(() => expect(unpairButtons()).toHaveLength(1));
+    let readable = false;
+    gateways.on("GET", `${east}/api/slack/pairings`, () => readable ? { json: { pairings: [pairing("UEAST")] } } : { status: 502, json: { error: "gateway_offline" } });
+    unpairButtons()[0].click();
+    await vi.waitFor(() => expect(button("Retry")).toBeDefined());
+    button("Retry")!.click();
+    await vi.waitFor(() => expect(button("Retry")).toBeDefined());
+    expect(unpairButtons()).toHaveLength(0);
+    expect(writes()).toHaveLength(1);
+    readable = true;
+    button("Retry")!.click();
+    await vi.waitFor(() => expect(unpairButtons()).toHaveLength(1));
+    expect(unpairButtons()[0].disabled).toBe(false);
+  });
+
   it("keeps the list that the recovery read returns, with the error message, after a failed unpair", async () => {
     gateways.on("DELETE", `${east}/api/slack/pairings/T1/UEAST`, { status: 403, json: { error: "forbidden" } });
     mount("/account/connections?gateway=east");
