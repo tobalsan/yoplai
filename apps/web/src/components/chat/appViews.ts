@@ -236,6 +236,13 @@ export function createAppViews(sessionId: Accessor<string | null | undefined>, c
       selectedScope = chatScope?.();
       const key = viewKey({ server: "yoplai", resourceUri: "ui://yoplai/dashboard", key: frame.gateway ? `${frame.gateway}\n${frame.id}` : frame.id });
       if (!isTab(key)) setSelections((current) => [...current, { session: sessionId(), tab: { key, frame }, order: [] }]);
+      // An explicit query on a remote dashboard that is already open replaces its query, so the host prepares a fresh view.
+      // An omitted query keeps the selected one. A local dashboard has no query.
+      else if (frame.gateway && frame.query !== undefined) {
+        setSelections((current) => current.map((selection) => selection.tab.key === key && "frame" in selection.tab && selection.tab.frame.query !== frame.query
+          ? { ...selection, tab: { key, frame: { ...selection.tab.frame, query: frame.query } } }
+          : selection));
+      }
       setActiveKey(key);
       persist();
     },
