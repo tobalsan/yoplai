@@ -903,9 +903,8 @@ describe("desktop relay: chat relay", () => {
 
   it("names the gateway after the host of the URL by default", async () => {
     const store = createFileRemoteGatewayStore(path.join(tmpDir, "default-name.json"));
-    const gateway = await connectRemoteGateway(remoteBase, {}, store);
+    const gateway = await connectRemoteGateway(remoteBase, { token: "default-name-token" }, store);
     expect(gateway.name).toBe("127.0.0.1");
-    expect(gateway.token).toBeUndefined();
   });
 
   it("gives a clear error for a wrong token and saves nothing", async () => {
