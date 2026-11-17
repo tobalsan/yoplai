@@ -155,7 +155,8 @@ const scenarios: Array<{ name: string; run: (h: RoutingHarness) => Promise<void>
       const elapsed = performance.now() - started;
       const budget = phase === "work_request" ? h.config.modelRouting.budgets.predicateMs
         : h.config.modelRouting.budgets.predicateMs + h.config.modelRouting.budgets.categoryMs;
-      expect(elapsed).toBeLessThan(budget + 200);
+      // Hang guard only; the abort budget is proven by the abortedAt check below.
+      expect(elapsed).toBeLessThan(budget + 2000);
       expect(await h.lock()).toBeUndefined();
       const hung = h.classifier.calls.slice(before).filter((call) => call.question === phase);
       expect(hung).toHaveLength(phase === "category" ? 2 : 1);
