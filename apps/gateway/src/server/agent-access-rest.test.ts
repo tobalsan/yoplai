@@ -789,6 +789,32 @@ describe("agent access without a pool (mixed migrated and plain agents)", () => 
     expect(await retry.json()).toMatchObject({ payloads: [{ text: "dispatch-ok" }] });
   });
 
+  it("requires login for shared chats and lets a logged-in colleague read without agent access", async () => {
+    const historyDir = path.join(tmpDir, ".yoplai", "sessions", "users", users.get("alice")!.id, "history");
+    await fs.mkdir(historyDir, { recursive: true });
+    await fs.writeFile(path.join(historyDir, "legacy-agent-share-fixture.jsonl"), JSON.stringify({
+      type: "history", agentId: "legacy-agent", sessionId: "share-fixture", role: "user", timestamp: 1,
+      content: [{ type: "text", text: "Colleague can read this persisted turn" }],
+    }) + "\n");
+    const ownerPath = "/agents/legacy-agent/sessions/share-fixture/share";
+    const shared = await request("alice", ownerPath, { method: "PUT" });
+    expect(shared.status).toBe(200);
+    const { token } = await shared.json() as { token: string };
+    expect((await request("mallory", "/agents/legacy-agent/history")).status).toBe(403);
+    for (const method of ["GET", "PUT", "DELETE"]) {
+      expect((await request("mallory", ownerPath, { method })).status).toBe(403);
+      expect((await request("root", ownerPath, { method })).status).toBe(404);
+    }
+    const viewed = await request("mallory", `/shared-chats/${token}`);
+    expect(viewed.status).toBe(200);
+    expect(await viewed.json()).toEqual({
+      agentId: "legacy-agent", agentName: "legacy-agent", title: "",
+      messages: [{ role: "user", timestamp: 1, content: [{ type: "text", text: "Colleague can read this persisted turn" }] }],
+    });
+    expect((await fetch(`${baseUrl}/api/shared-chats/${token}`, { signal: AbortSignal.timeout(3000) })).status).toBe(401);
+    expect((await request("pending", `/shared-chats/${token}`)).status).toBe(403);
+  });
+
   it("keeps global authentication and account eligibility on dashboard pin routes", async () => {
     for (const method of ["PUT", "DELETE"]) {
       const unauthenticated = await fetch(`${baseUrl}/api/dashboards/unknown/pin`, { method });

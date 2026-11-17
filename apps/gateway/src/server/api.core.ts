@@ -82,6 +82,7 @@ import { getUserHistoryDir } from "@yoplai/extension-multi-user/isolation";
 import {
   appendSessionMeta,
   invalidateResolvedHistoryFile,
+  readSessionMeta,
 } from "../history/store.js";
 import { resolveSessionDataFile } from "../sessions/files.js";
 import { createOAuthRoutes } from "../oauth/routes.js";
@@ -92,6 +93,7 @@ import { getSkillContext, resolveSkillActor } from "../skills/context.js";
 import { ImportTokenStore } from "../skills/import-tokens.js";
 import { listSkillRecipients, skillOwnerName } from "../skills/http-auth.js";
 import { ChatProjectStore, isSafeChatProjectId } from "../chat-projects/store.js";
+import { ChatShareStore } from "../chat-shares/store.js";
 import { getOAuthService } from "../oauth/service.js";
 import { readToolLabels } from "../maintenance/tool-labels.js";
 import { loadSuggestions } from "../suggestions/loader.js";
@@ -766,6 +768,42 @@ api.get("/agents/sessions/search", async (c) => {
   });
   items.sort((a, b) => Number(b.match === "title") - Number(a.match === "title") || b.lastActivity - a.lastActivity);
   return c.json({ items: items.slice(0, 50) });
+});
+
+const chatShares = new ChatShareStore(path.join(CONFIG_DIR, "chat-shares.json"));
+
+api.get("/shared-chats/:token", async (c) => {
+  if (!isExtensionLoaded("multiUser")) return c.json({ error: "Not found" }, 404);
+  const share = await chatShares.getByToken(c.req.param("token"));
+  if (!share || !await resolveExistingSessionHistoryFile({ userId: share.ownerUserId, agentId: share.agentId, sessionId: share.sessionId })) {
+    return c.json({ error: "Not found" }, 404);
+  }
+  const agent = getAgent(share.agentId);
+  if (!agent) return c.json({ error: "Not found" }, 404);
+  const messages = (await getFullSessionHistory(share.agentId, share.sessionId, share.ownerUserId))
+    .map((message) => message.role === "system" ? { ...message, context: undefined } : message);
+  const title = await readSessionMeta(share.agentId, share.sessionId, "title", share.ownerUserId);
+  return c.json({ agentId: share.agentId, agentName: agent.name, title: typeof title === "string" ? title : "", messages });
+});
+
+api.on(["GET", "PUT", "DELETE"], "/agents/:agentId/sessions/:sessionId/share", async (c) => {
+  if (!isExtensionLoaded("multiUser")) return c.json({ error: "Not found" }, 404);
+  const agentId = c.req.param("agentId");
+  const sessionId = c.req.param("sessionId");
+  if (!isSafeSessionId(sessionId)) return c.json({ error: "Invalid session id" }, 400);
+  if (!getAgent(agentId) || !isAgentActive(agentId)) return c.json({ error: "Agent not found" }, 404);
+  const userId = await getRequestUserId(c);
+  if (!userId || !await resolveExistingSessionHistoryFile({ userId, agentId, sessionId })) {
+    return c.json({ error: "Session not found" }, 404);
+  }
+  if (c.req.method === "DELETE") {
+    await chatShares.revoke(userId, agentId, sessionId);
+    return c.json({ shared: false });
+  }
+  const share = c.req.method === "PUT"
+    ? await chatShares.create(userId, agentId, sessionId)
+    : await chatShares.findBySession(userId, agentId, sessionId);
+  return c.json(share ? { shared: true, token: share.token } : { shared: false });
 });
 
 // DELETE /api/agents/:agentId/sessions/:sessionId - delete a session history file

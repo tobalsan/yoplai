@@ -699,43 +699,119 @@ describe("ChatView abort handling", () => {
     dispose();
   });
 
-  it("links the settings cog to the agent edit page", async () => {
+  it("opens one settings menu with a default-agent picker and the agent settings link, and closes on Escape or outside click", async () => {
     const { container, dispose } = renderView();
-    await waitFor(() => expect(container.querySelector('a[aria-label="Agent settings"]')).not.toBeNull());
-    expect(container.querySelector('a[aria-label="Agent settings"]')?.getAttribute("href")).toBe("/agents/agent-1/edit");
+    await waitFor(() => expect(queryByRole(container, "button", { name: "Chat settings" })).not.toBeNull());
+    const button = queryByRole(container, "button", { name: "Chat settings" })!;
+    button.click();
+    expect(queryByRole(container, "menu")).not.toBeNull();
+    expect(queryByRole(container, "menuitem", { name: "Default agent…" })).not.toBeNull();
+    expect(queryByRole(container, "menuitem", { name: "Agent settings" })?.getAttribute("href")).toBe("/agents/agent-1/edit");
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(queryByRole(container, "menu")).toBeNull();
+    button.click();
+    fireEvent.mouseDown(document.body);
+    expect(queryByRole(container, "menu")).toBeNull();
     dispose();
   });
 
-  it("links the settings cog to the pool agent in forked mode and hides it without a match", async () => {
+  it("links menu settings to the pool agent in forked mode and hides the entry without a match", async () => {
     setCapabilitiesForTests({ multiUser: false, forkedAgents: true });
     fetchPoolActionsMock.mockResolvedValue([{ poolId: "pool-1", action: "chat", chatAgentId: "agent-1", forked: true, reason: null, teamName: null }]);
     const first = renderView();
-    await waitFor(() => expect(first.container.querySelector('a[aria-label="Agent settings"]')?.getAttribute("href")).toBe("/agents/pool-1/edit"));
+    queryByRole(first.container, "button", { name: "Chat settings" })!.click();
+    await waitFor(() => expect(queryByRole(first.container, "menuitem", { name: "Agent settings" })?.getAttribute("href")).toBe("/agents/pool-1/edit"));
     first.dispose();
     fetchPoolActionsMock.mockResolvedValue([]);
     const second = renderView();
+    queryByRole(second.container, "button", { name: "Chat settings" })!.click();
     await tick();
     await tick();
-    expect(second.container.querySelector('a[aria-label="Agent settings"]')).toBeNull();
+    expect(queryByRole(second.container, "menuitem", { name: "Agent settings" })).toBeNull();
     second.dispose();
   });
 
-  it("shows an unpressed star for a non-main agent and opens the picker", async () => {
+  it("opens the existing default-agent picker from the menu", async () => {
     const { container, dispose } = renderView();
-    await waitFor(() => expect(container.querySelector('button[aria-label="Choose main agent"]')).not.toBeNull());
-    const star = container.querySelector<HTMLButtonElement>('button[aria-label="Choose main agent"]')!;
-    expect(star.getAttribute("aria-pressed")).toBe("false");
-    star.click();
+    queryByRole(container, "button", { name: "Chat settings" })!.click();
+    queryByRole(container, "menuitem", { name: "Default agent…" })!.click();
     await waitFor(() => expect(document.querySelector('[role="dialog"]')).not.toBeNull());
     dispose();
   });
 
-  it("shows a pressed star when the chat agent is the main agent", async () => {
+  it("marks the current default agent in the menu", async () => {
     fetchMainAgentPreferenceMock.mockResolvedValue({ mainAgentId: "agent-1", accessible: true, pickerDismissedAt: null });
     const { container, dispose } = renderView();
-    await waitFor(() => expect(container.querySelector('button[aria-label="Agent is your main agent. Change main agent"]')).not.toBeNull());
-    expect(container.querySelector('button[aria-label="Agent is your main agent. Change main agent"]')?.getAttribute("aria-pressed")).toBe("true");
+    await tick();
+    queryByRole(container, "button", { name: "Chat settings" })!.click();
+    await waitFor(() => expect(queryByRole(container, "menuitem", { name: /Default agent/ })?.textContent).toContain("current"));
     dispose();
+  });
+
+  it("copies a share link, copies it again and revokes it from the menu", async () => {
+    fetchCapabilitiesMock.mockResolvedValue({ multiUser: true, extensions: {}, agents: ["agent-1"] });
+    setCapabilitiesForTests({ multiUser: true });
+    let shared = false;
+    vi.stubGlobal("fetch", vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      if (init?.method === "PUT") shared = true;
+      if (init?.method === "DELETE") shared = false;
+      return new Response(JSON.stringify(shared ? { shared: true, token: "shared-token" } : { shared: false }));
+    }));
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", { value: { writeText }, configurable: true });
+    const { container, dispose } = renderView();
+    await tick();
+    queryByRole(container, "button", { name: "Chat settings" })!.click();
+    await waitFor(() => expect((queryByRole(container, "menuitem", { name: "Share link" }) as HTMLButtonElement)?.disabled).toBe(false));
+    queryByRole(container, "menuitem", { name: "Share link" })!.click();
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith("http://localhost:3000/shared/shared-token"));
+    queryByRole(container, "button", { name: "Chat settings" })!.click();
+    await waitFor(() => expect((queryByRole(container, "menuitem", { name: "Revoke link" }) as HTMLButtonElement)?.disabled).toBe(false));
+    queryByRole(container, "menuitem", { name: "Copy link" })!.click();
+    await waitFor(() => expect(writeText).toHaveBeenCalledTimes(2));
+    queryByRole(container, "button", { name: "Chat settings" })!.click();
+    await waitFor(() => expect((queryByRole(container, "menuitem", { name: "Revoke link" }) as HTMLButtonElement)?.disabled).toBe(false));
+    queryByRole(container, "menuitem", { name: "Revoke link" })!.click();
+    await waitFor(() => expect(queryByRole(container, "menu")).toBeNull());
+    queryByRole(container, "button", { name: "Chat settings" })!.click();
+    await waitFor(() => expect(queryByRole(container, "menuitem", { name: "Share link" })).not.toBeNull());
+    dispose();
+  });
+
+  it("keeps chatting usable while a share request hangs and then times out", async () => {
+    fetchCapabilitiesMock.mockResolvedValue({ multiUser: true, extensions: {}, agents: ["agent-1"] });
+    setCapabilitiesForTests({ multiUser: true });
+    vi.stubGlobal("fetch", vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      if (init?.method === "PUT") return new Promise<Response>((_resolve, reject) => {
+        init.signal?.addEventListener("abort", () => reject(new DOMException("Aborted", "AbortError")));
+      });
+      return new Response(JSON.stringify({ shared: false }));
+    }));
+    const { container, dispose } = renderView();
+    const toasts = document.createElement("div");
+    document.body.appendChild(toasts);
+    const disposeToasts = render(() => <ToastHost />, toasts);
+    await tick();
+    queryByRole(container, "button", { name: "Chat settings" })!.click();
+    await waitFor(() => expect((queryByRole(container, "menuitem", { name: "Share link" }) as HTMLButtonElement)?.disabled).toBe(false));
+    vi.useFakeTimers();
+    try {
+      queryByRole(container, "menuitem", { name: "Share link" })!.click();
+      expect(queryByRole(container, "menuitem", { name: "Agent settings" })).not.toBeNull();
+      const composer = queryByRole(container, "textbox") as HTMLTextAreaElement;
+      composer.value = "A new request during sharing";
+      fireEvent.input(composer);
+      expect((queryByRole(container, "button", { name: "Send message" }) as HTMLButtonElement).disabled).toBe(false);
+      queryByRole(container, "button", { name: "Send message" })!.click();
+      expect(queryByText(container, "A new request during sharing")).not.toBeNull();
+      await vi.advanceTimersByTimeAsync(10_000);
+      expect(toasts.textContent).toContain("Sharing took too long. Try again.");
+      expect((queryByRole(container, "menuitem", { name: "Share link" }) as HTMLButtonElement).disabled).toBe(false);
+    } finally {
+      vi.useRealTimers();
+      disposeToasts();
+      dispose();
+    }
   });
 
   it.each(["full", "simple"] as const)("nests history tool calls once, collapsed in %s mode", async (mode) => {
