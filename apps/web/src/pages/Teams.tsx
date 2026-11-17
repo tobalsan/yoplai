@@ -393,7 +393,7 @@ function TeamDetail(props: {
     fetchTeamAgents
   );
   // Pool metadata gives each team agent its display name and avatar.
-  const [pool] = createResource(fetchPool);
+  const [pool] = createResource(() => fetchPool());
   const poolAgent = (poolId: string) => (pool.error ? undefined : pool())?.find((agent) => agent.id === poolId);
   const [agentBusy, setAgentBusy] = createSignal(false);
   const [removeTarget, setRemoveTarget] = createSignal<{ poolId: string; name: string; lastTeam: boolean; public: boolean } | null>(null);
@@ -792,7 +792,7 @@ function TeamlessUserRow(props: { user: TeamlessUser; teams: Team[]; onAdded: (u
 
 export function Teams() {
   const session = useSession();
-  const [teams, { refetch }] = createResource(fetchTeams);
+  const [teams, { refetch }] = createResource(() => fetchTeams());
   const [modalTeam, setModalTeam] = createSignal<Team | null | undefined>(
     undefined
   );

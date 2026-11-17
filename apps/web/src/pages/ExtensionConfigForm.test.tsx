@@ -152,7 +152,7 @@ describe("ExtensionConfigForm", () => {
       enabled: true,
       config: {},
       secrets: { apiKey: "sk-exa-123" },
-    });
+    }, undefined);
     expect(container.querySelector(".ext-config-saved")?.textContent).toBe(
       "Saved ✓"
     );
@@ -191,7 +191,7 @@ describe("ExtensionConfigForm", () => {
       enabled: true,
       config: {},
       secrets: {},
-    });
+    }, undefined);
   });
 
   it("blocks submit and warns when a required field is blank", async () => {
@@ -246,7 +246,7 @@ describe("ExtensionConfigForm", () => {
       enabled: true,
       config: { baseUrl: "https://api.exa.ai" },
       secrets: { apiKey: "sk-1" },
-    });
+    }, undefined);
   });
 
   it("collapses advanced fields behind a uniform disclosure", async () => {
@@ -343,14 +343,14 @@ describe("ExtensionConfigForm", () => {
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(container.querySelector(".ext-config-remove-confirm")).toBeNull();
     await confirm();
-    expect(disconnectConnectionMock).toHaveBeenCalledWith("scribe", "extension", "exa");
+    expect(disconnectConnectionMock).toHaveBeenCalledWith("scribe", "extension", "exa", undefined);
     expect(removeButton()).toBeNull();
 
     selectScope(container, "team");
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(removeButton()!.textContent).toBe("Remove team credentials");
     await confirm();
-    expect(removeTeamCredentialsMock).toHaveBeenCalledWith("scribe", "exa");
+    expect(removeTeamCredentialsMock).toHaveBeenCalledWith("scribe", "exa", undefined);
     expect(removeButton()).toBeNull();
   });
 
@@ -379,7 +379,7 @@ describe("ExtensionConfigForm", () => {
     input.dispatchEvent(new InputEvent("input", { bubbles: true }));
     container.querySelector("form")!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
     await new Promise((resolve) => setTimeout(resolve, 0));
-    expect(patchAgentExtensionMock).toHaveBeenCalledWith("scribe", "exa", { credentialScope: "personal", config: { baseUrl: "https://alice.test" }, secrets: { apiKey: "alice-personal" } });
+    expect(patchAgentExtensionMock).toHaveBeenCalledWith("scribe", "exa", { credentialScope: "personal", config: { baseUrl: "https://alice.test" }, secrets: { apiKey: "alice-personal" } }, undefined);
     expect(container.querySelector<HTMLInputElement>("#ext-field-apiKey")?.value).toBe("********");
     expect(pills()[0]).toEqual(["Configured", "ok"]);
     expect(container.textContent).not.toContain("alice-personal");
@@ -424,7 +424,7 @@ describe("ExtensionConfigForm", () => {
     input.dispatchEvent(new InputEvent("input", { bubbles: true }));
     container.querySelector("form")!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
     await new Promise((resolve) => setTimeout(resolve, 0));
-    expect(patchAgentExtensionMock).toHaveBeenCalledWith("scribe", "exa", { credentialScope: "team", enabled: true, config: {}, secrets: { apiKey: "team-token" } });
+    expect(patchAgentExtensionMock).toHaveBeenCalledWith("scribe", "exa", { credentialScope: "team", enabled: true, config: {}, secrets: { apiKey: "team-token" } }, undefined);
     expect(activeScope(container)).toBe("team");
     expect(container.querySelector<HTMLInputElement>("#ext-field-apiKey")?.value).toBe("********");
     selectScope(container, "personal");
@@ -457,7 +457,7 @@ describe("ExtensionConfigForm", () => {
     selectScope(container, "team");
     container.querySelector("form")!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
     await new Promise((resolve) => setTimeout(resolve, 0));
-    expect(patchAgentExtensionMock).toHaveBeenCalledWith("scribe", "exa", { credentialScope: "team", enabled: true, config: {}, secrets: {} });
+    expect(patchAgentExtensionMock).toHaveBeenCalledWith("scribe", "exa", { credentialScope: "team", enabled: true, config: {}, secrets: {} }, undefined);
   });
   it("saves a boolean turned back off on the same open form", async () => {
     setSession("admin");
@@ -478,8 +478,8 @@ describe("ExtensionConfigForm", () => {
     await toggleAndSave(true);
     await toggleAndSave(false);
 
-    expect(patchAgentExtensionMock).toHaveBeenNthCalledWith(1, "scribe", "exa", { enabled: true, config: { allowWrite: true }, secrets: {} });
-    expect(patchAgentExtensionMock).toHaveBeenNthCalledWith(2, "scribe", "exa", { enabled: true, config: { allowWrite: false }, secrets: {} });
+    expect(patchAgentExtensionMock).toHaveBeenNthCalledWith(1, "scribe", "exa", { enabled: true, config: { allowWrite: true }, secrets: {} }, undefined);
+    expect(patchAgentExtensionMock).toHaveBeenNthCalledWith(2, "scribe", "exa", { enabled: true, config: { allowWrite: false }, secrets: {} }, undefined);
     expect(container.querySelector<HTMLInputElement>("#ext-field-allowWrite")!.checked).toBe(false);
   });
 });

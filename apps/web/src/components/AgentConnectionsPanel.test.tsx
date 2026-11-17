@@ -54,7 +54,7 @@ describe("AgentConnectionsPanel", () => {
     expect(root.querySelector('[data-scope="team"] button')).toBeNull();
     button.click();
     await tick();
-    expect(disconnectMock).toHaveBeenCalledWith("scribe", "oauth", "google");
+    expect(disconnectMock).toHaveBeenCalledWith("scribe", "oauth", "google", undefined);
   });
 
   it("shows the matching extension icon, falling back to a letter", async () => {
@@ -116,7 +116,7 @@ describe("AgentConnectionsPanel", () => {
     expect(root.querySelector('[data-scope="team"] .cred-status-pill')!.textContent).toBe("Connected");
     root.querySelector("button")!.click();
     await tick();
-    expect(disconnectMcpMock).toHaveBeenCalledWith("scribe", "Docs");
+    expect(disconnectMcpMock).toHaveBeenCalledWith("scribe", "Docs", undefined);
   });
 
   it("keeps core connections available when MCP status fails", async () => {
@@ -129,7 +129,7 @@ describe("AgentConnectionsPanel", () => {
     expect(root.textContent).toContain("MCP connections unavailable: MCP offline");
     root.querySelector("button")!.click();
     await tick();
-    expect(disconnectMock).toHaveBeenCalledWith("scribe", "oauth", "google");
+    expect(disconnectMock).toHaveBeenCalledWith("scribe", "oauth", "google", undefined);
   });
 
   it("does not wait for an MCP status request before showing and disconnecting core connections", async () => {
@@ -142,7 +142,7 @@ describe("AgentConnectionsPanel", () => {
     expect(root.textContent).toContain("Loading MCP connections");
     root.querySelector("button")!.click();
     await tick();
-    expect(disconnectMock).toHaveBeenCalledWith("scribe", "extension", "asana");
+    expect(disconnectMock).toHaveBeenCalledWith("scribe", "extension", "asana", undefined);
   });
 
   it("ignores a late response from the previously selected agent", async () => {

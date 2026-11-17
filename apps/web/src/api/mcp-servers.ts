@@ -1,4 +1,5 @@
 import { apiFetch as fetch } from "./core";
+import { gatewayApiPath, gatewayKey, type GatewayName } from "./gateway";
 
 export type McpScope = "personal" | "team";
 export type McpServer = {
@@ -31,44 +32,47 @@ export function mcpDisplayName(name: string, title?: string): string {
   return title || name.charAt(0).toUpperCase() + name.slice(1);
 }
 
-const endpoint = (agentId: string) => `/api/mcp/servers?agent=${encodeURIComponent(agentId)}`;
+const endpoint = (agentId: string, gateway?: GatewayName) => gatewayApiPath(gateway, `/api/mcp/servers?agent=${encodeURIComponent(agentId)}`);
+const agentPath = (gateway: GatewayName, path: string, agentId: string, name: string) =>
+  gatewayApiPath(gateway, `${path}?agent=${encodeURIComponent(agentId)}&server=${encodeURIComponent(name)}`);
 
 export type McpServerList = { servers: McpServer[]; canConfigureTeam: boolean; canEditLabels?: boolean };
 const lastLists = new Map<string, McpServerList>();
 const statusRequests = new Map<string, object>();
 
 /** Last list fetched for an agent; lets pages render instantly while live status refreshes. */
-export function cachedMcpServers(agentId: string): McpServerList | undefined {
-  return lastLists.get(agentId);
+export function cachedMcpServers(agentId: string, gateway?: GatewayName): McpServerList | undefined {
+  return lastLists.get(gatewayKey(gateway, agentId));
 }
 
-export async function fetchMcpServers(agentId: string): Promise<McpServerList> {
-  const response = await fetch(endpoint(agentId), { signal: AbortSignal.timeout(35_000) });
+export async function fetchMcpServers(agentId: string, gateway?: GatewayName): Promise<McpServerList> {
+  const response = await fetch(endpoint(agentId, gateway), { signal: AbortSignal.timeout(35_000) });
   if (!response.ok) throw new Error("Failed to load MCP servers.");
   const list: McpServerList = await response.json();
-  lastLists.set(agentId, list);
+  lastLists.set(gatewayKey(gateway, agentId), list);
   return list;
 }
 
 /** Configuration and credential presence only; never waits for MCP discovery. */
-export async function fetchMcpServersFast(agentId: string, name?: string): Promise<McpServerList> {
-  const response = await fetch(`${endpoint(agentId)}&live=0${name === undefined ? "" : `&server=${encodeURIComponent(name)}`}`, { signal: AbortSignal.timeout(35_000) });
+export async function fetchMcpServersFast(agentId: string, name?: string, gateway?: GatewayName): Promise<McpServerList> {
+  const response = await fetch(`${endpoint(agentId, gateway)}&live=0${name === undefined ? "" : `&server=${encodeURIComponent(name)}`}`, { signal: AbortSignal.timeout(35_000) });
   if (!response.ok) throw new Error("Failed to load MCP servers.");
   const list: McpServerList = await response.json();
-  if (name === undefined) lastLists.set(agentId, list);
+  if (name === undefined) lastLists.set(gatewayKey(gateway, agentId), list);
   return list;
 }
 
 /** Live status for one details page; leave the full agent-list cache intact. */
-export async function fetchMcpServer(agentId: string, name: string): Promise<McpServerList> {
-  const key = JSON.stringify([agentId, name]);
+export async function fetchMcpServer(agentId: string, name: string, gateway?: GatewayName): Promise<McpServerList> {
+  const key = gatewayKey(gateway, agentId, name);
   const request = {};
   statusRequests.set(key, request);
-  const response = await fetch(`${endpoint(agentId)}&server=${encodeURIComponent(name)}`, { signal: AbortSignal.timeout(35_000) });
+  const response = await fetch(`${endpoint(agentId, gateway)}&server=${encodeURIComponent(name)}`, { signal: AbortSignal.timeout(35_000) });
   if (!response.ok) throw new Error("Failed to load MCP server.");
   const list: McpServerList = await response.json();
-  const cached = lastLists.get(agentId);
-  if (cached && statusRequests.get(key) === request) lastLists.set(agentId, { ...cached, servers: cached.servers.map((server) => list.servers.find((item) => item.name === server.name) ?? server) });
+  const listKey = gatewayKey(gateway, agentId);
+  const cached = lastLists.get(listKey);
+  if (cached && statusRequests.get(key) === request) lastLists.set(listKey, { ...cached, servers: cached.servers.map((server) => list.servers.find((item) => item.name === server.name) ?? server) });
   return list;
 }
 
@@ -84,37 +88,39 @@ export function iconRefreshOutcome(result: { status: McpIconRefreshStatus; error
   return { message: result.status === "updated" ? "Icon updated" : "No new icon found; kept the current one" };
 }
 
-export async function refreshMcpServerIcon(agentId: string, name: string): Promise<{ status: McpIconRefreshStatus; error?: string; server: McpServer }> {
-  const key = JSON.stringify([agentId, name]);
+export async function refreshMcpServerIcon(agentId: string, name: string, gateway?: GatewayName): Promise<{ status: McpIconRefreshStatus; error?: string; server: McpServer }> {
+  const key = gatewayKey(gateway, agentId, name);
   const request = {};
   statusRequests.set(key, request);
-  const response = await fetch(`/api/mcp/servers/icon/refresh?agent=${encodeURIComponent(agentId)}&server=${encodeURIComponent(name)}`, { method: "POST", signal: AbortSignal.timeout(35_000) });
+  const response = await fetch(agentPath(gateway, "/api/mcp/servers/icon/refresh", agentId, name), { method: "POST", signal: AbortSignal.timeout(35_000) });
   if (!response.ok) throw new Error((await response.text()) || "Failed to refresh MCP server icon.");
   const result: { status: McpIconRefreshStatus; error?: string; server: McpServer } = await response.json();
-  const cached = lastLists.get(agentId);
-  if (cached && statusRequests.get(key) === request) lastLists.set(agentId, { ...cached, servers: cached.servers.map((server) => server.name === result.server.name ? { ...server, ...result.server } : server) });
+  const listKey = gatewayKey(gateway, agentId);
+  const cached = lastLists.get(listKey);
+  if (cached && statusRequests.get(key) === request) lastLists.set(listKey, { ...cached, servers: cached.servers.map((server) => server.name === result.server.name ? { ...server, ...result.server } : server) });
   return result;
 }
 
-export async function addMcpServer(agentId: string, url: string, credentialScope: McpScope, returnTo?: string): Promise<{ server: McpServer; authorizationUrl?: string }> {
-  const response = await fetch(endpoint(agentId), {
+/** A remote add sends no return path: the remote callback must not load a local page. */
+export async function addMcpServer(agentId: string, url: string, credentialScope: McpScope, returnTo?: string, gateway?: GatewayName): Promise<{ server: McpServer; authorizationUrl?: string }> {
+  const response = await fetch(endpoint(agentId, gateway), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ url, credentialScope, returnTo }),
+    body: JSON.stringify(gateway === undefined ? { url, credentialScope, returnTo } : { url, credentialScope }),
     signal: AbortSignal.timeout(45_000),
   });
   if (!response.ok) throw new Error((await response.text()) || "Failed to add MCP server.");
   return response.json();
 }
 
-export async function removeMcpServer(agentId: string, name: string): Promise<void> {
-  const response = await fetch(`/api/mcp/servers/remove?agent=${encodeURIComponent(agentId)}&server=${encodeURIComponent(name)}`, { method: "POST" });
+export async function removeMcpServer(agentId: string, name: string, gateway?: GatewayName): Promise<void> {
+  const response = await fetch(agentPath(gateway, "/api/mcp/servers/remove", agentId, name), { method: "POST" });
   if (response.status === 403) throw new Error("Only admins can remove this MCP server.");
   if (!response.ok) throw new Error("Failed to remove MCP server.");
 }
 
-export async function disconnectMcpServer(agentId: string, name: string, scope: McpScope): Promise<void> {
-  const response = await fetch(`/api/mcp/oauth/disconnect?agent=${encodeURIComponent(agentId)}&server=${encodeURIComponent(name)}&scope=${scope}`, { method: "POST" });
+export async function disconnectMcpServer(agentId: string, name: string, scope: McpScope, gateway?: GatewayName): Promise<void> {
+  const response = await fetch(gatewayApiPath(gateway, `/api/mcp/oauth/disconnect?agent=${encodeURIComponent(agentId)}&server=${encodeURIComponent(name)}&scope=${scope}`), { method: "POST" });
   if (!response.ok) throw new Error("Failed to disconnect MCP server.");
 }
 
@@ -127,16 +133,16 @@ export type McpServerConfigView = {
   config: Record<string, unknown>;
 };
 
-const configEndpoint = (agentId: string, name: string) => `/api/mcp/servers/config?agent=${encodeURIComponent(agentId)}&server=${encodeURIComponent(name)}`;
+const configEndpoint = (agentId: string, name: string, gateway?: GatewayName) => agentPath(gateway, "/api/mcp/servers/config", agentId, name);
 
-export async function fetchMcpServerConfig(agentId: string, name: string): Promise<McpServerConfigView> {
-  const response = await fetch(configEndpoint(agentId, name));
+export async function fetchMcpServerConfig(agentId: string, name: string, gateway?: GatewayName): Promise<McpServerConfigView> {
+  const response = await fetch(configEndpoint(agentId, name, gateway));
   if (!response.ok) throw new Error((await response.text()) || "Failed to load MCP server config.");
   return response.json();
 }
 
-export async function saveMcpServerConfig(agentId: string, name: string, config: unknown): Promise<McpServerConfigView> {
-  const response = await fetch(configEndpoint(agentId, name), {
+export async function saveMcpServerConfig(agentId: string, name: string, config: unknown, gateway?: GatewayName): Promise<McpServerConfigView> {
+  const response = await fetch(configEndpoint(agentId, name, gateway), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ config }),
@@ -145,8 +151,8 @@ export async function saveMcpServerConfig(agentId: string, name: string, config:
   return response.json();
 }
 
-export async function setSharedMcpServer(agentId: string, name: string, enabled: boolean): Promise<McpServer> {
-  const response = await fetch(`/api/mcp/servers/shared?agent=${encodeURIComponent(agentId)}&server=${encodeURIComponent(name)}`, {
+export async function setSharedMcpServer(agentId: string, name: string, enabled: boolean, gateway?: GatewayName): Promise<McpServer> {
+  const response = await fetch(agentPath(gateway, "/api/mcp/servers/shared", agentId, name), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ enabled }),
@@ -157,8 +163,8 @@ export async function setSharedMcpServer(agentId: string, name: string, enabled:
 }
 
 /** Sets the manual name/description of an agent-local server; an empty value clears it. */
-export async function saveMcpServerLabel(agentId: string, name: string, label: { displayName: string; description: string }): Promise<void> {
-  const response = await fetch(`/api/mcp/servers/label?agent=${encodeURIComponent(agentId)}&server=${encodeURIComponent(name)}`, {
+export async function saveMcpServerLabel(agentId: string, name: string, label: { displayName: string; description: string }, gateway?: GatewayName): Promise<void> {
+  const response = await fetch(agentPath(gateway, "/api/mcp/servers/label", agentId, name), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(label),

@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { render } from "solid-js/web";
+import { Route, Router } from "@solidjs/router";
 import { Dashboards } from "./Dashboards";
 import type { DashboardRow } from "../api/dashboards";
 
@@ -39,7 +40,7 @@ it.each(["failure", "timeout"])("moves pins without duplicates and rolls back on
     });
     throw new Error(`Unexpected request: ${input}`);
   }));
-  dispose = render(() => <Dashboards />, root);
+  dispose = render(() => <Router><Route path="*" component={Dashboards} /></Router>, root);
   await vi.advanceTimersByTimeAsync(0);
   expect(section("Pinned")).toBeUndefined();
   expect(section("My dashboards")?.textContent).toContain("Own");
@@ -93,7 +94,7 @@ it("keeps a successful pin when an overlapping delete refresh returns an older s
     }
     throw new Error(`Unexpected request: ${input}`);
   }));
-  dispose = render(() => <Dashboards />, root);
+  dispose = render(() => <Router><Route path="*" component={Dashboards} /></Router>, root);
   await vi.waitFor(() => expect(root.querySelectorAll(".dashboard-list-row")).toHaveLength(2));
   toggle("Own").click();
   Array.from(dashboard("Other").querySelectorAll("button")).find((button) => button.textContent?.trim() === "Delete")!.click();

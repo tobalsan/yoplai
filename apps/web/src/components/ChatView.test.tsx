@@ -219,6 +219,13 @@ function renderView() {
   return { container, dispose };
 }
 
+async function openAgentSettingsHref(container: HTMLElement): Promise<string | null | undefined> {
+  await waitFor(() => expect(queryByRole(container, "button", { name: "Chat settings" })).not.toBeNull());
+  queryByRole(container, "button", { name: "Chat settings" })!.click();
+  await waitFor(() => expect(queryByRole(container, "menuitem", { name: "Agent settings" })).not.toBeNull());
+  return queryByRole(container, "menuitem", { name: "Agent settings" })?.getAttribute("href");
+}
+
 describe("ChatView abort handling", () => {
   beforeEach(() => {
     localStorage.clear();
@@ -741,9 +748,9 @@ describe("ChatView abort handling", () => {
     routeState.agentId = "pom%40ams";
     fetchAgentMock.mockResolvedValue({ id: "pom@ams", name: "Pom (remote)", gateway: "ams", model: { provider: "openai", model: "gpt-5" }, queueMode: "queue" });
     const { container, dispose } = renderView();
-    await waitFor(() => expect(queryByRole(container, "link", { name: "Pom (remote) settings" })).not.toBeNull());
+    await waitFor(() => expect(queryByRole(container, "button", { name: "Chat settings" })).not.toBeNull());
     expect(container.textContent).toContain("@ams");
-    expect(queryByRole(container, "link", { name: "Pom (remote) settings" })?.getAttribute("href")).toBe("/agents/pom%40ams/edit");
+    expect(await openAgentSettingsHref(container)).toBe("/agents/pom%40ams/edit");
     dispose();
   });
 
@@ -751,7 +758,7 @@ describe("ChatView abort handling", () => {
     routeState.agentId = "pom%40ams";
     fetchAgentMock.mockResolvedValue({ id: "pom@ams", name: "Pom (remote)", gateway: "ams", model: { provider: "openai", model: "gpt-5" }, queueMode: "queue" });
     const { container, dispose } = renderView();
-    await waitFor(() => expect(queryByRole(container, "link", { name: "Pom (remote) settings" })).not.toBeNull());
+    await waitFor(() => expect(container.textContent).toContain("@ams"));
     const input = queryByRole(container, "textbox") as HTMLTextAreaElement;
     input.value = "Hello";
     input.dispatchEvent(new Event("input", { bubbles: true }));
@@ -767,10 +774,10 @@ describe("ChatView abort handling", () => {
     for (const routeId of ["pom%40ams", "pom@ams"]) {
       routeState.agentId = routeId;
       const { container, dispose } = renderView();
-      await waitFor(() => expect(queryByRole(container, "link", { name: "Pom (remote) settings" })).not.toBeNull());
+      await waitFor(() => expect(queryByRole(container, "button", { name: "Chat settings" })).not.toBeNull());
       seen.push({
         text: container.textContent?.includes("@ams") ? "marked" : "unmarked",
-        href: queryByRole(container, "link", { name: "Pom (remote) settings" })?.getAttribute("href"),
+        href: await openAgentSettingsHref(container),
       });
       dispose();
     }
@@ -841,7 +848,7 @@ describe("ChatView abort handling", () => {
       fetchAgentMock.mockResolvedValue({ id: "pom@ams", name: agentName, gateway: "ams", model: { provider: "openai", model: "gpt-5" }, queueMode: "queue" });
       subscribeToSessionMock.mockImplementation((_id, _key, next) => { subscription = next; return Object.assign(() => {}, { send }); });
       const view = renderView();
-      await waitFor(() => expect(queryByRole(view.container, "link", { name: `${agentName} settings` })).not.toBeNull());
+      await waitFor(() => expect(queryByRole(view.container, "button", { name: "Chat settings" })).not.toBeNull());
       await tick(); await tick();
       return view;
     }
@@ -1345,7 +1352,7 @@ describe("ChatView abort handling", () => {
 
     it("shows no device control and sends no relay request for a local agent", async () => {
       const { container, dispose } = renderView();
-      await waitFor(() => expect(queryByRole(container, "link", { name: "Agent settings" })).not.toBeNull());
+      await waitFor(() => expect(queryByRole(container, "button", { name: "Chat settings" })).not.toBeNull());
       await tick(); await tick();
       expect(queryByRole(container, "button", { name: "Device: Ask" })).toBeNull();
       expect(relay.calls).toEqual([]);
@@ -1452,8 +1459,8 @@ describe("ChatView abort handling", () => {
     routeState.agentId = "a%23b%3Fc%40ams";
     fetchAgentMock.mockResolvedValue({ id: "a#b?c@ams", name: "Odd", gateway: "ams", model: { provider: "openai", model: "gpt-5" }, queueMode: "queue" });
     const { container, dispose } = renderView();
-    await waitFor(() => expect(queryByRole(container, "link", { name: "Odd settings" })).not.toBeNull());
-    const href = queryByRole(container, "link", { name: "Odd settings" })!.getAttribute("href")!;
+    await waitFor(() => expect(queryByRole(container, "button", { name: "Chat settings" })).not.toBeNull());
+    const href = (await openAgentSettingsHref(container))!;
     expect(new URL(href, "http://localhost").pathname).toBe("/agents/a%23b%3Fc%40ams/edit");
     dispose();
   });
@@ -1469,8 +1476,8 @@ describe("ChatView abort handling", () => {
     routeState.agentId = "pom";
     fetchAgentMock.mockResolvedValue({ id: "pom", name: "Pom", model: { provider: "openai", model: "gpt-5" }, queueMode: "queue" });
     const { container, dispose } = renderView();
-    await waitFor(() => expect(queryByRole(container, "link", { name: "Pom settings" })).not.toBeNull());
-    expect(queryByRole(container, "link", { name: "Pom settings" })?.getAttribute("href")).toBe("/agents/pom/edit");
+    await waitFor(() => expect(queryByRole(container, "button", { name: "Chat settings" })).not.toBeNull());
+    expect(await openAgentSettingsHref(container)).toBe("/agents/pom/edit");
     const input = queryByRole(container, "textbox") as HTMLTextAreaElement;
     input.value = "Hello";
     input.dispatchEvent(new Event("input", { bubbles: true }));
@@ -1494,6 +1501,20 @@ describe("ChatView abort handling", () => {
     await tick();
     expect(queryByRole(second.container, "menuitem", { name: "Agent settings" })).toBeNull();
     second.dispose();
+  });
+
+  it("links the chat settings menu of a remote agent to its qualified route and never reads the local pool", async () => {
+    setCapabilitiesForTests({ multiUser: false, forkedAgents: true });
+    routeState.agentId = "pom%40ams";
+    fetchAgentMock.mockResolvedValue({ id: "pom@ams", name: "Pom (remote)", gateway: "ams", model: { provider: "openai", model: "gpt-5" }, queueMode: "queue" });
+    // A local pool entry with the same chat ID must not capture the remote agent.
+    fetchPoolActionsMock.mockResolvedValue([{ poolId: "local-pool", action: "chat", chatAgentId: "pom@ams", forked: true, reason: null, teamName: null }]);
+    const { container, dispose } = renderView();
+    await waitFor(() => expect(queryByRole(container, "button", { name: "Chat settings" })).not.toBeNull());
+    queryByRole(container, "button", { name: "Chat settings" })!.click();
+    await waitFor(() => expect(queryByRole(container, "menuitem", { name: "Agent settings" })?.getAttribute("href")).toBe("/agents/pom%40ams/edit"));
+    expect(fetchPoolActionsMock).not.toHaveBeenCalled();
+    dispose();
   });
 
   it("opens the existing default-agent picker from the menu", async () => {

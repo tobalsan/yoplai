@@ -69,7 +69,7 @@ describe("DashboardAccessDialog", () => {
     expect(button("Save").disabled).toBe(false);
     button("Save").click();
     await tick();
-    expect(saveMock).toHaveBeenCalledWith("d1", [{ kind: "all", mode: "write" }]);
+    expect(saveMock).toHaveBeenCalledWith("d1", [{ kind: "all", mode: "write" }], undefined);
   });
 
   it("keeps Save disabled after removing and adding back the same person", async () => {
@@ -110,6 +110,6 @@ describe("DashboardAccessDialog", () => {
     await tick();
     button("Save").click();
     await tick();
-    expect(saveMock).toHaveBeenCalledWith("d1", []);
+    expect(saveMock).toHaveBeenCalledWith("d1", [], undefined);
   });
 });

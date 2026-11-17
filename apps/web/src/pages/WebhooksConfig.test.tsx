@@ -96,7 +96,7 @@ describe("WebhooksConfigPage", () => {
     await settle();
     expect(updateWebhookMock).toHaveBeenCalledWith("scribe", "triage", {
       credentialMode: "owner",
-    });
+    }, undefined);
     expect(checked("Mine")).toBe(true);
     expect(container.textContent).toContain("Owned by you");
   });
@@ -175,7 +175,7 @@ describe("WebhooksConfigPage", () => {
     await settle();
     expect(updateWebhookMock).toHaveBeenCalledWith("scribe", "triage", {
       enabled: false,
-    });
+    }, undefined);
     expect(toggle().getAttribute("aria-checked")).toBe("false");
     expect(container.textContent).toContain("Disabled");
   });
@@ -512,7 +512,7 @@ describe("WebhooksConfigPage", () => {
     await settle();
     expect(updateWebhookMock).toHaveBeenCalledWith("scribe", "triage", {
       credentialMode: "team",
-    });
+    }, undefined);
     expect(checked("Team")).toBe(true);
     expect(container.textContent).not.toContain("Owned by");
   });

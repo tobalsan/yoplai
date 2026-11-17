@@ -1,5 +1,6 @@
 import { API_BASE, apiFetch as fetch } from "./core";
 import { fetchOAuthStatus } from "./oauth";
+import { gatewayApiPath, type GatewayName } from "./gateway";
 
 type ExtensionConfigTier = "auto-form" | "bespoke-route" | "toggle-only";
 
@@ -55,10 +56,11 @@ export function detailsPath(agentId: string, extensionId: string): string {
 // Staff and same-team members may read the extension catalog for an agent
 // (built-in + runtime scanned), including enabled state and config metadata.
 export async function fetchAgentExtensions(
-  agentId: string
+  agentId: string,
+  gateway?: GatewayName
 ): Promise<ExtensionCatalogEntry[]> {
   const res = await fetch(
-    `${API_BASE}/agents/${encodeURIComponent(agentId)}/extensions`
+    gatewayApiPath(gateway, `${API_BASE}/agents/${encodeURIComponent(agentId)}/extensions`)
   );
   if (!res.ok) throw new Error("Failed to fetch extension catalog");
   const data = (await res.json()) as { extensions: ExtensionCatalogEntry[] };
@@ -77,10 +79,11 @@ export type ExtensionConfigPatch = {
 // Unset an extension's whole-team credentials (admin); settings stay. Returns the refreshed catalog.
 export async function removeTeamExtensionCredentials(
   agentId: string,
-  extensionId: string
+  extensionId: string,
+  gateway?: GatewayName
 ): Promise<ExtensionCatalogEntry[]> {
   const res = await fetch(
-    `${API_BASE}/agents/${encodeURIComponent(agentId)}/extensions/${encodeURIComponent(extensionId)}/credentials`,
+    gatewayApiPath(gateway, `${API_BASE}/agents/${encodeURIComponent(agentId)}/extensions/${encodeURIComponent(extensionId)}/credentials`),
     { method: "DELETE" }
   );
   if (!res.ok) throw new Error("Failed to remove team credentials");
@@ -91,12 +94,13 @@ export async function removeTeamExtensionCredentials(
 export async function patchAgentExtension(
   agentId: string,
   extensionId: string,
-  patch: ExtensionConfigPatch
+  patch: ExtensionConfigPatch,
+  gateway?: GatewayName
 ): Promise<ExtensionCatalogEntry[]> {
   const res = await fetch(
-    `${API_BASE}/agents/${encodeURIComponent(agentId)}/extensions/${encodeURIComponent(
+    gatewayApiPath(gateway, `${API_BASE}/agents/${encodeURIComponent(agentId)}/extensions/${encodeURIComponent(
       extensionId
-    )}`,
+    )}`),
     {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
@@ -114,8 +118,9 @@ export type OAuthScopeState = "connected" | "needs_reconnect" | "disconnected";
 export async function fetchOAuthScopeState(
   agentId: string,
   provider: string,
-  scope: "personal" | "team"
+  scope: "personal" | "team",
+  gateway?: GatewayName
 ): Promise<OAuthScopeState> {
-  const data = await fetchOAuthStatus(agentId, provider, scope);
+  const data = await fetchOAuthStatus(agentId, provider, scope, gateway);
   return data.state ?? (data.connected ? "connected" : "disconnected");
 }

@@ -1,9 +1,22 @@
 import { Show, createSignal, onCleanup } from "solid-js";
 import type { DashboardRow } from "../api/dashboards";
+import { remoteRowTargets } from "../lib/remote-dashboard";
 
 type RowDashboard = Pick<DashboardRow,
   "link" | "chatHref" | "title" | "params" | "legacy" | "isOwner" | "ownerName" | "mode" | "updatedAt" | "publishedAt"
-> & Partial<Pick<DashboardRow, "shared" | "shares" | "agentName" | "pinned">>;
+> & Partial<Pick<DashboardRow, "id" | "agentId" | "shared" | "shares" | "agentName" | "pinned">>;
+
+/** The open, chat, and copy targets of a row. A remote row uses only local routes. */
+function rowTargets(dashboard: RowDashboard, gateway: string | undefined): { open: string | undefined; chat: string | null } {
+  if (gateway === undefined) return { open: dashboard.link, chat: dashboard.chatHref };
+  if (!dashboard.id || !dashboard.agentId) return { open: undefined, chat: null };
+  return remoteRowTargets({ id: dashboard.id, agentId: dashboard.agentId, chatHref: dashboard.chatHref }, gateway);
+}
+
+/** Local open target of a dashboard row of one gateway. */
+export function dashboardOpenHref(dashboard: RowDashboard, gateway?: string): string | undefined {
+  return rowTargets(dashboard, gateway).open;
+}
 
 export function ownershipLabel(dashboard: Pick<RowDashboard, "legacy" | "isOwner" | "shared" | "ownerName">) {
   if (dashboard.isOwner) return "Owned by you";
@@ -32,6 +45,8 @@ function accessOf(dashboard: RowDashboard): Access | undefined {
 
 export function DashboardListActions(props: {
   dashboard: RowDashboard;
+  /** Linked gateway that owns the dashboard. Absent for a local dashboard. */
+  gateway?: string;
   onManage?: () => void;
   onClaim?: () => void;
   onDelete?: () => void;
@@ -41,11 +56,14 @@ export function DashboardListActions(props: {
   pinPending?: boolean;
 }) {
   const [copied, setCopied] = createSignal(false);
+  const targets = () => rowTargets(props.dashboard, props.gateway);
   let timer: ReturnType<typeof setTimeout> | undefined;
   onCleanup(() => clearTimeout(timer));
   const copy = async () => {
     try {
-      await navigator.clipboard.writeText(new URL(props.dashboard.link, window.location.origin).href);
+      const open = targets().open;
+      if (!open) return;
+      await navigator.clipboard.writeText(new URL(open, window.location.origin).href);
       setCopied(true);
       clearTimeout(timer);
       timer = setTimeout(() => setCopied(false), 1500);
@@ -68,16 +86,16 @@ export function DashboardListActions(props: {
           </button>
         </span>
       </Show>
-      <span class="dashboard-slot dashboard-slot--open" classList={{ "dashboard-slot--empty": props.dashboard.params.length > 0 }}>
-        <Show when={props.dashboard.params.length === 0}>
-          <a class="dashboard-action" href={props.dashboard.link} target="_blank" rel="noopener noreferrer">
+      <span class="dashboard-slot dashboard-slot--open" classList={{ "dashboard-slot--empty": props.dashboard.params.length > 0 || !targets().open }}>
+        <Show when={props.dashboard.params.length === 0 && targets().open}>
+          <a class="dashboard-action" href={targets().open!} target="_blank" rel="noopener noreferrer">
             <i class="fa-solid fa-arrow-up-right-from-square" aria-hidden="true" />Open
           </a>
         </Show>
       </span>
-      <span class="dashboard-slot dashboard-slot--chat" classList={{ "dashboard-slot--empty": !props.dashboard.chatHref }}>
-        <Show when={props.dashboard.chatHref}>
-          <a class="dashboard-action" href={props.dashboard.chatHref!}>
+      <span class="dashboard-slot dashboard-slot--chat" classList={{ "dashboard-slot--empty": !targets().chat }}>
+        <Show when={targets().chat}>
+          <a class="dashboard-action" href={targets().chat!}>
             <i class="fa-solid fa-comment" aria-hidden="true" />Chat
           </a>
         </Show>
@@ -148,6 +166,7 @@ export function DashboardListActions(props: {
 
 export function DashboardListRow(props: {
   dashboard: RowDashboard;
+  gateway?: string;
   showAgent?: boolean;
   onManage?: () => void;
   onClaim?: () => void;
@@ -179,7 +198,7 @@ export function DashboardListRow(props: {
             </span>
           )}</Show>
         </div>
-        <DashboardListActions dashboard={props.dashboard} onManage={props.onManage} onClaim={props.onClaim} onDelete={props.onDelete} reserveDelete={props.reserveDelete} onPin={props.onPin} pinPending={props.pinPending} />
+        <DashboardListActions dashboard={props.dashboard} gateway={props.gateway} onManage={props.onManage} onClaim={props.onClaim} onDelete={props.onDelete} reserveDelete={props.reserveDelete} onPin={props.onPin} pinPending={props.pinPending} />
       </div>
     </div>
   );

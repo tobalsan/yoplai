@@ -10,6 +10,8 @@ function OAuthConnectPage() {
   const [agents, setAgents] = createSignal<Agent[]>([]);
   const [selectedAgent, setSelectedAgent] = createSignal(typeof query.agent === "string" ? query.agent : "");
   const [agentsError, setAgentsError] = createSignal<string>();
+  // A qualified ID names a remote agent only when the loaded list says so. The card waits for that.
+  const selected = () => agents().find((agent) => agent.id === selectedAgent());
   const selectAgent = (agentId: string) => {
     setSelectedAgent(agentId);
     setQuery({ agent: agentId, oauth: undefined, oauth_scope: undefined, oauth_error: undefined }, { replace: true });
@@ -60,8 +62,8 @@ function OAuthConnectPage() {
             </For>
           </select>
         </div>
-        <Show when={selectedAgent()} keyed>
-          {(agentId) => <OAuthConnectCard agentId={agentId} provider="google" label="Google Drive" />}
+        <Show when={selectedAgent() && (!selectedAgent().includes("@") || selected()) ? selectedAgent() : undefined} keyed>
+          {(agentId) => <OAuthConnectCard agentId={agentId} gateway={selected()?.gateway} provider="google" label="Google Drive" />}
         </Show>
       </div>
     </LeftNavShell>

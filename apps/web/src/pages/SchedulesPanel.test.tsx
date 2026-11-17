@@ -339,7 +339,7 @@ describe("SchedulesPanel", () => {
     expect(team!.getAttribute("aria-checked")).toBe("true");
     mine!.click();
     await settle();
-    expect(updateScheduleMock).toHaveBeenCalledWith("scribe", "job-1", { credentialMode: "owner" });
+    expect(updateScheduleMock).toHaveBeenCalledWith("scribe", "job-1", { credentialMode: "owner" }, undefined);
   });
 
   it("pauses own jobs but locks Team job toggles for non-admins", async () => {
@@ -357,7 +357,7 @@ describe("SchedulesPanel", () => {
     expect(mine!.getAttribute("aria-checked")).toBe("false");
     expect(container.querySelector("li.schedule")!.textContent).toContain("Paused");
     await settle();
-    expect(updateScheduleMock).toHaveBeenCalledWith("scribe", "mine", { enabled: false });
+    expect(updateScheduleMock).toHaveBeenCalledWith("scribe", "mine", { enabled: false }, undefined);
   });
 
   it("lets admins resume Team jobs", async () => {
@@ -371,7 +371,7 @@ describe("SchedulesPanel", () => {
     expect(toggle.disabled).toBe(false);
     toggle.click();
     await settle();
-    expect(updateScheduleMock).toHaveBeenCalledWith("scribe", "team", { enabled: true });
+    expect(updateScheduleMock).toHaveBeenCalledWith("scribe", "team", { enabled: true }, undefined);
   });
 
   it("deletes only after confirmation and locks Team deletes for non-admins", async () => {
@@ -393,7 +393,7 @@ describe("SchedulesPanel", () => {
     mine!.click();
     dialog()!.querySelector<HTMLButtonElement>(".schedule-dialog-danger")!.click();
     await settle();
-    expect(deleteScheduleMock).toHaveBeenCalledWith("scribe", "mine");
+    expect(deleteScheduleMock).toHaveBeenCalledWith("scribe", "mine", undefined);
     expect(dialog()).toBeNull();
   });
 

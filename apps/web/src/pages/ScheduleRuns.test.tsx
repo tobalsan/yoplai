@@ -106,7 +106,7 @@ describe("ScheduleRuns", () => {
     ]);
     dispose = render(() => <ScheduleRuns />, container);
     await settle();
-    expect(fetchRunsMock).toHaveBeenCalledWith("scribe", "once-job");
+    expect(fetchRunsMock).toHaveBeenCalledWith("scribe", "once-job", undefined);
     const rows = container.querySelectorAll(".schedule-run");
     expect(Array.from(rows, (row) => row.getAttribute("data-status"))).toEqual(["running", "interrupted", "error", "ok"]);
     expect(rows[0]!.textContent).toContain("(ongoing)");

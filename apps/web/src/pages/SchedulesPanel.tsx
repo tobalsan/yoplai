@@ -1,14 +1,13 @@
 import cronstrue from "cronstrue";
 import { A } from "@solidjs/router";
-import { createEffect, createMemo, createResource, createSignal, For, onCleanup, Show } from "solid-js";
+import { createComputed, createEffect, createMemo, createResource, createSignal, For, onCleanup, Show } from "solid-js";
 import { createStore, reconcile } from "solid-js/store";
 import { deleteSchedule, fetchSchedules, updateSchedule, type ScheduleJob } from "../api/schedules";
 import { ScopeIcon } from "../components/CredentialScopeTabs";
-import { useSession } from "../auth/client";
-import { capabilities } from "../lib/capabilities";
-import { isSuperadmin } from "../lib/roles";
+import { useRequester } from "../lib/requester";
 import { isForeignMine, usePrivateItemsVisibility, visibleJobs } from "../lib/private-items";
 import { refreshScheduleAlerts } from "../lib/schedule-alerts";
+import { gatewayKey } from "../api/gateway";
 
 type CredentialMode = "owner" | "team";
 
@@ -54,25 +53,32 @@ function elapsedTime(ms: number): string {
   return seconds < 60 ? `${seconds}s` : `${Math.floor(seconds / 60)}m ${seconds % 60}s`;
 }
 
-export function SchedulesPanel(props: { agentId: string; agentName: string }) {
-  const session = useSession();
+export function SchedulesPanel(props: { agentId: string; agentName: string; gateway?: string }) {
+  const requester = useRequester(() => props.gateway);
   const { showPrivateItems } = usePrivateItemsVisibility();
-  const [result, { refetch }] = createResource(
-    () => props.agentId,
-    async (agentId, { value }): Promise<{ jobs: ScheduleJob[]; error?: string }> => {
+  // The identity of the list: the gateway and the agent. Jobs, actions, and dialogs belong to one identity.
+  const identity = createMemo(() => gatewayKey(props.gateway, props.agentId));
+  const [loaded, { refetch }] = createResource(
+    () => ({ agentId: props.agentId, gateway: props.gateway }),
+    async ({ agentId, gateway }, { value }): Promise<{ key: string; jobs: ScheduleJob[]; error?: string }> => {
+      const key = gatewayKey(gateway, agentId);
       try {
-        return { jobs: await fetchSchedules(agentId) };
+        return { key, jobs: await fetchSchedules(agentId, gateway) };
       } catch (cause) {
-        return { jobs: value?.jobs ?? [], error: cause instanceof Error ? cause.message : "Failed to load scheduled jobs." };
+        // Keep earlier jobs only for the same gateway and agent.
+        return { key, jobs: value?.key === key ? value.jobs : [], error: cause instanceof Error ? cause.message : "Failed to load scheduled jobs." };
       }
     }
   );
+  // Data of another gateway or agent is never current data.
+  const current = () => { const latest = loaded.latest; return latest?.key === identity() ? latest : undefined; };
+  const result = { get loading() { return loaded.loading; }, get latest() { return current(); } };
   const [jobs, setJobs] = createStore<ScheduleJob[]>([]);
-  const visible = createMemo(() => visibleJobs(jobs, session().data?.user.id,
-    !isSuperadmin((session().data?.user as { role?: string | string[] } | undefined)?.role) || showPrivateItems()));
+  const visible = createMemo(() => visibleJobs(jobs, requester().user?.id,
+    !requester().isSuperadmin || showPrivateItems()));
   createEffect(() => setJobs(reconcile(result.latest?.jobs ?? [])));
   createEffect(() => {
-    if (capabilities.enableCronMonitoring !== true) return;
+    if (!requester().enableCronMonitoring) return;
     const poll = setInterval(() => { if (!result.loading) void refetch(); }, 2_000);
     onCleanup(() => clearInterval(poll));
   });
@@ -80,46 +86,72 @@ export function SchedulesPanel(props: { agentId: string; agentName: string }) {
   const [busy, setBusy] = createSignal<string>();
   // Optimistic on/off state while a toggle request is in flight.
   const [pending, setPending] = createSignal<Record<string, boolean>>({});
+  const [confirming, setConfirming] = createSignal<ScheduleJob>();
+  const [deleting, setDeleting] = createSignal(false);
+  const [deleteError, setDeleteError] = createSignal<string | null>(null);
+  // Each identity change starts a new generation and drops pending actions and the open dialog.
+  // A late answer of an older identity then changes nothing and refreshes nothing.
+  let generation = 0;
+  createComputed(() => {
+    void identity();
+    generation++;
+    setBusy(undefined);
+    setPending({});
+    setError(null);
+    setConfirming(undefined);
+    setDeleting(false);
+    setDeleteError(null);
+  });
+  onCleanup(() => { generation++; });
+  const mutation = () => {
+    const mine = generation;
+    const key = identity();
+    return { agentId: props.agentId, gateway: props.gateway, live: () => generation === mine && identity() === key };
+  };
   // Single-user mode has no session: everyone manages every job (server enforces the same).
+  // A remote page needs a loaded single-user context for that. An unknown context grants nothing.
   const isAdmin = () => {
-    const user = session().data?.user as { role?: string | string[] | null } | undefined;
-    if (!user) return true;
+    const user = requester().user as { role?: string | string[] | null } | undefined;
+    if (!user) return requester().gateway === undefined || (requester().ready && !requester().unknown && !requester().multiUser);
     const roles = Array.isArray(user.role) ? user.role : (user.role ?? "").split(",");
     return roles.some((role) => STAFF_ROLES.includes(role.trim()));
   };
 
   const changeMode = async (job: ScheduleJob, credentialMode: CredentialMode) => {
     if (busy() || (job.credentialMode ?? "team") === credentialMode) return;
+    const run = mutation();
     setBusy(job.id);
     setError(null);
     try {
-      await updateSchedule(props.agentId, job.id, { credentialMode });
+      await updateSchedule(run.agentId, job.id, { credentialMode }, run.gateway);
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Failed to update scheduled job.");
+      if (run.live()) setError(cause instanceof Error ? cause.message : "Failed to update scheduled job.");
     } finally {
-      await refetch();
-      setBusy(undefined);
+      if (run.live()) {
+        await refetch();
+        if (run.live()) setBusy(undefined);
+      }
     }
   };
 
   const toggleEnabled = async (job: ScheduleJob, enabled: boolean) => {
     if (job.id in pending()) return;
+    const run = mutation();
     setPending((current) => ({ ...current, [job.id]: enabled }));
     setError(null);
     try {
-      await updateSchedule(props.agentId, job.id, { enabled });
-      void refreshScheduleAlerts();
+      await updateSchedule(run.agentId, job.id, { enabled }, run.gateway);
+      void refreshScheduleAlerts(run.gateway);
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Failed to update scheduled job.");
+      if (run.live()) setError(cause instanceof Error ? cause.message : "Failed to update scheduled job.");
     } finally {
-      await refetch();
-      setPending(({ [job.id]: _done, ...rest }) => rest);
+      if (run.live()) {
+        await refetch();
+        if (run.live()) setPending(({ [job.id]: _done, ...rest }) => rest);
+      }
     }
   };
 
-  const [confirming, setConfirming] = createSignal<ScheduleJob>();
-  const [deleting, setDeleting] = createSignal(false);
-  const [deleteError, setDeleteError] = createSignal<string | null>(null);
   let deleteTrigger: HTMLButtonElement | undefined;
 
   const openDelete = (job: ScheduleJob, trigger: HTMLButtonElement) => {
@@ -135,16 +167,19 @@ export function SchedulesPanel(props: { agentId: string; agentName: string }) {
   const confirmDelete = async () => {
     const job = confirming();
     if (!job || deleting()) return;
+    const run = mutation();
     setDeleting(true);
     setDeleteError(null);
     try {
-      await deleteSchedule(props.agentId, job.id);
-      setConfirming(undefined);
-      await refetch();
+      await deleteSchedule(run.agentId, job.id, run.gateway);
+      if (run.live()) {
+        setConfirming(undefined);
+        await refetch();
+      }
     } catch (cause) {
-      setDeleteError(cause instanceof Error ? cause.message : "Failed to delete scheduled job.");
+      if (run.live()) setDeleteError(cause instanceof Error ? cause.message : "Failed to delete scheduled job.");
     } finally {
-      setDeleting(false);
+      if (run.live()) setDeleting(false);
     }
   };
   createEffect(() => {
@@ -171,7 +206,7 @@ export function SchedulesPanel(props: { agentId: string; agentName: string }) {
         <ul class="schedule-list">
           <For each={visible()}>{(job) => {
             const mode = () => job.credentialMode ?? "team";
-            const foreignMine = () => isForeignMine(job, session().data?.user.id);
+            const foreignMine = () => isForeignMine(job, requester().user?.id);
             const ownerOnlyTitle = "Only the owner can change this job";
             const enabled = () => pending()[job.id] ?? job.enabled !== false;
             const canToggle = () => !foreignMine() && (mode() === "owner" || isAdmin());
@@ -186,11 +221,11 @@ export function SchedulesPanel(props: { agentId: string; agentName: string }) {
                 </span>
                 <div class="schedule-main">
                   <div class="schedule-title">
-                    <Show when={capabilities.enableCronMonitoring === true} fallback={<strong>{job.name}</strong>}>
+                    <Show when={requester().enableCronMonitoring} fallback={<strong>{job.name}</strong>}>
                       <A href={`/agents/${encodeURIComponent(props.agentId)}/schedules/${encodeURIComponent(job.id)}/runs`}><strong>{job.name}</strong></A>
                     </Show>
                     <Show when={!enabled()}><span class="schedule-paused">{job.pausedReason?.kind === "credentials" ? "Paused: credentials" : "Paused"}</span></Show>
-                    <Show when={capabilities.enableCronMonitoring === true && job.state?.runningForMs !== undefined}>
+                    <Show when={requester().enableCronMonitoring && job.state?.runningForMs !== undefined}>
                       <span class="schedule-running">Running {elapsedTime(job.state?.runningForMs ?? 0)}</span>
                     </Show>
                   </div>
@@ -201,8 +236,8 @@ export function SchedulesPanel(props: { agentId: string; agentName: string }) {
                   <Show when={jobSummary(job)}>
                     {(summary) => <p class="schedule-prompt" title={summary()}>{summary()}</p>}
                   </Show>
-                  <Show when={mode() === "team" && job.createdByUserId && (job.createdByUserId === session().data?.user.id || job.createdByDisplayName)}>
-                    <p class="schedule-prompt">Created by {job.createdByUserId === session().data?.user.id ? "you" : job.createdByDisplayName}</p>
+                  <Show when={mode() === "team" && job.createdByUserId && (job.createdByUserId === requester().user?.id || job.createdByDisplayName)}>
+                    <p class="schedule-prompt">Created by {job.createdByUserId === requester().user?.id ? "you" : job.createdByDisplayName}</p>
                   </Show>
                   <Show when={foreignMine()}>
                     <p class="schedule-prompt">Owned by {job.ownerDisplayName || "another user"}</p>

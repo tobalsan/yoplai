@@ -79,7 +79,7 @@ describe("McpServerDetails", () => {
 
     button("Disconnect")!.click();
     await tick();
-    expect(disconnectMcpServerMock).toHaveBeenCalledWith("scribe", "docs", "personal");
+    expect(disconnectMcpServerMock).toHaveBeenCalledWith("scribe", "docs", "personal", undefined);
     container.querySelector<HTMLButtonElement>('[data-scope="team"]')!.click();
     await tick();
     button("Connect")!.click();
@@ -95,7 +95,7 @@ describe("McpServerDetails", () => {
     await tick();
     button("Confirm remove")!.click();
     await tick();
-    expect(removeMcpServerMock).toHaveBeenCalledWith("scribe", "docs");
+    expect(removeMcpServerMock).toHaveBeenCalledWith("scribe", "docs", undefined);
     expect(navigateMock).toHaveBeenCalledWith("/agents/scribe/edit");
   });
 
@@ -120,7 +120,7 @@ describe("McpServerDetails", () => {
     textarea.dispatchEvent(new Event("input", { bubbles: true }));
     button("Save")!.click();
     await tick();
-    expect(saveMcpServerConfigMock).toHaveBeenCalledWith("scribe", "docs", { url: "https://new.test/mcp" });
+    expect(saveMcpServerConfigMock).toHaveBeenCalledWith("scribe", "docs", { url: "https://new.test/mcp" }, undefined);
     expect(container.textContent).toContain("Saved.");
   });
 
@@ -183,7 +183,7 @@ describe("McpServerDetails", () => {
     inputs[1]!.dispatchEvent(new Event("input", { bubbles: true }));
     button("Update name")!.click();
     await tick();
-    expect(saveMcpServerLabelMock).toHaveBeenCalledWith("scribe", "docs", { displayName: "Docs", description: "" });
+    expect(saveMcpServerLabelMock).toHaveBeenCalledWith("scribe", "docs", { displayName: "Docs", description: "" }, undefined);
   });
 
   it("hides the label form from non-superadmins, including admins", async () => {
@@ -207,7 +207,7 @@ describe("McpServerDetails", () => {
     expect(fetchMcpServerConfigMock).not.toHaveBeenCalled();
     button("Enable")!.click();
     await tick();
-    expect(setSharedMcpServerMock).toHaveBeenCalledWith("scribe", "docs", true);
+    expect(setSharedMcpServerMock).toHaveBeenCalledWith("scribe", "docs", true, undefined);
   });
 });
 
@@ -222,7 +222,7 @@ it("refreshes a user HTTP icon immediately while live status still contains the 
   expect(button("Refreshing")?.disabled).toBe(true);
   refresh.resolve({ status: "updated", server: { ...server, iconUrl: "https://new.test/icon.png" } });
   await tick();
-  expect(refreshMcpServerIconMock).toHaveBeenCalledWith("scribe", "docs");
+  expect(refreshMcpServerIconMock).toHaveBeenCalledWith("scribe", "docs", undefined);
   expect(container.textContent).toContain("Icon updated");
   expect(Array.from(container.querySelectorAll('[role="status"]')).some((item) => item.textContent === "Icon updated")).toBe(true);
   expect(container.querySelector(".mcp-details-head img")?.getAttribute("src")).toBe("https://new.test/icon.png");

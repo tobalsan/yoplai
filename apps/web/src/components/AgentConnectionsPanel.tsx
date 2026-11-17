@@ -1,4 +1,4 @@
-import { createEffect, createSignal, For, Show } from "solid-js";
+import { createComputed, createEffect, createSignal, For, onCleanup, Show } from "solid-js";
 import {
   disconnectMcpConnection,
   disconnectAgentConnection,
@@ -7,11 +7,13 @@ import {
   type AgentConnection,
 } from "../api/connections";
 import type { ExtensionCatalogEntry } from "../api/extensions";
-import { useSession } from "../auth/client";
+import { useRequester } from "../lib/requester";
 import { ScopeIcon, STATUS_PILL_STYLES, StatusPill, STATUS_CONNECTED, STATUS_NOT_CONNECTED } from "./CredentialScopeTabs";
 
 export function AgentConnectionsPanel(props: {
   agentId: string;
+  /** Linked gateway that hosts the agent. Absent for a local agent. */
+  gateway?: string;
   includeMcp?: boolean;
   /** Agent extension catalog, used to show each connection's extension icon. */
   extensions?: ExtensionCatalogEntry[];
@@ -23,17 +25,23 @@ export function AgentConnectionsPanel(props: {
   const [error, setError] = createSignal<string>();
   const [mcpError, setMcpError] = createSignal<string>();
   const [pending, setPending] = createSignal<string>();
-  const session = useSession();
+  const requester = useRequester(() => props.gateway);
   let requestId = 0;
+  // Each visit has its own number. Returning to the same gateway, agent, and user is a new visit, so an answer
+  // that started in an older visit changes nothing. The panel closing ends the visit too.
+  let visit = 0;
+  createComputed(() => { void props.agentId; void props.gateway; void requester().user?.id; visit++; });
+  onCleanup(() => { visit++; requestId++; });
 
   const refresh = async (agentId: string, userId?: string) => {
+    const gateway = props.gateway;
     const currentRequest = ++requestId;
     setLoading(true);
     setError(undefined);
     setMcpError(undefined);
     if (props.includeMcp) {
       setMcpLoading(true);
-      void fetchAgentMcpConnections(agentId, Boolean(userId))
+      void fetchAgentMcpConnections(agentId, Boolean(userId), gateway)
         .then((next) => {
           if (currentRequest === requestId) setMcpConnections(next);
         })
@@ -51,7 +59,7 @@ export function AgentConnectionsPanel(props: {
       setMcpLoading(false);
     }
     try {
-      const next = await fetchAgentConnections(agentId);
+      const next = await fetchAgentConnections(agentId, gateway);
       if (currentRequest === requestId) setConnections(next);
     } catch (cause) {
       if (currentRequest === requestId) {
@@ -65,28 +73,38 @@ export function AgentConnectionsPanel(props: {
 
   createEffect(() => {
     const agentId = props.agentId;
-    const userId = session().data?.user?.id;
+    void props.gateway;
+    const userId = requester().user?.id;
+    // A remote identity is unknown until its context loads. Do not read personal status before.
+    if (props.gateway !== undefined && !requester().ready) return;
     setConnections([]);
     setMcpConnections([]);
+    // A disconnect of the old identity must not leave the new list locked.
+    setPending(undefined);
     if (agentId) void refresh(agentId, userId);
   });
 
   const disconnect = async (connection: AgentConnection) => {
     const agentId = props.agentId;
-    const userId = session().data?.user?.id;
+    const gateway = props.gateway;
+    const userId = requester().user?.id;
     const key = `${connection.kind}:${connection.id}`;
+    // A late answer of an older gateway, agent, or user changes nothing.
+    const mine = visit;
+    const same = () => visit === mine && agentId === props.agentId && gateway === props.gateway && userId === requester().user?.id;
     setPending(key);
     if (connection.kind === "mcp") setMcpError(undefined);
     else setError(undefined);
     try {
-      if (connection.kind === "mcp") await disconnectMcpConnection(agentId, connection.id);
-      else await disconnectAgentConnection(agentId, connection.kind, connection.id);
-      if (agentId === props.agentId && userId === session().data?.user?.id) await refresh(agentId, userId);
+      if (connection.kind === "mcp") await disconnectMcpConnection(agentId, connection.id, gateway);
+      else await disconnectAgentConnection(agentId, connection.kind, connection.id, gateway);
+      if (same()) await refresh(agentId, userId);
     } catch (cause) {
+      if (!same()) return;
       if (connection.kind === "mcp") setMcpError(cause instanceof Error ? cause.message : "Failed to disconnect MCP connection");
       else setError(cause instanceof Error ? cause.message : "Failed to disconnect connection");
     } finally {
-      setPending(undefined);
+      if (same()) setPending(undefined);
     }
   };
 

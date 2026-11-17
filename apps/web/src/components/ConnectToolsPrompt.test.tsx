@@ -332,7 +332,7 @@ describe("ConnectToolsPrompt", () => {
       credentialScope: "personal",
       config: {},
       secrets: { apiKey: "secret-key" },
-    });
+    }, undefined);
     expect(container.querySelector(".connect-prompt-setup")).toBeNull();
     expect(container.querySelector('[data-row="ext:exa"]')?.textContent).toContain("Connected");
     expect(container.querySelector(".connect-prompt")).not.toBeNull();

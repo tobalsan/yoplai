@@ -8,8 +8,9 @@ import {
   Switch,
   type JSX,
 } from "solid-js";
-import { useSession } from "../auth/client";
-import { disconnectOAuth, fetchOAuthStatus, oauthAuthorizeUrl, type OAuthConnectionState, type OAuthStatus } from "../api/oauth";
+import { disconnectOAuth, fetchOAuthStatus, oauthAuthorizeUrl, readOAuthStatus, startRemoteOAuth, type OAuthConnectionState, type OAuthStatus } from "../api/oauth";
+import { useRequester } from "../lib/requester";
+import { createOAuthPopupFlow, type OAuthVerdict } from "../lib/oauth-popup-flow";
 import { CredentialScopeTabs, preferredScope, STATUS_CONNECTED, STATUS_NOT_SET_UP, STATUS_RECONNECT, type CredentialScope, type ScopeStatus } from "./CredentialScopeTabs";
 import { onOAuthReturn } from "../lib/oauth-popup";
 import { readOAuthResult } from "../lib/oauth-return";
@@ -29,6 +30,8 @@ function providerLabel(provider: string): string {
 
 export function OAuthConnectCard(props: {
   agentId: string;
+  /** Linked gateway that hosts the agent. Absent for a local agent. */
+  gateway?: string;
   provider: string;
   /** Scopes required for the Whole team tab. */
   scopes?: string[];
@@ -58,7 +61,8 @@ export function OAuthConnectCard(props: {
   window.addEventListener("pageshow", onPageShow);
   onCleanup(() => window.removeEventListener("pageshow", onPageShow));
   const [error, setError] = createSignal<string>();
-  const session = useSession();
+  const requester = useRequester(() => props.gateway);
+  const flow = createOAuthPopupFlow();
   const [ownScope, setOwnScope] = createSignal<CredentialScope>(oauthResult?.scope ?? "personal");
   const scope = () => props.scope ?? ownScope();
   const setScope = (next: CredentialScope) => {
@@ -70,6 +74,9 @@ export function OAuthConnectCard(props: {
   let scopePicked = !!oauthResult;
   if (oauthResult) props.onScopeChange?.(oauthResult.scope);
   let statusRequest = 0;
+  // A status answer that arrives after the card is gone must not call back into the page.
+  let disposed = false;
+  onCleanup(() => { statusRequest++; disposed = true; });
 
   const refreshStatus = async () => {
     if (!props.agentId) return;
@@ -77,11 +84,14 @@ export function OAuthConnectCard(props: {
     setLoading(true);
     try {
       // Both scopes are loaded so each tab can show its own state.
+      // A remote read keeps a refusal or an offline gateway apart from "not connected".
       const load = (target: CredentialScope): Promise<OAuthStatus> =>
-        fetchOAuthStatus(props.agentId, props.provider, target);
+        props.gateway === undefined
+          ? fetchOAuthStatus(props.agentId, props.provider, target)
+          : readOAuthStatus(props.agentId, props.provider, target, props.gateway);
       const [team, personal] = await Promise.all([
         load("team"),
-        session().data?.user ? load("personal") : undefined,
+        requester().user ? load("personal") : undefined,
       ]);
       if (request !== statusRequest) return;
       if (team.canConfigureTeam === false) setCanConfigureTeam(false);
@@ -100,6 +110,13 @@ export function OAuthConnectCard(props: {
   };
 
   createEffect(() => {
+    // A new agent, gateway, provider, or tab ends the sign-in of the old one.
+    void [props.agentId, props.gateway, props.provider, scope()];
+    flow.cancel();
+  });
+
+  createEffect(() => {
+    void props.gateway;
     if (props.agentId && props.provider) void refreshStatus();
   });
 
@@ -131,8 +148,39 @@ export function OAuthConnectCard(props: {
   const authorizeUrl = (target: CredentialScope, scopes: string[]) =>
     oauthAuthorizeUrl(props.agentId, props.provider, target, scopes, window.location.pathname + window.location.search + window.location.hash);
 
+  const requiredScopes = (target: CredentialScope, saved?: string[]) => saved ?? scopesFor(target);
+
+  /** Remote connect: the click opens the popup first. Status checks through the relay decide the result. */
+  const connectRemote = () => {
+    const gateway = props.gateway!;
+    const { agentId, provider } = props;
+    const target = scope();
+    let required: string[] = [];
+    setError(undefined);
+    void flow.begin<OAuthStatus>({
+      read: (signal) => readOAuthStatus(agentId, provider, target, gateway, signal),
+      start: async (signal) => {
+        const saved = props.hasUnsavedSettings?.() ? await props.saveSettings?.() : undefined;
+        required = requiredScopes(target, saved);
+        return startRemoteOAuth(gateway, agentId, target, { kind: "core", provider, scopes: required }, signal);
+      },
+      verdict: (before, now): OAuthVerdict => {
+        if (stateOf(now) !== "connected") return "pending";
+        if (stateOf(before) === "connected" && (before.connectedAt === undefined || now.connectedAt === before.connectedAt)) return "pending";
+        return required.every((scopeName) => now.scopes?.includes(scopeName)) ? "connected" : "denied";
+      },
+      canProve: (before) => stateOf(before) !== "connected" || before.connectedAt !== undefined,
+      onConnected: () => refreshStatus(),
+    });
+  };
+
+  const flowBusy = () => flow.state().phase === "preparing" || flow.state().phase === "waiting";
+  const pendingConnect = () => redirecting() || flowBusy();
+  const connectingLabel = () => (flowBusy() ? "Waiting for sign-in…" : "Redirecting…");
+
   const connect = async () => {
     if (!props.agentId) return;
+    if (props.gateway !== undefined) return connectRemote();
     const target = scope();
     setRedirecting(true);
     try {
@@ -146,8 +194,15 @@ export function OAuthConnectCard(props: {
   };
 
   const disconnect = async () => {
-    await disconnectOAuth(props.agentId, props.provider, scope());
-    await refreshStatus();
+    // An answer for another agent, gateway, or provider changes nothing here.
+    const { agentId, provider, gateway } = props;
+    const same = () => !disposed && props.agentId === agentId && props.provider === provider && props.gateway === gateway;
+    try {
+      await disconnectOAuth(agentId, provider, scope(), gateway);
+      if (same()) await refreshStatus();
+    } catch (cause) {
+      if (same()) setError(cause instanceof Error ? cause.message : String(cause));
+    }
   };
 
   return (
@@ -159,9 +214,18 @@ export function OAuthConnectCard(props: {
       <Show when={error()}>
         {(message) => <div class="oauth-error">{message()}</div>}
       </Show>
+      <Show when={flowBusy()}>
+        <div class="oauth-quiet" role="status">
+          Finish the sign-in in the new window. This page confirms the connection.{" "}
+          <button type="button" class="oauth-btn" onClick={() => flow.cancel()}>Cancel</button>
+        </div>
+      </Show>
+      <Show when={(() => { const current = flow.state(); return current.phase === "failed" ? current.message : undefined; })()}>
+        {(message) => <div class="oauth-error" role="alert">{message()}</div>}
+      </Show>
       <CredentialScopeTabs
         value={scope()}
-        personalDisabled={!session().data?.user}
+        personalDisabled={!requester().user}
         teamLocked={!canConfigureTeam()}
         status={{ personal: tabStatus("personal"), team: tabStatus("team") }}
         onChange={(next) => {
@@ -179,10 +243,10 @@ export function OAuthConnectCard(props: {
               <button
                 class="oauth-btn oauth-btn-primary"
                 data-tour="oauth-connect"
-                disabled={!props.agentId || redirecting()}
+                disabled={!props.agentId || pendingConnect()}
                 onClick={() => void connect()}
               >
-                {redirecting() ? "Redirecting…" : `Connect ${props.label}`}
+                {pendingConnect() ? connectingLabel() : `Connect ${props.label}`}
               </button>
             }
           >
@@ -201,8 +265,8 @@ export function OAuthConnectCard(props: {
             </Match>
             <Match when={needsGrant()}>
               <div class="oauth-actions">
-                <button class="oauth-btn oauth-btn-primary" data-tour="oauth-grant" disabled={redirecting()} onClick={() => void connect()}>
-                  {redirecting() ? "Redirecting…" : `Grant ${props.label} access`}
+                <button class="oauth-btn oauth-btn-primary" data-tour="oauth-grant" disabled={pendingConnect()} onClick={() => void connect()}>
+                  {pendingConnect() ? connectingLabel() : `Grant ${props.label} access`}
                 </button>
                 <button
                   class="oauth-btn oauth-btn-danger"
@@ -214,8 +278,8 @@ export function OAuthConnectCard(props: {
             </Match>
             <Match when={lifecycle() === "needs_reconnect"}>
               <div class="oauth-actions">
-                <button class="oauth-btn oauth-btn-primary" disabled={redirecting()} onClick={() => void connect()}>
-                  {redirecting() ? "Redirecting…" : "Reconnect"}
+                <button class="oauth-btn oauth-btn-primary" disabled={pendingConnect()} onClick={() => void connect()}>
+                  {pendingConnect() ? connectingLabel() : "Reconnect"}
                 </button>
                 <button
                   class="oauth-btn oauth-btn-danger"

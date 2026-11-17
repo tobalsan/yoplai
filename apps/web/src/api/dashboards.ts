@@ -1,4 +1,5 @@
 import { API_BASE, apiFetch } from "./core";
+import { gatewayApiPath, type GatewayName } from "./gateway";
 
 export type DashboardShare =
   | { kind: "user"; id: string; mode: "read" | "write" }
@@ -27,36 +28,36 @@ export type DashboardRow = {
 
 export type DashboardRecipient = { id: string; name: string; email: string; image?: string | null };
 
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await apiFetch(`${API_BASE}/dashboards${path}`, { signal: AbortSignal.timeout(15_000), ...init });
+async function request<T>(path: string, init?: RequestInit, gateway?: GatewayName): Promise<T> {
+  const response = await apiFetch(gatewayApiPath(gateway, `${API_BASE}/dashboards${path}`), { signal: AbortSignal.timeout(15_000), ...init });
   if (!response.ok) throw new Error(`Dashboard request failed (${response.status})`);
   return response.json();
 }
 
-export function fetchDashboards() {
-  return request<{ owned: DashboardRow[]; shared: DashboardRow[] }>("");
+export function fetchDashboards(gateway?: GatewayName) {
+  return request<{ owned: DashboardRow[]; shared: DashboardRow[] }>("", undefined, gateway);
 }
 
-export function setDashboardPinned(id: string, pinned: boolean) {
-  return request<{ ok: true; pinned: boolean }>(`/${encodeURIComponent(id)}/pin`, { method: pinned ? "PUT" : "DELETE" });
+export function setDashboardPinned(id: string, pinned: boolean, gateway?: GatewayName) {
+  return request<{ ok: true; pinned: boolean }>(`/${encodeURIComponent(id)}/pin`, { method: pinned ? "PUT" : "DELETE" }, gateway);
 }
 
-export function fetchDashboardRecipients() {
-  return request<{ users: DashboardRecipient[] }>("/recipients");
+export function fetchDashboardRecipients(gateway?: GatewayName) {
+  return request<{ users: DashboardRecipient[] }>("/recipients", undefined, gateway);
 }
 
-export function saveDashboardShares(id: string, shares: DashboardShare[]) {
+export function saveDashboardShares(id: string, shares: DashboardShare[], gateway?: GatewayName) {
   return request<{ dashboard: DashboardRow }>(`/${encodeURIComponent(id)}/sharing`, {
     method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ shares }),
-  });
+  }, gateway);
 }
 
-export function claimDashboard(id: string) {
+export function claimDashboard(id: string, gateway?: GatewayName) {
   return request<{ dashboard: DashboardRow }>(`/${encodeURIComponent(id)}/claim`, {
     method: "POST", headers: { "content-type": "application/json" }, body: "{}",
-  });
+  }, gateway);
 }
 
-export function deleteDashboard(id: string) {
-  return request<{ ok: true }>(`/${encodeURIComponent(id)}`, { method: "DELETE" });
+export function deleteDashboard(id: string, gateway?: GatewayName) {
+  return request<{ ok: true }>(`/${encodeURIComponent(id)}`, { method: "DELETE" }, gateway);
 }

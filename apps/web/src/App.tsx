@@ -70,7 +70,6 @@ function Layout(props: { children?: JSX.Element }) {
     const match = stripBase(location.pathname).match(/^\/chat\/([^/]+)/);
     return match ? decodeURIComponent(match[1]) : null;
   });
-  useScheduleAlerts(() => !isLoginPage(), chatAgentId);
   const [chatAgents] = createResource(
     () =>
       chatAgentId() &&
@@ -83,6 +82,9 @@ function Layout(props: { children?: JSX.Element }) {
   const chatAgentName = createMemo(
     () => chatAgents()?.find((agent) => agent.id === chatAgentId())?.name
   );
+  // The gateway of the chat agent comes from the resolved agent list, never from its ID suffix.
+  const chatGateway = createMemo(() => chatAgents()?.find((agent) => agent.id === chatAgentId())?.gateway);
+  useScheduleAlerts(() => !isLoginPage(), chatAgentId, chatGateway);
 
   onMount(() => {
     void loadCapabilities().catch(() => undefined);
