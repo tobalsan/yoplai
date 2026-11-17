@@ -1,0 +1,29 @@
+appId: ai.yoplai.desktop
+productName: Yoplai
+directories:
+  output: release
+# Only the compiled shell goes in the asar. The gateway, the web UI, and the templates sit outside it.
+files:
+  - dist/**/*
+  - package.json
+  - "!dist/**/*.test.*"
+  - "!dist/**/*.map"
+  - "!dist/**/*.d.ts"
+# The desktop package has no runtime dependencies. The gateway stage has its own rebuilt node_modules.
+npmRebuild: false
+afterPack: scripts/after-pack.mjs
+extraResources:
+  - from: build/gateway
+    to: gateway
+  - from: build/web
+    to: web
+  - from: ../../docs/templates
+    to: templates
+mac:
+  category: public.app-category.productivity
+  identity: null
+  target:
+    - target: dir
+      arch: arm64
+    - target: dmg
+      arch: arm64

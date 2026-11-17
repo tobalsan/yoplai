@@ -1,4 +1,4 @@
-import { defineConfig } from "vitest/config";
+import { configDefaults, defineConfig } from "vitest/config";
 import { fileURLToPath } from "node:url";
 import solid from "vite-plugin-solid";
 
@@ -48,6 +48,8 @@ export default defineConfig({
     globals: true,
     environment: "node",
     include: ["**/*.test.ts", "**/*.test.tsx"],
+    // The desktop package script writes a gateway copy and the app bundle here.
+    exclude: [...configDefaults.exclude, "apps/desktop/build/**", "apps/desktop/release/**"],
     setupFiles: [setupFile],
     fileParallelism: true,
     maxWorkers: 4,
