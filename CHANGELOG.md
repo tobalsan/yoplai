@@ -28,6 +28,7 @@ Breaking changes are marked **⚠ BREAKING**.
 ### Changed
 
 - The Pairings page of a linked gateway now lists and unlinks Threadit and Mattermost accounts, as it does for Slack. The remote gateway needs this version to accept the request. An older remote shows "The remote gateway refused this action."
+- After you link a gateway, the row reads "Device connecting…" until the device connects. "Device not connected" shows only when the device stays offline after the check ends.
 - Chat header settings menu groups the default-agent picker, agent settings and share/copy/revoke link actions behind one cog.
 - Upgrade Pi packages to 1.5.2; codemode scripts now wait for a free worker instead of failing immediately when both workers are busy. Rebuild the sandbox image after upgrading.
 - The page for Slack pairings is now **Pairings**, with a Slack section. The sidebar item and the account menu item use the same name. A gateway with no Slack, or with no multi-user sign-in, shows "No pairings on this gateway." instead of a red error.
@@ -56,6 +57,7 @@ Breaking changes are marked **⚠ BREAKING**.
 - A linked gateway can now list and unlink the Threadit and Mattermost account links of its user. The remote accepts the gateway link key on `GET /api/surface-links` and `DELETE /api/surface-links/<id>`, and the local relay allows these two routes. The `pair` route stays closed to the relay.
 - In single-user mode, the agent connections list works with no sign-in and shows team connections only. Personal connection writes answer 400 `personal_scope_unavailable`.
 - The agent Extensions tab, My connections tab, and admin MCP servers page show no red error when the gateway has no MCP extension. The single-user gateway shows no "Just me" choice.
+- The linked gateways page now shows "Device connecting…" and updates the device state about every 2 seconds after a link, for up to one minute. Before, the row stayed on "Device not connected" until you did something else.
 - In a chat with an agent of a linked gateway, an extension view now shows "This view is not available for an agent of a linked gateway." It no longer opens the local page of the same path.
 - Claude quota readings stay fresh while idle by ignoring five-hour windows without a string reset time and retaining valid weekly usage.
 - When the AI provider's safety filter refuses a message, the chat no longer gets stuck. The refused turn is dropped from the saved session, so the next message works, and the user sees "The AI provider's safety filter blocked this message, so it was not kept. You can rephrase or carry on." (French too) instead of "Something went wrong". The gateway logs it at warn, not error.
