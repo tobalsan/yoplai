@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 
 /** The only variables that pass from the app environment to the gateway. LC_* passes too. */
@@ -39,10 +40,15 @@ export function buildPackagedEnv(input: PackagedEnvInput): NodeJS.ProcessEnv {
   };
 }
 
+/** A leading `~` means the user home, as for YOPLAI_HOME in `packages/shared/src/config-path.ts`. */
+function expandHomePath(rawPath: string): string {
+  return rawPath.startsWith("~") ? path.join(os.homedir(), rawPath.slice(1)) : path.resolve(rawPath);
+}
+
 /** YOPLAI_HOME wins. Else the app support folder of the user. */
 export function resolveHome(parentEnv: NodeJS.ProcessEnv, appSupportDir: string): string {
   const override = parentEnv.YOPLAI_HOME?.trim();
-  return override ? path.resolve(override) : path.join(appSupportDir, "Yoplai", "home");
+  return override ? expandHomePath(override) : path.join(appSupportDir, "Yoplai", "home");
 }
 
 /** The first-run config: no agents and loopback bind. Slice 6 adds the real setup. */
