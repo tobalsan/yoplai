@@ -19,7 +19,7 @@
     "@yoplai/shared": "workspace:*",
     "@slack/bolt": "^4.6.0",
     "@slack/web-api": "^7.15.1",
-    "better-sqlite3": "^12.10.0",
+    "better-sqlite3": "^13.2.0",
     "hono": "^4.11.4",
     "zod": "^3.23.8"
   },
