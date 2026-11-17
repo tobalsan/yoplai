@@ -7,7 +7,10 @@ vi.mock("../../api/top-extensions", () => m);
 vi.mock("@solidjs/router", () => ({
   A: (props: Record<string, unknown>) => <a {...props} />,
   useLocation: () => ({ pathname: "/admin/extensions", search: "" }),
+  useSearchParams: () => [{}, vi.fn()],
 }));
+vi.mock("../../auth/client", () => ({ useSession: () => () => ({ isPending: false, data: null }) }));
+vi.mock("../../api/gateway", async (importOriginal) => ({ ...(await importOriginal<typeof import("../../api/gateway")>()), fetchGatewayList: vi.fn().mockResolvedValue({ state: "unavailable" }) }));
 
 const { default: AdminExtensionsPage } = await import("./Extensions");
 const { setCapabilitiesForTests, resetCapabilitiesForTests } = await import("../../lib/capabilities");
@@ -65,12 +68,12 @@ describe("AdminExtensionsPage", () => {
     expect(control("Mark Exa as system")).not.toBeNull();
     control("Mark Exa as system").click();
     await flush();
-    expect(m.saveTopExtensions).toHaveBeenLastCalledWith({ extensions: [], mcp: [], system: { extensions: ["exa"], mcp: [] } });
+    expect(m.saveTopExtensions).toHaveBeenLastCalledWith({ extensions: [], mcp: [], system: { extensions: ["exa"], mcp: [] } }, undefined);
     expect(control("Unmark Exa as system").getAttribute("aria-checked")).toBe("true");
     m.saveTopExtensions.mockResolvedValueOnce({ extensions: [], mcp: [], system: { extensions: [], mcp: [] } });
     control("Unmark Exa as system").click();
     await flush();
-    expect(m.saveTopExtensions).toHaveBeenLastCalledWith({ extensions: [], mcp: [], system: { extensions: [], mcp: [] } });
+    expect(m.saveTopExtensions).toHaveBeenLastCalledWith({ extensions: [], mcp: [], system: { extensions: [], mcp: [] } }, undefined);
     expect(control("Mark Exa as system").getAttribute("aria-checked")).toBe("false");
   });
 
@@ -97,13 +100,13 @@ describe("AdminExtensionsPage", () => {
     m.saveTopExtensions.mockResolvedValueOnce({ extensions: [], mcp: [], system: { extensions: [], mcp: ["https://mcp.linear.app/mcp"] } });
     control("Mark linear as system").click();
     await flush();
-    expect(m.saveTopExtensions).toHaveBeenLastCalledWith({ extensions: [], mcp: ["https://mcp.linear.app/mcp"], system: { extensions: [], mcp: ["https://mcp.linear.app/mcp"] } });
+    expect(m.saveTopExtensions).toHaveBeenLastCalledWith({ extensions: [], mcp: ["https://mcp.linear.app/mcp"], system: { extensions: [], mcp: ["https://mcp.linear.app/mcp"] } }, undefined);
     expect(control("Unmark linear as system").getAttribute("aria-checked")).toBe("true");
     expect(control("Mark linear as top").getAttribute("aria-pressed")).toBe("false");
     m.saveTopExtensions.mockResolvedValueOnce({ extensions: [], mcp: [], system: { extensions: [], mcp: [] } });
     control("Unmark linear as system").click();
     await flush();
-    expect(m.saveTopExtensions).toHaveBeenLastCalledWith({ extensions: [], mcp: [], system: { extensions: [], mcp: [] } });
+    expect(m.saveTopExtensions).toHaveBeenLastCalledWith({ extensions: [], mcp: [], system: { extensions: [], mcp: [] } }, undefined);
     expect(control("Mark linear as system").getAttribute("aria-checked")).toBe("false");
   });
 
@@ -160,7 +163,7 @@ describe("AdminExtensionsPage", () => {
 
     star('[data-extension="notion"]').click();
     await flush();
-    expect(m.saveTopExtensions).toHaveBeenLastCalledWith({ extensions: ["exa", "notion"], mcp: [], system: { extensions: [], mcp: [] } });
+    expect(m.saveTopExtensions).toHaveBeenLastCalledWith({ extensions: ["exa", "notion"], mcp: [], system: { extensions: [], mcp: [] } }, undefined);
     expect(star('[data-extension="notion"]').getAttribute("aria-pressed")).toBe("true");
 
     star('[data-mcp="https://mcp.linear.app/mcp"]').click();
@@ -169,7 +172,7 @@ describe("AdminExtensionsPage", () => {
       extensions: ["exa", "notion"],
       mcp: ["https://mcp.linear.app/mcp"],
       system: { extensions: [], mcp: [] },
-    });
+    }, undefined);
   });
 
   it("locks every star while a save is in flight so toggles cannot overwrite each other", async () => {

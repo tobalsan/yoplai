@@ -3,11 +3,14 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { render } from "solid-js/web";
 
 const m = vi.hoisted(() => ({ refreshMcpCatalogIcon: vi.fn(), fetchMcpCatalog: vi.fn(), addMcpCatalogServer: vi.fn(), updateMcpCatalogServer: vi.fn(), removeMcpCatalogServer: vi.fn() }));
-vi.mock("../../api/mcp-servers", async () => ({ ...m, iconRefreshOutcome: (await vi.importActual<typeof import("../../api/mcp-servers")>("../../api/mcp-servers")).iconRefreshOutcome, refreshMcpServerIcon: vi.fn(), mcpDisplayName: (name: string, title?: string) => title || name }));
+vi.mock("../../api/mcp-servers", async () => ({ ...m, iconRefreshOutcome: (await vi.importActual<typeof import("../../api/mcp-servers")>("../../api/mcp-servers")).iconRefreshOutcome, refreshMcpServerIcon: vi.fn(), ICON_REFRESH_UNCERTAIN: "uncertain", mcpDisplayName: (name: string, title?: string) => title || name }));
 vi.mock("@solidjs/router", () => ({
   A: (props: Record<string, unknown>) => <a {...props} />,
   useLocation: () => ({ pathname: "/admin/mcp-servers", search: "" }),
+  useSearchParams: () => [{}, vi.fn()],
 }));
+vi.mock("../../auth/client", () => ({ useSession: () => () => ({ isPending: false, data: null }) }));
+vi.mock("../../api/gateway", async (importOriginal) => ({ ...(await importOriginal<typeof import("../../api/gateway")>()), fetchGatewayList: vi.fn().mockResolvedValue({ state: "unavailable" }) }));
 
 const { default: AdminMcpServersPage } = await import("./McpServers");
 const flush = async () => { for (let i = 0; i < 6; i++) await new Promise((r) => setTimeout(r, 0)); };
@@ -44,7 +47,7 @@ describe("AdminMcpServersPage", () => {
     type(container.querySelector<HTMLInputElement>('[aria-label="Name (optional)"]')!, "X");
     container.querySelector("form")!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
     await flush();
-    expect(m.addMcpCatalogServer).toHaveBeenCalledWith({ url: "https://x.test/mcp", displayName: "X", description: "" });
+    expect(m.addMcpCatalogServer).toHaveBeenCalledWith({ url: "https://x.test/mcp", displayName: "X", description: "" }, undefined);
 
     m.updateMcpCatalogServer.mockResolvedValue({ name: "linear", url: "https://mcp.linear.app/mcp", displayName: "Lin", description: "Issues" });
     click(container, "Edit");
@@ -52,7 +55,7 @@ describe("AdminMcpServersPage", () => {
     type(container.querySelector<HTMLInputElement>('[aria-label="Name for linear"]')!, "Lin");
     click(container, "Save");
     await flush();
-    expect(m.updateMcpCatalogServer).toHaveBeenCalledWith("linear", { displayName: "Lin", description: "Issues" });
+    expect(m.updateMcpCatalogServer).toHaveBeenCalledWith("linear", { displayName: "Lin", description: "Issues" }, undefined);
     expect(container.textContent).toContain("Lin");
 
     m.removeMcpCatalogServer.mockResolvedValue(undefined);
@@ -61,7 +64,7 @@ describe("AdminMcpServersPage", () => {
     expect(m.removeMcpCatalogServer).not.toHaveBeenCalled();
     click(container, "Confirm remove");
     await flush();
-    expect(m.removeMcpCatalogServer).toHaveBeenCalledWith("linear");
+    expect(m.removeMcpCatalogServer).toHaveBeenCalledWith("linear", undefined);
     expect(container.textContent).toContain("No shared MCP servers yet.");
   });
 
@@ -73,7 +76,7 @@ describe("AdminMcpServersPage", () => {
     expect(Array.from(container.querySelectorAll("button")).find((button) => button.textContent === "Refreshing…")?.disabled).toBe(true);
     refresh.resolve({ status: "updated", server: { name: "linear", url: "https://mcp.linear.app/mcp", iconUrl: "https://linear.test/new.png" } });
     await flush();
-    expect(m.refreshMcpCatalogIcon).toHaveBeenCalledWith("linear");
+    expect(m.refreshMcpCatalogIcon).toHaveBeenCalledWith("linear", undefined);
     expect(container.querySelector('[data-server="linear"] [role="status"]')?.textContent).toBe("Icon updated");
     expect(container.querySelector('[data-server="linear"] img')?.getAttribute("src")).toBe("https://linear.test/new.png");
   });

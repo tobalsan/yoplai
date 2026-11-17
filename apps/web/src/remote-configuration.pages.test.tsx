@@ -80,6 +80,8 @@ beforeEach(() => {
   ] });
   gateways.on("GET", `${east}/api/capabilities`, { json: remoteCapabilities });
   gateways.on("GET", `${west}/api/capabilities`, { json: remoteCapabilities });
+  // The configured gateways. "quiet" has no visible agent, and it still appears in every selector.
+  gateways.on("GET", "/api/relay/gateways", { json: { gateways: [{ name: "east" }, { name: "west" }, { name: "quiet" }] } });
   gateways.on("GET", `${east}/api/top-extensions`, { json: { extensions: [], mcp: [], system: { extensions: [], mcp: [] } } });
   gateways.on("GET", new RegExp(`^${east}/api/mcp/servers\\?agent=${agent}`), { json: { canConfigureTeam: true, servers: [] } });
   gateways.on("GET", `${east}/api/agents/${agent}/extensions`, { json: { extensions: [entry({ displayName: "East Exa" })] } });
@@ -706,7 +708,7 @@ describe("Dashboards page", () => {
     mount("/dashboards");
     await vi.waitFor(() => expect(text()).toContain("Local board"));
     const select = container.querySelector<HTMLSelectElement>('select[aria-label="Gateway"]')!;
-    expect(Array.from(select.options).map((option) => option.textContent)).toEqual(["This computer", "east", "west"]);
+    expect(Array.from(select.options).map((option) => option.textContent)).toEqual(["This computer", "east", "west", "quiet"]);
     select.value = "east";
     select.dispatchEvent(new Event("change", { bubbles: true }));
     await vi.waitFor(() => expect(text()).toContain("East board"));

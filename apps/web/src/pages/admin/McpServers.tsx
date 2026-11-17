@@ -1,4 +1,4 @@
-import { For, Show, createResource, createSignal } from "solid-js";
+import { For, Show, createComputed, createMemo, createResource, createSignal, onCleanup } from "solid-js";
 import {
   addMcpCatalogServer,
   fetchMcpCatalog,
@@ -11,11 +11,34 @@ import {
 } from "../../api/mcp-servers";
 import AdminLayout from "./AdminLayout";
 import { McpIcon } from "../../components/McpExtensionCard";
+import { gatewayKey } from "../../api/gateway";
+import { missingGatewayText, useGatewayChoice } from "../../lib/gateway-choice";
+import { useRequester } from "../../lib/requester";
+import { createResourceKey } from "../../lib/resource-key";
+import { GatewaySelect } from "../../components/GatewaySelect";
 
 const message = (cause: unknown, fallback: string) => (cause instanceof Error && cause.message ? cause.message : fallback);
 
 export default function AdminMcpServersPage() {
-  const [servers, { mutate, refetch }] = createResource(fetchMcpCatalog);
+  // The explicit gateway choice. A gateway that is not configured makes no call and never means Local.
+  const choice = useGatewayChoice();
+  const gateway = choice.gateway;
+  // The remote requester decides what the page offers. The local session and role never apply to a gateway.
+  const requester = useRequester(gateway);
+  // Local keeps its old behavior: the gateway refuses what the role may not do. A gateway is read-only
+  // until its requester is known, and a remote multi-user gateway allows only its superadmin.
+  const canWrite = () => gateway() === undefined || (requester().ready && !requester().unknown && (!requester().multiUser || requester().isSuperadmin));
+  const [result, { mutate, refetch }] = createResource(
+    createResourceKey(() => (choice.ready() ? { gateway: gateway() } : null)),
+    async (key): Promise<{ key: string; servers: McpCatalogServer[] }> => ({ key: gatewayKey(key.gateway), servers: await fetchMcpCatalog(key.gateway) })
+  );
+  // The catalog of another gateway is never current data. Server names repeat across gateways.
+  const servers = createMemo<McpCatalogServer[] | undefined>(() => {
+    if (result.error || !choice.ready()) return undefined;
+    // `latest` keeps the last data while a read runs, and it does not suspend the page.
+    const value = result.latest;
+    return value?.key === gatewayKey(gateway()) ? value.servers : undefined;
+  });
   const [error, setError] = createSignal<string>();
   const [busy, setBusy] = createSignal(false);
   const [url, setUrl] = createSignal("");
@@ -26,29 +49,91 @@ export default function AdminMcpServersPage() {
   const [editDescription, setEditDescription] = createSignal("");
   const [confirming, setConfirming] = createSignal<string>();
   const [iconResults, setIconResults] = createSignal<Record<string, { busy?: boolean; message?: string; error?: string }>>({});
+  // After an uncertain write error the list read failed too. Another write stays off until a read works.
+  const [listUnknown, setListUnknown] = createSignal(false);
+  // Each visit to a gateway has its own number. An answer of an older visit, also one of the same gateway,
+  // changes nothing. The page closing ends the visit too. A visit change also drops the forms and the open
+  // dialogs, so no draft or confirmation reaches another gateway.
+  let visit = 0;
+  const iconAttempts = new Map<string, number>();
+  createComputed(() => {
+    void choice.chosen();
+    void gateway();
+    visit++;
+    iconAttempts.clear();
+    setError(undefined);
+    setBusy(false);
+    setUrl("");
+    setName("");
+    setDescription("");
+    setEditing(undefined);
+    setConfirming(undefined);
+    setIconResults({});
+    setListUnknown(false);
+  });
+  onCleanup(() => { visit++; });
+
+  /** Reads the list of the exact gateway again. A failed read keeps the unknown state. */
+  const settleList = async (live: () => boolean) => {
+    if (!live()) return;
+    try { await refetch(); } catch { /* The error state of the resource tells the result. */ }
+    if (live()) setListUnknown(Boolean(result.error));
+  };
+  const retryRead = async () => {
+    const mine = visit;
+    const live = () => visit === mine;
+    setBusy(true);
+    await settleList(live);
+    if (live()) setBusy(false);
+  };
+
   const refreshIcon = async (server: McpCatalogServer) => {
-    setIconResults((results) => ({ ...results, [server.name]: { busy: true } }));
+    if (!canWrite() || !choice.ready()) return;
+    const host = gateway();
+    const mine = visit;
+    const key = server.name;
+    const attempt = (iconAttempts.get(key) ?? 0) + 1;
+    iconAttempts.set(key, attempt);
+    const live = () => visit === mine && iconAttempts.get(key) === attempt;
+    setIconResults((results) => ({ ...results, [key]: { busy: true } }));
     try {
-      const result = await refreshMcpCatalogIcon(server.name);
-      mutate((list) => list?.map((item) => item.name === server.name ? { ...item, iconUrl: result.server.iconUrl } : item));
-      setIconResults((results) => ({ ...results, [server.name]: iconRefreshOutcome(result, "This server needs sign-in; its own icon is captured the next time an agent connects.") }));
+      const outcome = await refreshMcpCatalogIcon(key, host);
+      if (!live()) return;
+      mutate((value) => value && value.key === gatewayKey(host) ? { ...value, servers: value.servers.map((item) => item.name === key ? { ...item, iconUrl: outcome.server.iconUrl } : item) } : value);
+      setIconResults((results) => ({ ...results, [key]: iconRefreshOutcome(outcome, "This server needs sign-in; its own icon is captured the next time an agent connects.") }));
     } catch (cause) {
-      setIconResults((results) => ({ ...results, [server.name]: { error: message(cause, "Failed to refresh MCP server icon.") } }));
+      // Any failed answer leaves the outcome uncertain: the browser deadline, the relay answer
+      // `502 gateway_offline` after its own 30 second deadline, and a refusal that follows a commit all look alike.
+      // The page reads the same catalog before another change, and keeps the catalog controls off during that read.
+      if (attempt === iconAttempts.get(key) && visit === mine) setIconResults((results) => ({ ...results, [key]: { error: message(cause, "Failed to refresh MCP server icon.") } }));
+      if (visit !== mine) return;
+      setBusy(true);
+      await settleList(() => visit === mine);
+      if (visit === mine) setBusy(false);
     }
   };
 
-  async function run(action: () => Promise<void>, fallback: string) {
+  /** Runs one write for the gateway that is shown now. `uncertain` writes read the list again after an error. */
+  async function run(action: (host: string | undefined, live: () => boolean) => Promise<void>, fallback: string, uncertain = true) {
+    if (!choice.ready() || !canWrite() || listUnknown()) return;
+    const host = gateway();
+    const mine = visit;
+    const live = () => visit === mine;
     setBusy(true);
     setError(undefined);
-    try { await action(); }
-    catch (cause) { setError(message(cause, fallback)); }
-    finally { setBusy(false); }
+    let failed = false;
+    try { await action(host, live); }
+    catch (cause) { failed = true; if (live()) setError(message(cause, fallback)); }
+    // The remote can apply a write before its answer fails, so the list settles before another write.
+    if (failed && uncertain) await settleList(live);
+    if (live()) setBusy(false);
   }
 
   const add = (event: Event) => {
     event.preventDefault();
-    void run(async () => {
-      await addMcpCatalogServer({ url: url().trim(), displayName: name(), description: description() });
+    void run(async (host, live) => {
+      await addMcpCatalogServer({ url: url().trim(), displayName: name(), description: description() }, host);
+      if (!live()) return;
       setUrl(""); setName(""); setDescription("");
       await refetch();
     }, "Failed to add MCP server.");
@@ -58,32 +143,49 @@ export default function AdminMcpServersPage() {
     setEditName(server.displayName ?? "");
     setEditDescription(server.description ?? "");
   };
-  const saveEdit = (server: McpCatalogServer) => run(async () => {
-    const saved = await updateMcpCatalogServer(server.name, { displayName: editName(), description: editDescription() });
-    mutate((list) => list?.map((item) => (item.name === server.name ? { ...item, displayName: saved.displayName, description: saved.description } : item)));
+  const saveEdit = (server: McpCatalogServer) => run(async (host, live) => {
+    const saved = await updateMcpCatalogServer(server.name, { displayName: editName(), description: editDescription() }, host);
+    if (!live()) return;
+    mutate((value) => value && value.key === gatewayKey(host) ? { ...value, servers: value.servers.map((item) => (item.name === server.name ? { ...item, displayName: saved.displayName, description: saved.description } : item)) } : value);
     setEditing(undefined);
   }, "Failed to save MCP server.");
-  const remove = (server: McpCatalogServer) => run(async () => {
-    await removeMcpCatalogServer(server.name);
-    mutate((list) => list?.filter((item) => item.name !== server.name));
+  const remove = (server: McpCatalogServer) => run(async (host, live) => {
+    await removeMcpCatalogServer(server.name, host);
+    if (!live()) return;
+    mutate((value) => value && value.key === gatewayKey(host) ? { ...value, servers: value.servers.filter((item) => item.name !== server.name) } : value);
     setConfirming(undefined);
   }, "Failed to remove MCP server.");
+
+  const missing = () => { const selection = choice.selection(); return selection.state === "missing" ? selection : undefined; };
+  const writeOff = () => busy() || !canWrite() || listUnknown();
 
   return (
     <AdminLayout
       title="MCP servers"
+      gateway={gateway()}
       description="Shared remote MCP servers every agent can enable from its extensions page. Users connect their own account; nothing is connected here."
     >
+      <GatewaySelect value={choice.chosen()} names={choice.names()} onChange={choice.choose} />
+      <Show when={missing()}>{(selection) => <p class="mcps-error" role="alert">{missingGatewayText(selection())}</p>}</Show>
+      <Show when={gateway() !== undefined && requester().ready && requester().unknown}>
+        <p class="mcps-error" role="alert">Could not read your permissions on {gateway()}. The controls stay off.</p>
+      </Show>
+      <Show when={gateway() !== undefined && requester().ready && !requester().unknown && requester().multiUser && !requester().isSuperadmin}>
+        <p class="mcps-empty" role="status">Only the superadmin of {gateway()} can change this catalog.</p>
+      </Show>
       <form class="mcps-add" onSubmit={add}>
         <input type="url" required aria-label="Server URL" placeholder="https://mcp.example.com/mcp" value={url()} onInput={(event) => setUrl(event.currentTarget.value)} />
         <input type="text" maxLength={100} aria-label="Name (optional)" placeholder="Display name, e.g. Atlassian" value={name()} onInput={(event) => setName(event.currentTarget.value)} />
         <input type="text" maxLength={500} aria-label="Description (optional)" placeholder="What this server gives agents access to" value={description()} onInput={(event) => setDescription(event.currentTarget.value)} />
-        <button type="submit" disabled={busy()}>Add server</button>
+        <button type="submit" disabled={writeOff() || !choice.ready()}>Add server</button>
       </form>
       <Show when={error()}>{(text) => <p class="mcps-error" role="alert">{text()}</p>}</Show>
-      <Show when={servers.error}><p class="mcps-error" role="alert">{message(servers.error, "Failed to load MCP servers.")}</p></Show>
+      <Show when={listUnknown()}>
+        <p class="mcps-error" role="alert">The server list could not be read after the error, and the change may have happened. Read the list before you change it again. <button type="button" disabled={busy()} onClick={() => void retryRead()}>Read list</button></p>
+      </Show>
+      <Show when={choice.ready() && result.error}><p class="mcps-error" role="alert">{message(result.error, "Failed to load MCP servers.")}</p></Show>
       <div>
-        <Show when={!servers.error && servers()} fallback={<Show when={servers.loading}><div class="mcps-empty">Loading…</div></Show>}>
+        <Show when={servers()} fallback={<Show when={choice.selection().state === "loading" || (choice.ready() && result.loading)}><div class="mcps-empty">Loading…</div></Show>}>
           {(list) => (
             <Show when={list().length > 0} fallback={<div class="mcps-empty">No shared MCP servers yet.</div>}>
               <div class="mcps-grid">
@@ -107,17 +209,17 @@ export default function AdminMcpServersPage() {
                       <Show when={confirming() === server.name} fallback={
                         <Show when={editing() === server.name} fallback={
                           <>
-                            <button type="button" disabled={busy() || iconResults()[server.name]?.busy} onClick={() => void refreshIcon(server)}>{iconResults()[server.name]?.busy ? "Refreshing…" : "Refresh icon"}</button>
-                            <button type="button" disabled={busy()} onClick={() => startEdit(server)}>Edit</button>
-                            <button type="button" disabled={busy()} onClick={() => setConfirming(server.name)}>Remove</button>
+                            <button type="button" disabled={writeOff() || iconResults()[server.name]?.busy} onClick={() => void refreshIcon(server)}>{iconResults()[server.name]?.busy ? "Refreshing…" : "Refresh icon"}</button>
+                            <button type="button" disabled={writeOff()} onClick={() => startEdit(server)}>Edit</button>
+                            <button type="button" disabled={writeOff()} onClick={() => setConfirming(server.name)}>Remove</button>
                           </>
                         }>
-                          <button type="button" disabled={busy()} onClick={() => void saveEdit(server)}>Save</button>
+                          <button type="button" disabled={writeOff()} onClick={() => void saveEdit(server)}>Save</button>
                           <button type="button" disabled={busy()} onClick={() => setEditing(undefined)}>Cancel</button>
                         </Show>
                       }>
-                        <span role="alert" class="mcps-sub">Remove for every agent?</span>
-                        <button type="button" disabled={busy()} onClick={() => void remove(server)}>Confirm remove</button>
+                        <span role="alert" class="mcps-sub">Remove for every agent{gateway() !== undefined ? ` on ${gateway()}` : ""}?</span>
+                        <button type="button" disabled={writeOff()} onClick={() => void remove(server)}>Confirm remove</button>
                         <button type="button" disabled={busy()} onClick={() => setConfirming(undefined)}>Cancel</button>
                       </Show>
                     </div>

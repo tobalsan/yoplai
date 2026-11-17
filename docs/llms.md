@@ -38,6 +38,7 @@ Core TypeScript/Node.js process. Main ownership:
   `server/origins.ts` supplies the trusted browser origins for CORS and OAuth start.
   Remote `/api/capabilities` already supplies safe requester context. Local authentication must not replace it.
   See [the transport contract](relay-configuration.md) for the route table, OAuth handoffs, and round-3b limits.
+  Global controls batch 1: `GET /api/relay/gateways` (redacted names) in `relay/configuration.ts`, `lib/gateway-choice.ts` and `GatewaySelect` for `?gateway=`, gateway-aware `pages/admin/Extensions.tsx` and `McpServers.tsx`, and per-gateway alert dots in `lib/schedule-alerts.ts`. Skills and Slack pairing are later batches. See [Global controls](relay-configuration.md#global-controls-batch-1).
   Round 3c builds the configuration pages in `apps/web`: gateway context (`api/gateway.ts`, `lib/agent-target.ts`, `lib/requester.ts`, `lib/resource-key.ts`), OAuth popups (`lib/oauth-popup-flow.ts`, `api/oauth.ts`), and the gateway argument of every configuration API function. See [Configuration pages](relay-configuration.md#configuration-pages-round-3c). Browser acceptance is still open.
   `relayConfigurationHttp()` runs the configuration allowlist before the local extension gate.
   It replaces a consumed local schedule body with a bounded rebuilt request.

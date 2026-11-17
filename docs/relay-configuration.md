@@ -51,6 +51,9 @@ Existing chat and media routes keep their contracts.
 | PATCH | `/admin/forks/:poolId/visibility` | Gateway prefix |
 | DELETE | `/admin/teams/:teamId/agents/:poolId` | Gateway prefix |
 | GET | `/top-extensions`, `/capabilities` | Gateway prefix |
+| GET, PUT | `/admin/top-extensions` | Gateway prefix. The PUT body is JSON inside the 1 MiB bound. |
+| POST | `/mcp/catalog`, `/mcp/catalog/update?server=...` | Gateway prefix. JSON body inside the 1 MiB bound. |
+| POST | `/mcp/catalog/remove?server=...`, `/mcp/catalog/icon/refresh?server=...` | Gateway prefix. No body. |
 
 The relay uses only the linked bearer. The remote gateway checks agent access and permissions.
 The relay removes caller cookies, authorization, Origin, Host, forwarded headers, and `x-yoplai-*` identity headers.
@@ -248,11 +251,23 @@ Local agents keep the redirect flow. A remote agent uses `lib/oauth-popup-flow.t
 4. The flow trusts no `postMessage`. It decides only from fresh status of the same gateway, agent, provider or server, and scope. A new connection needs a state change, or a new `connectedAt` for core status. MCP status has no connection time, so a connected server cannot prove a reconnect and the flow reports "unconfirmed" instead of success.
 5. Success closes the popup and refreshes the status. Blocked, closed, cancelled, failed, denied, unconfirmed, and timed-out flows show a visible message. A newer flow, a changed agent, gateway, provider, or scope, a Cancel click, or the end of the page ends the old flow and closes its popup. A late status of an old flow changes nothing.
 
+### Global controls (batch 1)
+
+- `GET /api/relay/gateways` returns `{ gateways: [{ name }] }` with `Cache-Control: no-store`. It lists every configured link, also a link with no visible agent and a gateway that is offline. It returns no URL, token, or other store field.
+  It answers only a trusted request (no Origin, or a loopback Origin, and no external forwarded client). Other methods get 405. A disabled relay answers `403 relay_unavailable`, not an empty list. Local multi-user mode keeps the relay off and gets the same refusal.
+- The global pages choose a gateway with `?gateway=<name>` (`lib/gateway-choice.ts`, `components/GatewaySelect.tsx`). Local is the default. A name that the configured list does not hold, and a list that cannot be read, show an error and make no call. They never mean Local.
+- `/admin/extensions` (Top and system flags) and `/admin/mcp-servers` (shared catalog) use the remote requester. A remote multi-user gateway allows only its superadmin, and the page keeps its controls off for another role and for an unknown requester. A single-user remote already treats its linked bearer as its actor, and the relay adds no privilege. The other admin pages stay local, and the tab bar of a chosen gateway shows only these two.
+  Catalog removal on a gateway removes the server for every agent of that gateway, and the confirmation says so.
+- The JSON writes (`PUT /admin/top-extensions`, `POST /mcp/catalog`, `POST /mcp/catalog/update`) need a trusted Origin and a JSON content type, and the relay reads the body inside 1 MiB before it forwards it. The catalog remove and icon refresh writes have no body.
+- Each page binds its data, forms, dialogs, and writes to the gateway, the visit, and the attempt. A write whose answer is uncertain (an error, a timeout, a cancel) makes the page read the list of the same gateway again before another change. A failed read keeps an explicit unknown state with a "Read list" button.
+- Both icon refresh calls share one finite client deadline (`ICON_REFRESH_TIMEOUT_MS`, 35 seconds). The relay answers within its own 30 second header deadline, so a relay refusal arrives first. A timeout is an uncertain outcome, not proof that the remote made no change.
+- Schedule alerts load for every configured gateway, whatever its agents or health, and not only for the open chat. A failed read keeps the last known alerts and is recorded as a failed read. A denied scope clears its alerts, and a link that leaves the list drops its alerts. The dot of an agent reads only the alerts of its own gateway and compares the qualified agent ID. The dot of the navigation shows an alert of Local or of any configured gateway.
+- Skills and Slack pairing stay in the remaining scope of this slice. They are not part of batch 1.
+
 ### Limits
 
 - `ConnectToolsPrompt` and the "Connect tools" button need local multi-user mode, and the relay is off there. They stay local.
-- Admin pages (the Admin link of the local UI opens `/admin/extensions` and the others), the MCP catalog admin page, skills, and account Slack pairing act on the local gateway only. Gateway-aware administration is outside this batch.
-- The schedule alert dot of the agent list shows local alerts only.
+- The user, skill, and quota admin pages, the skills page, and account Slack pairing act on the local gateway only. Skills and Slack remain in the remaining scope of this slice. The extension and MCP catalog admin pages follow the chosen gateway.
 - A job ID or server name that decodes to `%`, `/`, or `\` is refused by the relay path check.
 - Tests use synthetic gateways: `apps/web/src/remote-configuration*.test.tsx`, `api/remote-configuration.test.ts`, `lib/oauth-popup-flow.test.ts`, and `remote-gateway.fixture.ts`. They run the real router and pages with a fake fetch and a fake popup.
   Real popups, provider redirects, the external MCP extension, and the browser behavior of the relay need a browser check.

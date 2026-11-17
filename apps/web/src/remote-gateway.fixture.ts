@@ -13,6 +13,17 @@ export function relayPrefix(gateway: string): string {
   return `/api/relay/gateways/${encodeURIComponent(gateway)}`;
 }
 
+/** A pending answer ends with the abort reason when the caller aborts, as a real fetch does. */
+function raceAbort<T>(answer: T | Promise<T>, signal: AbortSignal | null | undefined): Promise<T> {
+  if (!signal) return Promise.resolve(answer);
+  if (signal.aborted) return Promise.reject(signal.reason);
+  return new Promise<T>((resolve, reject) => {
+    const onAbort = () => reject(signal.reason);
+    signal.addEventListener("abort", onAbort, { once: true });
+    Promise.resolve(answer).then(resolve, reject).finally(() => signal.removeEventListener("abort", onAbort));
+  });
+}
+
 export function createFakeGateways() {
   const requests: RecordedRequest[] = [];
   const unexpected: RecordedRequest[] = [];
@@ -32,7 +43,7 @@ export function createFakeGateways() {
     requests.push(request);
     order.push(`fetch ${method} ${url}`);
     const found = [...handlers].reverse().find((item) => item.method === method && (typeof item.match === "string" ? item.match === url : item.match.test(url)));
-    const answer = found ? await found.handler(request) : undefined;
+    const answer = found ? await raceAbort(found.handler(request), init?.signal) : undefined;
     if (!found || answer === undefined) {
       unexpected.push(request);
       return new Response(JSON.stringify({ error: "unexpected_request" }), { status: 599 });

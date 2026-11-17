@@ -22,6 +22,7 @@ import { WsBroker, type WsBrokerAuthAdapter } from "./ws-broker.js";
 import { accessLogger } from "./access-log.js";
 import { allowedCorsOrigins } from "./origins.js";
 import { relayConfigurationHttp, relayHttp } from "../relay/http.js";
+import { GATEWAY_LIST_PATH } from "../relay/configuration.js";
 import { relayDeviceApi } from "../relay/device-routes.js";
 import { dashboardViewHttp, ownsDashboardViewPath } from "../relay/dashboard-views.js";
 import { startDeviceLinks } from "../relay/device-links.js";
@@ -113,7 +114,8 @@ app.route(
 app.use("*", dashboardViewHttp());
 const configurationRelay = relayConfigurationHttp();
 app.use("/api/*", (c, next) => {
-  if (currentExtensionRuntime().isEnabled("multiUser")) return next();
+  // Local multi-user mode keeps the relay off. Only the gateway list answers there, with an explicit refusal.
+  if (currentExtensionRuntime().isEnabled("multiUser") && c.req.path !== GATEWAY_LIST_PATH) return next();
   return configurationRelay(c, next);
 });
 app.use("/api/*", async (c, next) => {

@@ -45,3 +45,19 @@ export async function fetchGatewayCapabilities(gateway: string, signal?: AbortSi
   if (!response.ok) throw Object.assign(new Error("Failed to fetch gateway capabilities"), { status: response.status });
   return response.json();
 }
+
+/** The configured gateway links. `unavailable` means that the local relay is off, as in local multi-user mode. */
+export type GatewayList = { state: "ready"; names: string[] } | { state: "unavailable" };
+
+/**
+ * Reads the redacted list of configured gateway names. It holds no URL or token. A link with no visible
+ * agent or a gateway that is offline still appears. A failed read throws: it is not an empty list.
+ */
+export async function fetchGatewayList(signal?: AbortSignal): Promise<GatewayList> {
+  const response = await apiFetch("/api/relay/gateways", { signal });
+  // A disabled relay answers 403. A gateway that does not know the route answers 404. Both mean no linked gateways.
+  if (response.status === 403 || response.status === 404) return { state: "unavailable" };
+  if (!response.ok) throw new Error(`Failed to read linked gateways (${response.status})`);
+  const body = (await response.json()) as { gateways?: { name?: unknown }[] };
+  return { state: "ready", names: (body.gateways ?? []).flatMap((item) => (typeof item.name === "string" ? [item.name] : [])) };
+}
