@@ -183,18 +183,16 @@ A browser link has its own key. It expires after 90 days, and you link again to 
 
 The link works only when the local gateway listens on `127.0.0.1` and multi-user mode and Tailscale serve are off. A gateway bound to another loopback address (such as `::1`) keeps its saved links but cannot start a new browser link.
 
-Configuration transport now supports linked gateways through an explicit API prefix and an allowlist.
-The linked bearer defines the remote requester, including personal connections and administrative rights.
-Remote OAuth starts use a trusted-origin JSON POST and return a checked provider URL.
-The remote stores state and tokens. The local server never fetches the provider URL.
 Settings pages of a remote agent (extensions, MCP servers, connections, schedules, webhooks, dashboards, teams) work on the local page. Open them from the settings link of the chat, or at `/agents/<agentId>@<name>/edit`. Open the dashboards of one remote gateway at `/dashboards?gateway=<name>`. A sign-in for a remote agent opens in a popup that your browser must allow, and the page confirms it from the remote status. The remote gateway decides every permission. Remote dashboards open on the local page at `/remote-dashboards/<gateway>/<id>`, and in a chat panel for a remote agent. The page shows a dashboard through a trusted shell, and Chat and annotation follow the access that the remote gateway reports.
 
-Core OAuth starts need the new JSON start result on the remote gateway.
-A desktop does not need the remote provider extension or scheduler extension to forward these requests.
-Media and agent lists permit only bounded redirects within the same gateway and route family.
+The remote gateway must run this version of Yoplai (update it before the local gateway). The local gateway needs no provider or scheduler extension to forward these requests. The linked key defines who you are on the remote gateway, so it decides your personal connections and administrative rights.
+
+Known limitations:
+
+- In a long chat, when the agent loads late, a newer dashboard panel may not open by itself. Open it by hand from the chat.
+- After a page reload, a merged dashboard tab loses the filter that you chose. Choose the filter again.
 
 See [remote configuration transport](docs/relay-configuration.md) for the API and page contract.
-
 
 ### Let a remote agent use your machine
 
@@ -220,11 +218,9 @@ Limits: the rules match names and real paths. A hard link to a secret file, a co
 
 The check also covers the real path behind a symbolic link. A command (`device_bash`) is not checked against this list. It asks in Ask and Workspace mode, so you see the command first. The card shows the whole command. A command over 20,000 characters that needs approval gets a refusal. The agent must write it to a script file and run the file.
 
-How your gateway picks the chat: your local gateway names the chat that you use (the session ID of the page, or its session key) and gives each message that it forwards a secret token for that one turn. The remote gateway sends the token back with each device call of that turn. A call with no valid token counts as a background call. The remote gateway cannot pick the chat or the mode of a call. The link protocol is version 2, so your local and remote gateways must both run this version. One limit: during a turn in a Full chat, the remote gateway controls the agent, so Full means trust in that gateway for that turn. The switch that allows all calls of an agent for scheduled jobs means trust in its gateway for background runs.
+Your local gateway, not the remote one, picks the chat and its mode: it names the chat that you use and gives each message that it forwards a secret token for that one turn. A device call with no valid token counts as a background call. Both gateways must run the same link protocol version (2). During a turn in a Full chat, the remote gateway controls the agent, so Full means trust in that gateway for that turn. The switch that allows all calls of an agent for scheduled jobs means trust in its gateway for background runs.
 
-Queued remote messages keep their own device permissions, also when two views use the same remote session. A remote reset uses a fresh chat key and starts in Ask mode, with no workspace folder. A remote reset removes the old history query before the send. Reload keeps the fresh chat key and restores its pending approvals. The reset keeps the current view, other query fields, hash, and route state. It transfers no folder, permissions, or history.
-
-The relay allows 20 live send sockets per page socket and 1,000 token records across the local gateway. Token expiry removes device authorization but leaves the stream open. The token limit does not bound all live upstream sockets. This fix adds no global socket limit.
+Device permissions belong to one link: a new link under the same name starts in Ask mode with background calls off. Queued messages keep their own permissions. A reset of a remote chat starts a fresh chat in Ask mode with no workspace folder. Reload keeps it and restores its pending approvals.
 
 Scheduled jobs: a job gets the device tools only when its config has `requiresDevice: true` (set it in the `requiresDevice` field of `scheduler.create_job` or `scheduler.update_job`). A job with this flag stops at once, with the error code `device_offline`, when your device is not connected. You cannot combine the flag with `noAgent`. On a multi-user gateway, the job needs the credential mode `owner`.
 

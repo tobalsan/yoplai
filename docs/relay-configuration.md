@@ -1,7 +1,12 @@
 # Remote configuration transport
 
-Status: rounds 3a and 3b1 supply the transport. Round 3b2 adds the trusted dashboard host. Round 3c adds the configuration pages and OAuth popups.
-Browser acceptance of the whole batch (popups, dashboard confinement, chat frames) is still open. Node and jsdom tests do not prove it.
+This page describes how the local gateway reaches a linked remote gateway: the relay transport, the trusted dashboard host, the configuration pages, OAuth popups, and the browser link.
+Node and jsdom tests do not prove popups, dashboard confinement, or chat frames. Recorded real-browser checks cover standalone dashboard confinement, OAuth popups, and gateway linking; captured chat panels stay outside that browser evidence.
+
+## Known limitations
+
+- In a long chat, when the agent loads late, a newer dashboard panel may not open by itself. Open it by hand from the chat.
+- After a page reload, a merged dashboard tab loses the filter that you chose. Choose the filter again.
 
 ## Target selection
 
@@ -11,6 +16,7 @@ The relay keeps no global target state.
 
 Agent paths, `agent` query fields, and the schedule create field `agentId` also accept `<agentId>@<name>` without the prefix.
 An exact local agent ID wins without the prefix.
+The relay carries a raw remote agent ID as one HTTP path segment, so the ID must not be empty, `.`, or `..`, and must hold no `/`, `\`, `%`, `?`, `#`, or control character. Other characters, including `@`, work. The relay lists no remote agent with another ID and treats no suffix on such an ID as a gateway. The rule lives in `packages/shared/src/agent-id-wire.ts`.
 An explicit prefix accepts a raw remote agent ID, even when a local agent has that raw ID.
 The prefix rejects a suffixed agent that selects another gateway or matches an exact local ID.
 Object IDs, pool IDs, team IDs, server names, and arbitrary body strings stay unchanged.
@@ -70,8 +76,7 @@ The relay returns `gateway_offline` with status 502 when the remote fetch fails.
 
 ## Remote requester context
 
-`GET /api/relay/gateways/:name/api/capabilities` already supplies safe requester context.
-No new remote endpoint is necessary.
+`GET /api/relay/gateways/:name/api/capabilities` supplies safe requester context. No other remote endpoint is needed.
 
 | Field | Meaning for the selected remote |
 | --- | --- |
@@ -93,8 +98,8 @@ The remote remains the authority when a request returns 401 or 403.
 Agent catalog rows use suffixed `id`, `gateway`, and avatar paths.
 Known response fields named `agentId` use the gateway suffix, including dashboard result containers.
 Pool IDs and fork fields remain remote values. Capability `agents` also remain raw remote IDs.
-The page must retain the selected gateway separately from each object.
-It must not replace global local capabilities or the local session.
+The page retains the selected gateway separately from each object.
+It never replaces global local capabilities or the local session.
 
 ## OAuth start contract
 
@@ -175,7 +180,6 @@ Oversized bodies return status 413 with `configuration_body_too_large` without a
 Malformed JSON and failed reads return bounded errors before any mutation.
 The Node adapter of Hono replaces the global `Response` class when the server starts.
 The relay checks results with `isResponse`, not `instanceof Response`, so these errors reach the client.
-`apps/gateway/src/server/relay-configuration.http.test.ts` checks them through the real adapter on ephemeral loopback ports.
 
 Media and merged agent lists follow at most five same-origin redirects.
 Uploads accept only 307 or 308 and reuse their buffered form and file bytes.
@@ -189,7 +193,7 @@ The relay never uses unrestricted Fetch redirects.
 
 ## OAuth page contract
 
-The round-3c pages follow this contract. See [OAuth popups](#oauth-popups) for the implementation.
+The pages follow this contract. See [OAuth popups](#oauth-popups) for the implementation.
 
 1. Open a blank popup during the click event, before the asynchronous start request.
 2. Request the start URL through the local endpoint with the selected gateway and explicit scope.
@@ -203,7 +207,6 @@ Popup closure is not proof of success. Existing connected status alone is not pr
 A reconnect needs a fresh status comparison, such as connection time, when the remote response supplies it.
 The page must not claim a reconnect result that status cannot prove.
 It must not trust a message from an arbitrary popup origin.
-No new popup framework exists in round 3a.
 
 MCP add can start OAuth itself.
 Remote `POST /mcp/servers` therefore uses the same Origin and JSON checks as the start endpoint.
@@ -214,7 +217,7 @@ Without an authorization URL, the page closes the blank popup and refreshes the 
 After an add error, the page must read the remote list before retrying.
 The remote add can succeed before the relay rejects its response.
 
-## Configuration pages (round 3c)
+## Configuration pages
 
 The pages in `apps/web` use the routes above. They add no new transport route.
 
@@ -256,7 +259,7 @@ Local agents keep the redirect flow. A remote agent uses `lib/oauth-popup-flow.t
 4. The flow trusts no `postMessage`. It decides only from fresh status of the same gateway, agent, provider or server, and scope. A new connection needs a state change, or a new `connectedAt` for core status. MCP status has no connection time, so a connected server cannot prove a reconnect and the flow reports "unconfirmed" instead of success.
 5. Success closes the popup and refreshes the status. Blocked, closed, cancelled, failed, denied, unconfirmed, and timed-out flows show a visible message. A newer flow, a changed agent, gateway, provider, or scope, a Cancel click, or the end of the page ends the old flow and closes its popup. A late status of an old flow changes nothing.
 
-### Global controls (batch 1)
+### Global controls
 
 - `GET /api/relay/gateways` returns `{ gateways: [{ name }] }` with `Cache-Control: no-store`. It lists every configured link, also a link with no visible agent and a gateway that is offline. It returns no URL, token, or other store field.
   It answers only a trusted request (no Origin, or a loopback Origin, and no external forwarded client). Other methods get 405. A disabled relay answers `403 relay_unavailable`, not an empty list. Local multi-user mode keeps the relay off and gets the same refusal.
@@ -269,7 +272,7 @@ Local agents keep the redirect flow. A remote agent uses `lib/oauth-popup-flow.t
 - Schedule alerts load for every configured gateway, whatever its agents or health, and not only for the open chat. A failed read keeps the last known alerts and is recorded as a failed read. A denied scope clears its alerts, and a link that leaves the list drops its alerts. The dot of an agent reads only the alerts of its own gateway and compares the qualified agent ID. The dot of the navigation shows an alert of Local or of any configured gateway.
 - Skills and Slack pairing management follow below.
 
-### Skills (batches 2 and 3)
+### Skills
 
 - The relay allows exactly the skill routes in the route table. Each method and path is exact, and the remote keeps its own role, owner, and share policy. A skill ID is opaque and belongs to the gateway that the request names. The relay and the pages never read an agent ID inside a skill ID (`agent:<agentId>:<path>`) and never use it to select a gateway.
 - `POST /api/skills/import` is not allowed through the relay, whatever the method. Its bearer is an import token that the remote makes for the account, and it is never the linked gateway bearer. The page never calls it.
@@ -299,20 +302,24 @@ Local agents keep the redirect flow. A remote agent uses `lib/oauth-popup-flow.t
 - A gateway that has no multi-user identity answers `409 {"error":"multi_user_required"}`. A remote single-user gateway therefore fails explicitly. The local relay stays off in local multi-user mode, and the relay does not forward a cookie, invent an Origin, or change its generic headers.
 - `/account/connections?gateway=<name>` shows the pairings of the account that the linked bearer names, with the remote capabilities as the owner. It binds the list, errors, and unpair attempts to the gateway and the visit. A failed remote unpair reads the same gateway again, and the controls stay off until the read works. A gateway that is not configured makes no call and never means Local. A local user with linked gateways gets a "Slack pairings" entry in the sidebar footer. The local multi-user account panel is unchanged.
 
-### Confirmed fixes (callback, Webhooks, owner mode)
+### OAuth callbacks and the authentication gate
 
-- The MCP OAuth callback is one more MCP route that a multi-user gateway now lets through the outer authentication gate. The new exception is exactly `GET /api/mcp/oauth/callback`. Any other method on that path, a suffix, a trailing slash, a different case, and an encoded alias (for example `%63allback`) still need credentials. Both callback exceptions check the original request target, up to the query, from the Node adapter binding (`incoming.url`), with no normalization and no decoding. The decoded path of Hono and the normalized URL of the adapter do not count, because they remove `%2e` segments. A request with no such binding, or with a target that is not in origin form, never gets the exception. An encoded dot segment, a double slash, and a backslash need credentials. The other MCP routes also need credentials, except the two exceptions that already existed: `GET /api/mcp/oauth/client-metadata.json` and the CORS preflight, which the CORS handler answers before authentication. This change does not remove them. The provider sends the browser to this path with no session. The one-use state of the authenticated start carries the owner, scope, agent, server, and PKCE verifier. The callback takes only `code`, `state`, and `error`. The relay has no callback route. 
-- A core provider callback now passes the same outer gate by one more exact rule: `GET /api/oauth/<provider>/callback`, where the raw path segment is the ID of a provider that the registry holds. A provider that the registry does not hold, a suffix, a trailing slash, a different case, an encoded alias or segment (for example `%66ixture`, `%63allback`, or `%2e`), and every other method need credentials. The state of the authenticated start binds the provider, owner scope, agent, redirect URI, scopes, and PKCE verifier. It is one use and it expires after ten minutes. The callback reads only `code`, `state`, and `error`, takes no owner from the callback request, and keeps the start-time policy. The authorize, status, and disconnect routes, the CORS preflight, and every other protected route are unchanged. The relay has no callback route.
+- A multi-user gateway lets exactly `GET /api/mcp/oauth/callback` through its outer authentication gate, because the provider sends the browser to that path with no session. Any other method on that path, a suffix, a trailing slash, a different case, and an encoded alias (for example `%63allback`) need credentials. The other MCP routes need credentials too, except `GET /api/mcp/oauth/client-metadata.json` and the CORS preflight, which the CORS handler answers before authentication.
+- A core provider callback passes the same gate by one exact rule: `GET /api/oauth/<provider>/callback`, where the raw path segment is the ID of a provider that the registry holds. A provider that the registry does not hold, a suffix, a trailing slash, a different case, an encoded alias or segment (for example `%66ixture`, `%63allback`, or `%2e`), and every other method need credentials. The authorize, status, and disconnect routes and every other protected route need credentials.
+- Both exceptions check the original request target, up to the query, from the Node adapter binding (`incoming.url`), with no normalization and no decoding. The decoded path of Hono and the normalized URL of the adapter do not count, because they remove `%2e` segments. A request with no such binding, or with a target that is not in origin form, never gets an exception. An encoded dot segment, a double slash, and a backslash need credentials.
+- The one-use state of the authenticated start carries the owner, scope, agent, provider or server, redirect URI, scopes, and PKCE verifier. A core state expires after ten minutes. A callback takes only `code`, `state`, and `error`, takes no owner from the callback request, and keeps the start-time policy. The relay has no callback route.
+
+### Bespoke extension pages and owner mode
+
 - An agent page for a bespoke extension (for example Webhooks) opens only where the gateway of the agent loads the extension. The route wrapper and the generic details page use the same remote availability test. Where the module is not available, the page shows that state with no link to the same closed route. Where the capabilities cannot be read, the page shows a Retry button that reads them again. The page never enables a remote module and never uses the local capabilities as remote authority.
-- Mine on a scheduled job of a linked gateway needs the confirmed user ID of that gateway. The page disables Mine without it, and the handler checks the same rule. A refused request returns `403 {"error":"owner_requires_user","message":"Owner credentials need a signed-in user."}`. A job that does not exist returns 404, and a job that exists and belongs to another user returns 403. An unexpected failure returns 500 with no caught text. The historical browser failure stays unrecorded.
+- Mine on a scheduled job of a linked gateway needs the confirmed user ID of that gateway. The page disables Mine without it, and the handler checks the same rule. A refused request returns `403 {"error":"owner_requires_user","message":"Owner credentials need a signed-in user."}`. A job that does not exist returns 404, and a job that exists and belongs to another user returns 403. An unexpected failure returns 500 with no caught text.
 
 ### Limits
 
 - `ConnectToolsPrompt` and the "Connect tools" button need local multi-user mode, and the relay is off there. They stay local.
 - The user and quota admin pages act on the local gateway only. The extension, MCP catalog, and skills pages follow the chosen gateway.
 - A job ID or server name that decodes to `%`, `/`, or `\` is refused by the relay path check.
-- Tests use synthetic gateways: `apps/web/src/remote-configuration*.test.tsx`, `api/remote-configuration.test.ts`, `lib/oauth-popup-flow.test.ts`, and `remote-gateway.fixture.ts`. They run the real router and pages with a fake fetch and a fake popup.
-  Real popups, provider redirects, the external MCP extension, and the browser behavior of the relay need a browser check.
+- Real popups, provider redirects, the external MCP extension, and the browser behavior of the relay need a real-browser check. The external MCP source stays unchanged.
 
 ## Browser link
 
@@ -338,7 +345,7 @@ The callback host is the literal `127.0.0.1`. The gateway records the address th
 
 ### Routes
 
-All routes live in `relay/link-routes.ts`. `relay/link-paths.ts` owns every spelling of `/api/relay/link` (encoded, mixed case), so a path that no route owns answers 404 and never falls through. The global CORS middleware skips this namespace, and the routes answer CORS for a configured UI origin only.
+All routes live in `relay/link-routes.ts`. `packages/shared/src/secret-paths.ts` owns every spelling of `/api/relay/link` (encoded, mixed case), so a path that no route owns answers 404 and never falls through. The global CORS middleware skips this namespace, and the routes answer CORS for a configured UI origin only.
 
 | Route | Purpose |
 |---|---|
@@ -354,13 +361,13 @@ Policy of every route, in order: the relay is on, the socket peer is loopback, n
 
 ### Attempts
 
-An attempt holds the origin, the callback address, the name, the device label, the verifier, and the generation of the stored link at start. It lives in memory, so a restart cancels every attempt. A start takes its slot before the first remote request, so starts that run together cannot pass 20 open attempts, and a failed start gives the slot back. Limits: 20 open attempts, 50 finished attempts, retention of 10 minutes, and 6 minutes of life. The `state` works once and is the only authority of `complete`. The control token (32 random bytes, kept in page memory, never in an address) guards `status` and `cancel`. A cancel during the exchange answers 409.
+An attempt holds the origin, the callback address, the name, the device label, the verifier, and the generation of the stored link at start. It lives in memory, so a restart cancels every attempt. A start takes its slot and its name before the first remote request, so starts that run together cannot pass 20 open attempts, and a failed start gives both back. A second start of a name that has a start in flight, or a pending or exchanging attempt, answers 409 `link_in_progress`. A finished, cancelled, or expired attempt frees the name. Limits: 20 open attempts, 50 finished attempts, retention of 10 minutes, and 6 minutes of life. The `state` works once and is the only authority of `complete`. The control token (32 random bytes, kept in page memory, never in an address) guards `status` and `cancel`. A cancel during the exchange answers 409.
 
 Outcomes of `status`: `pending`, `exchanging`, `linked`, `denied`, `cancelled`, `expired`, `failed`, `uncertain`.
 
 - A refusal on the remote ends as `denied` and erases the verifier.
 - A 4xx answer to the exchange ends as `failed`. The remote burned the code.
-- The store saves with `saveIfGeneration`. A completion cannot overwrite a newer link or a disconnect. Each attempt also holds the `mutationVersion` of its name. The store counts each change of a name in `remote-gateways.json` and keeps counting after a removal (see the file format below). Every writer, the gateway and each CLI process, checks and updates the count under the lock file `remote-gateways.json.lock`. The lock file holds the process ID of its owner and a random token. Only the process that made a lock deletes it, right after its own write. No process renames, moves, or deletes the lock of another process, so a live writer that pauses keeps its lock, however long it pauses. A writer that finds a lock waits 5 seconds and then fails with `Cannot lock remote-gateways.json`. If the owner process is alive, the error names its process ID. If the owner process died, the lock stays and the error names the lock file and the dead process ID. In that case, delete the lock file by hand, then try again. The check of the owner sees only processes of one machine and one process namespace, so do not share one home between a container and its host. So an older attempt cannot restore a name that any process linked and then removed. If it loses the race, or the disk write fails, the gateway revokes the new key with the key itself. If that revoke also fails, the attempt ends as `uncertain`.
+- The store saves with `saveIfGeneration`. A completion cannot overwrite a newer link or a disconnect. Each attempt also holds the `mutationVersion` of its name. The store counts each change of a name in `remote-gateways.json` and keeps counting after a removal (see the file format below). Every writer, the gateway and each CLI process, checks and updates the count under the lock file `remote-gateways.json.lock`. The lock file holds the process ID of its owner and a random token. Only the process that made a lock deletes it, right after its own write. No process renames, moves, or deletes the lock of another process, so a live writer that pauses keeps its lock, however long it pauses. A writer that finds a lock does not wait: the store runs on the thread of the gateway, so it fails at once with a `LinkStoreLockError` (`Cannot lock remote-gateways.json`), and the user tries again. If the owner process is alive, the error names its process ID. If the owner process died, the lock stays and the error names the lock file and the dead process ID. In that case, delete the lock file by hand, then try again. The check of the owner sees only processes of one machine and one process namespace, so do not share one home between a container and its host. So an older attempt cannot restore a name that any process linked and then removed. If it loses the race, or the save fails, the gateway revokes the new key with the key itself. When the save failed on the lock, the result of the attempt (the callback page, the page of the link list, and the CLI) keeps the text of the lock error, including the dead process ID and the lock file to delete. If that revoke also fails, the attempt ends as `uncertain`.
 
 ### Lost first exchange
 
@@ -368,7 +375,7 @@ If the answer to the first exchange is lost (network error, timeout, 5xx, redire
 
 ### Saved links
 
-The file is a JSON array, mode 0600. A row of a changed name has a `mutations` count. A removed link leaves the row `{ "removedName": "<name>", "mutations": <count> }`, so the count survives the removal. A file from an older version has neither field. It reads with counts of zero, and the next write adds them. An older version of Yoplai reads a count row as a link with no name, so do not run an older version on the same home. `remote-gateways.json` entries of a browser link have a `managed` field: `linkId`, `account`, `deviceLabel`, `expiresAt`, `linkedAt`. `saveIfGeneration(gateway, expected, expectedVersion)` and `removeIfGeneration(name, expected)` write only while the stored generation (and, for a save, the `mutationVersion` of the name) is the one the caller saw. Manual links (`--token`) and open links have no `managed` field, and the metadata route shows their unknown fields as `null`. `yoplai connect` never adopts, migrates, or rotates a manual link, and a name that a manual link uses is refused. `yoplai connect --token` also refuses the name of a browser link. Run `yoplai disconnect <name>` first, which revokes the key.
+The file is a JSON array, mode 0600. A row of a changed name has a `mutations` count. A removed link leaves the row `{ "removedName": "<name>", "mutations": <count> }`, so the count survives the removal. A file from an older version has neither field. It reads with counts of zero, and the next write adds them. An older version of Yoplai reads a count row as a link with no name, so do not run an older version on the same home. `remote-gateways.json` entries of a browser link have a `managed` field: `linkId`, `account`, `deviceLabel`, `expiresAt`, `linkedAt`. `saveIfGeneration(gateway, expected, expectedVersion)` and `removeIfGeneration(name, expected)` write only while the stored generation (and, for a save, the `mutationVersion` of the name) is the one the caller saw. Manual links (`--token`) and open links have no `managed` field, and the metadata route shows their unknown fields as `null`. `yoplai connect` never adopts, migrates, or rotates a manual link, and a name that a manual link uses is refused. `yoplai connect --token` also refuses the name of a browser link, and the store enforces this while it holds the lock (`save` of a gateway with no `managed` field returns false over a browser link). Run `yoplai disconnect <name>` first, which revokes the key.
 
 The metadata route keeps key state and connection state apart. `keyState` is `active`, `expired` (by the stored expiry), `rejected` (the remote refused the key at the device upgrade), `none` (open gateway), or `unknown` (manual token). `connection` is `connected`, `connecting`, `replaced` (another device of the same account took the one device connection of the remote user), `unauthorized`, or `offline`. An offline device does not prove that the remote revoked the key.
 
@@ -384,14 +391,9 @@ The remote closes the chat socket and the device socket of a key when the key st
 - `yoplai connect <url> --token <token>` is the explicit older path.
 - `yoplai disconnect <name> [--local-only]` goes through the gateway for a browser link. While the gateway is down, only a link with no key goes away, or a link removed with `--local-only`.
 
-### Tests
-
-`relay/link.test.ts` (service, with a scripted remote), `relay/link-routes.test.ts` (policy, callback page, listeners on `127.0.0.1`, `127.0.0.2`, and `::1`), `relay/store.test.ts`, `server/ws-broker-credential.test.ts`, `cli/connect.test.ts`, `server/access-log.test.ts`, `apps/web/src/pages/RemoteGateways.test.tsx`, and `relay/link.http.test.ts`. The last one starts two real gateways in two processes with isolated homes. A synthetic user signs in with email and password, approves, and the local store gets a working key. It also covers refuse, link again, revoke on the remote, disconnect from the CLI, a lost first exchange, and a remote with no sign-in. On a machine with only `127.0.0.1` on its loopback interface (macOS), the `127.0.0.2` listener cannot bind, so the test checks that address without a real listener. A real browser check is still open.
-
 ## Dashboard viewer transport
 
-Round 3b1 adds the backend for remote dashboards and a small trusted shell.
-Round 3b2 adds the host page and the frame wiring of the chat page. See [Web host](#web-host). These two rounds add no configuration pages or popups. Round 3c adds them (see [Configuration pages](#configuration-pages-round-3c)).
+The gateway serves remote dashboards through a small trusted shell, and the web app hosts them on a local page and in chat panels. See [Web host](#web-host).
 
 The linked bearer never reaches the browser. The remote edit token authorizes every write.
 JSON dashboard routes (list, recipients, pin, sharing, claim, delete) keep using `/api/relay/gateways/:name/api/dashboards...`.
@@ -411,9 +413,7 @@ A snapshot never describes another dashboard, and no frame or top-level request 
 The checked metadata is the only source of Chat, annotation, agent, and gateway facts.
 Readiness only shows that scripts ran. A `ready` or `delivered` state does not prove that a browser shows the page.
 
-Browser confinement is not proven by these Node tests. Iris owns the browser gate.
-The gate must show that the shell policy stops self-navigation, other viewers, aliases, queries, redirects, `about:blank`, `data:`, `blob:`, `javascript:`, history, and cached restoration.
-If another source can keep enabled controls, stop and ask. Do not add a nonce condition. The gate runs in Chromium first. WebKit is unproven until a real engine check exists.
+Node tests do not prove browser confinement. The real-browser acceptance checks cover self-navigation, other viewers, aliases, queries, redirects, `about:blank`, `data:`, `blob:`, `javascript:`, history, and cached restoration. They run in Chromium. WebKit is unproven.
 
 ### Routes
 
@@ -431,6 +431,7 @@ No route returns a redirect. The global CORS middleware skips this prefix.
 | --- | --- | --- |
 | `POST /api/relay/dashboard-views` | Trusted UI code | Prepare. Makes one remote read and one snapshot. Returns 201. |
 | `POST /api/relay/dashboard-views/read` | Trusted UI code | Reads the checked metadata of one snapshot. The handle is in the JSON body. |
+| `POST /api/relay/dashboard-views/release` | Trusted UI code | Ends one snapshot that the host no longer shows. The handle is in the JSON body. Only the issuer origin can end it. A handle that is already gone returns 200 too. |
 | `GET /api/relay/dashboard-views/:handle/shell` | The host, as an iframe | Returns the trusted shell. Loads once. |
 | `GET /api/relay/dashboard-views/:handle/frame` | The shell, as an iframe | Returns the snapshot bytes. Delivers once. |
 | `POST /api/relay/dashboard-views/:handle/edit` | Renderer script | Forwards one token-authenticated edit to the snapshot dashboard. |
@@ -454,7 +455,7 @@ Lifetime and capacity. These are fixed defaults, not settings.
 | Bytes after delivery | Removed at once. The metadata stays until expiry. |
 | Page | 5 MiB after decompression |
 
-Both `429` answers have `Retry-After: 60`. Expiry, unlink, relink, and restart end a snapshot and its bytes. A failed remote read stores nothing.
+Both `429` answers have `Retry-After: 60`. Expiry, release, unlink, relink, and restart end a snapshot and its bytes. The host releases a snapshot when it replaces or discards its view. The expiry still ends a snapshot whose page was lost. A failed remote read stores nothing.
 One timer without a reference waits for the next deadline of any snapshot. It frees undelivered bytes at the end of the delivery window and removes metadata at its expiry, also while no request arrives. The store sets the timer again after each store, delivery, and removal. The timer does not keep the process alive. Each use still checks the expiry and the link.
 
 ### Trusted host contract
@@ -614,11 +615,11 @@ another status, HTML, or a JSON value that is not an object with a boolean `ok`.
 Other refusals: `403 opaque_origin_required`, `415 text_plain_required`, `413 request_too_large`, `400 invalid_edit_request`, `429`, `504`, and `410`.
 Every answer to a valid write route with `Origin: null` has `Access-Control-Allow-Origin: null` and `Vary: Origin`, so the page can read it. No answer has credentials.
 Bearer revocation stops later prepares. It does not revoke an edit token that the remote already issued.
-An edit token keeps its signed identity for eight hours. This policy is unchanged. Share and eligibility checks still apply to each later edit.
+An edit token keeps its signed identity for eight hours. Share and eligibility checks still apply to each later edit.
 
 ### Remote contract
 
-A remote gateway with this round serves `GET /d/:id/embed`. It reuses the normal viewer authentication, access policy, draft choice, queries, and token issue.
+A remote gateway serves `GET /d/:id/embed`. It reuses the normal viewer authentication, access policy, draft choice, queries, and token issue.
 Differences: sibling links are `../<id>/`, the edit base is `.`, the page has no Chat button, a failure returns bounded JSON (`401`, `403`, `404`) and not a redirect or HTML,
 and the link builder resolves against the document URL. Annotation also needs a viewer who is not impersonated.
 Every answer of the route has `X-Yoplai-Dashboard-Embed: 1`, `X-Yoplai-Dashboard-Embed-Assets: v3`, and `X-Yoplai-Dashboard-Embed-Policy: 1`.
@@ -662,17 +663,7 @@ The web app builds the host contract above in `apps/web`. Remote HTML never ente
 - Opening the same remote gateway and dashboard again with an explicit query (`openFrame`) updates the existing tab and prepares a fresh view. An omitted query keeps the selected one. Local dashboards have no query.
 - A final DNS dot does not change the link policy: `localhost.`, `nas.local.`, and `app.localhost.` stay blocked.
 
-Tests: `components/chat/RemoteFrameView.test.tsx`, `lib/remote-dashboard.test.ts`, `api/dashboard-views.test.ts`, `App.remote-dashboard.test.tsx` (actual router), and `components/ChatView.remote-dashboard.test.tsx`, and `components/chat/CapturedRemoteFrame.test.tsx`. They use fake shell windows and a fake fetch. Browser confinement still needs the real browser gate.
+### Not forwarded
 
-### Safe fixtures and limits
-
-Use only synthetic agents, fake bearers (for example `fake-bearer-alice`), disposable `YOPLAI_HOME` directories, and ephemeral loopback ports.
-`apps/gateway/src/server/dashboard-views.http.test.ts` runs the real adapter, the real global middleware, and a remote with the real renderer and a SQLite file.
-It switches users by relinking the fake bearer, which also proves that a relink ends old snapshots.
-`apps/gateway/src/relay/dashboard-view-shell.test.ts` runs the shell script against a fake window. It checks what the shell tells its host.
-The tests do not prove browser behavior: that the shell policy confines the renderer, opaque-origin loading, `Sec-Fetch-*` values, Vite proxy headers, history and cached restoration, CSV download, popups, and annotation need a real browser check.
-If the browser check fails, stop and ask. A separate loopback origin would still need a document identity contract.
-
-Global administration, agent creation, account Slack pairing, and shared catalog writes remain outside this batch.
-The external MCP source stays unchanged.
-Synthetic transport tests do not prove the external MCP runtime or browser popup behavior.
+The relay forwards none of these: user and quota administration, agent creation, `POST /api/skills/import`, Slack token redemption and credential connection, and OAuth callbacks.
+Node tests use synthetic agents, fake bearers, disposable `YOPLAI_HOME` directories, and ephemeral loopback ports. They do not prove browser behavior: that the shell policy confines the renderer, opaque-origin loading, `Sec-Fetch-*` values, Vite proxy headers, history and cached restoration, CSV download, popups, and annotation need a real browser.
