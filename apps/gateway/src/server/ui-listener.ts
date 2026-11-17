@@ -26,7 +26,29 @@ export interface UiListenerOptions {
 /** The same service paths as the `proxy` block of `apps/web/vite.config.ts`. */
 const FORWARDED_PREFIXES = ["/api", "/ws", "/hooks"];
 const FORWARDED_DIRECTORIES = ["/d/", "/d-assets/"];
-const HOP_BY_HOP_HEADERS = ["connection", "keep-alive", "proxy-connection", "transfer-encoding", "upgrade"];
+/** The standard hop-by-hop headers (RFC 9110 section 7.6.1, plus the old proxy-connection). A proxy must not forward them. */
+const HOP_BY_HOP_HEADERS = [
+  "connection",
+  "keep-alive",
+  "proxy-authenticate",
+  "proxy-authorization",
+  "proxy-connection",
+  "te",
+  "trailer",
+  "transfer-encoding",
+  "upgrade",
+];
+
+/** Remove the standard hop-by-hop headers and every header that `Connection` names. Returns a copy. */
+function withoutHopByHop<T extends http.IncomingHttpHeaders | http.OutgoingHttpHeaders>(source: T): T {
+  const headers = { ...source };
+  const named = String(headers.connection ?? "")
+    .split(",")
+    .map((token) => token.trim().toLowerCase())
+    .filter(Boolean);
+  for (const name of [...HOP_BY_HOP_HEADERS, ...named]) delete headers[name];
+  return headers;
+}
 
 function pathnameOf(target: string | undefined): string {
   const raw = target ?? "/";
@@ -61,8 +83,7 @@ export function redactedTarget(target: string | undefined): string {
 }
 
 function forwardedHeaders(request: IncomingMessage, gatewayHost: string, gatewayPort: number): http.OutgoingHttpHeaders {
-  const headers: http.OutgoingHttpHeaders = { ...request.headers };
-  for (const name of HOP_BY_HOP_HEADERS) delete headers[name];
+  const headers: http.OutgoingHttpHeaders = withoutHopByHop(request.headers);
   const peer = request.socket.remoteAddress ?? "";
   const previous = request.headers["x-forwarded-for"];
   headers["x-forwarded-for"] = [typeof previous === "string" ? previous : undefined, peer].filter(Boolean).join(", ");
@@ -83,7 +104,12 @@ function forwardRequest(request: IncomingMessage, response: ServerResponse, opti
       agent: false,
     },
     (upstreamResponse) => {
-      response.writeHead(upstreamResponse.statusCode ?? 502, upstreamResponse.statusMessage, upstreamResponse.headers);
+      response.writeHead(upstreamResponse.statusCode ?? 502, upstreamResponse.statusMessage, withoutHopByHop(upstreamResponse.headers));
+      // pipe does not pass an upstream failure on. Destroy the response so the browser sees a truncated body.
+      upstreamResponse.on("error", () => response.destroy());
+      upstreamResponse.on("close", () => {
+        if (!upstreamResponse.complete) response.destroy();
+      });
       upstreamResponse.pipe(response);
     }
   );
@@ -151,16 +177,27 @@ async function resolveFile(root: string, pathname: string): Promise<string | und
   }
 }
 
-/** A page path has no file extension in its last segment. A missing asset always has one. */
-function isPagePath(pathname: string): boolean {
-  return !path.posix.basename(pathname).includes(".");
+/**
+ * True for a path that gets the app shell when no file matches. The test uses the decoded path.
+ * Nothing under /assets is a page, and a last segment with a file extension is a missing file.
+ */
+function ownsPageFallback(pathname: string): boolean {
+  let decoded: string;
+  try {
+    decoded = decodeURIComponent(pathname);
+  } catch {
+    return false;
+  }
+  const normalized = path.posix.normalize(decoded);
+  if (normalized === "/assets" || normalized.startsWith("/assets/")) return false;
+  return !path.posix.basename(normalized).includes(".");
 }
 
 async function serveStatic(request: IncomingMessage, response: ServerResponse, root: string): Promise<void> {
   if (request.method !== "GET" && request.method !== "HEAD") return notFound(response);
   const pathname = pathnameOf(request.url);
   let file = await resolveFile(root, pathname);
-  if (!file && isPagePath(pathname)) file = await resolveFile(root, "/index.html");
+  if (!file && ownsPageFallback(pathname)) file = await resolveFile(root, "/index.html");
   if (!file) return notFound(response);
 
   const hashed = file.startsWith(`${root}${path.sep}assets${path.sep}`);
