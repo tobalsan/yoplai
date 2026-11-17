@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { render } from "solid-js/web";
+import { queryAllByText } from "@testing-library/dom";
 import type { Agent } from "../api/types";
 import type { PoolCatalogEntry } from "../api/teams";
 
@@ -131,6 +132,17 @@ afterEach(() => {
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
 describe("AgentCatalog action states", () => {
+  it("marks a remote agent card with its gateway and leaves a local card unmarked", async () => {
+    setSession("user");
+    fetchPoolMock.mockResolvedValue([agent("pom"), { id: "pom@ams", name: "Pom (remote)", gateway: "ams" } as Agent]);
+    fetchPoolActionsMock.mockResolvedValue([entry("pom", "chat"), entry("pom@ams", "chat")]);
+    await mountCatalog();
+    const cards = Array.from(container.querySelectorAll(".catalog-card"));
+    expect(cards).toHaveLength(2);
+    expect(queryAllByText(cards[0] as HTMLElement, "@ams")).toHaveLength(0);
+    expect(queryAllByText(cards[1] as HTMLElement, "@ams")).toHaveLength(1);
+  });
+
   it("marks the pool card whose chat fork has a credential alert", async () => {
     setSession("user");
     fetchPoolMock.mockResolvedValue([agent("scribe"), agent("helper")]);

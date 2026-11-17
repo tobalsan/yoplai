@@ -1,3 +1,4 @@
+import { decodeRouteParam } from "../lib/path";
 import {
   createMemo,
   createResource,
@@ -210,7 +211,8 @@ function ForkVisibility(props: { fork: AgentFork; canManage: boolean; onChanged:
 }
 
 export function EditAgent() {
-  const params = useParams<{ agentId: string }>();
+  const routeParams = useParams<{ agentId: string }>();
+  const params = { get agentId() { return decodeRouteParam(routeParams.agentId); } };
   // The chat cog passes its page in history state so Back returns there.
   const location = useLocation<{ backTo?: string }>();
   const backTo = () => {

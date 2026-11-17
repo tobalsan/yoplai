@@ -22,7 +22,7 @@ export async function fetchPool(): Promise<Agent[]> {
 }
 
 export async function fetchAgent(agentId: string): Promise<Agent> {
-  const res = await fetch(`${API_BASE}/agents/${agentId}`);
+  const res = await fetch(`${API_BASE}/agents/${encodeURIComponent(agentId)}`);
   if (!res.ok) throw new Error("Failed to fetch agent");
   return res.json();
 }
@@ -36,7 +36,7 @@ export async function fetchAgentDashboards(agentId: string): Promise<AgentDashbo
 }
 
 export async function fetchAgentSuggestions(agentId: string): Promise<Suggestion[]> {
-  const res = await fetch(`${API_BASE}/agents/${agentId}/suggestions`);
+  const res = await fetch(`${API_BASE}/agents/${encodeURIComponent(agentId)}/suggestions`);
   if (!res.ok) return [];
   return res.json();
 }
@@ -98,7 +98,7 @@ export async function fetchFullHistory(
     if (page.before) query.set("before", page.before);
   }
   const res = await fetch(
-    `${API_BASE}/agents/${agentId}/history?${query}`,
+    `${API_BASE}/agents/${encodeURIComponent(agentId)}/history?${query}`,
     signal ? { signal } : undefined
   );
   if (!res.ok) {

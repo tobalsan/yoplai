@@ -75,6 +75,8 @@ export type Agent = {
   authMode?: "oauth" | "api_key" | "proxy";
   queueMode?: QueueMode; // default "queue"
   isDefaultProjectManager?: boolean;
+  /** Name of the linked remote gateway that hosts this agent. Absent for a local agent. */
+  gateway?: string;
 };
 
 export type Message = {

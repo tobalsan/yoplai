@@ -1,4 +1,5 @@
 import { A, useNavigate, useParams } from "@solidjs/router";
+import { RemoteAgentMark } from "../components/RemoteAgentMark";
 import { For, Show, createEffect, createResource, createSignal, onCleanup } from "solid-js";
 import { fetchAgents, fetchAgentSessions, startNewChat } from "../api";
 import {
@@ -695,7 +696,7 @@ export function ChatProject() {
                   </Show>
                 </span>
                 <div class="agent-picker-main">
-                  <div class="agent-picker-name">{agent.name || agent.id}</div>
+                  <div class="agent-picker-name">{agent.name || agent.id}<RemoteAgentMark gateway={agent.gateway} /></div>
                   <Show when={agent.description}>
                     <div class="agent-picker-description">{agent.description}</div>
                   </Show>

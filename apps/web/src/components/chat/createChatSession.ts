@@ -74,7 +74,8 @@ export type CompactStatus = {
 };
 
 
-type HistoryLoaded = { scope: string; sessionId: string | undefined; empty: boolean };
+/** `request` numbers the history requests in start order. `refresh` marks one made after the gateway said the run ended. */
+type HistoryLoaded = { scope: string; sessionId: string | undefined; empty: boolean; request: number; refresh: boolean };
 type SendRequest = {
   text: string;
   // The composer captures this before restore/compaction; later selections belong to the next send.
@@ -300,14 +301,16 @@ export function createChatSession(input: ChatSessionInput) {
   })), activeCopyTurnTimestamp(fullMessages())));
 
   // Load history based on view mode
-  const loadHistory = async (mode: HistoryViewMode) => {
+  let latestHistoryRequest = 0;
+  const loadHistory = async (mode: HistoryViewMode, refresh = false) => {
+    const request = ++latestHistoryRequest;
     const requestedSession = currentSession();
     const agentId = input.agentId();
     const key = sessionKey();
     const sessionId = explicitSessionId();
     setLoading(true);
     const res = await fetchFullHistory(agentId, key, sessionId, { limit: 100 });
-    if (requestedSession !== currentSession()) return;
+    if (requestedSession !== currentSession() || request !== latestHistoryRequest) return;
     const offset = res.historyOffset ?? 0;
     const prefixLength = loadedHistorySession === requestedSession
       ? offset - loadedHistoryOffset
@@ -382,7 +385,7 @@ export function createChatSession(input: ChatSessionInput) {
       applyActiveTurn(res.isStreaming ?? false, res.activeTurn ?? null);
     }
     setLoading(false);
-    setHistoryLoaded({ scope: requestedSession, sessionId, empty: res.messages.length === 0 });
+    setHistoryLoaded({ scope: requestedSession, sessionId, empty: res.messages.length === 0, request, refresh });
   };
 
   const loadEarlierHistory = async () => {
@@ -902,7 +905,7 @@ export function createChatSession(input: ChatSessionInput) {
             if (pendingQueuedMessages().length > 0) {
               setPendingQueuedMessages((prev) => prev.slice(1));
             }
-            loadHistory(viewMode());
+            loadHistory(viewMode(), true);
           }
         },
       },
@@ -954,7 +957,7 @@ export function createChatSession(input: ChatSessionInput) {
           // Agent went idle and we're not the ones streaming (no active cleanup)
           // This means a background/reconnected run finished
           resetStreamingState();
-          loadHistory(viewMode());
+          loadHistory(viewMode(), true);
         }
       },
       onReconnect: () => {
@@ -1810,6 +1813,7 @@ export function createChatSession(input: ChatSessionInput) {
     streamingToolCalls, streamingFiles, streamingTextAt, streamingStartedAt,
     streamingFinished, activeTools, isStreaming, loading, stopping, showInterrupted,
     pendingQueuedMessages, historyCursor, loadingEarlier, historyError, historyLoaded,
+    historyRequests: () => latestHistoryRequest,
     contextUsageDisplay, isContextUsageDanger, contextWarning,
     compactStatusForCurrentSession, compactStatuses,
     copyTurnFor, shouldAnimate,

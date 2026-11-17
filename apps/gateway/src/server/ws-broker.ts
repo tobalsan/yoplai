@@ -12,6 +12,7 @@ import { getSessionEntry } from "../sessions/index.js";
 import { getSessionCurrentTurn, isStreaming } from "../agents/index.js";
 import type { ExtensionRuntime } from "../extensions/runtime.js";
 import { normalizeRunRequest } from "./run-request.js";
+import { RelayWsBridge } from "../relay/ws.js";
 
 type RequestAuthContext =
   import("@yoplai/extension-multi-user").RequestAuthContext;
@@ -39,6 +40,9 @@ export class WsBroker {
   private readonly connectedClients = new Set<WebSocket>();
   private readonly authContexts = new Map<WebSocket, RequestAuthContext>();
   private readonly statusSubscribers = new Set<WebSocket>();
+  /** Counts the subscribe and unsubscribe messages of each page socket. A late authorization checks it. */
+  private readonly subscribeGenerations = new Map<WebSocket, number>();
+  private readonly relayBridges = new Map<WebSocket, RelayWsBridge>();
   private readonly disposers: Array<() => void> = [];
   private wss: WebSocketServer | null = null;
 
@@ -98,15 +102,25 @@ export class WsBroker {
       this.authContexts.set(ws, request.authContext);
     }
 
+    const bridge = new RelayWsBridge(ws, request?.headers, () => {
+      this.supersedeSubscribe(ws);
+      this.subscriptions.delete(ws);
+    });
+    this.relayBridges.set(ws, bridge);
     ws.on("message", (raw) => {
-      void this.handleMessage(ws, raw.toString(), authAdapter);
+      const text = raw.toString();
+      if (bridge.handle(text)) return;
+      void this.handleMessage(ws, text, authAdapter);
     });
 
     ws.on("close", () => {
       this.subscriptions.delete(ws);
+      this.subscribeGenerations.delete(ws);
       this.statusSubscribers.delete(ws);
       this.connectedClients.delete(ws);
       this.authContexts.delete(ws);
+      this.relayBridges.get(ws)?.close();
+      this.relayBridges.delete(ws);
     });
   }
 
@@ -126,11 +140,13 @@ export class WsBroker {
     const authContext = this.authContexts.get(ws) ?? null;
 
     if (msg.type === "subscribe") {
-      await this.subscribeToSession(ws, msg, authContext, authAdapter);
+      const generation = this.supersedeSubscribe(ws);
+      await this.subscribeToSession(ws, msg, authContext, authAdapter, generation);
       return;
     }
 
     if (msg.type === "unsubscribe") {
+      this.supersedeSubscribe(ws);
       this.subscriptions.delete(ws);
       return;
     }
@@ -153,11 +169,18 @@ export class WsBroker {
     this.send(ws, { type: "error", message: "Unknown message type" });
   }
 
+  private supersedeSubscribe(ws: WebSocket): number {
+    const generation = (this.subscribeGenerations.get(ws) ?? 0) + 1;
+    this.subscribeGenerations.set(ws, generation);
+    return generation;
+  }
+
   private async subscribeToSession(
     ws: WebSocket,
     msg: Extract<WsClientMessage, { type: "subscribe" }>,
     authContext: RequestAuthContext | null,
-    authAdapter: WsBrokerAuthAdapter
+    authAdapter: WsBrokerAuthAdapter,
+    generation: number
   ): Promise<void> {
     const agent = getAgent(msg.agentId);
     if (!agent || !isAgentActive(msg.agentId)) {
@@ -168,6 +191,7 @@ export class WsBroker {
       this.send(ws, { type: "error", message: "Forbidden" });
       return;
     }
+    if (this.subscribeGenerations.get(ws) !== generation) return;
 
     this.subscriptions.set(ws, {
       agentId: msg.agentId,

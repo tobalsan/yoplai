@@ -63,7 +63,7 @@ export async function postAbort(
   sessionKey: string,
   sessionId?: string
 ): Promise<void> {
-  await fetch(`${API_BASE}/agents/${agentId}/messages`, {
+  await fetch(`${API_BASE}/agents/${encodeURIComponent(agentId)}/messages`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ message: "/abort", sessionKey, sessionId }),
@@ -110,7 +110,7 @@ export async function deleteAgentSession(
   sessionId: string
 ): Promise<void> {
   const res = await fetch(
-    `${API_BASE}/agents/${agentId}/sessions/${sessionId}`,
+    `${API_BASE}/agents/${encodeURIComponent(agentId)}/sessions/${encodeURIComponent(sessionId)}`,
     {
       method: "DELETE",
     }
@@ -124,7 +124,7 @@ export async function renameAgentSession(
   title: string
 ): Promise<void> {
   const res = await fetch(
-    `${API_BASE}/agents/${agentId}/sessions/${sessionId}`,
+    `${API_BASE}/agents/${encodeURIComponent(agentId)}/sessions/${encodeURIComponent(sessionId)}`,
     {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
@@ -140,7 +140,7 @@ export async function pinAgentSession(
   pinned: boolean
 ): Promise<void> {
   const res = await fetch(
-    `${API_BASE}/agents/${agentId}/sessions/${sessionId}`,
+    `${API_BASE}/agents/${encodeURIComponent(agentId)}/sessions/${encodeURIComponent(sessionId)}`,
     {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
@@ -156,7 +156,7 @@ export async function archiveAgentSession(
   archived: boolean
 ): Promise<void> {
   const res = await fetch(
-    `${API_BASE}/agents/${agentId}/sessions/${sessionId}`,
+    `${API_BASE}/agents/${encodeURIComponent(agentId)}/sessions/${encodeURIComponent(sessionId)}`,
     {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
@@ -181,7 +181,7 @@ export async function postCompact(
   );
   let res: Response;
   try {
-    res = await fetch(`${API_BASE}/agents/${agentId}/compact`, {
+    res = await fetch(`${API_BASE}/agents/${encodeURIComponent(agentId)}/compact`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ sessionKey, ...(sessionId ? { sessionId } : {}) }),

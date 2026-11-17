@@ -1,4 +1,5 @@
 import { createEffect, createMemo, createResource, createSignal, For, Show, onCleanup } from "solid-js";
+import { RemoteAgentMark } from "../components/RemoteAgentMark";
 import { A, useNavigate } from "@solidjs/router";
 import { fetchAgents, fetchPool } from "../api";
 import { startNewChat } from "../api/chat";
@@ -190,7 +191,7 @@ export function AgentCatalog() {
                     </div>
                   )}
                 </Show>
-                <div class="catalog-name">{agent.name}<ScheduleAlertDot agentId={mainAgentIdFor(agent.id)} /></div>
+                <div class="catalog-name">{agent.name}<RemoteAgentMark gateway={agent.gateway} /><ScheduleAlertDot agentId={mainAgentIdFor(agent.id)} /></div>
                 <Show when={agent.role}>
                   <div class="catalog-role">{agent.role}</div>
                 </Show>

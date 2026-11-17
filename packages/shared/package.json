@@ -79,6 +79,11 @@
       "development": "./src/media-types.ts",
       "import": "./dist/media-types.js",
       "types": "./dist/media-types.d.ts"
+    },
+    "./agent-id-wire": {
+      "development": "./src/agent-id-wire.ts",
+      "import": "./dist/agent-id-wire.js",
+      "types": "./dist/agent-id-wire.d.ts"
     }
   },
   "scripts": {

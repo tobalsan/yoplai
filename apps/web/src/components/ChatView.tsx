@@ -1,4 +1,6 @@
+import { decodeRouteParam } from "../lib/path";
 import { createChatSession } from "./chat/createChatSession";
+import { RemoteAgentMark } from "./RemoteAgentMark";
 import { ChatTranscript } from "./chat/ChatTranscript";
 import { createAppViews, chatAppViewCalls, viewKey } from "./chat/appViews";
 import { load as loadPanelTabs } from "./chat/appViewStorage";
@@ -126,7 +128,11 @@ export function ChatView() {
     }
   };
   void refreshToolLabels();
-  const params = useParams<{ agentId: string; view?: string }>();
+  const routeParams = useParams<{ agentId: string; view?: string }>();
+  const params = {
+    get agentId() { return decodeRouteParam(routeParams.agentId); },
+    get view() { return routeParams.view; },
+  };
   const navigate = useNavigate();
   const location = useLocation<{ mainAgentHome?: boolean; draftMessage?: string }>();
   const [agent] = createResource(() => params.agentId, fetchAgent);
@@ -252,7 +258,7 @@ export function ChatView() {
       setUploadingFiles(true);
       setUploadError("");
       try {
-        const attachments = await uploadFiles(currentPendingFiles.map((item) => item.file));
+        const attachments = await uploadFiles(currentPendingFiles.map((item) => item.file), params.agentId);
         const inboundFiles = attachments.map((attachment, index) =>
           attachmentToFileBlock(attachment, currentPendingFiles[index])
         );
@@ -585,8 +591,8 @@ export function ChatView() {
     if (mode !== viewMode()) {
       const basePath =
         mode === "full"
-          ? `/chat/${params.agentId}/full`
-          : `/chat/${params.agentId}`;
+          ? `/chat/${encodeURIComponent(params.agentId)}/full`
+          : `/chat/${encodeURIComponent(params.agentId)}`;
       const session = explicitSessionId();
       const query = new URLSearchParams();
       if (session) query.set("session", session);
@@ -741,7 +747,7 @@ export function ChatView() {
           </Show>
           <div class="agent-info-text">
             <div class="agent-title-row">
-              <div class="agent-name">{agent()?.name ?? "Loading..."}</div>
+              <div class="agent-name">{agent()?.name ?? "Loading..."}<RemoteAgentMark gateway={agent()?.gateway} /></div>
               <Show when={project()}>
                 {(proj) => (
                   <A href={`/p/${projectId()}`} class="chat-project-chip">
