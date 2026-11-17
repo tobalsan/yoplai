@@ -112,7 +112,30 @@ describe("home", () => {
       agents: [],
       gateway: { bind: "loopback" },
       ui: { bind: "loopback" },
+      oauth: { encryptionKey: "$env:OAUTH_ENCRYPTION_KEY" },
     });
+  });
+
+  it("writes a random OAuth encryption key to .env, readable by the user only", () => {
+    const first = tempDir();
+    const second = tempDir();
+    seedHome(first);
+    seedHome(second);
+
+    const envFile = path.join(first, ".env");
+    const match = /^OAUTH_ENCRYPTION_KEY=([A-Za-z0-9_-]{43})\n$/.exec(fs.readFileSync(envFile, "utf8"));
+    expect(match).not.toBeNull();
+    expect(fs.statSync(envFile).mode & 0o777).toBe(0o600);
+    expect(fs.readFileSync(path.join(second, ".env"), "utf8")).not.toBe(fs.readFileSync(envFile, "utf8"));
+  });
+
+  it("keeps the other values of a .env that exists", () => {
+    const home = tempDir();
+    fs.writeFileSync(path.join(home, ".env"), "OTHER=1\n");
+
+    seedHome(home);
+
+    expect(fs.readFileSync(path.join(home, ".env"), "utf8")).toMatch(/^OTHER=1\nOAUTH_ENCRYPTION_KEY=\S+\n$/);
   });
 
   it("keeps an existing config", () => {
