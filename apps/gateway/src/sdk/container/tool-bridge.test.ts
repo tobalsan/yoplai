@@ -62,6 +62,8 @@ describe("container tool bridge", () => {
       },
       expect.objectContaining({ extensionId: "gateway", name: "extract_document" }),
       expect.objectContaining({ extensionId: "gateway", name: "skill_save" }),
+      expect.objectContaining({ extensionId: "gateway", name: "agent_update_instructions" }),
+      expect.objectContaining({ extensionId: "gateway", name: "shared_update_system_file" }),
     ]);
   });
 

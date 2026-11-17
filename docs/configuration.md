@@ -83,6 +83,29 @@ Mattermost, Slack and Telegram settings may also live under `extensions.mattermo
 
 Pi turns that fail on a transient provider error (rate limit, 5xx, queue/backpressure hint, connection reset) are retried in place, on the host and inside the sandbox alike. Retry delays double after each attempt unless the provider supplies a `Retry-After` hint. Eligibility is per turn, not per run: only the failed assistant turn is dropped from the model context, then the run resumes in place, so tool calls and results from earlier turns are preserved and the user message is never re-sent. Partial text streamed by the failed turn is discarded with it. The dropped turn stays in the session transcript for history.
 
+### Updating instructions from chat
+
+Ask a Pi agent explicitly to change its instructions, for example, "From now on, always answer in French." The agent uses gateway tools to write on the host; sandbox mounts of `AGENTS.md` and `agent.yaml` remain read-only.
+
+| Tool | Replaces | Allowed requester |
+| --- | --- | --- |
+| `agent_update_instructions({ expected, content })` | The calling agent's own `AGENTS.md` | Admin or superadmin |
+| `shared_update_system_file({ file, expected, content })` | An existing Markdown file directly in `$YOPLAI_HOME/shared` | Superadmin only |
+
+The single-user operator counts as a superadmin. In multi-user mode, the run must identify an eligible account; an admin may change instructions for any agent they can chat with. Plain users must ask an admin, and shared-file changes require a superadmin.
+
+Both tools require a human chat source (`web`, `slack`, `discord`, `telegram`, `mattermost`, `irc`, or `threadit`) with no agent sender. Scheduled jobs, webhooks, heartbeats, dreams, orchestrator runs, and agent-to-agent turns are refused. Human replies in bound Slack and Mattermost threads remain eligible even when the run is marked `background`.
+
+IRC trusts configured `humanNicks` as the user in single-user mode; nicknames are not authenticated. All other IRC authors are treated as agent senders and refused.
+
+Multi-user changes currently require the web app or Slack with a linked eligible account. Discord, Mattermost, Telegram, IRC, and Threadit do not supply a platform account ID; these surfaces must use the web app or ask an admin. Single-user mode works on every listed chat surface.
+
+`expected` is the full current file text and `content` the full replacement. A stale `expected` refuses the write: re-read and retry. A missing `AGENTS.md` can be created with `expected: ""`. Shared `file` must be a bare `.md` filename: no paths, `..`, new files, or symlink escapes. This shared folder is separate from the sandbox's `/shared` mount setting.
+
+Successful calls return a unified diff; shared-file results also identify every configured agent that loads the file. Web chat shows the diff in the tool block; agents confirm the changed file in one short reply on messaging surfaces. Updated instructions and shared files apply on the next turn without a reload. Agents change these files only on an explicit user request; lessons still belong in skills or `memory.md`.
+
+Deployments that copy repository files such as `config/shared/*.md` into `$YOPLAI_HOME/shared` overwrite chat edits on the next deploy; these tools do not push changes back to that repository.
+
 ## Environment and secrets
 
 Use shell environment, `$YOPLAI_HOME/.env`, or agent-local `.env`; reference values as `$env:NAME`.

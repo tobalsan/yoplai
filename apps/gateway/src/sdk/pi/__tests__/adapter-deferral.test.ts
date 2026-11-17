@@ -641,7 +641,7 @@ describe("Pi gateway deferred tools", () => {
     };
     const before = await measure({ enabled: false });
     const after = await measure({});
-    expect(before.names).toHaveLength(256);
+    expect(before.names).toHaveLength(258);
     expect(before.names).not.toContain("tool_search");
     expect(after.names).toHaveLength(18);
     expect(after.schemas / before.schemas).toBeLessThanOrEqual(0.2);

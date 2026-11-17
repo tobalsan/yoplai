@@ -25,6 +25,7 @@ import {
 import { dashboardCsp, renderDashboardHtml } from "../canvas/routes.js";
 import { executeProjectTool, projectTools } from "../chat-projects/tools.js";
 import { executeSkillSave } from "../skills/tools.js";
+import { executeAgentUpdateInstructions, executeSharedUpdateSystemFile } from "../instructions/tools.js";
 import { captureSendFile } from "../mcp-apps/capture.js";
 
 const InternalToolRequestSchema = z.object({
@@ -337,6 +338,10 @@ export function createInternalTools(
           })()
         : parsed.data.tool === "skill_save"
         ? executeSkillSave(parsed.data.args, { userId: context.userId })
+        : parsed.data.tool === "agent_update_instructions"
+        ? executeAgentUpdateInstructions(parsed.data.args, { ...context, config: deps.getConfig() })
+        : parsed.data.tool === "shared_update_system_file"
+        ? executeSharedUpdateSystemFile(parsed.data.args, { ...context, config: deps.getConfig() })
         : projectTools.some((tool) => tool.name === parsed.data.tool)
         ? executeProjectTool(parsed.data.tool, parsed.data.args, context)
         : parsed.data.tool === "extract_document"
