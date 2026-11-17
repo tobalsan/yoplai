@@ -23,6 +23,7 @@ Breaking changes are marked **⚠ BREAKING**.
 - Threadit `edit_message` tool can replace or remove a message's attachments via `attachment_ids` (full set; `[]` removes all); `body` is now optional.
 - Run `pnpm --filter @yoplai/desktop dist` on an Apple Silicon Mac to build an unsigned `Yoplai.app` and a `.dmg` in `apps/desktop/release`. The app needs no repo, no pnpm, and no Node. It runs a bundled gateway and serves the web UI itself. Data lives in `~/Library/Application Support/Yoplai/home` (`YOPLAI_HOME` overrides it). A second launch shows the first window. The app picks three free ports.
 - `YOPLAI_GATEWAY_PORT`, `YOPLAI_UI_PORT`, and the new `YOPLAI_APPS_PORT` now set the ports of the gateway, the UI, and the MCP Apps listener, in the config too. `YOPLAI_WEB_DIST` makes the gateway serve a built web UI on the UI port. That port answers only a loopback Host name of the port, as Vite does. `YOPLAI_TEMPLATES_DIR` sets the folder of the agent template files. The port variables take 1 to 65535. With `YOPLAI_WEB_DIST` set, the gateway exits when the MCP Apps port cannot bind, and the app shows its error page with Restart. `YOPLAI_HOME=~/x` expands `~` in the app. A new app home also gets a random `OAUTH_ENCRYPTION_KEY` in its `.env` (mode 0600), so Connect works for local agents.
+- An agent with no avatar now shows one of ten default images on the Agents page, the sidebar, the chat header, and the other agent lists. The same agent always gets the same image.
 
 ### Changed
 

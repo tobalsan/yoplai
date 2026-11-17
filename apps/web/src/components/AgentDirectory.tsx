@@ -18,6 +18,7 @@ import {
 } from "../api";
 import type { SubagentGlobalListItem } from "../api/types";
 import { RemoteAgentMark } from "./RemoteAgentMark";
+import { AgentAvatarFill } from "./AgentAvatarFill";
 
 type AgentDirectoryProps = {
   selectedAgent: Accessor<string | null>;
@@ -62,14 +63,6 @@ function statusLabel(status: ActiveProjectItem["status"]): string {
   if (status === "running") return "RUNNING";
   if (status === "error") return "ERROR";
   return "IDLE";
-}
-
-function getInitials(name: string): string {
-  const words = name.trim().split(/\s+/);
-  if (words.length >= 2) {
-    return (words[0][0] + words[1][0]).toUpperCase();
-  }
-  return name.slice(0, 2).toUpperCase();
 }
 
 export function AgentDirectory(props: AgentDirectoryProps) {
@@ -148,6 +141,9 @@ export function AgentDirectory(props: AgentDirectoryProps) {
           letter-spacing: 0.02em;
           transition: background 0.2s ease;
         }
+
+        .agent-avatar { overflow: hidden; }
+        .agent-avatar img { width: 100%; height: 100%; object-fit: cover; }
 
         .agent-avatar.running {
           background: #166534;
@@ -277,7 +273,7 @@ function LeadAgentsSection(props: {
                 onClick={() => props.onSelectAgent(agent.id)}
               >
                 <span class="agent-avatar" classList={{ running: isRunning() }}>
-                  {getInitials(agent.name)}
+                  <AgentAvatarFill avatar={agent.avatar} agentId={agent.id} />
                 </span>
                 <span class="agent-label">{agent.name}</span>
                 <RemoteAgentMark gateway={agent.gateway} />

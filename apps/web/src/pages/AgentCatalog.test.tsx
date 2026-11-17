@@ -64,6 +64,8 @@ vi.mock("@solidjs/router", () => ({
 }));
 
 import { AgentCatalog } from "./AgentCatalog";
+import { defaultAvatarUrl } from "../lib/default-avatar";
+import { defaultAvatarSources } from "../lib/default-avatar.fixture";
 import { refreshScheduleAlerts } from "../lib/schedule-alerts";
 import {
   resetCapabilitiesForTests,
@@ -163,6 +165,14 @@ describe("AgentCatalog action states", () => {
       await refreshScheduleAlerts();
       vi.unstubAllGlobals();
     }
+  });
+
+  it("shows the default avatar on the card of an agent with no avatar", async () => {
+    setSession("user");
+    fetchPoolMock.mockResolvedValue([agent("scribe")]);
+    fetchPoolActionsMock.mockResolvedValue([entry("scribe", "chat")]);
+    await mountCatalog();
+    expect(defaultAvatarSources(container)).toContain(defaultAvatarUrl("scribe"));
   });
 
   it("shows a Chat link routed to the fork agent id when action is chat", async () => {

@@ -167,7 +167,7 @@ describe("Skills", () => {
     respond = (path) => path === "/api/skills" ? Response.json({ mine, sharedWithMe: [], agent: [agentRow("sales", "Sales", "pitch"), agentRow("hr", "HR", "onboarding"), agentRow("hr", "HR", "leave")] }) : undefined;
     await mount();
     const tabs = () => Array.from(root.querySelectorAll<HTMLButtonElement>('[role="tab"]'));
-    expect(tabs().map((tab) => tab.textContent)).toEqual(["🦊HR2", "SSales1"]);
+    expect(tabs().map((tab) => tab.textContent)).toEqual(["🦊HR2", "Sales1"]);
     expect(tabs()[0].getAttribute("aria-selected")).toBe("true");
     expect(root.textContent).toContain("onboarding guidance");
     expect(root.textContent).not.toContain("pitch guidance");

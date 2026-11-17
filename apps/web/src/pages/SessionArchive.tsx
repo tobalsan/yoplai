@@ -9,6 +9,7 @@ import {
 import type { SessionSummary } from "../api/types";
 import { ConfirmDialog } from "../components/ui/ConfirmDialog";
 import { showToast } from "../lib/toast";
+import { AgentAvatarFill } from "../components/AgentAvatarFill";
 
 function relativeTime(timestamp: number, now: number): string {
   const diff = now - timestamp;
@@ -236,22 +237,7 @@ export function SessionArchive() {
                 return (
                   <li class="archive-session">
                     <div class="archive-session-avatar">
-                      <Show
-                        when={session.avatar}
-                        fallback={session.agentId[0]?.toUpperCase()}
-                      >
-                        {(avatar) => (
-                          <Show
-                            when={
-                              avatar().startsWith("/") ||
-                              /^https?:\/\//i.test(avatar())
-                            }
-                            fallback={avatar()}
-                          >
-                            <img src={avatar()} alt="" />
-                          </Show>
-                        )}
-                      </Show>
+                      <AgentAvatarFill avatar={session.avatar} agentId={session.agentId} />
                     </div>
                     <div class="archive-session-content">
                       <span class="archive-session-title">{title()}</span>

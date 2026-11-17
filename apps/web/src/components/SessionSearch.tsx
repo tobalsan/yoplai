@@ -12,6 +12,7 @@ import { stripBase } from "../lib/path";
 import { Modal } from "./ui/Modal";
 import { searchSessions } from "../api/chat";
 import type { SessionSearchResult } from "../api/types";
+import { AgentAvatarFill } from "./AgentAvatarFill";
 
 const [searchOpen, setSearchOpen] = createSignal(false);
 
@@ -171,22 +172,7 @@ function SearchPalette(props: { onClose: () => void }) {
                   onClick={() => open(item)}
                 >
                   <span class="session-search-avatar" aria-hidden="true">
-                    <Show
-                      when={item.avatar}
-                      fallback={item.agentId[0]?.toUpperCase()}
-                    >
-                      {(avatar) => (
-                        <Show
-                          when={
-                            avatar().startsWith("/") ||
-                            /^https?:\/\//i.test(avatar())
-                          }
-                          fallback={avatar()}
-                        >
-                          <img src={avatar()} alt="" />
-                        </Show>
-                      )}
-                    </Show>
+                    <AgentAvatarFill avatar={item.avatar} agentId={item.agentId} />
                   </span>
                   <span class="session-search-copy">
                     <span class="session-search-title">
