@@ -184,8 +184,8 @@ function portFromEnv(name: string): number | undefined {
   const value = readEnv(name);
   if (value === undefined) return undefined;
   const port = Number(value);
-  if (!Number.isInteger(port) || port < 0 || port > 65535) {
-    throw new Error(`YOPLAI_${name} must be a port from 0 to 65535, got "${value}"`);
+  if (!Number.isInteger(port) || port < 1 || port > 65535) {
+    throw new Error(`YOPLAI_${name} must be a port from 1 to 65535, got "${value}"`);
   }
   return port;
 }
@@ -193,6 +193,7 @@ function portFromEnv(name: string): number | undefined {
 /**
  * The launcher sets the ports it chose in the environment. They win over the file,
  * so the listeners, the MCP Apps ticket URLs, and the origin checks read the same ports.
+ * Port 0 is refused: the proxy target, the origins, and the tickets would name port 0, not the bound port.
  */
 function applyEnvPorts(config: GatewayConfig): void {
   const gatewayPort = portFromEnv("GATEWAY_PORT");

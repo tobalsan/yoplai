@@ -433,6 +433,17 @@ describe("effective ports from the environment", () => {
     expect(config.apps?.port).toBe(4201);
   });
 
+  it("refuses port 0 and other bad ports from the environment", async () => {
+    await homeWithConfig({});
+    delete process.env.YOPLAI_UI_PORT;
+    delete process.env.YOPLAI_APPS_PORT;
+    for (const value of ["0", "65536", "-1", "abc", "30.5"]) {
+      process.env.YOPLAI_GATEWAY_PORT = value;
+      clearConfigCacheForTests();
+      expect(() => loadConfig()).toThrow(/YOPLAI_GATEWAY_PORT must be a port from 1 to 65535/);
+    }
+  });
+
   it("keeps the file ports and other settings when the environment sets none", async () => {
     await homeWithConfig({ gateway: { port: 4100, host: "127.0.0.1" }, apps: { origin: "http://127.0.0.1:4101" } });
     delete process.env.YOPLAI_GATEWAY_PORT;
