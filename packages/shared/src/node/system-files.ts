@@ -21,7 +21,7 @@ function normalizeEntry(entry: SystemFileEntry): { filePath: string; required?: 
   return { filePath: entry.path, required: entry.required };
 }
 
-function expandPath(filePath: string, workspaceDir: string): string {
+export function resolveSystemFilePath(filePath: string, workspaceDir: string): string {
   const expanded = filePath.startsWith("~")
     ? path.join(os.homedir(), filePath.slice(1))
     : expandHomePlaceholder(filePath, resolveHomeDir());
@@ -54,7 +54,7 @@ export async function resolveSystemFiles({
   const out: ResolvedSystemFile[] = [];
   const seen = new Set<string>();
   const add = async (filePath: string, required: boolean, implicit = false) => {
-    const absolutePath = expandPath(filePath, workspaceDir);
+    const absolutePath = resolveSystemFilePath(filePath, workspaceDir);
     const key = path.resolve(absolutePath);
     if (seen.has(key)) return;
     seen.add(key);

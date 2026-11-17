@@ -1075,6 +1075,8 @@ function collectHistoryEvent(
   }
 
   if (event.type === "tool_execution_end") {
+    const result = event.result;
+    const details = result && typeof result === "object" && "details" in result ? result.details : undefined;
     collected.push({
       type: "tool_result",
       id: typeof event.toolCallId === "string" ? event.toolCallId : "",
@@ -1083,6 +1085,9 @@ function collectHistoryEvent(
         : {}),
       name: typeof event.toolName === "string" ? event.toolName : "unknown",
       content: extractToolResultText(event.result),
+      ...(details && typeof details === "object" && "diff" in details && typeof details.diff === "string"
+        ? { details: { diff: details.diff } }
+        : {}),
       isError: event.isError === true,
       timestamp: Date.now(),
     });
@@ -1188,6 +1193,11 @@ async function formatGatewayToolResult(
   toolName: string,
   result: unknown
 ): Promise<string> {
+  if ((toolName === "agent_update_instructions" || toolName === "shared_update_system_file") && result && typeof result === "object" && "file" in result && typeof result.file === "string") {
+    const affected = "affectedAgents" in result && Array.isArray(result.affectedAgents)
+      ? `; affects agents: ${result.affectedAgents.join(", ")}` : "";
+    return `Updated ${result.file}${affected}`;
+  }
   const text = stringifyToolResult(result);
   if (text.length <= LARGE_TOOL_RESULT_THRESHOLD) return text;
 

@@ -7,7 +7,7 @@ const PLACEHOLDER_PATTERN = /\{([A-Za-z_][A-Za-z0-9_]*)\}/g;
 export type ToolLabelTemplates = Record<string, string>;
 
 /** Core tools with built-in argument-aware labels; never templated. */
-const BUILTIN_TOOLS = new Set(["bash", "read", "edit", "write", "grep", "find"]);
+const BUILTIN_TOOLS = new Set(["bash", "read", "edit", "write", "grep", "find", "agent_update_instructions", "shared_update_system_file"]);
 
 export function isBuiltinTool(name: string): boolean {
   return BUILTIN_TOOLS.has(name.toLowerCase());
@@ -66,6 +66,11 @@ function stringifyArg(value: unknown): string | undefined {
 /** Instant label with no stored template: key args for common tools, else humanized name. */
 export function fallbackToolLabel(name: string, args: unknown): string {
   const lower = name.toLowerCase();
+  if (lower === "agent_update_instructions") return "Updated its instructions";
+  if (lower === "shared_update_system_file") {
+    const sharedFile = stringArg(args, "file");
+    return sharedFile ? `Updated shared file ${truncateText(sharedFile, ARG_VALUE_MAX_LENGTH)}` : "Updated shared file";
+  }
   const file = stringArg(args, "path") ?? stringArg(args, "file_path");
   const fileName = file ? (file.split("/").filter(Boolean).at(-1) ?? file) : undefined;
   const command = stringArg(args, "command");

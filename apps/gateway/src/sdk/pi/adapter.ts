@@ -64,6 +64,7 @@ import { createManagedSkillsStaging, getBuiltInSkillsDir } from "./skills.js";
 import { getSkillContext } from "../../skills/context.js";
 import { resolveRunSkills } from "../../skills/resolver.js";
 import { executeSkillSave, skillSaveTool } from "../../skills/tools.js";
+import { executeAgentUpdateInstructions, executeSharedUpdateSystemFile, instructionTools } from "../../instructions/tools.js";
 import { executeProjectTool, projectTools } from "../../chat-projects/tools.js";
 import { getConversationFiles } from "../../media/conversation-files.js";
 import { ContainerFileOutputAdapter } from "../container/file-output.js";
@@ -244,6 +245,26 @@ async function createPiExtensionTools(
       return { content: [{ type: "text", text: stringifyToolResult(result) }], details: result };
     },
   });
+  for (const tool of instructionTools) {
+    const name = claimAgentToolName(tool.name, usedToolNames);
+    descriptors.push({ ...tool, name, canonicalName: tool.name });
+    piTools.push({
+      name, label: tool.description, description: tool.description,
+      parameters: tool.parameters as unknown as ToolDefinition["parameters"],
+      execute: async (_toolCallId, args) => {
+        const context = {
+          config, agentId: params.agentId, source: params.source, sender: params.sender,
+          userId: params.userId, actorKind: params.actorKind, background: params.background,
+        };
+        if (tool.name === "agent_update_instructions") {
+          const result = await executeAgentUpdateInstructions(args, context);
+          return { content: [{ type: "text", text: `Updated ${result.file}` }], details: result };
+        }
+        const result = await executeSharedUpdateSystemFile(args, context);
+        return { content: [{ type: "text", text: `Updated ${result.file}; affects agents: ${result.affectedAgents.join(", ")}` }], details: result };
+      },
+    });
+  }
   if (params.context?.project?.id) {
     for (const tool of projectTools) {
       const name = claimAgentToolName(tool.name, usedToolNames);
@@ -858,11 +879,15 @@ export const piAdapter: SdkAdapter = {
           if (invisibleToolNames.has(toolName)) return;
           // Extract text from result - handle both string and structured formats
           let content = "";
+          let details: { diff: string } | undefined;
           if (typeof rawResult === "string") {
             content = rawResult;
           } else if (rawResult && typeof rawResult === "object") {
             // Handle structured content like {content: [{type: "text", text: "..."}]}
             const obj = rawResult as Record<string, unknown>;
+            if (obj.details && typeof obj.details === "object" && "diff" in obj.details && typeof obj.details.diff === "string") {
+              details = { diff: obj.details.diff };
+            }
             if (Array.isArray(obj.content)) {
               content = (obj.content as Array<Record<string, unknown>>)
                 .filter((c) => c?.type === "text" && typeof c.text === "string")
@@ -879,6 +904,7 @@ export const piAdapter: SdkAdapter = {
             content,
             isError,
             parentToolCallId,
+            ...(details ? { details } : {}),
             ...(view ? { view } : {}),
           });
           params.onHistoryEvent({
@@ -888,6 +914,7 @@ export const piAdapter: SdkAdapter = {
             content,
             isError,
             parentToolCallId,
+            ...(details ? { details } : {}),
             ...(view ? { view } : {}),
             timestamp: Date.now(),
           });

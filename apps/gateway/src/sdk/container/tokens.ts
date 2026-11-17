@@ -17,6 +17,9 @@ export type ContainerTokenContext = {
   userId?: string;
   actorUserId?: string;
   actorKind?: "user" | "service" | "local" | "eval";
+  source?: string;
+  sender?: { kind: string };
+  background?: boolean;
   sessionOwnerId?: string | null;
   requesterId?: string;
   projectId?: string;

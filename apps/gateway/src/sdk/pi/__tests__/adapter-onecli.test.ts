@@ -139,7 +139,7 @@ describe("pi adapter onecli env wiring", () => {
     mockCreateAgentSession.mockResolvedValue({ session });
     const { piAdapter } = await import("../adapter.js");
     await piAdapter.run(makeRunParams(agent));
-    expect(mockCreateAgentSession).toHaveBeenLastCalledWith(expect.objectContaining({ customTools: [expect.objectContaining({ name: "send_file" }), expect.objectContaining({ name: "skill_save" })] }));
+    expect(mockCreateAgentSession).toHaveBeenLastCalledWith(expect.objectContaining({ customTools: [expect.objectContaining({ name: "send_file" }), expect.objectContaining({ name: "skill_save" }), expect.objectContaining({ name: "agent_update_instructions" }), expect.objectContaining({ name: "shared_update_system_file" })] }));
     await piAdapter.run({ ...makeRunParams(agent), context: { kind: "web", project: { id: "research", instructions: "" } } });
     expect(mockCreateAgentSession).toHaveBeenLastCalledWith(expect.objectContaining({
       customTools: expect.arrayContaining([
@@ -650,7 +650,7 @@ describe("pi adapter onecli env wiring", () => {
     const customToolNames = options.customTools?.map(
       (candidate) => candidate.name
     );
-    expect(customToolNames).toEqual(["scratchpad_read", "send_file", "skill_save"]);
+    expect(customToolNames).toEqual(["scratchpad_read", "send_file", "skill_save", "agent_update_instructions", "shared_update_system_file"]);
     expect(options.tools).toEqual([
       "read",
       "bash",
@@ -659,6 +659,8 @@ describe("pi adapter onecli env wiring", () => {
       "scratchpad_read",
       "send_file",
       "skill_save",
+      "agent_update_instructions",
+      "shared_update_system_file",
       "tool_search",
     ]);
     expect(customToolNames).not.toEqual(

@@ -6,6 +6,26 @@ const config: IrcExtensionConfig = { host: "localhost", port: 6667, tls: false, 
 function setup(payloads = [{ text: "**ok**" }], routerConfig: IrcExtensionConfig = config) { const runAgent = vi.fn().mockResolvedValue({ payloads, meta: { durationMs: 0, sessionId: "x" } }); const ctx = { getAgent: () => ({ id: "main", workspace: ".", extensions: { irc: { enabled: true } } }), getAgents: () => [], isAgentActive: vi.fn(() => true), runAgent } as unknown as ExtensionContext; const send = vi.fn(); return { ctx, router: new IrcRouter(ctx, routerConfig, { send, nick: "yoplai" }), runAgent, send }; }
 const message = (prefix: string, target: string, trailing: string) => ({ prefix, command: "PRIVMSG", params: [target], trailing });
 describe("IRC router", () => {
+  it.each([
+    { author: "ALICE", target: "#team", debounceMs: 0, sender: undefined },
+    { author: "bob", target: "#team", debounceMs: 0, sender: { kind: "agent", agentId: "irc:bob" } },
+    { author: "ALICE", target: "yoplai", debounceMs: 0, sender: undefined },
+    { author: "bob", target: "yoplai", debounceMs: 0, sender: { kind: "agent", agentId: "irc:bob" } },
+    { author: "ALICE", target: "#team", debounceMs: 1, sender: undefined },
+    { author: "bob", target: "#team", debounceMs: 1, sender: { kind: "agent", agentId: "irc:bob" } },
+    { author: "ALICE", target: "yoplai", debounceMs: 1, sender: undefined },
+    { author: "bob", target: "yoplai", debounceMs: 1, sender: { kind: "agent", agentId: "irc:bob" } },
+  ])("identifies $author in $target with debounce $debounceMs for requester checks", async ({ author, target, debounceMs, sender }) => {
+    vi.useFakeTimers();
+    try {
+      const { router, runAgent } = setup([], { ...config, debounceMs, dm: { enabled: true, agent: "main", debounceMs } });
+      router.handle(message(`${author}!u@h`, target, "yoplai: change a rule"));
+      await vi.advanceTimersByTimeAsync(1);
+      expect(runAgent).toHaveBeenCalledTimes(1);
+      expect(runAgent.mock.calls[0][0]).toMatchObject({ source: "irc", message: "change a rule" });
+      expect(runAgent.mock.calls[0][0].sender).toEqual(sender);
+    } finally { vi.useRealTimers(); }
+  });
   it("acks accepted channel messages before invoking the agent", () => { const { router, runAgent, send } = setup([]); router.handle(message("bob!u@h", "#team", "yoplai: answer")); expect(send).toHaveBeenCalledWith("#team", "👀"); expect(send.mock.invocationCallOrder[0]).toBeLessThan(runAgent.mock.invocationCallOrder[0]); });
   it("acks reply-all channel messages without requiring a mention", () => { const { router, runAgent, send } = setup([], { ...config, channels: { "#team": { agent: "main", mode: "reply-all" } } }); router.handle(message("bob!u@h", "#team", "answer")); expect(send).toHaveBeenCalledWith("#team", "👀"); expect(runAgent).toHaveBeenCalledWith(expect.objectContaining({ message: "answer" })); });
   it("does not ack ignored, unaddressed, disallowed, or loop-guarded messages", () => { const { ctx, router, runAgent, send } = setup([]); router.handle(message("bob!u@h", "#team", "unaddressed")); router.handle(message("mallory!u@h", "yoplai", "disallowed")); router.handle(message("yoplai!u@h", "#team", "yoplai: loop")); const guardedSend = vi.fn(); const guarded = new IrcRouter(ctx, { ...config, maxA2ATurns: 0, humanNicks: [] }, { send: guardedSend, nick: "yoplai" }); const warn = vi.spyOn(console, "warn").mockImplementation(() => {}); try { guarded.handle(message("bob!u@h", "#team", "yoplai: capped")); } finally { warn.mockRestore(); } expect(runAgent).not.toHaveBeenCalled(); expect(send).not.toHaveBeenCalled(); expect(guardedSend).not.toHaveBeenCalled(); });
