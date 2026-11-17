@@ -21,7 +21,7 @@ const agent = "assistant%40east";
 const PROVIDER_URL = "https://provider.example.test/authorize?state=abc";
 
 const remoteCapabilities = {
-  version: 2, extensions: { scheduler: true }, agents: ["assistant"], multiUser: true, forkedAgents: false,
+  version: 2, extensions: { scheduler: true, mcp: true }, agents: ["assistant"], multiUser: true, forkedAgents: false,
   enableCronMonitoring: true, user: { id: "remote-alice", name: "Alice", email: "alice@example.test", role: "admin" },
 };
 
@@ -71,7 +71,7 @@ function BannerPage() {
 beforeEach(() => {
   vi.useFakeTimers({ shouldAdvanceTime: true });
   localStorage.clear();
-  setCapabilitiesForTests({ extensions: {}, multiUser: false });
+  setCapabilitiesForTests({ extensions: { mcp: true }, multiUser: false });
   gateways = createFakeGateways();
   gateways.on("GET", "/api/agents", { json: [
     { id: "assistant", name: "Local Assistant" },
@@ -531,6 +531,7 @@ describe("Edit page of a remote agent", () => {
 
   describe("my connections tab", () => {
     it("ignores a late disconnect error of the old agent and keeps the connections of the new agent usable", async () => {
+      setCapabilitiesForTests({ extensions: { mcp: true }, multiUser: true });
       let fail: (() => void) | undefined;
       gateways.on("GET", `${east}/api/agents/${agent}/connections`, { json: { connections: [{ kind: "oauth", id: "google", name: "Google", personal: true, team: false }] } });
       gateways.on("GET", `${east}/api/mcp/oauth/status?agent=${agent}&scope=team`, { json: { servers: [] } });
@@ -620,7 +621,7 @@ describe("Edit page of a remote agent", () => {
     });
 
     it("keeps no job of the old gateway after a failed read on a second remote gateway, and sends no action for it", async () => {
-      setCapabilitiesForTests({ extensions: { scheduler: true }, multiUser: false, enableCronMonitoring: true });
+      setCapabilitiesForTests({ extensions: { scheduler: true, mcp: true }, multiUser: false, enableCronMonitoring: true });
       gateways.on("GET", `${east}/api/schedules?agent=${agent}`, { json: [job({ name: "East Digest" })] });
       gateways.on("GET", `${west}/api/schedules?agent=assistant%40west`, { status: 502, json: { error: "gateway_offline" } });
       gateways.on("GET", `${west}/api/agents/assistant%40west/extensions`, { json: { extensions: [] } });
@@ -636,7 +637,7 @@ describe("Edit page of a remote agent", () => {
     });
 
     it("clears remote jobs when the local list fails, and sends no action with a remote job ID", async () => {
-      setCapabilitiesForTests({ extensions: { scheduler: true }, multiUser: false, enableCronMonitoring: true });
+      setCapabilitiesForTests({ extensions: { scheduler: true, mcp: true }, multiUser: false, enableCronMonitoring: true });
       gateways.on("GET", `${east}/api/schedules?agent=${agent}`, { json: [job({ name: "East Digest" })] });
       gateways.on("GET", "/api/schedules?agent=assistant", { status: 403, json: {} });
       gateways.on("GET", "/api/agents/assistant/extensions", { json: { extensions: [] } });
@@ -652,7 +653,7 @@ describe("Edit page of a remote agent", () => {
     });
 
     it("drops an open delete dialog and a pending action when the agent changes", async () => {
-      setCapabilitiesForTests({ extensions: { scheduler: true }, multiUser: false, enableCronMonitoring: true });
+      setCapabilitiesForTests({ extensions: { scheduler: true, mcp: true }, multiUser: false, enableCronMonitoring: true });
       gateways.on("GET", `${east}/api/schedules?agent=${agent}`, { json: [job({ name: "East Digest" })] });
       gateways.on("GET", "/api/schedules?agent=assistant", { json: [] });
       gateways.on("GET", "/api/agents/assistant/extensions", { json: { extensions: [] } });
@@ -669,7 +670,7 @@ describe("Edit page of a remote agent", () => {
     });
 
     it("ignores a late schedule change of the old gateway", async () => {
-      setCapabilitiesForTests({ extensions: { scheduler: true }, multiUser: false, enableCronMonitoring: true });
+      setCapabilitiesForTests({ extensions: { scheduler: true, mcp: true }, multiUser: false, enableCronMonitoring: true });
       let fail: (() => void) | undefined;
       gateways.on("GET", `${east}/api/schedules?agent=${agent}`, { json: [job({ name: "East Digest" })] });
       gateways.on("PATCH", `${east}/api/schedules/${agent}/job-1`, () => new Promise((resolve) => { fail = () => resolve({ status: 403, json: { error: "team_requires_admin" } }); }));

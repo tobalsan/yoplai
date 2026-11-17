@@ -33,13 +33,13 @@ export function AgentConnectionsPanel(props: {
   createComputed(() => { void props.agentId; void props.gateway; void requester().user?.id; visit++; });
   onCleanup(() => { visit++; requestId++; });
 
-  const refresh = async (agentId: string, userId?: string) => {
+  const refresh = async (agentId: string, userId: string | undefined, includeMcp: boolean) => {
     const gateway = props.gateway;
     const currentRequest = ++requestId;
     setLoading(true);
     setError(undefined);
     setMcpError(undefined);
-    if (props.includeMcp) {
+    if (includeMcp) {
       setMcpLoading(true);
       void fetchAgentMcpConnections(agentId, Boolean(userId), gateway)
         .then((next) => {
@@ -71,17 +71,23 @@ export function AgentConnectionsPanel(props: {
     }
   };
 
+  // The MCP part needs the mcp extension on the gateway. A gateway that is not ready or not known has none.
+  const mcpAvailable = () => props.includeMcp === true && requester().isExtensionEnabled("mcp");
+  // A known single-user gateway has no personal connections, so the panel shows the team connection only.
+  const showPersonal = () => !(requester().ready && !requester().unknown && !requester().multiUser);
+
   createEffect(() => {
     const agentId = props.agentId;
     void props.gateway;
     const userId = requester().user?.id;
     // A remote identity is unknown until its context loads. Do not read personal status before.
     if (props.gateway !== undefined && !requester().ready) return;
+    const includeMcp = mcpAvailable();
     setConnections([]);
     setMcpConnections([]);
     // A disconnect of the old identity must not leave the new list locked.
     setPending(undefined);
-    if (agentId) void refresh(agentId, userId);
+    if (agentId) void refresh(agentId, userId, includeMcp);
   });
 
   const disconnect = async (connection: AgentConnection) => {
@@ -98,7 +104,7 @@ export function AgentConnectionsPanel(props: {
     try {
       if (connection.kind === "mcp") await disconnectMcpConnection(agentId, connection.id, gateway);
       else await disconnectAgentConnection(agentId, connection.kind, connection.id, gateway);
-      if (same()) await refresh(agentId, userId);
+      if (same()) await refresh(agentId, userId, mcpAvailable());
     } catch (cause) {
       if (!same()) return;
       if (connection.kind === "mcp") setMcpError(cause instanceof Error ? cause.message : "Failed to disconnect MCP connection");
@@ -115,7 +121,7 @@ export function AgentConnectionsPanel(props: {
       <style>{STATUS_PILL_STYLES + AGENT_CONNECTIONS_STYLES}</style>
       <header class="agent-connections-head">
         <h2>My connections</h2>
-        <p>Your own connections sit next to the team fallback. Disconnecting removes only yours; the team connection stays.</p>
+        <p>{showPersonal() ? "Your own connections sit next to the team fallback. Disconnecting removes only yours; the team connection stays." : "These connections belong to the team."}</p>
       </header>
       <Show when={loading()}><p class="agent-connections-note" role="status">Loading connections…</p></Show>
       <Show when={error()}>{(message) => <p role="alert" class="agent-connections-error">{message()}</p>}</Show>
@@ -142,6 +148,7 @@ export function AgentConnectionsPanel(props: {
                     <span class="agent-connection-kind">{KIND_LABELS[connection.kind]}</span>
                   </span>
                 </div>
+                <Show when={showPersonal()}>
                 <div class="agent-connection-scope" data-scope="personal">
                   <ScopeIcon scope="personal" class="agent-connection-scope-icon" />
                   <span class="agent-connection-scope-text">
@@ -161,10 +168,11 @@ export function AgentConnectionsPanel(props: {
                     </button>
                   </Show>
                 </div>
+                </Show>
                 <div class="agent-connection-scope" data-scope="team">
                   <ScopeIcon scope="team" class="agent-connection-scope-icon" />
                   <span class="agent-connection-scope-text">
-                    <span class="agent-connection-scope-label">Whole team</span>
+                    <Show when={showPersonal()}><span class="agent-connection-scope-label">Whole team</span></Show>
                     <StatusPill status={connection.team ? STATUS_CONNECTED : STATUS_NOT_CONNECTED} />
                   </span>
                 </div>

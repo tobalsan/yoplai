@@ -15,11 +15,14 @@ vi.mock("../api/connections", () => ({
   fetchAgentMcpConnections: fetchMcpMock,
   disconnectMcpConnection: disconnectMcpMock,
 }));
+const { fetchCapsMock } = vi.hoisted(() => ({ fetchCapsMock: vi.fn() }));
+vi.mock("../api/gateway", async (importOriginal) => ({ ...(await importOriginal<typeof import("../api/gateway")>()), fetchGatewayCapabilities: fetchCapsMock }));
 vi.mock("../auth/client", () => ({ useSession: useSessionMock }));
 
 import { AgentConnectionsPanel } from "./AgentConnectionsPanel";
 import type { ExtensionCatalogEntry } from "../api/extensions";
 import { createSignal } from "solid-js";
+import { resetCapabilitiesForTests, setCapabilitiesForTests } from "../lib/capabilities";
 
 let root: HTMLDivElement;
 let dispose: () => void;
@@ -29,7 +32,9 @@ beforeEach(() => {
   fetchConnectionsMock.mockReset();
   disconnectMock.mockReset();
   fetchMcpMock.mockReset();
+  fetchCapsMock.mockReset();
   disconnectMcpMock.mockReset();
+  setCapabilitiesForTests({ multiUser: true, extensions: { mcp: true } });
   const [session] = createSignal({ data: { user: { id: "alice" } } });
   useSessionMock.mockReturnValue(session);
   root = document.createElement("div");
@@ -38,6 +43,7 @@ beforeEach(() => {
 afterEach(() => {
   dispose?.();
   root.remove();
+  resetCapabilitiesForTests();
 });
 
 describe("AgentConnectionsPanel", () => {
@@ -174,5 +180,50 @@ describe("AgentConnectionsPanel", () => {
     resolveAlice([{ kind: "oauth", id: "google", name: "Alice Drive", personal: true, team: false }]);
     await tick();
     expect(root.textContent).not.toContain("Alice Drive");
+  });
+
+  it("shows the team connection only, with no scope label, on a single-user gateway", async () => {
+    setCapabilitiesForTests({ multiUser: false, extensions: {} });
+    useSessionMock.mockReturnValue(createSignal({ data: null })[0]);
+    fetchConnectionsMock.mockResolvedValue([{ kind: "extension", id: "exa", name: "Exa", personal: false, team: true }]);
+    dispose = render(() => <AgentConnectionsPanel agentId="scribe" includeMcp />, root);
+    await tick();
+    expect(root.textContent).toContain("Exa");
+    expect(root.textContent).not.toContain("Just me");
+    expect(root.textContent).not.toContain("Whole team");
+    expect(root.textContent).toContain("Connected");
+  });
+
+  it("reads no MCP status and shows no MCP error when the gateway has no mcp extension", async () => {
+    setCapabilitiesForTests({ multiUser: true, extensions: {} });
+    fetchConnectionsMock.mockResolvedValue([{ kind: "oauth", id: "google", name: "Google Drive", personal: true, team: false }]);
+    dispose = render(() => <AgentConnectionsPanel agentId="scribe" includeMcp />, root);
+    await tick();
+    expect(fetchMcpMock).not.toHaveBeenCalled();
+    expect(root.textContent).toContain("Google Drive");
+    expect(root.textContent).not.toContain("MCP connections unavailable");
+    expect(root.textContent).not.toContain("Loading MCP connections");
+  });
+
+  it("reads MCP status of a remote gateway only when its capabilities list mcp", async () => {
+    fetchConnectionsMock.mockResolvedValue([]);
+    fetchMcpMock.mockResolvedValue([]);
+    fetchCapsMock.mockResolvedValue({ multiUser: true, extensions: { mcp: true }, user: { id: "bob" } });
+    dispose = render(() => <AgentConnectionsPanel agentId="scribe" gateway="ams" includeMcp />, root);
+    await tick();
+    expect(fetchMcpMock).toHaveBeenCalledWith("scribe", true, "ams");
+  });
+
+  it("reads no MCP status of a remote gateway without mcp, or with unknown capabilities", async () => {
+    fetchConnectionsMock.mockResolvedValue([]);
+    fetchCapsMock.mockResolvedValue({ multiUser: true, extensions: {}, user: { id: "bob" } });
+    dispose = render(() => <AgentConnectionsPanel agentId="scribe" gateway="ams" includeMcp />, root);
+    await tick();
+    dispose();
+    fetchCapsMock.mockRejectedValue(new Error("offline"));
+    dispose = render(() => <AgentConnectionsPanel agentId="scribe" gateway="tms" includeMcp />, root);
+    await tick();
+    expect(fetchMcpMock).not.toHaveBeenCalled();
+    expect(root.textContent).not.toContain("MCP connections unavailable");
   });
 });
