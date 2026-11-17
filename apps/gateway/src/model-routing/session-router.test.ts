@@ -216,7 +216,7 @@ describe("durable routing telemetry", () => {
     if (kind === "dream") input.sessionId = "dream:session";
     if (kind === "compact") input.sessionId = "compact:session";
     if (kind === "opt-out") input.agent = { ...agent, modelRouting: { enabled: false } };
-    if (kind === "non-pi") input.sdk = "openclaw";
+    if (kind === "non-pi") input.sdk = "test";
     const extra = kind === "agent" ? { sender: { kind: "agent" } } : kind === "background" ? { background: true } : kind === "model" ? { model: { provider: "usual-provider", model: "usual-model" } } : {};
     expect(await routeSession({ ...input, ...extra }, { classifier })).toEqual({});
     expect((await entries()).filter((entry) => entry.key === "modelRouteAttempt")).toHaveLength(0);

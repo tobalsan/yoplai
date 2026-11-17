@@ -204,7 +204,7 @@ describe("failed-run user message persistence (real store)", () => {
     ]);
   });
 
-  it("single user entry across a real thinking-level fallback retry (OpenClaw shape)", async () => {
+  it("single user entry across a real thinking-level fallback retry (text-only adapter shape)", async () => {
     SID = "int-6";
     getAgent.mockReturnValue(createAgent({ reasoning: "high" }));
     let attempt = 0;
@@ -217,7 +217,7 @@ describe("failed-run user message persistence (real store)", () => {
           timestamp: Date.now(),
         });
         if (attempt === 1) {
-          // OpenClaw ends the turn before rejecting thinking-level errors.
+          // The adapter ends the turn before rejecting thinking-level errors.
           params.onHistoryEvent({ type: "turn_end", timestamp: Date.now() });
           throw new Error("thinking level not supported by model");
         }

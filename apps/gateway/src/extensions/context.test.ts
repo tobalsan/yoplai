@@ -293,7 +293,13 @@ describe("createExtensionContext media helpers", () => {
 
   it("stops an owner-scoped run through its controller when the SDK cannot interrupt", async () => {
     const { writeTestV3Config } = await import("../test-utils/v3-config.js");
-    await writeTestV3Config(tmpDir, { agents: [{ id: "alpha", extraYaml: "sdk: openclaw" }] });
+    await writeTestV3Config(tmpDir, { agents: [{ id: "alpha" }] });
+    const registry = await import("../sdk/registry.js");
+    const { piAdapter } = await import("../sdk/pi/adapter.js");
+    vi.spyOn(registry, "getSdkAdapter").mockReturnValue({
+      ...piAdapter,
+      capabilities: { ...piAdapter.capabilities, interrupt: false },
+    });
     const { createExtensionContext } = await import("./context.js");
     const { SessionRunLifecycle } = await import("../agents/run-lifecycle.js");
     const { setSessionHandle } = await import("../agents/sessions.js");

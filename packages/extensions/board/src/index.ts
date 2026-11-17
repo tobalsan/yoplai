@@ -523,8 +523,7 @@ function registerBoardRoutes(app: Hono): void {
     return (
       value === "claude" ||
       value === "codex" ||
-      value === "pi" ||
-      value === "openclaw"
+      value === "pi"
     );
   }
 

@@ -9,6 +9,10 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ## [Unreleased]
 
+### Removed
+
+- **⚠ BREAKING**: Removed the OpenClaw SDK and the `claude` SDK id. Agents with `sdk: openclaw`, `sdk: claude`, or an `openclaw:` block now fail validation and must use `pi`.
+
 ### Added
 
 - Chat can update an agent's instructions (admins and superadmins) or existing shared Markdown system files (superadmins), with requester checks, conflict protection, and a visible diff; the single-user operator can use both tools.

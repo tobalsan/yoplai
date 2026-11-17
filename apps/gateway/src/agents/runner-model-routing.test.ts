@@ -14,7 +14,7 @@ import { getMediaInboundDir } from "../media/metadata.js";
 import { piAdapter } from "../sdk/pi/adapter.js";
 import * as containerAdapterModule from "../sdk/container/adapter.js";
 import type { SdkRunParams } from "../sdk/types.js";
-import { openclawAdapter } from "../sdk/openclaw/adapter.js";
+import * as registry from "../sdk/registry.js";
 import { agentEventBus, type AgentHistoryEvent } from "./events.js";
 import type { WorkRequestResult, CategoryResult } from "../model-routing/classifier.js";
 
@@ -467,18 +467,21 @@ describe("session model routing through runAgent", () => {
   it("keeps non-Pi SDK runs on the configured model", async () => {
     const config = GatewayConfigSchema.parse({ agents: [agent], extensions: {}, modelRouting: routingConfig });
     // Exercise the runtime guard even if an opted-in agent changes SDK.
-    config.agents[0].sdk = "openclaw";
+    config.agents[0].sdk = "test" as typeof agent.sdk;
     setLoadedConfig(config);
-    const run = vi.spyOn(openclawAdapter, "run").mockImplementation(async (params) => {
-      models.push((params.model ?? params.agent.model).model);
-      return { text: "non-Pi answer" };
+    const sdk = vi.spyOn(registry, "getSdkAdapter").mockReturnValue({
+      ...piAdapter,
+      run: async (params) => {
+        models.push((params.model ?? params.agent.model).model);
+        return { text: "non-Pi answer" };
+      },
     });
     try {
       await expect(send("Build a report")).resolves.toMatchObject({ payloads: [{ text: "non-Pi answer" }] });
       expect(models).toEqual(["usual"]);
       expect(classifier.checkWorkRequest).not.toHaveBeenCalled();
       expect(await readSessionMeta(agent.id, sessionId, "modelRoute")).toBeUndefined();
-    } finally { run.mockRestore(); }
+    } finally { sdk.mockRestore(); }
   });
   it("correlates the attempt with the persisted human timestamp and exposes routing on the first traced event", async () => {
     configure("shadow");

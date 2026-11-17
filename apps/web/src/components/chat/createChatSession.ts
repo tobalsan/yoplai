@@ -1251,18 +1251,6 @@ export function createChatSession(input: ChatSessionInput) {
 
     // If streaming in queue mode, send message without interrupting current stream
     if (isStreaming() && queueMode === "queue") {
-      const sdkId = currentAgent?.sdk ?? "pi";
-      const trackSequentialQueue = sdkId === "openclaw";
-      if (trackSequentialQueue) {
-        setPendingQueuedMessages((prev) => [
-          ...prev,
-          {
-            text: messageText,
-            files: inboundFiles.length > 0 ? inboundFiles : undefined,
-            timestamp: userMsg.timestamp,
-          },
-        ]);
-      }
       let queuedText = "";
       let queuedThinking = "";
       const queuedFiles: FileBlock[] = [];
@@ -1306,12 +1294,6 @@ export function createChatSession(input: ChatSessionInput) {
           if (!isCurrentQueuedStream()) {
             if (queueCleanup) queueCleanup();
             return;
-          }
-
-          if (trackSequentialQueue) {
-            setPendingQueuedMessages((prev) =>
-              prev.length ? prev.slice(0, -1) : prev
-            );
           }
 
           const blocks: ChatContentBlock[] = queuedBlocks.length

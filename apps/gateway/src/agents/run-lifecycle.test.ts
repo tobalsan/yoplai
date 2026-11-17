@@ -121,7 +121,7 @@ describe("beginUserTurn (pre-acceptance)", () => {
     );
   });
 
-  it("echo suppression survives turn_end and rearms (OpenClaw retry shape)", async () => {
+  it("echo suppression survives turn_end and rearms (text-only adapter retry)", async () => {
     const sessionId = `preaccept-retry-${Date.now()}`;
     const lifecycle = makeLifecycle(sessionId);
 

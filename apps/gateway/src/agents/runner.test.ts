@@ -122,7 +122,7 @@ describe("runAgent session_history prompt gating", () => {
     getSessionThinkLevel.mockResolvedValue("low");
   });
 
-  async function run(sdk: "pi" | "openclaw", config: Record<string, unknown> = {}) {
+  async function run(sdk: "pi", config: Record<string, unknown> = {}) {
     const adapter = createAdapter();
     getSdkAdapter.mockReturnValue(adapter);
     getAgent.mockReturnValue(createAgent({ sdk }));
@@ -134,9 +134,6 @@ describe("runAgent session_history prompt gating", () => {
 
   it("advertises for pi by default", async () => {
     expect(await run("pi")).toBe(true);
-  });
-  it("does not advertise for openclaw", async () => {
-    expect(await run("openclaw")).toBe(false);
   });
   it("does not advertise when disabled in config", async () => {
     expect(await run("pi", { sessionHistory: { enabled: false } })).toBe(false);

@@ -53,7 +53,7 @@ Common fields:
 | `id`                                  | Unique id; must match workspace folder                      |
 | `name`                                | Display name                                                |
 | `system_files`                        | Ordered prompt files; `AGENTS.md` is prepended when present |
-| `sdk`                                 | `pi` (default), `claude`, or `openclaw`                     |
+| `sdk`                                 | `pi` (default)                                            |
 | `description`, `avatar`, `role`       | Optional UI metadata                                        |
 | `model.provider`                      | Provider id; required for Pi                                |
 | `model.model`                         | Model id                                                    |

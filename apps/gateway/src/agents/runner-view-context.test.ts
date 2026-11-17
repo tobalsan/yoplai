@@ -200,11 +200,4 @@ describe("MCP App context in newly started runs", () => {
     expect(history.filter((message) => message.role === "user").map((message) => message.content)).toEqual([[{ type: "text", text: "Update this one" }]]);
     expect(contexts.snapshot({ agentId: agent.id, sessionId })).toEqual([]);
   });
-  it("keeps openclaw outside context snapshot and consumption", async () => {
-    setLoadedConfig(GatewayConfigSchema.parse({ agents: [{ ...agent, sdk: "openclaw" }], extensions: {} }));
-    setContext();
-    await send("OpenClaw turn");
-    expect(captured[0].nudge).toBeUndefined();
-    expect(contexts.snapshot({ agentId: agent.id, sessionId })).toEqual([{ viewKey: "boards\nui://selection", value: "APP-TOKEN-17" }]);
-  });
 });

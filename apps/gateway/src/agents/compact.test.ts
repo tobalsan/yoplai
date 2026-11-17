@@ -193,7 +193,7 @@ describe("compactAgentSession single-flight coordination", () => {
 
   it("rejects unsupported harnesses without touching history or runtime", async () => {
     const { compactAgentSession } = await import("./compact.js");
-    getAgent.mockReturnValue({ id: "alpha", sdk: "openclaw", model: { provider: "anthropic", model: "claude" } });
+    getAgent.mockReturnValue({ id: "alpha", sdk: "test", model: { provider: "anthropic", model: "claude" } });
     await expect(compactAgentSession({ agentId: "alpha", sessionId: "s1", sessionKey: "main" })).rejects.toThrow("only for Pi");
     expect(getFullSessionHistory).not.toHaveBeenCalled();
     expect(writeFile).not.toHaveBeenCalled();

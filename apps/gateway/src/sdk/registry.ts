@@ -1,10 +1,8 @@
 import type { SdkAdapter, SdkId } from "./types.js";
 import { piAdapter } from "./pi/adapter.js";
-import { openclawAdapter } from "./openclaw/adapter.js";
 
 const adapters: Record<SdkId, SdkAdapter> = {
   pi: piAdapter,
-  openclaw: openclawAdapter,
 };
 
 export function getSdkAdapter(id: SdkId): SdkAdapter {
