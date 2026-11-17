@@ -22,7 +22,7 @@ Breaking changes are marked **⚠ BREAKING**.
 - Multi-user chat share links let any signed-in colleague read the latest saved conversation, with owner-only revocation, name-only files and inert app views.
 - Threadit `edit_message` tool can replace or remove a message's attachments via `attachment_ids` (full set; `[]` removes all); `body` is now optional.
 - Run `pnpm --filter @yoplai/desktop dist` on an Apple Silicon Mac to build an unsigned `Yoplai.app` and a `.dmg` in `apps/desktop/release`. The app needs no repo, no pnpm, and no Node. It runs a bundled gateway and serves the web UI itself. Data lives in `~/Library/Application Support/Yoplai/home` (`YOPLAI_HOME` overrides it). A second launch shows the first window. The app picks three free ports.
-- `YOPLAI_GATEWAY_PORT`, `YOPLAI_UI_PORT`, and the new `YOPLAI_APPS_PORT` now set the ports of the gateway, the UI, and the MCP Apps listener, in the config too. `YOPLAI_WEB_DIST` makes the gateway serve a built web UI on the UI port. `YOPLAI_TEMPLATES_DIR` sets the folder of the agent template files.
+- `YOPLAI_GATEWAY_PORT`, `YOPLAI_UI_PORT`, and the new `YOPLAI_APPS_PORT` now set the ports of the gateway, the UI, and the MCP Apps listener, in the config too. `YOPLAI_WEB_DIST` makes the gateway serve a built web UI on the UI port. `YOPLAI_TEMPLATES_DIR` sets the folder of the agent template files. The port variables take 1 to 65535. With `YOPLAI_WEB_DIST` set, the gateway exits when the MCP Apps port cannot bind, and the app shows its error page with Restart. `YOPLAI_HOME=~/x` expands `~` in the app.
 
 ### Changed
 
