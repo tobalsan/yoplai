@@ -7,6 +7,7 @@
     "build:web": "pnpm --filter @yoplai/web build",
     "dev": "pnpm exec tsx scripts/dev.ts",
     "dev:gateway": "pnpm --filter @yoplai/shared exec tsc --watch --preserveWatchOutput & NODE_OPTIONS='--conditions=development' YOPLAI_WEB_DEV=1 pnpm --filter @yoplai/gateway exec tsx watch --include '../../packages/shared/dist/**/*' src/cli/index.ts gateway",
+    "desktop": "pnpm --filter @yoplai/desktop build && pnpm --filter @yoplai/desktop start",
     "dev:web": "pnpm --filter @yoplai/web dev",
     "lint": "eslint .",
     "typecheck": "tsc -b",

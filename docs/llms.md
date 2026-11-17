@@ -8,6 +8,8 @@ This document is the cross-package map for coding agents. Use it to find ownersh
 
 ## Repository layout
 
+- `apps/desktop` (`@yoplai/desktop`): Electron window. `pnpm desktop` builds with `tsc` and runs `launch.mjs`, a dev launcher that starts Electron in its own process group and forwards the first SIGINT/SIGTERM. `YOPLAI_UI_HOST` sets the bind host of the UI child. `YOPLAI_GATEWAY_HOST` sets the gateway address of the Vite proxy. The desktop sets both to `127.0.0.1` and starts the gateway with `--host 127.0.0.1`. `src/launch-plan.ts` is the only module that knows how children start (dev mode: pnpm, tsx, Vite). `stack.ts` starts the plan in process groups, `links.ts` routes links, permissions, and navigation. No preload.
+
 ```text
 yoplai/
 ├── apps/
