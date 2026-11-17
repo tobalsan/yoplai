@@ -3,6 +3,7 @@ import path from "node:path";
 import { Hono, type Context } from "hono";
 import type { ContentfulStatusCode } from "hono/utils/http-status";
 import { z } from "zod";
+import { decodeSkillId } from "@yoplai/shared/skill-id-wire";
 import { MAX_UPLOAD_SIZE_BYTES } from "../media/upload.js";
 import { inspectSkillDirectory, type SkillStore } from "./store.js";
 import type { SkillAccessPolicy } from "./access.js";
@@ -94,6 +95,21 @@ export function createSkillRoutes(deps: SkillRoutesDeps): Hono {
     console.warn("[skills] Request failed");
     return c.json({ error: "skills_unavailable" }, 500);
   });
+  // One accessor reads the skill ID for both route families. The legacy routes carry the ID in `:id`. The alias routes
+  // carry the canonical wire form in `:wireId`, and the accessor decodes it once. The decoded ID is only a store key and a
+  // policy input. It never becomes a path, a URL, or a gateway name.
+  const skillId = (c: Context): string => {
+    if (c.req.param("wireId") === undefined) return c.req.param("id")!;
+    // The parameter above is already URL-decoded, so `%76%31_` would read as `v1_`. The codec checks the raw segment of
+    // the request path instead, and a percent escape in it is never canonical.
+    const wire = /(?:^|\/)skill-ids\/([^/]+)/.exec(new URL(c.req.url).pathname)?.[1];
+    const id = wire === undefined ? undefined : decodeSkillId(wire);
+    if (id === undefined) throw new SkillError("invalid_skill_id");
+    return id;
+  };
+  // A handler of a skill object serves its legacy route and its alias route.
+  const object = (method: "GET" | "PUT" | "POST" | "DELETE", suffix: string, handler: (c: Context) => Response | Promise<Response>) =>
+    routes.on(method, [`/skills/:id${suffix}`, `/skill-ids/:wireId${suffix}`], handler);
   const context = async (c: Context) => {
     const actor = await deps.getActor(c);
     if (!actor) throw new SkillError("unauthorized", 401);
@@ -101,14 +117,14 @@ export function createSkillRoutes(deps: SkillRoutesDeps): Hono {
   };
   const userRow = async (c: Context, write = false) => {
     const ctx = await context(c);
-    const skill = await ctx.store.get(c.req.param("id")!);
+    const skill = await ctx.store.get(skillId(c));
     if (!skill || !(write ? await ctx.policy.canWrite(skill, ctx.actor) : await ctx.policy.canRead(skill, ctx.actor))) throw new SkillError("not_found", 404);
     return { ...ctx, skill };
   };
   const superadminRow = async (c: Context) => {
     const ctx = await context(c);
     if (ctx.actor.role !== "superadmin") throw new SkillError("forbidden", 403);
-    const skill = await ctx.store.get(c.req.param("id")!);
+    const skill = await ctx.store.get(skillId(c));
     if (!skill) throw new SkillError("not_found", 404);
     return { ...ctx, skill };
   };
@@ -195,9 +211,9 @@ export function createSkillRoutes(deps: SkillRoutesDeps): Hono {
     await context(c);
     return c.json({ users: await deps.getRecipients() });
   });
-  routes.get("/skills/:id", async (c) => {
+  object("GET", "", async (c) => {
     const ctx = await context(c);
-    const id = c.req.param("id");
+    const id = skillId(c);
     if (ctx.multiUser && ctx.actor.role !== "superadmin" && (await ctx.store.systemAgentSkills()).includes(id)) throw new SkillError("not_found", 404);
     const directory = await findDirectory(c, ctx.store, id);
     if (directory) {
@@ -210,20 +226,20 @@ export function createSkillRoutes(deps: SkillRoutesDeps): Hono {
     const { store, policy, actor, skill } = await userRow(c);
     return c.json({ ...await present(store, policy, actor, skill), ...await store.detail(skill.id) });
   });
-  routes.put("/skills/:id/content", async (c) => {
+  object("PUT", "/content", async (c) => {
     const { store, skill } = await userRow(c, true);
     const updated = await store.replace(skill.id, await multipart(c));
     return c.json({ id: updated.id, name: updated.name });
   });
-  routes.put("/skills/:id/enabled", async (c) => {
-    if (/^(builtin|default|agent):/.test(c.req.param("id"))) throw new SkillError("skill_locked");
+  object("PUT", "/enabled", async (c) => {
+    if (/^(builtin|default|agent):/.test(skillId(c))) throw new SkillError("skill_locked");
     const { store, actor, skill } = await userRow(c);
     const result = z.object({ enabled: z.boolean() }).strict().safeParse(await jsonBody(c));
     if (!result.success) throw new SkillError("invalid_enabled");
     await store.setEnabled(actor.userId, skill.id, result.data.enabled);
     return c.json({ ok: true });
   });
-  routes.put("/skills/:id/shares", async (c) => {
+  object("PUT", "/shares", async (c) => {
     const { store, policy, actor, skill } = await userRow(c);
     if (!await policy.canManage(skill, actor)) throw new SkillError("forbidden", 403);
     const parsed = sharesSchema.safeParse(await jsonBody(c));
@@ -254,10 +270,10 @@ export function createSkillRoutes(deps: SkillRoutesDeps): Hono {
     const agent = (await agentSkills(c)).map((row) => ({ ...directoryRow(row), system: ids.includes(row.id) }));
     return c.json({ skills, agent, system: reserved.map(directoryRow) });
   });
-  routes.put("/skills/:id/system", async (c) => {
+  object("PUT", "/system", async (c) => {
     const { store, actor } = await context(c);
     if (actor.role !== "superadmin") throw new SkillError("forbidden", 403);
-    const id = c.req.param("id")!;
+    const id = skillId(c);
     if (!(await agentSkills(c)).some((skill) => skill.id === id)) throw new SkillError("not_found", 404);
     const result = z.object({ system: z.boolean() }).strict().safeParse(await jsonBody(c));
     if (!result.success) throw new SkillError("invalid_system_state");
@@ -269,16 +285,16 @@ export function createSkillRoutes(deps: SkillRoutesDeps): Hono {
   const agentSource = async (c: Context) => {
     const ctx = await context(c);
     if (ctx.actor.role !== "superadmin") throw new SkillError("forbidden", 403);
-    const source = (await agentSkills(c)).find((skill) => skill.id === c.req.param("id"));
+    const source = (await agentSkills(c)).find((skill) => skill.id === skillId(c));
     if (!source) throw new SkillError("not_found", 404);
     if (path.basename(source.skillFile) !== "SKILL.md") throw new SkillError("unsupported_skill");
     return { ...ctx, source };
   };
-  routes.get("/skills/:id/default", async (c) => {
+  object("GET", "/default", async (c) => {
     const { source } = await agentSource(c);
     return c.json({ outsidePaths: await outsidePaths(source.directory) });
   });
-  routes.post("/skills/:id/default", async (c) => {
+  object("POST", "/default", async (c) => {
     const { store, source } = await agentSource(c);
     const id = source.id;
     const { name } = await store.addDefault(source.directory);
@@ -286,7 +302,7 @@ export function createSkillRoutes(deps: SkillRoutesDeps): Hono {
     await deps.audit?.(c, "skill.make_default", source.agentId, [{ field: "default", after: `default:${name}` }]);
     return c.json({ id: `default:${name}`, name });
   });
-  routes.put("/skills/:id/owner", async (c) => {
+  object("PUT", "/owner", async (c) => {
     const { store, skill } = await superadminRow(c);
     const result = z.object({ ownerId: z.string().min(1) }).strict().safeParse(await jsonBody(c));
     if (!result.success) throw new SkillError("invalid_owner");
@@ -295,7 +311,7 @@ export function createSkillRoutes(deps: SkillRoutesDeps): Hono {
     await deps.audit?.(c, "skill.owner", skill.id, [{ field: "ownerId", before: skill.ownerId, after: result.data.ownerId }]);
     return c.json({ ok: true });
   });
-  routes.put("/skills/:id/admin", async (c) => {
+  object("PUT", "/admin", async (c) => {
     const { store, skill } = await superadminRow(c);
     const result = z.object({ disabledByAdmin: z.boolean() }).strict().safeParse(await jsonBody(c));
     if (!result.success) throw new SkillError("invalid_admin_state");
@@ -305,16 +321,16 @@ export function createSkillRoutes(deps: SkillRoutesDeps): Hono {
     await deps.audit?.(c, "skill.admin", skill.id, [{ field: "disabledByAdmin", before: skill.disabledByAdmin, after: result.data.disabledByAdmin }]);
     return c.json({ ok: true });
   });
-  routes.get("/skills/:id/versions", async (c) => {
+  object("GET", "/versions", async (c) => {
     const { store, skill } = await userRow(c, true);
     return c.json({ versions: await store.versions(skill.id) });
   });
-  routes.post("/skills/:id/versions/:versionId/restore", async (c) => {
+  object("POST", "/versions/:versionId/restore", async (c) => {
     const { store, skill } = await userRow(c, true);
     const updated = await store.restore(skill.id, c.req.param("versionId"));
     return c.json({ id: updated.id, name: updated.name });
   });
-  routes.delete("/skills/:id", async (c) => {
+  object("DELETE", "", async (c) => {
     const admin = (await context(c)).actor.role === "superadmin";
     const { store, policy, actor, skill } = admin ? await superadminRow(c) : await userRow(c);
     if (!await policy.canManage(skill, actor) && !(actor.role === "superadmin" && skill.shares.some((share) => share.kind === "all"))) throw new SkillError("forbidden", 403);

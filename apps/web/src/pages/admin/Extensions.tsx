@@ -10,6 +10,7 @@ import { McpIcon } from "../../components/McpExtensionCard";
 import { capabilities } from "../../lib/capabilities";
 import { gatewayKey } from "../../api/gateway";
 import { missingGatewayText, useGatewayChoice } from "../../lib/gateway-choice";
+import { RequesterFailure } from "../../lib/page-visit";
 import { useRequester } from "../../lib/requester";
 import { createResourceKey } from "../../lib/resource-key";
 import { GatewaySelect } from "../../components/GatewaySelect";
@@ -168,7 +169,7 @@ export default function AdminExtensionsPage() {
       <GatewaySelect value={choice.chosen()} names={choice.names()} onChange={choice.choose} />
       <Show when={missing()}>{(selection) => <p class="top-error" role="alert">{missingGatewayText(selection())}</p>}</Show>
       <Show when={gateway() !== undefined && requester().ready && requester().unknown}>
-        <p class="top-error" role="alert">Could not read your permissions on {gateway()}. The controls stay off.</p>
+        <RequesterFailure requester={requester} class="top-error">Could not read your permissions on {gateway()}. The controls stay off.</RequesterFailure>
       </Show>
       <Show when={gateway() !== undefined && requester().ready && !requester().unknown && requester().multiUser && !requester().isSuperadmin}>
         <p class="top-empty" role="status">Only the superadmin of {gateway()} can change these flags.</p>

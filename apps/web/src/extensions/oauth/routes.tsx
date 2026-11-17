@@ -2,6 +2,7 @@ import { createEffect, createSignal, For, Show } from "solid-js";
 import { useSearchParams } from "@solidjs/router";
 import { LeftNavShell } from "../../components/LeftNavShell";
 import { OAuthConnectCard } from "../../components/OAuthConnectCard";
+import { useRequester } from "../../lib/requester";
 import { fetchAgents } from "../../api/agents";
 import type { Agent } from "../../api/types";
 
@@ -12,6 +13,7 @@ function OAuthConnectPage() {
   const [agentsError, setAgentsError] = createSignal<string>();
   // A qualified ID names a remote agent only when the loaded list says so. The card waits for that.
   const selected = () => agents().find((agent) => agent.id === selectedAgent());
+  const requester = useRequester(() => selected()?.gateway);
   const selectAgent = (agentId: string) => {
     setSelectedAgent(agentId);
     setQuery({ agent: agentId, oauth: undefined, oauth_scope: undefined, oauth_error: undefined }, { replace: true });
@@ -63,7 +65,7 @@ function OAuthConnectPage() {
           </select>
         </div>
         <Show when={selectedAgent() && (!selectedAgent().includes("@") || selected()) ? selectedAgent() : undefined} keyed>
-          {(agentId) => <OAuthConnectCard agentId={agentId} gateway={selected()?.gateway} provider="google" label="Google Drive" />}
+          {(agentId) => <OAuthConnectCard agentId={agentId} gateway={selected()?.gateway} requester={requester} provider="google" label="Google Drive" />}
         </Show>
       </div>
     </LeftNavShell>

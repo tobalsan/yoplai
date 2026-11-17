@@ -2,10 +2,9 @@ import { A, useParams } from "@solidjs/router";
 import { createMemo, createResource, For, onCleanup, Show } from "solid-js";
 import type { ScheduleRun } from "@yoplai/shared/types";
 import { fetchScheduleRuns } from "../api/schedules";
-import { gatewayKey } from "../api/gateway";
 import { decodeRouteParam } from "../lib/path";
 import { useAgentTarget } from "../lib/agent-target";
-import { useRequester } from "../lib/requester";
+import { PageVisit } from "../lib/page-visit";
 
 function duration(run: ScheduleRun): string {
   const seconds = Math.max(0, Math.floor(((run.finishedAt ? Date.parse(run.finishedAt) : Date.now()) - Date.parse(run.startedAt)) / 1000));
@@ -23,9 +22,6 @@ export function ScheduleRuns() {
   };
   const { target, retry } = useAgentTarget(() => params.agentId);
   const gateway = () => { const current = target(); return current.state === "ready" ? current.gateway : undefined; };
-  const requester = useRequester(gateway);
-  // A local page reads the local capabilities. A remote page waits for the capabilities of its gateway.
-  const contextReady = () => gateway() === undefined || requester().ready;
   return (
     <main class="schedule-runs">
       <style>{STYLES}</style>
@@ -35,12 +31,20 @@ export function ScheduleRuns() {
       <Show when={target().state === "missing"}>
         <p role="alert">This agent is unavailable. Check that its gateway is online. <button type="button" onClick={retry}>Retry</button></p>
       </Show>
-      <Show when={target().state === "loading" || (target().state === "ready" && !contextReady())}><p role="status">Loading run history…</p></Show>
-      <Show when={target().state === "ready" && contextReady()}>
-        <Show when={requester().isExtensionEnabled("scheduler") && requester().enableCronMonitoring} fallback={<p>Run history is unavailable.</p>}>
-          <RunHistory agentId={params.agentId} jobId={params.jobId} gateway={gateway()} />
-        </Show>
-      </Show>
+      <Show when={target().state === "loading"}><p role="status">Loading run history…</p></Show>
+      <PageVisit
+        gateway={gateway}
+        identity={() => [params.agentId, params.jobId]}
+        resolved={() => target().state === "ready"}
+        pending="Loading run history…"
+        failure="Could not read what the gateway of this agent offers."
+      >
+        {(visit) => (
+          <Show when={visit.requester().isExtensionEnabled("scheduler") && visit.requester().enableCronMonitoring} fallback={<p>Run history is unavailable.</p>}>
+            <RunHistory agentId={params.agentId} jobId={params.jobId} gateway={visit.gateway} />
+          </Show>
+        )}
+      </PageVisit>
     </main>
   );
 }
@@ -48,30 +52,31 @@ export function ScheduleRuns() {
 function RunHistory(props: { agentId: string; jobId: string; gateway?: string }) {
   const [result, { refetch }] = createResource(
     () => ({ agentId: props.agentId, jobId: props.jobId, gateway: props.gateway }),
-    async ({ agentId, jobId, gateway }, { value }): Promise<{ key: string; runs: ScheduleRun[]; error?: string }> => {
-      const key = gatewayKey(gateway, agentId, jobId);
+    async ({ agentId, jobId, gateway }, { value }): Promise<{ runs: ScheduleRun[]; error?: string }> => {
       try {
-        return { key, runs: await fetchScheduleRuns(agentId, jobId, gateway), error: undefined };
+        return { runs: await fetchScheduleRuns(agentId, jobId, gateway), error: undefined };
       } catch (cause) {
-        // Keep earlier runs only for the same gateway, agent, and job.
-        return { key, runs: value?.key === key ? value.runs : [], error: cause instanceof Error ? cause.message : "Failed to load run history." };
+        // This view belongs to one gateway, agent, and job, so an earlier answer is still its own.
+        return { runs: value?.runs ?? [], error: cause instanceof Error ? cause.message : "Failed to load run history." };
       }
     }
   );
   const poll = setInterval(() => { if (!result.loading) void refetch(); }, 2_000);
   onCleanup(() => clearInterval(poll));
-  const runs = createMemo(() => [...(result.latest?.runs ?? [])].sort((a, b) =>
+  // A new visit starts empty. Reading `latest` before the first answer would suspend the page instead.
+  const latest = () => (result.state === "ready" || result.state === "refreshing" ? result.latest : undefined);
+  const runs = createMemo(() => [...(latest()?.runs ?? [])].sort((a, b) =>
     Number(b.status === "running") - Number(a.status === "running") || Date.parse(b.startedAt) - Date.parse(a.startedAt)
   ));
 
   return (
     <>
       <button class="schedule-runs-refresh" type="button" disabled={result.loading} onClick={() => void refetch()}>
-        {result.latest?.error ? "Retry" : "Refresh"}
+        {latest()?.error ? "Retry" : "Refresh"}
       </button>
-      <Show when={result.loading && !result.latest}><p role="status">Loading run history…</p></Show>
-      <Show when={result.latest?.error}>{(error) => <p class="schedule-runs-error" role="alert">{error()}</p>}</Show>
-      <Show when={!result.loading && !result.latest?.error && runs().length === 0}><p>No runs yet.</p></Show>
+      <Show when={result.loading && !latest()}><p role="status">Loading run history…</p></Show>
+      <Show when={latest()?.error}>{(error) => <p class="schedule-runs-error" role="alert">{error()}</p>}</Show>
+      <Show when={!result.loading && !latest()?.error && runs().length === 0}><p>No runs yet.</p></Show>
       <ul class="schedule-run-list">
         <For each={runs()}>{(run) => (
           <li class="schedule-run" data-status={run.status}>

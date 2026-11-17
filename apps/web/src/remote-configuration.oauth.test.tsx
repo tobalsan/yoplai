@@ -5,7 +5,7 @@ import { Suspense, type JSX } from "solid-js";
 import { MemoryRouter, Route, createMemoryHistory } from "@solidjs/router";
 import { createFakeGateways, createFakePopup, relayPrefix } from "./remote-gateway.fixture";
 import { resetCapabilitiesForTests, setCapabilitiesForTests } from "./lib/capabilities";
-import { selectScope } from "./components/CredentialScopeTabs.testing";
+import { activeScope, selectScope } from "./components/CredentialScopeTabs.testing";
 import { ExtensionDetails } from "./pages/ExtensionDetails";
 import { McpServerDetails } from "./pages/McpServerDetails";
 import { OAUTH_FLOW_TIMEOUT_MS, OAUTH_POLL_INTERVAL_MS } from "./lib/oauth-popup-flow";
@@ -284,6 +284,37 @@ describe("core sign-in of a remote agent", () => {
     await tick();
     await tick();
     expect(gateways.requests.length).toBe(before);
+  });
+
+  it("chooses Just me after the capabilities arrive, even when the team status was ready first", async () => {
+    let answerCapabilities!: () => void;
+    gateways.on("GET", `${east}/api/capabilities`, () => new Promise((resolve) => { answerCapabilities = () => resolve({ json: remoteCapabilities }); }));
+    team = { ...team, state: "connected", connected: true, scopes: ["drive"], connectedAt: 10 };
+    gateways.on("GET", `${east}/api/oauth/google/status?agent=${agent}&scope=personal`, { json: { state: "connected", connected: true, provider: "google", scopes: ["drive"], connectedAt: 20, canConfigureTeam: true } });
+    gateways.on("POST", `${east}/api/oauth/google/disconnect?agent=${agent}&scope=personal`, { json: { state: "disconnected", connected: false, provider: "google" } });
+    mount(`/agents/${agent}/extensions/google`);
+    await vi.waitFor(() => expect(answerCapabilities).toBeDefined());
+    await tick();
+    // No scope is read or chosen before the requester is known.
+    expect(gateways.log().filter((line) => line.includes("/oauth/google/status"))).toEqual([]);
+    answerCapabilities();
+    await vi.waitFor(() => expect(button("Disconnect Google")).toBeDefined());
+    expect(activeScope(container)).toBe("personal");
+    button("Disconnect Google")!.click();
+    await vi.waitFor(() => expect(gateways.log()).toContain(`POST ${east}/api/oauth/google/disconnect?agent=${agent}&scope=personal`));
+  });
+
+  it("shows a failed capabilities read with a Retry instead of choosing a scope, and recovers without navigation", async () => {
+    let capabilities: { status: number; json: unknown } = { status: 500, json: {} };
+    gateways.on("GET", `${east}/api/capabilities`, () => capabilities);
+    mount(`/agents/${agent}/extensions/google`);
+    await vi.waitFor(() => expect(text()).toContain("Could not read who you are on east."));
+    expect(gateways.log().filter((line) => line.includes("/oauth/google/status"))).toEqual([]);
+    capabilities = { status: 200, json: remoteCapabilities };
+    button("Retry")!.click();
+    await vi.waitFor(() => expect(button("Connect Google")).toBeDefined());
+    expect(text()).not.toContain("Could not read who you are");
+    expect(gateways.localConfigurationRequests()).toEqual([]);
   });
 
   it("names a remote status refusal instead of showing a disconnected grant", async () => {

@@ -1,6 +1,7 @@
 import {
   createEffect,
   children,
+  type Accessor,
   createSignal,
   Match,
   onCleanup,
@@ -9,7 +10,8 @@ import {
   type JSX,
 } from "solid-js";
 import { disconnectOAuth, fetchOAuthStatus, oauthAuthorizeUrl, readOAuthStatus, startRemoteOAuth, type OAuthConnectionState, type OAuthStatus } from "../api/oauth";
-import { useRequester } from "../lib/requester";
+import { RequesterFailure } from "../lib/page-visit";
+import type { Requester } from "../lib/requester";
 import { createOAuthPopupFlow, type OAuthVerdict } from "../lib/oauth-popup-flow";
 import { CredentialScopeTabs, preferredScope, STATUS_CONNECTED, STATUS_NOT_SET_UP, STATUS_RECONNECT, type CredentialScope, type ScopeStatus } from "./CredentialScopeTabs";
 import { onOAuthReturn } from "../lib/oauth-popup";
@@ -32,6 +34,8 @@ export function OAuthConnectCard(props: {
   agentId: string;
   /** Linked gateway that hosts the agent. Absent for a local agent. */
   gateway?: string;
+  /** Who asks, on the gateway of the agent. The page owns it, so the card and the page never read it twice. */
+  requester: Accessor<Requester>;
   provider: string;
   /** Scopes required for the Whole team tab. */
   scopes?: string[];
@@ -61,7 +65,7 @@ export function OAuthConnectCard(props: {
   window.addEventListener("pageshow", onPageShow);
   onCleanup(() => window.removeEventListener("pageshow", onPageShow));
   const [error, setError] = createSignal<string>();
-  const requester = useRequester(() => props.gateway);
+  const requester = () => props.requester();
   const flow = createOAuthPopupFlow();
   const [ownScope, setOwnScope] = createSignal<CredentialScope>(oauthResult?.scope ?? "personal");
   const scope = () => props.scope ?? ownScope();
@@ -78,8 +82,11 @@ export function OAuthConnectCard(props: {
   let disposed = false;
   onCleanup(() => { statusRequest++; disposed = true; });
 
+  // The tabs and the default scope depend on who asks. Until the requester is known, nothing is read or chosen.
+  const requesterKnown = () => requester().ready && !requester().unknown;
+
   const refreshStatus = async () => {
-    if (!props.agentId) return;
+    if (!props.agentId || !requesterKnown()) return;
     const request = ++statusRequest;
     setLoading(true);
     try {
@@ -117,7 +124,7 @@ export function OAuthConnectCard(props: {
 
   createEffect(() => {
     void props.gateway;
-    if (props.agentId && props.provider) void refreshStatus();
+    if (props.agentId && props.provider && requesterKnown()) void refreshStatus();
   });
 
   createEffect(() => {
@@ -213,6 +220,9 @@ export function OAuthConnectCard(props: {
       </Show>
       <Show when={error()}>
         {(message) => <div class="oauth-error">{message()}</div>}
+      </Show>
+      <Show when={requester().ready && requester().unknown}>
+        <RequesterFailure requester={props.requester} class="oauth-error">Could not read who you are on {props.gateway ?? "this gateway"}.</RequesterFailure>
       </Show>
       <Show when={flowBusy()}>
         <div class="oauth-quiet" role="status">
@@ -315,7 +325,7 @@ export function OAuthConnectCard(props: {
         <Show when={connected() || needsGrant()}>
           <ScopeUsageNote scope={scope()} />
         </Show>
-        <Show when={loading() && !status()}>
+        <Show when={(loading() || !requester().ready) && !status()}>
           <div class="oauth-quiet">Checking connection…</div>
         </Show>
         <Show when={settings()}>

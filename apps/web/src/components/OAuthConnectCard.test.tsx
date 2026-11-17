@@ -1,12 +1,20 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { render } from "solid-js/web";
+import type { JSX } from "solid-js";
 import { OAuthConnectCard } from "./OAuthConnectCard";
+import { useRequester } from "../lib/requester";
 import { activeScope, scopeTabLabels, selectScope } from "./CredentialScopeTabs.testing";
 
 vi.mock("../auth/client", () => ({
   useSession: () => () => ({ data: { user: { id: "alice" } } }),
 }));
+
+// The page owns the requester and hands it to the card.
+function Card(props: { agentId: string; provider: string; label: string; gateway?: string; children?: JSX.Element }) {
+  const requester = useRequester(() => props.gateway);
+  return <OAuthConnectCard {...props} requester={requester} />;
+}
 
 const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
 let dispose: (() => void) | undefined;
@@ -23,7 +31,7 @@ describe("OAuthConnectCard scope", () => {
       ? { connected: true, provider: "google", account: "alice@example.test", scopes: [] }
       : { state: "needs_reconnect", connected: false, provider: "google" })));
     vi.stubGlobal("fetch", fetchMock);
-    dispose = render(() => <OAuthConnectCard agentId="probe" provider="google" label="Google" />, document.body);
+    dispose = render(() => <Card agentId="probe" provider="google" label="Google" />, document.body);
     await flush();
     selectScope(document, "personal");
     await flush();
@@ -40,7 +48,7 @@ describe("OAuthConnectCard scope", () => {
     vi.stubGlobal("fetch", fetchMock);
     const assign = vi.fn();
     vi.stubGlobal("location", { href: "http://localhost/connections?agent=probe", pathname: "/connections", search: "?agent=probe", hash: "", assign });
-    dispose = render(() => <OAuthConnectCard agentId="probe" provider="google" label="Google" />, document.body);
+    dispose = render(() => <Card agentId="probe" provider="google" label="Google" />, document.body);
     await flush();
     selectScope(document, "personal");
     await flush();
@@ -57,7 +65,7 @@ describe("OAuthConnectCard scope", () => {
   it("shows feedback while the sign-in page loads and resets it when Back restores the page", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ connected: false, provider: "google" }))));
     vi.stubGlobal("location", { href: "http://localhost/connections?agent=probe", pathname: "/connections", search: "?agent=probe", hash: "", assign: vi.fn() });
-    dispose = render(() => <OAuthConnectCard agentId="probe" provider="google" label="Google" />, document.body);
+    dispose = render(() => <Card agentId="probe" provider="google" label="Google" />, document.body);
     await flush();
     const button = () => Array.from(document.querySelectorAll<HTMLButtonElement>("button")).find((item) => /Connect Google|Redirecting/.test(item.textContent ?? ""))!;
     button().click();
@@ -73,7 +81,7 @@ describe("OAuthConnectCard scope", () => {
       ? { connected: true, provider: "google", account: "team@example.test", scopes: [], canConfigureTeam: false }
       : { connected: false, provider: "google", canConfigureTeam: false })));
     vi.stubGlobal("fetch", fetchMock);
-    dispose = render(() => <OAuthConnectCard agentId="probe" provider="google" label="Google" />, document.body);
+    dispose = render(() => <Card agentId="probe" provider="google" label="Google" />, document.body);
     await flush();
     await flush();
     expect(scopeTabLabels(document)).toEqual(["Just me", "Whole team"]);
@@ -90,7 +98,7 @@ describe("OAuthConnectCard scope", () => {
 
   it("tells non-admins an admin must set up a missing team connection", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ connected: false, provider: "google", canConfigureTeam: false }))));
-    dispose = render(() => <OAuthConnectCard agentId="probe" provider="google" label="Google" />, document.body);
+    dispose = render(() => <Card agentId="probe" provider="google" label="Google" />, document.body);
     await flush();
     await flush();
     selectScope(document, "team");

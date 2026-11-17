@@ -68,6 +68,8 @@ export async function fetchSchedules(agentId: string, gateway?: GatewayName): Pr
   }
 }
 
+export const OWNER_REQUIRES_USER_MESSAGE = "Owner credentials need a signed-in user. This gateway did not confirm one for you.";
+
 export async function updateSchedule(
   agentId: string,
   jobId: string,
@@ -83,8 +85,11 @@ export async function updateSchedule(
       body: JSON.stringify(patch),
       signal: controller.signal,
     });
-    if (res.status === 403 && (await res.json().catch(() => ({}))).error === "team_requires_admin") {
-      throw new Error("Only admins can pause or resume Team jobs.");
+    if (res.status === 403) {
+      const body = await res.json().catch(() => ({}));
+      if (body.error === "team_requires_admin") throw new Error("Only admins can pause or resume Team jobs.");
+      // The gateway sends a fixed safe message for this refusal.
+      if (body.error === "owner_requires_user") throw new Error(OWNER_REQUIRES_USER_MESSAGE);
     }
     if (!res.ok) throw new Error("Failed to update scheduled job");
     return await res.json();

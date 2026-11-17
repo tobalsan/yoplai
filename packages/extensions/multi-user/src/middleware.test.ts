@@ -37,7 +37,24 @@ describe("multi-user middleware", () => {
     for (const method of ["POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"]) {
       expect((await app.request(documentPath, { method })).status).toBe(401);
     }
-    for (const url of [`${documentPath}/extra`, "/api/mcp/oauth/status", "/api/mcp/oauth/callback"]) {
+    for (const url of [`${documentPath}/extra`, "/api/mcp/oauth/status"]) {
+      expect((await app.request(url)).status).toBe(401);
+    }
+  });
+
+  it("allows only the exact MCP OAuth callback GET without a session", async () => {
+    setRuntime({ auth: { api: { getSession: vi.fn(async () => null) } } });
+    const { createAuthMiddleware } = await import("./middleware.js");
+    const app = new Hono();
+    app.use("/api/*", createAuthMiddleware());
+    app.all("/api/mcp/*", (c) => c.json({ ok: true }));
+
+    const callback = "/api/mcp/oauth/callback";
+    expect((await app.request(`${callback}?code=c&state=s`)).status).toBe(200);
+    for (const method of ["POST", "PUT", "PATCH", "DELETE", "HEAD"]) {
+      expect((await app.request(callback, { method })).status).toBe(401);
+    }
+    for (const url of [`${callback}/`, `${callback}/extra`, `${callback}.json`, "/api/mcp/oauth/Callback", "/api/mcp/oauth/status", "/api/mcp/oauth/authorize", "/api/mcp/servers", "/api/mcp/catalog", "/api/mcp/servers/callback"]) {
       expect((await app.request(url)).status).toBe(401);
     }
   });

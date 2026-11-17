@@ -143,6 +143,17 @@ describe("Edit page of a remote agent", () => {
     expect(gateways.localConfigurationRequests()).toEqual([]);
   });
 
+  it("reads the permissions again on Retry and keeps the page, without navigation", async () => {
+    let answer: { status: number; json: unknown } = { status: 500, json: { error: "boom" } };
+    gateways.on("GET", `${east}/api/capabilities`, () => answer);
+    mount(`/agents/${agent}/edit`);
+    await vi.waitFor(() => expect(text()).toContain("Could not read your permissions on east."));
+    answer = { status: 200, json: remoteCapabilities };
+    button("Retry")!.click();
+    await vi.waitFor(() => expect(text()).not.toContain("Could not read your permissions"));
+    expect(gateways.localConfigurationRequests()).toEqual([]);
+  });
+
   it("makes no call and shows a retry when the gateway of the agent is not known", async () => {
     gateways.on("GET", "/api/agents", { status: 500, json: [] });
     mount(`/agents/${agent}/edit`);

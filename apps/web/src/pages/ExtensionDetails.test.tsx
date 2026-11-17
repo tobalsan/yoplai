@@ -158,6 +158,7 @@ describe("ExtensionDetails", () => {
 
   it("renders a Configure link to the bespoke route when present", async () => {
     setSession("admin");
+    setCapabilitiesForTests({ extensions: { exa: true } });
     fetchAgentExtensionsMock.mockResolvedValue([
       entry({
         tier: "bespoke-route",

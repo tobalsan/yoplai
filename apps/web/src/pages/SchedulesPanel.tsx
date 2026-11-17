@@ -2,7 +2,7 @@ import cronstrue from "cronstrue";
 import { A } from "@solidjs/router";
 import { createComputed, createEffect, createMemo, createResource, createSignal, For, onCleanup, Show } from "solid-js";
 import { createStore, reconcile } from "solid-js/store";
-import { deleteSchedule, fetchSchedules, updateSchedule, type ScheduleJob } from "../api/schedules";
+import { OWNER_REQUIRES_USER_MESSAGE, deleteSchedule, fetchSchedules, updateSchedule, type ScheduleJob } from "../api/schedules";
 import { ScopeIcon } from "../components/CredentialScopeTabs";
 import { useRequester } from "../lib/requester";
 import { isForeignMine, usePrivateItemsVisibility, visibleJobs } from "../lib/private-items";
@@ -117,8 +117,13 @@ export function SchedulesPanel(props: { agentId: string; agentName: string; gate
     return roles.some((role) => STAFF_ROLES.includes(role.trim()));
   };
 
+  // Mine on a remote job needs the confirmed ID of the user of that gateway. A remote gateway whose capabilities
+  // named no user gives none, and the page never invents one or copies the local identity. A local page keeps its
+  // behavior, and the gateway refuses with a typed answer when it has no user.
+  const canOwn = () => requester().gateway === undefined || !!requester().user?.id;
   const changeMode = async (job: ScheduleJob, credentialMode: CredentialMode) => {
     if (busy() || (job.credentialMode ?? "team") === credentialMode) return;
+    if (credentialMode === "owner" && !job.ownerUserId && !canOwn()) { setError(OWNER_REQUIRES_USER_MESSAGE); return; }
     const run = mutation();
     setBusy(job.id);
     setError(null);
@@ -251,8 +256,8 @@ export function SchedulesPanel(props: { agentId: string; agentName: string; gate
                         type="button"
                         role="radio"
                         aria-checked={mode() === option.mode}
-                        title={foreignMine() ? ownerOnlyTitle : option.title}
-                        disabled={foreignMine() || busy() !== undefined}
+                        title={foreignMine() ? ownerOnlyTitle : option.mode === "owner" && !canOwn() && !job.ownerUserId ? "This gateway did not confirm who you are, so a job cannot run with your credentials." : option.title}
+                        disabled={foreignMine() || busy() !== undefined || (option.mode === "owner" && !job.ownerUserId && !canOwn())}
                         onClick={() => void changeMode(job, option.mode)}
                       >
                         <ScopeIcon scope={option.mode === "owner" ? "personal" : "team"} class="schedule-mode-icon" />

@@ -15,6 +15,8 @@ import { z } from "zod";
 import type { Context, Hono } from "hono";
 import {
   ScheduleAlreadyRunningError,
+  ScheduleNotFoundError,
+  OwnerIdentityRequiredError,
   SchedulerService,
   clearSchedulerContext,
   getScheduler,
@@ -791,6 +793,8 @@ const schedulerExtension: Extension = {
       }
 
       const scheduler = getScheduler();
+      // A job that does not exist is 404. Only a job that exists and belongs to another user is 403.
+      if (!(await scheduler.list(agentId)).some((candidate) => candidate.id === id)) return c.json({ error: "Schedule not found" }, 404);
       if (!(await canAccessJob(agentId, id, requestUserId(c)))) return c.json({ error: "Schedule owner access required" }, 403);
       try {
         const previous = (await scheduler.list(agentId)).find((candidate) => candidate.id === id);
@@ -814,8 +818,11 @@ const schedulerExtension: Extension = {
           });
         }
         return c.json(job);
-      } catch {
-        return c.json({ error: "Schedule not found" }, 404);
+      } catch (error) {
+        if (error instanceof ScheduleNotFoundError) return c.json({ error: "Schedule not found" }, 404);
+        // The text is fixed. A caught message could hold storage paths or other private detail.
+        if (error instanceof OwnerIdentityRequiredError) return c.json({ error: "owner_requires_user", message: "Owner credentials need a signed-in user." }, 403);
+        return c.json({ error: "Schedule update failed" }, 500);
       }
     });
 

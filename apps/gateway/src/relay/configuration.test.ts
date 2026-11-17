@@ -282,6 +282,8 @@ describe("configuration path boundaries", () => {
   });
 });
 
+let unsafeUrl = "";
+
 describe("remote OAuth start", () => {
   beforeEach(() => { answer = (url) => url.pathname.startsWith("/api/oauth/")
     ? Response.json({ kind: "oauth_authorization", provider: "google", authorizationUrl: "https://provider.test/authorize?state=fake-state" })
@@ -405,6 +407,35 @@ describe("remote OAuth start", () => {
   it("refuses MCP add without the browser start boundary", async () => {
     expect((await app.request("/api/mcp/servers?agent=agent@east", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ url: "https://mcp.test", credentialScope: "team" }) })).status).toBe(403);
     expect(records).toEqual([]);
+  });
+
+  describe.each([
+    ["core OAuth start", async () => {
+      answer = () => Response.json({ kind: "oauth_authorization", provider: "google", authorizationUrl: unsafeUrl });
+      return app.request("/api/relay/oauth/start", json(startInput));
+    }],
+    ["MCP add", async () => {
+      answer = () => Response.json({ server: { name: "server" }, authorizationUrl: unsafeUrl });
+      return app.request(`${prefix()}/api/mcp/servers?agent=agent`, json({ url: "https://mcp.test", credentialScope: "team" }));
+    }],
+  ])("%s with the linked bearer in the provider URL", (_name, start) => {
+    it.each([
+      ["plain", "https://provider.test/authorize?state=fake-east-bearer"],
+      ["percent-encoded", "https://provider.test/authorize?state=%66ake-east-bearer"],
+      ["fully encoded", "https://provider.test/authorize?state=%66%61%6B%65%2D%65%61%73%74%2D%62%65%61%72%65%72"],
+      ["encoded twice", "https://provider.test/authorize?state=%2566ake-east-bearer"],
+      ["next to a malformed escape", "https://provider.test/authorize?x=%ZZ&state=%66ake-east-bearer"],
+    ])("refuses a %s bearer", async (_label, url) => {
+      unsafeUrl = url;
+      const response = await start();
+      expect(response.status).toBe(502);
+      expect(await response.text()).not.toContain("fake-east-bearer");
+    });
+
+    it("passes a URL that only looks like the bearer", async () => {
+      unsafeUrl = "https://provider.test/authorize?state=fake-east";
+      expect((await start()).status).not.toBe(502);
+    });
   });
 
   it("refuses an unsafe MCP add authorization URL", async () => {

@@ -16,6 +16,12 @@ export function DashboardAccessDialog(props: {
   onClose: () => void; onSaved: () => void | Promise<void>;
   loadRecipients?: typeof fetchDashboardRecipients;
   saveShares?: (id: string, shares: DashboardShare[]) => Promise<unknown>;
+  /**
+   * Reads the current shares of the item again. When a save fails, the remote may hold the change although the answer
+   * failed. The dialog then reads the shares, replaces its draft with them, and keeps Save off until a read works.
+   * A dialog with no `reload` keeps its old behavior.
+   */
+  reload?: () => Promise<DashboardShare[]>;
   platformReadOnly?: boolean;
   note?: string;
 }) {
@@ -37,8 +43,10 @@ export function DashboardAccessDialog(props: {
   // Order does not matter: re-adding a removed person must not count as a change.
   const normalize = (list: DashboardShare[]) =>
     JSON.stringify(list.map((share) => `${share.kind === "all" ? "*" : share.id}:${share.mode}`).sort());
-  const original = normalize(initial);
-  const changed = () => normalize(shares()) !== original;
+  // The saved state that a change is measured against. A recovery read replaces it.
+  const [original, setOriginal] = createSignal(normalize(initial));
+  const changed = () => normalize(shares()) !== original();
+  const [unknown, setUnknown] = createSignal(false);
   const add = () => {
     const id = selected();
     if (!id) return;
@@ -49,16 +57,43 @@ export function DashboardAccessDialog(props: {
   const gateway = props.gateway;
   let disposed = false;
   onCleanup(() => { disposed = true; });
+  // Each save or read has its own attempt number. A recovery of an older attempt changes nothing.
+  let attempt = 0;
+  const recover = async (mine: number) => {
+    if (!props.reload) return;
+    try {
+      const current = await props.reload();
+      if (disposed || mine !== attempt) return;
+      // The draft follows the returned shares, so no later save sends a stale draft.
+      setUserShares(current.filter((share): share is UserShare => share.kind === "user"));
+      setEveryoneMode(current.find((share) => share.kind === "all")?.mode ?? null);
+      setOriginal(normalize(current));
+      setUnknown(false);
+    } catch {
+      if (!disposed && mine === attempt) setUnknown(true);
+    }
+  };
   const save = async () => {
+    if (unknown()) return;
+    const mine = ++attempt;
     setBusy(true); setError(undefined);
-    try { await (props.saveShares ?? ((id, next) => saveDashboardShares(id, next, gateway)))(props.dashboard.id, shares()); if (disposed) return; await props.onSaved(); if (!disposed) props.onClose(); }
-    catch (cause) { if (!disposed) setError(cause instanceof Error ? cause.message : "Unable to save access."); }
-    finally { if (!disposed) setBusy(false); }
+    let failed = false;
+    try { await (props.saveShares ?? ((id, next) => saveDashboardShares(id, next, gateway)))(props.dashboard.id, shares()); if (disposed || mine !== attempt) return; await props.onSaved(); if (!disposed && mine === attempt) props.onClose(); }
+    catch (cause) { failed = true; if (!disposed && mine === attempt) setError(cause instanceof Error ? cause.message : "Unable to save access."); }
+    if (failed && !disposed && mine === attempt) await recover(mine);
+    if (!disposed && mine === attempt) setBusy(false);
+  };
+  const retryRead = async () => {
+    const mine = ++attempt;
+    setBusy(true);
+    await recover(mine);
+    if (!disposed && mine === attempt) setBusy(false);
   };
   return (
     <Modal title={`Share "${props.dashboard.title}"`} onClose={props.onClose} dismissible={!busy()} error={error()}
-      footer={<><Button variant="secondary" disabled={busy()} onClick={props.onClose}>Cancel</Button><Button variant="primary" disabled={busy() || !changed() || recipients.loading || !!recipients.error} onClick={() => void save()}>{busy() ? "Saving…" : "Save"}</Button></>}>
+      footer={<><Button variant="secondary" disabled={busy()} onClick={props.onClose}>Cancel</Button><Button variant="primary" disabled={busy() || unknown() || !changed() || recipients.loading || !!recipients.error} onClick={() => void save()}>{busy() ? "Saving…" : "Save"}</Button></>}>
       <Show when={recipients.error}><p role="alert">Unable to load users.</p></Show>
+      <Show when={unknown()}><p role="alert">The shares could not be read after the error, and the change may have happened. <Button variant="secondary" disabled={busy()} onClick={() => void retryRead()}>Read shares</Button></p></Show>
       <div class="share-add">
         <UserPicker class="share-select" value={selected()} onChange={setSelected} onEnter={add} disabled={busy() || recipients.loading}
           users={users().filter((user) => !userShares().some((share) => share.id === user.id)).map((user) => ({ id: user.id, label: `${user.name} (${user.email})`, name: user.name, image: user.image }))} />

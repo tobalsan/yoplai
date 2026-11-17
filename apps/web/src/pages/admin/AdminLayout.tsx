@@ -13,6 +13,7 @@ function adminTabs(gateway?: string) {
     return [
       { href: "/admin/extensions", to: `/admin/extensions${query}`, label: "Extensions", visible: true },
       { href: "/admin/mcp-servers", to: `/admin/mcp-servers${query}`, label: "MCP servers", visible: true },
+      { href: "/admin/skills", to: `/admin/skills${query}`, label: "Skills", visible: true },
     ];
   }
   return [

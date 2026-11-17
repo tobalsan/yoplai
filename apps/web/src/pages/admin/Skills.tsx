@@ -1,6 +1,11 @@
-import { For, Show, createResource, createSignal } from "solid-js";
+import { For, Show, createResource, createSignal, onCleanup, type Accessor } from "solid-js";
 import { A } from "@solidjs/router";
-import { checkSkillDefault, deleteSkill, fetchAdminSkills, fetchSkillRecipients, makeSkillDefault, setSkillAdminDisabled, setSkillSystem, transferSkillOwner, type SkillRow } from "../../api/skills";
+import { checkSkillDefault, deleteSkill, fetchAdminSkills, fetchSkillRecipients, makeSkillDefault, setSkillAdminDisabled, setSkillSystem, skillPath, transferSkillOwner, type SkillRow } from "../../api/skills";
+import type { GatewayName } from "../../api/gateway";
+import { missingGatewayText, useGatewayChoice } from "../../lib/gateway-choice";
+import { PageVisit } from "../../lib/page-visit";
+import type { Requester } from "../../lib/requester";
+import { GatewaySelect } from "../../components/GatewaySelect";
 import { capabilities } from "../../lib/capabilities";
 import { isSuperadmin } from "../../lib/roles";
 import { Button } from "../../components/ui/Button";
@@ -11,35 +16,73 @@ import AdminLayout from "./AdminLayout";
 
 const formatDate = (value: string | number | null) => value ? new Date(value).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" }) : "—";
 
+/**
+ * Skill administration of the local gateway, or of one linked gateway that the page names in `?gateway=`.
+ * The view below mounts again for each gateway, so every dialog, draft, and attempt belongs to one visit.
+ * A gateway that is not configured makes no call and never means Local.
+ */
 export default function AdminSkills() {
-  const permitted = () => !capabilities.multiUser || isSuperadmin(capabilities.user?.role);
-  const [skills, { refetch }] = createResource(permitted, fetchAdminSkills);
-  const [recipients] = createResource(() => permitted() && capabilities.multiUser, () => fetchSkillRecipients().catch(() => ({ users: [] })));
+  const choice = useGatewayChoice();
+  const missing = () => { const selection = choice.selection(); return selection.state === "missing" ? selection : undefined; };
+  return <AdminLayout title="Skills" gateway={choice.gateway()} description="Review the skills on this platform. Disable or delete a skill that is shared with everyone.">
+    <GatewaySelect value={choice.chosen()} names={choice.names()} onChange={choice.choose} />
+    <Show when={missing()}>{(selection) => <p class="admin-skills-notice admin-skills-error" role="alert">{missingGatewayText(selection())}</p>}</Show>
+    <PageVisit gateway={choice.gateway} identity={() => []} resolved={choice.ready} pending="Loading skills…" failure={`Could not read your permissions on ${choice.gateway() ?? "this gateway"}.`}>
+      {(visit) => <AdminSkillsView gateway={visit.gateway} requester={visit.requester} />}
+    </PageVisit>
+  </AdminLayout>;
+}
+
+function AdminSkillsView(props: { gateway?: GatewayName; requester: Accessor<Requester> }) {
+  // One view is one visit: the gateway is fixed for its life. The requester of that gateway is known here, and it decides what the page offers.
+  const gateway = props.gateway;
+  const requester = props.requester;
+  const multiUser = () => (gateway === undefined ? capabilities.multiUser : requester().multiUser);
+  // Local keeps its old rule. A gateway needs a known requester, and a multi-user gateway allows only its superadmin.
+  const permitted = () => gateway === undefined
+    ? !capabilities.multiUser || isSuperadmin(capabilities.user?.role)
+    : !requester().multiUser || requester().isSuperadmin;
+  let disposed = false;
+  onCleanup(() => { disposed = true; });
+  const [skills, { refetch }] = createResource(permitted, () => fetchAdminSkills(gateway));
+  const [recipients] = createResource(() => permitted() && multiUser(), () => fetchSkillRecipients(gateway).catch(() => ({ users: [] })));
   const data = () => skills.error ? undefined : skills.latest;
   const [error, setError] = createSignal("");
   const [busy, setBusy] = createSignal(false);
+  // After an uncertain write the remote may hold the change although the answer failed. Every control stays off until a
+  // read of the same gateway works.
+  const [unknown, setUnknown] = createSignal(false);
+  const settle = async () => {
+    try { await refetch(); } catch { /* The error state of the resource tells the result. */ }
+    if (!disposed) setUnknown(Boolean(skills.error));
+  };
   const [deleting, setDeleting] = createSignal<SkillRow>();
   const [transferring, setTransferring] = createSignal<{ id: string; name: string; ownerId: string }>();
   const [newOwner, setNewOwner] = createSignal("");
   const [makingDefault, setMakingDefault] = createSignal<SkillRow>();
-  const [defaultCheck] = createResource(() => makingDefault()?.id, (id) => checkSkillDefault(id).catch(() => ({ outsidePaths: [] })));
+  const [defaultCheck] = createResource(() => makingDefault()?.id, (id) => checkSkillDefault(id, gateway).catch(() => ({ outsidePaths: [] })));
   const [agentTab, setAgentTab] = createSignal<string>();
   const userName = (id: string) => recipients.latest?.users?.find((user) => user.id === id)?.name ?? "Unknown user";
   const platformWide = (row: SkillRow) => row.shares.some((share) => share.kind === "all");
   const run = async (operation: () => Promise<void>) => {
+    if (unknown()) return;
     setBusy(true); setError("");
-    try { await operation(); await refetch(); }
-    catch (cause) { setError(cause instanceof Error ? cause.message : "Unable to update skill."); }
-    finally { setBusy(false); }
+    let failed = false;
+    try { await operation(); if (!disposed) await refetch(); }
+    catch (cause) { failed = true; if (!disposed) setError(cause instanceof Error ? cause.message : "Unable to update skill."); }
+    // The remote can commit a write before its answer fails. Read the same gateway before another write.
+    if (failed && !disposed) await settle();
+    if (!disposed) setBusy(false);
   };
+  const retry = async () => { setBusy(true); await settle(); if (!disposed) setBusy(false); };
   const action = (icon: string, label: string) => <><i class={`fa-solid ${icon}`} aria-hidden="true" /><span class="admin-skills-action-label">{label}</span></>;
   const header = (id: string, title: string, count: number, description: string) => <header class="admin-skills-section-header">
     <h2 id={id}>{title}</h2><span class="admin-skills-count">{count}</span><p>{description}</p>
   </header>;
-  return <AdminLayout title="Skills" description="Review the skills on this platform. Disable or delete a skill that is shared with everyone.">
+  return <>
     <Show when={permitted()} fallback={<p class="admin-skills-notice" role="alert">Superadmin access required.</p>}>
-      <Show when={skills.error || error()}><p class="admin-skills-notice admin-skills-error" role="alert">{error() || "Unable to load skills."} <button class="admin-skills-link-button" onClick={() => void refetch()}>Retry</button></p></Show>
-      <Show when={skills.state === "pending"}><p class="admin-skills-notice" role="status">Loading skills…</p></Show>
+      <Show when={skills.error || error() || unknown()}><p class="admin-skills-notice admin-skills-error" role="alert">{error() || "Unable to load skills."} <button class="admin-skills-link-button" onClick={() => void retry()}>Retry</button></p></Show>
+      <Show when={skills.loading && !data()}><p class="admin-skills-notice" role="status">Loading skills…</p></Show>
       <Show when={data()}>{(result) => <>
         <section class="admin-skills-section" aria-labelledby="admin-skills-user">
           {header("admin-skills-user", "User skills", result().skills.length, "Skills that people upload, create or import. Each user turns them on for all the agents they can use.")}
@@ -49,22 +92,22 @@ export default function AdminSkills() {
                 <thead><tr><th scope="col">Skill</th><th scope="col">Owner</th><th scope="col">Access</th><th scope="col" class="admin-skills-num">Enabled by</th><th scope="col">Updated</th><th scope="col"><span class="admin-skills-sr">Actions</span></th></tr></thead>
                 <tbody><For each={result().skills}>{(row) => <tr>
                   <td class="admin-skills-skill">
-                    <A href={`/skills/${encodeURIComponent(row.id)}`}>{row.name}</A>
+                    <A href={skillPath(row.id, gateway)}>{row.name}</A>
                     <p title={row.description}>{row.description}</p>
                     <Show when={row.disabledByAdmin || row.collisions.length}><div class="admin-skills-flags">
                       <Show when={row.disabledByAdmin}><span class="admin-skills-pill admin-skills-pill--warn">Disabled by admin</span></Show>
                       <Show when={row.collisions.length}><span class="admin-skills-pill admin-skills-pill--warn" title="A system skill with the same name takes precedence.">Same name as {row.collisions.join(", ")}</span></Show>
                     </div></Show>
                   </td>
-                  <td>{row.ownerName}<Show when={capabilities.multiUser && !row.ownerActive}> <span class="admin-skills-pill admin-skills-pill--warn">Owner inactive</span></Show></td>
+                  <td>{row.ownerName}<Show when={multiUser() && !row.ownerActive}> <span class="admin-skills-pill admin-skills-pill--warn">Owner inactive</span></Show></td>
                   <td><Show when={row.shares.length} fallback={<span class="admin-skills-muted">Private</span>}><ul class="admin-skills-access">
                     <For each={row.shares}>{(share) => <li>{share.kind === "all" ? <span class="admin-skills-pill">Everyone · view</span> : <>{userName(share.id)} <span class="admin-skills-muted">· {share.mode === "write" ? "edit" : "view"}</span></>}</li>}</For>
                   </ul></Show></td>
                   <td class="admin-skills-num">{row.enabledCount} {row.enabledCount === 1 ? "user" : "users"}</td>
                   <td class="admin-skills-muted admin-skills-nowrap">{formatDate(row.updatedAt)}</td>
                   <td class="admin-skills-actions"><div class="admin-skills-row-actions">
-                    <Show when={capabilities.multiUser}><Button disabled={busy()} title="Transfer" aria-label={`Transfer ${row.name}`} onClick={() => { setError(""); setNewOwner(""); setTransferring(row); }}>{action("fa-right-left", "Transfer")}</Button></Show>
-                    <Show when={row.disabledByAdmin || platformWide(row)}><Button disabled={busy()} title={row.disabledByAdmin ? "Restore" : "Disable"} aria-label={`${row.disabledByAdmin ? "Restore" : "Disable"} ${row.name}`} onClick={() => void run(async () => { await setSkillAdminDisabled(row.id, !row.disabledByAdmin); })}>{row.disabledByAdmin ? action("fa-rotate-left", "Restore") : action("fa-ban", "Disable")}</Button></Show>
+                    <Show when={multiUser()}><Button disabled={busy()} title="Transfer" aria-label={`Transfer ${row.name}`} onClick={() => { setError(""); setNewOwner(""); setTransferring(row); }}>{action("fa-right-left", "Transfer")}</Button></Show>
+                    <Show when={row.disabledByAdmin || platformWide(row)}><Button disabled={busy()} title={row.disabledByAdmin ? "Restore" : "Disable"} aria-label={`${row.disabledByAdmin ? "Restore" : "Disable"} ${row.name}`} onClick={() => void run(async () => { await setSkillAdminDisabled(row.id, !row.disabledByAdmin, gateway); })}>{row.disabledByAdmin ? action("fa-rotate-left", "Restore") : action("fa-ban", "Disable")}</Button></Show>
                     <Show when={platformWide(row)}><Button data-tone="danger" disabled={busy()} title="Delete" aria-label={`Delete ${row.name}`} onClick={() => setDeleting(row)}>{action("fa-trash-can", "Delete")}</Button></Show>
                   </div></td>
                 </tr>}</For></tbody>
@@ -76,11 +119,11 @@ export default function AdminSkills() {
           {header("admin-skills-agent", "Agent skills", result().agent.length, "Skills in agent workspaces. Only the agent that owns the workspace uses them. Mark a skill as System to hide it from the Skills page. Make default moves it to the default skills.")}
           <Show when={result().agent.length} fallback={<div class="admin-skills-panel"><p class="admin-skills-empty">No agent workspace skills.</p></div>}>
             <AgentSkillTabs rows={result().agent} selected={agentTab()} onSelect={setAgentTab} renderRow={(row) => <li class="admin-skills-agent-row">
-              <div class="admin-skills-skill"><A href={`/skills/${encodeURIComponent(row.id)}`}>{row.name}</A><p title={row.description}>{row.description}</p></div>
+              <div class="admin-skills-skill"><A href={skillPath(row.id, gateway)}>{row.name}</A><p title={row.description}>{row.description}</p></div>
               <div class="admin-skills-agent-actions">
                 <Button disabled={busy()} title="Move to the default skills, for all agents" aria-label={`Make ${row.name} a default skill`} onClick={() => { setError(""); setMakingDefault(row); }}>{action("fa-share-nodes", "Make default")}</Button>
-                <Show when={capabilities.multiUser}><label class="admin-skills-system-switch" title="Hide from the Skills page. The agent still uses it.">
-                  <input type="checkbox" role="switch" checked={row.system === true} aria-label={`Mark ${row.name} as system`} disabled={busy()} onChange={() => void run(async () => { await setSkillSystem(row.id, !row.system); })} />System
+                <Show when={multiUser()}><label class="admin-skills-system-switch" title="Hide from the Skills page. The agent still uses it.">
+                  <input type="checkbox" role="switch" checked={row.system === true} aria-label={`Mark ${row.name} as system`} disabled={busy()} onChange={() => void run(async () => { await setSkillSystem(row.id, !row.system, gateway); })} />System
                 </label></Show>
               </div>
             </li>} />
@@ -92,7 +135,7 @@ export default function AdminSkills() {
             <Show when={result().system.length} fallback={<p class="admin-skills-empty">No system skills.</p>}>
               <ul class="admin-skills-system">
                 <For each={result().system}>{(row) => <li>
-                  <div class="admin-skills-skill"><A href={`/skills/${encodeURIComponent(row.id)}`}>{row.name}</A><p title={row.description}>{row.description}</p></div>
+                  <div class="admin-skills-skill"><A href={skillPath(row.id, gateway)}>{row.name}</A><p title={row.description}>{row.description}</p></div>
                   <div class="admin-skills-system-meta">
                     <span class="admin-skills-pill">{row.kind === "builtin" ? "Built-in" : "Default"}</span>
                     <span class="admin-skills-muted">{row.agents?.length ? `Agents: ${row.agents.join(", ")}` : "All agents"}</span>
@@ -103,13 +146,13 @@ export default function AdminSkills() {
           </div>
         </section>
       </>}</Show>
-      <Show when={transferring()}>{(row) => <ConfirmDialog title="Transfer skill" description={`Give ${row().name} to another user. The new owner can edit, share and delete it. The current owner loses access unless it is shared with them.`} confirmLabel="Transfer" error={error()} onCancel={() => setTransferring(undefined)} onConfirm={async () => { if (!newOwner()) { setError("Choose a new owner."); return; } await run(async () => { await transferSkillOwner(row().id, newOwner()); setTransferring(undefined); }); }}>
+      <Show when={transferring()}>{(row) => <ConfirmDialog title="Transfer skill" description={`Give ${row().name} to another user. The new owner can edit, share and delete it. The current owner loses access unless it is shared with them.`} confirmLabel="Transfer" error={error()} onCancel={() => setTransferring(undefined)} onConfirm={async () => { if (!newOwner()) { setError("Choose a new owner."); return; } await run(async () => { await transferSkillOwner(row().id, newOwner(), gateway); setTransferring(undefined); }); }}>
         <div class="admin-skills-owner-field"><span>New owner</span>
           <UserPicker class="admin-skills-owner-picker" value={newOwner()} onChange={setNewOwner}
             users={(recipients.latest?.users ?? []).filter((user) => user.id !== row().ownerId).map((user) => ({ id: user.id, label: `${user.name} (${user.email})`, name: user.name, image: user.image }))} />
         </div>
       </ConfirmDialog>}</Show>
-      <Show when={makingDefault()}>{(row) => <ConfirmDialog title="Make default skill" description={`Move ${row().name} from ${row().agentName}'s workspace to the default skills? All agents and all users get it, always on. It is removed from the workspace.`} confirmLabel={defaultCheck.latest?.outsidePaths.length ? "Make default anyway" : "Make default"} error={error()} onCancel={() => setMakingDefault(undefined)} onConfirm={() => run(async () => { await makeSkillDefault(row().id); setMakingDefault(undefined); })}>
+      <Show when={makingDefault()}>{(row) => <ConfirmDialog title="Make default skill" description={`Move ${row().name} from ${row().agentName}'s workspace to the default skills? All agents and all users get it, always on. It is removed from the workspace.`} confirmLabel={defaultCheck.latest?.outsidePaths.length ? "Make default anyway" : "Make default"} error={error()} onCancel={() => setMakingDefault(undefined)} onConfirm={() => run(async () => { await makeSkillDefault(row().id, gateway); setMakingDefault(undefined); })}>
         <Show when={defaultCheck.loading}><p class="admin-skills-muted" role="status">Checking file paths…</p></Show>
         <Show when={!defaultCheck.loading && defaultCheck()?.outsidePaths.length}><div class="admin-skills-path-warning" role="alert">
           <p>This skill refers to files outside its folder. Other agents may not have these files:</p>
@@ -117,7 +160,7 @@ export default function AdminSkills() {
           <Show when={(defaultCheck()?.outsidePaths.length ?? 0) > 8}><p>And {(defaultCheck()?.outsidePaths.length ?? 0) - 8} more.</p></Show>
         </div></Show>
       </ConfirmDialog>}</Show>
-      <Show when={deleting()}>{(row) => <ConfirmDialog title="Delete platform-wide skill" description={`Delete ${row().name} for its owner and everyone it is shared with? This cannot be undone.`} confirmLabel="Delete" danger error={error()} onCancel={() => setDeleting(undefined)} onConfirm={() => run(async () => { await deleteSkill(row().id); setDeleting(undefined); })} />}</Show>
+      <Show when={deleting()}>{(row) => <ConfirmDialog title="Delete platform-wide skill" description={`Delete ${row().name} for its owner and everyone it is shared with? This cannot be undone.`} confirmLabel="Delete" danger error={error()} onCancel={() => setDeleting(undefined)} onConfirm={() => run(async () => { await deleteSkill(row().id, gateway); setDeleting(undefined); })} />}</Show>
     </Show>
     <style>{`
       .admin-skills-section { max-width: 1120px; }
@@ -186,5 +229,5 @@ export default function AdminSkills() {
       }
       @media (max-width: 720px) { .admin-skills-system li { flex-direction: column; gap: 8px; } .admin-skills-system-meta { flex-direction: row; align-items: center; } }
     `}</style>
-  </AdminLayout>;
+  </>;
 }

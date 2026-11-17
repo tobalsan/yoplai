@@ -89,6 +89,11 @@
       "development": "./src/secret-paths.ts",
       "import": "./dist/secret-paths.js",
       "types": "./dist/secret-paths.d.ts"
+    },
+    "./skill-id-wire": {
+      "development": "./src/skill-id-wire.ts",
+      "import": "./dist/skill-id-wire.js",
+      "types": "./dist/skill-id-wire.d.ts"
     }
   },
   "scripts": {

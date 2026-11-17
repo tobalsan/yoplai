@@ -15,6 +15,7 @@ import { normalizeMcpServerUrl } from "@yoplai/shared/mcp-url";
 import { EMPTY_TOP_EXTENSIONS, fetchTopExtensions } from "../api/top-extensions";
 import { gatewayApiPath, gatewayKey, qualifiedAgentId, qualifyAgentRoute, rawAgentId, type GatewayName } from "../api/gateway";
 import { useAgentTarget } from "../lib/agent-target";
+import { RequesterFailure } from "../lib/page-visit";
 import { useRequester } from "../lib/requester";
 import { createResourceKey } from "../lib/resource-key";
 import { createOAuthPopupFlow, type OAuthVerdict } from "../lib/oauth-popup-flow";
@@ -659,7 +660,7 @@ export function EditAgent() {
         </Show>
 
         <Show when={contextReady() && requester().unknown}>
-          <div class="error" role="alert">Could not read your permissions on {gateway()}. Controls that need them stay off.</div>
+          <RequesterFailure requester={requester} class="error">Could not read your permissions on {gateway()}. Controls that need them stay off.</RequesterFailure>
         </Show>
 
         <Show when={contextReady() && !agents.loading && !activeAgents.loading && !agent()}>

@@ -145,6 +145,18 @@ describe("global extension administration", () => {
     expect(gateways.requests.filter((request) => request.method === "PUT")).toEqual([]);
   });
 
+  it("turns the controls on after Retry reads the permissions again, without navigation", async () => {
+    let answer: { status: number; json: unknown } = { status: 500, json: {} };
+    gateways.on("GET", `${east}/api/capabilities`, () => answer);
+    mount("/admin/extensions?gateway=east");
+    await vi.waitFor(() => expect(text()).toContain("Could not read your permissions on east."));
+    expect(star("Ext exa")?.disabled).toBe(true);
+    answer = { status: 200, json: caps({ user: { id: "root", role: "superadmin" } }) };
+    Array.from(container.querySelectorAll<HTMLButtonElement>("button")).find((item) => item.textContent === "Retry")!.click();
+    await vi.waitFor(() => expect(star("Ext exa")?.disabled).toBe(false));
+    expect(text()).not.toContain("Could not read your permissions");
+  });
+
   it("lets a single-user remote change its flags, because its linked bearer is its actor", async () => {
     gateways.on("PUT", `${west}/api/admin/top-extensions`, { json: top(["exa"]) });
     mount("/admin/extensions?gateway=west");
@@ -338,6 +350,18 @@ describe("MCP catalog administration", () => {
     await vi.waitFor(() => expect(button("Add server")?.disabled).toBe(false));
     expect(text()).not.toContain("The server list could not be read");
     await vi.waitFor(() => expect(row("new")).not.toBeNull());
+  });
+
+  it("turns Add server on after Retry reads the permissions again, without navigation", async () => {
+    let answer: { status: number; json: unknown } = { status: 500, json: {} };
+    gateways.on("GET", `${east}/api/capabilities`, () => answer);
+    mount("/admin/mcp-servers?gateway=east");
+    await vi.waitFor(() => expect(text()).toContain("Could not read your permissions on east."));
+    expect(button("Add server")?.disabled).toBe(true);
+    answer = { status: 200, json: caps({ user: { id: "root", role: "superadmin" } }) };
+    button("Retry")!.click();
+    await vi.waitFor(() => expect(button("Add server")?.disabled).toBe(false));
+    expect(text()).not.toContain("Could not read your permissions");
   });
 
   it("shows the refusal and an offline gateway as errors, and makes no call for a gateway that is not linked", async () => {

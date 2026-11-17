@@ -137,6 +137,22 @@ type CompleteRunInput = {
 
 let schedulerCtx: ExtensionContext | null = null;
 
+/** The job of an update does not exist. The route answers 404. */
+export class ScheduleNotFoundError extends Error {
+  constructor(agentId: string, id: string) {
+    super(`Schedule not found: ${agentId}/${id}`);
+    this.name = "ScheduleNotFoundError";
+  }
+}
+
+/** A job cannot take owner credentials with no authenticated requester. The route answers with a safe 403. */
+export class OwnerIdentityRequiredError extends Error {
+  constructor() {
+    super("Owner credentials require an authenticated user");
+    this.name = "OwnerIdentityRequiredError";
+  }
+}
+
 export class ScheduleAlreadyRunningError extends Error {
   constructor(agentId: string, id: string) {
     super(`Schedule already running: ${agentId}/${id}`);
@@ -361,9 +377,9 @@ export class SchedulerService {
   ): Promise<ScheduleJob> {
     await this.load();
     const job = this.findJob(agentId, id);
-    if (!job) throw new Error(`Schedule not found: ${agentId}/${id}`);
+    if (!job) throw new ScheduleNotFoundError(agentId, id);
 
-    if (patch.credentialMode === "owner" && !job.ownerUserId && !ownerUserId) throw new Error("Owner credentials require an authenticated user");
+    if (patch.credentialMode === "owner" && !job.ownerUserId && !ownerUserId) throw new OwnerIdentityRequiredError();
     assertDeviceJobValid(
       patch.requiresDevice ?? job.requiresDevice,
       (patch.payload ?? job.payload).noAgent,

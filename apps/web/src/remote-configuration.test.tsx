@@ -8,6 +8,7 @@ import { resetCapabilitiesForTests, setCapabilitiesForTests } from "./lib/capabi
 import { renderExtensionRoutes } from "./lib/web-route-registry";
 import { ExtensionDetails } from "./pages/ExtensionDetails";
 import { ScheduleRuns } from "./pages/ScheduleRuns";
+import { ScheduleRunTrace } from "./pages/ScheduleRunTrace";
 import { selectScope } from "./components/CredentialScopeTabs.testing";
 import type { ExtensionCatalogEntry } from "./api/extensions";
 
@@ -51,6 +52,7 @@ function mount(path: string) {
     <MemoryRouter history={history} root={(props) => <Suspense>{props.children}</Suspense>}>
       <Route path="/agents/:agentId/extensions/:extensionId" component={() => <ExtensionDetails />} />
       <Route path="/agents/:agentId/schedules/:jobId/runs" component={ScheduleRuns} />
+      <Route path="/agents/:agentId/schedules/:jobId/runs/:runId" component={ScheduleRunTrace} />
       <Route path="/review-away" component={() => <h1>Other page</h1>} />
       {renderExtensionRoutes((Component) => <Component />)}
     </MemoryRouter>
@@ -131,6 +133,8 @@ describe("extension page of a remote agent", () => {
   });
 
   it("links a bespoke config page to the qualified agent, not to the raw remote agent", async () => {
+    // The remote loads the module, so its bespoke page opens from the link.
+    gateways.on("GET", `${east}/api/capabilities`, { json: { ...remoteCapabilities, extensions: { ...remoteCapabilities.extensions, notes: true } } });
     gateways.on("GET", `${east}/api/agents/assistant%40east/extensions`, { json: { extensions: [entry({ id: "notes", displayName: "Notes", tier: "bespoke-route", configRoutePath: "/agents/assistant/extensions/notes/settings" })] } });
     mount("/agents/assistant%40east/extensions/notes");
     await vi.waitFor(() => expect(text()).toContain("Notes"));
@@ -276,6 +280,68 @@ describe("schedule history of a remote agent", () => {
     go("/agents/assistant%40east/schedules/job-1/runs");
     await vi.waitFor(() => expect(text()).toContain("Failed to load run history."));
     expect(container.querySelectorAll("a[href*='run-local']")).toHaveLength(0);
+  });
+});
+
+describe("schedule pages while the next visit loads", () => {
+  const run = (id: string, jobId: string) => ({ id, jobId, agentId: "assistant", startedAt: "2026-01-01T00:00:00.000Z", finishedAt: "2026-01-01T00:00:05.000Z", status: "ok", runKind: "scheduled" });
+  const trace = (id: string, jobId: string, prompt: string) => ({ run: { ...run(id, jobId), prompt }, messages: [] });
+  const localCapabilities = () => setCapabilitiesForTests({ extensions: { scheduler: true }, multiUser: false, enableCronMonitoring: true });
+
+  it("shows no rows of the previous job under the next job while its history is pending", async () => {
+    localCapabilities();
+    let answerNext!: () => void;
+    gateways.on("GET", "/api/schedules/assistant/job-1/runs", { json: { runs: [run("run-one", "job-1")] } });
+    gateways.on("GET", "/api/schedules/assistant/job-2/runs", () => new Promise((resolve) => { answerNext = () => resolve({ json: { runs: [run("run-two", "job-2")] } }); }));
+    mount("/agents/assistant/schedules/job-1/runs");
+    await vi.waitFor(() => expect(link("OK")?.getAttribute("href")).toContain("run-one"));
+    go("/agents/assistant/schedules/job-2/runs");
+    await vi.waitFor(() => expect(answerNext).toBeDefined());
+    expect(text()).toContain("Job: job-2");
+    expect(container.querySelectorAll("a[href*='run-one']")).toHaveLength(0);
+    expect(link("OK")).toBeUndefined();
+    answerNext();
+    await vi.waitFor(() => expect(link("OK")?.getAttribute("href")).toContain("run-two"));
+  });
+
+  it("shows no transcript of the previous run under the next run while its trace is pending", async () => {
+    localCapabilities();
+    let answerNext!: () => void;
+    gateways.on("GET", "/api/schedules/assistant/job-1/runs/run-one/trace", { json: trace("run-one", "job-1", "Prompt of the first run") });
+    gateways.on("GET", "/api/schedules/assistant/job-1/runs/run-two/trace", () => new Promise((resolve) => { answerNext = () => resolve({ json: trace("run-two", "job-1", "Prompt of the second run") }); }));
+    mount("/agents/assistant/schedules/job-1/runs/run-one");
+    await vi.waitFor(() => expect(text()).toContain("Prompt of the first run"));
+    go("/agents/assistant/schedules/job-1/runs/run-two");
+    await vi.waitFor(() => expect(answerNext).toBeDefined());
+    expect(text()).not.toContain("Prompt of the first run");
+    answerNext();
+    await vi.waitFor(() => expect(text()).toContain("Prompt of the second run"));
+  });
+
+  it("shows a failed capabilities read with a Retry, not an unavailable page, and loads the history after it", async () => {
+    let capabilities: { status: number; json: unknown } = { status: 500, json: {} };
+    gateways.on("GET", `${east}/api/capabilities`, () => capabilities);
+    gateways.on("GET", `${east}/api/schedules/assistant%40east/job-1/runs`, { json: { runs: [run("run-east", "job-1")] } });
+    mount("/agents/assistant%40east/schedules/job-1/runs");
+    await vi.waitFor(() => expect(text()).toContain("Could not read what the gateway of this agent offers."));
+    expect(text()).not.toContain("Run history is unavailable.");
+    expect(gateways.log().filter((line) => line.includes("/schedules"))).toEqual([]);
+    capabilities = { status: 200, json: remoteCapabilities };
+    button("Retry")!.click();
+    await vi.waitFor(() => expect(link("OK")?.getAttribute("href")).toContain("run-east"));
+    expect(gateways.localConfigurationRequests()).toEqual([]);
+  });
+
+  it("shows a failed capabilities read with a Retry on the trace page too", async () => {
+    let capabilities: { status: number; json: unknown } = { status: 500, json: {} };
+    gateways.on("GET", `${east}/api/capabilities`, () => capabilities);
+    gateways.on("GET", `${east}/api/schedules/assistant%40east/job-1/runs/run-east/trace`, { json: trace("run-east", "job-1", "Prompt of the east run") });
+    mount("/agents/assistant%40east/schedules/job-1/runs/run-east");
+    await vi.waitFor(() => expect(text()).toContain("Could not read what the gateway of this agent offers."));
+    expect(text()).not.toContain("Run trace is unavailable.");
+    capabilities = { status: 200, json: remoteCapabilities };
+    button("Retry")!.click();
+    await vi.waitFor(() => expect(text()).toContain("Prompt of the east run"));
   });
 });
 

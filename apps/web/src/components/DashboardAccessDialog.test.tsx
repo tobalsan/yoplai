@@ -112,4 +112,49 @@ describe("DashboardAccessDialog", () => {
     await tick();
     expect(saveMock).toHaveBeenCalledWith("d1", [], undefined);
   });
+  describe("recovery of an uncertain save", () => {
+    const openWith = async (reload?: () => Promise<object[]>) => {
+      dispose = render(() => <DashboardAccessDialog dashboard={{ id: "d1", title: "Revenue", shares: [] }} onClose={() => {}} onSaved={() => {}} reload={reload as never} />, root);
+      await tick();
+    };
+
+    it("keeps its old behavior with no reload: Save turns on again after a failed save", async () => {
+      saveMock.mockRejectedValue(new Error("Offline"));
+      await openWith();
+      choose(select("General access"), "all");
+      button("Save").click();
+      await tick(); await tick();
+      expect(document.body.textContent).toContain("Offline");
+      expect(button("Save").disabled).toBe(false);
+    });
+
+    it("replaces the draft with the shares that the reload returns", async () => {
+      saveMock.mockRejectedValue(new Error("Offline"));
+      await openWith(async () => [{ kind: "all", mode: "read" }]);
+      choose(select("General access"), "all");
+      button("Save").click();
+      await tick(); await tick();
+      expect(select("General access").value).toBe("all");
+      expect(button("Save").disabled).toBe(true);
+      expect(saveMock).toHaveBeenCalledTimes(1);
+    });
+
+    it("keeps Save off when the reload fails, and turns it on after Read shares works", async () => {
+      saveMock.mockRejectedValue(new Error("Offline"));
+      let failing = true;
+      await openWith(async () => { if (failing) throw new Error("Offline"); return []; });
+      choose(select("General access"), "all");
+      button("Save").click();
+      await tick(); await tick();
+      expect(button("Save").disabled).toBe(true);
+      button("Save").click(); await tick();
+      expect(saveMock).toHaveBeenCalledTimes(1);
+      failing = false;
+      button("Read shares").click();
+      await tick(); await tick();
+      expect(button("Read shares")).toBeUndefined();
+      choose(select("General access"), "all");
+      expect(button("Save").disabled).toBe(false);
+    });
+  });
 });
