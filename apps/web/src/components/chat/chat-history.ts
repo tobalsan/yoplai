@@ -4,6 +4,10 @@ import { extractBlockText } from "../../lib/history";
 import type { ActivityItem } from "./ChatBlocks";
 import type { McpAppView } from "@yoplai/shared/types";
 
+export function isExtensionFrameView(view?: McpAppView): boolean {
+  return view?.server === "yoplai" && view.resourceUri === "ui://yoplai/extension-frame";
+}
+
 export function userText(message: FullHistoryMessage): string {
   return message.content
     .filter((b): b is { type: "text"; text: string } => b.type === "text")
@@ -102,7 +106,7 @@ export function fullHistoryDisplayRows(
         });
       } else if (block.type === "toolCall") {
         const result = toolResults.get(block.id);
-        if ((block as ChatToolCall).viewCall ?? !!result?.view) {
+        if (isExtensionFrameView(result?.view) || ((block as ChatToolCall).viewCall ?? !!result?.view)) {
           rows.push({ kind: "mcp-app", call: block, result, historyIndex });
           continue;
         }
@@ -192,7 +196,7 @@ export function fullMessagesToSimpleView(
           id: block.id,
           parentToolCallId: block.parentToolCallId,
           result: results.get(block.id),
-          viewCall: (block as ChatToolCall).viewCall ?? !!results.get(block.id)?.view,
+          viewCall: isExtensionFrameView(results.get(block.id)?.view) || ((block as ChatToolCall).viewCall ?? !!results.get(block.id)?.view),
           view: (block as ChatToolCall).view,
           role: "tool",
           toolName: block.name,

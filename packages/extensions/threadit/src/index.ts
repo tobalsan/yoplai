@@ -4,12 +4,14 @@ import {
   type ExtensionContext,
 } from "@yoplai/shared";
 import { resolveThreaditConfig } from "./config.js";
+import { describeFailure, MAX_BODY_CHARS, splitAnswer, ThreaditApi } from "./api.js";
 import { ThreaditPoller } from "./poller.js";
 import { resolveToolTarget, threaditAgentTools } from "./tools.js";
 
 const pollers = new Map<string, ThreaditPoller>();
 let hostContext: ExtensionContext | undefined;
 const tools = threaditAgentTools({ getHost: () => hostContext });
+let unregisterDeliverySink: (() => void) | undefined;
 
 function resolveAgent(ctx: ExtensionContext, agentId: string) {
   const live = ctx.getAgent(agentId);
@@ -79,12 +81,31 @@ const threaditExtension: Extension = {
   },
   async start(ctx) {
     hostContext = ctx;
+    unregisterDeliverySink = ctx.registerDeliverySink("threadit", async ({ agent, destination, text }) => {
+      const config = resolveAgent(ctx, agent.id);
+      if (config?.status !== "ok" || !config.config.token) {
+        throw new Error("No Threadit token is configured for this agent.");
+      }
+      const [thread, parent] = (destination.channel ?? "").split(":");
+      const threadId = Number(thread);
+      const parentId = parent === undefined ? null : Number(parent);
+      if (!Number.isSafeInteger(threadId) || threadId <= 0 || (parentId !== null && (!Number.isSafeInteger(parentId) || parentId <= 0))) {
+        throw new Error("Threadit delivery requires THREAD_ID[:PARENT_MESSAGE_ID].");
+      }
+      const api = new ThreaditApi(config.config.baseUrl, config.config.token);
+      for (const part of splitAnswer(text, MAX_BODY_CHARS)) {
+        const result = await api.reply(threadId, parentId, part);
+        if (!result.ok) throw new Error(`Threadit delivery failed: ${describeFailure(result)}`);
+      }
+    });
     reconcilePollers(ctx);
   },
   async onConfigReload() {
     if (hostContext) reconcilePollers(hostContext);
   },
   async stop() {
+    unregisterDeliverySink?.();
+    unregisterDeliverySink = undefined;
     hostContext = undefined;
     const all = [...pollers.values()];
     pollers.clear();

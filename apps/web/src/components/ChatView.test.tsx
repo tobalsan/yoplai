@@ -3060,6 +3060,124 @@ describe("ChatView abort handling", () => {
     } finally { view.dispose(); measure.mockRestore(); }
   });
 
+  // ALG-708 Testing Decisions + Groom GO f321c105 approve ChatView's public
+  // stream/DOM seam: catches live opening/reuse, misses browser sandbox networking.
+  it("resolves a fresh chat before loading its first result-only extension frame", async () => {
+    const measure = measureChatSpace();
+    fetchFullHistoryMock.mockResolvedValue({ messages: [], isStreaming: false, activeTurn: null });
+    loadMcpAppDataMock.mockResolvedValue({ args: {}, result: { content: [], structuredContent: {
+      extensionId: "questionnaire", url: "/x/questionnaire/form-one", title: "Project choices", key: "form-one",
+    } } });
+    const view = await startFullStream();
+    let resolveSession: ((value: { messages: never[]; sessionId: string }) => void) | undefined;
+    fetchFullHistoryMock.mockImplementationOnce(() => new Promise((resolve) => { resolveSession = resolve; }));
+    try {
+      view.callbacks()?.onToolCall?.("fresh-interview", "interview_ask", {});
+      view.callbacks()?.onToolResult?.("fresh-interview", "interview_ask", "Form ready", false, undefined, undefined, {
+        server: "yoplai", tool: "extension-frame", resourceUri: "ui://yoplai/extension-frame", recordId: "fresh-form-record", key: "questionnaire:form-one", title: "Project choices",
+      });
+      await tick();
+      expect(loadMcpAppDataMock).not.toHaveBeenCalled();
+      expect(resolveSession).toBeTypeOf("function");
+      resolveSession!({ messages: [], sessionId: "fresh-interview-session" });
+      await waitFor(() => expect(queryByTitle(view.container, "Project choices view")).not.toBeNull());
+      expect(loadMcpAppDataMock).toHaveBeenCalledWith("agent-1", "fresh-interview-session", "fresh-interview", expect.any(AbortSignal));
+      expect(queryByTitle(queryByRole(view.container, "complementary")!, "Project choices view")).not.toBeNull();
+    } finally { view.dispose(); measure.mockRestore(); }
+  });
+
+  it("keeps a fresh chat progressing if its extension frame session lookup hangs", async () => {
+    const measure = measureChatSpace();
+    fetchFullHistoryMock.mockResolvedValue({ messages: [], isStreaming: false, activeTurn: null });
+    const view = await startFullStream();
+    let lookupSignal: AbortSignal | undefined;
+    fetchFullHistoryMock.mockImplementationOnce((_agent, _key, _id, _page, signal) => {
+      lookupSignal = signal;
+      return new Promise(() => {});
+    });
+    vi.useFakeTimers();
+    try {
+      view.callbacks()?.onToolCall?.("unresolved-interview", "interview_ask", {});
+      view.callbacks()?.onToolResult?.("unresolved-interview", "interview_ask", "Form ready", false, undefined, undefined, {
+        server: "yoplai", tool: "extension-frame", resourceUri: "ui://yoplai/extension-frame", recordId: "unresolved-form-record", key: "questionnaire:form-one", title: "Project choices",
+      });
+      view.onText("Chat continues while its session resolves.");
+      await vi.advanceTimersByTimeAsync(15_000);
+      expect(loadMcpAppDataMock).not.toHaveBeenCalled();
+      expect(view.container.querySelector("iframe")).toBeNull();
+      expect(view.container.textContent).toContain("View unavailable");
+      expect(view.container.textContent).toContain("Chat continues while its session resolves.");
+      expect(lookupSignal?.aborted).toBe(true);
+    } finally { vi.useRealTimers(); view.dispose(); measure.mockRestore(); }
+  });
+
+  it("opens an extension frame from result metadata and reuses its key", async () => {
+    const measure = measureChatSpace();
+    loadMcpAppDataMock.mockResolvedValue({ args: {}, result: { content: [], structuredContent: {
+      extensionId: "questionnaire", url: "/x/questionnaire/form-one", title: "Project choices", key: "form-one",
+    } } });
+    const { container, dispose, callbacks } = await startFullStream();
+    const marker = { server: "yoplai", tool: "extension-frame", resourceUri: "ui://yoplai/extension-frame" };
+    try {
+      callbacks()?.onToolCall?.("interview-one", "interview_ask", {});
+      callbacks()?.onToolResult?.("interview-one", "interview_ask", "Form ready", false, undefined, undefined, { ...marker, recordId: "form-record", key: "questionnaire:form-one", title: "Project choices" });
+      await waitFor(() => expect(queryByRole(container, "complementary")).not.toBeNull());
+      const panel = queryByRole(container, "complementary")!;
+      await waitFor(() => expect(queryByTitle(panel, "Project choices view")).not.toBeNull());
+      const frame = queryByTitle(panel, "Project choices view") as HTMLIFrameElement;
+      expect(frame.getAttribute("src")).toBe("/x/questionnaire/form-one");
+      expect(frame.getAttribute("sandbox")).not.toContain("allow-same-origin");
+      callbacks()?.onToolCall?.("interview-two", "interview_ask", {});
+      callbacks()?.onToolResult?.("interview-two", "interview_ask", "Form ready again", false, undefined, undefined, { ...marker, recordId: "form-record-two", key: "questionnaire:form-one", title: "Project choices" });
+      await tick();
+      expect(queryByTitle(panel, "Project choices view")).toBe(frame);
+      expect(panel.querySelectorAll("iframe")).toHaveLength(1);
+    } finally { dispose(); measure.mockRestore(); }
+  });
+
+  it.each(["simple", "full"])("replays a result-only extension frame inline in %s history without opening the panel", async (mode) => {
+    routeState.view = mode;
+    const measure = measureChatSpace();
+    const marker = { server: "yoplai", tool: "extension-frame", resourceUri: "ui://yoplai/extension-frame" };
+    fetchFullHistoryMock.mockResolvedValue({ sessionId: "session-main", messages: [
+      { role: "assistant", timestamp: 1, content: [{ type: "toolCall", id: "saved-interview", name: "interview_ask", arguments: {}, viewCall: false }] },
+      { role: "toolResult", timestamp: 2, toolCallId: "saved-interview", toolName: "interview_ask", content: [{ type: "text", text: "Form ready" }], view: { ...marker, recordId: "saved-record", key: "questionnaire:form-one", title: "Project choices" } },
+    ] });
+    loadMcpAppDataMock.mockResolvedValue({ args: {}, result: { content: [], structuredContent: { extensionId: "questionnaire", url: "/x/questionnaire/form-one", title: "Project choices", key: "form-one" } } });
+    const { container, dispose } = renderView();
+    try {
+      await waitFor(() => expect(queryByTitle(container, "Project choices view")).not.toBeNull());
+      expect(queryByRole(container, "complementary")).toBeNull();
+    } finally { dispose(); measure.mockRestore(); }
+  });
+
+  it.each(["https://foreign.example.test/form", "/x/another/form", "/x/questionnaire/../another/form"])("refuses an extension frame whose captured data points outside its pages: %s", async (url) => {
+    const measure = measureChatSpace();
+    loadMcpAppDataMock.mockResolvedValue({ args: {}, result: { content: [], structuredContent: { extensionId: "questionnaire", url, title: "Project choices", key: "form-one" } } });
+    const view = await startFullStream();
+    try {
+      view.callbacks()?.onToolCall?.("unsafe-interview", "interview_ask", {});
+      view.callbacks()?.onToolResult?.("unsafe-interview", "interview_ask", "Form ready", false, undefined, undefined, { server: "yoplai", tool: "extension-frame", resourceUri: "ui://yoplai/extension-frame", recordId: "unsafe-record", key: "questionnaire:form-one" });
+      await waitFor(() => expect(queryByText(view.container, "View unavailable")).not.toBeNull());
+      expect(view.container.querySelector("iframe")).toBeNull();
+    } finally { view.dispose(); measure.mockRestore(); }
+  });
+
+  it("keeps chat progressing when an extension frame's data request hangs", async () => {
+    const measure = measureChatSpace();
+    loadMcpAppDataMock.mockImplementation(() => new Promise(() => {}));
+    const view = await startFullStream();
+    try {
+      vi.useFakeTimers();
+      view.callbacks()?.onToolCall?.("hanging-interview", "interview_ask", {});
+      view.callbacks()?.onToolResult?.("hanging-interview", "interview_ask", "Form ready", false, undefined, undefined, { server: "yoplai", tool: "extension-frame", resourceUri: "ui://yoplai/extension-frame", recordId: "hanging-record", key: "questionnaire:form-one" });
+      view.onText("Chat continues while the form loads.");
+      await vi.advanceTimersByTimeAsync(10_000);
+      expect(queryByText(view.container, "View unavailable")).not.toBeNull();
+      expect(view.container.textContent).toContain("Chat continues while the form loads.");
+    } finally { vi.useRealTimers(); view.dispose(); measure.mockRestore(); }
+  });
+
   it("labels the compact dashboard card and focuses its panel", async () => {
     const measure = measureChatSpace();
     loadMcpAppDataMock.mockResolvedValue({ args: {}, result: { content: [], structuredContent: { id: "garden", title: "Garden overview" } } });

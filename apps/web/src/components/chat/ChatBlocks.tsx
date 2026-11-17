@@ -13,6 +13,7 @@ import { appsAvailable } from "../../lib/capabilities";
 import { groupActivityItems, lastFiveWords } from "../../lib/chat-activity";
 import type { AppViews } from "./appViews";
 import { ImageLightbox } from "./ImageLightbox";
+import { isExtensionFrameView } from "./chat-history";
 
 export const ChatReadOnlyContext = createContext(false);
 
@@ -170,6 +171,7 @@ export function McpAppToolRow(props: { agentId: string; sessionId?: string | nul
   const role = () => props.appViews.roleOf(props.toolCallId);
   const captured = () => !!view()?.calls.find((call) => call.id === props.toolCallId)?.result?.view;
   const dashboard = () => view()?.latest.result?.view?.resourceUri === "ui://yoplai/dashboard";
+  const extensionFrame = () => isExtensionFrameView(view()?.latest.result?.view);
   const settled = () => !!props.result || captured();
   const inPanel = () => props.appViews.activeKey() === view()?.key;
   const hasTab = () => { const key = view()?.key; return !!key && props.appViews.isTab(key); };
@@ -202,8 +204,8 @@ export function McpAppToolRow(props: { agentId: string; sessionId?: string | nul
           <button type="button" class="mcp-app-updated" disabled={inPanel()} onClick={reveal}><i class="fa-solid fa-eye" aria-hidden="true" />{title()} updated. {inPanel() ? "Displayed in side panel" : hasTab() ? "Show in side panel" : "Click to see it"}</button>
         </Show>
       </Match>
-      <Match when={dashboard() && captured() && !!props.sessionId}>
-        <CapturedFrameView kind="dashboard" agentId={props.agentId} sessionId={props.sessionId!} callId={() => view()!.latest.id} startCallId={props.appViews.shownCallOf(view()!.key)} onShown={(callId) => { const key = view()?.key; if (key) props.appViews.reportShown(key, callId); }} mode="inline" onExpand={() => props.appViews.open(view()!.key)} />
+      <Match when={(dashboard() || extensionFrame()) && captured() && !!props.sessionId}>
+        <CapturedFrameView kind={extensionFrame() ? "extension" : "dashboard"} agentId={props.agentId} sessionId={props.sessionId!} callId={() => view()!.latest.id} startCallId={props.appViews.shownCallOf(view()!.key)} onShown={(callId) => { const key = view()?.key; if (key) props.appViews.reportShown(key, callId); }} mode="inline" onExpand={() => props.appViews.open(view()!.key)} />
       </Match>
       <Match when={settled() && appsAvailable() !== undefined && (appsAvailable() === false || !captured() || props.sessionId !== undefined)}>
         <Show when={captured() && appsAvailable() === true && !!props.sessionId}

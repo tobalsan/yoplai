@@ -67,7 +67,35 @@ External extensions load from `extensionsPath`, or `$YOPLAI_HOME/extensions` by 
 
 Extensions can contribute routes, services, lifecycle hooks, capabilities, CLI commands, web routes, prompt text, tools, delivery sinks, and OAuth requirements. Tool bundles use `packages/shared/src/tool-extension.ts` and object-shaped Zod parameter schemas.
 
+### Browser pages and tool frames
+
+`registerPageRoutes(app)` optionally registers Hono routes relative to `/x/<extensionId>`. The host checks that the extension is enabled on every request. In multi-user mode it supplies `c.get("multiUserAuthContext")`; unauthenticated page GETs redirect to `/login?returnTo=...`, while other methods return 401. Cookie-authenticated writes remain read-only during impersonation. Single-user gateways pass through without an account.
+
+Declare cookie-free POST patterns in `tokenAuthenticatedRoutes: [{ method: "POST", path: "/:id/submit" }]`. These routes still require the extension to be enabled, but the extension must authenticate an expiring signed token, re-check its viewer and form access on every call, and provide CORS headers. Sandboxed pages can post `text/plain` JSON without cookies or a preflight, following Canvas. Never issue a write token while `multiUserAuthContext.impersonator` is active. `ctx.canUserAccessAgent(userId, agentId)` re-checks current account eligibility and agent authorization without importing host auth internals; it returns true in single-user mode.
+
+The context bound to an extension exposes `pageRoutePrefix` only when its page hook is supported, and `supportsFrameViews` advertises tool-frame support. A tool can return a top-level `frameView: { url, title, key }`: `url` must be a same-origin path within that extension's `/x/<extensionId>` prefix. Absolute URLs, foreign extension paths and escaping traversal are refused. The host captures the frame in the existing owner-scoped view records; it never uses an extension's MCP Apps provider. Keys are namespaced by extension, and repeated keys reuse the same panel tab. Live results open the existing opaque sandbox on wide screens; history replay stays inline. Older hosts lack these optional context fields, so extensions can return a link or a clear unsupported-host error.
+
 Secrets resolve before extension validation. Missing IDs and invalid config fail or warn at startup according to extension contract. Missing tool-extension tokens remain configurable at runtime: affected calls return a configuration link while unrelated tools keep working. Agent-local `.env` lets two agents reuse names such as `SLACK_TOKEN` without sharing values.
+
+### Run origins and delivery
+
+Messaging transports set optional `RunAgentParams.origin: { sink, destination }`.
+The gateway forwards it to `ExtensionAgentToolContext.origin` for both Pi and
+container tool calls. Extensions can retain it with a pending interaction and
+later call `ctx.getDeliverySink(origin.sink)` using the saved destination.
+Web, scheduler and IRC runs leave it unset; older hosts also omit it.
+
+| Sink | `destination.channel` |
+| --- | --- |
+| `slack` | `CHANNEL_ID[:THREAD_TS]` |
+| `mattermost` | `CHANNEL_ID[:ROOT_POST_ID]` |
+| `threadit` | `THREAD_ID[:PARENT_MESSAGE_ID]` |
+| `telegram` | Chat ID |
+| `discord` | Channel ID (a forum reply uses its thread channel) |
+
+Slack and Threadit sinks preserve the supplied thread or parent, and Threadit
+uses the agent's current board credentials. Sinks throw on delivery failure.
+Telegram and Discord delivery stays at the chat/channel level.
 
 ### Chat commands and reply review
 

@@ -503,18 +503,20 @@ async function sendSlackMessage(
 
 /**
  * Register the "slack" delivery sink used by the scheduler to push cron
- * results. `channel` maps to a channel ID; `user` maps to a Slack user ID,
+ * results. `channel` maps to `CHANNEL_ID[:THREAD_TS]`; `user` maps to a Slack user ID,
  * which Slack DMs when passed as the `channel` param on chat.postMessage.
  * Shares sendSlackMessage with slack.send_message, so a delivered result also
  * leaves the same proactive-DM note a manual send would.
  */
 export function createSlackDeliverySink(ctx: ExtensionContext): DeliverySink {
   return async ({ agent, destination, text }) => {
-    const channel = destination.channel ?? destination.user;
+    const [channel, threadTs] = destination.channel
+      ? destination.channel.split(":", 2)
+      : [destination.user];
     if (!channel) {
       throw new Error("Slack delivery requires a channel or user destination.");
     }
-    await sendSlackMessage(agent, ctx.getConfig(), undefined, { channel, text });
+    await sendSlackMessage(agent, ctx.getConfig(), undefined, { channel, text, threadTs });
   };
 }
 

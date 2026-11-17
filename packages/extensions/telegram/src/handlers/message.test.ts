@@ -138,6 +138,7 @@ describe("handleTelegramMessage", () => {
         message: "hello",
         sessionKey: DEFAULT_MAIN_KEY,
         source: "telegram",
+        origin: { sink: "telegram", destination: { channel: "123" } },
       })
     );
     expect(send).toHaveBeenCalledWith(

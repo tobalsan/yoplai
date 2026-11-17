@@ -686,6 +686,7 @@ export class ThreaditPoller {
           message: prompt,
           sessionKey: `threadit:thread-${item.thread_id}`,
           source: "threadit",
+          origin: { sink: "threadit", destination: { channel: `${item.thread_id}:${item.id}` } },
           sessionOwnerId: null,
           signal: controller.signal,
           onEvent,

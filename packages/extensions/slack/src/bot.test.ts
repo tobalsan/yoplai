@@ -799,6 +799,7 @@ describe("createSlackBot", () => {
     expect(mockRunAgent).toHaveBeenCalledWith(
       expect.objectContaining({
         slackDelivery: { channel: "C1", threadTs: "1.0", eventId: "1.1" },
+        origin: { sink: "slack", destination: { channel: "C1:1.0" } },
       })
     );
   });
@@ -2867,6 +2868,7 @@ describe("createSlackBot", () => {
         expect.objectContaining({
           sessionKey: "slack:C1:1.1",
           slackDelivery: { channel: "C1", threadTs: "1.1", eventId: "2.2" },
+          origin: { sink: "slack", destination: { channel: "C1:1.1" } },
         })
       );
     });

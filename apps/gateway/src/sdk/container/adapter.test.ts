@@ -16,10 +16,12 @@ import {
 import {
   AgentConfigSchema,
   type AgentConfig,
+  type Extension,
   type GatewayConfig,
 } from "@yoplai/shared";
 import {
   clearConfigCacheForTests,
+  loadConfig,
   setLoadedConfig,
 } from "../../config/index.js";
 import { ensureWorkspaceFiles } from "../../agents/workspace.js";
@@ -28,6 +30,9 @@ import { isRunSettledError } from "../run-settled.js";
 import { getContainerTokenContext } from "./tokens.js";
 import type { SdkRunParams } from "../types.js";
 import { modelQuotaStore } from "../../model-quota/runtime.js";
+import { z } from "zod";
+import { ExtensionRuntime } from "../../extensions/runtime.js";
+import { createInternalTools } from "../../server/internal-tools.js";
 
 const mockGetExtensionAgentTools = vi.hoisted(() =>
   vi.fn<(agent: unknown) => unknown[]>(() => [])
@@ -40,11 +45,13 @@ vi.mock("@earendil-works/pi-coding-agent", async (importOriginal) => ({
   readStoredCredential: mockReadQuotaCredential,
 }));
 
-vi.mock("../../extensions/tools.js", () => ({
+vi.mock("../../extensions/tools.js", async (importOriginal) => ({
+  ...await importOriginal<typeof import("../../extensions/tools.js")>(),
   getExtensionAgentTools: mockGetExtensionAgentTools,
 }));
 
-vi.mock("./oauth-tokens.js", () => ({
+vi.mock("./oauth-tokens.js", async (importOriginal) => ({
+  ...await importOriginal<typeof import("./oauth-tokens.js")>(),
   resolveOAuthTokens: mockResolveOAuthTokens,
 }));
 
@@ -295,6 +302,44 @@ afterEach(() => {
 });
 
 describe("container adapter", () => {
+  it("keeps the transport origin available to extension tools called by the launched container", async () => {
+    const root = tempDir();
+    process.env.YOPLAI_HOME = path.join(root, "yoplai");
+    const agent = createAgent(root);
+    setConfig(agent, root);
+    const extension: Extension = {
+      id: "origin", displayName: "Origin", description: "Reply origin",
+      dependencies: [], routePrefixes: [], configSchema: z.object({}),
+      validateConfig: () => ({ valid: true, errors: [] }),
+      registerRoutes() {}, async start() {}, async stop() {}, capabilities: () => [],
+      getAgentTools: () => [{
+        name: "origin_show", description: "Show reply origin", parameters: {},
+        execute: (_args, context) => ({ origin: context.origin }),
+      }],
+    };
+    const runtime = new ExtensionRuntime();
+    runtime.load([extension]);
+    const actualTools = await vi.importActual<typeof import("../../extensions/tools.js")>("../../extensions/tools.js");
+    const app = createInternalTools({ getConfig: loadConfig, getRuntime: () => runtime, executeExtensionTool: actualTools.executeExtensionAgentTool });
+    const { processes } = mockSpawn();
+    mockExecFile();
+    const params = { ...createParams(agent), origin: { sink: "threadit", destination: { channel: "12:34" } } };
+    const run = getContainerAdapter().run(params);
+    await tick();
+    const input = JSON.parse(processes[0].stdinChunks.join(""));
+    const response = await app.request("/tools", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ agentId: "cloud", agentToken: input.agentToken, sessionId: "session-1", tool: "origin_show", args: {} }),
+    });
+    const body = await response.json();
+    processes[0].emitOutput({ text: "done" });
+    processes[0].finish(0);
+    await run;
+    expect(response.status).toBe(200);
+    expect(body).toEqual({ origin: { sink: "threadit", destination: { channel: "12:34" } } });
+  });
+
   // ALG-595 run/frame seam approved by Thinh, comment 959e9e2b.
   // Exercises recording and callback isolation through fake Docker, not image deployment.
   it("records an authorized quota frame without forwarding it into chat", async () => {

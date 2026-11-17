@@ -25,6 +25,7 @@ import { getAgent, CONFIG_DIR } from "../config/index.js";
 import { createDashboardAssetRoutes, createDashboardRoutes } from "../canvas/routes.js";
 import { getDashboardRegistry } from "../canvas/store.js";
 import { resolveDashboardHttpActor, listDashboardRecipients, dashboardOwnerName, authenticateDashboardRequest } from "../canvas/http-auth.js";
+import { createExtensionPageRoutes } from "../extensions/page-routes.js";
 
 type RequestAuthContext =
   import("@yoplai/extension-multi-user").RequestAuthContext;
@@ -113,6 +114,14 @@ app.use(
 );
 app.use("*", accessLogger());
 app.route("/internal", internalTools);
+app.route("/x", createExtensionPageRoutes({
+  getRuntime: currentExtensionRuntime,
+  getConfig: loadConfig,
+  async authenticate(request) {
+    if (!currentExtensionRuntime().isEnabled("multiUser")) return {};
+    return authenticateDashboardRequest(request);
+  },
+}));
 app.route("/d-assets", createDashboardAssetRoutes(loadConfig));
 app.route(
   "/d",

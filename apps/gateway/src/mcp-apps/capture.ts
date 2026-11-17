@@ -1,7 +1,7 @@
 import { randomBytes } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
-import type { ExtensionAgentToolContext, McpToolMetadata, McpAppViewReference, McpAppView, McpAppFile } from "@yoplai/shared";
+import { ExtensionFrameViewSchema, isExtensionPageUrl, type Extension, type ExtensionAgentToolContext, type McpToolMetadata, type McpAppViewReference, type McpAppView, type McpAppFile } from "@yoplai/shared";
 import { getUserHistoryDir } from "@yoplai/extension-multi-user/isolation";
 import { CONFIG_DIR } from "../config/index.js";
 import { logWarn } from "../logging.js";
@@ -25,6 +25,7 @@ type CaptureIdentity = { agentId: string; sessionId: string; userId?: string; se
 type CaptureContext = CaptureIdentity & { toolCallId?: string; signal?: AbortSignal };
 export const yoplaiFileView: McpAppView = { server: "yoplai", tool: "send_file", resourceUri: "ui://yoplai/file-viewer" };
 export const yoplaiDashboardView: McpAppView = { server: "yoplai", tool: "dashboard", resourceUri: "ui://yoplai/dashboard" };
+export const yoplaiExtensionFrameView: McpAppView = { server: "yoplai", tool: "extension-frame", resourceUri: "ui://yoplai/extension-frame" };
 type ViewExtras = Pick<McpAppViewReference, "file" | "key" | "title">;
 const referenceLifetime = 15 * 60 * 1000;
 const references = new Map<string, { scope: string; view: McpAppViewReference; createdAt: number }>();
@@ -127,6 +128,19 @@ export async function captureSendFile(context: CaptureContext, args: unknown, fi
     content: [{ type: "text", text: "File sent to user" }],
     structuredContent: { uri: `yoplai-file://${file.fileId}`, ...file },
   }, { file });
+}
+
+export async function captureExtensionFrame(extension: Pick<Extension, "id" | "registerPageRoutes">, context: ExtensionAgentToolContext, args: unknown, result: unknown): Promise<boolean> {
+  if (!extension.registerPageRoutes || !result || typeof result !== "object" || !("frameView" in result)) return false;
+  const parsed = ExtensionFrameViewSchema.safeParse(result.frameView);
+  if (!parsed.success || !context.sessionId) return false;
+  const frame = parsed.data;
+  if (!isExtensionPageUrl(frame.url, extension.id)) return false;
+  await captureYoplaiView({ ...context, agentId: context.agent.id, sessionId: context.sessionId }, yoplaiExtensionFrameView, args, {
+    content: [{ type: "text", text: frame.title }],
+    structuredContent: { ...frame, extensionId: extension.id },
+  }, { key: `${extension.id}:${frame.key}`, title: frame.title });
+  return true;
 }
 
 export async function captureYoplaiView(context: CaptureContext, view: McpAppView, args: unknown, result: Record<string, unknown>, extras: ViewExtras = {}): Promise<void> {

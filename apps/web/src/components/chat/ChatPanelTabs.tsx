@@ -3,6 +3,7 @@ import { getFileIcon } from "../../lib/attachments";
 import type { AppViews } from "./appViews";
 import { McpAppView } from "./McpAppView";
 import { CapturedFrameView, FrameView } from "./FrameView";
+import { isExtensionFrameView } from "./chat-history";
 
 export function ChatPanelTabs(props: {
   appViews: AppViews;
@@ -24,6 +25,7 @@ export function ChatPanelTabs(props: {
   };
   const file = (key: string) => props.appViews.shownFileOf(key) ?? view(key)?.latest.result?.view?.file;
   const dashboard = (key: string) => !!frame(key) || view(key)?.latest.result?.view?.resourceUri === "ui://yoplai/dashboard";
+  const extensionFrame = (key: string) => isExtensionFrameView(view(key)?.latest.result?.view);
   const title = (key: string) => {
     const latest = view(key)?.latest.result?.view;
     return frame(key)?.title ?? latest?.title ?? latest?.file?.title ?? latest?.file?.filename ?? file(key)?.title ?? file(key)?.filename ?? (dashboard(key) ? "Dashboard" : latest?.server ?? "View");
@@ -90,10 +92,12 @@ export function ChatPanelTabs(props: {
     <div class="chat-panel-tabpanels">
       <For each={mountedKeys()}>{(key) => <div class="chat-panel-tabpanel" role="tabpanel" id={panelId(key)} aria-labelledby={multiple() ? tabId(key) : undefined} aria-label={multiple() ? undefined : title(key)} hidden={props.appViews.activeKey() !== key} tabIndex={-1}>
         <Show when={frame(key)} fallback={
-          <Show when={dashboard(key)} fallback={
+          <Show when={props.sessionId} fallback={<p role="status">{props.sessionId === null ? "View unavailable" : "Loading view…"}</p>}>
+          <Show when={dashboard(key) || extensionFrame(key)} fallback={
             <McpAppView agentId={props.agentId} sessionId={props.sessionId!} viewKey={key} callId={() => view(key)!.latest.id} startCallId={props.appViews.shownCallOf(key)} text={view(key)?.latest.text ?? ""} mode="panel" fileOf={props.appViews.fileOf} onShown={(callId) => props.appViews.reportShown(key, callId)} onDisplayMode={(mode) => { if (mode === "inline") close(key); }} onUserMessage={(text) => props.onUserMessage(key, text)} />
           }>
-            <CapturedFrameView kind="dashboard" agentId={props.agentId} sessionId={props.sessionId!} callId={() => view(key)!.latest.id} startCallId={props.appViews.shownCallOf(key)} mode="panel" onCollapse={() => close(key)} onShown={(callId) => props.appViews.reportShown(key, callId)} />
+            <CapturedFrameView kind={extensionFrame(key) ? "extension" : "dashboard"} agentId={props.agentId} sessionId={props.sessionId!} callId={() => view(key)!.latest.id} startCallId={props.appViews.shownCallOf(key)} mode="panel" onCollapse={() => close(key)} onShown={(callId) => props.appViews.reportShown(key, callId)} />
+          </Show>
           </Show>
         }>{(target) => <FrameView target={target()} mode="panel" onCollapse={() => close(key)} />}</Show>
       </div>}</For>

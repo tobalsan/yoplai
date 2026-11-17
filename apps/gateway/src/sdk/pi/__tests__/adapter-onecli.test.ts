@@ -2,7 +2,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { AgentConfig, Extension, GatewayConfig } from "@yoplai/shared";
+import type { AgentConfig, Extension, ExtensionAgentToolContext, GatewayConfig } from "@yoplai/shared";
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import type { SdkRunParams } from "../../types.js";
 import { getConversationFiles } from "../../../media/conversation-files.js";
@@ -122,6 +122,32 @@ describe("pi adapter onecli env wiring", () => {
     for (const dir of tempDirs.splice(0)) {
       fs.rmSync(dir, { recursive: true, force: true });
     }
+  });
+
+  it("passes the originating reply destination to a Pi extension tool", async () => {
+    const agent = makeAgent();
+    setLoadedConfig({ agents: [agent] } as GatewayConfig);
+    const params = { ...makeRunParams(agent), origin: { sink: "slack", destination: { channel: "C012:1700000000.123" } } };
+    mockGetExtensionAgentTools.mockResolvedValue([{
+      extensionId: "sample", name: "sample_origin", description: "Show delivery origin", parameters: { type: "object", properties: {} },
+      execute: (_args: unknown, context: ExtensionAgentToolContext) => context.origin,
+    }]);
+    let result: unknown;
+    mockCreateAgentSession.mockImplementation(async (options) => ({
+      session: {
+        messages: [{ role: "assistant", content: "done" }],
+        agent: { state: { messages: [] } },
+        setActiveToolsByName: vi.fn(), subscribe: vi.fn(() => vi.fn()),
+        prompt: async () => {
+          const tool = (options.customTools as ToolDefinition[]).find((entry) => entry.name === "sample_origin")!;
+          result = (await tool.execute("origin-call", {}, params.abortSignal, undefined, {} as Parameters<ToolDefinition["execute"]>[4])).details;
+        },
+        abort: vi.fn(), dispose: vi.fn(),
+      },
+    }));
+    const { piAdapter } = await import("../adapter.js");
+    await piAdapter.run(params);
+    expect(result).toEqual({ sink: "slack", destination: { channel: "C012:1700000000.123" } });
   });
 
   it("registers project memory host tools for local Claude project chats only", async () => {

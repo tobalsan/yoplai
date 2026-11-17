@@ -497,6 +497,7 @@ export async function runAgent(
       actorKind: params.actorKind,
       sessionOwnerId: sessionOwnerId ?? null,
       requesterId: params.requesterId,
+      origin: params.origin,
       sessionId,
       sessionKey,
       message,

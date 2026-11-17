@@ -2,7 +2,7 @@ import { createComputed, createMemo, createSignal, on, type Accessor } from "sol
 import type { McpAppView, McpAppViewReference } from "@yoplai/shared/types";
 import type { HistoryViewMode, FullToolResultMessage } from "../../api/types";
 import type { ChatTranscriptSession } from "./ChatTranscript";
-import type { ChatToolCall } from "./chat-history";
+import { isExtensionFrameView, type ChatToolCall } from "./chat-history";
 import { extractBlockText } from "../../lib/history";
 import { save, type SavedAppViews } from "./appViewStorage";
 
@@ -29,7 +29,7 @@ export function chatAppViewCalls(session: ChatTranscriptSession, mode: HistoryVi
   } else {
     const results = new Map(session.fullMessages().filter((message) => message.role === "toolResult").map((message) => [message.toolCallId, message]));
     history = session.fullMessages().flatMap((message) => message.role === "assistant"
-      ? message.content.flatMap((block) => block.type === "toolCall" && ((block as ChatToolCall).viewCall ?? !!results.get(block.id)?.view)
+      ? message.content.flatMap((block) => block.type === "toolCall" && (isExtensionFrameView(results.get(block.id)?.view) || ((block as ChatToolCall).viewCall ?? !!results.get(block.id)?.view))
         ? [{ id: block.id, timestamp: message.timestamp, view: (block as ChatToolCall).view, result: results.get(block.id), text: text(results.get(block.id)) }]
         : [])
       : []);

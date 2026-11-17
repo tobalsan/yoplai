@@ -169,6 +169,9 @@ export default defineConfig({
       "^/d(?:/|-assets/)": {
         target: gatewayTarget,
       },
+      "/x": {
+        target: gatewayTarget,
+      },
     },
   },
   preview: {

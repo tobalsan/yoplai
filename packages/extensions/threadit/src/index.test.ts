@@ -20,6 +20,7 @@ function context(root: unknown, agents: Array<Record<string, unknown>>, active =
     getAgents: () => agents,
     getAgent: (id: string) => agents.find((a) => a.id === id),
     isAgentActive: (id: string) => active && id !== "idle",
+    registerDeliverySink: () => () => undefined,
   } as unknown as ExtensionContext;
 }
 

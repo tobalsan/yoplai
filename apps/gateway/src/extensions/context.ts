@@ -68,6 +68,8 @@ export function bindExtensionContext(context: ExtensionContext, extensionId: str
   const writeConfig = context.updateAgentExtensionConfig;
   return {
     ...context,
+    pageRoutePrefix: getLoadedExtensions().some((extension) => extension.id === extensionId && extension.registerPageRoutes)
+      ? `/x/${encodeURIComponent(extensionId)}` : undefined,
     updateAgentExtensionConfig: writeConfig && (async (agentId, targetId, patch) => {
       if (targetId !== extensionId) throw new Error("An extension can only write its own config.");
       return writeConfig(agentId, targetId, patch);
@@ -95,6 +97,17 @@ export function createExtensionContext(
   const getCredentialStore = () => credentialStore ??= new CredentialStore();
 
   return {
+    supportsFrameViews: true,
+    canUserAccessAgent: async (userId, agentId) => {
+      if (!loadConfig().extensions?.multiUser?.enabled) return true;
+      const { getMultiUserRuntime, getEligibleAccount, hasAgentAccess } = await import("@yoplai/extension-multi-user");
+      const runtime = getMultiUserRuntime();
+      const account = runtime && getEligibleAccount(runtime.db, userId, { approvalBypass: "superadmin" });
+      return !!account && hasAgentAccess({
+        user: { id: account.id, email: account.email, role: account.role, approved: true },
+        session: { id: "extension-page-token", userId: account.id },
+      }, agentId);
+    },
     mintToolToken: ({ agentId, userId, sessionId, runId }) => {
       const agent = getAgent(agentId);
       if (!agent) throw new Error(`Unknown agent: ${agentId}`);

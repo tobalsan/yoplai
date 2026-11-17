@@ -1192,6 +1192,7 @@ async function handleSlackMessage(
         ...(sessionId ? { sessionId } : {}),
         sessionKey,
         source: "slack",
+        origin: { sink: "slack", destination: { channel: replyThreadTs ? `${data.channel}:${replyThreadTs}` : data.channel } },
         slackDelivery: {
           channel: data.channel,
           threadTs: replyThreadTs,
@@ -1414,6 +1415,7 @@ async function handleSlackReaction(
           ? DEFAULT_MAIN_KEY
           : buildSlackSessionKey(result.channel, reactionThreadTs),
       source: "slack",
+      origin: { sink: "slack", destination: { channel: `${result.channel}:${reactionThreadTs ?? result.messageTs}` } },
       slackDelivery: {
         channel: result.channel,
         threadTs: reactionThreadTs,

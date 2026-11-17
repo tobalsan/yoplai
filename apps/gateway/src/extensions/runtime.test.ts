@@ -45,6 +45,23 @@ const config = GatewayConfigSchema.parse({
 });
 
 describe("ExtensionRuntime", () => {
+  it("passes the originating reply destination to extension tool execution", async () => {
+    const runtime = new ExtensionRuntime();
+    runtime.load([extension({
+      id: "sample",
+      getAgentTools: () => [{
+        name: "sample_origin",
+        description: "Show the reply destination",
+        parameters: {},
+        execute: (_args, context) => context.origin,
+      }],
+    })]);
+    const result = await runtime.executeTool(agent, "sample_origin", {}, config, "session", undefined, undefined, undefined, {
+      origin: { sink: "mattermost", destination: { channel: "channel:root" } },
+    });
+    expect(result).toEqual({ found: true, result: { sink: "mattermost", destination: { channel: "channel:root" } } });
+  });
+
   it("warns on one JSON line for failed tool hooks while healthy tools remain available", async () => {
     const runtime = new ExtensionRuntime();
     runtime.load([

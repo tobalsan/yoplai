@@ -375,6 +375,7 @@ export async function handleTelegramMessage(
       attachments: attachments.length > 0 ? attachments : undefined,
       sessionKey,
       source: "telegram",
+      origin: { sink: "telegram", destination: { channel: String(data.chatId) } },
       context,
       onEvent:
         streamingEnabled || toolNotes

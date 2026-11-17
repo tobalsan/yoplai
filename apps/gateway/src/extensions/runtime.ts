@@ -17,9 +17,9 @@ import { getOAuthService } from "../oauth/service.js";
 import { extensionSecretFields, resolveExtensionTokenConfig } from "../credentials/extension-tokens.js";
 import { getConversationFiles } from "../media/conversation-files.js";
 import { logWarn } from "../logging.js";
-import { captureMcpApp } from "../mcp-apps/capture.js";
+import { captureExtensionFrame, captureMcpApp } from "../mcp-apps/capture.js";
 
-type RunIdentity = Pick<ExtensionAgentToolContext, "sessionOwnerId" | "requesterId" | "conversationFiles" | "actorUserId" | "actorKind" | "toolCallId"> & ExtensionRunInfo;
+type RunIdentity = Pick<ExtensionAgentToolContext, "sessionOwnerId" | "requesterId" | "origin" | "conversationFiles" | "actorUserId" | "actorKind" | "toolCallId"> & ExtensionRunInfo;
 
 export function resolveRunActor(config: GatewayConfig, userId?: string, identity?: RunIdentity): Pick<ExtensionAgentToolContext, "actorUserId" | "actorKind"> {
   if (identity?.actorKind === "eval") return { actorKind: "eval", actorUserId: identity.actorUserId };
@@ -279,7 +279,7 @@ export class ExtensionRuntime {
             execute: async (args: unknown, context: ExtensionAgentToolContext) => {
               await requireActorExecution(context.agent.id, context.config, context.userId, context);
               const result = await withOAuthConnectLink(extension, needsCallTimeRebind(extension) ? rebindAtCallTime(extension, tool) : tool.execute)(args, context);
-              await captureMcpApp(tool.mcp, context, args, result);
+              if (!await captureExtensionFrame(extension, context, args, result)) await captureMcpApp(tool.mcp, context, args, result);
               return result;
             },
           }));
@@ -384,6 +384,7 @@ export class ExtensionRuntime {
         ...resolveRunActor(config, userId, identity),
         sessionOwnerId: identity?.sessionOwnerId,
         requesterId: identity?.requesterId,
+        origin: identity?.origin,
         emitProgress,
         signal,
         conversationFiles: identity?.conversationFiles ?? (sessionId ? getConversationFiles(agent.id, sessionId, userId) : undefined),
