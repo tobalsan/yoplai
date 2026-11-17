@@ -23,3 +23,26 @@ export async function findFreePort(
   }
   throw new Error(`No free port found in range ${basePort}-${basePort + maxAttempts - 1}`);
 }
+
+export interface PickedPorts {
+  gatewayPort: number;
+  uiPort: number;
+  appsPort: number;
+}
+
+/** Base ports of the gateway, the UI, and the MCP Apps listener. */
+export const BASE_PORTS: PickedPorts = { gatewayPort: 4000, uiPort: 3000, appsPort: 4001 };
+
+/** Pick three different free ports. Each search skips the ports that are already picked. */
+export async function pickPorts(isFree: (port: number) => Promise<boolean> = isPortFree): Promise<PickedPorts> {
+  const picked = new Set<number>();
+  const pick = async (basePort: number): Promise<number> => {
+    const port = await findFreePort(basePort, { isFree: async (candidate) => !picked.has(candidate) && (await isFree(candidate)) });
+    picked.add(port);
+    return port;
+  };
+  const gatewayPort = await pick(BASE_PORTS.gatewayPort);
+  const uiPort = await pick(BASE_PORTS.uiPort);
+  const appsPort = await pick(BASE_PORTS.appsPort);
+  return { gatewayPort, uiPort, appsPort };
+}
