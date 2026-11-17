@@ -12,10 +12,12 @@ Breaking changes are marked **⚠ BREAKING**.
 ### Added
 
 - Chat can update an agent's instructions (admins and superadmins) or existing shared Markdown system files (superadmins), with requester checks, conflict protection, and a visible diff; the single-user operator can use both tools.
+- Multi-user chat share links let any signed-in colleague read the latest saved conversation, with owner-only revocation, name-only files and inert app views.
 - Threadit `edit_message` tool can replace or remove a message's attachments via `attachment_ids` (full set; `[]` removes all); `body` is now optional.
 
 ### Changed
 
+- Chat header settings menu groups the default-agent picker, agent settings and share/copy/revoke link actions behind one cog.
 - Upgrade Pi packages to 1.5.2; codemode scripts now wait for a free worker instead of failing immediately when both workers are busy. Rebuild the sandbox image after upgrading.
 
 ### Fixed

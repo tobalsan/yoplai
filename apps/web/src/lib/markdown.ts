@@ -3,6 +3,7 @@ import DOMPurify from "dompurify";
 
 type RenderMarkdownOptions = {
   copyCode?: boolean;
+  filesAsText?: boolean;
   preserveCodeWhitespace?: boolean;
   breaks?: boolean;
   stripFrontmatter?: boolean;
@@ -39,6 +40,14 @@ function getFilenameFromHref(raw: string): string {
     return decodeURIComponent(last);
   } catch {
     return last;
+  }
+}
+
+function isMediaDownload(href: string): boolean {
+  try {
+    return /\/api\/media\/download(?:\/|$)/.test(decodeURIComponent(new URL(href, "https://shared.invalid").pathname));
+  } catch {
+    return false;
   }
 }
 
@@ -82,6 +91,7 @@ export function renderMarkdown(
 
   renderer.link = ({ href, title, text }: Tokens.Link) => {
     const rawHref = normalizeHref(href) ?? "";
+    if (options?.filesAsText && isMediaDownload(rawHref)) return escapeHtml(text || getFilenameFromHref(rawHref));
     const resolvedHref = options?.rewriteHref?.(rawHref) ?? rawHref;
     const safeTitle =
       typeof title === "string" && title ? ` title="${title}"` : "";
@@ -92,7 +102,9 @@ export function renderMarkdown(
     return `<a href="${resolvedHref ?? ""}"${safeTitle} target="_blank" rel="noopener noreferrer">${safeText}</a>`;
   };
 
-  if (options?.rewriteHref) {
+  if (options?.filesAsText) {
+    renderer.image = ({ href, text }: Tokens.Image) => escapeHtml(text || getFilenameFromHref(normalizeHref(href) ?? ""));
+  } else if (options?.rewriteHref) {
     renderer.image = ({ href, title }: Tokens.Image) => {
       const rawHref = normalizeHref(href) ?? "";
       const resolvedHref = options.rewriteHref?.(rawHref) ?? rawHref;

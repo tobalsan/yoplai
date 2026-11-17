@@ -25,6 +25,7 @@ import { ScheduleRunTrace } from "./pages/ScheduleRunTrace";
 import { ExtensionDetails } from "./pages/ExtensionDetails";
 import { McpServerDetails } from "./pages/McpServerDetails";
 import { ChatProject } from "./pages/ChatProject";
+import { SharedChat } from "./pages/SharedChat";
 import { Teams } from "./pages/Teams";
 import { Dashboards } from "./pages/Dashboards";
 import { Skills } from "./pages/Skills";
@@ -339,6 +340,7 @@ export default function App() {
         )}
       />
       <Route path="/p/:id" component={() => <GuardedRoute><LeftNavShell><ChatProject /></LeftNavShell></GuardedRoute>} />
+      <Route path="/shared/:token" component={() => <GuardedRoute><LeftNavShell><SharedChat /></LeftNavShell></GuardedRoute>} />
       <Route
         path="/chat/:agentId/:view?"
         component={() => (

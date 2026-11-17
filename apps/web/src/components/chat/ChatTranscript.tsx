@@ -9,7 +9,7 @@ import { formatTimestamp } from "../../lib/format";
 import { formatReplyClipboard } from "../../lib/reply-clipboard";
 import { writeReplyClipboard } from "../../lib/clipboard";
 import { CopyButton } from "../CopyButton";
-import { CompactionSummary, CompactStatusView, ActivityGroup, ContentBlocks, FileAttachmentList, TranscriptFileCard, ModelMetaDisplay, ActiveToolIndicator, AssistantText, McpAppToolRow } from "./ChatBlocks";
+import { ChatReadOnlyContext, CompactionSummary, CompactStatusView, ActivityGroup, ContentBlocks, FileAttachmentList, TranscriptFileCard, ModelMetaDisplay, ActiveToolIndicator, AssistantText, McpAppToolRow } from "./ChatBlocks";
 import { userText, compactSummary, fullHistoryDisplayRows, type SimpleViewMessage, type SimpleToolMessage, type SimpleSummaryMessage, type FullDisplayRow } from "./chat-history";
 import type { AppViews } from "./appViews";
 
@@ -65,7 +65,7 @@ function messageItem<T>(segment: ActivitySegment<T>): T | undefined {
 }
 
 
-export function ChatTranscript(props: { agentId: string; session: ChatTranscriptSession; viewMode: Accessor<HistoryViewMode>; appViews: AppViews; onUserMessage?: (viewKey: string, text: string) => Promise<void> }) {
+export function ChatTranscript(props: { agentId: string; session: ChatTranscriptSession; viewMode: Accessor<HistoryViewMode>; appViews: AppViews; readOnly?: boolean; onUserMessage?: (viewKey: string, text: string) => Promise<void> }) {
   const { simpleMessages, fullMessages, streamingBlocks: liveBlocks, streamingText, streamingThinking, streamingToolCalls, streamingFiles, streamingTextAt, streamingStartedAt, isStreaming, streamingFinished, showInterrupted, activeTools, historyCursor, loadingEarlier, historyError, compactStatusForCurrentSession, copyTurnFor, shouldAnimate, loadEarlierHistory } = props.session;
   const streamingBlocks = createMemo(() => liveBlocks().filter((block) => block.type !== "toolCall" || !block.view || !props.appViews.isLiveDuplicate(block.id)));
   const viewMode = props.viewMode;
@@ -107,7 +107,7 @@ export function ChatTranscript(props: { agentId: string; session: ChatTranscript
   });
 
 
-  return <>
+  return <ChatReadOnlyContext.Provider value={props.readOnly ?? false}>
           <Show when={historyCursor()}>
             <button class="load-earlier" disabled={loadingEarlier()} onClick={() => void loadEarlierHistory()}>
               {loadingEarlier() ? "Loading earlier messages…" : "Load earlier messages"}
@@ -131,7 +131,7 @@ export function ChatTranscript(props: { agentId: string; session: ChatTranscript
                   activity={(items) => (
                     <>
                       <ActivityGroup
-                        simple
+                        simple={!props.readOnly}
                         items={items().map((msg) =>
                           msg.role === "thinking"
                             ? {
@@ -565,5 +565,5 @@ export function ChatTranscript(props: { agentId: string; session: ChatTranscript
         </Show>
 
         <div data-scroll-anchor />
-  </>;
+  </ChatReadOnlyContext.Provider>;
 }
