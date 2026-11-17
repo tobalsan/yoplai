@@ -187,7 +187,27 @@ While your local gateway runs and is linked, an agent on the remote gateway can 
 | Workspace | The chat has a workspace folder | Passes | Passes inside the folder, asks outside | Asks you |
 | Full | You switch it on | Passes | Passes | Passes |
 
-A relative path and each command start in the workspace folder. With no folder, they start in your home directory. A run with no person present, such as a scheduled job, gets a refusal for each call that asks. You can allow all calls of one remote agent for such runs. The controls for the folder, the Full switch, and the approval prompt come to the page in a later release. Until then, use the local routes `/api/relay/device-settings` and `/api/relay/agent-settings`.
+A relative path and each command start in the workspace folder. With no folder, they start in your home directory. A run with no person present, such as a scheduled job, gets a refusal for each call that asks. You can allow all calls of one remote agent for such runs. In a chat with a remote agent, a call that needs approval shows as a card with the buttons Approve and Refuse. The control in the chat header shows the mode as "Device: Ask", "Device: Workspace", or "Device: Full". Its panel sets the workspace folder and the Full switch, and has a switch that allows all calls of that agent for scheduled jobs. You can set the folder before the first message of a new chat.
+
+Secret files: a read of a common secret file gets a refusal with no prompt, in Ask and Workspace mode and in a run with no person present. A write or edit of such a file always asks, also inside the workspace folder. Full access bypasses these rules. The list covers these paths and names, in upper and lower case:
+
+- Folders at any depth: `.ssh`, `.gnupg`, `.aws`, `.azure`, `.kube`, `.password-store`, `.config/gcloud`, `Library/Keychains`.
+- The file `.docker/config.json`.
+- File names: `.env` and `.env.<x>` (not `.env.example`, `.env.sample`, `.env.template`, `.env.dist`), `.netrc`, `.npmrc`, `.pypirc`, `.git-credentials`, `.htpasswd`, `auth.json`, `credentials`, `credentials.json`, and names that start with `id_rsa`, `id_dsa`, `id_ecdsa`, or `id_ed25519`.
+- File types: `.pem`, `.key`, `.p12`, `.pfx`, `.keychain-db`, `.kdbx`.
+- In the Yoplai home: `remote-gateways.json`, `device-settings.json`, `user-token.json`, `auth.db`.
+
+Limits: the rules match names and real paths. A hard link to a secret file, a copy with a different name, and a file that a local process swaps during a call are not covered. `device_bash` is not covered. If Yoplai cannot find the real path of a file, it refuses the read.
+
+The check also covers the real path behind a symbolic link. A command (`device_bash`) is not checked against this list. It asks in Ask and Workspace mode, so you see the command first. The card shows the whole command. A command over 20,000 characters that needs approval gets a refusal. The agent must write it to a script file and run the file.
+
+How your gateway picks the chat: your local gateway names the chat that you use (the session ID of the page, or its session key) and gives each message that it forwards a secret token for that one turn. The remote gateway sends the token back with each device call of that turn. A call with no valid token counts as a background call. The remote gateway cannot pick the chat or the mode of a call. The link protocol is version 2, so your local and remote gateways must both run this version. One limit: during a turn in a Full chat, the remote gateway controls the agent, so Full means trust in that gateway for that turn. The switch that allows all calls of an agent for scheduled jobs means trust in its gateway for background runs.
+
+Queued remote messages keep their own device permissions, also when two views use the same remote session. A remote reset uses a fresh chat key and starts in Ask mode, with no workspace folder. A remote reset removes the old history query before the send. Reload keeps the fresh chat key and restores its pending approvals. The reset keeps the current view, other query fields, hash, and route state. It transfers no folder, permissions, or history.
+
+The relay allows 20 live send sockets per page socket and 1,000 token records across the local gateway. Token expiry removes device authorization but leaves the stream open. The token limit does not bound all live upstream sockets. This fix adds no global socket limit.
+
+Scheduled jobs: a job gets the device tools only when its config has `requiresDevice: true` (set it in the `requiresDevice` field of `scheduler.create_job` or `scheduler.update_job`). A job with this flag stops at once, with the error code `device_offline`, when your device is not connected. You cannot combine the flag with `noAgent`. On a multi-user gateway, the job needs the credential mode `owner`.
 
 ## Troubleshooting
 

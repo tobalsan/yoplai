@@ -180,7 +180,7 @@ async function dispatchInternalTool(
   userId?: string,
   emitProgress?: ContainerTokenContext["emitProgress"],
   signal?: AbortSignal,
-  identity?: Pick<ContainerTokenContext, "sessionOwnerId" | "requesterId" | "origin" | "conversationFiles" | "actorUserId" | "actorKind" | "source" | "sender" | "background"> & { toolCallId?: string }
+  identity?: Pick<ContainerTokenContext, "sessionOwnerId" | "requesterId" | "origin" | "conversationFiles" | "actorUserId" | "actorKind" | "source" | "sender" | "background" | "requiresDevice" | "deviceTurnToken"> & { toolCallId?: string }
 ): Promise<unknown> {
   signal?.throwIfAborted();
   const config = deps.getConfig();

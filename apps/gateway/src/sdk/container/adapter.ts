@@ -381,6 +381,8 @@ export function getContainerAdapter(): SdkAdapter {
           sessionOwnerId: params.sessionOwnerId === undefined ? params.userId ?? null : params.sessionOwnerId,
           requesterId: params.requesterId,
           origin: params.origin,
+          requiresDevice: params.requiresDevice,
+          deviceTurnToken: params.deviceTurnToken,
           registerFileOutput: (event, signal) =>
             fileOutputAdapter.handle(params, event, hostDataDir, signal, launchSpec.conversationFiles),
           projectId: params.context?.project?.id,

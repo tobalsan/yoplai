@@ -12,6 +12,8 @@ import {
   type Accessor,
 } from "solid-js";
 import type { McpAppView, McpAppViewReference } from "@yoplai/shared/types";
+import type { WsDeviceApprovalRequest, WsDeviceApprovalResolved } from "@yoplai/shared";
+import type { RealtimeSubscription } from "../../api/realtime-client";
 import { isNoReply } from "@yoplai/shared/no-reply";
 import { getMaxContextTokens } from "@yoplai/shared/model-context";
 import {
@@ -24,6 +26,7 @@ import {
   postAbort,
   postCompact,
   type DoneMeta,
+  type StreamCallbacks,
 } from "../../api";
 import type {
   Agent,
@@ -95,12 +98,24 @@ type ChatSessionInput = {
   uploadPending: (pendingFiles: readonly PendingFile[]) => Promise<{ attachments?: FileAttachment[]; inboundFiles: FileBlock[] } | "failed">;
   onArchiveRestored: () => void;
   onSessionReset: (newSessionId: string) => void;
+  onRemoteReset: () => Promise<void>;
   preservePrependScroll: (prepend: () => void) => void;
   onLiveView?: (view: McpAppViewReference) => void;
 };
 
+/** A device call that waits for the user. `answered` means the page sent its answer. */
+export type DeviceApprovalItem = {
+  request: WsDeviceApprovalRequest;
+  state: "pending" | "answered" | "timeout";
+};
+
+/** A remote agent has an id of the form `name@gateway`. Only its socket connects again after a drop. */
+function isRemoteAgent(agentId: string): boolean {
+  return agentId.includes("@");
+}
+
 export function createChatSession(input: ChatSessionInput) {
-  const { agent, sessionKey, explicitSessionId, viewMode } = input;
+  const { agent, sessionKey, viewMode, explicitSessionId } = input;
   const [historyLoaded, setHistoryLoaded] = createSignal<HistoryLoaded>();
   const [simpleMessages, setSimpleMessages] = createSignal<SimpleViewMessage[]>(
     []
@@ -114,6 +129,8 @@ export function createChatSession(input: ChatSessionInput) {
   const [pendingThinkLevel, setPendingThinkLevel] =
     createSignal<ThinkLevel | null>(null);
 
+  const [deviceApprovals, setDeviceApprovals] = createSignal<DeviceApprovalItem[]>([]);
+  const [deviceConnectionLost, setDeviceConnectionLost] = createSignal(false);
   const [stopping, setStopping] = createSignal(false);
   const [showInterrupted, setShowInterrupted] = createSignal(false);
   const [isStreaming, setIsStreaming] = createSignal(false);
@@ -179,7 +196,7 @@ export function createChatSession(input: ChatSessionInput) {
   let directStreamSession: string | null = null;
   let displayedSession: string | null = null;
   let pendingResetSession: string | null = null;
-  let subscriptionCleanup: (() => void) | null = null;
+  let subscriptionCleanup: RealtimeSubscription | null = null;
   let aborted = false;
   let skipNextHistoryRefresh = false;
   let preparingSend = false;
@@ -623,13 +640,62 @@ export function createChatSession(input: ChatSessionInput) {
     });
   };
 
-  const resolveAppSession = () => {
+  // The local gateway names the chat as the page sends it: the explicit session ID, else the session key.
+  // The session key lives in local storage, so a new chat bumps a counter to tell the page.
+  const [newChatCount, setNewChatCount] = createSignal(0);
+  const deviceChatName = () => {
+    newChatCount();
+    return explicitSessionId() ? `session:${explicitSessionId()}` : `key:${sessionKey()}`;
+  };
+  /** The socket of a message that got the request. An answer goes back on the same socket. */
+  const approvalAnswerers = new Map<string, (approvalId: string, approve: boolean) => boolean>();
+  const addDeviceApproval = (request: WsDeviceApprovalRequest) =>
+    setDeviceApprovals((prev) =>
+      prev.some((item) => item.request.approvalId === request.approvalId)
+        ? prev
+        : [...prev, { request, state: "pending" }]
+    );
+  const resolveDeviceApproval = (resolved: WsDeviceApprovalResolved) => {
+    approvalAnswerers.delete(resolved.approvalId);
+    setDeviceApprovals((prev) =>
+      resolved.outcome === "timeout"
+        ? prev.map((item) => (item.request.approvalId === resolved.approvalId ? { ...item, state: "timeout" } : item))
+        : prev.filter((item) => item.request.approvalId !== resolved.approvalId)
+    );
+  };
+  const messageApprovalCallbacks = (agentId: string): Pick<StreamCallbacks, "onDeviceApprovalRequest" | "onDeviceApprovalResolved" | "onDeviceApprovalClosed"> => {
+    const chat = deviceChatName();
+    let socketAnswer: ((approvalId: string, approve: boolean) => boolean) | undefined;
+    return {
+      onDeviceApprovalRequest: (request, answer) => {
+        if (input.agentId() !== agentId || request.agentId !== agentId || request.chat !== deviceChatName() || chat !== deviceChatName()) return;
+        socketAnswer = answer;
+        approvalAnswerers.set(request.approvalId, answer);
+        addDeviceApproval(request);
+      },
+      onDeviceApprovalResolved: (resolved) => {
+        if (input.agentId() === agentId) resolveDeviceApproval(resolved);
+      },
+      onDeviceApprovalClosed: () => {
+        for (const [id, answer] of approvalAnswerers) {
+          if (answer === socketAnswer) approvalAnswerers.delete(id);
+        }
+        socketAnswer = undefined;
+      },
+    };
+  };
+  const isDeviceApprovalShown = (item: DeviceApprovalItem) => item.request.chat === deviceChatName();
+
+  const resolveAppSession = (onFailed?: () => void) => {
     if (explicitSessionId() || resolvedSessionId() || appSessionLookup || appSessionFailed()) return;
     const scope = currentSession();
     const controller = new AbortController();
     appSessionLookup = controller;
     const timer = setTimeout(() => {
-      if (scope === currentSession()) setAppSessionFailed(true);
+      if (scope === currentSession()) {
+        setAppSessionFailed(true);
+        onFailed?.();
+      }
       controller.abort();
     }, 15_000);
     controller.signal.addEventListener("abort", () => clearTimeout(timer), { once: true });
@@ -637,15 +703,28 @@ export function createChatSession(input: ChatSessionInput) {
       .then((response) => {
         if (controller.signal.aborted || scope !== currentSession()) return;
         if (response.sessionId) setResolvedSessionId(response.sessionId);
-        else setAppSessionFailed(true);
+        else {
+          setAppSessionFailed(true);
+          onFailed?.();
+        }
       })
       .catch(() => {
-        if (!controller.signal.aborted && scope === currentSession()) setAppSessionFailed(true);
+        if (!controller.signal.aborted && scope === currentSession()) {
+          setAppSessionFailed(true);
+          onFailed?.();
+        }
       })
       .finally(() => {
         clearTimeout(timer);
         if (appSessionLookup === controller) appSessionLookup = undefined;
       });
+  };
+
+  // The active turn of the subscription for the key of this chat gives the session ID.
+  const adoptSessionId = (sessionId: string) => {
+    if (explicitSessionId() || resolvedSessionId()) return;
+    setResolvedSessionId(sessionId);
+    setAppSessionFailed(false);
   };
 
   const appendStreamingToolCallBlock = (
@@ -764,16 +843,38 @@ export function createChatSession(input: ChatSessionInput) {
   // Subscribe to live updates for background runs
   createEffect(() => {
     const agentId = input.agentId();
+    newChatCount(); // "New chat" writes a new session key. Subscribe again with it.
     const key = sessionKey();
     if (!agentId) return;
     const subscribedSession = currentSession();
     const isCurrentSubscription = () => subscribedSession === currentSession();
+    const isOpenAgent = () => input.agentId() === agentId;
 
     subscriptionCleanup?.();
+    approvalAnswerers.clear();
+    // The new subscription gets each approval that still waits.
+    setDeviceApprovals([]);
+    setDeviceConnectionLost(false);
     subscriptionCleanup = subscribeToSession(
       agentId,
       key,
       {
+        onConnected: () => {
+          if (!isCurrentSubscription()) return;
+          // The gateway sends each approval that still waits after each subscribe.
+          setDeviceApprovals([]);
+          setDeviceConnectionLost(false);
+        },
+        onDisconnected: () => {
+          if (!isCurrentSubscription()) return;
+          setDeviceConnectionLost(true);
+        },
+        onDeviceApprovalRequest: (request) => {
+          if (isOpenAgent()) addDeviceApproval(request);
+        },
+        onDeviceApprovalResolved: (resolved) => {
+          if (isOpenAgent()) resolveDeviceApproval(resolved);
+        },
         onText: (chunk) => {
           if (!isCurrentSubscription()) return;
           if (ownsDisplayedDirectStream()) return;
@@ -884,8 +985,10 @@ export function createChatSession(input: ChatSessionInput) {
           if (ownsDisplayedDirectStream()) return;
           resetStreamingState();
         },
-        onActiveTurn: (turn) => {
+        onActiveTurn: (turn, sessionId) => {
           if (!isCurrentSubscription()) return;
+          // The gateway sends this event for the session of the subscribed key.
+          if (sessionId) adoptSessionId(sessionId);
           if (ownsDisplayedDirectStream()) return;
           applyActiveTurnSnapshot(turn);
         },
@@ -909,7 +1012,8 @@ export function createChatSession(input: ChatSessionInput) {
           }
         },
       },
-      explicitSessionId()
+      explicitSessionId(),
+      isRemoteAgent(agentId)
     );
   });
 
@@ -1208,6 +1312,10 @@ export function createChatSession(input: ChatSessionInput) {
     }
     beforeSubmit?.();
 
+    if (isResetCommand && isRemoteAgent(input.agentId())) {
+      await input.onRemoteReset();
+      batch(() => startNewChat(input.agentId()));
+    }
     const messageText = text || "Attached file(s).";
     const levelToSend = pendingThinkLevel() ?? thinkingLevel();
     const currentAgent = agent();
@@ -1226,7 +1334,7 @@ export function createChatSession(input: ChatSessionInput) {
       setSimpleMessages([]);
       setFullMessages([]);
       setPendingQueuedMessages([]);
-      input.onSessionReset(sessionId);
+      if (!isRemoteAgent(input.agentId())) input.onSessionReset(sessionId);
     };
 
     // Add user message to both views
@@ -1484,10 +1592,11 @@ export function createChatSession(input: ChatSessionInput) {
             queuedFiles.push(fileBlock);
             queuedBlocks.push(fileBlock);
           },
+          ...messageApprovalCallbacks(input.agentId()),
           onSessionReset: (sessionId) => {
             if (!isCurrentQueuedStream()) return;
             queuedResetFrom = queuedSession;
-            queuedSession = sessionScope(sessionId);
+            queuedSession = isRemoteAgent(input.agentId()) ? currentSession() : sessionScope(sessionId);
             pendingResetSession = queuedSession;
             // Queued /new or /reset triggered - clear messages and streaming state
             handleSessionReset(sessionId);
@@ -1521,6 +1630,7 @@ export function createChatSession(input: ChatSessionInput) {
     setStreamingFiles([]);
     setStreamingTextAt(null);
     setActiveTools([]);
+    setAppSessionFailed(false);
 
     let streamSession = currentSession();
     let resetFromSession: string | null = null;
@@ -1703,10 +1813,11 @@ export function createChatSession(input: ChatSessionInput) {
           setStreamingFiles((prev) => [...prev, fileBlock]);
           appendStreamingFileBlock(fileBlock);
         },
+        ...messageApprovalCallbacks(input.agentId()),
         onSessionReset: (sessionId) => {
           if (!isCurrentDirectStream()) return;
           resetFromSession = streamSession;
-          streamSession = sessionScope(sessionId);
+          streamSession = isRemoteAgent(input.agentId()) ? currentSession() : sessionScope(sessionId);
           directStreamSession = streamSession;
           pendingResetSession = streamSession;
           // Clear messages when session resets (e.g., /new command)
@@ -1756,6 +1867,7 @@ export function createChatSession(input: ChatSessionInput) {
 
 
   const startNewChat = (agentId: string) => {
+    approvalAnswerers.clear();
     appSessionLookup?.abort();
     appSessionLookup = undefined;
     setAppSessionFailed(false);
@@ -1765,6 +1877,7 @@ export function createChatSession(input: ChatSessionInput) {
     directStreamSession = null;
     resetStreamingState();
     startNewChatKey(agentId);
+    setNewChatCount((count) => count + 1);
     setSimpleMessages([]);
     setFullMessages([]);
     setPendingQueuedMessages([]);
@@ -1800,6 +1913,15 @@ export function createChatSession(input: ChatSessionInput) {
   const copyTurnFor = (message: SimpleViewMessage | ContentBlock): string[] | undefined =>
     "role" in message ? simpleCopyReplies().get(message) : fullCopyReplies().get(message);
   const shouldAnimate = (id: string) => !noAnimIds.delete(id);
+  const answerDeviceApproval = (approvalId: string, approve: boolean) => {
+    const sent =
+      approvalAnswerers.get(approvalId)?.(approvalId, approve) ||
+      subscriptionCleanup?.send({ type: "device_approval_answer", approvalId, approve });
+    if (!sent) return;
+    setDeviceApprovals((prev) =>
+      prev.map((item) => (item.request.approvalId === approvalId ? { ...item, state: "answered" } : item))
+    );
+  };
   onCleanup(() => {
     appSessionLookup?.abort();
     cleanup?.();
@@ -1817,6 +1939,7 @@ export function createChatSession(input: ChatSessionInput) {
     contextUsageDisplay, isContextUsageDanger, contextWarning,
     compactStatusForCurrentSession, compactStatuses,
     copyTurnFor, shouldAnimate,
+    deviceApprovals, isDeviceApprovalShown, deviceChatName, deviceConnectionLost, answerDeviceApproval,
     thinkingLevel: () => pendingThinkLevel() ?? thinkingLevel(),
     selectThinking: (level: ThinkLevel | null) => setPendingThinkLevel(level),
     flushFinished, send, sendFromView, stop, compact: compactCurrentSession,

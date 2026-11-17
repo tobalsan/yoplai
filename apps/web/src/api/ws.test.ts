@@ -14,7 +14,7 @@ describe("nested tool dispatch", () => {
 
     expect(onToolCall).toHaveBeenCalledWith("code/0", "lookup", { id: 7 }, "code");
     expect(onToolResult).toHaveBeenCalledWith("code/0", "lookup", "found", false, undefined, "code");
-    expect(onActiveTurn).toHaveBeenCalledWith(snapshot);
+    expect(onActiveTurn).toHaveBeenCalledWith(snapshot, "session");
   });
 });
 

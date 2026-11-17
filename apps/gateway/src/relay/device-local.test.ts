@@ -5,6 +5,7 @@ import { Hono } from "hono";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { DeviceCall } from "@yoplai/shared";
 import { DeviceApprovals } from "./device-approvals.js";
+import { issueTestTurn } from "./device-turn.fixture.js";
 import { DeviceExecutor } from "./device-exec.js";
 import { relayDeviceApi } from "./device-routes.js";
 import { createFileDeviceSettingsStore, deviceChatKey, type DeviceSettingsStore } from "./device-settings.js";
@@ -18,12 +19,12 @@ let settings: DeviceSettingsStore;
 let approvals: DeviceApprovals;
 let executor: DeviceExecutor;
 let asked: string[];
-const chatKey = deviceChatKey("ams", "s1");
+const chatKey = deviceChatKey("ams", "pom@ams", "session:s1");
 
 function call(tool: string, args: unknown, overrides: Partial<DeviceCall> = {}): DeviceCall {
   return {
     type: "call", callId: `call-${Math.random()}`, tool, arguments: args,
-    agentId: "pom", sessionId: "s1", toolCallId: "tc1", runKind: "chat", ...overrides,
+    agentId: "pom", toolCallId: "tc1", turnToken: issueTestTurn(), ...overrides,
   };
 }
 
@@ -156,7 +157,7 @@ describe("device gate: Full mode", () => {
   });
 
   it("does not apply the Full switch of another chat", async () => {
-    settings.setChat(deviceChatKey("ams", "other"), { full: true });
+    settings.setChat(deviceChatKey("ams", "pom@ams", "session:other"), { full: true });
     answerApprovals(true);
     await run("device_bash", { command: "echo hi" });
     expect(asked).toEqual(["device_bash"]);
@@ -198,25 +199,19 @@ describe("device calls: background runs", () => {
   it("refuses at once a call that needs an answer, with no prompt", async () => {
     answerApprovals(true);
     const target = path.join(outside, "w.txt");
-    await expect(run("device_write", { path: target, content: "x" }, { runKind: "background" })).rejects.toThrow(/no user is present/);
+    await expect(run("device_write", { path: target, content: "x" }, { turnToken: undefined })).rejects.toThrow(/no user is present/);
     expect(asked).toEqual([]);
     expect(fs.existsSync(target)).toBe(false);
-  });
-
-  it("runs a call that passes in the mode of the chat", async () => {
-    settings.setChat(chatKey, { workspaceFolder: folder, full: false });
-    await run("device_write", { path: path.join(folder, "bg.txt"), content: "ok" }, { runKind: "background" });
-    expect(fs.readFileSync(path.join(folder, "bg.txt"), "utf8")).toBe("ok");
   });
 
   it("passes each call when the agent setting is on, and only for that agent", async () => {
     settings.setAgentFullBackground("pom@ams", true);
     const target = path.join(outside, "w.txt");
-    await run("device_write", { path: target, content: "x" }, { runKind: "background" });
+    await run("device_write", { path: target, content: "x" }, { turnToken: undefined });
     expect(fs.readFileSync(target, "utf8")).toBe("x");
-    await expect(run("device_write", { path: target, content: "y" }, { runKind: "background", agentId: "other" })).rejects.toThrow(/no user is present/);
+    await expect(run("device_write", { path: target, content: "y" }, { agentId: "other" })).rejects.toThrow(/no user is present/);
     answerApprovals(true);
-    await run("device_write", { path: target, content: "z" }, { runKind: "chat" });
+    await run("device_write", { path: target, content: "z" }, {});
     expect(asked).toEqual(["device_write"]);
   });
 });
@@ -230,9 +225,10 @@ describe("device settings store", () => {
     expect(createFileDeviceSettingsStore(file).getChat(chatKey)).toEqual({ workspaceFolder: folder, full: true });
   });
 
-  it("keeps the settings of two different gateway and session pairs apart", () => {
-    settings.setChat(deviceChatKey("a", "b:c"), { full: true });
-    expect(settings.getChat(deviceChatKey("a:b", "c")).full).toBe(false);
+  it("keeps the settings of two different gateway, agent, and chat triples apart", () => {
+    settings.setChat(deviceChatKey("a", "b:c", "d"), { full: true });
+    expect(settings.getChat(deviceChatKey("a:b", "c", "d")).full).toBe(false);
+    expect(settings.getChat(deviceChatKey("a", "b", "c:d")).full).toBe(false);
   });
 });
 
@@ -242,7 +238,7 @@ describe("device settings routes", () => {
   const request = (url: string, init?: RequestInit) => app.request(url, init);
   const put = (url: string, body: unknown, headers: Record<string, string> = {}) =>
     request(url, { method: "PUT", body: JSON.stringify(body), headers: { "content-type": "application/json", ...headers } });
-  const chatUrl = "/api/relay/device-settings?agentId=pom%40ams&sessionId=s1";
+  const chatUrl = "/api/relay/device-settings?agentId=pom%40ams&chat=session%3As1";
 
   beforeEach(() => {
     enabled = true;
@@ -261,6 +257,18 @@ describe("device settings routes", () => {
     expect(await (await put(chatUrl, { workspaceFolder: folder })).json()).toMatchObject({ mode: "workspace", workspaceFolder: folder });
     expect(await (await put(chatUrl, { full: true })).json()).toMatchObject({ mode: "full", workspaceFolder: folder });
     expect(await (await put(chatUrl, { full: false, workspaceFolder: null })).json()).toMatchObject({ mode: "ask", workspaceFolder: null });
+  });
+
+  it("reads and writes the settings of a chat that has no message yet, and keeps chats apart", async () => {
+    const fresh = "/api/relay/device-settings?agentId=pom%40ams&chat=key%3Aweb-new-chat";
+    expect(await (await request(fresh)).json()).toMatchObject({ chat: "key:web-new-chat", mode: "ask", full: false });
+    expect(await (await put(fresh, { full: true })).json()).toMatchObject({ mode: "full" });
+    expect(await (await request(fresh)).json()).toMatchObject({ mode: "full" });
+    expect(await (await request(chatUrl)).json()).toMatchObject({ mode: "ask" });
+  });
+
+  it("asks for the chat name and refuses the old session ID parameter", async () => {
+    expect((await request("/api/relay/device-settings?agentId=pom%40ams&sessionId=s1")).status).toBe(400);
   });
 
   it("refuses a folder that is not an absolute path to a directory", async () => {

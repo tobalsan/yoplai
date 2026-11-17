@@ -449,17 +449,18 @@ describe("desktop relay: chat relay", () => {
     ws.close();
   });
 
-  it("closes the page socket when the queue for a connecting remote socket is full", async () => {
+  it("refuses a send when the page reaches the pending-turn limit", async () => {
     const stall = net.createServer(() => {});
     await new Promise<void>((resolve) => stall.listen(0, "127.0.0.1", resolve));
     saveGateway({ name: "stall", url: `http://127.0.0.1:${(stall.address() as AddressInfo).port}` });
     try {
       const ws = await openPage(localBase);
-      const closed = new Promise<void>((resolve) => ws.once("close", () => resolve()));
-      for (let i = 0; i < 30; i++) {
+      const refused = new Promise<Record<string, unknown>>((resolve) => ws.once("message", raw => resolve(JSON.parse(raw.toString()))));
+      for (let i = 0; i < 21; i++) {
         ws.send(JSON.stringify({ type: "send", agentId: "x@stall", sessionKey: "main", message: `m${i}` }));
       }
-      await closed;
+      expect(await refused).toMatchObject({ type: "error", message: "Too many pending device turns. Try again after a turn ends." });
+      ws.close();
     } finally {
       removeGateway("stall");
       stall.close();

@@ -51,6 +51,17 @@ describe("normalizeRunRequest", () => {
     expect(result).toMatchObject({ type: "run", params: { projectId: "research" } });
   });
 
+  it("carries the device turn token of a chat message into the run", async () => {
+    const { normalizeRunRequest } = await import("./run-request.js");
+    const input = { agentId: "alpha", message: "hello" };
+    const withToken = await normalizeRunRequest({
+      agent, input: { ...input, deviceTurnToken: "token-1" }, authContext: null, extensionRuntime, source: "web",
+    });
+    expect(withToken).toMatchObject({ type: "run", params: { deviceTurnToken: "token-1" } });
+    const without = await normalizeRunRequest({ agent, input, authContext: null, extensionRuntime, source: "web" });
+    expect(without).toMatchObject({ type: "run", params: { deviceTurnToken: undefined } });
+  });
+
   it("rejects unsafe explicit session ids", async () => {
     const { normalizeRunRequest } = await import("./run-request.js");
 

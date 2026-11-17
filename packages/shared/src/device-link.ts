@@ -1,7 +1,7 @@
 import { z } from "zod";
 
 /** Version of the device link protocol. Each side closes the link on a version that it does not know. */
-export const DEVICE_PROTOCOL_VERSION = 1;
+export const DEVICE_PROTOCOL_VERSION = 2;
 
 /** Close codes of the device link. */
 export const DEVICE_CLOSE_UNSUPPORTED_VERSION = 4001;
@@ -10,6 +10,9 @@ export const DEVICE_CLOSE_REPLACED = 4003;
 
 export const DEVICE_TOOL_NAMES = ["device_read", "device_write", "device_edit", "device_bash"] as const;
 export type DeviceToolName = (typeof DEVICE_TOOL_NAMES)[number];
+
+/** Each device call that finds no device starts its error text with this. The scheduler looks for it. */
+export const DEVICE_OFFLINE_CALL_TEXT = "The device of the user is not connected. The call did not run.";
 
 /** `background` means that no human is present to answer a prompt. */
 export const DeviceRunKindSchema = z.enum(["chat", "background"]);
@@ -28,9 +31,9 @@ const DeviceCallSchema = z.object({
   tool: z.string(),
   arguments: z.unknown(),
   agentId: z.string(),
-  sessionId: z.string(),
   toolCallId: z.string(),
-  runKind: DeviceRunKindSchema,
+  /** Secret of the chat turn. A call with no valid token is a background call. */
+  turnToken: z.string().optional(),
 });
 
 const DeviceResultSchema = z.object({
@@ -77,7 +80,8 @@ export type WsDeviceApprovalRequest = {
   gateway: string;
   /** Remote agent ID with the gateway suffix. */
   agentId: string;
-  sessionId: string;
+  /** Local chat name of the turn: `session:<id>` or `key:<sessionKey>`. */
+  chat: string;
   toolCallId: string;
   tool: string;
   /** Long text values are cut to 2,000 characters. */
@@ -90,7 +94,7 @@ export type WsDeviceApprovalResolved = {
   type: "device_approval_resolved";
   approvalId: string;
   agentId: string;
-  sessionId: string;
+  chat: string;
   outcome: DeviceApprovalOutcome;
 };
 

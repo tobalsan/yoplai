@@ -1,11 +1,13 @@
 import type { McpAppView, McpAppViewReference } from "@yoplai/shared/types";
 import type { SubagentRunStatus } from "@yoplai/shared/types";
+import type { WsDeviceApprovalRequest, WsDeviceApprovalResolved } from "@yoplai/shared";
 import type { ActiveTurn } from "./agents";
 import { dispatchWsEvent, wsDebug, type WsStreamEvent } from "./ws";
 import {
   subscribeToRealtime,
   type RealtimeEvent,
   type RealtimeInterest,
+  type RealtimeSubscription,
 } from "./realtime-client";
 
 export type SubscriptionCallbacks = {
@@ -30,23 +32,43 @@ export type SubscriptionCallbacks = {
     mimeType: string;
     size: number;
   }) => void;
-  onActiveTurn?: (snapshot: ActiveTurn) => void;
+  onActiveTurn?: (snapshot: ActiveTurn, sessionId?: string) => void;
   onDone?: () => void;
   onHistoryUpdated?: () => void;
   onError?: (error: string) => void;
+  onDeviceApprovalRequest?: (request: WsDeviceApprovalRequest) => void;
+  onDeviceApprovalResolved?: (resolved: WsDeviceApprovalResolved) => void;
+  /** The socket opened. It sends the subscription again after a drop. */
+  onConnected?: () => void;
+  /** The socket closed and the page did not stop it. */
+  onDisconnected?: () => void;
 };
 
 export function subscribeToSession(
   agentId: string,
   sessionKey: string,
   callbacks: SubscriptionCallbacks,
-  sessionId?: string
-): () => void {
+  sessionId?: string,
+  reconnect = false
+): RealtimeSubscription {
   return subscribeToRealtime({
     interests: [{ type: "session", agentId, sessionKey, sessionId }],
-    reconnect: false,
-    onOpen: () => callbacks.onHistoryUpdated?.(),
+    reconnect,
+    onOpen: () => {
+      callbacks.onConnected?.();
+      callbacks.onHistoryUpdated?.();
+    },
+    onClose: () => callbacks.onDisconnected?.(),
     onEvent: (event) => {
+      const message = event as { type: string };
+      if (message.type === "device_approval_request") {
+        callbacks.onDeviceApprovalRequest?.(event as unknown as WsDeviceApprovalRequest);
+        return;
+      }
+      if (message.type === "device_approval_resolved") {
+        callbacks.onDeviceApprovalResolved?.(event as unknown as WsDeviceApprovalResolved);
+        return;
+      }
       dispatchWsEvent(event as WsStreamEvent, callbacks);
     },
     onError: () => callbacks.onError?.("Subscription connection error"),

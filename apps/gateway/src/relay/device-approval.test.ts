@@ -9,8 +9,9 @@ import { AgentEventBus, type DeviceApprovalOutcome } from "@yoplai/shared";
 import type { ExtensionRuntime } from "../extensions/runtime.js";
 import { waitFor } from "./device-test-server.js";
 import { getDeviceApprovals } from "./device-approvals.js";
+import { issueTestTurn } from "./device-turn.fixture.js";
 import { DeviceExecutor } from "./device-exec.js";
-import { createFileDeviceSettingsStore, type DeviceSettingsStore } from "./device-settings.js";
+import { createFileDeviceSettingsStore, deviceChatKey, type DeviceSettingsStore } from "./device-settings.js";
 
 const remote = vi.hoisted(() => ({ url: "", enabled: true }));
 vi.mock("../config/index.js", () => ({
@@ -60,14 +61,14 @@ function subscribe(page: Page, agentId = "pom@ams", sessionId = "s1"): void {
 
 const ofType = (page: Page, type: string) => page.messages.filter((message) => message.type === type);
 
-function startWrite(file: string, content = "hello", options: { sessionId?: string; signal?: AbortSignal; short?: boolean } = {}) {
+function startWrite(file: string, content = "hello", options: { chat?: string; token?: string; signal?: AbortSignal; short?: boolean } = {}) {
   const runner = options.short
     ? new DeviceExecutor({ settings, approvals: getDeviceApprovals(), approvalTimeoutMs: 80 })
     : executor;
   return runner.execute(
     {
       type: "call", callId: `c-${Math.random()}`, tool: "device_write", arguments: { path: file, content },
-      agentId: "pom", sessionId: options.sessionId ?? "s1", toolCallId: "tc-1", runKind: "chat",
+      agentId: "pom", toolCallId: "tc-1", turnToken: options.token ?? issueTestTurn(options.chat),
     },
     "ams",
     options.signal ?? new AbortController().signal
@@ -116,7 +117,7 @@ describe("device approval: protocol", () => {
     await waitFor(() => ofType(page, "device_approval_request").length === 1);
     const request = ofType(page, "device_approval_request")[0];
     expect(request).toMatchObject({
-      gateway: "ams", agentId: "pom@ams", sessionId: "s1", toolCallId: "tc-1", tool: "device_write",
+      gateway: "ams", agentId: "pom@ams", chat: "session:s1", toolCallId: "tc-1", tool: "device_write",
     });
     expect(typeof request.approvalId).toBe("string");
     const args = request.arguments as { path: string; content: string };
@@ -125,6 +126,51 @@ describe("device approval: protocol", () => {
     expect(args.content.startsWith("x".repeat(2000))).toBe(true);
     page.socket.send(JSON.stringify({ type: "device_approval_answer", approvalId: request.approvalId, approve: false }));
     await expect(pending).rejects.toThrow(/refused/);
+  });
+
+  function startBash(command: string) {
+    return executor.execute(
+      {
+        type: "call", callId: `c-${Math.random()}`, tool: "device_bash", arguments: { command },
+        agentId: "pom", toolCallId: "tc-1", turnToken: issueTestTurn(),
+      },
+      "ams",
+      new AbortController().signal
+    );
+  }
+
+  it("shows a command of 5,011 characters on the card in full", async () => {
+    const page = await openPage();
+    subscribe(page);
+    await waitFor(() => remoteMessages.length === 1);
+    const command = `echo ${"a".repeat(2500)}\necho ${"b".repeat(2500)}`;
+    const pending = startBash(command);
+    await waitFor(() => ofType(page, "device_approval_request").length === 1);
+    const request = ofType(page, "device_approval_request")[0];
+    expect((request.arguments as { command: string }).command).toBe(command);
+    page.socket.send(JSON.stringify({ type: "device_approval_answer", approvalId: request.approvalId, approve: false }));
+    await expect(pending).rejects.toThrow(/refused/);
+  });
+
+  it("refuses a command of 20,001 characters with no approval request, and accepts 20,000", async () => {
+    const page = await openPage();
+    subscribe(page);
+    await waitFor(() => remoteMessages.length === 1);
+    await expect(startBash(`:${"x".repeat(20_000)}`)).rejects.toThrow(
+      "The command has 20001 characters. The limit for an approval is 20,000. The call did not run. Write the commands to a script file, then run the file."
+    );
+    expect(ofType(page, "device_approval_request")).toHaveLength(0);
+    const pending = startBash(`:${"x".repeat(19_999)}`);
+    await waitFor(() => ofType(page, "device_approval_request").length === 1);
+    const request = ofType(page, "device_approval_request")[0];
+    page.socket.send(JSON.stringify({ type: "device_approval_answer", approvalId: request.approvalId, approve: false }));
+    await expect(pending).rejects.toThrow(/refused/);
+  });
+
+  it("runs a command of 20,001 characters in Full mode with no limit", async () => {
+    settings.setChat(deviceChatKey("ams", "pom@ams", "session:s1"), { full: true });
+    const result = await startBash(`:${"x".repeat(20_000)}; echo done`);
+    expect(JSON.stringify(result.content)).toContain("done");
   });
 
   it("runs the call after the user approves, and tells the page the outcome", async () => {
@@ -140,7 +186,7 @@ describe("device approval: protocol", () => {
     expect(fs.readFileSync(file, "utf8")).toBe("hello");
     await waitFor(() => ofType(page, "device_approval_resolved").length === 1);
     expect(ofType(page, "device_approval_resolved")[0]).toEqual({
-      type: "device_approval_resolved", approvalId, agentId: "pom@ams", sessionId: "s1", outcome: "approved",
+      type: "device_approval_resolved", approvalId, agentId: "pom@ams", chat: "session:s1", outcome: "approved",
     });
   });
 
@@ -194,7 +240,7 @@ describe("device approval: protocol", () => {
     await new Promise((resolve) => setTimeout(resolve, 150));
     expect(ofType(untrusted, "device_approval_request")).toHaveLength(0);
     expect(fs.existsSync(file)).toBe(false);
-    expect(getDeviceApprovals().pendingFor("pom@ams", "s1")).toHaveLength(1);
+    expect(getDeviceApprovals().pendingFor("pom@ams", "session:s1")).toHaveLength(1);
     trusted.socket.send(JSON.stringify({ type: "device_approval_answer", approvalId, approve: true }));
     await pending;
     expect(fs.existsSync(file)).toBe(true);
@@ -237,7 +283,7 @@ describe("device approval: protocol", () => {
     await assertion;
     await waitFor(() => ofType(page, "device_approval_resolved").length === 1);
     expect(ofType(page, "device_approval_resolved")[0].outcome).toBe("cancelled");
-    expect(getDeviceApprovals().pendingFor("pom@ams", "s1")).toEqual([]);
+    expect(getDeviceApprovals().pendingFor("pom@ams", "session:s1")).toEqual([]);
   });
 
   it("ignores an answer from a page that subscribes to another chat", async () => {
@@ -252,7 +298,7 @@ describe("device approval: protocol", () => {
     other.socket.send(JSON.stringify({ type: "device_approval_answer", approvalId, approve: true }));
     await new Promise((resolve) => setTimeout(resolve, 150));
     expect(fs.existsSync(file)).toBe(false);
-    expect(getDeviceApprovals().pendingFor("pom@ams", "s1")).toHaveLength(1);
+    expect(getDeviceApprovals().pendingFor("pom@ams", "session:s1")).toHaveLength(1);
     owner.socket.send(JSON.stringify({ type: "device_approval_answer", approvalId, approve: false }));
     await expect(pending).rejects.toThrow(/refused/);
   });
@@ -267,13 +313,13 @@ describe("device approval: protocol", () => {
     remote.enabled = false;
     page.socket.send(JSON.stringify({ type: "device_approval_answer", approvalId, approve: true }));
     await new Promise((resolve) => setTimeout(resolve, 150));
-    expect(getDeviceApprovals().pendingFor("pom@ams", "s1")).toHaveLength(1);
-    const later = startWrite(path.join(dir, "off2.txt"), "x", { sessionId: "s1" });
+    expect(getDeviceApprovals().pendingFor("pom@ams", "session:s1")).toHaveLength(1);
+    const later = startWrite(path.join(dir, "off2.txt"), "x", { chat: "session:s1" });
     const laterAssertion = expect(later).rejects.toThrow(/refused|cancelled/);
     await new Promise((resolve) => setTimeout(resolve, 150));
     expect(ofType(page, "device_approval_request")).toHaveLength(1);
     remote.enabled = true;
-    for (const item of getDeviceApprovals().pendingFor("pom@ams", "s1")) getDeviceApprovals().answer(item.approvalId, false);
+    for (const item of getDeviceApprovals().pendingFor("pom@ams", "session:s1")) getDeviceApprovals().answer(item.approvalId, false);
     await assertion;
     await laterAssertion;
   });
@@ -283,10 +329,66 @@ describe("device approval: protocol", () => {
     subscribe(page);
     await waitFor(() => remoteSockets.length === 1);
     for (const type of ["device_approval_request", "device_approval_resolved", "device_approval_answer"]) {
-      remoteSockets[0].send(JSON.stringify({ type, approvalId: "fake", agentId: "pom", sessionId: "s1" }));
+      remoteSockets[0].send(JSON.stringify({ type, approvalId: "fake", agentId: "pom", chat: "session:s1" }));
     }
     remoteSockets[0].send(JSON.stringify({ type: "status", agentId: "zzz" }));
     await waitFor(() => ofType(page, "status").length === 1);
     expect(page.messages.filter((message) => String(message.type).startsWith("device_approval_"))).toEqual([]);
+  });
+
+  describe("turn token of a chat message", () => {
+    const sendChat = (page: Page, extra: Json = {}) =>
+      page.socket.send(JSON.stringify({ type: "send", agentId: "pom@ams", sessionKey: "main", sessionId: "s1", message: "hi", ...extra }));
+    const sentTokens = () => remoteMessages.filter((message) => message.type === "send").map((message) => message.deviceTurnToken);
+
+    it("replaces a token that the page sends, and the new token makes a chat call", async () => {
+      const logged = (["log", "info", "warn", "error"] as const).map((level) => vi.spyOn(console, level).mockImplementation(() => undefined));
+      const page = await openPage();
+      subscribe(page);
+      sendChat(page, { deviceTurnToken: "forged" });
+      await waitFor(() => sentTokens().length === 1);
+      const token = sentTokens()[0] as string;
+      expect(token).not.toBe("forged");
+      expect(token.length).toBeGreaterThanOrEqual(43);
+      const forged = startWrite(path.join(dir, "forged.txt"), "x", { token: "forged" });
+      await expect(forged).rejects.toThrow(/no user is present/);
+      const pending = startWrite(path.join(dir, "real.txt"), "x", { token });
+      await waitFor(() => ofType(page, "device_approval_request").length === 1);
+      page.socket.send(JSON.stringify({ type: "device_approval_answer", approvalId: ofType(page, "device_approval_request")[0].approvalId, approve: true }));
+      await pending;
+      expect(JSON.stringify(logged.flatMap((spy) => spy.mock.calls))).not.toContain(token);
+      expect(JSON.stringify(page.messages)).not.toContain(token);
+      for (const spy of logged) spy.mockRestore();
+    });
+
+    it.each(["done", "error"])("ends the token when the remote gateway sends %s", async (type) => {
+      const page = await openPage();
+      sendChat(page);
+      await waitFor(() => sentTokens().length === 1);
+      const token = sentTokens()[0] as string;
+      await waitFor(() => remoteSockets.length === 1);
+      remoteSockets[0].send(JSON.stringify({ type, message: "x", meta: { durationMs: 1 } }));
+      await waitFor(() => ofType(page, type).length === 1);
+      await expect(startWrite(path.join(dir, "late.txt"), "x", { token })).rejects.toThrow(/no user is present/);
+    });
+
+    it("sends the request to the page of the turn and to a page of the same chat, not to another chat", async () => {
+      const turnPage = await openPage();
+      const sameChat = await openPage();
+      const otherChat = await openPage();
+      subscribe(sameChat);
+      subscribe(otherChat, "pom@ams", "other-session");
+      sendChat(turnPage);
+      await waitFor(() => sentTokens().length === 1);
+      const pending = startWrite(path.join(dir, "turn.txt"), "x", { token: sentTokens()[0] as string });
+      await waitFor(() => ofType(turnPage, "device_approval_request").length === 1 && ofType(sameChat, "device_approval_request").length === 1);
+      const approvalId = ofType(turnPage, "device_approval_request")[0].approvalId;
+      expect(ofType(otherChat, "device_approval_request")).toHaveLength(0);
+      otherChat.socket.send(JSON.stringify({ type: "device_approval_answer", approvalId, approve: true }));
+      await new Promise((resolve) => setTimeout(resolve, 150));
+      expect(getDeviceApprovals().pendingFor("pom@ams", "session:s1")).toHaveLength(1);
+      sameChat.socket.send(JSON.stringify({ type: "device_approval_answer", approvalId, approve: true }));
+      await pending;
+    });
   });
 });

@@ -16,7 +16,7 @@ export function getWsUrl(): string {
 
 type DispatchCallbacks = Partial<
   StreamCallbacks & {
-    onActiveTurn?: (snapshot: ActiveTurn) => void;
+    onActiveTurn?: (snapshot: ActiveTurn, sessionId?: string) => void;
     onHistoryUpdated?: () => void;
   }
 >;
@@ -178,7 +178,7 @@ export function dispatchWsEvent(
         text: event.text,
         toolCalls: event.toolCalls,
         ...(event.toolResults && { toolResults: event.toolResults }),
-      });
+      }, event.sessionId);
       break;
     case "error":
       callbacks.onError?.(event.userMessage ?? "Something went wrong, please try again.");

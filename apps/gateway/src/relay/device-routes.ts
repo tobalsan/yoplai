@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import type { MiddlewareHandler } from "hono";
+import { addGatewaySuffix } from "./agent-id.js";
 import { getDeviceLinkStates } from "./device-links.js";
 import { resolveDeviceMode } from "./device-gate.js";
 import { deviceChatKey, getDeviceSettingsStore, type DeviceSettingsStore } from "./device-settings.js";
@@ -77,9 +78,9 @@ export function relayDeviceApi(overrides: Partial<DeviceRoutesDeps> = {}): Middl
       return c.json({ agentId, fullBackground: store.getAgentFullBackground(agentId) });
     }
 
-    const sessionId = url.searchParams.get("sessionId") ?? "";
-    if (!sessionId) return c.json({ error: "sessionId is required" }, 400);
-    const chatKey = deviceChatKey(target.gateway, sessionId);
+    const chat = url.searchParams.get("chat") ?? "";
+    if (!chat) return c.json({ error: "chat is required" }, 400);
+    const chatKey = deviceChatKey(target.gateway, addGatewaySuffix(target.agentId, target.gateway), chat);
     if (method === "PUT") {
       const body = await readJsonObject(c.req.raw);
       if (!body) return c.json({ error: "Invalid JSON body" }, 400);
@@ -97,7 +98,7 @@ export function relayDeviceApi(overrides: Partial<DeviceRoutesDeps> = {}): Middl
     const settings = store.getChat(chatKey);
     return c.json({
       agentId,
-      sessionId,
+      chat,
       workspaceFolder: settings.workspaceFolder ?? null,
       full: settings.full,
       // The executor ignores a workspace folder that does not exist, so the mode ignores it too.

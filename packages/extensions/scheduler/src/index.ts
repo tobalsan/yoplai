@@ -54,6 +54,7 @@ const createJobToolSchema = z.object({
   script: z.string().min(1).optional(),
   noAgent: z.boolean().optional(),
   quietOutput: z.boolean().optional(),
+  requiresDevice: z.boolean().optional(),
   deliver: z.array(DeliverTargetSchema).optional(),
   model: z.object({ provider: z.string().min(1), model: z.string().min(1) }).optional(),
   timeoutMs: z.number().positive().optional(),
@@ -70,6 +71,7 @@ const updateJobToolSchema = z.object({
   script: z.string().min(1).nullable().optional(),
   noAgent: z.boolean().optional(),
   quietOutput: z.boolean().optional(),
+  requiresDevice: z.boolean().optional(),
   deliver: z.array(DeliverTargetSchema).optional(),
   model: z.object({ provider: z.string().min(1), model: z.string().min(1) }).optional(),
   timeoutMs: z.number().positive().optional(),
@@ -271,6 +273,11 @@ function schedulerAgentTools(): ExtensionAgentTool[] {
             description:
               "Skip writing an output file for uneventful runs (exit 0 with empty stdout on script-only jobs, or a silent tick on gated jobs). Errors and woke-agent runs always write a file. Requires script.",
           },
+          requiresDevice: {
+            type: "boolean",
+            description:
+              "Set true when the job uses the device_* tools on the machine of the user. A job with no flag gets no device tools. The job fails at once when the device is not connected. Cannot be combined with noAgent.",
+          },
           deliver: {
             type: "array",
             items: {
@@ -330,6 +337,7 @@ function schedulerAgentTools(): ExtensionAgentTool[] {
               noAgent: input.noAgent,
               quietOutput: input.quietOutput,
             },
+            requiresDevice: input.requiresDevice,
             deliver: input.deliver,
             model: input.model,
             timeoutMs: input.timeoutMs,
@@ -394,6 +402,11 @@ function schedulerAgentTools(): ExtensionAgentTool[] {
             type: "boolean",
             description:
               "Skip writing an output file for uneventful runs (exit 0 with empty stdout on script-only jobs, or a silent tick on gated jobs). Errors and woke-agent runs always write a file. Requires script.",
+          },
+          requiresDevice: {
+            type: "boolean",
+            description:
+              "Set true when the job uses the device_* tools on the machine of the user. A job with no flag gets no device tools. The job fails at once when the device is not connected. Cannot be combined with noAgent.",
           },
           deliver: {
             type: "array",
@@ -480,6 +493,7 @@ function schedulerAgentTools(): ExtensionAgentTool[] {
               ? parseToolSchedule(input.schedule)
               : undefined,
             payload,
+            requiresDevice: input.requiresDevice,
             deliver: input.deliver,
             model: input.model,
             timeoutMs: input.timeoutMs,

@@ -4,10 +4,11 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { isInsideRoot } from "../util/paths.js";
 import type { DeviceToolName } from "@yoplai/shared";
+import { isSecretPath } from "./device-secrets.js";
 import type { ChatDeviceSettings } from "./device-settings.js";
 
 export type DeviceMode = "ask" | "workspace" | "full";
-export type GateDecision = "pass" | "ask";
+export type GateDecision = "pass" | "ask" | "refuse";
 
 /** The mode that results from the settings of a chat. Full wins over a workspace folder. */
 export function resolveDeviceMode(settings: ChatDeviceSettings): DeviceMode {
@@ -48,16 +49,19 @@ export function resolveAgainstFolder(folder: string, rawPath: string): string {
 /**
  * Resolves each symbolic link. For a path that does not exist, it resolves the nearest
  * directory that exists. Returns undefined for a dangling symbolic link, because a write
- * would follow it to an unknown place.
+ * would follow it to an unknown place. Throws the error of a lookup that fails for a reason other
+ * than a missing path, so the caller does not treat an unknown path as safe.
  */
-async function realPathOrNearest(target: string): Promise<string | undefined> {
+export async function realPathOrNearest(target: string): Promise<string | undefined> {
   const missing: string[] = [];
   let current = target;
   for (;;) {
     try {
       return path.join(await fs.realpath(current), ...missing.reverse());
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "ENOENT") return undefined;
+      const code = (error as NodeJS.ErrnoException).code;
+      if (code === "ENOTDIR") return undefined;
+      if (code !== "ENOENT") throw error;
     }
     try {
       await fs.lstat(current);
@@ -74,9 +78,27 @@ async function realPathOrNearest(target: string): Promise<string | undefined> {
 
 /** Compares real paths: a symbolic link in the folder that points outside is not in the folder. */
 export async function isInsideWorkspaceFolder(folder: string, absolutePath: string): Promise<boolean> {
-  const realFolder = await realPathOrNearest(folder);
-  const realTarget = await realPathOrNearest(absolutePath);
+  let realFolder: string | undefined;
+  let realTarget: string | undefined;
+  try {
+    realFolder = await realPathOrNearest(folder);
+    realTarget = await realPathOrNearest(absolutePath);
+  } catch {
+    return false;
+  }
   return realFolder !== undefined && realTarget !== undefined && isInsideRoot(realFolder, realTarget);
+}
+
+/** True when the path, or the real path behind it, is on the list of secret files. */
+export async function touchesSecretFile(target: string): Promise<boolean> {
+  if (isSecretPath(target)) return true;
+  let real: string | undefined;
+  try {
+    real = await realPathOrNearest(target);
+  } catch {
+    throw new Error(`The device cannot check ${target} against the list of secret files. The call did not run.`);
+  }
+  return real !== undefined && isSecretPath(real);
 }
 
 export async function decideGate(input: {
@@ -86,8 +108,11 @@ export async function decideGate(input: {
   /** The resolved path of a file call. */
   absolutePath?: string;
 }): Promise<GateDecision> {
-  if (input.mode === "full" || input.tool === "device_read") return "pass";
+  if (input.mode === "full") return "pass";
+  const secret = input.absolutePath !== undefined && (await touchesSecretFile(input.absolutePath));
+  if (input.tool === "device_read") return secret ? "refuse" : "pass";
   if (
+    !secret &&
     input.mode === "workspace" &&
     (input.tool === "device_write" || input.tool === "device_edit") &&
     input.folder !== undefined &&

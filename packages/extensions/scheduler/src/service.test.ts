@@ -11,6 +11,7 @@ import type {
   SchedulePayload,
   UserNotifier,
 } from "@yoplai/shared";
+import { DEVICE_OFFLINE_CALL_TEXT } from "@yoplai/shared";
 import { DELIVERY_TIMEOUT_MS, MAX_DELIVERY_CHARS } from "./deliver.js";
 import { PerAgentScheduleStore } from "./store.js";
 import * as scriptRunner from "./script.js";
@@ -85,6 +86,152 @@ describe("SchedulerService run ledger", () => {
     expect(runAgent).toHaveBeenCalledWith(expect.objectContaining({
       actorKind: "local", actorUserId: "local", userId: undefined,
     }));
+  });
+
+  it("passes requiresDevice from the job to the agent run, and omits it for a job with no flag", async () => {
+    const { config, runAgent } = await setup(false);
+    withDevice(config, runAgent, { online: true });
+    const withFlag = await scheduler.add("alpha", {
+      name: "Notes", schedule: { cron: "0 8 * * *", tz: "UTC" }, payload: jobPayload({ message: "Read" }), requiresDevice: true,
+    });
+    await scheduler.runNow("alpha", withFlag.id);
+    expect(runAgent).toHaveBeenLastCalledWith(expect.objectContaining({ source: "scheduler", requiresDevice: true }));
+    const plain = await add();
+    await scheduler.runNow("alpha", plain.id);
+    expect(runAgent.mock.calls.at(-1)?.[0].requiresDevice).toBeUndefined();
+  });
+
+  function withDevice(config: GatewayConfig, runAgent: ReturnType<typeof vi.fn>, state: { online: boolean }) {
+    const ctx = context(config, runAgent);
+    ctx.isDeviceOnline = () => state.online;
+    setSchedulerContext(ctx);
+  }
+
+  function jobState(jobs: Awaited<ReturnType<SchedulerService["list"]>>) {
+    return (jobs[0] as { state?: { lastStatus?: string; lastErrorCode?: string } }).state;
+  }
+
+  async function addDeviceJob(overrides: Partial<Parameters<SchedulerService["add"]>[1]> = {}) {
+    return scheduler.add("alpha", {
+      name: "Notes", schedule: { cron: "0 8 * * *", tz: "UTC" }, payload: jobPayload({ message: "Read my notes" }), requiresDevice: true, ...overrides,
+    });
+  }
+
+  it("stops a job that needs the device before the script and the model when the device is offline", async () => {
+    const { config, runAgent } = await setup();
+    withDevice(config, runAgent, { online: false });
+    const runScript = vi.spyOn(scriptRunner, "runScript");
+    const job = await addDeviceJob({ payload: jobPayload({ message: "Read my notes", script: "check.sh" }) });
+    const result = await scheduler.runNow("alpha", job.id);
+    expect(result).toMatchObject({
+      status: "error", errorCode: "device_offline",
+      error: "This job needs the device of the user, and the device is not connected. The job did not run.",
+    });
+    expect(runAgent).not.toHaveBeenCalled();
+    expect(runScript).not.toHaveBeenCalled();
+    expect(await scheduler.listRuns("alpha", job.id)).toEqual([
+      expect.objectContaining({ status: "error", errorCode: "device_offline", error: result.error }),
+    ]);
+    expect(jobState(await scheduler.list("alpha"))).toMatchObject({ lastStatus: "error", lastErrorCode: "device_offline" });
+  });
+
+  it("runs a job that needs the device when the device is online, and clears the code after a success", async () => {
+    const { config, runAgent } = await setup();
+    const state = { online: false };
+    withDevice(config, runAgent, state);
+    const job = await addDeviceJob();
+    expect((await scheduler.runNow("alpha", job.id)).errorCode).toBe("device_offline");
+    state.online = true;
+    const result = await scheduler.runNow("alpha", job.id);
+    expect(result.status).toBe("ok");
+    expect(result.errorCode).toBeUndefined();
+    expect(runAgent).toHaveBeenCalledOnce();
+    expect(jobState(await scheduler.list("alpha"))?.lastErrorCode).toBeUndefined();
+    const runs = await scheduler.listRuns("alpha", job.id);
+    expect(runs.find((run) => run.status === "ok")?.errorCode).toBeUndefined();
+  });
+
+  it("does not look for the device when the job has no requiresDevice flag", async () => {
+    const { config, runAgent } = await setup();
+    withDevice(config, runAgent, { online: false });
+    const job = await add();
+    expect((await scheduler.runNow("alpha", job.id)).status).toBe("ok");
+  });
+
+  it("stops the run with the code device_offline when the device drops during the run", async () => {
+    let runSignal: AbortSignal | undefined;
+    const runAgent = vi.fn((params: { signal: AbortSignal; onEvent: (event: unknown) => void }) => new Promise((_resolve, reject) => {
+      runSignal = params.signal;
+      params.signal.addEventListener("abort", () => reject(new Error("aborted")));
+      params.onEvent({
+        type: "tool_result", id: "t1", name: "device_bash", isError: true, timestamp: 1,
+        content: `${DEVICE_OFFLINE_CALL_TEXT} The link dropped during the call, so the call may have run.`,
+      });
+    }));
+    const { config } = await setup(true, runAgent);
+    withDevice(config, runAgent, { online: true });
+    const job = await addDeviceJob();
+    const result = await scheduler.runNow("alpha", job.id);
+    expect(runSignal?.aborted).toBe(true);
+    expect(result).toMatchObject({ status: "error", errorCode: "device_offline", error: expect.stringContaining("went offline during the job") });
+    expect(await scheduler.listRuns("alpha", job.id)).toEqual([
+      expect.objectContaining({ status: "error", errorCode: "device_offline" }),
+    ]);
+  });
+
+  it("checks the device again after the script, and does not start the model when the device dropped", async () => {
+    const { config, runAgent } = await setup();
+    const state = { online: true };
+    withDevice(config, runAgent, state);
+    vi.spyOn(scriptRunner, "runScript").mockImplementation(async () => {
+      state.online = false;
+      return { stdout: '{"wakeAgent":true}', stderr: "", finalStdoutLine: '{"wakeAgent":true}' };
+    });
+    const job = await addDeviceJob({ payload: jobPayload({ message: "Read my notes", script: "check.sh" }) });
+    const result = await scheduler.runNow("alpha", job.id);
+    expect(runAgent).not.toHaveBeenCalled();
+    expect(result).toMatchObject({ status: "error", errorCode: "device_offline" });
+  });
+
+  const deviceDropEvent = {
+    type: "tool_result", id: "t1", name: "device_bash", isError: true, timestamp: 1, content: DEVICE_OFFLINE_CALL_TEXT,
+  };
+  const credentialEvent = {
+    type: "tool_result", id: "t0", name: "google_calendar", isError: false, timestamp: 0,
+    content: '{"error":"oauth_connection_required","provider":"google"}',
+  };
+
+  it.each(["resolves", "rejects"])("keeps the credential refusal over the device code when the run %s", async (outcome) => {
+    const runAgent = vi.fn((params: { onEvent: (event: unknown) => void }) => {
+      params.onEvent(credentialEvent);
+      params.onEvent(deviceDropEvent);
+      return outcome === "rejects"
+        ? Promise.reject(new Error("aborted"))
+        : Promise.resolve({ payloads: [{ text: "x" }], meta: { durationMs: 1, sessionId: "s" } });
+    });
+    const { config } = await setup(true, runAgent);
+    withDevice(config, runAgent, { online: true });
+    const job = await addDeviceJob();
+    const result = await scheduler.runNow("alpha", job.id);
+    expect(result.status).toBe("error");
+    expect(result.errorCode).toBeUndefined();
+    expect(result.error).toContain("Reconnect google");
+  });
+
+  it("refuses requiresDevice on a team job of a multi-user gateway, at create and at update", async () => {
+    const { config } = await setup();
+    config.extensions = { ...config.extensions, multiUser: { enabled: true } } as GatewayConfig["extensions"];
+    await expect(addDeviceJob({ credentialMode: "team" })).rejects.toThrow("needs credentialMode owner");
+    const owned = await addDeviceJob({ credentialMode: "owner" }).catch(() => undefined);
+    expect(owned).toBeUndefined();
+    const plain = await scheduler.add("alpha", {
+      name: "Team", schedule: { cron: "0 8 * * *", tz: "UTC" }, payload: jobPayload({ message: "Read" }), credentialMode: "team",
+    });
+    await expect(scheduler.update("alpha", plain.id, { requiresDevice: true })).rejects.toThrow("needs credentialMode owner");
+    const mine = await scheduler.add("alpha", {
+      name: "Mine", schedule: { cron: "0 8 * * *", tz: "UTC" }, payload: jobPayload({ message: "Read" }), credentialMode: "owner", requiresDevice: true,
+    }, "alice");
+    expect(mine.requiresDevice).toBe(true);
   });
 
   it("persists running state before invoking the agent and finishes the same record after monitoring turns off", async () => {

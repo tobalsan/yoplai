@@ -4,20 +4,24 @@ import { Ajv2020 } from "ajv/dist/2020.js";
 import type { ValidateFunction } from "ajv";
 import type { DeviceCall, DeviceToolName } from "@yoplai/shared";
 import { addGatewaySuffix } from "./agent-id.js";
-import { APPROVAL_TIMEOUT_MS, type DeviceApprovals } from "./device-approvals.js";
+import { APPROVAL_TIMEOUT_MS, MAX_APPROVAL_COMMAND_CHARS, type DeviceApprovals } from "./device-approvals.js";
 import {
   decideGate,
   resolveAgainstFolder,
   resolveDeviceMode,
   type GateDecision,
 } from "./device-gate.js";
+import { getDeviceTurns, type DeviceTurns } from "./device-turns.js";
 import { deviceChatKey, type DeviceSettingsStore } from "./device-settings.js";
+import { secretReadRefusal } from "./device-secrets.js";
 import { deviceToolParameters, getDeviceToolDefinition } from "./device-tools.js";
 
 export type DeviceExecutorOptions = {
   settings: DeviceSettingsStore;
   approvals: DeviceApprovals;
   approvalTimeoutMs?: number;
+  /** The turns that this gateway forwarded. Defaults to the registry of the process. */
+  turns?: DeviceTurns;
   /** Gives the checked path of a file call. Tests replace it to prove the compare of the file operations. */
   resolvePath?: (folder: string, rawPath: string) => string;
 };
@@ -63,7 +67,11 @@ export class DeviceExecutor {
     let args = call.arguments as Record<string, unknown>;
 
     const { settings, approvals } = this.options;
-    const chatSettings = settings.getChat(deviceChatKey(gatewayName, call.sessionId));
+    const agentKey = addGatewaySuffix(call.agentId, gatewayName);
+    // Only a token that this gateway issued for this gateway and agent makes a chat call. The message says nothing else about the chat.
+    const found = (this.options.turns ?? getDeviceTurns()).find(call.turnToken);
+    const turn = found && found.gateway === gatewayName && found.agentId === call.agentId ? found : undefined;
+    const chatSettings = turn ? settings.getChat(deviceChatKey(gatewayName, agentKey, turn.chat)) : { full: false };
     const folder =
       chatSettings.workspaceFolder && isDirectory(chatSettings.workspaceFolder)
         ? chatSettings.workspaceFolder
@@ -75,8 +83,7 @@ export class DeviceExecutor {
       args = { ...args, path: absolutePath };
     }
 
-    const agentKey = addGatewaySuffix(call.agentId, gatewayName);
-    const full = chatSettings.full || (call.runKind === "background" && settings.getAgentFullBackground(agentKey));
+    const full = chatSettings.full || (!turn && settings.getAgentFullBackground(agentKey));
     const decision: GateDecision = await decideGate({
       tool: definition.name,
       mode: full ? "full" : resolveDeviceMode({ ...chatSettings, workspaceFolder: folder }),
@@ -85,17 +92,25 @@ export class DeviceExecutor {
     });
     signal.throwIfAborted();
 
+    if (decision === "refuse") throw new Error(secretReadRefusal(absolutePath ?? ""));
     if (decision === "ask") {
-      if (call.runKind === "background") {
+      if (!turn) {
         throw new Error(
           `${definition.name} needs the approval of the user, and no user is present in this run. The call did not run. The user can allow background calls in the settings of this agent.`
+        );
+      }
+      const command = definition.name === "device_bash" ? args.command : undefined;
+      if (typeof command === "string" && command.length > MAX_APPROVAL_COMMAND_CHARS) {
+        throw new Error(
+          `The command has ${command.length} characters. The limit for an approval is ${MAX_APPROVAL_COMMAND_CHARS.toLocaleString("en-US")}. The call did not run. Write the commands to a script file, then run the file.`
         );
       }
       const timeoutMs = this.options.approvalTimeoutMs ?? APPROVAL_TIMEOUT_MS;
       const outcome = await approvals.request({
         gateway: gatewayName,
         agentId: agentKey,
-        sessionId: call.sessionId,
+        chat: turn.chat,
+        page: turn.page,
         toolCallId: call.toolCallId,
         tool: definition.name,
         arguments: args,
@@ -110,7 +125,7 @@ export class DeviceExecutor {
     }
 
     signal.throwIfAborted();
-    const tool = definition.create(cwd, absolutePath);
+    const tool = definition.create(cwd, absolutePath, !full && decision === "pass");
     return tool.execute(call.callId, args as never, signal);
   }
 }

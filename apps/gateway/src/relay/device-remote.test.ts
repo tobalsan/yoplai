@@ -1,7 +1,7 @@
 import type { Server } from "node:http";
 import { WebSocket } from "ws";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { AgentEventBus, DEVICE_PROTOCOL_VERSION, type AgentConfig, type ExtensionAgentToolContext } from "@yoplai/shared";
+import { AgentEventBus, DEVICE_OFFLINE_CALL_TEXT, DEVICE_PROTOCOL_VERSION, type AgentConfig, type ExtensionAgentToolContext } from "@yoplai/shared";
 import { startRemoteServer, waitFor } from "./device-test-server.js";
 import { getDeviceRegistry, resetDeviceRegistry } from "./device-registry.js";
 
@@ -44,9 +44,9 @@ function toolContext(overrides: Partial<ExtensionAgentToolContext> = {}): Extens
   };
 }
 
-async function deviceTools(userId?: string) {
+async function deviceTools(userId?: string, run: ExtensionAgentToolContext["run"] = { source: "web" }) {
   const { deviceToolsExtension } = await import("./device-extension.js");
-  return (await deviceToolsExtension.getAgentTools?.(agent, { config: {} as never, userId })) ?? [];
+  return (await deviceToolsExtension.getAgentTools?.(agent, { config: {} as never, userId, run })) ?? [];
 }
 
 describe("device link: remote side", () => {
@@ -83,6 +83,14 @@ describe("device link: remote side", () => {
     expect(closed.reason).toContain("Unsupported protocol version 99");
     expect(connection.messages).toEqual([]);
     expect(await deviceTools()).toEqual([]);
+  });
+
+  it("closes the link of an old relay with protocol version 1", async () => {
+    remote = await startRemoteServer(false);
+    const connection = await relay(remote.port, { version: 1 });
+    const closed = await connection.closed;
+    expect(closed.code).toBe(4001);
+    expect(closed.reason).toContain("Unsupported protocol version 1");
   });
 
   it("closes the link on a message that it cannot parse", async () => {
@@ -155,8 +163,23 @@ describe("device link: remote side", () => {
     const call = connection.messages[1];
     expect(call).toMatchObject({
       type: "call", tool: "device_read", arguments: { path: "a.txt" },
-      agentId: "pom", sessionId: "s1", toolCallId: "tc1", runKind: "chat",
+      agentId: "pom", toolCallId: "tc1",
     });
+    connection.socket.send(JSON.stringify({ type: "result", callId: call.callId, ok: true, content: [{ type: "text", text: "hello" }] }));
+    expect(await pending).toBe("hello");
+  });
+
+  it("puts the turn token of the run on the call, and keeps it out of the tool result", async () => {
+    remote = await startRemoteServer(false);
+    const connection = await relay(remote.port);
+    await waitFor(() => connection.messages.length === 1);
+    const read = (await deviceTools()).find((tool) => tool.name === "device_read");
+    const pending = read?.execute({ path: "a.txt" }, toolContext({ run: { source: "web", deviceTurnToken: "secret-turn-token" } }));
+    await waitFor(() => connection.messages.length === 2);
+    const call = connection.messages[1];
+    expect(call.turnToken).toBe("secret-turn-token");
+    expect(call).not.toHaveProperty("sessionId");
+    expect(call).not.toHaveProperty("runKind");
     connection.socket.send(JSON.stringify({ type: "result", callId: call.callId, ok: true, content: [{ type: "text", text: "hello" }] }));
     expect(await pending).toBe("hello");
   });
@@ -172,7 +195,52 @@ describe("device link: remote side", () => {
     await expect(pending).rejects.toThrow("The user refused");
   });
 
-  it("marks a run with no human as a background run", async () => {
+  it("gives a background run the device tools only with requiresDevice, and a chat run as before", async () => {
+    remote = await startRemoteServer(false);
+    const connection = await relay(remote.port);
+    await waitFor(() => connection.messages.length === 1);
+    for (const source of ["scheduler", "heartbeat", "webhook", "agent", "orchestrator", "dream", "system"]) {
+      expect(await deviceTools(undefined, { source })).toEqual([]);
+      expect(await deviceTools(undefined, { source, requiresDevice: true })).toHaveLength(4);
+    }
+    expect(await deviceTools(undefined, { source: "web" })).toHaveLength(4);
+    expect(await deviceTools(undefined, { source: "web", background: true })).toEqual([]);
+  });
+
+  it("keeps the device tools for a background run with requiresDevice after a drop, and the call gets the fixed offline text", async () => {
+    remote = await startRemoteServer(false);
+    const connection = await relay(remote.port);
+    await waitFor(() => connection.messages.length === 1);
+    connection.socket.terminate();
+    await connection.closed;
+    await vi.waitFor(async () => expect(await deviceTools(undefined, { source: "web" })).toHaveLength(0));
+    const tools = await deviceTools(undefined, { source: "scheduler", requiresDevice: true });
+    expect(tools.map((item) => item.name)).toHaveLength(4);
+    await expect(
+      tools.find((item) => item.name === "device_read")?.execute({ path: "a.txt" }, toolContext({ run: { source: "scheduler", requiresDevice: true } }))
+    ).rejects.toThrow(DEVICE_OFFLINE_CALL_TEXT);
+    expect(await deviceTools(undefined, { source: "scheduler" })).toEqual([]);
+  });
+
+  it("refuses a device call of a background run with no flag, even when the tool was listed", async () => {
+    remote = await startRemoteServer(false);
+    const connection = await relay(remote.port);
+    await waitFor(() => connection.messages.length === 1);
+    const tool = (await deviceTools(undefined, { source: "scheduler", requiresDevice: true })).find((item) => item.name === "device_read");
+    await expect(tool?.execute({ path: "a.txt" }, toolContext({ run: { source: "scheduler" } }))).rejects.toThrow("requiresDevice: true");
+    expect(connection.messages).toHaveLength(1);
+  });
+
+  it("tells the agent about the device tools only while a relay is online", async () => {
+    remote = await startRemoteServer(false);
+    const { deviceToolsExtension } = await import("./device-extension.js");
+    expect(await deviceToolsExtension.getSystemPromptContributions?.(agent, { config: {} as never })).toBeUndefined();
+    const connection = await relay(remote.port);
+    await waitFor(() => connection.messages.length === 1);
+    expect(await deviceToolsExtension.getSystemPromptContributions?.(agent, { config: {} as never })).toMatch(/requiresDevice: true/);
+  });
+
+  it("sends a call with no turn token for a run that has none", async () => {
     remote = await startRemoteServer(false);
     const connection = await relay(remote.port);
     await waitFor(() => connection.messages.length === 1);
@@ -180,16 +248,13 @@ describe("device link: remote side", () => {
     const runs: Array<ExtensionAgentToolContext["run"]> = [
       { source: "scheduler" }, { source: "heartbeat" }, { source: "webhook" }, { source: "agent" },
       { source: "orchestrator" }, { source: "dream" }, { source: "system" },
-      { source: "web", background: true }, undefined, { source: "slack" }, { source: "cli" },
-    ];
+      { source: "web", background: true }, {}, { source: "slack" }, { source: "cli" },
+    ].map((run) => (run.source === "slack" || run.source === "cli" ? run : { ...run, requiresDevice: true }));
     for (const run of runs) {
       void Promise.resolve(tool?.execute({ path: "a" }, toolContext({ run }))).catch(() => undefined);
     }
     await waitFor(() => connection.messages.length === 1 + runs.length);
-    expect(connection.messages.slice(1).map((message) => message.runKind)).toEqual([
-      "background", "background", "background", "background", "background", "background", "background",
-      "background", "background", "chat", "chat",
-    ]);
+    expect(connection.messages.slice(1).map((message) => message.turnToken)).toEqual(runs.map(() => undefined));
   });
 
   it("sends cancel and fails the call when the run aborts", async () => {
@@ -212,7 +277,7 @@ describe("device link: remote side", () => {
     await waitFor(() => connection.messages.length === 1);
     const pending = getDeviceRegistry().call(
       "local",
-      { tool: "device_bash", arguments: {}, agentId: "pom", sessionId: "s1", toolCallId: "tc", runKind: "chat" },
+      { tool: "device_bash", arguments: {}, agentId: "pom", toolCallId: "tc" },
       undefined,
       50
     );
@@ -229,7 +294,7 @@ describe("device link: remote side", () => {
     const pending = tool?.execute({ command: "sleep 5" }, toolContext());
     await waitFor(() => connection.messages.length === 2);
     connection.socket.terminate();
-    await expect(pending).rejects.toThrow(/Device link dropped/);
+    await expect(pending).rejects.toThrow(DEVICE_OFFLINE_CALL_TEXT);
   });
 
   it("does not send a call again after a new connection", async () => {
@@ -255,7 +320,7 @@ describe("device link: remote side", () => {
     const pending = tool?.execute({ command: "sleep 5" }, toolContext());
     await waitFor(() => first.messages.length === 2);
     const second = await relay(remote.port);
-    await expect(pending).rejects.toThrow(/replaced/);
+    await expect(pending).rejects.toThrow(DEVICE_OFFLINE_CALL_TEXT);
     expect((await first.closed).code).toBe(4003);
     await waitFor(() => second.messages.length === 1);
     expect((await deviceTools()).length).toBe(4);
@@ -273,7 +338,7 @@ describe("device link: remote side", () => {
   it("fails a call at once when no relay is online", async () => {
     remote = await startRemoteServer(false);
     await expect(
-      getDeviceRegistry().call("local", { tool: "device_read", arguments: {}, agentId: "pom", sessionId: "s", toolCallId: "t", runKind: "chat" })
-    ).rejects.toThrow(/No device is online/);
+      getDeviceRegistry().call("local", { tool: "device_read", arguments: {}, agentId: "pom", toolCallId: "t" })
+    ).rejects.toThrow(DEVICE_OFFLINE_CALL_TEXT);
   });
 });

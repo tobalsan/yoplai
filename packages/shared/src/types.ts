@@ -539,6 +539,8 @@ export const ScheduleJobFileSchema = z.object({
   model: RequiredModelConfigSchema.optional(),
   reasoning: ThinkLevelSchema.optional(),
   payload: SchedulePayloadSchema,
+  /** The job uses the device tools on the device of the user. */
+  requiresDevice: z.boolean().optional(),
   deliver: z.array(DeliverTargetSchema).optional(),
   createdAt: z.string().optional(),
   timeoutMs: z.number().positive().optional(),
@@ -572,6 +574,8 @@ export type ScheduleRun = {
   exitCode?: number;
   gateOutput?: string;
   error?: string;
+  /** Machine-readable reason of an error. `device_offline` means the device was not connected. */
+  errorCode?: string;
   outputPath?: string;
   prompt: string;
   /** null selects shared storage; private runs retain their original owner. */
@@ -1432,6 +1436,10 @@ export type RunAgentParams = {
   slackDelivery?: ContainerDeliveryContext["slack"];
   /** Exclude this run from agent-wide UI streaming status. */
   background?: boolean;
+  /** A background run gets the device tools only when this is true. */
+  requiresDevice?: boolean;
+  /** Secret of one chat turn from the local gateway. Only the device tools send it back. */
+  deviceTurnToken?: string;
   trace?: AgentTraceContext;
   onEvent?: (event: StreamEvent) => void;
   /** Delivery callback for a turn deferred behind an active requester. */
@@ -1719,6 +1727,8 @@ export interface ExtensionContext {
   getUserNotifiers(): Map<string, UserNotifier>;
   resolveConnectPath?(agentId: string, hints: CredentialConnectHints): Promise<string | undefined>;
   getDeliveryOffers?(agent: AgentConfig, requester: { userId?: string }): Promise<DeliveryOffer[]>;
+  /** True when the device relay of the user is connected. No user ID means the user `local`. */
+  isDeviceOnline?(userId?: string): boolean;
 
   // Events
   subscribe(event: string, handler: (payload: unknown) => void): () => void;
@@ -1808,6 +1818,10 @@ export type ExtensionRunInfo = {
   source?: string;
   sender?: { kind: string };
   background?: boolean;
+  /** A scheduled job that needs the device tools of the user sets this. */
+  requiresDevice?: boolean;
+  /** Secret of one chat turn from the local gateway. Only the device tools send it back. */
+  deviceTurnToken?: string;
   sessionId?: string;
 };
 
@@ -2039,6 +2053,7 @@ export const ExtensionDefinitionSchema = z.object({
 
 // API payloads
 export const SendMessageRequestSchema = z.object({
+  deviceTurnToken: z.string().max(200).optional(),
   projectId: z.string().regex(/^[a-zA-Z0-9_-]{1,100}$/).optional(),
   message: z.string(),
   sessionId: z.string().optional(), // explicit session ID (bypasses sessionKey resolution)
@@ -2261,6 +2276,7 @@ export const CreateScheduleRequestSchema = z.object({
   schedule: ScheduleSchema,
   model: RequiredModelConfigSchema.optional(),
   payload: SchedulePayloadSchema,
+  requiresDevice: z.boolean().optional(),
   deliver: z.array(DeliverTargetSchema).optional(),
   timeoutMs: z.number().positive().optional(),
 });
@@ -2273,6 +2289,7 @@ export const UpdateScheduleRequestSchema = z.object({
   schedule: ScheduleSchema.optional(),
   model: RequiredModelConfigSchema.optional(),
   payload: SchedulePayloadSchema.optional(),
+  requiresDevice: z.boolean().optional(),
   deliver: z.array(DeliverTargetSchema).optional(),
   timeoutMs: z.number().positive().optional(),
 });

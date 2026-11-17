@@ -23,6 +23,8 @@ export type ContainerTokenContext = {
   sessionOwnerId?: string | null;
   requesterId?: string;
   origin?: ExtensionAgentToolContext["origin"];
+  requiresDevice?: boolean;
+  deviceTurnToken?: string;
   projectId?: string;
   emitProgress?: (event: {
     label: string;

@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, queryAllByRole, queryByRole, queryByText, queryByTitle } from "@testing-library/dom";
+import { fireEvent, queryAllByRole, queryAllByText, queryByRole, queryByText, queryByTitle } from "@testing-library/dom";
 import { createSignal } from "solid-js";
 import { delegateEvents, render } from "solid-js/web";
 import { ChatView, ThinkingLine } from "./ChatView";
@@ -10,6 +10,7 @@ import type { SubscriptionCallbacks } from "../api/realtime";
 import type { StreamCallbacks } from "../api/chat";
 import type { FullHistoryMessage } from "../api/types";
 import type { McpAppFile } from "@yoplai/shared/types";
+import type { WsDeviceApprovalRequest } from "@yoplai/shared";
 import { ToastHost } from "../lib/toast";
 import {
   resetCapabilitiesForTests,
@@ -73,6 +74,7 @@ const {
   fetchChatProjectMock: vi.fn(),
   routeState: {
     agentId: "agent-1",
+    state: null as unknown,
     view: undefined as string | undefined,
     session: undefined as string | undefined,
     project: undefined as string | undefined,
@@ -84,7 +86,18 @@ const {
 vi.mock("@solidjs/router", () => ({
   A: (props: Record<string, unknown>) => <a {...props} />,
   useNavigate: () => navigateMock,
-  useLocation: () => ({ state: null }),
+  useLocation: () => ({
+    get state() { return routeState.state; },
+    get pathname() { return `/chat/${encodeURIComponent(routeState.agentId)}${routeState.view ? `/${routeState.view}` : ""}`; },
+    get search() {
+      const query = new URLSearchParams();
+      for (const key of ["session", "project", "dashboard", "new"] as const) {
+        if (routeState[key]) query.set(key, routeState[key]);
+      }
+      return query.size ? `?${query}` : "";
+    },
+    hash: "",
+  }),
   useParams: () => ({ get agentId() { routeAgentVersion(); return routeState.agentId; }, get view() { routeVersion(); return routeState.view; } }),
   useSearchParams: () => [
     {
@@ -262,12 +275,21 @@ describe("ChatView abort handling", () => {
     uploadFilesMock.mockResolvedValue([]);
     archiveAgentSessionMock.mockResolvedValue(undefined);
     routeState.view = undefined;
+    routeState.state = null;
     routeState.agentId = "agent-1";
     routeState.session = undefined;
     routeState.project = undefined;
     routeState.dashboard = undefined;
     routeState.new = undefined;
     setSearchParamsMock.mockImplementation((changes) => { Object.assign(routeState, changes); setRouteVersion((value) => value + 1); });
+    navigateMock.mockImplementation((target: string, options?: { replace?: boolean }) => {
+      if (!options?.replace) return;
+      const url = new URL(target, "http://localhost");
+      for (const key of ["session", "project", "dashboard", "new"] as const) {
+        routeState[key] = url.searchParams.get(key) ?? undefined;
+      }
+      setRouteVersion((value) => value + 1);
+    });
     fetchMainAgentPreferenceMock.mockResolvedValue({ mainAgentId: null, accessible: false, pickerDismissedAt: null });
     fetchMainAgentOptionsMock.mockResolvedValue({ preference: null, agents: [{ id: "agent-1", name: "Agent" }, { id: "agent-2", name: "Other" }] });
     fetchPoolActionsMock.mockResolvedValue([]);
@@ -754,6 +776,676 @@ describe("ChatView abort handling", () => {
     }
     expect(seen[0]).toEqual(seen[1]);
     expect(seen[0].href).toBe("/agents/pom%40ams/edit");
+  });
+
+  describe("device access of a remote agent", () => {
+    type RelayState = {
+      links: Array<{ name: string; connected: boolean }>;
+      settings: { workspaceFolder: string | null; full: boolean; mode: string };
+      fullBackground: boolean;
+      putError?: string;
+      getFails?: boolean;
+      linksFail?: boolean;
+      hold?: Promise<void>;
+      staleGet?: { promise: Promise<void>; settings: { workspaceFolder: string | null; full: boolean; mode: string } };
+      calls: Array<{ method: string; url: string; body: unknown }>;
+    };
+    const relay: RelayState = { links: [], settings: { workspaceFolder: null, full: false, mode: "ask" }, fullBackground: false, calls: [] };
+    const send = vi.fn();
+    let subscription: SubscriptionCallbacks = {};
+
+    const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
+    function stubRelay() {
+      relay.links = [{ name: "ams", connected: true }];
+      relay.settings = { workspaceFolder: null, full: false, mode: "ask" };
+      relay.fullBackground = false;
+      relay.putError = undefined;
+      relay.getFails = false;
+      relay.linksFail = false;
+      relay.hold = undefined;
+      relay.staleGet = undefined;
+      relay.calls = [];
+      vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        const method = init?.method ?? "GET";
+        const body = init?.body ? JSON.parse(String(init.body)) : undefined;
+        if (!url.includes("/api/relay/")) return json({});
+        relay.calls.push({ method, url, body });
+        if (url.includes("device-links")) return relay.linksFail ? json({ error: "down" }, 500) : json(relay.links);
+        if (url.includes("agent-settings")) {
+          if (method === "PUT") relay.fullBackground = body.fullBackground;
+          return json({ fullBackground: relay.fullBackground });
+        }
+        if (method === "GET" && relay.getFails) return json({ error: "down" }, 500);
+        if (method === "PUT") {
+          if (relay.putError) return json({ error: relay.putError }, 400);
+          if ("workspaceFolder" in body) relay.settings.workspaceFolder = body.workspaceFolder;
+          if ("full" in body) relay.settings.full = body.full;
+          relay.settings.mode = relay.settings.full ? "full" : relay.settings.workspaceFolder ? "workspace" : "ask";
+          const answer = json({ ...relay.settings });
+          if ("workspaceFolder" in body && relay.hold) await relay.hold;
+          return answer;
+        }
+        if (relay.staleGet) {
+          const { promise, settings } = relay.staleGet;
+          relay.staleGet = undefined;
+          const answer = json(settings);
+          await promise;
+          return answer;
+        }
+        return json(relay.settings);
+      }));
+    }
+    async function renderRemote(agentName = "Pom (remote)") {
+      routeState.agentId = "pom@ams";
+      fetchAgentMock.mockResolvedValue({ id: "pom@ams", name: agentName, gateway: "ams", model: { provider: "openai", model: "gpt-5" }, queueMode: "queue" });
+      subscribeToSessionMock.mockImplementation((_id, _key, next) => { subscription = next; return Object.assign(() => {}, { send }); });
+      const view = renderView();
+      await waitFor(() => expect(queryByRole(view.container, "link", { name: `${agentName} settings` })).not.toBeNull());
+      await tick(); await tick();
+      return view;
+    }
+    const request = (approvalId: string, chat: string, tool = "device_bash", args: unknown = { command: "ls -la" }, toolCallId = "call-1") => ({
+      type: "device_approval_request" as const, approvalId, gateway: "ams", agentId: "pom@ams", chat, toolCallId, tool, arguments: args,
+    });
+
+    beforeEach(() => { send.mockReset(); send.mockReturnValue(true); stubRelay(); });
+
+    it.each(["/reset write a synthetic file", "/reset"])("uses a fresh Ask key for %s from an Ask history view", async (text) => {
+      routeState.session = "history-ask";
+      const fetchRelay = globalThis.fetch;
+      vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        if (String(input).includes("chat=key%3Amain")) return json({ workspaceFolder: null, full: true, mode: "full" });
+        return fetchRelay(input, init);
+      }));
+      const { container, dispose } = await renderRemote();
+      await waitFor(() => expect(queryByRole(container, "button", { name: /Device: Ask/ })).not.toBeNull());
+      expect(relay.calls.some(call => call.url.includes("chat=session%3Ahistory-ask"))).toBe(true);
+      const textarea = queryByRole(container, "textbox") as HTMLTextAreaElement;
+      textarea.value = text;
+      textarea.dispatchEvent(new Event("input", { bubbles: true }));
+      await tick();
+      queryByRole(container, "button", { name: "Send message" })!.click();
+      await waitFor(() => expect(streamMessageMock).toHaveBeenCalled());
+      const sent = streamMessageMock.mock.calls.at(-1)!;
+      expect(sent[1]).toBe(text);
+      expect(sent[2]).toBe("fresh-key");
+      expect(sent[7]?.sessionId).toBeUndefined();
+      await waitFor(() => expect(subscribeToSessionMock.mock.calls.at(-1)?.[1]).toBe("fresh-key"));
+      expect(subscribeToSessionMock.mock.calls.at(-1)?.[3]).toBeUndefined();
+      await waitFor(() => expect(relay.calls.some(call => call.url.includes("chat=key%3Afresh-key"))).toBe(true));
+      await waitFor(() => expect(queryByRole(container, "button", { name: /Device: Ask/ })).not.toBeNull());
+      dispose();
+    });
+
+    async function sendReset(container: HTMLElement, text: string, count = 1) {
+      const textarea = queryByRole(container, "textbox") as HTMLTextAreaElement;
+      fireEvent.input(textarea, { target: { value: text } });
+      await tick();
+      fireEvent.keyDown(textarea, { key: "Enter" });
+      await waitFor(() => expect(streamMessageMock).toHaveBeenCalledTimes(count));
+      return streamMessageMock.mock.calls.at(-1)!;
+    }
+
+    it.each([
+      ["/reset run the synthetic command", false],
+      ["/new run the synthetic command", true],
+    ] as const)("restores a pending approval after remount for %s from history", async (text, approve) => {
+      routeState.session = "history-ask";
+      routeState.project = "project-1";
+      routeState.view = "full";
+      routeState.state = { backTo: "/agents" };
+      const first = await renderRemote();
+      const messageAnswer = vi.fn().mockReturnValue(true);
+      let sessionAtSend: string | undefined;
+      streamMessageMock.mockImplementation(() => {
+        sessionAtSend = routeState.session;
+        return () => {};
+      });
+      const sent = await sendReset(first.container, text);
+      expect(sent[2]).toBe("fresh-key");
+      expect(sent[7]?.sessionId).toBeUndefined();
+      const pending = request("reset-pending", "key:fresh-key");
+      sent[6].onDeviceApprovalRequest(pending, messageAnswer);
+      sent[3]("The command waits for approval.");
+      await waitFor(() => expect(queryByRole(first.container, "button", { name: "Approve" })).not.toBeNull());
+      expect(first.container.textContent).toContain("The command waits for approval.");
+      first.dispose();
+
+      const second = await renderRemote();
+      expect(getSessionKeyMock()).toBe("fresh-key");
+      expect(subscribeToSessionMock.mock.calls.at(-1)?.slice(0, 2)).toEqual(["pom@ams", "fresh-key"]);
+      expect(subscribeToSessionMock.mock.calls.at(-1)?.[3]).toBeUndefined();
+      expect(sessionAtSend).toBeUndefined();
+      expect(navigateMock).toHaveBeenCalledOnce();
+      expect(navigateMock).toHaveBeenCalledWith(
+        "/chat/pom%40ams/full?project=project-1", { replace: true, state: routeState.state },
+      );
+      expect(routeState.project).toBe("project-1");
+      expect(routeState.view).toBe("full");
+      subscription.onDeviceApprovalRequest?.(pending);
+      await waitFor(() => expect(queryByRole(second.container, "button", { name: "Approve" })).not.toBeNull());
+      expect(queryByText(second.container, "ls -la")).not.toBeNull();
+      queryByRole(second.container, "button", { name: approve ? "Approve" : "Refuse" })!.click();
+      expect(send).toHaveBeenCalledWith({ type: "device_approval_answer", approvalId: "reset-pending", approve });
+      expect(messageAnswer).not.toHaveBeenCalled();
+      subscription.onDeviceApprovalResolved?.({ type: "device_approval_resolved", approvalId: "reset-pending", agentId: "pom@ams", chat: "key:fresh-key", outcome: approve ? "approved" : "refused" });
+      await waitFor(() => expect(queryByRole(second.container, "button", { name: "Approve" })).toBeNull());
+      second.dispose();
+    });
+
+    it.each(["/reset", "/new"])("keeps the fresh key route after an empty %s and its reset event", async (text) => {
+      routeState.session = "history-ask";
+      const first = await renderRemote();
+      const sent = await sendReset(first.container, text);
+      sent[6].onSessionReset("remote-empty-reset");
+      sent[3]("The reset is complete.");
+      sent[4]();
+      await tick();
+      expect(routeState.session).toBeUndefined();
+      expect(navigateMock).toHaveBeenCalledOnce();
+      expect(navigateMock).toHaveBeenCalledWith("/chat/pom%40ams", { replace: true, state: routeState.state });
+      expect(first.container.textContent).toContain("The reset is complete.");
+      expect(subscribeToSessionMock.mock.calls.at(-1)?.[1]).toBe("fresh-key");
+      expect(subscribeToSessionMock.mock.calls.at(-1)?.[3]).toBeUndefined();
+      first.dispose();
+      const second = await renderRemote();
+      expect(subscribeToSessionMock.mock.calls.at(-1)?.[1]).toBe("fresh-key");
+      expect(subscribeToSessionMock.mock.calls.at(-1)?.[3]).toBeUndefined();
+      expect(startNewChatMock).toHaveBeenCalledOnce();
+      second.dispose();
+    });
+
+    it("uses separate keys for consecutive resets and hides the old approval", async () => {
+      routeState.session = "history-ask";
+      let resetCount = 0;
+      startNewChatMock.mockImplementation(() => { getSessionKeyMock.mockReturnValue(`reset-${++resetCount}`); });
+      const view = await renderRemote();
+      const first = await sendReset(view.container, "/reset first command");
+      const oldAnswer = vi.fn().mockReturnValue(true);
+      first[6].onDeviceApprovalRequest(request("first", "key:reset-1"), oldAnswer);
+      await waitFor(() => expect(queryByRole(view.container, "button", { name: "Approve" })).not.toBeNull());
+      const second = await sendReset(view.container, "/reset second command", 2);
+      expect(first[2]).toBe("reset-1");
+      expect(second[2]).toBe("reset-2");
+      expect(second[7]?.sessionId).toBeUndefined();
+      expect(routeState.session).toBeUndefined();
+      first[3]("Text from the old reset.");
+      first[6].onDeviceApprovalRequest(request("stale", "key:reset-1"), oldAnswer);
+      subscription.onDeviceApprovalRequest?.(request("second", "key:reset-2", "device_bash", { command: "echo second" }));
+      await waitFor(() => expect(queryAllByRole(view.container, "button", { name: "Approve" })).toHaveLength(1));
+      expect(queryByText(view.container, "ls -la")).toBeNull();
+      expect(view.container.textContent).not.toContain("Text from the old reset.");
+      expect(queryByText(view.container, "echo second")).not.toBeNull();
+      queryByRole(view.container, "button", { name: "Refuse" })!.click();
+      expect(send).toHaveBeenCalledWith({ type: "device_approval_answer", approvalId: "second", approve: false });
+      expect(oldAnswer).not.toHaveBeenCalled();
+      view.dispose();
+    });
+
+    it("uses another history identity after a reset and ignores the old stream", async () => {
+      routeState.session = "history-ask";
+      const view = await renderRemote();
+      const sent = await sendReset(view.container, "/reset first command");
+      sent[6].onDeviceApprovalRequest(request("reset", "key:fresh-key"), () => true);
+      await waitFor(() => expect(queryByRole(view.container, "button", { name: "Approve" })).not.toBeNull());
+      routeState.session = "another-history";
+      setRouteVersion(value => value + 1);
+      await waitFor(() => expect(subscribeToSessionMock.mock.calls.at(-1)?.[3]).toBe("another-history"));
+      sent[3]("Text from the old reset.");
+      sent[6].onSessionReset("stale-reset-event");
+      subscription.onDeviceApprovalRequest?.(request("stale", "key:fresh-key"));
+      subscription.onDeviceApprovalRequest?.(request("history", "session:another-history", "device_bash", { command: "echo history" }));
+      await waitFor(() => expect(queryAllByRole(view.container, "button", { name: "Approve" })).toHaveLength(1));
+      expect(queryByText(view.container, "ls -la")).toBeNull();
+      expect(view.container.textContent).not.toContain("Text from the old reset.");
+      expect(queryByText(view.container, "echo history")).not.toBeNull();
+      expect(routeState.session).toBe("another-history");
+      queryByRole(view.container, "button", { name: "Approve" })!.click();
+      expect(send).toHaveBeenCalledWith({ type: "device_approval_answer", approvalId: "history", approve: true });
+      view.dispose();
+    });
+
+    it("shows a card for a request of the open chat and none for another chat", async () => {
+      const { container, dispose } = await renderRemote();
+      subscription.onDeviceApprovalRequest?.(request("a1", "key:other"));
+      await tick();
+      expect(queryByText(container, "ls -la")).toBeNull();
+      subscription.onDeviceApprovalRequest?.(request("a2", "key:main"));
+      await waitFor(() => expect(queryByText(container, "A remote agent wants to run a command on this device")).not.toBeNull());
+      expect(queryByText(container, "ls -la")).not.toBeNull();
+      dispose();
+    });
+
+    it("shows the path and the content of a file write as text", async () => {
+      const { container, dispose } = await renderRemote();
+      subscription.onDeviceApprovalRequest?.(request("a1", "key:main", "device_write", { path: "/tmp/a.txt", content: "<img src=x onerror=alert(1)>" }));
+      await waitFor(() => expect(queryByText(container, "A remote agent wants to write a file on this device")).not.toBeNull());
+      expect(queryByText(container, "/tmp/a.txt")).not.toBeNull();
+      expect(queryByText(container, "<img src=x onerror=alert(1)>")).not.toBeNull();
+      expect(queryByRole(container, "img")).toBeNull();
+      dispose();
+    });
+
+    it("shows the card in the simple view and in the full view", async () => {
+      for (const mode of ["simple", "full"]) {
+        routeState.view = mode;
+        const { container, dispose } = await renderRemote();
+        subscription.onDeviceApprovalRequest?.(request("a1", "key:main"));
+        await waitFor(() => expect(queryByRole(container, "button", { name: "Approve" })).not.toBeNull());
+        dispose();
+      }
+    });
+
+    it("sends Approve and Refuse on the subscription socket and disables the buttons", async () => {
+      const { container, dispose } = await renderRemote();
+      subscription.onDeviceApprovalRequest?.(request("a1", "key:main"));
+      subscription.onDeviceApprovalRequest?.(request("a2", "key:main", "device_read", { path: "/tmp/b" }));
+      await waitFor(() => expect(queryAllByRole(container, "button", { name: "Approve" })).toHaveLength(2));
+      queryAllByRole(container, "button", { name: "Approve" })[0].click();
+      queryAllByRole(container, "button", { name: "Refuse" })[1].click();
+      expect(send).toHaveBeenNthCalledWith(1, { type: "device_approval_answer", approvalId: "a1", approve: true });
+      expect(send).toHaveBeenNthCalledWith(2, { type: "device_approval_answer", approvalId: "a2", approve: false });
+      await waitFor(() => expect((queryAllByRole(container, "button", { name: "Approve" })[0] as HTMLButtonElement).disabled).toBe(true));
+      dispose();
+    });
+
+    describe("a request on the socket of a message", () => {
+      type MessageCallbacks = {
+        onDeviceApprovalRequest?: (request: WsDeviceApprovalRequest, answer: (id: string, approve: boolean) => boolean) => void;
+        onDeviceApprovalResolved?: (resolved: unknown) => void;
+        onDeviceApprovalClosed?: () => void;
+      };
+      async function sendFirstMessageOfNewChat() {
+        let callbacks: MessageCallbacks = {};
+        const messageSocketSend = vi.fn().mockReturnValue(true);
+        streamMessageMock.mockImplementation((_a, _m, _k, _t, _d, _e, next) => { callbacks = next; return () => {}; });
+        const view = await renderRemote();
+        const keysSubscribed = () => subscribeToSessionMock.mock.calls.map((call) => call[1]);
+        expect(keysSubscribed()).toEqual(["main"]);
+        queryByTitle(view.container, "New chat")!.click();
+        await tick();
+        const textarea = view.container.querySelector("textarea") as HTMLTextAreaElement;
+        textarea.value = "list the files";
+        textarea.dispatchEvent(new Event("input", { bubbles: true }));
+        await tick();
+        queryByRole(view.container, "button", { name: "Send message" })!.click();
+        await waitFor(() => expect(streamMessageMock).toHaveBeenCalled());
+        expect(streamMessageMock.mock.calls.at(-1)?.[2]).toBe("fresh-key");
+        return { ...view, callbacks: () => callbacks, messageSocketSend, keysSubscribed };
+      }
+
+      it("shows the card of the first message after New chat and answers on the socket of the message", async () => {
+        const { container, dispose, callbacks, messageSocketSend } = await sendFirstMessageOfNewChat();
+        callbacks().onDeviceApprovalRequest?.(request("a1", "key:fresh-key"), messageSocketSend);
+        await waitFor(() => expect(queryByRole(container, "button", { name: "Approve" })).not.toBeNull());
+        expect(queryByText(container, "ls -la")).not.toBeNull();
+        queryByRole(container, "button", { name: "Approve" })!.click();
+        expect(messageSocketSend).toHaveBeenCalledWith("a1", true);
+        expect(send).not.toHaveBeenCalled();
+        await waitFor(() => expect((queryByRole(container, "button", { name: "Approve" }) as HTMLButtonElement).disabled).toBe(true));
+        dispose();
+      });
+
+      it("uses the subscription after the message socket ends", async () => {
+        const { container, dispose, callbacks, messageSocketSend } = await sendFirstMessageOfNewChat();
+        callbacks().onDeviceApprovalRequest?.(request("a1", "key:fresh-key"), messageSocketSend);
+        callbacks().onDeviceApprovalClosed?.();
+        await waitFor(() => expect(queryByRole(container, "button", { name: "Approve" })).not.toBeNull());
+        queryByRole(container, "button", { name: "Approve" })!.click();
+        expect(messageSocketSend).not.toHaveBeenCalled();
+        expect(send).toHaveBeenCalledWith({ type: "device_approval_answer", approvalId: "a1", approve: true });
+        dispose();
+      });
+
+      it("removes old answer functions when the chat changes", async () => {
+        const { container, dispose, callbacks, messageSocketSend } = await sendFirstMessageOfNewChat();
+        callbacks().onDeviceApprovalRequest?.(request("a1", "key:fresh-key"), messageSocketSend);
+        queryByTitle(container, "New chat")!.click();
+        await tick();
+        subscription.onDeviceApprovalRequest?.(request("a1", "key:fresh-key"));
+        await waitFor(() => expect(queryByRole(container, "button", { name: "Approve" })).not.toBeNull());
+        queryByRole(container, "button", { name: "Approve" })!.click();
+        expect(messageSocketSend).not.toHaveBeenCalled();
+        expect(send).toHaveBeenCalledWith({ type: "device_approval_answer", approvalId: "a1", approve: true });
+        dispose();
+      });
+
+      it("subscribes again with the key of the new chat", async () => {
+        const { keysSubscribed, dispose } = await sendFirstMessageOfNewChat();
+        expect(keysSubscribed()).toContain("fresh-key");
+        dispose();
+      });
+
+      it("shows no card for a request of another chat", async () => {
+        const { container, dispose, callbacks, messageSocketSend } = await sendFirstMessageOfNewChat();
+        callbacks().onDeviceApprovalRequest?.(request("a1", "key:main"), messageSocketSend);
+        await tick();
+        expect(queryByRole(container, "button", { name: "Approve" })).toBeNull();
+        dispose();
+      });
+
+      it("shows one card for a request that arrives on two sockets", async () => {
+        const { container, dispose, callbacks, messageSocketSend } = await sendFirstMessageOfNewChat();
+        callbacks().onDeviceApprovalRequest?.(request("a1", "key:fresh-key"), messageSocketSend);
+        subscription.onDeviceApprovalRequest?.(request("a1", "key:fresh-key"));
+        await waitFor(() => expect(queryAllByRole(container, "button", { name: "Approve" })).toHaveLength(1));
+        dispose();
+      });
+    });
+
+    it("removes the card on a resolved message and shows a line for a timeout", async () => {
+      const { container, dispose } = await renderRemote();
+      subscription.onDeviceApprovalRequest?.(request("a1", "key:main"));
+      subscription.onDeviceApprovalRequest?.(request("a2", "key:main"));
+      await waitFor(() => expect(queryAllByRole(container, "button", { name: "Approve" })).toHaveLength(2));
+      subscription.onDeviceApprovalResolved?.({ type: "device_approval_resolved", approvalId: "a1", agentId: "pom@ams", chat: "key:main", outcome: "approved" });
+      await waitFor(() => expect(queryAllByRole(container, "button", { name: "Approve" })).toHaveLength(1));
+      expect(queryByText(container, "A device call got no answer in time.")).toBeNull();
+      subscription.onDeviceApprovalResolved?.({ type: "device_approval_resolved", approvalId: "a2", agentId: "pom@ams", chat: "key:main", outcome: "timeout" });
+      await waitFor(() => expect(queryByText(container, "A device call got no answer in time.")).not.toBeNull());
+      expect(queryAllByRole(container, "button", { name: "Approve" })).toHaveLength(0);
+      dispose();
+    });
+
+    it("shows a lone surrogate as an escape", async () => {
+      const { container, dispose } = await renderRemote();
+      subscription.onDeviceApprovalRequest?.(request("a1", "key:main", "device_bash", { command: "a\uD800b" }));
+      await waitFor(() => expect(queryByText(container, "a\\uD800b")).not.toBeNull());
+      dispose();
+    });
+
+    it("shows each hidden character of the command and of the agent name as an escape", async () => {
+      const { container, dispose } = await renderRemote("Pom\u202E(remote)");
+      subscription.onDeviceApprovalRequest?.(request("a1", "key:main", "device_bash", { command: "echo ok\u202Eevil\u200B\u0007\rend" }));
+      await waitFor(() => expect(queryByText(container, "echo ok\\u202Eevil\\u200B\\u0007\\u000Dend")).not.toBeNull());
+      expect(queryByText(container, "Pom\\u202E(remote)")).not.toBeNull();
+      expect(queryByRole(container, "region", { name: "A remote agent wants to run a command on this device" })!.textContent).not.toMatch(/[\u202E\u200B\r]/);
+      expect(queryByRole(container, "region", { name: "A remote agent wants to run a command on this device" })!.textContent?.includes(String.fromCharCode(7))).toBe(false);
+      dispose();
+    });
+
+    it("shows each invisible character and each backslash as an escape", async () => {
+      const { container, dispose } = await renderRemote();
+      const command = "a\uFE0Fb\u{E0100}c\u{E0061}d\u034Fe\u2061f\u202Eg\\u202E";
+      subscription.onDeviceApprovalRequest?.(request("a1", "key:main", "device_bash", { command }));
+      await waitFor(() => expect(queryByText(container, "a\\uFE0Fb\\u{E0100}c\\u{E0061}d\\u034Fe\\u2061f\\u202Eg\\\\u202E")).not.toBeNull());
+      dispose();
+    });
+
+    it("shows the full text of a long command with no warning, also when the command contains the text of a cut mark", async () => {
+      const command = Array.from({ length: 400 }, (_, i) => `echo line-${i}`).join("\n") + "\nrm -rf /tmp/x… (cut)";
+      const { container, dispose } = await renderRemote();
+      subscription.onDeviceApprovalRequest?.(request("a1", "key:main", "device_bash", { command }));
+      await waitFor(() => expect(queryByText(container, command, { normalizer: (value) => value })).not.toBeNull());
+      expect(queryByText(container, "This command is longer than the card shows. If you approve, the full command runs.")).toBeNull();
+      expect(queryByText(container, "This card does not show all of the text. The call uses the full text.")).toBeNull();
+      dispose();
+    });
+
+    it("shows all of a long file text and warns only when a value is cut, and shows the detail of an edit", async () => {
+      const { container, dispose } = await renderRemote();
+      const content = Array.from({ length: 30 }, (_, i) => `line-${i}`).join("\n");
+      subscription.onDeviceApprovalRequest?.(request("a1", "key:main", "device_write", { path: "/tmp/a", content }));
+      await waitFor(() => expect(queryByText(container, content, { normalizer: (value) => value })).not.toBeNull());
+      expect(queryByText(container, "This text is long. Scroll the box to read all of it before you approve.")).toBeNull();
+      expect(queryByText(container, "This card does not show all of the text. The call uses the full text.")).toBeNull();
+      subscription.onDeviceApprovalRequest?.(request("a2", "key:main", "device_edit", { path: "/tmp/b", edits: [{ oldText: "foo", newText: "bar… (cut)" }] }));
+      await waitFor(() => expect(queryByText(container, "A remote agent wants to edit a file on this device")).not.toBeNull());
+      expect(container.textContent).toContain('"oldText": "foo"');
+      expect(container.textContent).toContain('"newText": "bar… (cut)"');
+      expect(queryByText(container, "This card does not show all of the text. The call uses the full text.")).not.toBeNull();
+      dispose();
+    });
+
+    it("shows a pending approval again after a new subscription and none that ended while the socket was down", async () => {
+      const { container, dispose } = await renderRemote();
+      subscription.onDeviceApprovalRequest?.(request("a1", "key:main"));
+      subscription.onDeviceApprovalRequest?.(request("a2", "key:main", "device_read", { path: "/tmp/b" }));
+      await waitFor(() => expect(queryAllByRole(container, "button", { name: "Approve" })).toHaveLength(2));
+      subscription.onDisconnected?.();
+      await waitFor(() => expect(queryAllByText(container, "The connection is lost. You cannot answer until it returns.")).toHaveLength(2));
+      for (const button of queryAllByRole(container, "button", { name: "Approve" })) expect((button as HTMLButtonElement).disabled).toBe(true);
+      subscription.onConnected?.();
+      subscription.onDeviceApprovalRequest?.(request("a1", "key:main"));
+      await waitFor(() => expect(queryAllByRole(container, "button", { name: "Approve" })).toHaveLength(1));
+      expect((queryByRole(container, "button", { name: "Approve" }) as HTMLButtonElement).disabled).toBe(false);
+      expect(queryByText(container, "The connection is lost. You cannot answer until it returns.")).toBeNull();
+      dispose();
+    });
+
+    it("asks for a new connection after a drop for a remote agent and not for a local agent", async () => {
+      const { dispose } = await renderRemote();
+      expect(subscribeToSessionMock.mock.calls.at(-1)?.[4]).toBe(true);
+      dispose();
+      subscribeToSessionMock.mockClear();
+      routeState.agentId = "agent-1";
+      const local = renderView();
+      await waitFor(() => expect(subscribeToSessionMock).toHaveBeenCalled());
+      expect(subscribeToSessionMock.mock.calls.at(-1)?.[4]).toBeFalsy();
+      local.dispose();
+    });
+
+    it("shows the mode Full when the first answer of the route is Full", async () => {
+      relay.settings = { workspaceFolder: null, full: true, mode: "full" };
+      fetchAgentMock.mockResolvedValue({ id: "pom@ams", name: "Pom (remote)", gateway: "ams", model: { provider: "openai", model: "gpt-5" }, queueMode: "queue" });
+      routeState.agentId = "pom@ams";
+      subscribeToSessionMock.mockImplementation((_id, _key, next) => { subscription = next; return Object.assign(() => {}, { send }); });
+      const { container, dispose } = renderView();
+      await waitFor(() => expect(queryByRole(container, "button", { name: "Device: Full" })).not.toBeNull());
+      expect(queryByRole(container, "button", { name: "Device: Ask" })).toBeNull();
+      dispose();
+    });
+
+    it("shows no mode and an error with a retry when the settings do not load", async () => {
+      relay.getFails = true;
+      const { container, dispose } = await renderRemote();
+      await waitFor(() => expect(queryByRole(container, "button", { name: "Device: error" })).not.toBeNull());
+      queryByRole(container, "button", { name: "Device: error" })!.click();
+      expect((queryByRole(container, "textbox", { name: "Workspace folder" }) as HTMLInputElement).disabled).toBe(true);
+      expect((queryByRole(container, "switch", { name: "Full access" }) as HTMLInputElement).disabled).toBe(true);
+      relay.getFails = false;
+      relay.settings = { workspaceFolder: null, full: true, mode: "full" };
+      queryByRole(container, "button", { name: "Try again" })!.click();
+      await waitFor(() => expect(queryByRole(container, "button", { name: "Device: Full" })).not.toBeNull());
+      dispose();
+    });
+
+    it("shows an unknown state when the page cannot read the device link", async () => {
+      relay.linksFail = true;
+      const { container, dispose } = await renderRemote();
+      await waitFor(() => expect(queryByRole(container, "button", { name: "Device: unknown" })).not.toBeNull());
+      dispose();
+    });
+
+    it("follows a mode change of another tab on focus, on panel open, and on a new approval request", async () => {
+      const { container, dispose } = await renderRemote();
+      await waitFor(() => expect(queryByRole(container, "button", { name: "Device: Ask" })).not.toBeNull());
+      relay.settings = { workspaceFolder: null, full: true, mode: "full" };
+      window.dispatchEvent(new Event("focus"));
+      await waitFor(() => expect(queryByRole(container, "button", { name: "Device: Full" })).not.toBeNull());
+      relay.settings = { workspaceFolder: "/work", full: false, mode: "workspace" };
+      queryByRole(container, "button", { name: "Device: Full" })!.click();
+      await waitFor(() => expect(queryByRole(container, "button", { name: "Device: Workspace" })).not.toBeNull());
+      relay.settings = { workspaceFolder: null, full: false, mode: "ask" };
+      subscription.onDeviceApprovalRequest?.(request("a1", "key:main"));
+      await waitFor(() => expect(queryByRole(container, "button", { name: "Device: Ask" })).not.toBeNull());
+      dispose();
+    });
+
+    it("ignores the late answer of an older write", async () => {
+      let release!: () => void;
+      relay.hold = new Promise<void>((resolve) => { release = resolve; });
+      const { container, dispose } = await renderRemote();
+      await waitFor(() => expect(queryByRole(container, "button", { name: "Device: Ask" })).not.toBeNull());
+      queryByRole(container, "button", { name: "Device: Ask" })!.click();
+      const input = queryByRole(container, "textbox", { name: "Workspace folder" }) as HTMLInputElement;
+      input.value = "/work";
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+      queryByRole(container, "button", { name: "Save" })!.click();
+      await tick();
+      queryByRole(container, "switch", { name: "Full access" })!.click();
+      await waitFor(() => expect(queryByRole(container, "button", { name: "Device: Full" })).not.toBeNull());
+      release();
+      await tick(); await tick();
+      expect(queryByRole(container, "button", { name: "Device: Full" })).not.toBeNull();
+      dispose();
+    });
+
+    it("keeps the result of a write when a read that started during the write answers late with an older mode", async () => {
+      let releaseWrite!: () => void;
+      let releaseRead!: () => void;
+      relay.hold = new Promise<void>((resolve) => { releaseWrite = resolve; });
+      const { container, dispose } = await renderRemote();
+      await waitFor(() => expect(queryByRole(container, "button", { name: "Device: Ask" })).not.toBeNull());
+      queryByRole(container, "button", { name: "Device: Ask" })!.click();
+      const input = queryByRole(container, "textbox", { name: "Workspace folder" }) as HTMLInputElement;
+      input.value = "/work";
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+      queryByRole(container, "button", { name: "Save" })!.click();
+      await tick();
+      relay.staleGet = { promise: new Promise<void>((resolve) => { releaseRead = resolve; }), settings: { workspaceFolder: null, full: false, mode: "ask" } };
+      window.dispatchEvent(new Event("focus"));
+      await tick();
+      releaseWrite();
+      await waitFor(() => expect(queryByRole(container, "button", { name: "Device: Workspace" })).not.toBeNull());
+      releaseRead();
+      await tick(); await tick();
+      expect(queryByRole(container, "button", { name: "Device: Workspace" })).not.toBeNull();
+      dispose();
+    });
+
+    it("shows an unknown mode and a retry when a refresh on focus fails", async () => {
+      const { container, dispose } = await renderRemote();
+      await waitFor(() => expect(queryByRole(container, "button", { name: "Device: Ask" })).not.toBeNull());
+      relay.getFails = true;
+      window.dispatchEvent(new Event("focus"));
+      await waitFor(() => expect(queryByRole(container, "button", { name: "Device: error" })).not.toBeNull());
+      queryByRole(container, "button", { name: "Device: error" })!.click();
+      expect((queryByRole(container, "switch", { name: "Full access" }) as HTMLInputElement).disabled).toBe(true);
+      relay.getFails = false;
+      relay.settings = { workspaceFolder: null, full: true, mode: "full" };
+      queryByRole(container, "button", { name: "Try again" })!.click();
+      await waitFor(() => expect(queryByRole(container, "button", { name: "Device: Full" })).not.toBeNull());
+      dispose();
+    });
+
+    it("closes the panel on Escape and on a click outside it", async () => {
+      const { container, dispose } = await renderRemote();
+      await waitFor(() => expect(queryByRole(container, "button", { name: "Device: Ask" })).not.toBeNull());
+      queryByRole(container, "button", { name: "Device: Ask" })!.click();
+      expect(queryByRole(container, "group", { name: "Device access" })).not.toBeNull();
+      document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+      await waitFor(() => expect(queryByRole(container, "group", { name: "Device access" })).toBeNull());
+      queryByRole(container, "button", { name: "Device: Ask" })!.click();
+      document.body.dispatchEvent(new Event("pointerdown", { bubbles: true }));
+      await waitFor(() => expect(queryByRole(container, "group", { name: "Device access" })).toBeNull());
+      dispose();
+    });
+
+    it("shows no device control and sends no relay request for a local agent", async () => {
+      const { container, dispose } = renderView();
+      await waitFor(() => expect(queryByRole(container, "link", { name: "Agent settings" })).not.toBeNull());
+      await tick(); await tick();
+      expect(queryByRole(container, "button", { name: "Device: Ask" })).toBeNull();
+      expect(relay.calls).toEqual([]);
+      dispose();
+    });
+
+    it("shows the mode from the route, saves a folder, and shows Workspace", async () => {
+      const { container, dispose } = await renderRemote();
+      await waitFor(() => expect(queryByRole(container, "button", { name: "Device: Ask" })).not.toBeNull());
+      expect(relay.calls.some((call) => call.url.includes("device-settings?agentId=pom%40ams&chat=key%3Amain"))).toBe(true);
+      queryByRole(container, "button", { name: "Device: Ask" })!.click();
+      const input = queryByRole(container, "textbox", { name: "Workspace folder" }) as HTMLInputElement;
+      input.value = "/Users/me/project";
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+      queryByRole(container, "button", { name: "Save" })!.click();
+      await waitFor(() => expect(queryByRole(container, "button", { name: "Device: Workspace" })).not.toBeNull());
+      expect(relay.calls.find((call) => call.method === "PUT" && call.url.includes("device-settings"))?.body).toEqual({ workspaceFolder: "/Users/me/project" });
+      queryByRole(container, "button", { name: "Remove" })!.click();
+      await waitFor(() => expect(queryByRole(container, "button", { name: "Device: Ask" })).not.toBeNull());
+      dispose();
+    });
+
+    it("sets the Full switch and shows Full", async () => {
+      const { container, dispose } = await renderRemote();
+      queryByRole(container, "button", { name: "Device: Ask" })!.click();
+      queryByRole(container, "switch", { name: "Full access" })!.click();
+      await waitFor(() => expect(queryByRole(container, "button", { name: "Device: Full" })).not.toBeNull());
+      expect(relay.calls.find((call) => call.method === "PUT" && call.url.includes("device-settings"))?.body).toEqual({ full: true });
+      dispose();
+    });
+
+    it("shows the error of the route in the panel", async () => {
+      relay.putError = "workspaceFolder must be an absolute path to a directory that exists";
+      const { container, dispose } = await renderRemote();
+      queryByRole(container, "button", { name: "Device: Ask" })!.click();
+      const input = queryByRole(container, "textbox", { name: "Workspace folder" }) as HTMLInputElement;
+      input.value = "/nope";
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+      queryByRole(container, "button", { name: "Save" })!.click();
+      await waitFor(() => expect(queryByRole(container, "alert")?.textContent).toContain("must be an absolute path"));
+      dispose();
+    });
+
+    it("shows a working device control before the first message of a new chat, and keeps Full after it", async () => {
+      let finish = () => {};
+      streamMessageMock.mockImplementation((_a, _m, _k, onText, onDone) => { finish = () => { onText("Done"); onDone(); }; return () => {}; });
+      const view = await renderRemote();
+      queryByRole(view.container, "button", { name: "Start a new chat" })!.click();
+      await waitFor(() => expect(relay.calls.some((call) => call.url.includes("chat=key%3Afresh-key"))).toBe(true));
+      await waitFor(() => expect(queryByRole(view.container, "button", { name: "Device: Ask" })).not.toBeNull());
+      queryByRole(view.container, "button", { name: "Device: Ask" })!.click();
+      expect((queryByRole(view.container, "switch", { name: "Full access" }) as HTMLInputElement).disabled).toBe(false);
+      queryByRole(view.container, "switch", { name: "Full access" })!.click();
+      await waitFor(() => expect(queryByRole(view.container, "button", { name: "Device: Full" })).not.toBeNull());
+      document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
+      await tick();
+      const input = queryByRole(view.container, "textbox") as HTMLTextAreaElement;
+      input.value = "Run ls";
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+      queryByRole(view.container, "button", { name: "Send message" })!.click();
+      await waitFor(() => expect(streamMessageMock).toHaveBeenCalled());
+      finish();
+      await tick(); await tick();
+      expect(queryByRole(view.container, "button", { name: "Device: Full" })).not.toBeNull();
+      const writes = relay.calls.filter((call) => call.method === "PUT" && call.url.includes("device-settings"));
+      expect(writes.map((call) => call.url.includes("chat=key%3Afresh-key"))).toEqual([true]);
+      view.dispose();
+    });
+
+    it("shows the card of a new chat for its own chat name and none for the chat that it replaced", async () => {
+      const view = await renderRemote();
+      queryByRole(view.container, "button", { name: "Start a new chat" })!.click();
+      await tick();
+      subscription.onDeviceApprovalRequest?.(request("old", "key:main", "device_bash", { command: "old-command" }));
+      subscription.onDeviceApprovalRequest?.(request("new", "key:fresh-key", "device_bash", { command: "new-command" }));
+      await waitFor(() => expect(queryByText(view.container, "new-command")).not.toBeNull());
+      expect(queryByText(view.container, "old-command")).toBeNull();
+      view.dispose();
+    });
+
+    it("shows Device: offline when the link is not connected", async () => {
+      relay.links = [{ name: "ams", connected: false }];
+      const { container, dispose } = await renderRemote();
+      await waitFor(() => expect(queryByRole(container, "button", { name: "Device: offline" })).not.toBeNull());
+      queryByRole(container, "button", { name: "Device: offline" })!.click();
+      expect(queryByText(container, "The remote agent cannot reach this device now.")).not.toBeNull();
+      dispose();
+    });
+
+    it("reads and writes the scheduled jobs setting of the agent", async () => {
+      relay.fullBackground = true;
+      const { container, dispose } = await renderRemote();
+      queryByRole(container, "button", { name: "Device: Ask" })!.click();
+      const name = "Scheduled jobs of this agent get full access on this device";
+      await waitFor(() => expect((queryByRole(container, "switch", { name }) as HTMLInputElement).checked).toBe(true));
+      queryByRole(container, "switch", { name })!.click();
+      await waitFor(() => expect(relay.calls.find((call) => call.method === "PUT" && call.url.includes("agent-settings"))?.body).toEqual({ fullBackground: false }));
+      expect(relay.calls.some((call) => call.url.includes("agent-settings?agentId=pom%40ams"))).toBe(true);
+      dispose();
+    });
   });
 
   it("keeps /edit at the end of the settings link for an id with # or ?", async () => {

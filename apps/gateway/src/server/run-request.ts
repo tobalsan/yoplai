@@ -28,6 +28,7 @@ export type RawRunRequestInput = {
   thinkLevel?: unknown;
   attachments?: unknown;
   projectId?: unknown;
+  deviceTurnToken?: unknown;
 };
 
 export type RunRequestImmediateEvent = StreamEvent | WsSessionResetEvent;
@@ -114,6 +115,7 @@ export async function normalizeRunRequest({
     sessionId: input.sessionId,
     sessionKey: input.sessionKey,
     thinkLevel: input.thinkLevel,
+    deviceTurnToken: input.deviceTurnToken,
   });
   if (!parsed.success) {
     return { type: "validation_error", message: parsed.error.message };
@@ -139,6 +141,7 @@ export async function normalizeRunRequest({
         sessionId: data.sessionId,
         sessionKey: data.sessionKey,
         thinkLevel: data.thinkLevel,
+        deviceTurnToken: data.deviceTurnToken,
         context: userContext(authContext),
         extensionRuntime,
         source,
@@ -196,6 +199,7 @@ export async function normalizeRunRequest({
       resolvedSession,
       projectId: data.projectId,
       thinkLevel: data.thinkLevel as ThinkLevel | undefined,
+      deviceTurnToken: data.deviceTurnToken,
       context: userContext(authContext),
       extensionRuntime,
       source,

@@ -900,6 +900,16 @@ describe("api core session resolution", () => {
     expect(renameResponse.status).toBe(400);
   });
 
+  it("strips a caller device token at the REST boundary", async () => {
+    const { api } = await import("./api.core.js");
+    const response = await api.request(new Request("http://localhost/agents/alpha/messages", {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ message: "hello", sessionId: "synthetic", deviceTurnToken: "synthetic-token" }),
+    }));
+    expect(response.status).toBe(200);
+    expect(runAgent).toHaveBeenCalledWith(expect.objectContaining({ deviceTurnToken: undefined }));
+  });
+
   it("passes a resolved session through to runAgent", async () => {
     const { api } = await import("./api.core.js");
 

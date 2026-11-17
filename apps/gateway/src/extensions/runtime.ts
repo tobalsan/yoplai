@@ -48,7 +48,7 @@ function buildHookContext(
 ): ExtensionHookContext {
   return {
     config,
-    run: identity && { source: identity.source, sender: identity.sender, background: identity.background, sessionId: identity.sessionId },
+    run: identity && { source: identity.source, sender: identity.sender, background: identity.background, requiresDevice: identity.requiresDevice, deviceTurnToken: identity.deviceTurnToken, sessionId: identity.sessionId },
     ...(execution ? { execution } : {}),
     env: resolveAgentEnv(agent, config),
     userId,
@@ -385,7 +385,7 @@ export class ExtensionRuntime {
         sessionOwnerId: identity?.sessionOwnerId,
         requesterId: identity?.requesterId,
         origin: identity?.origin,
-        run: identity && { source: identity.source, sender: identity.sender, background: identity.background },
+        run: identity && { source: identity.source, sender: identity.sender, background: identity.background, requiresDevice: identity.requiresDevice, deviceTurnToken: identity.deviceTurnToken },
         emitProgress,
         signal,
         conversationFiles: identity?.conversationFiles ?? (sessionId ? getConversationFiles(agent.id, sessionId, userId) : undefined),

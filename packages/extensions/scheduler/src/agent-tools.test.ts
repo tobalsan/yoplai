@@ -4,7 +4,7 @@ import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AgentConfig, ExtensionContext, GatewayConfig } from "@yoplai/shared";
 import { schedulerExtension } from "./index.js";
-import { clearSchedulerContext, setSchedulerContext, stopScheduler } from "./service.js";
+import { clearSchedulerContext, getScheduler, setSchedulerContext, stopScheduler } from "./service.js";
 
 function agent(id: string, workspace: string): AgentConfig {
   return {
@@ -236,6 +236,73 @@ describe("scheduler agent tools", () => {
       ok: false,
       error: "jobId is required. Call scheduler.list_jobs first, then pass the selected jobs[n].id as jobId.",
     });
+  });
+
+  it("keeps requiresDevice through create, update, a reload from disk, and a list", async () => {
+    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-scheduler-tools-"));
+    const alpha = agent("alpha", path.join(tmpDir, "alpha"));
+    const config: GatewayConfig = { version: 3, agents: [alpha], extensions: { scheduler: { enabled: true } }, sessions: { idleMinutes: 360 } };
+    setSchedulerContext(context(config));
+    const tools = await schedulerExtension.getAgentTools?.(alpha, { config });
+    const byName = new Map(tools?.map((tool) => [tool.name, tool]));
+    const created = await byName.get("scheduler.create_job")!.execute(
+      { name: "Notes", cron: "0 8 * * *", tz: "UTC", message: "Read my notes", requiresDevice: true },
+      { agent: alpha, config }
+    ) as { ok: boolean; job: { id: string; requiresDevice?: boolean } };
+    expect(created.job.requiresDevice).toBe(true);
+
+    await getScheduler().refreshFromDisk();
+    const listed = await byName.get("scheduler.list_jobs")!.execute({}, { agent: alpha, config }) as { jobs: Array<{ requiresDevice?: boolean }> };
+    expect(listed.jobs[0]?.requiresDevice).toBe(true);
+
+    const cleared = await byName.get("scheduler.update_job")!.execute(
+      { jobId: created.job.id, requiresDevice: false },
+      { agent: alpha, config }
+    ) as { job: { requiresDevice?: boolean } };
+    expect(cleared.job.requiresDevice).toBe(false);
+    const restored = await byName.get("scheduler.update_job")!.execute(
+      { jobId: created.job.id, requiresDevice: true },
+      { agent: alpha, config }
+    ) as { job: { requiresDevice?: boolean } };
+    expect(restored.job.requiresDevice).toBe(true);
+  });
+
+  it("refuses requiresDevice together with noAgent on create and update", async () => {
+    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-scheduler-tools-"));
+    const alpha = agent("alpha", path.join(tmpDir, "alpha"));
+    const config: GatewayConfig = { version: 3, agents: [alpha], extensions: { scheduler: { enabled: true } }, sessions: { idleMinutes: 360 } };
+    setSchedulerContext(context(config));
+    const tools = await schedulerExtension.getAgentTools?.(alpha, { config });
+    const byName = new Map(tools?.map((tool) => [tool.name, tool]));
+    await writeScript(alpha.workspace, "scripts/rotate.sh", 0o755);
+
+    const refused = await byName.get("scheduler.create_job")!.execute(
+      { name: "Rotate", cron: "*/5 * * * *", tz: "UTC", script: "scripts/rotate.sh", noAgent: true, requiresDevice: true },
+      { agent: alpha, config }
+    ) as { ok: boolean; error?: string };
+    expect(refused).toMatchObject({ ok: false, error: expect.stringContaining("requiresDevice cannot be used with noAgent") });
+
+    const created = await byName.get("scheduler.create_job")!.execute(
+      { name: "Rotate", cron: "*/5 * * * *", tz: "UTC", script: "scripts/rotate.sh", noAgent: true },
+      { agent: alpha, config }
+    ) as { job: { id: string } };
+    const updated = await byName.get("scheduler.update_job")!.execute(
+      { jobId: created.job.id, requiresDevice: true },
+      { agent: alpha, config }
+    ) as { ok: boolean; error?: string };
+    expect(updated).toMatchObject({ ok: false, error: expect.stringContaining("requiresDevice cannot be used with noAgent") });
+  });
+
+  it("describes requiresDevice in the create and update tools", async () => {
+    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-scheduler-tools-"));
+    const alpha = agent("alpha", path.join(tmpDir, "alpha"));
+    const config: GatewayConfig = { version: 3, agents: [alpha], extensions: { scheduler: { enabled: true } }, sessions: { idleMinutes: 360 } };
+    setSchedulerContext(context(config));
+    const tools = await schedulerExtension.getAgentTools?.(alpha, { config });
+    for (const name of ["scheduler.create_job", "scheduler.update_job"]) {
+      const parameters = tools!.find((tool) => tool.name === name)!.parameters as { properties: Record<string, { description?: string }> };
+      expect(parameters.properties.requiresDevice?.description).toMatch(/device_\* tools[\s\S]*no flag gets no device tools[\s\S]*fails at once/);
+    }
   });
 
   it("creates a script-only job via the tool", async () => {

@@ -2,6 +2,8 @@ import { decodeRouteParam } from "../lib/path";
 import { createChatSession } from "./chat/createChatSession";
 import { RemoteAgentMark } from "./RemoteAgentMark";
 import { ChatTranscript } from "./chat/ChatTranscript";
+import { DeviceApprovalCards } from "./chat/DeviceApprovalCards";
+import { DeviceSettingsControl } from "./chat/DeviceSettingsControl";
 import { createAppViews, chatAppViewCalls, viewKey } from "./chat/appViews";
 import { load as loadPanelTabs } from "./chat/appViewStorage";
 import { ChatSidePanel, canSplitPanel } from "./chat/ChatSidePanel";
@@ -13,6 +15,7 @@ import {
   createEffect,
   createResource,
   createMemo,
+  startTransition,
   For,
   onCleanup,
   onMount,
@@ -275,6 +278,16 @@ export function ChatView() {
       showToast("Chat restored", "success");
       void refetchSessions();
       window.dispatchEvent(new Event("chat-projects-changed"));
+    },
+    onRemoteReset: async () => {
+      clearPendingFiles();
+      const query = new URLSearchParams(location.search);
+      query.delete("session");
+      const search = query.toString();
+      const url = `${location.pathname}${search ? `?${search}` : ""}${location.hash}`;
+      await startTransition(() => {
+        navigate(url, { replace: true, state: location.state });
+      });
     },
     onSessionReset: (sessionId) => {
       clearPendingFiles();
@@ -840,6 +853,9 @@ export function ChatView() {
             </button>
           </div>
         </Show>
+        <Show when={agent()?.gateway}>
+          {(gateway) => <DeviceSettingsControl agentId={params.agentId} gateway={gateway()} chat={session.deviceChatName()} refreshKey={session.deviceApprovals().length} />}
+        </Show>
         <button
           class="new-chat-btn"
           aria-label="Start a new chat"
@@ -919,6 +935,14 @@ export function ChatView() {
           }}
         >
           <ChatTranscript agentId={params.agentId} session={session} viewMode={viewMode} appViews={appViews} onUserMessage={handleViewMessage} />
+          <Show when={agent()?.gateway}>
+            <DeviceApprovalCards
+              agentName={agent()?.name ?? "The agent"}
+              items={session.deviceApprovals().filter(session.isDeviceApprovalShown)}
+              connectionLost={session.deviceConnectionLost()}
+              onAnswer={session.answerDeviceApproval}
+            />
+          </Show>
         </div>
 
         <div class="composer-zone">

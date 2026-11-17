@@ -10,7 +10,7 @@ import type {
   StreamEvent,
   CredentialConnectHints,
 } from "@yoplai/shared";
-import { resolveWebBaseUrl } from "@yoplai/shared";
+import { DEVICE_OFFLINE_CALL_TEXT, resolveWebBaseUrl } from "@yoplai/shared";
 import { deliverRunResult, deliveryText, withDeliveryTimeout, type DeliveryOutcome } from "./deliver.js";
 import { PerAgentScheduleStore, type ScheduleStore } from "./store.js";
 import { computeNextRunAtMs } from "./schedule.js";
@@ -31,6 +31,12 @@ const CREDENTIAL_REFUSAL_PAUSE_THRESHOLD = 3;
 
 const DEFAULT_JOB_TIMEOUT_MS = 30 * 60 * 1000; // 30 minutes
 
+/** The error text of a job that needs the device when the device is not connected. */
+export const DEVICE_OFFLINE_JOB_TEXT =
+  "This job needs the device of the user, and the device is not connected. The job did not run.";
+const DEVICE_DROPPED_JOB_TEXT = "The device of the user went offline during the job. The job stopped.";
+const DEVICE_OFFLINE_CODE = "device_offline";
+
 type CredentialRefusal = CredentialConnectHints & { integration: string };
 
 function credentialError(event: StreamEvent): CredentialRefusal | undefined {
@@ -50,6 +56,28 @@ function credentialError(event: StreamEvent): CredentialRefusal | undefined {
   }
 }
 
+/** A job with no agent run has no device tools, so the flag cannot work with it. */
+function assertDeviceJobValid(
+  requiresDevice: boolean | undefined,
+  noAgent: boolean | undefined,
+  multiUser: boolean,
+  credentialMode: "owner" | "team" | undefined
+): void {
+  if (!requiresDevice) return;
+  if (noAgent) {
+    throw new Error("requiresDevice cannot be used with noAgent. A script-only job has no agent run, so it has no device tools.");
+  }
+  if (multiUser && credentialMode !== "owner") {
+    throw new Error("requiresDevice needs credentialMode owner on a multi-user gateway. A team job has no user, so it cannot match a device.");
+  }
+}
+
+/** True for the result of a device tool that found no device. */
+function isDeviceOfflineResult(event: StreamEvent): boolean {
+  return event.type === "tool_result" && event.isError && /^device_(read|write|edit|bash)$/.test(event.name) &&
+    event.content.includes(DEVICE_OFFLINE_CALL_TEXT);
+}
+
 type SchedulerRunKind = "script_only" | "silent_tick" | "woke_agent";
 
 type SchedulerState = {
@@ -57,6 +85,8 @@ type SchedulerState = {
   lastRunAtMs?: number;
   lastStatus?: "ok" | "error";
   lastError?: string;
+  /** Machine-readable reason of the last error, for example `device_offline`. */
+  lastErrorCode?: string;
   lastExitCode?: number;
   lastRunKind?: SchedulerRunKind;
   /** Per-target delivery outcomes of the last run; absent when nothing was pushed. */
@@ -72,6 +102,7 @@ export type SchedulerRunResult = {
   sessionId?: string;
   outputPath?: string;
   error?: string;
+  errorCode?: string;
 };
 
 type JobWithState = ScheduleJob & {
@@ -100,6 +131,7 @@ type CompleteRunInput = {
   gateOutput?: string;
   error?: unknown;
   errorMessage?: string;
+  errorCode?: string;
   credentialRefused?: CredentialRefusal;
 };
 
@@ -293,6 +325,7 @@ export class SchedulerService {
     if (!ctx.getAgent(agentId)) throw new Error(`Agent not found: ${agentId}`);
     const credentialMode = input.credentialMode ?? (ownerUserId ? "owner" : "team");
     if (credentialMode === "owner" && !ownerUserId) throw new Error("Owner credentials require an authenticated user");
+    assertDeviceJobValid(input.requiresDevice, input.payload.noAgent, !!ctx.getConfig().extensions?.multiUser?.enabled, credentialMode);
     const id = crypto.randomUUID();
     const job: JobWithState = {
       id,
@@ -305,6 +338,7 @@ export class SchedulerService {
       schedule: input.schedule,
       model: input.model,
       payload: input.payload,
+      requiresDevice: input.requiresDevice,
       deliver: input.deliver,
       timeoutMs: input.timeoutMs,
       createdAt: new Date().toISOString(),
@@ -330,6 +364,12 @@ export class SchedulerService {
     if (!job) throw new Error(`Schedule not found: ${agentId}/${id}`);
 
     if (patch.credentialMode === "owner" && !job.ownerUserId && !ownerUserId) throw new Error("Owner credentials require an authenticated user");
+    assertDeviceJobValid(
+      patch.requiresDevice ?? job.requiresDevice,
+      (patch.payload ?? job.payload).noAgent,
+      !!getSchedulerContext().getConfig().extensions?.multiUser?.enabled,
+      patch.credentialMode ?? job.credentialMode
+    );
     if (patch.name !== undefined) job.name = patch.name;
     if (patch.credentialMode !== undefined) job.credentialMode = patch.credentialMode;
     if (patch.credentialMode === "team") delete job.ownerUserId;
@@ -342,6 +382,7 @@ export class SchedulerService {
     if (patch.schedule) job.schedule = patch.schedule;
     if (patch.model) job.model = patch.model;
     if (patch.payload) job.payload = patch.payload;
+    if (patch.requiresDevice !== undefined) job.requiresDevice = patch.requiresDevice;
     if (patch.deliver !== undefined) job.deliver = patch.deliver;
     if (patch.timeoutMs !== undefined) job.timeoutMs = patch.timeoutMs;
 
@@ -592,7 +633,7 @@ export class SchedulerService {
     // Settings can change while persistence or a gate awaits; this fire keeps
     // the same payload and credentials that its ledger record describes.
     const payload = { ...job.payload };
-    const { credentialMode, ownerUserId } = job;
+    const { credentialMode, ownerUserId, requiresDevice } = job;
     const scheduledRunAt = job.schedule.runAt;
     this.executingJobs.add(key);
     this.runningJobStartedAtMs.set(key, Date.now());
@@ -645,6 +686,7 @@ export class SchedulerService {
       job.state = job.state ?? {};
       job.state.lastStatus = "error";
       job.state.lastError = "Agent not found";
+      delete job.state.lastErrorCode;
       job.state.lastRunAtMs = firedAt.getTime();
       if (ledgerRun) await this.saveRun({ ...ledgerRun, status: "error", error: "Agent not found", finishedAt: new Date().toISOString() });
       if (scheduledRunAt !== undefined) {
@@ -713,6 +755,17 @@ export class SchedulerService {
         kind: !payload.script ? "agent" : payload.noAgent ? "script" : "gated",
       });
       return this.completeAndRelease(key, { ledgerRun, payload, job, scheduledRunAt, agent, workspaceDir, model: outputModel, firedAt, status: "error", statusLabel: "error", error: new Error(message), errorMessage: message });
+    }
+
+    if (requiresDevice && !ctx.isDeviceOnline?.(credentialMode === "owner" ? ownerUserId : undefined)) {
+      ctx.logger.error("[scheduler] job failed", DEVICE_OFFLINE_JOB_TEXT, {
+        jobId: job.id,
+        jobName: job.name,
+        agentId: job.agentId,
+        runId: ledgerRun?.id,
+        kind: "agent",
+      });
+      return this.completeAndRelease(key, { ledgerRun, payload, job, scheduledRunAt, agent, workspaceDir, model: outputModel, firedAt, status: "error", statusLabel: "error", error: new Error(DEVICE_OFFLINE_JOB_TEXT), errorMessage: DEVICE_OFFLINE_JOB_TEXT, errorCode: DEVICE_OFFLINE_CODE });
     }
 
     let prompt = payload.message ?? "";
@@ -856,6 +909,18 @@ export class SchedulerService {
       await this.saveRun(ledgerRun);
     }
 
+    // The script can take a long time, so check the device again before the model starts.
+    if (requiresDevice && payload.script && !ctx.isDeviceOnline?.(credentialMode === "owner" ? ownerUserId : undefined)) {
+      ctx.logger.error("[scheduler] job failed", DEVICE_OFFLINE_JOB_TEXT, {
+        jobId: job.id,
+        jobName: job.name,
+        agentId: job.agentId,
+        runId: ledgerRun?.id,
+        kind: "gated",
+      });
+      return this.completeAndRelease(key, { ledgerRun, payload, job, scheduledRunAt, agent, workspaceDir, model: outputModel, firedAt, status: "error", statusLabel: "error", gateOutput, prompt, error: new Error(DEVICE_OFFLINE_JOB_TEXT), errorMessage: DEVICE_OFFLINE_JOB_TEXT, errorCode: DEVICE_OFFLINE_CODE });
+    }
+
     // Each execution gets its own AbortController so timeout can cancel the run.
     const controller = new AbortController();
     this.executingJobControllers.set(key, controller);
@@ -864,6 +929,7 @@ export class SchedulerService {
     // actually settles — even if executeJob returns early due to timeout —
     // so the next scheduled fire cannot overlap with a still-aborting run.
     let missingCredentialError: CredentialRefusal | undefined;
+    let deviceDropped = false;
     const runPromise = ctx.runAgent({
       agentId: job.agentId,
       userId: credentialMode === "owner" ? ownerUserId : undefined,
@@ -874,6 +940,7 @@ export class SchedulerService {
       model: job.model,
       thinkLevel: job.reasoning,
       source: "scheduler",
+      requiresDevice,
       // Without an explicit surface the tracer falls back to "chat", so
       // scheduled runs would show up as yoplai:chat:<agent> in Langfuse.
       trace: {
@@ -883,6 +950,10 @@ export class SchedulerService {
       signal: controller.signal,
       onEvent: (event) => {
         missingCredentialError ??= credentialError(event);
+        if (!deviceDropped && isDeviceOfflineResult(event)) {
+          deviceDropped = true;
+          controller.abort();
+        }
       },
       });
 
@@ -907,6 +978,7 @@ export class SchedulerService {
     let runError: string | undefined;
     let errorValue: unknown;
     let credentialRefused: CredentialRefusal | undefined;
+    let errorCode: string | undefined;
 
     try {
       const result = await Promise.race([runPromise, timeoutPromise]);
@@ -921,6 +993,12 @@ export class SchedulerService {
       runStatus = "error";
       errorValue = err;
       runError = err instanceof Error ? err.message : String(err);
+      // A rejected run keeps a timeout as a timeout. A device drop must not hide a credential refusal.
+      if (deviceDropped && missingCredentialError && !credentialRefused) {
+        credentialRefused = missingCredentialError;
+        runError = `Reconnect ${missingCredentialError.integration} credentials before this scheduled job can run.`;
+        errorValue = new Error(runError);
+      }
       ctx.logger.error("[scheduler] job failed", runError.split("\n")[0], {
         jobId: job.id,
         jobName: job.name,
@@ -931,6 +1009,12 @@ export class SchedulerService {
       });
     } finally {
       clearTimeout(timeoutId);
+    }
+    if (deviceDropped && !credentialRefused) {
+      runStatus = "error";
+      runError = DEVICE_DROPPED_JOB_TEXT;
+      errorValue = new Error(DEVICE_DROPPED_JOB_TEXT);
+      errorCode = DEVICE_OFFLINE_CODE;
     }
 
     try {
@@ -957,6 +1041,7 @@ export class SchedulerService {
         gateOutput,
         error: errorValue,
         errorMessage: runError,
+        errorCode,
         credentialRefused,
       });
       if (detached) {
@@ -1047,6 +1132,7 @@ export class SchedulerService {
     job.state = job.state ?? {};
     job.state.lastStatus = input.status;
     job.state.lastError = input.errorMessage;
+    job.state.lastErrorCode = input.errorCode;
     job.state.lastExitCode = input.exitCode;
     job.state.lastRunKind = input.runKind;
 
@@ -1141,6 +1227,7 @@ export class SchedulerService {
           exitCode: input.exitCode ?? input.ledgerRun.exitCode,
           gateOutput: input.gateOutput ?? input.ledgerRun.gateOutput,
           error: input.errorMessage,
+          errorCode: input.errorCode,
           outputPath,
         });
       }
@@ -1176,6 +1263,7 @@ export class SchedulerService {
       sessionId: input.sessionId,
       outputPath,
       error: input.errorMessage,
+      errorCode: input.errorCode,
     };
   }
 }

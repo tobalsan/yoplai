@@ -3,7 +3,7 @@ import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import os from "node:os";
 import { randomUUID } from "node:crypto";
-import type { FullHistoryMessage, GatewayConfig } from "@yoplai/shared";
+import { DEVICE_PROTOCOL_VERSION, type FullHistoryMessage, type GatewayConfig } from "@yoplai/shared";
 
 describe("createExtensionContext media helpers", () => {
   let tmpDir: string;
@@ -75,6 +75,25 @@ describe("createExtensionContext media helpers", () => {
       expect(validateContainerToken(first.token, "alpha")).toBe(false);
       expect(validateContainerToken(second.token, "alpha")).toBe(true);
     } finally { first.revoke(); second.revoke(); }
+  });
+
+  it("tells an extension whether the device relay of a user is online", async () => {
+    const { writeTestV3Config } = await import("../test-utils/v3-config.js");
+    await writeTestV3Config(tmpDir, { agents: [{ id: "alpha" }] });
+    const { createExtensionContext } = await import("./context.js");
+    const { loadConfig } = await import("../config/index.js");
+    const { getDeviceRegistry } = await import("../relay/device-registry.js");
+    const { EventEmitter } = await import("node:events");
+    const ctx = createExtensionContext(loadConfig());
+    expect(ctx.isDeviceOnline?.()).toBe(false);
+    const socket = Object.assign(new EventEmitter(), { send: vi.fn(), close: vi.fn(), terminate: vi.fn(), readyState: 1, OPEN: 1 });
+    getDeviceRegistry().accept(socket as never, "local");
+    socket.emit("message", Buffer.from(JSON.stringify({ type: "hello", protocolVersion: DEVICE_PROTOCOL_VERSION, deviceName: "laptop" })));
+    expect(ctx.isDeviceOnline?.()).toBe(true);
+    expect(ctx.isDeviceOnline?.("local")).toBe(true);
+    expect(ctx.isDeviceOnline?.("someone-else")).toBe(false);
+    socket.emit("close");
+    expect(ctx.isDeviceOnline?.()).toBe(false);
   });
 
   it("emits extension fields at the top level on one physical JSON line", async () => {

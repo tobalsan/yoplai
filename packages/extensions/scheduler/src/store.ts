@@ -32,6 +32,7 @@ const RunSchema = z.object({
   exitCode: z.number().optional(),
   gateOutput: z.string().optional(),
   error: z.string().optional(),
+  errorCode: z.string().optional(),
   outputPath: z.string().optional(),
   prompt: z.string(),
   storageOwnerId: z.string().nullable(),
