@@ -379,7 +379,8 @@ export function startServer(
   }
 
   console.log(`Starting gateway server on ${resolvedHost}:${resolvedPort}`);
-  process.env.YOPLAI_GATEWAY_PORT = String(resolvedPort);
+  // Port 0 (tests) means "any free port". It is not a valid env port, and loadConfig refuses it.
+  if (resolvedPort !== 0) process.env.YOPLAI_GATEWAY_PORT = String(resolvedPort);
 
   const server = serve({
     fetch: app.fetch,
