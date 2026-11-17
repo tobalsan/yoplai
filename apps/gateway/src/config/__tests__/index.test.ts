@@ -392,3 +392,70 @@ describe("config loading", () => {
     expect(() => loadConfig()).not.toThrow();
   });
 });
+
+describe("effective ports from the environment", () => {
+  const saved = {
+    home: process.env.YOPLAI_HOME,
+    gateway: process.env.YOPLAI_GATEWAY_PORT,
+    ui: process.env.YOPLAI_UI_PORT,
+    apps: process.env.YOPLAI_APPS_PORT,
+  };
+
+  afterEach(() => {
+    clearConfigCacheForTests();
+    for (const [key, name] of [
+      ["home", "YOPLAI_HOME"],
+      ["gateway", "YOPLAI_GATEWAY_PORT"],
+      ["ui", "YOPLAI_UI_PORT"],
+      ["apps", "YOPLAI_APPS_PORT"],
+    ] as const) {
+      if (saved[key] === undefined) delete process.env[name];
+      else process.env[name] = saved[key];
+    }
+  });
+
+  async function homeWithConfig(config: object): Promise<void> {
+    const home = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-ports-"));
+    await fs.writeFile(path.join(home, "yoplai.json"), JSON.stringify({ version: 3, agents: [], ...config }));
+    process.env.YOPLAI_HOME = home;
+  }
+
+  it("lets the environment ports win over the file ports", async () => {
+    await homeWithConfig({ gateway: { port: 4100 }, ui: { port: 3100 }, apps: { port: 4101 } });
+    process.env.YOPLAI_GATEWAY_PORT = "4200";
+    process.env.YOPLAI_UI_PORT = "3200";
+    process.env.YOPLAI_APPS_PORT = "4201";
+
+    const config = loadConfig();
+
+    expect(config.gateway?.port).toBe(4200);
+    expect(config.ui?.port).toBe(3200);
+    expect(config.apps?.port).toBe(4201);
+  });
+
+  it("keeps the file ports and other settings when the environment sets none", async () => {
+    await homeWithConfig({ gateway: { port: 4100, host: "127.0.0.1" }, apps: { origin: "http://127.0.0.1:4101" } });
+    delete process.env.YOPLAI_GATEWAY_PORT;
+    delete process.env.YOPLAI_UI_PORT;
+    delete process.env.YOPLAI_APPS_PORT;
+
+    const config = loadConfig();
+
+    expect(config.gateway).toMatchObject({ port: 4100, host: "127.0.0.1" });
+    expect(config.apps).toEqual({ origin: "http://127.0.0.1:4101" });
+  });
+
+  it("keeps other apps settings when the environment sets the apps port", async () => {
+    await homeWithConfig({ apps: { origin: "https://views.example.net" } });
+    process.env.YOPLAI_APPS_PORT = "4301";
+
+    expect(loadConfig().apps).toEqual({ origin: "https://views.example.net", port: 4301 });
+  });
+
+  it("rejects a port that is not a valid number", async () => {
+    await homeWithConfig({});
+    process.env.YOPLAI_UI_PORT = "70000";
+
+    expect(() => loadConfig()).toThrow(/YOPLAI_UI_PORT/);
+  });
+});
