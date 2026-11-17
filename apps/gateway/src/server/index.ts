@@ -395,11 +395,21 @@ export function startServer(
   else server.once("listening", recordListener);
   server.once("close", () => setGatewayListener(undefined));
 
-  const stopApps = startAppsListener(config, resolvedHost);
-  server.once("close", stopApps);
-
   // The packaged app has no Vite. With a built UI directory, a second loopback listener serves it on the UI port.
   const webDist = readEnv("WEB_DIST");
+  // Dev keeps running without Apps views. The packaged app exits, so the desktop shows its error page with Restart.
+  const stopApps = startAppsListener(
+    config,
+    resolvedHost,
+    webDist
+      ? (error) => {
+          logError(`MCP Apps listener failed on port ${config.apps?.port ?? 4001}`, error);
+          process.exit(1);
+        }
+      : undefined
+  );
+  server.once("close", stopApps);
+
   if (webDist) {
     const uiPort = config.ui?.port ?? 3000;
     const uiServer = startUiListener({
