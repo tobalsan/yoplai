@@ -21,7 +21,7 @@ const json = (value: unknown) => new Response(JSON.stringify(value));
 const tick = () => new Promise((resolve) => setTimeout(resolve, 0));
 const server = (name: string, extra = {}) => ({ name, type: "http", url: `https://${name}.test/mcp`, auth: "none", state: "disconnected", status: "pending", readOnly: true, ...extra });
 let dispose: (() => void) | undefined;
-beforeEach(() => { setCapabilitiesForTests({ forkedAgents: false }); route[1]("agentId", "status-order"); });
+beforeEach(() => { setCapabilitiesForTests({ forkedAgents: false, extensions: { mcp: true } }); route[1]("agentId", "status-order"); });
 afterEach(() => { dispose?.(); document.body.replaceChildren(); resetCapabilitiesForTests(); vi.unstubAllGlobals(); });
 
 it("waits for all fast inputs, paints final Top/name order, then checks active cards independently without moving them", async () => {

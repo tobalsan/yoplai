@@ -1,23 +1,25 @@
 // @vitest-environment jsdom
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { render } from "solid-js/web";
 
-const m = vi.hoisted(() => ({ refreshMcpCatalogIcon: vi.fn(), fetchMcpCatalog: vi.fn(), addMcpCatalogServer: vi.fn(), updateMcpCatalogServer: vi.fn(), removeMcpCatalogServer: vi.fn() }));
+const m = vi.hoisted(() => ({ refreshMcpCatalogIcon: vi.fn(), fetchMcpCatalog: vi.fn(), addMcpCatalogServer: vi.fn(), updateMcpCatalogServer: vi.fn(), removeMcpCatalogServer: vi.fn(), sessionPending: false }));
 vi.mock("../../api/mcp-servers", async () => ({ ...m, iconRefreshOutcome: (await vi.importActual<typeof import("../../api/mcp-servers")>("../../api/mcp-servers")).iconRefreshOutcome, refreshMcpServerIcon: vi.fn(), ICON_REFRESH_UNCERTAIN: "uncertain", mcpDisplayName: (name: string, title?: string) => title || name }));
 vi.mock("@solidjs/router", () => ({
   A: (props: Record<string, unknown>) => <a {...props} />,
   useLocation: () => ({ pathname: "/admin/mcp-servers", search: "" }),
   useSearchParams: () => [{}, vi.fn()],
 }));
-vi.mock("../../auth/client", () => ({ useSession: () => () => ({ isPending: false, data: null }) }));
+vi.mock("../../auth/client", () => ({ useSession: () => () => ({ isPending: m.sessionPending, data: null }) }));
 vi.mock("../../api/gateway", async (importOriginal) => ({ ...(await importOriginal<typeof import("../../api/gateway")>()), fetchGatewayList: vi.fn().mockResolvedValue({ state: "unavailable" }) }));
 
 const { default: AdminMcpServersPage } = await import("./McpServers");
+const { resetCapabilitiesForTests, setCapabilitiesForTests } = await import("../../lib/capabilities");
 const flush = async () => { for (let i = 0; i < 6; i++) await new Promise((r) => setTimeout(r, 0)); };
 
 describe("AdminMcpServersPage", () => {
   let dispose: () => void;
-  afterEach(() => { dispose?.(); document.body.innerHTML = ""; vi.clearAllMocks(); });
+  beforeEach(() => setCapabilitiesForTests({ extensions: { mcp: true } }));
+  afterEach(() => { dispose?.(); document.body.innerHTML = ""; vi.clearAllMocks(); m.sessionPending = false; resetCapabilitiesForTests(); });
 
   async function mount() {
     m.fetchMcpCatalog.mockResolvedValue([{ name: "linear", url: "https://mcp.linear.app/mcp", displayName: "Linear", description: "Issues" }]);
@@ -130,5 +132,21 @@ describe("AdminMcpServersPage", () => {
     container.querySelector("form")!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
     await flush();
     expect(container.querySelector('[role="alert"]')?.textContent).toContain("Superadmin access required");
+  });
+
+  it("shows neutral text and no form or catalog read when the mcp extension is off", async () => {
+    setCapabilitiesForTests({ extensions: {} });
+    const container = await mount();
+    expect(m.fetchMcpCatalog).not.toHaveBeenCalled();
+    expect(container.querySelector('[role="status"]')?.textContent).toBe("The MCP extension is not installed on this gateway.");
+    expect(container.querySelector('[role="alert"]')).toBeNull();
+    expect(container.querySelector('[aria-label="Server URL"]')).toBeNull();
+  });
+
+  it("shows no form and reads no catalog while the capabilities are not known", async () => {
+    m.sessionPending = true;
+    const container = await mount();
+    expect(m.fetchMcpCatalog).not.toHaveBeenCalled();
+    expect(container.querySelector('[aria-label="Server URL"]')).toBeNull();
   });
 });
