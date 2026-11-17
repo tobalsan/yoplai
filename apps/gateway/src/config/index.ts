@@ -212,8 +212,8 @@ function portFromEnv(name: string): number | undefined {
   const value = readEnv(name);
   if (value === undefined) return undefined;
   const port = Number(value);
-  if (!Number.isInteger(port) || port < 1 || port > 65535) {
-    throw new Error(`YOPLAI_${name} must be a port from 1 to 65535, got "${value}"`);
+  if (!Number.isInteger(port) || port < 0 || port > 65535) {
+    throw new Error(`YOPLAI_${name} must be a port from 0 to 65535, got "${value}"`);
   }
   return port;
 }
