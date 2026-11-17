@@ -64,6 +64,16 @@ A closed thread (409 `thread_closed`) stops all writes for that item and aborts 
 
 Logs use the `[threadit] <agentId>:` prefix and fixed categories. They hold no board text, prompt, reply, or token. A server error code appears only if it is in a fixed allowlist.
 
+## Account linking
+
+With multi-user sign-in enabled, send `@agent !pair` or reply `!pair` to an agent. It replies in the Threadit thread with a ten-minute, single-use link. Open it, sign in to Yoplai, check the Threadit username and gateway email, then click **Connect**. Return to Threadit and retry your message.
+
+Set your email in Threadit first: click your name at the bottom of the left sidebar. Redemption reads your Threadit email again and requires it to match your signed-in Yoplai email (trimmed, case-insensitive). Missing or different emails fail without linking. Threadit emails are self-set and unverified; use this flow on a trusted internal board.
+
+Linked human messages run as that Yoplai user for personal credentials and user-scoped tools, subject to the user's agent access. Each human has a distinct requester identity; thread session storage stays shared. Agent accounts cannot link. Without multi-user sign-in, `!pair` explains that linking needs sign-in.
+
+**Account connections** in Yoplai lists linked accounts and offers **Unlink**. The next message from an unlinked account runs without a gateway user and uses team credentials as before. You can link several accounts and boards; linking the same board account again replaces its previous gateway link.
+
 ## Tools
 
 The extension gives the agent `threadit.*` tools. The tools run in the gateway. The sandbox needs no token and no network route to the board. Tools exist when the extension has a `baseUrl` and is not disabled. Each tool returns `{ ok: true, ... }` or `{ ok: false, error }`. The token never appears in a result or an error.

@@ -2,6 +2,9 @@ import { mkdir, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import {
   isNoReply,
+  getSurfaceLinkService,
+  normalizeSurfaceScope,
+  registerSurfaceIdentityProvider,
   type ExtensionContext,
   type RunAgentResult,
   type StreamEvent,
@@ -90,6 +93,7 @@ export class ThreaditPoller {
   private readonly aborters = new Set<() => void>();
   private readonly sleepers = new Set<() => void>();
   private me: BoardAccount | undefined;
+  private unregisterIdentity: (() => void) | undefined;
   private stopped = false;
   private rejected = false;
   private recovered = false;
@@ -138,6 +142,8 @@ export class ThreaditPoller {
     if (!latest && this.readConfig) {
       // The agent disabled or removed the extension. Drop the old token.
       if (this.current) this.log("info", "disabled, token dropped");
+      this.unregisterIdentity?.();
+      this.unregisterIdentity = undefined;
       this.current = undefined;
       this.me = undefined;
       this.recovered = false;
@@ -154,6 +160,8 @@ export class ThreaditPoller {
       if (latest) this.config = latest;
       return;
     }
+    this.unregisterIdentity?.();
+    this.unregisterIdentity = undefined;
     this.config = latest;
     this.current = this.buildApi(latest);
     this.me = undefined;
@@ -171,6 +179,8 @@ export class ThreaditPoller {
 
   async stop(): Promise<void> {
     this.stopped = true;
+    this.unregisterIdentity?.();
+    this.unregisterIdentity = undefined;
     clearTimeout(this.timer);
     for (const abort of [...this.aborters]) abort();
     for (const wake of [...this.sleepers]) wake();
@@ -234,7 +244,25 @@ export class ThreaditPoller {
       this.rejected = true;
       return false;
     }
+    if (this.stopped) return false;
     this.me = result.data;
+    const api = this.api;
+    this.unregisterIdentity = registerSurfaceIdentityProvider({
+      surface: "threadit",
+      scope: api.baseUrl,
+      lookup: async (externalId) => {
+        const result = await api.users();
+        const account = result.ok
+          ? result.data.find((user) => String(user.id) === externalId)
+          : undefined;
+        if (!account) throw new Error("Threadit identity is unavailable.");
+        return {
+          username: account.username,
+          email: account.email,
+          isAgent: account.account_type === "agent",
+        };
+      },
+    });
     this.pendingLogged = false;
     this.recovered = await this.resumeProcessing();
     return true;
@@ -486,6 +514,44 @@ export class ThreaditPoller {
     this.handled.add(item.id);
     if (this.stopped) return true;
 
+    if (
+      item.author.account_type !== "agent" &&
+      item.body.trim().replace(/^(?:@[\w.-]+\s+)+/, "").trim() === "!pair"
+    ) {
+      const links = getSurfaceLinkService();
+      if (!links) {
+        await this.replyAndFinish(item, "Account linking needs multi-user sign-in.");
+        return true;
+      }
+      const users = await this.api.users();
+      if (!users.ok) {
+        await this.replyAndFinish(
+          item,
+          "I could not read your Threadit account. Please try again."
+        );
+        return true;
+      }
+      const author = users.data.find((user) => user.id === item.author.id);
+      if (!author?.email?.trim()) {
+        await this.replyAndFinish(
+          item,
+          "Set your email in Threadit first (click your name at the bottom left), then send `!pair` again."
+        );
+        return true;
+      }
+      const link = await links.issue({
+        surface: "threadit",
+        scope: normalizeSurfaceScope(this.api.baseUrl),
+        externalId: String(item.author.id),
+        username: author.username,
+      });
+      await this.replyAndFinish(
+        item,
+        `Connect your Threadit account: ${link} (expires in 10 minutes).`
+      );
+      return true;
+    }
+
     const first = await this.postActivity(
       item,
       "thought",
@@ -631,7 +697,14 @@ export class ThreaditPoller {
                   agentId: `threadit:${item.author.username}`,
                 },
               }
-            : {}),
+            : {
+                userId: getSurfaceLinkService()?.resolve(
+                  "threadit",
+                  this.api.baseUrl,
+                  String(item.author.id)
+                ),
+                requesterId: `threadit:${normalizeSurfaceScope(this.api.baseUrl)}:${item.author.id}`,
+              }),
         });
         return result.meta.queued ? await deferred : { result };
       } catch (error) {

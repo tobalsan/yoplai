@@ -1,3 +1,4 @@
+import { registerSurfaceIdentityProvider } from "@yoplai/shared";
 import type {
   AgentConfig,
   MattermostAgentConfig,
@@ -122,6 +123,8 @@ function createBot(params: {
   const userNames = new Map<string, string>();
   let identity: BotIdentity | undefined;
   let socket: MattermostSocket | undefined;
+  let stopped = false;
+  let unregisterIdentity: (() => void) | undefined;
 
   // A bound thread needs no mention when threadUnlock is on, or when the agent
   // started it (mattermost.create_thread): replies there are meant for it.
@@ -247,7 +250,9 @@ function createBot(params: {
     identity: () => identity,
     handleEvent,
     start: async () => {
+      stopped = false;
       const me = await rest.getMe();
+      if (stopped) return;
       identity = { id: me.id, username: me.username };
       socket = new MattermostSocket({
         baseUrl: rest.baseUrl,
@@ -268,9 +273,21 @@ function createBot(params: {
         },
       });
       await socket.start();
+      if (stopped) return;
+      unregisterIdentity = registerSurfaceIdentityProvider({
+        surface: "mattermost",
+        scope: rest.baseUrl,
+        lookup: async (externalId) => {
+          const user = await rest.getUser(externalId, AbortSignal.timeout(5_000));
+          return { username: user.username, email: user.email, isAgent: user.is_bot === true };
+        },
+      });
       console.log(`${logPrefix} Connected as @${me.username}`);
     },
     stop: async () => {
+      stopped = true;
+      unregisterIdentity?.();
+      unregisterIdentity = undefined;
       socket?.stop();
       socket = undefined;
     },

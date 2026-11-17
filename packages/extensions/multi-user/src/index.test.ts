@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { GatewayConfigSchema, type ExtensionContext } from "@yoplai/shared";
+import Database from "better-sqlite3";
 
 describe("multi-user component", () => {
   beforeEach(() => {
@@ -33,8 +34,8 @@ describe("multi-user component", () => {
   });
 
   it("starts and exposes multi-user capability", async () => {
-    const close = vi.fn();
-    const db = { close } as const;
+    const db = new Database(":memory:");
+    const close = vi.spyOn(db, "close");
     const auth = { handler: vi.fn(), api: { getSession: vi.fn() } } as const;
 
     vi.doMock("./db.js", () => ({

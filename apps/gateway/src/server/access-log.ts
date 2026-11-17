@@ -72,6 +72,9 @@ export function accessLogger(): MiddlewareHandler {
   const normalLogger = logger((message) => {
     if (message.startsWith("<-- ")) return;
     const safeMessage = stripAnsi(message).replace(/\/(sandbox|content|open)\/[^/?\s]+(?:\?[^\s]*)?/g, "/$1/[redacted]").replace(
+      /(\/api\/surface-links\/pair\/|%2fapi%2fsurface-links%2fpair%2f)[A-Za-z0-9_-]+/gi,
+      "$1[redacted]"
+    ).replace(
       /^(--> \S+ )(\S+)/,
       (_, prefix: string, target: string) => prefix + redactQuery(target)
     );

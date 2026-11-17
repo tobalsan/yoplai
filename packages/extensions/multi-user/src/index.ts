@@ -1,5 +1,7 @@
 import {
   MultiUserConfigSchema,
+  registerSurfaceLinkService,
+  resolveWebBaseUrl,
   type AgentConfig,
   type Extension,
   type ExtensionContext,
@@ -22,6 +24,11 @@ import {
   setMultiUserRuntime,
 } from "./runtime-state.js";
 import path from "node:path";
+import { createSurfaceLinkService } from "./surface-links.js";
+import { registerSurfaceLinkRoutes } from "./surface-link-routes.js";
+
+let unregisterSurfaceLinks: (() => void) | undefined;
+let activeContext: ExtensionContext | undefined;
 
 export { canUserUseAgent, getMultiUserRuntime } from "./runtime-state.js";
 export type { MultiUserRuntime } from "./runtime-state.js";
@@ -124,6 +131,7 @@ export const multiUserExtension: Extension = {
     "/api/teams",
     "/api/pool-actions",
     "/api/impersonation",
+    "/api/surface-links",
   ],
   validateConfig(raw) {
     const result = MultiUserConfigSchema.safeParse(raw);
@@ -136,6 +144,7 @@ export const multiUserExtension: Extension = {
   },
   registerRoutes(app: Hono) {
     registerMultiUserRoutes(app);
+    registerSurfaceLinkRoutes(app, () => activeContext?.getConfig().branding);
   },
   async start(ctx: ExtensionContext) {
     const config = ctx.getConfig().extensions?.multiUser;
@@ -145,6 +154,8 @@ export const multiUserExtension: Extension = {
 
     const db = initializeMultiUserDatabase(ctx.getDataDir());
     const auth = await createMultiUserAuth(ctx.getConfig(), config, db);
+    activeContext = ctx;
+    unregisterSurfaceLinks = registerSurfaceLinkService(createSurfaceLinkService(db, resolveWebBaseUrl(ctx.getConfig())));
     const assignments = createAgentAssignmentStore(db);
     const membership = createMembershipStore(db);
     // Forks live under $YOPLAI_HOME/agents/<forkId>, alongside functional
@@ -195,6 +206,9 @@ export const multiUserExtension: Extension = {
     });
   },
   async stop() {
+    unregisterSurfaceLinks?.();
+    unregisterSurfaceLinks = undefined;
+    activeContext = undefined;
     getMultiUserRuntime()?.db.close();
     setMultiUserRuntime(null);
   },
@@ -202,3 +216,5 @@ export const multiUserExtension: Extension = {
     return getMultiUserRuntime() ? ["multi-user"] : [];
   },
 };
+
+export { createSurfaceLinkService } from "./surface-links.js";

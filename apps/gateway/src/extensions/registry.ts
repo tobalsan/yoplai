@@ -308,7 +308,7 @@ const EXTENSION_REGISTRY: Record<string, ExtensionRegistration> = {
         (module) => module.multiUserExtension
       ),
     getConfig: (config) => config.extensions?.multiUser,
-    routePrefixes: ["/api/auth", "/api/me", "/api/admin", "/api/teams"],
+    routePrefixes: ["/api/auth", "/api/me", "/api/admin", "/api/teams", "/api/surface-links"],
   },
   board: builtInExtension("@yoplai/extension-board", "boardExtension", {
     getConfig: (config) => config.extensions?.board,

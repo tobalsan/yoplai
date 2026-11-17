@@ -112,6 +112,16 @@ Team scoping comes from the bot's team membership and channel IDs; DMs are cross
   thread is queued. Its answer is posted when it comes; typing and 👀 are cleared
   while it waits.
 
+## Account linking
+
+With multi-user sign-in enabled, send `!pair` in a DM with the bot or mention it with `@botname !pair` in a configured channel. The bot sends a ten-minute, single-use link by DM; in a channel it replies only that the link was sent. Open the link, sign in to Yoplai, check the Mattermost username and gateway email, then click **Connect**. Return to Mattermost and retry your message.
+
+The server must show the human's email to the bot (`ShowEmailAddress` or suitable permissions). If the bot cannot read it, `!pair` replies "Mattermost email is unavailable. Ask your administrator." Redemption reads the email again and requires it to match the signed-in Yoplai email (trimmed, case-insensitive). Missing or different emails fail without linking.
+
+Linked human messages run as that Yoplai user for personal credentials and user-scoped tools, subject to the user's agent access. Thread session ownership stays unchanged. Bots, webhooks and plugins cannot link. Without multi-user sign-in, `!pair` explains that linking needs sign-in.
+
+**Account connections** in Yoplai lists linked accounts and offers **Unlink**. The next message from an unlinked account runs without a gateway user and uses team credentials as before. You can link several accounts and servers; linking the same server account again replaces its previous gateway link.
+
 ## Connection
 
 - The token is sent only in the `Authorization` header (REST and WebSocket). It
