@@ -99,6 +99,7 @@ describe("home", () => {
     expect(resolveHome({}, "/Users/test/Library/Application Support")).toBe("/Users/test/Library/Application Support/Yoplai/home");
     expect(resolveHome({ YOPLAI_HOME: "  " }, "/support")).toBe("/support/Yoplai/home");
     expect(resolveHome({ YOPLAI_HOME: "/custom/home" }, "/support")).toBe("/custom/home");
+    expect(resolveHome({ YOPLAI_HOME: "~/custom" }, "/support")).toBe(path.join(os.homedir(), "custom"));
   });
 
   it("writes a version 3 config with no agents and loopback bind when the config is missing", () => {
