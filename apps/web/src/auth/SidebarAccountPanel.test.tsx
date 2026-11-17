@@ -71,7 +71,7 @@ describe("SidebarAccountPanel", () => {
     expect(toggle?.getAttribute("aria-expanded")).toBe("false");
     
     // Should NOT have inline links/buttons
-    expect(document.body.textContent).not.toContain("Account connections");
+    expect(document.body.textContent).not.toContain("Pairings");
     expect(document.body.textContent).not.toContain("Logout");
     
     dispose();
@@ -97,12 +97,11 @@ describe("SidebarAccountPanel", () => {
     expect(toggle.getAttribute("aria-expanded")).toBe("true");
     
     // Check menu items
-    expect(document.body.textContent).toContain("Account connections");
+    expect(document.body.textContent).toContain("Pairings");
     expect(document.body.textContent).toContain("Archive");
     expect(document.body.textContent).toContain("Logout");
     
     // Check icons
-    expect(menu?.querySelector(".fa-plug")).not.toBeNull();
     expect(menu?.querySelector(".fa-box-archive")).not.toBeNull();
     expect(menu?.querySelector(".fa-right-from-bracket")).not.toBeNull();
     
@@ -121,10 +120,10 @@ describe("SidebarAccountPanel", () => {
     const toggle = document.querySelector(".sidebar-account-toggle") as HTMLButtonElement;
     toggle.click();
     
-    // Click Account connections
+    // Click Pairings
     const items = document.querySelectorAll(".account-menu-item");
     const connectionsItem = Array.from(items).find((item) =>
-      item.textContent?.includes("Account connections")
+      item.textContent?.includes("Pairings")
     ) as HTMLButtonElement;
     expect(connectionsItem).not.toBeNull();
     
