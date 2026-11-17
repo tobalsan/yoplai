@@ -915,4 +915,5 @@ authCmd
     }
   });
 
-program.parse();
+// Electron as Node (the packaged app) makes commander skip the script path unless the source is named.
+program.parse(process.argv, { from: "node" });
