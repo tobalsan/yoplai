@@ -21,6 +21,8 @@ import type { ExtensionRuntime } from "../extensions/runtime.js";
 import { WsBroker, type WsBrokerAuthAdapter } from "./ws-broker.js";
 import { accessLogger } from "./access-log.js";
 import { relayHttp } from "../relay/http.js";
+import { relayDeviceApi } from "../relay/device-routes.js";
+import { startDeviceLinks } from "../relay/device-links.js";
 import { configureRelay } from "../relay/state.js";
 import { SKILL_IMPORT_TOKEN_PREFIX } from "../skills/import-tokens.js";
 import { getAgent, CONFIG_DIR } from "../config/index.js";
@@ -270,6 +272,7 @@ if (readEnv("DEV")) {
   );
 }
 
+app.use("/api/*", relayDeviceApi());
 app.use("/api/*", relayHttp());
 
 app.all("/api/*", async (c) => {
@@ -417,6 +420,7 @@ export function startServer(
     getExtensionRuntime: currentExtensionRuntime,
   };
   new WsBroker().attach(server as import("http").Server, wsAuthAdapter);
+  server.once("close", startDeviceLinks());
 
   setupGracefulShutdown(server);
 

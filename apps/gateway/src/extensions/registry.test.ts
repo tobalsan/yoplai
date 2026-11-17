@@ -158,6 +158,7 @@ describe("extension registry", () => {
       "capabilityDiscovery",
       "canvas",
       "sessionHistory",
+      "deviceTools",
       "scheduler",
       "heartbeat",
     ]);
@@ -166,6 +167,7 @@ describe("extension registry", () => {
       "capabilityDiscovery",
       "canvas",
       "sessionHistory",
+      "deviceTools",
       "scheduler",
       "heartbeat",
     ]);
@@ -278,6 +280,7 @@ describe("extension registry", () => {
       "capabilityDiscovery",
       "canvas",
       "sessionHistory",
+      "deviceTools",
       "multiUser",
     ]);
     expect(isExtensionLoaded("multiUser")).toBe(true);
@@ -307,6 +310,7 @@ describe("extension registry", () => {
       "capabilityDiscovery",
       "canvas",
       "sessionHistory",
+      "deviceTools",
       "heartbeat",
     ]);
     expect(isExtensionLoaded("heartbeat")).toBe(true);
@@ -412,6 +416,7 @@ describe("extension registry", () => {
       "capabilityDiscovery",
       "canvas",
       "sessionHistory",
+      "deviceTools",
       "scheduler",
     ]);
     expect(isExtensionLoaded("scheduler")).toBe(true);
@@ -441,6 +446,7 @@ describe("extension registry", () => {
       "capabilityDiscovery",
       "canvas",
       "sessionHistory",
+      "deviceTools",
       "scheduler",
       "heartbeat",
     ]);
@@ -469,6 +475,7 @@ describe("extension registry", () => {
       "capabilityDiscovery",
       "canvas",
       "sessionHistory",
+      "deviceTools",
       "heartbeat",
     ]);
   });

@@ -385,6 +385,7 @@ export class ExtensionRuntime {
         sessionOwnerId: identity?.sessionOwnerId,
         requesterId: identity?.requesterId,
         origin: identity?.origin,
+        run: identity && { source: identity.source, sender: identity.sender, background: identity.background },
         emitProgress,
         signal,
         conversationFiles: identity?.conversationFiles ?? (sessionId ? getConversationFiles(agent.id, sessionId, userId) : undefined),

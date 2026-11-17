@@ -112,6 +112,16 @@ describe("ExtensionRuntime", () => {
       found: true, result: { actorUserId: "eval:fixture", actorKind: "eval", credentialUserId: undefined },
     });
   });
+  it("gives the tool the run origin of the caller", async () => {
+    const runtime = new ExtensionRuntime();
+    runtime.load([extension({ id: "origin", getAgentTools: () => [{
+      name: "origin", description: "Origin", parameters: {},
+      execute: (_args, context) => context.run,
+    }] })]);
+    expect(await runtime.executeTool(agent, "origin", {}, config, "s", undefined, undefined, undefined, { source: "heartbeat", background: true })).toEqual({
+      found: true, result: { source: "heartbeat", background: true, sender: undefined },
+    });
+  });
   it("retains server namespace metadata and extension capabilities when loading tools", async () => {
     const runtime = new ExtensionRuntime();
     runtime.load([extension({

@@ -177,6 +177,18 @@ Connecting an OAuth extension from settings takes you to the provider in the sam
 
 Run `yoplai connect https://remote.example.com --name ams [--token <user token>]` on your local gateway. The agents of the remote gateway then show in the agent list as `<agentId>@ams`, with a small `@ams` mark, and you chat with them on the local page. Use `--token` only when the remote gateway runs in multi-user mode (create one with `yoplai user token create` there). `yoplai remotes` lists links and `yoplai disconnect ams` removes one. The link works only when the local gateway listens on a loopback address and multi-user mode and Tailscale serve are off.
 
+### Let a remote agent use your machine
+
+While your local gateway runs and is linked, an agent on the remote gateway can read, write, and edit files and run commands on your machine. It uses the tools `device_read`, `device_write`, `device_edit`, and `device_bash`. Your local gateway decides for each call. Each chat has one of three modes:
+
+| Mode | When | Read | Write and edit | Command |
+|---|---|---|---|---|
+| Ask | Default | Passes | Asks you | Asks you |
+| Workspace | The chat has a workspace folder | Passes | Passes inside the folder, asks outside | Asks you |
+| Full | You switch it on | Passes | Passes | Passes |
+
+A relative path and each command start in the workspace folder. With no folder, they start in your home directory. A run with no person present, such as a scheduled job, gets a refusal for each call that asks. You can allow all calls of one remote agent for such runs. The controls for the folder, the Full switch, and the approval prompt come to the page in a later release. Until then, use the local routes `/api/relay/device-settings` and `/api/relay/agent-settings`.
+
 ## Troubleshooting
 
 ### `yoplai.json` not found

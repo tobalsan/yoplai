@@ -640,6 +640,7 @@ program
         agentId: agent.id,
         message: opts.message,
         sessionId: opts.session,
+        source: "cli",
         extensionRuntime,
         onEvent: (event) => {
           if (event.type === "text") {

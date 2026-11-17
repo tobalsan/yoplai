@@ -2,8 +2,9 @@ import type { IncomingHttpHeaders } from "node:http";
 import { WebSocket } from "ws";
 import { getAgent } from "../config/index.js";
 import { addGatewaySuffix } from "./agent-id.js";
+import { getDeviceApprovals, type ApprovalEvent } from "./device-approvals.js";
 import { remoteWsHeaders, remoteWsUrl } from "./remote.js";
-import { getLinkedGateways, isTrustedRequest, resolveRemoteAgent } from "./state.js";
+import { getLinkedGateways, isRelayEnabled, isTrustedRequest, resolveRemoteAgent } from "./state.js";
 import type { RemoteGateway } from "./store.js";
 
 type PageMessage = { type?: string; agentId?: string } & Record<string, unknown>;
@@ -23,6 +24,9 @@ export class RelayWsBridge {
   private readonly trusted: boolean;
   /** The gateway of the active session subscription. Unset means a local agent or none. */
   private subscribedGateway: string | undefined;
+  /** The remote agent and session of the page subscription. Device approvals for them go to the page. */
+  private subscription: { agentId: string; sessionId?: string } | undefined;
+  private readonly stopApprovals: (() => void) | undefined;
 
   constructor(
     private readonly page: WebSocket,
@@ -31,6 +35,8 @@ export class RelayWsBridge {
     private readonly connectTimeoutMs = CONNECT_TIMEOUT_MS
   ) {
     this.trusted = isTrustedRequest(headers?.origin, [headers?.["x-forwarded-for"] ?? []].flat().join(","));
+    // A page that is not trusted gets no approval request.
+    this.stopApprovals = this.trusted ? getDeviceApprovals().subscribe((event) => this.sendApproval(event)) : undefined;
   }
 
   /** Returns true when the message belongs to a remote agent. A failure never reaches the caller. */
@@ -44,18 +50,33 @@ export class RelayWsBridge {
   }
 
   close(): void {
+    this.stopApprovals?.();
     for (const link of this.links.values()) link.socket.close();
     this.links.clear();
   }
 
   private route(raw: string): boolean {
-    if (!this.trusted) return false;
     let message: PageMessage;
     try {
       message = JSON.parse(raw) as PageMessage;
     } catch {
       return false;
     }
+    // The answer belongs to the local gateway. It never goes to a remote gateway, and a page that is not trusted has no effect.
+    if (message.type === "device_approval_answer") {
+      if (
+        this.trusted &&
+        isRelayEnabled() &&
+        typeof message.approvalId === "string" &&
+        typeof message.approve === "boolean"
+      ) {
+        getDeviceApprovals().answer(message.approvalId, message.approve, (request) =>
+          this.subscribes(request.agentId, request.sessionId)
+        );
+      }
+      return true;
+    }
+    if (!this.trusted) return false;
     const gateways = getLinkedGateways();
     if (gateways.length === 0) return false;
 
@@ -71,16 +92,43 @@ export class RelayWsBridge {
       this.sendToOpenLinks(raw);
       this.releaseChat(this.subscribedGateway);
       this.subscribedGateway = undefined;
+      this.subscription = undefined;
       return false;
     }
     if (message.type !== "subscribe" && message.type !== "send") return false;
     if (typeof message.agentId !== "string") return false;
     const target = resolveRemoteAgent(message.agentId, gateways);
     const gateway = gateways.find((item) => item.name === target.gateway);
-    if (message.type === "subscribe") this.replaceSubscription(gateway?.name);
+    if (message.type === "subscribe") {
+      this.replaceSubscription(gateway?.name);
+      this.subscription = gateway
+        ? { agentId: message.agentId, sessionId: typeof message.sessionId === "string" ? message.sessionId : undefined }
+        : undefined;
+      if (gateway) this.sendPendingApprovals();
+    }
     if (!gateway) return false;
     this.sendTo(gateway, { ...message, agentId: target.agentId }, true);
     return true;
+  }
+
+  private subscribes(agentId: string, sessionId: string): boolean {
+    const sub = this.subscription;
+    return sub !== undefined && sub.agentId === agentId && (sub.sessionId === undefined || sub.sessionId === sessionId);
+  }
+
+  private sendApproval(event: ApprovalEvent): void {
+    if (this.page.readyState !== WebSocket.OPEN || !isRelayEnabled()) return;
+    if (!this.subscribes(event.message.agentId, event.message.sessionId)) return;
+    this.page.send(JSON.stringify(event.message));
+  }
+
+  /** A page that subscribes later gets each approval that still waits. */
+  private sendPendingApprovals(): void {
+    const sub = this.subscription;
+    if (!sub) return;
+    for (const message of getDeviceApprovals().pendingFor(sub.agentId, sub.sessionId)) {
+      if (this.page.readyState === WebSocket.OPEN) this.page.send(JSON.stringify(message));
+    }
   }
 
   /** A page socket has one session subscription. A new one replaces the previous one. */
@@ -151,6 +199,8 @@ export class RelayWsBridge {
     if (this.page.readyState !== WebSocket.OPEN) return;
     try {
       const event = JSON.parse(raw) as PageMessage;
+      // Only the local gateway makes device approval messages. A remote gateway must not send them to the page.
+      if (typeof event.type === "string" && event.type.startsWith("device_approval_")) return;
       if (typeof event.agentId === "string") {
         event.agentId = addGatewaySuffix(event.agentId, gatewayName);
         if (getAgent(event.agentId)) return;

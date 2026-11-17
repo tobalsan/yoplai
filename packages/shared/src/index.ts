@@ -29,3 +29,4 @@ export * from "./model-quota.js";
 export * from "./web-url.js";
 
 export * from "./surface-links.js";
+export * from "./device-link.js";

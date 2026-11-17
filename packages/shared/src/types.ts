@@ -3,6 +3,7 @@ import { QuotaWindowSchema } from "./model-quota.js";
 import { RunFailureKindSchema, type RunFailureKind } from "./run-failure.js";
 import type { Hono } from "hono";
 import type { CredentialScope } from "./oauth/types.js";
+import type { WsDeviceApprovalAnswer, WsDeviceApprovalRequest, WsDeviceApprovalResolved } from "./device-link.js";
 
 // Think levels
 export const ThinkLevelSchema = z.enum([
@@ -1741,6 +1742,8 @@ export type ExtensionAgentToolContext = {
   requesterId?: string;
   origin?: RunOrigin;
   signal?: AbortSignal;
+  /** Who started the run. Absent when the host does not know. */
+  run?: ExtensionRunInfo;
   /** Host-owned writable folder for this requester and conversation. */
   conversationFiles?: { hostPath: string; runtimePath: string };
   emitProgress?: (event: {
@@ -2432,7 +2435,8 @@ export type WsClientMessage =
   | WsSubscribeMessage
   | WsUnsubscribeMessage
   | WsSubscribeStatusMessage
-  | WsUnsubscribeStatusMessage;
+  | WsUnsubscribeStatusMessage
+  | WsDeviceApprovalAnswer;
 
 // Server messages include stream events plus subscription-specific events
 export type WsHistoryUpdatedEvent = {
@@ -2517,7 +2521,9 @@ export type WsServerMessage =
   | WsFileChangedEvent
   | WsAgentChangedEvent
   | WsSubagentChangedEvent
-  | WsActiveTurnSnapshot;
+  | WsActiveTurnSnapshot
+  | WsDeviceApprovalRequest
+  | WsDeviceApprovalResolved;
 
 // History types
 

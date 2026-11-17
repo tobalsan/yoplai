@@ -88,6 +88,10 @@ export function configureRelay(
   enabled = true;
 }
 
+export function isRelayEnabled(): boolean {
+  return enabled;
+}
+
 export function getRemoteGatewayStore() {
   fileStore ??= createFileRemoteGatewayStore();
   return fileStore;

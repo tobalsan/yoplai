@@ -120,6 +120,8 @@ export function createExtensionContext(
       registerContainerToken(token, {
         agentId, userId, sessionId, runId,
         actorKind: "service",
+        source: "system",
+        background: true,
         containerName: `host-script:${runId}`,
         roots: { workspace, data: workspace, uploads: workspace },
       });

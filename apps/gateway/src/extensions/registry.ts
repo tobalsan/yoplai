@@ -8,6 +8,7 @@ import { taskLifecycleExtension } from "../tasks/extension.js";
 import { capabilityDiscoveryExtension } from "../capabilities/extension.js";
 import { canvasExtension } from "../canvas/index.js";
 import { sessionHistoryExtension } from "../session-history/index.js";
+import { deviceToolsExtension } from "../relay/device-extension.js";
 
 type ExtensionRegistration = {
   load: () => Promise<Extension>;
@@ -466,6 +467,7 @@ async function deriveExtensionsToLoad(
     capabilityDiscoveryExtension,
     canvasExtension,
     sessionHistoryExtension,
+    deviceToolsExtension,
   ];
   const rawConfigs = new Map<string, Record<string, unknown>>();
   const unavailableOptionalExtensions = new Set<string>();
