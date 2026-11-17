@@ -142,6 +142,8 @@ function fork(partial: Partial<AgentFork> & { sourcePoolId: string }): AgentFork
 }
 
 import { EditAgent } from "./EditAgent";
+import { defaultAvatarUrl } from "../lib/default-avatar";
+import { defaultAvatarSources } from "../lib/default-avatar.fixture";
 import {
   resetCapabilitiesForTests,
   setCapabilitiesForTests,
@@ -234,6 +236,14 @@ describe("EditAgent", () => {
     await mountEdit("pom@ams");
     expect(container.textContent).toContain("Pom (remote)");
     expect(container.textContent).not.toContain("Agent not found.");
+  });
+
+  it("shows the default avatar of an agent that has no avatar", async () => {
+    setCapabilitiesForTests({ forkedAgents: false, extensions: { mcp: true } });
+    setSession("superadmin");
+    fetchAgentsMock.mockResolvedValue([agent({ id: "pom@ams", name: "Pom (remote)", gateway: "ams" })]);
+    await mountEdit("pom@ams");
+    expect(defaultAvatarSources(container)).toEqual([defaultAvatarUrl("pom@ams")]);
   });
 
   it("opens Scheduled jobs from the credential banner's Schedules link", async () => {

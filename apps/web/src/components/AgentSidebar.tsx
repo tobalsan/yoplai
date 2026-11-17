@@ -41,6 +41,7 @@ import { showToast } from "../lib/toast";
 import { openSessionSearch } from "./SessionSearch";
 import { captureChatReads, isChatUnread, observeChatSessions } from "../lib/chat-notifications";
 import { ScheduleAlertDot } from "./ScheduleAlertDot";
+import { AgentAvatarFill } from "./AgentAvatarFill";
 
 type AgentSidebarProps = {
   collapsed: Accessor<boolean>;
@@ -326,19 +327,7 @@ export function AgentSidebar(props: AgentSidebarProps) {
           onClick={() => { hideTooltip(); selectSession(session); }}
         >
           <span class="session-avatar">
-            <Show
-              when={session.avatar}
-              fallback={session.agentId[0]?.toUpperCase()}
-            >
-              {(avatar) => (
-                <Show
-                  when={avatar().startsWith("/") || /^https?:\/\//i.test(avatar())}
-                  fallback={avatar()}
-                >
-                  <img src={avatar()} alt="" />
-                </Show>
-              )}
-            </Show>
+            <AgentAvatarFill avatar={session.avatar} agentId={session.agentId} />
           </span>
           <Show when={isChatUnread(session)}>
             <span class="session-unread-dot" role="img" aria-label="Unread messages" />
