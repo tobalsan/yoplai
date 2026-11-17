@@ -66,6 +66,7 @@ export {
   requireAgentAccess,
   requireNotImpersonating,
   validateWebSocketRequest,
+  isVerifiedBearerRequest,
 } from "./middleware.js";
 export type { RequestAuthContext } from "./middleware.js";
 export {

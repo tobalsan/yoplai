@@ -261,14 +261,17 @@ app.all("/api/*", async (c) => {
   const request = new Request(url, init);
 
   let authContext: RequestAuthContext | null = null;
+  let multiUserBearerVerified = false;
   if (currentExtensionRuntime().isEnabled("multiUser")) {
-    const { forwardAuthContextToRequest, getRequestAuthContext } =
+    const { forwardAuthContextToRequest, getRequestAuthContext, isVerifiedBearerRequest } =
       await loadMultiUserMiddlewareModule();
     authContext = getRequestAuthContext(c);
+    // The marker comes from the outer middleware after it verified the bearer. It travels only in the bindings below.
+    multiUserBearerVerified = authContext !== null && isVerifiedBearerRequest(c);
     forwardAuthContextToRequest(request, authContext);
   }
 
-  return api.fetch(request, { multiUserAuthContext: authContext });
+  return api.fetch(request, { multiUserAuthContext: authContext, multiUserBearerVerified });
 });
 
 app.all("/hooks/*", async (c) => {

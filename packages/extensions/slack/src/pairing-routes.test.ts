@@ -9,7 +9,7 @@ import { registerSlackPairingRoutes } from "./pairing-routes.js";
 import { clearSlackContext, setSlackContext } from "./context.js";
 
 const state = vi.hoisted(() => ({ runtime: null as unknown }));
-vi.mock("@yoplai/extension-multi-user", async () => ({ ...(await vi.importActual<object>("../../multi-user/src/users.js")), getMultiUserRuntime: () => state.runtime }));
+vi.mock("@yoplai/extension-multi-user", async () => ({ ...(await vi.importActual<object>("../../multi-user/src/users.js")), ...(await vi.importActual<object>("../../multi-user/src/middleware.js")), getMultiUserRuntime: () => state.runtime }));
 
 describe("Slack pairing web routes", () => {
   let dataDir: string;
@@ -73,6 +73,53 @@ describe("Slack pairing web routes", () => {
     expect((await app.request("https://yoplai.test/api/slack/pairings/T1/U1", { method: "DELETE", headers: { origin: "https://evil.test" } })).status).toBe(403);
     db.prepare("UPDATE user SET banned = 1").run();
     expect((await app.request("https://yoplai.test/api/slack/pairings")).status).toBe(403);
+  });
+
+  it("serves a verified bearer identity from the binding, with no cookie and no Origin, and checks fresh eligibility", async () => {
+    await service.redeem(new URL(url).pathname.split("/").at(-1)!, { id: "existing", email: "person@example.com" });
+    const bound = new Hono();
+    const bind = (c: unknown, key: string, value: unknown) => (c as { set: (key: string, value: unknown) => void }).set(key, value);
+    let userId = "existing";
+    bound.use("*", async (c, next) => {
+      bind(c, "multiUserAuthContext", { user: { id: userId }, session: { id: "apikey:k1", userId } });
+      bind(c, "multiUserBearerVerified", true);
+      await next();
+    });
+    registerSlackPairingRoutes(bound);
+    expect(await (await bound.request("https://yoplai.test/slack/pairings")).json()).toEqual({ pairings: [{ workspaceId: "T1", slackUserId: "U1", pairedAt: expect.any(Number) }] });
+    expect(getSession).not.toHaveBeenCalled();
+    // The owner filter holds: another bound owner cannot unpair it.
+    db.prepare("INSERT INTO user VALUES ('other', 'other@example.com', 1, 'user', 0)").run();
+    userId = "other";
+    expect((await bound.request("https://yoplai.test/slack/pairings/T1/U1", { method: "DELETE" })).status).toBe(200);
+    expect(service.resolve("T1", "U1")).toBe("existing");
+    userId = "existing";
+    // A banned owner is refused with a fresh check.
+    db.prepare("UPDATE user SET banned = 1 WHERE id = 'existing'").run();
+    expect((await bound.request("https://yoplai.test/slack/pairings")).status).toBe(403);
+    db.prepare("UPDATE user SET banned = 0 WHERE id = 'existing'").run();
+    expect((await bound.request("https://yoplai.test/slack/pairings/T1/U1", { method: "DELETE" })).status).toBe(200);
+    expect(service.resolve("T1", "U1")).toBeUndefined();
+  });
+
+  it("does not treat a bound identity without the verified marker as a bearer, and keeps the cookie Origin check", async () => {
+    const bound = new Hono();
+    const bind = (c: unknown, key: string, value: unknown) => (c as { set: (key: string, value: unknown) => void }).set(key, value);
+    bound.use("*", async (c, next) => { bind(c, "multiUserAuthContext", { user: { id: "existing" }, session: { id: "apikey:k1", userId: "existing" } }); await next(); });
+    registerSlackPairingRoutes(bound);
+    // No marker and no cookie session: login is required.
+    expect((await bound.request("https://yoplai.test/slack/pairings")).status).toBe(401);
+    expect((await bound.request("https://yoplai.test/slack/pairings/T1/U1", { method: "DELETE" })).status).toBe(401);
+    getSession.mockResolvedValue({ user: { id: "existing" } });
+    expect((await bound.request("https://yoplai.test/slack/pairings/T1/U1", { method: "DELETE" })).status).toBe(403);
+  });
+
+  it("answers an explicit error when the gateway has no multi-user identity", async () => {
+    state.runtime = null;
+    const response = await app.request("https://yoplai.test/api/slack/pairings");
+    expect(response.status).toBe(409);
+    expect(await response.json()).toEqual({ error: "multi_user_required" });
+    expect((await app.request("https://yoplai.test/api/slack/pairings/T1/U1", { method: "DELETE", headers: { origin: "https://yoplai.test" } })).status).toBe(409);
   });
 
   it("uses configured branding name and logo", async () => {

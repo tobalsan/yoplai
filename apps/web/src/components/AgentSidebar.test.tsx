@@ -1168,6 +1168,29 @@ describe("AgentSidebar", () => {
     container2.remove();
   });
 
+  it("shows a Slack pairings entry for a local user with linked gateways, and no entry for a multi-user gateway or without links", async () => {
+    vi.useFakeTimers();
+    fetchAgentSessionsMock.mockResolvedValue({ items: [] });
+    setPathname("/chat/alpha");
+    const render_ = async (multiUser: boolean, answer: Response) => {
+      vi.spyOn(globalThis, "fetch").mockResolvedValue(answer);
+      setCapabilitiesForTests({ multiUser });
+      const container = document.createElement("div");
+      document.body.appendChild(container);
+      const dispose = render(() => <AgentSidebar collapsed={() => false} onToggleCollapse={() => {}} />, container);
+      await vi.advanceTimersByTimeAsync(5);
+      const link = Array.from(container.querySelectorAll("a")).find((item) => item.textContent?.includes("Slack pairings"));
+      dispose();
+      container.remove();
+      return link?.getAttribute("href");
+    };
+    const list = () => new Response(JSON.stringify({ gateways: [{ name: "east side" }, { name: "west" }] }), { status: 200, headers: { "content-type": "application/json" } });
+    expect(await render_(false, list())).toBe("/account/connections?gateway=east%20side");
+    expect(await render_(false, new Response(JSON.stringify({ error: "relay_unavailable" }), { status: 403 }))).toBeUndefined();
+    expect(await render_(false, new Response(JSON.stringify({ gateways: [] }), { status: 200 }))).toBeUndefined();
+    expect(await render_(true, list())).toBeUndefined();
+  });
+
   it("closes session menu on outside click", async () => {
     vi.useFakeTimers();
     fetchAgentSessionsMock.mockResolvedValue({

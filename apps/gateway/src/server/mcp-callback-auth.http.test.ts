@@ -208,6 +208,21 @@ describe("MCP OAuth callback past the outer authentication gate (real socket)", 
     expect(peerCalls).toEqual([]);
   });
 
+  it("refuses an encoded alias of the callback path, with valid state and code, and keeps the state usable", async () => {
+    const { state, verifier } = await start("alice");
+    const query = `?code=code-for-${verifier}&state=${state}`;
+    peerCalls.length = 0;
+    for (const alias of ["/api/mcp/oauth/%63allback", "/api/mcp/oauth/call%62ack", "/api/mcp/oauth/%43allback", "/api/mcp/oauth/%63%61%6c%6c%62%61%63%6b", "/api/mcp/%6Fauth/callback", "/api/%6Dcp/oauth/callback", "/%61pi/mcp/oauth/callback",
+      "/api/mcp/oauth/%2e/callback", "/api/mcp/oauth/%2E/callback", "/api/mcp/oauth/%2e%2e/oauth/callback", "/api/mcp/oauth/%2E%2E/oauth/callback", "/api/mcp/oauth/%2e%2E/oauth/callback",
+      "/api/mcp/oauth/./callback", "/api/mcp/oauth/../oauth/callback", "/api/mcp/oauth/x/%2e%2e/callback", "/api/mcp//oauth/callback", "/api/mcp/oauth\\callback", "/api/mcp\\oauth/callback"]) {
+      expect({ alias, status: (await raw("GET", `${alias}${query}`)).status }).toEqual({ alias, status: 401 });
+    }
+    // A leading double slash is outside the `/api/*` mount. It reaches no gateway route, so it is 404 and not an exception.
+    expect((await raw("GET", `//api/mcp/oauth/callback${query}`)).status).toBe(404);
+    expect(peerCalls).toEqual([]);
+    expect((await fetch(url(`${CALLBACK}${query}`))).status).toBe(200);
+  });
+
   it("keeps the protected MCP routes behind credentials and the agent gate", async () => {
     peerCalls.length = 0;
     for (const p of ["/api/mcp/oauth/status?agent=allowed-agent&scope=personal", "/api/mcp/servers?agent=allowed-agent", "/api/mcp/oauth/authorize?agent=allowed-agent&scope=personal"]) {

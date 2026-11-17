@@ -112,10 +112,14 @@ const api = new Hono();
 // Hono fetch creates a fresh context. Carry only the outer host’s authenticated
 // identity through its in-process bindings, never through caller-supplied headers.
 api.use("*", async (c: Context, next) => {
-  const authContext = (c.env as {
+  const bindings = c.env as {
     multiUserAuthContext?: import("@yoplai/extension-multi-user").RequestAuthContext | null;
-  } | undefined)?.multiUserAuthContext;
+    multiUserBearerVerified?: boolean;
+  } | undefined;
+  const authContext = bindings?.multiUserAuthContext;
   if (authContext) c.set("multiUserAuthContext", authContext);
+  // The outer host sets this binding after it verified a bearer. A request header never reaches it.
+  if (authContext && bindings?.multiUserBearerVerified === true) c.set("multiUserBearerVerified", true);
   await next();
 });
 const UUID_RE =

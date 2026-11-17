@@ -1,4 +1,5 @@
 import type { Context, MiddlewareHandler } from "hono";
+import { getOAuthProvider } from "@yoplai/shared";
 import { canUserUseAgent, getMultiUserRuntime } from "./runtime-state.js";
 import { getImpersonation } from "./impersonation.js";
 
@@ -29,6 +30,11 @@ export type RequestAuthContext = {
 };
 
 const REQUEST_AUTH_CONTEXT_KEY = "multiUserAuthContext";
+/**
+ * Set only by `createAuthMiddleware`, and only after `verifyBearer` accepted the request bearer. It lives in the Hono
+ * context and in the in-process bindings of the inner API. A header, a session string, or a role never sets it.
+ */
+const REQUEST_BEARER_VERIFIED_KEY = "multiUserBearerVerified";
 
 function normalizeAuthContext(session: {
   user: Record<string, unknown>;
@@ -188,6 +194,11 @@ export function getRequestAuthContext(c: Context): RequestAuthContext | null {
   return (authContext as RequestAuthContext | null | undefined) ?? null;
 }
 
+/** True when this request passed through a verified bearer. A cookie session is never a verified bearer. */
+export function isVerifiedBearerRequest(c: Context): boolean {
+  return c.get(REQUEST_BEARER_VERIFIED_KEY) === true;
+}
+
 export function getForwardedAuthContext(
   headers: Headers
 ): RequestAuthContext | null {
@@ -222,11 +233,35 @@ export function forwardAuthContextToRequest(
   return request;
 }
 
-function shouldSkipAuth(path: string, method: string): boolean {
+/**
+ * The original request target of a Node request, up to the query, with no normalization and no decoding. The Node
+ * adapter binds the incoming message as `env.incoming`. Its `url` is the target as the client sent it. Hono decodes
+ * `c.req.path`, and the adapter has already run `new URL()` on `c.req.url`, which removes `%2e` segments, so neither
+ * shows the original target. Without the binding, or with a target that is not in origin form, the result is
+ * `undefined`, and the callback exceptions fail closed.
+ */
+function originalRequestPath(c: Context): string | undefined {
+  const target = (c.env as { incoming?: { url?: unknown } } | undefined)?.incoming?.url;
+  if (typeof target !== "string" || !target.startsWith("/")) return undefined;
+  const query = target.indexOf("?");
+  return query === -1 ? target : target.slice(0, query);
+}
+
+/**
+ * `path` is the path that Hono gives. `rawPath` is the original request path (see `originalRequestPath`). The two
+ * callback exceptions need an exact match on `rawPath`, so an encoded alias, an encoded dot segment, a double slash, and
+ * a backslash need credentials. Every other rule keeps its own `path` handling.
+ */
+function shouldSkipAuth(path: string, method: string, rawPath: string | undefined): boolean {
   if (method === "GET" && path === "/api/mcp/oauth/client-metadata.json") return true;
   // The provider sends the browser here with no session. The callback holds only a one-use state. The state binds the
-  // owner, scope, agent, server, and PKCE verifier from the authenticated start. The exact method and path only.
-  if (method === "GET" && path === "/api/mcp/oauth/callback") return true;
+  // owner, scope, agent, server, and PKCE verifier from the authenticated start. The exact method and raw path only.
+  if (method === "GET" && rawPath === "/api/mcp/oauth/callback") return true;
+  // The browser returns from a core provider with no session. The one-use state of the authenticated start binds the
+  // owner, scope, agent, provider, redirect URI, and PKCE verifier. Only GET and the exact callback path of a provider that
+  // the registry holds pass. The raw path segment is the registry ID. Suffixes, aliases, and unknown providers need auth.
+  const coreCallback = method === "GET" && rawPath !== undefined ? /^\/api\/oauth\/([^/]+)\/callback$/.exec(rawPath) : null;
+  if (coreCallback && getOAuthProvider(coreCallback[1])) return true;
   if (method === "POST" && path === "/api/skills/import") return true;
   if (method === "GET" && /^\/api\/slack\/(?:pair|connect)\/[A-Za-z0-9_-]{43}$/.test(path)) return true;
   if (method === "GET" && /^\/api\/surface-links\/pair\/[A-Za-z0-9_-]{43}$/.test(path)) return true;
@@ -360,7 +395,7 @@ export const createAuthMiddleware = (): MiddlewareHandler => {
 
     if (bearer) {
       const result = await verifyBearer(bearer);
-      const skip = shouldSkipAuth(c.req.path, c.req.method);
+      const skip = shouldSkipAuth(c.req.path, c.req.method, originalRequestPath(c));
 
       if (!result || result.kind === "invalid") {
         if (skip) {
@@ -379,6 +414,7 @@ export const createAuthMiddleware = (): MiddlewareHandler => {
       }
 
       c.set(REQUEST_AUTH_CONTEXT_KEY, result.authContext);
+      c.set(REQUEST_BEARER_VERIFIED_KEY, true);
       await next();
       return;
     }
@@ -387,7 +423,7 @@ export const createAuthMiddleware = (): MiddlewareHandler => {
       headers: c.req.raw.headers,
     });
 
-    if (shouldSkipAuth(c.req.path, c.req.method)) {
+    if (shouldSkipAuth(c.req.path, c.req.method, originalRequestPath(c))) {
       // Public path — attach session if present but never reject
       if (session) {
         const authContext = normalizeAuthContext(session);

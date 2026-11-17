@@ -59,6 +59,10 @@ const rules: Rule[] = [
   { methods: ["GET"], path: /^\/api\/skill-ids\/[^/]+\/(?:default|versions)$/ },
   { methods: ["POST"], path: /^\/api\/skill-ids\/[^/]+\/default$/, bodyless: true },
   { methods: ["POST"], path: /^\/api\/skill-ids\/[^/]+\/versions\/[^/]+\/restore$/, bodyless: true },
+  // Slack pairing management. Both identifiers stay opaque and unchanged. The remote authenticates the linked bearer and
+  // owns the pairings of that account. Token redemption and credential connection routes are not here.
+  { methods: ["GET"], path: /^\/api\/slack\/pairings$/ },
+  { methods: ["DELETE"], path: /^\/api\/slack\/pairings\/[^/]+\/[^/]+$/, bodyless: true },
   { methods: ["PUT", "DELETE"], path: /^\/api\/dashboards\/[^/]+\/pin$/ },
   { methods: ["PATCH"], path: /^\/api\/dashboards\/[^/]+\/sharing$/ },
   { methods: ["POST"], path: /^\/api\/dashboards\/[^/]+\/claim$/ },

@@ -49,13 +49,51 @@ describe("multi-user middleware", () => {
     app.use("/api/*", createAuthMiddleware());
     app.all("/api/mcp/*", (c) => c.json({ ok: true }));
 
+    const send = (target: string, init: RequestInit = {}) => app.request(target, init, { incoming: { url: target } });
     const callback = "/api/mcp/oauth/callback";
-    expect((await app.request(`${callback}?code=c&state=s`)).status).toBe(200);
+    expect((await send(`${callback}?code=c&state=s`)).status).toBe(200);
+    // Without the binding, the exception fails closed.
+    expect((await app.request(`${callback}?code=c&state=s`)).status).toBe(401);
+    for (const alias of ["/api/mcp/oauth/%63allback", "/api/mcp/%6Fauth/callback", "/api/%6Dcp/oauth/callback", "/api/mcp/oauth/%2e/callback", "/api/mcp/oauth/%2E/callback", "/api/mcp/oauth/%2e%2e/oauth/callback", "/api/mcp//oauth/callback", "/api/mcp/oauth\\callback"]) {
+      expect({ alias, status: (await send(`${alias}?code=c&state=s`)).status }).toEqual({ alias, status: 401 });
+    }
     for (const method of ["POST", "PUT", "PATCH", "DELETE", "HEAD"]) {
-      expect((await app.request(callback, { method })).status).toBe(401);
+      expect((await send(callback, { method })).status).toBe(401);
     }
     for (const url of [`${callback}/`, `${callback}/extra`, `${callback}.json`, "/api/mcp/oauth/Callback", "/api/mcp/oauth/status", "/api/mcp/oauth/authorize", "/api/mcp/servers", "/api/mcp/catalog", "/api/mcp/servers/callback"]) {
-      expect((await app.request(url)).status).toBe(401);
+      expect((await send(url)).status).toBe(401);
+    }
+  });
+
+  it("allows only the exact GET callback of a registered core OAuth provider without a session", async () => {
+    setRuntime({ auth: { api: { getSession: vi.fn(async () => null) } } });
+    const { registerOAuthProvider, resetOAuthProviders } = await import("@yoplai/shared");
+    resetOAuthProviders();
+    registerOAuthProvider({ id: "fixture", displayName: "Fixture", authorizeUrl: "https://p.example/a", tokenUrl: "https://p.example/t", defaultScopes: ["read"] });
+    try {
+      const { createAuthMiddleware } = await import("./middleware.js");
+      const app = new Hono();
+      app.use("/api/*", createAuthMiddleware());
+      app.all("/api/*", (c) => c.json({ ok: true }));
+      // The Node adapter binds the incoming message. Its `url` is the original request target.
+      const send = (target: string, init: RequestInit = {}) => app.request(target, init, { incoming: { url: target } });
+      const callback = "/api/oauth/fixture/callback";
+      expect((await send(`${callback}?code=c&state=s`)).status).toBe(200);
+      // Without the binding, the exception fails closed.
+      expect((await app.request(`${callback}?code=c&state=s`)).status).toBe(401);
+      expect((await app.request(`${callback}?code=c&state=s`, {}, { incoming: { url: `http://x.test${callback}` } })).status).toBe(401);
+      // Hono decodes these paths to the exact callback path, and the raw pathname keeps the escapes.
+      for (const alias of ["/api/oauth/%66ixture/callback", "/api/oauth/fixture/%63allback", "/api/%6Fauth/fixture/callback", "/api/oauth/fixture/%2e/callback", "/api/oauth/fixture/%2E/callback", "/api/oauth/fixture/%2e%2e/fixture/callback", "/api/oauth/fixture/%2e%2E/fixture/callback", "/api/oauth//fixture/callback", "/api//oauth/fixture/callback", "/api/oauth/fixture\\callback", "/api/oauth/fixture/./callback"]) {
+        expect({ alias, status: (await send(`${alias}?code=c&state=s`)).status }).toEqual({ alias, status: 401 });
+      }
+      for (const method of ["POST", "PUT", "PATCH", "DELETE", "HEAD"]) {
+        expect({ method, status: (await app.request(callback, { method })).status }).toEqual({ method, status: 401 });
+      }
+      for (const url of [`${callback}/`, `${callback}/extra`, `${callback}.json`, "/api/oauth/Fixture/callback", "/api/oauth/fixture%2Fextra/callback", "/api/oauth/unknown/callback", "/api/oauth//callback", "/api/oauth/fixture/authorize", "/api/oauth/fixture/status", "/api/oauth/fixture/disconnect", "/api/oauth/callback", "/api/mcp/oauth/authorize"]) {
+        expect({ url, status: (await send(url)).status }).toEqual({ url, status: 401 });
+      }
+    } finally {
+      resetOAuthProviders();
     }
   });
 
@@ -269,6 +307,30 @@ describe("multi-user middleware", () => {
 
     expect(response.status).toBe(403);
     await expect(response.json()).resolves.toEqual({ error: "forbidden" });
+  });
+
+  it("marks a request as a verified bearer only after the bearer passed, never for a cookie or a header", async () => {
+    const verifyApiKey = vi.fn(async ({ body }: { body: { key: string } }) => (body.key === "good" ? { valid: true, key: { id: "key-1", referenceId: "user-1" } } : { valid: false }));
+    const getSession = vi.fn(async () => ({ user: { id: "user-1" }, session: { id: "apikey:fake", userId: "user-1" } }));
+    setRuntime({
+      auth: { api: { getSession, verifyApiKey } },
+      db: { prepare: vi.fn(() => ({ get: vi.fn(() => ({ id: "user-1", email: "u@example.com", name: "U", image: null, role: "user", approved: 1 })) })) },
+    });
+    const { createAuthMiddleware, isVerifiedBearerRequest } = await import("./middleware.js");
+    const app = new Hono();
+    app.use("/api/*", createAuthMiddleware());
+    app.get("/api/probe", (c) => c.json({ verified: isVerifiedBearerRequest(c) }));
+    const probe = async (headers: Record<string, string>) => {
+      const response = await app.request("/api/probe", { headers });
+      return { status: response.status, body: response.status === 200 ? await response.json() : null };
+    };
+    expect(await probe({ Authorization: "Bearer good" })).toEqual({ status: 200, body: { verified: true } });
+    // A cookie session, even one whose ID looks like an API key session, is not a bearer.
+    expect(await probe({ Cookie: "session=1" })).toEqual({ status: 200, body: { verified: false } });
+    // Caller headers never set the marker.
+    expect(await probe({ Cookie: "session=1", "x-multi-user-bearer-verified": "true", multiUserBearerVerified: "true" })).toEqual({ status: 200, body: { verified: false } });
+    // An invalid bearer never falls through to the cookie session.
+    expect(await probe({ Authorization: "Bearer forged", Cookie: "session=1" })).toEqual({ status: 401, body: null });
   });
 
   it("attaches auth context for bearer tokens of approved users", async () => {
