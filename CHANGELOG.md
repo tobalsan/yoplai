@@ -27,10 +27,12 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Changed
 
+- The Pairings page of a linked gateway now lists and unlinks Threadit and Mattermost accounts, as it does for Slack. The remote gateway needs this version to accept the request. An older remote shows "The remote gateway refused this action."
 - Scheduler scripts and webhook gates for sandboxed agents run in per-run containers from `/workspace` with the agent's sandbox policy. Agents without sandboxing run their scripts on the gateway host.
 - In multi-user mode, shared extension settings and Enable/Disable controls require an agent manager. Shared settings accept literal values, and extensions still accept credentials through their declared secret fields.
 - Chat header settings menu groups the default-agent picker, agent settings and share/copy/revoke link actions behind one cog.
 - Upgrade Pi packages to 1.5.2; codemode scripts now wait for a free worker instead of failing immediately when both workers are busy. Rebuild the sandbox image after upgrading.
+- The page for Slack pairings is now **Pairings**, with a Slack section. The sidebar item and the account menu item use the same name. A gateway with no Slack, or with no multi-user sign-in, shows "No pairings on this gateway." instead of a red error.
 - `better-sqlite3` is now version 13, because Electron 45 needs it.
 - `YOPLAI_UI_HOST` sets the bind host of the web UI. `YOPLAI_GATEWAY_HOST` sets the gateway address of the Vite proxy. `pnpm desktop` sets both to `127.0.0.1` and starts the gateway with `--host 127.0.0.1`.
 - Run `pnpm desktop` to open Yoplai in a desktop window (Electron). It starts a local gateway and the web UI from repo source on free ports, and stops both when you close the window. OAuth popups open in-app. Other links open in your system browser. If start fails, the window shows the last 50 log lines and a Restart link.

@@ -51,6 +51,8 @@ beforeEach(() => {
   gateways.on("GET", `${west}/api/capabilities`, { json: caps({ user: { id: "remote-bob", name: "Bob", role: "user" } }) });
   gateways.on("GET", "/api/slack/pairings", { json: { pairings: [pairing("ULOCAL")] } });
   gateways.on("GET", "/api/surface-links", { json: { links: [] } });
+  gateways.on("GET", `${east}/api/surface-links`, { json: { links: [] } });
+  gateways.on("GET", `${west}/api/surface-links`, { json: { links: [] } });
   gateways.on("GET", `${east}/api/slack/pairings`, { json: { pairings: [pairing("UEAST")] } });
   gateways.on("GET", `${west}/api/slack/pairings`, { json: { pairings: [pairing("UWEST")] } });
   vi.stubGlobal("fetch", gateways.fetchMock);
@@ -111,16 +113,34 @@ describe("Slack pairings of a chosen gateway", () => {
   it("shows an explicit message and calls nothing when the remote has no multi-user account", async () => {
     gateways.on("GET", `${east}/api/capabilities`, { json: caps({ multiUser: false, user: undefined }) });
     mount("/account/connections?gateway=east");
-    await vi.waitFor(() => expect(container.querySelector('[role="alert"]')?.textContent).toContain("no multi-user sign-in"));
+    await vi.waitFor(() => expect(container.querySelector('[role="status"]')?.textContent).toBe("No pairings on this gateway. It has no multi-user sign-in."));
+    expect(container.querySelector('[role="alert"]')).toBeNull();
     expect(log().filter((line) => line.includes("slack"))).toEqual([]);
-    expect(text()).not.toContain("Sign in to manage Slack pairings.");
+    expect(text()).not.toContain("Sign in to manage");
   });
 
-  it("shows the explicit refusal that the remote sends, and no local identity", async () => {
+  it("shows neutral text when the remote answers multi_user_required, and no local identity", async () => {
     gateways.on("GET", `${east}/api/slack/pairings`, { status: 409, json: { error: "multi_user_required" } });
+    gateways.on("GET", `${east}/api/surface-links`, { status: 409, json: { error: "multi_user_required" } });
     mount("/account/connections?gateway=east");
-    await vi.waitFor(() => expect(container.querySelector('[role="alert"]')?.textContent).toContain("The remote gateway has no multi-user sign-in"));
+    await vi.waitFor(() => expect(container.querySelector('[role="status"]')?.textContent).toBe("No pairings on this gateway."));
+    expect(container.querySelector('[role="alert"]')).toBeNull();
     expect(unpairButtons()).toHaveLength(0);
+  });
+
+  it("hides the Slack section when the remote has no Slack extension", async () => {
+    gateways.on("GET", `${east}/api/slack/pairings`, { status: 404, json: { error: "extension_disabled" } });
+    gateways.on("GET", `${east}/api/surface-links`, { status: 404, json: { error: "extension_disabled" } });
+    mount("/account/connections?gateway=east");
+    await vi.waitFor(() => expect(container.querySelector('[role="status"]')?.textContent).toBe("No pairings on this gateway."));
+    expect(container.querySelector('[role="alert"]')).toBeNull();
+    expect(container.querySelector("h2")).toBeNull();
+  });
+
+  it("keeps a 404 with another code as an error", async () => {
+    gateways.on("GET", `${east}/api/slack/pairings`, { status: 404, json: { error: "unknown_gateway" } });
+    mount("/account/connections?gateway=east");
+    await vi.waitFor(() => expect(container.querySelector('[role="alert"]')?.textContent).toBe("Failed to load Slack pairings"));
   });
 
   it("shows Retry when the remote capabilities fail, and reads after a good retry", async () => {
@@ -246,6 +266,19 @@ describe("Slack pairings of a chosen gateway", () => {
     button("Retry")!.click();
     await vi.waitFor(() => expect(unpairButtons()).toHaveLength(1));
     expect(unpairButtons()[0].disabled).toBe(false);
+  });
+
+  it("keeps the unpair error and Retry when the recovery read says Slack is unavailable", async () => {
+    gateways.on("DELETE", `${east}/api/slack/pairings/T1/UEAST`, { status: 502, json: { error: "gateway_offline" } });
+    mount("/account/connections?gateway=east");
+    await vi.waitFor(() => expect(unpairButtons()).toHaveLength(1));
+    gateways.on("GET", `${east}/api/slack/pairings`, { status: 503, json: { error: "slack_unavailable" } });
+    unpairButtons()[0].click();
+    await vi.waitFor(() => expect(button("Retry")).toBeDefined());
+    expect(text()).toContain("The remote gateway is offline.");
+    expect(text()).not.toContain("No pairings on this gateway.");
+    expect(unpairButtons()).toHaveLength(0);
+    expect(writes()).toHaveLength(1);
   });
 
   it("keeps the list that the recovery read returns, with the error message, after a failed unpair", async () => {
