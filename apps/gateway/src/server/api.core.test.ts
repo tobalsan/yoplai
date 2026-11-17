@@ -1909,7 +1909,9 @@ describe("api core session resolution", () => {
         multiUserState.agentAccess = false;
         expect((await patch({ credentialScope: "personal", secrets: { apiKey: "secret" } })).status).toBe(403);
         multiUserState.loaded = false;
-        expect((await patch({ credentialScope: "personal", secrets: { apiKey: "secret" } })).status).toBe(401);
+        const single = await patch({ credentialScope: "personal", secrets: { apiKey: "secret" } });
+        expect(single.status).toBe(400);
+        expect(await single.json()).toEqual({ error: "personal_scope_unavailable" });
         expect(credentialState.records.size).toBe(0);
       });
 

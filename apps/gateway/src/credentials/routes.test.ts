@@ -17,6 +17,7 @@ let store: CredentialStore;
 let oauthStore: OAuthConnectionStore;
 let userId: string | undefined;
 let allowed: boolean;
+let multiUser = true;
 const config = { agents: [{ id: "agent", extensions: { token: { enabled: true, apiToken: "shared-secret" } } }, { id: "cira", extensions: { token: { enabled: true } } }], extensions: {} } as unknown as GatewayConfig;
 const entry = { id: "token", displayName: "Token", requiredSecrets: ["apiToken"], configValues: { apiToken: "********" } };
 const grant = (owner?: string): OAuthConnection => ({ agentId: "agent", provider: "google", scope: owner ? "personal" : "team", userId: owner, accessToken: owner ?? "team-secret", scopes: [], connectedAt: 1, updatedAt: 1 });
@@ -27,11 +28,12 @@ beforeEach(() => {
   oauthStore = new OAuthConnectionStore(path.join(dir, "oauth"), new TokenCipher("test"));
   userId = "alice";
   allowed = true;
+  multiUser = true;
 });
 afterEach(() => fs.rmSync(dir, { recursive: true, force: true }));
 function app(fetchImpl = vi.fn().mockResolvedValue({ ok: true })) {
   const oauth = new OAuthService({ store: oauthStore, loadConfig: () => config, fetchImpl });
-  return { oauth, router: createConnectionRoutes({ config: () => config, store, oauth, catalog: vi.fn().mockResolvedValue([entry]), getUserId: async () => userId, canAccessAgent: async () => allowed }) };
+  return { oauth, router: createConnectionRoutes({ config: () => config, store, oauth, catalog: vi.fn().mockResolvedValue([entry]), getUserId: async () => userId, isMultiUser: () => multiUser, canAccessAgent: async () => allowed }) };
 }
 it("lists only caller presence and team presence without secret or owner metadata", async () => {
   oauthStore.save(grant("bob"));
@@ -80,4 +82,34 @@ it("lists a personal token saved via another agent and reports disconnected afte
   expect((await router.request("/agents/cira/connections/extension/token", { method: "DELETE" })).status).toBe(200);
   expect(await list("agent")).toMatchObject({ personal: false });
   expect(await list("cira")).toBeUndefined();
+});
+it("lists team connections without a user in single-user mode", async () => {
+  multiUser = false;
+  userId = undefined;
+  oauthStore.save(grant());
+  const response = await app().router.request("/agents/agent/connections");
+  expect(response.status).toBe(200);
+  expect(await response.json()).toEqual({ connections: [
+    { kind: "oauth", id: "google", name: "google", personal: false, team: true },
+    { kind: "extension", id: "token", name: "Token", personal: false, team: true },
+  ] });
+});
+it("still checks agent access in single-user mode", async () => {
+  multiUser = false;
+  userId = undefined;
+  allowed = false;
+  expect((await app().router.request("/agents/agent/connections")).status).toBe(403);
+});
+it("refuses personal disconnect in single-user mode", async () => {
+  multiUser = false;
+  userId = undefined;
+  const { router } = app();
+  expect((await router.request("/agents/agent/connections/oauth/google", { method: "DELETE" })).status).toBe(400);
+  const response = await router.request("/agents/agent/connections/extension/token", { method: "DELETE" });
+  expect(response.status).toBe(400);
+  expect(await response.json()).toEqual({ error: "personal_scope_unavailable" });
+});
+it("keeps 401 when multi-user is on and nobody is signed in", async () => {
+  userId = undefined;
+  expect((await app().router.request("/agents/agent/connections")).status).toBe(401);
 });

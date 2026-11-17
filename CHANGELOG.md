@@ -51,6 +51,7 @@ Breaking changes are marked **⚠ BREAKING**.
 ### Fixed
 
 - A linked gateway can now list and unlink the Threadit and Mattermost account links of its user. The remote accepts the gateway link key on `GET /api/surface-links` and `DELETE /api/surface-links/<id>`, and the local relay allows these two routes. The `pair` route stays closed to the relay.
+- In single-user mode, the agent connections list works with no sign-in and shows team connections only. Personal connection writes answer 400 `personal_scope_unavailable`.
 - In a chat with an agent of a linked gateway, an extension view now shows "This view is not available for an agent of a linked gateway." It no longer opens the local page of the same path.
 - Claude quota readings stay fresh while idle by ignoring five-hour windows without a string reset time and retaining valid weekly usage.
 - When the AI provider's safety filter refuses a message, the chat no longer gets stuck. The refused turn is dropped from the saved session, so the next message works, and the user sees "The AI provider's safety filter blocked this message, so it was not kept. You can rephrase or carry on." (French too) instead of "Something went wrong". The gateway logs it at warn, not error.
