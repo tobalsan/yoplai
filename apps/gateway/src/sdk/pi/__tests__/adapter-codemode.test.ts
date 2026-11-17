@@ -504,12 +504,13 @@ describe("Pi adapter codemode", () => {
     );
   });
 
-  it("rejects a third live worker across sessions and runs again after a worker exits", async () => {
+  it("queues a third live worker across sessions and runs it after a worker exits", async () => {
     // Same-module worker-cap seam approved in ALG-506 comment
     // 8fcf9742-a30b-45b2-bd18-5fb24d1cecda: real concurrent SDK sessions,
     // host-controlled tool barriers; catches shared capacity/recovery, misses other processes.
     const firstEntered = deferred();
     const secondEntered = deferred();
+    const thirdRequested = deferred();
     const release = deferred();
     const first = fixture(true, async () => {
       firstEntered.resolve();
@@ -520,6 +521,11 @@ describe("Pi adapter codemode", () => {
       secondEntered.resolve();
       await release.promise;
       return { count: 2 };
+    });
+    let thirdEntered = false;
+    const third = fixture(true, async () => {
+      thirdEntered = true;
+      return { count: 3 };
     });
     const respond: FauxResponseFactory = (context) =>
       context.messages.some((message) => message.role === "toolResult")
@@ -537,46 +543,39 @@ describe("Pi adapter codemode", () => {
       void secondPending.catch(() => {});
       await bounded(secondEntered.promise);
 
-      const third = fixture(true);
-      await bounded(piAdapter.run(third.params));
+      const thirdPending = piAdapter.run({
+        ...third.params,
+        onEvent: (event) => {
+          third.params.onEvent(event);
+          if (event.type === "tool_call" && event.name === "codemode")
+            thirdRequested.resolve();
+        },
+      });
+      holders.push(thirdPending);
+      void thirdPending.catch(() => {});
+      await bounded(thirdRequested.promise);
+      await expect(Promise.race([
+        thirdPending.then(() => "settled"),
+        new Promise<string>((resolve) => setTimeout(() => resolve("waiting"), 50)),
+      ])).resolves.toBe("waiting");
+      expect(thirdEntered).toBe(false);
+      release.resolve();
+      await expect(bounded(thirdPending)).resolves.toMatchObject({ text: "Done" });
       expect(third.events).toContainEqual(
         expect.objectContaining({
           type: "tool_result",
           name: "codemode",
-          isError: true,
-          content: expect.stringContaining(
-            "Codemode worker limit reached (2 workers are still running or shutting down). Retry after they exit."
-          ),
+          isError: false,
+          content: expect.stringContaining("3"),
         })
       );
     } finally {
       release.resolve();
-      await bounded(Promise.allSettled(holders));
       first.controller.abort();
       second.controller.abort();
+      third.controller.abort();
+      await bounded(Promise.allSettled(holders));
     }
-
-    let recovered = false;
-    for (let attempt = 0; attempt < 10; attempt++) {
-      const later = fixture(true);
-      await bounded(piAdapter.run(later.params));
-      const result = later.events.find(
-        (event) => event.type === "tool_result" && event.name === "codemode"
-      );
-      if (!result || result.type !== "tool_result")
-        throw new Error("Missing codemode result");
-      if (result.isError) {
-        expect(result.content).toContain(
-          "Codemode worker limit reached (2 workers are still running or shutting down). Retry after they exit."
-        );
-        await new Promise((resolve) => setTimeout(resolve, 20));
-        continue;
-      }
-      expect(result.content).toContain("3");
-      recovered = true;
-      break;
-    }
-    expect(recovered).toBe(true);
   });
 
   it("executes invisible lifecycle children while keeping them out of stream and display history", async () => {

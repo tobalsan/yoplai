@@ -21,8 +21,8 @@
   },
   "dependencies": {
     "@yoplai/shared": "workspace:*",
-    "@earendil-works/pi-ai": "^1.3.0",
-    "@earendil-works/pi-coding-agent": "^1.3.0",
+    "@earendil-works/pi-ai": "^1.5.2",
+    "@earendil-works/pi-coding-agent": "^1.5.2",
     "chokidar": "^4.0.3",
     "commander": "^12.1.0",
     "hono": "^4.11.4",

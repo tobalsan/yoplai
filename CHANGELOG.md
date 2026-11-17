@@ -13,6 +13,10 @@ Breaking changes are marked **⚠ BREAKING**.
 
 - Threadit `edit_message` tool can replace or remove a message's attachments via `attachment_ids` (full set; `[]` removes all); `body` is now optional.
 
+### Changed
+
+- Upgrade Pi packages to 1.5.2; codemode scripts now wait for a free worker instead of failing immediately when both workers are busy. Rebuild the sandbox image after upgrading.
+
 ### Fixed
 
 - Claude quota readings stay fresh while idle by ignoring five-hour windows without a string reset time and retaining valid weekly usage.
