@@ -1,5 +1,6 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { buildPackagedEnv } from "./packaged-env.js";
 
 export const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
 
@@ -23,10 +24,9 @@ export interface LaunchPlan {
 export interface LaunchPorts {
   gatewayPort: number;
   uiPort: number;
+  appsPort: number;
 }
 
-export const BASE_GATEWAY_PORT = 4000;
-export const BASE_UI_PORT = 3000;
 /** The shell always uses loopback, whatever the home config says. */
 const LOOPBACK_HOST = "127.0.0.1";
 
@@ -36,7 +36,7 @@ const LOOPBACK_HOST = "127.0.0.1";
  * YOPLAI_SKIP_WEB=1, so the UI port is the port chosen by the shell.
  * This is the only module that knows about pnpm, tsx, and Vite.
  */
-export function createDevLaunchPlan({ gatewayPort, uiPort }: LaunchPorts): LaunchPlan {
+export function createDevLaunchPlan({ gatewayPort, uiPort }: Pick<LaunchPorts, "gatewayPort" | "uiPort">): LaunchPlan {
   const uiUrl = `http://${LOOPBACK_HOST}:${uiPort}`;
   const gatewayNodeOptions = [process.env.NODE_OPTIONS, "--conditions=development"]
     .filter(Boolean)
@@ -80,6 +80,49 @@ export function createDevLaunchPlan({ gatewayPort, uiPort }: LaunchPorts): Launc
           YOPLAI_GATEWAY_HOST: LOOPBACK_HOST,
           NODE_OPTIONS: gatewayNodeOptions,
         },
+      },
+    ],
+  };
+}
+
+/** What the packaged plan needs from the running app. */
+export interface PackagedContext {
+  /** The Electron binary. With ELECTRON_RUN_AS_NODE it runs the gateway as Node. */
+  execPath: string;
+  /** Contents/Resources of the app. */
+  resourcesPath: string;
+  home: string;
+  /** The PATH from the login shell probe, or the fallback PATH. */
+  shellPath: string;
+  parentEnv: NodeJS.ProcessEnv;
+}
+
+/**
+ * Packaged plan: one child. The gateway runs on the bundled runtime, serves the built UI on the UI port,
+ * and needs no pnpm, no Vite, and no repo.
+ */
+export function createPackagedLaunchPlan(ports: LaunchPorts, context: PackagedContext): LaunchPlan {
+  const uiUrl = `http://${LOOPBACK_HOST}:${ports.uiPort}`;
+  return {
+    uiUrl,
+    readyUrls: [`http://${LOOPBACK_HOST}:${ports.gatewayPort}/health`, uiUrl],
+    children: [
+      {
+        name: "gateway",
+        command: context.execPath,
+        args: [
+          path.join(context.resourcesPath, "gateway", "dist", "cli", "index.js"),
+          "gateway", "--host", LOOPBACK_HOST, "--port", String(ports.gatewayPort),
+        ],
+        cwd: context.home,
+        env: buildPackagedEnv({
+          parentEnv: context.parentEnv,
+          shellPath: context.shellPath,
+          home: context.home,
+          ports,
+          resourcesPath: context.resourcesPath,
+          loopbackHost: LOOPBACK_HOST,
+        }),
       },
     ],
   };
