@@ -1,5 +1,6 @@
 // Build the packaged macOS app: Yoplai.app and a .dmg in apps/desktop/release.
-// Steps: repo build, desktop build, web build with an empty home, gateway deploy stage,
+// Steps: repo build, desktop build, web build with an empty home, gateway deploy stage
+// (the workspace state file is restored after it),
 // native module rebuild for the Electron version, electron-builder.
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
@@ -14,6 +15,7 @@ const buildDir = path.join(desktopDir, "build");
 const stageDir = path.join(buildDir, "gateway");
 const webOutDir = path.join(buildDir, "web");
 const ARCH = "arm64";
+const workspaceStateFile = path.join(repoRoot, "node_modules/.pnpm-workspace-state-v1.json");
 
 const electronVersion = createRequire(import.meta.url)("electron/package.json").version;
 
@@ -66,7 +68,15 @@ try {
 }
 fs.cpSync(path.join(repoRoot, "apps/web/dist"), webOutDir, { recursive: true });
 
-run("pnpm", ["--filter", "@yoplai/gateway", "deploy", "--prod", "--legacy", stageDir]);
+// `pnpm deploy` overwrites the workspace state of the repo with a state that has only the gateway project.
+// The next pnpm command sees a changed workspace, runs an install, and the desktop postinstall fails.
+// Restore the saved state after the deploy, so the next command needs no install.
+const workspaceState = fs.existsSync(workspaceStateFile) ? fs.readFileSync(workspaceStateFile) : undefined;
+try {
+  run("pnpm", ["--filter", "@yoplai/gateway", "deploy", "--prod", "--legacy", stageDir]);
+} finally {
+  if (workspaceState) fs.writeFileSync(workspaceStateFile, workspaceState);
+}
 
 pruneStage(stageDir);
 
