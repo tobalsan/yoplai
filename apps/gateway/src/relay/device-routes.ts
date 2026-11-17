@@ -4,7 +4,7 @@ import type { MiddlewareHandler } from "hono";
 import { addGatewaySuffix } from "./agent-id.js";
 import { getDeviceLinkStates } from "./device-links.js";
 import { resolveDeviceMode } from "./device-gate.js";
-import { deviceChatKey, getDeviceSettingsStore, type DeviceSettingsStore } from "./device-settings.js";
+import { deviceAgentKey, deviceChatKey, getDeviceSettingsStore, type DeviceSettingsStore } from "./device-settings.js";
 import { getLinkedGateways, isRelayEnabled, isTrustedRequest, resolveRemoteAgent } from "./state.js";
 import type { DeviceLinkState } from "./device-link-client.js";
 import type { RemoteGateway } from "./store.js";
@@ -66,21 +66,23 @@ export function relayDeviceApi(overrides: Partial<DeviceRoutesDeps> = {}): Middl
 
     const agentId = url.searchParams.get("agentId") ?? "";
     const target = resolveRemoteAgent(agentId, deps.getGateways());
-    if (!target.gateway) return c.json({ error: "Unknown remote agent" }, 404);
+    const link = deps.getGateways().find((gateway) => gateway.name === target.gateway);
+    if (!link) return c.json({ error: "Unknown remote agent" }, 404);
     const store = deps.settings();
+    const agentKey = deviceAgentKey(link, addGatewaySuffix(target.agentId, link.name));
 
     if (route === "/api/relay/agent-settings") {
       if (method === "PUT") {
         const body = await readJsonObject(c.req.raw);
         if (typeof body?.fullBackground !== "boolean") return c.json({ error: "fullBackground must be a boolean" }, 400);
-        store.setAgentFullBackground(agentId, body.fullBackground);
+        store.setAgentFullBackground(agentKey, body.fullBackground);
       }
-      return c.json({ agentId, fullBackground: store.getAgentFullBackground(agentId) });
+      return c.json({ agentId, fullBackground: store.getAgentFullBackground(agentKey) });
     }
 
     const chat = url.searchParams.get("chat") ?? "";
     if (!chat) return c.json({ error: "chat is required" }, 400);
-    const chatKey = deviceChatKey(target.gateway, addGatewaySuffix(target.agentId, target.gateway), chat);
+    const chatKey = deviceChatKey(link, addGatewaySuffix(target.agentId, link.name), chat);
     if (method === "PUT") {
       const body = await readJsonObject(c.req.raw);
       if (!body) return c.json({ error: "Invalid JSON body" }, 400);

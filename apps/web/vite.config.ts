@@ -144,22 +144,11 @@ const gatewayPort = readEnv("GATEWAY_PORT")
   : (gatewayConfig.port ?? 4000);
 const gatewayTarget = `http://${gatewayHost}:${gatewayPort}`;
 
-// The viewer path of a remote dashboard holds a secret snapshot handle. Vite's default
-// proxy error log prints the request URL, so the handler below replaces it
-// first. Keep this test in step with `ownsDashboardViewPath` in the gateway.
-const dashboardViewNamespace = "/api/relay/dashboard-views";
-function ownsDashboardViewUrl(url: string | undefined): boolean {
-  let value = (url ?? "").split("?")[0];
-  for (let i = 0; i < 4; i++) {
-    if (value.toLowerCase().startsWith(dashboardViewNamespace)) return true;
-    const decoded = value.replace(/%([0-9a-f]{2})/gi, (_match, hex: string) =>
-      String.fromCharCode(parseInt(hex, 16))
-    );
-    if (decoded === value) break;
-    value = decoded;
-  }
-  return false;
-}
+// A viewer path of a remote dashboard holds a secret snapshot handle. The status path of a browser link holds an
+// attempt ID, and the remote link paths hold request IDs that a stray request can pair with a verifier or a code.
+// Vite's default proxy error log prints the request URL, so the handler below replaces it first. The path tests
+// are the ones that the gateway uses for its own log.
+const pathOf = (url: string | undefined) => (url ?? "").split("?")[0];
 
 // In dev mode, always use root path (no /yoplai prefix)
 const base = tailscaleServe ? "/yoplai" : "/";
@@ -187,8 +176,13 @@ export default defineConfig({
         // Vite registers its own error listener after this one, and it logs `req.url`.
         configure: (proxy) => {
           proxy.on("error", (_error, request) => {
-            if (ownsDashboardViewUrl(request.url)) {
-              request.url = `${dashboardViewNamespace}/[redacted]`;
+            const path = pathOf(request.url);
+            if (ownsDashboardViewPath(path)) {
+              request.url = `${DASHBOARD_VIEW_NAMESPACE}/[redacted]`;
+            } else if (ownsRedactedPath(path, LINK_NAMESPACE)) {
+              request.url = `${LINK_NAMESPACE}/[redacted]`;
+            } else if (ownsRemoteLinkPath(path)) {
+              request.url = `${REMOTE_LINK_NAMESPACE}/[redacted]`;
             }
           });
         },

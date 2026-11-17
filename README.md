@@ -175,7 +175,13 @@ Connecting an OAuth extension from settings takes you to the provider in the sam
 
 ## Link a remote gateway
 
-Run `yoplai connect https://remote.example.com --name ams [--token <user token>]` on your local gateway. The agents of the remote gateway then show in the agent list as `<agentId>@ams`, with a small `@ams` mark, and you chat with them on the local page. Use `--token` only when the remote gateway runs in multi-user mode (create one with `yoplai user token create` there). `yoplai remotes` lists links and `yoplai disconnect ams` removes one. The link works only when the local gateway listens on a loopback address and multi-user mode and Tailscale serve are off.
+Run `yoplai connect https://remote.example.com --name ams` on your local gateway, or open **Link gateway** in the sidebar (page `/remote-gateways`). Your browser opens the remote gateway. Sign in there and approve this computer. Your local gateway then stores its own key, so you copy no token. The agents of the remote gateway show in the agent list as `<agentId>@ams`, with a small `@ams` mark, and you chat with them on the local page. The remote gateway must run in multi-user mode with email or Google sign-in. A remote gateway with no sign-in links at once with no page and no key.
+
+Use `--no-browser` to print the sign-in address and open it yourself. The browser must run on the same computer as the local gateway. The address of the remote must be `https://` and an origin only (no path). Use `--token <user token>` (create one with `yoplai user token create` there) only for an older remote that has no browser sign-in.
+
+A browser link has its own key. It expires after 90 days, and you link again to renew it. A link shows its account, device, key state, and connection state on `/remote-gateways`. `yoplai remotes` lists links. `yoplai disconnect ams` revokes the key on the remote gateway and removes the link. If the remote is offline, the link stays. Use `yoplai disconnect ams --local-only` (or **Remove locally**) to remove it from this computer only. The remote key then stays valid until you revoke it or it expires. You see and revoke your linked devices on the remote gateway at `/account/gateway-links`. If a link attempt ends with "uncertain", revoke the key there first, then link again.
+
+The link works only when the local gateway listens on `127.0.0.1` and multi-user mode and Tailscale serve are off. A gateway bound to another loopback address (such as `::1`) keeps its saved links but cannot start a new browser link.
 
 Configuration transport now supports linked gateways through an explicit API prefix and an allowlist.
 The linked bearer defines the remote requester, including personal connections and administrative rights.

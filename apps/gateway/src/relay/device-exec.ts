@@ -12,7 +12,7 @@ import {
   type GateDecision,
 } from "./device-gate.js";
 import { getDeviceTurns, type DeviceTurns } from "./device-turns.js";
-import { deviceChatKey, type DeviceSettingsStore } from "./device-settings.js";
+import { deviceAgentKey, deviceChatKey, type DeviceSettingsStore, type LinkIdentity } from "./device-settings.js";
 import { secretReadRefusal } from "./device-secrets.js";
 import { deviceToolParameters, getDeviceToolDefinition } from "./device-tools.js";
 
@@ -55,8 +55,8 @@ function isDirectory(folder: string): boolean {
 export class DeviceExecutor {
   constructor(private readonly options: DeviceExecutorOptions) {}
 
-  /** `gatewayName` is the name of the link that carried the call. It never comes from the message. */
-  async execute(call: DeviceCall, gatewayName: string, signal: AbortSignal): Promise<DeviceExecution> {
+  /** `link` is the link that carried the call. It never comes from the message. */
+  async execute(call: DeviceCall, link: LinkIdentity, signal: AbortSignal): Promise<DeviceExecution> {
     const definition = getDeviceToolDefinition(call.tool);
     if (!definition) throw new Error(`Unknown device tool: ${call.tool}`);
 
@@ -67,11 +67,12 @@ export class DeviceExecutor {
     let args = call.arguments as Record<string, unknown>;
 
     const { settings, approvals } = this.options;
-    const agentKey = addGatewaySuffix(call.agentId, gatewayName);
-    // Only a token that this gateway issued for this gateway and agent makes a chat call. The message says nothing else about the chat.
+    const agentKey = addGatewaySuffix(call.agentId, link.name);
+    // Only a token that this gateway issued for this link and agent makes a chat call. The message says nothing else about the chat.
     const found = (this.options.turns ?? getDeviceTurns()).find(call.turnToken);
-    const turn = found && found.gateway === gatewayName && found.agentId === call.agentId ? found : undefined;
-    const chatSettings = turn ? settings.getChat(deviceChatKey(gatewayName, agentKey, turn.chat)) : { full: false };
+    const turn =
+      found && found.gateway === link.name && found.generation === link.generation && found.agentId === call.agentId ? found : undefined;
+    const chatSettings = turn ? settings.getChat(deviceChatKey(link, agentKey, turn.chat)) : { full: false };
     const folder =
       chatSettings.workspaceFolder && isDirectory(chatSettings.workspaceFolder)
         ? chatSettings.workspaceFolder
@@ -83,7 +84,7 @@ export class DeviceExecutor {
       args = { ...args, path: absolutePath };
     }
 
-    const full = chatSettings.full || (!turn && settings.getAgentFullBackground(agentKey));
+    const full = chatSettings.full || (!turn && settings.getAgentFullBackground(deviceAgentKey(link, agentKey)));
     const decision: GateDecision = await decideGate({
       tool: definition.name,
       mode: full ? "full" : resolveDeviceMode({ ...chatSettings, workspaceFolder: folder }),
@@ -107,7 +108,7 @@ export class DeviceExecutor {
       }
       const timeoutMs = this.options.approvalTimeoutMs ?? APPROVAL_TIMEOUT_MS;
       const outcome = await approvals.request({
-        gateway: gatewayName,
+        gateway: link.name,
         agentId: agentKey,
         chat: turn.chat,
         page: turn.page,

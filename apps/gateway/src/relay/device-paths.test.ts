@@ -5,7 +5,7 @@ import { pathToFileURL } from "node:url";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { DeviceCall } from "@yoplai/shared";
 import { DeviceApprovals } from "./device-approvals.js";
-import { issueTestTurn } from "./device-turn.fixture.js";
+import { AMS, issueTestTurn } from "./device-turn.fixture.js";
 import { DeviceExecutor } from "./device-exec.js";
 import { deviceRunKind } from "./device-extension.js";
 import { createFileDeviceSettingsStore, deviceChatKey, type DeviceSettingsStore } from "./device-settings.js";
@@ -19,7 +19,7 @@ let settings: DeviceSettingsStore;
 let approvals: DeviceApprovals;
 let executor: DeviceExecutor;
 let asked: string[];
-const chatKey = deviceChatKey("ams", "pom@ams", "session:s1");
+const chatKey = deviceChatKey(AMS, "pom@ams", "session:s1");
 
 function call(tool: string, args: unknown, overrides: Partial<DeviceCall> = {}): DeviceCall {
   return {
@@ -29,7 +29,7 @@ function call(tool: string, args: unknown, overrides: Partial<DeviceCall> = {}):
 }
 
 const run = (tool: string, args: unknown, overrides: Partial<DeviceCall> = {}, signal = new AbortController().signal) =>
-  executor.execute(call(tool, args, overrides), "ams", signal);
+  executor.execute(call(tool, args, overrides), AMS, signal);
 
 /** Refuses each approval request and records the path that the gate asked about. */
 function refuseApprovals(): void {
@@ -134,7 +134,7 @@ describe("device gate: the file operations compare the path that Pi opens", () =
         tool === "device_write"
           ? { path: "ignored", content: "escaped" }
           : { path: "ignored", edits: [{ oldText: "old", newText: "new" }] };
-      await expect(wrongPath.execute(call(tool, args), "ams", new AbortController().signal)).rejects.toThrow(
+      await expect(wrongPath.execute(call(tool, args), AMS, new AbortController().signal)).rejects.toThrow(
         /path changed after the permission check/
       );
       expect(fs.readFileSync(path.join(outside, "x"), "utf8")).toBe("old");

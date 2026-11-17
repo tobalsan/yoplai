@@ -888,6 +888,12 @@ export function AgentSidebar(props: AgentSidebarProps) {
               <span class="archive-label">Slack pairings</span>
             </A>
           </Show>
+          <Show when={capabilities.relayLink?.available === true}>
+            <A href="/remote-gateways" class="archive-link" title="Link a remote gateway">
+              <i class="fa-solid fa-link" aria-hidden="true" />
+              <span class="archive-label">Link gateway</span>
+            </A>
+          </Show>
           <Show when={!capabilities.multiUser}>
             <A href="/archive" class="archive-link" title="Archive">
               <i class="fa-solid fa-box-archive" aria-hidden="true" />

@@ -20,9 +20,20 @@ export interface DeviceSettingsStore {
 
 export const DEVICE_SETTINGS_FILE = "device-settings.json";
 
-/** The chat key is the gateway name, the remote agent ID, and the local chat name. JSON keeps two different triples from sharing a key. */
-export function deviceChatKey(gatewayName: string, agentId: string, chat: string): string {
-  return JSON.stringify([gatewayName, agentId, chat]);
+/**
+ * The link that a grant belongs to. The name is only a locator that a later link can reuse. The generation names one saved
+ * link, so a grant never moves to a link that replaces it. A link from an older store file has no generation.
+ */
+export type LinkIdentity = { name: string; generation?: string };
+
+/** The chat key is the link, the remote agent ID, and the local chat name. JSON keeps two different tuples from sharing a key. */
+export function deviceChatKey(link: LinkIdentity, agentId: string, chat: string): string {
+  return JSON.stringify([link.generation ?? null, link.name, agentId, chat]);
+}
+
+/** The key of the background switch of one remote agent on one link. */
+export function deviceAgentKey(link: LinkIdentity, agentId: string): string {
+  return JSON.stringify([link.generation ?? null, link.name, agentId]);
 }
 
 type SettingsFile = {

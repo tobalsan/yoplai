@@ -37,12 +37,25 @@ export type WsBrokerAuthAdapter = {
     agentId: string
   ) => Promise<boolean>;
   getExtensionRuntime: () => ExtensionRuntime;
+  /**
+   * False when the credential behind a socket no longer works: a revoked, replaced, expired, disabled, or deleted
+   * key. A cookie session always counts as active. The check reads fresh state, so it must stay cheap.
+   */
+  isAuthContextActive?: (authContext: RequestAuthContext) => boolean;
 };
+
+/** A socket whose key stops is closed within this time even when it sends nothing. */
+const AUTH_RECHECK_MS = 5000;
+const CLOSE_CREDENTIAL_INVALID = 1008;
 
 export class WsBroker {
   private readonly subscriptions = new Map<WebSocket, Subscription>();
   private readonly connectedClients = new Set<WebSocket>();
   private readonly authContexts = new Map<WebSocket, RequestAuthContext>();
+  private readonly deviceContexts = new Map<WebSocket, RequestAuthContext>();
+  private authAdapter: WsBrokerAuthAdapter | undefined;
+
+  constructor(private readonly options: { recheckMs?: number } = {}) {}
   private readonly statusSubscribers = new Set<WebSocket>();
   /** Counts the subscribe and unsubscribe messages of each page socket. A late authorization checks it. */
   private readonly subscribeGenerations = new Map<WebSocket, number>();
@@ -78,7 +91,16 @@ export class WsBroker {
       this.handleConnection(ws, request as WsRequest, authAdapter);
     });
     this.deviceWss.on("connection", (ws, request) => {
-      const userId = (request as WsRequest).authContext?.user.id ?? LOCAL_DEVICE_USER;
+      const authContext = (request as WsRequest).authContext;
+      const userId = authContext?.user.id ?? LOCAL_DEVICE_USER;
+      const isActive = authAdapter.isAuthContextActive;
+      if (authContext && isActive) {
+        // The registry checks the key before each call and result. The timer in `attach` closes an idle socket.
+        this.deviceContexts.set(ws, authContext);
+        ws.once("close", () => this.deviceContexts.delete(ws));
+        getDeviceRegistry().accept(ws, userId, () => isActive(authContext));
+        return;
+      }
       getDeviceRegistry().accept(ws, userId);
     });
     server.on("upgrade", (request, socket, head) => {
@@ -91,8 +113,35 @@ export class WsBroker {
       }
       target.handleUpgrade(request, socket, head, (ws) => target.emit("connection", ws, request));
     });
+    this.authAdapter = authAdapter;
+    if (authAdapter.isAuthContextActive) {
+      const timer = setInterval(() => this.recheckSockets(authAdapter.isAuthContextActive!), this.options.recheckMs ?? AUTH_RECHECK_MS);
+      timer.unref();
+      this.disposers.push(() => clearInterval(timer));
+    }
     this.setupEventBroadcast(authAdapter);
     server.once("close", () => this.close());
+  }
+
+  /** Closes each socket whose key no longer works. */
+  private recheckSockets(isActive: (authContext: RequestAuthContext) => boolean): void {
+    for (const ws of [...this.authContexts.keys()]) this.socketActive(ws);
+    for (const [ws, authContext] of [...this.deviceContexts]) {
+      if (!isActive(authContext)) ws.close(CLOSE_CREDENTIAL_INVALID, "Credential no longer valid");
+    }
+  }
+
+  /**
+   * True while the credential of a chat socket works. Each call reads the current state and reuses no earlier answer,
+   * so a revoked key stops the very next send. A failed check closes the socket.
+   */
+  private socketActive(ws: WebSocket): boolean {
+    const authContext = this.authContexts.get(ws);
+    const isActive = this.authAdapter?.isAuthContextActive;
+    if (!authContext || !isActive) return true;
+    const ok = isActive(authContext);
+    if (!ok) ws.close(CLOSE_CREDENTIAL_INVALID, "Credential no longer valid");
+    return ok;
   }
 
   close(): void {
@@ -105,6 +154,8 @@ export class WsBroker {
     this.subscriptions.clear();
     this.connectedClients.clear();
     this.authContexts.clear();
+    this.deviceContexts.clear();
+    this.authAdapter = undefined;
     this.statusSubscribers.clear();
     this.wss?.close();
     this.wss = null;
@@ -130,6 +181,8 @@ export class WsBroker {
     });
     this.relayBridges.set(ws, bridge);
     ws.on("message", (raw) => {
+      // Each client action checks the credential again, so a revoked key stops at the next message.
+      if (!this.socketActive(ws)) return;
       const text = raw.toString();
       if (bridge.handle(text)) return;
       void this.handleMessage(ws, text, authAdapter);
@@ -410,7 +463,7 @@ export class WsBroker {
   }
 
   private send(ws: WebSocket, event: WsServerMessage): void {
-    if (ws.readyState === WebSocket.OPEN) {
+    if (ws.readyState === WebSocket.OPEN && this.socketActive(ws)) {
       ws.send(JSON.stringify(event));
     }
   }

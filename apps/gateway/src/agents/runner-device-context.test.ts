@@ -22,6 +22,7 @@ import { DeviceTurns } from "../relay/device-turns.js";
 import { createFileDeviceSettingsStore, deviceChatKey } from "../relay/device-settings.js";
 
 
+const REMOTE = { name: "remote", generation: "remote-link-1" };
 const agent = AgentConfigSchema.parse({ id: "context", name: "Context", sdk: "pi", workspace: path.join(fixture.home, "workspace"), model: { provider: "anthropic", model: "claude" }, queueMode: "queue" });
 const captured: SdkRunParams[] = [];
 let script: (params: SdkRunParams) => Promise<SdkRunResult>;
@@ -63,10 +64,10 @@ it.each(["native", "buffered"])("keeps the Ask token separate from a Full run du
   const executor = new DeviceExecutor({ settings, approvals, turns });
   const fullChat = "key:web-original";
   const askChat = `session:${sessionId}`;
-  settings.setChat(deviceChatKey("remote", "context@remote", fullChat), { full: true });
-  settings.setChat(deviceChatKey("remote", "context@remote", askChat), { full: false });
-  const fullToken = turns.issue({ gateway: "remote", agentId: agent.id, chat: fullChat, page: {} });
-  const askToken = turns.issue({ gateway: "remote", agentId: agent.id, chat: askChat, page: {} });
+  settings.setChat(deviceChatKey(REMOTE, "context@remote", fullChat), { full: true });
+  settings.setChat(deviceChatKey(REMOTE, "context@remote", askChat), { full: false });
+  const fullToken = turns.issue({ gateway: REMOTE.name, generation: REMOTE.generation, agentId: agent.id, chat: fullChat, page: {} });
+  const askToken = turns.issue({ gateway: REMOTE.name, generation: REMOTE.generation, agentId: agent.id, chat: askChat, page: {} });
   let enter!: () => void;
   let release!: () => void;
   const entered = new Promise<void>(r => { enter = r; });
@@ -83,7 +84,7 @@ it.each(["native", "buffered"])("keeps the Ask token separate from a Full run du
     params.onSessionHandle?.({});
     const call = executor.execute({ type: "call", callId: "fixture", agentId: agent.id,
       toolCallId: "fixture", tool: "device_write", arguments: { path: target, content: "synthetic" },
-      turnToken: params.deviceTurnToken }, "remote", new AbortController().signal);
+      turnToken: params.deviceTurnToken }, REMOTE, new AbortController().signal);
     if (params.deviceTurnToken === askToken) await expect(call).rejects.toThrow(/refused/);
     else await call;
     return { text: "Done" };

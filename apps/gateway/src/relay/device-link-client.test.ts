@@ -7,12 +7,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AgentEventBus, DEVICE_OFFLINE_CALL_TEXT, DEVICE_PROTOCOL_VERSION, type AgentConfig, type ExtensionAgentToolContext } from "@yoplai/shared";
 import { deviceToolsExtension } from "./device-extension.js";
 import { DeviceApprovals } from "./device-approvals.js";
-import { issueTestTurn } from "./device-turn.fixture.js";
+import { AMS, issueTestTurn } from "./device-turn.fixture.js";
 import { DeviceExecutor } from "./device-exec.js";
 import { DeviceLinkManager } from "./device-link-client.js";
 import { getDeviceRegistry, resetDeviceRegistry } from "./device-registry.js";
 import { startRemoteServer, waitFor } from "./device-test-server.js";
-import { createFileDeviceSettingsStore, deviceChatKey, type DeviceSettingsStore } from "./device-settings.js";
+import { createFileDeviceSettingsStore, deviceAgentKey, deviceChatKey, type DeviceSettingsStore } from "./device-settings.js";
 import type { RemoteGateway } from "./store.js";
 
 vi.mock("../config/index.js", () => ({
@@ -64,7 +64,7 @@ beforeEach(async () => {
   approvals = new DeviceApprovals();
   resetDeviceRegistry();
   remote = await startRemoteServer(false);
-  gateways = [{ name: "ams", url: `http://127.0.0.1:${remote.port}` }];
+  gateways = [{ ...AMS, url: `http://127.0.0.1:${remote.port}` }];
 });
 afterEach(async () => {
   manager?.stop();
@@ -84,7 +84,7 @@ describe("device link: local client", () => {
     closers.push(() => fake.close());
     await new Promise<void>((resolve) => fake.once("listening", resolve));
     fake.on("connection", (socket) => socket.once("message", (raw) => hellos.push(JSON.parse(raw.toString()))));
-    gateways = [{ name: "ams", url: `http://127.0.0.1:${(fake.address() as AddressInfo).port}`, token: "tok" }];
+    gateways = [{ ...AMS, url: `http://127.0.0.1:${(fake.address() as AddressInfo).port}`, token: "tok" }];
     startManager();
     await waitFor(() => hellos.length === 1);
     expect(hellos[0]).toEqual({ type: "hello", protocolVersion: DEVICE_PROTOCOL_VERSION, deviceName: "test-laptop" });
@@ -96,7 +96,7 @@ describe("device link: local client", () => {
     closers.push(() => fake.close());
     await new Promise<void>((resolve) => fake.once("listening", resolve));
     fake.on("connection", (_socket, request) => auth.push(request.headers.authorization));
-    gateways = [{ name: "ams", url: `http://127.0.0.1:${(fake.address() as AddressInfo).port}`, token: "secret-token" }];
+    gateways = [{ ...AMS, url: `http://127.0.0.1:${(fake.address() as AddressInfo).port}`, token: "secret-token" }];
     startManager();
     await waitFor(() => auth.length === 1);
     expect(auth[0]).toBe("Bearer secret-token");
@@ -111,11 +111,35 @@ describe("device link: local client", () => {
       socket.send(JSON.stringify({ type: "hello", protocolVersion: 99 }));
       socket.on("close", (code) => closes.push(code));
     });
-    gateways = [{ name: "ams", url: `http://127.0.0.1:${(fake.address() as AddressInfo).port}` }];
+    gateways = [{ ...AMS, url: `http://127.0.0.1:${(fake.address() as AddressInfo).port}` }];
     vi.spyOn(console, "warn").mockImplementation(() => undefined);
     const started = startManager();
     await waitFor(() => closes.includes(4001));
-    expect(started.states()).toEqual([{ name: "ams", connected: false }]);
+    expect(started.states()).toEqual([{ name: "ams", connected: false, status: "connecting" }]);
+  });
+
+  it("shows an unauthorized state when the remote refuses the key at the upgrade", async () => {
+    const server = (await import("node:http")).createServer();
+    closers.push(() => server.close());
+    server.on("upgrade", (_request, socket) => socket.end("HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n"));
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    gateways = [{ ...AMS, url: `http://127.0.0.1:${(server.address() as AddressInfo).port}`, token: "dead-key" }];
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const started = startManager();
+    await waitFor(() => started.states()[0]?.status === "unauthorized");
+    expect(started.states()).toEqual([{ name: "ams", connected: false, status: "unauthorized" }]);
+  });
+
+  it("shows a replaced state when another relay of the same user took the link", async () => {
+    const fake = new WebSocketServer({ port: 0, host: "127.0.0.1" });
+    closers.push(() => fake.close());
+    await new Promise<void>((resolve) => fake.once("listening", resolve));
+    fake.on("connection", (socket) => socket.once("message", () => socket.close(4003, "Replaced")));
+    gateways = [{ ...AMS, url: `http://127.0.0.1:${(fake.address() as AddressInfo).port}` }];
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const started = startManager();
+    await waitFor(() => started.states()[0]?.status === "replaced");
+    expect(started.states()).toEqual([{ name: "ams", connected: false, status: "replaced" }]);
   });
 
   it("links to nothing while the list of gateways is empty, and links after a store change with no restart", async () => {
@@ -124,9 +148,9 @@ describe("device link: local client", () => {
     await new Promise((resolve) => setTimeout(resolve, 100));
     expect(started.states()).toEqual([]);
     expect(online()).toBe(false);
-    gateways = [{ name: "ams", url: `http://127.0.0.1:${remote?.port}` }];
+    gateways = [{ ...AMS, url: `http://127.0.0.1:${remote?.port}` }];
     await waitFor(() => online());
-    expect(started.states()).toEqual([{ name: "ams", connected: true }]);
+    expect(started.states()).toEqual([{ name: "ams", connected: true, status: "connected" }]);
     gateways = [];
     await waitFor(() => !online());
     expect(started.states()).toEqual([]);
@@ -155,7 +179,7 @@ describe("device link: local client", () => {
 
 describe("device link: calls from the remote gateway", () => {
   beforeEach(async () => {
-    settings.setChat(deviceChatKey("ams", "pom@ams", "session:s1"), { full: true });
+    settings.setChat(deviceChatKey(AMS, "pom@ams", "session:s1"), { full: true });
     startManager();
     await waitFor(() => online());
   });
@@ -202,7 +226,7 @@ describe("device link: calls from the remote gateway", () => {
       }));
     });
     manager?.stop();
-    gateways = [{ name: "ams", url: `http://127.0.0.1:${(fake.address() as AddressInfo).port}` }];
+    gateways = [{ ...AMS, url: `http://127.0.0.1:${(fake.address() as AddressInfo).port}` }];
     startManager();
     // Full mode is set for the chat of the link name "ams" only, so the write runs with no prompt.
     await waitFor(() => results.length === 1);
@@ -218,6 +242,62 @@ describe("device link: calls from the remote gateway", () => {
     await waitFor(() => results.length === 2);
     expect(results[1]).toMatchObject({ ok: false, error: expect.stringMatching(/no user is present/) });
     expect(asked).toEqual([]);
+  });
+
+  it.each([
+    ["different", "fake-bearer-new"],
+    ["equal", "fake-bearer-old"],
+  ])("gives a link that is removed and created again with %s values none of the old grants", async (_name, newToken) => {
+    const fake = new WebSocketServer({ port: 0, host: "127.0.0.1" });
+    closers.push(() => fake.close());
+    await new Promise<void>((resolve) => fake.once("listening", resolve));
+    const url = `http://127.0.0.1:${(fake.address() as AddressInfo).port}`;
+    const results: Array<Record<string, unknown>> = [];
+    const sockets: WebSocket[] = [];
+    fake.on("connection", (socket) => {
+      sockets.push(socket as unknown as WebSocket);
+      socket.on("message", (raw) => {
+        const message = JSON.parse(raw.toString()) as Record<string, unknown>;
+        if (message.type === "result") results.push(message);
+      });
+      socket.send(JSON.stringify({ type: "hello", protocolVersion: DEVICE_PROTOCOL_VERSION }));
+    });
+    const call = (socket: WebSocket, callId: string, turnToken: string | undefined) =>
+      socket.send(JSON.stringify({
+        type: "call", callId, tool: "device_write", arguments: { path: path.join(dir, `${callId}.txt`), content: "x" },
+        agentId: "pom", toolCallId: callId, turnToken,
+      }));
+    settings.setAgentFullBackground(deviceAgentKey(AMS, "pom@ams"), true);
+    manager?.stop();
+    gateways = [{ ...AMS, url, token: "fake-bearer-old" }];
+    startManager();
+    await waitFor(() => sockets.length === 1);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    call(sockets[0], "chat-old", issueTestTurn());
+    call(sockets[0], "background-old", undefined);
+    await waitFor(() => results.length === 2);
+    expect(results.map((result) => result.ok)).toEqual([true, true]);
+
+    // The same name comes back as a new link. Only its generation tells it from the old one.
+    const replacement = { ...AMS, generation: "ams-link-2" };
+    gateways = [{ ...replacement, url, token: newToken }];
+    await waitFor(() => sockets.length === 2);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    const asked: string[] = [];
+    approvals.subscribe((event) => {
+      if (event.kind !== "request") return;
+      asked.push(event.message.chat);
+      approvals.answer(event.message.approvalId, false);
+    });
+    call(sockets[1], "chat-new", issueTestTurn("session:s1", { generation: replacement.generation }));
+    call(sockets[1], "background-new", undefined);
+    await waitFor(() => results.length === 4);
+    // The chat call asks the user again, and the background call has no user to ask.
+    expect(asked).toEqual(["session:s1"]);
+    expect(results.find((result) => result.callId === "chat-new")).toMatchObject({ ok: false, error: expect.stringMatching(/refused/) });
+    expect(results.find((result) => result.callId === "background-new")).toMatchObject({ ok: false, error: expect.stringMatching(/no user is present/) });
+    expect(fs.existsSync(path.join(dir, "chat-new.txt"))).toBe(false);
+    expect(fs.existsSync(path.join(dir, "background-new.txt"))).toBe(false);
   });
 
   it("stops a running command when the run aborts", async () => {
@@ -264,8 +344,8 @@ describe("device link: a drop with a call that waits", () => {
       socket.on("message", (raw) => connection.messages.push(JSON.parse(raw.toString()) as Record<string, unknown>));
       socket.send(JSON.stringify({ type: "hello", protocolVersion: DEVICE_PROTOCOL_VERSION }));
     });
-    gateways = [{ name: "ams", url: `http://127.0.0.1:${(fake.address() as AddressInfo).port}` }];
-    settings.setChat(deviceChatKey("ams", "pom@ams", "session:s1"), { full: true });
+    gateways = [{ ...AMS, url: `http://127.0.0.1:${(fake.address() as AddressInfo).port}` }];
+    settings.setChat(deviceChatKey(AMS, "pom@ams", "session:s1"), { full: true });
     const pidFile = path.join(dir, "old.pid");
     startManager();
     await waitFor(() => connections.length === 1 && connections[0].messages.length === 1);

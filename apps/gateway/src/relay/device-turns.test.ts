@@ -5,7 +5,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { DeviceCall } from "@yoplai/shared";
 import { DeviceApprovals } from "./device-approvals.js";
 import { DeviceExecutor } from "./device-exec.js";
-import { createFileDeviceSettingsStore, deviceChatKey, type DeviceSettingsStore } from "./device-settings.js";
+import { AMS } from "./device-turn.fixture.js";
+import { createFileDeviceSettingsStore, deviceAgentKey, deviceChatKey, type DeviceSettingsStore, type LinkIdentity } from "./device-settings.js";
 import { DeviceTurns, MAX_PENDING_DEVICE_TURNS, TURN_TOKEN_TTL_MS } from "./device-turns.js";
 
 vi.mock("../config/index.js", () => ({ getAgent: () => undefined }));
@@ -18,16 +19,16 @@ let turns: DeviceTurns;
 let executor: DeviceExecutor;
 let asked: string[];
 
-const turn = (chat: string, overrides: Partial<{ gateway: string; agentId: string }> = {}) =>
-  turns.issue({ gateway: "ams", agentId: "pom", chat, page: undefined, ...overrides });
+const turn = (chat: string, overrides: Partial<{ gateway: string; generation: string; agentId: string }> = {}) =>
+  turns.issue({ gateway: AMS.name, generation: AMS.generation, agentId: "pom", chat, page: undefined, ...overrides });
 
-const write = (turnToken: string | undefined, extra: Record<string, unknown> = {}) =>
+const write = (turnToken: string | undefined, extra: Record<string, unknown> = {}, link: LinkIdentity = AMS) =>
   executor.execute(
     {
       type: "call", callId: `c-${Math.random()}`, tool: "device_write", arguments: { path: target, content: "x" },
       agentId: "pom", toolCallId: "tc", turnToken, ...extra,
     } as DeviceCall,
-    "ams",
+    link,
     new AbortController().signal
   );
 
@@ -44,7 +45,7 @@ beforeEach(() => {
     asked.push(event.message.chat);
     approvals.answer(event.message.approvalId, true);
   });
-  settings.setChat(deviceChatKey("ams", "pom@ams", "session:A"), { full: true });
+  settings.setChat(deviceChatKey(AMS, "pom@ams", "session:A"), { full: true });
 });
 afterEach(() => {
   vi.useRealTimers();
@@ -71,7 +72,7 @@ describe("device call permission: the chat of the turn token", () => {
   });
 
   it("applies the Full switch of the agent to a call with no valid token", async () => {
-    settings.setAgentFullBackground("pom@ams", true);
+    settings.setAgentFullBackground(deviceAgentKey(AMS, "pom@ams"), true);
     await write(undefined);
     expect(fs.readFileSync(target, "utf8")).toBe("x");
   });
@@ -100,28 +101,62 @@ describe("device call permission: the chat of the turn token", () => {
 });
 
 describe("device turn limits", () => {
-  it("cancels the timer and ends each turn once", () => {
-    vi.useFakeTimers();
-    const before = vi.getTimerCount();
-    const token = turns.issue({ gateway: "ams", agentId: "pom", chat: "key:main", page: undefined });
-    expect(turns.find(token)).toMatchObject({ createdAt: Date.now() });
-    expect(vi.getTimerCount()).toBe(before + 1);
+  it("ends a turn once, and a second end changes nothing", async () => {
+    const token = turn("session:A");
+    const other = turn("session:A");
     turns.end(token);
     turns.end(token);
-    expect(turns.find(token)).toBeUndefined();
-    expect(vi.getTimerCount()).toBe(before);
+    await expect(write(token)).rejects.toThrow(/no user is present/);
+    await write(other);
+    expect(asked).toEqual([]);
   });
 
-  it("removes expired turns and frees the pending limit", () => {
+  it("frees the pending limit when turns end or expire", async () => {
     vi.useFakeTimers();
-    const tokens = Array.from({ length: MAX_PENDING_DEVICE_TURNS }, () =>
-      turns.issue({ gateway: "ams", agentId: "pom", chat: "key:main", page: undefined }));
+    const tokens = Array.from({ length: MAX_PENDING_DEVICE_TURNS }, () => turn("key:main"));
+    expect(() => turn("key:main")).toThrow(/Too many pending device turns/);
+    turns.end(tokens[0]);
+    turn("key:main");
     expect(() => turn("key:main")).toThrow(/Too many pending device turns/);
     vi.advanceTimersByTime(TURN_TOKEN_TTL_MS);
-    expect(vi.getTimerCount()).toBe(0);
-    expect(tokens.every(token => turns.find(token) === undefined)).toBe(true);
-    const token = turn("key:main");
-    expect(turns.find(token)).toBeDefined();
-    turns.end(token);
+    for (const token of tokens.slice(1)) await expect(write(token)).rejects.toThrow(/no user is present/);
+    const fresh = turn("session:A");
+    await write(fresh);
+    expect(fs.readFileSync(target, "utf8")).toBe("x");
+  });
+});
+
+describe("device grants: the link that made them", () => {
+  const REPLACEMENT: LinkIdentity = { name: AMS.name, generation: "ams-link-2" };
+
+  it("gives a link that replaces the name none of the chat or background grants of the old link", async () => {
+    settings.setAgentFullBackground(deviceAgentKey(AMS, "pom@ams"), true);
+    await write(turn("session:A"));
+    await write(undefined);
+    fs.rmSync(target);
+    // The same name, agent and chat. The replacement has another generation, so the old Full grants do not apply.
+    await expect(write(undefined, {}, REPLACEMENT)).rejects.toThrow(/no user is present/);
+    await write(turn("session:A", { generation: REPLACEMENT.generation }), {}, REPLACEMENT);
+    expect(asked).toEqual(["session:A"]);
+  });
+
+  it("refuses a turn of the old link on the replacement link", async () => {
+    const oldTurn = turn("session:A");
+    await expect(write(oldTurn, {}, REPLACEMENT)).rejects.toThrow(/no user is present/);
+    expect(fs.existsSync(target)).toBe(false);
+    expect(asked).toEqual([]);
+  });
+
+  it("ignores grants in a settings file from before links had a generation", async () => {
+    fs.writeFileSync(
+      path.join(dir, "device-settings.json"),
+      JSON.stringify({
+        chats: { [JSON.stringify(["ams", "pom@ams", "session:B"])]: { full: true } },
+        agents: { "pom@ams": { fullBackground: true } },
+      })
+    );
+    await expect(write(undefined)).rejects.toThrow(/no user is present/);
+    await write(turn("session:B"));
+    expect(asked).toEqual(["session:B"]);
   });
 });

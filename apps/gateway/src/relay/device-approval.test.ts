@@ -9,7 +9,7 @@ import { AgentEventBus, type DeviceApprovalOutcome } from "@yoplai/shared";
 import type { ExtensionRuntime } from "../extensions/runtime.js";
 import { waitFor } from "./device-test-server.js";
 import { getDeviceApprovals } from "./device-approvals.js";
-import { issueTestTurn } from "./device-turn.fixture.js";
+import { AMS, issueTestTurn } from "./device-turn.fixture.js";
 import { DeviceExecutor } from "./device-exec.js";
 import { createFileDeviceSettingsStore, deviceChatKey, type DeviceSettingsStore } from "./device-settings.js";
 
@@ -25,7 +25,7 @@ vi.mock("../sessions/index.js", () => ({ getSessionEntry: vi.fn() }));
 vi.mock("../server/run-request.js", () => ({ normalizeRunRequest: vi.fn() }));
 vi.mock("../relay/state.js", () => ({
   isRelayEnabled: () => remote.enabled,
-  getLinkedGateways: () => [{ name: "ams", url: remote.url }],
+  getLinkedGateways: () => [{ ...AMS, url: remote.url }],
   // A page that sends an Origin header from "evil.example" is not trusted.
   isTrustedRequest: (origin?: string | null) => !origin || !origin.includes("evil.example"),
   resolveRemoteAgent: (agentId: string) =>
@@ -70,7 +70,7 @@ function startWrite(file: string, content = "hello", options: { chat?: string; t
       type: "call", callId: `c-${Math.random()}`, tool: "device_write", arguments: { path: file, content },
       agentId: "pom", toolCallId: "tc-1", turnToken: options.token ?? issueTestTurn(options.chat),
     },
-    "ams",
+    AMS,
     options.signal ?? new AbortController().signal
   );
 }
@@ -134,7 +134,7 @@ describe("device approval: protocol", () => {
         type: "call", callId: `c-${Math.random()}`, tool: "device_bash", arguments: { command },
         agentId: "pom", toolCallId: "tc-1", turnToken: issueTestTurn(),
       },
-      "ams",
+      AMS,
       new AbortController().signal
     );
   }
@@ -168,7 +168,7 @@ describe("device approval: protocol", () => {
   });
 
   it("runs a command of 20,001 characters in Full mode with no limit", async () => {
-    settings.setChat(deviceChatKey("ams", "pom@ams", "session:s1"), { full: true });
+    settings.setChat(deviceChatKey(AMS, "pom@ams", "session:s1"), { full: true });
     const result = await startBash(`:${"x".repeat(20_000)}; echo done`);
     expect(JSON.stringify(result.content)).toContain("done");
   });

@@ -7,7 +7,7 @@ import { WebSocket, WebSocketServer } from "ws";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AgentEventBus, DEVICE_PROTOCOL_VERSION } from "@yoplai/shared";
 import { DeviceApprovals } from "./device-approvals.js";
-import { issueTestTurn } from "./device-turn.fixture.js";
+import { AMS, issueTestTurn } from "./device-turn.fixture.js";
 import { DeviceExecutor } from "./device-exec.js";
 import { DeviceLinkManager, MAX_ACTIVE_CALLS } from "./device-link-client.js";
 import { DEVICE_MAX_MESSAGE_BYTES, getDeviceRegistry, resetDeviceRegistry } from "./device-registry.js";
@@ -185,7 +185,7 @@ describe("device link client", () => {
   function startLink(url: string, executor: Pick<DeviceExecutor, "execute">) {
     manager = new DeviceLinkManager({
       executor: executor as DeviceExecutor,
-      getGateways: () => [{ name: "ams", url }],
+      getGateways: () => [{ ...AMS, url }],
       reconnectMinMs: 20, reconnectMaxMs: 80, checkIntervalMs: 30,
     });
     manager.start();
@@ -290,7 +290,7 @@ describe("device link client", () => {
   it("fails the pending approval when the link drops", async () => {
     const approvals = new DeviceApprovals();
     const gateway = await fakeGateway(() => undefined);
-    settings.setChat(deviceChatKey("ams", "pom@ams", "session:s1"), { workspaceFolder: dir, full: false });
+    settings.setChat(deviceChatKey(AMS, "pom@ams", "session:s1"), { workspaceFolder: dir, full: false });
     const pending: string[] = [];
     approvals.subscribe((event) => {
       if (event.kind === "request") pending.push(event.message.approvalId);

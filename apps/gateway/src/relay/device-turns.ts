@@ -7,6 +7,8 @@ export const MAX_PENDING_DEVICE_TURNS = 1000;
 
 export type DeviceTurn = {
   gateway: string;
+  /** Generation of the link that carried the turn. A link that replaces it by name does not own the turn. */
+  generation: string | undefined;
   /** Remote agent ID with the gateway suffix. */
   agentId: string;
   /** Local chat name. */

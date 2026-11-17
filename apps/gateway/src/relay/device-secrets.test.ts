@@ -6,9 +6,9 @@ import { pathToFileURL } from "node:url";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { resolveHomeDir, type DeviceCall } from "@yoplai/shared";
 import { DeviceApprovals } from "./device-approvals.js";
-import { issueTestTurn } from "./device-turn.fixture.js";
+import { AMS, issueTestTurn } from "./device-turn.fixture.js";
 import { DeviceExecutor } from "./device-exec.js";
-import { createFileDeviceSettingsStore, deviceChatKey, type DeviceSettingsStore } from "./device-settings.js";
+import { createFileDeviceSettingsStore, deviceAgentKey, deviceChatKey, type DeviceSettingsStore } from "./device-settings.js";
 import { DEVICE_TOOL_DEFINITIONS } from "./device-tools.js";
 import { isSecretPath, secretReadRefusal } from "./device-secrets.js";
 
@@ -87,14 +87,14 @@ describe("device calls and secret files", () => {
   let executor: DeviceExecutor;
   let asked: Array<{ tool: string; path: string }>;
   let previousHome: string | undefined;
-  const chatKey = deviceChatKey("ams", "pom@ams", "session:s1");
+  const chatKey = deviceChatKey(AMS, "pom@ams", "session:s1");
 
   const call = (tool: string, args: unknown, overrides: Partial<DeviceCall> = {}): DeviceCall => ({
     type: "call", callId: `call-${Math.random()}`, tool, arguments: args,
     agentId: "pom", toolCallId: "tc1", turnToken: issueTestTurn(), ...overrides,
   });
   const run = (tool: string, args: unknown, overrides: Partial<DeviceCall> = {}) =>
-    executor.execute(call(tool, args, overrides), "ams", new AbortController().signal);
+    executor.execute(call(tool, args, overrides), AMS, new AbortController().signal);
   const textOf = (result: { content: unknown[] }) => (result.content[0] as { text: string }).text;
 
   beforeEach(() => {
@@ -165,7 +165,7 @@ describe("device calls and secret files", () => {
 
   it("reads a secret file in a background run with the Full switch of the agent", async () => {
     settings.setChat(chatKey, { workspaceFolder: folder, full: false });
-    settings.setAgentFullBackground("pom@ams", true);
+    settings.setAgentFullBackground(deviceAgentKey(AMS, "pom@ams"), true);
     expect(textOf(await run("device_read", { path: secret }, { turnToken: undefined }))).toBe("PRIVATE-KEY");
   });
 

@@ -1,11 +1,19 @@
 import type { MiddlewareHandler } from "hono";
 import { logger } from "hono/logger";
-import { DASHBOARD_VIEW_NAMESPACE, ownsDashboardViewPath } from "../relay/dashboard-view-paths.js";
+import {
+  DASHBOARD_VIEW_NAMESPACE,
+  LINK_NAMESPACE,
+  REMOTE_LINK_NAMESPACE,
+  ownsDashboardViewPath,
+  ownsLinkPath,
+  ownsRemoteLinkPath,
+} from "@yoplai/shared/secret-paths";
 
 const SLOW_REQUEST_MS = 500;
 const SECRET_QUERY_NAMES = new Set([
   "code",
   "state",
+  "verifier",
   "token",
   "access_token",
   "refresh_token",
@@ -76,10 +84,23 @@ function redactViewerTarget(message: string): string {
   return `${parts[1]}${DASHBOARD_VIEW_NAMESPACE}/[redacted]${parts[3]}`;
 }
 
+/**
+ * Hides the whole target of a link request on either side, because a path can hold an attempt ID or a request ID and
+ * a query can hold a verifier or a code. A rejected request is hidden in the same way.
+ */
+function redactLinkTarget(message: string): string {
+  const parts = /^(--> \S+ )([\s\S]+?)( \d{3} \S+)$/.exec(message);
+  if (!parts) return message;
+  const path = parts[2].split("?")[0];
+  if (ownsLinkPath(path)) return `${parts[1]}${LINK_NAMESPACE}/[redacted]${parts[3]}`;
+  if (ownsRemoteLinkPath(path)) return `${parts[1]}${REMOTE_LINK_NAMESPACE}/[redacted]${parts[3]}`;
+  return message;
+}
+
 export function accessLogger(): MiddlewareHandler {
   const normalLogger = logger((message) => {
     if (message.startsWith("<-- ")) return;
-    const safeMessage = redactViewerTarget(stripAnsi(message)).replace(/\/(sandbox|content|open)\/[^/?\s]+(?:\?[^\s]*)?/g, "/$1/[redacted]").replace(
+    const safeMessage = redactLinkTarget(redactViewerTarget(stripAnsi(message))).replace(/\/(sandbox|content|open)\/[^/?\s]+(?:\?[^\s]*)?/g, "/$1/[redacted]").replace(
       /(\/api\/surface-links\/pair\/|%2fapi%2fsurface-links%2fpair%2f)[A-Za-z0-9_-]+/gi,
       "$1[redacted]"
     ).replace(

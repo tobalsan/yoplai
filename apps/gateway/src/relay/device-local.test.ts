@@ -5,10 +5,10 @@ import { Hono } from "hono";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { DeviceCall } from "@yoplai/shared";
 import { DeviceApprovals } from "./device-approvals.js";
-import { issueTestTurn } from "./device-turn.fixture.js";
+import { AMS, issueTestTurn } from "./device-turn.fixture.js";
 import { DeviceExecutor } from "./device-exec.js";
 import { relayDeviceApi } from "./device-routes.js";
-import { createFileDeviceSettingsStore, deviceChatKey, type DeviceSettingsStore } from "./device-settings.js";
+import { createFileDeviceSettingsStore, deviceAgentKey, deviceChatKey, type DeviceSettingsStore } from "./device-settings.js";
 
 vi.mock("../config/index.js", () => ({ getAgent: () => undefined }));
 
@@ -19,7 +19,7 @@ let settings: DeviceSettingsStore;
 let approvals: DeviceApprovals;
 let executor: DeviceExecutor;
 let asked: string[];
-const chatKey = deviceChatKey("ams", "pom@ams", "session:s1");
+const chatKey = deviceChatKey(AMS, "pom@ams", "session:s1");
 
 function call(tool: string, args: unknown, overrides: Partial<DeviceCall> = {}): DeviceCall {
   return {
@@ -42,7 +42,7 @@ function answerApprovals(approve: boolean): void {
 }
 
 const run = (tool: string, args: unknown, overrides: Partial<DeviceCall> = {}, signal = new AbortController().signal) =>
-  executor.execute(call(tool, args, overrides), "ams", signal);
+  executor.execute(call(tool, args, overrides), AMS, signal);
 
 beforeEach(() => {
   dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "yoplai-device-")));
@@ -157,7 +157,7 @@ describe("device gate: Full mode", () => {
   });
 
   it("does not apply the Full switch of another chat", async () => {
-    settings.setChat(deviceChatKey("ams", "pom@ams", "session:other"), { full: true });
+    settings.setChat(deviceChatKey(AMS, "pom@ams", "session:other"), { full: true });
     answerApprovals(true);
     await run("device_bash", { command: "echo hi" });
     expect(asked).toEqual(["device_bash"]);
@@ -188,7 +188,7 @@ describe("device calls: arguments and refusal", () => {
   it("fails the call when the user does not answer in time", async () => {
     const short = new DeviceExecutor({ settings, approvals, approvalTimeoutMs: 30 });
     const target = path.join(outside, "w.txt");
-    await expect(short.execute(call("device_write", { path: target, content: "x" }), "ams", new AbortController().signal))
+    await expect(short.execute(call("device_write", { path: target, content: "x" }), AMS, new AbortController().signal))
       .rejects.toThrow(/did not answer within/);
     expect(fs.existsSync(target)).toBe(false);
     expect(approvals.pendingFor("pom@ams", "s1")).toEqual([]);
@@ -205,7 +205,7 @@ describe("device calls: background runs", () => {
   });
 
   it("passes each call when the agent setting is on, and only for that agent", async () => {
-    settings.setAgentFullBackground("pom@ams", true);
+    settings.setAgentFullBackground(deviceAgentKey(AMS, "pom@ams"), true);
     const target = path.join(outside, "w.txt");
     await run("device_write", { path: target, content: "x" }, { turnToken: undefined });
     expect(fs.readFileSync(target, "utf8")).toBe("x");
@@ -219,22 +219,24 @@ describe("device calls: background runs", () => {
 describe("device settings store", () => {
   it("writes the file with mode 0600", () => {
     settings.setChat(chatKey, { workspaceFolder: folder, full: true });
-    settings.setAgentFullBackground("pom@ams", true);
+    settings.setAgentFullBackground(deviceAgentKey(AMS, "pom@ams"), true);
     const file = path.join(dir, "device-settings.json");
     expect(fs.statSync(file).mode & 0o777).toBe(0o600);
     expect(createFileDeviceSettingsStore(file).getChat(chatKey)).toEqual({ workspaceFolder: folder, full: true });
   });
 
-  it("keeps the settings of two different gateway, agent, and chat triples apart", () => {
-    settings.setChat(deviceChatKey("a", "b:c", "d"), { full: true });
-    expect(settings.getChat(deviceChatKey("a:b", "c", "d")).full).toBe(false);
-    expect(settings.getChat(deviceChatKey("a", "b", "c:d")).full).toBe(false);
+  it("keeps the settings of two different link, agent, and chat tuples apart", () => {
+    const link = { name: "a", generation: "g" };
+    settings.setChat(deviceChatKey(link, "b:c", "d"), { full: true });
+    expect(settings.getChat(deviceChatKey({ name: "a:b", generation: "g" }, "c", "d")).full).toBe(false);
+    expect(settings.getChat(deviceChatKey(link, "b", "c:d")).full).toBe(false);
   });
 });
 
 describe("device settings routes", () => {
   let app: Hono;
   let enabled: boolean;
+  let linkGeneration: string;
   const request = (url: string, init?: RequestInit) => app.request(url, init);
   const put = (url: string, body: unknown, headers: Record<string, string> = {}) =>
     request(url, { method: "PUT", body: JSON.stringify(body), headers: { "content-type": "application/json", ...headers } });
@@ -242,14 +244,26 @@ describe("device settings routes", () => {
 
   beforeEach(() => {
     enabled = true;
+    linkGeneration = AMS.generation!;
     app = new Hono();
     app.use("/api/*", relayDeviceApi({
       isEnabled: () => enabled,
-      getGateways: () => [{ name: "ams", url: "http://127.0.0.1:1" }],
-      getLinkStates: () => [{ name: "ams", connected: true }],
+      getGateways: () => [{ ...AMS, generation: linkGeneration, url: "http://127.0.0.1:1" }],
+      getLinkStates: () => [{ name: "ams", connected: true, status: "connected" }],
       settings: () => settings,
     }));
     app.all("/api/*", (c) => c.json({ error: "Not found" }, 404));
+  });
+
+  it("shows a link that replaces the name with no chat or background setting of the old link", async () => {
+    const agentUrl = "/api/relay/agent-settings?agentId=pom%40ams";
+    await put(chatUrl, { full: true });
+    await put(agentUrl, { fullBackground: true });
+    expect(await (await request(chatUrl)).json()).toMatchObject({ mode: "full", full: true });
+    expect(await (await request(agentUrl)).json()).toMatchObject({ fullBackground: true });
+    linkGeneration = "ams-link-2";
+    expect(await (await request(chatUrl)).json()).toMatchObject({ mode: "ask", full: false });
+    expect(await (await request(agentUrl)).json()).toMatchObject({ fullBackground: false });
   });
 
   it("changes the mode when the user sets and removes a folder, and when the user selects Full", async () => {
@@ -291,7 +305,7 @@ describe("device settings routes", () => {
   });
 
   it("lists the device links for diagnosis", async () => {
-    expect(await (await request("/api/relay/device-links")).json()).toEqual([{ name: "ams", connected: true }]);
+    expect(await (await request("/api/relay/device-links")).json()).toEqual([{ name: "ams", connected: true, status: "connected" }]);
   });
 
   it("answers an untrusted request like an unknown route", async () => {
@@ -314,14 +328,14 @@ describe("device settings routes", () => {
     expect((await request("/api/relay/agent-settings?agentId=pom%40ams")).status).toBe(404);
     expect((await put("/api/relay/agent-settings?agentId=pom%40ams", { fullBackground: true })).status).toBe(404);
     expect(settings.getChat(chatKey).full).toBe(false);
-    expect(settings.getAgentFullBackground("pom@ams")).toBe(false);
+    expect(settings.getAgentFullBackground(deviceAgentKey(AMS, "pom@ams"))).toBe(false);
   });
 
   it("refuses to write the agent setting from an untrusted request", async () => {
     const url = "/api/relay/agent-settings?agentId=pom%40ams";
     const response = await put(url, { fullBackground: true }, { origin: "https://evil.example" });
     expect(response.status).toBe(404);
-    expect(settings.getAgentFullBackground("pom@ams")).toBe(false);
+    expect(settings.getAgentFullBackground(deviceAgentKey(AMS, "pom@ams"))).toBe(false);
   });
 
   it("reports the mode that the executor uses when the workspace folder is gone", async () => {

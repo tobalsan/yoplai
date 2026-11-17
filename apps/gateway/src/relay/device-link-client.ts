@@ -19,7 +19,13 @@ export const GATEWAY_CHECK_MS = 5000;
 /** Most running calls on one link. A call over the limit gets an error result. */
 export const MAX_ACTIVE_CALLS = 20;
 
-export type DeviceLinkState = { name: string; connected: boolean };
+/**
+ * `replaced` means another relay of the same user took this link's place. `unauthorized` means that the remote
+ * refused the key at the upgrade. Both are separate from a key that the remote still accepts but cannot reach.
+ */
+export type DeviceLinkStatus = "connecting" | "connected" | "replaced" | "unauthorized";
+
+export type DeviceLinkState = { name: string; connected: boolean; status: DeviceLinkStatus };
 
 export type DeviceLinkManagerOptions = {
   executor: DeviceExecutor;
@@ -38,6 +44,7 @@ class DeviceLinkClient {
   private delayMs: number;
   private stopped = false;
   private connected = false;
+  private status: DeviceLinkStatus = "connecting";
   /** True after a log line for a failure, until the next good connection. */
   private failureLogged = false;
 
@@ -50,6 +57,10 @@ class DeviceLinkClient {
 
   get isConnected(): boolean {
     return this.connected;
+  }
+
+  get linkStatus(): DeviceLinkStatus {
+    return this.status;
   }
 
   start(): void {
@@ -99,6 +110,7 @@ class DeviceLinkClient {
         }
         ready = true;
         this.connected = true;
+        this.status = "connected";
         this.failureLogged = false;
         this.delayMs = this.options.reconnectMinMs ?? RECONNECT_MIN_MS;
         return;
@@ -111,10 +123,16 @@ class DeviceLinkClient {
       if (message.type === "cancel") calls.get(message.callId)?.abort();
     });
     // The close event follows an error, so this handler only keeps the process alive.
-    socket.on("error", (error) => this.logFailure(error));
+    socket.on("error", (error) => {
+      // ws reports a refused upgrade as "Unexpected server response: <status>".
+      if (/Unexpected server response: (?:401|403)\b/.test(error.message)) this.status = "unauthorized";
+      this.logFailure(error);
+    });
     socket.on("close", (code) => {
       this.connected = false;
+      if (code !== DEVICE_CLOSE_REPLACED && this.status !== "unauthorized") this.status = "connecting";
       if (code === DEVICE_CLOSE_REPLACED) {
+        this.status = "replaced";
         // Another relay of the same user took the place of this link. A new link would replace it again.
         console.warn(`[relay] device link to ${this.gateway.name} was replaced by another relay of the same user. It stays closed.`);
         this.stopped = true;
@@ -141,7 +159,7 @@ class DeviceLinkClient {
       socket.send(JSON.stringify({ type: "result", callId: call.callId, ...payload }));
     };
     this.options.executor
-      .execute(call, this.gateway.name, controller.signal)
+      .execute(call, this.gateway, controller.signal)
       .then(
         (result) => send({ ok: true, content: result.content, details: result.details }),
         (error: unknown) => send({ ok: false, error: error instanceof Error ? error.message : String(error) })
@@ -187,14 +205,21 @@ export class DeviceLinkManager {
   }
 
   states(): DeviceLinkState[] {
-    return [...this.clients.entries()].map(([name, client]) => ({ name, connected: client.isConnected }));
+    return [...this.clients.entries()].map(([name, client]) => ({ name, connected: client.isConnected, status: client.linkStatus }));
   }
 
   private reconcile(): void {
     const gateways = new Map(this.options.getGateways().map((gateway) => [gateway.name, gateway]));
     for (const [name, client] of this.clients) {
       const wanted = gateways.get(name);
-      if (wanted && wanted.url === client.gateway.url && wanted.token === client.gateway.token) continue;
+      if (
+        wanted &&
+        wanted.generation === client.gateway.generation &&
+        wanted.url === client.gateway.url &&
+        wanted.token === client.gateway.token
+      ) {
+        continue;
+      }
       client.stop();
       this.clients.delete(name);
     }

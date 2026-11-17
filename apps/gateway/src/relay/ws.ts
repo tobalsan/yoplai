@@ -11,11 +11,14 @@ import type { RemoteGateway } from "./store.js";
 type PageMessage = { type?: string; agentId?: string } & Record<string, unknown>;
 
 /** `chat` is false while the link serves status messages only. */
-type RemoteLink = { socket: WebSocket; queue: string[]; chat: boolean };
+type RemoteLink = { socket: WebSocket; queue: string[]; chat: boolean; generation: string | undefined };
 
 export const CONNECT_TIMEOUT_MS = 10_000;
 export const MAX_QUEUED_MESSAGES = 20;
 export const MAX_PENDING_PAGE_TURNS = 20;
+/** A closed status link is opened again after this delay, which doubles for each failed attempt up to the maximum. */
+export const STATUS_RETRY_BASE_MS = 1_000;
+export const MAX_STATUS_RETRY_DELAY_MS = 30_000;
 
 /**
  * Carries the messages of one page socket to the remote gateways. It opens one
@@ -29,13 +32,18 @@ export class RelayWsBridge {
   /** The remote agent and local chat name of the page subscription. Device approvals for them go to the page. */
   private subscription: { agentId: string; chat: string } | undefined;
   private readonly sendLinks = new Set<RemoteLink>();
+  /** Set while the page wants status messages. A status link that closes is opened again. */
+  private statusInterest: PageMessage | undefined;
+  private readonly statusRetries = new Map<string, { attempts: number; timer?: NodeJS.Timeout }>();
+  private closed = false;
   private readonly stopApprovals: (() => void) | undefined;
 
   constructor(
     private readonly page: WebSocket,
     headers: IncomingHttpHeaders | undefined,
     private readonly dropLocalSubscription: () => void,
-    private readonly connectTimeoutMs = CONNECT_TIMEOUT_MS
+    private readonly connectTimeoutMs = CONNECT_TIMEOUT_MS,
+    private readonly statusRetryBaseMs = STATUS_RETRY_BASE_MS
   ) {
     this.trusted = isTrustedRequest(headers?.origin, [headers?.["x-forwarded-for"] ?? []].flat().join(","));
     // A page that is not trusted gets no approval request.
@@ -53,6 +61,8 @@ export class RelayWsBridge {
   }
 
   close(): void {
+    this.closed = true;
+    this.stopStatusRetries();
     this.stopApprovals?.();
     for (const link of [...this.links.values(), ...this.sendLinks]) link.socket.close();
     this.links.clear();
@@ -87,10 +97,13 @@ export class RelayWsBridge {
     if (gateways.length === 0) return false;
 
     if (message.type === "subscribeStatus") {
+      this.stopStatusRetries();
+      this.statusInterest = message;
       for (const gateway of gateways) this.sendTo(gateway, message, false);
       return false;
     }
     if (message.type === "unsubscribeStatus") {
+      this.stopStatusRetries();
       this.sendToOpenLinks(raw);
       return false;
     }
@@ -124,6 +137,7 @@ export class RelayWsBridge {
       try {
         token = getDeviceTurns().issue({
           gateway: gateway.name,
+          generation: gateway.generation,
           agentId: target.agentId,
           chat: localChatName(message),
           page: this.page,
@@ -196,7 +210,14 @@ export class RelayWsBridge {
 
   private sendTo(gateway: RemoteGateway, message: PageMessage, chat: boolean, turnToken?: string): void {
     const payload = JSON.stringify(message);
-    const existing = turnToken === undefined ? this.links.get(gateway.name) : undefined;
+    let existing = turnToken === undefined ? this.links.get(gateway.name) : undefined;
+    if (existing && existing.generation !== gateway.generation) {
+      // A link that replaced this name made the retained socket obsolete. It ends quietly, and the new link opens its own.
+      this.links.delete(gateway.name);
+      existing.chat = false;
+      existing.socket.close();
+      existing = undefined;
+    }
     if (existing) {
       existing.chat ||= chat;
       this.deliver(existing, payload);
@@ -206,13 +227,14 @@ export class RelayWsBridge {
       headers: remoteWsHeaders(gateway),
       handshakeTimeout: this.connectTimeoutMs,
     });
-    const link: RemoteLink = { socket, queue: [payload], chat };
+    const link: RemoteLink = { socket, queue: [payload], chat, generation: gateway.generation };
     if (turnToken === undefined) this.links.set(gateway.name, link);
     else {
       this.sendLinks.add(link);
     }
     let finished = false;
     socket.on("open", () => {
+      if (turnToken === undefined) this.statusRetries.delete(gateway.name);
       for (const queued of link.queue.splice(0)) socket.send(queued);
     });
     socket.on("message", (data) => {
@@ -239,7 +261,30 @@ export class RelayWsBridge {
         this.sendLinks.delete(link);
         if (!finished) this.page.close();
       } else if (link.chat) this.page.close();
+      else this.retryStatus(gateway);
     });
+  }
+
+  private stopStatusRetries(): void {
+    this.statusInterest = undefined;
+    for (const retry of this.statusRetries.values()) clearTimeout(retry.timer);
+    this.statusRetries.clear();
+  }
+
+  /** The remote gateway closed its status link, for example after a restart. Open it again, with a capped growing delay, while the page wants status. */
+  private retryStatus(gateway: RemoteGateway): void {
+    const message = this.statusInterest;
+    if (!message || this.closed || this.page.readyState !== WebSocket.OPEN) return;
+    const retry = this.statusRetries.get(gateway.name) ?? { attempts: 0 };
+    if (retry.timer) return;
+    this.statusRetries.set(gateway.name, retry);
+    retry.timer = setTimeout(() => {
+      retry.timer = undefined;
+      retry.attempts += 1;
+      const current = getLinkedGateways().find((item) => item.name === gateway.name);
+      if (!this.statusInterest || !current || this.closed || this.links.has(current.name)) return;
+      this.sendTo(current, this.statusInterest, false);
+    }, Math.min(this.statusRetryBaseMs * 2 ** retry.attempts, MAX_STATUS_RETRY_DELAY_MS));
   }
 
   private toPage(gatewayName: string, raw: string, turnToken?: string): boolean {

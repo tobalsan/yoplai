@@ -434,6 +434,73 @@ describe("desktop relay: chat relay", () => {
     }
   });
 
+  it("subscribes again to a remote status link that closed and keeps delivering to the same page", async () => {
+    await withFakeGateway("flaky", undefined, async (fake) => {
+      const ws = await openPage(localBase);
+      const statuses: WsEvent[] = [];
+      ws.on("message", (raw) => {
+        const event = JSON.parse(raw.toString()) as WsEvent;
+        if (event.type === "status" && event.agentId?.endsWith("@flaky")) statuses.push(event);
+      });
+      ws.send(JSON.stringify({ type: "subscribeStatus" }));
+      await waitFor(() => fake.socketMessages.length === 1);
+      fake.sockets[0]?.close();
+      await waitFor(() => fake.sockets.length === 2, 5000);
+      await waitFor(() => fake.socketMessages.length === 2);
+      expect(fake.socketMessages[1]).toMatchObject({ type: "subscribeStatus" });
+      fake.sockets[1]?.send(JSON.stringify({ type: "status", agentId: "pom", status: "idle" }));
+      await waitFor(() => statuses.length === 1);
+      expect(statuses[0]?.agentId).toBe("pom@flaky");
+      expect(ws.readyState).toBe(WebSocket.OPEN);
+      ws.close();
+    });
+  });
+
+  it("keeps opening a status link again after more than five failed attempts", async () => {
+    let upgrades = 0;
+    const wss = new WebSocketServer({ noServer: true });
+    const server = http.createServer();
+    server.on("upgrade", (req, socket, head) => {
+      upgrades += 1;
+      if (upgrades <= 7) socket.destroy();
+      else
+        wss.handleUpgrade(req, socket, head, (upstream) => {
+          upstream.send(JSON.stringify({ type: "status", agentId: "pom", status: "idle" }));
+        });
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    saveGateway({ name: "outage", url: `http://127.0.0.1:${(server.address() as AddressInfo).port}` });
+    const sent: string[] = [];
+    const page = { readyState: WebSocket.OPEN, send: (data: string) => sent.push(data), close: vi.fn() } as unknown as WebSocket;
+    const { RelayWsBridge } = await import("./ws.js");
+    const bridge = new RelayWsBridge(page, undefined, () => {}, 200, 5);
+    try {
+      bridge.handle(JSON.stringify({ type: "subscribeStatus" }));
+      await waitFor(() => sent.some((raw) => raw.includes("pom@outage")), 4000);
+      expect(upgrades).toBeGreaterThan(7);
+      expect(page.close).not.toHaveBeenCalled();
+    } finally {
+      bridge.close();
+      removeGateway("outage");
+      server.closeAllConnections();
+      server.close();
+    }
+  });
+
+  it("does not open a status link again after the page unsubscribes", async () => {
+    await withFakeGateway("quiet", undefined, async (fake) => {
+      const ws = await openPage(localBase);
+      ws.send(JSON.stringify({ type: "subscribeStatus" }));
+      await waitFor(() => fake.socketMessages.length === 1);
+      ws.send(JSON.stringify({ type: "unsubscribeStatus" }));
+      await waitFor(() => fake.socketMessages.length === 2);
+      fake.sockets[0]?.close();
+      await sleep(1600);
+      expect(fake.sockets).toHaveLength(1);
+      ws.close();
+    });
+  });
+
   it("sends the status message of a remote gateway with the suffix", async () => {
     const ws = await openPage(localBase);
     const status = new Promise<WsEvent>((resolve) => {
@@ -599,6 +666,45 @@ describe("desktop relay: chat relay", () => {
         };
         expect(result.items).toHaveLength(50);
         expect(result.items[0]?.sessionId).toBe("title-hit");
+      }
+    );
+  });
+
+  it("relays the remote agent IDs that the transport carries and refuses the others", async () => {
+    const supported = ["plain", "a@b", "with space", "ünï-日本", "a.b"];
+    const refused = ["a%b", "a%2Fb", "a?b", "a#b", "a/b", "a\\b", ".", "..", "a\nb"];
+    await withFakeGateway(
+      "ids",
+      (req, res) => {
+        res.setHeader("content-type", "application/json");
+        res.end(req.url === "/api/agents" ? JSON.stringify([...supported, ...refused].map((id) => ({ id, name: id }))) : "{}");
+      },
+      async (fake) => {
+        const listed = (await (await fetch(`${localBase}/api/agents`)).json()) as Array<{ id: string; gateway?: string }>;
+        expect(listed.filter((agent) => agent.gateway === "ids").map((agent) => agent.id).sort()).toEqual(
+          supported.map((id) => `${id}@ids`).sort()
+        );
+
+        for (const id of supported) {
+          fake.requests.length = 0;
+          const response = await fetch(`${localBase}/api/agents/${encodeURIComponent(`${id}@ids`)}/history?view=full&sessionKey=main`);
+          expect(response.status, id).toBe(200);
+          expect(fake.requests.map((request) => request.url), id).toEqual([
+            `/api/agents/${encodeURIComponent(id)}/history?view=full&sessionKey=main`,
+          ]);
+        }
+
+        for (const id of refused) {
+          fake.requests.length = 0;
+          const response = await fetch(`${localBase}/api/agents/${encodeURIComponent(`${id}@ids`)}/history?view=full&sessionKey=main`);
+          expect(response.status, id).toBe(404);
+          expect(fake.requests, id).toEqual([]);
+        }
+
+        // A chat message to an ID that HTTP cannot carry stays local too, so the transports agree.
+        const events = await chat(localBase, "a%b@ids", "hi");
+        expect(events.at(-1)?.type).toBe("error");
+        expect(fake.socketMessages).toEqual([]);
       }
     );
   });
@@ -903,9 +1009,8 @@ describe("desktop relay: chat relay", () => {
 
   it("names the gateway after the host of the URL by default", async () => {
     const store = createFileRemoteGatewayStore(path.join(tmpDir, "default-name.json"));
-    const gateway = await connectRemoteGateway(remoteBase, {}, store);
+    const gateway = await connectRemoteGateway(remoteBase, { token: "default-name-token" }, store);
     expect(gateway.name).toBe("127.0.0.1");
-    expect(gateway.token).toBeUndefined();
   });
 
   it("gives a clear error for a wrong token and saves nothing", async () => {
