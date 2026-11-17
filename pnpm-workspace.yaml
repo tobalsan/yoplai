@@ -12,6 +12,7 @@ allowBuilds:
   koffi: true
   protobufjs: true
   tesseract.js: true
+  electron-winstaller: false
 minimumReleaseAgeExclude:
   - '@earendil-works/pi-agent-core@0.80.6'
   - '@earendil-works/pi-ai@0.80.6'

@@ -7,9 +7,12 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "start": "node launch.mjs",
-    "postinstall": "install-electron"
+    "postinstall": "install-electron",
+    "dist": "node scripts/build-package.mjs"
   },
   "devDependencies": {
-    "electron": "^45.0.0"
+    "@electron/rebuild": "^4.2.1",
+    "electron": "^45.0.0",
+    "electron-builder": "^26.18.0"
   }
 }

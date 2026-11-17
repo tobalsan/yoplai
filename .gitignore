@@ -27,3 +27,7 @@ worker-types
 # E2E validation temp home (docs/validation_e2e.md)
 .yoplai-e2e/
 validation/
+
+# Desktop packaging output
+apps/desktop/build/
+apps/desktop/release/
