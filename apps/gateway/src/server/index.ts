@@ -23,6 +23,7 @@ import { accessLogger } from "./access-log.js";
 import { allowedCorsOrigins } from "./origins.js";
 import { relayConfigurationHttp, relayHttp } from "../relay/http.js";
 import { relayDeviceApi } from "../relay/device-routes.js";
+import { dashboardViewHttp, ownsDashboardViewPath } from "../relay/dashboard-views.js";
 import { startDeviceLinks } from "../relay/device-links.js";
 import { configureRelay } from "../relay/state.js";
 import { SKILL_IMPORT_TOKEN_PREFIX } from "../skills/import-tokens.js";
@@ -65,15 +66,14 @@ function isExtensionEnabled(
   return runtime.isEnabled(extensionId, config);
 }
 
-app.use(
-  "*",
-  cors({
-    // Reflect only known origins. `credentials: true` is incompatible with a
-    // wildcard, and the web client calls the API with `credentials: "include"`.
-    origin: (origin) => (allowedCorsOrigins().includes(origin) ? origin : null),
-    credentials: true,
-  })
-);
+const globalCors = cors({
+  // Reflect only known origins. `credentials: true` is incompatible with a
+  // wildcard, and the web client calls the API with `credentials: "include"`.
+  origin: (origin) => (allowedCorsOrigins().includes(origin) ? origin : null),
+  credentials: true,
+});
+// The dashboard viewer answers CORS itself: no CORS grant for HTML, no credentials for writes.
+app.use("*", (c, next) => (ownsDashboardViewPath(new URL(c.req.url).pathname) ? next() : globalCors(c, next)));
 app.use("*", accessLogger());
 app.route("/internal", internalTools);
 app.route("/x", createExtensionPageRoutes({
@@ -108,6 +108,9 @@ app.route(
     },
   })
 );
+// The viewer namespace answers before the extension gate and the generic relay.
+// The mount matches every path, because the ownership test also claims mixed-case and encoded spellings.
+app.use("*", dashboardViewHttp());
 const configurationRelay = relayConfigurationHttp();
 app.use("/api/*", (c, next) => {
   if (currentExtensionRuntime().isEnabled("multiUser")) return next();

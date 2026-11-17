@@ -54,6 +54,68 @@ describe("app views", () => {
     });
   });
 
+  it("keeps a remote dashboard separate from a local one with the same ID, saves its gateway, and restores it", () => {
+    createRoot((dispose) => {
+      const views = createAppViews(() => "session", () => [], undefined, { agentId: () => "maple@east", ready: () => true });
+      views.openFrame({ kind: "dashboard", id: "garden", title: "Dashboard" });
+      views.openFrame({ kind: "dashboard", id: "garden", title: "Dashboard", gateway: "east", query: "week=3" });
+      expect(views.tabs().map((tab) => tab.key)).toEqual([
+        "yoplai\nui://yoplai/dashboard\ngarden",
+        "yoplai\nui://yoplai/dashboard\neast\ngarden",
+      ]);
+      const saved = load("maple@east", "session");
+      expect(saved?.tabs.map((tab) => tab.frame)).toEqual([
+        { id: "garden", title: "Dashboard" },
+        { id: "garden", title: "Dashboard", gateway: "east", query: "week=3" },
+      ]);
+      const restored = createAppViews(() => "session", () => []);
+      restored.restore(saved!);
+      expect(restored.tabs().map((tab) => ("frame" in tab ? tab.frame : undefined))).toEqual([
+        { kind: "dashboard", id: "garden", title: "Dashboard" },
+        { kind: "dashboard", id: "garden", title: "Dashboard", gateway: "east", query: "week=3" },
+      ]);
+      dispose();
+    });
+  });
+
+  it("turns an explicit remote dashboard into the captured view of the same dashboard and keeps one tab", () => {
+    createRoot((dispose) => {
+      const [calls, setCalls] = createSignal<AppViewCall[]>([]);
+      const views = createAppViews(() => "session", calls, undefined, undefined, () => "east");
+      views.openFrame({ kind: "dashboard", id: "garden", title: "Garden", gateway: "east" });
+      const key = "yoplai\nui://yoplai/dashboard\neast\ngarden";
+      expect(views.tabs().map((tab) => tab.key)).toEqual([key]);
+      const view = { server: "yoplai", tool: "dashboard", resourceUri: "ui://yoplai/dashboard", key: "garden" };
+      setCalls([{ id: "garden-result", timestamp: 1, result: { view: { ...view, recordId: "garden-record" } } }]);
+      expect(views.frame()).toBeUndefined();
+      expect(views.tabs().map((tab) => tab.key)).toEqual([key]);
+      expect(views.panel()?.latest.id).toBe("garden-result");
+      views.open(key);
+      expect(views.tabs()).toHaveLength(1);
+      setCalls([
+        { id: "garden-result", timestamp: 1, result: { view: { ...view, recordId: "garden-record" } } },
+        { id: "garden-update", timestamp: 2, result: { view: { ...view, recordId: "garden-record-2" } } },
+      ]);
+      expect(views.tabs()).toHaveLength(1);
+      expect(views.panel()?.latest.id).toBe("garden-update");
+      dispose();
+    });
+  });
+
+  it("keeps a captured local dashboard separate from a remote one with the same ID", () => {
+    createRoot((dispose) => {
+      const view = { server: "yoplai", tool: "dashboard", resourceUri: "ui://yoplai/dashboard", key: "garden" };
+      const calls = [{ id: "r", timestamp: 1, result: { view: { ...view, recordId: "x" } } }];
+      const remote = createAppViews(() => "session", () => calls, undefined, undefined, () => "east");
+      const local = createAppViews(() => "session", () => calls);
+      remote.open("yoplai\nui://yoplai/dashboard\neast\ngarden");
+      local.open("yoplai\nui://yoplai/dashboard\ngarden");
+      expect(remote.panel()?.key).toBe("yoplai\nui://yoplai/dashboard\neast\ngarden");
+      expect(local.panel()?.key).toBe("yoplai\nui://yoplai/dashboard\ngarden");
+      dispose();
+    });
+  });
+
   it("merges saved tabs around a pre-open dashboard, keeps its active key and appends other open tabs", () => {
     createRoot((dispose) => {
       const [calls, setCalls] = createSignal([fileCall("a", "a.md"), fileCall("b", "b.md"), fileCall("c", "c.md")]);

@@ -1,5 +1,5 @@
 export type SavedAppViews = {
-  tabs: { key: string; frame?: { id: string; title: string } }[];
+  tabs: { key: string; frame?: { id: string; title: string; gateway?: string; query?: string } }[];
   active?: string;
 };
 
@@ -22,7 +22,17 @@ export function load(agentId: string, sessionId: string): SavedAppViews | undefi
       if (!isObject(tab) || typeof tab.key !== "string" || !tab.key) return;
       if (tab.frame !== undefined) {
         if (!isObject(tab.frame) || typeof tab.frame.id !== "string" || !tab.frame.id || typeof tab.frame.title !== "string") return;
-        tabs.push({ key: tab.key, frame: { id: tab.frame.id, title: tab.frame.title } });
+        const { gateway, query } = tab.frame;
+        if ((gateway !== undefined && (typeof gateway !== "string" || !gateway)) || (query !== undefined && typeof query !== "string")) return;
+        tabs.push({
+          key: tab.key,
+          frame: {
+            id: tab.frame.id,
+            title: tab.frame.title,
+            ...(gateway ? { gateway } : {}),
+            ...(gateway && query ? { query } : {}),
+          },
+        });
       } else tabs.push({ key: tab.key });
     }
     return { tabs, ...(value.active !== undefined ? { active: value.active } : {}) };

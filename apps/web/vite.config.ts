@@ -7,6 +7,14 @@ import {
   resolveConfigPath,
 } from "../../packages/shared/src/config-path.js";
 import { resolveBindHost } from "../../packages/shared/src/network.js";
+import {
+  DASHBOARD_VIEW_NAMESPACE,
+  LINK_NAMESPACE,
+  REMOTE_LINK_NAMESPACE,
+  ownsDashboardViewPath,
+  ownsRedactedPath,
+  ownsRemoteLinkPath,
+} from "../../packages/shared/src/secret-paths.js";
 
 type BindMode = "loopback" | "lan" | "tailnet";
 
@@ -136,6 +144,23 @@ const gatewayPort = readEnv("GATEWAY_PORT")
   : (gatewayConfig.port ?? 4000);
 const gatewayTarget = `http://${gatewayHost}:${gatewayPort}`;
 
+// The viewer path of a remote dashboard holds a secret snapshot handle. Vite's default
+// proxy error log prints the request URL, so the handler below replaces it
+// first. Keep this test in step with `ownsDashboardViewPath` in the gateway.
+const dashboardViewNamespace = "/api/relay/dashboard-views";
+function ownsDashboardViewUrl(url: string | undefined): boolean {
+  let value = (url ?? "").split("?")[0];
+  for (let i = 0; i < 4; i++) {
+    if (value.toLowerCase().startsWith(dashboardViewNamespace)) return true;
+    const decoded = value.replace(/%([0-9a-f]{2})/gi, (_match, hex: string) =>
+      String.fromCharCode(parseInt(hex, 16))
+    );
+    if (decoded === value) break;
+    value = decoded;
+  }
+  return false;
+}
+
 // In dev mode, always use root path (no /yoplai prefix)
 const base = tailscaleServe ? "/yoplai" : "/";
 
@@ -159,6 +184,14 @@ export default defineConfig({
         target: gatewayTarget,
         changeOrigin: true,
         xfwd: true,
+        // Vite registers its own error listener after this one, and it logs `req.url`.
+        configure: (proxy) => {
+          proxy.on("error", (_error, request) => {
+            if (ownsDashboardViewUrl(request.url)) {
+              request.url = `${dashboardViewNamespace}/[redacted]`;
+            }
+          });
+        },
       },
       "/ws": {
         target: gatewayTarget,

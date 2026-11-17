@@ -21,7 +21,7 @@ function isTrustedOrigin(origin: string | null | undefined): boolean {
 }
 
 /** The UI proxy of Vite adds the real client address to `X-Forwarded-For`. */
-function isLoopbackForwardedFor(forwardedFor: string | null | undefined): boolean {
+export function isLoopbackForwardedFor(forwardedFor: string | null | undefined): boolean {
   if (!forwardedFor) return true;
   return forwardedFor
     .split(",")

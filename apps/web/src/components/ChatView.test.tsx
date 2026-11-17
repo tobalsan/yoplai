@@ -669,13 +669,13 @@ describe("ChatView abort handling", () => {
     vi.stubGlobal("navigator", { ...navigator, clipboard: { writeText } });
     const { container, dispose } = renderView();
     await tick(); await tick();
-    callbacks.onText?.("```sh\n  echo '**raw**'\n\t<x>\n");
+    callbacks.onText?.("```sh\n  echo '**raw**'\n\t\n");
     await tick();
     callbacks.onText?.("\n```");
     const button = () => queryByRole(container, "button", { name: "Copy code" });
     await waitFor(() => expect(button()).not.toBeNull());
     button()!.click();
-    await waitFor(() => expect(writeText).toHaveBeenCalledWith("  echo '**raw**'\n\t<x>\n\n"));
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith("  echo '**raw**'\n\t\n\n"));
     expect(button()!.textContent).toContain("Copied");
     dispose();
   });
@@ -3701,6 +3701,329 @@ describe("ChatView abort handling", () => {
       await waitFor(() => expect(queryByTitle(view.container, "live-dashboard dashboard")).not.toBeNull());
       expect(!!queryByRole(view.container, "complementary")).toBe(viewport > 768);
     } finally { view.dispose(); measure.mockRestore(); }
+  });
+
+  it("opens a live dashboard result that arrives before the agent resolves as one tab of its gateway", async () => {
+    const measure = measureChatSpace();
+    routeState.agentId = "pom%40east";
+    routeState.session = "explicit-session";
+    let resolveAgent: ((agent: unknown) => void) | undefined;
+    fetchAgentMock.mockImplementation(() => new Promise((resolve) => { resolveAgent = resolve; }));
+    let subscription: SubscriptionCallbacks = {};
+    subscribeToSessionMock.mockImplementation((_agent, _key, callbacks) => { subscription = callbacks; return () => {}; });
+    const marker = { server: "yoplai", tool: "dashboard", resourceUri: "ui://yoplai/dashboard", key: "garden" };
+    fetchFullHistoryMock.mockResolvedValue({ sessionId: "explicit-session", isStreaming: false, activeTurn: null, messages: [
+      { role: "assistant", timestamp: 1, content: [{ type: "toolCall", id: "first", name: "dashboard_update", arguments: {}, viewCall: true, view: marker }] },
+      { role: "toolResult", timestamp: 2, toolCallId: "first", toolName: "dashboard_update", content: [{ type: "text", text: "Updated" }], view: { ...marker, recordId: "first-record" } },
+    ] });
+    loadMcpAppDataMock.mockImplementation(async (_agent, _session, id) => ({ args: {}, result: { content: [], structuredContent: { id: "garden", title: id } } }));
+    const view = renderView();
+    try {
+      await waitFor(() => expect(fetchAgentMock).toHaveBeenCalled());
+      await waitFor(() => expect(subscribeToSessionMock).toHaveBeenCalled());
+      subscription.onToolCall?.("first", "dashboard_update", {}, undefined, marker);
+      subscription.onToolResult?.("first", "dashboard_update", "Updated", false, undefined, undefined, { ...marker, recordId: "first-record" });
+      await tick();
+      expect(queryByRole(view.container, "complementary")).toBeNull();
+      resolveAgent!({ id: "pom@east", name: "Pom (east)", gateway: "east", model: { provider: "openai", model: "gpt-5" }, queueMode: "queue" });
+      await waitFor(() => expect(queryByRole(view.container, "complementary")).not.toBeNull());
+      subscription.onToolCall?.("second", "dashboard_update", {}, undefined, marker);
+      subscription.onToolResult?.("second", "dashboard_update", "Updated", false, undefined, undefined, { ...marker, recordId: "second-record" });
+      await waitFor(() => expect(queryByRole(view.container, "complementary")!.querySelector("strong")?.textContent).toBe("second"));
+      const panels = queryAllByRole(view.container, "tabpanel", { hidden: true });
+      expect(panels).toHaveLength(1);
+      expect(decodeURIComponent(panels[0].id)).toContain("east\ngarden");
+    } finally { view.dispose(); measure.mockRestore(); }
+  });
+
+  it("opens every distinct live dashboard received before the agent resolves, in order, with the last received selected, repeats reusing a tab", async () => {
+    const measure = measureChatSpace();
+    routeState.agentId = "pom%40east";
+    routeState.session = "explicit-session";
+    let resolveAgent: ((agent: unknown) => void) | undefined;
+    fetchAgentMock.mockImplementation(() => new Promise((resolve) => { resolveAgent = resolve; }));
+    let subscription: SubscriptionCallbacks = {};
+    subscribeToSessionMock.mockImplementation((_agent, _key, callbacks) => { subscription = callbacks; return () => {}; });
+    const marker = { server: "yoplai", tool: "dashboard", resourceUri: "ui://yoplai/dashboard" };
+    fetchFullHistoryMock.mockResolvedValue({ sessionId: "explicit-session", isStreaming: false, activeTurn: null, messages: ["garden", "weather", "garden"].flatMap((id, index) => [
+      { role: "assistant", timestamp: index * 2 + 1, content: [{ type: "toolCall", id: `result-${index}`, name: "dashboard_update", arguments: {}, viewCall: true, view: marker }] },
+      { role: "toolResult", timestamp: index * 2 + 2, toolCallId: `result-${index}`, toolName: "dashboard_update", content: [{ type: "text", text: "Updated" }], view: { ...marker, key: id, recordId: `result-${index}-record` } },
+    ]) });
+    loadMcpAppDataMock.mockImplementation(async (_agent, _session, id) => ({ args: {}, result: { content: [], structuredContent: { id, title: id } } }));
+    const view = renderView();
+    try {
+      await waitFor(() => expect(subscribeToSessionMock).toHaveBeenCalled());
+      let n = 0;
+      for (const id of ["garden", "weather", "garden"]) {
+        const call = `result-${n++}`;
+        subscription.onToolCall?.(call, "dashboard_update", {}, undefined, marker);
+        subscription.onToolResult?.(call, "dashboard_update", "Updated", false, undefined, undefined, { ...marker, key: id, recordId: `${call}-record` });
+      }
+      await tick();
+      expect(queryByRole(view.container, "complementary")).toBeNull();
+      resolveAgent!({ id: "pom@east", name: "Pom (east)", gateway: "east", model: { provider: "openai", model: "gpt-5" }, queueMode: "queue" });
+      await waitFor(() => expect(queryAllByRole(view.container, "tab")).toHaveLength(2));
+      const tabs = queryAllByRole(view.container, "tab");
+      expect(tabs.map((tab) => decodeURIComponent(tab.id).split("-tab-")[1])).toEqual(["yoplai\nui://yoplai/dashboard\neast\ngarden", "yoplai\nui://yoplai/dashboard\neast\nweather"]);
+      expect(tabs.map((tab) => tab.getAttribute("aria-selected"))).toEqual(["true", "false"]);
+    } finally { view.dispose(); measure.mockRestore(); }
+  });
+
+  it("opens a live dashboard whose run finished before the agent resolved once history restores it", async () => {
+    const measure = measureChatSpace();
+    routeState.agentId = "pom%40east";
+    routeState.session = "explicit-session";
+    let resolveAgent: ((agent: unknown) => void) | undefined;
+    fetchAgentMock.mockImplementation(() => new Promise((resolve) => { resolveAgent = resolve; }));
+    let resolveHistory: ((history: unknown) => void) | undefined;
+    fetchFullHistoryMock.mockImplementation(() => new Promise((resolve) => { resolveHistory = resolve; }));
+    let subscription: SubscriptionCallbacks = {};
+    subscribeToSessionMock.mockImplementation((_agent, _key, callbacks) => { subscription = callbacks; return () => {}; });
+    loadMcpAppDataMock.mockImplementation(async (_agent, _session, id) => ({ args: {}, result: { content: [], structuredContent: { id: "garden", title: id } } }));
+    const marker = { server: "yoplai", tool: "dashboard", resourceUri: "ui://yoplai/dashboard" };
+    const reference = { ...marker, key: "garden", recordId: "done-record" };
+    const view = renderView();
+    try {
+      await waitFor(() => expect(subscribeToSessionMock).toHaveBeenCalled());
+      subscription.onToolCall?.("done", "dashboard_update", {}, undefined, marker);
+      subscription.onToolResult?.("done", "dashboard_update", "Updated", false, undefined, undefined, reference);
+      subscription.onDone?.();
+      await tick();
+      resolveAgent!({ id: "pom@east", name: "Pom (east)", gateway: "east", model: { provider: "openai", model: "gpt-5" }, queueMode: "queue" });
+      await tick();
+      await tick();
+      expect(queryByRole(view.container, "complementary")).toBeNull();
+      await waitFor(() => expect(resolveHistory).toBeDefined());
+      resolveHistory!({ sessionId: "explicit-session", isStreaming: false, activeTurn: null, messages: [
+        { role: "assistant", timestamp: 1, content: [{ type: "toolCall", id: "done", name: "dashboard_update", arguments: {}, viewCall: true, view: marker }] },
+        { role: "toolResult", timestamp: 2, toolCallId: "done", toolName: "dashboard_update", content: [{ type: "text", text: "Updated" }], view: reference },
+      ] });
+      await waitFor(() => expect(queryByRole(view.container, "complementary")).not.toBeNull());
+      const panels = queryAllByRole(view.container, "tabpanel", { hidden: true });
+      expect(panels).toHaveLength(1);
+      expect(decodeURIComponent(panels[0].id)).toContain("east\ngarden");
+    } finally { view.dispose(); measure.mockRestore(); }
+  });
+
+  it("opens live dashboards received while the agent and history load in arrival order, with the newest selected", async () => {
+    const measure = measureChatSpace();
+    routeState.agentId = "pom%40east";
+    routeState.session = "explicit-session";
+    let resolveAgent: ((agent: unknown) => void) | undefined;
+    fetchAgentMock.mockImplementation(() => new Promise((resolve) => { resolveAgent = resolve; }));
+    let resolveHistory: ((history: unknown) => void) | undefined;
+    fetchFullHistoryMock.mockImplementation(() => new Promise((resolve) => { resolveHistory = resolve; }));
+    let subscription: SubscriptionCallbacks = {};
+    subscribeToSessionMock.mockImplementation((_agent, _key, callbacks) => { subscription = callbacks; return () => {}; });
+    loadMcpAppDataMock.mockImplementation(async (_agent, _session, id) => ({ args: {}, result: { content: [], structuredContent: { id, title: id } } }));
+    const marker = { server: "yoplai", tool: "dashboard", resourceUri: "ui://yoplai/dashboard" };
+    const view = renderView();
+    try {
+      await waitFor(() => expect(subscribeToSessionMock).toHaveBeenCalled());
+      subscription.onToolCall?.("garden-call", "dashboard_update", {}, undefined, marker);
+      subscription.onToolResult?.("garden-call", "dashboard_update", "Updated", false, undefined, undefined, { ...marker, key: "garden", recordId: "garden-record" });
+      subscription.onDone?.();
+      await tick();
+      subscription.onToolCall?.("weather-call", "dashboard_update", {}, undefined, marker);
+      subscription.onToolResult?.("weather-call", "dashboard_update", "Updated", false, undefined, undefined, { ...marker, key: "weather", recordId: "weather-record" });
+      await tick();
+      resolveAgent!({ id: "pom@east", name: "Pom (east)", gateway: "east", model: { provider: "openai", model: "gpt-5" }, queueMode: "queue" });
+      await tick();
+      await tick();
+      expect(queryByRole(view.container, "complementary")).toBeNull();
+      await waitFor(() => expect(resolveHistory).toBeDefined());
+      resolveHistory!({ sessionId: "explicit-session", isStreaming: false, activeTurn: null, messages: ["garden", "weather"].flatMap((id, index) => [
+        { role: "assistant", timestamp: index * 2 + 1, content: [{ type: "toolCall", id: `${id}-call`, name: "dashboard_update", arguments: {}, viewCall: true, view: marker }] },
+        { role: "toolResult", timestamp: index * 2 + 2, toolCallId: `${id}-call`, toolName: "dashboard_update", content: [{ type: "text", text: "Updated" }], view: { ...marker, key: id, recordId: `${id}-record` } },
+      ]) });
+      await waitFor(() => expect(queryAllByRole(view.container, "tab")).toHaveLength(2));
+      const tabs = queryAllByRole(view.container, "tab");
+      expect(tabs.map((tab) => decodeURIComponent(tab.id).split("-tab-")[1])).toEqual(["yoplai\nui://yoplai/dashboard\neast\ngarden", "yoplai\nui://yoplai/dashboard\neast\nweather"]);
+      expect(tabs.map((tab) => tab.getAttribute("aria-selected"))).toEqual(["false", "true"]);
+    } finally { view.dispose(); measure.mockRestore(); }
+  });
+
+  // The first history request can return a snapshot taken before a live result: the conversation loses the
+  // result until the run ends and the history is read again.
+  function staleHistoryRun(pendingAgent?: Promise<unknown>) {
+    const measure = measureChatSpace();
+    routeState.agentId = "pom%40east";
+    routeState.session = "explicit-session";
+    const agent = { id: "pom@east", name: "Pom (east)", gateway: "east", model: { provider: "openai", model: "gpt-5" }, queueMode: "queue" };
+    fetchAgentMock.mockImplementation(async () => pendingAgent ?? agent);
+    const histories: ((history: unknown) => void)[] = [];
+    fetchFullHistoryMock.mockImplementation(() => new Promise((resolve) => { histories.push(resolve); }));
+    let subscription: SubscriptionCallbacks = {};
+    subscribeToSessionMock.mockImplementation((_agent, _key, callbacks) => { subscription = callbacks; return () => {}; });
+    loadMcpAppDataMock.mockImplementation(async (_agent, _session, id) => ({ args: {}, result: { content: [], structuredContent: { id, title: id } } }));
+    const marker = { server: "yoplai", tool: "dashboard", resourceUri: "ui://yoplai/dashboard" };
+    const view = renderView();
+    return {
+      view,
+      agent,
+      histories,
+      // The run as the gateway holds it once these results arrived: an active turn, or the saved history when it is over.
+      current(ids: string[], finished: boolean) {
+        return finished ? this.persisted(ids) : { ...this.active, activeTurn: { ...this.active.activeTurn,
+          toolCalls: ids.map((id) => ({ id: `${id}-call`, name: "dashboard_update", arguments: {}, status: "done", view: marker })),
+          toolResults: ids.map((id) => ({ id: `${id}-call`, name: "dashboard_update", content: "Updated", isError: false, view: { ...marker, key: id, recordId: `${id}-record` } })) } };
+      },
+      idle: { sessionId: "explicit-session", isStreaming: false, activeTurn: null, messages: [] },
+      active: { sessionId: "explicit-session", isStreaming: true, messages: [],
+        activeTurn: { userText: "Update", userTimestamp: 1, startedAt: 1, thinking: "", text: "", toolCalls: [], toolResults: [] } },
+      persisted: (ids: string[]) => ({ sessionId: "explicit-session", isStreaming: false, activeTurn: null, messages: ids.flatMap((id, index) => [
+        { role: "assistant", timestamp: index * 2 + 1, content: [{ type: "toolCall", id: `${id}-call`, name: "dashboard_update", arguments: {}, viewCall: true, view: marker }] },
+        { role: "toolResult", timestamp: index * 2 + 2, toolCallId: `${id}-call`, toolName: "dashboard_update", content: [{ type: "text", text: "Updated" }], view: { ...marker, key: id, recordId: `${id}-record` } },
+      ]) }),
+      async result(id: string) {
+        subscription.onToolCall?.(`${id}-call`, "dashboard_update", {}, undefined, marker);
+        subscription.onToolResult?.(`${id}-call`, "dashboard_update", "Updated", false, undefined, undefined, { ...marker, key: id, recordId: `${id}-record` });
+        await tick();
+      },
+      async done() { subscription.onDone?.(); await tick(); },
+      async historyUpdated() { subscription.onHistoryUpdated?.(); await tick(); },
+      async started() {
+        await waitFor(() => expect(subscribeToSessionMock).toHaveBeenCalled());
+        await waitFor(() => expect(histories).toHaveLength(1));
+        await waitFor(() => expect(view.container.textContent).toContain("Pom (east)"));
+      },
+      end() { view.dispose(); measure.mockRestore(); },
+    };
+  }
+
+  it.each([
+    ["an idle snapshot", "idle", false],
+    ["an active snapshot without the call", "active", false],
+    ["an idle snapshot that returns after the run finished", "idle", true],
+  ] as const)("opens a live dashboard once the history holds it, after %s taken before its result dropped it", async (_name, snapshot, doneFirst) => {
+    const run = staleHistoryRun();
+    try {
+      await run.started();
+      await run.result("garden");
+      if (doneFirst) await run.done();
+      run.histories[0](run[snapshot]);
+      await tick();
+      if (!doneFirst) await run.done();
+      await run.historyUpdated();
+      expect(run.histories).toHaveLength(2);
+      // The fresh history shows the persisted result again: its data is read once more.
+      const loads = () => loadMcpAppDataMock.mock.calls.filter((call) => call[2] === "garden-call").length;
+      const before = loads();
+      run.histories[1](run.persisted(["garden"]));
+      await waitFor(() => expect(loads()).toBeGreaterThan(before));
+      await waitFor(() => expect(queryByRole(run.view.container, "complementary")).not.toBeNull());
+      const panels = queryAllByRole(run.view.container, "tabpanel", { hidden: true });
+      expect(panels).toHaveLength(1);
+      expect(decodeURIComponent(panels[0].id)).toContain("east\ngarden");
+    } finally { run.end(); }
+  });
+
+  it("keeps arrival order when a history snapshot drops the first of two live dashboards", async () => {
+    const run = staleHistoryRun();
+    try {
+      await run.started();
+      await run.result("garden");
+      run.histories[0](run.idle);
+      await tick();
+      await run.result("weather");
+      await run.done();
+      await run.historyUpdated();
+      expect(run.histories).toHaveLength(2);
+      run.histories[1](run.persisted(["garden", "weather"]));
+      await waitFor(() => expect(queryAllByRole(run.view.container, "tab")).toHaveLength(2));
+      const tabs = queryAllByRole(run.view.container, "tab");
+      expect(tabs.map((tab) => decodeURIComponent(tab.id).split("-tab-")[1])).toEqual(["yoplai\nui://yoplai/dashboard\neast\ngarden", "yoplai\nui://yoplai/dashboard\neast\nweather"]);
+      expect(tabs.map((tab) => tab.getAttribute("aria-selected"))).toEqual(["false", "true"]);
+    } finally { run.end(); }
+  });
+
+  it("opens a later live dashboard when the fresh history leaves the first one out of its page", async () => {
+    const run = staleHistoryRun();
+    try {
+      await run.started();
+      await run.result("garden");
+      run.histories[0](run.idle);
+      await tick();
+      await run.result("weather");
+      await run.done();
+      await run.historyUpdated();
+      await waitFor(() => expect(run.histories).toHaveLength(2));
+      run.histories[1](run.persisted(["weather"]));
+      await waitFor(() => expect(queryByRole(run.view.container, "complementary")).not.toBeNull());
+      const panels = queryAllByRole(run.view.container, "tabpanel", { hidden: true });
+      expect(panels).toHaveLength(1);
+      expect(decodeURIComponent(panels[0].id)).toContain("east\nweather");
+    } finally { run.end(); }
+  });
+
+  it.each(["idle", "active"] as const)("keeps the fresh transcript and no Stop button when a superseded first history response returns %s", async (snapshot) => {
+    const run = staleHistoryRun();
+    try {
+      await run.started();
+      await run.result("garden");
+      await run.done();
+      await run.historyUpdated();
+      await waitFor(() => expect(run.histories).toHaveLength(2));
+      const fresh = run.persisted(["garden"]);
+      run.histories[1]({ ...fresh, messages: [...fresh.messages, { role: "assistant", timestamp: 9, content: [{ type: "text", text: "Garden dashboard is ready" }] }] });
+      await waitFor(() => expect(run.view.container.textContent).toContain("Garden dashboard is ready"));
+      run.histories[0](run[snapshot]);
+      await tick();
+      await tick();
+      expect(run.view.container.textContent).toContain("Garden dashboard is ready");
+      expect(queryByRole(run.view.container, "button", { name: "Stop agent" })).toBeNull();
+    } finally { run.end(); }
+  });
+
+  // Every order of: agent resolved (A), first history response (H0), garden result (G), weather result (W), run done (D),
+  // history_updated (U) and the response to its history request (H1). The first history request starts once the agent
+  // resolves. Its response is a stale snapshot (idle, or active without the calls) or holds what arrived before it.
+  const liveOrders: [string, "idle" | "active" | "current"][] = [];
+  for (const run of [["G", "D", "U", "H1"], ["G", "W", "D", "U", "H1"], ["G", "D", "W", "U", "H1"]]) {
+    for (let a = 0; a <= run.length; a++) for (let h = a + 1; h <= run.length + 1; h++) {
+      const order = [...run];
+      order.splice(a, 0, "A");
+      order.splice(h, 0, "H0");
+      for (const snapshot of ["idle", "active", "current"] as const) liveOrders.push([order.join(" "), snapshot]);
+    }
+  }
+
+  it.each(liveOrders)("opens live dashboards in arrival order with the last one selected (%s, %s first history)", async (order, snapshot) => {
+    let resolveAgent: ((agent: unknown) => void) | undefined;
+    const run = staleHistoryRun(new Promise((resolve) => { resolveAgent = resolve; }));
+    const events = order.split(" ");
+    const views = events.includes("W") ? ["garden", "weather"] : ["garden"];
+    // A history_updated that precedes the agent sends its history request before the first load does.
+    const refetch = events.indexOf("U") < events.indexOf("A") ? 0 : 1;
+    const seen: string[] = [];
+    let finished = false;
+    try {
+      await waitFor(() => expect(subscribeToSessionMock).toHaveBeenCalled());
+      for (const event of events) {
+        if (event === "A") { resolveAgent!(run.agent); await tick(); }
+        else if (event === "G" || event === "W") { seen.push(views[seen.length]); await run.result(seen[seen.length - 1]); }
+        else if (event === "D") { finished = true; await run.done(); }
+        else if (event === "U") await run.historyUpdated();
+        else {
+          const request = event === "H1" ? refetch : 1 - refetch;
+          await waitFor(() => expect(run.histories.length).toBeGreaterThan(request));
+          // A first load that starts after history_updated is taken after every result, so it holds them.
+          run.histories[request](event === "H1" ? run.persisted(views) : snapshot === "current" || refetch === 0 ? run.current(seen, finished) : run[snapshot]);
+          await tick();
+        }
+      }
+      if (views.length === 1) {
+        await waitFor(() => expect(queryByRole(run.view.container, "complementary")).not.toBeNull());
+        const panels = queryAllByRole(run.view.container, "tabpanel", { hidden: true });
+        expect(panels).toHaveLength(1);
+        expect(decodeURIComponent(panels[0].id)).toContain("east\ngarden");
+      } else {
+        await waitFor(() => expect(queryAllByRole(run.view.container, "tab")).toHaveLength(2));
+        const tabs = queryAllByRole(run.view.container, "tab");
+        expect(tabs.map((tab) => decodeURIComponent(tab.id).split("-tab-")[1])).toEqual(["yoplai\nui://yoplai/dashboard\neast\ngarden", "yoplai\nui://yoplai/dashboard\neast\nweather"]);
+        expect(tabs.map((tab) => tab.getAttribute("aria-selected"))).toEqual(["false", "true"]);
+      }
+    } finally { run.end(); }
   });
 
   it.each(["failure", "timeout"])("keeps chat progressing and the last dashboard visible after a data %s", async (failure) => {

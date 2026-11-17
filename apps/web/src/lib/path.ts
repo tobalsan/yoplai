@@ -7,6 +7,11 @@ export function stripBase(pathname: string): string {
   return pathname;
 }
 
+/** Prefixes an app route with the deployment base path. */
+export function withBase(pathname: string): string {
+  return `${basePath}${pathname}`;
+}
+
 /** Agent and session ids addressed by a `/chat/:agentId?session=…` URL. */
 export function chatRouteSession(pathname: string, search: string): { agentId?: string; sessionId?: string } {
   const match = stripBase(pathname).match(/^\/chat\/([^/?]+)/);

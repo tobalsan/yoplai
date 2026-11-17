@@ -84,6 +84,11 @@
       "development": "./src/agent-id-wire.ts",
       "import": "./dist/agent-id-wire.js",
       "types": "./dist/agent-id-wire.d.ts"
+    },
+    "./secret-paths": {
+      "development": "./src/secret-paths.ts",
+      "import": "./dist/secret-paths.js",
+      "types": "./dist/secret-paths.d.ts"
     }
   },
   "scripts": {

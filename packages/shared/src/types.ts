@@ -2091,6 +2091,15 @@ export const CapabilitiesResponseSchema = z.object({
     .optional(),
   forkedAgents: z.boolean().optional().default(false),
   enableCronMonitoring: z.boolean().optional(),
+  /** The remote dashboard embed contract. A gateway without it cannot serve remote viewers. */
+  dashboardEmbed: z
+    .object({
+      version: z.number(),
+      assetVersion: z.string(),
+      policyVersion: z.number(),
+      enabled: z.boolean(),
+    })
+    .optional(),
   home: z.string().optional(),
   user: CapabilitiesUserSchema.optional(),
   branding: z

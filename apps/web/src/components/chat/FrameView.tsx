@@ -5,15 +5,35 @@ import type { DashboardFrame } from "./appViews";
 import { DashboardAnnotationsContext } from "./dashboardAnnotations";
 import { ExtensionFrameViewSchema, isExtensionPageUrl, type ExtensionFrameView } from "@yoplai/shared/types";
 import frameViewStyles from "./FrameView.css?inline";
+import { RemoteFrameView } from "./RemoteFrameView";
 
 type FrameTarget = DashboardFrame | (ExtensionFrameView & { kind: "extension"; extensionId: string });
 
-export function FrameView(props: {
+export type FrameViewProps = {
   target: FrameTarget;
   mode: "inline" | "panel";
   onExpand?: () => void;
   onCollapse?: () => void;
-}) {
+  /** The frame fills a public route of its own. A remote frame then offers Chat. */
+  standalone?: boolean;
+  /** A remote dashboard link of the same gateway. Without it, the frame shows the new dashboard itself. */
+  onNavigate?: (next: { id: string; query: string }) => void;
+};
+
+/** A dashboard with a `gateway` comes from a linked remote gateway and goes through the trusted host. */
+export function FrameView(props: FrameViewProps) {
+  const remote = () => {
+    const target = props.target;
+    return target.kind === "dashboard" && target.gateway ? target : undefined;
+  };
+  return (
+    <Show when={remote()} fallback={<LocalFrameView {...props} />}>
+      {(target) => <RemoteFrameView {...props} target={target()} />}
+    </Show>
+  );
+}
+
+function LocalFrameView(props: FrameViewProps) {
   let frame: HTMLIFrameElement | undefined;
   const annotation = useContext(DashboardAnnotationsContext)?.frame(() => props.target.kind === "dashboard" ? frame : undefined);
   const url = () => props.target.kind === "dashboard" ? `/d/${encodeURIComponent(props.target.id)}` : props.target.url;
@@ -90,6 +110,15 @@ export function FrameView(props: {
 export function CapturedFrameView(props: {
   kind: FrameTarget["kind"];
   agentId: string;
+  /**
+   * The linked gateway of the locally resolved chat agent. It is the only source of the
+   * gateway: a captured result and the renderer never choose it, and an ID suffix never implies it.
+   */
+  gateway?: string;
+  /** The chat agent is not resolved yet, so the frame cannot choose between a local and a remote host. */
+  gatewayPending?: boolean;
+  /** The query the user chose for a remote dashboard. A captured result never supplies it. */
+  query?: string;
   sessionId: string;
   callId: () => string;
   mode: "inline" | "panel";
@@ -130,7 +159,10 @@ export function CapturedFrameView(props: {
           if (typeof extensionId !== "string" || !isExtensionPageUrl(frame.url, extensionId)) throw new Error("Invalid extension frame");
           setTarget({ ...frame, kind: "extension", extensionId });
         } else {
-          setTarget({ ...(data.result.structuredContent as Omit<DashboardFrame, "kind">), kind: "dashboard" });
+          // Only the dashboard ID and title come from the result. Other fields, such as a gateway or query, never reach the target.
+          const content = data.result.structuredContent as { id?: unknown; title?: unknown } | undefined;
+          if (typeof content?.id !== "string" || !content.id) throw new Error("View update unavailable");
+          setTarget({ kind: "dashboard", id: content.id, title: typeof content.title === "string" ? content.title : "", revision: id });
         }
         props.onShown?.(id);
         if (!primed()) setPrimed(true);
@@ -147,9 +179,14 @@ export function CapturedFrameView(props: {
       controller.abort();
     });
   });
+  const frame = createMemo<FrameTarget | undefined>(() => {
+    const current = target();
+    if (!current || props.gatewayPending) return undefined;
+    return props.gateway && current.kind === "dashboard" ? { ...current, gateway: props.gateway, ...(props.query !== undefined ? { query: props.query } : {}) } : current;
+  });
   return (
     <Show
-      when={target()}
+      when={frame()}
       fallback={
         <p role="status">
           {failed() ? `${props.kind === "dashboard" ? "Dashboard" : "View"} unavailable` : `Loading ${props.kind === "dashboard" ? "dashboard" : "view"}…`}

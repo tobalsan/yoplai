@@ -39,7 +39,24 @@ export function chatAppViewCalls(session: ChatTranscriptSession, mode: HistoryVi
     : [])];
 }
 
-export type DashboardFrame = { kind: "dashboard"; id: string; title: string };
+/** A dashboard of a linked remote gateway carries its `gateway` name, so the host prepares a fresh view for it. */
+export type DashboardFrame = {
+  kind: "dashboard";
+  id: string;
+  title: string;
+  gateway?: string;
+  query?: string;
+  /** The captured call that produced this frame. A new one makes a remote host prepare a fresh view. It is never saved. */
+  revision?: string;
+};
+function savedFrame(frame: DashboardFrame): NonNullable<SavedAppViews["tabs"][number]["frame"]> {
+  return {
+    id: frame.id,
+    title: frame.title,
+    ...(frame.gateway ? { gateway: frame.gateway } : {}),
+    ...(frame.gateway && frame.query ? { query: frame.query } : {}),
+  };
+}
 export type AppViewTab = AppView | { key: string; frame: DashboardFrame };
 
 export type AppViews = ReturnType<typeof createAppViews>;
@@ -49,7 +66,24 @@ export function viewKey(view: Pick<McpAppViewReference, "server" | "resourceUri"
   return view.server + "\n" + view.resourceUri + (key !== undefined ? "\n" + key : "");
 }
 
-export function createAppViews(sessionId: Accessor<string | null | undefined>, calls: Accessor<AppViewCall[]>, chatScope?: Accessor<string>, persistence?: { agentId: Accessor<string>; ready: Accessor<boolean> }) {
+const DASHBOARD_VIEW = { server: "yoplai", resourceUri: "ui://yoplai/dashboard" };
+
+/** The tab key of a dashboard. A remote one is qualified by its gateway, so it never meets a local one with the same ID. */
+export function dashboardKey(id: string, gateway?: string): string {
+  return viewKey({ ...DASHBOARD_VIEW, key: gateway ? `${gateway}\n${id}` : id });
+}
+
+/**
+ * The tab key of a captured view. The capture carries the raw dashboard ID. The gateway comes from the locally
+ * resolved chat agent, never from the capture, so a captured dashboard and an explicit frame share one key.
+ */
+export function appViewKey(view: Pick<McpAppViewReference, "server" | "resourceUri" | "file" | "key">, gateway?: string): string {
+  return view.server === DASHBOARD_VIEW.server && view.resourceUri === DASHBOARD_VIEW.resourceUri && view.key !== undefined
+    ? dashboardKey(view.key, gateway)
+    : viewKey(view);
+}
+
+export function createAppViews(sessionId: Accessor<string | null | undefined>, calls: Accessor<AppViewCall[]>, chatScope?: Accessor<string>, persistence?: { agentId: Accessor<string>; ready: Accessor<boolean> }, gateway?: Accessor<string | undefined>) {
   const source = createMemo(calls);
   const [shown, setShown] = createSignal(new Map<string, AppViewCall>());
   const historyIds = createMemo(() => new Set(source().filter((call) => call.history).map((call) => call.id)));
@@ -63,7 +97,7 @@ export function createAppViews(sessionId: Accessor<string | null | undefined>, c
     for (const call of unique.values()) {
       const ref = call.result?.view ?? call.view;
       if (!ref) continue;
-      const key = viewKey(ref);
+      const key = appViewKey(ref, gateway?.());
       const group = groups.get(key) ?? [];
       group.push(call);
       groups.set(key, group);
@@ -83,6 +117,8 @@ export function createAppViews(sessionId: Accessor<string | null | undefined>, c
     session: string | null | undefined;
     tab: AppViewTab;
     order: AppViewCall[];
+    /** The query the user chose for a remote dashboard. It stays when a captured result replaces the frame. Never read from a result. */
+    query?: string;
   }[]>([]);
   const [activeKey, setActiveKey] = createSignal<string>();
   let selectedScope: string | undefined;
@@ -110,6 +146,7 @@ export function createAppViews(sessionId: Accessor<string | null | undefined>, c
   const tabs = createMemo(() => selections().filter((selection) => selection.session === sessionId()).map((selection) => {
     const current = projection().get(selection.tab.key);
     if (current && "frame" in selection.tab) {
+      selection.query ??= selection.tab.frame.query;
       selection.tab = current;
       selection.order = [...current.calls];
     } else if (current && !("frame" in selection.tab)) {
@@ -136,7 +173,7 @@ export function createAppViews(sessionId: Accessor<string | null | undefined>, c
     if (!session || !persistence.ready()) return;
     pendingSave = false;
     save(persistence.agentId(), session, {
-      tabs: tabs().map((tab) => ({ key: tab.key, ...("frame" in tab ? { frame: { id: tab.frame.id, title: tab.frame.title } } : {}) })),
+      tabs: tabs().map((tab) => ({ key: tab.key, ...("frame" in tab ? { frame: savedFrame(tab.frame) } : {}) })),
       active: activeKey(),
     });
   }
@@ -185,6 +222,8 @@ export function createAppViews(sessionId: Accessor<string | null | undefined>, c
     activeKey,
     activate,
     isTab,
+    /** The query that the user chose for this remote dashboard tab, also once a captured result shows it. */
+    queryOf(key: string) { return selections().find((selection) => selection.session === sessionId() && selection.tab.key === key)?.query; },
     restore(saved: SavedAppViews | undefined) {
       if (!saved) return;
       selectedScope = chatScope?.();
@@ -225,11 +264,20 @@ export function createAppViews(sessionId: Accessor<string | null | undefined>, c
     },
     openFrame(frame: DashboardFrame) {
       selectedScope = chatScope?.();
-      const key = viewKey({ server: "yoplai", resourceUri: "ui://yoplai/dashboard", key: frame.id });
+      const key = dashboardKey(frame.id, frame.gateway);
       if (!isTab(key)) setSelections((current) => [...current, { session: sessionId(), tab: { key, frame }, order: [] }]);
+      // An explicit query on a remote dashboard that is already open replaces its query, so the host prepares a fresh view.
+      // An omitted query keeps the selected one. A local dashboard has no query.
+      else if (frame.gateway && frame.query !== undefined) {
+        setSelections((current) => current.map((selection) => selection.tab.key !== key ? selection
+          : "frame" in selection.tab ? { ...selection, query: frame.query, tab: { key, frame: { ...selection.tab.frame, query: frame.query } } }
+          : { ...selection, query: frame.query }));
+      }
       setActiveKey(key);
       persist();
     },
+    /** Whether `open` shows this view now: it is a tab already, or the conversation holds a result for it. */
+    canOpen(key: string) { return isTab(key) || projection().has(key); },
     open(key: string) {
       if (isTab(key)) {
         selectedScope = chatScope?.();

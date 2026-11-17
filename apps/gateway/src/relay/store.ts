@@ -7,6 +7,12 @@ export type RemoteGateway = {
   name: string;
   url: string;
   token?: string;
+  /**
+   * Random value that the store sets on each new link. A link that another
+   * process removes and creates again with equal values gets a new generation.
+   * An older file can lack it.
+   */
+  generation?: string;
 };
 
 /** Holds the linked remote gateways. Callers read the credential through this interface only. */
@@ -42,7 +48,12 @@ export function createFileRemoteGatewayStore(
   return {
     list,
     save(gateway) {
-      write([...list().filter((item) => item.name !== gateway.name), gateway]);
+      const gateways = list();
+      const existing = gateways.find((item) => item.name === gateway.name);
+      // An equal save changes nothing, so existing grants stay valid. Any other save starts a new link.
+      const unchanged = existing?.generation !== undefined && existing.url === gateway.url && existing.token === gateway.token;
+      const generation = unchanged ? existing.generation : randomUUID();
+      write([...gateways.filter((item) => item.name !== gateway.name), { ...gateway, generation }]);
     },
     remove(name) {
       const gateways = list();

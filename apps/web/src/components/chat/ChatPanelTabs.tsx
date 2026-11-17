@@ -8,6 +8,8 @@ import { isExtensionFrameView } from "./chat-history";
 export function ChatPanelTabs(props: {
   appViews: AppViews;
   agentId: string;
+  gateway?: string;
+  gatewayPending?: boolean;
   sessionId: string | null | undefined;
   onUserMessage: (key: string, text: string) => Promise<void>;
 }) {
@@ -96,7 +98,7 @@ export function ChatPanelTabs(props: {
           <Show when={dashboard(key) || extensionFrame(key)} fallback={
             <McpAppView agentId={props.agentId} sessionId={props.sessionId!} viewKey={key} callId={() => view(key)!.latest.id} startCallId={props.appViews.shownCallOf(key)} text={view(key)?.latest.text ?? ""} mode="panel" fileOf={props.appViews.fileOf} onShown={(callId) => props.appViews.reportShown(key, callId)} onDisplayMode={(mode) => { if (mode === "inline") close(key); }} onUserMessage={(text) => props.onUserMessage(key, text)} />
           }>
-            <CapturedFrameView kind={extensionFrame(key) ? "extension" : "dashboard"} agentId={props.agentId} sessionId={props.sessionId!} callId={() => view(key)!.latest.id} startCallId={props.appViews.shownCallOf(key)} mode="panel" onCollapse={() => close(key)} onShown={(callId) => props.appViews.reportShown(key, callId)} />
+            <CapturedFrameView kind={extensionFrame(key) ? "extension" : "dashboard"} agentId={props.agentId} gateway={props.gateway} query={props.appViews.queryOf(key)} gatewayPending={props.gatewayPending} sessionId={props.sessionId!} callId={() => view(key)!.latest.id} startCallId={props.appViews.shownCallOf(key)} mode="panel" onCollapse={() => close(key)} onShown={(callId) => props.appViews.reportShown(key, callId)} />
           </Show>
           </Show>
         }>{(target) => <FrameView target={target()} mode="panel" onCollapse={() => close(key)} />}</Show>

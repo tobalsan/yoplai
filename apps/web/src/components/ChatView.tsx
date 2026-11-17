@@ -1,10 +1,11 @@
+import type { McpAppViewReference } from "@yoplai/shared/types";
 import { decodeRouteParam } from "../lib/path";
 import { createChatSession } from "./chat/createChatSession";
 import { RemoteAgentMark } from "./RemoteAgentMark";
 import { ChatTranscript } from "./chat/ChatTranscript";
 import { DeviceApprovalCards } from "./chat/DeviceApprovalCards";
 import { DeviceSettingsControl } from "./chat/DeviceSettingsControl";
-import { createAppViews, chatAppViewCalls, viewKey } from "./chat/appViews";
+import { createAppViews, chatAppViewCalls, appViewKey } from "./chat/appViews";
 import { load as loadPanelTabs } from "./chat/appViewStorage";
 import { ChatSidePanel, canSplitPanel } from "./chat/ChatSidePanel";
 import { ChatPanelTabs } from "./chat/ChatPanelTabs";
@@ -21,6 +22,7 @@ import {
   onMount,
   Show,
   on,
+  untrack,
 } from "solid-js";
 
 import { useParams, useNavigate, useSearchParams, useLocation, A } from "@solidjs/router";
@@ -139,6 +141,8 @@ export function ChatView() {
   const navigate = useNavigate();
   const location = useLocation<{ mainAgentHome?: boolean; draftMessage?: string }>();
   const [agent] = createResource(() => params.agentId, fetchAgent);
+  // The gateway of a captured dashboard comes from the resolved agent, never from an ID suffix or a tool result.
+  const chatGateway = () => (agent.loading || agent.error ? undefined : agent()?.gateway);
   // Settings live on the pool agent in forked mode; the chat agent is a fork.
   const [settingsPoolActions] = createResource(
     () => (capabilities.forkedAgents ? params.agentId : null),
@@ -236,6 +240,18 @@ export function ChatView() {
   );
 
   const currentSession = () => `${params.agentId}:${sessionKey()}:${explicitSessionId() ?? ""}`;
+  // Live views to open, in arrival order and one per view. They wait for the agent (it fixes the tab key)
+  // and the history (it restores saved tabs first). Each stays queued until the conversation holds its result.
+  // `after` is the number of history requests started when the view arrived.
+  const [openRequests, setOpenRequests] = createSignal<{ session: string; views: Map<string, { view: McpAppViewReference; after: number }>; last: McpAppViewReference }>();
+  function requestOpen(view: McpAppViewReference) {
+    const scope = currentSession();
+    setOpenRequests((current) => {
+      const views = current?.session === scope ? new Map(current.views) : new Map<string, { view: McpAppViewReference; after: number }>();
+      views.set(appViewKey(view), { view, after: session.historyRequests() });
+      return { session: scope, views, last: view };
+    });
+  }
   const session = createChatSession({
     agentId: () => params.agentId,
     agent,
@@ -246,16 +262,7 @@ export function ChatView() {
     isArchived: isSessionArchived,
     isImpersonating: () => !!impersonationStatus()?.active,
     isUploading: uploadingFiles,
-    onLiveView: (view) => {
-      const row = chatViewRef?.querySelector(".chat-main")?.parentElement;
-      if (!row || !canSplitPanel(row.getBoundingClientRect().width)) return;
-      const key = viewKey(view);
-      const requestedSession = currentSession();
-      appViews.open(key);
-      if (appViews.panel()?.key !== key) queueMicrotask(() => {
-        if (currentSession() === requestedSession) appViews.open(key);
-      });
-    },
+    onLiveView: requestOpen,
     uploadPending: async (currentPendingFiles) => {
       if (currentPendingFiles.length === 0) return { inboundFiles: [] };
       setUploadingFiles(true);
@@ -318,13 +325,16 @@ export function ChatView() {
   const appViews = createAppViews(session.appSessionId, () => chatAppViewCalls(session, viewMode()), currentSession, {
     agentId: () => params.agentId,
     ready: panelStorageReady,
-  });
+  }, chatGateway);
+
   createEffect(() => {
     if (panelStorageReady()) return;
     if (currentSession() !== initialPanelScope) {
       setPanelStorageReady(true);
       return;
     }
+    // Captured dashboards take their gateway from the resolved agent, so restore waits for it.
+    if (agent.loading) return;
     const loaded = session.historyLoaded();
     const sessionId = session.appSessionId();
     if (!loaded || loaded.scope !== currentSession() || !sessionId) return;
@@ -334,6 +344,32 @@ export function ChatView() {
       if (saved) appViews.restore(saved);
     }
     setPanelStorageReady(true);
+  });
+  // Opens the queued views from the oldest on, and stops at the first one the conversation does not hold yet:
+  // a history response older than a live result drops it until the next response. A view that a history
+  // requested after it arrived and after the run ended still lacks, for example one beyond the loaded page,
+  // leaves the queue so it does not block the later views. A later change of the conversation runs this again,
+  // so the tabs keep arrival order and the last view received ends selected.
+  createEffect(() => {
+    const requests = openRequests();
+    const loaded = session.historyLoaded();
+    if (!requests || agent.loading || !panelStorageReady()) return;
+    const row = chatViewRef?.querySelector(".chat-main")?.parentElement;
+    if (requests.session !== currentSession() || !row || !canSplitPanel(row.getBoundingClientRect().width)) {
+      setOpenRequests(undefined);
+      return;
+    }
+    const waiting = new Map(requests.views);
+    for (const [id, { view, after }] of requests.views) {
+      const key = appViewKey(view, chatGateway());
+      if (!appViews.canOpen(key)) {
+        if (!loaded?.refresh || loaded.scope !== requests.session || loaded.request <= after) break;
+      } else untrack(() => appViews.open(key));
+      waiting.delete(id);
+    }
+    if (waiting.size === requests.views.size) return;
+    untrack(() => appViews.activate(appViewKey(requests.last, chatGateway())));
+    setOpenRequests(waiting.size ? { ...requests, views: waiting } : undefined);
   });
   onCleanup(appViews.close);
   // Staged dashboard notes belong to this conversation only.
@@ -698,10 +734,22 @@ export function ChatView() {
     requestAnimationFrame(() => textareaRef?.focus());
   };
 
-  onMount(() => {
-    if (!dashboardFromUrl) return;
-    appViews.openFrame({ kind: "dashboard", id: dashboardFromUrl, title: "Dashboard" });
+  const openDashboardFromUrl = (gateway?: string) => {
+    appViews.openFrame({ kind: "dashboard", id: dashboardFromUrl!, title: "Dashboard", ...(gateway ? { gateway } : {}) });
     setSearchParams({ dashboard: undefined, new: undefined }, { replace: true });
+  };
+  // A remote agent ID has the form `name@gateway`. Its dashboard belongs to the gateway that the loaded agent names.
+  const remoteDashboardPending = () => !!dashboardFromUrl && params.agentId.includes("@");
+  onMount(() => {
+    if (dashboardFromUrl && !remoteDashboardPending()) openDashboardFromUrl();
+  });
+  let remoteDashboardOpened = false;
+  createEffect(() => {
+    if (!remoteDashboardPending() || remoteDashboardOpened || agent.loading) return;
+    remoteDashboardOpened = true;
+    // A failed agent read opens nothing: the dashboard gateway would be a guess.
+    if (agent.error) setSearchParams({ dashboard: undefined, new: undefined }, { replace: true });
+    else openDashboardFromUrl(agent()?.gateway);
   });
 
   let draftMessageUsed = false;
@@ -934,7 +982,7 @@ export function ChatView() {
             "drop-target": isFileDragActive() && activeDropZone() === "history",
           }}
         >
-          <ChatTranscript agentId={params.agentId} session={session} viewMode={viewMode} appViews={appViews} onUserMessage={handleViewMessage} />
+          <ChatTranscript agentId={params.agentId} gateway={chatGateway()} gatewayPending={agent.loading} session={session} viewMode={viewMode} appViews={appViews} onUserMessage={handleViewMessage} />
           <Show when={agent()?.gateway}>
             <DeviceApprovalCards
               agentName={agent()?.name ?? "The agent"}
@@ -1166,7 +1214,7 @@ export function ChatView() {
       </div>
       <Show when={appViews.tabs().length > 0}>
         <ChatSidePanel>
-          <ChatPanelTabs appViews={appViews} agentId={params.agentId} sessionId={session.appSessionId()} onUserMessage={handleViewMessage} />
+          <ChatPanelTabs appViews={appViews} agentId={params.agentId} gateway={chatGateway()} gatewayPending={agent.loading} sessionId={session.appSessionId()} onUserMessage={handleViewMessage} />
         </ChatSidePanel>
       </Show>
 

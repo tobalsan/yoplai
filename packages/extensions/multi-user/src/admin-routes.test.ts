@@ -1363,6 +1363,7 @@ describe("multi-user api core", () => {
       authMethods: { google: false, emailAndPassword: true },
       enableCronMonitoring: false,
       forkedAgents: true,
+      dashboardEmbed: { version: 1, assetVersion: "v3", policyVersion: 1, enabled: true },
       user: {
         id: "user-1",
         name: "User One",

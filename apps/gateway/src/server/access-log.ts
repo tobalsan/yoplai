@@ -1,5 +1,6 @@
 import type { MiddlewareHandler } from "hono";
 import { logger } from "hono/logger";
+import { DASHBOARD_VIEW_NAMESPACE, ownsDashboardViewPath } from "../relay/dashboard-view-paths.js";
 
 const SLOW_REQUEST_MS = 500;
 const SECRET_QUERY_NAMES = new Set([
@@ -68,10 +69,17 @@ function isPollingOrHealthPath(path: string): boolean {
   );
 }
 
+/** Hides the whole target of an owned viewer request, because every part of it can carry a snapshot handle. */
+function redactViewerTarget(message: string): string {
+  const parts = /^(--> \S+ )([\s\S]+?)( \d{3} \S+)$/.exec(message);
+  if (!parts || !ownsDashboardViewPath(parts[2].split("?")[0])) return message;
+  return `${parts[1]}${DASHBOARD_VIEW_NAMESPACE}/[redacted]${parts[3]}`;
+}
+
 export function accessLogger(): MiddlewareHandler {
   const normalLogger = logger((message) => {
     if (message.startsWith("<-- ")) return;
-    const safeMessage = stripAnsi(message).replace(/\/(sandbox|content|open)\/[^/?\s]+(?:\?[^\s]*)?/g, "/$1/[redacted]").replace(
+    const safeMessage = redactViewerTarget(stripAnsi(message)).replace(/\/(sandbox|content|open)\/[^/?\s]+(?:\?[^\s]*)?/g, "/$1/[redacted]").replace(
       /(\/api\/surface-links\/pair\/|%2fapi%2fsurface-links%2fpair%2f)[A-Za-z0-9_-]+/gi,
       "$1[redacted]"
     ).replace(

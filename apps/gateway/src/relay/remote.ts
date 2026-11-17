@@ -75,6 +75,24 @@ export async function fetchRemote(
   }
 }
 
+/**
+ * One remote call with exactly the headers that the caller names. It adds the
+ * linked bearer only when asked, never follows a redirect, and leaves the
+ * deadline to the caller, who owns the signal for the whole body read.
+ */
+export function fetchRemoteExact(
+  gateway: RemoteGateway,
+  pathAndQuery: string,
+  init: RequestInit & { bearer: boolean }
+): Promise<Response> {
+  const { bearer, ...rest } = init;
+  const headers = new Headers(rest.headers);
+  for (const name of ["authorization", "proxy-authorization", "cookie", "host", "origin", "referer", "forwarded"]) headers.delete(name);
+  for (const name of [...headers.keys()]) if (name.startsWith("x-forwarded-")) headers.delete(name);
+  if (bearer && gateway.token) headers.set("authorization", `Bearer ${gateway.token}`);
+  return fetch(remoteHttpUrl(gateway, pathAndQuery), { ...rest, redirect: "manual", headers });
+}
+
 export class UnsafeRemoteRedirectError extends Error {
   constructor() { super("Unsafe remote redirect"); }
 }

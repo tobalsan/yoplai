@@ -65,6 +65,29 @@
   outline: 2px solid var(--accent);
   outline-offset: 2px;
 }
+.frame-view-notice,
+.frame-view-error {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  padding: 8px 12px;
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+.frame-view-notice p,
+.frame-view-error p {
+  flex: 1 1 200px;
+  margin: 0;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.frame-view-error {
+  color: var(--text-primary);
+  border-top: 1px solid var(--border-default);
+  background: var(--bg-raised);
+}
 .frame-view iframe {
   display: block;
   width: 100%;
