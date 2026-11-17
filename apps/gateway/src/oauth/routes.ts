@@ -1,5 +1,5 @@
 import { Hono, type Context } from "hono";
-import { getOAuthProvider, type CredentialScope } from "@yoplai/shared";
+import { getOAuthProvider, type CredentialScope, type OAuthAuthorizationStart } from "@yoplai/shared";
 import { getOAuthService, OAuthCallbackError, type OAuthService } from "./service.js";
 import { getAuditActor, recordSettingsChange } from "../audit/store.js";
 
@@ -73,6 +73,8 @@ export function createOAuthRoutes(
     const denied = await requireAgentAccess(c, agentId);
     if (denied) return denied;
     const scope = c.req.query("scope");
+    const jsonStart = c.req.header("accept") === "application/json";
+    if (scope === undefined && jsonStart) return c.json({ error: "missing_scope" }, 400);
     if (scope === undefined) {
       return c.html(renderScopePage(provider, agentId, c.req.query("scopes"), !!(await getRequesterUserId(c)), await canConfigureTeam(c, agentId), c.req.query("returnTo")));
     }
@@ -103,6 +105,10 @@ export function createOAuthRoutes(
             changes: [{ field: "credentials", secret: "set" }] });
         },
       });
+      if (jsonStart) {
+        c.header("Cache-Control", "no-store");
+        return c.json({ kind: "oauth_authorization", provider, authorizationUrl: authorizeUrl } satisfies OAuthAuthorizationStart);
+      }
       return c.redirect(authorizeUrl, 302);
     } catch (error) {
       return c.json(
@@ -122,7 +128,7 @@ export function createOAuthRoutes(
     const providerError = c.req.query("error");
     if (providerError && !state) {
       return c.html(
-        renderResultPage(false, `Google returned an error: ${providerError}`),
+        renderResultPage(false, `The provider returned an error: ${providerError}`),
         400
       );
     }

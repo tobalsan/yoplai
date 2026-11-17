@@ -1,5 +1,13 @@
 import { z } from "zod";
 
+/** The core authorize route returns this body only with Accept: application/json. */
+export const OAuthAuthorizationStartSchema = z.object({
+  kind: z.literal("oauth_authorization"),
+  provider: z.string().min(1),
+  authorizationUrl: z.string().min(1),
+});
+export type OAuthAuthorizationStart = z.infer<typeof OAuthAuthorizationStartSchema>;
+
 /**
  * A provider descriptor is pure data: adding a new OAuth provider (Gmail,
  * Dropbox, ...) is a matter of adding one of these, not writing new flow code.

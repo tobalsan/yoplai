@@ -246,7 +246,11 @@ export class OAuthService {
     this.#pending.delete(input.state);
 
     try {
-      if (input.error) throw new Error(`Google returned an error: ${input.error}`);
+      if (input.error) {
+        throw new Error(
+          `${this.#resolveProvider(input.provider).displayName} returned an error: ${input.error}`
+        );
+      }
       if (!input.code) throw new Error("Missing code or state.");
       const config = this.#loadConfig();
       const provider = this.#materializeProvider(

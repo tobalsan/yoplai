@@ -6,9 +6,12 @@ import { getLinkedGateways, isTrustedRequest, resolveRemoteAgent } from "./state
 import {
   fetchRemote,
   fetchRemoteJson,
+  fetchRemoteWithRedirects,
+  UnsafeRemoteRedirectError,
   suffixAgentIds,
   suffixAvatarUrl,
 } from "./remote.js";
+import { configurationRedirect, isResponse, relayConfiguration } from "./configuration.js";
 import type { RemoteGateway } from "./store.js";
 
 type RemoteAgent = { id: string; avatar?: string } & Record<string, unknown>;
@@ -22,7 +25,7 @@ const DROPPED_RESPONSE_HEADERS = ["content-encoding", "content-length", "transfe
 
 function suffixAgent(agent: RemoteAgent, gateway: string): RemoteAgent {
   return {
-    ...agent,
+    ...(suffixAgentIds(agent, gateway) as RemoteAgent),
     id: addGatewaySuffix(agent.id, gateway),
     ...(agent.avatar ? { avatar: suffixAvatarUrl(agent.avatar, gateway) } : {}),
     gateway,
@@ -121,18 +124,15 @@ async function mergeLists(
 async function forward(
   request: Request,
   gateway: RemoteGateway,
-  remoteAgentId: string,
-  segments: string[]
+  pathAndQuery: string,
+  agentDetail = false
 ): Promise<Response> {
-  const url = new URL(request.url);
-  const remoteSegments = [...segments];
-  remoteSegments[3] = encodeURIComponent(remoteAgentId);
   const headers = new Headers(request.headers);
   for (const name of DROPPED_REQUEST_HEADERS) headers.delete(name);
   const hasBody = request.method !== "GET" && request.method !== "HEAD";
   let response: Response;
   try {
-    response = await fetchRemote(gateway, `${remoteSegments.join("/")}${url.search}`, {
+    response = await fetchRemote(gateway, pathAndQuery, {
       method: request.method,
       headers,
       body: hasBody ? request.body : undefined,
@@ -143,23 +143,37 @@ async function forward(
     return Response.json({ error: "gateway_offline", gateway: gateway.name }, { status: 502 });
   }
   const responseHeaders = new Headers(response.headers);
+  if (response.status >= 300 && response.status < 400 && responseHeaders.has("location")) {
+    const location = configurationRedirect(gateway, responseHeaders.get("location")!, pathAndQuery);
+    if (!location) {
+      await response.body?.cancel();
+      return Response.json({ error: "unsafe_remote_redirect" }, { status: 502 });
+    }
+    responseHeaders.set("location", location);
+  }
   for (const name of DROPPED_RESPONSE_HEADERS) responseHeaders.delete(name);
   const hasNoBody =
     request.method === "HEAD" || [204, 205, 304].includes(response.status);
   if (hasNoBody || !(response.headers.get("content-type") ?? "").includes("application/json")) {
     return new Response(hasNoBody ? null : response.body, { status: response.status, headers: responseHeaders });
   }
-  let body = suffixAgentIds(await response.json(), gateway.name);
+  let rawBody: unknown;
+  try { rawBody = await response.json(); }
+  catch { return Response.json({ error: "invalid_remote_response", gateway: gateway.name }, { status: 502 }); }
+  let body = suffixAgentIds(rawBody, gateway.name);
+  if (response.ok && request.method === "GET" && pathAndQuery.split("?")[0] === "/api/agents" && Array.isArray(body)) {
+    body = (rawBody as RemoteAgent[]).filter(isRelayedAgent).map((agent) => suffixAgent(agent, gateway.name));
+  }
   if (
     response.ok &&
     request.method === "GET" &&
-    segments.length === 4 &&
+    agentDetail &&
     body &&
     typeof body === "object" &&
     !Array.isArray(body) &&
     typeof (body as RemoteAgent).id === "string"
   ) {
-    body = suffixAgent(body as RemoteAgent, gateway.name);
+    body = suffixAgent(rawBody as RemoteAgent, gateway.name);
   }
   return new Response(JSON.stringify(body), { status: response.status, headers: responseHeaders });
 }
@@ -212,7 +226,7 @@ async function forwardUpload(request: Request, gateways: RemoteGateway[]): Promi
   if (file instanceof File && file.size > MAX_UPLOAD_SIZE_BYTES) return uploadTooLarge();
   form.set("agentId", target.agentId);
   try {
-    const response = await fetchRemote(gateway, "/api/media/upload", {
+    const response = await fetchRemoteWithRedirects(gateway, "/api/media/upload", "upload", {
       method: "POST",
       body: form,
       signal: request.signal,
@@ -221,7 +235,8 @@ async function forwardUpload(request: Request, gateways: RemoteGateway[]): Promi
       status: response.status,
       headers: { "content-type": response.headers.get("content-type") ?? "application/json" },
     });
-  } catch {
+  } catch (error) {
+    if (error instanceof UnsafeRemoteRedirectError) return Response.json({ error: "unsafe_remote_redirect" }, { status: 502 });
     return Response.json({ error: "gateway_offline", gateway: gateway.name }, { status: 502 });
   }
 }
@@ -233,7 +248,7 @@ async function downloadFromRemote(
 ): Promise<Response | null> {
   for (const gateway of gateways) {
     try {
-      const response = await fetchRemote(gateway, `/api/media/download/${fileId}`, {
+      const response = await fetchRemoteWithRedirects(gateway, `/api/media/download/${fileId}`, "download", {
         signal,
       });
       if (response.ok) {
@@ -242,11 +257,22 @@ async function downloadFromRemote(
         return new Response(response.body, { status: 200, headers });
       }
       await response.body?.cancel();
-    } catch {
+    } catch (error) {
+      if (error instanceof UnsafeRemoteRedirectError) return Response.json({ error: "unsafe_remote_redirect" }, { status: 502 });
       continue;
     }
   }
   return null;
+}
+
+/** Resolve only allowed configuration routes before the local extension gate. */
+export function relayConfigurationHttp(): MiddlewareHandler {
+  return async (c, next) => {
+    const result = await relayConfiguration(c.req.raw, getLinkedGateways(), forward);
+    if (isResponse(result)) return result;
+    if (result) c.req.raw = result;
+    return next();
+  };
 }
 
 /** Sends `/api/agents/:id` calls for remote agents to their gateway and merges remote entries into the lists. */
@@ -265,7 +291,9 @@ export function relayHttp(): MiddlewareHandler {
         : resolveRemoteAgent(first, gateways);
       const gateway = gateways.find((item) => item.name === target.gateway);
       if (gateway) {
-        return forward(c.req.raw, gateway, target.agentId, segments);
+        const remoteSegments = [...segments];
+        remoteSegments[3] = encodeURIComponent(target.agentId);
+        return forward(c.req.raw, gateway, `${remoteSegments.join("/")}${url.search}`, segments.length === 4);
       }
     }
 

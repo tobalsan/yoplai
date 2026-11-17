@@ -85,6 +85,49 @@ describe("oauth routes", () => {
     expect(audit).toHaveBeenCalledWith({ actorUserId: "alice", actorEmail: "alice@example.com", impersonatorUserId: "admin", action: "oauth.connect", agentId: "a1", targetType: "oauth", targetId: "google", scope: "team", changes: [{ field: "credentials", secret: "set" }] });
   });
 
+  it("returns a typed JSON start only when the caller requests JSON", async () => {
+    const service = new OAuthService({ store, loadConfig: makeConfig });
+    const app = createOAuthRoutes(service);
+    const response = await app.request("/oauth/google/authorize?agent=a1&scope=team", { headers: { accept: "application/json" } });
+    expect(response.status).toBe(200);
+    expect(response.headers.get("cache-control")).toBe("no-store");
+    expect(response.headers.get("location")).toBeNull();
+    const result = await response.json();
+    expect(result).toMatchObject({ kind: "oauth_authorization", provider: "google" });
+    const url = new URL(result.authorizationUrl);
+    expect(url.origin).toBe("https://accounts.google.com");
+    expect(url.searchParams.get("redirect_uri")).toBe("http://localhost:4000/api/oauth/google/callback");
+    const callback = await app.request(`/oauth/google/callback?error=access_denied&state=${url.searchParams.get("state")}`);
+    expect(callback.status).toBe(400);
+    expect(await callback.text()).toContain("access_denied");
+    expect((await app.request(`/oauth/google/callback?error=access_denied&state=${url.searchParams.get("state")}`)).status).toBe(400);
+  });
+
+  it("names the actual provider on the callback page when a non-Google provider denies", async () => {
+    const config = {
+      agents: [],
+      extensions: {},
+      oauth: { redirectBaseUrl: "http://localhost:4000", providers: { zendesk: { clientId: "zid", clientSecret: "zsecret", subdomain: "acme" } } },
+    } as unknown as GatewayConfig;
+    const app = createOAuthRoutes(new OAuthService({ store, loadConfig: () => config }));
+    const authorization = await app.request("/oauth/zendesk/authorize?agent=a1&scope=team");
+    const state = new URL(authorization.headers.get("location")!).searchParams.get("state");
+    const callback = await app.request(`/oauth/zendesk/callback?error=access_denied&state=${state}`);
+    expect(callback.status).toBe(400);
+    const text = new JSDOM(await callback.text()).window.document.body.textContent ?? "";
+    expect(text).toContain("Zendesk returned an error: access_denied");
+    expect(text).not.toContain("Google");
+  });
+
+  it("does not name Google when the provider error arrives without state", async () => {
+    const app = createOAuthRoutes(new OAuthService({ store, loadConfig: makeConfig }));
+    const callback = await app.request("/oauth/zendesk/callback?error=access_denied");
+    expect(callback.status).toBe(400);
+    const text = new JSDOM(await callback.text()).window.document.body.textContent ?? "";
+    expect(text).toContain("access_denied");
+    expect(text).not.toContain("Google");
+  });
+
   it("authorize requires an agent query param", async () => {
     const app = createOAuthRoutes(
       new OAuthService({ store, loadConfig: makeConfig })
@@ -250,6 +293,31 @@ describe("oauth routes", () => {
     expect(await alice.json()).toMatchObject({ connected: true, scope: "personal", account: "alice@example.com" });
     await app.request("/oauth/google/disconnect?agent=a1&scope=personal&userId=alice", { method: "POST", headers: { "test-user": "bob" } });
     expect(service.getConnection("a1", "google", "alice")).toBeDefined();
+  });
+
+  it("accepts a bearer start and a callback without a browser session", async () => {
+    const fetchImpl = vi.fn(async (input: RequestInfo | URL) => Response.json(
+      String(input).includes("token") ? { access_token: "fake-personal-token", expires_in: 3600 } : { email: "owner@example.test" }
+    ));
+    const service = new OAuthService({ store, fetchImpl, loadConfig: makeConfig });
+    const headers = { authorization: "Bearer fake-linked-bearer" };
+    const app = createOAuthRoutes(
+      service,
+      async (c) => c.req.header("authorization") === headers.authorization,
+      async (c) => c.req.header("authorization") === headers.authorization ? "remote-owner" : undefined,
+      async () => false
+    );
+    const authorization = await app.request("/oauth/google/authorize?agent=a1&scope=personal", { headers });
+    expect(authorization.status).toBe(302);
+    const state = new URL(authorization.headers.get("location")!).searchParams.get("state");
+    const callback = await app.request(`/oauth/google/callback?code=fake-code&state=${state}`);
+    expect(callback.status).toBe(200);
+    expect(callback.headers.get("content-type")).toContain("text/html");
+    expect(callback.headers.get("location")).toBeNull();
+    expect(service.getConnection("a1", "google", "remote-owner")?.accessToken).toBe("fake-personal-token");
+    expect((await app.request(`/oauth/google/callback?code=fake-code&state=${state}`)).status).toBe(400);
+    expect((await app.request("/oauth/google/authorize?agent=a1&scope=team", { headers })).status).toBe(403);
+    expect(fetchImpl.mock.calls.every(([input]) => !String(input).includes("authorize"))).toBe(true);
   });
 
   it("requires a user account for personal operations and rejects invalid scopes", async () => {

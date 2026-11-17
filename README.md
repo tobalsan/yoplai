@@ -177,6 +177,19 @@ Connecting an OAuth extension from settings takes you to the provider in the sam
 
 Run `yoplai connect https://remote.example.com --name ams [--token <user token>]` on your local gateway. The agents of the remote gateway then show in the agent list as `<agentId>@ams`, with a small `@ams` mark, and you chat with them on the local page. Use `--token` only when the remote gateway runs in multi-user mode (create one with `yoplai user token create` there). `yoplai remotes` lists links and `yoplai disconnect ams` removes one. The link works only when the local gateway listens on a loopback address and multi-user mode and Tailscale serve are off.
 
+Configuration transport now supports linked gateways through an explicit API prefix and an allowlist.
+The linked bearer defines the remote requester, including personal connections and administrative rights.
+Remote OAuth starts use a trusted-origin JSON POST and return a checked provider URL.
+The remote stores state and tokens. The local server never fetches the provider URL.
+The page controls and dashboard viewer still need round 3b.
+
+Core OAuth starts need the new JSON start result on the remote gateway.
+A desktop does not need the remote provider extension or scheduler extension to forward these requests.
+Media and agent lists permit only bounded redirects within the same gateway and route family.
+
+See [remote configuration transport](docs/relay-configuration.md) for the API and page contract.
+
+
 ### Let a remote agent use your machine
 
 While your local gateway runs and is linked, an agent on the remote gateway can read, write, and edit files and run commands on your machine. It uses the tools `device_read`, `device_write`, `device_edit`, and `device_bash`. Your local gateway decides for each call. Each chat has one of three modes:
